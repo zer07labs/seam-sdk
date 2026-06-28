@@ -1,0 +1,11 @@
+# Generated stubs are regenerated from the contract on release — not committed.
+/gen/
+
+# Per-language build artifacts.
+**/node_modules/
+**/dist/
+**/build/
+**/target/
+**/__pycache__/
+*.pyc
+.DS_Store

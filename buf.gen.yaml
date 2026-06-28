@@ -1,0 +1,49 @@
+# Generate the Seam client SDKs for every target language from the seam.api.v1 contract.
+#
+# Input is the published BSR module `buf.build/zer07labs/seam` (or a local seam-runtime checkout — see the
+# Makefile). Remote plugins run codegen on the BSR, so no local protoc-gen-* toolchains are needed; they
+# do require a one-time `buf registry login`.
+version: v2
+managed:
+  enabled: true
+  override:
+    - file_option: java_multiple_files
+      value: true
+    - file_option: java_package_prefix
+      value: com.zer07labs
+plugins:
+  # ── Go (messages + grpc-go) ──
+  - remote: buf.build/protocolbuffers/go
+    out: gen/go
+    opt: paths=source_relative
+  - remote: buf.build/grpc/go
+    out: gen/go
+    opt: paths=source_relative
+
+  # ── Python (messages + type stubs + grpc) ──
+  - remote: buf.build/protocolbuffers/python
+    out: gen/python
+  - remote: buf.build/protocolbuffers/pyi
+    out: gen/python
+  - remote: buf.build/grpc/python
+    out: gen/python
+
+  # ── TypeScript (protobuf-es + Connect) ──
+  - remote: buf.build/bufbuild/es
+    out: gen/ts
+    opt: target=ts
+  - remote: buf.build/connectrpc/es
+    out: gen/ts
+    opt: target=ts
+
+  # ── Java (messages + grpc-java) ──
+  - remote: buf.build/protocolbuffers/java
+    out: gen/java
+  - remote: buf.build/grpc/java
+    out: gen/java
+
+  # ── Kotlin (messages + grpc-kotlin) ──
+  - remote: buf.build/protocolbuffers/kotlin
+    out: gen/kotlin
+  - remote: buf.build/grpc/kotlin
+    out: gen/kotlin
