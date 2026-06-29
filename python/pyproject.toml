@@ -1,0 +1,25 @@
+[project]
+name = "seam-sdk"
+version = "0.1.0"
+description = "Python SDK for the Seam decision-boundary runtime — gRPC transport + stock-crypto client shim."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "grpcio>=1.60",
+    "protobuf>=5",
+    "cryptography>=42",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# The generated transport (`gen/python`) is produced by `buf generate` and added to the package at build
+# time; it is not committed (see the repo .gitignore).
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["seam_sdk*"]

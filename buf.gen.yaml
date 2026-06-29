@@ -7,6 +7,9 @@ version: v2
 managed:
   enabled: true
   override:
+    # Go needs an import path; set it here (managed mode) so the proto stays language-neutral.
+    - file_option: go_package_prefix
+      value: github.com/zer07labs/seam-sdk/gen/go
     - file_option: java_multiple_files
       value: true
     - file_option: java_package_prefix

@@ -51,3 +51,16 @@ gen/{go,python,ts,java,kotlin}/   # generated stubs (git-ignored; regenerated on
 
 The contract is versioned and **backward-compatibility-checked** in the runtime repo's CI (`buf breaking`),
 so a change there can never silently break a generated client. Regenerate after a contract release.
+
+## Status
+
+| Language | Transport (generated) | Crypto shim + ergonomic client |
+|---|---|---|
+| **Python** | ✅ | ✅ **complete reference** — round-trips live (admit → decide → seal → read → verify) |
+| TypeScript | ✅ | ⏳ same pattern (`@noble/ed25519` + `@noble/hashes`, JOSE) |
+| Go | ✅ | ⏳ |
+| Java | ✅ | ⏳ |
+| Kotlin | ✅ | ⏳ |
+
+The crypto shim is identical across languages — pure stock Ed25519/SHA-256/JOSE, conformance-tested against
+`conformance/vectors.json`. Python (`python/`) is the reference each other language mirrors.
