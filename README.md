@@ -56,8 +56,8 @@ so a change there can never silently break a generated client. Regenerate after 
 
 | Language | Transport (generated) | Crypto shim + ergonomic client |
 |---|---|---|
-| **Python** | ✅ | ✅ **complete reference** — round-trips live (admit → decide → seal → read → verify) |
-| TypeScript | ✅ | ⏳ same pattern (`@noble/ed25519` + `@noble/hashes`, JOSE) |
+| **Python** | ✅ | ✅ **complete** — round-trips live (admit → decide → seal → read → verify) |
+| **TypeScript** | ✅ | ✅ **complete** — round-trips live (`@noble/curves` + `@noble/hashes`, `@connectrpc/connect`) |
 | Go | ✅ | ⏳ |
 | Java | ✅ | ⏳ |
 | Kotlin | ✅ | ⏳ |

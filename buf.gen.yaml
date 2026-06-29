@@ -31,12 +31,10 @@ plugins:
   - remote: buf.build/grpc/python
     out: gen/python
 
-  # ── TypeScript (protobuf-es + Connect) ──
+  # ── TypeScript (protobuf-es v2 — emits the service descriptors too; used with @connectrpc/connect v2).
+  #    Generated into the ts package so it resolves the package's node_modules. ──
   - remote: buf.build/bufbuild/es
-    out: gen/ts
-    opt: target=ts
-  - remote: buf.build/connectrpc/es
-    out: gen/ts
+    out: ts/gen
     opt: target=ts
 
   # ── Java (messages + grpc-java) ──
