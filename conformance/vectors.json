@@ -1,0 +1,41 @@
+{
+  "_comment": "Conformance vectors for the Seam SDK crypto shim. Inputs are fixed; outputs are byte-exact.",
+  "admission": {
+    "inputs": {
+      "agent_seed_hex": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
+      "receiver_aid": "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
+      "pop_nonce": "c2VhbS1jb25mb3JtYW5jZS1ub25jZS0wMDE",
+      "now_ms": 1700000000000
+    },
+    "derived": {
+      "sender_aid": "aid:pubkey:ed25519:GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
+      "proof_domain": "aitp-pinned-key-v1\u0000"
+    },
+    "presentation": {
+      "sender_aid": "aid:pubkey:ed25519:GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
+      "descriptor": {
+        "type": "pinned_key",
+        "subject": "aid:pubkey:ed25519:GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
+        "proof": "A7qoBa1bFYBIcQrqKKI8wFl75ysL5fJ1HewoEWklpb5LUI3haFe4eTukildS9tItc2MsCyddI7ePkQsGVHJVBw",
+        "public_key": "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE"
+      },
+      "message_id": "b216b10f-d1bc-2b19-c3b4-287ca50bdece",
+      "timestamp": 1700000000,
+      "pop_nonce": "c2VhbS1jb25mb3JtYW5jZS1ub25jZS0wMDE"
+    }
+  },
+  "tct": {
+    "inputs": {
+      "issuer_seed_hex": "0707070707070707070707070707070707070707070707070707070707070707",
+      "commitment": {
+        "id": "k-conformance",
+        "action": "BLOCK",
+        "authority": "decision.v1",
+        "auth_method": "aitp-pinned-handshake",
+        "trust_basis": "test"
+      }
+    },
+    "issuer_aid": "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
+    "signed_artifact_jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJhdWQiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJjbmYiOnsiamt0IjoiLS02SU01bDBPb3NMajl5V3NrSVNZaFVBM25fM0NVUlFrbXJZTVNoYV9jayJ9LCJleHAiOjQ4NTM2MDAwMDAsImdyYW50cyI6WyJzZWFtOmNvbW1pdG1lbnQiLCJzZWFtLWNvbW1pdG1lbnQtZGlnZXN0Ojk1YzUyZDFhNGE1YjczMDBkMDNkMDEzY2YzYTYxMDNhNjk4M2YyM2JkOGRhMjM4ZWNjZGUzNGFhYjc4NTAxMjgiXSwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJqdGkiOiIyMzQwMDIwZC1lMjJlLTY1ZTQtZWZkOS1iOTFkMmM1Y2I1NzMiLCJzdWIiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJ2ZXIiOiJhaXRwLzAuMiJ9.Kiab8hJPKy44-irm_94ckk-CPXKY6ZX9N9hKJmT40rAhuPijo75ilW2q47ZuumlrtUUbQxUH6obqXFTB6NeSBQ"
+  }
+}

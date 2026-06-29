@@ -1,0 +1,36 @@
+{
+  "name": "@zer07labs/seam-sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for the Seam decision-boundary runtime — gRPC transport + stock-crypto client shim.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/src/client.js",
+  "types": "./dist/src/client.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/client.d.ts",
+      "import": "./dist/src/client.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.12.1",
+    "@connectrpc/connect": "^2.0.0",
+    "@connectrpc/connect-node": "^2.0.0",
+    "@noble/curves": "^1.6.0",
+    "@noble/hashes": "^1.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
+    "test": "node --import tsx --test tests/*.test.ts"
+  }
+}

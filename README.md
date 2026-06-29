@@ -35,15 +35,35 @@ make generate          # all languages, from the published contract module
 make generate-local RUNTIME=../seam-runtime
 ```
 
-Output lands under `gen/<language>/`. Each language directory then wraps the generated stubs with its
-crypto shim and is packaged/published on its own cadence (pkg.go.dev, PyPI, npm, Maven Central).
+Generated stubs are git-ignored (regenerated on release). They land per language where each package
+consumes them: **Python → `python/seam_sdk/_gen/`** (so the wheel ships the transport), **TypeScript →
+`ts/gen/`** (so it resolves the package's `node_modules`), and **Go/Java/Kotlin → `gen/<language>/`**.
+
+## Build & test
+
+Each package wraps the generated stubs with its crypto shim and is published on its own cadence (PyPI,
+npm, pkg.go.dev, Maven Central). Generate first (above), then:
+
+```sh
+# Python — an installable wheel that ships the generated transport.
+pip install ./python              # or: pip install -e "./python[dev]" && (cd python && pytest)
+
+# TypeScript — compiles to dist/ (JS + d.ts); `npm pack`/publish runs the build via prepack.
+cd ts && npm ci && npm run build  # npm test runs the conformance + (gated) live round-trip
+```
+
+CI (`.github/workflows/ci.yml`) regenerates from the contract and runs both: Python (`ruff` + `pytest`)
+and TypeScript (`tsc` typecheck + build + `node --test`). A gated job builds `seam-grpc` and runs the live
+round-trip end-to-end (it needs a runtime-checkout token, so it self-skips when unset).
 
 ## Layout
 
 ```
 buf.gen.yaml         # codegen for all five languages (remote plugins)
 Makefile             # generate / generate-local / clean / lint
-gen/{go,python,ts,java,kotlin}/   # generated stubs (git-ignored; regenerated on release)
+.github/workflows/   # CI: ruff+pytest, tsc+build+test, gated live integration
+gen/{go,java,kotlin}/             # generated stubs without an in-package home (git-ignored)
+python/seam_sdk/_gen/, ts/gen/    # generated transport, inside each package (git-ignored)
 <lang>/              # per-language package: the crypto shim + ergonomic client + packaging
 ```
 
@@ -51,3 +71,16 @@ gen/{go,python,ts,java,kotlin}/   # generated stubs (git-ignored; regenerated on
 
 The contract is versioned and **backward-compatibility-checked** in the runtime repo's CI (`buf breaking`),
 so a change there can never silently break a generated client. Regenerate after a contract release.
+
+## Status
+
+| Language | Transport (generated) | Crypto shim + ergonomic client |
+|---|---|---|
+| **Python** | ✅ | ✅ **complete** — round-trips live (admit → decide → seal → read → verify) |
+| **TypeScript** | ✅ | ✅ **complete** — round-trips live (`@noble/curves` + `@noble/hashes`, `@connectrpc/connect`) |
+| Go | ✅ | ⏳ |
+| Java | ✅ | ⏳ |
+| Kotlin | ✅ | ⏳ |
+
+The crypto shim is identical across languages — pure stock Ed25519/SHA-256/JOSE, conformance-tested against
+`conformance/vectors.json`. Python (`python/`) is the reference each other language mirrors.
