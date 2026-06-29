@@ -63,5 +63,8 @@ def test_full_round_trip(server):
     assert client.get_decision(dec.decision_id).outcome == "Resolved"
     assert client.replay_decision(dec.decision_id).chain_verified
 
-    # Independent verification — fetch the proof and verify the rooted TCT locally, zero server trust.
-    assert client.verify_decision(dec.decision_id) is True
+    # Independent verification — pin the issuer (TOFU here) then verify the rooted TCT locally.
+    issuer = client.issuer_aid()
+    assert client.verify_decision(dec.decision_id, issuer) is True
+    # A wrong pinned issuer must be rejected even though the server's proof is internally consistent.
+    assert client.verify_decision(dec.decision_id, "aid:pubkey:ed25519:" + "A" * 43) is False

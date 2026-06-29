@@ -111,24 +111,25 @@ def verify_tct(issuer_aid: str, tct_jws: str, commitment: dict, now_s: int | Non
     claims (`typ`, `iss==sub==aud==issuer_aid`, `exp`), and that the bound `seam-commitment-digest` grant
     matches this exact commitment (tamper-evidence over the decided content + committer attribution).
     """
-    parts = tct_jws.split(".")
-    if len(parts) != 3:
-        return False
-    header_b64, payload_b64, sig_b64 = parts
+    # Any malformed/forged input must fail closed (return False), never raise.
     try:
+        parts = tct_jws.split(".")
+        if len(parts) != 3:
+            return False
+        header_b64, payload_b64, sig_b64 = parts
         Ed25519PublicKey.from_public_bytes(_aid_to_pubkey(issuer_aid)).verify(
             _b64url_decode(sig_b64), f"{header_b64}.{payload_b64}".encode("ascii")
         )
+        header = json.loads(_b64url_decode(header_b64))
+        payload = json.loads(_b64url_decode(payload_b64))
+        if header.get("alg") != "EdDSA" or header.get("typ") != "aitp-tct+jwt":
+            return False
+        if not (payload.get("iss") == payload.get("sub") == payload.get("aud") == issuer_aid):
+            return False
+        now = now_s if now_s is not None else int(time.time())
+        if now >= int(payload.get("exp", 0)):  # RFC 7519: reject at/after expiry
+            return False
+        want = "seam-commitment-digest:" + _seam_commitment_digest(commitment)
+        return want in payload.get("grants", [])
     except Exception:
         return False
-    header = json.loads(_b64url_decode(header_b64))
-    payload = json.loads(_b64url_decode(payload_b64))
-    if header.get("alg") != "EdDSA" or header.get("typ") != "aitp-tct+jwt":
-        return False
-    if not (payload.get("iss") == payload.get("sub") == payload.get("aud") == issuer_aid):
-        return False
-    now = now_s if now_s is not None else int(time.time())
-    if int(payload.get("exp", 0)) < now:
-        return False
-    want = "seam-commitment-digest:" + _seam_commitment_digest(commitment)
-    return want in payload.get("grants", [])

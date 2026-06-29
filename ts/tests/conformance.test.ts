@@ -26,3 +26,21 @@ test("TCT verify: valid → true, tampered → false", () => {
     false,
   );
 });
+
+test("TCT verify fails closed on malformed/expired/forged", () => {
+  const t = vectors.tct;
+  const c = t.inputs.commitment;
+  const jws = t.signed_artifact_jws as string;
+  const iss = t.issuer_aid as string;
+  const [h, p, s] = jws.split(".");
+  const cases: [string, string, string, number][] = [
+    ["expired", iss, jws, 9_999_999_999],
+    ["not-3-parts", iss, "not.a", 1_700_000_001],
+    ["wrong-issuer-key", "aid:pubkey:ed25519:" + "A".repeat(43), jws, 1_700_000_001],
+    ["unsupported-aid", "did:web:example.com", jws, 1_700_000_001],
+    ["tampered-signature", iss, `${h}.${p}.${s.slice(0, -4)}AAAA`, 1_700_000_001],
+  ];
+  for (const [name, issuer, token, now] of cases) {
+    assert.equal(verifyTct(issuer, token, c, now), false, `${name} must fail closed`);
+  }
+});

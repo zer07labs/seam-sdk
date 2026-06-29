@@ -33,7 +33,9 @@ test("full round trip: admit → decide → seal → read → verify", { skip: !
     assert.equal(dec.outcome, "Resolved");
     assert.equal((await client.getDecision(dec.decisionId)).outcome, "Resolved");
     assert.equal((await client.replayDecision(dec.decisionId)).chainVerified, true);
-    assert.equal(await client.verifyDecision(dec.decisionId), true);
+    const issuer = await client.issuerAid();
+    assert.equal(await client.verifyDecision(dec.decisionId, issuer), true);
+    assert.equal(await client.verifyDecision(dec.decisionId, "aid:pubkey:ed25519:" + "A".repeat(43)), false);
   } finally {
     proc?.kill();
   }

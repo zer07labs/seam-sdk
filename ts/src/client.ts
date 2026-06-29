@@ -72,12 +72,17 @@ export class SeamClient {
     return this.coord.getCommitmentProof({ decisionId });
   }
 
-  /** Fetch a sealed decision's proof and verify its rooted TCT locally — zero server trust. */
-  async verifyDecision(decisionId: string): Promise<boolean> {
+  /**
+   * Fetch a sealed decision's proof and verify its rooted TCT locally — zero server trust.
+   * `expectedIssuer` is the issuer AID the caller pinned out of band (or TOFU-cached via `issuerAid()`);
+   * the server-supplied `proof.issuerAid` must match, so a malicious server can't substitute its own key.
+   */
+  async verifyDecision(decisionId: string, expectedIssuer: string): Promise<boolean> {
     const proof = await this.getCommitmentProof(decisionId);
+    if (proof.issuerAid !== expectedIssuer) return false;
     const c = proof.commitment;
     if (!c) return false;
-    return verifyTct(proof.issuerAid, new TextDecoder().decode(c.signedArtifact), {
+    return verifyTct(expectedIssuer, new TextDecoder().decode(c.signedArtifact), {
       id: c.id,
       action: c.action,
       authority: c.authority,

@@ -85,9 +85,17 @@ class SeamClient:
     def get_commitment_proof(self, decision_id: str) -> pb.CommitmentProof:
         return self._coord.GetCommitmentProof(pb.DecisionRef(decision_id=decision_id))
 
-    def verify_decision(self, decision_id: str) -> bool:
-        """Fetch a sealed decision's proof and verify its rooted TCT locally — zero server trust."""
+    def verify_decision(self, decision_id: str, expected_issuer: str) -> bool:
+        """Fetch a sealed decision's proof and verify its rooted TCT locally — zero server trust.
+
+        `expected_issuer` is the issuer AID the caller **pinned out of band** (or TOFU-cached). The TCT is
+        verified against it, and the server-supplied `proof.issuer_aid` must match — so a malicious server
+        cannot substitute its own key. Get the issuer once via `issuer_aid()` and pin it; never trust the
+        per-response issuer as the verification anchor.
+        """
         proof = self.get_commitment_proof(decision_id)
+        if proof.issuer_aid != expected_issuer:
+            return False
         c = proof.commitment
         commitment = {
             "id": c.id,
@@ -97,4 +105,4 @@ class SeamClient:
             "trust_basis": c.trust_basis,
             "supersedes": c.supersedes or "",
         }
-        return verify_tct(proof.issuer_aid, c.signed_artifact.decode(), commitment)
+        return verify_tct(expected_issuer, c.signed_artifact.decode(), commitment)

@@ -113,16 +113,23 @@ export function verifyTct(
   commitment: Commitment,
   nowS?: number,
 ): boolean {
-  const parts = tctJws.split(".");
-  if (parts.length !== 3) return false;
-  const [h, p, s] = parts;
-  if (!ed25519.verify(b64urlDecode(s), enc.encode(`${h}.${p}`), aidToPubkey(issuerAid))) return false;
-  const header = JSON.parse(Buffer.from(h, "base64url").toString());
-  const payload = JSON.parse(Buffer.from(p, "base64url").toString());
-  if (header.alg !== "EdDSA" || header.typ !== "aitp-tct+jwt") return false;
-  if (!(payload.iss === payload.sub && payload.sub === payload.aud && payload.aud === issuerAid))
+  // Any malformed/forged input must fail closed (return false), never throw.
+  try {
+    const parts = tctJws.split(".");
+    if (parts.length !== 3) return false;
+    const [h, p, s] = parts;
+    // zip215:false → RFC 8032 strictness, matching the Python/Rust verifiers (no non-canonical sigs).
+    if (!ed25519.verify(b64urlDecode(s), enc.encode(`${h}.${p}`), aidToPubkey(issuerAid), { zip215: false }))
+      return false;
+    const header = JSON.parse(Buffer.from(h, "base64url").toString());
+    const payload = JSON.parse(Buffer.from(p, "base64url").toString());
+    if (header.alg !== "EdDSA" || header.typ !== "aitp-tct+jwt") return false;
+    if (!(payload.iss === payload.sub && payload.sub === payload.aud && payload.aud === issuerAid))
+      return false;
+    const now = nowS ?? Math.floor(Date.now() / 1000);
+    if (now >= (payload.exp ?? 0)) return false; // RFC 7519: reject at/after expiry
+    return (payload.grants ?? []).includes("seam-commitment-digest:" + seamCommitmentDigest(commitment));
+  } catch {
     return false;
-  const now = nowS ?? Math.floor(Date.now() / 1000);
-  if ((payload.exp ?? 0) < now) return false;
-  return (payload.grants ?? []).includes("seam-commitment-digest:" + seamCommitmentDigest(commitment));
+  }
 }
