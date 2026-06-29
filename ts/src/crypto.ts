@@ -97,11 +97,27 @@ function aidToPubkey(aid: string): Uint8Array {
   throw new Error(`unsupported AID form: ${aid}`);
 }
 
+// An 8-byte big-endian length prefix — frames each digest field unambiguously (a `\0` separator would let
+// boundary-shifted fields collide, since the fields are arbitrary text that may contain that byte).
+function lenPrefix(b: Uint8Array): Uint8Array {
+  const out = new Uint8Array(8);
+  new DataView(out.buffer).setBigUint64(0, BigInt(b.length), false);
+  return out;
+}
+
 function seamCommitmentDigest(c: Commitment): string {
-  const fields = [c.id, c.action, c.authority, c.supersedes ?? "", c.auth_method, c.trust_basis];
+  const fields = [
+    enc.encode("seam-commitment-digest:v1"),
+    enc.encode(c.id),
+    enc.encode(c.action),
+    enc.encode(c.authority),
+    enc.encode(c.supersedes ?? ""),
+    enc.encode(c.auth_method),
+    enc.encode(c.trust_basis),
+  ];
   const parts: Uint8Array[] = [];
   for (const f of fields) {
-    parts.push(enc.encode(f), NUL);
+    parts.push(lenPrefix(f), f);
   }
   return Buffer.from(sha256(concat(...parts))).toString("hex");
 }

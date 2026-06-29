@@ -91,18 +91,24 @@ def _aid_to_pubkey(aid: str) -> bytes:
 
 
 def _seam_commitment_digest(commitment: dict) -> str:
-    """SHA-256 over `id\\0 action\\0 authority\\0 supersedes\\0 auth_method\\0 trust_basis\\0` (hex)."""
+    """SHA-256 (hex) over a length-prefixed framing of a domain tag + the commitment fields.
+
+    Each field is prefixed with its 8-byte big-endian byte length (no separator), so the digest is
+    injective over `(domain, id, action, authority, supersedes, auth_method, trust_basis)` regardless of
+    content — a `\\0` separator would let boundary-shifted fields collide. Mirrors the runtime byte-for-byte.
+    """
     h = hashlib.sha256()
     for field in (
-        commitment["id"],
-        commitment["action"],
-        commitment["authority"],
-        commitment.get("supersedes") or "",
-        commitment["auth_method"],
-        commitment["trust_basis"],
+        b"seam-commitment-digest:v1",
+        commitment["id"].encode(),
+        commitment["action"].encode(),
+        commitment["authority"].encode(),
+        (commitment.get("supersedes") or "").encode(),
+        commitment["auth_method"].encode(),
+        commitment["trust_basis"].encode(),
     ):
-        h.update(field.encode())
-        h.update(b"\x00")
+        h.update(len(field).to_bytes(8, "big"))
+        h.update(field)
     return h.hexdigest()
 
 
