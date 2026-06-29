@@ -1,12 +1,46 @@
 name: ci
 
+# The SDKs are generated from the *private* `seam.api.v1` contract on the BSR, so building/testing the
+# transport-coupled client needs read access to it. Configure these repo secrets to enable CI:
+#   * BUF_TOKEN          — a BSR token with read access to buf.build/zer07labs/seam (enables python + ts).
+#   * RUNTIME_REPO_TOKEN — a PAT that can check out the private zer07labs/seam-runtime (enables the live
+#                          integration job, which builds seam-grpc).
+# Jobs that need a secret self-skip (not fail) when it is absent — so forks and the pre-secret state stay
+# green instead of red.
+
 on:
   push:
   pull_request:
 
 jobs:
+  preflight:
+    name: preflight (secret gating)
+    runs-on: ubuntu-latest
+    outputs:
+      have_buf_token: ${{ steps.check.outputs.have_buf_token }}
+      can_integrate: ${{ steps.check.outputs.can_integrate }}
+    steps:
+      - id: check
+        env:
+          BUF_TOKEN: ${{ secrets.BUF_TOKEN }}
+          RUNTIME_REPO_TOKEN: ${{ secrets.RUNTIME_REPO_TOKEN }}
+        run: |
+          if [ -n "$BUF_TOKEN" ]; then
+            echo "have_buf_token=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have_buf_token=false" >> "$GITHUB_OUTPUT"
+            echo "BUF_TOKEN not set — skipping the build/test jobs (cannot read the private contract)"
+          fi
+          if [ -n "$BUF_TOKEN" ] && [ -n "$RUNTIME_REPO_TOKEN" ]; then
+            echo "can_integrate=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "can_integrate=false" >> "$GITHUB_OUTPUT"
+          fi
+
   python:
     name: python (ruff · pytest)
+    needs: preflight
+    if: needs.preflight.outputs.have_buf_token == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,17 +50,10 @@ jobs:
       - uses: bufbuild/buf-setup-action@v1
         with:
           github_token: ${{ github.token }}
-      # The SDKs are generated from the `seam.api.v1` contract on the BSR. Log in only if a token is
-      # configured (a private module); otherwise generation assumes a public module.
-      - name: buf login (if a BSR token is configured)
+      - name: buf login
         env:
           BUF_TOKEN: ${{ secrets.BUF_TOKEN }}
-        run: |
-          if [ -n "$BUF_TOKEN" ]; then
-            printf '%s' "$BUF_TOKEN" | buf registry login buf.build --token-stdin
-          else
-            echo "no BUF_TOKEN — assuming the contract module is public"
-          fi
+        run: printf '%s' "$BUF_TOKEN" | buf registry login buf.build --token-stdin
       - name: generate the transport stubs from the contract
         run: buf generate buf.build/zer07labs/seam
       - name: install (package + dev tools)
@@ -42,6 +69,8 @@ jobs:
 
   typescript:
     name: typescript (typecheck · build · test)
+    needs: preflight
+    if: needs.preflight.outputs.have_buf_token == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -53,15 +82,10 @@ jobs:
       - uses: bufbuild/buf-setup-action@v1
         with:
           github_token: ${{ github.token }}
-      - name: buf login (if a BSR token is configured)
+      - name: buf login
         env:
           BUF_TOKEN: ${{ secrets.BUF_TOKEN }}
-        run: |
-          if [ -n "$BUF_TOKEN" ]; then
-            printf '%s' "$BUF_TOKEN" | buf registry login buf.build --token-stdin
-          else
-            echo "no BUF_TOKEN — assuming the contract module is public"
-          fi
+        run: printf '%s' "$BUF_TOKEN" | buf registry login buf.build --token-stdin
       - name: generate the transport stubs from the contract
         run: buf generate buf.build/zer07labs/seam
       - name: install
@@ -78,29 +102,9 @@ jobs:
         working-directory: ts
         run: npm test
 
-  # Whether the live-integration job can run: it needs to check out the *private* seam-runtime, which
-  # requires a PAT (`RUNTIME_REPO_TOKEN`). Expose its presence as an output so the job self-skips cleanly
-  # on forks / before the secret is configured, instead of failing.
-  preflight:
-    name: preflight (integration gating)
-    runs-on: ubuntu-latest
-    outputs:
-      can_integrate: ${{ steps.check.outputs.can_integrate }}
-    steps:
-      - id: check
-        env:
-          RUNTIME_REPO_TOKEN: ${{ secrets.RUNTIME_REPO_TOKEN }}
-        run: |
-          if [ -n "$RUNTIME_REPO_TOKEN" ]; then
-            echo "can_integrate=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "can_integrate=false" >> "$GITHUB_OUTPUT"
-            echo "RUNTIME_REPO_TOKEN not set — skipping the live integration job"
-          fi
-
   integration:
     name: integration (live seam-grpc round-trip)
-    needs: [python, typescript, preflight]
+    needs: preflight
     if: needs.preflight.outputs.can_integrate == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -127,13 +131,10 @@ jobs:
       - uses: bufbuild/buf-setup-action@v1
         with:
           github_token: ${{ github.token }}
-      - name: buf login (if a BSR token is configured)
+      - name: buf login
         env:
           BUF_TOKEN: ${{ secrets.BUF_TOKEN }}
-        run: |
-          if [ -n "$BUF_TOKEN" ]; then
-            printf '%s' "$BUF_TOKEN" | buf registry login buf.build --token-stdin
-          fi
+        run: printf '%s' "$BUF_TOKEN" | buf registry login buf.build --token-stdin
       - name: generate the transport stubs from the contract
         run: buf generate buf.build/zer07labs/seam
       - name: python live round-trip
