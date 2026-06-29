@@ -10,8 +10,8 @@ import {
   SeamAdmission,
   SeamCoordination,
   SeamTrust,
-} from "../gen/seam/api/v1/seam_pb.ts";
-import { aidFromPubkey, buildPresentation, verifyTct } from "./crypto.ts";
+} from "../gen/seam/api/v1/seam_pb.js";
+import { aidFromPubkey, buildPresentation, verifyTct } from "./crypto.js";
 
 export class Agent {
   constructor(public readonly seed: Uint8Array) {

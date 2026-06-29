@@ -40,9 +40,17 @@ def test_aid_derivation_matches():
 def test_tct_verify_valid_and_tampered():
     t = VECTORS["tct"]
     c = t["inputs"]["commitment"]
-    assert verify_tct(t["issuer_aid"], t["signed_artifact_jws"], c, now_s=1_700_000_001) is True
     assert (
-        verify_tct(t["issuer_aid"], t["signed_artifact_jws"], {**c, "action": "ALLOW"}, now_s=1_700_000_001)
+        verify_tct(t["issuer_aid"], t["signed_artifact_jws"], c, now_s=1_700_000_001)
+        is True
+    )
+    assert (
+        verify_tct(
+            t["issuer_aid"],
+            t["signed_artifact_jws"],
+            {**c, "action": "ALLOW"},
+            now_s=1_700_000_001,
+        )
         is False
     )
 
@@ -59,4 +67,6 @@ def test_tct_verify_fails_closed():
         "tampered-signature": (iss, f"{h}.{p}.{s[:-4]}AAAA", 1_700_000_001),
     }
     for name, (issuer, token, now) in cases.items():
-        assert verify_tct(issuer, token, c, now_s=now) is False, f"{name} must fail closed"
+        assert verify_tct(issuer, token, c, now_s=now) is False, (
+            f"{name} must fail closed"
+        )

@@ -24,12 +24,14 @@ plugins:
     opt: paths=source_relative
 
   # ── Python (messages + type stubs + grpc) ──
+  #    Generated *inside* the package (`seam_sdk/_gen`) so the built wheel ships the transport and
+  #    `import seam_sdk` resolves it once installed — not into a sibling `gen/` outside the package.
   - remote: buf.build/protocolbuffers/python
-    out: gen/python
+    out: python/seam_sdk/_gen
   - remote: buf.build/protocolbuffers/pyi
-    out: gen/python
+    out: python/seam_sdk/_gen
   - remote: buf.build/grpc/python
-    out: gen/python
+    out: python/seam_sdk/_gen
 
   # ── TypeScript (protobuf-es v2 — emits the service descriptors too; used with @connectrpc/connect v2).
   #    Generated into the ts package so it resolves the package's node_modules. ──

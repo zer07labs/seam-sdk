@@ -1,0 +1,152 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  python:
+    name: python (ruff · pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ github.token }}
+      # The SDKs are generated from the `seam.api.v1` contract on the BSR. Log in only if a token is
+      # configured (a private module); otherwise generation assumes a public module.
+      - name: buf login (if a BSR token is configured)
+        env:
+          BUF_TOKEN: ${{ secrets.BUF_TOKEN }}
+        run: |
+          if [ -n "$BUF_TOKEN" ]; then
+            printf '%s' "$BUF_TOKEN" | buf registry login buf.build --token-stdin
+          else
+            echo "no BUF_TOKEN — assuming the contract module is public"
+          fi
+      - name: generate the transport stubs from the contract
+        run: buf generate buf.build/zer07labs/seam
+      - name: install (package + dev tools)
+        run: pip install -e "./python[dev]"
+      - name: ruff (lint + format)
+        run: |
+          ruff check python
+          ruff format --check python
+      # Unit + cross-language conformance vectors. The live integration test self-skips (no SEAM_GRPC_BIN).
+      - name: pytest
+        working-directory: python
+        run: pytest -q
+
+  typescript:
+    name: typescript (typecheck · build · test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ts/package-lock.json
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ github.token }}
+      - name: buf login (if a BSR token is configured)
+        env:
+          BUF_TOKEN: ${{ secrets.BUF_TOKEN }}
+        run: |
+          if [ -n "$BUF_TOKEN" ]; then
+            printf '%s' "$BUF_TOKEN" | buf registry login buf.build --token-stdin
+          else
+            echo "no BUF_TOKEN — assuming the contract module is public"
+          fi
+      - name: generate the transport stubs from the contract
+        run: buf generate buf.build/zer07labs/seam
+      - name: install
+        working-directory: ts
+        run: npm ci
+      - name: typecheck
+        working-directory: ts
+        run: npm run typecheck
+      - name: build (emit JS + d.ts)
+        working-directory: ts
+        run: npm run build
+      # Conformance vectors. The live integration test self-skips (no SEAM_GRPC_BIN / SEAM_GRPC_ADDR).
+      - name: test
+        working-directory: ts
+        run: npm test
+
+  # Whether the live-integration job can run: it needs to check out the *private* seam-runtime, which
+  # requires a PAT (`RUNTIME_REPO_TOKEN`). Expose its presence as an output so the job self-skips cleanly
+  # on forks / before the secret is configured, instead of failing.
+  preflight:
+    name: preflight (integration gating)
+    runs-on: ubuntu-latest
+    outputs:
+      can_integrate: ${{ steps.check.outputs.can_integrate }}
+    steps:
+      - id: check
+        env:
+          RUNTIME_REPO_TOKEN: ${{ secrets.RUNTIME_REPO_TOKEN }}
+        run: |
+          if [ -n "$RUNTIME_REPO_TOKEN" ]; then
+            echo "can_integrate=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "can_integrate=false" >> "$GITHUB_OUTPUT"
+            echo "RUNTIME_REPO_TOKEN not set — skipping the live integration job"
+          fi
+
+  integration:
+    name: integration (live seam-grpc round-trip)
+    needs: [python, typescript, preflight]
+    if: needs.preflight.outputs.can_integrate == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: check out the runtime (private) to build seam-grpc
+        uses: actions/checkout@v4
+        with:
+          repository: zer07labs/seam-runtime
+          token: ${{ secrets.RUNTIME_REPO_TOKEN }}
+          path: _runtime
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: build seam-grpc
+        run: cargo build --manifest-path _runtime/Cargo.toml -p seamd --bin seam-grpc
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ts/package-lock.json
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ github.token }}
+      - name: buf login (if a BSR token is configured)
+        env:
+          BUF_TOKEN: ${{ secrets.BUF_TOKEN }}
+        run: |
+          if [ -n "$BUF_TOKEN" ]; then
+            printf '%s' "$BUF_TOKEN" | buf registry login buf.build --token-stdin
+          fi
+      - name: generate the transport stubs from the contract
+        run: buf generate buf.build/zer07labs/seam
+      - name: python live round-trip
+        working-directory: python
+        env:
+          SEAM_GRPC_BIN: ${{ github.workspace }}/_runtime/target/debug/seam-grpc
+        run: |
+          pip install -e ".[dev]"
+          pytest -q tests/test_integration.py
+      - name: typescript live round-trip
+        working-directory: ts
+        env:
+          SEAM_GRPC_BIN: ${{ github.workspace }}/_runtime/target/debug/seam-grpc
+        run: |
+          npm ci
+          npm test

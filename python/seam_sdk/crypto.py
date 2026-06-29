@@ -49,7 +49,9 @@ def build_presentation(
     sender_aid = aid_from_pubkey(pub)
 
     # message_id: deterministic from the nonce (no RNG); raw 16 bytes, not version-munged.
-    mid = uuid.UUID(bytes=hashlib.sha256(b"seam-pop-mid" + pop_nonce.encode("ascii")).digest()[:16])
+    mid = uuid.UUID(
+        bytes=hashlib.sha256(b"seam-pop-mid" + pop_nonce.encode("ascii")).digest()[:16]
+    )
     timestamp = now_ms // 1000
 
     proof_input = (
@@ -84,7 +86,7 @@ def _aid_to_pubkey(aid: str) -> bytes:
     """Recover the 32-byte Ed25519 public key embedded in an `aid:pubkey:[ed25519:]<43-b64url>`."""
     for prefix in ("aid:pubkey:ed25519:", "aid:pubkey:"):
         if aid.startswith(prefix):
-            return _b64url_decode(aid[len(prefix):])
+            return _b64url_decode(aid[len(prefix) :])
     raise ValueError(f"unsupported AID form: {aid!r}")
 
 
@@ -104,7 +106,9 @@ def _seam_commitment_digest(commitment: dict) -> str:
     return h.hexdigest()
 
 
-def verify_tct(issuer_aid: str, tct_jws: str, commitment: dict, now_s: int | None = None) -> bool:
+def verify_tct(
+    issuer_aid: str, tct_jws: str, commitment: dict, now_s: int | None = None
+) -> bool:
     """Independently verify a sealed commitment's rooted TCT — zero server trust, stock crypto only.
 
     Verifies the EdDSA JWS against the issuer's key (recovered from its AID), checks the self-issued
@@ -124,7 +128,9 @@ def verify_tct(issuer_aid: str, tct_jws: str, commitment: dict, now_s: int | Non
         payload = json.loads(_b64url_decode(payload_b64))
         if header.get("alg") != "EdDSA" or header.get("typ") != "aitp-tct+jwt":
             return False
-        if not (payload.get("iss") == payload.get("sub") == payload.get("aud") == issuer_aid):
+        if not (
+            payload.get("iss") == payload.get("sub") == payload.get("aud") == issuer_aid
+        ):
             return False
         now = now_s if now_s is not None else int(time.time())
         if now >= int(payload.get("exp", 0)):  # RFC 7519: reject at/after expiry

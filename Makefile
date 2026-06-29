@@ -19,7 +19,7 @@ generate-local:
 	buf generate $(RUNTIME)
 
 clean:
-	rm -rf gen
+	rm -rf gen python/seam_sdk/_gen ts/gen ts/dist
 
 # Sanity-check the contract module the SDKs are generated from (lints the runtime checkout).
 lint:

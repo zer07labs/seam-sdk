@@ -8,8 +8,11 @@
 **/target/
 **/__pycache__/
 *.pyc
+*.egg-info/
 .DS_Store
 
 # Python
 .venv/
+# The Python transport is generated into the package (so the wheel ships it) — still not committed.
+python/seam_sdk/_gen/
 ts/gen/

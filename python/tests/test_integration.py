@@ -35,7 +35,9 @@ def server():
         return
     binary = os.environ.get("SEAM_GRPC_BIN")
     if not binary:
-        pytest.skip("set SEAM_GRPC_ADDR or SEAM_GRPC_BIN to run the live integration test")
+        pytest.skip(
+            "set SEAM_GRPC_ADDR or SEAM_GRPC_BIN to run the live integration test"
+        )
     addr = "127.0.0.1:8099"
     proc = subprocess.Popen(
         [binary],
@@ -55,7 +57,10 @@ def test_full_round_trip(server):
     agent = Agent(bytes([42] * 32))  # the enrolled reference agent
 
     dec = client.run_decision(
-        agent, "py-int", ["fraud-v3", "risk-v2"], [("fraud-v3", "BLOCK"), ("risk-v2", "BLOCK")]
+        agent,
+        "py-int",
+        ["fraud-v3", "risk-v2"],
+        [("fraud-v3", "BLOCK"), ("risk-v2", "BLOCK")],
     )
     assert dec.decided_value == "BLOCK"
     assert dec.outcome == "Resolved"
@@ -67,4 +72,7 @@ def test_full_round_trip(server):
     issuer = client.issuer_aid()
     assert client.verify_decision(dec.decision_id, issuer) is True
     # A wrong pinned issuer must be rejected even though the server's proof is internally consistent.
-    assert client.verify_decision(dec.decision_id, "aid:pubkey:ed25519:" + "A" * 43) is False
+    assert (
+        client.verify_decision(dec.decision_id, "aid:pubkey:ed25519:" + "A" * 43)
+        is False
+    )

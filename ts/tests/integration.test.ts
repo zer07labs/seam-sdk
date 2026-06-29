@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { connect as tcpConnect } from "node:net";
-import { Agent, SeamClient } from "../src/client.ts";
+import { Agent, SeamClient } from "../src/client.js";
 
 const BIN = process.env.SEAM_GRPC_BIN;
 const ADDR = process.env.SEAM_GRPC_ADDR ?? "127.0.0.1:8098";

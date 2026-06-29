@@ -16,8 +16,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from .crypto import aid_from_pubkey, build_presentation, verify_tct
 
-# The generated transport stubs (produced by `buf generate` into ../gen/python).
-_GEN = pathlib.Path(__file__).resolve().parents[2] / "gen" / "python"
+# The generated transport stubs (`buf generate` writes them into the package at `seam_sdk/_gen`, so they
+# ship with the wheel). Their internal imports are rooted at that dir (`from seam.api.v1 import ...`), so
+# put it on the path — works both in the source tree and once installed.
+_GEN = pathlib.Path(__file__).resolve().parent / "_gen"
 if str(_GEN) not in sys.path:
     sys.path.insert(0, str(_GEN))
 from seam.api.v1 import seam_pb2 as pb  # noqa: E402
@@ -40,7 +42,11 @@ class Agent:
 
     @property
     def aid(self) -> str:
-        pub = Ed25519PrivateKey.from_private_bytes(self.seed).public_key().public_bytes_raw()
+        pub = (
+            Ed25519PrivateKey.from_private_bytes(self.seed)
+            .public_key()
+            .public_bytes_raw()
+        )
         return aid_from_pubkey(pub)
 
 
@@ -62,7 +68,9 @@ class SeamClient:
         body = build_presentation(agent.seed, ch.receiver_aid, ch.nonce, _now_ms())
         return pb.PinnedPresentation(presentation_json=json.dumps(body).encode())
 
-    def run_decision(self, agent: Agent, session_id: str, participants, votes) -> pb.DecisionResponse:
+    def run_decision(
+        self, agent: Agent, session_id: str, participants, votes
+    ) -> pb.DecisionResponse:
         """Admit (the PoP handshake) → run a coordinated decision → seal, in one call."""
         return self._coord.RunDecision(
             pb.RunDecisionRequest(

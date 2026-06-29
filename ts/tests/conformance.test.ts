@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { buildPresentation, verifyTct } from "../src/crypto.ts";
+import { buildPresentation, verifyTct } from "../src/crypto.js";
 
 const vectors = JSON.parse(
   readFileSync(new URL("../../conformance/vectors.json", import.meta.url), "utf8"),

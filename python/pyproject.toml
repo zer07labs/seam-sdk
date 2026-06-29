@@ -12,14 +12,25 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7"]
+# ruff is pinned (its formatter output is version-sensitive) so `ruff format --check` agrees across CI and
+# local runs.
+dev = ["pytest>=7", "ruff==0.15.20"]
+
+[tool.ruff]
+target-version = "py39"
+# Skip the generated transport (`seam_sdk/_gen`) — it's machine-emitted and regenerated, not ours to lint.
+extend-exclude = ["_gen"]
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
-# The generated transport (`gen/python`) is produced by `buf generate` and added to the package at build
-# time; it is not committed (see the repo .gitignore).
+# The generated transport is produced by `buf generate` into `seam_sdk/_gen` (not committed — see the repo
+# .gitignore). The stubs aren't importable sub-packages (no `__init__.py`; they're put on `sys.path` at
+# runtime), so ship the whole tree as package data rather than discovering it as packages.
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["seam_sdk*"]
+
+[tool.setuptools.package-data]
+seam_sdk = ["_gen/**/*.py", "_gen/**/*.pyi"]
