@@ -78,9 +78,9 @@ so a change there can never silently break a generated client. Regenerate after 
 |---|---|---|
 | **Python** | ✅ | ✅ **complete** — round-trips live (admit → decide → seal → read → verify) |
 | **TypeScript** | ✅ | ✅ **complete** — round-trips live (`@noble/curves` + `@noble/hashes`, `@connectrpc/connect`) |
-| Go | ✅ | ⏳ |
-| Java | ✅ | ⏳ |
-| Kotlin | ✅ | ⏳ |
+| Go | ✅ | ✅ **shim** — conformance-tested (Ed25519 PoP, AID, TCT verify); ergonomic client over gen transport is a follow-up |
+| Java | ✅ | ✅ **shim** — conformance-tested (Bouncy Castle); client is a follow-up |
+| Kotlin | ✅ | ✅ **shim** — conformance-tested (Bouncy Castle); client is a follow-up |
 
 The crypto shim is identical across languages — pure stock Ed25519/SHA-256/JOSE, conformance-tested against
 `conformance/vectors.json`. Python (`python/`) is the reference each other language mirrors.
