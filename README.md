@@ -72,12 +72,33 @@ python/seam_sdk/_gen/, ts/gen/    # generated transport, inside each package (gi
 The contract is versioned and **backward-compatibility-checked** in the runtime repo's CI (`buf breaking`),
 so a change there can never silently break a generated client. Regenerate after a contract release.
 
+## Session lifecycle & budgets (enterprise 6.2)
+
+Python and TypeScript expose the **incremental session** path — `open_session` → `submit_proposal`/
+`submit_vote` → `submit_commit`, with `resume_session`/`cancel_session`/`expire_session`/`session_status`
+— alongside the one-shot `run_decision`. The multi-dimension budget surface is first-class; all three
+clients (Py/TS + the Rust `seam-client`) document **identical** semantics:
+
+| Rule | Behavior |
+|---|---|
+| Legacy `budget` (int) | The message-count limit. `0` ⇒ the server default (32). |
+| `limits.messages` | Overrides the legacy `budget` when set. |
+| Absent `limits` dimension | Unlimited on that dimension (`tokens`/`cost_micros`/`wall_ms`). |
+| `soft_pct` | Soft-warning threshold as % of any limit (server default 80). |
+| Per-step `usage` | Absent ⇒ zero; the orchestrator reports what the agent runtime spent. |
+| **Suspended** | A hard breach returns a step with `state == "Suspended"` — an **ok step, not an error**. |
+| `resume` with a raise | The R9 approver raises any dimension; the session then continues. |
+| Scope-floor denial | Surfaces as gRPC **`PERMISSION_DENIED`** (distinct from `INVALID_ARGUMENT`). |
+
+`uint64` budget dimensions are `bigint` in TypeScript and `int` in Python. The live 6.2 suspend→raise→resume
+loop is covered by `test_budget_suspend_resume_loop` (Python) and the "6.2 budget loop" test (TS).
+
 ## Status
 
 | Language | Transport (generated) | Crypto shim + ergonomic client |
 |---|---|---|
-| **Python** | ✅ | ✅ **complete** — round-trips live (admit → decide → seal → read → verify) |
-| **TypeScript** | ✅ | ✅ **complete** — round-trips live (`@noble/curves` + `@noble/hashes`, `@connectrpc/connect`) |
+| **Python** | ✅ | ✅ **complete** — one-shot + **incremental sessions & budgets**; round-trips live (admit → decide → seal → read → verify) |
+| **TypeScript** | ✅ | ✅ **complete** — one-shot + **incremental sessions & budgets**; round-trips live (`@noble/curves` + `@noble/hashes`, `@connectrpc/connect`) |
 | Go | ✅ | ⏳ |
 | Java | ✅ | ⏳ |
 | Kotlin | ✅ | ⏳ |

@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import pathlib
 import sys
+from dataclasses import dataclass
+from typing import Optional, Sequence
 
 import grpc
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -50,6 +52,46 @@ class Agent:
         return aid_from_pubkey(pub)
 
 
+@dataclass
+class BudgetLimits:
+    """Multi-dimension session budget (enterprise 6.2). Every field is optional; an unset
+    dimension is unlimited. ``messages``, when set, overrides the legacy ``budget`` count.
+    ``soft_pct`` is the soft-warning threshold as a percent of any limit (server default 80)."""
+
+    messages: Optional[int] = None
+    tokens: Optional[int] = None
+    cost_micros: Optional[int] = None
+    wall_ms: Optional[int] = None
+    soft_pct: Optional[int] = None
+
+    def to_pb(self) -> "pb.BudgetLimits":
+        kwargs = {
+            k: v
+            for k, v in (
+                ("messages", self.messages),
+                ("tokens", self.tokens),
+                ("cost_micros", self.cost_micros),
+                ("wall_ms", self.wall_ms),
+                ("soft_pct", self.soft_pct),
+            )
+            if v is not None
+        }
+        return pb.BudgetLimits(**kwargs)
+
+
+@dataclass
+class StepUsage:
+    """Caller-reported per-step resource spend (enterprise 6.2), debited to the session ledger.
+    The protocol cannot know what an agent runtime spent; the orchestrator reports it. Absent =
+    zero."""
+
+    tokens: int = 0
+    cost_micros: int = 0
+
+    def to_pb(self) -> "pb.StepUsage":
+        return pb.StepUsage(tokens=self.tokens, cost_micros=self.cost_micros)
+
+
 class SeamClient:
     """A high-level client over a gRPC channel to a Seam server."""
 
@@ -80,6 +122,115 @@ class SeamClient:
                 presentation=self._presentation(agent),
             )
         )
+
+    # ── Incremental session lifecycle (enterprise 6.2 budget surface) ───────────────────────────
+    # open → propose/vote → commit, with resume/cancel/expire/status. Budgets are first-class:
+    # multi-dimension ``limits`` at open, per-step ``usage``, and the dimension-raising resume.
+    # A step returns a ``SessionStep`` whose ``state == "Suspended"`` when a hard budget dimension
+    # is breached (an ``Ok`` step, not an error — the R9 approver then resumes with a raise). A
+    # scope-floor denial surfaces as a gRPC ``PERMISSION_DENIED`` error.
+
+    def open_session(
+        self,
+        agent: Agent,
+        session_id: str,
+        participants: Sequence[str],
+        *,
+        budget: int = 32,
+        limits: Optional[BudgetLimits] = None,
+        mode: str = "",
+    ) -> pb.SessionStep:
+        """Admit (the PoP handshake) → open an incremental session. ``budget`` is the legacy
+        message count (0 ⇒ the server default 32); ``limits`` adds the other 6.2 dimensions."""
+        req = pb.OpenSessionRequest(
+            session_id=session_id,
+            participants=list(participants),
+            budget=budget,
+            mode=mode,
+            presentation=self._presentation(agent),
+        )
+        if limits is not None:
+            req.limits.CopyFrom(limits.to_pb())
+        return self._coord.OpenSession(req)
+
+    def submit_proposal(
+        self,
+        session_id: str,
+        proposer: str,
+        proposal_id: str,
+        option: str,
+        *,
+        usage: Optional[StepUsage] = None,
+    ) -> pb.SessionStep:
+        req = pb.ProposalRequest(
+            session_id=session_id,
+            proposer=proposer,
+            proposal_id=proposal_id,
+            option=option,
+        )
+        if usage is not None:
+            req.usage.CopyFrom(usage.to_pb())
+        return self._coord.SubmitProposal(req)
+
+    def submit_vote(
+        self,
+        session_id: str,
+        voter: str,
+        proposal_id: str,
+        value: str,
+        *,
+        usage: Optional[StepUsage] = None,
+    ) -> pb.SessionStep:
+        req = pb.VoteRequest(
+            session_id=session_id,
+            voter=voter,
+            proposal_id=proposal_id,
+            value=value,
+        )
+        if usage is not None:
+            req.usage.CopyFrom(usage.to_pb())
+        return self._coord.SubmitVote(req)
+
+    def submit_commit(
+        self,
+        session_id: str,
+        commitment_id: str,
+        action: str,
+        *,
+        usage: Optional[StepUsage] = None,
+    ) -> pb.SessionStep:
+        req = pb.CommitRequest(
+            session_id=session_id,
+            commitment_id=commitment_id,
+            action=action,
+        )
+        if usage is not None:
+            req.usage.CopyFrom(usage.to_pb())
+        return self._coord.SubmitCommit(req)
+
+    def resume_session(
+        self,
+        session_id: str,
+        *,
+        budget: int = 32,
+        raise_: Optional[BudgetLimits] = None,
+    ) -> pb.SessionStep:
+        """Resume a Suspended session (the R9 approver action). ``raise_`` raises any budget
+        dimension; absent, ``budget`` raises the message count."""
+        req = pb.ResumeRequest(session_id=session_id, budget=budget)
+        if raise_ is not None:
+            # `raise` is a Python keyword, so the generated field is reached via getattr.
+            getattr(req, "raise").CopyFrom(raise_.to_pb())
+        return self._coord.ResumeSession(req)
+
+    def cancel_session(self, session_id: str) -> pb.TerminalResponse:
+        return self._coord.CancelSession(pb.SessionRef(session_id=session_id))
+
+    def expire_session(self, session_id: str) -> pb.TerminalResponse:
+        return self._coord.ExpireSession(pb.SessionRef(session_id=session_id))
+
+    def session_status(self, session_id: str) -> pb.SessionStatusResponse:
+        return self._coord.SessionStatus(pb.SessionRef(session_id=session_id))
 
     def get_decision(self, decision_id: str) -> pb.DecisionRecordView:
         return self._coord.GetDecision(pb.DecisionRef(decision_id=decision_id))

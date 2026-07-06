@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from seam_sdk import Agent, SeamClient
+from seam_sdk import Agent, BudgetLimits, SeamClient, StepUsage
 
 
 def _wait(port: int, timeout: float = 5.0):
@@ -41,7 +41,14 @@ def server():
     addr = "127.0.0.1:8099"
     proc = subprocess.Popen(
         [binary],
-        env={**os.environ, "SEAM_GRPC_LISTEN": addr},
+        # SEAM_DEV_INSECURE lets the dev binary boot with the public dev seed AND enrol the
+        # well-known demo tenant (the [42;32] agent this test admits as) — both required since
+        # the server refuses a public identity by default (runtime security hardening).
+        env={
+            **os.environ,
+            "SEAM_GRPC_LISTEN": addr,
+            "SEAM_DEV_INSECURE": "1",
+        },
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -76,3 +83,47 @@ def test_full_round_trip(server):
         client.verify_decision(dec.decision_id, "aid:pubkey:ed25519:" + "A" * 43)
         is False
     )
+
+
+def test_session_lifecycle_seals(server):
+    """open → propose → vote → commit seals a decision over the incremental session API."""
+    client = SeamClient.connect(server)
+    agent = Agent(bytes([42] * 32))
+
+    client.open_session(agent, "py-sess", ["lead", "peer"])
+    client.submit_proposal("py-sess", "lead", "p1", "BLOCK")
+    client.submit_vote("py-sess", "peer", "p1", "APPROVE")
+    step = client.submit_commit("py-sess", "c1", "BLOCK")
+
+    assert step.state == "Resolved"
+    assert step.decision_id
+    assert client.get_decision(step.decision_id).outcome == "Resolved"
+
+
+def test_budget_suspend_resume_loop(server):
+    """The enterprise-6.2 loop: a hard budget breach suspends (an Ok step, not an error); the
+    dimension-raising resume un-suspends it and the session seals."""
+    client = SeamClient.connect(server)
+    agent = Agent(bytes([42] * 32))
+
+    # Open with a 1000-token allowance.
+    client.open_session(
+        agent, "py-budget", ["lead", "peer"], limits=BudgetLimits(tokens=1000)
+    )
+    # The proposal reports the full allowance — applied, ledger now exhausted.
+    client.submit_proposal(
+        "py-budget", "lead", "p1", "BLOCK", usage=StepUsage(tokens=1000, cost_micros=40)
+    )
+    # The next step breaches the hard token limit: refused + Suspended (not an error).
+    step = client.submit_vote("py-budget", "peer", "p1", "APPROVE")
+    assert step.state == "Suspended", step.state
+
+    # The R9 approver raises the token dimension and resumes.
+    client.resume_session("py-budget", raise_=BudgetLimits(tokens=5000))
+    # Re-submit (the breached vote was never applied): now within budget → continues.
+    step = client.submit_vote("py-budget", "peer", "p1", "APPROVE")
+    assert step.state != "Suspended", step.state
+    # And the session seals.
+    step = client.submit_commit("py-budget", "c1", "BLOCK")
+    assert step.state == "Resolved"
+    assert step.decision_id

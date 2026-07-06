@@ -22,6 +22,28 @@ export class Agent {
   }
 }
 
+/**
+ * Multi-dimension session budget (enterprise 6.2). Every field is optional; an unset dimension is
+ * unlimited. `messages`, when set, overrides the legacy `budget` count. `softPct` is the soft-warning
+ * threshold as a percent of any limit (server default 80). `uint64` dimensions are `bigint`.
+ */
+export interface BudgetLimits {
+  messages?: bigint;
+  tokens?: bigint;
+  costMicros?: bigint;
+  wallMs?: bigint;
+  softPct?: number;
+}
+
+/**
+ * Caller-reported per-step resource spend (enterprise 6.2), debited to the session ledger. The protocol
+ * cannot know what an agent runtime spent; the orchestrator reports it. Absent = zero.
+ */
+export interface StepUsage {
+  tokens?: bigint;
+  costMicros?: bigint;
+}
+
 export class SeamClient {
   private readonly admission: Client<typeof SeamAdmission>;
   private readonly coord: Client<typeof SeamCoordination>;
@@ -57,6 +79,78 @@ export class SeamClient {
       votes: votes.map(([a, value]) => ({ agent: a, value })),
       presentation: await this.presentation(agent),
     });
+  }
+
+  // ── Incremental session lifecycle (enterprise 6.2 budget surface) ─────────────────────────────
+  // open → propose/vote → commit, with resume/cancel/expire/status. Budgets are first-class:
+  // multi-dimension `limits` at open, per-step `usage`, and the dimension-raising resume. A step
+  // whose `state === "Suspended"` is a hard budget breach (a resolved step, not a thrown error — the
+  // R9 approver then resumes with a raise). A scope-floor denial throws a `PERMISSION_DENIED`.
+
+  /** Admit (the PoP handshake) → open an incremental session. `budget` is the legacy message count
+   * (0 ⇒ the server default 32); `limits` adds the other 6.2 dimensions. */
+  async openSession(
+    agent: Agent,
+    opts: {
+      sessionId: string;
+      participants: string[];
+      budget?: number;
+      limits?: BudgetLimits;
+      mode?: string;
+    },
+  ) {
+    return this.coord.openSession({
+      sessionId: opts.sessionId,
+      participants: opts.participants,
+      budget: opts.budget ?? 32,
+      mode: opts.mode ?? "",
+      presentation: await this.presentation(agent),
+      limits: opts.limits,
+    });
+  }
+
+  submitProposal(
+    sessionId: string,
+    proposer: string,
+    proposalId: string,
+    option: string,
+    usage?: StepUsage,
+  ) {
+    return this.coord.submitProposal({ sessionId, proposer, proposalId, option, usage });
+  }
+
+  submitVote(
+    sessionId: string,
+    voter: string,
+    proposalId: string,
+    value: string,
+    usage?: StepUsage,
+  ) {
+    return this.coord.submitVote({ sessionId, voter, proposalId, value, usage });
+  }
+
+  submitCommit(sessionId: string, commitmentId: string, action: string, usage?: StepUsage) {
+    return this.coord.submitCommit({ sessionId, commitmentId, action, usage });
+  }
+
+  /** Resume a Suspended session (the R9 approver action). `raise` raises any budget dimension;
+   * absent, `budget` raises the message count. */
+  resumeSession(sessionId: string, opts?: { budget?: number; raise?: BudgetLimits }) {
+    return this.coord.resumeSession({
+      sessionId,
+      budget: opts?.budget ?? 32,
+      raise: opts?.raise,
+    });
+  }
+
+  cancelSession(sessionId: string) {
+    return this.coord.cancelSession({ sessionId });
+  }
+  expireSession(sessionId: string) {
+    return this.coord.expireSession({ sessionId });
+  }
+  sessionStatus(sessionId: string) {
+    return this.coord.sessionStatus({ sessionId });
   }
 
   getDecision(decisionId: string) {
