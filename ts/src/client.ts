@@ -13,6 +13,24 @@ import {
 } from "../gen/seam/api/v1/seam_pb.js";
 import { aidFromPubkey, buildPresentation, verifyTct } from "./crypto.js";
 
+/**
+ * The fetched proof's issuer AID does not match the issuer the caller pinned out of band.
+ *
+ * Thrown by {@link SeamClient.verifyDecision}. This is a **distinct security signal** — a malicious server
+ * attempting to substitute its own issuer key — and must never be conflated with an ordinary
+ * cryptographically-invalid decision (which resolves to `false`). Mirrors the Rust reference
+ * (`ClientError::Crypto("issuer AID mismatch…")`).
+ */
+export class IssuerMismatchError extends Error {
+  readonly name = "IssuerMismatchError";
+  constructor(
+    readonly proofIssuer: string,
+    readonly expectedIssuer: string,
+  ) {
+    super(`issuer AID mismatch: proof carried ${JSON.stringify(proofIssuer)}, expected ${JSON.stringify(expectedIssuer)}`);
+  }
+}
+
 export class Agent {
   constructor(public readonly seed: Uint8Array) {
     if (seed.length !== 32) throw new Error("agent seed must be 32 bytes");
@@ -76,10 +94,16 @@ export class SeamClient {
    * Fetch a sealed decision's proof and verify its rooted TCT locally — zero server trust.
    * `expectedIssuer` is the issuer AID the caller pinned out of band (or TOFU-cached via `issuerAid()`);
    * the server-supplied `proof.issuerAid` must match, so a malicious server can't substitute its own key.
+   *
+   * Resolves `true` iff the rooted TCT is cryptographically valid for the pinned issuer, `false` for an
+   * ordinary invalid decision. Rejects with {@link IssuerMismatchError} when the proof's issuer AID does
+   * not match `expectedIssuer` — a distinct security signal (an attempted key substitution), never
+   * downgraded to a bland `false`. Mirrors the Rust reference's distinct `ClientError::Crypto`.
    */
   async verifyDecision(decisionId: string, expectedIssuer: string): Promise<boolean> {
     const proof = await this.getCommitmentProof(decisionId);
-    if (proof.issuerAid !== expectedIssuer) return false;
+    if (proof.issuerAid !== expectedIssuer)
+      throw new IssuerMismatchError(proof.issuerAid, expectedIssuer);
     const c = proof.commitment;
     if (!c) return false;
     return verifyTct(expectedIssuer, new TextDecoder().decode(c.signedArtifact), {
