@@ -5,7 +5,14 @@ verification; ``Agent`` holds the agent seed. The crypto is pure stock Ed25519/S
 vectors generated from the Rust runtime pin the exact bytes (see ``conformance/vectors.json``).
 """
 
-from .client import Agent, IssuerMismatchError, SeamClient, SeamError
+from .client import (
+    Agent,
+    BudgetLimits,
+    IssuerMismatchError,
+    SeamClient,
+    SeamError,
+    StepUsage,
+)
 from .crypto import aid_from_pubkey, build_presentation, verify_tct
 
 __all__ = [
@@ -13,6 +20,8 @@ __all__ = [
     "SeamClient",
     "SeamError",
     "IssuerMismatchError",
+    "BudgetLimits",
+    "StepUsage",
     "aid_from_pubkey",
     "build_presentation",
     "verify_tct",
