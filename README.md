@@ -18,7 +18,11 @@ The single source of truth is the `seam.api.v1` protobuf contract, published as 
      the agent's Ed25519 key (the seed never leaves the client).
    - **AID derivation** — derive the `aid:pubkey:ed25519:` identity from the agent's public key.
    - **Independent TCT/JWS verification** — verify a sealed decision's rooted commitment offline, with
-     zero server trust, from the issuer AID + the signed artifact.
+     zero server trust, from the issuer AID + the signed artifact. `verify_decision`/`verifyDecision`
+     returns `false` for an ordinary invalid decision, but raises a **distinct** `IssuerMismatchError`
+     when the server's proof carries a different issuer AID than the one the caller pinned — a
+     key-substitution signal that is never downgraded to a bland `false` (matching the Rust reference's
+     distinct `ClientError::Crypto`).
 
    The Rust reference implementation of this shim lives in the runtime repo (`seam-client`); each language
    mirrors its small surface (`Agent`, `SeamClient`, `verify_sealed_commitment`).

@@ -26,6 +26,27 @@ from seam.api.v1 import seam_pb2 as pb  # noqa: E402
 from seam.api.v1 import seam_pb2_grpc as rpc  # noqa: E402
 
 
+class SeamError(Exception):
+    """Base class for Seam SDK errors."""
+
+
+class IssuerMismatchError(SeamError):
+    """The fetched proof's issuer AID does not match the issuer the caller pinned out of band.
+
+    Raised by :meth:`SeamClient.verify_decision`. This is a **distinct security signal** — a malicious
+    server attempting to substitute its own issuer key — and must never be conflated with an ordinary
+    cryptographically-invalid decision (which returns ``False``). Mirrors the Rust reference
+    (``ClientError::Crypto("issuer AID mismatch…")``).
+    """
+
+    def __init__(self, proof_issuer: str, expected_issuer: str):
+        self.proof_issuer = proof_issuer
+        self.expected_issuer = expected_issuer
+        super().__init__(
+            f"issuer AID mismatch: proof carried {proof_issuer!r}, expected {expected_issuer!r}"
+        )
+
+
 def _now_ms() -> int:
     import time
 
@@ -100,10 +121,15 @@ class SeamClient:
         verified against it, and the server-supplied `proof.issuer_aid` must match — so a malicious server
         cannot substitute its own key. Get the issuer once via `issuer_aid()` and pin it; never trust the
         per-response issuer as the verification anchor.
+
+        Returns ``True`` iff the rooted TCT is cryptographically valid for the pinned issuer, ``False`` for
+        an ordinary invalid decision. Raises :class:`IssuerMismatchError` when the proof's issuer AID does
+        not match `expected_issuer` — a distinct security signal (an attempted key substitution), never
+        downgraded to a bland ``False``. Mirrors the Rust reference's distinct ``ClientError::Crypto``.
         """
         proof = self.get_commitment_proof(decision_id)
         if proof.issuer_aid != expected_issuer:
-            return False
+            raise IssuerMismatchError(proof.issuer_aid, expected_issuer)
         c = proof.commitment
         commitment = {
             "id": c.id,
