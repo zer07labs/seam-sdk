@@ -11,7 +11,7 @@ import json
 import pathlib
 import sys
 from dataclasses import dataclass
-from typing import Optional, Sequence
+from typing import Mapping, Optional, Sequence
 
 import grpc
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -121,10 +121,20 @@ class SeamClient:
         self._admission = rpc.SeamAdmissionStub(channel)
         self._coord = rpc.SeamCoordinationStub(channel)
         self._trust = rpc.SeamTrustStub(channel)
+        self._context = rpc.SeamContextStub(channel)
 
     @classmethod
-    def connect(cls, target: str) -> "SeamClient":
-        return cls(grpc.insecure_channel(target))
+    def connect(
+        cls, target: str, *, credentials: Optional[grpc.ChannelCredentials] = None
+    ) -> "SeamClient":
+        """Connect to a Seam data-plane endpoint. Plaintext by default (the dev/loopback path); pass
+        ``credentials=grpc.ssl_channel_credentials()`` (or a configured creds object) to use TLS."""
+        channel = (
+            grpc.secure_channel(target, credentials)
+            if credentials is not None
+            else grpc.insecure_channel(target)
+        )
+        return cls(channel)
 
     def _presentation(self, agent: Agent) -> pb.PinnedPresentation:
         ch = self._admission.IssueChallenge(pb.Empty())
@@ -132,17 +142,30 @@ class SeamClient:
         return pb.PinnedPresentation(presentation_json=json.dumps(body).encode())
 
     def run_decision(
-        self, agent: Agent, session_id: str, participants, votes
+        self,
+        agent: Agent,
+        session_id: str,
+        participants,
+        votes,
+        *,
+        features: Optional[Mapping[str, str]] = None,
     ) -> pb.DecisionResponse:
-        """Admit (the PoP handshake) → run a coordinated decision → seal, in one call."""
-        return self._coord.RunDecision(
-            pb.RunDecisionRequest(
-                session_id=session_id,
-                participants=list(participants),
-                votes=[pb.Vote(agent=a, value=v) for a, v in votes],
-                presentation=self._presentation(agent),
-            )
+        """Admit (the PoP handshake) → run a coordinated decision → seal, in one call.
+
+        ``features`` are optional pre-decision request features (e.g. ``{"amount_band": "high"}``) that the
+        advisory learning classifier keys ``context_class`` on. They **never** affect the sealed record —
+        the decision seals identically with or without them. Absent ⇒ no features (non-breaking). Mirrors
+        the Rust reference's ``run_decision_with_features``.
+        """
+        req = pb.RunDecisionRequest(
+            session_id=session_id,
+            participants=list(participants),
+            votes=[pb.Vote(agent=a, value=v) for a, v in votes],
+            presentation=self._presentation(agent),
         )
+        if features:
+            req.features.update(features)
+        return self._coord.RunDecision(req)
 
     # ── Incremental session lifecycle (enterprise 6.2 budget surface) ───────────────────────────
     # open → propose/vote → commit, with resume/cancel/expire/status. Budgets are first-class:
@@ -259,8 +282,64 @@ class SeamClient:
     def replay_decision(self, decision_id: str) -> pb.ReplayView:
         return self._coord.ReplayDecision(pb.DecisionRef(decision_id=decision_id))
 
+    def report_outcome(
+        self, decision_id: str, correct: bool, verified_by: Optional[str] = None
+    ) -> bool:
+        """Report a delayed correctness outcome for a sealed decision (advisory, Plan R). The sealed
+        record is never mutated; this only emits a LEARNING_OUTCOME. ``verified_by`` records the source
+        (downstream system / reviewer). Returns whether it was recorded. NOT_FOUND if the id is unknown."""
+        req = pb.ReportOutcomeRequest(decision_id=decision_id, correct=correct)
+        if verified_by is not None:
+            req.verified_by = verified_by
+        return self._coord.ReportOutcome(req).recorded
+
+    # ── Context binding (data plane) ─────────────────────────────────────────────────────────────
+
+    def register_context(
+        self,
+        content: bytes,
+        fidelity: str,
+        derived_from: Optional[Sequence[str]] = None,
+    ) -> str:
+        """Register context content at a given ``fidelity`` (``Digest`` | ``Reference`` | ``Value``);
+        returns its content ref (a ``sha256:`` ref or an ``acdp://`` remote id)."""
+        return self._context.RegisterContext(
+            pb.RegisterContextRequest(
+                content=content,
+                fidelity=fidelity,
+                derived_from=list(derived_from or []),
+            )
+        ).content_ref
+
+    def resolve_context(self, refs: Sequence[str]) -> Sequence[pb.ContextBinding]:
+        """Resolve context refs to their bindings (fidelity, classification, lineage, version)."""
+        return list(
+            self._context.ResolveContext(
+                pb.ResolveContextRequest(refs=list(refs))
+            ).bindings
+        )
+
+    # ── Trust / verification (data plane) ────────────────────────────────────────────────────────
+
     def issuer_aid(self) -> str:
         return self._trust.IssuerAid(pb.Empty()).issuer_aid
+
+    def verify_commitment(
+        self, commitment: pb.Commitment, signed_artifact: bytes
+    ) -> bool:
+        """Server-side verification of a rooted commitment (the ``SeamTrust`` path). For zero-server-trust
+        verification prefer :meth:`verify_decision`, which verifies locally against a pinned issuer."""
+        return self._trust.VerifyCommitment(
+            pb.VerifyCommitmentRequest(
+                commitment=commitment, signed_artifact=signed_artifact
+            )
+        ).valid
+
+    def verify_party_anchor(self, party_id: str, anchor: pb.Anchor) -> bool:
+        """Verify a counterparty's published audit-chain anchor (network mode)."""
+        return self._trust.VerifyPartyAnchor(
+            pb.VerifyAnchorRequest(party_id=party_id, anchor=anchor)
+        ).valid
 
     def get_commitment_proof(self, decision_id: str) -> pb.CommitmentProof:
         return self._coord.GetCommitmentProof(pb.DecisionRef(decision_id=decision_id))
