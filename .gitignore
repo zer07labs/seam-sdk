@@ -6,6 +6,7 @@
 **/dist/
 **/build/
 **/target/
+**/.gradle/
 **/__pycache__/
 *.pyc
 *.egg-info/
@@ -16,3 +17,7 @@
 # The Python transport is generated into the package (so the wheel ships it) — still not committed.
 python/seam_sdk/_gen/
 ts/gen/
+
+plans/
+.claude/
+CLAUDE.md
