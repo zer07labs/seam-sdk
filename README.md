@@ -18,7 +18,11 @@ The single source of truth is the `seam.api.v1` protobuf contract, published as 
      the agent's Ed25519 key (the seed never leaves the client).
    - **AID derivation** — derive the `aid:pubkey:ed25519:` identity from the agent's public key.
    - **Independent TCT/JWS verification** — verify a sealed decision's rooted commitment offline, with
-     zero server trust, from the issuer AID + the signed artifact.
+     zero server trust, from the issuer AID + the signed artifact. `verify_decision`/`verifyDecision`
+     returns `false` for an ordinary invalid decision, but raises a **distinct** `IssuerMismatchError`
+     when the server's proof carries a different issuer AID than the one the caller pinned — a
+     key-substitution signal that is never downgraded to a bland `false` (matching the Rust reference's
+     distinct `ClientError::Crypto`).
 
    The Rust reference implementation of this shim lives in the runtime repo (`seam-client`); each language
    mirrors its small surface (`Agent`, `SeamClient`, `verify_sealed_commitment`).
@@ -99,9 +103,9 @@ loop is covered by `test_budget_suspend_resume_loop` (Python) and the "6.2 budge
 |---|---|---|
 | **Python** | ✅ | ✅ **complete** — one-shot + **incremental sessions & budgets**; round-trips live (admit → decide → seal → read → verify) |
 | **TypeScript** | ✅ | ✅ **complete** — one-shot + **incremental sessions & budgets**; round-trips live (`@noble/curves` + `@noble/hashes`, `@connectrpc/connect`) |
-| Go | ✅ | ⏳ |
-| Java | ✅ | ⏳ |
-| Kotlin | ✅ | ⏳ |
+| Go | ✅ | ✅ **shim** — conformance-tested (Ed25519 PoP, AID, TCT verify); ergonomic client over gen transport is a follow-up |
+| Java | ✅ | ✅ **shim** — conformance-tested (Bouncy Castle); client is a follow-up |
+| Kotlin | ✅ | ✅ **shim** — conformance-tested (Bouncy Castle); client is a follow-up |
 
 The crypto shim is identical across languages — pure stock Ed25519/SHA-256/JOSE, conformance-tested against
 `conformance/vectors.json`. Python (`python/`) is the reference each other language mirrors.

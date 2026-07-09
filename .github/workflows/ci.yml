@@ -151,3 +151,45 @@ jobs:
         run: |
           npm ci
           npm test
+
+  # The Go/Java/Kotlin crypto shims are standalone (no generated transport) — they need no BUF_TOKEN and
+  # run unconditionally, verifying byte-for-byte reproduction of conformance/vectors.json.
+  go:
+    name: go (test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: go test
+        working-directory: go
+        run: go test ./...
+
+  java:
+    name: java (gradle test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: gradle test
+        working-directory: java
+        run: gradle test --no-daemon
+
+  kotlin:
+    name: kotlin (gradle test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: gradle test
+        working-directory: kotlin
+        run: gradle test --no-daemon

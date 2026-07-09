@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { connect as tcpConnect } from "node:net";
-import { Agent, SeamClient } from "../src/client.js";
+import { Agent, IssuerMismatchError, SeamClient } from "../src/client.js";
 
 const BIN = process.env.SEAM_GRPC_BIN;
 const SKIP = !BIN && !process.env.SEAM_GRPC_ADDR;
@@ -53,7 +53,11 @@ test("full round trip: admit → decide → seal → read → verify", { skip: S
     assert.equal((await client.replayDecision(dec.decisionId)).chainVerified, true);
     const issuer = await client.issuerAid();
     assert.equal(await client.verifyDecision(dec.decisionId, issuer), true);
-    assert.equal(await client.verifyDecision(dec.decisionId, "aid:pubkey:ed25519:" + "A".repeat(43)), false);
+    // A wrong pinned issuer is a key-substitution signal — a DISTINCT error, not a bland false.
+    await assert.rejects(
+      client.verifyDecision(dec.decisionId, "aid:pubkey:ed25519:" + "A".repeat(43)),
+      IssuerMismatchError,
+    );
   });
 });
 
