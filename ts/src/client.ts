@@ -16,6 +16,7 @@ import {
   type ContextBinding,
 } from "../gen/seam/api/v1/seam_pb.js";
 import { aidFromPubkey, buildPresentation, verifyTct } from "./crypto.js";
+import { errorMappingInterceptor } from "./errors.js";
 
 /**
  * The fetched proof's issuer AID does not match the issuer the caller pinned out of band.
@@ -79,9 +80,11 @@ export class SeamClient {
     this.context = createClient(SeamContext, transport);
   }
 
-  /** Connect to a Seam gRPC endpoint (e.g. `http://127.0.0.1:8090`). */
+  /** Connect to a Seam gRPC endpoint (e.g. `http://127.0.0.1:8090`, or `https://…` for TLS). */
   static connect(baseUrl: string): SeamClient {
-    return new SeamClient(createGrpcTransport({ baseUrl }));
+    return new SeamClient(
+      createGrpcTransport({ baseUrl, interceptors: [errorMappingInterceptor()] }),
+    );
   }
 
   private async presentation(agent: Agent) {

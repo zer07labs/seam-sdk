@@ -127,6 +127,12 @@ RPCs (`enroll_tenant`, `list_tenants`, `register_party`, `place`/`release_legal_
 `audit_trail`). The live preview→confirm→erase flow (+ empty-tenant / wrong-count rejections + bearer-auth)
 is covered by `test_admin.py` (Python) and `admin.test.ts` (TS).
 
+`SeamAdminClient` also **streams the governance outbox** (`seam-event.v1`) via `stream_events` /
+`streamEvents`: **drain** mode (`follow=False`) yields the current backlog and closes (`ack=True` marks
+those rows published); **live-tail** mode (`follow=True`) yields the backlog from a cursor then keeps
+yielding new events (never acks; resume from `seq + 1`, dedup by `event_id`; ends cleanly on server
+shutdown). Sealing a decision emits a `DECISION_SEALED` event — asserted live in both SDKs.
+
 ## Data-plane surface
 
 Beyond decisions & sessions, `SeamClient` wraps the rest of the data plane: independent proof retrieval +
@@ -137,11 +143,15 @@ sealed record).
 
 ## Errors & transport security
 
-- **`IssuerMismatchError`** (Py + TS) is the one semantic typed error — a key-substitution signal raised by
-  `verify_decision`/`verifyDecision`, never downgraded to `false`. Everything else surfaces as the idiomatic
-  transport error carrying a typed status code: `grpc.RpcError` with `.code()` (Python) / `ConnectError`
-  with `.code` (TS) — e.g. `UNAUTHENTICATED` (bad/missing management token), `PERMISSION_DENIED` (scope-floor
-  denial), `INVALID_ARGUMENT` (empty tenant / wrong `confirm_count`).
+- **`IssuerMismatchError`** (Py + TS) is the one client-side semantic error — a key-substitution signal
+  raised by `verify_decision`/`verifyDecision`, never downgraded to `false`.
+- **Typed server errors.** Server failures are mapped to a status-code taxonomy under `SeamError`:
+  `SeamRpcError` and subclasses `InvalidArgumentError` (empty tenant / wrong `confirm_count`),
+  `PermissionDeniedError` (scope-floor denial), `UnauthenticatedError` (bad/missing management token),
+  `NotFoundError`, `ResourceExhaustedError`, `UnavailableError`, … The mapping is **non-breaking**: in
+  Python each is *also* a `grpc.RpcError` (so `except grpc.RpcError` and `.code()` still work); in TypeScript
+  each *extends* `ConnectError` (so `instanceof ConnectError` and `.code` still work). Catch a specific
+  subclass, or keep catching the raw transport error — both work.
 - **TLS.** Both clients are plaintext by default (the dev/loopback path). Python: pass
   `credentials=grpc.ssl_channel_credentials()` to `connect(...)`. TypeScript: use an `https://` base URL.
   Prefer TLS whenever a real management bearer token is in play, so it isn't sent over cleartext.

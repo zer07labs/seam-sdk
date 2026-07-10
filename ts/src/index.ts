@@ -7,3 +7,4 @@
 export * from "./client.js";
 export * from "./admin.js";
 export * from "./crypto.js";
+export * from "./errors.js";

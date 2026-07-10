@@ -15,7 +15,13 @@ import time
 import grpc
 import pytest
 
-from seam_sdk import Agent, SeamAdminClient, SeamClient
+from seam_sdk import (
+    Agent,
+    SeamAdminClient,
+    SeamClient,
+    SeamRpcError,
+    UnauthenticatedError,
+)
 
 TENANT = "design-partner"  # the demo tenant SEAM_DEV_INSECURE enrolls the [42;32] agent under
 
@@ -80,12 +86,14 @@ def test_erasure_preview_confirm_erase():
         assert decision_id in preview.would_erase
         assert decision_id not in preview.already_erased
 
-        # An empty tenant scope is refused (audit P0.1: erasure never crosses tenants).
-        with pytest.raises(grpc.RpcError):
+        # An empty tenant scope is refused (audit P0.1: erasure never crosses tenants). The error is a
+        # typed SeamRpcError — and, being non-breaking, still a grpc.RpcError.
+        with pytest.raises(SeamRpcError) as ei:
             admin.erase_subject("", subject, len(preview.would_erase))
+        assert isinstance(ei.value, grpc.RpcError)
 
         # The wrong confirm_count is refused (must equal the preview's would_erase count).
-        with pytest.raises(grpc.RpcError):
+        with pytest.raises(SeamRpcError):
             admin.erase_subject(TENANT, subject, len(preview.would_erase) + 1)
 
         # The right count returns a populated, signed certificate.
@@ -120,21 +128,38 @@ def test_management_bearer_auth():
     try:
         subject, _ = _seal_one("127.0.0.1:8103")
 
-        # No token → UNAUTHENTICATED.
+        # No token → UNAUTHENTICATED, surfaced as the typed UnauthenticatedError (still exposing .code()).
         anon = SeamAdminClient.connect("127.0.0.1:8104")
-        with pytest.raises(grpc.RpcError) as ei:
+        with pytest.raises(UnauthenticatedError) as ei:
             anon.preview_erasure(TENANT, subject)
         assert ei.value.code() == grpc.StatusCode.UNAUTHENTICATED
 
         # Wrong token → UNAUTHENTICATED.
         wrong = SeamAdminClient.connect("127.0.0.1:8104", token="nope")
-        with pytest.raises(grpc.RpcError) as ei:
+        with pytest.raises(UnauthenticatedError):
             wrong.preview_erasure(TENANT, subject)
-        assert ei.value.code() == grpc.StatusCode.UNAUTHENTICATED
 
         # Right token → succeeds.
         ok = SeamAdminClient.connect("127.0.0.1:8104", token=token)
         preview = ok.preview_erasure(TENANT, subject)
         assert isinstance(list(preview.would_erase), list)
+    finally:
+        proc.terminate()
+
+
+def test_stream_events_drains_decision_sealed():
+    """Sealing a decision emits a DECISION_SEALED event to the seam-event.v1 outbox; drain mode
+    (follow=False) streams the current backlog and closes."""
+    proc = _spawn(8107, 8108)
+    try:
+        _, decision_id = _seal_one("127.0.0.1:8107")
+        admin = SeamAdminClient.connect("127.0.0.1:8108")
+
+        events = list(admin.stream_events(from_seq=0, follow=False))
+        assert events, "expected at least the DECISION_SEALED event"
+        sealed = [e for e in events if e.kind == "DECISION_SEALED"]
+        assert sealed, f"kinds seen: {[e.kind for e in events]}"
+        assert any(e.decision_id == decision_id for e in sealed)
+        assert sealed[0].HasField("payload")
     finally:
         proc.terminate()
