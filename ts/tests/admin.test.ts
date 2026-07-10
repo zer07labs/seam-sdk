@@ -12,6 +12,7 @@ import { Code, ConnectError } from "@connectrpc/connect";
 
 import { Agent, SeamClient } from "../src/client.js";
 import { SeamAdminClient } from "../src/admin.js";
+import { SeamRpcError, UnauthenticatedError } from "../src/errors.js";
 
 const BIN = process.env.SEAM_GRPC_BIN;
 const SKIP = !BIN;
@@ -71,10 +72,13 @@ test("erasure: preview → confirm → erase (+ empty-tenant & wrong-count rejec
     assert.ok(!preview.alreadyErased.includes(decisionId));
     const count = BigInt(preview.wouldErase.length);
 
-    // Empty tenant is refused (erasure never crosses tenants).
-    await assert.rejects(admin.eraseSubject("", subject, count));
+    // Empty tenant is refused (erasure never crosses tenants). Surfaced as a typed SeamRpcError — and,
+    // being non-breaking, still a ConnectError.
+    await assert.rejects(admin.eraseSubject("", subject, count), (e: unknown) =>
+      e instanceof SeamRpcError && e instanceof ConnectError);
     // Wrong confirm count is refused.
-    await assert.rejects(admin.eraseSubject(TENANT, subject, count + 1n));
+    await assert.rejects(admin.eraseSubject(TENANT, subject, count + 1n), (e: unknown) =>
+      e instanceof SeamRpcError);
 
     // Right count → populated, signed certificate.
     const cert = await admin.eraseSubject(TENANT, subject, count);
@@ -106,14 +110,28 @@ test("management bearer auth: missing/wrong → UNAUTHENTICATED, right → ok", 
 
     const anon = SeamAdminClient.connect(mgmtUrl);
     await assert.rejects(anon.previewErasure(TENANT, subject), (e: unknown) =>
-      e instanceof ConnectError && e.code === Code.Unauthenticated);
+      e instanceof UnauthenticatedError && e.code === Code.Unauthenticated);
 
     const wrong = SeamAdminClient.connect(mgmtUrl, { token: "nope" });
     await assert.rejects(wrong.previewErasure(TENANT, subject), (e: unknown) =>
-      e instanceof ConnectError && e.code === Code.Unauthenticated);
+      e instanceof UnauthenticatedError);
 
     const ok = SeamAdminClient.connect(mgmtUrl, { token });
     const preview = await ok.previewErasure(TENANT, subject);
     assert.ok(Array.isArray(preview.wouldErase));
+  });
+});
+
+test("streamEvents (drain) yields the DECISION_SEALED event", { skip: SKIP }, async () => {
+  await withPlanes(8207, 8208, undefined, async (dataAddr, mgmtUrl) => {
+    const { decisionId } = await sealOne(dataAddr);
+    const admin = SeamAdminClient.connect(mgmtUrl);
+
+    const events = [];
+    for await (const ev of admin.streamEvents({ follow: false })) events.push(ev);
+    assert.ok(events.length > 0, "expected at least the DECISION_SEALED event");
+    const sealed = events.filter((e) => e.kind === "DECISION_SEALED");
+    assert.ok(sealed.length > 0, `kinds seen: ${events.map((e) => e.kind).join(",")}`);
+    assert.ok(sealed.some((e) => e.decisionId === decisionId));
   });
 });

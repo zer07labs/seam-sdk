@@ -14,7 +14,7 @@ Erasure is a **preview → confirm → erase** flow (runtime audit P0.1): ``prev
 from __future__ import annotations
 
 import collections
-from typing import Optional, Sequence
+from typing import Iterator, Optional, Sequence
 
 import grpc
 
@@ -23,6 +23,8 @@ import grpc
 from . import client as _client  # noqa: F401
 from seam.api.v1 import seam_pb2 as pb  # noqa: E402
 from seam.api.v1 import seam_pb2_grpc as rpc  # noqa: E402
+
+from .errors import _MappedStub, map_rpc_error  # noqa: E402
 
 __all__ = ["SeamAdminClient"]
 
@@ -77,7 +79,9 @@ class SeamAdminClient:
 
     def __init__(self, channel: grpc.Channel):
         self._ch = channel
-        self._admin = rpc.SeamAdminStub(channel)
+        self._admin = _MappedStub(rpc.SeamAdminStub(channel))
+        # Streaming stub for the governance outbox; iteration errors are mapped in stream_events.
+        self._events = rpc.SeamEventsStub(channel)
 
     @classmethod
     def connect(
@@ -177,3 +181,25 @@ class SeamAdminClient:
 
     def audit_trail(self) -> Sequence[pb.AuditEntry]:
         return list(self._admin.AuditTrail(pb.Empty()).entries)
+
+    # ── Governance event stream (seam-event.v1 outbox) ───────────────────────────────────────────
+
+    def stream_events(
+        self, *, from_seq: int = 0, follow: bool = False, ack: bool = False
+    ) -> Iterator[pb.SeamEvent]:
+        """Server-stream the ``seam-event.v1`` governance outbox. Two modes:
+
+        * **drain** (``follow=False``, default): yield the current unpublished backlog, then stop.
+          ``ack=True`` marks exactly the yielded rows published (the at-least-once relay watermark);
+          ``from_seq`` is advisory in this mode.
+        * **live tail** (``follow=True``): yield the backlog from ``from_seq``, then keep yielding new
+          events as they arrive — cursor-based, never acks. Resume from the last ``seq + 1`` and dedup
+          by ``event_id``. The stream ends cleanly when the server drains on shutdown.
+
+        Yields :class:`pb.SeamEvent`. Iterate in a thread/task for ``follow=True`` (it blocks)."""
+        req = pb.StreamEventsRequest(from_seq=from_seq, ack=ack, follow=follow)
+        try:
+            for event in self._events.StreamEvents(req):
+                yield event
+        except grpc.RpcError as e:
+            raise map_rpc_error(e) from e

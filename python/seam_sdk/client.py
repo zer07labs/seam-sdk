@@ -17,6 +17,7 @@ import grpc
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from .crypto import aid_from_pubkey, build_presentation, verify_tct
+from .errors import IssuerMismatchError, SeamError, _MappedStub  # noqa: F401  (SeamError re-exported)
 
 # The generated transport stubs (`buf generate` writes them into the package at `seam_sdk/_gen`, so they
 # ship with the wheel). Their internal imports are rooted at that dir (`from seam.api.v1 import ...`), so
@@ -28,25 +29,8 @@ from seam.api.v1 import seam_pb2 as pb  # noqa: E402
 from seam.api.v1 import seam_pb2_grpc as rpc  # noqa: E402
 
 
-class SeamError(Exception):
-    """Base class for Seam SDK errors."""
-
-
-class IssuerMismatchError(SeamError):
-    """The fetched proof's issuer AID does not match the issuer the caller pinned out of band.
-
-    Raised by :meth:`SeamClient.verify_decision`. This is a **distinct security signal** — a malicious
-    server attempting to substitute its own issuer key — and must never be conflated with an ordinary
-    cryptographically-invalid decision (which returns ``False``). Mirrors the Rust reference
-    (``ClientError::Crypto("issuer AID mismatch…")``).
-    """
-
-    def __init__(self, proof_issuer: str, expected_issuer: str):
-        self.proof_issuer = proof_issuer
-        self.expected_issuer = expected_issuer
-        super().__init__(
-            f"issuer AID mismatch: proof carried {proof_issuer!r}, expected {expected_issuer!r}"
-        )
+# ``SeamError`` and ``IssuerMismatchError`` are defined in :mod:`seam_sdk.errors` and imported above; they
+# stay importable from here (``from seam_sdk.client import SeamError``) for backward compatibility.
 
 
 def _now_ms() -> int:
@@ -118,10 +102,12 @@ class SeamClient:
 
     def __init__(self, channel: grpc.Channel):
         self._ch = channel
-        self._admission = rpc.SeamAdmissionStub(channel)
-        self._coord = rpc.SeamCoordinationStub(channel)
-        self._trust = rpc.SeamTrustStub(channel)
-        self._context = rpc.SeamContextStub(channel)
+        # Stubs are wrapped so server errors surface as typed ``SeamRpcError`` subclasses (still
+        # ``grpc.RpcError``) instead of bare status codes.
+        self._admission = _MappedStub(rpc.SeamAdmissionStub(channel))
+        self._coord = _MappedStub(rpc.SeamCoordinationStub(channel))
+        self._trust = _MappedStub(rpc.SeamTrustStub(channel))
+        self._context = _MappedStub(rpc.SeamContextStub(channel))
 
     @classmethod
     def connect(

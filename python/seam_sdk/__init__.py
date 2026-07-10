@@ -9,22 +9,49 @@ from .admin import SeamAdminClient
 from .client import (
     Agent,
     BudgetLimits,
-    IssuerMismatchError,
     SeamClient,
-    SeamError,
     StepUsage,
 )
 from .crypto import aid_from_pubkey, build_presentation, verify_tct
+from .errors import (
+    AlreadyExistsError,
+    DeadlineExceededError,
+    FailedPreconditionError,
+    InternalError,
+    InvalidArgumentError,
+    IssuerMismatchError,
+    NotFoundError,
+    PermissionDeniedError,
+    ResourceExhaustedError,
+    SeamError,
+    SeamRpcError,
+    UnauthenticatedError,
+    UnavailableError,
+    UnimplementedError,
+)
 
 __all__ = [
     "Agent",
     "SeamClient",
     "SeamAdminClient",
-    "SeamError",
-    "IssuerMismatchError",
     "BudgetLimits",
     "StepUsage",
     "aid_from_pubkey",
     "build_presentation",
     "verify_tct",
+    # Error taxonomy
+    "SeamError",
+    "IssuerMismatchError",
+    "SeamRpcError",
+    "InvalidArgumentError",
+    "FailedPreconditionError",
+    "PermissionDeniedError",
+    "UnauthenticatedError",
+    "NotFoundError",
+    "AlreadyExistsError",
+    "ResourceExhaustedError",
+    "UnavailableError",
+    "DeadlineExceededError",
+    "UnimplementedError",
+    "InternalError",
 ]
