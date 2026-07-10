@@ -137,13 +137,15 @@ jobs:
         run: printf '%s' "$BUF_TOKEN" | buf registry login buf.build --token-stdin
       - name: generate the transport stubs from the contract
         run: buf generate buf.build/zer07labs/seam
-      - name: python live round-trip
+      # Live data-plane round-trip + the management-plane (SeamAdmin) erasure/auth suite. Both spawn the
+      # seam-grpc binary themselves; test_admin.py boots the second (SEAM_GRPC_MGMT_LISTEN) listener.
+      - name: python live round-trip + management plane
         working-directory: python
         env:
           SEAM_GRPC_BIN: ${{ github.workspace }}/_runtime/target/debug/seam-grpc
         run: |
           pip install -e ".[dev]"
-          pytest -q tests/test_integration.py
+          pytest -q tests/test_integration.py tests/test_admin.py
       - name: typescript live round-trip
         working-directory: ts
         env:

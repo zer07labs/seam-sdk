@@ -8,8 +8,12 @@ import { ed25519 } from "@noble/curves/ed25519";
 
 import {
   SeamAdmission,
+  SeamContext,
   SeamCoordination,
   SeamTrust,
+  type Anchor,
+  type Commitment,
+  type ContextBinding,
 } from "../gen/seam/api/v1/seam_pb.js";
 import { aidFromPubkey, buildPresentation, verifyTct } from "./crypto.js";
 
@@ -66,11 +70,13 @@ export class SeamClient {
   private readonly admission: Client<typeof SeamAdmission>;
   private readonly coord: Client<typeof SeamCoordination>;
   private readonly trust: Client<typeof SeamTrust>;
+  private readonly context: Client<typeof SeamContext>;
 
   constructor(transport: ReturnType<typeof createGrpcTransport>) {
     this.admission = createClient(SeamAdmission, transport);
     this.coord = createClient(SeamCoordination, transport);
     this.trust = createClient(SeamTrust, transport);
+    this.context = createClient(SeamContext, transport);
   }
 
   /** Connect to a Seam gRPC endpoint (e.g. `http://127.0.0.1:8090`). */
@@ -84,18 +90,27 @@ export class SeamClient {
     return { presentationJson: new TextEncoder().encode(JSON.stringify(body)) };
   }
 
-  /** Admit (the PoP handshake) → run a coordinated decision → seal, in one call. */
+  /**
+   * Admit (the PoP handshake) → run a coordinated decision → seal, in one call.
+   *
+   * `features` are optional pre-decision request features (e.g. `{ amount_band: "high" }`) that the advisory
+   * learning classifier keys `context_class` on. They **never** affect the sealed record — the decision seals
+   * identically with or without them. Omitted ⇒ no features (non-breaking). Mirrors the Rust reference's
+   * `run_decision_with_features`.
+   */
   async runDecision(
     agent: Agent,
     sessionId: string,
     participants: string[],
     votes: [string, string][],
+    features?: Record<string, string>,
   ) {
     return this.coord.runDecision({
       sessionId,
       participants,
       votes: votes.map(([a, value]) => ({ agent: a, value })),
       presentation: await this.presentation(agent),
+      features: features ?? {},
     });
   }
 
@@ -182,6 +197,42 @@ export class SeamClient {
   }
   getCommitmentProof(decisionId: string) {
     return this.coord.getCommitmentProof({ decisionId });
+  }
+
+  /** Report a delayed correctness outcome for a sealed decision (advisory, Plan R). The sealed record is
+   * never mutated; this only emits a LEARNING_OUTCOME. Resolves whether it was recorded. */
+  async reportOutcome(decisionId: string, correct: boolean, verifiedBy?: string): Promise<boolean> {
+    return (await this.coord.reportOutcome({ decisionId, correct, verifiedBy })).recorded;
+  }
+
+  // ── Context binding (data plane) ──────────────────────────────────────────────────────────────
+
+  /** Register context content at a `fidelity` (`Digest` | `Reference` | `Value`); resolves its content
+   * ref (a `sha256:` ref or an `acdp://` remote id). */
+  async registerContext(
+    content: Uint8Array,
+    fidelity: string,
+    derivedFrom: string[] = [],
+  ): Promise<string> {
+    return (await this.context.registerContext({ content, fidelity, derivedFrom })).contentRef;
+  }
+
+  /** Resolve context refs to their bindings (fidelity, classification, lineage, version). */
+  async resolveContext(refs: string[]): Promise<ContextBinding[]> {
+    return (await this.context.resolveContext({ refs })).bindings;
+  }
+
+  // ── Trust / verification (data plane) ─────────────────────────────────────────────────────────
+
+  /** Server-side verification of a rooted commitment. For zero-server-trust verification prefer
+   * {@link verifyDecision}, which verifies locally against a pinned issuer. */
+  async verifyCommitment(commitment: Commitment, signedArtifact: Uint8Array): Promise<boolean> {
+    return (await this.trust.verifyCommitment({ commitment, signedArtifact })).valid;
+  }
+
+  /** Verify a counterparty's published audit-chain anchor (network mode). */
+  async verifyPartyAnchor(partyId: string, anchor: Anchor): Promise<boolean> {
+    return (await this.trust.verifyPartyAnchor({ partyId, anchor })).valid;
   }
 
   /**

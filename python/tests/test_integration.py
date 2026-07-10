@@ -98,6 +98,34 @@ def test_session_lifecycle_seals(server):
     assert client.get_decision(step.decision_id).outcome == "Resolved"
 
 
+def test_features_do_not_affect_the_record(server):
+    """H4: request features steer the advisory serving read but NEVER touch the sealed record — a
+    decision run *with* features seals the same structural record as one run *without*."""
+    client = SeamClient.connect(server)
+    agent = Agent(bytes([42] * 32))
+    votes = [("fraud-v3", "BLOCK"), ("risk-v2", "BLOCK")]
+
+    plain = client.run_decision(agent, "py-feat-off", ["fraud-v3", "risk-v2"], votes)
+    feat = client.run_decision(
+        agent,
+        "py-feat-on",
+        ["fraud-v3", "risk-v2"],
+        votes,
+        features={"amount_band": "high", "channel": "card-present"},
+    )
+
+    # Same decided value + outcome; features are accepted and a policy_version is surfaced.
+    assert feat.decided_value == plain.decided_value
+    assert feat.outcome == plain.outcome
+    assert feat.policy_version  # non-empty — the serving read routed a policy
+
+    # The sealed structural columns match (the record is unaffected by features).
+    rec_plain = client.get_decision(plain.decision_id)
+    rec_feat = client.get_decision(feat.decision_id)
+    assert rec_feat.outcome == rec_plain.outcome
+    assert rec_feat.classification == rec_plain.classification
+
+
 def test_budget_suspend_resume_loop(server):
     """The enterprise-6.2 loop: a hard budget breach suspends (an Ok step, not an error); the
     dimension-raising resume un-suspends it and the session seals."""

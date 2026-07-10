@@ -58,7 +58,8 @@ cd ts && npm ci && npm run build  # npm test runs the conformance + (gated) live
 
 CI (`.github/workflows/ci.yml`) regenerates from the contract and runs both: Python (`ruff` + `pytest`)
 and TypeScript (`tsc` typecheck + build + `node --test`). A gated job builds `seam-grpc` and runs the live
-round-trip end-to-end (it needs a runtime-checkout token, so it self-skips when unset).
+round-trip **and the management-plane (erasure/auth) suite** end-to-end (it needs a runtime-checkout token,
+so it self-skips when unset).
 
 ## Layout
 
@@ -97,12 +98,60 @@ clients (Py/TS + the Rust `seam-client`) document **identical** semantics:
 `uint64` budget dimensions are `bigint` in TypeScript and `int` in Python. The live 6.2 suspend→raise→resume
 loop is covered by `test_budget_suspend_resume_loop` (Python) and the "6.2 budget loop" test (TS).
 
+## Request features (advisory serving)
+
+`run_decision`/`runDecision` take an optional `features` map (`dict[str, str]` / `Record<string, string>`).
+The runtime's advisory learning classifier keys `context_class` on them; they **never** affect the sealed
+record — a decision seals identically with or without features (mirrors the Rust reference's
+`run_decision_with_features`). Default absent ⇒ no features (non-breaking). Covered by the
+"features never affect the sealed record" test in both Py + TS.
+
+## Management plane — GDPR erasure & governance (`SeamAdminClient`)
+
+The governance surface (`SeamAdmin`) is served on a **separate management listener**
+(`SEAM_GRPC_MGMT_LISTEN`), never the data plane, and is gated by a bearer token (`SEAM_MGMT_TOKEN`). The Py +
+TS SDKs expose it as a **distinct `SeamAdminClient`** you point at the management endpoint:
+
+```python
+admin = SeamAdminClient.connect("mgmt.host:8443", token="…")   # omit token only against a dev server
+preview = admin.preview_erasure("tenant", subject)             # non-destructive
+cert = admin.erase_subject("tenant", subject, len(preview.would_erase))   # or: erase_subject_confirmed(...)
+```
+
+**Erasure is preview → confirm → erase** (runtime audit P0.1): `preview_erasure`/`previewErasure` is
+non-destructive (returns `would_erase` / `held` / `already_erased`); `erase_subject`/`eraseSubject` requires
+a **non-empty `tenant`** scope (erasure never crosses tenants) and a `confirm_count` that must **equal the
+preview's `would_erase` count**, and returns a signed, chain-anchored `ErasureCertificate`.
+`erase_subject_confirmed`/`eraseSubjectConfirmed` does both in one call. The client also wraps the governance
+RPCs (`enroll_tenant`, `list_tenants`, `register_party`, `place`/`release_legal_hold`, `enforce_retention`,
+`audit_trail`). The live preview→confirm→erase flow (+ empty-tenant / wrong-count rejections + bearer-auth)
+is covered by `test_admin.py` (Python) and `admin.test.ts` (TS).
+
+## Data-plane surface
+
+Beyond decisions & sessions, `SeamClient` wraps the rest of the data plane: independent proof retrieval +
+local verification (`get_commitment_proof`, `verify_decision`), server-side trust
+(`verify_commitment`, `verify_party_anchor`), context binding (`register_context`, `resolve_context`),
+and advisory outcome reporting (`report_outcome`, Plan R — emits a `LEARNING_OUTCOME`, never mutates the
+sealed record).
+
+## Errors & transport security
+
+- **`IssuerMismatchError`** (Py + TS) is the one semantic typed error — a key-substitution signal raised by
+  `verify_decision`/`verifyDecision`, never downgraded to `false`. Everything else surfaces as the idiomatic
+  transport error carrying a typed status code: `grpc.RpcError` with `.code()` (Python) / `ConnectError`
+  with `.code` (TS) — e.g. `UNAUTHENTICATED` (bad/missing management token), `PERMISSION_DENIED` (scope-floor
+  denial), `INVALID_ARGUMENT` (empty tenant / wrong `confirm_count`).
+- **TLS.** Both clients are plaintext by default (the dev/loopback path). Python: pass
+  `credentials=grpc.ssl_channel_credentials()` to `connect(...)`. TypeScript: use an `https://` base URL.
+  Prefer TLS whenever a real management bearer token is in play, so it isn't sent over cleartext.
+
 ## Status
 
 | Language | Transport (generated) | Crypto shim + ergonomic client |
 |---|---|---|
-| **Python** | ✅ | ✅ **complete** — one-shot + **incremental sessions & budgets**; round-trips live (admit → decide → seal → read → verify) |
-| **TypeScript** | ✅ | ✅ **complete** — one-shot + **incremental sessions & budgets**; round-trips live (`@noble/curves` + `@noble/hashes`, `@connectrpc/connect`) |
+| **Python** | ✅ | ✅ **complete** — one-shot + **sessions & budgets** + **features** + **management plane** (`SeamAdminClient`: erasure/governance) + context/trust/outcome; round-trips live |
+| **TypeScript** | ✅ | ✅ **complete** — one-shot + **sessions & budgets** + **features** + **management plane** (`SeamAdminClient`: erasure/governance) + context/trust/outcome; round-trips live |
 | Go | ✅ | ✅ **shim** — conformance-tested (Ed25519 PoP, AID, TCT verify); ergonomic client over gen transport is a follow-up |
 | Java | ✅ | ✅ **shim** — conformance-tested (Bouncy Castle); client is a follow-up |
 | Kotlin | ✅ | ✅ **shim** — conformance-tested (Bouncy Castle); client is a follow-up |

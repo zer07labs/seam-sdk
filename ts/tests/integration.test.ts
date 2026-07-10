@@ -61,6 +61,25 @@ test("full round trip: admit → decide → seal → read → verify", { skip: S
   });
 });
 
+test("H4: request features never affect the sealed record", { skip: SKIP }, async () => {
+  await withServer(8095, async (addr) => {
+    const client = SeamClient.connect(`http://${addr}`);
+    const votes: [string, string][] = [["fraud-v3", "BLOCK"], ["risk-v2", "BLOCK"]];
+    const plain = await client.runDecision(demoAgent(), "ts-feat-off", ["fraud-v3", "risk-v2"], votes);
+    const feat = await client.runDecision(demoAgent(), "ts-feat-on", ["fraud-v3", "risk-v2"], votes, {
+      amount_band: "high",
+      channel: "card-present",
+    });
+    assert.equal(feat.decidedValue, plain.decidedValue);
+    assert.equal(feat.outcome, plain.outcome);
+    assert.ok(feat.policyVersion.length > 0); // the serving read routed a policy
+    const recPlain = await client.getDecision(plain.decisionId);
+    const recFeat = await client.getDecision(feat.decisionId);
+    assert.equal(recFeat.outcome, recPlain.outcome);
+    assert.equal(recFeat.classification, recPlain.classification);
+  });
+});
+
 test("session lifecycle: open → propose → vote → commit seals", { skip: SKIP }, async () => {
   await withServer(8097, async (addr) => {
     const client = SeamClient.connect(`http://${addr}`);
