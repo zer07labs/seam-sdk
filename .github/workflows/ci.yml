@@ -195,3 +195,44 @@ jobs:
       - name: gradle test
         working-directory: kotlin
         run: gradle test --no-daemon
+
+  verify:
+    name: verify (the independent verifier)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      # THE claim, asserted. `verify/` exists to check Seam's audit chain WITHOUT trusting Seam, and the
+      # only thing that makes that true is its dependency list. A verifier that links Seam's own store is
+      # Seam checking Seam — which is precisely what "don't trust us, verify it yourself" says you should
+      # not have to accept.
+      #
+      # So this is a gate, not a comment. If a Seam crate ever appears in the tree, the claim has quietly
+      # stopped being true and the build says so.
+      - name: the verifier must link NOTHING of Seam's
+        run: |
+          cd verify
+          TREE=$(cargo tree -e normal)
+          echo "$TREE"
+          if echo "$TREE" | grep -vE '^seam-verify ' | grep -qiE '\bseam-(store|types|traits|trust|kernel|crypto|api|client|guard|coord|context|bandit)'; then
+            echo "::error::seam-verify links a Seam crate. The independence claim is now false — that is the whole product."
+            exit 1
+          fi
+          echo "OK — zero Seam crates."
+
+      - name: fmt
+        run: cd verify && cargo fmt --check
+      - name: clippy
+        run: cd verify && cargo clippy --all-targets -- -D warnings
+      - name: test
+        run: cd verify && cargo test
+      # The published reference vector must verify with the shipped binary — from the issuer AID alone.
+      # If this ever fails, we are shipping a fixture that does not verify, which is worse than shipping none.
+      - name: the published reference vector verifies
+        run: |
+          cd verify
+          AID=$(python3 -c "import json;print(json.load(open('fixtures/erasure_certificate_vector.json'))['issuer_aid'])")
+          cargo run --quiet -- erasure-cert fixtures/erasure_certificate_vector.json --issuer "$AID"

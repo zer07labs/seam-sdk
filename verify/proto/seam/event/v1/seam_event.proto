@@ -1,0 +1,228 @@
+// THE canonical `seam-event.v1` wire schema — the outbox contract.
+//
+// This is the schema an external consumer decodes, and the one a third party needs in order to verify
+// Seam's audit chain without trusting Seam. The normative prose is `docs/seam-event.v1.md`, alongside;
+// the reference verifier that reads these bytes is this crate.
+//
+// RULES FOR CHANGING THIS FILE:
+//   * Tags are the wire contract. Never renumber, never reuse, never retype.
+//   * Additive-only within v1: a new field takes the next free tag and MUST be `optional` or `repeated`,
+//     so existing encoders produce byte-identical output when it is absent.
+//   * A breaking change is not a change here — it is `seam-event.v2` plus a dual-emit window
+//     (spec §Versioning).
+//
+// Presence mapping (why some fields are `optional` and others are not):
+//   proto3 `optional string`  -> explicit presence
+//   proto3 `string`           -> implicit presence (no tag emitted for the default value)
+//   message field             -> presence is native
+//   `repeated double`         -> packed, the proto3 default
+// Getting this wrong changes the bytes on the wire.
+
+syntax = "proto3";
+
+package seam.event.v1;
+
+option go_package = "github.com/zer07labs/seam-sdk/gen/seam/event/v1;eventv1";
+option java_multiple_files = true;
+option java_package = "com.zer07labs.seam.event.v1";
+
+// The `seam-event.v1` envelope — one outbox row.
+//
+// Exactly one payload field is set, selected by `kind`:
+//   DECISION_SEALED     -> payload              (tag 13, CHAINED)
+//   LEARNING_DECISION   -> learning_decision    (tag 14, advisory/unchained)
+//   LEARNING_OUTCOME    -> learning_outcome     (tag 15, advisory/unchained)
+//   AUDIT_ENTRY         -> audit_entry          (tag 16, CHAINED)
+//   BUDGET_BREACH       -> budget_breach        (tag 17, advisory/unchained)
+//   ERASURE_CERTIFICATE -> erasure_certificate  (tag 18, CHAINED, signed)
+//
+// SESSION_LIFECYCLE is named by the spec's EventKind enum but has NO payload message, NO prost tag,
+// and NO emitter in the runtime today. It is therefore a *reserved kind name* (a manifest may filter
+// on it without being refused) that carries no payload. See DECISIONS.md D-002. When the runtime
+// implements it, the payload takes the next free envelope tag (21 — 19/20 are now digest/checksum).
+message SeamEvent {
+  // Always "seam-event.v1". A consumer that sees anything else DLQs the event tagged
+  // `unknown-schema` — it never crashes and never guesses.
+  string schema_version = 1;
+
+  // Unique + stable per event. THE idempotency key: every sink write is idempotent by this, or
+  // dedups on it before the sink.
+  string event_id = 2;
+
+  // Monotonic over the runtime's single ordered outbox. The ordering key, and the unit `replay_from`
+  // rewinds to.
+  uint64 seq = 3;
+
+  // Millis. Injected at emit — never a wall-clock read on the binding path.
+  uint64 occurred_at = 4;
+
+  string tenant = 5;
+  string namespace = 6;
+
+  // The classification label driving per-consumer redaction. Vocabulary (ascending sensitivity):
+  // Public < Internal < Confidential < Financial < Pii < Phi. An unknown label is fail-closed
+  // everywhere (a manifest naming one is refused; an event carrying one is DLQ'd, never passed on).
+  string classification = 7;
+
+  // The kind discriminator. A *string*, not an enum, precisely so an unknown kind decodes cleanly
+  // and is ignored rather than erroring (tolerant reader, spec §Versioning).
+  string kind = 8;
+
+  optional string session_id = 9;
+  optional string decision_id = 10;
+
+  // Per-event cost signal (R11 — observability, never a record field).
+  uint64 cost_micros = 11;
+
+  // The hash-chain link. Set on the CHAINED kinds (DECISION_SEALED, AUDIT_ENTRY,
+  // ERASURE_CERTIFICATE); EMPTY on the advisory kinds (LEARNING_*, BUDGET_BREACH).
+  //
+  // The chain is global over the *unfiltered* stream. A kind-filtered subscription therefore gets
+  // at-least-once + dedup but NOT the completeness proof — which is why every SDK refuses
+  // `verify_chain` on a filtered subscription rather than silently reporting a false gap.
+  bytes prev_checksum = 12;
+
+  // The DECISION_SEALED payload — structural columns only, never the encrypted commitment
+  // plaintext. The stream never carries openable secrets.
+  //
+  // Message-typed fields are NOT marked `optional`: in proto3 they already carry explicit presence
+  // natively (`optional` would only wrap them in a redundant synthetic oneof). This mirrors prost's
+  // `Option<Message>` exactly. The scalar `optional`s above (tags 9/10) DO need the keyword.
+  DecisionSealed payload = 13;
+
+  LearningDecision learning_decision = 14;
+  LearningOutcome learning_outcome = 15;
+  AuditEntry audit_entry = 16;
+  BudgetBreach budget_breach = 17;
+  ErasureCertificate erasure_certificate = 18;
+
+  // ── 19/20: the chain-verifiability fix, now SHIPPED (docs/upstream/UPSTREAM-001) ──
+  //
+  // The chain link is `checksum = H(prev || digest)` over the sealed-record digest. Previously the digest
+  // was NOT on the wire, so a consumer held `prev_checksum` and could never recompute a single link, and
+  // every SDK's `verify_chain` shipped the weaker, honest check (seq contiguity + genesis + non-reverting
+  // head). These two additive fields carry this entry's own digest and resulting checksum, so a consumer
+  // now verifies the full chain from the stream alone: for each chained event in seq order, assert
+  // `prev_checksum == running_head` and `checksum == H(prev_checksum || digest)`, then advance the head.
+  //
+  // Set on the CHAINED kinds ONLY (DECISION_SEALED / AUDIT_ENTRY / ERASURE_CERTIFICATE); absent on the
+  // advisory kinds (as `prev_checksum` is empty for them). Purely additive — an encoder that omits them
+  // produces byte-identical output, so no lockstep upgrade.
+  //
+  // NOTE: events written BEFORE these fields were added carry neither, and are therefore indistinguishable
+  // from advisory (unchained) events to a verifier reading bytes. See the spec's warning — a verifier MUST
+  // disclose how many such events it skipped, or refuse the stream. Reporting a green chain over history
+  // it never checked is the one thing it must not do.
+  optional bytes digest = 19;    // this entry's record/action digest
+  optional bytes checksum = 20;  // = H(prev_checksum || digest); the head this entry produces
+}
+
+// DECISION_SEALED payload (envelope tag 13). Structural columns of the DecisionRecord.
+message DecisionSealed {
+  string decision_id = 1;
+  string tenant = 2;
+  string namespace = 3;
+  optional string mode = 4;
+  optional string policy_version = 5;
+  string outcome = 6;
+  optional string supersedes = 7;
+  uint64 sealed_at = 8;
+  uint32 schema_version = 9;
+}
+
+// The posterior-keying tuple, shared verbatim with the seam-learning engine so the runtime and the
+// engine agree on the arm key without a re-map (`docs/specs/learning-keys.md`).
+message PolicyKey {
+  string tenant = 1;
+  string task_type = 2;
+  string context_class = 3;
+  string mode = 4;
+}
+
+// LEARNING_DECISION payload (envelope tag 14) — ADVISORY, unchained, no binding authority.
+// One event per decision *dimension*, joined to outcomes by the ENVELOPE `decision_id`.
+message LearningDecision {
+  PolicyKey policy_key = 1;
+
+  // "policy" | "agent" — which decision dimension this arm is for.
+  string dimension = 2;
+
+  string algorithm_id = 3;
+
+  // The chosen arm.
+  string candidate = 4;
+
+  optional string experiment_id = 5;
+  optional string algorithm_arm = 6;
+
+  // The served feature vector `x` — the EXACT one the serving read used, so serve==fit parity holds
+  // by construction. Empty for non-contextual algorithms (Thompson).
+  repeated double features = 7;
+
+  // The FeatureSchema id `x` was encoded under. Absent for Thompson.
+  optional string schema_id = 8;
+
+  // P(this arm | x) at serve time — required for retroactive off-policy evaluation (IPS/SNIPS/DR).
+  // Absent until the serving read populates it. Once real traffic flows an unlogged propensity is
+  // UNRECOVERABLE, which is why the slot is fixed now (plan 02 §E). The ingestion connector maps it
+  // when present and writes NULL when absent; it can never synthesize it.
+  optional double propensity = 9;
+}
+
+// LEARNING_OUTCOME payload (envelope tag 15) — ADVISORY, unchained.
+//
+// Repeated outcomes for one decision are DISTINCT events by construction (the runtime folds the
+// report time and seq into the event_id: `{decision_id}#lo#{occurred_at}#{seq}`) — a correction or a
+// second reporter is a new event, never a mutation. The offline join decides which one wins.
+message LearningOutcome {
+  bool correct = 1;
+  optional string verified_by = 2;
+}
+
+// AUDIT_ENTRY payload (envelope tag 16) — CHAINED. An audit event for actions that produce no
+// DecisionRecord: nothing was decided, but the refusal itself must be provable.
+message AuditEntry {
+  // Machine-readable action discriminator, e.g. "admit.compat_reject" | "execute.scope_deny".
+  string action = 1;
+  // The subject acted on (e.g. the offending agent_id).
+  string subject = 2;
+  // The rendered typed denial. No secrets, no free-text agent content — which is why SIEM
+  // destinations may pass it through unredacted.
+  string reason = 3;
+}
+
+// BUDGET_BREACH payload (envelope tag 17) — ADVISORY, unchained.
+//
+// severity "hard" means the session is now SUSPENDED awaiting an approver, so alert latency on this
+// kind is user-facing, not merely operational.
+message BudgetBreach {
+  // "hard" (suspended, awaiting HITL) | "soft" (early warning).
+  string severity = 1;
+  // The breached dimension: "messages" | "tokens" | "cost_micros" | "wall_ms".
+  string dimension = 2;
+  // The limit on the breached dimension.
+  uint64 limit = 3;
+  // The full ledger snapshot at the breach, so an approver sees exactly what was spent against what.
+  uint64 messages = 4;
+  uint64 tokens = 5;
+  uint64 cost_micros = 6;
+  uint64 wall_ms = 7;
+}
+
+// ERASURE_CERTIFICATE payload (envelope tag 18) — CHAINED and SIGNED.
+//
+// Ed25519 over the domain-separated `seam.erasure-certificate.v1` framing, by the runtime ISSUER
+// key. A data subject or regulator verifies it from the published issuer AID alone. No connector
+// ever holds or references that key (custody separation — plan 04 §5.4).
+message ErasureCertificate {
+  string subject = 1;
+  // Decision ids whose keys are destroyed.
+  repeated string erased = 2;
+  // Decision ids withheld under legal hold — disclosed, never silent.
+  repeated string held = 3;
+  uint64 erased_at = 4;
+  // The audit-chain head at certification.
+  bytes chain_head = 5;
+  string issuer_aid = 6;
+  bytes signature = 7;
+}

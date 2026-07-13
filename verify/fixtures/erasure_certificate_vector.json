@@ -1,0 +1,18 @@
+{
+  "issuer_aid": "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
+  "public_key_b64": "6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw=",
+  "cert": {
+    "subject": "did:seam:subject-7",
+    "erased": [
+      "dec:abc",
+      "dec:def"
+    ],
+    "held": [
+      "dec:held-1"
+    ],
+    "erased_at": 1700000400000,
+    "chain_head": "zMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMw=",
+    "issuer_aid": "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
+    "signature": "u/ssd7plZgcuNEOG7X3rvsDkS2ijxAwD/AaY7T9woHaPb54nGfyA1cKhv0iCBYl6OA3EReT9F09RAD8TDVwjBw=="
+  }
+}
