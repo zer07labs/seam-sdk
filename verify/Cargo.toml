@@ -1,0 +1,54 @@
+[package]
+name = "seam-verify"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Independently verify a Seam audit chain and an erasure certificate. Links nothing of Seam's."
+repository = "https://github.com/zer07labs/seam-sdk"
+publish = false
+
+# ==================================================================================================
+# THE DEPENDENCY LIST IS THE ARGUMENT.
+#
+# Seam's claim is: "don't trust us — verify it yourself." A verifier that links Seam's own store, its
+# server, or its types is not a verifier; it is Seam checking Seam, which is exactly what the claim says
+# you should not have to accept.
+#
+# So this crate depends on NOTHING of Seam's. Not one crate, not one type, not one line. It is built from
+# the published specs alone:
+#
+#   * docs/seam-event.v1.md          — the wire format and the chain rule
+#   * docs/erasure-certificate.v1.md — the signing framing
+#
+# Everything below is a general-purpose primitive you can audit yourself:
+#
+#   prost          decode protobuf
+#   sha2           SHA-256 (the chain link, and the certificate's signed digest)
+#   ed25519-dalek  verify the issuer's signature
+#   base64         the AID's key encoding, and the JSON projection's bytes fields
+#   serde_json     the JSON projection
+#
+# `cargo tree` is the assertion. If a Seam crate ever appears in it, the claim has quietly stopped being
+# true — and that is a review trigger, not a refactor.
+#
+# There IS a second implementation of this inside the runtime (`seam-runtime/crates/seam-verify`), which
+# reuses the runtime's own codec because it can. A differential test drives BOTH over the same streams and
+# requires them to agree. That is what stops this copy from drifting into a rubber stamp.
+# ==================================================================================================
+[dependencies]
+prost = "0.14"
+sha2 = "0.10"
+ed25519-dalek = "2"
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Test-only. The fixtures are built from the SPEC (a SHA-256 chain, a base64 projection) — which is itself
+# the proof that a third party can build them too, with nothing of Seam's.
+[dev-dependencies]
+sha2 = "0.10"
+base64 = "0.22"
+
+[[bin]]
+name = "seam-verify"
+path = "src/main.rs"
