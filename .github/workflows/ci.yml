@@ -56,6 +56,11 @@ jobs:
         run: printf '%s' "$BUF_TOKEN" | buf registry login buf.build --token-stdin
       - name: generate the transport stubs from the contract
         run: buf generate buf.build/zer07labs/seam
+      # The SDK's contract-freshness gate: assert the just-generated stubs carry the RPC the hand-written
+      # clients call. Hard-fails on a stale BSR module (the SDK analogue of the runtime's published-surface
+      # gate). Default mode (RPC only) — the streamed-payload fields are STREAM=1 and pend the Phase-0 push.
+      - name: check-contract (RPC surface gate)
+        run: make check-contract
       - name: install (package + dev tools)
         run: pip install -e "./python[dev]"
       - name: ruff (lint + format)
