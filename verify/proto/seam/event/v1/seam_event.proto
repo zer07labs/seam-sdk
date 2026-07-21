@@ -29,17 +29,20 @@ option java_package = "com.zer07labs.seam.event.v1";
 // The `seam-event.v1` envelope — one outbox row.
 //
 // Exactly one payload field is set, selected by `kind`:
-//   DECISION_SEALED     -> payload              (tag 13, CHAINED)
-//   LEARNING_DECISION   -> learning_decision    (tag 14, advisory/unchained)
-//   LEARNING_OUTCOME    -> learning_outcome     (tag 15, advisory/unchained)
-//   AUDIT_ENTRY         -> audit_entry          (tag 16, CHAINED)
-//   BUDGET_BREACH       -> budget_breach        (tag 17, advisory/unchained)
-//   ERASURE_CERTIFICATE -> erasure_certificate  (tag 18, CHAINED, signed)
+//   DECISION_SEALED        -> payload                 (tag 13, CHAINED)
+//   LEARNING_DECISION      -> learning_decision       (tag 14, advisory/unchained)
+//   LEARNING_OUTCOME       -> learning_outcome        (tag 15, advisory/unchained)
+//   AUDIT_ENTRY            -> audit_entry              (tag 16, CHAINED)
+//   BUDGET_BREACH          -> budget_breach            (tag 17, advisory/unchained)
+//   ERASURE_CERTIFICATE    -> erasure_certificate      (tag 18, CHAINED, signed)
+//   SESSION_LIFECYCLE      -> session_lifecycle        (tag 21, advisory/unchained; CP-09)
+//   CHAIN_HEAD_ATTESTATION -> chain_head_attestation   (tag 22, CHAINED, signed; A14)
 //
-// SESSION_LIFECYCLE is named by the spec's EventKind enum but has NO payload message, NO prost tag,
-// and NO emitter in the runtime today. It is therefore a *reserved kind name* (a manifest may filter
-// on it without being refused) that carries no payload. See DECISIONS.md D-002. When the runtime
-// implements it, the payload takes the next free envelope tag (21 — 19/20 are now digest/checksum).
+// SESSION_LIFECYCLE (CP-09) was revived at its long-reserved tag 21 WITH its producer (the runtime emits
+// `phase: "opened"` on interactive opens); it is advisory (carries no digest/checksum) and this verifier
+// treats it as such (by field presence, not kind). CHAIN_HEAD_ATTESTATION (A14) is the issuer-signed
+// `(len, head)` at tag 22 — itself CHAINED, and additionally verified under `seam-verify chain --issuer`.
+// See DECISIONS.md D-002 (tag 21 reservation).
 message SeamEvent {
   // Always "seam-event.v1". A consumer that sees anything else DLQs the event tagged
   // `unknown-schema` — it never crashes and never guesses.
@@ -115,6 +118,41 @@ message SeamEvent {
   // it never checked is the one thing it must not do.
   optional bytes digest = 19;    // this entry's record/action digest
   optional bytes checksum = 20;  // = H(prev_checksum || digest); the head this entry produces
+
+  // ── 21/22: the CP-09 revival + A14 authenticity root ──
+  //
+  // 21 — SESSION_LIFECYCLE (advisory, unchained): a session transition ("opened" today). Carries no
+  // digest/checksum; a verifier keys chained-ness on field presence, so this never advances the head.
+  // 22 — CHAIN_HEAD_ATTESTATION (CHAINED, signed): the issuer-signed audit-chain `(len, head)`. It IS a
+  // link (carries digest/checksum) AND is separately verified under `--issuer` — every attestation must
+  // check against the pinned issuer key and sit at the head it attests, closing the fabricated-chain gap
+  // (an unkeyed SHA-256 chain over a public genesis is otherwise rebuildable by a transport-level forger).
+  optional SessionLifecycle session_lifecycle = 21;
+  optional ChainHeadAttestation chain_head_attestation = 22;
+}
+
+// SESSION_LIFECYCLE payload (envelope tag 21) — ADVISORY, unchained (CP-09). Operational metadata only:
+// no subject, secret, or agent content. Consumers MUST tolerate unknown `phase` values (additive vocab).
+message SessionLifecycle {
+  string phase = 1;           // "opened" today
+  string mode = 2;
+  string policy_version = 3;
+  uint64 opened_at_millis = 4;
+}
+
+// CHAIN_HEAD_ATTESTATION payload (envelope tag 22) — CHAINED and SIGNED (A14).
+//
+// Ed25519 over SHA256 of the domain-separated `seam.audit.chain-head-attestation.v1` framing, by the
+// runtime ISSUER key (the same key as the TCT + erasure cert). `seam-verify chain --issuer <AID>` verifies
+// every attestation against the PINNED issuer AID and asserts `attested_head` is the running head after
+// `attested_len` links; a stream carrying none is refused.
+message ChainHeadAttestation {
+  uint64 attested_len = 1;    // 1-based head position = number of chained links covered
+  bytes attested_head = 2;    // the checksum at position attested_len (32 bytes)
+  uint64 attested_at = 3;
+  string issuer_aid = 4;
+  uint32 digest_schema = 5;   // record-digest formula (2 = A14 v2); bound into the signature (downgrade guard)
+  bytes signature = 6;
 }
 
 // DECISION_SEALED payload (envelope tag 13). Structural columns of the DecisionRecord.
