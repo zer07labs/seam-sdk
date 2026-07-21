@@ -104,9 +104,11 @@ so a change there can never silently break a generated client. Regenerate after 
 ## Session lifecycle & budgets (enterprise 6.2)
 
 Python and TypeScript expose the **incremental session** path — `open_session` → `submit_proposal`/
-`submit_vote` → `submit_commit`, with `resume_session`/`cancel_session`/`expire_session`/`session_status`
-— alongside the one-shot `run_decision`. The multi-dimension budget surface is first-class; all three
-clients (Py/TS + the Rust `seam-client`) document **identical** semantics:
+`submit_vote` → `submit_commit`, with `cancel_session`/`expire_session`/`session_status` — alongside the
+one-shot `run_decision`. The R9 **resume** is the exception: it moved to the **management** plane (rt-D),
+so it is `SeamAdminClient.resume_session(session_id, approver, …)`, not a data-plane call (the data-plane
+`resume_session` is now a tombstone). The multi-dimension budget surface is first-class; all three clients
+(Py/TS + the Rust `seam-client`) document **identical** semantics:
 
 | Rule | Behavior |
 |---|---|
@@ -116,7 +118,7 @@ clients (Py/TS + the Rust `seam-client`) document **identical** semantics:
 | `soft_pct` | Soft-warning threshold as % of any limit (server default 80). |
 | Per-step `usage` | Absent ⇒ zero; the orchestrator reports what the agent runtime spent. |
 | **Suspended** | A hard breach returns a step with `state == "Suspended"` — an **ok step, not an error**. |
-| `resume` with a raise | The R9 approver raises any dimension; the session then continues. |
+| `resume` with a raise | The R9 approver (on the **management** plane: `SeamAdminClient.resume_session`) raises any dimension; the session then continues. |
 | Scope-floor denial | Surfaces as gRPC **`PERMISSION_DENIED`** (distinct from `INVALID_ARGUMENT`). |
 
 `uint64` budget dimensions are `bigint` in TypeScript and `int` in Python. The live 6.2 suspend→raise→resume

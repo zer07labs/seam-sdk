@@ -27,6 +27,7 @@ import {
 } from "../gen/seam/api/v1/seam_pb.js";
 import { errorMappingInterceptor, toSeamError } from "./errors.js";
 import { recordDigestV2 } from "./crypto.js";
+import type { BudgetLimits } from "./client.js";
 
 /** The `seam-event.v1` kinds the SDK knows about. A consumer MAY branch on these, but MUST still tolerate
  * an unknown kind — the wire is a tolerant reader (new kinds are additive): pass anything not in this set
@@ -145,6 +146,26 @@ export class SeamAdminClient {
   /** Register a counterparty's raw 32-byte ed25519 public key (network mode). */
   async registerParty(partyId: string, pubkey: Uint8Array): Promise<void> {
     await this.admin.registerParty({ partyId, pubkey });
+  }
+
+  /** Resume a Suspended session — the R9 approver action, on the **management** plane (rt-D: this moved
+   * off the data plane, where `SeamCoordination.ResumeSession` is now a tombstone). Requires the
+   * `session:resume` operator scope. `approver` is a **required**, non-empty attribution for the approval.
+   * `raise` raises any budget dimension; absent, `budget` raises the message count. `tenant`/`namespace`
+   * scope the lookup — leave empty to resolve the session by id alone. */
+  async resumeSession(
+    sessionId: string,
+    approver: string,
+    opts?: { tenant?: string; namespace?: string; budget?: number; raise?: BudgetLimits },
+  ) {
+    return this.admin.resumeSession({
+      sessionId,
+      approver,
+      tenant: opts?.tenant ?? "",
+      namespace: opts?.namespace ?? "",
+      budget: opts?.budget ?? 32,
+      raise: opts?.raise,
+    });
   }
 
   // ── Retention & legal hold ────────────────────────────────────────────────────────────────────

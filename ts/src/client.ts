@@ -170,8 +170,9 @@ export class SeamClient {
     return this.coord.submitCommit({ sessionId, commitmentId, action, usage });
   }
 
-  /** Resume a Suspended session (the R9 approver action). `raise` raises any budget dimension;
-   * absent, `budget` raises the message count. */
+  /** @deprecated Resume moved to the **management** plane (rt-D): this data-plane RPC now returns
+   * `PERMISSION_DENIED` ("call SeamAdmin.ResumeSession"). Use {@link SeamAdminClient.resumeSession} (the R9
+   * approver action) with an operator token instead. Retained only so an old caller gets a clear error. */
   resumeSession(sessionId: string, opts?: { budget?: number; raise?: BudgetLimits }) {
     return this.coord.resumeSession({
       sessionId,

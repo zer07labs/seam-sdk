@@ -13,7 +13,14 @@ import time
 
 import pytest
 
-from seam_sdk import Agent, BudgetLimits, IssuerMismatchError, SeamClient, StepUsage
+from seam_sdk import (
+    Agent,
+    BudgetLimits,
+    IssuerMismatchError,
+    SeamAdminClient,
+    SeamClient,
+    StepUsage,
+)
 
 
 def _wait(port: int, timeout: float = 5.0):
@@ -126,13 +133,45 @@ def test_features_do_not_affect_the_record(server):
     assert rec_feat.classification == rec_plain.classification
 
 
-def test_budget_suspend_resume_loop(server):
+@pytest.fixture
+def dual_plane():
+    """Spawn seam-grpc with BOTH the data plane and the management plane (dev-open) — the budget-resume
+    loop needs both, since the R9 resume moved to the mgmt plane (rt-D). Yields (data_addr, mgmt_addr)."""
+    binary = os.environ.get("SEAM_GRPC_BIN")
+    if not binary:
+        pytest.skip("set SEAM_GRPC_BIN to run the live budget-resume loop")
+    data_port, mgmt_port = 8115, 8116
+    proc = subprocess.Popen(
+        [binary],
+        env={
+            **os.environ,
+            "SEAM_GRPC_LISTEN": f"127.0.0.1:{data_port}",
+            "SEAM_GRPC_MGMT_LISTEN": f"127.0.0.1:{mgmt_port}",
+            "SEAM_DEV_INSECURE": "1",
+        },
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        _wait(data_port)
+        _wait(mgmt_port)
+        yield f"127.0.0.1:{data_port}", f"127.0.0.1:{mgmt_port}"
+    finally:
+        proc.terminate()
+
+
+def test_budget_suspend_resume_loop(dual_plane):
     """The enterprise-6.2 loop: a hard budget breach suspends (an Ok step, not an error); the
-    dimension-raising resume un-suspends it and the session seals."""
-    client = SeamClient.connect(server)
+    dimension-raising resume un-suspends it and the session seals. Resume is the R9 approver action on the
+    **management** plane (rt-D: `SeamCoordination.ResumeSession` is now a tombstone)."""
+    data_addr, mgmt_addr = dual_plane
+    client = SeamClient.connect(data_addr)
+    admin = SeamAdminClient.connect(
+        mgmt_addr
+    )  # dev-open mgmt plane — no operator token needed
     agent = Agent(bytes([42] * 32))
 
-    # Open with a 1000-token allowance.
+    # Open with a 1000-token allowance (data plane).
     client.open_session(
         agent, "py-budget", ["lead", "peer"], limits=BudgetLimits(tokens=1000)
     )
@@ -144,9 +183,11 @@ def test_budget_suspend_resume_loop(server):
     step = client.submit_vote("py-budget", "peer", "p1", "APPROVE")
     assert step.state == "Suspended", step.state
 
-    # The R9 approver raises the token dimension and resumes.
-    client.resume_session("py-budget", raise_=BudgetLimits(tokens=5000))
-    # Re-submit (the breached vote was never applied): now within budget → continues.
+    # The R9 approver raises the token dimension and resumes — now via SeamAdmin (mgmt plane), named.
+    admin.resume_session(
+        "py-budget", approver="op:approver", raise_=BudgetLimits(tokens=5000)
+    )
+    # Re-submit (the breached vote was never applied): now within budget → continues (data plane).
     step = client.submit_vote("py-budget", "peer", "p1", "APPROVE")
     assert step.state != "Suspended", step.state
     # And the session seals.

@@ -213,6 +213,36 @@ class SeamAdminClient:
             pb.RegisterPartyRequest(party_id=party_id, pubkey=pubkey)
         )
 
+    # ── Session governance ───────────────────────────────────────────────────────────────────────
+
+    def resume_session(
+        self,
+        session_id: str,
+        approver: str,
+        *,
+        tenant: str = "",
+        namespace: str = "",
+        budget: int = 32,
+        raise_: Optional["_client.BudgetLimits"] = None,
+    ) -> pb.SessionStep:
+        """Resume a Suspended session — the R9 approver action, on the **management** plane (rt-D: this
+        moved off the data plane, where ``SeamCoordination.ResumeSession`` is now a tombstone). It requires
+        the ``session:resume`` operator scope. ``approver`` is a **required**, non-empty attribution for the
+        approval (an R9 approval must name who granted it). ``raise_`` raises any budget dimension; absent,
+        ``budget`` raises the message count. ``tenant``/``namespace`` scope the lookup — leave empty to
+        resolve the session by id alone."""
+        req = pb.AdminResumeRequest(
+            session_id=session_id,
+            approver=approver,
+            tenant=tenant,
+            namespace=namespace,
+            budget=budget,
+        )
+        if raise_ is not None:
+            # `raise` is a Python keyword, so the generated field is reached via getattr.
+            getattr(req, "raise").CopyFrom(raise_.to_pb())
+        return self._admin.ResumeSession(req)
+
     # ── Retention & legal hold ───────────────────────────────────────────────────────────────────
 
     def place_legal_hold(self, decision_id: str) -> None:
