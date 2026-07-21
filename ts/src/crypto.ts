@@ -149,3 +149,102 @@ export function verifyTct(
     return false;
   }
 }
+
+// ── A14 authenticity framing (seam-event.v1) ─────────────────────────────────────────────────────────
+// frame(x) = u32le(len) || x ; opt(x) = 0x00 if null else 0x01 || frame(x). Transcribed from
+// `seam-event.v1.md`. NOTE the u32 LITTLE-endian length prefix here — distinct from `lenPrefix` above
+// (8-byte big-endian, the commitment-digest framing). These let a client verify a chain-head attestation
+// or recompute a v2 record digest in-language, from the published spec alone.
+
+function frameLE(b: Uint8Array): Uint8Array {
+  const len = new Uint8Array(4);
+  new DataView(len.buffer).setUint32(0, b.length, true); // little-endian
+  return concat(len, b);
+}
+
+function optLE(s: string | null | undefined): Uint8Array {
+  if (s === null || s === undefined) return new Uint8Array([0]);
+  return concat(new Uint8Array([1]), frameLE(enc.encode(s)));
+}
+
+function u64le(n: number | bigint): Uint8Array {
+  const out = new Uint8Array(8);
+  new DataView(out.buffer).setBigUint64(0, BigInt(n), true);
+  return out;
+}
+function u32le(n: number): Uint8Array {
+  const out = new Uint8Array(4);
+  new DataView(out.buffer).setUint32(0, n, true);
+  return out;
+}
+
+/** Recompute a v2 `DECISION_SEALED` record digest (`seam.audit.record-digest.v2`) from its on-wire
+ * structural columns + `ciphertextDigest` (SHA256(ciphertext), tag 10) — compare to the wire `digest`
+ * (tag 19) to catch a payload rewrite (A14 design-a). Preimage order is NOT wire-tag order; the `opt`
+ * presence byte is raw, so `null` and `""` are distinct. */
+export function recordDigestV2(d: {
+  decisionId: string;
+  tenant: string;
+  namespace: string;
+  ciphertextDigest: Uint8Array;
+  sealedAt: number | bigint;
+  outcome: string;
+  mode: string | null;
+  policyVersion: string | null;
+  supersedes: string | null;
+  schemaVersion?: number;
+}): Uint8Array {
+  const pre = concat(
+    frameLE(enc.encode("seam.audit.record-digest.v2")),
+    frameLE(enc.encode(d.decisionId)),
+    frameLE(enc.encode(d.tenant)),
+    frameLE(enc.encode(d.namespace)),
+    frameLE(d.ciphertextDigest),
+    frameLE(u64le(d.sealedAt)),
+    frameLE(enc.encode(d.outcome)),
+    optLE(d.mode),
+    optLE(d.policyVersion),
+    optLE(d.supersedes),
+    frameLE(u32le(d.schemaVersion ?? 2)),
+  );
+  return sha256(pre);
+}
+
+function chainHeadAttestationDigest(a: {
+  attestedLen: number | bigint;
+  attestedHead: Uint8Array;
+  attestedAt: number | bigint;
+  digestSchema: number;
+  issuerAid: string;
+}): Uint8Array {
+  const pre = concat(
+    frameLE(enc.encode("seam.audit.chain-head-attestation.v1")),
+    frameLE(u64le(a.attestedLen)),
+    frameLE(a.attestedHead),
+    frameLE(u64le(a.attestedAt)),
+    frameLE(u32le(a.digestSchema)),
+    frameLE(enc.encode(a.issuerAid)),
+  );
+  return sha256(pre);
+}
+
+/** Verify a chain-head attestation's Ed25519 signature against the PINNED issuer AID (A14). `true` iff the
+ * signature checks out over the recomputed digest; `false` on any tamper. The key comes from `issuerAid`
+ * (pinned out of band), never from the attestation itself. */
+export function verifyChainHeadAttestation(
+  issuerAid: string,
+  a: {
+    attestedLen: number | bigint;
+    attestedHead: Uint8Array;
+    attestedAt: number | bigint;
+    digestSchema: number;
+    signature: Uint8Array;
+  },
+): boolean {
+  try {
+    const digest = chainHeadAttestationDigest({ ...a, issuerAid });
+    return ed25519.verify(a.signature, digest, aidToPubkey(issuerAid), { zip215: false });
+  } catch {
+    return false;
+  }
+}
