@@ -130,7 +130,9 @@ def test_management_operator_token_auth():
     malformed, or tampered token is refused; a valid one passes. Designed to hold against BOTH pre- and
     post-#175 runtimes — the operator-token path is already live, and an operator-keys-only plane closes the
     old fallback."""
-    from tests.operator_token import (
+    # Sibling module (pytest prepends the test dir to sys.path) — NOT `tests.operator_token`, which only
+    # resolves under `python -m pytest` (cwd on path), not the CI's bare `pytest`.
+    from operator_token import (
         REGISTRY_SNAPSHOT_PATH,
         mint_operator_token,
         tamper_signature,
