@@ -105,9 +105,10 @@ fn fabricated_chain_passes_integrity_but_is_refused_under_issuer() {
 #[test]
 fn an_authentic_attestation_spliced_onto_another_chain_is_refused() {
     // Take the genuine attestation event (a valid issuer signature over the REAL chain's head at len 3)
-    // and relink it onto the fabricated 2-link chain so integrity passes. Its signature still verifies —
-    // but it attests len 3, a position the fabricated chain never reaches (and whose head differs), so the
-    // head-at-position check refuses it. This is the sharpest case: a valid signature is not enough.
+    // and relink it as the 3rd link of the fabricated 2-link chain, so integrity passes. Its signature
+    // still verifies — but it attests the REAL chain's head at len 3, while this chain's head at len 3 (the
+    // relinked attestation's own checksum) differs, so the head-at-position check refuses it on the
+    // head-MISMATCH branch. The sharpest case: a valid issuer signature is not enough.
     let attested: Vec<String> = golden("attested_chain.jsonl")
         .lines()
         .map(String::from)
@@ -160,9 +161,11 @@ fn an_authentic_attestation_spliced_onto_another_chain_is_refused() {
         code, FAILED,
         "a spliced authentic attestation must be refused:\n{out}"
     );
+    // Specifically the head-MISMATCH branch: the attestation is itself the 3rd link, so len 3 IS reached —
+    // the head there just differs from what the authentic signature attests.
     assert!(
-        out.contains("cannot be covering this chain") || out.contains("SPLICED"),
-        "the refusal must name the position/splice failure:\n{out}"
+        out.contains("SPLICED"),
+        "the refusal must be the head-at-position splice failure, not out-of-range:\n{out}"
     );
 }
 
