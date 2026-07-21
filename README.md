@@ -62,7 +62,7 @@ and probes the emitted stubs:
   and a **hard gate under `STREAM=1`** (the mode for live-event decoding). These reach the BSR only after
   the runtime's proto-mirror push; `generate-local` carries them today.
 
-> **BSR state (probed 2026-07-21, `buf build buf.build/zer07labs/seam`):** carries `VerifyPartyAttestation`
+> **BSR state (probed 2026-07-21, `buf build buf.build/zer07labs/seam -o /tmp/x.binpb && strings /tmp/x.binpb | grep -E 'VerifyPartyAttestation|session_lifecycle'`):** carries `VerifyPartyAttestation`
 > (A4 is live on the BSR), but **not yet** the four streamed-payload mirror fields — those are pending the
 > runtime proto-mirror's main-merge push. Until then, `make generate-local RUNTIME=../seam-runtime` is the
 > baseline for any streamed-event work.

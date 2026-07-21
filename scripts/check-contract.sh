@@ -88,7 +88,7 @@ for spec in \
   "SeamEvent.session_lifecycle (tag 21)|session_lifecycle|sessionLifecycle" \
   "SeamEvent.chain_head_attestation (tag 22)|chain_head_attestation|chainHeadAttestation" \
   "DecisionSealed.ciphertext_digest (tag 10)|ciphertext_digest|ciphertextDigest" \
-  "AuditEntryEvent.actor (tag 4)|actor" ; do
+  "AuditEntryEvent.actor (tag 4)|\\bactor\\b" ; do
   label="${spec%%|*}"; rest="${spec#*|}"
   # split the remaining |-separated patterns
   IFS='|' read -r -a pats <<< "$rest"
