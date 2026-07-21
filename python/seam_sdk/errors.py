@@ -66,7 +66,7 @@ class PermissionDeniedError(SeamRpcError):
 
 
 class UnauthenticatedError(SeamRpcError):
-    """`UNAUTHENTICATED` — a missing/invalid management bearer token."""
+    """`UNAUTHENTICATED` — a missing or invalid management operator token."""
 
 
 class NotFoundError(SeamRpcError):

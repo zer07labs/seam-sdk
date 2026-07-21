@@ -37,20 +37,22 @@ def _wait(port: int, timeout: float = 8.0):
     raise RuntimeError(f"server never came up on {port}")
 
 
-def _spawn(data_port: int, mgmt_port: int, token: str | None = None):
+def _spawn(data_port: int, mgmt_port: int, registry_snapshot: str | None = None):
     binary = os.environ.get("SEAM_GRPC_BIN")
     if not binary:
         pytest.skip("set SEAM_GRPC_BIN to run the live management-plane test")
     env = {
         **os.environ,
         "SEAM_GRPC_LISTEN": f"127.0.0.1:{data_port}",
-        # The mgmt plane only binds when this is set; SEAM_DEV_INSECURE lets it bind unauthenticated
-        # (unless SEAM_MGMT_TOKEN is also given, which then requires a bearer token on every call).
+        # The mgmt plane binds when this is set; SEAM_DEV_INSECURE lets it bind dev-open. Installing an
+        # `operator_keys` trust root via SEAM_REGISTRY_SNAPSHOT instead CLOSES the plane: every request must
+        # then carry a valid compact-JWS operator token (the shared SEAM_MGMT_TOKEN bearer was removed in
+        # seam-runtime #175). This path is live on both pre- and post-#175 runtimes.
         "SEAM_GRPC_MGMT_LISTEN": f"127.0.0.1:{mgmt_port}",
         "SEAM_DEV_INSECURE": "1",
     }
-    if token:
-        env["SEAM_MGMT_TOKEN"] = token
+    if registry_snapshot:
+        env["SEAM_REGISTRY_SNAPSHOT"] = registry_snapshot
     proc = subprocess.Popen(
         [binary], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
@@ -122,11 +124,27 @@ def test_erase_subject_confirmed_convenience():
         proc.terminate()
 
 
-def test_management_bearer_auth():
-    token = "s3cr3t-operator-token"
-    proc = _spawn(8103, 8104, token=token)
+def test_management_operator_token_auth():
+    """The management plane authenticates compact-JWS operator tokens against the installed `operator_keys`
+    root (rt-D / CP-18d; the shared `SEAM_MGMT_TOKEN` bearer was removed in seam-runtime #175). A missing,
+    malformed, or tampered token is refused; a valid one passes. Designed to hold against BOTH pre- and
+    post-#175 runtimes — the operator-token path is already live, and an operator-keys-only plane closes the
+    old fallback."""
+    # Sibling module (pytest prepends the test dir to sys.path) — NOT `tests.operator_token`, which only
+    # resolves under `python -m pytest` (cwd on path), not the CI's bare `pytest`.
+    from operator_token import (
+        REGISTRY_SNAPSHOT_PATH,
+        mint_operator_token,
+        tamper_signature,
+    )
+
+    proc = _spawn(8103, 8104, registry_snapshot=REGISTRY_SNAPSHOT_PATH)
     try:
-        subject, _ = _seal_one("127.0.0.1:8103")
+        # preview_erasure requires the `erasure:preview` scope (non-destructive → no jti needed).
+        token = mint_operator_token(["erasure:preview"])
+        subject = (
+            "aid:pubkey:ed25519:zzz"  # any subject — this pins AUTH, not the erase flow
+        )
 
         # No token → UNAUTHENTICATED, surfaced as the typed UnauthenticatedError (still exposing .code()).
         anon = SeamAdminClient.connect("127.0.0.1:8104")
@@ -134,12 +152,20 @@ def test_management_bearer_auth():
             anon.preview_erasure(TENANT, subject)
         assert ei.value.code() == grpc.StatusCode.UNAUTHENTICATED
 
-        # Wrong token → UNAUTHENTICATED.
+        # A non-JWS bearer → UNAUTHENTICATED (the operator-keys-only plane refuses the old shared-bearer shape).
         wrong = SeamAdminClient.connect("127.0.0.1:8104", token="nope")
         with pytest.raises(UnauthenticatedError):
             wrong.preview_erasure(TENANT, subject)
 
-        # Right token → succeeds.
+        # A JWS-shaped token with a corrupted signature → UNAUTHENTICATED (a hard verification failure, never
+        # a downgrade to an accepted request).
+        tampered = SeamAdminClient.connect(
+            "127.0.0.1:8104", token=tamper_signature(token)
+        )
+        with pytest.raises(UnauthenticatedError):
+            tampered.preview_erasure(TENANT, subject)
+
+        # A valid operator token → succeeds.
         ok = SeamAdminClient.connect("127.0.0.1:8104", token=token)
         preview = ok.preview_erasure(TENANT, subject)
         assert isinstance(list(preview.would_erase), list)
