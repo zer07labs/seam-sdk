@@ -3,9 +3,35 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { connect as tcpConnect } from "node:net";
 import { Agent, IssuerMismatchError, SeamClient } from "../src/client.js";
+import { SeamAdminClient } from "../src/admin.js";
 
 const BIN = process.env.SEAM_GRPC_BIN;
 const SKIP = !BIN && !process.env.SEAM_GRPC_ADDR;
+
+/** Boot seam-grpc with BOTH planes (dev-open) on distinct ports; run `fn`, then tear down. Needs
+ * SEAM_GRPC_BIN (a spawned binary) — used by the budget-resume loop, whose R9 resume is on the mgmt plane. */
+async function withPlanes(
+  dataPort: number,
+  mgmtPort: number,
+  fn: (dataAddr: string, mgmtUrl: string) => Promise<void>,
+): Promise<void> {
+  const proc = spawn(BIN!, {
+    env: {
+      ...process.env,
+      SEAM_GRPC_LISTEN: `127.0.0.1:${dataPort}`,
+      SEAM_GRPC_MGMT_LISTEN: `127.0.0.1:${mgmtPort}`,
+      SEAM_DEV_INSECURE: "1",
+    },
+    stdio: "ignore",
+  });
+  try {
+    await waitPort(dataPort);
+    await waitPort(mgmtPort);
+    await fn(`127.0.0.1:${dataPort}`, `http://127.0.0.1:${mgmtPort}`);
+  } finally {
+    proc.kill();
+  }
+}
 
 function waitPort(port: number, timeoutMs = 5000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -92,9 +118,12 @@ test("session lifecycle: open → propose → vote → commit seals", { skip: SK
   });
 });
 
-test("6.2 budget loop: hard breach suspends, raising resume continues and seals", { skip: SKIP }, async () => {
-  await withServer(8096, async (addr) => {
-    const client = SeamClient.connect(`http://${addr}`);
+test("6.2 budget loop: hard breach suspends, mgmt-plane resume continues and seals", { skip: !BIN }, async () => {
+  // Resume moved to the management plane (rt-D: SeamCoordination.ResumeSession is now a tombstone), so
+  // this needs both planes; the dev-open mgmt plane accepts the R9 resume without an operator token.
+  await withPlanes(8217, 8218, async (dataAddr, mgmtUrl) => {
+    const client = SeamClient.connect(`http://${dataAddr}`);
+    const admin = SeamAdminClient.connect(mgmtUrl);
     await client.openSession(demoAgent(), {
       sessionId: "ts-budget",
       participants: ["lead", "peer"],
@@ -105,8 +134,8 @@ test("6.2 budget loop: hard breach suspends, raising resume continues and seals"
     // The next step breaches the hard token limit: Suspended (a resolved step, not a thrown error).
     let step = await client.submitVote("ts-budget", "peer", "p1", "APPROVE");
     assert.equal(step.state, "Suspended");
-    // The R9 approver raises the token dimension and resumes.
-    await client.resumeSession("ts-budget", { raise: { tokens: 5000n } });
+    // The R9 approver raises the token dimension and resumes — now via SeamAdmin (mgmt plane), named.
+    await admin.resumeSession("ts-budget", "op:approver", { raise: { tokens: 5000n } });
     // Re-submit (the breached vote was never applied): now within budget → continues, then seals.
     step = await client.submitVote("ts-budget", "peer", "p1", "APPROVE");
     assert.notEqual(step.state, "Suspended");

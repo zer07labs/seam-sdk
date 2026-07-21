@@ -245,8 +245,10 @@ class SeamClient:
         budget: int = 32,
         raise_: Optional[BudgetLimits] = None,
     ) -> pb.SessionStep:
-        """Resume a Suspended session (the R9 approver action). ``raise_`` raises any budget
-        dimension; absent, ``budget`` raises the message count."""
+        """**Deprecated / tombstone.** Resume moved to the **management** plane (rt-D): this data-plane RPC
+        now returns ``PERMISSION_DENIED`` ("call SeamAdmin.ResumeSession"). Use
+        :meth:`SeamAdminClient.resume_session` (the R9 approver action) with an operator token instead.
+        Retained only so an old caller gets a clear, typed error rather than a missing attribute."""
         req = pb.ResumeRequest(session_id=session_id, budget=budget)
         if raise_ is not None:
             # `raise` is a Python keyword, so the generated field is reached via getattr.
