@@ -24,6 +24,55 @@ import {
   type SeamEvent,
 } from "../gen/seam/api/v1/seam_pb.js";
 import { errorMappingInterceptor, toSeamError } from "./errors.js";
+import { recordDigestV2 } from "./crypto.js";
+
+/** The `seam-event.v1` kinds the SDK knows about. A consumer MAY branch on these, but MUST still tolerate
+ * an unknown kind — the wire is a tolerant reader (new kinds are additive): pass anything not in this set
+ * through opaque, never erroring on it. */
+export const KNOWN_KINDS: ReadonlySet<string> = new Set([
+  "DECISION_SEALED",
+  "LEARNING_DECISION",
+  "LEARNING_OUTCOME",
+  "AUDIT_ENTRY",
+  "BUDGET_BREACH",
+  "ERASURE_CERTIFICATE",
+  "SESSION_LIFECYCLE",
+  "CHAIN_HEAD_ATTESTATION",
+]);
+
+/** Recompute a streamed v2 `DECISION_SEALED`'s record digest from its payload (+ `ciphertextDigest`, tag
+ * 10) and compare it to the wire `digest` (tag 19) — live authenticity for a single record, the in-client
+ * counterpart of `seam-verify chain --issuer`'s design-a. Returns `true` iff they match; `false` for a
+ * rewritten payload or a v2 record stripped of its `ciphertextDigest`. Throws for anything not
+ * stream-recomputable (a non-`DECISION_SEALED` event, a v1 record, or an event with no wire digest).
+ * `mode`/`policyVersion`/`supersedes` map `undefined` → `null` so absent and `""` stay distinct. */
+export function verifyStreamedRecordDigest(event: SeamEvent): boolean {
+  if (event.kind !== "DECISION_SEALED") {
+    throw new Error(`not a DECISION_SEALED event: ${event.kind}`);
+  }
+  const p = event.payload;
+  if (!p) throw new Error("DECISION_SEALED event has no payload");
+  if (p.schemaVersion < 2) {
+    throw new Error(`v${p.schemaVersion} record is not stream-recomputable (only v2+)`);
+  }
+  if (!event.digest) throw new Error("event carries no wire digest to compare against");
+  if (p.ciphertextDigest.length === 0) return false; // a v2 record with no ciphertext_digest is a strip
+  const recomputed = recordDigestV2({
+    decisionId: p.decisionId,
+    tenant: p.tenant,
+    namespace: p.namespace,
+    ciphertextDigest: p.ciphertextDigest,
+    sealedAt: p.sealedAt,
+    outcome: p.outcome,
+    mode: p.mode ?? null,
+    policyVersion: p.policyVersion ?? null,
+    supersedes: p.supersedes ?? null,
+    schemaVersion: p.schemaVersion,
+  });
+  const wire = event.digest;
+  if (recomputed.length !== wire.length) return false;
+  return recomputed.every((b, i) => b === wire[i]);
+}
 
 /** A Connect interceptor that attaches `authorization: Bearer <token>` to every request. */
 function bearerAuth(token: string): Interceptor {
