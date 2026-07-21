@@ -43,3 +43,17 @@ Each is the strongest option given what the code showed; none is a one-way door.
 - **Blast radius if wrong:** low — a test-only fixture. If the runtime regenerates the KAT, the pinned
   constants must be refreshed (a deliberate, reviewable update, flagged by the test going red).
 - **Status:** UNCONFIRMED
+
+## The verify/ authenticity goldens are pinned to a runtime commit
+- **Assumed:** the independent verifier must be tested against the SAME golden streams the runtime tests
+  its own verifier with, or "the two verifiers agree" (Phase 5) is unprovable — but the goldens are
+  generated in the runtime and can be regenerated (`REGEN_GOLDENS=1`).
+- **Chose:** copy the runtime goldens verbatim into `verify/tests/goldens/` and pin the source commit in the
+  test-module doc (seam-runtime @ fd633c9). A runtime golden regen becomes a deliberate, reviewable SDK
+  update (the copied fixture drifts → a test fails), never a silent divergence. Phase 3 copies only the two
+  it uses (attested, fabricated); Phase 4 adds `payload_rewrite`.
+- **Alternatives:** read the goldens from a sibling runtime checkout at test time — a fragile path that
+  differs local vs CI, and couples the SDK's green build to a runtime checkout being present.
+- **Blast radius if wrong:** low — test fixtures. A drift is caught by a failing test, and the fix is a
+  re-copy from the named commit.
+- **Status:** UNCONFIRMED

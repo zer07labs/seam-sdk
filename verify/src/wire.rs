@@ -41,6 +41,27 @@ pub struct SeamEventPb {
     /// tag 20 — the head this entry produces, `= H(prev_checksum ‖ digest)`.
     #[prost(bytes = "vec", optional, tag = "20")]
     pub checksum: Option<Vec<u8>>,
+    /// tag 22 — the issuer-signed `(len, head)` (A14). Present on a `CHAIN_HEAD_ATTESTATION`, which is
+    /// itself chained (it carries digest/checksum like any link) AND additionally verified under `--issuer`.
+    #[prost(message, optional, tag = "22")]
+    pub chain_head_attestation: Option<ChainHeadAttestationPb>,
+}
+
+/// The `CHAIN_HEAD_ATTESTATION` payload (tag 22), transcribed from `seam-event.v1.md` §CHAIN_HEAD_ATTESTATION.
+#[derive(Clone, PartialEq, Message)]
+pub struct ChainHeadAttestationPb {
+    #[prost(uint64, tag = "1")]
+    pub attested_len: u64,
+    #[prost(bytes = "vec", tag = "2")]
+    pub attested_head: Vec<u8>,
+    #[prost(uint64, tag = "3")]
+    pub attested_at: u64,
+    #[prost(string, tag = "4")]
+    pub issuer_aid: String,
+    #[prost(uint32, tag = "5")]
+    pub digest_schema: u32,
+    #[prost(bytes = "vec", tag = "6")]
+    pub signature: Vec<u8>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -98,6 +119,18 @@ pub struct SeamEventJson {
     pub audit_entry: Option<AuditEntryJson>,
     #[serde(default)]
     pub erasure_certificate: Option<ErasureCertificateJson>,
+    #[serde(default)]
+    pub chain_head_attestation: Option<ChainHeadAttestationJson>,
+}
+
+#[derive(Deserialize)]
+pub struct ChainHeadAttestationJson {
+    pub attested_len: u64,
+    pub attested_head: String,
+    pub attested_at: u64,
+    pub issuer_aid: String,
+    pub digest_schema: u32,
+    pub signature: String,
 }
 
 #[derive(Deserialize)]
@@ -128,6 +161,8 @@ pub struct Event {
     pub checksum: Option<Vec<u8>>,
     pub audit_action: Option<String>,
     pub cert: Option<Cert>,
+    /// The `CHAIN_HEAD_ATTESTATION` payload, when this event is one. `None` otherwise.
+    pub attestation: Option<Attestation>,
     /// The canonical bytes this event decoded from (or re-encodes to) — the dedup identity.
     pub bytes: Vec<u8>,
 }
@@ -140,6 +175,16 @@ pub struct Cert {
     pub erased_at: u64,
     pub chain_head: Vec<u8>,
     pub issuer_aid: String,
+    pub signature: Vec<u8>,
+}
+
+#[derive(Clone)]
+pub struct Attestation {
+    pub attested_len: u64,
+    pub attested_head: Vec<u8>,
+    pub attested_at: u64,
+    pub issuer_aid: String,
+    pub digest_schema: u32,
     pub signature: Vec<u8>,
 }
 
@@ -176,6 +221,18 @@ impl Event {
                     signature: b64(&c.signature)?,
                 })
             });
+            let attestation = j
+                .chain_head_attestation
+                .map(|a| -> Result<Attestation, String> {
+                    Ok(Attestation {
+                        attested_len: a.attested_len,
+                        attested_head: b64(&a.attested_head)?,
+                        attested_at: a.attested_at,
+                        issuer_aid: a.issuer_aid,
+                        digest_schema: a.digest_schema,
+                        signature: b64(&a.signature)?,
+                    })
+                });
             let ev = Event {
                 event_id: j.event_id,
                 seq: j.seq,
@@ -186,6 +243,7 @@ impl Event {
                 checksum: j.checksum.as_deref().map(b64).transpose()?,
                 audit_action: j.audit_entry.map(|a| a.action),
                 cert: cert.transpose()?,
+                attestation: attestation.transpose()?,
                 bytes: Vec::new(),
             };
             return Ok(ev.with_identity());
@@ -223,6 +281,14 @@ impl Event {
                 issuer_aid: c.issuer_aid,
                 signature: c.signature,
             }),
+            attestation: pb.chain_head_attestation.map(|a| Attestation {
+                attested_len: a.attested_len,
+                attested_head: a.attested_head,
+                attested_at: a.attested_at,
+                issuer_aid: a.issuer_aid,
+                digest_schema: a.digest_schema,
+                signature: a.signature,
+            }),
             bytes: raw,
         }
         .with_identity())
@@ -258,6 +324,14 @@ impl Event {
             }),
             digest: self.digest.clone(),
             checksum: self.checksum.clone(),
+            chain_head_attestation: self.attestation.as_ref().map(|a| ChainHeadAttestationPb {
+                attested_len: a.attested_len,
+                attested_head: a.attested_head.clone(),
+                attested_at: a.attested_at,
+                issuer_aid: a.issuer_aid.clone(),
+                digest_schema: a.digest_schema,
+                signature: a.signature.clone(),
+            }),
         };
         self.bytes = pb.encode_to_vec();
         self

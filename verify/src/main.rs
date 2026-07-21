@@ -6,6 +6,7 @@
 //!
 //! ```text
 //! seam-verify chain <FILE> [--strict]              # the seam-event.v1 hash chain, from the stream alone
+//! seam-verify chain <FILE> --issuer <AID>          # + AUTHENTICITY: every issuer-signed head verifies
 //! seam-verify erasure-cert <FILE> --issuer <AID>   # a GDPR erasure certificate, from the issuer AID alone
 //! ```
 //!
@@ -29,7 +30,7 @@ fn usage() -> ! {
         "seam-verify — check Seam's audit chain and erasure certificates without trusting Seam\n\
          \n\
          USAGE:\n    \
-             seam-verify chain <FILE> [--strict] [--json]\n    \
+             seam-verify chain <FILE> [--strict] [--issuer <AID>] [--json]\n    \
              seam-verify erasure-cert <FILE> --issuer <AID> [--json]\n\
          \n\
          chain <FILE>\n    \
@@ -44,6 +45,12 @@ fn usage() -> ! {
                        Events written before Seam added those fields look exactly like advisory ones\n              \
                        here: by default they are SKIPPED and counted, and a green result would then be\n              \
                        a claim about history that was never actually checked.\n\
+         \n    \
+             --issuer <AID>  Upgrade integrity to AUTHENTICITY. Every CHAIN_HEAD_ATTESTATION must verify\n                      \
+                       against this PINNED issuer key AND sit at the head it attests, and at least one must\n                      \
+                       be present — a plain SHA-256 chain over a public genesis can be rebuilt by a\n                      \
+                       transport-controlling forger, but an issuer-signed head cannot be minted without\n                      \
+                       the key. A stream with no attestation is REFUSED, not passed.\n\
          \n\
          erasure-cert <FILE> --issuer <AID>\n    \
              Verify a signed GDPR erasure certificate against the issuer AID and NOTHING else. Get the\n    \
@@ -87,7 +94,7 @@ fn fail(msg: &str, json: bool, banner: &str) -> ExitCode {
     ExitCode::from(FAILED)
 }
 
-fn cmd_chain(path: &str, strict: bool, json: bool) -> ExitCode {
+fn cmd_chain(path: &str, strict: bool, json: bool, issuer: Option<&str>) -> ExitCode {
     let lines = match read_lines(path) {
         Ok(l) => l,
         Err(e) => {
@@ -134,22 +141,51 @@ fn cmd_chain(path: &str, strict: bool, json: bool) -> ExitCode {
                 );
                 return fail(&msg, json, "REFUSED (--strict)");
             }
+            // --issuer upgrades integrity → AUTHENTICITY: every chain-head attestation must verify against
+            // the pinned key AND sit at the head it attests, and at least one must be present. Integrity
+            // has already passed (the head sequence in `r.heads` is trustworthy to check positions against).
+            let issuer_report = match issuer {
+                None => None,
+                Some(aid) => match verify::verify_attestations(&events, &r.heads, aid) {
+                    Ok(ir) => Some(ir),
+                    Err(e) => return fail(&e, json, "AUTHENTICITY VERIFICATION FAILED"),
+                },
+            };
             if json {
+                let authenticity = match &issuer_report {
+                    Some(ir) => format!(
+                        ",\"authenticated\":true,\"attestations\":{},\"covered_prefix\":{}",
+                        ir.attestations, ir.covered_prefix
+                    ),
+                    None => String::new(),
+                };
                 println!(
                     "{{\"verified\":true,\"events\":{},\"links\":{},\"advisory\":{},\"duplicates\":{},\
-                     \"unverifiable\":{},\"head\":\"{}\"}}",
+                     \"unverifiable\":{},\"head\":\"{}\"{}}}",
                     r.events,
                     r.links,
                     r.advisory,
                     r.duplicates,
                     r.unverifiable.len(),
-                    verify::hex(&r.head)
+                    verify::hex(&r.head),
+                    authenticity,
                 );
             } else {
-                println!("CHAIN VERIFIED");
+                println!(
+                    "{}",
+                    if issuer_report.is_some() {
+                        "CHAIN AUTHENTICATED (integrity + issuer-signed head)"
+                    } else {
+                        "CHAIN VERIFIED"
+                    }
+                );
                 println!("  events            : {}", r.events);
                 println!("  links checked     : {}", r.links);
                 println!("  advisory (skipped): {}", r.advisory);
+                if let Some(ir) = &issuer_report {
+                    println!("  attestations      : {} (issuer-signed)", ir.attestations);
+                    println!("  covered prefix    : {} links", ir.covered_prefix);
+                }
                 if r.duplicates > 0 {
                     println!(
                         "  duplicates        : {} (at-least-once retries)",
@@ -286,7 +322,7 @@ fn main() -> ExitCode {
 
     match cmd {
         "chain" => match positional {
-            Some(p) => cmd_chain(&p, strict, json),
+            Some(p) => cmd_chain(&p, strict, json, issuer.as_deref()),
             None => {
                 eprintln!("seam-verify: chain requires a FILE (or '-')");
                 usage();
