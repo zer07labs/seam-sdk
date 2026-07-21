@@ -133,8 +133,10 @@ record — a decision seals identically with or without features (mirrors the Ru
 ## Management plane — GDPR erasure & governance (`SeamAdminClient`)
 
 The governance surface (`SeamAdmin`) is served on a **separate management listener**
-(`SEAM_GRPC_MGMT_LISTEN`), never the data plane, and is gated by a bearer token (`SEAM_MGMT_TOKEN`). The Py +
-TS SDKs expose it as a **distinct `SeamAdminClient`** you point at the management endpoint:
+(`SEAM_GRPC_MGMT_LISTEN`), never the data plane, and is gated by an **operator token** — a compact-JWS
+credential the control plane mints against the runtime's `operator_keys` trust root, enforcing a per-verb
+scope (the deprecated shared `SEAM_MGMT_TOKEN` bearer was removed in seam-runtime #175). The Py + TS SDKs
+expose it as a **distinct `SeamAdminClient`** you point at the management endpoint:
 
 ```python
 admin = SeamAdminClient.connect("mgmt.host:8443", token="…")   # omit token only against a dev server
@@ -178,7 +180,7 @@ sealed record).
   subclass, or keep catching the raw transport error — both work.
 - **TLS.** Both clients are plaintext by default (the dev/loopback path). Python: pass
   `credentials=grpc.ssl_channel_credentials()` to `connect(...)`. TypeScript: use an `https://` base URL.
-  Prefer TLS whenever a real management bearer token is in play, so it isn't sent over cleartext.
+  Prefer TLS whenever a real operator token is in play, so it isn't sent over cleartext.
 
 ## Status
 

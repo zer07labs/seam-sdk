@@ -1,0 +1,101 @@
+{
+  "snapshot_id": "snap-operator-keys-1",
+  "generated_at": 1751600000000,
+  "tenant": "design-partner",
+  "capability_registry": {
+    "manifests": [
+      {
+        "agent_id": "lead",
+        "version": "1.0.0",
+        "protocol": "macp",
+        "supported_modes": [
+          "macp.mode.decision.v1"
+        ],
+        "max_scope": {
+          "tools": [
+            "search"
+          ],
+          "actions": [
+            "ALLOW"
+          ],
+          "mode_cap": [
+            "macp.mode.decision.v1"
+          ]
+        },
+        "compat": {
+          "min": 1,
+          "max": 2
+        }
+      }
+    ],
+    "pins": []
+  },
+  "namespaces": [
+    {
+      "namespace_id": "fraud",
+      "active_policy": "pol-A",
+      "policy_candidates": [
+        "pol-B",
+        "pol-C"
+      ],
+      "quota": {
+        "max_messages": 500,
+        "max_tokens": 100000,
+        "max_cost_micros": 250000,
+        "max_wall_ms": 900000,
+        "max_live_sessions": 0,
+        "open_rate_limit": 100,
+        "open_rate_window_secs": 60
+      }
+    },
+    {
+      "namespace_id": "billing",
+      "active_policy": "pol-D",
+      "policy_candidates": []
+    }
+  ],
+  "retention_schedule": {
+    "default": {
+      "full_days": 365,
+      "sealed_digest_days": 90,
+      "commitment_only_days": 30
+    },
+    "rules": [
+      {
+        "namespace": "fraud",
+        "classification": "Pii",
+        "policy": {
+          "full_days": 30,
+          "sealed_digest_days": 30,
+          "commitment_only_days": 30
+        }
+      }
+    ]
+  },
+  "handling_policies": [
+    {
+      "namespace": "fraud",
+      "rules": [
+        {
+          "label": "Internal",
+          "store_fidelity": "Digest",
+          "min_classification_to_decrypt": "Confidential",
+          "retention_class": "SealedDigest",
+          "egress_redaction": "none",
+          "worm": true,
+          "default_legal_hold": false
+        }
+      ]
+    }
+  ],
+  "operator_keys": [
+    {
+      "alg": "ed25519",
+      "public_key_hex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+    },
+    {
+      "alg": "ed25519",
+      "public_key_hex": "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025"
+    }
+  ]
+}

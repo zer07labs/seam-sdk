@@ -13,6 +13,11 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import { Agent, SeamClient } from "../src/client.js";
 import { SeamAdminClient } from "../src/admin.js";
 import { SeamRpcError, UnauthenticatedError } from "../src/errors.js";
+import {
+  REGISTRY_SNAPSHOT_PATH,
+  mintOperatorToken,
+  tamperSignature,
+} from "./operator_token.js";
 
 const BIN = process.env.SEAM_GRPC_BIN;
 const SKIP = !BIN;
@@ -30,11 +35,14 @@ function waitPort(port: number, timeoutMs = 8000): Promise<void> {
   });
 }
 
-/** Boot seam-grpc with both planes on distinct ports; run `fn`, then tear down. */
+/** Boot seam-grpc with both planes on distinct ports; run `fn`, then tear down. Passing a
+ * `registrySnapshot` installs an `operator_keys` trust root, which CLOSES the mgmt plane onto compact-JWS
+ * operator tokens (the shared SEAM_MGMT_TOKEN bearer was removed in seam-runtime #175); omit it for the
+ * dev-open flow. This path is live on both pre- and post-#175 runtimes. */
 async function withPlanes(
   dataPort: number,
   mgmtPort: number,
-  token: string | undefined,
+  registrySnapshot: string | undefined,
   fn: (dataAddr: string, mgmtUrl: string) => Promise<void>,
 ): Promise<void> {
   const env: NodeJS.ProcessEnv = {
@@ -43,7 +51,7 @@ async function withPlanes(
     SEAM_GRPC_MGMT_LISTEN: `127.0.0.1:${mgmtPort}`,
     SEAM_DEV_INSECURE: "1",
   };
-  if (token) env.SEAM_MGMT_TOKEN = token;
+  if (registrySnapshot) env.SEAM_REGISTRY_SNAPSHOT = registrySnapshot;
   const proc = spawn(BIN!, { env, stdio: "ignore" });
   try {
     await waitPort(dataPort);
@@ -103,24 +111,44 @@ test("eraseSubjectConfirmed convenience path", { skip: SKIP }, async () => {
   });
 });
 
-test("management bearer auth: missing/wrong → UNAUTHENTICATED, right → ok", { skip: SKIP }, async () => {
-  const token = "s3cr3t-operator-token";
-  await withPlanes(8203, 8204, token, async (dataAddr, mgmtUrl) => {
-    const { subject } = await sealOne(dataAddr);
+test(
+  "management operator-token auth: missing/wrong/tampered → UNAUTHENTICATED, valid → ok",
+  { skip: SKIP },
+  async () => {
+    // The management plane authenticates compact-JWS operator tokens against the installed operator_keys
+    // root (rt-D / CP-18d; the shared SEAM_MGMT_TOKEN bearer was removed in seam-runtime #175). Holds
+    // against BOTH pre- and post-#175 runtimes — the operator-token path is already live.
+    await withPlanes(8203, 8204, REGISTRY_SNAPSHOT_PATH, async (_dataAddr, mgmtUrl) => {
+      // previewErasure requires the erasure:preview scope (non-destructive → no jti needed).
+      const token = mintOperatorToken(["erasure:preview"]);
+      const subject = "aid:pubkey:ed25519:zzz"; // any subject — this pins AUTH, not the erase flow
 
-    const anon = SeamAdminClient.connect(mgmtUrl);
-    await assert.rejects(anon.previewErasure(TENANT, subject), (e: unknown) =>
-      e instanceof UnauthenticatedError && e.code === Code.Unauthenticated);
+      const anon = SeamAdminClient.connect(mgmtUrl);
+      await assert.rejects(
+        anon.previewErasure(TENANT, subject),
+        (e: unknown) => e instanceof UnauthenticatedError && e.code === Code.Unauthenticated,
+      );
 
-    const wrong = SeamAdminClient.connect(mgmtUrl, { token: "nope" });
-    await assert.rejects(wrong.previewErasure(TENANT, subject), (e: unknown) =>
-      e instanceof UnauthenticatedError);
+      // A non-JWS bearer → the operator-keys-only plane refuses the old shared-bearer shape.
+      const wrong = SeamAdminClient.connect(mgmtUrl, { token: "nope" });
+      await assert.rejects(
+        wrong.previewErasure(TENANT, subject),
+        (e: unknown) => e instanceof UnauthenticatedError,
+      );
 
-    const ok = SeamAdminClient.connect(mgmtUrl, { token });
-    const preview = await ok.previewErasure(TENANT, subject);
-    assert.ok(Array.isArray(preview.wouldErase));
-  });
-});
+      // A JWS-shaped token with a corrupted signature → a hard verification failure, never a downgrade.
+      const tampered = SeamAdminClient.connect(mgmtUrl, { token: tamperSignature(token) });
+      await assert.rejects(
+        tampered.previewErasure(TENANT, subject),
+        (e: unknown) => e instanceof UnauthenticatedError,
+      );
+
+      const ok = SeamAdminClient.connect(mgmtUrl, { token });
+      const preview = await ok.previewErasure(TENANT, subject);
+      assert.ok(Array.isArray(preview.wouldErase));
+    });
+  },
+);
 
 test("streamEvents (drain) yields the DECISION_SEALED event", { skip: SKIP }, async () => {
   await withPlanes(8207, 8208, undefined, async (dataAddr, mgmtUrl) => {

@@ -1,9 +1,11 @@
 // Seam management-plane client (`SeamAdmin`) — GDPR erasure + governance.
 //
 // The admin surface lives on a **separate management listener** (`SEAM_GRPC_MGMT_LISTEN`), never the data
-// plane, and is gated by a bearer token (`SEAM_MGMT_TOKEN`). This client targets that endpoint and, when a
-// token is supplied, attaches `authorization: Bearer <token>` on every call via a Connect interceptor. With
-// the runtime in `SEAM_DEV_INSECURE` mode and no token configured, the plane is unauthenticated and the
+// plane, and is gated by an **operator token** — a compact-JWS credential the control plane mints against
+// the runtime's installed `operator_keys` trust root, enforcing a per-verb scope (the deprecated shared
+// `SEAM_MGMT_TOKEN` bearer was removed in seam-runtime #175). This client is token-agnostic: when a token is
+// supplied, it attaches `authorization: Bearer <token>` on every call via a Connect interceptor. With
+// the runtime in `SEAM_DEV_INSECURE` mode and no `operator_keys` root installed, the plane is dev-open and the
 // token may be omitted.
 //
 // Erasure is a preview → confirm → erase flow (runtime audit P0.1): `previewErasure` is non-destructive;
@@ -93,9 +95,9 @@ export class SeamAdminClient {
 
   /**
    * Connect to a Seam **management** endpoint (`SEAM_GRPC_MGMT_LISTEN`, distinct from the data plane;
-   * use `https://…` for TLS). When `token` is set, every call carries `authorization: Bearer <token>`;
-   * omit it only against a dev server running unauthenticated (`SEAM_DEV_INSECURE` with no
-   * `SEAM_MGMT_TOKEN`).
+   * use `https://…` for TLS). `token` is a control-plane-minted **operator token**; when set, every call
+   * carries `authorization: Bearer <token>`. Omit it only against a dev-open server (`SEAM_DEV_INSECURE`
+   * with no `operator_keys` root installed).
    */
   static connect(baseUrl: string, opts?: { token?: string }): SeamAdminClient {
     const interceptors: Interceptor[] = [errorMappingInterceptor()];
