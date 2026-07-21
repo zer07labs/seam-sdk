@@ -63,7 +63,9 @@ def mint_operator_token(
 
 
 def tamper_signature(token: str) -> str:
-    """Return ``token`` with its JWS signature corrupted — a valid shape, an invalid signature."""
-    head, _sig = token.rsplit(".", 1)
-    flipped = "AA" if not token.endswith("AA") else "BB"
-    return f"{head}.{flipped}"
+    """Return ``token`` with its JWS signature corrupted — same 64-byte length (so this exercises the
+    signature-VERIFICATION path, not a length check), a flipped bit making it invalid."""
+    head, sig_b64 = token.rsplit(".", 1)
+    sig = bytearray(base64.urlsafe_b64decode(sig_b64 + "=" * (-len(sig_b64) % 4)))
+    sig[0] ^= 0x01
+    return f"{head}.{_b64url(bytes(sig))}"

@@ -39,8 +39,11 @@ export function mintOperatorToken(
   return `${signing}.${b64url(sig)}`;
 }
 
-/** Return `token` with its JWS signature corrupted — a valid shape, an invalid signature. */
+/** Return `token` with its JWS signature corrupted — same 64-byte length (so this exercises the
+ * signature-VERIFICATION path, not a length check), a flipped bit making it invalid. */
 export function tamperSignature(token: string): string {
-  const head = token.slice(0, token.lastIndexOf("."));
-  return `${head}.${token.endsWith("AA") ? "BB" : "AA"}`;
+  const i = token.lastIndexOf(".");
+  const sig = Buffer.from(token.slice(i + 1), "base64url");
+  sig[0] ^= 0x01;
+  return `${token.slice(0, i)}.${b64url(sig)}`;
 }
