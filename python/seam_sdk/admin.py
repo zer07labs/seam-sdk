@@ -25,8 +25,65 @@ from seam.api.v1 import seam_pb2 as pb  # noqa: E402
 from seam.api.v1 import seam_pb2_grpc as rpc  # noqa: E402
 
 from .errors import _MappedStub, map_rpc_error  # noqa: E402
+from .crypto import record_digest_v2  # noqa: E402
 
-__all__ = ["SeamAdminClient"]
+__all__ = [
+    "SeamAdminClient",
+    "KNOWN_KINDS",
+    "verify_streamed_record_digest",
+]
+
+# The `seam-event.v1` kinds the SDK knows about. A consumer MAY use this to branch on typed payloads, but
+# MUST still tolerate an unknown kind (the wire is a tolerant reader — new kinds are additive): iterate
+# `stream_events` and pass anything not in this set through opaque, never erroring on it.
+KNOWN_KINDS = frozenset(
+    {
+        "DECISION_SEALED",
+        "LEARNING_DECISION",
+        "LEARNING_OUTCOME",
+        "AUDIT_ENTRY",
+        "BUDGET_BREACH",
+        "ERASURE_CERTIFICATE",
+        "SESSION_LIFECYCLE",
+        "CHAIN_HEAD_ATTESTATION",
+    }
+)
+
+
+def verify_streamed_record_digest(event: pb.SeamEvent) -> bool:
+    """Recompute a streamed v2 ``DECISION_SEALED``'s record digest from its payload (+ ``ciphertext_digest``,
+    tag 10) and compare it to the wire ``digest`` (tag 19) — live authenticity for a single record, the
+    in-client counterpart of ``seam-verify chain --issuer``'s design-a. Returns ``True`` iff they match;
+    ``False`` for a rewritten payload or a v2 record stripped of its ``ciphertext_digest``.
+
+    Raises :class:`ValueError` for anything not stream-recomputable: a non-``DECISION_SEALED`` event, a v1
+    record (the historical digest is not recomputable from the wire), or an event with no wire digest. The
+    presence of ``mode``/``policy_version``/``supersedes`` is read via ``HasField`` so ``None`` and ``""``
+    stay distinct — the framing requires it."""
+    if event.kind != "DECISION_SEALED":
+        raise ValueError(f"not a DECISION_SEALED event: {event.kind}")
+    p = event.payload
+    if p.schema_version < 2:
+        raise ValueError(
+            f"v{p.schema_version} record is not stream-recomputable (only v2+)"
+        )
+    if not event.HasField("digest"):
+        raise ValueError("event carries no wire digest to compare against")
+    if not p.ciphertext_digest:
+        return False  # a v2 record with no ciphertext_digest is a strip/downgrade — never a match
+    recomputed = record_digest_v2(
+        p.decision_id,
+        p.tenant,
+        p.namespace,
+        bytes(p.ciphertext_digest),
+        p.sealed_at,
+        p.outcome,
+        p.mode if p.HasField("mode") else None,
+        p.policy_version if p.HasField("policy_version") else None,
+        p.supersedes if p.HasField("supersedes") else None,
+        p.schema_version,
+    )
+    return recomputed == bytes(event.digest)
 
 
 class _ClientCallDetails(

@@ -5,7 +5,7 @@ verification; ``Agent`` holds the agent seed. The crypto is pure stock Ed25519/S
 vectors generated from the Rust runtime pin the exact bytes (see ``conformance/vectors.json``).
 """
 
-from .admin import SeamAdminClient
+from .admin import KNOWN_KINDS, SeamAdminClient, verify_streamed_record_digest
 from .client import (
     Agent,
     BudgetLimits,
@@ -39,6 +39,9 @@ __all__ = [
     "aid_from_pubkey",
     "build_presentation",
     "verify_tct",
+    # Streamed-event surface (A14)
+    "KNOWN_KINDS",
+    "verify_streamed_record_digest",
     # Error taxonomy
     "SeamError",
     "IssuerMismatchError",

@@ -57,3 +57,20 @@ Each is the strongest option given what the code showed; none is a one-way door.
 - **Blast radius if wrong:** low — test fixtures. A drift is caught by a failing test, and the fix is a
   re-copy from the named commit.
 - **Status:** UNCONFIRMED
+
+## The streamed digest-recompute helper lives on the admin module, keyed to a single record
+- **Assumed:** Phase 6 (the plan marks it optional; implemented per the "do it fully" decision) needs an
+  in-client counterpart to `verify/`'s design-a, but the client already has the full authenticity story via
+  the standalone `verify/` tool over exported streams — so the in-client helper should be minimal.
+- **Chose:** `verify_streamed_record_digest(event)` / `verifyStreamedRecordDigest(event)` verifies ONE
+  streamed v2 `DECISION_SEALED` (recompute + compare to the wire digest), placed next to `stream_events` on
+  the admin module and re-exported. It reuses Phase 5b's `record_digest_v2` framing (no third impl). A
+  full streamed *chain* walk (attestation verification over a live feed) is deliberately left to `verify/`
+  on an exported stream — porting the whole `--issuer` pass into Py+TS would be a second maintenance
+  surface for the authenticity logic with no consumer asking for it yet.
+- **Alternatives:** (a) a full in-client `verify_streamed_chain` — heavier, duplicates the attestation
+  logic; (b) no in-client helper at all — but acceptance 2 wants a client-side recompute that matches the
+  runtime.
+- **Blast radius if wrong:** low — additive API. If a full streamed-chain verify is later wanted, it builds
+  on the same `record_digest_v2` + `verify_chain_head_attestation` primitives already shipped.
+- **Status:** UNCONFIRMED
