@@ -121,7 +121,7 @@ def dual_plane():
     binary = os.environ.get("SEAM_GRPC_BIN")
     if not binary:
         pytest.skip("set SEAM_GRPC_BIN to run the live attestation round-trip")
-    data_port, mgmt_port = 8103, 8104
+    data_port, mgmt_port = 8111, 8112
     proc = subprocess.Popen(
         [binary],
         env={
