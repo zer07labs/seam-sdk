@@ -327,6 +327,17 @@ class SeamClient:
             pb.VerifyAnchorRequest(party_id=party_id, anchor=anchor)
         ).valid
 
+    def verify_party_attestation(
+        self, party_id: str, attestation: pb.ChainHeadAttestation
+    ) -> bool:
+        """Verify a counterparty's signed chain-head attestation against the registry-pinned key (A14
+        network mode). Returns ``True`` iff the attestation's Ed25519 signature checks out against the
+        pubkey registered for ``party_id``; ``False`` for an unknown party or any tamper (a boolean
+        verdict, never an exception) — mirroring :meth:`verify_party_anchor`."""
+        return self._trust.VerifyPartyAttestation(
+            pb.VerifyAttestationRequest(party_id=party_id, attestation=attestation)
+        ).valid
+
     def get_commitment_proof(self, decision_id: str) -> pb.CommitmentProof:
         return self._coord.GetCommitmentProof(pb.DecisionRef(decision_id=decision_id))
 
