@@ -12,6 +12,7 @@ import {
   SeamCoordination,
   SeamTrust,
   type Anchor,
+  type ChainHeadAttestation,
   type Commitment,
   type ContextBinding,
 } from "../gen/seam/api/v1/seam_pb.js";
@@ -236,6 +237,18 @@ export class SeamClient {
   /** Verify a counterparty's published audit-chain anchor (network mode). */
   async verifyPartyAnchor(partyId: string, anchor: Anchor): Promise<boolean> {
     return (await this.trust.verifyPartyAnchor({ partyId, anchor })).valid;
+  }
+
+  /** Verify a counterparty's signed chain-head attestation against the registry-pinned key (A14 network
+   * mode). Resolves `true` iff the attestation's Ed25519 signature checks out against the pubkey
+   * registered for `partyId`; `false` for an unknown party or any tamper (a boolean verdict, never a
+   * rejection) — mirroring {@link verifyPartyAnchor}. */
+  async verifyPartyAttestation(
+    partyId: string,
+    attestation: ChainHeadAttestation,
+  ): Promise<boolean> {
+    return (await this.trust.verifyPartyAttestation({ partyId, attestation }))
+      .valid;
   }
 
   /**

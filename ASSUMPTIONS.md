@@ -28,3 +28,18 @@ Each is the strongest option given what the code showed; none is a one-way door.
   silent-skip) says it may not be, and a stale contract would pass locally and break on release.
 - **Blast radius if wrong:** none structural — it is a documented workflow, not a code contract.
 - **Status:** UNCONFIRMED
+
+## The live attestation valid-case pins the runtime's chain_head_attestation KAT
+- **Assumed:** the Phase-2 live test needs a genuinely-valid attestation for the "verifies" case, and the
+  SDK must stay Seam-crate-free and not re-implement the chain-head signature framing.
+- **Chose:** pin the runtime's committed `chain_head_attestation` KAT (issuer seed + precomputed signature)
+  directly in the test — derive the party pubkey from the seed with the standard `cryptography`/`@noble`
+  ed25519, register it via the admin plane, and submit the KAT attestation verbatim (its `issuer_aid` is
+  part of the signed preimage, so it is passed exactly). A known-good signature from the runtime is the
+  gold standard; the SDK never re-derives the framing (that is Phase 4's `verify/` job, kept independent).
+- **Alternatives:** (a) add a client-side chain-head signer to the crypto shim — new product crypto surface
+  the plan explicitly rejected for Phase 2; (b) read the vector from a sibling runtime checkout — a fragile
+  path that differs between local and CI. Phase 5 will formalize this KAT into `conformance/vectors.json`.
+- **Blast radius if wrong:** low — a test-only fixture. If the runtime regenerates the KAT, the pinned
+  constants must be refreshed (a deliberate, reviewable update, flagged by the test going red).
+- **Status:** UNCONFIRMED
