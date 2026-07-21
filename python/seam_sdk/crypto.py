@@ -145,3 +145,92 @@ def verify_tct(
         return want in payload.get("grants", [])
     except Exception:
         return False
+
+
+# ── A14 authenticity framing (seam-event.v1) ─────────────────────────────────────────────────────────
+# frame(x) = u32le(len(x)) || x ; opt(x) = 0x00 if None else 0x01 || frame(x). Both transcribed from
+# `seam-event.v1.md`; they let a client verify a chain-head attestation or recompute a v2 record digest
+# in-language, from the published spec alone (the same framing the independent `verify/` tool uses).
+
+
+def _frame(b: bytes) -> bytes:
+    return struct.pack("<I", len(b)) + b
+
+
+def _opt(s: str | None) -> bytes:
+    return b"\x00" if s is None else b"\x01" + _frame(s.encode("utf-8"))
+
+
+def record_digest_v2(
+    decision_id: str,
+    tenant: str,
+    namespace: str,
+    ciphertext_digest: bytes,
+    sealed_at: int,
+    outcome: str,
+    mode: str | None,
+    policy_version: str | None,
+    supersedes: str | None,
+    schema_version: int = 2,
+) -> bytes:
+    """Recompute a v2 ``DECISION_SEALED`` record digest (``seam.audit.record-digest.v2``) from its on-wire
+    structural columns + ``ciphertext_digest`` (SHA256(ciphertext), tag 10). Compare to the event's wire
+    ``digest`` (tag 19) to catch a payload rewrite. Preimage order is NOT wire-tag order: ``outcome``
+    precedes the optional ``mode``/``policy_version``/``supersedes``; the ``opt`` presence byte is raw, so
+    ``None`` and ``""`` are distinct."""
+    pre = (
+        _frame(b"seam.audit.record-digest.v2")
+        + _frame(decision_id.encode())
+        + _frame(tenant.encode())
+        + _frame(namespace.encode())
+        + _frame(ciphertext_digest)
+        + _frame(struct.pack("<Q", sealed_at))
+        + _frame(outcome.encode())
+        + _opt(mode)
+        + _opt(policy_version)
+        + _opt(supersedes)
+        + _frame(struct.pack("<I", schema_version))
+    )
+    return hashlib.sha256(pre).digest()
+
+
+def _chain_head_attestation_digest(
+    attested_len: int,
+    attested_head: bytes,
+    attested_at: int,
+    digest_schema: int,
+    issuer_aid: str,
+) -> bytes:
+    """The 32-byte digest a ``CHAIN_HEAD_ATTESTATION`` signs over (``seam.audit.chain-head-attestation.v1``)."""
+    pre = (
+        _frame(b"seam.audit.chain-head-attestation.v1")
+        + _frame(struct.pack("<Q", attested_len))
+        + _frame(attested_head)
+        + _frame(struct.pack("<Q", attested_at))
+        + _frame(struct.pack("<I", digest_schema))
+        + _frame(issuer_aid.encode())
+    )
+    return hashlib.sha256(pre).digest()
+
+
+def verify_chain_head_attestation(
+    issuer_aid: str,
+    attested_len: int,
+    attested_head: bytes,
+    attested_at: int,
+    digest_schema: int,
+    signature: bytes,
+) -> bool:
+    """Verify a chain-head attestation's Ed25519 signature against the PINNED issuer AID (A14). Returns
+    ``True`` iff the signature checks out over the recomputed digest; ``False`` on any tamper. The key comes
+    from ``issuer_aid`` (which the caller pinned out of band), never from the attestation itself."""
+    digest = _chain_head_attestation_digest(
+        attested_len, attested_head, attested_at, digest_schema, issuer_aid
+    )
+    try:
+        Ed25519PublicKey.from_public_bytes(_aid_to_pubkey(issuer_aid)).verify(
+            signature, digest
+        )
+        return True
+    except Exception:
+        return False

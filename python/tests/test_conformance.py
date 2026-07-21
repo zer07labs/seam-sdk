@@ -70,3 +70,53 @@ def test_tct_verify_fails_closed():
         assert verify_tct(issuer, token, c, now_s=now) is False, (
             f"{name} must fail closed"
         )
+
+
+def test_record_digest_v2_matches_reference():
+    """The v2 record-digest framing must reproduce the Rust reference byte-for-byte (A14 design-a)."""
+    from seam_sdk.crypto import record_digest_v2
+
+    v = VECTORS["record_digest_v2"]
+    i = v["inputs"]
+    got = record_digest_v2(
+        i["decision_id"],
+        i["tenant"],
+        i["namespace"],
+        bytes.fromhex(i["ciphertext_digest_hex"]),
+        i["sealed_at"],
+        i["outcome"],
+        i["mode"],
+        i["policy_version"],
+        i["supersedes"],
+        i["schema_version"],
+    )
+    assert got.hex() == v["digest_hex"]
+
+
+def test_chain_head_attestation_signature_verifies():
+    """The chain-head attestation must verify against the pinned issuer AID, and a tamper must not (A14)."""
+    from seam_sdk.crypto import verify_chain_head_attestation
+
+    v = VECTORS["chain_head_attestation"]
+    i = v["inputs"]
+    ok = verify_chain_head_attestation(
+        v["issuer_aid"],
+        i["attested_len"],
+        bytes.fromhex(i["attested_head_hex"]),
+        i["attested_at"],
+        i["digest_schema"],
+        bytes.fromhex(v["signature_hex"]),
+    )
+    assert ok is True
+    # A tampered length must not verify (it is bound into the signed preimage).
+    assert (
+        verify_chain_head_attestation(
+            v["issuer_aid"],
+            i["attested_len"] + 1,
+            bytes.fromhex(i["attested_head_hex"]),
+            i["attested_at"],
+            i["digest_schema"],
+            bytes.fromhex(v["signature_hex"]),
+        )
+        is False
+    )

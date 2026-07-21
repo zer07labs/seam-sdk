@@ -6,7 +6,8 @@ This is the tool that makes that sentence mean something. It takes bytes you alr
 and answers **yes** or **no**.
 
 ```bash
-cargo run -- chain events.jsonl
+cargo run -- chain events.jsonl                                  # INTEGRITY — the hash chain links
+cargo run -- chain events.jsonl --issuer aid:pubkey:ed25519:...  # AUTHENTICITY — + issuer-signed heads
 cargo run -- erasure-cert cert.json --issuer aid:pubkey:ed25519:...
 ```
 
@@ -56,13 +57,47 @@ CHAIN VERIFIED
   head              : 9f2c…
 ```
 
-It detects a **forged, inserted, rewritten, reordered or dropped** event. It cannot detect an event that
-was never sent to you at all — for that, compare the `head` above against an independently published
-anchor (`docs/audit-anchor.md`), which is why anchors exist.
+It detects a **forged, inserted, rewritten, reordered or dropped** event. Integrity alone cannot detect a
+**fabricated** chain — a self-consistent chain a transport-controlling adversary rebuilt from a fork point,
+whose links all hash correctly — nor a **payload rewrite** that keeps the `(prev, digest, checksum)` triple
+intact. For those, add `--issuer` (below).
 
 **Chained-ness is by field presence, never by kind.** Advisory events (`LEARNING_*`, `BUDGET_BREACH`,
 `SESSION_LIFECYCLE`) and the off-chain `chain_anchor` carry no digest and do not advance the head. A
 verifier that keys on `kind` instead breaks on the first advisory event in an unfiltered stream.
+
+#### AUTHENTICITY — `chain <FILE> --issuer <AID>`
+
+Integrity proves the chain is *internally consistent*. It does not prove Seam *wrote* it: an unkeyed
+SHA-256 chain over a public genesis can be rebuilt by anyone who controls the bytes you receive. `--issuer`
+closes that — it upgrades the check from integrity to **authenticity**, against a key **you** pinned out of
+band (Seam serves it at `GET /v1/trust/issuer-aid`):
+
+```
+CHAIN AUTHENTICATED (integrity + issuer-signed head)
+  events            : 767
+  links checked     : 767
+  attestations      : 3 (issuer-signed)
+  covered prefix    : 750 links
+  records recomputed: 764 (v2 digest-v2 recompute)
+  head              : 9f2c…
+```
+
+Two things a forger cannot fake:
+
+* **Signed chain heads.** Seam periodically signs its audit-chain `(length, head)` with the issuer key
+  (`CHAIN_HEAD_ATTESTATION`). `--issuer` verifies every one against the **pinned** AID *and* checks the
+  attested head is the running head at that position — so a fabricated chain (which carries no valid
+  attestation) is **REFUSED**, and an authentic attestation spliced onto a different chain fails the
+  position check. A stream with no attestation at all is refused, not passed: its absence is the tell.
+* **Recomputable record digests.** Every v2 `DECISION_SEALED` commits to its structural columns via
+  `digest = SHA256(record-digest-v2 framing)`. `--issuer` recomputes it from the payload and compares — so
+  a **payload rewrite** (flip an `outcome`, keep the triple) is caught even in an unattested tail, and a v2
+  record stripped of its `ciphertext_digest` (a downgrade) is refused.
+
+The pin is load-bearing for exactly the reason it is on the erasure certificate (below): deriving the key
+from the chain's own attestation would let a forgery verify against its forger. `--issuer` is strictly
+stronger than plain `chain`, never weaker.
 
 > ### ⚠️ `--strict`, and why you probably want it
 >
@@ -107,8 +142,10 @@ you have checked this tool against something you did not have to take on faith.
 Stated plainly, because a verifier that oversells itself is worse than none:
 
 * **It cannot prove you were sent everything.** A chain that verifies is internally consistent; if Seam
-  never handed you events 500–600, the events you *do* hold still chain. That is what the published anchor
-  is for: it pins a head at a time, so a truncated history fails to reach it.
+  never handed you events 500–600, the events you *do* hold still chain. `--issuer` narrows this — a signed
+  head pins the length and content of the prefix it covers, so a truncation *below* an attestation is
+  caught — but beyond the last attested head, the published anchor (`docs/audit-anchor.md`) is still what
+  pins a head at a time so a truncated history fails to reach it.
 * **It cannot read your decisions.** The digest is over the *sealed* record. The plaintext is not on the
   wire, by design — verification discloses nothing.
 * **It cannot verify pre-cutover history** (see `--strict` above). It will say so rather than pretend.
@@ -130,7 +167,9 @@ Stated plainly, because a verifier that oversells itself is worse than none:
 
 The runtime carries a second implementation of this check, and a **differential test** drives both over the
 same streams — including streams produced by Seam's real seal path — and fails if their verdicts ever
-diverge.
+diverge. It covers **both** surfaces: integrity *and* `--issuer` authenticity (a genuine attested chain, a
+fabricated one, a payload rewrite, a spliced attestation — the two verifiers must agree on all four). It
+runs in the runtime's CI against this public verifier, so drift is caught at the source.
 
 That test exists because a hand-transcribed verifier that quietly stops matching the encoder is worse than
 no verifier at all: it becomes a rubber stamp that agrees with everything, including a forgery.

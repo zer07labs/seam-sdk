@@ -37,5 +37,34 @@
     },
     "issuer_aid": "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
     "signed_artifact_jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJhdWQiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJjbmYiOnsiamt0IjoiLS02SU01bDBPb3NMajl5V3NrSVNZaFVBM25fM0NVUlFrbXJZTVNoYV9jayJ9LCJleHAiOjQ4NTM2MDAwMDAsImdyYW50cyI6WyJzZWFtOmNvbW1pdG1lbnQiLCJzZWFtLWNvbW1pdG1lbnQtZGlnZXN0OmYwYzhkOWM5NzAwMjI4MDE0MWM2YTEzNGRmYjZhNmU0MTJjYTFkNjg0Y2NjYTM3ZGNlMjg3ZGYyYzhjNTBkMzQiXSwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJqdGkiOiIyMzQwMDIwZC1lMjJlLTY1ZTQtZWZkOS1iOTFkMmM1Y2I1NzMiLCJzdWIiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJ2ZXIiOiJhaXRwLzAuMiJ9.bWxVo7r5uFF3XAKdkgKoxg7YK-HXRit7MpXiyaoKtaV4bfoqaQfUEFggo7XruUHOJVkyxmbHUwsQGMVp_0YJDw"
+  },
+  "chain_head_attestation": {
+    "inputs": {
+      "issuer_seed_hex": "0707070707070707070707070707070707070707070707070707070707070707",
+      "domain": "seam.audit.chain-head-attestation.v1",
+      "attested_len": 1000,
+      "attested_head_hex": "abababababababababababababababababababababababababababababababab",
+      "attested_at": 1700000000000,
+      "digest_schema": 2
+    },
+    "issuer_aid": "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
+    "signature_hex": "5169458689b92af81fbbfbd1bd07aff82cb68993919837232a1b54204a0e565ee58791b607c40a48dae6a9dbf8c6129e7028fdbd0e14095d7a4c0a99c775a90a"
+  },
+  "record_digest_v2": {
+    "inputs": {
+      "domain": "seam.audit.record-digest.v2",
+      "decision_id": "dec:conformance",
+      "tenant": "acme",
+      "namespace": "fraud",
+      "ciphertext_hex": "636f6e666f726d616e63652d636970686572746578742d0001ff",
+      "ciphertext_digest_hex": "67d9f6952981d85f7a2cabb0d5468e6934dc63ec55b480f18339277afc7635a6",
+      "sealed_at": 1700000000000,
+      "outcome": "Resolved",
+      "mode": "decision.v1",
+      "policy_version": null,
+      "supersedes": null,
+      "schema_version": 2
+    },
+    "digest_hex": "3817863521537d347c112bb95d7960d3d9f3007ee041f59c87bcaaf88ac40785"
   }
 }

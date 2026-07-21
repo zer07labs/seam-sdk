@@ -1,3 +1,10 @@
+# An EMPTY [workspace] makes this crate its own workspace root, so it builds standalone no matter where it
+# is checked out — including nested inside ANOTHER cargo workspace (e.g. the runtime's differential-parity
+# CI job, which checks the SDK out under the runtime tree). Without it, cargo adopts this crate into the
+# enclosing workspace and refuses to build it ("believes it's in a workspace when it's not"). A verifier
+# whose whole claim is "check it out and build it yourself, anywhere" must not depend on its parent dir.
+[workspace]
+
 [package]
 name = "seam-verify"
 version = "0.1.0"
