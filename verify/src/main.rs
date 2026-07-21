@@ -50,7 +50,10 @@ fn usage() -> ! {
                        against this PINNED issuer key AND sit at the head it attests, and at least one must\n                      \
                        be present — a plain SHA-256 chain over a public genesis can be rebuilt by a\n                      \
                        transport-controlling forger, but an issuer-signed head cannot be minted without\n                      \
-                       the key. A stream with no attestation is REFUSED, not passed.\n\
+                       the key. A stream with no attestation is REFUSED, not passed. Additionally, every v2\n                      \
+                       DECISION_SEALED's digest is RECOMPUTED from its payload and compared to the wire\n                      \
+                       digest (catching a payload rewrite in an unattested tail), and a v2 record missing\n                      \
+                       its ciphertext_digest (a strip/downgrade) is REFUSED.\n\
          \n\
          erasure-cert <FILE> --issuer <AID>\n    \
              Verify a signed GDPR erasure certificate against the issuer AID and NOTHING else. Get the\n    \
@@ -146,7 +149,7 @@ fn cmd_chain(path: &str, strict: bool, json: bool, issuer: Option<&str>) -> Exit
             // has already passed (the head sequence in `r.heads` is trustworthy to check positions against).
             let issuer_report = match issuer {
                 None => None,
-                Some(aid) => match verify::verify_attestations(&events, &r.heads, aid) {
+                Some(aid) => match verify::verify_authenticity(&events, &r.heads, aid) {
                     Ok(ir) => Some(ir),
                     Err(e) => return fail(&e, json, "AUTHENTICITY VERIFICATION FAILED"),
                 },
@@ -154,8 +157,9 @@ fn cmd_chain(path: &str, strict: bool, json: bool, issuer: Option<&str>) -> Exit
             if json {
                 let authenticity = match &issuer_report {
                     Some(ir) => format!(
-                        ",\"authenticated\":true,\"attestations\":{},\"covered_prefix\":{}",
-                        ir.attestations, ir.covered_prefix
+                        ",\"authenticated\":true,\"attestations\":{},\"covered_prefix\":{},\
+                         \"records_recomputed\":{}",
+                        ir.attestations, ir.covered_prefix, ir.records_recomputed
                     ),
                     None => String::new(),
                 };
@@ -185,6 +189,10 @@ fn cmd_chain(path: &str, strict: bool, json: bool, issuer: Option<&str>) -> Exit
                 if let Some(ir) = &issuer_report {
                     println!("  attestations      : {} (issuer-signed)", ir.attestations);
                     println!("  covered prefix    : {} links", ir.covered_prefix);
+                    println!(
+                        "  records recomputed: {} (v2 digest-v2 recompute)",
+                        ir.records_recomputed
+                    );
                 }
                 if r.duplicates > 0 {
                     println!(
