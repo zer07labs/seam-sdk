@@ -29,6 +29,12 @@ pub struct SeamEventPb {
     /// tag 12 — the head this event extends.
     #[prost(bytes = "vec", tag = "12")]
     pub prev_checksum: Vec<u8>,
+    /// tag 13 — the `DECISION_SEALED` payload. Read ONLY under `--issuer` (design-a, Phase 4), to
+    /// recompute the record's digest-v2 from its structural columns and catch a payload rewrite. A verifier
+    /// otherwise has no business decoding a decision's payload — this is the deliberate, `--issuer`-gated
+    /// widening the plan prices.
+    #[prost(message, optional, tag = "13")]
+    pub payload: Option<DecisionSealedPb>,
     /// tag 16 — an `AUDIT_ENTRY`. We need only its `action`, to spot the off-chain `chain_anchor`.
     #[prost(message, optional, tag = "16")]
     pub audit_entry: Option<AuditEntryPb>,
@@ -74,6 +80,36 @@ pub struct AuditEntryPb {
     pub reason: String,
 }
 
+/// The `DECISION_SEALED` payload (envelope tag 13) — the structural columns the digest-v2 recompute covers,
+/// plus `ciphertext_digest` (tag 10, the one input a stream consumer does not otherwise hold). Transcribed
+/// from `seam-event.v1.md` §DECISION_SEALED + §Record digest. `mode`/`policy_version`/`supersedes` are
+/// `optional` — proto3 explicit presence — because the v2 framing distinguishes `None` from `Some("")`.
+#[derive(Clone, PartialEq, Message)]
+pub struct DecisionSealedPb {
+    #[prost(string, tag = "1")]
+    pub decision_id: String,
+    #[prost(string, tag = "2")]
+    pub tenant: String,
+    #[prost(string, tag = "3")]
+    pub namespace: String,
+    #[prost(string, optional, tag = "4")]
+    pub mode: Option<String>,
+    #[prost(string, optional, tag = "5")]
+    pub policy_version: Option<String>,
+    #[prost(string, tag = "6")]
+    pub outcome: String,
+    #[prost(string, optional, tag = "7")]
+    pub supersedes: Option<String>,
+    #[prost(uint64, tag = "8")]
+    pub sealed_at: u64,
+    #[prost(uint32, tag = "9")]
+    pub schema_version: u32,
+    /// tag 10 — `SHA256(ciphertext)`. Mandatory on v2; absent (empty) on v1. A v2 record missing it is a
+    /// strip/downgrade attack, refused under `--issuer`.
+    #[prost(bytes = "vec", tag = "10")]
+    pub ciphertext_digest: Vec<u8>,
+}
+
 #[derive(Clone, PartialEq, Message)]
 pub struct ErasureCertificatePb {
     #[prost(string, tag = "1")]
@@ -116,6 +152,8 @@ pub struct SeamEventJson {
     #[serde(default)]
     pub checksum: Option<String>,
     #[serde(default)]
+    pub payload: Option<DecisionSealedJson>,
+    #[serde(default)]
     pub audit_entry: Option<AuditEntryJson>,
     #[serde(default)]
     pub erasure_certificate: Option<ErasureCertificateJson>,
@@ -137,6 +175,31 @@ pub struct ChainHeadAttestationJson {
 pub struct AuditEntryJson {
     #[serde(default)]
     pub action: String,
+}
+
+#[derive(Deserialize)]
+pub struct DecisionSealedJson {
+    #[serde(default)]
+    pub decision_id: String,
+    #[serde(default)]
+    pub tenant: String,
+    #[serde(default)]
+    pub namespace: String,
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub policy_version: Option<String>,
+    #[serde(default)]
+    pub outcome: String,
+    #[serde(default)]
+    pub supersedes: Option<String>,
+    #[serde(default)]
+    pub sealed_at: u64,
+    #[serde(default)]
+    pub schema_version: u32,
+    /// base64 (STANDARD); absent/empty on v1.
+    #[serde(default)]
+    pub ciphertext_digest: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -163,8 +226,24 @@ pub struct Event {
     pub cert: Option<Cert>,
     /// The `CHAIN_HEAD_ATTESTATION` payload, when this event is one. `None` otherwise.
     pub attestation: Option<Attestation>,
+    /// The `DECISION_SEALED` payload — read only for the digest-v2 recompute under `--issuer`.
+    pub decision: Option<Decision>,
     /// The canonical bytes this event decoded from (or re-encodes to) — the dedup identity.
     pub bytes: Vec<u8>,
+}
+
+#[derive(Clone)]
+pub struct Decision {
+    pub decision_id: String,
+    pub tenant: String,
+    pub namespace: String,
+    pub mode: Option<String>,
+    pub policy_version: Option<String>,
+    pub outcome: String,
+    pub supersedes: Option<String>,
+    pub sealed_at: u64,
+    pub schema_version: u32,
+    pub ciphertext_digest: Vec<u8>,
 }
 
 #[derive(Clone)]
@@ -233,6 +312,25 @@ impl Event {
                         signature: b64(&a.signature)?,
                     })
                 });
+            let decision = j.payload.map(|p| -> Result<Decision, String> {
+                Ok(Decision {
+                    decision_id: p.decision_id,
+                    tenant: p.tenant,
+                    namespace: p.namespace,
+                    mode: p.mode,
+                    policy_version: p.policy_version,
+                    outcome: p.outcome,
+                    supersedes: p.supersedes,
+                    sealed_at: p.sealed_at,
+                    schema_version: p.schema_version,
+                    ciphertext_digest: p
+                        .ciphertext_digest
+                        .as_deref()
+                        .map(b64)
+                        .transpose()?
+                        .unwrap_or_default(),
+                })
+            });
             let ev = Event {
                 event_id: j.event_id,
                 seq: j.seq,
@@ -244,6 +342,7 @@ impl Event {
                 audit_action: j.audit_entry.map(|a| a.action),
                 cert: cert.transpose()?,
                 attestation: attestation.transpose()?,
+                decision: decision.transpose()?,
                 bytes: Vec::new(),
             };
             return Ok(ev.with_identity());
@@ -289,6 +388,18 @@ impl Event {
                 digest_schema: a.digest_schema,
                 signature: a.signature,
             }),
+            decision: pb.payload.map(|p| Decision {
+                decision_id: p.decision_id,
+                tenant: p.tenant,
+                namespace: p.namespace,
+                mode: p.mode,
+                policy_version: p.policy_version,
+                outcome: p.outcome,
+                supersedes: p.supersedes,
+                sealed_at: p.sealed_at,
+                schema_version: p.schema_version,
+                ciphertext_digest: p.ciphertext_digest,
+            }),
             bytes: raw,
         }
         .with_identity())
@@ -309,6 +420,18 @@ impl Event {
             occurred_at: self.occurred_at,
             kind: self.kind.clone(),
             prev_checksum: self.prev_checksum.clone(),
+            payload: self.decision.as_ref().map(|d| DecisionSealedPb {
+                decision_id: d.decision_id.clone(),
+                tenant: d.tenant.clone(),
+                namespace: d.namespace.clone(),
+                mode: d.mode.clone(),
+                policy_version: d.policy_version.clone(),
+                outcome: d.outcome.clone(),
+                supersedes: d.supersedes.clone(),
+                sealed_at: d.sealed_at,
+                schema_version: d.schema_version,
+                ciphertext_digest: d.ciphertext_digest.clone(),
+            }),
             audit_entry: self.audit_action.as_ref().map(|a| AuditEntryPb {
                 action: a.clone(),
                 ..Default::default()

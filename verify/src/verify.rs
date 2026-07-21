@@ -2,7 +2,7 @@
 
 use sha2::{Digest, Sha256};
 
-use crate::wire::{Attestation, Cert, Event};
+use crate::wire::{Attestation, Cert, Decision, Event};
 
 /// The chain's genesis head: 32 zero bytes (`seam-event.v1.md` §Ordering & integrity).
 pub const GENESIS: [u8; 32] = [0u8; 32];
@@ -253,10 +253,49 @@ fn chain_head_attestation_payload(a: &Attestation) -> [u8; 32] {
 
 pub struct IssuerReport {
     /// The number of `CHAIN_HEAD_ATTESTATION`s that verified (signature + head-at-position). At least 1
-    /// is required — see [`verify_attestations`].
+    /// is required — see [`verify_authenticity`].
     pub attestations: usize,
     /// The longest prefix any valid attestation covers (its `attested_len`) — the issuer-signed reach.
     pub covered_prefix: u64,
+    /// The number of v2 `DECISION_SEALED` records whose digest-v2 recomputed and matched the wire `digest`
+    /// (design-a). v1 records are link-only (not recomputable) and not counted.
+    pub records_recomputed: usize,
+}
+
+/// The 32-byte record digest a v2 `DECISION_SEALED` commits to — `seam.audit.record-digest.v2`.
+///
+/// Transcribed verbatim from `seam-event.v1.md` §Record digest (v2). `frame(x) = u32le(len) ‖ x`;
+/// `opt(x) = 0x00` when absent, `0x01 ‖ frame(x)` when present — so `None` and `Some("")` are DISTINCT (a
+/// naive empty-string collapse is a real bug), and the presence byte is RAW (never itself framed).
+/// `ciphertext_digest` is `SHA256(ciphertext)` framed directly (the stream carries the digest, never the
+/// ciphertext — the recompute never re-hashes plaintext). The preimage order is NOT the wire tag order:
+/// `outcome` precedes the optional `mode`/`policy_version`/`supersedes`.
+fn record_digest_v2(d: &Decision) -> [u8; 32] {
+    let mut buf: Vec<u8> = Vec::new();
+    let frame = |buf: &mut Vec<u8>, part: &[u8]| {
+        buf.extend_from_slice(&(part.len() as u32).to_le_bytes());
+        buf.extend_from_slice(part);
+    };
+    let opt = |buf: &mut Vec<u8>, x: Option<&str>| match x {
+        None => buf.push(0x00),
+        Some(s) => {
+            buf.push(0x01);
+            buf.extend_from_slice(&(s.len() as u32).to_le_bytes());
+            buf.extend_from_slice(s.as_bytes());
+        }
+    };
+    frame(&mut buf, b"seam.audit.record-digest.v2");
+    frame(&mut buf, d.decision_id.as_bytes());
+    frame(&mut buf, d.tenant.as_bytes());
+    frame(&mut buf, d.namespace.as_bytes());
+    frame(&mut buf, &d.ciphertext_digest);
+    frame(&mut buf, &d.sealed_at.to_le_bytes());
+    frame(&mut buf, d.outcome.as_bytes());
+    opt(&mut buf, d.mode.as_deref());
+    opt(&mut buf, d.policy_version.as_deref());
+    opt(&mut buf, d.supersedes.as_deref());
+    frame(&mut buf, &d.schema_version.to_le_bytes());
+    Sha256::digest(&buf).into()
 }
 
 /// Verify every `CHAIN_HEAD_ATTESTATION` in the stream against the **pinned** issuer AID (A14, design-b).
@@ -280,7 +319,18 @@ pub struct IssuerReport {
 /// `heads` is [`ChainReport::heads`] from a passing [`chain`] call (the caller runs integrity first).
 /// Every attestation present must pass; a single failure aborts with `Err` (a forged one in the mix is an
 /// attack, even if others pass).
-pub fn verify_attestations(
+///
+/// # design-a — every v2 record self-verifies (Phase 4)
+///
+/// The attestation (design-b) covers a *prefix* and only exists if the runtime emitted one; a payload
+/// rewrite in an unattested tail would slip past it. So under `--issuer` this ALSO recomputes each v2
+/// `DECISION_SEALED`'s digest from its structural columns (spec §Record digest) and compares it to the
+/// wire `digest` (tag 19): a mismatch is a **payload rewrite** (a column changed after sealing; the link's
+/// triple still hashes, but the digest no longer matches the payload). And a v2 record that lacks a
+/// non-empty `ciphertext_digest` (tag 10) is REFUSED — a **tag-10 strip / downgrade**, the exact hole
+/// "cannot recompute ⇒ not a failure" would leave open. v1 records are not recomputable and are skipped,
+/// never failed (selected by `schema_version`, never silently green on a version we cannot recompute).
+pub fn verify_authenticity(
     events: &[Event],
     heads: &[Vec<u8>],
     pinned_aid: &str,
@@ -292,6 +342,46 @@ pub fn verify_attestations(
 
     let mut attestations = 0usize;
     let mut covered_prefix = 0u64;
+    let mut records_recomputed = 0usize;
+
+    // design-a: every v2 DECISION_SEALED recomputes; a v2 record with no ciphertext_digest is a strip.
+    for e in events {
+        let Some(d) = e.decision.as_ref() else {
+            continue;
+        };
+        if d.schema_version < 2 {
+            continue; // v1: the historical digest is not stream-recomputable — link-only, not a failure.
+        }
+        if d.ciphertext_digest.is_empty() {
+            return Err(format!(
+                "a v2 DECISION_SEALED ({}) carries NO ciphertext_digest (tag 10).\n  \
+                 A v2 record is required to commit its SHA256(ciphertext); an absent tag 10 on a covered \
+                 record is a strip/downgrade attack (rewrite a field, drop the commitment, leave the \
+                 (prev,digest,checksum) triple intact so the signed head still matches) — refused, not \
+                 treated as cannot-recompute-so-pass.",
+                d.decision_id
+            ));
+        }
+        // Compare against the event's own digest (tag 19). A chained DECISION_SEALED always carries it;
+        // if it is absent the integrity pass already flagged the event UNVERIFIABLE, so there is nothing to
+        // compare here (do not invent a pass).
+        let Some(wire_digest) = e.digest.as_ref() else {
+            continue;
+        };
+        let recomputed = record_digest_v2(d);
+        if wire_digest.as_slice() != recomputed {
+            return Err(format!(
+                "a v2 DECISION_SEALED ({}) does NOT match its own digest.\n  \
+                 recomputed {}\n  wire       {}\n  \
+                 A structural column (e.g. outcome) was rewritten after sealing: the chain link still \
+                 hashes, but the record digest no longer matches the payload it commits to.",
+                d.decision_id,
+                hex(&recomputed),
+                hex(wire_digest)
+            ));
+        }
+        records_recomputed += 1;
+    }
 
     for e in events {
         let Some(a) = e.attestation.as_ref() else {
@@ -359,6 +449,7 @@ pub fn verify_attestations(
     Ok(IssuerReport {
         attestations,
         covered_prefix,
+        records_recomputed,
     })
 }
 
@@ -430,6 +521,58 @@ mod tests {
             )
             .is_err(),
             "a tampered attested_len must not verify"
+        );
+    }
+
+    /// Pin `record_digest_v2`'s framing byte-for-byte against the runtime's committed `record_digest_v2`
+    /// KAT (seam-client/tests/conformance_vectors.json). A single wrong `frame`/`opt`/`le`/order produces a
+    /// total-mismatch digest — so this catches any drift and independently proves (nothing of Seam's is
+    /// linked) that design-a's recompute is exactly the runtime's. `policy_version`/`supersedes` are `None`
+    /// here, exercising the `opt` absent-byte; `mode` is `Some`, exercising the present branch.
+    #[test]
+    fn record_digest_v2_matches_the_runtime_kat() {
+        let d = Decision {
+            decision_id: "dec:conformance".into(),
+            tenant: "acme".into(),
+            namespace: "fraud".into(),
+            mode: Some("decision.v1".into()),
+            policy_version: None,
+            outcome: "Resolved".into(),
+            supersedes: None,
+            sealed_at: 1_700_000_000_000,
+            schema_version: 2,
+            ciphertext_digest: hex_to_bytes(
+                "67d9f6952981d85f7a2cabb0d5468e6934dc63ec55b480f18339277afc7635a6",
+            ),
+        };
+        assert_eq!(
+            hex(&record_digest_v2(&d)),
+            "3817863521537d347c112bb95d7960d3d9f3007ee041f59c87bcaaf88ac40785",
+            "the digest-v2 framing must match the runtime KAT byte-for-byte"
+        );
+    }
+
+    /// `None` and `Some("")` must NOT collapse — the `opt` presence byte makes them distinct preimages.
+    #[test]
+    fn record_digest_v2_distinguishes_none_from_empty_string() {
+        let base = Decision {
+            decision_id: "d".into(),
+            tenant: "t".into(),
+            namespace: "n".into(),
+            mode: None,
+            policy_version: None,
+            outcome: "Resolved".into(),
+            supersedes: None,
+            sealed_at: 1,
+            schema_version: 2,
+            ciphertext_digest: vec![0u8; 32],
+        };
+        let mut with_empty = base.clone();
+        with_empty.mode = Some(String::new());
+        assert_ne!(
+            record_digest_v2(&base),
+            record_digest_v2(&with_empty),
+            "mode: None must differ from mode: Some(\"\")"
         );
     }
 

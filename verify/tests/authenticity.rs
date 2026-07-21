@@ -46,6 +46,27 @@ fn b64e(b: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(b)
 }
 
+/// Apply `f` to the `payload` object of the FIRST DECISION_SEALED in a JSONL stream; return the new stream.
+/// The chain triple (prev_checksum/digest/checksum) is untouched, so integrity stays intact by construction
+/// — only the payload column the mutation targets changes, which is exactly a payload-rewrite / strip shape.
+fn mutate_first_sealed(jsonl: &str, f: impl Fn(&mut serde_json::Value)) -> String {
+    let mut done = false;
+    jsonl
+        .lines()
+        .map(|l| {
+            let mut e: serde_json::Value = serde_json::from_str(l).unwrap();
+            if !done && e["kind"] == "DECISION_SEALED" {
+                if let Some(p) = e.get_mut("payload") {
+                    f(p);
+                    done = true;
+                }
+            }
+            serde_json::to_string(&e).unwrap()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 // ── The golden trio ───────────────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -166,6 +187,73 @@ fn an_authentic_attestation_spliced_onto_another_chain_is_refused() {
     assert!(
         out.contains("SPLICED"),
         "the refusal must be the head-at-position splice failure, not out-of-range:\n{out}"
+    );
+}
+
+// ── design-a: digest-v2 recomputation (Phase 4) ───────────────────────────────────────────────────────
+
+#[test]
+fn a_payload_rewrite_is_caught_under_issuer_but_not_by_integrity() {
+    let rw = golden("payload_rewrite.jsonl");
+    // Integrity PASSES a payload rewrite: the (prev,digest,checksum) triple stays consistent — only the
+    // payload column changed. This is exactly the gap design-a closes (design-b's attestation covers the
+    // prefix, but the head still matches the copied tag-19 digest).
+    let (code, out) = run("rewrite-int", &rw, &[]);
+    assert_eq!(
+        code, VERIFIED,
+        "integrity alone does not catch a rewrite:\n{out}"
+    );
+    // Under --issuer the recomputed digest-v2 no longer matches the wire digest → REFUSE.
+    let (code, out) = run("rewrite-auth", &rw, &["--issuer", ISSUER]);
+    assert_eq!(
+        code, FAILED,
+        "a payload rewrite must be refused under --issuer:\n{out}"
+    );
+    assert!(out.contains("does NOT match its own digest"), "{out}");
+}
+
+#[test]
+fn a_v2_record_with_a_stripped_ciphertext_digest_is_refused() {
+    // Strip tag 10 from a v2 DECISION_SEALED but leave the chain triple intact (a strip/downgrade attack:
+    // the signed head still matches because tag 19 is copied unchanged). design-a refuses it rather than
+    // treating "can't recompute" as a pass.
+    let stripped = mutate_first_sealed(&golden("attested_chain.jsonl"), |p| {
+        p.as_object_mut().unwrap().remove("ciphertext_digest");
+    });
+    // Integrity still passes (the triple is untouched).
+    let (code, _out) = run("strip-int", &stripped, &[]);
+    assert_eq!(
+        code, VERIFIED,
+        "the strip leaves the chain intact by construction"
+    );
+    let (code, out) = run("strip-auth", &stripped, &["--issuer", ISSUER]);
+    assert_eq!(
+        code, FAILED,
+        "a v2 record missing ciphertext_digest must be refused:\n{out}"
+    );
+    assert!(out.contains("NO ciphertext_digest"), "{out}");
+}
+
+#[test]
+fn a_v1_record_is_link_verified_but_not_recomputed() {
+    // A v1 record (schema_version=1, no ciphertext_digest) is not stream-recomputable; design-a SKIPS it —
+    // it must NOT trigger the strip refusal (that is v2-only) nor a false digest mismatch. Downgrade the
+    // first sealed record to v1 and drop its ciphertext_digest; the chain + attestation are untouched, so
+    // --issuer still passes, with one fewer record recomputed.
+    let v1 = mutate_first_sealed(&golden("attested_chain.jsonl"), |p| {
+        let o = p.as_object_mut().unwrap();
+        o.insert("schema_version".into(), serde_json::json!(1));
+        o.remove("ciphertext_digest");
+    });
+    let (code, out) = run("v1-skip", &v1, &["--issuer", ISSUER]);
+    assert_eq!(
+        code, VERIFIED,
+        "a v1 record must be link-only, never a false failure:\n{out}"
+    );
+    // 3 v2 records → 2 after one is downgraded to v1.
+    assert!(
+        out.contains("records recomputed: 2"),
+        "the v1 record is skipped, not recomputed:\n{out}"
     );
 }
 
