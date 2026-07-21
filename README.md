@@ -43,6 +43,30 @@ Generated stubs are git-ignored (regenerated on release). They land per language
 consumes them: **Python → `python/seam_sdk/_gen/`** (so the wheel ships the transport), **TypeScript →
 `ts/gen/`** (so it resolves the package's `node_modules`), and **Go/Java/Kotlin → `gen/<language>/`**.
 
+**BSR vs. local — which contract to build against.** `make generate` pulls the **published BSR module**
+(`buf.build/zer07labs/seam`) — the immutable release of record that shipped packages are built from.
+`make generate-local` pulls a **runtime checkout's working tree** — always current with the runtime, so SDK
+development is never blocked waiting on a BSR push. The BSR is updated on a runtime **main-merge**, and only
+when that CI has `BUF_TOKEN` set; publishing to the BSR is immutable per label, so it is a **runtime-side,
+user-gated** step this repo never performs. Rule of thumb: **`generate-local` for iteration, `generate`
+(BSR) for release**. When a contract change has landed in the runtime but not yet been pushed to the BSR,
+only `generate-local` sees it.
+
+**`make check-contract`** turns "what surface does the active contract expose?" into a verifiable fact
+(the SDK's analogue of the runtime's published-surface gate). It runs after a `generate`/`generate-local`
+and probes the emitted stubs:
+- **`SeamTrust.VerifyPartyAttestation`** (the A4 RPC the attestation client calls) — a **hard gate**;
+  a stale contract missing it exits non-zero.
+- the **streamed-payload mirror fields** (`session_lifecycle` tag 21, `chain_head_attestation` tag 22,
+  `DecisionSealed.ciphertext_digest` tag 10, `AuditEntryEvent.actor` tag 4) — **reported** by default,
+  and a **hard gate under `STREAM=1`** (the mode for live-event decoding). These reach the BSR only after
+  the runtime's proto-mirror push; `generate-local` carries them today.
+
+> **BSR state (probed 2026-07-21, `buf build buf.build/zer07labs/seam -o /tmp/x.binpb && strings /tmp/x.binpb | grep -E 'VerifyPartyAttestation|session_lifecycle'`):** carries `VerifyPartyAttestation`
+> (A4 is live on the BSR), but **not yet** the four streamed-payload mirror fields — those are pending the
+> runtime proto-mirror's main-merge push. Until then, `make generate-local RUNTIME=../seam-runtime` is the
+> baseline for any streamed-event work.
+
 ## Build & test
 
 Each package wraps the generated stubs with its crypto shim and is published on its own cadence (PyPI,
