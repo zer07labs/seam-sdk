@@ -112,10 +112,13 @@ transport from the BSR and pushes both packages. Immutable per version — a re-
 git tag vX.Y.Z && git push origin vX.Y.Z     # → npm + wheel land on Cloudsmith
 ```
 
-*Requires two repo secrets:* `BUF_TOKEN` (read the contract from the BSR) and `CLOUDSMITH_API_KEY` (a raw
-Cloudsmith key with push to `zer07labs/internal`). **No per-format setup is needed** — Cloudsmith repos are
-format-agnostic; the same repo that holds the Cargo crates accepts an npm package or a wheel on first push
-(verified: `npm.cloudsmith.io/zer07labs/internal/` already answers, like the Cargo endpoint).
+*Credentials.* `BUF_TOKEN` (read the contract from the BSR — already set) plus a Cloudsmith push token. The
+workflow **reuses the org-level `CARGO_REGISTRIES_ZER07LABS_TOKEN`** (the same Cloudsmith key the Rust crates
+publish with) — it just strips that value's literal `Bearer ` prefix, which npm/twine must not carry. So if
+that org secret is in scope for this repo, **there is no new secret to set**. (A dedicated `CLOUDSMITH_API_KEY`
+is honored first if you ever prefer a separate key.) **No per-format setup is needed** either — Cloudsmith
+repos are format-agnostic; the same repo that holds the Cargo crates accepts an npm package or a wheel on
+first push (verified: `npm.cloudsmith.io/zer07labs/internal/` already answers, like the Cargo endpoint).
 
 **Consuming it** — point the consumer at Cloudsmith and add the dependency:
 

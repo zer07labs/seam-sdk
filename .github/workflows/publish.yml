@@ -70,12 +70,20 @@ jobs:
       - name: build + publish
         working-directory: ts
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.CLOUDSMITH_API_KEY }}
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
+          CARGO_REGISTRIES_ZER07LABS_TOKEN: ${{ secrets.CARGO_REGISTRIES_ZER07LABS_TOKEN }}
         run: |
-          if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "::error::CLOUDSMITH_API_KEY is not set — cannot publish to the private npm registry."
+          # Prefer a dedicated CLOUDSMITH_API_KEY; else reuse the ORG-level Cargo token — the same Cloudsmith
+          # key, just stored with the cargo:token provider's literal "Bearer " prefix, which npm's _authToken
+          # must NOT carry (npm adds its own). Strip it.
+          TOKEN="$CLOUDSMITH_API_KEY"
+          [ -z "$TOKEN" ] && TOKEN="${CARGO_REGISTRIES_ZER07LABS_TOKEN#Bearer }"
+          if [ -z "$TOKEN" ]; then
+            echo "::error::No Cloudsmith credential. Set CLOUDSMITH_API_KEY, or ensure the org secret CARGO_REGISTRIES_ZER07LABS_TOKEN is in scope for this repo (with npm push to zer07labs/internal)."
             exit 1
           fi
+          echo "::add-mask::$TOKEN"
+          export NODE_AUTH_TOKEN="$TOKEN"   # setup-node wrote _authToken=${NODE_AUTH_TOKEN} into .npmrc
           npm ci
           npm run build
           npm publish   # registry + access come from package.json publishConfig
@@ -105,15 +113,21 @@ jobs:
       - name: build (bundles the transport via package-data) + upload
         working-directory: python
         env:
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
+          CARGO_REGISTRIES_ZER07LABS_TOKEN: ${{ secrets.CARGO_REGISTRIES_ZER07LABS_TOKEN }}
           # Cloudsmith twine auth: username `token`, password = the raw API key.
           TWINE_USERNAME: token
-          TWINE_PASSWORD: ${{ secrets.CLOUDSMITH_API_KEY }}
           TWINE_REPOSITORY_URL: "https://python.cloudsmith.io/zer07labs/internal/"
         run: |
-          if [ -z "$TWINE_PASSWORD" ]; then
-            echo "::error::CLOUDSMITH_API_KEY is not set — cannot publish the wheel."
+          # Dedicated key if set, else the org Cargo token with its "Bearer " prefix stripped (see the npm job).
+          TOKEN="$CLOUDSMITH_API_KEY"
+          [ -z "$TOKEN" ] && TOKEN="${CARGO_REGISTRIES_ZER07LABS_TOKEN#Bearer }"
+          if [ -z "$TOKEN" ]; then
+            echo "::error::No Cloudsmith credential. Set CLOUDSMITH_API_KEY, or ensure the org secret CARGO_REGISTRIES_ZER07LABS_TOKEN is in scope for this repo (with python push to zer07labs/internal)."
             exit 1
           fi
+          echo "::add-mask::$TOKEN"
+          export TWINE_PASSWORD="$TOKEN"
           python -m pip install --quiet build twine
           python -m build
           # Sanity: the wheel MUST contain the generated transport, or a consumer gets an import error.
