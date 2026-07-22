@@ -18,6 +18,7 @@ import pytest
 
 import seam_sdk.client  # noqa: F401 — wires the generated stubs onto sys.path
 from seam.api.v1 import seam_pb2 as pb  # noqa: E402
+from seam.event.v1 import seam_event_pb2 as ev  # noqa: E402
 from seam_sdk import KNOWN_KINDS, SeamClient, verify_streamed_record_digest  # noqa: E402
 from seam_sdk.admin import SeamAdminClient  # noqa: E402
 
@@ -26,11 +27,11 @@ VECTORS = json.loads(
 )
 
 
-def _kat_event() -> pb.SeamEvent:
+def _kat_event() -> ev.SeamEvent:
     """A DECISION_SEALED event whose payload + wire digest are the runtime record_digest_v2 KAT."""
     v = VECTORS["record_digest_v2"]
     i = v["inputs"]
-    payload = pb.DecisionSealed(
+    payload = ev.DecisionSealed(
         decision_id=i["decision_id"],
         tenant=i["tenant"],
         namespace=i["namespace"],
@@ -41,7 +42,7 @@ def _kat_event() -> pb.SeamEvent:
     )
     # mode is Some in the KAT; policy_version / supersedes are None (left unset → HasField False).
     payload.mode = i["mode"]
-    return pb.SeamEvent(
+    return ev.SeamEvent(
         kind="DECISION_SEALED",
         payload=payload,
         digest=bytes.fromhex(v["digest_hex"]),
@@ -75,7 +76,7 @@ def test_streamed_record_digest_rejects_non_v2_and_non_sealed():
     v1.payload.schema_version = 1
     with pytest.raises(ValueError):
         verify_streamed_record_digest(v1)
-    other = pb.SeamEvent(kind="SESSION_LIFECYCLE")
+    other = ev.SeamEvent(kind="SESSION_LIFECYCLE")
     with pytest.raises(ValueError):
         verify_streamed_record_digest(other)
 
