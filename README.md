@@ -103,14 +103,13 @@ The SDK is **not** published to public npmjs / PyPI. It ships to the org's **pri
 `docs/deployment.md` § Publishing](https://github.com/zer07labs/seam-runtime)). One registry hosts all
 formats: Cargo, **npm**, **Python**.
 
-**Cutting a release.** Bump the versions (`ts/package.json`, `python/pyproject.toml` — keep them equal) and
-push a matching tag; [`.github/workflows/publish.yml`](.github/workflows/publish.yml) generates the
-transport from the BSR and pushes both packages. Immutable per version — a re-cut needs a bump.
-
-```sh
-# versions bumped to X.Y.Z in ts/package.json + python/pyproject.toml, then:
-git tag vX.Y.Z && git push origin vX.Y.Z     # → npm + wheel land on Cloudsmith
-```
+**Cutting a release — one version everywhere.** The SDK version tracks the **seam-runtime** version: a
+runtime release fires a `repository_dispatch` here ([`release-on-runtime.yml`](.github/workflows/release-on-runtime.yml)),
+which bumps `ts/package.json` + `python/pyproject.toml` to match, commits, and tags `vX.Y.Z` — that tag
+triggers [`publish.yml`](.github/workflows/publish.yml) (transport regenerated from the BSR, both packages
+pushed to Cloudsmith). So you don't cut the SDK release by hand; releasing the runtime releases the SDK at
+the same version. A `workflow_dispatch` fallback (with an explicit version) exists if a dispatch is missed.
+Immutable per version — a re-cut needs a bump. The `version-lockstep` CI guard keeps py == ts.
 
 *Credentials.* `BUF_TOKEN` (read the contract from the BSR — already set) plus a Cloudsmith push token. The
 workflow **reuses the org-level `CARGO_REGISTRIES_ZER07LABS_TOKEN`** (the same Cloudsmith key the Rust crates
