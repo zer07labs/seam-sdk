@@ -96,6 +96,42 @@ python/seam_sdk/_gen/, ts/gen/    # generated transport, inside each package (gi
 <lang>/              # per-language package: the crypto shim + ergonomic client + packaging
 ```
 
+## Internal distribution (private — Cloudsmith `zer07labs/internal`)
+
+The SDK is **not** published to public npmjs / PyPI. It ships to the org's **private Cloudsmith** repo
+`zer07labs/internal` — the *same* registry the Rust crates use ([seam-runtime
+`docs/deployment.md` § Publishing](https://github.com/zer07labs/seam-runtime)). One registry hosts all
+formats: Cargo, **npm**, **Python**.
+
+**Cutting a release.** Bump the versions (`ts/package.json`, `python/pyproject.toml` — keep them equal) and
+push a matching tag; [`.github/workflows/publish.yml`](.github/workflows/publish.yml) generates the
+transport from the BSR and pushes both packages. Immutable per version — a re-cut needs a bump.
+
+```sh
+# versions bumped to X.Y.Z in ts/package.json + python/pyproject.toml, then:
+git tag vX.Y.Z && git push origin vX.Y.Z     # → npm + wheel land on Cloudsmith
+```
+
+*Requires two repo secrets:* `BUF_TOKEN` (read the contract from the BSR) and `CLOUDSMITH_API_KEY` (a raw
+Cloudsmith key with push to `zer07labs/internal`, npm + python formats enabled). The npm/python formats may
+need enabling once on the Cloudsmith repo (they're format-agnostic; the Cargo one is already live).
+
+**Consuming it** — point the consumer at Cloudsmith and add the dependency:
+
+```sh
+# npm (e.g. the control plane): .npmrc
+@zer07labs:registry=https://npm.cloudsmith.io/zer07labs/internal/
+//npm.cloudsmith.io/zer07labs/internal/:_authToken=${CLOUDSMITH_API_KEY}
+#   package.json → "dependencies": { "@zer07labs/seam-sdk": "^0.3.0" }
+
+# Python: pip
+pip install seam-sdk --extra-index-url \
+  https://token:${CLOUDSMITH_API_KEY}@python.cloudsmith.io/zer07labs/internal/simple/
+```
+
+> Endpoint hosts follow the per-format Cloudsmith convention (`cargo.cloudsmith.io/…` → `npm.`/`python.`).
+> If a call 4xx's on a URL, confirm it against Cloudsmith → the repo → **Set Me Up**.
+
 ## Contract changes
 
 The contract is versioned and **backward-compatibility-checked** in the runtime repo's CI (`buf breaking`),
