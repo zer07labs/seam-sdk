@@ -1,0 +1,128 @@
+name: publish (internal — Cloudsmith zer07labs/internal)
+
+# Cut an INTERNAL release. Push a version tag `vX.Y.Z` (matching the package versions) and this publishes
+# the npm package (@zer07labs/seam-sdk) AND the Python wheel (seam-sdk) to the org's PRIVATE Cloudsmith
+# repo `zer07labs/internal` — the SAME registry the Rust crates already use (docs: seam-runtime
+# .cargo/config.toml + docs/deployment.md § Publishing). NOTHING goes to public npmjs / PyPI.
+#
+# A published version is IMMUTABLE per registry — a re-cut needs a version bump. Confirm the tag matches the
+# in-tree versions (the version-check job below enforces it, so a stale tag fails loud instead of no-op'ing).
+#
+# Required repo/org secrets:
+#   BUF_TOKEN          — read access to buf.build/zer07labs/seam (to generate the transport stubs from the
+#                        BSR — the release source; a git checkout does NOT carry them, they're .gitignored).
+#   CLOUDSMITH_API_KEY — a Cloudsmith API key with push to zer07labs/internal (npm + python formats enabled
+#                        on the repo). The RAW key — no "Bearer "/"Token " prefix (npm and twine add their
+#                        own). Distinct from the Cargo CI's CARGO_REGISTRIES_ZER07LABS_TOKEN, which carries a
+#                        literal "Bearer " prefix; do not reuse that value verbatim here.
+#
+# Endpoint hosts follow the established per-format Cloudsmith convention (cargo.cloudsmith.io/… → npm/python
+# equivalents). If a push 4xx's on the URL, confirm it against Cloudsmith → the repo → "Set Me Up".
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  version-check:
+    name: tag matches the in-tree versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: assert vTAG == ts/package.json == python version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          TS=$(node -p "require('./ts/package.json').version")
+          PY=$(grep -m1 '^version' python/pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "tag=$TAG  ts=$TS  py=$PY"
+          if [ "$TAG" != "$TS" ] || [ "$TAG" != "$PY" ]; then
+            echo "::error::tag v$TAG does not match ts ($TS) / python ($PY) — bump the versions and re-tag."
+            exit 1
+          fi
+
+  npm:
+    name: npm → Cloudsmith
+    needs: version-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://npm.cloudsmith.io/zer07labs/internal/"
+          scope: "@zer07labs"
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ github.token }}
+      - name: buf login + generate the transport stubs from the BSR
+        env:
+          BUF_TOKEN: ${{ secrets.BUF_TOKEN }}
+        run: |
+          if [ -z "$BUF_TOKEN" ]; then
+            echo "::error::BUF_TOKEN is not set — cannot generate the transport stubs; the wheel/tarball would ship without a transport."
+            exit 1
+          fi
+          printf '%s' "$BUF_TOKEN" | buf registry login buf.build --token-stdin
+          buf generate buf.build/zer07labs/seam
+      - name: build + publish
+        working-directory: ts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.CLOUDSMITH_API_KEY }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::error::CLOUDSMITH_API_KEY is not set — cannot publish to the private npm registry."
+            exit 1
+          fi
+          npm ci
+          npm run build
+          npm publish   # registry + access come from package.json publishConfig
+
+  python:
+    name: python wheel → Cloudsmith
+    needs: version-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ github.token }}
+      - name: buf login + generate the transport stubs from the BSR
+        env:
+          BUF_TOKEN: ${{ secrets.BUF_TOKEN }}
+        run: |
+          if [ -z "$BUF_TOKEN" ]; then
+            echo "::error::BUF_TOKEN is not set — cannot generate the transport stubs."
+            exit 1
+          fi
+          printf '%s' "$BUF_TOKEN" | buf registry login buf.build --token-stdin
+          buf generate buf.build/zer07labs/seam
+      - name: build (bundles the transport via package-data) + upload
+        working-directory: python
+        env:
+          # Cloudsmith twine auth: username `token`, password = the raw API key.
+          TWINE_USERNAME: token
+          TWINE_PASSWORD: ${{ secrets.CLOUDSMITH_API_KEY }}
+          TWINE_REPOSITORY_URL: "https://python.cloudsmith.io/zer07labs/internal/"
+        run: |
+          if [ -z "$TWINE_PASSWORD" ]; then
+            echo "::error::CLOUDSMITH_API_KEY is not set — cannot publish the wheel."
+            exit 1
+          fi
+          python -m pip install --quiet build twine
+          python -m build
+          # Sanity: the wheel MUST contain the generated transport, or a consumer gets an import error.
+          python - <<'PY'
+          import glob, zipfile, sys
+          whl = glob.glob("dist/*.whl")[0]
+          names = zipfile.ZipFile(whl).namelist()
+          if not any(n.endswith("_gen/seam/api/v1/seam_pb2.py") for n in names):
+              sys.exit(f"{whl} is missing the generated transport — refusing to publish a broken wheel")
+          print(f"{whl}: transport bundled OK")
+          PY
+          twine upload dist/*
