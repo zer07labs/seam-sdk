@@ -1,6 +1,6 @@
 [project]
 name = "seam-sdk"
-version = "0.5.1"
+version = "0.6.0"
 description = "Python SDK for the Seam decision-boundary runtime — gRPC transport + stock-crypto client shim."
 readme = "README.md"
 requires-python = ">=3.9"
