@@ -12,10 +12,11 @@ import {
   SeamCoordination,
   SeamTrust,
   type Anchor,
-  type ChainHeadAttestation,
   type Commitment,
   type ContextBinding,
 } from "../gen/seam/api/v1/seam_pb.js";
+// ChainHeadAttestation moved to the canonical seam.event.v1 package.
+import { type ChainHeadAttestation } from "../gen/seam/event/v1/seam_event_pb.js";
 import { aidFromPubkey, buildPresentation, verifyTct } from "./crypto.js";
 import { errorMappingInterceptor } from "./errors.js";
 

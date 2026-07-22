@@ -14,7 +14,7 @@ import {
   SeamEventSchema,
   DecisionSealedSchema,
   type SeamEvent,
-} from "../gen/seam/api/v1/seam_pb.js";
+} from "../gen/seam/event/v1/seam_event_pb.js";
 import { Agent, SeamClient } from "../src/client.js";
 import {
   SeamAdminClient,

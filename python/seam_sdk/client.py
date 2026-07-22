@@ -26,6 +26,7 @@ _GEN = pathlib.Path(__file__).resolve().parent / "_gen"
 if str(_GEN) not in sys.path:
     sys.path.insert(0, str(_GEN))
 from seam.api.v1 import seam_pb2 as pb  # noqa: E402
+from seam.event.v1 import seam_event_pb2 as ev  # noqa: E402
 from seam.api.v1 import seam_pb2_grpc as rpc  # noqa: E402
 
 
@@ -330,7 +331,7 @@ class SeamClient:
         ).valid
 
     def verify_party_attestation(
-        self, party_id: str, attestation: pb.ChainHeadAttestation
+        self, party_id: str, attestation: ev.ChainHeadAttestation
     ) -> bool:
         """Verify a counterparty's signed chain-head attestation against the registry-pinned key (A14
         network mode). Returns ``True`` iff the attestation's Ed25519 signature checks out against the

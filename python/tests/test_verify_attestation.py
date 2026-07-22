@@ -24,6 +24,7 @@ import pytest
 
 import seam_sdk.client  # noqa: F401  — importing wires the generated `_gen` stubs onto sys.path
 from seam.api.v1 import seam_pb2 as pb  # noqa: E402
+from seam.event.v1 import seam_event_pb2 as ev  # noqa: E402
 from seam_sdk import SeamAdminClient, SeamClient  # noqa: E402
 
 # ── The runtime chain_head_attestation KAT (seam-client/tests/conformance_vectors.json) ───────────────
@@ -45,8 +46,8 @@ _KAT_ATTESTATION = dict(
 )
 
 
-def _kat_attestation() -> pb.ChainHeadAttestation:
-    return pb.ChainHeadAttestation(**_KAT_ATTESTATION)
+def _kat_attestation() -> ev.ChainHeadAttestation:
+    return ev.ChainHeadAttestation(**_KAT_ATTESTATION)
 
 
 def _kat_pubkey() -> bytes:

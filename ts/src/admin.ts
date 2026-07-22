@@ -19,12 +19,15 @@ import {
   SeamAdmin,
   SeamEvents,
   type ErasurePreview,
-  type ErasureCertificate,
   type TenantView,
   type AuditEntry,
   type Anchor,
-  type SeamEvent,
 } from "../gen/seam/api/v1/seam_pb.js";
+// The event messages now live in the canonical seam.event.v1 package (imported by seam.api.v1).
+import {
+  type ErasureCertificate,
+  type SeamEvent,
+} from "../gen/seam/event/v1/seam_event_pb.js";
 import { errorMappingInterceptor, toSeamError } from "./errors.js";
 import { recordDigestV2 } from "./crypto.js";
 import type { BudgetLimits } from "./client.js";

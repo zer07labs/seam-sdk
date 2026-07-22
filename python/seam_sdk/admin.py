@@ -24,6 +24,7 @@ import grpc
 # path insertion at import time), so `from seam.api.v1 import ...` resolves here too.
 from . import client as _client  # noqa: F401
 from seam.api.v1 import seam_pb2 as pb  # noqa: E402
+from seam.event.v1 import seam_event_pb2 as ev  # noqa: E402
 from seam.api.v1 import seam_pb2_grpc as rpc  # noqa: E402
 
 from .errors import _MappedStub, map_rpc_error  # noqa: E402
@@ -52,7 +53,7 @@ KNOWN_KINDS = frozenset(
 )
 
 
-def verify_streamed_record_digest(event: pb.SeamEvent) -> bool:
+def verify_streamed_record_digest(event: ev.SeamEvent) -> bool:
     """Recompute a streamed v2 ``DECISION_SEALED``'s record digest from its payload (+ ``ciphertext_digest``,
     tag 10) and compare it to the wire ``digest`` (tag 19) — live authenticity for a single record, the
     in-client counterpart of ``seam-verify chain --issuer``'s design-a. Returns ``True`` iff they match;
@@ -176,7 +177,7 @@ class SeamAdminClient:
 
     def erase_subject(
         self, tenant: str, subject: str, confirm_count: int
-    ) -> pb.ErasureCertificate:
+    ) -> ev.ErasureCertificate:
         """Crypto-shred every record bound to ``subject`` in ``tenant`` and return the signed,
         chain-anchored certificate. ``tenant`` is REQUIRED (empty ⇒ server rejects); ``confirm_count``
         MUST equal the preview's ``len(would_erase)`` or the server rejects (``INVALID_ARGUMENT``)."""
@@ -188,7 +189,7 @@ class SeamAdminClient:
 
     def erase_subject_confirmed(
         self, tenant: str, subject: str
-    ) -> pb.ErasureCertificate:
+    ) -> ev.ErasureCertificate:
         """The common, safe path: preview, then erase with the preview's ``would_erase`` count."""
         preview = self.preview_erasure(tenant, subject)
         return self.erase_subject(tenant, subject, len(preview.would_erase))
@@ -276,7 +277,7 @@ class SeamAdminClient:
 
     def stream_events(
         self, *, from_seq: int = 0, follow: bool = False, ack: bool = False
-    ) -> Iterator[pb.SeamEvent]:
+    ) -> Iterator[ev.SeamEvent]:
         """Server-stream the ``seam-event.v1`` governance outbox. Two modes:
 
         * **drain** (``follow=False``, default): yield the current unpublished backlog, then stop.
@@ -286,7 +287,7 @@ class SeamAdminClient:
           events as they arrive — cursor-based, never acks. Resume from the last ``seq + 1`` and dedup
           by ``event_id``. The stream ends cleanly when the server drains on shutdown.
 
-        Yields :class:`pb.SeamEvent`. Iterate in a thread/task for ``follow=True`` (it blocks)."""
+        Yields :class:`ev.SeamEvent`. Iterate in a thread/task for ``follow=True`` (it blocks)."""
         req = pb.StreamEventsRequest(from_seq=from_seq, ack=ack, follow=follow)
         try:
             for event in self._events.StreamEvents(req):
