@@ -13,6 +13,23 @@ on:
   pull_request:
 
 jobs:
+  version-lockstep:
+    name: version lockstep (python == typescript)
+    runs-on: ubuntu-latest
+    # "One version everywhere": ts/package.json and python/pyproject.toml must always be the same version
+    # (they are released together, following the runtime). Fail a PR that lets them drift.
+    steps:
+      - uses: actions/checkout@v4
+      - name: python version must equal typescript version
+        run: |
+          TS=$(node -p "require('./ts/package.json').version")
+          PY=$(grep -m1 '^version' python/pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "ts=$TS  py=$PY"
+          if [ "$TS" != "$PY" ]; then
+            echo "::error::ts/package.json ($TS) != python/pyproject.toml ($PY) — keep them equal (one version everywhere)."
+            exit 1
+          fi
+
   preflight:
     name: preflight (secret gating)
     runs-on: ubuntu-latest

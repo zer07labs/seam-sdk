@@ -1,0 +1,72 @@
+name: release (follow the runtime version)
+
+# "One version everywhere": the seam-runtime release is the version AUTHORITY. When it cuts a release,
+# its publish workflow fires a repository_dispatch here with the new version; this bumps ts/package.json +
+# python/pyproject.toml to match, commits to main, and tags v{version} — which triggers publish.yml (the
+# Cloudsmith npm + wheel upload). So the SDK is always the SAME version as the runtime.
+#
+# (This is where Seam deliberately diverges from MACP, whose repos version independently. Here the SDK
+# FOLLOWS the runtime, which is what "one version everywhere" requires across two repos.)
+#
+# Uses the seam-deps-bot App token so the commit + tag it pushes actually trigger downstream CI + publish
+# (GITHUB_TOKEN can't). Requires org secrets SEAM_BOT_APP_ID + SEAM_BOT_PRIVATE_KEY.
+on:
+  repository_dispatch:
+    types: [seam-release]
+  # Manual fallback: run it yourself with an explicit version if the dispatch is ever missed.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 0.4.1), must match the runtime's"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve the target version
+        id: v
+        run: |
+          VER="${{ github.event.client_payload.version || github.event.inputs.version }}"
+          VER="${VER#v}"   # tolerate a leading v
+          [ -n "$VER" ] || { echo "::error::no version in the dispatch payload / input"; exit 1; }
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: Mint the seam-deps-bot App token
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.SEAM_BOT_APP_ID }}
+          private-key: ${{ secrets.SEAM_BOT_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ steps.app.outputs.token }}
+
+      - name: Bump both packages to the runtime version
+        env:
+          VER: ${{ steps.v.outputs.version }}
+        run: |
+          # ts/package.json
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('ts/package.json','utf8'));p.version=process.env.VER;fs.writeFileSync('ts/package.json',JSON.stringify(p,null,2)+'\n')"
+          # python/pyproject.toml — the FIRST version line (the [project] one)
+          perl -pi -e 's/^version = "[^"]+"/version = "$ENV{VER}"/ if $. < 6' python/pyproject.toml
+          echo "ts=$(node -p "require('./ts/package.json').version")  py=$(grep -m1 '^version' python/pyproject.toml)"
+
+      - name: Commit + tag (triggers publish.yml)
+        env:
+          VER: ${{ steps.v.outputs.version }}
+        run: |
+          git config user.name "seam-deps-bot[bot]"
+          git config user.email "seam-deps-bot[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "already at $VER — tagging only"
+          else
+            git commit -am "chore(release): v$VER — follow the runtime version"
+            git push origin HEAD:main
+          fi
+          git tag -a "v$VER" -m "seam-sdk v$VER (follows seam-runtime)"
+          git push origin "v$VER"
