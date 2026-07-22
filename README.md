@@ -113,8 +113,9 @@ git tag vX.Y.Z && git push origin vX.Y.Z     # → npm + wheel land on Cloudsmit
 ```
 
 *Requires two repo secrets:* `BUF_TOKEN` (read the contract from the BSR) and `CLOUDSMITH_API_KEY` (a raw
-Cloudsmith key with push to `zer07labs/internal`, npm + python formats enabled). The npm/python formats may
-need enabling once on the Cloudsmith repo (they're format-agnostic; the Cargo one is already live).
+Cloudsmith key with push to `zer07labs/internal`). **No per-format setup is needed** — Cloudsmith repos are
+format-agnostic; the same repo that holds the Cargo crates accepts an npm package or a wheel on first push
+(verified: `npm.cloudsmith.io/zer07labs/internal/` already answers, like the Cargo endpoint).
 
 **Consuming it** — point the consumer at Cloudsmith and add the dependency:
 
@@ -124,9 +125,10 @@ need enabling once on the Cloudsmith repo (they're format-agnostic; the Cargo on
 //npm.cloudsmith.io/zer07labs/internal/:_authToken=${CLOUDSMITH_API_KEY}
 #   package.json → "dependencies": { "@zer07labs/seam-sdk": "^0.3.0" }
 
-# Python: pip
+# Python: pip. NOTE the pip index host (dl.cloudsmith.io/basic/…/python/simple/) is DIFFERENT from the
+# twine upload host (python.cloudsmith.io/…/) — Cloudsmith serves install and upload from separate hosts.
 pip install seam-sdk --extra-index-url \
-  https://token:${CLOUDSMITH_API_KEY}@python.cloudsmith.io/zer07labs/internal/simple/
+  https://token:${CLOUDSMITH_API_KEY}@dl.cloudsmith.io/basic/zer07labs/internal/python/simple/
 ```
 
 > Endpoint hosts follow the per-format Cloudsmith convention (`cargo.cloudsmith.io/…` → `npm.`/`python.`).
