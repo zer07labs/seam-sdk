@@ -21,7 +21,7 @@ import { SeamAdminClient } from "../src/admin.js";
 import {
   ChainHeadAttestationSchema,
   type ChainHeadAttestation,
-} from "../gen/seam/api/v1/seam_pb.js";
+} from "../gen/seam/event/v1/seam_event_pb.js";
 
 const BIN = process.env.SEAM_GRPC_BIN;
 const SKIP = !BIN;

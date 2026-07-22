@@ -37,7 +37,11 @@ plugins:
   #    Generated into the ts package so it resolves the package's node_modules. ──
   - remote: buf.build/bufbuild/es
     out: ts/gen
-    opt: target=ts
+    opt:
+      - target=ts
+      # seam.api.v1 now imports seam.event.v1 across files; nodenext moduleResolution needs the explicit
+      # `.js` extension on the generated cross-file imports (a single-file contract never emitted any).
+      - import_extension=js
 
   # ── Java (messages + grpc-java) ──
   - remote: buf.build/protocolbuffers/java
