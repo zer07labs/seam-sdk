@@ -23,9 +23,11 @@ RUNTIME    ?= ../seam-runtime
 
 generate:
 	buf generate $(BUF_MODULE)
+	python3 scripts/root_gen.py
 
 generate-local:
 	buf generate $(RUNTIME)
+	python3 scripts/root_gen.py
 
 # Assert the active stubs carry the RPC the hand-written clients call (hard gate), and report whether the
 # streamed-payload mirror fields are present (hard-gated under STREAM=1 — the Phase-6 mode). Run AFTER a

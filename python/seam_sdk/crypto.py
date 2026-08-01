@@ -147,6 +147,143 @@ def verify_tct(
         return False
 
 
+# ── RFC 8785 (JCS) canonicalization + the Authorize call binding ─────────────────────────────────────
+# `tool_input_digest` is what `call_sig` signs and what the advisory audit row records — a one-way door
+# pinned by the runtime's cross-language vector (`conformance/authorize_jcs_digest_vector.json`). There
+# is deliberately NO bless mode: a mismatch is a CONTRACT BREAK, not a prompt to regenerate.
+
+_JCS_ESCAPES = {
+    0x08: "\\b",
+    0x09: "\\t",
+    0x0A: "\\n",
+    0x0C: "\\f",
+    0x0D: "\\r",
+    0x22: '\\"',
+    0x5C: "\\\\",
+}
+
+# ECMAScript can only represent integers exactly within ±2^53; beyond that a decimal rendering here
+# would not round-trip through the runtime's f64 path, so it is rejected rather than silently skewed.
+_MAX_SAFE_INT = 2**53
+
+
+def _jcs_string(s: str) -> str:
+    """JSON-escape per RFC 8785 §3.2.2.2: only what JSON requires; non-ASCII stays literal UTF-8."""
+    out = ['"']
+    for ch in s:
+        cp = ord(ch)
+        esc = _JCS_ESCAPES.get(cp)
+        if esc is not None:
+            out.append(esc)
+        elif cp < 0x20:
+            out.append(f"\\u{cp:04x}")
+        else:
+            out.append(ch)
+    out.append('"')
+    return "".join(out)
+
+
+def _jcs_number(v: float) -> str:
+    """ECMAScript ``Number::toString`` (ECMA-262 §6.1.6.1.20) — the JCS number rendering.
+
+    Python's ``repr`` already yields the shortest round-trip digits for a double; this reformats them
+    into the ES6 surface form (integral doubles lose their ``.0``, exponents normalize to ``e±d`` with
+    no zero-padding, decimal notation for 10^-6 ≤ |v| < 10^21).
+    """
+    import math
+
+    if math.isnan(v) or math.isinf(v):
+        raise ValueError("NaN and Infinity cannot be canonicalized (RFC 8785)")
+    if v == 0:
+        return "0"  # covers -0.0: ES6 renders negative zero as "0"
+    sign = "-" if v < 0 else ""
+    from decimal import Decimal
+
+    _, digit_tuple, dexp = Decimal(repr(abs(v))).as_tuple()
+    raw = "".join(map(str, digit_tuple))
+    digits = raw.rstrip("0") or "0"
+    dexp += len(raw) - len(digits)
+    n = len(digits) + dexp  # value = 0.<digits> × 10^n
+    k = len(digits)
+    if k <= n <= 21:
+        body = digits + "0" * (n - k)
+    elif 0 < n <= 21:
+        body = digits[:n] + "." + digits[n:]
+    elif -6 < n <= 0:
+        body = "0." + "0" * (-n) + digits
+    else:
+        mant = digits[0] + ("." + digits[1:] if k > 1 else "")
+        e = n - 1
+        body = f"{mant}e{'+' if e >= 0 else '-'}{abs(e)}"
+    return sign + body
+
+
+def _jcs_write(v, out: list) -> None:
+    if v is None:
+        out.append("null")
+    elif v is True:
+        out.append("true")
+    elif v is False:
+        out.append("false")
+    elif isinstance(v, str):
+        out.append(_jcs_string(v))
+    elif isinstance(v, int):
+        if abs(v) > _MAX_SAFE_INT:
+            raise ValueError(
+                f"integer {v} exceeds 2^53 and cannot round-trip as an IEEE double"
+            )
+        out.append(str(v))
+    elif isinstance(v, float):
+        out.append(_jcs_number(v))
+    elif isinstance(v, (list, tuple)):
+        out.append("[")
+        for i, item in enumerate(v):
+            if i:
+                out.append(",")
+            _jcs_write(item, out)
+        out.append("]")
+    elif isinstance(v, dict):
+        out.append("{")
+        for key in v:
+            if not isinstance(key, str):
+                raise TypeError(
+                    f"JSON object keys must be strings, got {type(key).__name__}"
+                )
+        # RFC 8785 §3.2.3: keys sort by UTF-16 code units — UTF-16BE byte order IS code-unit order.
+        for i, key in enumerate(sorted(v, key=lambda k: k.encode("utf-16-be"))):
+            if i:
+                out.append(",")
+            out.append(_jcs_string(key))
+            out.append(":")
+            _jcs_write(v[key], out)
+        out.append("}")
+    else:
+        raise TypeError(f"{type(v).__name__} is not JSON-serializable")
+
+
+def jcs_canonicalize(obj) -> bytes:
+    """RFC 8785 (JCS) canonical JSON bytes for ``obj`` — sorted keys (UTF-16 code-unit order),
+    ES6 number rendering, minimal string escaping, UTF-8 encoded, no whitespace."""
+    out: list = []
+    _jcs_write(obj, out)
+    return "".join(out).encode("utf-8")
+
+
+def tool_input_digest(canonical: bytes) -> str:
+    """``"sha256:<hex>"`` over already-canonical JCS bytes (from :func:`jcs_canonicalize`)."""
+    return "sha256:" + hashlib.sha256(canonical).hexdigest()
+
+
+def call_sig(agent_seed: bytes, ticket: bytes, digest: str) -> bytes:
+    """The per-call proof-of-possession for :meth:`SeamClient.authorize`: Ed25519 by the agent key over
+    ``ticket_bytes || tool_input_digest_utf8`` (mirrors the runtime's ``call_sig_payload`` framing).
+    Binding the digest stops a captured signature being re-pointed at another tool call; binding the
+    ticket stops replay against a later ticket."""
+    return Ed25519PrivateKey.from_private_bytes(agent_seed).sign(
+        ticket + digest.encode("utf-8")
+    )
+
+
 # ── A14 authenticity framing (seam-event.v1) ─────────────────────────────────────────────────────────
 # frame(x) = u32le(len(x)) || x ; opt(x) = 0x00 if None else 0x01 || frame(x). Both transcribed from
 # `seam-event.v1.md`; they let a client verify a chain-head attestation or recompute a v2 record digest

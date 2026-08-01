@@ -150,6 +150,65 @@ export function verifyTct(
   }
 }
 
+// ── RFC 8785 (JCS) canonicalization + the Authorize call binding ─────────────────────────────────────
+// `toolInputDigest` is what `callSig` signs and what the advisory audit row records — a one-way door
+// pinned by the runtime's cross-language vector (`conformance/authorize_jcs_digest_vector.json`), which
+// must match the Python SDK byte-for-byte. There is deliberately NO bless mode: a mismatch is a
+// CONTRACT BREAK, not a prompt to regenerate.
+//
+// ES6 is JCS's native habitat: `String(number)` IS the required Number::toString rendering, default
+// string sort IS UTF-16 code-unit order, and `JSON.stringify` of a *string* IS the minimal escaping.
+
+const MAX_SAFE = 9007199254740992n; // 2^53 — beyond it an integer cannot round-trip as an IEEE double
+
+function jcsWrite(v: unknown): string {
+  if (v === null) return "null";
+  switch (typeof v) {
+    case "boolean":
+      return v ? "true" : "false";
+    case "number":
+      if (!Number.isFinite(v)) throw new Error("NaN and Infinity cannot be canonicalized (RFC 8785)");
+      return v === 0 ? "0" : String(v); // String(-0) is "0", matching ES6 ToString
+    case "bigint":
+      if (v > MAX_SAFE || v < -MAX_SAFE) throw new Error(`integer ${v} exceeds 2^53 and cannot round-trip as an IEEE double`);
+      return v.toString();
+    case "string":
+      // A lone surrogate cannot encode to UTF-8; Python raises on it (UnicodeEncodeError) and the
+      // Rust runtime cannot represent it — silently emitting `\udXXX` here would let TS digest a
+      // string no other implementation can, a cross-language divergence in a signed digest.
+      if (/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(v))
+        throw new Error("lone surrogate in string cannot be canonicalized (not valid Unicode)");
+      return JSON.stringify(v);
+  }
+  if (Array.isArray(v)) return "[" + v.map(jcsWrite).join(",") + "]";
+  if (typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    // Default Array.prototype.sort() compares UTF-16 code units — exactly RFC 8785 §3.2.3.
+    const keys = Object.keys(o).sort();
+    return "{" + keys.map((k) => JSON.stringify(k) + ":" + jcsWrite(o[k])).join(",") + "}";
+  }
+  throw new TypeError(`${typeof v} is not JSON-serializable`);
+}
+
+/** RFC 8785 (JCS) canonical JSON bytes — sorted keys (UTF-16 code-unit order), ES6 number rendering,
+ * minimal string escaping, UTF-8 encoded, no whitespace. */
+export function jcsCanonicalize(obj: unknown): Uint8Array {
+  return enc.encode(jcsWrite(obj));
+}
+
+/** `"sha256:<hex>"` over already-canonical JCS bytes (from {@link jcsCanonicalize}). */
+export function toolInputDigest(canonical: Uint8Array): string {
+  return "sha256:" + Buffer.from(sha256(canonical)).toString("hex");
+}
+
+/** The per-call proof-of-possession for `authorize()`: Ed25519 by the agent key over
+ * `ticket_bytes || tool_input_digest_utf8` (mirrors the runtime's `call_sig_payload` framing).
+ * Binding the digest stops a captured signature being re-pointed at another tool call; binding the
+ * ticket stops replay against a later ticket. */
+export function callSig(agentSeed: Uint8Array, ticket: Uint8Array, digest: string): Uint8Array {
+  return ed25519.sign(concat(ticket, enc.encode(digest)), agentSeed);
+}
+
 // ── A14 authenticity framing (seam-event.v1) ─────────────────────────────────────────────────────────
 // frame(x) = u32le(len) || x ; opt(x) = 0x00 if null else 0x01 || frame(x). Transcribed from
 // `seam-event.v1.md`. NOTE the u32 LITTLE-endian length prefix here — distinct from `lenPrefix` above

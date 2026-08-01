@@ -20,14 +20,12 @@ from typing import Iterator, Optional, Sequence
 
 import grpc
 
-# Importing the client module first ensures the generated `_gen` dir is on `sys.path` (client.py does the
-# path insertion at import time), so `from seam.api.v1 import ...` resolves here too.
-from . import client as _client  # noqa: F401
-from seam.api.v1 import seam_pb2 as pb  # noqa: E402
-from seam.event.v1 import seam_event_pb2 as ev  # noqa: E402
-from seam.api.v1 import seam_pb2_grpc as rpc  # noqa: E402
+from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
+from seam_sdk._gen.seam.api.v1 import seam_pb2_grpc as rpc
+from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as ev
 
-from .errors import _MappedStub, map_rpc_error  # noqa: E402
+from . import client as _client  # noqa: TC001 — referenced by the `raise_` annotation below
+from .errors import _MappedStub, map_rpc_error
 from .crypto import record_digest_v2  # noqa: E402
 
 __all__ = [

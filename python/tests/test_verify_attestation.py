@@ -22,9 +22,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import seam_sdk.client  # noqa: F401  — importing wires the generated `_gen` stubs onto sys.path
-from seam.api.v1 import seam_pb2 as pb  # noqa: E402
-from seam.event.v1 import seam_event_pb2 as ev  # noqa: E402
+from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
+from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as ev
 from seam_sdk import SeamAdminClient, SeamClient  # noqa: E402
 
 # ── The runtime chain_head_attestation KAT (seam-client/tests/conformance_vectors.json) ───────────────
@@ -71,7 +70,7 @@ class _RecordingTrust:
         self._valid = valid
         self.seen: pb.VerifyAttestationRequest | None = None
 
-    def VerifyPartyAttestation(self, req):  # noqa: N802 — mirrors the generated stub method name
+    def VerifyPartyAttestation(self, req, **_kw):  # noqa: N802 — mirrors the generated stub method name
         self.seen = req
         return SimpleNamespace(valid=self._valid)
 

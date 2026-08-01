@@ -7,7 +7,9 @@ import { createGrpcTransport } from "@connectrpc/connect-node";
 import { ed25519 } from "@noble/curves/ed25519";
 
 import {
+  AuthorizeVerdict,
   SeamAdmission,
+  SeamAuthorization,
   SeamContext,
   SeamCoordination,
   SeamTrust,
@@ -17,8 +19,15 @@ import {
 } from "../gen/seam/api/v1/seam_pb.js";
 // ChainHeadAttestation moved to the canonical seam.event.v1 package.
 import { type ChainHeadAttestation } from "../gen/seam/event/v1/seam_event_pb.js";
-import { aidFromPubkey, buildPresentation, verifyTct } from "./crypto.js";
-import { errorMappingInterceptor } from "./errors.js";
+import {
+  aidFromPubkey,
+  buildPresentation,
+  callSig,
+  jcsCanonicalize,
+  toolInputDigest,
+  verifyTct,
+} from "./crypto.js";
+import { errorMappingInterceptor, UnauthenticatedError } from "./errors.js";
 
 /**
  * The fetched proof's issuer AID does not match the issuer the caller pinned out of band.
@@ -48,6 +57,42 @@ export class Agent {
 }
 
 /**
+ * `Authorize` returned a verdict this SDK version does not recognize (including the proto zero value
+ * `AUTHORIZE_VERDICT_UNSPECIFIED`, which a correct server never emits). Growth policy (normative, from
+ * the proto): an unrecognized verdict MUST route to the adapter's FailPolicy — never to an implicit
+ * allow. Throwing a typed error is how this SDK enforces that.
+ */
+export class UnknownVerdictError extends Error {
+  readonly name = "UnknownVerdictError";
+  constructor(
+    readonly rawValue: number,
+    readonly authorizeId: string,
+  ) {
+    super(
+      `unrecognized AuthorizeVerdict value ${rawValue} (authorize_id=${authorizeId || "<none>"}); treat as failure, never allow`,
+    );
+  }
+}
+
+/** One advisory verdict. `transformedInput` is the guard-redacted canonical JSON, set iff
+ * `verdict === "TRANSFORM"`. `authorizeId` correlates the advisory event — NOT a decisionId. */
+export interface AuthorizeResult {
+  verdict: "ALLOW" | "DENY" | "TRANSFORM" | "ESCALATE";
+  reason: string;
+  transformedInput?: Uint8Array;
+  authorizeId: string;
+  policyVersion: string;
+  allowed: boolean;
+}
+
+const VERDICT_NAMES: Partial<Record<AuthorizeVerdict, AuthorizeResult["verdict"]>> = {
+  [AuthorizeVerdict.ALLOW]: "ALLOW",
+  [AuthorizeVerdict.DENY]: "DENY",
+  [AuthorizeVerdict.TRANSFORM]: "TRANSFORM",
+  [AuthorizeVerdict.ESCALATE]: "ESCALATE",
+};
+
+/**
  * Multi-dimension session budget (enterprise 6.2). Every field is optional; an unset dimension is
  * unlimited. `messages`, when set, overrides the legacy `budget` count. `softPct` is the soft-warning
  * threshold as a percent of any limit (server default 80). `uint64` dimensions are `bigint`.
@@ -74,12 +119,19 @@ export class SeamClient {
   private readonly coord: Client<typeof SeamCoordination>;
   private readonly trust: Client<typeof SeamTrust>;
   private readonly context: Client<typeof SeamContext>;
+  private readonly authz: Client<typeof SeamAuthorization>;
+  // Admission-ticket lifecycle (advisory Authorize path), keyed by agent AID: admit-once, refreshed
+  // at 80% TTL, retried exactly once on UNAUTHENTICATED. `admitting` serializes concurrent admits so
+  // parallel authorize() calls share one handshake instead of racing N of them.
+  private readonly tickets = new Map<string, { ticket: Uint8Array; refreshAtMs: number }>();
+  private readonly admitting = new Map<string, Promise<Uint8Array>>();
 
   constructor(transport: ReturnType<typeof createGrpcTransport>) {
     this.admission = createClient(SeamAdmission, transport);
     this.coord = createClient(SeamCoordination, transport);
     this.trust = createClient(SeamTrust, transport);
     this.context = createClient(SeamContext, transport);
+    this.authz = createClient(SeamAuthorization, transport);
   }
 
   /** Connect to a Seam gRPC endpoint (e.g. `http://127.0.0.1:8090`, or `https://…` for TLS). */
@@ -93,6 +145,104 @@ export class SeamClient {
     const ch = await this.admission.issueChallenge({});
     const body = buildPresentation(agent.seed, ch.receiverAid, ch.nonce, Date.now());
     return { presentationJson: new TextEncoder().encode(JSON.stringify(body)) };
+  }
+
+  // ── Advisory authorization (1-RTT, unsealed) ──────────────────────────────────────────────────
+
+  /** Run the challenge→`Admit` handshake now and cache the admission ticket. {@link authorize} calls
+   * this lazily; an explicit `admit` only front-loads the 2-RTT handshake (e.g. at worker startup). */
+  async admit(agent: Agent): Promise<Uint8Array> {
+    // Coalesce concurrent admits per agent: everyone awaits the one in-flight handshake.
+    const aid = agent.aid;
+    const inFlight = this.admitting.get(aid);
+    if (inFlight) return inFlight;
+    const p = (async () => {
+      const t = await this.admission.admit(await this.presentation(agent));
+      const nowMs = Date.now();
+      const ttlMs = Number(t.expiresAtMs) - nowMs;
+      if (ttlMs > 0 && t.ticket.length > 0) {
+        this.tickets.set(aid, { ticket: t.ticket, refreshAtMs: nowMs + ttlMs * 0.8 });
+      } else {
+        this.tickets.delete(aid); // never cache an expired/empty ticket
+      }
+      return t.ticket;
+    })();
+    this.admitting.set(aid, p);
+    try {
+      return await p;
+    } finally {
+      this.admitting.delete(aid);
+    }
+  }
+
+  /**
+   * Ask one advisory `(toolName, toolInput) -> verdict` question — 1 RTT steady-state, seals nothing.
+   *
+   * `toolInput` is the tool call's input as a plain JSON-able value; it is JCS-canonicalized and
+   * digested here, and the per-call `callSig` binds the ticket to that exact digest.
+   * `digestOnly: true` sends the digest without the raw input (audit-grade; no guard scan or
+   * TRANSFORM). Ticket lifecycle: lazy admit, cached, refreshed at 80% TTL, retried exactly once on
+   * `UNAUTHENTICATED`. An unknown verdict throws {@link UnknownVerdictError} — never an implicit
+   * allow. An old runtime without the Authorize service throws `UnimplementedError`; adapters
+   * typically degrade to their Observe tier on it.
+   */
+  async authorize(
+    agent: Agent,
+    toolName: string,
+    toolInput?: unknown,
+    opts?: {
+      digestOnly?: boolean;
+      features?: Record<string, string>;
+      sessionId?: string;
+      subject?: string;
+      agentId?: string;
+      clientRequestId?: string;
+    },
+  ): Promise<AuthorizeResult> {
+    const canonical = jcsCanonicalize(toolInput ?? {});
+    const digest = toolInputDigest(canonical);
+    const request = (ticket: Uint8Array) => ({
+      ticket,
+      toolName,
+      toolInputDigest: digest,
+      toolInput: opts?.digestOnly ? new Uint8Array(0) : canonical,
+      callSig: callSig(agent.seed, ticket, digest),
+      features: opts?.features ?? {},
+      sessionId: opts?.sessionId ?? "",
+      subject: opts?.subject ?? "",
+      agentId: opts?.agentId ?? "",
+      clientRequestId: opts?.clientRequestId ?? "",
+    });
+
+    const cached = this.tickets.get(agent.aid);
+    let ticket =
+      cached && Date.now() < cached.refreshAtMs ? cached.ticket : await this.admit(agent);
+    let resp;
+    try {
+      resp = await this.authz.authorize(request(ticket));
+    } catch (e) {
+      if (!(e instanceof UnauthenticatedError)) throw e;
+      // Expired/rejected ticket: refresh once, retry once. A second failure propagates typed.
+      this.tickets.delete(agent.aid);
+      ticket = await this.admit(agent);
+      resp = await this.authz.authorize(request(ticket));
+    }
+    const verdict = VERDICT_NAMES[resp.verdict];
+    if (!verdict) throw new UnknownVerdictError(resp.verdict, resp.authorizeId);
+    if (verdict === "TRANSFORM" && resp.transformedInput.length === 0)
+      // A TRANSFORM that carries no rewrite is a protocol violation; surfacing it as a result would
+      // hand a truthiness-gating caller the ORIGINAL (unredacted) input to execute.
+      throw new Error(
+        `TRANSFORM verdict without transformed_input (authorize_id=${resp.authorizeId || "<none>"}); treat as failure, never execute the original input`,
+      );
+    return {
+      verdict,
+      reason: resp.reason,
+      transformedInput: verdict === "TRANSFORM" ? resp.transformedInput : undefined,
+      authorizeId: resp.authorizeId,
+      policyVersion: resp.policyVersion,
+      allowed: verdict === "ALLOW",
+    };
   }
 
   /**
@@ -109,6 +259,7 @@ export class SeamClient {
     participants: string[],
     votes: [string, string][],
     features?: Record<string, string>,
+    onBehalfOf?: string[],
   ) {
     return this.coord.runDecision({
       sessionId,
@@ -116,6 +267,9 @@ export class SeamClient {
       votes: votes.map(([a, value]) => ({ agent: a, value })),
       presentation: await this.presentation(agent),
       features: features ?? {},
+      // Phase 0b: end-user data subjects. The engine never reads them; the kernel folds each into
+      // the sealed record's participation as an inert `subject:<i>` declaration (GDPR-erasure join).
+      onBehalfOf: onBehalfOf ?? [],
     });
   }
 
@@ -135,6 +289,7 @@ export class SeamClient {
       budget?: number;
       limits?: BudgetLimits;
       mode?: string;
+      onBehalfOf?: string[];
     },
   ) {
     return this.coord.openSession({
@@ -144,6 +299,7 @@ export class SeamClient {
       mode: opts.mode ?? "",
       presentation: await this.presentation(agent),
       limits: opts.limits,
+      onBehalfOf: opts.onBehalfOf ?? [],
     });
   }
 
