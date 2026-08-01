@@ -13,7 +13,7 @@ from typing import Mapping, Optional
 from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
 
 from .crypto import call_sig, jcs_canonicalize, tool_input_digest
-from .errors import SeamError, UnknownVerdictError
+from .errors import ProtocolViolationError, UnknownVerdictError
 
 # The closed verdict set this SDK version understands. GROWTH POLICY (proto, normative): any value NOT
 # in this map — including AUTHORIZE_VERDICT_UNSPECIFIED — must surface as a typed failure the adapter's
@@ -52,9 +52,10 @@ def result_of(resp: "pb.AuthorizeResponse") -> AuthorizeResult:
     if name == "TRANSFORM" and not resp.transformed_input:
         # A TRANSFORM that carries no rewrite is a protocol violation; surfacing it as a result
         # would hand a truthiness-gating caller the ORIGINAL (unredacted) input to execute.
-        raise SeamError(
+        raise ProtocolViolationError(
             f"TRANSFORM verdict without transformed_input (authorize_id={resp.authorize_id or '<none>'}); "
-            "treat as failure, never execute the original input"
+            "treat as failure, never execute the original input",
+            resp.authorize_id,
         )
     return AuthorizeResult(
         verdict=name,

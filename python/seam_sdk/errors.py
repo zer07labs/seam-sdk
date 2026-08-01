@@ -49,6 +49,17 @@ class UnknownVerdictError(SeamError):
         )
 
 
+class ProtocolViolationError(SeamError):
+    """The server answered something the wire contract forbids — e.g. a TRANSFORM verdict with no
+    ``transformed_input``. Typed (not a bare ``SeamError``) so adapters can route it to their
+    hard-deny path: a caller that gated on truthiness would otherwise execute the ORIGINAL,
+    unredacted input."""
+
+    def __init__(self, message: str, authorize_id: str = ""):
+        self.authorize_id = authorize_id
+        super().__init__(message)
+
+
 class SeamRpcError(SeamError, grpc.RpcError):
     """A server-returned gRPC error, typed by status code.
 

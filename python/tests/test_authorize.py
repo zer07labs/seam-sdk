@@ -284,13 +284,13 @@ def test_every_verdict_decodes(fake_server):
 def test_transform_without_rewrite_is_a_typed_failure(fake_server):
     """A TRANSFORM carrying no transformed_input must fail typed — never hand back a result whose
     falsy rewrite could route a truthiness-gating caller to the original, unredacted input."""
-    from seam_sdk import SeamError
+    from seam_sdk import ProtocolViolationError
 
     servicer, addr = fake_server
     client = SeamClient.connect(addr)
     servicer.verdict = pb.TRANSFORM
     servicer.transformed = b""
-    with pytest.raises(SeamError):
+    with pytest.raises(ProtocolViolationError):
         client.authorize(Agent(SEED), "t", {})
 
 
