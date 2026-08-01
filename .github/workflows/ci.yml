@@ -72,7 +72,10 @@ jobs:
           BUF_TOKEN: ${{ secrets.BUF_TOKEN }}
         run: printf '%s' "$BUF_TOKEN" | buf registry login buf.build --token-stdin
       - name: generate the transport stubs from the contract
-        run: buf generate buf.build/zer07labs/seam
+        # `make generate`, NOT raw `buf generate`: the Makefile target also runs
+        # scripts/root_gen.py, which rewrites the generated absolute imports into rooted
+        # `seam_sdk._gen.*` subpackages. Raw buf output does not import.
+        run: make generate
       # The SDK's contract-freshness gate: assert the just-generated stubs carry the RPC the hand-written
       # clients call. Hard-fails on a stale BSR module (the SDK analogue of the runtime's published-surface
       # gate). Default mode (RPC only) — the streamed-payload fields are STREAM=1 and pend the Phase-0 push.
@@ -109,7 +112,10 @@ jobs:
           BUF_TOKEN: ${{ secrets.BUF_TOKEN }}
         run: printf '%s' "$BUF_TOKEN" | buf registry login buf.build --token-stdin
       - name: generate the transport stubs from the contract
-        run: buf generate buf.build/zer07labs/seam
+        # `make generate`, NOT raw `buf generate`: the Makefile target also runs
+        # scripts/root_gen.py, which rewrites the generated absolute imports into rooted
+        # `seam_sdk._gen.*` subpackages. Raw buf output does not import.
+        run: make generate
       - name: install
         working-directory: ts
         run: npm ci
@@ -158,7 +164,10 @@ jobs:
           BUF_TOKEN: ${{ secrets.BUF_TOKEN }}
         run: printf '%s' "$BUF_TOKEN" | buf registry login buf.build --token-stdin
       - name: generate the transport stubs from the contract
-        run: buf generate buf.build/zer07labs/seam
+        # `make generate`, NOT raw `buf generate`: the Makefile target also runs
+        # scripts/root_gen.py, which rewrites the generated absolute imports into rooted
+        # `seam_sdk._gen.*` subpackages. Raw buf output does not import.
+        run: make generate
       # Live data-plane round-trip + the management-plane (SeamAdmin) erasure/auth suite. Both spawn the
       # seam-grpc binary themselves; test_admin.py boots the second (SEAM_GRPC_MGMT_LISTEN) listener.
       - name: python live round-trip + management plane
