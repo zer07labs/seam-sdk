@@ -22,7 +22,7 @@ VECTORS = json.loads(
 def _client_with_proof(proof) -> SeamClient:
     """A client whose `get_commitment_proof` returns `proof` — no channel I/O ever happens."""
     client = SeamClient.connect("127.0.0.1:1")  # lazy insecure channel; never dialed
-    client.get_commitment_proof = lambda _decision_id: proof  # type: ignore[method-assign]
+    client.get_commitment_proof = lambda _decision_id, **_kw: proof  # type: ignore[method-assign]
     return client
 
 

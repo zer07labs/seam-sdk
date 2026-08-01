@@ -1,0 +1,71 @@
+{
+  "$comment": [
+    "The CROSS-LANGUAGE conformance vector for AuthorizeRequest.tool_input_digest.",
+    "Contract: canonicalize the tool input as RFC 8785 (JCS) JSON, then",
+    "tool_input_digest = \"sha256:\" + lowercase_hex(sha256(canonical_utf8_bytes)).",
+    "Every SDK and framework adapter MUST reproduce `canonical` byte-for-byte and `digest`",
+    "character-for-character from `input`. The Rust reference is",
+    "crates/seam-api/tests/authorize_jcs_digest_vector.rs. There is deliberately NO bless mode: a",
+    "mismatch is a CONTRACT BREAK, not a prompt to regenerate. The digest is a one-way door — it is",
+    "what call_sig signs and what the advisory audit row records.",
+    "`input` is written here in ordinary JSON; a conformant implementation canonicalizes IT, not the",
+    "pretty-printed text of this file."
+  ],
+  "algorithm": "sha256",
+  "canonicalization": "RFC 8785 (JSON Canonicalization Scheme)",
+  "cases": [
+    {
+      "name": "empty-object",
+      "why": "the degenerate input every adapter hits first (a no-argument tool)",
+      "input": {},
+      "canonical": "{}",
+      "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "name": "key-ordering",
+      "why": "JCS sorts object keys by UTF-16 code unit; an insertion-ordered serializer diverges here",
+      "input": { "zeta": 1, "alpha": 2, "Beta": 3, "_under": 4 },
+      "canonical": "{\"Beta\":3,\"_under\":4,\"alpha\":2,\"zeta\":1}",
+      "digest": "sha256:9dd15a91d539d523de1e7cd31627be83c4047c604b71559a65a354d9e23a23e8"
+    },
+    {
+      "name": "nested-and-arrays",
+      "why": "array order is significant (never sorted) while nested object keys are sorted",
+      "input": {
+        "tool": "wire_transfer",
+        "args": { "to": "acct-9", "amount": 100, "from": "acct-1" },
+        "tags": ["z", "a", "m"]
+      },
+      "canonical": "{\"args\":{\"amount\":100,\"from\":\"acct-1\",\"to\":\"acct-9\"},\"tags\":[\"z\",\"a\",\"m\"],\"tool\":\"wire_transfer\"}",
+      "digest": "sha256:80e7ca9a9be3c0c7c7c4908fda93b54d0a24f8594bcb66878c6997b3912acbc6"
+    },
+    {
+      "name": "numbers",
+      "why": "JCS numbers are ECMAScript Number::toString — integral doubles lose their .0, and exponents normalize",
+      "input": { "int": 1, "neg": -0.5, "big": 1e21, "trailing": 1.0, "zero": 0 },
+      "canonical": "{\"big\":1e+21,\"int\":1,\"neg\":-0.5,\"trailing\":1,\"zero\":0}",
+      "digest": "sha256:7ac01e056e941ff19f9c1f1d743fffcd1d1706913caa729aa71ba67bdbe76ffc"
+    },
+    {
+      "name": "strings-and-escapes",
+      "why": "JCS escapes only what JSON requires; everything else is literal UTF-8 (no \\uXXXX for non-ASCII)",
+      "input": { "text": "quote\" backslash\\ tab\t newline\n emoji😀 accents éü" },
+      "canonical": "{\"text\":\"quote\\\" backslash\\\\ tab\\t newline\\n emoji😀 accents éü\"}",
+      "digest": "sha256:d3f616cd00bc2a8526dae55e8dc64e19a673096b871c2c33191d8c4a5be9759a"
+    },
+    {
+      "name": "unicode-key-ordering",
+      "why": "JCS orders keys by UTF-16 code units, which differs from UTF-8 byte order above U+FFFF",
+      "input": { "é": 1, "z": 2, "😀": 3, "a": 4 },
+      "canonical": "{\"a\":4,\"z\":2,\"é\":1,\"😀\":3}",
+      "digest": "sha256:e46202e5929323f5a81c69473e28132188f5df21e697b221261c6c5741602ee8"
+    },
+    {
+      "name": "literals",
+      "why": "true/false/null render bare, and a top-level array is a legal input too",
+      "input": [true, false, null, ""],
+      "canonical": "[true,false,null,\"\"]",
+      "digest": "sha256:c08ea2a8c49c9760a68728347d24c85357c90da7f475bc42b7468d82757a8be6"
+    }
+  ]
+}

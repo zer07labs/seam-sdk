@@ -25,12 +25,13 @@ extend-exclude = ["_gen"]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
-# The generated transport is produced by `buf generate` into `seam_sdk/_gen` (not committed — see the repo
-# .gitignore). The stubs aren't importable sub-packages (no `__init__.py`; they're put on `sys.path` at
-# runtime), so ship the whole tree as package data rather than discovering it as packages.
+# The generated transport is produced by `buf generate` + `scripts/root_gen.py` into
+# `seam_sdk/_gen` (not committed — see the repo .gitignore). root_gen makes the tree REAL
+# subpackages (__init__.py + rooted imports), so packages.find discovers them; the .pyi
+# stubs still ride as package data.
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["seam_sdk*"]
 
 [tool.setuptools.package-data]
-seam_sdk = ["_gen/**/*.py", "_gen/**/*.pyi"]
+seam_sdk = ["_gen/**/*.pyi"]

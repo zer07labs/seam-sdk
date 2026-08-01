@@ -33,7 +33,9 @@ cd "$REPO_ROOT"
 
 PY_GEN="python/seam_sdk/_gen/seam/api/v1/seam_pb2.py"
 PY_GRPC="python/seam_sdk/_gen/seam/api/v1/seam_pb2_grpc.py"
+PY_EV="python/seam_sdk/_gen/seam/event/v1/seam_event_pb2.py"
 TS_GEN="ts/gen/seam/api/v1/seam_pb.ts"
+TS_EV="ts/gen/seam/event/v1/seam_event_pb.ts"
 
 err()  { echo "ERROR: $*" >&2; }
 note() { echo "  $*"; }
@@ -41,7 +43,7 @@ note() { echo "  $*"; }
 # A stub file must exist before we can probe it — a missing file is "you didn't generate", not "absent
 # symbol"; those are different failures and conflating them would hide a forgotten `make generate`.
 missing=0
-for f in "$PY_GEN" "$PY_GRPC" "$TS_GEN"; do
+for f in "$PY_GEN" "$PY_GRPC" "$PY_EV" "$TS_GEN" "$TS_EV"; do
   if [ ! -f "$f" ]; then
     err "generated stub not found: $f"
     missing=1
@@ -81,6 +83,25 @@ rpc_status="$(probe "SeamTrust.VerifyPartyAttestation (A4)" "$PY_GRPC" "$PY_GEN"
 rpc_rc=$?
 note "$rpc_status"
 
+# ── Probe 1b: the advisory Authorize surface (HARD GATE) ──────────────────────────────────────────────
+# The Phase-1 clients construct AuthorizeRequest and dial SeamAuthorization.Authorize + SeamAdmission.
+# Admit; every CI job regenerates from the BSR, so without this probe a stale BSR would pass freshness
+# while the new client fails to import. All three symbols land in one runtime push — probe each so a
+# partial mirror shows.
+authz_rc=0
+for spec in \
+  "SeamAuthorization.Authorize (Phase 1)|SeamAuthorization" \
+  "SeamAdmission.Admit → AdmissionTicket|AdmissionTicket" \
+  "AuthorizeRequest.call_sig|call_sig|callSig" \
+  "RunDecisionRequest.on_behalf_of (Phase 0b)|on_behalf_of|onBehalfOf" ; do
+  label="${spec%%|*}"; rest="${spec#*|}"
+  IFS='|' read -r -a pats <<< "$rest"
+  s="$(probe "$label" "$PY_GEN" "$PY_GRPC" "$TS_GEN" -- "${pats[@]}")"
+  st=$?
+  note "$s"
+  [ "$st" -ne 0 ] && authz_rc=1
+done
+
 # ── Probe 2: the streamed-payload mirror fields (reported; hard under STREAM=1) ────────────────────────
 # All four must be present together (they land in one Phase-0 push); probe each so a partial mirror shows.
 stream_rc=0
@@ -92,7 +113,8 @@ for spec in \
   label="${spec%%|*}"; rest="${spec#*|}"
   # split the remaining |-separated patterns
   IFS='|' read -r -a pats <<< "$rest"
-  s="$(probe "$label" "$PY_GEN" "$TS_GEN" -- "${pats[@]}")"
+  # The streamed payload lives in the seam.event.v1 stubs (the event contract split out of api).
+  s="$(probe "$label" "$PY_EV" "$TS_EV" -- "${pats[@]}")"
   st=$?
   note "$s"
   [ "$st" -ne 0 ] && stream_rc=1
@@ -106,6 +128,14 @@ if [ "$rpc_rc" -ne 0 ]; then
   exit 1
 fi
 echo "OK — VerifyPartyAttestation present (Phase 2 unblocked)."
+
+if [ "$authz_rc" -ne 0 ]; then
+  err "the active contract is STALE for Phase 1: the Authorize surface (SeamAuthorization / AdmissionTicket /"
+  err "call_sig / on_behalf_of) is not fully in the stubs. Regenerate from a contract that has it:"
+  err "'make generate-local RUNTIME=../seam-runtime' (always fresh), or 'make generate' once the BSR carries it."
+  exit 1
+fi
+echo "OK — Authorize surface present (Phase 1 unblocked)."
 
 if [ "${STREAM:-0}" = "1" ]; then
   if [ "$stream_rc" -ne 0 ]; then

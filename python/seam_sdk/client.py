@@ -8,26 +8,35 @@ server trust beyond the fetch.
 from __future__ import annotations
 
 import json
-import pathlib
-import sys
+import threading
 from dataclasses import dataclass
-from typing import Mapping, Optional, Sequence
+from typing import Dict, Mapping, Optional, Sequence
 
 import grpc
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from ._authorize import (
+    AuthorizeResult,
+    TicketCache,
+    build_authorize_request,
+    result_of,
+)
 from .crypto import aid_from_pubkey, build_presentation, verify_tct
-from .errors import IssuerMismatchError, SeamError, _MappedStub  # noqa: F401  (SeamError re-exported)
+from .errors import (  # noqa: F401  (SeamError re-exported)
+    IssuerMismatchError,
+    SeamError,
+    UnauthenticatedError,
+    _MappedStub,
+)
 
-# The generated transport stubs (`buf generate` writes them into the package at `seam_sdk/_gen`, so they
-# ship with the wheel). Their internal imports are rooted at that dir (`from seam.api.v1 import ...`), so
-# put it on the path — works both in the source tree and once installed.
-_GEN = pathlib.Path(__file__).resolve().parent / "_gen"
-if str(_GEN) not in sys.path:
-    sys.path.insert(0, str(_GEN))
-from seam.api.v1 import seam_pb2 as pb  # noqa: E402
-from seam.event.v1 import seam_event_pb2 as ev  # noqa: E402
-from seam.api.v1 import seam_pb2_grpc as rpc  # noqa: E402
+# The generated transport stubs are ROOTED subpackages (`scripts/root_gen.py` rewrites the
+# raw buf output), so they import like any other module — no sys.path injection, no global
+# `seam` namespace collision with installed packages. BEHAVIOR CHANGE for anyone who
+# imported `seam.api.v1` directly off the old path hack: import `seam_sdk._gen.seam.api.v1`
+# (the public `seam_sdk` API is unchanged).
+from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
+from seam_sdk._gen.seam.api.v1 import seam_pb2_grpc as rpc
+from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as ev  # noqa: F401  (re-exported)
 
 
 # ``SeamError`` and ``IssuerMismatchError`` are defined in :mod:`seam_sdk.errors` and imported above; they
@@ -40,6 +49,12 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+# Every public method takes ``timeout`` (seconds) and propagates it as the gRPC deadline. The SDK never
+# retries beyond the single ticket refresh in ``authorize`` — adapters own retry semantics. A deadline
+# breach surfaces as ``DeadlineExceededError``, distinct from a DENY verdict.
+DEFAULT_TIMEOUT_S = 2.0
+
+
 class Agent:
     """An agent identity — a 32-byte seed that derives the pinned AID and signs the admission PoP."""
 
@@ -47,15 +62,19 @@ class Agent:
         if len(seed) != 32:
             raise ValueError("agent seed must be 32 bytes")
         self.seed = seed
+        self._aid: Optional[str] = None
 
     @property
     def aid(self) -> str:
-        pub = (
-            Ed25519PrivateKey.from_private_bytes(self.seed)
-            .public_key()
-            .public_bytes_raw()
-        )
-        return aid_from_pubkey(pub)
+        # Derived once — the AID keys the per-agent ticket cache on the authorize hot path.
+        if self._aid is None:
+            pub = (
+                Ed25519PrivateKey.from_private_bytes(self.seed)
+                .public_key()
+                .public_bytes_raw()
+            )
+            self._aid = aid_from_pubkey(pub)
+        return self._aid
 
 
 @dataclass
@@ -109,6 +128,11 @@ class SeamClient:
         self._coord = _MappedStub(rpc.SeamCoordinationStub(channel))
         self._trust = _MappedStub(rpc.SeamTrustStub(channel))
         self._context = _MappedStub(rpc.SeamContextStub(channel))
+        self._authz = _MappedStub(rpc.SeamAuthorizationStub(channel))
+        # Admission-ticket lifecycle (advisory Authorize path): one cache per agent AID, all guarded
+        # by one lock — admit-once, refresh at 80% TTL, retry exactly once on UNAUTHENTICATED.
+        self._tickets: Dict[str, TicketCache] = {}
+        self._ticket_lock = threading.Lock()
 
     @classmethod
     def connect(
@@ -123,10 +147,87 @@ class SeamClient:
         )
         return cls(channel)
 
-    def _presentation(self, agent: Agent) -> pb.PinnedPresentation:
-        ch = self._admission.IssueChallenge(pb.Empty())
+    def _presentation(
+        self, agent: Agent, timeout: float = DEFAULT_TIMEOUT_S
+    ) -> pb.PinnedPresentation:
+        ch = self._admission.IssueChallenge(pb.Empty(), timeout=timeout)
         body = build_presentation(agent.seed, ch.receiver_aid, ch.nonce, _now_ms())
         return pb.PinnedPresentation(presentation_json=json.dumps(body).encode())
+
+    # ── Advisory authorization (1-RTT, unsealed) ────────────────────────────────────────────────
+
+    def admit(self, agent: Agent, *, timeout: float = DEFAULT_TIMEOUT_S) -> bytes:
+        """Run the challenge→``Admit`` handshake now and cache the resulting admission ticket.
+
+        :meth:`authorize` calls this lazily — an explicit ``admit`` is only useful to front-load the
+        2-RTT handshake (e.g. at worker startup). Returns the opaque ticket bytes."""
+        with self._ticket_lock:
+            cache = self._tickets.setdefault(agent.aid, TicketCache())
+            return self._admit_locked(agent, cache, timeout)
+
+    def _admit_locked(self, agent: Agent, cache: TicketCache, timeout: float) -> bytes:
+        ticket = self._admission.Admit(
+            self._presentation(agent, timeout), timeout=timeout
+        )
+        cache.store(ticket.ticket, ticket.expires_at_ms, _now_ms())
+        return ticket.ticket
+
+    def authorize(
+        self,
+        agent: Agent,
+        tool_name: str,
+        tool_input=None,
+        *,
+        digest_only: bool = False,
+        features: Optional[Mapping[str, str]] = None,
+        session_id: str = "",
+        subject: str = "",
+        agent_id: str = "",
+        client_request_id: str = "",
+        timeout: float = DEFAULT_TIMEOUT_S,
+    ) -> AuthorizeResult:
+        """Ask one advisory ``(tool_name, tool_input) -> verdict`` question — 1 RTT, seals nothing.
+
+        ``tool_input`` is the tool call's input as a plain JSON-able object; it is JCS-canonicalized
+        and digested here, and the per-call ``call_sig`` binds the ticket to that exact digest.
+        ``digest_only=True`` sends the digest without the raw input (audit-grade; no guard scan or
+        TRANSFORM). The ticket lifecycle is owned by the client: lazy admit, cached, refreshed at 80%
+        TTL, retried exactly once on ``UNAUTHENTICATED``. An unknown verdict raises
+        :class:`~seam_sdk.errors.UnknownVerdictError` — never an implicit allow. An old runtime
+        without the Authorize service raises ``UnimplementedError``; adapters typically degrade to
+        their Observe tier on it.
+        """
+        ticket = self._ticket_for(agent, timeout)
+        build = lambda t: build_authorize_request(  # noqa: E731 — rebuilt on refresh (new call_sig)
+            ticket=t,
+            agent_seed=agent.seed,
+            tool_name=tool_name,
+            tool_input=tool_input,
+            digest_only=digest_only,
+            features=features,
+            session_id=session_id,
+            subject=subject,
+            agent_id=agent_id,
+            client_request_id=client_request_id,
+        )
+        try:
+            resp = self._authz.Authorize(build(ticket), timeout=timeout)
+        except UnauthenticatedError:
+            # Expired/rejected ticket: refresh once, retry once. A second failure propagates typed.
+            with self._ticket_lock:
+                cache = self._tickets.setdefault(agent.aid, TicketCache())
+                cache.invalidate()
+                ticket = self._admit_locked(agent, cache, timeout)
+            resp = self._authz.Authorize(build(ticket), timeout=timeout)
+        return result_of(resp)
+
+    def _ticket_for(self, agent: Agent, timeout: float) -> bytes:
+        with self._ticket_lock:
+            cache = self._tickets.setdefault(agent.aid, TicketCache())
+            ticket = cache.get(_now_ms())
+            if ticket is None:
+                ticket = self._admit_locked(agent, cache, timeout)
+            return ticket
 
     def run_decision(
         self,
@@ -136,6 +237,8 @@ class SeamClient:
         votes,
         *,
         features: Optional[Mapping[str, str]] = None,
+        on_behalf_of: Sequence[str] = (),
+        timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.DecisionResponse:
         """Admit (the PoP handshake) → run a coordinated decision → seal, in one call.
 
@@ -143,16 +246,22 @@ class SeamClient:
         advisory learning classifier keys ``context_class`` on. They **never** affect the sealed record —
         the decision seals identically with or without them. Absent ⇒ no features (non-breaking). Mirrors
         the Rust reference's ``run_decision_with_features``.
+
+        ``on_behalf_of`` names the end-user data subjects this decision is made for (Phase 0b). The
+        engine never reads them; the kernel folds each into the sealed record's participation as an
+        inert ``subject:<i>`` declaration, which is what makes GDPR erasure find the record. The
+        ``subject:`` prefix is reserved — supplying it here is the server's INVALID_ARGUMENT to raise.
         """
         req = pb.RunDecisionRequest(
             session_id=session_id,
             participants=list(participants),
             votes=[pb.Vote(agent=a, value=v) for a, v in votes],
-            presentation=self._presentation(agent),
+            presentation=self._presentation(agent, timeout),
+            on_behalf_of=list(on_behalf_of),
         )
         if features:
             req.features.update(features)
-        return self._coord.RunDecision(req)
+        return self._coord.RunDecision(req, timeout=timeout)
 
     # ── Incremental session lifecycle (enterprise 6.2 budget surface) ───────────────────────────
     # open → propose/vote → commit, with resume/cancel/expire/status. Budgets are first-class:
@@ -170,19 +279,23 @@ class SeamClient:
         budget: int = 32,
         limits: Optional[BudgetLimits] = None,
         mode: str = "",
+        on_behalf_of: Sequence[str] = (),
+        timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.SessionStep:
         """Admit (the PoP handshake) → open an incremental session. ``budget`` is the legacy
-        message count (0 ⇒ the server default 32); ``limits`` adds the other 6.2 dimensions."""
+        message count (0 ⇒ the server default 32); ``limits`` adds the other 6.2 dimensions.
+        ``on_behalf_of`` binds end-user data subjects to the session (see :meth:`run_decision`)."""
         req = pb.OpenSessionRequest(
             session_id=session_id,
             participants=list(participants),
             budget=budget,
             mode=mode,
-            presentation=self._presentation(agent),
+            presentation=self._presentation(agent, timeout),
+            on_behalf_of=list(on_behalf_of),
         )
         if limits is not None:
             req.limits.CopyFrom(limits.to_pb())
-        return self._coord.OpenSession(req)
+        return self._coord.OpenSession(req, timeout=timeout)
 
     def submit_proposal(
         self,
@@ -192,6 +305,7 @@ class SeamClient:
         option: str,
         *,
         usage: Optional[StepUsage] = None,
+        timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.SessionStep:
         req = pb.ProposalRequest(
             session_id=session_id,
@@ -201,7 +315,7 @@ class SeamClient:
         )
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        return self._coord.SubmitProposal(req)
+        return self._coord.SubmitProposal(req, timeout=timeout)
 
     def submit_vote(
         self,
@@ -211,6 +325,7 @@ class SeamClient:
         value: str,
         *,
         usage: Optional[StepUsage] = None,
+        timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.SessionStep:
         req = pb.VoteRequest(
             session_id=session_id,
@@ -220,7 +335,7 @@ class SeamClient:
         )
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        return self._coord.SubmitVote(req)
+        return self._coord.SubmitVote(req, timeout=timeout)
 
     def submit_commit(
         self,
@@ -229,6 +344,7 @@ class SeamClient:
         action: str,
         *,
         usage: Optional[StepUsage] = None,
+        timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.SessionStep:
         req = pb.CommitRequest(
             session_id=session_id,
@@ -237,7 +353,7 @@ class SeamClient:
         )
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        return self._coord.SubmitCommit(req)
+        return self._coord.SubmitCommit(req, timeout=timeout)
 
     def resume_session(
         self,
@@ -245,6 +361,7 @@ class SeamClient:
         *,
         budget: int = 32,
         raise_: Optional[BudgetLimits] = None,
+        timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.SessionStep:
         """**Deprecated / tombstone.** Resume moved to the **management** plane (rt-D): this data-plane RPC
         now returns ``PERMISSION_DENIED`` ("call SeamAdmin.ResumeSession"). Use
@@ -254,25 +371,50 @@ class SeamClient:
         if raise_ is not None:
             # `raise` is a Python keyword, so the generated field is reached via getattr.
             getattr(req, "raise").CopyFrom(raise_.to_pb())
-        return self._coord.ResumeSession(req)
+        return self._coord.ResumeSession(req, timeout=timeout)
 
-    def cancel_session(self, session_id: str) -> pb.TerminalResponse:
-        return self._coord.CancelSession(pb.SessionRef(session_id=session_id))
+    def cancel_session(
+        self, session_id: str, *, timeout: float = DEFAULT_TIMEOUT_S
+    ) -> pb.TerminalResponse:
+        return self._coord.CancelSession(
+            pb.SessionRef(session_id=session_id), timeout=timeout
+        )
 
-    def expire_session(self, session_id: str) -> pb.TerminalResponse:
-        return self._coord.ExpireSession(pb.SessionRef(session_id=session_id))
+    def expire_session(
+        self, session_id: str, *, timeout: float = DEFAULT_TIMEOUT_S
+    ) -> pb.TerminalResponse:
+        return self._coord.ExpireSession(
+            pb.SessionRef(session_id=session_id), timeout=timeout
+        )
 
-    def session_status(self, session_id: str) -> pb.SessionStatusResponse:
-        return self._coord.SessionStatus(pb.SessionRef(session_id=session_id))
+    def session_status(
+        self, session_id: str, *, timeout: float = DEFAULT_TIMEOUT_S
+    ) -> pb.SessionStatusResponse:
+        return self._coord.SessionStatus(
+            pb.SessionRef(session_id=session_id), timeout=timeout
+        )
 
-    def get_decision(self, decision_id: str) -> pb.DecisionRecordView:
-        return self._coord.GetDecision(pb.DecisionRef(decision_id=decision_id))
+    def get_decision(
+        self, decision_id: str, *, timeout: float = DEFAULT_TIMEOUT_S
+    ) -> pb.DecisionRecordView:
+        return self._coord.GetDecision(
+            pb.DecisionRef(decision_id=decision_id), timeout=timeout
+        )
 
-    def replay_decision(self, decision_id: str) -> pb.ReplayView:
-        return self._coord.ReplayDecision(pb.DecisionRef(decision_id=decision_id))
+    def replay_decision(
+        self, decision_id: str, *, timeout: float = DEFAULT_TIMEOUT_S
+    ) -> pb.ReplayView:
+        return self._coord.ReplayDecision(
+            pb.DecisionRef(decision_id=decision_id), timeout=timeout
+        )
 
     def report_outcome(
-        self, decision_id: str, correct: bool, verified_by: Optional[str] = None
+        self,
+        decision_id: str,
+        correct: bool,
+        verified_by: Optional[str] = None,
+        *,
+        timeout: float = DEFAULT_TIMEOUT_S,
     ) -> bool:
         """Report a delayed correctness outcome for a sealed decision (advisory, Plan R). The sealed
         record is never mutated; this only emits a LEARNING_OUTCOME. ``verified_by`` records the source
@@ -280,7 +422,7 @@ class SeamClient:
         req = pb.ReportOutcomeRequest(decision_id=decision_id, correct=correct)
         if verified_by is not None:
             req.verified_by = verified_by
-        return self._coord.ReportOutcome(req).recorded
+        return self._coord.ReportOutcome(req, timeout=timeout).recorded
 
     # ── Context binding (data plane) ─────────────────────────────────────────────────────────────
 
@@ -289,6 +431,8 @@ class SeamClient:
         content: bytes,
         fidelity: str,
         derived_from: Optional[Sequence[str]] = None,
+        *,
+        timeout: float = DEFAULT_TIMEOUT_S,
     ) -> str:
         """Register context content at a given ``fidelity`` (``Digest`` | ``Reference`` | ``Value``);
         returns its content ref (a ``sha256:`` ref or an ``acdp://`` remote id)."""
@@ -297,54 +441,79 @@ class SeamClient:
                 content=content,
                 fidelity=fidelity,
                 derived_from=list(derived_from or []),
-            )
+            ),
+            timeout=timeout,
         ).content_ref
 
-    def resolve_context(self, refs: Sequence[str]) -> Sequence[pb.ContextBinding]:
+    def resolve_context(
+        self, refs: Sequence[str], *, timeout: float = DEFAULT_TIMEOUT_S
+    ) -> Sequence[pb.ContextBinding]:
         """Resolve context refs to their bindings (fidelity, classification, lineage, version)."""
         return list(
             self._context.ResolveContext(
-                pb.ResolveContextRequest(refs=list(refs))
+                pb.ResolveContextRequest(refs=list(refs)), timeout=timeout
             ).bindings
         )
 
     # ── Trust / verification (data plane) ────────────────────────────────────────────────────────
 
-    def issuer_aid(self) -> str:
-        return self._trust.IssuerAid(pb.Empty()).issuer_aid
+    def issuer_aid(self, *, timeout: float = DEFAULT_TIMEOUT_S) -> str:
+        return self._trust.IssuerAid(pb.Empty(), timeout=timeout).issuer_aid
 
     def verify_commitment(
-        self, commitment: pb.Commitment, signed_artifact: bytes
+        self,
+        commitment: pb.Commitment,
+        signed_artifact: bytes,
+        *,
+        timeout: float = DEFAULT_TIMEOUT_S,
     ) -> bool:
         """Server-side verification of a rooted commitment (the ``SeamTrust`` path). For zero-server-trust
         verification prefer :meth:`verify_decision`, which verifies locally against a pinned issuer."""
         return self._trust.VerifyCommitment(
             pb.VerifyCommitmentRequest(
                 commitment=commitment, signed_artifact=signed_artifact
-            )
+            ),
+            timeout=timeout,
         ).valid
 
-    def verify_party_anchor(self, party_id: str, anchor: pb.Anchor) -> bool:
+    def verify_party_anchor(
+        self, party_id: str, anchor: pb.Anchor, *, timeout: float = DEFAULT_TIMEOUT_S
+    ) -> bool:
         """Verify a counterparty's published audit-chain anchor (network mode)."""
         return self._trust.VerifyPartyAnchor(
-            pb.VerifyAnchorRequest(party_id=party_id, anchor=anchor)
+            pb.VerifyAnchorRequest(party_id=party_id, anchor=anchor), timeout=timeout
         ).valid
 
     def verify_party_attestation(
-        self, party_id: str, attestation: ev.ChainHeadAttestation
+        self,
+        party_id: str,
+        attestation: ev.ChainHeadAttestation,
+        *,
+        timeout: float = DEFAULT_TIMEOUT_S,
     ) -> bool:
         """Verify a counterparty's signed chain-head attestation against the registry-pinned key (A14
         network mode). Returns ``True`` iff the attestation's Ed25519 signature checks out against the
         pubkey registered for ``party_id``; ``False`` for an unknown party or any tamper (a boolean
         verdict, never an exception) — mirroring :meth:`verify_party_anchor`."""
         return self._trust.VerifyPartyAttestation(
-            pb.VerifyAttestationRequest(party_id=party_id, attestation=attestation)
+            pb.VerifyAttestationRequest(party_id=party_id, attestation=attestation),
+            timeout=timeout,
         ).valid
 
-    def get_commitment_proof(self, decision_id: str) -> pb.CommitmentProof:
-        return self._coord.GetCommitmentProof(pb.DecisionRef(decision_id=decision_id))
+    def get_commitment_proof(
+        self, decision_id: str, *, timeout: float = DEFAULT_TIMEOUT_S
+    ) -> pb.CommitmentProof:
+        return self._coord.GetCommitmentProof(
+            pb.DecisionRef(decision_id=decision_id), timeout=timeout
+        )
 
-    def verify_decision(self, decision_id: str, expected_issuer: str) -> bool:
+    def verify_decision(
+        self,
+        decision_id: str,
+        expected_issuer: str,
+        *,
+        timeout: float = DEFAULT_TIMEOUT_S,
+    ) -> bool:
         """Fetch a sealed decision's proof and verify its rooted TCT locally — zero server trust.
 
         `expected_issuer` is the issuer AID the caller **pinned out of band** (or TOFU-cached). The TCT is
@@ -357,7 +526,7 @@ class SeamClient:
         not match `expected_issuer` — a distinct security signal (an attempted key substitution), never
         downgraded to a bland ``False``. Mirrors the Rust reference's distinct ``ClientError::Crypto``.
         """
-        proof = self.get_commitment_proof(decision_id)
+        proof = self.get_commitment_proof(decision_id, timeout=timeout)
         if proof.issuer_aid != expected_issuer:
             raise IssuerMismatchError(proof.issuer_aid, expected_issuer)
         c = proof.commitment

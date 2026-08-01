@@ -33,6 +33,22 @@ class IssuerMismatchError(SeamError):
         )
 
 
+class UnknownVerdictError(SeamError):
+    """``Authorize`` returned a verdict this SDK version does not recognize (including the proto zero
+    value ``AUTHORIZE_VERDICT_UNSPECIFIED``, which a correct server never emits).
+
+    Growth policy (normative, from the proto): an unrecognized verdict MUST route to the adapter's
+    FailPolicy — never to an implicit allow. Raising a typed error is how this SDK enforces that."""
+
+    def __init__(self, raw_value: int, authorize_id: str = ""):
+        self.raw_value = raw_value
+        self.authorize_id = authorize_id
+        super().__init__(
+            f"unrecognized AuthorizeVerdict value {raw_value} "
+            f"(authorize_id={authorize_id or '<none>'}); treat as failure, never allow"
+        )
+
+
 class SeamRpcError(SeamError, grpc.RpcError):
     """A server-returned gRPC error, typed by status code.
 
