@@ -1,0 +1,76 @@
+# Yank (delete) a published seam-sdk version from Cloudsmith — python + npm formats ONLY.
+#
+# Exists because the release flow is fully automatic (runtime dispatch → stamp → publish): a
+# mis-ordered merge can publish a version whose code predates its number (it happened: 0.7.7
+# shipped without the authorize/aio surface). Deleting such a version is the correction — the
+# packages are private/internal, so no public-registry immutability etiquette applies.
+#
+# Safety rails:
+#   * workflow_dispatch only, version is an explicit input — nothing automatic ever yanks.
+#   * `dry_run: true` (the default) lists exactly what WOULD be deleted and touches nothing.
+#   * format filter is python+npm and the name must be exactly `seam-sdk` (npm scope stripped) —
+#     the zer07labs Cargo crates live in the same repo and must be unreachable from here.
+name: yank
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Exact version to delete (e.g. 0.7.7)"
+        required: true
+      dry_run:
+        description: "true = list matches only, delete nothing"
+        required: true
+        default: "true"
+
+jobs:
+  yank:
+    runs-on: ubuntu-latest
+    steps:
+      - name: find and delete the version's python+npm packages
+        env:
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
+          CARGO_REGISTRIES_ZER07LABS_TOKEN: ${{ secrets.CARGO_REGISTRIES_ZER07LABS_TOKEN }}
+          VERSION: ${{ inputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          TOKEN="${CLOUDSMITH_API_KEY:-$CARGO_REGISTRIES_ZER07LABS_TOKEN}"
+          if [ -z "$TOKEN" ]; then
+            echo "::error::No Cloudsmith credential in scope."; exit 1
+          fi
+          case "$VERSION" in
+            *[!0-9.]*|"") echo "::error::version must be plain digits-and-dots, got '$VERSION'"; exit 1 ;;
+          esac
+
+          echo "querying zer07labs/internal for seam-sdk@$VERSION (python + npm)…"
+          curl -sf -H "X-Api-Key: $TOKEN" \
+            "https://api.cloudsmith.io/v1/packages/zer07labs/internal/?query=seam-sdk+version:$VERSION&page_size=50" \
+            > /tmp/pkgs.json
+
+          jq -r '.[] | select(.version == env.VERSION)
+                     | select(.format == "python" or .format == "npm")
+                     | select((.name | sub("^@[^/]+/"; "")) == "seam-sdk")
+                     | [.slug_perm, .format, .name, .version] | @tsv' /tmp/pkgs.json > /tmp/targets.tsv
+
+          if [ ! -s /tmp/targets.tsv ]; then
+            echo "::warning::no python/npm seam-sdk packages found at version $VERSION — nothing to do."
+            exit 0
+          fi
+          echo "matched:"; column -t /tmp/targets.tsv
+
+          if [ "$DRY_RUN" != "false" ]; then
+            echo "DRY RUN — nothing deleted. Re-dispatch with dry_run=false to delete the above."
+            exit 0
+          fi
+
+          while IFS=$'\t' read -r slug fmt name ver; do
+            echo "deleting $fmt $name@$ver ($slug)…"
+            code=$(curl -s -o /tmp/del.json -w "%{http_code}" -X DELETE -H "X-Api-Key: $TOKEN" \
+              "https://api.cloudsmith.io/v1/packages/zer07labs/internal/$slug/")
+            case "$code" in
+              2*) echo "  deleted ($code)" ;;
+              *)  echo "::error::delete failed with HTTP $code: $(cat /tmp/del.json)"; exit 1 ;;
+            esac
+          done < /tmp/targets.tsv
+          echo "DONE — seam-sdk@$VERSION removed (python + npm)."
