@@ -10,7 +10,26 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 dependencies = [
-    "grpcio>=1.60",
+    # Also DERIVED, and for exactly the reason the protobuf line below exists — the same defect was
+    # sitting three lines away in this same list. The grpc stubs in `_gen` are emitted with the
+    # registered-method calling convention, which needs BOTH halves of a grpcio pair:
+    #
+    #   * `channel.unary_unary(..., _registered_method=True)` — client side, added in grpcio 1.63.
+    #   * `server.add_registered_method_handlers(...)` — server side, added in grpcio **1.64**, and
+    #     emitted UNGUARDED (no hasattr check) by the plugin.
+    #
+    # So the floor is the later of the two. `>=1.60` let a resolver pick 1.60-1.62, where the client
+    # dies at `SeamClient.connect()` with `TypeError: unexpected keyword argument
+    # '_registered_method'` — worse than the protobuf case, which at least named a version error.
+    # And a floor of 1.63, which is what you get by checking only the client half, installs and
+    # connects fine and then raises `AttributeError: '_Server' object has no attribute
+    # 'add_registered_method_handlers'` from every `add_*Servicer_to_server` — anyone implementing a
+    # servicer against this contract, and every test fixture in this repo.
+    #
+    # Like protobuf, this moves on its own: buf's remote grpc plugin tracks latest. Unlike protobuf,
+    # the emitted stub carries NO version constant to read, so tests/test_grpcio_floor.py derives the
+    # requirement from the calling-convention markers actually present in `_gen`.
+    "grpcio>=1.64",
     # This floor is DERIVED, not chosen: it must be >= the gencode version compiled into
     # `seam_sdk/_gen` and share its major, because protobuf's runtime-version check rejects a
     # runtime older than the gencode that generated a file. `>=5` violated that — the checked-in

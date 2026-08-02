@@ -57,10 +57,30 @@ class FakeSeam(rpc.SeamAdmissionServicer, rpc.SeamAuthorizationServicer):
         self.verdict = pb.ALLOW
         self.reason = ""
         self.transformed = b""
-        self.fail_next_unauthenticated = 0  # reject N upcoming Authorize calls
+        self.fail_next_unauthenticated = (
+            0  # reject the next N Authorize calls, whatever they hold
+        )
         self.valid_tickets: set = set()
+        self.rejections = 0  # how many Authorize calls were actually rejected
+        #: Optional ``threading.Barrier``. When set, a rejected Authorize waits here before aborting,
+        #: so N callers are rejected *simultaneously* no matter how the scheduler interleaves them.
+        #: Without it, staging a revocation race depends on timing; with it, the race is staged by
+        #: construction and a runner too loaded to produce it fails loudly (BrokenBarrierError)
+        #: rather than passing on a serialized run that proved nothing.
+        self.reject_barrier: threading.Barrier | None = None
         self.last_request: pb.AuthorizeRequest | None = None
         self._lock = threading.Lock()
+
+    def revoke_all(self) -> None:
+        """Invalidate every ticket minted so far — a mass revocation, as the server would do it.
+
+        Ticket-aware rather than a countdown, which matters for concurrency tests: a counter is
+        consumed by whoever gets there first, so a retry can eat another caller's rejection and the
+        outcome depends on interleaving. Revoking state is idempotent — a caller arriving late still
+        finds its ticket dead, and one arriving after the refresh finds the NEW ticket alive.
+        """
+        with self._lock:
+            self.valid_tickets.clear()
 
     # ── SeamAdmission ──
     def IssueChallenge(self, request, context):  # noqa: N802
@@ -86,9 +106,21 @@ class FakeSeam(rpc.SeamAdmissionServicer, rpc.SeamAuthorizationServicer):
             self.last_request = request
             if self.fail_next_unauthenticated > 0:
                 self.fail_next_unauthenticated -= 1
-                context.abort(grpc.StatusCode.UNAUTHENTICATED, "ticket rejected")
-            if request.ticket not in self.valid_tickets:
-                context.abort(grpc.StatusCode.UNAUTHENTICATED, "unknown ticket")
+                reason = "ticket rejected"
+            elif request.ticket not in self.valid_tickets:
+                reason = "unknown ticket"
+            else:
+                reason = ""
+            if reason:
+                self.rejections += 1
+            barrier = self.reject_barrier
+        # Both the barrier wait and the abort happen OUTSIDE the lock. Waiting inside it would
+        # deadlock instantly — every other caller would block on the lock trying to reach the
+        # barrier the first one is already waiting at.
+        if reason:
+            if barrier is not None:
+                barrier.wait(timeout=15)
+            context.abort(grpc.StatusCode.UNAUTHENTICATED, reason)
         return pb.AuthorizeResponse(
             verdict=self.verdict,
             reason=self.reason,
