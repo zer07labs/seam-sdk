@@ -29,6 +29,11 @@ jobs:
             echo "::error::ts/package.json ($TS) != python/pyproject.toml ($PY) — keep them equal (one version everywhere)."
             exit 1
           fi
+      # The check above proves the two versions AGREE; this proves the thing that has to SET them
+      # still works. Those are different properties, and only the first one was ever tested — the
+      # stamp's only test run was the real release.
+      - name: the version stamp still stamps
+        run: ./scripts/test_set_version.sh
 
   preflight:
     name: preflight (secret gating)

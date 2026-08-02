@@ -46,15 +46,12 @@ jobs:
         with:
           token: ${{ steps.app.outputs.token }}
 
+      # The stamp lives in scripts/set_version.sh so it is testable without cutting a release —
+      # scripts/test_set_version.sh runs on every PR. It was inline here, matching pyproject's
+      # `version` key by LINE NUMBER, which would have half-stamped (ts yes, python no) the first
+      # time anyone added a few comment lines above it.
       - name: Bump both packages to the runtime version
-        env:
-          VER: ${{ steps.v.outputs.version }}
-        run: |
-          # ts/package.json
-          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('ts/package.json','utf8'));p.version=process.env.VER;fs.writeFileSync('ts/package.json',JSON.stringify(p,null,2)+'\n')"
-          # python/pyproject.toml — the FIRST version line (the [project] one)
-          perl -pi -e 's/^version = "[^"]+"/version = "$ENV{VER}"/ if $. < 6' python/pyproject.toml
-          echo "ts=$(node -p "require('./ts/package.json').version")  py=$(grep -m1 '^version' python/pyproject.toml)"
+        run: ./scripts/set_version.sh "${{ steps.v.outputs.version }}"
 
       - name: Commit + tag (triggers publish.yml)
         env:
