@@ -116,3 +116,22 @@ Each is the strongest option given what the code showed; none is a one-way door.
   and a release note.
 - **Status:** UNCONFIRMED — the `requires-python` and floor bumps are metadata breaking changes;
   confirm the release framing before publishing.
+
+## The `grpcio` floor is derived the same way, and needs the LATER of two versions
+- **Assumed:** consumers can move to grpcio 1.64+. Same reasoning as protobuf above, and found by
+  the verification pass on that very change — the identical defect was sitting three lines away in
+  the same dependency list.
+- **Chose:** `grpcio>=1.64`, plus `tests/test_grpcio_floor.py`, which derives the requirement from
+  the calling-convention markers present in `_gen` rather than pinning a number (buf's remote grpc
+  plugin tracks latest, and unlike `seam_pb2.py` the grpc stub carries no version constant to read).
+  1.64 rather than 1.63 because the stubs need BOTH halves of the registered-method convention:
+  `_registered_method=True` on the client (1.63) and `server.add_registered_method_handlers`, emitted
+  unguarded, on the server (1.64). Verified by installing 1.60/1.62/1.63/1.64 and calling both.
+- **Alternatives:** rejected `>=1.63`, which is what checking only the client half yields — it
+  installs, connects, and then raises `AttributeError` from every `add_*Servicer_to_server`, so it
+  moves the failure later and makes it look like the consumer's fixture bug. Rejected pinning
+  without a guard, for the same reason as protobuf: the number moves on a regenerate.
+- **Blast radius if wrong:** a consumer pinned below grpcio 1.64 can no longer resolve seam-sdk.
+  As above, that is the correct outcome — the old `>=1.60` let a resolver pick a grpcio where
+  `SeamClient.connect()` dies with an opaque `TypeError` — but it is breaking for such a consumer.
+- **Status:** UNCONFIRMED — folds into the same release framing as the protobuf floor above.

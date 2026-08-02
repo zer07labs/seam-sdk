@@ -105,9 +105,17 @@ class SeamClient:
         self._context = _AioMappedStub(rpc.SeamContextStub(channel))
         self._authz = _AioMappedStub(rpc.SeamAuthorizationStub(channel))
         # One cache AND one lock per agent AID — see the sync client for why per-AID rather than
-        # one global lock. The locks are created lazily inside coroutines rather than here, so each
-        # binds to the loop that actually uses it instead of to whatever loop existed at
-        # construction time (or none).
+        # one global lock. The per-AID locks are created lazily inside coroutines rather than here.
+        #
+        # That is NOT multi-loop safety, and it would be wrong to read it as such: `_registry_lock`
+        # below is constructed here and guards every lookup, so the first loop to use this client
+        # pins it, and a second loop raises "bound to a different event loop" no matter how lazily
+        # the per-AID locks are made. A client is single-loop, exactly as it was when there was one
+        # `_ticket_lock` — this change did not regress that, and does not fix it either. The failure
+        # is loud rather than silent, which is why it is acceptable to leave.
+        #
+        # Since 3.10 (this package's floor) `asyncio.Lock()` no longer grabs the running loop at
+        # construction, so building `_registry_lock` in `__init__` is safe on its own terms.
         self._tickets: dict = {}
         self._ticket_locks: dict = {}
         self._registry_lock = asyncio.Lock()

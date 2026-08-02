@@ -81,6 +81,13 @@ def test_mass_revocation_produces_exactly_one_readmit_sync(busy_server):
     Every in-flight call is rejected at once, which is what a revocation does. Each caller then has
     to decide whether to re-admit; the fix is that it re-checks the cache under the lock and only
     pays for the round trip if the ticket it failed on is still the cached one.
+
+    The race is staged on BOTH sides rather than hoped for. The client barrier starts the callers
+    together; the server barrier holds every rejection until all ``CONCURRENCY`` have arrived, so
+    the simultaneity the assertion depends on is constructed, not timed. A runner too loaded to
+    produce it raises ``BrokenBarrierError`` — an honest "could not stage the race" — instead of
+    serializing into a run where only one caller ever reaches the refresh path and a BROKEN client
+    would score one re-admit and pass.
     """
     servicer, addr = busy_server
     with SeamClient.connect(addr) as client:
@@ -88,7 +95,8 @@ def test_mass_revocation_produces_exactly_one_readmit_sync(busy_server):
         client.authorize(agent, "t", {})  # warm the cache: one shared, valid ticket
         assert servicer.admits == 1
 
-        servicer.fail_next_unauthenticated = CONCURRENCY
+        servicer.reject_barrier = threading.Barrier(CONCURRENCY)
+        servicer.revoke_all()
         gate = threading.Barrier(CONCURRENCY)
 
         def call(_):
@@ -99,6 +107,10 @@ def test_mass_revocation_produces_exactly_one_readmit_sync(busy_server):
             results = list(pool.map(call, range(CONCURRENCY)))
 
     assert all(r.allowed for r in results), "every caller must still get its verdict"
+    assert servicer.rejections == CONCURRENCY, (
+        f"only {servicer.rejections} of {CONCURRENCY} callers were rejected — the revocation race "
+        "did not actually happen, so the re-admit count below proves nothing"
+    )
     readmits = servicer.admits - 1
     assert readmits == 1, (
         f"{CONCURRENCY} callers rejected at once caused {readmits} re-admits; the refresh must "
@@ -118,13 +130,17 @@ def test_mass_revocation_produces_exactly_one_readmit_aio(busy_server):
             await client.authorize(agent, "t", {})
             assert servicer.admits == 1
 
-            servicer.fail_next_unauthenticated = CONCURRENCY
+            servicer.reject_barrier = threading.Barrier(CONCURRENCY)
+            servicer.revoke_all()
             results = await asyncio.gather(
                 *(client.authorize(agent, "t", {"k": i}) for i in range(CONCURRENCY))
             )
             assert all(r.allowed for r in results)
 
     asyncio.run(scenario())
+    assert servicer.rejections == CONCURRENCY, (
+        f"only {servicer.rejections} of {CONCURRENCY} callers were rejected — no race was staged"
+    )
     readmits = servicer.admits - 1
     assert readmits == 1, (
         f"{CONCURRENCY} concurrent aio callers caused {readmits} re-admits"

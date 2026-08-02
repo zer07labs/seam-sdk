@@ -55,9 +55,9 @@ def _now_ms() -> int:
 # Every public method takes ``timeout`` (seconds) and propagates it as the gRPC deadline on each
 # wire call it makes. Most methods make exactly one, so per-RPC and overall coincide. Three do not:
 #
-#   * ``authorize`` may make up to FOUR: an admit (challenge + Admit = 2 RTT) when the ticket is
-#     cold or stale, the Authorize itself, and — on ``UNAUTHENTICATED`` — a refresh (another 2 RTT)
-#     plus one retried Authorize. Worst case is therefore several times the value passed.
+#   * ``authorize`` may make up to SIX: an admit (challenge + Admit = 2) when the ticket is cold or
+#     stale, the Authorize itself (1), and — on ``UNAUTHENTICATED`` — a refresh (another 2) plus one
+#     retried Authorize (1). So the worst case is 6x the value passed, not the 1x it reads as.
 #   * ``run_decision`` and ``open_session`` each begin with the challenge→Admit handshake.
 #
 # So a caller that needs a hard overall bound must impose its own outer clock; the adapters'
@@ -209,7 +209,16 @@ class SeamClient:
             return self._admit_locked(agent, cache, timeout)
 
     def _cache_and_lock(self, aid: str) -> "tuple[TicketCache, threading.Lock]":
-        """The (cache, lock) pair for one agent identity, created on first use."""
+        """The (cache, lock) pair for one agent identity, created on first use.
+
+        Both dicts grow per distinct AID and are never evicted. That is deliberate for the shape
+        this client is built for — an agent process holds one identity, occasionally a handful — and
+        the entries are tiny. A gateway multiplexing thousands of identities through ONE client
+        would grow them without bound; that deployment wants an LRU here, and should be treated as
+        a change to make rather than a bug to discover. Noted rather than pre-solved: the eviction
+        policy interacts with the refresh coalescing above (evicting a lock mid-refresh would split
+        the very race it exists to serialize), so it is not a change to make speculatively.
+        """
         with self._registry_lock:
             return (
                 self._tickets.setdefault(aid, TicketCache()),
@@ -285,6 +294,15 @@ class SeamClient:
         So: if the cache now holds a ticket that is NOT the one we failed on, some other caller
         already refreshed and we use theirs. Only the caller still holding the dead ticket (or
         finding none) pays for the round trip.
+
+        **What adopting costs, when the adopted ticket is also dead.** Under a revocation that kills
+        every outstanding ticket rather than one, an adopter takes a ticket that the server will
+        also reject. It retries once, fails, and the ``UnauthenticatedError`` propagates typed —
+        there is no second refresh, because the retry in ``authorize`` is deliberately one-shot.
+        Before this change that caller would have minted its own ticket and might have succeeded.
+        That is a real trade and it is the right one: the alternative is re-opening the stampede on
+        exactly the failure that causes it. The bound is what matters — N callers serialize behind
+        the lock, each paying at most one admit attempt, with no fan-out and no retry loop.
         """
         cache, lock = self._cache_and_lock(agent.aid)
         with lock:
