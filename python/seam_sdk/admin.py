@@ -28,6 +28,19 @@ from . import client as _client  # noqa: TC001 — referenced by the `raise_` an
 from .errors import _MappedStub, map_rpc_error
 from .crypto import record_digest_v2  # noqa: E402
 
+# Management-plane calls get their own, larger default deadline — but they DO get one.
+#
+# Every method here used to have none at all, including `erase_subject`, which crypto-shreds a
+# subject's records. An unbounded destructive RPC is not a conservative choice: a stalled call to a
+# wedged management plane hangs the operator's process forever with no way to know whether the
+# erasure landed, and an interactive operator's instinct is to Ctrl-C and re-run — against a server
+# that may still be working. A generous, overridable deadline is strictly better than none.
+#
+# 30s rather than the data plane's 2s because these are operator-cadence, not hot-path: erasure and
+# retention enforcement do real work over potentially many records. Pass `timeout=` to widen it for a
+# large tenant; the point is that the number exists and the caller owns it.
+DEFAULT_ADMIN_TIMEOUT_S = 30.0
+
 __all__ = [
     "SeamAdminClient",
     "KNOWN_KINDS",
@@ -141,6 +154,16 @@ class SeamAdminClient:
         # Streaming stub for the governance outbox; iteration errors are mapped in stream_events.
         self._events = rpc.SeamEventsStub(channel)
 
+    def close(self) -> None:
+        """Close the underlying channel. Idempotent — grpc tolerates a repeated close."""
+        self._ch.close()
+
+    def __enter__(self) -> "SeamAdminClient":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
     @classmethod
     def connect(
         cls,
@@ -166,15 +189,22 @@ class SeamAdminClient:
 
     # ── GDPR erasure (preview → confirm → erase) ─────────────────────────────────────────────────
 
-    def preview_erasure(self, tenant: str, subject: str) -> pb.ErasurePreview:
+    def preview_erasure(
+        self, tenant: str, subject: str, *, timeout: float = DEFAULT_ADMIN_TIMEOUT_S
+    ) -> pb.ErasurePreview:
         """Non-destructive: what WOULD be crypto-shredded (``would_erase``), what a legal hold pins
         (``held``), and what is already shredded (``already_erased``) for ``subject`` in ``tenant``."""
         return self._admin.PreviewErasure(
-            pb.ErasureRequest(subject=subject, tenant=tenant)
+            pb.ErasureRequest(subject=subject, tenant=tenant), timeout=timeout
         )
 
     def erase_subject(
-        self, tenant: str, subject: str, confirm_count: int
+        self,
+        tenant: str,
+        subject: str,
+        confirm_count: int,
+        *,
+        timeout: float = DEFAULT_ADMIN_TIMEOUT_S,
     ) -> ev.ErasureCertificate:
         """Crypto-shred every record bound to ``subject`` in ``tenant`` and return the signed,
         chain-anchored certificate. ``tenant`` is REQUIRED (empty ⇒ server rejects); ``confirm_count``
@@ -182,34 +212,53 @@ class SeamAdminClient:
         return self._admin.EraseSubject(
             pb.ErasureRequest(
                 subject=subject, tenant=tenant, confirm_count=confirm_count
-            )
+            ),
+            timeout=timeout,
         )
 
     def erase_subject_confirmed(
-        self, tenant: str, subject: str
+        self, tenant: str, subject: str, *, timeout: float = DEFAULT_ADMIN_TIMEOUT_S
     ) -> ev.ErasureCertificate:
-        """The common, safe path: preview, then erase with the preview's ``would_erase`` count."""
-        preview = self.preview_erasure(tenant, subject)
-        return self.erase_subject(tenant, subject, len(preview.would_erase))
+        """The common, safe path: preview, then erase with the preview's ``would_erase`` count.
+
+        ``timeout`` applies to EACH of the two calls, not to the pair — so the worst case is 2x it.
+        Stated rather than left to be discovered: this is the same arithmetic the adapters'
+        SessionBinder documents for its own two-call failure path."""
+        preview = self.preview_erasure(tenant, subject, timeout=timeout)
+        return self.erase_subject(
+            tenant, subject, len(preview.would_erase), timeout=timeout
+        )
 
     # ── Governance / tenancy ─────────────────────────────────────────────────────────────────────
 
     def enroll_tenant(
-        self, subject_aid: str, tenant: str, namespace: str
+        self,
+        subject_aid: str,
+        tenant: str,
+        namespace: str,
+        *,
+        timeout: float = DEFAULT_ADMIN_TIMEOUT_S,
     ) -> pb.TenantView:
+        """Bind an agent identity to a tenant/namespace."""
         return self._admin.EnrollTenant(
             pb.EnrollTenantRequest(
                 subject_aid=subject_aid, tenant=tenant, namespace=namespace
-            )
+            ),
+            timeout=timeout,
         )
 
-    def list_tenants(self) -> Sequence[pb.TenantView]:
-        return list(self._admin.ListTenants(pb.Empty()).tenants)
+    def list_tenants(
+        self, *, timeout: float = DEFAULT_ADMIN_TIMEOUT_S
+    ) -> Sequence[pb.TenantView]:
+        """Every enrolled tenant view."""
+        return list(self._admin.ListTenants(pb.Empty(), timeout=timeout).tenants)
 
-    def register_party(self, party_id: str, pubkey: bytes) -> None:
+    def register_party(
+        self, party_id: str, pubkey: bytes, *, timeout: float = DEFAULT_ADMIN_TIMEOUT_S
+    ) -> None:
         """Register a counterparty's raw 32-byte ed25519 public key (network mode)."""
         self._admin.RegisterParty(
-            pb.RegisterPartyRequest(party_id=party_id, pubkey=pubkey)
+            pb.RegisterPartyRequest(party_id=party_id, pubkey=pubkey), timeout=timeout
         )
 
     # ── Session governance ───────────────────────────────────────────────────────────────────────
@@ -223,6 +272,7 @@ class SeamAdminClient:
         namespace: str = "",
         budget: int = 32,
         raise_: Optional["_client.BudgetLimits"] = None,
+        timeout: float = DEFAULT_ADMIN_TIMEOUT_S,
     ) -> pb.SessionStep:
         """Resume a Suspended session — the R9 approver action, on the **management** plane (rt-D: this
         moved off the data plane, where ``SeamCoordination.ResumeSession`` is now a tombstone). It requires
@@ -240,15 +290,25 @@ class SeamAdminClient:
         if raise_ is not None:
             # `raise` is a Python keyword, so the generated field is reached via getattr.
             getattr(req, "raise").CopyFrom(raise_.to_pb())
-        return self._admin.ResumeSession(req)
+        return self._admin.ResumeSession(req, timeout=timeout)
 
     # ── Retention & legal hold ───────────────────────────────────────────────────────────────────
 
-    def place_legal_hold(self, decision_id: str) -> None:
-        self._admin.PlaceLegalHold(pb.DecisionRef(decision_id=decision_id))
+    def place_legal_hold(
+        self, decision_id: str, *, timeout: float = DEFAULT_ADMIN_TIMEOUT_S
+    ) -> None:
+        """Pin a decision against erasure and retention until the hold is released."""
+        self._admin.PlaceLegalHold(
+            pb.DecisionRef(decision_id=decision_id), timeout=timeout
+        )
 
-    def release_legal_hold(self, decision_id: str) -> None:
-        self._admin.ReleaseLegalHold(pb.DecisionRef(decision_id=decision_id))
+    def release_legal_hold(
+        self, decision_id: str, *, timeout: float = DEFAULT_ADMIN_TIMEOUT_S
+    ) -> None:
+        """Release a legal hold, making the decision eligible for erasure/retention again."""
+        self._admin.ReleaseLegalHold(
+            pb.DecisionRef(decision_id=decision_id), timeout=timeout
+        )
 
     def enforce_retention(
         self,
@@ -257,6 +317,7 @@ class SeamAdminClient:
         commitment_only_days: int,
         *,
         now_millis: Optional[int] = None,
+        timeout: float = DEFAULT_ADMIN_TIMEOUT_S,
     ) -> Sequence[str]:
         """Crypto-shred decisions past their tiered retention windows; returns the purged decision ids."""
         req = pb.RetentionRequest(
@@ -266,15 +327,23 @@ class SeamAdminClient:
         )
         if now_millis is not None:
             req.now_millis = now_millis
-        return list(self._admin.EnforceRetention(req).purged)
+        return list(self._admin.EnforceRetention(req, timeout=timeout).purged)
 
-    def audit_trail(self) -> Sequence[pb.AuditEntry]:
-        return list(self._admin.AuditTrail(pb.Empty()).entries)
+    def audit_trail(
+        self, *, timeout: float = DEFAULT_ADMIN_TIMEOUT_S
+    ) -> Sequence[pb.AuditEntry]:
+        """The management plane's audit entries."""
+        return list(self._admin.AuditTrail(pb.Empty(), timeout=timeout).entries)
 
     # ── Governance event stream (seam-event.v1 outbox) ───────────────────────────────────────────
 
     def stream_events(
-        self, *, from_seq: int = 0, follow: bool = False, ack: bool = False
+        self,
+        *,
+        from_seq: int = 0,
+        follow: bool = False,
+        ack: bool = False,
+        timeout: Optional[float] = None,
     ) -> Iterator[ev.SeamEvent]:
         """Server-stream the ``seam-event.v1`` governance outbox. Two modes:
 
@@ -285,10 +354,16 @@ class SeamAdminClient:
           events as they arrive — cursor-based, never acks. Resume from the last ``seq + 1`` and dedup
           by ``event_id``. The stream ends cleanly when the server drains on shutdown.
 
-        Yields :class:`ev.SeamEvent`. Iterate in a thread/task for ``follow=True`` (it blocks)."""
+        Yields :class:`ev.SeamEvent`. Iterate in a thread/task for ``follow=True`` (it blocks).
+
+        ``timeout`` defaults to ``None`` — **no deadline** — and that is the one deliberate exception
+        to this client's every-call-is-bounded rule. A gRPC deadline bounds the whole STREAM, not the
+        gap between events, so any finite value silently kills a healthy live tail the moment it
+        outlives the number. Set it only for a bounded drain (``follow=False``), where "this should
+        have finished by now" is a meaningful statement."""
         req = pb.StreamEventsRequest(from_seq=from_seq, ack=ack, follow=follow)
         try:
-            for event in self._events.StreamEvents(req):
+            for event in self._events.StreamEvents(req, timeout=timeout):
                 yield event
         except grpc.RpcError as e:
             raise map_rpc_error(e) from e

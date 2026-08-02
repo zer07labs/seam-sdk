@@ -104,8 +104,13 @@ class SeamClient:
         self._trust = _AioMappedStub(rpc.SeamTrustStub(channel))
         self._context = _AioMappedStub(rpc.SeamContextStub(channel))
         self._authz = _AioMappedStub(rpc.SeamAuthorizationStub(channel))
+        # One cache AND one lock per agent AID — see the sync client for why per-AID rather than
+        # one global lock. The locks are created lazily inside coroutines rather than here, so each
+        # binds to the loop that actually uses it instead of to whatever loop existed at
+        # construction time (or none).
         self._tickets: dict = {}
-        self._ticket_lock = asyncio.Lock()
+        self._ticket_locks: dict = {}
+        self._registry_lock = asyncio.Lock()
 
     @classmethod
     def connect(
@@ -141,9 +146,22 @@ class SeamClient:
     async def admit(self, agent: Agent, *, timeout: float = DEFAULT_TIMEOUT_S) -> bytes:
         """Run the challenge→``Admit`` handshake now and cache the resulting admission ticket.
         :meth:`authorize` calls this lazily; an explicit ``admit`` only front-loads the handshake."""
-        async with self._ticket_lock:
-            cache = self._tickets.setdefault(agent.aid, TicketCache())
+        cache, lock = await self._cache_and_lock(agent.aid)
+        async with lock:
             return await self._admit_locked(agent, cache, timeout)
+
+    async def _cache_and_lock(self, aid: str):
+        """The (cache, lock) pair for one agent identity, created on first use.
+
+        ``_registry_lock`` guards the two dicts and NOTHING else — it is never held across an
+        await of an RPC, only across two dict lookups.
+        """
+        async with self._registry_lock:
+            cache = self._tickets.setdefault(aid, TicketCache())
+            lock = self._ticket_locks.get(aid)
+            if lock is None:
+                lock = self._ticket_locks[aid] = asyncio.Lock()
+            return cache, lock
 
     async def _admit_locked(
         self, agent: Agent, cache: TicketCache, timeout: float
@@ -174,8 +192,8 @@ class SeamClient:
         Ticket lifecycle: lazy admit, cached, refreshed at 80% TTL, retried exactly once on
         ``UNAUTHENTICATED``. An unknown verdict raises ``UnknownVerdictError`` — never an
         implicit allow."""
-        async with self._ticket_lock:
-            cache = self._tickets.setdefault(agent.aid, TicketCache())
+        cache, lock = await self._cache_and_lock(agent.aid)
+        async with lock:
             ticket = cache.get(_now_ms())
             if ticket is None:
                 ticket = await self._admit_locked(agent, cache, timeout)
@@ -198,12 +216,30 @@ class SeamClient:
         try:
             resp = await self._authz.Authorize(build(ticket), timeout=timeout)
         except UnauthenticatedError:
-            async with self._ticket_lock:
-                cache = self._tickets.setdefault(agent.aid, TicketCache())
-                cache.invalidate()
-                ticket = await self._admit_locked(agent, cache, timeout)
+            ticket = await self._refresh_ticket(agent, ticket, timeout)
             resp = await self._authz.Authorize(build(ticket), timeout=timeout)
         return result_of(resp)
+
+    async def _refresh_ticket(
+        self, agent: Agent, failed: bytes, timeout: float
+    ) -> bytes:
+        """Re-admit after an ``UNAUTHENTICATED``, coalescing concurrent refreshes to ONE.
+
+        The async twin of :meth:`seam_sdk.SeamClient._refresh_ticket`, and it matters MORE here:
+        an aio client is the one most likely to have hundreds of authorizes genuinely in flight
+        together, so a mass revocation fanned out to hundreds of simultaneous re-admits against
+        the endpoint that was already the bottleneck.
+
+        If the cache now holds a ticket that is not the one we failed on, another caller already
+        refreshed and we use theirs.
+        """
+        cache, lock = await self._cache_and_lock(agent.aid)
+        async with lock:
+            current = cache.get(_now_ms())
+            if current is not None and current != failed:
+                return current
+            cache.invalidate()
+            return await self._admit_locked(agent, cache, timeout)
 
     # ── Coordination ────────────────────────────────────────────────────────────────────────────
 
