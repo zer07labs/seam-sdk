@@ -74,3 +74,45 @@ Each is the strongest option given what the code showed; none is a one-way door.
 - **Blast radius if wrong:** low — additive API. If a full streamed-chain verify is later wanted, it builds
   on the same `record_digest_v2` + `verify_chain_head_attestation` primitives already shipped.
 - **Status:** UNCONFIRMED
+
+## `timeout` means per-RPC, not an overall call budget
+
+- **Assumed:** callers who need a hard overall bound already impose their own outer clock.
+  True of the one consumer we know: `seam-agent-core`'s `Gate` wraps every call in
+  `asyncio.wait_for`, and `SessionBinder` does the same per step.
+- **Chose:** keep per-RPC and **document it explicitly** (`client.py`, above `DEFAULT_TIMEOUT_S`).
+  Most methods make one wire call, so the distinction is invisible; it bites on `authorize`,
+  which can make up to four (a cold/stale admit is 2 RTT, then Authorize, then on
+  `UNAUTHENTICATED` a refresh of 2 RTT plus the retried Authorize), and on `run_decision` /
+  `open_session`, which each begin with the challenge→Admit handshake.
+- **Alternatives:** an overall budget — the semantics most callers would assume from the name.
+  Rejected for now, not forever: it means threading a deadline through the ticket lifecycle and
+  deciding what a partially-spent budget means for a refresh, which is a contract change for
+  every existing caller in exchange for a bound the only consumer that needs it already has.
+- **Blast radius if wrong:** a caller sizing an outer deadline as `1x timeout` sees spurious
+  cancellations on the refresh path, where the SDK legitimately needs more. That is the failure
+  the documentation above is meant to prevent; the adapters' `Gate` already sizes for it.
+- **Status:** UNCONFIRMED — revisit if a second consumer wants an overall budget. Changing it
+  later is additive if introduced as a distinct parameter rather than a redefinition of `timeout`.
+
+## The `protobuf` floor is derived from the generated stubs, not chosen
+
+- **Assumed:** consumers can move to protobuf 7.x. `_gen` is emitted by buf's remote
+  `protocolbuffers/python` plugin, which tracks latest, so this is not really optional — every
+  wheel we build already contains gencode that demands it.
+- **Chose:** `protobuf>=7.35.1,<8`, matching the gencode currently emitted, plus
+  `tests/test_protobuf_floor.py`, which DERIVES the required version from the emitted stubs and
+  fails when a regenerate outruns the declared floor. The number will move; the guard is what
+  keeps it correct without anyone remembering. `requires-python` also moves to `>=3.10`, because
+  protobuf 7.x requires it — 3.9 was already broken in practice, just at import time rather than
+  at resolve time.
+- **Alternatives:** pin the buf plugin version to freeze the gencode (buf remote plugins do
+  support version pinning, and this would trade "the floor moves" for "the stubs go stale" —
+  worth revisiting if the floor churns); leave `>=5` and document the hazard (it is what shipped,
+  and it broke a consumer's entire suite with an error that named protobuf rather than us).
+- **Blast radius if wrong:** a consumer pinned to protobuf 5.x or 6.x can no longer resolve
+  seam-sdk. That is the correct outcome — the alternative is resolving successfully and failing
+  at `import seam_sdk` — but it IS a breaking change for such a consumer and wants a minor bump
+  and a release note.
+- **Status:** UNCONFIRMED — the `requires-python` and floor bumps are metadata breaking changes;
+  confirm the release framing before publishing.

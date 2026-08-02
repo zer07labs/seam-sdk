@@ -49,9 +49,28 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-# Every public method takes ``timeout`` (seconds) and propagates it as the gRPC deadline. The SDK never
-# retries beyond the single ticket refresh in ``authorize`` — adapters own retry semantics. A deadline
-# breach surfaces as ``DeadlineExceededError``, distinct from a DENY verdict.
+# ``timeout`` is PER-RPC, not an overall budget for the call. Decided, not accidental — and it has a
+# consequence callers must size around, so it is stated here rather than discovered.
+#
+# Every public method takes ``timeout`` (seconds) and propagates it as the gRPC deadline on each
+# wire call it makes. Most methods make exactly one, so per-RPC and overall coincide. Three do not:
+#
+#   * ``authorize`` may make up to FOUR: an admit (challenge + Admit = 2 RTT) when the ticket is
+#     cold or stale, the Authorize itself, and — on ``UNAUTHENTICATED`` — a refresh (another 2 RTT)
+#     plus one retried Authorize. Worst case is therefore several times the value passed.
+#   * ``run_decision`` and ``open_session`` each begin with the challenge→Admit handshake.
+#
+# So a caller that needs a hard overall bound must impose its own outer clock; the adapters'
+# ``Gate`` does exactly that with ``asyncio.wait_for`` around every call, and its ``timeout_s``
+# is the number that actually bounds a gated tool call.
+#
+# Overall-budget semantics were considered and rejected for now: it would mean threading a
+# deadline through the ticket lifecycle and deciding what a partially-spent budget means for the
+# refresh, which is a contract change for every existing caller in exchange for a bound the one
+# consumer that needs it already imposes. Recorded in ASSUMPTIONS.md.
+#
+# The SDK never retries beyond that single ticket refresh — adapters own retry semantics. A
+# deadline breach surfaces as ``DeadlineExceededError``, distinct from a DENY verdict.
 DEFAULT_TIMEOUT_S = 2.0
 
 
@@ -129,10 +148,17 @@ class SeamClient:
         self._trust = _MappedStub(rpc.SeamTrustStub(channel))
         self._context = _MappedStub(rpc.SeamContextStub(channel))
         self._authz = _MappedStub(rpc.SeamAuthorizationStub(channel))
-        # Admission-ticket lifecycle (advisory Authorize path): one cache per agent AID, all guarded
-        # by one lock — admit-once, refresh at 80% TTL, retry exactly once on UNAUTHENTICATED.
+        # Admission-ticket lifecycle (advisory Authorize path): one cache AND one lock PER AGENT AID —
+        # admit-once, refresh at 80% TTL, retry exactly once on UNAUTHENTICATED.
+        #
+        # Per-AID, not one global lock: a hung `Admit` for agent A held the single lock for its whole
+        # timeout, so agent B could not even READ its own already-cached ticket. One slow identity
+        # stalling every other identity's hot path is not a property a shared client should have.
         self._tickets: Dict[str, TicketCache] = {}
-        self._ticket_lock = threading.Lock()
+        self._ticket_locks: Dict[str, threading.Lock] = {}
+        # Guards the two dicts above and NOTHING else. It is never held across an RPC — only across a
+        # dict lookup — which is what keeps the per-AID split from collapsing back into a global lock.
+        self._registry_lock = threading.Lock()
 
     @classmethod
     def connect(
@@ -146,6 +172,23 @@ class SeamClient:
             else grpc.insecure_channel(target)
         )
         return cls(channel)
+
+    def close(self) -> None:
+        """Close the underlying channel.
+
+        The aio client has had this since it shipped; the sync one leaked a channel — and with it a
+        connection and the ticket-refresh state keyed to it — for every client a process constructed.
+        A long-lived worker that rebuilds its client on reconnect leaked one per reconnect.
+
+        Idempotent: grpc tolerates a repeated close, so ``with`` plus an explicit ``close()`` is safe.
+        """
+        self._ch.close()
+
+    def __enter__(self) -> "SeamClient":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
 
     def _presentation(
         self, agent: Agent, timeout: float = DEFAULT_TIMEOUT_S
@@ -161,9 +204,17 @@ class SeamClient:
 
         :meth:`authorize` calls this lazily — an explicit ``admit`` is only useful to front-load the
         2-RTT handshake (e.g. at worker startup). Returns the opaque ticket bytes."""
-        with self._ticket_lock:
-            cache = self._tickets.setdefault(agent.aid, TicketCache())
+        cache, lock = self._cache_and_lock(agent.aid)
+        with lock:
             return self._admit_locked(agent, cache, timeout)
+
+    def _cache_and_lock(self, aid: str) -> "tuple[TicketCache, threading.Lock]":
+        """The (cache, lock) pair for one agent identity, created on first use."""
+        with self._registry_lock:
+            return (
+                self._tickets.setdefault(aid, TicketCache()),
+                self._ticket_locks.setdefault(aid, threading.Lock()),
+            )
 
     def _admit_locked(self, agent: Agent, cache: TicketCache, timeout: float) -> bytes:
         ticket = self._admission.Admit(
@@ -214,16 +265,38 @@ class SeamClient:
             resp = self._authz.Authorize(build(ticket), timeout=timeout)
         except UnauthenticatedError:
             # Expired/rejected ticket: refresh once, retry once. A second failure propagates typed.
-            with self._ticket_lock:
-                cache = self._tickets.setdefault(agent.aid, TicketCache())
-                cache.invalidate()
-                ticket = self._admit_locked(agent, cache, timeout)
+            ticket = self._refresh_ticket(agent, ticket, timeout)
             resp = self._authz.Authorize(build(ticket), timeout=timeout)
         return result_of(resp)
 
+    def _refresh_ticket(self, agent: Agent, failed: bytes, timeout: float) -> bytes:
+        """Re-admit after an ``UNAUTHENTICATED``, coalescing concurrent refreshes to ONE.
+
+        The re-check inside the lock is the whole point. Unconditionally invalidating and
+        re-admitting meant N concurrent callers produced N re-admits: each one threw away the
+        ticket the previous caller had just minted, so every caller admitted for itself. Cold start
+        already coalesced correctly (they all find an empty cache and the first one fills it) —
+        which is what made this easy to miss, because the obvious test passes.
+
+        It matters under mass revocation, which is precisely when the admission endpoint is already
+        the most loaded thing in the system: every in-flight call fails at once and, before this,
+        every one of them stampeded it.
+
+        So: if the cache now holds a ticket that is NOT the one we failed on, some other caller
+        already refreshed and we use theirs. Only the caller still holding the dead ticket (or
+        finding none) pays for the round trip.
+        """
+        cache, lock = self._cache_and_lock(agent.aid)
+        with lock:
+            current = cache.get(_now_ms())
+            if current is not None and current != failed:
+                return current
+            cache.invalidate()
+            return self._admit_locked(agent, cache, timeout)
+
     def _ticket_for(self, agent: Agent, timeout: float) -> bytes:
-        with self._ticket_lock:
-            cache = self._tickets.setdefault(agent.aid, TicketCache())
+        cache, lock = self._cache_and_lock(agent.aid)
+        with lock:
             ticket = cache.get(_now_ms())
             if ticket is None:
                 ticket = self._admit_locked(agent, cache, timeout)

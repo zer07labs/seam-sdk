@@ -210,18 +210,38 @@ def test_optional_fields_ride_the_request(fake_server):
     )
 
 
-def test_short_ttl_ticket_refreshes_before_expiry(fake_server):
+def test_short_ttl_ticket_refreshes_before_expiry(fake_server, monkeypatch):
+    """The client refreshes PROACTIVELY at 80% of TTL — not because the server rejected it.
+
+    Driven by an injected clock rather than a real ``time.sleep(0.18)``. A sleep-based version
+    asserts something about how busy the machine is as much as about TTL arithmetic, and it is
+    slow in the one suite that runs on every push. The arithmetic itself is pinned at its exact
+    boundaries in tests/test_ticket_lifecycle.py; this proves the CLIENT consults it.
+    """
     servicer, addr = fake_server
-    servicer.ttl_ms = 200  # refresh point at 160ms
-    client = SeamClient.connect(addr)
-    agent = Agent(SEED)
-    client.authorize(agent, "t", {})
-    assert servicer.admits == 1
-    time.sleep(0.18)  # past 80% of TTL but before expiry
-    client.authorize(agent, "t", {})
-    assert (
-        servicer.admits == 2
-    )  # proactively refreshed, not driven by a server rejection
+    servicer.ttl_ms = 100_000  # refresh point at +80s, expiry at +100s
+    # The clock starts at real `now` because the fake server stamps `expires_at_ms` from ITS real
+    # clock; the TTL the cache computes is the difference between the two. The margins below are
+    # tens of seconds, so the few milliseconds of drift between these two readings are irrelevant —
+    # which is the point of using a wide TTL rather than the 200 ms the sleeping version needed.
+    clock = {"now": int(time.time() * 1000)}
+    monkeypatch.setattr("seam_sdk.client._now_ms", lambda: clock["now"])
+
+    with SeamClient.connect(addr) as client:
+        agent = Agent(SEED)
+        client.authorize(agent, "t", {})
+        assert servicer.admits == 1
+
+        clock["now"] += 70_000  # inside the refresh window
+        client.authorize(agent, "t", {})
+        assert servicer.admits == 1, "refreshed early — the ticket was still fresh"
+
+        clock["now"] += 15_000  # past 80% of TTL, still before expiry at +100s
+        client.authorize(agent, "t", {})
+        assert servicer.admits == 2, (
+            "did not refresh at the 80% point — the refresh must land BEFORE expiry, not after a "
+            "server rejection"
+        )
 
 
 def test_unauthenticated_refreshes_once_then_succeeds(fake_server):
