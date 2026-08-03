@@ -3,13 +3,29 @@
 seam-sdk does not choose its own version. The seam-runtime release is the version authority: it
 fires a `seam-release` dispatch, `release-on-runtime.yml` stamps `ts/package.json` and
 `python/pyproject.toml` to match, and tags — so the SDK is always the same version as the runtime
-("one version everywhere"). Entries here therefore accumulate under **Unreleased** and are titled
-by the runtime release that carries them.
+("one version everywhere"). Entries here therefore accumulate under **Unreleased** and are retitled
+to the runtime version that carries them once it ships.
+
+One consequence is worth knowing when reading these entries: **this SDK cannot express its own
+semver.** A breaking change here ships under whatever number the runtime's history computes, which
+may be a patch. Where that happens it is called out at the top of the version's section rather than
+left for a consumer to discover.
 
 Client-facing changes only. The protobuf contract is `seam.api.v1`; read it at the source rather
 than trusting a summary here.
 
 ## Unreleased
+
+_Nothing yet._
+
+## 0.7.13 — 2026-08-03
+
+> **Shipped as a patch, but the packaging changes below are breaking.** The version number could not
+> say so: seam-sdk follows the runtime's version, and the runtime's own history for this release
+> contained nothing breaking, so release-plz computed a patch. Read this section before upgrading a
+> pinned consumer. (Resolvers still do the safe thing — a consumer pinned below any floor resolves
+> to 0.7.12 rather than installing something it cannot import — but the number is not the signal it
+> would normally be.)
 
 ### Breaking — Python packaging metadata
 
