@@ -66,7 +66,10 @@ jobs:
             exit 1
           fi
           printf '%s' "$BUF_TOKEN" | buf registry login buf.build --token-stdin
-          buf generate buf.build/zer07labs/seam
+          # `make generate`, never raw `buf generate` — see the python job below for what raw
+          # output costs. This job only ships TypeScript, but the two must not diverge: a reader
+          # comparing them should not have to work out which one is deliberate.
+          make generate
       - name: build + publish
         working-directory: ts
         env:
@@ -109,7 +112,19 @@ jobs:
             exit 1
           fi
           printf '%s' "$BUF_TOKEN" | buf registry login buf.build --token-stdin
-          buf generate buf.build/zer07labs/seam
+          # `make generate`, NOT raw `buf generate`. This line shipped `buf generate` and every
+          # wheel it produced was UNIMPORTABLE:
+          #
+          #     File ".../seam_sdk/_gen/seam/api/v1/seam_pb2.py", line 25
+          #       from seam.event.v1 import seam_event_pb2 as ...
+          #     ModuleNotFoundError: No module named 'seam'
+          #
+          # protoc emits top-level `from seam.<pkg>.v1 import` for its siblings;
+          # `scripts/root_gen.py` rewrites those to the rooted `seam_sdk._gen.*` form and drops
+          # the `__init__.py` files. `make generate` runs both. ci.yml has said so in a comment
+          # three times over; this file did the other thing, and the guard below could not see
+          # the difference because it only looked for the file, never imported it.
+          make generate
       - name: build (bundles the transport via package-data) + upload
         working-directory: python
         env:
@@ -130,13 +145,27 @@ jobs:
           export TWINE_PASSWORD="$TOKEN"
           python -m pip install --quiet build twine
           python -m build
-          # Sanity: the wheel MUST contain the generated transport, or a consumer gets an import error.
-          python - <<'PY'
-          import glob, zipfile, sys
-          whl = glob.glob("dist/*.whl")[0]
-          names = zipfile.ZipFile(whl).namelist()
-          if not any(n.endswith("_gen/seam/api/v1/seam_pb2.py") for n in names):
-              sys.exit(f"{whl} is missing the generated transport — refusing to publish a broken wheel")
-          print(f"{whl}: transport bundled OK")
+          # INSTALL THE WHEEL AND IMPORT IT. The previous guard listed the zip's contents and
+          # checked that `_gen/seam/api/v1/seam_pb2.py` was present — then printed "refusing to
+          # publish a broken wheel". It could not have detected the break it was named for: the
+          # file was always there, and always unimportable, because the step above generated it
+          # without rooting the imports. A guard that cannot fail for the reason it claims is
+          # worse than no guard, because it is also a promise.
+          #
+          # A fresh venv, not this one: the build environment has the source tree on sys.path,
+          # so `import seam_sdk` here would resolve `python/seam_sdk/` and pass no matter what
+          # the wheel contains.
+          python -m venv /tmp/wheelcheck
+          /tmp/wheelcheck/bin/python -m pip install --quiet dist/*.whl
+          cd /tmp && /tmp/wheelcheck/bin/python - <<'PY'
+          import seam_sdk
+          # The generated transport is behind these two imports; a raw-buf wheel dies on the
+          # first one with ModuleNotFoundError: No module named 'seam'.
+          from seam_sdk import SeamClient, aio  # noqa: F401
+          from seam_sdk._gen.seam.api.v1 import seam_pb2  # noqa: F401
+          # And a real key derivation, so the check exercises the package rather than its imports.
+          assert seam_sdk.Agent(bytes(32)).aid.startswith("aid:pubkey:ed25519:")
+          print("wheel installs, imports, and derives — OK")
           PY
+          cd "$GITHUB_WORKSPACE/python"
           twine upload dist/*
