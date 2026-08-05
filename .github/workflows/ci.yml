@@ -96,6 +96,26 @@ jobs:
       - name: pytest
         working-directory: python
         run: pytest -q
+      # BUILD THE WHEEL AND IMPORT IT, exactly as publish.yml does. Everything above this line
+      # runs against an EDITABLE install of the source tree, which cannot see a packaging defect:
+      # `pip install -e ./python` puts the working directory on the path, so `import seam_sdk`
+      # succeeds whatever the built artifact would contain. That blind spot is not theoretical —
+      # every wheel this repo published was unimportable and the whole suite stayed green over
+      # it. A fresh venv is essential for the same reason.
+      - name: the wheel a consumer installs actually imports
+        run: |
+          set -e
+          python -m pip install --quiet build
+          cd python && python -m build --wheel
+          python -m venv /tmp/wheelcheck
+          /tmp/wheelcheck/bin/python -m pip install --quiet dist/*.whl
+          cd /tmp && /tmp/wheelcheck/bin/python - <<'PY'
+          import seam_sdk
+          from seam_sdk import SeamClient, aio  # noqa: F401
+          from seam_sdk._gen.seam.api.v1 import seam_pb2  # noqa: F401
+          assert seam_sdk.Agent(bytes(32)).aid.startswith("aid:pubkey:ed25519:")
+          print("wheel installs, imports, and derives — OK")
+          PY
 
   typescript:
     name: typescript (typecheck · build · test)
