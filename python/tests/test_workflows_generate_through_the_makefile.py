@@ -33,23 +33,29 @@ from pathlib import Path
 
 import pytest
 
-WORKFLOWS = sorted((Path(__file__).resolve().parents[2] / ".github" / "workflows").glob("*.yml"))
+WORKFLOWS = sorted(
+    (Path(__file__).resolve().parents[2] / ".github" / "workflows").glob("*.yml")
+)
 
 # `buf generate` as a command, not as prose. A comment saying "NOT raw `buf generate`" is the
 # right thing to write and must not trip this: the pattern requires the invocation to open a
 # line (after YAML/shell indentation), which a backticked mention inside a `#` comment does not.
-RAW_BUF_GENERATE = re.compile(r"^\s*buf\s+generate\b", flags=re.M)
+RAW_BUF_GENERATE = re.compile(r"^\s*buf\s+generate\b", flags=re.MULTILINE)
 
 
 def _uncommented(text: str) -> str:
     """Drop whole-line comments so prose about the rule cannot satisfy or violate it."""
-    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    return "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#")
+    )
 
 
 def test_there_are_workflows_to_check():
     """Anti-vacuity: a glob that matched nothing would make every assertion below pass."""
     assert WORKFLOWS, "no workflows found — this guard would silently check nothing"
-    assert any(w.name == "publish.yml" for w in WORKFLOWS), "publish.yml is the file that got this wrong"
+    assert any(w.name == "publish.yml" for w in WORKFLOWS), (
+        "publish.yml is the file that got this wrong"
+    )
 
 
 @pytest.mark.parametrize("workflow", WORKFLOWS, ids=lambda p: p.name)
