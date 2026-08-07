@@ -292,3 +292,65 @@ jobs:
           cd verify
           AID=$(python3 -c "import json;print(json.load(open('fixtures/erasure_certificate_vector.json'))['issuer_aid'])")
           cargo run --quiet -- erasure-cert fixtures/erasure_certificate_vector.json --issuer "$AID"
+
+  workflow-guards:
+    name: workflow guards
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install --quiet pyyaml pytest
+      - name: the required-check gate covers every job
+        run: python -m pytest scripts/test_ci_gate.py -q
+
+  # The single check branch protection requires. Requiring the jobs directly does not work here:
+  # `integration` is SKIPPED on every PR that cannot reach a live runtime, and a skipped required
+  # check blocks the merge forever. Requiring nothing is worse — `python` and `typescript` are
+  # gated on `preflight`, so a PR where BUF_TOKEN does not resolve skips the SDK's core test jobs
+  # and still shows green.
+  #
+  # So the gate splits the difference explicitly: REQUIRED jobs must succeed; ADVISORY jobs may
+  # skip but must not fail. `integration` is the only advisory one, and it is advisory because it
+  # needs a live seam-grpc a PR cannot always reach — a documented decision, not an accident.
+  ci-ok:
+    if: always()
+    needs:
+      - version-lockstep
+      - preflight
+      - python
+      - typescript
+      - integration
+      - go
+      - java
+      - kotlin
+      - verify
+      - workflow-guards
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: required jobs must SUCCEED; advisory jobs may skip but not fail
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          # Comma-separated. scripts/test_ci_gate.py asserts this list stays minimal.
+          ADVISORY: integration
+        run: |
+          set -euo pipefail
+          bad=$(printf '%s' "$NEEDS" | jq -r --arg adv "$ADVISORY" '
+            ($adv | split(",")) as $a
+            | to_entries[]
+            | select(
+                if (.key as $k | $a | index($k))
+                then (.value.result | . != "success" and . != "skipped")
+                else .value.result != "success"
+                end)
+            | "  \(.key): \(.value.result)"')
+          printf '%s' "$NEEDS" | jq -r --arg adv "$ADVISORY" '
+            ($adv | split(",")) as $a | to_entries[]
+            | select(.key as $k | $a | index($k))
+            | "advisory  \(.key): \(.value.result)"'
+          if [ -n "$bad" ]; then
+            echo "::error::not every required job succeeded"
+            printf '%s\n' "$bad"
+            exit 1
+          fi
+          echo "all required jobs succeeded"
