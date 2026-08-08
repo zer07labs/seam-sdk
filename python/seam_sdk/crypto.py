@@ -274,13 +274,63 @@ def tool_input_digest(canonical: bytes) -> str:
     return "sha256:" + hashlib.sha256(canonical).hexdigest()
 
 
-def call_sig(agent_seed: bytes, ticket: bytes, digest: str) -> bytes:
-    """The per-call proof-of-possession for :meth:`SeamClient.authorize`: Ed25519 by the agent key over
-    ``ticket_bytes || tool_input_digest_utf8`` (mirrors the runtime's ``call_sig_payload`` framing).
-    Binding the digest stops a captured signature being re-pointed at another tool call; binding the
-    ticket stops replay against a later ticket."""
+# Domain separation for the per-call proof-of-possession. `v2` because the signed payload grew from
+# `ticket || digest` to additionally cover `tool_name` and `agent_id`; the distinct tag means a v1
+# signature can NEVER verify as a v2 one, so a version skew between SDK and runtime is a clean
+# rejection rather than a parse ambiguity. Bump it here only in lockstep with the runtime.
+CALL_SIG_CONTEXT = b"seam-authorize-call-v2"
+
+
+def call_sig_payload(
+    ticket: bytes, tool_input_digest: str, tool_name: str, agent_id: str
+) -> bytes:
+    """The exact bytes :func:`call_sig` signs — ``frame(context) || frame(ticket) ||
+    frame(tool_input_digest) || frame(tool_name) || frame(agent_id)``, where
+    ``frame(x) = u32le(len(x)) || x`` over UTF-8.
+
+    Length prefixing is load-bearing now that the payload is multi-field: concatenating raw would
+    frame ``("read", "x")`` and ``("read_x", "")`` identically, re-opening the re-pointing gap this
+    closes. Lengths are BYTE counts.
+
+    ``agent_id`` is the raw wire value — the empty string when the caller omits it, signed verbatim
+    rather than skipped, matching the server's framing at verify time.
+
+    Pinned by ``conformance/call_sig_payload_vector.json``, whose bytes come from executing the
+    runtime's Rust ``call_sig_payload``. Exposed publicly so a caller can reproduce or verify the
+    binding without re-deriving it from prose.
+    """
+    parts = (
+        CALL_SIG_CONTEXT,
+        ticket,
+        tool_input_digest.encode("utf-8"),
+        tool_name.encode("utf-8"),
+        agent_id.encode("utf-8"),
+    )
+    return b"".join(struct.pack("<I", len(p)) + p for p in parts)
+
+
+def call_sig(
+    agent_seed: bytes,
+    ticket: bytes,
+    digest: str,
+    *,
+    tool_name: str,
+    agent_id: str,
+) -> bytes:
+    """The per-call proof-of-possession for :meth:`SeamClient.authorize`: Ed25519 by the agent key
+    over :func:`call_sig_payload`.
+
+    Binding the *digest* stops a captured signature being re-pointed at a different input; binding
+    the *tool_name* and *agent_id* stops it being re-pointed at a different tool call or registry
+    agent while the ticket is live; binding the *ticket bytes* stops replay against a later ticket.
+
+    ``tool_name`` and ``agent_id`` are keyword-ONLY and have no defaults on purpose. They arrived
+    with the v2 framing, and defaulting them would let existing callers keep compiling while
+    producing a signature the runtime rejects — surfacing as ``UNAUTHENTICATED: admission ticket is
+    not valid``, which names the wrong artifact entirely. A TypeError here is the cheaper failure.
+    """
     return Ed25519PrivateKey.from_private_bytes(agent_seed).sign(
-        ticket + digest.encode("utf-8")
+        call_sig_payload(ticket, digest, tool_name, agent_id)
     )
 
 

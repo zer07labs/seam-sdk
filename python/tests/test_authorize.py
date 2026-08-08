@@ -31,7 +31,7 @@ from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
 from seam_sdk._gen.seam.api.v1 import seam_pb2_grpc as rpc
 from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as ev
 from seam_sdk.aio import SeamClient as AioSeamClient
-from seam_sdk.crypto import jcs_canonicalize, tool_input_digest
+from seam_sdk.crypto import call_sig_payload, jcs_canonicalize, tool_input_digest
 from seam_sdk.errors import UnauthenticatedError
 
 SEED = bytes(range(32))
@@ -204,9 +204,15 @@ def test_call_sig_and_digest_verify_server_side(fake_server):
     assert req.tool_input == canonical  # raw input rides as the exact canonical bytes
     assert req.tool_input_digest == tool_input_digest(canonical)
     assert req.tool_input_digest == "sha256:" + hashlib.sha256(canonical).hexdigest()
-    # The per-call PoP: Ed25519 by the agent key over ticket_bytes || digest_utf8.
+    # The per-call PoP, verified the way the SERVER does it: Ed25519 by the agent key over the v2
+    # payload, using the WIRE values off the request rather than the ones we passed in. Rebuilding
+    # the payload from local variables would re-introduce the self-consistency trap — this must fail
+    # if the client signs anything other than what it actually sends.
     Ed25519PublicKey.from_public_bytes(_pubkey_of_aid(agent.aid)).verify(
-        req.call_sig, bytes(req.ticket) + req.tool_input_digest.encode()
+        req.call_sig,
+        call_sig_payload(
+            bytes(req.ticket), req.tool_input_digest, req.tool_name, req.agent_id
+        ),
     )
 
 

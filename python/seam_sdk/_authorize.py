@@ -121,7 +121,11 @@ def build_authorize_request(
         ticket=ticket,
         tool_name=tool_name,
         tool_input_digest=digest,
-        call_sig=call_sig(agent_seed, ticket, digest),
+        # The signed tool_name/agent_id must be the WIRE values assembled below — the runtime
+        # verifies them verbatim against the request, so any divergence is a rejected call.
+        call_sig=call_sig(
+            agent_seed, ticket, digest, tool_name=tool_name, agent_id=agent_id
+        ),
         session_id=session_id,
         subject=subject,
         agent_id=agent_id,
