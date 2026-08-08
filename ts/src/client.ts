@@ -206,7 +206,9 @@ export class SeamClient {
       toolName,
       toolInputDigest: digest,
       toolInput: opts?.digestOnly ? new Uint8Array(0) : canonical,
-      callSig: callSig(agent.seed, ticket, digest),
+      // The signed toolName/agentId must be the WIRE values assembled here — the runtime verifies
+      // them verbatim against the request, so any divergence is a rejected call.
+      callSig: callSig(agent.seed, ticket, digest, toolName, opts?.agentId ?? ""),
       features: opts?.features ?? {},
       sessionId: opts?.sessionId ?? "",
       subject: opts?.subject ?? "",

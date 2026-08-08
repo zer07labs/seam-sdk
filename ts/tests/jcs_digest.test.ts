@@ -10,7 +10,7 @@ import { test } from "node:test";
 
 import { ed25519 } from "@noble/curves/ed25519";
 
-import { callSig, jcsCanonicalize, toolInputDigest } from "../src/crypto.js";
+import { callSig, callSigPayload, jcsCanonicalize, toolInputDigest } from "../src/crypto.js";
 
 const VECTOR = JSON.parse(
   readFileSync(
@@ -47,16 +47,21 @@ test("unrepresentable inputs are rejected", () => {
   assert.throws(() => jcsCanonicalize(() => {}));
 });
 
-test("callSig is Ed25519 over ticket || digest", () => {
+// Shape only. The FRAMING is pinned by call_sig_payload.test.ts against the runtime's own bytes.
+// In its previous form this test verified the signature against the payload it had just built
+// itself (`ticket || digest`), so it stayed green straight through the v1→v2 framing change while
+// every live ENFORCE call was being rejected. A test that reconstructs the subject's own input can
+// only prove self-consistency — never conformance.
+test("callSig is Ed25519 over the v2 payload", () => {
   const seed = new Uint8Array(Array.from({ length: 32 }, (_, i) => i));
   const ticket = new TextEncoder().encode("opaque-ticket-bytes");
   const digest = toolInputDigest(jcsCanonicalize({ a: 1 }));
-  const sig = callSig(seed, ticket, digest);
+  const sig = callSig(seed, ticket, digest, "t", "a");
   assert.equal(sig.length, 64);
-  const msg = new Uint8Array([...ticket, ...new TextEncoder().encode(digest)]);
-  assert.ok(ed25519.verify(sig, msg, ed25519.getPublicKey(seed)));
-  msg[0] ^= 1;
-  assert.ok(!ed25519.verify(sig, msg, ed25519.getPublicKey(seed)));
+  assert.ok(ed25519.verify(sig, callSigPayload(ticket, digest, "t", "a"), ed25519.getPublicKey(seed)));
+  assert.ok(
+    !ed25519.verify(sig, callSigPayload(ticket, digest, "t", "DIFFERENT"), ed25519.getPublicKey(seed)),
+  );
 });
 
 test("lone surrogates are rejected (parity with Python/Rust)", () => {

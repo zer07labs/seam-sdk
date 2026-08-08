@@ -19,6 +19,7 @@ from .crypto import (
     aid_from_pubkey,
     build_presentation,
     call_sig,
+    call_sig_payload,
     jcs_canonicalize,
     tool_input_digest,
     verify_tct,
@@ -58,6 +59,7 @@ __all__ = [
     "jcs_canonicalize",
     "tool_input_digest",
     "call_sig",
+    "call_sig_payload",
     # Streamed-event surface (A14)
     "KNOWN_KINDS",
     "verify_streamed_record_digest",
