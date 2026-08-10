@@ -120,6 +120,16 @@ for spec in \
   [ "$st" -ne 0 ] && stream_rc=1
 done
 
+# ── Probe 3: the ReportEventsConsumed RPC (reported; hard under EVENTS=1) ──────────────────────────────
+# R1: the seam-event.v1 relay reports its durably-consumed cursor via SeamEvents.ReportEventsConsumed so
+# the runtime can bound its outbox. Like the streamed-payload fields, it lands on the BSR only after the
+# runtime pushes the updated seam.api.v1; until then `make generate` (BSR) lacks it while
+# `make generate-local` has it. REPORTED by default; hard-gated when EVENTS=1. Once the BSR carries it,
+# promote this to a permanent hard gate (fold it into Probe 1b alongside the other RPCs).
+report_consumed_status="$(probe "SeamEvents.ReportEventsConsumed (R1)" "$PY_GRPC" "$PY_GEN" "$TS_GEN" -- "ReportEventsConsumed" "reportEventsConsumed")"
+report_consumed_rc=$?
+note "$report_consumed_status"
+
 echo
 if [ "$rpc_rc" -ne 0 ]; then
   err "the active contract is STALE for Phase 2: VerifyPartyAttestation is not in the stubs."
@@ -151,5 +161,21 @@ else
     echo "       runtime Phase-0 BSR push; 'make generate-local' has them today. (Set STREAM=1 to hard-gate.)"
   else
     echo "OK — streamed-payload mirror fields present (Phase 6 also unblocked)."
+  fi
+fi
+
+if [ "${EVENTS:-0}" = "1" ]; then
+  if [ "$report_consumed_rc" -ne 0 ]; then
+    err "EVENTS=1: SeamEvents.ReportEventsConsumed is not in the stubs (the runtime's updated seam.api.v1"
+    err "is not on the BSR yet). Use 'make generate-local RUNTIME=../seam-runtime' until the push lands."
+    exit 4
+  fi
+  echo "OK — ReportEventsConsumed present (relay cursor reporting unblocked)."
+else
+  if [ "$report_consumed_rc" -ne 0 ]; then
+    echo "NOTE — SeamEvents.ReportEventsConsumed not present. Relay cursor reporting needs the runtime's"
+    echo "       seam.api.v1 BSR push; 'make generate-local' has it today. (Set EVENTS=1 to hard-gate.)"
+  else
+    echo "OK — ReportEventsConsumed present (relay cursor reporting unblocked)."
   fi
 fi

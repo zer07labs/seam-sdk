@@ -367,3 +367,21 @@ class SeamAdminClient:
                 yield event
         except grpc.RpcError as e:
             raise map_rpc_error(e) from e
+
+    def report_events_consumed(
+        self, consumed_cursor: int, *, timeout: float = DEFAULT_ADMIN_TIMEOUT_S
+    ) -> None:
+        """Report the relay's durably-consumed outbox cursor so the runtime can bound its outbox (R1).
+
+        ``consumed_cursor`` is the FIRST outbox offset the relay has NOT yet durably delivered downstream
+        (its contiguous-delivery resume offset). The runtime advances a monotone GC watermark from it and
+        prunes only rows *below* it, so it can never delete a row the relay still needs. A lower re-report
+        is a durable no-op (the watermark is monotone); a value past the outbox head is clamped by the
+        runtime. Requires the destructive ``events:consume`` operator scope."""
+        try:
+            self._events.ReportEventsConsumed(
+                pb.ReportConsumedRequest(consumed_cursor=consumed_cursor),
+                timeout=timeout,
+            )
+        except grpc.RpcError as e:
+            raise map_rpc_error(e) from e
