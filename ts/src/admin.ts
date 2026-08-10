@@ -12,7 +12,11 @@
 // `eraseSubject` requires a non-empty `tenant` scope and a `confirmCount` equal to the preview's
 // `wouldErase` count. `eraseSubjectConfirmed` is the common, safe path that does both.
 
-import { createClient, type Client, type Interceptor } from "@connectrpc/connect";
+import {
+  createClient,
+  type Client,
+  type Interceptor,
+} from "@connectrpc/connect";
 import { createGrpcTransport } from "@connectrpc/connect-node";
 
 import {
@@ -59,9 +63,12 @@ export function verifyStreamedRecordDigest(event: SeamEvent): boolean {
   const p = event.payload;
   if (!p) throw new Error("DECISION_SEALED event has no payload");
   if (p.schemaVersion < 2) {
-    throw new Error(`v${p.schemaVersion} record is not stream-recomputable (only v2+)`);
+    throw new Error(
+      `v${p.schemaVersion} record is not stream-recomputable (only v2+)`,
+    );
   }
-  if (!event.digest) throw new Error("event carries no wire digest to compare against");
+  if (!event.digest)
+    throw new Error("event carries no wire digest to compare against");
   if (p.ciphertextDigest.length === 0) return false; // a v2 record with no ciphertext_digest is a strip
   const recomputed = recordDigestV2({
     decisionId: p.decisionId,
@@ -133,12 +140,20 @@ export class SeamAdminClient {
     subject: string,
   ): Promise<ErasureCertificate> {
     const preview = await this.previewErasure(tenant, subject);
-    return this.eraseSubject(tenant, subject, BigInt(preview.wouldErase.length));
+    return this.eraseSubject(
+      tenant,
+      subject,
+      BigInt(preview.wouldErase.length),
+    );
   }
 
   // ── Governance / tenancy ──────────────────────────────────────────────────────────────────────
 
-  enrollTenant(subjectAid: string, tenant: string, namespace: string): Promise<TenantView> {
+  enrollTenant(
+    subjectAid: string,
+    tenant: string,
+    namespace: string,
+  ): Promise<TenantView> {
     return this.admin.enrollTenant({ subjectAid, tenant, namespace });
   }
 
@@ -159,7 +174,12 @@ export class SeamAdminClient {
   async resumeSession(
     sessionId: string,
     approver: string,
-    opts?: { tenant?: string; namespace?: string; budget?: number; raise?: BudgetLimits },
+    opts?: {
+      tenant?: string;
+      namespace?: string;
+      budget?: number;
+      raise?: BudgetLimits;
+    },
   ) {
     return this.admin.resumeSession({
       sessionId,
@@ -224,6 +244,23 @@ export class SeamAdminClient {
       })) {
         yield ev;
       }
+    } catch (e) {
+      throw toSeamError(e);
+    }
+  }
+
+  /**
+   * Report the relay's durably-consumed outbox cursor so the runtime can bound its outbox (R1).
+   *
+   * `consumedCursor` is the first outbox offset the relay has NOT yet durably delivered downstream (its
+   * contiguous-delivery resume offset). The runtime advances a monotone GC watermark from it and prunes
+   * only rows *below* it, so it can never delete a row the relay still needs. A lower re-report is a
+   * durable no-op (the watermark is monotone); a value past the outbox head is clamped by the runtime.
+   * Requires the destructive `events:consume` operator scope.
+   */
+  async reportEventsConsumed(consumedCursor: bigint): Promise<void> {
+    try {
+      await this.events.reportEventsConsumed({ consumedCursor });
     } catch (e) {
       throw toSeamError(e);
     }
