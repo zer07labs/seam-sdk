@@ -179,9 +179,14 @@ def test_client_side_semantic_errors_survive_a_pickle_round_trip():
     replaced by a TypeError in transit)."""
     from seam_sdk.errors import IssuerMismatchError, UnknownVerdictError
 
-    mism = pickle.loads(pickle.dumps(IssuerMismatchError("aid:pubkey:AA", "aid:pubkey:BB")))
+    mism = pickle.loads(
+        pickle.dumps(IssuerMismatchError("aid:pubkey:AA", "aid:pubkey:BB"))
+    )
     assert type(mism) is IssuerMismatchError
-    assert (mism.proof_issuer, mism.expected_issuer) == ("aid:pubkey:AA", "aid:pubkey:BB")
+    assert (mism.proof_issuer, mism.expected_issuer) == (
+        "aid:pubkey:AA",
+        "aid:pubkey:BB",
+    )
 
     verd = pickle.loads(pickle.dumps(UnknownVerdictError(7, "az-1")))
     assert type(verd) is UnknownVerdictError
