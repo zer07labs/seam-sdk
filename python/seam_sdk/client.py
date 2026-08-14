@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import threading
+import warnings
 from dataclasses import dataclass
 from typing import Dict, Mapping, Optional, Sequence
 
@@ -367,15 +368,16 @@ class SeamClient:
         session_id: str,
         participants: Sequence[str],
         *,
-        budget: int = 32,
+        budget: int = 0,
         limits: Optional[BudgetLimits] = None,
         mode: str = "",
         on_behalf_of: Sequence[str] = (),
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.SessionStep:
         """Admit (the PoP handshake) → open an incremental session. ``budget`` is the legacy
-        message count (0 ⇒ the server default 32); ``limits`` adds the other 6.2 dimensions.
-        ``on_behalf_of`` binds end-user data subjects to the session (see :meth:`run_decision`)."""
+        message count (0 means the server default, currently 32 — the proto's semantics, so the
+        server owns the number); ``limits`` adds the other 6.2 dimensions. ``on_behalf_of`` binds
+        end-user data subjects to the session (see :meth:`run_decision`)."""
         req = pb.OpenSessionRequest(
             session_id=session_id,
             participants=list(participants),
@@ -450,14 +452,21 @@ class SeamClient:
         self,
         session_id: str,
         *,
-        budget: int = 32,
+        budget: int = 0,
         raise_: Optional[BudgetLimits] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.SessionStep:
         """**Deprecated / tombstone.** Resume moved to the **management** plane (rt-D): this data-plane RPC
         now returns ``PERMISSION_DENIED`` ("call SeamAdmin.ResumeSession"). Use
         :meth:`SeamAdminClient.resume_session` (the R9 approver action) with an operator token instead.
-        Retained only so an old caller gets a clear, typed error rather than a missing attribute."""
+        Retained only so an old caller gets a clear, typed error rather than a missing attribute.
+        ``budget`` follows the proto's semantics: 0 means the server default, currently 32."""
+        warnings.warn(
+            "SeamClient.resume_session is a tombstone: resume moved to the management plane "
+            "(SeamAdmin.ResumeSession) — use SeamAdminClient.resume_session with an operator token",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         req = pb.ResumeRequest(session_id=session_id, budget=budget)
         if raise_ is not None:
             # `raise` is a Python keyword, so the generated field is reached via getattr.

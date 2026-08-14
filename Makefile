@@ -29,9 +29,13 @@ generate-local:
 	buf generate $(RUNTIME)
 	python3 scripts/root_gen.py
 
-# Assert the active stubs carry the RPC the hand-written clients call (hard gate), and report whether the
-# streamed-payload mirror fields are present (hard-gated under STREAM=1 — the Phase-6 mode). Run AFTER a
-# `generate` / `generate-local`; it inspects the emitted stubs, it does not generate them.
+# Assert the active stubs carry the surface the hand-written clients call, probing the Python and TS
+# stub trees INDEPENDENTLY (one can be stale beside the other). The RPC + Authorize probes are always
+# hard gates; STREAM=1 additionally hard-gates the streamed-payload mirror fields and EVENTS=1 hard-gates
+# SeamEvents.ReportEventsConsumed — CI sets both, since the BSR module carries that surface. Exit codes:
+# 0 OK · 1 RPC/Authorize stale · 2 stream fields stale (STREAM=1) · 3 stubs not generated ·
+# 4 ReportEventsConsumed stale (EVENTS=1). Run AFTER a `generate` / `generate-local`; it inspects the
+# emitted stubs, it does not generate them.
 check-contract:
 	./scripts/check-contract.sh
 

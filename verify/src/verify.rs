@@ -298,7 +298,7 @@ fn record_digest_v2(d: &Decision) -> [u8; 32] {
     Sha256::digest(&buf).into()
 }
 
-/// Verify every `CHAIN_HEAD_ATTESTATION` in the stream against the **pinned** issuer AID (A14, design-b).
+/// Verify every `CHAIN_HEAD_ATTESTATION` in the stream against the **pinned** issuer AIDs (A14, design-b).
 ///
 /// # Why every attestation, and why at least one
 ///
@@ -333,12 +333,21 @@ fn record_digest_v2(d: &Decision) -> [u8; 32] {
 pub fn verify_authenticity(
     events: &[Event],
     heads: &[Vec<u8>],
-    pinned_aid: &str,
+    pinned_aids: &[String],
 ) -> Result<IssuerReport, String> {
     use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
-    let key = aid_to_key(pinned_aid)?;
-    let vk = VerifyingKey::from_bytes(&key).map_err(|e| format!("bad issuer key: {e}"))?;
+    // `--issuer` is repeatable: a chain that spans an issuer-key ROTATION carries attestations from the
+    // retired key AND the new one, and each must verify against SOME AID the caller pinned. Every pinned
+    // AID must be well-formed up front — a typo'd pin silently matching nothing would weaken the gate.
+    let keys: Vec<(&str, VerifyingKey)> = pinned_aids
+        .iter()
+        .map(|aid| {
+            let key = aid_to_key(aid)?;
+            let vk = VerifyingKey::from_bytes(&key).map_err(|e| format!("bad issuer key: {e}"))?;
+            Ok((aid.as_str(), vk))
+        })
+        .collect::<Result<_, String>>()?;
 
     let mut attestations = 0usize;
     let mut covered_prefix = 0u64;
@@ -387,15 +396,18 @@ pub fn verify_authenticity(
         let Some(a) = e.attestation.as_ref() else {
             continue;
         };
-        // The pin, before any signature work (as for the erasure cert).
-        if a.issuer_aid != pinned_aid {
+        // The pin, before any signature work (as for the erasure cert): the attestation must NAME one of
+        // the AIDs the caller pinned. An issuer outside the pinned set = FAIL, exactly as a single-pin
+        // mismatch always was.
+        let Some((_, vk)) = keys.iter().find(|(aid, _)| *aid == a.issuer_aid) else {
             return Err(format!(
-                "a CHAIN_HEAD_ATTESTATION names issuer '{}', but you pinned '{}'.\n  \
+                "a CHAIN_HEAD_ATTESTATION names issuer '{}', but you pinned [{}].\n  \
                  A signature only means something relative to a key you already trusted; deriving the key \
                  from the attestation's own issuer would let a forgery verify against its forger.",
-                a.issuer_aid, pinned_aid
+                a.issuer_aid,
+                pinned_aids.join(", ")
             ));
-        }
+        };
         let sig: [u8; 64] = a
             .signature
             .as_slice()

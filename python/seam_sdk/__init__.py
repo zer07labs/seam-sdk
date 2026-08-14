@@ -7,7 +7,12 @@ vectors generated from the Rust runtime pin the exact bytes (see ``conformance/v
 
 from . import aio
 from ._authorize import AuthorizeResult
-from .admin import KNOWN_KINDS, SeamAdminClient, verify_streamed_record_digest
+from .admin import (
+    DEFAULT_ADMIN_TIMEOUT_S,
+    KNOWN_KINDS,
+    SeamAdminClient,
+    verify_streamed_record_digest,
+)
 from .client import (
     DEFAULT_TIMEOUT_S,
     Agent,
@@ -21,7 +26,9 @@ from .crypto import (
     call_sig,
     call_sig_payload,
     jcs_canonicalize,
+    record_digest_v2,
     tool_input_digest,
+    verify_chain_head_attestation,
     verify_tct,
 )
 from .errors import (
@@ -41,6 +48,7 @@ from .errors import (
     UnavailableError,
     UnimplementedError,
     UnknownVerdictError,
+    map_rpc_error,
 )
 
 __all__ = [
@@ -56,6 +64,7 @@ __all__ = [
     # Advisory authorization (Authorize verb)
     "AuthorizeResult",
     "DEFAULT_TIMEOUT_S",
+    "DEFAULT_ADMIN_TIMEOUT_S",
     "jcs_canonicalize",
     "tool_input_digest",
     "call_sig",
@@ -63,8 +72,11 @@ __all__ = [
     # Streamed-event surface (A14)
     "KNOWN_KINDS",
     "verify_streamed_record_digest",
+    "record_digest_v2",
+    "verify_chain_head_attestation",
     # Error taxonomy
     "SeamError",
+    "map_rpc_error",
     "IssuerMismatchError",
     "SeamRpcError",
     "InvalidArgumentError",

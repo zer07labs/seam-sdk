@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from concurrent import futures
 
 import grpc
@@ -45,9 +46,12 @@ class PartialEventStream(rpc.SeamEventsServicer):
         self.before_abort = 3
         self.abort_with = grpc.StatusCode.UNAVAILABLE
         self.abort = True
+        self.calls = 0
         self.lock = threading.Lock()
 
     def StreamEvents(self, request, context):  # noqa: N802
+        with self.lock:
+            self.calls += 1
         for seq in range(1, self.before_abort + 1):
             yield ev.SeamEvent(seq=seq, event_id=f"evt-{seq}", kind="AUDIT_ENTRY")
         if self.abort:
@@ -120,7 +124,9 @@ def test_an_abort_on_the_very_first_event_is_still_an_iteration_time_failure(
     servicer.abort_with = grpc.StatusCode.RESOURCE_EXHAUSTED
 
     with SeamAdminClient.connect(addr) as admin:
-        stream = admin.stream_events()  # no error here — it is a generator
+        stream = (
+            admin.stream_events()
+        )  # no error here — the stream is lazy until first iteration
         with pytest.raises(ResourceExhaustedError):
             next(stream)
 
@@ -135,6 +141,79 @@ def test_a_clean_stream_ends_without_raising(event_server):
             "evt-2",
             "evt-3",
         ]
+
+
+# ── The EventStream handle: drain-only ack, laziness, deliberate cancellation ────────────────────
+
+
+def test_ack_with_follow_is_refused_client_side(event_server):
+    """The proto declares ``ack`` drain-only (a live tail is cursor-based and never acks). Sending
+    the pair anyway would leave the caller believing rows were being marked published while the
+    server ignores the flag — refused HERE, loudly, at call time."""
+    _, addr = event_server
+    with SeamAdminClient.connect(addr) as admin:
+        with pytest.raises(ValueError, match="drain-only"):
+            admin.stream_events(ack=True, follow=True)
+
+
+def test_nothing_is_sent_until_the_first_iteration(event_server):
+    """The stream is lazy, and it matters most with ``ack=True``: constructing the stream must not
+    mark a single row published until the caller actually starts consuming."""
+    servicer, addr = event_server
+    servicer.abort = False
+    with SeamAdminClient.connect(addr) as admin:
+        stream = admin.stream_events(ack=True)
+        time.sleep(0.2)  # give a mistakenly-eager RPC time to land server-side
+        assert servicer.calls == 0, "constructing the stream must send nothing"
+        assert next(stream).event_id == "evt-1"
+        assert servicer.calls == 1
+
+
+def test_cancel_before_first_iteration_never_sends_the_rpc(event_server):
+    servicer, addr = event_server
+    servicer.abort = False
+    with SeamAdminClient.connect(addr) as admin:
+        stream = admin.stream_events(ack=True)
+        assert stream.cancel() is True
+        assert list(stream) == [], "a cancelled-before-start stream yields nothing"
+        assert servicer.calls == 0, "and the RPC (ack included) was never sent"
+
+
+class BlockingTail(rpc.SeamEventsServicer):
+    """Yields one event then blocks — a live tail with nothing more to say, until released."""
+
+    def __init__(self):
+        self.release = threading.Event()
+
+    def StreamEvents(self, request, context):  # noqa: N802
+        yield ev.SeamEvent(seq=1, event_id="evt-1", kind="AUDIT_ENTRY")
+        self.release.wait(timeout=10)
+
+
+@pytest.fixture
+def blocking_tail_server():
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+    servicer = BlockingTail()
+    rpc.add_SeamEventsServicer_to_server(servicer, server)
+    port = server.add_insecure_port("127.0.0.1:0")
+    server.start()
+    yield servicer, f"127.0.0.1:{port}"
+    servicer.release.set()
+    server.stop(None)
+
+
+def test_cancel_ends_a_live_tail_cleanly(blocking_tail_server):
+    """The way OUT of ``follow=True``, which otherwise ends only when the server shuts down. Our own
+    deliberate cancel comes back as a clean end of iteration — the caller asked for it — never as a
+    typed error to be investigated."""
+    _, addr = blocking_tail_server
+    with SeamAdminClient.connect(addr) as admin:
+        stream = admin.stream_events(follow=True)
+        assert next(stream).event_id == "evt-1"
+        assert stream.cancel() is True
+        with pytest.raises(StopIteration):
+            next(stream)
+        assert list(stream) == [], "iteration after a deliberate cancel stays ended"
 
 
 # ── The staged path: aio._MappedStream ───────────────────────────────────────────────────────────

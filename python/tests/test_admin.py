@@ -1,8 +1,9 @@
-"""Live management-plane tests — GDPR erasure preview→confirm→erase + bearer auth.
+"""Management-plane tests — server-free wrapper shapes, plus live erasure preview→confirm→erase + bearer auth.
 
 The admin surface (`SeamAdmin`) is served on a SEPARATE management listener (`SEAM_GRPC_MGMT_LISTEN`) from
-the data plane. These tests spawn a `seam-grpc` binary with BOTH planes up and exercise the erasure flow
-against the enrolled demo tenant. Env-gated exactly like `test_integration.py`:
+the data plane. The unit section runs an in-process recording servicer (no binary needed); the live tests
+spawn a `seam-grpc` binary with BOTH planes up and exercise the erasure flow against the enrolled demo
+tenant. The live tests are env-gated exactly like `test_integration.py`:
   * ``SEAM_GRPC_BIN`` — path to a ``seam-grpc`` binary the test spawns (both planes on distinct ports), or
   * skipped otherwise (a running server can't be assumed to have the mgmt plane bound).
 """
@@ -11,6 +12,7 @@ import os
 import socket
 import subprocess
 import time
+from concurrent import futures
 
 import grpc
 import pytest
@@ -22,8 +24,105 @@ from seam_sdk import (
     SeamRpcError,
     UnauthenticatedError,
 )
+from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
+from seam_sdk._gen.seam.api.v1 import seam_pb2_grpc as rpc
 
 TENANT = "design-partner"  # the demo tenant SEAM_DEV_INSECURE enrolls the [42;32] agent under
+
+# ── Unit: the party/grant wrapper shapes, server-free ────────────────────────────────────────────
+
+
+class RecordingAdmin(rpc.SeamAdminServicer):
+    """Records each governance request; answers the minimal well-formed response."""
+
+    def __init__(self):
+        self.removed: pb.RemovePartyRequest | None = None
+        self.placed: pb.PlaceGrantRequest | None = None
+        self.revoked: pb.RevokeGrantRequest | None = None
+        self.grants: list[pb.GrantView] = []
+
+    def RemoveParty(self, request, context):  # noqa: N802
+        self.removed = request
+        return pb.Empty()
+
+    def PlaceGrant(self, request, context):  # noqa: N802
+        self.placed = request
+        return pb.Empty()
+
+    def RevokeGrant(self, request, context):  # noqa: N802
+        self.revoked = request
+        return pb.Empty()
+
+    def ListGrants(self, request, context):  # noqa: N802
+        return pb.ListGrantsResponse(grants=self.grants)
+
+
+@pytest.fixture
+def recording_admin():
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+    servicer = RecordingAdmin()
+    rpc.add_SeamAdminServicer_to_server(servicer, server)
+    port = server.add_insecure_port("127.0.0.1:0")
+    server.start()
+    yield servicer, f"127.0.0.1:{port}"
+    server.stop(None)
+
+
+def test_remove_party_sends_the_party_id_and_returns_none(recording_admin):
+    servicer, addr = recording_admin
+    with SeamAdminClient.connect(addr) as admin:
+        assert admin.remove_party("bank-A") is None
+    assert servicer.removed.party_id == "bank-A"
+
+
+def test_place_grant_sends_every_field_and_returns_none(recording_admin):
+    servicer, addr = recording_admin
+    with SeamAdminClient.connect(addr) as admin:
+        assert (
+            admin.place_grant("acme", "ns-a", "ns-b", "op@acme", 4102444800000) is None
+        )
+    assert servicer.placed.tenant == "acme"
+    assert servicer.placed.from_ns == "ns-a"
+    assert servicer.placed.to_ns == "ns-b"
+    assert servicer.placed.grantor == "op@acme"
+    assert servicer.placed.expires_at == 4102444800000
+
+
+def test_revoke_grant_sends_every_field_and_returns_none(recording_admin):
+    servicer, addr = recording_admin
+    with SeamAdminClient.connect(addr) as admin:
+        assert admin.revoke_grant("acme", "ns-a", "ns-b", "op@acme") is None
+    assert servicer.revoked.tenant == "acme"
+    assert servicer.revoked.from_ns == "ns-a"
+    assert servicer.revoked.to_ns == "ns-b"
+    assert servicer.revoked.revoker == "op@acme"
+
+
+def test_list_grants_returns_the_stored_views_as_a_list(recording_admin):
+    servicer, addr = recording_admin
+    servicer.grants = [
+        pb.GrantView(
+            tenant="acme",
+            from_ns="ns-a",
+            to_ns="ns-b",
+            grantor="op@acme",
+            expires_at=4102444800000,
+        )
+    ]
+    with SeamAdminClient.connect(addr) as admin:
+        grants = admin.list_grants()
+    assert isinstance(grants, list)
+    assert len(grants) == 1
+    assert grants[0].tenant == "acme" and grants[0].to_ns == "ns-b"
+
+
+def test_list_grants_empty_is_an_empty_list(recording_admin):
+    _, addr = recording_admin
+    with SeamAdminClient.connect(addr) as admin:
+        assert admin.list_grants() == []
+
+
+# ── Live: erasure preview→confirm→erase + bearer auth (env-gated) ────────────────────────────────
 
 
 def _wait(port: int, timeout: float = 8.0):
@@ -35,6 +134,15 @@ def _wait(port: int, timeout: float = 8.0):
         except OSError:
             time.sleep(0.05)
     raise RuntimeError(f"server never came up on {port}")
+
+
+def _free_port() -> int:
+    """An OS-allocated ephemeral port — the spawned-binary counterpart of the in-process suites'
+    ``add_insecure_port("127.0.0.1:0")``. Fixed port numbers collide with whatever else is running
+    (another test worker, a leaked server) and fail with an unrelated-looking bind error."""
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
 
 def _spawn(data_port: int, mgmt_port: int, registry_snapshot: str | None = None):
@@ -76,11 +184,12 @@ def _seal_one(data_addr: str) -> tuple[str, str]:
 
 
 def test_erasure_preview_confirm_erase():
-    proc = _spawn(8101, 8102)
+    data_port, mgmt_port = _free_port(), _free_port()
+    proc = _spawn(data_port, mgmt_port)
     try:
-        subject, decision_id = _seal_one("127.0.0.1:8101")
+        subject, decision_id = _seal_one(f"127.0.0.1:{data_port}")
         admin = SeamAdminClient.connect(
-            "127.0.0.1:8102"
+            f"127.0.0.1:{mgmt_port}"
         )  # unauthenticated dev mgmt plane
 
         # Preview is non-destructive and lists the sealed record under would_erase.
@@ -114,10 +223,11 @@ def test_erasure_preview_confirm_erase():
 
 
 def test_erase_subject_confirmed_convenience():
-    proc = _spawn(8105, 8106)
+    data_port, mgmt_port = _free_port(), _free_port()
+    proc = _spawn(data_port, mgmt_port)
     try:
-        subject, decision_id = _seal_one("127.0.0.1:8105")
-        admin = SeamAdminClient.connect("127.0.0.1:8106")
+        subject, decision_id = _seal_one(f"127.0.0.1:{data_port}")
+        admin = SeamAdminClient.connect(f"127.0.0.1:{mgmt_port}")
         cert = admin.erase_subject_confirmed(TENANT, subject)
         assert decision_id in cert.erased
     finally:
@@ -138,7 +248,9 @@ def test_management_operator_token_auth():
         tamper_signature,
     )
 
-    proc = _spawn(8103, 8104, registry_snapshot=REGISTRY_SNAPSHOT_PATH)
+    data_port, mgmt_port = _free_port(), _free_port()
+    proc = _spawn(data_port, mgmt_port, registry_snapshot=REGISTRY_SNAPSHOT_PATH)
+    mgmt_addr = f"127.0.0.1:{mgmt_port}"
     try:
         # preview_erasure requires the `erasure:preview` scope (non-destructive → no jti needed).
         token = mint_operator_token(["erasure:preview"])
@@ -147,26 +259,24 @@ def test_management_operator_token_auth():
         )
 
         # No token → UNAUTHENTICATED, surfaced as the typed UnauthenticatedError (still exposing .code()).
-        anon = SeamAdminClient.connect("127.0.0.1:8104")
+        anon = SeamAdminClient.connect(mgmt_addr)
         with pytest.raises(UnauthenticatedError) as ei:
             anon.preview_erasure(TENANT, subject)
         assert ei.value.code() == grpc.StatusCode.UNAUTHENTICATED
 
         # A non-JWS bearer → UNAUTHENTICATED (the operator-keys-only plane refuses the old shared-bearer shape).
-        wrong = SeamAdminClient.connect("127.0.0.1:8104", token="nope")
+        wrong = SeamAdminClient.connect(mgmt_addr, token="nope")
         with pytest.raises(UnauthenticatedError):
             wrong.preview_erasure(TENANT, subject)
 
         # A JWS-shaped token with a corrupted signature → UNAUTHENTICATED (a hard verification failure, never
         # a downgrade to an accepted request).
-        tampered = SeamAdminClient.connect(
-            "127.0.0.1:8104", token=tamper_signature(token)
-        )
+        tampered = SeamAdminClient.connect(mgmt_addr, token=tamper_signature(token))
         with pytest.raises(UnauthenticatedError):
             tampered.preview_erasure(TENANT, subject)
 
         # A valid operator token → succeeds.
-        ok = SeamAdminClient.connect("127.0.0.1:8104", token=token)
+        ok = SeamAdminClient.connect(mgmt_addr, token=token)
         preview = ok.preview_erasure(TENANT, subject)
         assert isinstance(list(preview.would_erase), list)
     finally:
@@ -176,10 +286,11 @@ def test_management_operator_token_auth():
 def test_stream_events_drains_decision_sealed():
     """Sealing a decision emits a DECISION_SEALED event to the seam-event.v1 outbox; drain mode
     (follow=False) streams the current backlog and closes."""
-    proc = _spawn(8107, 8108)
+    data_port, mgmt_port = _free_port(), _free_port()
+    proc = _spawn(data_port, mgmt_port)
     try:
-        _, decision_id = _seal_one("127.0.0.1:8107")
-        admin = SeamAdminClient.connect("127.0.0.1:8108")
+        _, decision_id = _seal_one(f"127.0.0.1:{data_port}")
+        admin = SeamAdminClient.connect(f"127.0.0.1:{mgmt_port}")
 
         events = list(admin.stream_events(from_seq=0, follow=False))
         assert events, "expected at least the DECISION_SEALED event"

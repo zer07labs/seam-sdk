@@ -38,8 +38,8 @@ fn usage() -> ! {
              projection or base64 protobuf ('-' reads stdin).\n\
          \n\
              An event is a link iff it carries `digest` and `checksum` — by FIELD PRESENCE, never by\n    \
-             kind. Advisory events (LEARNING_*, BUDGET_BREACH, SESSION_LIFECYCLE) and the off-chain\n    \
-             `chain_anchor` carry neither, and do not advance the head.\n\
+             kind. Advisory events (LEARNING_*, BUDGET_BREACH, SESSION_LIFECYCLE, AUTHORIZE_EVALUATED)\n    \
+             and the off-chain `chain_anchor` carry neither, and do not advance the head.\n\
          \n\
              --strict  Refuse a stream containing any non-advisory event with no digest/checksum.\n              \
                        Events written before Seam added those fields look exactly like advisory ones\n              \
@@ -47,13 +47,16 @@ fn usage() -> ! {
                        a claim about history that was never actually checked.\n\
          \n    \
              --issuer <AID>  Upgrade integrity to AUTHENTICITY. Every CHAIN_HEAD_ATTESTATION must verify\n                      \
-                       against this PINNED issuer key AND sit at the head it attests, and at least one must\n                      \
+                       against a PINNED issuer key AND sit at the head it attests, and at least one must\n                      \
                        be present — a plain SHA-256 chain over a public genesis can be rebuilt by a\n                      \
                        transport-controlling forger, but an issuer-signed head cannot be minted without\n                      \
                        the key. A stream with no attestation is REFUSED, not passed. Additionally, every v2\n                      \
                        DECISION_SEALED's digest is RECOMPUTED from its payload and compared to the wire\n                      \
                        digest (catching a payload rewrite in an unattested tail), and a v2 record missing\n                      \
-                       its ciphertext_digest (a strip/downgrade) is REFUSED.\n\
+                       its ciphertext_digest (a strip/downgrade) is REFUSED.\n                      \
+                       REPEATABLE: pass once per trusted issuer to verify a chain spanning a key ROTATION\n                      \
+                       (an attestation passes iff it verifies against ANY pinned AID; one naming an issuer\n                      \
+                       outside the pinned set is a FAIL).\n\
          \n\
          erasure-cert <FILE> --issuer <AID>\n    \
              Verify a signed GDPR erasure certificate against the issuer AID and NOTHING else. Get the\n    \
@@ -97,27 +100,34 @@ fn fail(msg: &str, json: bool, banner: &str) -> ExitCode {
     ExitCode::from(FAILED)
 }
 
-fn cmd_chain(path: &str, strict: bool, json: bool, issuer: Option<&str>) -> ExitCode {
+/// The exit-1 (usage/IO/parse) path. Under `--json` a CI consumer parses stdout — an error that left
+/// stdout EMPTY would be indistinguishable from a crashed pipe, so the same `{"verified":false,"error"}`
+/// shape as the exit-2 report is emitted there too. The human line stays on stderr either way.
+fn io_error(msg: &str, json: bool) -> ExitCode {
+    if json {
+        println!("{{\"verified\":false,\"error\":{}}}", q(msg));
+    }
+    eprintln!("seam-verify: {msg}");
+    ExitCode::from(1)
+}
+
+fn cmd_chain(path: &str, strict: bool, json: bool, issuers: &[String]) -> ExitCode {
     let lines = match read_lines(path) {
         Ok(l) => l,
-        Err(e) => {
-            eprintln!("seam-verify: {e}");
-            return ExitCode::from(1);
-        }
+        Err(e) => return io_error(&e, json),
     };
     if lines.is_empty() {
-        eprintln!("seam-verify: {path}: no events — refusing to report a green chain over nothing");
-        return ExitCode::from(1);
+        return io_error(
+            &format!("{path}: no events — refusing to report a green chain over nothing"),
+            json,
+        );
     }
 
     let mut events = Vec::with_capacity(lines.len());
     for (i, l) in lines.iter().enumerate() {
         match Event::parse(l) {
             Ok(e) => events.push(e),
-            Err(e) => {
-                eprintln!("seam-verify: line {}: {e}", i + 1);
-                return ExitCode::from(1);
-            }
+            Err(e) => return io_error(&format!("line {}: {e}", i + 1), json),
         }
     }
 
@@ -147,12 +157,13 @@ fn cmd_chain(path: &str, strict: bool, json: bool, issuer: Option<&str>) -> Exit
             // --issuer upgrades integrity → AUTHENTICITY: every chain-head attestation must verify against
             // the pinned key AND sit at the head it attests, and at least one must be present. Integrity
             // has already passed (the head sequence in `r.heads` is trustworthy to check positions against).
-            let issuer_report = match issuer {
-                None => None,
-                Some(aid) => match verify::verify_authenticity(&events, &r.heads, aid) {
+            let issuer_report = if issuers.is_empty() {
+                None
+            } else {
+                match verify::verify_authenticity(&events, &r.heads, issuers) {
                     Ok(ir) => Some(ir),
                     Err(e) => return fail(&e, json, "AUTHENTICITY VERIFICATION FAILED"),
-                },
+                }
             };
             if json {
                 let authenticity = match &issuer_report {
@@ -217,10 +228,7 @@ fn cmd_chain(path: &str, strict: bool, json: bool, issuer: Option<&str>) -> Exit
 fn cmd_cert(path: &str, issuer: &str, json: bool) -> ExitCode {
     let raw = match std::fs::read_to_string(path) {
         Ok(r) => r,
-        Err(e) => {
-            eprintln!("seam-verify: {path}: {e}");
-            return ExitCode::from(1);
-        }
+        Err(e) => return io_error(&format!("{path}: {e}"), json),
     };
     // Accept every shape a holder can plausibly have:
     //   * the whole `seam-event.v1` event  — what a webhook sink receives;
@@ -252,17 +260,21 @@ fn cmd_cert(path: &str, issuer: &str, json: bool) -> ExitCode {
                         signature,
                     },
                     _ => {
-                        eprintln!("seam-verify: {path}: chain_head/signature are not valid base64");
-                        return ExitCode::from(1);
+                        return io_error(
+                            &format!("{path}: chain_head/signature are not valid base64"),
+                            json,
+                        );
                     }
                 }
             }
             Err(e) => {
-                eprintln!(
-                    "seam-verify: {path}: not a certificate in any recognised shape (a seam-event.v1 \
-                     event, a bare certificate, or a {{\"cert\": ...}} wrapper): {e}"
+                return io_error(
+                    &format!(
+                        "{path}: not a certificate in any recognised shape (a seam-event.v1 \
+                         event, a bare certificate, or a {{\"cert\": ...}} wrapper): {e}"
+                    ),
+                    json,
                 );
-                return ExitCode::from(1);
             }
         },
     };
@@ -304,7 +316,9 @@ fn main() -> ExitCode {
     }
 
     let (mut json, mut strict) = (false, false);
-    let mut issuer: Option<String> = None;
+    // Repeatable: one `--issuer` per trusted AID, so a chain spanning an issuer-key rotation (attestations
+    // from the retired key AND the new one) can be authenticated end-to-end. One --issuer behaves as before.
+    let mut issuers: Vec<String> = Vec::new();
     let mut positional: Option<String> = None;
 
     let mut it = argv[1..].iter();
@@ -313,7 +327,7 @@ fn main() -> ExitCode {
             "--json" => json = true,
             "--strict" => strict = true,
             "--issuer" => match it.next() {
-                Some(v) => issuer = Some(v.clone()),
+                Some(v) => issuers.push(v.clone()),
                 None => {
                     eprintln!("seam-verify: --issuer requires an AID");
                     usage();
@@ -324,25 +338,40 @@ fn main() -> ExitCode {
                 eprintln!("seam-verify: unknown option '{o}'");
                 usage();
             }
-            o => positional = Some(o.to_owned()),
+            o => match positional {
+                // A second input file is ambiguous — silently keeping the LAST one would verify a file
+                // the caller never asked about, under a green banner. Refuse loudly instead.
+                Some(ref first) => {
+                    eprintln!(
+                        "seam-verify: more than one input file given ('{first}' and '{o}') — \
+                         exactly one FILE is accepted"
+                    );
+                    usage();
+                }
+                None => positional = Some(o.to_owned()),
+            },
         }
     }
 
     match cmd {
         "chain" => match positional {
-            Some(p) => cmd_chain(&p, strict, json, issuer.as_deref()),
+            Some(p) => cmd_chain(&p, strict, json, &issuers),
             None => {
                 eprintln!("seam-verify: chain requires a FILE (or '-')");
                 usage();
             }
         },
-        "erasure-cert" => match (positional, issuer) {
-            (Some(p), Some(i)) => cmd_cert(&p, &i, json),
-            _ => {
-                eprintln!("seam-verify: erasure-cert requires a FILE and --issuer <AID>");
+        "erasure-cert" => {
+            // A certificate names exactly ONE signer; repeatable --issuer is a chain-only affordance for
+            // key rotation. Anything but exactly one pin here is a usage error.
+            let (Some(p), [i]) = (positional, issuers.as_slice()) else {
+                eprintln!(
+                    "seam-verify: erasure-cert requires a FILE and exactly one --issuer <AID>"
+                );
                 usage();
-            }
-        },
+            };
+            cmd_cert(&p, i, json)
+        }
         o => {
             eprintln!("seam-verify: unknown command '{o}'");
             usage();

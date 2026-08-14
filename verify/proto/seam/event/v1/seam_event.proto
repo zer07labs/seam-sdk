@@ -37,6 +37,7 @@ option java_package = "com.zer07labs.seam.event.v1";
 //   ERASURE_CERTIFICATE    -> erasure_certificate      (tag 18, CHAINED, signed)
 //   SESSION_LIFECYCLE      -> session_lifecycle        (tag 21, advisory/unchained; CP-09)
 //   CHAIN_HEAD_ATTESTATION -> chain_head_attestation   (tag 22, CHAINED, signed; A14)
+//   AUTHORIZE_EVALUATED    -> authorize_evaluated      (tag 23, advisory/unchained)
 //
 // SESSION_LIFECYCLE (CP-09) was revived at its long-reserved tag 21 WITH its producer (the runtime emits
 // `phase: "opened"` on interactive opens); it is advisory (carries no digest/checksum) and this verifier
@@ -129,6 +130,32 @@ message SeamEvent {
   // (an unkeyed SHA-256 chain over a public genesis is otherwise rebuildable by a transport-level forger).
   optional SessionLifecycle session_lifecycle = 21;
   optional ChainHeadAttestation chain_head_attestation = 22;
+
+  // ── 23: the advisory AUTHORIZE_EVALUATED payload ──
+  //
+  // One row per `SeamAuthorization.Authorize` evaluation (spec §AUTHORIZE_EVALUATED). ADVISORY,
+  // unchained: the authorize path seals nothing — no decision record, no DEK, no chain append — so the
+  // event carries no digest/checksum and an empty prev_checksum, and never advances the head. Additive:
+  // absent on every other kind, so existing events' bytes are unchanged.
+  optional AuthorizeEvaluated authorize_evaluated = 23;
+}
+
+// AUTHORIZE_EVALUATED payload (envelope tag 23) — ADVISORY, unchained. The audit row for one advisory
+// authorization; `authorize_id` (a ULID) is its handle, never a `decision_id` (nothing was sealed).
+//
+// PII rule: the end-user data subject rides ONLY as `subject_digest = sha256(subject)`, never raw — an
+// outbox row is un-shredable, so a raw end-user id here would be an un-erasable copy of it.
+message AuthorizeEvaluated {
+  string authorize_id = 1;                // ULID — the handle returned to the caller
+  optional string client_request_id = 2;  // the caller's idempotent audit-join key, when supplied
+  string agent_aid = 3;                   // the VERIFIED caller AID (derived, never asserted)
+  string agent_id = 4;                    // the registry identity the scope floor was evaluated against
+  string tool_name = 5;
+  string tool_input_digest = 6;           // "sha256:<hex>" over the RFC 8785 (JCS) canonical input
+  string verdict = 7;                     // "ALLOW" | "DENY" | "TRANSFORM" | "ESCALATE"
+  string reason = 8;                      // closed-set / operator-authored only (D-030)
+  string policy_version = 9;
+  optional string subject_digest = 10;    // sha256(subject) hex — NEVER the raw subject
 }
 
 // SESSION_LIFECYCLE payload (envelope tag 21) — ADVISORY, unchained (CP-09). Operational metadata only:
@@ -232,6 +259,10 @@ message AuditEntry {
   // The rendered typed denial. No secrets, no free-text agent content — which is why SIEM
   // destinations may pass it through unredacted.
   string reason = 3;
+  // rt-D §4 — the authenticated operator subject that performed a management action; absent on the
+  // unauthenticated dev-open plane. A FRESH optional tag: a decoder that never saw it reads absent
+  // (back-compat) and a pre-migration entry re-encodes byte-identically.
+  optional string actor = 4;
 }
 
 // BUDGET_BREACH payload (envelope tag 17) — ADVISORY, unchained.

@@ -13,16 +13,18 @@
 // `wouldErase` count. `eraseSubjectConfirmed` is the common, safe path that does both.
 
 import {
+  Code,
   createClient,
   type Client,
   type Interceptor,
 } from "@connectrpc/connect";
-import { createGrpcTransport } from "@connectrpc/connect-node";
+import { createGrpcTransport, Http2SessionManager } from "@connectrpc/connect-node";
 
 import {
   SeamAdmin,
   SeamEvents,
   type ErasurePreview,
+  type GrantView,
   type TenantView,
   type AuditEntry,
   type Anchor,
@@ -32,9 +34,24 @@ import {
   type ErasureCertificate,
   type SeamEvent,
 } from "../gen/seam/event/v1/seam_event_pb.js";
-import { errorMappingInterceptor, toSeamError } from "./errors.js";
+import { errorMappingInterceptor, InvalidArgumentError, toSeamError } from "./errors.js";
 import { recordDigestV2 } from "./crypto.js";
-import type { BudgetLimits } from "./client.js";
+import type { BudgetLimits, UnaryCallOptions } from "./client.js";
+
+// Management-plane calls get their own, larger default deadline — but they DO get one.
+//
+// 30s rather than the data plane's 2s because these are operator-cadence, not hot-path: erasure
+// and retention enforcement do real work over potentially many records. An unbounded destructive
+// RPC (an `eraseSubject` against a wedged management plane) hangs the operator's process with no
+// way to know whether the erasure landed — and the instinct at that point is Ctrl-C and re-run,
+// against a server that may still be working. Pass `{ timeoutMs }` to widen it for a large tenant;
+// the point is that the number exists and the caller owns it. Mirrors the Python SDK's
+// `DEFAULT_ADMIN_TIMEOUT_S = 30`. `streamEvents` is the one deliberate exception — see its doc.
+export const DEFAULT_ADMIN_TIMEOUT_MS = 30_000;
+
+const call = (opts?: UnaryCallOptions) => ({
+  timeoutMs: opts?.timeoutMs ?? DEFAULT_ADMIN_TIMEOUT_MS,
+});
 
 /** The `seam-event.v1` kinds the SDK knows about. A consumer MAY branch on these, but MUST still tolerate
  * an unknown kind — the wire is a tolerant reader (new kinds are additive): pass anything not in this set
@@ -48,14 +65,17 @@ export const KNOWN_KINDS: ReadonlySet<string> = new Set([
   "ERASURE_CERTIFICATE",
   "SESSION_LIFECYCLE",
   "CHAIN_HEAD_ATTESTATION",
+  "AUTHORIZE_EVALUATED",
 ]);
 
 /** Recompute a streamed v2 `DECISION_SEALED`'s record digest from its payload (+ `ciphertextDigest`, tag
  * 10) and compare it to the wire `digest` (tag 19) — live authenticity for a single record, the in-client
  * counterpart of `seam-verify chain --issuer`'s design-a. Returns `true` iff they match; `false` for a
  * rewritten payload or a v2 record stripped of its `ciphertextDigest`. Throws for anything not
- * stream-recomputable (a non-`DECISION_SEALED` event, a v1 record, or an event with no wire digest).
- * `mode`/`policyVersion`/`supersedes` map `undefined` → `null` so absent and `""` stay distinct. */
+ * stream-recomputable (a non-`DECISION_SEALED` event, a v1 record, a record whose `schemaVersion` is
+ * NEWER than this SDK knows — its digest would not compute under the v2 domain tag — or an event with no
+ * wire digest). `mode`/`policyVersion`/`supersedes` map `undefined` → `null` so absent and `""` stay
+ * distinct. */
 export function verifyStreamedRecordDigest(event: SeamEvent): boolean {
   if (event.kind !== "DECISION_SEALED") {
     throw new Error(`not a DECISION_SEALED event: ${event.kind}`);
@@ -64,7 +84,14 @@ export function verifyStreamedRecordDigest(event: SeamEvent): boolean {
   if (!p) throw new Error("DECISION_SEALED event has no payload");
   if (p.schemaVersion < 2) {
     throw new Error(
-      `v${p.schemaVersion} record is not stream-recomputable (only v2+)`,
+      `v${p.schemaVersion} record is not stream-recomputable (only v2)`,
+    );
+  }
+  if (p.schemaVersion > 2) {
+    // A future schema version does NOT compute under the v2 domain tag. Computing anyway would
+    // return `false` for a genuine record — a silent authenticity downgrade — so it throws like v1.
+    throw new Error(
+      `v${p.schemaVersion} record is not recomputable by this SDK (knows only v2); upgrade the SDK`,
     );
   }
   if (!event.digest)
@@ -98,10 +125,16 @@ function bearerAuth(token: string): Interceptor {
 export class SeamAdminClient {
   private readonly admin: Client<typeof SeamAdmin>;
   private readonly events: Client<typeof SeamEvents>;
+  // The HTTP/2 session this client owns (set by `connect`), so `close()` can tear it down.
+  private readonly session?: Http2SessionManager;
 
-  constructor(transport: ReturnType<typeof createGrpcTransport>) {
+  constructor(
+    transport: ReturnType<typeof createGrpcTransport>,
+    session?: Http2SessionManager,
+  ) {
     this.admin = createClient(SeamAdmin, transport);
     this.events = createClient(SeamEvents, transport);
+    this.session = session;
   }
 
   /**
@@ -113,15 +146,34 @@ export class SeamAdminClient {
   static connect(baseUrl: string, opts?: { token?: string }): SeamAdminClient {
     const interceptors: Interceptor[] = [errorMappingInterceptor()];
     if (opts?.token) interceptors.push(bearerAuth(opts.token));
-    return new SeamAdminClient(createGrpcTransport({ baseUrl, interceptors }));
+    const session = new Http2SessionManager(baseUrl);
+    return new SeamAdminClient(
+      createGrpcTransport({ baseUrl, interceptors, sessionManager: session }),
+      session,
+    );
+  }
+
+  /**
+   * Close the underlying HTTP/2 session (connection + any open streams, including a live
+   * `streamEvents` tail), releasing its socket and keepalive timers. Mirrors the Python SDK's
+   * `close()`. Idempotent — a repeated close is a no-op. Limitation: a client constructed directly
+   * over an externally-created transport has no handle on that transport's internal session
+   * (connect-node exposes none), so `close()` is a documented no-op there.
+   */
+  close(): void {
+    this.session?.abort();
   }
 
   // ── GDPR erasure (preview → confirm → erase) ──────────────────────────────────────────────────
 
   /** Non-destructive: what WOULD be shredded (`wouldErase`), held by legal hold (`held`), or already
    * shredded (`alreadyErased`) for `subject` in `tenant`. */
-  previewErasure(tenant: string, subject: string): Promise<ErasurePreview> {
-    return this.admin.previewErasure({ tenant, subject });
+  previewErasure(
+    tenant: string,
+    subject: string,
+    opts?: UnaryCallOptions,
+  ): Promise<ErasurePreview> {
+    return this.admin.previewErasure({ tenant, subject }, call(opts));
   }
 
   /** Crypto-shred every record bound to `subject` in `tenant`; returns the signed certificate. `tenant`
@@ -130,20 +182,24 @@ export class SeamAdminClient {
     tenant: string,
     subject: string,
     confirmCount: bigint,
+    opts?: UnaryCallOptions,
   ): Promise<ErasureCertificate> {
-    return this.admin.eraseSubject({ tenant, subject, confirmCount });
+    return this.admin.eraseSubject({ tenant, subject, confirmCount }, call(opts));
   }
 
-  /** The common, safe path: preview, then erase with the preview's `wouldErase` count. */
+  /** The common, safe path: preview, then erase with the preview's `wouldErase` count.
+   * `timeoutMs` applies to EACH of the two calls, not to the pair — the worst case is 2x it. */
   async eraseSubjectConfirmed(
     tenant: string,
     subject: string,
+    opts?: UnaryCallOptions,
   ): Promise<ErasureCertificate> {
-    const preview = await this.previewErasure(tenant, subject);
+    const preview = await this.previewErasure(tenant, subject, opts);
     return this.eraseSubject(
       tenant,
       subject,
       BigInt(preview.wouldErase.length),
+      opts,
     );
   }
 
@@ -153,17 +209,62 @@ export class SeamAdminClient {
     subjectAid: string,
     tenant: string,
     namespace: string,
+    opts?: UnaryCallOptions,
   ): Promise<TenantView> {
-    return this.admin.enrollTenant({ subjectAid, tenant, namespace });
+    return this.admin.enrollTenant({ subjectAid, tenant, namespace }, call(opts));
   }
 
-  async listTenants(): Promise<TenantView[]> {
-    return (await this.admin.listTenants({})).tenants;
+  async listTenants(opts?: UnaryCallOptions): Promise<TenantView[]> {
+    return (await this.admin.listTenants({}, call(opts))).tenants;
   }
 
   /** Register a counterparty's raw 32-byte ed25519 public key (network mode). */
-  async registerParty(partyId: string, pubkey: Uint8Array): Promise<void> {
-    await this.admin.registerParty({ partyId, pubkey });
+  async registerParty(
+    partyId: string,
+    pubkey: Uint8Array,
+    opts?: UnaryCallOptions,
+  ): Promise<void> {
+    await this.admin.registerParty({ partyId, pubkey }, call(opts));
+  }
+
+  /** Revoke a previously-registered party's verifying key (PartyRegistry-durability Phase 4) — parity
+   * with the HTTP `DELETE /v1/parties/{party_id}`. Chained (`party_removed`) and durable. Requires the
+   * `grant:revoke` operator scope. */
+  async removeParty(partyId: string, opts?: UnaryCallOptions): Promise<void> {
+    await this.admin.removeParty({ partyId }, call(opts));
+  }
+
+  // ── Cross-namespace read grants (build-ent-deploy-infra §D2) ──────────────────────────────────
+  // Parity with the HTTP `POST/GET/DELETE /v1/grants`. Place/revoke are chained to the audit trail;
+  // cross-tenant reads are never grantable.
+
+  /** Grant subjects enrolled in `fromNs` read access to `toNs` records of the SAME `tenant` until
+   * `expiresAt` (unix millis, must be in the future). Requires the `grant:create` operator scope. */
+  async placeGrant(
+    tenant: string,
+    fromNs: string,
+    toNs: string,
+    grantor: string,
+    expiresAt: bigint,
+    opts?: UnaryCallOptions,
+  ): Promise<void> {
+    await this.admin.placeGrant({ tenant, fromNs, toNs, grantor, expiresAt }, call(opts));
+  }
+
+  /** Revoke a cross-namespace grant (idempotent). Requires the `grant:revoke` operator scope. */
+  async revokeGrant(
+    tenant: string,
+    fromNs: string,
+    toNs: string,
+    revoker: string,
+    opts?: UnaryCallOptions,
+  ): Promise<void> {
+    await this.admin.revokeGrant({ tenant, fromNs, toNs, revoker }, call(opts));
+  }
+
+  /** Every stored cross-namespace grant. Requires the `grant:revoke` operator scope. */
+  async listGrants(opts?: UnaryCallOptions): Promise<GrantView[]> {
+    return (await this.admin.listGrants({}, call(opts))).grants;
   }
 
   /** Resume a Suspended session — the R9 approver action, on the **management** plane (rt-D: this moved
@@ -179,25 +280,30 @@ export class SeamAdminClient {
       namespace?: string;
       budget?: number;
       raise?: BudgetLimits;
+      timeoutMs?: number;
     },
   ) {
-    return this.admin.resumeSession({
-      sessionId,
-      approver,
-      tenant: opts?.tenant ?? "",
-      namespace: opts?.namespace ?? "",
-      budget: opts?.budget ?? 32,
-      raise: opts?.raise,
-    });
+    return this.admin.resumeSession(
+      {
+        sessionId,
+        approver,
+        tenant: opts?.tenant ?? "",
+        namespace: opts?.namespace ?? "",
+        // 0 ⇒ the server default — the proto owns the default, the client never re-states it.
+        budget: opts?.budget ?? 0,
+        raise: opts?.raise,
+      },
+      call(opts),
+    );
   }
 
   // ── Retention & legal hold ────────────────────────────────────────────────────────────────────
 
-  async placeLegalHold(decisionId: string): Promise<void> {
-    await this.admin.placeLegalHold({ decisionId });
+  async placeLegalHold(decisionId: string, opts?: UnaryCallOptions): Promise<void> {
+    await this.admin.placeLegalHold({ decisionId }, call(opts));
   }
-  async releaseLegalHold(decisionId: string): Promise<void> {
-    await this.admin.releaseLegalHold({ decisionId });
+  async releaseLegalHold(decisionId: string, opts?: UnaryCallOptions): Promise<void> {
+    await this.admin.releaseLegalHold({ decisionId }, call(opts));
   }
 
   /** Crypto-shred decisions past their tiered retention windows; returns the purged decision ids. */
@@ -206,19 +312,23 @@ export class SeamAdminClient {
     sealedDigestDays: bigint,
     commitmentOnlyDays: bigint,
     nowMillis?: bigint,
+    opts?: UnaryCallOptions,
   ): Promise<string[]> {
     return (
-      await this.admin.enforceRetention({
-        fullDays,
-        sealedDigestDays,
-        commitmentOnlyDays,
-        nowMillis,
-      })
+      await this.admin.enforceRetention(
+        {
+          fullDays,
+          sealedDigestDays,
+          commitmentOnlyDays,
+          nowMillis,
+        },
+        call(opts),
+      )
     ).purged;
   }
 
-  async auditTrail(): Promise<AuditEntry[]> {
-    return (await this.admin.auditTrail({})).entries;
+  async auditTrail(opts?: UnaryCallOptions): Promise<AuditEntry[]> {
+    return (await this.admin.auditTrail({}, call(opts))).entries;
   }
 
   // ── Governance event stream (seam-event.v1 outbox) ────────────────────────────────────────────
@@ -230,23 +340,50 @@ export class SeamAdminClient {
    *   - **live tail** (`follow: true`): yield the backlog from `fromSeq`, then keep yielding new events as
    *     they arrive — cursor-based, never acks. Resume from the last `seq + 1n` and dedup by `eventId`.
    *     The stream ends cleanly when the server drains on shutdown.
+   *
+   * `ack` is drain-only (the proto contract): combining `ack: true` with `follow: true` throws a
+   * client-side {@link InvalidArgumentError} eagerly — a live tail never acks, and silently dropping
+   * either flag would corrupt the relay watermark.
+   *
+   * `signal` cancels the stream (e.g. to terminate a follow-tail): pass an `AbortController`'s signal
+   * and `abort()` it; the iteration then rejects with a `Canceled`-coded error.
+   *
+   * `timeoutMs` defaults to `undefined` — **no deadline** — the one deliberate exception to this
+   * client's every-call-is-bounded rule. A deadline bounds the whole STREAM, not the gap between
+   * events, so any finite default would kill a healthy live tail the moment it outlived the number.
+   * Set it only for a bounded drain (`follow: false`), where "this should have finished by now" is a
+   * meaningful statement.
    */
-  async *streamEvents(opts?: {
+  streamEvents(opts?: {
     fromSeq?: bigint;
     follow?: boolean;
     ack?: boolean;
+    signal?: AbortSignal;
+    timeoutMs?: number;
   }): AsyncIterable<SeamEvent> {
-    try {
-      for await (const ev of this.events.streamEvents({
-        fromSeq: opts?.fromSeq ?? 0n,
-        follow: opts?.follow ?? false,
-        ack: opts?.ack ?? false,
-      })) {
-        yield ev;
-      }
-    } catch (e) {
-      throw toSeamError(e);
+    if (opts?.ack && opts?.follow) {
+      throw new InvalidArgumentError(
+        "streamEvents: ack is drain-only — a live tail (follow: true) never acks; drop one of the two flags",
+        Code.InvalidArgument,
+      );
     }
+    const events = this.events;
+    return (async function* () {
+      try {
+        for await (const ev of events.streamEvents(
+          {
+            fromSeq: opts?.fromSeq ?? 0n,
+            follow: opts?.follow ?? false,
+            ack: opts?.ack ?? false,
+          },
+          { signal: opts?.signal, timeoutMs: opts?.timeoutMs },
+        )) {
+          yield ev;
+        }
+      } catch (e) {
+        throw toSeamError(e);
+      }
+    })();
   }
 
   /**
@@ -258,13 +395,16 @@ export class SeamAdminClient {
    * durable no-op (the watermark is monotone); a value past the outbox head is clamped by the runtime.
    * Requires the destructive `events:consume` operator scope.
    */
-  async reportEventsConsumed(consumedCursor: bigint): Promise<void> {
+  async reportEventsConsumed(
+    consumedCursor: bigint,
+    opts?: UnaryCallOptions,
+  ): Promise<void> {
     try {
-      await this.events.reportEventsConsumed({ consumedCursor });
+      await this.events.reportEventsConsumed({ consumedCursor }, call(opts));
     } catch (e) {
       throw toSeamError(e);
     }
   }
 }
 
-export type { Anchor };
+export type { Anchor, GrantView };

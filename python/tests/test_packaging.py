@@ -68,6 +68,8 @@ def test_wheel_has_rooted_gen_and_no_global_seam(wheel):
     assert "seam_sdk/_gen/seam/api/v1/seam_pb2.py" in names
     assert "seam_sdk/_gen/seam/api/v1/seam_pb2_grpc.py" in names
     assert "seam_sdk/_gen/seam/event/v1/seam_event_pb2.py" in names
+    # PEP 561: the marker must SHIP, or downstream type checkers ignore every annotation here.
+    assert "seam_sdk/py.typed" in names
     # Every _gen directory level is a real package.
     for pkg in [
         "seam_sdk/_gen",

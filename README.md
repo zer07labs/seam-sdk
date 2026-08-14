@@ -24,8 +24,10 @@ The single source of truth is the `seam.api.v1` protobuf contract, published as 
      key-substitution signal that is never downgraded to a bland `false` (matching the Rust reference's
      distinct `ClientError::Crypto`).
 
-   The Rust reference implementation of this shim lives in the runtime repo (`seam-client`); each language
-   mirrors its small surface (`Agent`, `SeamClient`, `verify_sealed_commitment`).
+   The Rust reference implementation of this shim lives in the runtime repo (`seam-client`). **Python and
+   TypeScript** mirror its full surface (`Agent`, `SeamClient`, verification) and add the ergonomic
+   clients documented below; **Go, Java, and Kotlin** ship the crypto shim only
+   (`BuildPresentation`/`VerifyTCT`/AID derivation — see the Status table), by ADR.
 
 ## Generate
 
@@ -58,19 +60,21 @@ and probes the emitted stubs:
 - **`SeamTrust.VerifyPartyAttestation`** (the A4 RPC the attestation client calls) — a **hard gate**;
   a stale contract missing it exits non-zero.
 - the **streamed-payload mirror fields** (`session_lifecycle` tag 21, `chain_head_attestation` tag 22,
-  `DecisionSealed.ciphertext_digest` tag 10, `AuditEntryEvent.actor` tag 4) — **reported** by default,
-  and a **hard gate under `STREAM=1`** (the mode for live-event decoding). These reach the BSR only after
-  the runtime's proto-mirror push; `generate-local` carries them today.
+  `DecisionSealed.ciphertext_digest` tag 10, `AuditEntryEvent.actor` tag 4) and
+  **`SeamEvents.ReportEventsConsumed`** — **permanent hard gates** (`STREAM=1` / `EVENTS=1`, set in CI).
+  Each probe checks the Python and TypeScript stubs **independently**, so a partial regen that leaves one
+  language stale fails loudly.
 
-> **BSR state (probed 2026-07-21, `buf build buf.build/zer07labs/seam -o /tmp/x.binpb && strings /tmp/x.binpb | grep -E 'VerifyPartyAttestation|session_lifecycle'`):** carries `VerifyPartyAttestation`
-> (A4 is live on the BSR), but **not yet** the four streamed-payload mirror fields — those are pending the
-> runtime proto-mirror's main-merge push. Until then, `make generate-local RUNTIME=../seam-runtime` is the
-> baseline for any streamed-event work.
+> **BSR state (probed 2026-08-14, `buf export buf.build/zer07labs/seam` + grep):** the BSR carries the
+> full surface — `VerifyPartyAttestation`, all four streamed-payload mirror fields, and
+> `ReportEventsConsumed`. Their absence is now a regression, which is why the gates above are permanent.
 
 ## Build & test
 
-Each package wraps the generated stubs with its crypto shim and is published on its own cadence (PyPI,
-npm, pkg.go.dev, Maven Central). Generate first (above), then:
+Python and TypeScript wrap the generated stubs with their crypto shims and are the two published
+packages (private Cloudsmith — see *Internal distribution*). Go/Java/Kotlin are standalone crypto shims
+(no generated transport in-package); Go resolves by module path + `go/vX.Y.Z` tags, Java/Kotlin build
+from source. Generate first (above), then:
 
 ```sh
 # Python — an installable wheel that ships the generated transport.
@@ -93,7 +97,8 @@ Makefile             # generate / generate-local / clean / lint
 .github/workflows/   # CI: ruff+pytest, tsc+build+test, gated live integration
 gen/{go,java,kotlin}/             # generated stubs without an in-package home (git-ignored)
 python/seam_sdk/_gen/, ts/gen/    # generated transport, inside each package (git-ignored)
-<lang>/              # per-language package: the crypto shim + ergonomic client + packaging
+python/, ts/         # first-class SDKs: crypto shim + ergonomic clients + packaging
+go/, java/, kotlin/  # crypto shims + conformance tests only (ADR; ergonomic clients are demand-driven)
 ```
 
 ## Internal distribution (private — Cloudsmith `zer07labs/internal`)
@@ -125,7 +130,7 @@ first push (verified: `npm.cloudsmith.io/zer07labs/internal/` already answers, l
 # npm (e.g. the control plane): .npmrc
 @zer07labs:registry=https://npm.cloudsmith.io/zer07labs/internal/
 //npm.cloudsmith.io/zer07labs/internal/:_authToken=${CLOUDSMITH_API_KEY}
-#   package.json → "dependencies": { "@zer07labs/seam-sdk": "^0.3.0" }
+#   package.json → "dependencies": { "@zer07labs/seam-sdk": "^0.7" }  # version follows the runtime release
 
 # Python: pip. NOTE the pip index host (dl.cloudsmith.io/basic/…/python/simple/) is DIFFERENT from the
 # twine upload host (python.cloudsmith.io/…/) — Cloudsmith serves install and upload from separate hosts.
@@ -152,7 +157,7 @@ so it is `SeamAdminClient.resume_session(session_id, approver, …)`, not a data
 
 | Rule | Behavior |
 |---|---|
-| Legacy `budget` (int) | The message-count limit. `0` ⇒ the server default (32). |
+| Legacy `budget` (int) | The message-count limit. `0` ⇒ the server default (32). The SDK entry points default to `0` — they never bake the server's default client-side. |
 | `limits.messages` | Overrides the legacy `budget` when set. |
 | Absent `limits` dimension | Unlimited on that dimension (`tokens`/`cost_micros`/`wall_ms`). |
 | `soft_pct` | Soft-warning threshold as % of any limit (server default 80). |
@@ -195,19 +200,41 @@ RPCs (`enroll_tenant`, `list_tenants`, `register_party`, `place`/`release_legal_
 `audit_trail`). The live preview→confirm→erase flow (+ empty-tenant / wrong-count rejections + bearer-auth)
 is covered by `test_admin.py` (Python) and `admin.test.ts` (TS).
 
+Party/grant lifecycle is symmetric: `register_party` has its inverse `remove_party`, and cross-namespace
+grants are managed with `place_grant` / `revoke_grant` / `list_grants` (same wrappers in TS).
+
 `SeamAdminClient` also **streams the governance outbox** (`seam-event.v1`) via `stream_events` /
 `streamEvents`: **drain** mode (`follow=False`) yields the current backlog and closes (`ack=True` marks
-those rows published); **live-tail** mode (`follow=True`) yields the backlog from a cursor then keeps
-yielding new events (never acks; resume from `seq + 1`, dedup by `event_id`; ends cleanly on server
-shutdown). Sealing a decision emits a `DECISION_SEALED` event — asserted live in both SDKs.
+those rows published — `ack` is drain-only and rejected with `follow=True`); **live-tail** mode
+(`follow=True`) yields the backlog from a cursor then keeps yielding new events (never acks; resume from
+`seq + 1`, dedup by `event_id`; ends cleanly on server shutdown, or deliberately — Python returns an
+`EventStream` handle with `.cancel()`, TS takes an `AbortSignal`). A relay reports its durably-consumed
+cursor with `report_events_consumed` / `reportEventsConsumed` (destructive: advances the runtime's GC
+watermark; needs the `events:consume` scope). For streamed `DECISION_SEALED` events,
+`verify_streamed_record_digest` / `verifyStreamedRecordDigest` recomputes the v2 record digest
+client-side; `KNOWN_KINDS` lists the event kinds the SDK types (unknown kinds always pass through
+opaque). Sealing a decision emits a `DECISION_SEALED` event — asserted live in both SDKs.
 
 ## Data-plane surface
 
 Beyond decisions & sessions, `SeamClient` wraps the rest of the data plane: independent proof retrieval +
 local verification (`get_commitment_proof`, `verify_decision`), server-side trust
-(`verify_commitment`, `verify_party_anchor`), context binding (`register_context`, `resolve_context`),
-and advisory outcome reporting (`report_outcome`, Plan R — emits a `LEARNING_OUTCOME`, never mutates the
-sealed record).
+(`verify_commitment`, `verify_party_anchor`, `verify_party_attestation` — the A4 signed chain-head
+check, boolean verdict, tamper/unknown ⇒ `False` never an exception), context binding
+(`register_context`, `resolve_context`), and advisory outcome reporting (`report_outcome`, Plan R —
+emits a `LEARNING_OUTCOME`, never mutates the sealed record).
+
+**`authorize` — the 1-RTT advisory tool-call gate.** Both clients expose the pre-tool-call
+`Authorize` verb: a ticketed call (admission handshake amortized across calls, refreshed at 80% TTL,
+revocation-stampede-safe) returning a typed `AuthorizeResult` with the closed verdict set
+ALLOW / DENY / TRANSFORM / ESCALATE; an unrecognized verdict raises `UnknownVerdictError` (never an
+implicit allow), and a TRANSFORM without a transformed input raises `ProtocolViolationError`. The
+offline helpers `record_digest_v2` and `verify_chain_head_attestation` are exported at top level for
+consumers verifying exported streams without the `verify/` binary.
+
+**Async (Python).** `seam_sdk.aio` mirrors the full data-plane `SeamClient` for `asyncio` (same
+signatures, shared ticket core). The management plane is **sync-only by design** — an async operator
+runs `SeamAdminClient` in a thread.
 
 ## Errors & transport security
 
@@ -223,6 +250,12 @@ sealed record).
 - **TLS.** Both clients are plaintext by default (the dev/loopback path). Python: pass
   `credentials=grpc.ssl_channel_credentials()` to `connect(...)`. TypeScript: use an `https://` base URL.
   Prefer TLS whenever a real operator token is in play, so it isn't sent over cleartext.
+- **Deadlines.** Every unary call is bounded in both SDKs: ~2 s on the data plane, 30 s on the
+  management plane (destructive calls must not hang forever), streams unbounded. Override per call
+  (`timeout=` in Python, `timeoutMs` in TS); a breach maps to the typed `DeadlineExceeded` error.
+- **Lifecycle.** Both clients expose idempotent `close()` (Python also context-manages); the deprecated
+  data-plane `resume_session` tombstone emits a `DeprecationWarning` pointing at the management-plane
+  resume.
 
 ## Status
 
@@ -234,5 +267,9 @@ sealed record).
 | Java | ✅ | ✅ **shim** — conformance-tested (Bouncy Castle); client is a follow-up |
 | Kotlin | ✅ | ✅ **shim** — conformance-tested (Bouncy Castle); client is a follow-up |
 
-The crypto shim is identical across languages — pure stock Ed25519/SHA-256/JOSE, conformance-tested against
-`conformance/vectors.json`. Python (`python/`) is the reference each other language mirrors.
+The admission/TCT crypto is byte-identical across all five languages — pure stock Ed25519/SHA-256/JOSE,
+conformance-tested against `conformance/vectors.json` (`admission` + `tct` sections). The wider crypto
+surface (JCS/call-sig framing for `authorize`, `record_digest_v2`, chain-head attestation verify) exists
+in **Python and TypeScript only** — its "every SDK MUST" vectors are scoped to languages with an
+authorize surface, and wiring them is a named precondition of any future Go/Java/Kotlin ergonomic
+client. Python (`python/`) is the reference each other language mirrors.

@@ -114,6 +114,15 @@ def _wait(port: int, timeout: float = 8.0):
     raise RuntimeError(f"server never came up on {port}")
 
 
+def _free_port() -> int:
+    """An OS-allocated ephemeral port — the spawned-binary counterpart of the in-process suites'
+    ``add_insecure_port("127.0.0.1:0")``. Fixed port numbers collide with whatever else is running
+    (another test worker, a leaked server) and fail with an unrelated-looking bind error."""
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
 @pytest.fixture
 def dual_plane():
     """Spawn seam-grpc with BOTH the data plane (VerifyPartyAttestation) and the management plane
@@ -121,7 +130,7 @@ def dual_plane():
     binary = os.environ.get("SEAM_GRPC_BIN")
     if not binary:
         pytest.skip("set SEAM_GRPC_BIN to run the live attestation round-trip")
-    data_port, mgmt_port = 8111, 8112
+    data_port, mgmt_port = _free_port(), _free_port()
     proc = subprocess.Popen(
         [binary],
         env={

@@ -5,8 +5,9 @@ name: ci
 #   * BUF_TOKEN          — a BSR token with read access to buf.build/zer07labs/seam (enables python + ts).
 #   * RUNTIME_REPO_TOKEN — a PAT that can check out the private zer07labs/seam-runtime (enables the live
 #                          integration job, which builds seam-grpc).
-# Jobs that need a secret self-skip (not fail) when it is absent — so forks and the pre-secret state stay
-# green instead of red.
+# Jobs that need a secret self-skip when it is absent — but the single required check (`ci-ok`) treats a
+# skipped REQUIRED job as a failure, so a missing BUF_TOKEN turns the run red at the gate rather than
+# silently green. Only `integration` is advisory (may skip, must not fail) — see the ci-ok job below.
 
 on:
   push:
@@ -81,10 +82,14 @@ jobs:
         # scripts/root_gen.py, which rewrites the generated absolute imports into rooted
         # `seam_sdk._gen.*` subpackages. Raw buf output does not import.
         run: make generate
-      # The SDK's contract-freshness gate: assert the just-generated stubs carry the RPC the hand-written
-      # clients call. Hard-fails on a stale BSR module (the SDK analogue of the runtime's published-surface
-      # gate). Default mode (RPC only) — the streamed-payload fields are STREAM=1 and pend the Phase-0 push.
-      - name: check-contract (RPC surface gate)
+      # The SDK's contract-freshness gate: assert the just-generated stubs carry the surface the
+      # hand-written clients call, per language (the SDK analogue of the runtime's published-surface
+      # gate). STREAM=1 + EVENTS=1 are permanent hard gates: the BSR module carries the streamed-payload
+      # mirror fields and SeamEvents.ReportEventsConsumed, so their absence here is a regression.
+      - name: check-contract (full surface gate)
+        env:
+          STREAM: "1"
+          EVENTS: "1"
         run: make check-contract
       - name: install (package + dev tools)
         run: pip install -e "./python[dev]"
@@ -141,6 +146,13 @@ jobs:
         # scripts/root_gen.py, which rewrites the generated absolute imports into rooted
         # `seam_sdk._gen.*` subpackages. Raw buf output does not import.
         run: make generate
+      # Same contract-freshness gate as the python job. The script probes the Python and TS stub trees
+      # independently, so running it here catches a stale ts/gen even when python/_gen is fresh.
+      - name: check-contract (full surface gate)
+        env:
+          STREAM: "1"
+          EVENTS: "1"
+        run: make check-contract
       - name: install
         working-directory: ts
         run: npm ci

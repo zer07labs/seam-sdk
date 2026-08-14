@@ -66,4 +66,8 @@ jobs:
             git push origin HEAD:main
           fi
           git tag -a "v$VER" -m "seam-sdk v$VER (follows seam-runtime)"
-          git push origin "v$VER"
+          # The Go module lives in go/ (module path github.com/zer07labs/seam-sdk/go), and Go resolves a
+          # nested module's versions ONLY from `go/vX.Y.Z` tags — the root `v$VER` tag is invisible to
+          # `go get`. Tag the SAME commit both ways so every release is fetchable in every language.
+          git tag -a "go/v$VER" -m "seam-sdk Go module v$VER (follows seam-runtime)"
+          git push origin "v$VER" "go/v$VER"

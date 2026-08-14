@@ -63,8 +63,9 @@ whose links all hash correctly — nor a **payload rewrite** that keeps the `(pr
 intact. For those, add `--issuer` (below).
 
 **Chained-ness is by field presence, never by kind.** Advisory events (`LEARNING_*`, `BUDGET_BREACH`,
-`SESSION_LIFECYCLE`) and the off-chain `chain_anchor` carry no digest and do not advance the head. A
-verifier that keys on `kind` instead breaks on the first advisory event in an unfiltered stream.
+`SESSION_LIFECYCLE`, `AUTHORIZE_EVALUATED`) and the off-chain `chain_anchor` carry no digest and do not
+advance the head. A verifier that keys on `kind` instead breaks on the first advisory event in an
+unfiltered stream.
 
 #### AUTHENTICITY — `chain <FILE> --issuer <AID>`
 
@@ -98,6 +99,20 @@ Two things a forger cannot fake:
 The pin is load-bearing for exactly the reason it is on the erasure certificate (below): deriving the key
 from the chain's own attestation would let a forgery verify against its forger. `--issuer` is strictly
 stronger than plain `chain`, never weaker.
+
+**`--issuer` is repeatable — key rotation.** A chain that spans an issuer-key rotation carries
+attestations signed by the retired key *and* the new one. Pass `--issuer` once per trusted AID
+(`--issuer <OLD> --issuer <NEW>`): an attestation verifies if it matches **any** pinned AID, and one
+naming an issuer outside the pinned set is a **FAIL** — exactly as a single-pin mismatch always was. A
+stream with zero valid attestations is still refused.
+
+**A green banner is not the whole verdict — read the `unverifiable` count.** `CHAIN AUTHENTICATED` can
+legitimately coexist with a disclosed non-zero `UNVERIFIABLE` count: events with no `digest`/`checksum`
+that are not advisory (pre-cutover history — or a spec-condoned *tail-strip*, where chain fields were
+stripped from events after the last attested head; the next link catches an interior strip, but a strip
+at the very tail has no next link to catch it). The tool **discloses** these, it cannot check them. A CI
+consumer parsing the `--json` output should therefore assert `verified == true` **and**
+`unverifiable == 0` (or run with `--strict`, which refuses such streams outright).
 
 > ### ⚠️ `--strict`, and why you probably want it
 >
