@@ -32,6 +32,11 @@ class IssuerMismatchError(SeamError):
             f"issuer AID mismatch: proof carried {proof_issuer!r}, expected {expected_issuer!r}"
         )
 
+    def __reduce__(self):
+        # Same rebuild-from-real-arguments discipline as SeamRpcError below: Exception's default
+        # pickling replays __init__ with the formatted message, which this two-arg __init__ rejects.
+        return (type(self), (self.proof_issuer, self.expected_issuer))
+
 
 class UnknownVerdictError(SeamError):
     """``Authorize`` returned a verdict this SDK version does not recognize (including the proto zero
@@ -47,6 +52,10 @@ class UnknownVerdictError(SeamError):
             f"unrecognized AuthorizeVerdict value {raw_value} "
             f"(authorize_id={authorize_id or '<none>'}); treat as failure, never allow"
         )
+
+    def __reduce__(self):
+        # Same rebuild-from-real-arguments discipline as SeamRpcError below.
+        return (type(self), (self.raw_value, self.authorize_id))
 
 
 class ProtocolViolationError(SeamError):
@@ -72,6 +81,13 @@ class SeamRpcError(SeamError, grpc.RpcError):
         self._code = code
         self._details = details
         super().__init__(f"{code.name}: {details}" if details else code.name)
+
+    def __reduce__(self):
+        # Exception's default pickling replays __init__ with `args` — the FORMATTED message, not the
+        # (code, details) pair this __init__ takes — so unpickling raised TypeError. Rebuilding from
+        # the real constructor arguments keeps these errors picklable across multiprocessing /
+        # concurrent.futures boundaries, where a worker's typed error must survive the trip back.
+        return (type(self), (self._code, self._details))
 
     def code(self) -> grpc.StatusCode:
         return self._code
@@ -147,6 +163,10 @@ def map_rpc_error(exc: grpc.RpcError) -> SeamRpcError:
     code = (
         exc.code() if callable(getattr(exc, "code", None)) else grpc.StatusCode.UNKNOWN
     )
+    if code is None:
+        # A code() accessor that RETURNS None (a half-built stub or interceptor error) — normalize to
+        # UNKNOWN rather than letting `code.name` raise AttributeError inside the mapping layer.
+        code = grpc.StatusCode.UNKNOWN
     details = (exc.details() if callable(getattr(exc, "details", None)) else "") or ""
     return _BY_CODE.get(code, InternalError)(code, details)
 

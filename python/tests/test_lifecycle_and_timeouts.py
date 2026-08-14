@@ -24,6 +24,7 @@ import grpc
 import pytest
 
 from seam_sdk import Agent, SeamClient
+from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
 from seam_sdk._gen.seam.api.v1 import seam_pb2_grpc as rpc
 from seam_sdk.admin import DEFAULT_ADMIN_TIMEOUT_S, SeamAdminClient
 from seam_sdk.errors import DeadlineExceededError
@@ -130,18 +131,28 @@ ADMIN_CALLS = {
     "enroll_tenant": lambda a: a.enroll_tenant("aid:x", "acme", "ns", timeout=0.1),
     "list_tenants": lambda a: a.list_tenants(timeout=0.1),
     "register_party": lambda a: a.register_party("p", b"\x00" * 32, timeout=0.1),
+    "remove_party": lambda a: a.remove_party("p", timeout=0.1),
+    "place_grant": lambda a: a.place_grant(
+        "acme", "ns-a", "ns-b", "op", 4102444800000, timeout=0.1
+    ),
+    "revoke_grant": lambda a: a.revoke_grant("acme", "ns-a", "ns-b", "op", timeout=0.1),
+    "list_grants": lambda a: a.list_grants(timeout=0.1),
     "resume_session": lambda a: a.resume_session("s", "approver", timeout=0.1),
     "place_legal_hold": lambda a: a.place_legal_hold("d", timeout=0.1),
     "release_legal_hold": lambda a: a.release_legal_hold("d", timeout=0.1),
     "enforce_retention": lambda a: a.enforce_retention(1, 2, 3, timeout=0.1),
     "audit_trail": lambda a: a.audit_trail(timeout=0.1),
+    "report_events_consumed": lambda a: a.report_events_consumed(0, timeout=0.1),
 }
 
 
 @pytest.fixture
 def hanging_admin():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=16))
-    rpc.add_SeamAdminServicer_to_server(HangingSeam(), server)
+    servicer = HangingSeam()
+    rpc.add_SeamAdminServicer_to_server(servicer, server)
+    # `report_events_consumed` rides the SeamEvents service, on the same management channel.
+    rpc.add_SeamEventsServicer_to_server(servicer, server)
     port = server.add_insecure_port("127.0.0.1:0")
     server.start()
     yield f"127.0.0.1:{port}"
@@ -197,3 +208,60 @@ def test_stream_events_defaults_to_no_deadline():
         inspect.signature(SeamAdminClient.stream_events).parameters["timeout"].default
     )
     assert default is None
+
+
+# ── The tombstoned data-plane resume warns before it round-trips ─────────────────────────────────
+
+
+class _RecordingCoord:
+    """A fake coordination stub: records the ResumeSession request, answers a benign step."""
+
+    def __init__(self):
+        self.seen = None
+
+    def ResumeSession(self, req, **_kw):  # noqa: N802 — mirrors the generated stub method name
+        self.seen = req
+        return pb.SessionStep(state="Active")
+
+
+def test_the_sync_tombstoned_resume_warns_deprecation():
+    """The docstring already said deprecated; a ``DeprecationWarning`` is what tooling actually
+    SEES (-W error::DeprecationWarning, pytest filters, linters) — pointing the caller at
+    ``SeamAdminClient.resume_session`` before the server's PERMISSION_DENIED does."""
+    client = SeamClient.connect("127.0.0.1:1")  # lazy insecure channel; never dialed
+    coord = _RecordingCoord()
+    client._coord = coord
+    with pytest.warns(DeprecationWarning, match="SeamAdmin.ResumeSession"):
+        client.resume_session("s-1")
+    assert coord.seen.session_id == "s-1"
+    assert coord.seen.budget == 0, (
+        "0 on the wire — the server owns the real default (32)"
+    )
+
+
+def test_the_aio_tombstoned_resume_warns_deprecation():
+    import asyncio
+
+    from seam_sdk.aio import SeamClient as AioSeamClient
+
+    class _AsyncRecordingCoord:
+        def __init__(self):
+            self.seen = None
+
+        async def ResumeSession(self, req, **_kw):  # noqa: N802
+            self.seen = req
+            return pb.SessionStep(state="Active")
+
+    async def scenario():
+        client = AioSeamClient.connect("127.0.0.1:1")  # lazy channel; never dialed
+        coord = _AsyncRecordingCoord()
+        client._coord = coord
+        try:
+            with pytest.warns(DeprecationWarning, match="SeamAdmin.ResumeSession"):
+                await client.resume_session("s-1")
+        finally:
+            await client.close()
+        assert coord.seen.session_id == "s-1"
+        assert coord.seen.budget == 0
+
+    asyncio.run(scenario())

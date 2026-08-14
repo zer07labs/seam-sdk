@@ -16,7 +16,7 @@ Erasure is a **preview → confirm → erase** flow (runtime audit P0.1): ``prev
 from __future__ import annotations
 
 import collections
-from typing import Iterator, Optional, Sequence
+from typing import Callable, Iterator, Optional, Sequence
 
 import grpc
 
@@ -43,7 +43,9 @@ DEFAULT_ADMIN_TIMEOUT_S = 30.0
 
 __all__ = [
     "SeamAdminClient",
+    "EventStream",
     "KNOWN_KINDS",
+    "DEFAULT_ADMIN_TIMEOUT_S",
     "verify_streamed_record_digest",
 ]
 
@@ -60,6 +62,7 @@ KNOWN_KINDS = frozenset(
         "ERASURE_CERTIFICATE",
         "SESSION_LIFECYCLE",
         "CHAIN_HEAD_ATTESTATION",
+        "AUTHORIZE_EVALUATED",
     }
 )
 
@@ -71,15 +74,17 @@ def verify_streamed_record_digest(event: ev.SeamEvent) -> bool:
     ``False`` for a rewritten payload or a v2 record stripped of its ``ciphertext_digest``.
 
     Raises :class:`ValueError` for anything not stream-recomputable: a non-``DECISION_SEALED`` event, a v1
-    record (the historical digest is not recomputable from the wire), or an event with no wire digest. The
-    presence of ``mode``/``policy_version``/``supersedes`` is read via ``HasField`` so ``None`` and ``""``
+    record (the historical digest is not recomputable from the wire), a schema version NEWER than v2 (a
+    future framing this SDK does not know; recomputing it with the v2 domain tag would report a spurious
+    ``False`` on a genuine record), or an event with no wire digest. The presence of
+    ``mode``/``policy_version``/``supersedes`` is read via ``HasField`` so ``None`` and ``""``
     stay distinct — the framing requires it."""
     if event.kind != "DECISION_SEALED":
         raise ValueError(f"not a DECISION_SEALED event: {event.kind}")
     p = event.payload
-    if p.schema_version < 2:
+    if p.schema_version != 2:
         raise ValueError(
-            f"v{p.schema_version} record is not stream-recomputable (only v2+)"
+            f"v{p.schema_version} record is not stream-recomputable by this SDK (only v2)"
         )
     if not event.HasField("digest"):
         raise ValueError("event carries no wire digest to compare against")
@@ -143,6 +148,50 @@ class _BearerAuthInterceptor(
 
     def intercept_unary_stream(self, continuation, details, request):
         return continuation(self._with_auth(details), request)
+
+
+class EventStream:
+    """One ``StreamEvents`` call: iterable like the generator it replaced, plus deliberate cancellation.
+
+    **Lazy**, exactly as the generator was: nothing is sent — the RPC, and with it any ``ack`` — until
+    the first iteration. Iteration errors surface typed (:class:`~seam_sdk.errors.SeamRpcError`), at
+    iteration time, unchanged.
+
+    :meth:`cancel` is the deliberate way OUT of a ``follow=True`` live tail, which otherwise ends only
+    when the server drains on shutdown. After ``cancel()`` the iteration ends cleanly (``StopIteration``,
+    not an error — the caller asked for it); called before the first iteration, the RPC is never sent
+    at all."""
+
+    def __init__(self, start: Callable[[], Iterator[ev.SeamEvent]]):
+        self._start = start
+        self._call = None
+        self._cancelled = False
+
+    def __iter__(self) -> "EventStream":
+        return self
+
+    def __next__(self) -> ev.SeamEvent:
+        if self._call is None:
+            if self._cancelled:
+                raise StopIteration
+            self._call = self._start()
+        try:
+            return next(self._call)
+        except grpc.RpcError as e:
+            code = e.code() if callable(getattr(e, "code", None)) else None
+            if self._cancelled and code is grpc.StatusCode.CANCELLED:
+                # Our own deliberate cancel coming back around — a clean end, never an error.
+                raise StopIteration from None
+            raise map_rpc_error(e) from e
+
+    def cancel(self) -> bool:
+        """Cancel the underlying RPC (ending a live tail deliberately). Idempotent. Returns whether
+        the cancellation took — always ``True`` before the first iteration (the RPC is then simply
+        never sent)."""
+        self._cancelled = True
+        if self._call is not None:
+            return self._call.cancel()
+        return True
 
 
 class SeamAdminClient:
@@ -261,6 +310,65 @@ class SeamAdminClient:
             pb.RegisterPartyRequest(party_id=party_id, pubkey=pubkey), timeout=timeout
         )
 
+    def remove_party(
+        self, party_id: str, *, timeout: float = DEFAULT_ADMIN_TIMEOUT_S
+    ) -> None:
+        """Revoke a previously-registered party's verifying key (chained + durable). Requires the
+        ``grant:revoke`` operator scope."""
+        self._admin.RemoveParty(
+            pb.RemovePartyRequest(party_id=party_id), timeout=timeout
+        )
+
+    # ── Cross-namespace read grants (§D2) ────────────────────────────────────────────────────────
+
+    def place_grant(
+        self,
+        tenant: str,
+        from_ns: str,
+        to_ns: str,
+        grantor: str,
+        expires_at: int,
+        *,
+        timeout: float = DEFAULT_ADMIN_TIMEOUT_S,
+    ) -> None:
+        """Grant subjects enrolled in ``from_ns`` read access to ``to_ns`` records of the SAME
+        ``tenant`` until ``expires_at`` (unix millis, must be in the future) — cross-tenant reads are
+        never grantable. Chained to the audit trail. Requires the ``grant:create`` operator scope."""
+        self._admin.PlaceGrant(
+            pb.PlaceGrantRequest(
+                tenant=tenant,
+                from_ns=from_ns,
+                to_ns=to_ns,
+                grantor=grantor,
+                expires_at=expires_at,
+            ),
+            timeout=timeout,
+        )
+
+    def revoke_grant(
+        self,
+        tenant: str,
+        from_ns: str,
+        to_ns: str,
+        revoker: str,
+        *,
+        timeout: float = DEFAULT_ADMIN_TIMEOUT_S,
+    ) -> None:
+        """Revoke a cross-namespace grant (idempotent). Chained to the audit trail. Requires the
+        ``grant:revoke`` operator scope."""
+        self._admin.RevokeGrant(
+            pb.RevokeGrantRequest(
+                tenant=tenant, from_ns=from_ns, to_ns=to_ns, revoker=revoker
+            ),
+            timeout=timeout,
+        )
+
+    def list_grants(
+        self, *, timeout: float = DEFAULT_ADMIN_TIMEOUT_S
+    ) -> Sequence[pb.GrantView]:
+        """Every stored cross-namespace grant. Requires the ``grant:revoke`` operator scope."""
+        return list(self._admin.ListGrants(pb.Empty(), timeout=timeout).grants)
+
     # ── Session governance ───────────────────────────────────────────────────────────────────────
 
     def resume_session(
@@ -270,7 +378,7 @@ class SeamAdminClient:
         *,
         tenant: str = "",
         namespace: str = "",
-        budget: int = 32,
+        budget: int = 0,
         raise_: Optional["_client.BudgetLimits"] = None,
         timeout: float = DEFAULT_ADMIN_TIMEOUT_S,
     ) -> pb.SessionStep:
@@ -278,8 +386,8 @@ class SeamAdminClient:
         moved off the data plane, where ``SeamCoordination.ResumeSession`` is now a tombstone). It requires
         the ``session:resume`` operator scope. ``approver`` is a **required**, non-empty attribution for the
         approval (an R9 approval must name who granted it). ``raise_`` raises any budget dimension; absent,
-        ``budget`` raises the message count. ``tenant``/``namespace`` scope the lookup — leave empty to
-        resolve the session by id alone."""
+        ``budget`` raises the message count (0 means the server default, currently 32).
+        ``tenant``/``namespace`` scope the lookup — leave empty to resolve the session by id alone."""
         req = pb.AdminResumeRequest(
             session_id=session_id,
             approver=approver,
@@ -344,7 +452,7 @@ class SeamAdminClient:
         follow: bool = False,
         ack: bool = False,
         timeout: Optional[float] = None,
-    ) -> Iterator[ev.SeamEvent]:
+    ) -> "EventStream":
         """Server-stream the ``seam-event.v1`` governance outbox. Two modes:
 
         * **drain** (``follow=False``, default): yield the current unpublished backlog, then stop.
@@ -354,19 +462,26 @@ class SeamAdminClient:
           events as they arrive — cursor-based, never acks. Resume from the last ``seq + 1`` and dedup
           by ``event_id``. The stream ends cleanly when the server drains on shutdown.
 
-        Yields :class:`ev.SeamEvent`. Iterate in a thread/task for ``follow=True`` (it blocks).
+        ``ack`` is **drain-only** by contract; ``ack=True`` with ``follow=True`` raises
+        :class:`ValueError` here rather than sending a request the proto declares meaningless.
+
+        Returns an :class:`EventStream` of :class:`ev.SeamEvent` — iterable exactly like the generator
+        it replaced, and **lazy** like it too: NOTHING is sent (the ack included) until the first
+        iteration, so constructing the stream commits to nothing. The handle adds :meth:`EventStream.cancel`
+        for deliberately ending a live tail. Iterate in a thread/task for ``follow=True`` (it blocks).
 
         ``timeout`` defaults to ``None`` — **no deadline** — and that is the one deliberate exception
         to this client's every-call-is-bounded rule. A gRPC deadline bounds the whole STREAM, not the
         gap between events, so any finite value silently kills a healthy live tail the moment it
         outlives the number. Set it only for a bounded drain (``follow=False``), where "this should
         have finished by now" is a meaningful statement."""
+        if ack and follow:
+            raise ValueError(
+                "ack is drain-only: ack=True cannot be combined with follow=True "
+                "(a live tail is cursor-based and never acks)"
+            )
         req = pb.StreamEventsRequest(from_seq=from_seq, ack=ack, follow=follow)
-        try:
-            for event in self._events.StreamEvents(req, timeout=timeout):
-                yield event
-        except grpc.RpcError as e:
-            raise map_rpc_error(e) from e
+        return EventStream(lambda: self._events.StreamEvents(req, timeout=timeout))
 
     def report_events_consumed(
         self, consumed_cursor: int, *, timeout: float = DEFAULT_ADMIN_TIMEOUT_S

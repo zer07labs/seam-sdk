@@ -186,7 +186,13 @@ func VerifyTCT(issuerAID, tctJWS string, c Commitment, nowS int64) bool {
 		return false
 	}
 	exp, ok := payload["exp"].(float64)
-	if !ok || float64(nowS) >= exp { // RFC 7519: reject at/after expiry
+	if !ok {
+		return false
+	}
+	// Reject at/after expiry (RFC 7519), TRUNCATING exp to whole seconds first — exactly the reference
+	// semantics (Python does `int(payload.get("exp", 0))`, Java/Kotlin `(long)`): for exp = N + 0.5,
+	// nowS = N is already expired. A float-precise compare would accept it and drift from the shims.
+	if nowS >= int64(exp) {
 		return false
 	}
 	want := "seam-commitment-digest:" + seamCommitmentDigest(c)

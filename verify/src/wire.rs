@@ -24,6 +24,12 @@ pub struct SeamEventPb {
     /// drop it from the canonical form and they collapse into one "duplicate", discarding evidence.
     #[prost(uint64, tag = "4")]
     pub occurred_at: u64,
+    /// tags 5/6 — part of the event's IDENTITY (like `occurred_at`): two otherwise-identical events in
+    /// different tenants/namespaces are different events, and must not dedup into one.
+    #[prost(string, tag = "5")]
+    pub tenant: String,
+    #[prost(string, tag = "6")]
+    pub namespace: String,
     #[prost(string, tag = "8")]
     pub kind: String,
     /// tag 12 — the head this event extends.
@@ -51,6 +57,11 @@ pub struct SeamEventPb {
     /// itself chained (it carries digest/checksum like any link) AND additionally verified under `--issuer`.
     #[prost(message, optional, tag = "22")]
     pub chain_head_attestation: Option<ChainHeadAttestationPb>,
+    /// tag 23 — the ADVISORY `AUTHORIZE_EVALUATED` payload (spec §AUTHORIZE_EVALUATED). Not chained: the
+    /// authorize path seals nothing, so this row is the only trace the call happened. Decoded (not skipped)
+    /// so the payload is part of the event's canonical identity across both transports.
+    #[prost(message, optional, tag = "23")]
+    pub authorize_evaluated: Option<AuthorizeEvaluatedPb>,
 }
 
 /// The `CHAIN_HEAD_ATTESTATION` payload (tag 22), transcribed from `seam-event.v1.md` §CHAIN_HEAD_ATTESTATION.
@@ -70,6 +81,9 @@ pub struct ChainHeadAttestationPb {
     pub signature: Vec<u8>,
 }
 
+/// The `AUDIT_ENTRY` payload (envelope tag 16). ALL of its fields are part of the event's canonical
+/// identity: two chained audit entries differing only in `subject`/`reason` are two DIFFERENT events, and
+/// collapsing them into one "duplicate" would discard evidence (and hide an impostor wearing a real id).
 #[derive(Clone, PartialEq, Message)]
 pub struct AuditEntryPb {
     #[prost(string, tag = "1")]
@@ -78,6 +92,36 @@ pub struct AuditEntryPb {
     pub subject: String,
     #[prost(string, tag = "3")]
     pub reason: String,
+    /// tag 4 — the authenticated operator subject (rt-D §4); `None` on the unauthenticated plane.
+    #[prost(string, optional, tag = "4")]
+    pub actor: Option<String>,
+}
+
+/// The `AUTHORIZE_EVALUATED` payload (envelope tag 23) — ADVISORY, unchained. Transcribed from
+/// `seam-event.v1.md` §AUTHORIZE_EVALUATED. Never verified (nothing is sealed); decoded only so the
+/// payload participates in the canonical dedup identity.
+#[derive(Clone, PartialEq, Message)]
+pub struct AuthorizeEvaluatedPb {
+    #[prost(string, tag = "1")]
+    pub authorize_id: String,
+    #[prost(string, optional, tag = "2")]
+    pub client_request_id: Option<String>,
+    #[prost(string, tag = "3")]
+    pub agent_aid: String,
+    #[prost(string, tag = "4")]
+    pub agent_id: String,
+    #[prost(string, tag = "5")]
+    pub tool_name: String,
+    #[prost(string, tag = "6")]
+    pub tool_input_digest: String,
+    #[prost(string, tag = "7")]
+    pub verdict: String,
+    #[prost(string, tag = "8")]
+    pub reason: String,
+    #[prost(string, tag = "9")]
+    pub policy_version: String,
+    #[prost(string, optional, tag = "10")]
+    pub subject_digest: Option<String>,
 }
 
 /// The `DECISION_SEALED` payload (envelope tag 13) — the structural columns the digest-v2 recompute covers,
@@ -144,6 +188,10 @@ pub struct SeamEventJson {
     #[serde(default)]
     pub occurred_at: u64,
     #[serde(default)]
+    pub tenant: String,
+    #[serde(default)]
+    pub namespace: String,
+    #[serde(default)]
     pub kind: String,
     #[serde(default)]
     pub prev_checksum: String,
@@ -159,6 +207,8 @@ pub struct SeamEventJson {
     pub erasure_certificate: Option<ErasureCertificateJson>,
     #[serde(default)]
     pub chain_head_attestation: Option<ChainHeadAttestationJson>,
+    #[serde(default)]
+    pub authorize_evaluated: Option<AuthorizeEvaluatedJson>,
 }
 
 #[derive(Deserialize)]
@@ -175,6 +225,36 @@ pub struct ChainHeadAttestationJson {
 pub struct AuditEntryJson {
     #[serde(default)]
     pub action: String,
+    #[serde(default)]
+    pub subject: String,
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub actor: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct AuthorizeEvaluatedJson {
+    #[serde(default)]
+    pub authorize_id: String,
+    #[serde(default)]
+    pub client_request_id: Option<String>,
+    #[serde(default)]
+    pub agent_aid: String,
+    #[serde(default)]
+    pub agent_id: String,
+    #[serde(default)]
+    pub tool_name: String,
+    #[serde(default)]
+    pub tool_input_digest: String,
+    #[serde(default)]
+    pub verdict: String,
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub policy_version: String,
+    #[serde(default)]
+    pub subject_digest: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -218,11 +298,17 @@ pub struct Event {
     pub event_id: String,
     pub seq: u64,
     pub occurred_at: u64,
+    pub tenant: String,
+    pub namespace: String,
     pub kind: String,
     pub prev_checksum: Vec<u8>,
     pub digest: Option<Vec<u8>>,
     pub checksum: Option<Vec<u8>>,
-    pub audit_action: Option<String>,
+    /// The full `AUDIT_ENTRY` payload — all of it is dedup identity, not just `action` (two chained
+    /// entries differing only in `subject`/`reason` are two different events).
+    pub audit: Option<AuditEntry>,
+    /// The `AUTHORIZE_EVALUATED` payload — advisory; carried only for the dedup identity.
+    pub authorize: Option<AuthorizeEvaluatedPb>,
     pub cert: Option<Cert>,
     /// The `CHAIN_HEAD_ATTESTATION` payload, when this event is one. `None` otherwise.
     pub attestation: Option<Attestation>,
@@ -230,6 +316,14 @@ pub struct Event {
     pub decision: Option<Decision>,
     /// The canonical bytes this event decoded from (or re-encodes to) — the dedup identity.
     pub bytes: Vec<u8>,
+}
+
+#[derive(Clone)]
+pub struct AuditEntry {
+    pub action: String,
+    pub subject: String,
+    pub reason: String,
+    pub actor: Option<String>,
 }
 
 #[derive(Clone)]
@@ -335,11 +429,30 @@ impl Event {
                 event_id: j.event_id,
                 seq: j.seq,
                 occurred_at: j.occurred_at,
+                tenant: j.tenant,
+                namespace: j.namespace,
                 kind: j.kind,
                 prev_checksum: b64(&j.prev_checksum)?,
                 digest: j.digest.as_deref().map(b64).transpose()?,
                 checksum: j.checksum.as_deref().map(b64).transpose()?,
-                audit_action: j.audit_entry.map(|a| a.action),
+                audit: j.audit_entry.map(|a| AuditEntry {
+                    action: a.action,
+                    subject: a.subject,
+                    reason: a.reason,
+                    actor: a.actor,
+                }),
+                authorize: j.authorize_evaluated.map(|a| AuthorizeEvaluatedPb {
+                    authorize_id: a.authorize_id,
+                    client_request_id: a.client_request_id,
+                    agent_aid: a.agent_aid,
+                    agent_id: a.agent_id,
+                    tool_name: a.tool_name,
+                    tool_input_digest: a.tool_input_digest,
+                    verdict: a.verdict,
+                    reason: a.reason,
+                    policy_version: a.policy_version,
+                    subject_digest: a.subject_digest,
+                }),
                 cert: cert.transpose()?,
                 attestation: attestation.transpose()?,
                 decision: decision.transpose()?,
@@ -366,11 +479,19 @@ impl Event {
             event_id: pb.event_id,
             seq: pb.seq,
             occurred_at: pb.occurred_at,
+            tenant: pb.tenant,
+            namespace: pb.namespace,
             kind: pb.kind,
             prev_checksum: pb.prev_checksum,
             digest: pb.digest,
             checksum: pb.checksum,
-            audit_action: pb.audit_entry.map(|a| a.action),
+            audit: pb.audit_entry.map(|a| AuditEntry {
+                action: a.action,
+                subject: a.subject,
+                reason: a.reason,
+                actor: a.actor,
+            }),
+            authorize: pb.authorize_evaluated,
             cert: pb.erasure_certificate.map(|c| Cert {
                 subject: c.subject,
                 erased: c.erased,
@@ -418,6 +539,8 @@ impl Event {
             event_id: self.event_id.clone(),
             seq: self.seq,
             occurred_at: self.occurred_at,
+            tenant: self.tenant.clone(),
+            namespace: self.namespace.clone(),
             kind: self.kind.clone(),
             prev_checksum: self.prev_checksum.clone(),
             payload: self.decision.as_ref().map(|d| DecisionSealedPb {
@@ -432,10 +555,15 @@ impl Event {
                 schema_version: d.schema_version,
                 ciphertext_digest: d.ciphertext_digest.clone(),
             }),
-            audit_entry: self.audit_action.as_ref().map(|a| AuditEntryPb {
-                action: a.clone(),
-                ..Default::default()
+            // The FULL payload, not just `action`: identity narrowed to one field would dedup two audit
+            // entries that differ only in subject/reason — two events collapsed into one, evidence gone.
+            audit_entry: self.audit.as_ref().map(|a| AuditEntryPb {
+                action: a.action.clone(),
+                subject: a.subject.clone(),
+                reason: a.reason.clone(),
+                actor: a.actor.clone(),
             }),
+            authorize_evaluated: self.authorize.clone(),
             erasure_certificate: self.cert.as_ref().map(|c| ErasureCertificatePb {
                 subject: c.subject.clone(),
                 erased: c.erased.clone(),
@@ -467,16 +595,206 @@ impl Event {
 
     /// Is it legitimately unchained (advisory), rather than pre-cutover history we cannot verify?
     pub fn is_advisory(&self) -> bool {
-        const ADVISORY: &[&str] = &[
+        if ADVISORY_KINDS.contains(&self.kind.as_str()) {
+            return true;
+        }
+        // The chain anchor: an AUDIT_ENTRY by kind, off-chain by design (spec §AUDIT_ENTRY).
+        self.audit
+            .as_ref()
+            .is_some_and(|a| a.action == "chain_anchor")
+    }
+}
+
+/// The kinds that carry no chain fields BY DESIGN (spec `enum EventKind`, the `ADVISORY`-annotated ones).
+///
+/// **Must stay equal to the spec's ADVISORY set** (`seam-runtime/docs/specs/seam-event.v1.md`, mirrored
+/// by the runtime verifier's `ADVISORY_KINDS` at `seam-runtime/crates/seam-verify/src/main.rs` and its
+/// `advisory_kinds_matches_spec_annotations` tripwire). A kind missing here makes `--strict` refuse a
+/// healthy stream carrying it — exactly the `AUTHORIZE_EVALUATED` false refusal this list once shipped
+/// with. Pinned by `advisory_kinds_are_pinned_to_the_spec` below.
+pub const ADVISORY_KINDS: &[&str] = &[
+    "LEARNING_DECISION",
+    "LEARNING_OUTCOME",
+    "BUDGET_BREACH",
+    "SESSION_LIFECYCLE",
+    // ADVISORY per spec §AUTHORIZE_EVALUATED (tag 23): the authorize path seals nothing — no record, no
+    // DEK, no chain append — so the row carries no digest/checksum by design. Its omission made --strict
+    // refuse any stream containing a single ESCALATE verdict (emitted unconditionally).
+    "AUTHORIZE_EVALUATED",
+];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    /// Spec-sync tripwire, mirroring the runtime verifier's `advisory_kinds_matches_spec_annotations`
+    /// (`seam-runtime/crates/seam-verify/src/main.rs`, which pins its list against the ADVISORY-annotated
+    /// `enum EventKind` block of `docs/specs/seam-event.v1.md`).
+    ///
+    /// Two layers, so it bites in every environment:
+    ///
+    /// 1. **Always** — the list is pinned against the hardcoded expected set below. A kind can only be
+    ///    added/removed here by ALSO editing this test, and the loud names point straight at the spec
+    ///    section to reconcile against.
+    /// 2. **When the runtime checkout is reachable** — the list is additionally checked EQUAL to the
+    ///    spec's own ADVISORY annotations, parsed the same way the runtime tripwire parses them. The
+    ///    sibling is located like the differential harness locates ours: `SEAM_RUNTIME_DIR` overrides;
+    ///    otherwise `../../seam-runtime` beside this repo. A set-but-wrong `SEAM_RUNTIME_DIR` is a hard
+    ///    FAILURE (someone asked for the check; silently skipping it would keep a broken gate green);
+    ///    an absent sibling with no override is a skip (a third party building this crate standalone
+    ///    cannot be required to hold Seam's private repo — independence is the product claim).
+    #[test]
+    fn advisory_kinds_are_pinned_to_the_spec() {
+        // Layer 1 — the hardcoded pin. Reconcile ONLY against seam-event.v1.md `enum EventKind`'s
+        // ADVISORY annotations (the runtime tripwire enforces that side of the equality).
+        let expected: BTreeSet<&str> = [
             "LEARNING_DECISION",
             "LEARNING_OUTCOME",
             "BUDGET_BREACH",
             "SESSION_LIFECYCLE",
-        ];
-        if ADVISORY.contains(&self.kind.as_str()) {
-            return true;
-        }
-        // The chain anchor: an AUDIT_ENTRY by kind, off-chain by design (spec §AUDIT_ENTRY).
-        self.audit_action.as_deref() == Some("chain_anchor")
+            "AUTHORIZE_EVALUATED",
+        ]
+        .into();
+        let ours: BTreeSet<&str> = ADVISORY_KINDS.iter().copied().collect();
+        assert_eq!(
+            ours, expected,
+            "ADVISORY_KINDS drifted from the expected set. Reconcile with the spec's ADVISORY-annotated \
+             EventKinds (seam-runtime/docs/specs/seam-event.v1.md) — a kind advisory in the spec but \
+             missing here makes --strict refuse a healthy stream (the AUTHORIZE_EVALUATED regression); \
+             one here but not in the spec would green an unverifiable stream."
+        );
+
+        // Layer 2 — the spec itself, when reachable.
+        let spec_path = match std::env::var("SEAM_RUNTIME_DIR") {
+            Ok(dir) => {
+                let p = std::path::PathBuf::from(dir).join("docs/specs/seam-event.v1.md");
+                assert!(
+                    p.is_file(),
+                    "SEAM_RUNTIME_DIR is set but {} does not exist. It was set on purpose; skipping \
+                     would keep a broken spec-sync gate green forever.",
+                    p.display()
+                );
+                p
+            }
+            Err(_) => {
+                let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../seam-runtime/docs/specs/seam-event.v1.md");
+                if !p.is_file() {
+                    eprintln!(
+                        "skipping spec cross-check: no sibling seam-runtime checkout (set \
+                         SEAM_RUNTIME_DIR to enforce it)"
+                    );
+                    return;
+                }
+                p
+            }
+        };
+        let spec = std::fs::read_to_string(&spec_path).expect("read seam-event.v1.md");
+        let body = spec
+            .split_once("enum EventKind {")
+            .expect("spec must declare `enum EventKind {`")
+            .1
+            .split_once('}')
+            .expect("`enum EventKind {` must be closed by `}`")
+            .0;
+        let spec_set: BTreeSet<String> = body
+            .lines()
+            .filter(|l| l.contains("ADVISORY"))
+            .filter_map(|l| l.split_whitespace().next())
+            .filter(|t| !t.is_empty() && t.chars().all(|c| c.is_ascii_uppercase() || c == '_'))
+            .map(str::to_owned)
+            .collect();
+        let ours: BTreeSet<String> = ADVISORY_KINDS.iter().map(|s| (*s).to_owned()).collect();
+        assert_eq!(
+            ours,
+            spec_set,
+            "ADVISORY_KINDS must equal the spec's ADVISORY-annotated EventKinds ({})",
+            spec_path.display()
+        );
+    }
+
+    fn b64e(b: &[u8]) -> String {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.encode(b)
+    }
+
+    /// An AUTHORIZE_EVALUATED event must be recognized on BOTH transports — decoded from base64 protobuf
+    /// (tag 23) and from the JSON projection — classify as advisory, and canonicalize to the SAME identity
+    /// bytes (so an at-least-once redelivery over the other transport dedups instead of doubling).
+    #[test]
+    fn authorize_evaluated_is_advisory_on_both_transports() {
+        let pb = SeamEventPb {
+            schema_version: "seam-event.v1".into(),
+            event_id: "az01#az#7".into(),
+            seq: 7,
+            occurred_at: 1_700,
+            tenant: "acme".into(),
+            namespace: "fraud".into(),
+            kind: "AUTHORIZE_EVALUATED".into(),
+            authorize_evaluated: Some(AuthorizeEvaluatedPb {
+                authorize_id: "az01".into(),
+                client_request_id: None,
+                agent_aid: "aid:pubkey:agent".into(),
+                agent_id: "agent-1".into(),
+                tool_name: "payments.transfer".into(),
+                tool_input_digest: "sha256:00".into(),
+                verdict: "ESCALATE".into(),
+                reason: "amount_over_floor".into(),
+                policy_version: "p1".into(),
+                subject_digest: None,
+            }),
+            ..Default::default()
+        };
+        let from_pb = Event::parse(&b64e(&pb.encode_to_vec())).expect("pb transport must parse");
+        assert!(from_pb.is_advisory(), "AUTHORIZE_EVALUATED is advisory");
+        assert!(!from_pb.is_link());
+        assert_eq!(
+            from_pb.authorize.as_ref().map(|a| a.verdict.as_str()),
+            Some("ESCALATE"),
+            "the tag-23 payload must be decoded, not skipped"
+        );
+
+        let json = r#"{"schema_version":"seam-event.v1","event_id":"az01#az#7","seq":7,
+            "occurred_at":1700,"tenant":"acme","namespace":"fraud","kind":"AUTHORIZE_EVALUATED",
+            "prev_checksum":"","authorize_evaluated":{"authorize_id":"az01",
+            "agent_aid":"aid:pubkey:agent","agent_id":"agent-1","tool_name":"payments.transfer",
+            "tool_input_digest":"sha256:00","verdict":"ESCALATE","reason":"amount_over_floor",
+            "policy_version":"p1"}}"#
+            .replace('\n', "");
+        let from_json = Event::parse(&json).expect("JSON transport must parse");
+        assert!(from_json.is_advisory());
+        assert_eq!(
+            from_pb.bytes, from_json.bytes,
+            "one event, two transports — the canonical identity must collapse them"
+        );
+    }
+
+    /// Two chained AUDIT_ENTRY events differing ONLY in the payload's subject/reason/actor are two
+    /// DIFFERENT events. Identity narrowed to `action` alone deduped them into one — evidence discarded,
+    /// and an impostor wearing a real id invisible.
+    #[test]
+    fn audit_entries_differing_only_in_subject_or_reason_are_distinct_identities() {
+        let entry = |subject: &str, reason: &str, actor: Option<&str>| {
+            let actor = actor
+                .map(|a| format!(r#","actor":{}"#, serde_json::to_string(a).unwrap()))
+                .unwrap_or_default();
+            Event::parse(&format!(
+                r#"{{"schema_version":"seam-event.v1","event_id":"a1","seq":4,"kind":"AUDIT_ENTRY",
+                   "prev_checksum":"","audit_entry":{{"action":"execute.scope_deny",
+                   "subject":"{subject}","reason":"{reason}"{actor}}}}}"#
+            ))
+            .expect("parse audit entry")
+        };
+        let base = entry("agent-1", "scope", None);
+        assert_ne!(base.bytes, entry("agent-2", "scope", None).bytes, "subject");
+        assert_ne!(base.bytes, entry("agent-1", "other", None).bytes, "reason");
+        assert_ne!(
+            base.bytes,
+            entry("agent-1", "scope", Some("op@x")).bytes,
+            "actor"
+        );
+        // And byte-identical redeliveries still collapse.
+        assert_eq!(base.bytes, entry("agent-1", "scope", None).bytes);
     }
 }

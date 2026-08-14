@@ -8,21 +8,30 @@
 # generated stubs carry the symbols the SDK depends on, and FAILS LOUD when they don't — so a stale
 # contract is caught here, at the SDK, not days later by a consumer.
 #
-# Two independent probes (the two are decoupled — one can be fresh while the other is stale):
+# Four probe groups, each checked PER LANGUAGE (Python and TypeScript are probed independently — the
+# two stub trees are generated together but can go stale separately, e.g. a stale ts/gen beside a fresh
+# python/_gen; a symbol present in one language must never vouch for the other):
 #
-#   1. RPC probe (HARD GATE, always) — `SeamTrust.VerifyPartyAttestation` (A4). The Phase-2 client wrapper
-#      calls it; absent stubs mean the wrapper cannot even import. A missing RPC exits non-zero.
+#   1.  RPC probe (HARD GATE, always) — `SeamTrust.VerifyPartyAttestation` (A4). The Phase-2 client wrapper
+#       calls it; absent stubs mean the wrapper cannot even import. A missing RPC exits non-zero.
 #
-#   2. Streamed-payload probe (reported; hard only under STREAM=1) — the four fields the SDK-facing
-#      contract must mirror from the canonical wire so a `StreamEvents` consumer can decode them:
-#      `session_lifecycle` (tag 21), `chain_head_attestation` (tag 22), `ciphertext_digest` (tag 10),
-#      `AuditEntryEvent.actor` (tag 4). These land on the BSR only after the runtime's Phase-0 mirror is
-#      pushed; until then `make generate` (BSR) lacks them while `make generate-local` has them. This probe
-#      REPORTS their state by default (Phase 6 is optional/pending the BSR push) and becomes a hard gate
-#      when STREAM=1 is set (the Phase-6 CI mode).
+#   1b. Authorize-surface probe (HARD GATE, always) — SeamAuthorization / AdmissionTicket / call_sig /
+#       on_behalf_of, the Phase-1 client surface.
 #
-# Usage:  scripts/check-contract.sh            # RPC hard gate + stream report
-#         STREAM=1 scripts/check-contract.sh   # additionally hard-gate the streamed-payload fields
+#   2.  Streamed-payload probe (reported; hard under STREAM=1) — the four fields a `StreamEvents` consumer
+#       decodes: `session_lifecycle` (tag 21), `chain_head_attestation` (tag 22), `ciphertext_digest`
+#       (tag 10), `AuditEntryEvent.actor` (tag 4). The BSR module now carries all four (the runtime's
+#       Phase-0 mirror is published), so CI runs with STREAM=1 as a permanent hard gate; the plain default
+#       stays report-only for local trees mid-regeneration.
+#
+#   3.  ReportEventsConsumed probe (reported; hard under EVENTS=1) — `SeamEvents.ReportEventsConsumed`
+#       (R1). Also on the BSR now; CI runs with EVENTS=1 as a permanent hard gate.
+#
+# Usage:  scripts/check-contract.sh                     # hard gates 1+1b; report 2+3
+#         STREAM=1 EVENTS=1 scripts/check-contract.sh   # additionally hard-gate 2 and 3 (the CI mode)
+#
+# Exit codes: 0 OK · 1 RPC/Authorize surface stale · 2 streamed-payload fields stale (STREAM=1) ·
+#             3 stubs not generated at all · 4 ReportEventsConsumed stale (EVENTS=1).
 #
 # Run it AFTER `make generate` / `make generate-local` — it inspects the emitted stubs, it does not
 # generate them.
@@ -54,10 +63,11 @@ if [ "$missing" -ne 0 ]; then
   exit 3
 fi
 
-# Probe a symbol across the stub files that should carry it; echo PRESENT/ABSENT and return 0/1.
-# $1 = human label, then the files to search, then '--' , then one-or-more grep patterns (ANY match ⇒ present).
-probe() {
-  local label="$1"; shift
+# Probe a symbol within ONE language's stub files; echo PRESENT/ABSENT (tagged with the language) and
+# return 0/1. $1 = human label, $2 = language tag, then the files to search, then '--', then one-or-more
+# grep patterns (ANY match ⇒ present).
+probe_lang() {
+  local label="$1" lang="$2"; shift 2
   local files=() patterns=()
   local seen_dd=0
   for a in "$@"; do
@@ -69,19 +79,43 @@ probe() {
     if grep -qE "$p" "${files[@]}" 2>/dev/null; then found=0; break; fi
   done
   if [ "$found" -eq 0 ]; then
-    echo "PRESENT $label"
+    echo "PRESENT $label [$lang]"
   else
-    echo "ABSENT  $label"
+    echo "ABSENT  $label [$lang]"
   fi
   return "$found"
+}
+
+# Probe a seam.api.v1 symbol in the Python AND TypeScript stubs INDEPENDENTLY — one line per language,
+# non-zero if EITHER lacks it. Never let one language's freshness vouch for the other's: the stub trees
+# regenerate together but a stale ts/gen can sit beside a fresh python/_gen (and vice versa).
+# $1 = human label, then the grep patterns.
+probe_api() {
+  local label="$1"; shift
+  local rc=0 s st
+  s="$(probe_lang "$label" python "$PY_GEN" "$PY_GRPC" -- "$@")"; st=$?
+  note "$s"; [ "$st" -ne 0 ] && rc=1
+  s="$(probe_lang "$label" ts "$TS_GEN" -- "$@")"; st=$?
+  note "$s"; [ "$st" -ne 0 ] && rc=1
+  return "$rc"
+}
+
+# Same, for the seam.event.v1 stubs (the event contract split out of api).
+probe_event() {
+  local label="$1"; shift
+  local rc=0 s st
+  s="$(probe_lang "$label" python "$PY_EV" -- "$@")"; st=$?
+  note "$s"; [ "$st" -ne 0 ] && rc=1
+  s="$(probe_lang "$label" ts "$TS_EV" -- "$@")"; st=$?
+  note "$s"; [ "$st" -ne 0 ] && rc=1
+  return "$rc"
 }
 
 echo "== check-contract: probing the active generated stubs =="
 
 # ── Probe 1: the VerifyPartyAttestation RPC (HARD GATE) ───────────────────────────────────────────────
-rpc_status="$(probe "SeamTrust.VerifyPartyAttestation (A4)" "$PY_GRPC" "$PY_GEN" "$TS_GEN" -- "VerifyPartyAttestation" "verifyPartyAttestation")"
+probe_api "SeamTrust.VerifyPartyAttestation (A4)" "VerifyPartyAttestation" "verifyPartyAttestation"
 rpc_rc=$?
-note "$rpc_status"
 
 # ── Probe 1b: the advisory Authorize surface (HARD GATE) ──────────────────────────────────────────────
 # The Phase-1 clients construct AuthorizeRequest and dial SeamAuthorization.Authorize + SeamAdmission.
@@ -96,10 +130,7 @@ for spec in \
   "RunDecisionRequest.on_behalf_of (Phase 0b)|on_behalf_of|onBehalfOf" ; do
   label="${spec%%|*}"; rest="${spec#*|}"
   IFS='|' read -r -a pats <<< "$rest"
-  s="$(probe "$label" "$PY_GEN" "$PY_GRPC" "$TS_GEN" -- "${pats[@]}")"
-  st=$?
-  note "$s"
-  [ "$st" -ne 0 ] && authz_rc=1
+  probe_api "$label" "${pats[@]}" || authz_rc=1
 done
 
 # ── Probe 2: the streamed-payload mirror fields (reported; hard under STREAM=1) ────────────────────────
@@ -113,22 +144,15 @@ for spec in \
   label="${spec%%|*}"; rest="${spec#*|}"
   # split the remaining |-separated patterns
   IFS='|' read -r -a pats <<< "$rest"
-  # The streamed payload lives in the seam.event.v1 stubs (the event contract split out of api).
-  s="$(probe "$label" "$PY_EV" "$TS_EV" -- "${pats[@]}")"
-  st=$?
-  note "$s"
-  [ "$st" -ne 0 ] && stream_rc=1
+  probe_event "$label" "${pats[@]}" || stream_rc=1
 done
 
 # ── Probe 3: the ReportEventsConsumed RPC (reported; hard under EVENTS=1) ──────────────────────────────
 # R1: the seam-event.v1 relay reports its durably-consumed cursor via SeamEvents.ReportEventsConsumed so
-# the runtime can bound its outbox. Like the streamed-payload fields, it lands on the BSR only after the
-# runtime pushes the updated seam.api.v1; until then `make generate` (BSR) lacks it while
-# `make generate-local` has it. REPORTED by default; hard-gated when EVENTS=1. Once the BSR carries it,
-# promote this to a permanent hard gate (fold it into Probe 1b alongside the other RPCs).
-report_consumed_status="$(probe "SeamEvents.ReportEventsConsumed (R1)" "$PY_GRPC" "$PY_GEN" "$TS_GEN" -- "ReportEventsConsumed" "reportEventsConsumed")"
+# the runtime can bound its outbox. The BSR module now carries it (verified 2026-08 via `buf export`), so
+# CI runs with EVENTS=1 as a permanent hard gate; the plain default stays report-only for local trees.
+probe_api "SeamEvents.ReportEventsConsumed (R1)" "ReportEventsConsumed" "reportEventsConsumed"
 report_consumed_rc=$?
-note "$report_consumed_status"
 
 echo
 if [ "$rpc_rc" -ne 0 ]; then
@@ -149,16 +173,16 @@ echo "OK — Authorize surface present (Phase 1 unblocked)."
 
 if [ "${STREAM:-0}" = "1" ]; then
   if [ "$stream_rc" -ne 0 ]; then
-    err "STREAM=1: the streamed-payload mirror fields are not all present (Phase-0 mirror not in this"
-    err "contract). The BSR carries them only after the runtime's Phase-0 push; use 'make generate-local'"
-    err "for development until then."
+    err "STREAM=1: the streamed-payload mirror fields are not all present in every language's stubs."
+    err "The BSR module carries them, so this is a stale/partial generation — rerun 'make generate'"
+    err "(or 'make generate-local RUNTIME=../seam-runtime') and check both python/_gen and ts/gen."
     exit 2
   fi
   echo "OK — all streamed-payload mirror fields present (Phase 6 unblocked)."
 else
   if [ "$stream_rc" -ne 0 ]; then
-    echo "NOTE — streamed-payload mirror fields not all present. Phase 6 (live event decoding) needs the"
-    echo "       runtime Phase-0 BSR push; 'make generate-local' has them today. (Set STREAM=1 to hard-gate.)"
+    echo "NOTE — streamed-payload mirror fields not all present in every language's stubs. The BSR carries"
+    echo "       them; rerun 'make generate' / 'make generate-local'. (Set STREAM=1 to hard-gate, as CI does.)"
   else
     echo "OK — streamed-payload mirror fields present (Phase 6 also unblocked)."
   fi
@@ -166,15 +190,16 @@ fi
 
 if [ "${EVENTS:-0}" = "1" ]; then
   if [ "$report_consumed_rc" -ne 0 ]; then
-    err "EVENTS=1: SeamEvents.ReportEventsConsumed is not in the stubs (the runtime's updated seam.api.v1"
-    err "is not on the BSR yet). Use 'make generate-local RUNTIME=../seam-runtime' until the push lands."
+    err "EVENTS=1: SeamEvents.ReportEventsConsumed is not in every language's stubs. The BSR module"
+    err "carries it, so this is a stale/partial generation — rerun 'make generate' (or 'make"
+    err "generate-local RUNTIME=../seam-runtime') and check both python/_gen and ts/gen."
     exit 4
   fi
   echo "OK — ReportEventsConsumed present (relay cursor reporting unblocked)."
 else
   if [ "$report_consumed_rc" -ne 0 ]; then
-    echo "NOTE — SeamEvents.ReportEventsConsumed not present. Relay cursor reporting needs the runtime's"
-    echo "       seam.api.v1 BSR push; 'make generate-local' has it today. (Set EVENTS=1 to hard-gate.)"
+    echo "NOTE — SeamEvents.ReportEventsConsumed not present in every language's stubs. The BSR carries"
+    echo "       it; rerun 'make generate' / 'make generate-local'. (Set EVENTS=1 to hard-gate, as CI does.)"
   else
     echo "OK — ReportEventsConsumed present (relay cursor reporting unblocked)."
   fi

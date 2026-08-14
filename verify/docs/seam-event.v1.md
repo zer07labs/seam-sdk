@@ -1,3 +1,9 @@
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ da5f556 (refreshed 2026-08-14).
+     The runtime spec is the source of truth; refresh this copy whenever the spec changes —
+     a stale copy here once shipped a real verifier bug (the AUTHORIZE_EVALUATED advisory omission).
+     The advisory-kind tripwire in src/wire.rs cross-checks the LIVE runtime spec when the sibling
+     checkout is present; this file is what third parties build from when it is not. -->
+
 # `seam-event.v1` — event-stream wire spec (language-neutral)
 
 **Status:** Normative (v1 draft). The published contract for the runtime's **outbox** — the ordered,
@@ -34,19 +40,32 @@ SeamEvent {
   prev_checksum:   bytes     // hash-chain link → the head this event's chain extends (tag 12)
   digest:          bytes?    // §A — this entry's record/action digest; CHAINED kinds only (tag 19)
   checksum:        bytes?    // §A — the head this entry produces = H(prev_checksum ‖ digest) (tag 20)
-  payload:         bytes     // kind-specific body, already central-redacted (seam-guard) before emit
+  payload:         bytes     // kind-specific body (central seam-guard redaction on the outbox is NOT YET WIRED — see the Redaction note below)
 }
 
 enum EventKind {
   DECISION_SEALED   // a DecisionRecord reached a terminal outcome (Resolved/Expired/...)
   AUDIT_ENTRY       // an entry appended to the hash-chained audit log WITHOUT a sealed decision (tag 16)
-  SESSION_LIFECYCLE // open / suspended / resumed / expired transitions
   LEARNING_DECISION // ADVISORY — the per-dimension arm the orchestrator chose (not chained; tag 14)
   LEARNING_OUTCOME  // ADVISORY — a delayed correctness report for a decision (not chained; tag 15)
   BUDGET_BREACH     // ADVISORY — the 6.2 R9 escalation signal (not chained; tag 17)
   ERASURE_CERTIFICATE // the signed GDPR erasure attestation (CHAINED; tag 18)
+  CHAIN_HEAD_ATTESTATION // the issuer-signed audit chain head (A14; CHAINED; tag 22)
+  SESSION_LIFECYCLE // ADVISORY — a session lifecycle transition, "opened" only today (not chained; tag 21)
+  AUTHORIZE_EVALUATED // ADVISORY — one advisory authorization was evaluated (not chained; tag 23)
 }
 ```
+
+> **Revived kind — `SESSION_LIFECYCLE` (CP-09), at its reserved tag 21.** This kind was once removed as
+> never-implemented (A11: spec-declared with no payload struct, no prost tag, no emitter — a filter
+> against it silently matched nothing). It returns **with its producer in the same change**, exactly as
+> the removal note demanded: the runtime emits `phase: "opened"` on every INTERACTIVE session open (the
+> producer the control plane's fail-closed retire/drain workflow consumes to learn which sessions are
+> live). Terminals stay observable via `DECISION_SEALED`; a one-shot `run_decision` emits no "opened"
+> (its seal arrives in the same call). The `spec_kind_sync` conformance test
+> (`seam-store/tests/spec_kind_sync.rs`) continues to pin spec-set == emitted-set, and its dedicated
+> revival guard now asserts the kind stays implemented. Tag 21 was reserved for precisely this revival
+> (D-002) and is now permanently taken; the A14 attestation keeps tag 22.
 
 ### `AUDIT_ENTRY` (additive, tag 16 — chained)
 
@@ -92,6 +111,130 @@ ErasureCertificate {                       // payload at SeamEvent tag 18
 }
 ```
 
+### `CHAIN_HEAD_ATTESTATION` (additive, tag 22 — chained) — A14
+
+The audit chain's `(len, head)` **signed by the runtime issuer key** — the keyed root that closes the
+fabricated-chain gap. An unkeyed SHA-256 chain with a public genesis lets a transport-controlling adversary
+rebuild a self-consistent chain from any fork point; a signed head cannot be minted without the issuer key,
+so a forged chain carries no valid attestation and fails verification. The event is **chained**
+(`prev_checksum` set) so it is itself tamper-evident and `--strict`-clean, and rewriting any entry at or
+before an attestation breaks a link on the path to a **signed** value.
+
+```
+ChainHeadAttestation {                     // payload at SeamEvent tag 22
+  attested_len:  u64      // number of chain links covered = the head's 1-based position
+  attested_head: bytes    // the checksum at position attested_len (32 bytes)
+  attested_at:   u64      // injected millis
+  issuer_aid:    string   // the runtime issuer identity (same key as the TCT + erasure cert)
+  digest_schema: u32      // the record-digest formula the attested chain uses (2 = A14 v2) — the
+                          // downgrade guard: bound into the signature so a v2 chain can't be claimed v1
+  signature:     bytes    // Ed25519 over the signed framing below
+}
+```
+
+**Signed framing** (over the 32-byte SHA-256 **digest**, never the preimage):
+
+```
+signature = Ed25519( SHA256(
+    frame("seam.audit.chain-head-attestation.v1")
+  ‖ frame(le64(attested_len)) ‖ frame(attested_head)
+  ‖ frame(le64(attested_at)) ‖ frame(le32(digest_schema)) ‖ frame(issuer_aid) ) )
+```
+
+**Semantics — a true statement about a prefix.** An attestation asserts: *the entry at position
+`attested_len` carries checksum `attested_head`, and the issuer said so.* The chain may advance between the
+head read and the append (no lock is held across read→sign→append), so a "stale" attestation is simply one
+over a shorter, still-covered prefix; a verifier checks the head **at that position**.
+
+**Triggers.** Emitted at **boot** (every restart leaves a signed head immediately, covering restart gaps),
+**every N chain entries** (`SEAM_CHAIN_ATTEST_EVERY`, default 1000; `0` disables — the every-N worker is
+**ON by default**, unlike the opt-in retention worker, because an authenticity root that is opt-in is the
+gap persisting by default), and at **every anchor boundary** (attest-then-anchor, so the externally
+notarized `(len, head)` transitively pins an issuer-signed head — see `audit-anchor.md`). The empty chain
+(`attested_len == 0`) is never signed (no genesis attestation).
+
+**Verification** (`seam-verify chain --issuer <AID>`): (a) every `CHAIN_HEAD_ATTESTATION` verifies against
+the **pinned** issuer AID (a mismatch is refused before any signature work — deriving the key from the
+attestation's own `issuer_aid` would let a forgery verify against its forger), AND its `attested_head`
+equals the running head after `attested_len` chained links (an authentic attestation replayed into a
+fabricated chain dies on this position check); (b) for every `DECISION_SEALED`, recompute the record
+digest (spec §Record digest) from its payload and compare it to the event's `digest` (tag 19) — a
+mismatch is a **payload rewrite** (a structural column was changed after sealing; the chain link still
+hashes, but the payload no longer matches it); (c) **a `schema_version >= 2` `DECISION_SEALED` that lacks
+a non-empty `ciphertext_digest` (tag 10) ⇒ REFUSE.** A v2 record is *required* to carry its commitment, so
+an absent tag 10 on a covered record is a **tag-10 strip / downgrade attack** — rewrite a field, drop the
+commitment, leave the `(prev,digest,checksum)` triple intact (the signed head cannot catch it: tag 19 is
+copied unchanged, so the head still matches and the signature verifies) — or a non-conforming producer.
+Both fail under `--issuer`; treating the strip as *cannot-recompute, not-a-failure* is exactly the hole
+design (a) exists to close. This is scoped to the covered class: v1 (`schema_version = 1`) records are not
+recomputable and never required a commitment, so they are skipped, not failed; and without `--issuer` none
+of (a)–(d) runs (a consumer with no issuer key legitimately checks integrity only); (d) **zero valid
+attestations under `--issuer` ⇒ REFUSE** — a forger cannot mint one, so their absence is the
+fabricated-chain tell, and a green-with-no-attestations would be a coverage hole reporting green.
+
+### `SESSION_LIFECYCLE` (additive, tag 21 — advisory, not chained) — CP-09
+
+A session lifecycle transition for the session named by the envelope `session_id`. **Advisory**: it
+carries no `digest`/`checksum` and never perturbs the audit chain (a verifier keys on field presence,
+§Ordering & integrity). Emitted on interactive session opens only; consumers MUST tolerate unknown
+`phase` values (additive vocabulary).
+
+```proto
+message SessionLifecycle {           // envelope tag 21
+  string phase = 1;                  // "opened" (only phase emitted today; vocabulary is additive)
+  string mode = 2;                   // the canonical MACP mode id the session opened in
+  string policy_version = 3;         // the policy bound at open
+  uint64 opened_at_millis = 4;       // the caller-injected session clock at open
+}
+```
+
+Envelope: `event_id = "{session_id}#lc:{phase}@{opened_at_millis}"` — salted with the open timestamp
+because a session id can be RE-opened after sweep eviction, and delivery dedups by `event_id` (an
+unsalted id would pin a deduping consumer to the first open's stale payload). `classification` is
+**fixed `Internal`** (operational metadata — phase/mode/policy/timestamp; no subject, secret, or agent
+content — so classification-gated redaction rules never fire on this kind: gate on `when_kind`).
+
+### `AUTHORIZE_EVALUATED` (additive, tag 23 — advisory, not chained)
+
+The audit row for one advisory authorization (`SeamAuthorization.Authorize`). That path **seals
+nothing** — no decision record, no DEK, no chain append — so this event is the *only* trace the call ever
+happened, and `authorize_id` (a ULID) is its handle. **Advisory**: no `digest`/`checksum`, empty
+`prev_checksum`; chaining a hot per-tool-call loop into the audit ledger would let traffic volume drive
+the chain. The envelope `decision_id` is deliberately **absent** — an `authorize_id` is not a
+`decision_id`, and populating it would invite a consumer to join to a sealed decision that does not exist.
+
+```proto
+message AuthorizeEvaluated {           // envelope tag 23
+  string authorize_id = 1;             // ULID — the handle returned to the caller
+  optional string client_request_id = 2; // the caller's idempotent audit-join key, when supplied
+  string agent_aid = 3;                // the VERIFIED caller AID (derived, never asserted)
+  string agent_id = 4;                 // the registry identity the scope floor was evaluated against
+  string tool_name = 5;
+  string tool_input_digest = 6;        // "sha256:<hex>" over the RFC 8785 (JCS) canonical input
+  string verdict = 7;                  // "ALLOW" | "DENY" | "TRANSFORM" | "ESCALATE"
+  string reason = 8;                   // closed-set / operator-authored only (D-030)
+  string policy_version = 9;
+  optional string subject_digest = 10; // sha256(subject) hex — NEVER the raw subject
+}
+```
+
+Envelope: `event_id = "{authorize_id}#az#{seq}"`; `classification` is **fixed `Internal`** (ids, digests,
+and a closed-set reason — no subject, secret, or agent content can reach it, so classification-gated
+redaction never fires: gate on `when_kind`).
+
+**PII rule.** The end-user data subject rides ONLY as `subject_digest = sha256(subject)`. GDPR erasure
+walks *decision records*; an outbox row is un-shredable, so a raw end-user id here would be an
+un-erasable copy of it. The digest stays correlation-preserving — an erasure operator recomputes it.
+
+**Emission contract.** Emission is per-namespace config (`authorize.emit_events`, default on) with an
+`authorize.event_sample_rate` knob — **except for `ESCALATE`**, which always emits (sampling-exempt) and
+whose append is **fail-closed**: an ESCALATE whose append fails returns an error rather than the verdict,
+because an escalation nobody can ever see is not an escalation. ALLOW/DENY/TRANSFORM appends stay
+fail-open (verdict returned, `seam.security` WARN logged). The `{authorize_id, client_request_id?,
+agent_aid, agent_id, tool_name, tool_input_digest, subject_digest?, reason}` field set on an ESCALATE row
+is the complete contract a future control-plane escalation inbox consumes — built from events alone, with
+no wire change.
+
 ### `BUDGET_BREACH` (additive, tag 17 — advisory, not chained)
 
 The enterprise-6.2 escalation signal on the R9 Suspended/HITL path. `severity: "hard"` means
@@ -116,6 +259,20 @@ BudgetBreach {                             // payload at SeamEvent tag 17
 (`decision_id`, `tenant`, `namespace`, `mode`, `policy_version`, `outcome`, `supersedes`, `sealed_at`,
 `schema_version`, …) — never the `Encrypted<Commitment>` plaintext. A consumer that needs the
 commitment body holds the key; the stream never carries openable secrets.
+
+Since `schema_version = 2` (**A14**) the payload **must** carry `ciphertext_digest` (payload **tag 10**):
+`SHA256(ciphertext)` — the one input to the record digest a stream consumer does not hold, collapsed to
+32 bytes. It discloses nothing (a hash of a high-entropy AEAD ciphertext) and lets a consumer recompute
+the record `digest` from what it received (see §Record digest). It is absent (no wire bytes) only on
+`schema_version = 1` payloads.
+
+**A stripped tag 10 on a v2 record is an attack, not a safe downgrade.** Dropping tag 10 while leaving the
+`(prev_checksum, digest, checksum)` triple intact lets an adversary rewrite a structural column and evade
+the recompute — the signed head cannot catch it, because `digest` (tag 19) is copied unchanged. Under
+`--issuer` a verifier therefore **fails** a `schema_version >= 2` `DECISION_SEALED` that lacks a non-empty
+`ciphertext_digest` (see §Ordering & integrity Verification (c)); it does **not** treat the strip as a
+downgrade to integrity-only. The legitimate "no issuer key ⇒ integrity-only" story is unchanged — it is a
+property of running *without* `--issuer`, not of stripping a field the producer is required to emit.
 
 ### Advisory learning kinds (additive, v1)
 
@@ -163,7 +320,7 @@ The decision being scored is identified by the **envelope `decision_id`**, not a
   are present (equivalently, `prev_checksum` is non-empty). The chained kinds are `DECISION_SEALED`,
   `AUDIT_ENTRY`, and `ERASURE_CERTIFICATE` — **except** the `action: "chain_anchor"` `AUDIT_ENTRY`, which is
   emitted off-chain (no `digest`) and is *not* a link. Advisory kinds (`LEARNING_DECISION`,
-  `LEARNING_OUTCOME`, `BUDGET_BREACH`, `SESSION_LIFECYCLE`) likewise set none of the three. A consumer
+  `LEARNING_OUTCOME`, `BUDGET_BREACH`) likewise set none of the three. A consumer
   verifies the whole chain **from the stream alone, without trusting the transport**: with
   `running_head = 32 zero bytes` (genesis), for each event **that has a `digest`** in `seq` order, assert
   `prev_checksum == running_head`, assert `checksum == H(prev_checksum ‖ digest)` (**this link is now
@@ -171,9 +328,69 @@ The decision being scored is identified by the **envelope `decision_id`**, not a
   `running_head = checksum`. This detects a forged/inserted/rewritten event, not merely a dropped one; an
   attacker stripping tags 19/20 off a chained event is caught at the next link (`prev_checksum ≠
   running_head`) — equivalent in power to dropping it, which a tail-strip aside is covered by the
-  out-of-band anchor (`audit-anchor.md`). The `digest` is a hash over the **sealed** record (ciphertext +
-  identity columns) — the same value that anchor publishes; it discloses nothing a consumer does not
-  already hold.
+  out-of-band anchor (`audit-anchor.md`). The `digest` is computed per §Record digest below — from
+  `schema_version = 2` it covers every structural column a consumer acts on plus `SHA256(ciphertext)`,
+  so a consumer recomputes it from the wire; it discloses nothing a consumer does not already hold.
+
+## Retention & the relay-consumed cursor (R1)
+
+The outbox is **garbage-collected against the relay's durably-consumed cursor**, never against the
+operator ack-drain's `published` flag. A consumer relaying the outbox (e.g. `seam-connectors`) reports its
+progress with `SeamEvents.ReportEventsConsumed(consumed_cursor)`; the runtime keeps a durable, **monotone**
+high-water from it (a lower re-report is ignored) and prunes a row only when it is **both** below that
+cursor **and** older than the retention window (`SEAM_OUTBOX_RETENTION_MILLIS`, default 7 days), always
+retaining the current max-`seq` row so the `seq` allocator cannot regress.
+
+- **Never pruned below what the relay needs.** Because prune deletes only `offset < consumed_cursor`, a row
+  at or above the cursor is never removed — so the relay's contiguous resume (`from_seq = last + 1`) can
+  never skip a deleted row and mis-read the gap as a chain violation.
+- **`consumed_cursor` MUST be the relay's contiguous-delivery high-water.** It is the first offset the relay
+  has **not** durably delivered downstream. The relay **must stop the cursor at the first row it could not
+  deliver** (an undecodable/poison row it skipped on the follow-tail) — never advance past it — so that row
+  stays `>= cursor` and is preserved for repair. Reporting a cursor past a skipped row would let the runtime
+  prune an undelivered row.
+- **Before any relay reports**, the cursor is absent and prune is a **strict no-op**: the outbox grows but
+  is never corrupted. `ReportEventsConsumed` requires the operator `events:consume` scope (it drives a
+  destructive prune).
+
+## Record digest
+
+The `digest` field (tag 19) on a `DECISION_SEALED` event is selected by the payload's `schema_version`.
+All framing is byte-exact and any-language-reproducible. `frame(x) = le32(len(x)) ‖ x` (a little-endian
+u32 length prefix, then the bytes). `opt(x) = 0x00` when the field is absent, `0x01 ‖ frame(x)` when
+present — so `None` and `Some("")` are distinct. `le64`/`le32` are little-endian fixed-width integers.
+
+### Record digest (v2) — `schema_version = 2` (A14)
+
+```
+digest_v2 = SHA256(
+    frame("seam.audit.record-digest.v2")          // domain + version, in-preimage
+  ‖ frame(decision_id) ‖ frame(tenant) ‖ frame(namespace)
+  ‖ frame(SHA256(ciphertext))                      // == the wire ciphertext_digest (payload tag 10)
+  ‖ frame(le64(sealed_at))
+  ‖ frame(outcome) ‖ opt(mode) ‖ opt(policy_version) ‖ opt(supersedes)
+  ‖ frame(le32(schema_version))                    // == 2
+)
+```
+
+Coverage equals identity + `SHA256(ciphertext)` + **every structural column `DECISION_SEALED` carries on
+the wire** (`decision_id` … `schema_version`, payload tags 1–9). A consumer that holds the payload and
+`ciphertext_digest` (tag 10) recomputes `digest_v2` and compares it to `digest` (tag 19): a mismatch means
+a structural column (e.g. `outcome`) was rewritten after sealing — the link's `(prev,digest,checksum)`
+triple stays internally consistent, but the recomputed digest no longer matches. The length-prefixed,
+domain-tagged framing also removes the field-boundary collisions of v1 (`"ab","c"` vs `"a","bc"`).
+
+### Record digest (v1, historical) — `schema_version = 1`
+
+```
+digest_v1 = SHA256(decision_id ‖ tenant ‖ namespace ‖ ciphertext ‖ le64(sealed_at))
+```
+
+Unframed concatenation over the **ciphertext** (which is off-wire), with no domain tag and no structural
+columns. It is **not** recomputable by a stream consumer and it collides across field boundaries — the two
+reasons A14 replaced it. This build emits v2 only; v1 is documented solely so a verifier can re-bind a
+`schema_version = 1` record from a pre-A14 fixture. There is **no dual-emit**: a verifier selects the
+formula by `schema_version` (`2 ⇒` v2, `1 ⇒` v1) — never silently green on a version it cannot recompute.
 
 > ### ⚠️ Pre-cutover events carry no `digest`/`checksum`, and a verifier CANNOT tell them from advisory ones
 >
@@ -210,8 +427,11 @@ per-destination `redaction_profile` (in the connector manifest) can redact furth
 ## JSON projection (webhooks)
 
 The JSON projection is a field-for-field mapping of `SeamEvent` with `bytes` fields base64-encoded and
-`u64` fields as JSON numbers. Signed-webhook delivery (the in-core built-in) signs the JSON body and
-carries the `prev_checksum`/head range it covers.
+`u64` fields as JSON numbers.
+
+> **Note:** an in-core signed-webhook emitter (signing the JSON body, carrying the `prev_checksum`/head
+> range) is **not built** — there is no HTTP delivery loop or body-signing in the runtime today, only this
+> projection. A consumer reads the outbox stream and delivers/signs on its own side. (Tracked: plan T3.4/T4.)
 
 ## Versioning
 

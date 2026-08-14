@@ -257,6 +257,165 @@ fn a_v1_record_is_link_verified_but_not_recomputed() {
     );
 }
 
+// ── AUTHORIZE_EVALUATED is advisory (P1 regression) ───────────────────────────────────────────────────
+
+#[test]
+fn an_authorize_evaluated_event_does_not_break_strict_issuer_verification() {
+    // REGRESSION: AUTHORIZE_EVALUATED (spec §AUTHORIZE_EVALUATED, tag 23) is ADVISORY — the authorize
+    // path seals nothing, so the event carries no digest/checksum BY DESIGN. Before the fix it was
+    // missing from the advisory set, filed as UNVERIFIABLE, and `--strict --issuer` over a healthy
+    // attested stream containing a single one exited 2. The runtime emits an event for EVERY ESCALATE
+    // verdict unconditionally, so this false refusal hit any real delivered stream.
+    let mut stream = golden("attested_chain.jsonl");
+    stream.push_str(
+        "\n{\"schema_version\":\"seam-event.v1\",\"event_id\":\"az01#az#9\",\"seq\":9,\
+         \"occurred_at\":1701,\"tenant\":\"acme\",\"namespace\":\"fraud\",\
+         \"kind\":\"AUTHORIZE_EVALUATED\",\"prev_checksum\":\"\",\
+         \"authorize_evaluated\":{\"authorize_id\":\"az01\",\"agent_aid\":\"aid:pubkey:agent\",\
+         \"agent_id\":\"agent-1\",\"tool_name\":\"payments.transfer\",\
+         \"tool_input_digest\":\"sha256:00\",\"verdict\":\"ESCALATE\",\
+         \"reason\":\"amount_over_floor\",\"policy_version\":\"p1\"}}",
+    );
+    let (code, out) = run("az-strict", &stream, &["--strict", "--issuer", ISSUER]);
+    assert_eq!(
+        code, VERIFIED,
+        "a healthy attested stream + one AUTHORIZE_EVALUATED must PASS under --strict --issuer \
+         (it used to exit 2, filed as unverifiable):\n{out}"
+    );
+    assert!(out.contains("CHAIN AUTHENTICATED"), "{out}");
+    assert!(
+        out.contains("advisory (skipped): 1"),
+        "the event must be classified advisory, not unverifiable:\n{out}"
+    );
+}
+
+// ── Key rotation: --issuer is repeatable ──────────────────────────────────────────────────────────────
+
+fn b64u(b: &[u8]) -> String {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b)
+}
+
+/// The `seam.audit.chain-head-attestation.v1` signed digest, reimplemented from the spec — built from
+/// the published framing alone, like every other fixture here (that a third party CAN is the point).
+fn att_digest(len: u64, head: &[u8], at: u64, schema: u32, issuer_aid: &str) -> [u8; 32] {
+    let mut h = Sha256::new();
+    let mut frame = |part: &[u8]| {
+        h.update((part.len() as u32).to_le_bytes());
+        h.update(part);
+    };
+    frame(b"seam.audit.chain-head-attestation.v1");
+    frame(&len.to_le_bytes());
+    frame(head);
+    frame(&at.to_le_bytes());
+    frame(&schema.to_le_bytes());
+    frame(issuer_aid.as_bytes());
+    h.finalize().into()
+}
+
+/// A chained CHAIN_HEAD_ATTESTATION event over `(len, head)`, signed by `sk` naming `aid`.
+fn attestation_event(
+    seq: u64,
+    prev: &[u8],
+    len: u64,
+    attested_head: &[u8],
+    sk: &ed25519_dalek::SigningKey,
+    aid: &str,
+) -> (String, Vec<u8>) {
+    use ed25519_dalek::Signer;
+    let at = 1_700 + seq;
+    let sig = sk
+        .sign(&att_digest(len, attested_head, at, 2, aid))
+        .to_bytes();
+    let digest = Sha256::digest(format!("att-{seq}").as_bytes()).to_vec();
+    let checksum = {
+        let mut h = Sha256::new();
+        h.update(prev);
+        h.update(&digest);
+        h.finalize().to_vec()
+    };
+    let line = format!(
+        "{{\"schema_version\":\"seam-event.v1\",\"event_id\":\"att#{seq}\",\"seq\":{seq},\
+         \"occurred_at\":{at},\"kind\":\"CHAIN_HEAD_ATTESTATION\",\
+         \"prev_checksum\":\"{}\",\"digest\":\"{}\",\"checksum\":\"{}\",\
+         \"chain_head_attestation\":{{\"attested_len\":{len},\"attested_head\":\"{}\",\
+         \"attested_at\":{at},\"issuer_aid\":\"{aid}\",\"digest_schema\":2,\"signature\":\"{}\"}}}}",
+        b64e(prev),
+        b64e(&digest),
+        b64e(&checksum),
+        b64e(attested_head),
+        b64e(&sig),
+    );
+    (line, checksum)
+}
+
+/// A chain spanning an issuer-key ROTATION: attestations signed by the retired key, then the new one.
+/// Pinning BOTH (`--issuer` once per AID) authenticates the whole chain; pinning only the new key must
+/// FAIL — the old attestation names an issuer outside the pinned set, same as any single-pin mismatch.
+#[test]
+fn a_key_rotation_chain_passes_with_both_issuers_pinned_and_fails_with_one() {
+    use ed25519_dalek::SigningKey;
+
+    // OLD = the golden issuer (ed25519 seed 07×32); NEW = a fresh key minted here from seed 42×32.
+    let old_sk = SigningKey::from_bytes(&[0x07; 32]);
+    let old_aid = format!("aid:pubkey:{}", b64u(old_sk.verifying_key().as_bytes()));
+    assert_eq!(
+        old_aid, ISSUER,
+        "seed 07×32 must derive the golden issuer AID"
+    );
+    let new_sk = SigningKey::from_bytes(&[0x42; 32]);
+    let new_aid = format!(
+        "aid:pubkey:ed25519:{}",
+        b64u(new_sk.verifying_key().as_bytes())
+    );
+
+    // Two plain links, then an OLD-signed attestation (itself link 3), then a NEW-signed one (link 4).
+    let mut head = vec![0u8; 32];
+    let mut lines = Vec::new();
+    for seq in 0..2u64 {
+        let digest = Sha256::digest(format!("r{seq}").as_bytes()).to_vec();
+        let checksum = {
+            let mut h = Sha256::new();
+            h.update(&head);
+            h.update(&digest);
+            h.finalize().to_vec()
+        };
+        lines.push(format!(
+            "{{\"schema_version\":\"seam-event.v1\",\"event_id\":\"d{seq}#{seq}\",\"seq\":{seq},\
+             \"kind\":\"DECISION_SEALED\",\"prev_checksum\":\"{}\",\"digest\":\"{}\",\
+             \"checksum\":\"{}\"}}",
+            b64e(&head),
+            b64e(&digest),
+            b64e(&checksum),
+        ));
+        head = checksum;
+    }
+    let (old_att, head3) = attestation_event(2, &head, 2, &head, &old_sk, &old_aid);
+    lines.push(old_att);
+    let (new_att, _) = attestation_event(3, &head3, 3, &head3, &new_sk, &new_aid);
+    lines.push(new_att);
+    let body = lines.join("\n");
+
+    // Both keys pinned → the rotation authenticates end-to-end.
+    let (code, out) = run(
+        "rotation-both",
+        &body,
+        &["--issuer", &old_aid, "--issuer", &new_aid],
+    );
+    assert_eq!(
+        code, VERIFIED,
+        "pin OLD + NEW must PASS across a rotation:\n{out}"
+    );
+    assert!(out.contains("attestations      : 2"), "{out}");
+
+    // Only the new key pinned → the old attestation names an unpinned issuer: FAIL.
+    let (code, out) = run("rotation-new-only", &body, &["--issuer", &new_aid]);
+    assert_eq!(
+        code, FAILED,
+        "an attestation naming an issuer outside the pinned set must FAIL:\n{out}"
+    );
+    assert!(out.contains("but you pinned"), "{out}");
+}
+
 // ── The pin is load-bearing ───────────────────────────────────────────────────────────────────────────
 
 #[test]

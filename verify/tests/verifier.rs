@@ -217,3 +217,121 @@ fn out_of_order_delivery_is_fine_but_a_real_reorder_is_not() {
     let (code, out) = run("reordered", &c, &[]);
     assert_eq!(code, FAILED, "a genuine reorder MUST fail:\n{out}");
 }
+
+// ── CLI hardening ─────────────────────────────────────────────────────────────────────────────────────
+
+/// Like `run`, but keeps stdout and stderr SEPARATE — the --json contract is specifically about which
+/// stream carries the machine-readable object.
+fn run_streams(name: &str, lines: &[String], args: &[&str]) -> (i32, String, String) {
+    let path = std::env::temp_dir().join(format!("pubverify-{name}-{}.jsonl", std::process::id()));
+    std::fs::write(&path, lines.join("\n")).unwrap();
+    let mut argv: Vec<&str> = vec!["chain", path.to_str().unwrap()];
+    argv.extend_from_slice(args);
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_seam-verify"))
+        .args(&argv)
+        .output()
+        .expect("run seam-verify");
+    let _ = std::fs::remove_file(&path);
+    (
+        out.status.code().unwrap(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn a_second_positional_file_is_a_usage_error_never_a_silent_last_wins() {
+    // `chain good.jsonl typo.jsonl` used to verify only typo.jsonl — the caller's first file silently
+    // ignored under whatever verdict the LAST one earned. Ambiguity about WHICH bytes were verified is a
+    // usage error, loudly.
+    let a = std::env::temp_dir().join(format!("pubverify-multi-a-{}.jsonl", std::process::id()));
+    let b = std::env::temp_dir().join(format!("pubverify-multi-b-{}.jsonl", std::process::id()));
+    std::fs::write(&a, chain(3).join("\n")).unwrap();
+    std::fs::write(&b, chain(3).join("\n")).unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_seam-verify"))
+        .args(["chain", a.to_str().unwrap(), b.to_str().unwrap()])
+        .output()
+        .expect("run seam-verify");
+    let _ = (std::fs::remove_file(&a), std::fs::remove_file(&b));
+    assert_eq!(
+        out.status.code().unwrap(),
+        USAGE,
+        "two input files must be refused, never last-wins"
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("more than one input file"), "{err}");
+}
+
+#[test]
+fn json_mode_emits_a_json_error_on_stdout_for_a_missing_file() {
+    // A CI consumer runs `... --json | jq .verified`. An exit-1 path that leaves stdout EMPTY makes the
+    // pipeline's failure mode "jq: no input" instead of a parseable refusal.
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_seam-verify"))
+        .args(["chain", "/nonexistent/no-such-file.jsonl", "--json"])
+        .output()
+        .expect("run seam-verify");
+    assert_eq!(out.status.code().unwrap(), USAGE);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let v: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("stdout must be a JSON object under --json");
+    assert_eq!(v["verified"], false, "{stdout}");
+    assert!(
+        v["error"].as_str().is_some_and(|e| !e.is_empty()),
+        "{stdout}"
+    );
+    assert!(
+        !String::from_utf8_lossy(&out.stderr).is_empty(),
+        "the human line stays on stderr"
+    );
+}
+
+#[test]
+fn json_mode_emits_a_json_error_on_stdout_for_a_malformed_line() {
+    let mut c = chain(3);
+    c.push("!!!!".to_string());
+    let (code, stdout, stderr) = run_streams("json-junk", &c, &["--json"]);
+    assert_eq!(code, USAGE);
+    let v: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("stdout must be a JSON object under --json");
+    assert_eq!(v["verified"], false, "{stdout}");
+    assert!(
+        v["error"].as_str().is_some_and(|e| e.contains("line 4")),
+        "the error names the offending line:\n{stdout}"
+    );
+    assert!(!stderr.is_empty(), "the human line stays on stderr");
+}
+
+#[test]
+fn two_audit_entries_differing_only_in_payload_do_not_dedupe_into_one() {
+    // Two CHAINED audit entries wearing the same event_id but differing only in subject/reason are two
+    // DIFFERENT events. An identity projection narrowed to `action` alone deduped them into one — the
+    // second copy (evidence, or an impostor) silently discarded under a green verdict. With the full
+    // payload in the identity they are distinct, and the impostor check refuses the stream.
+    let mut c = chain(2);
+    let head_after: Vec<u8> = {
+        // Rebuild the running head after 2 links, exactly as `chain()` does.
+        let mut head = vec![0u8; 32];
+        for seq in 0..2u64 {
+            let digest = Sha256::digest(format!("record-{seq}").as_bytes()).to_vec();
+            head = link(&head, &digest);
+        }
+        head
+    };
+    let digest = Sha256::digest(b"audit").to_vec();
+    let audit = |reason: &str| {
+        format!(
+            r#"{{"schema_version":"seam-event.v1","event_id":"audit:2#2","seq":2,"kind":"AUDIT_ENTRY","prev_checksum":"{}","digest":"{}","checksum":"{}","audit_entry":{{"action":"execute.scope_deny","subject":"agent-1","reason":"{reason}"}}}}"#,
+            b64(&head_after),
+            b64(&digest),
+            b64(&link(&head_after, &digest))
+        )
+    };
+    c.push(audit("capability_class_a"));
+    c.push(audit("capability_class_b"));
+    let (code, out) = run("audit-impostor", &c, &[]);
+    assert_eq!(
+        code, FAILED,
+        "same chained id, different payload = two events wearing one identity — refuse:\n{out}"
+    );
+    assert!(out.contains("TWICE with DIFFERENT content"), "{out}");
+}

@@ -20,6 +20,7 @@ import hashlib
 import json
 import threading
 import time
+import warnings
 from concurrent import futures
 
 import grpc
@@ -136,6 +137,7 @@ class HangingSeam(
     rpc.SeamTrustServicer,
     rpc.SeamContextServicer,
     rpc.SeamAuthorizationServicer,
+    rpc.SeamEventsServicer,
 ):
     """Every RPC sleeps past any test deadline — the fixture for timeout-enforcement tests."""
 
@@ -403,7 +405,9 @@ def test_every_public_method_enforces_timeout(hanging_server):
         lambda: client.verify_decision("d", "aid:pubkey:x", timeout=0.1),
     ]
     for call in calls:
-        with pytest.raises(DeadlineExceededError):
+        with pytest.raises(DeadlineExceededError), warnings.catch_warnings():
+            # resume_session is a tombstone and warns; the matrix pins DEADLINES, not deprecation.
+            warnings.simplefilter("ignore", DeprecationWarning)
             call()
 
 
@@ -500,7 +504,9 @@ def test_aio_deadlines_enforced(hanging_server):
                 lambda: client.get_commitment_proof("d", timeout=0.1),
                 lambda: client.verify_decision("d", "aid:pubkey:x", timeout=0.1),
             ]:
-                with pytest.raises(DeadlineExceededError):
+                with pytest.raises(DeadlineExceededError), warnings.catch_warnings():
+                    # resume_session is a tombstone and warns; this matrix pins deadlines only.
+                    warnings.simplefilter("ignore", DeprecationWarning)
                     await call()
 
     asyncio.run(scenario())

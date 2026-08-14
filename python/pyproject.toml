@@ -9,6 +9,8 @@ readme = "README.md"
 # first import, where it is not.
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
+# PEP 561: the package ships inline types (py.typed below), so type checkers use them.
+classifiers = ["Typing :: Typed"]
 dependencies = [
     # Also DERIVED, and for exactly the reason the protobuf line below exists — the same defect was
     # sitting three lines away in this same list. The grpc stubs in `_gen` are emitted with the
@@ -68,4 +70,5 @@ where = ["."]
 include = ["seam_sdk*"]
 
 [tool.setuptools.package-data]
-seam_sdk = ["_gen/**/*.pyi"]
+# `py.typed` is the PEP 561 marker that lets type checkers read the inline annotations + .pyi stubs.
+seam_sdk = ["_gen/**/*.pyi", "py.typed"]

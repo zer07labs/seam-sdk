@@ -109,6 +109,44 @@ func TestTCTVerifyFailsClosed(t *testing.T) {
 	}
 }
 
+// signTCT builds a minimally-valid TCT JWS over the given commitment with the given exp claim, signed
+// by the issuer seed — a local fixture generator for boundary cases the published vector cannot pin.
+func signTCT(t *testing.T, seedHex string, c Commitment, exp float64) (issuerAID, jws string) {
+	t.Helper()
+	seed, err := hex.DecodeString(seedHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	priv := ed25519.NewKeyFromSeed(seed)
+	issuerAID = AIDFromPubkey(priv.Public().(ed25519.PublicKey))
+	header, _ := json.Marshal(map[string]any{"alg": "EdDSA", "typ": "aitp-tct+jwt"})
+	payload, _ := json.Marshal(map[string]any{
+		"iss": issuerAID, "sub": issuerAID, "aud": issuerAID,
+		"exp":    exp,
+		"grants": []string{"seam-commitment-digest:" + seamCommitmentDigest(c)},
+	})
+	signing := b64urlNoPad(header) + "." + b64urlNoPad(payload)
+	sig := ed25519.Sign(priv, []byte(signing))
+	return issuerAID, signing + "." + b64urlNoPad(sig)
+}
+
+// TestTCTExpFractionalBoundary pins the reference truncation semantics shared by every shim: exp is
+// truncated to whole seconds BEFORE the `nowS >= exp` comparison (Python: `int(payload["exp"])`), so
+// for exp = N + 0.5 the token is already expired at nowS = N. A float-precise compare (Go's previous
+// behavior) would still accept it there and drift from Python/Java/Kotlin.
+func TestTCTExpFractionalBoundary(t *testing.T) {
+	v := load(t)
+	c := v.TCT.Inputs.Commitment
+	const n = int64(1_700_000_000)
+	iss, jws := signTCT(t, v.TCT.Inputs.IssuerSeedHex, c, float64(n)+0.5)
+	if VerifyTCT(iss, jws, c, n) {
+		t.Fatal("exp = N + 0.5 must already be expired at nowS = N (truncation semantics)")
+	}
+	if !VerifyTCT(iss, jws, c, n-1) {
+		t.Fatal("exp = N + 0.5 must still verify at nowS = N - 1")
+	}
+}
+
 func repeat(s string, n int) string {
 	out := make([]byte, 0, len(s)*n)
 	for i := 0; i < n; i++ {

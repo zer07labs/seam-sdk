@@ -19,6 +19,7 @@ the first and fail the second.
 
 from __future__ import annotations
 
+import pickle
 import threading
 import time
 from concurrent import futures
@@ -137,6 +138,54 @@ def test_an_error_with_no_code_accessor_still_maps():
     mapped = map_rpc_error(Bare())
     assert type(mapped) is InternalError
     assert mapped.code() is grpc.StatusCode.UNKNOWN
+
+
+def test_an_error_whose_code_returns_none_still_maps():
+    """The sibling of the no-code-method case: `code()` EXISTS but returns None (a half-built stub or
+    an interceptor's hand-rolled error). Before the guard this raised AttributeError on `code.name`
+    INSIDE the mapping layer — the error about the error, shadowing the real failure."""
+
+    class NoneCode(grpc.RpcError):
+        def code(self):
+            return None
+
+        def details(self):
+            return "no status attached"
+
+    mapped = map_rpc_error(NoneCode())
+    assert type(mapped) is InternalError
+    assert mapped.code() is grpc.StatusCode.UNKNOWN
+    assert "no status attached" in str(mapped)
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"), MAPPING, ids=[c.name for c, _ in MAPPING]
+)
+def test_every_typed_error_survives_a_pickle_round_trip(code, expected):
+    """Typed errors cross process boundaries (multiprocessing / concurrent.futures workers). The
+    Exception default replays __init__ with the FORMATTED message, not (code, details) — so without
+    __reduce__ the unpickle raised TypeError and the worker's real error was lost in transit."""
+    err = map_rpc_error(_RawRpcError(code, "detail text"))
+    clone = pickle.loads(pickle.dumps(err))
+    assert type(clone) is expected
+    assert clone.code() is code
+    assert clone.details() == "detail text"
+    assert str(clone) == str(err)
+
+
+def test_client_side_semantic_errors_survive_a_pickle_round_trip():
+    """IssuerMismatchError and UnknownVerdictError take multi-arg __init__s too, so they need the
+    same __reduce__ discipline as the SeamRpcError family (a worker's security signal must not be
+    replaced by a TypeError in transit)."""
+    from seam_sdk.errors import IssuerMismatchError, UnknownVerdictError
+
+    mism = pickle.loads(pickle.dumps(IssuerMismatchError("aid:pubkey:AA", "aid:pubkey:BB")))
+    assert type(mism) is IssuerMismatchError
+    assert (mism.proof_issuer, mism.expected_issuer) == ("aid:pubkey:AA", "aid:pubkey:BB")
+
+    verd = pickle.loads(pickle.dumps(UnknownVerdictError(7, "az-1")))
+    assert type(verd) is UnknownVerdictError
+    assert (verd.raw_value, verd.authorize_id) == (7, "az-1")
 
 
 # ── The same mapping, reached through a real call ────────────────────────────────────────────────

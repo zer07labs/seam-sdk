@@ -50,7 +50,10 @@ def _kat_event() -> evpb.SeamEvent:
 def test_known_kinds_includes_the_a14_kinds():
     assert "SESSION_LIFECYCLE" in KNOWN_KINDS
     assert "CHAIN_HEAD_ATTESTATION" in KNOWN_KINDS
-    assert len(KNOWN_KINDS) == 8
+    assert (
+        "AUTHORIZE_EVALUATED" in KNOWN_KINDS
+    )  # tag 23: one row per advisory Authorize evaluation
+    assert len(KNOWN_KINDS) == 9
 
 
 def test_streamed_record_digest_matches_for_a_genuine_event():
@@ -77,6 +80,16 @@ def test_streamed_record_digest_rejects_non_v2_and_non_sealed():
     other = evpb.SeamEvent(kind="SESSION_LIFECYCLE")
     with pytest.raises(ValueError):
         verify_streamed_record_digest(other)
+
+
+def test_streamed_record_digest_rejects_a_future_schema_version():
+    """A v3+ record is a framing this SDK does not know. Recomputing it with the v2 domain tag would
+    report a spurious False on a GENUINE record — a tamper verdict fabricated by version skew — so it
+    must refuse loudly like v1 does, not answer."""
+    v3 = _kat_event()
+    v3.payload.schema_version = 3
+    with pytest.raises(ValueError, match="not stream-recomputable"):
+        verify_streamed_record_digest(v3)
 
 
 # ── Live: a streamed SESSION_LIFECYCLE carries its payload; a streamed v2 DECISION_SEALED recomputes ──

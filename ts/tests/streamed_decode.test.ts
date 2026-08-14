@@ -50,10 +50,11 @@ function katEvent(): SeamEvent {
 
 // ── Unit ──────────────────────────────────────────────────────────────────────────────────────────────
 
-test("KNOWN_KINDS includes the A14 kinds", () => {
+test("KNOWN_KINDS includes the A14 kinds and the authorize outbox kind", () => {
   assert.ok(KNOWN_KINDS.has("SESSION_LIFECYCLE"));
   assert.ok(KNOWN_KINDS.has("CHAIN_HEAD_ATTESTATION"));
-  assert.equal(KNOWN_KINDS.size, 8);
+  assert.ok(KNOWN_KINDS.has("AUTHORIZE_EVALUATED"));
+  assert.equal(KNOWN_KINDS.size, 9);
 });
 
 test("verifyStreamedRecordDigest: genuine → true, rewrite → false, strip → false", () => {
@@ -73,6 +74,14 @@ test("verifyStreamedRecordDigest: v1 and non-DECISION_SEALED throw", () => {
   v1.payload!.schemaVersion = 1;
   assert.throws(() => verifyStreamedRecordDigest(v1));
   assert.throws(() => verifyStreamedRecordDigest(create(SeamEventSchema, { kind: "SESSION_LIFECYCLE" })));
+});
+
+test("verifyStreamedRecordDigest: a schema version NEWER than v2 throws, never computes under the v2 tag", () => {
+  // Computing a v3+ digest with the v2 domain tag would return `false` for a genuine record — a
+  // silent authenticity downgrade. It must refuse, exactly like the v1 not-recomputable path.
+  const v3 = katEvent();
+  v3.payload!.schemaVersion = 3;
+  assert.throws(() => verifyStreamedRecordDigest(v3), /not recomputable|only v2/);
 });
 
 // ── Live ──────────────────────────────────────────────────────────────────────────────────────────────

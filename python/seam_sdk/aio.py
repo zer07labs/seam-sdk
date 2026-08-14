@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import warnings
 from typing import Mapping, Optional, Sequence
 
 import grpc
@@ -134,6 +135,8 @@ class SeamClient:
         return cls(channel)
 
     async def close(self) -> None:
+        """Close the underlying channel. Idempotent — grpc.aio tolerates a repeated close, so
+        ``async with`` plus a defensive explicit ``close()`` is safe."""
         await self._ch.close()
 
     async def __aenter__(self) -> "SeamClient":
@@ -281,7 +284,7 @@ class SeamClient:
         session_id: str,
         participants: Sequence[str],
         *,
-        budget: int = 32,
+        budget: int = 0,
         limits: Optional[BudgetLimits] = None,
         mode: str = "",
         on_behalf_of: Sequence[str] = (),
@@ -361,11 +364,19 @@ class SeamClient:
         self,
         session_id: str,
         *,
-        budget: int = 32,
+        budget: int = 0,
         raise_: Optional[BudgetLimits] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.SessionStep:
-        """**Deprecated / tombstone** — see :meth:`seam_sdk.SeamClient.resume_session`."""
+        """**Deprecated / tombstone** — see :meth:`seam_sdk.SeamClient.resume_session`. ``budget``
+        follows the proto's semantics: 0 means the server default, currently 32."""
+        warnings.warn(
+            "seam_sdk.aio.SeamClient.resume_session is a tombstone: resume moved to the management "
+            "plane (SeamAdmin.ResumeSession) — use SeamAdminClient.resume_session with an operator "
+            "token",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         req = pb.ResumeRequest(session_id=session_id, budget=budget)
         if raise_ is not None:
             getattr(req, "raise").CopyFrom(raise_.to_pb())
