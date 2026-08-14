@@ -40,9 +40,15 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-PY_GEN="python/seam_sdk/_gen/seam/api/v1/seam_pb2.py"
+# Python is probed via the .pyi type stubs, not the _pb2.py modules: the _pb2 files carry field names
+# only inside the serialized descriptor blob, where escape sequences make a grep unreliable (a name can
+# match or not depending on the bytes around it — `session_lifecycle` happened to survive while
+# `ciphertext_digest` didn't, which shipped a false ABSENT). The .pyi files declare every field as plain
+# source text and ship in the wheel. The _grpc.py file stays for service/RPC probes (RPCs aren't in .pyi
+# message stubs).
+PY_GEN="python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi"
 PY_GRPC="python/seam_sdk/_gen/seam/api/v1/seam_pb2_grpc.py"
-PY_EV="python/seam_sdk/_gen/seam/event/v1/seam_event_pb2.py"
+PY_EV="python/seam_sdk/_gen/seam/event/v1/seam_event_pb2.pyi"
 TS_GEN="ts/gen/seam/api/v1/seam_pb.ts"
 TS_EV="ts/gen/seam/event/v1/seam_event_pb.ts"
 
