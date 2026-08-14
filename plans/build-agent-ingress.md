@@ -1,5 +1,32 @@
 # Build Plan — Agent ingress: the door
 
+> **🔄 REFRESHED 2026-08-14 — PENDING (verified against code; the earlier "delivered" claim was
+> wrong).** What actually shipped, all in the sibling `seam-adapters` repo (v0.1.0, six packages,
+> private Cloudsmith index; pins `seam-sdk >=0.7,<0.8`, lock resolves 0.7.9 — **not** "0.7.20"):
+>
+> - **§A example — PARTIAL.** `examples/fraud/run.py` (observe→enforce→seal + issuer-pinned
+>   `verify_decision` + wrong-pin `IssuerMismatchError` assert) and `examples/fraud_council/run.py`
+>   (true open→propose→vote→commit with `chain_verified` assert) are real and self-asserting;
+>   `scripts/enroll_dev_identities.py` covers identity provisioning. **Missing: the two scenes the
+>   plan called the demo** — (1) a budget breach driving `Suspended` → R9 raise →
+>   `SeamAdminClient.resume_session` (nothing in any repo calls it from an example; the shipped
+>   "escalate→resume" is LangGraph `interrupt()`, a different mechanism), and (2) a **denied
+>   admission** (scope violation at Admit — shipped DENYs are tool-gate denials only).
+> - **§B MCP server — MISSING entirely, org-wide.** Recorded as a deliberate deferral in
+>   seam-adapters `ASSUMPTIONS.md` ("MCP proof is adapter-SHAPED"). No `seam_*` tool surface, no
+>   per-agent key-custody design for a shared server.
+> - **§C adapter — OVERSHOT.** Four framework shims + a council harness shipped (plan said one,
+>   with an explicit no-second-adapter non-goal). The §C "map tool usage to `StepUsage` so budgets
+>   bind" element is absent — no `StepUsage` reference anywhere in seam-adapters.
+> - **§D packaging — PARTIAL.** Partner compose + ≤5-min quickstart + nightly quickstart CI exist
+>   (`seam-adapters/compose/`), but every path needs partner credentials (private image, private
+>   wheels). **The DoD — "a stranger, with no access to any private repo" — is not met.**
+>
+> **Remaining work (the refreshed scope):** §A's Suspended/resume + denied-admission example
+> scenes; §B the MCP server; §C `StepUsage` wiring in the adapters; §D a public evaluation path
+> (or an explicit product decision that partner-gated is the intended distribution, recorded and
+> the DoD amended). The original plan below stands as written for those items.
+
 > **The finding that produced this plan.** There is **no way for a real agent to get into a Seam session.**
 > Not "no good way" — no way. Across the entire org there is:
 >

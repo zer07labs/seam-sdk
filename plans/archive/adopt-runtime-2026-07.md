@@ -1,5 +1,21 @@
 # Plan — seam-sdk adopts the seam-runtime backlog-closeout landing (2026-07)
 
+> **📦 ARCHIVED 2026-08-14 — DELIVERED, Phases 0–5 verified in both repos (Phase 6 partially
+> delivered).** Phase 0 landed runtime-side via a restructure the plan didn't anticipate: the event
+> schema was extracted into a canonical `seam.event.v1` package imported by `seam.api.v1`
+> (`crates/seam-api/proto/seam/event/v1/seam_event.proto`), with all four mirror fields at the exact
+> canonical tags (21/22/10/4) and `event_to_proto` populating them on both drain and live-tail
+> stream paths, end-to-end tested. Phases 1–2: `make check-contract` + `verify_party_attestation`
+> wrappers shipped. Phases 3–4: `chain --issuer` attestation + digest-v2 recompute shipped, framing
+> KAT-pinned byte-exact, `verify/Cargo.toml` Seam-free. Phase 5: README says AUTHENTICITY, D-034
+> entry in `verify/DECISIONS.md`, goldens + vectors byte-identical to the runtime, differential
+> harness runs the public verifier in runtime CI. Phase 6: `verify_streamed_record_digest` +
+> typed event accessors shipped with the events surface (beyond the "deferred" default).
+> **Post-archive drift caught by the 2026-08-14 review:** runtime #251 later added
+> `AUTHORIZE_EVALUATED` (tag 23, advisory) to the spec; the SDK verifier's advisory list missed it
+> → reproduced false refusal under `--strict`. Fixed same-day with an SDK-side spec-sync tripwire;
+> see `plans/consolidation-2026-08-14.md`.
+
 > Written 2026-07-20 against seam-runtime `main` (post PRs #184–#198) and seam-sdk `main`
 > (HEAD `fdba12d`). Every claim below was read from code in both repos, cited file:line. Source of
 > truth is the runtime **code**, never a status doc.
