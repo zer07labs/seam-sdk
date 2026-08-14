@@ -1,5 +1,17 @@
 # seam-sdk — hardening & completion (P1.10 · H3 · H4 + solid-SDK surface)
 
+> **📦 ARCHIVED 2026-08-14 — DELIVERED (re-verified against code).** P1.10 typed
+> `IssuerMismatchError`, H4 `features`, H3 `SeamAdminClient` (erasure preview→confirm→erase +
+> governance wrappers + bearer interceptor on both unary and stream calls), H5 data-plane parity,
+> `SeamEvents.StreamEvents`, the typed-error taxonomy, and optional TLS are all present and tested
+> in both first-class SDKs (Py: `admin.py`/`errors.py`; TS: `admin.ts`/`errors.ts`). The bearer
+> model described in H3.0 was later replaced runtime-side (#175: shared `SEAM_MGMT_TOKEN` →
+> compact-JWS operator tokens); SDK PR #16 migrated the auth suites — no drift remains.
+> **Residuals found in the 2026-08-14 review and fixed in the same pass:** the four
+> grants/RemoveParty `SeamAdmin` RPCs were still unwrapped in both SDKs; TS TLS remained
+> scheme-only (`https://` baseUrl) vs Python's `credentials=` param. See
+> `plans/consolidation-2026-08-14.md` for the full review + fix record.
+
 > **✅ IMPLEMENTED 2026-07-09** (branch `feat/sdk-hardening-h3-h4-h5`). Landed: H4 `features`; a new
 > `SeamAdminClient` (Py `admin.py` + TS `admin.ts`) with the preview→confirm→erase flow, bearer-token auth,
 > and the governance wrappers; H5 data-plane parity (`report_outcome`, `register_context`/`resolve_context`,

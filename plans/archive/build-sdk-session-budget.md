@@ -1,5 +1,18 @@
 # Build Plan — SDK session + budget surface (Python/TS; `seam-sdk` repo)
 
+> **📦 ARCHIVED 2026-08-14 — DELIVERED (verified against code, not memory).** All eight lifecycle
+> methods + `BudgetLimits`/`StepUsage` exist in both SDKs (`python/seam_sdk/client.py:364-486`,
+> `ts/src/client.ts:286-349`); the suspend→raise→resume loop is live-tested in both
+> (`python/tests/test_integration.py:163-192`, `ts/tests/integration.test.ts:121-146`); the README
+> budget-semantics table exists (README §budget semantics). **Post-plan runtime change absorbed:**
+> the runtime moved resume to `SeamAdmin.ResumeSession` (rt-D), so the data-plane `resume_session`
+> is a documented deprecated tombstone and the live raise path is `SeamAdminClient.resume_session`.
+> **Deviations from the letter of the plan:** (1) lifecycle methods return raw generated pb messages
+> (`SessionStep`/`TerminalResponse`/`SessionStatusResponse`), not the promised DTO wrappers — kept
+> deliberately at v0.7.x: the surface is shipped, tested, and identical across Py/TS, and a DTO
+> retrofit is now a breaking change with no behavioral payoff; inputs *are* DTO-typed. (2) TS tests
+> run under `node:test`, not vitest. Neither deviation affects the wire contract or the DoD loop.
+
 > **Scope:** the sibling `../seam-sdk` repo (Python + TypeScript SDKs). **Status: ready to
 > build** once runtime PR #51 (`feat/budget-transport`) is merged and the updated
 > `seam.api.v1` contract is published to the BSR.
