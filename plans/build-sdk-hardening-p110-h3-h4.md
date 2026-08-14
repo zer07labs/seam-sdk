@@ -227,5 +227,3 @@ rely on end-to-end; each is a thin wrapper + a small test.
 - Go/Java/Kotlin ergonomic clients (crypto shims by ADR).
 - The runtime side — all merged (BSR carries tenant/confirm_count/PreviewErasure/features/ReportOutcome).
 - Any runtime contract push or regeneration commit (stubs are git-ignored + CI-regenerated).
-</content>
-</invoke>
