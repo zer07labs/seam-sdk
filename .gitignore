@@ -18,6 +18,5 @@
 python/seam_sdk/_gen/
 ts/gen/
 
-plans/
 .claude/
 CLAUDE.md
