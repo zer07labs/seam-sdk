@@ -1,7 +1,8 @@
 # Assumptions — seam-sdk adopts the seam-runtime backlog-closeout landing (2026-07)
 
-Working assumptions taken during `/implement` of `plans/adopt-runtime-2026-07.md`, to reconcile later.
-Each is the strongest option given what the code showed; none is a one-way door.
+Working assumptions taken during `/implement` of `plans/archive/adopt-runtime-2026-07.md`, to
+reconcile later. Each is the strongest option given what the code showed; none is a one-way door.
+Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 
 ## check-contract default mode is RPC-only; streamed-payload fields gate under STREAM=1
 - **Assumed:** the SDK's CI must stay green against the **currently published BSR**, which carries
@@ -16,7 +17,11 @@ Each is the strongest option given what the code showed; none is a one-way door.
   the phase's whole point.
 - **Blast radius if wrong:** low/reversible — one env flag on one CI step. If the streamed fields must be
   enforced sooner, set `STREAM=1`; if the RPC gate is too strict, it is a one-line probe change.
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (2026-08-16). The escalation this entry named as the eventual target already
+  happened: `.github/workflows/ci.yml` now runs `STREAM=1 EVENTS=1` as permanent hard gates on both
+  check-contract steps, and `README.md` states the BSR carries the full surface. (This entry originally
+  said "CI runs the default mode" — that clause is now stale; the env-flag split itself — lenient default
+  for local mid-regeneration trees, hard gate in CI — is unchanged and correct.) See DECISIONS.md.
 
 ## generate-local is the development baseline; the BSR is the release source
 - **Assumed:** SDK development should not be blocked waiting on the (user-gated, immutable) BSR push, while
@@ -27,7 +32,10 @@ Each is the strongest option given what the code showed; none is a one-way door.
 - **Alternatives:** assume the BSR is always fresh — the runtime's A13 history (a `buf push` that used to
   silent-skip) says it may not be, and a stale contract would pass locally and break on release.
 - **Blast radius if wrong:** none structural — it is a documented workflow, not a code contract.
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (2026-08-16). Verified: the `Makefile` still has both targets exactly as
+  described; `ci.yml`/`publish.yml` only ever call `make generate` (BSR); `README.md` documents
+  `generate-local` for iteration; and `python/tests/test_workflows_generate_through_the_makefile.py`
+  enforces that no workflow calls raw `buf generate`. Nothing drifted. See DECISIONS.md.
 
 ## The live attestation valid-case pins the runtime's chain_head_attestation KAT
 - **Assumed:** the Phase-2 live test needs a genuinely-valid attestation for the "verifies" case, and the
@@ -42,7 +50,18 @@ Each is the strongest option given what the code showed; none is a one-way door.
   path that differs between local and CI. Phase 5 will formalize this KAT into `conformance/vectors.json`.
 - **Blast radius if wrong:** low — a test-only fixture. If the runtime regenerates the KAT, the pinned
   constants must be refreshed (a deliberate, reviewable update, flagged by the test going red).
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (amended) (2026-08-16). The decision to pin a runtime-signed KAT rather than
+  re-derive the framing client-side is correct and unchanged. The *mechanism* was amended, scoped to the
+  two Python/TS attestation tests this entry was originally about: Phase 5 had since added this same KAT
+  to `conformance/vectors.json`, but `python/tests/test_verify_attestation.py` and
+  `ts/tests/verify_attestation.test.ts` still carried their own hand-copied literal. Both now load the KAT
+  from `conformance/vectors.json` (matching the loader pattern `test_conformance.py` / `conformance.test.ts`
+  already use) and the duplicated literals are deleted, so a runtime KAT regen reddens both of these
+  instead of silently diverging. **Not closed by this pass:** `verify/src/verify.rs` (the Rust crate, a
+  different test — payload-framing, not attestation registration) carries two more independent hardcoded
+  copies of the same KAT (`attested_len: 1000` etc. at ~line 488 and ~515) that a regen still wouldn't
+  catch; out of scope here since it's a separate assumption's territory (Rust crate hygiene), not this
+  Python/TS entry — worth its own follow-up if it's ever worth the churn. See DECISIONS.md.
 
 ## The verify/ authenticity goldens are pinned to a runtime commit
 - **Assumed:** the independent verifier must be tested against the SAME golden streams the runtime tests
@@ -56,7 +75,11 @@ Each is the strongest option given what the code showed; none is a one-way door.
   differs local vs CI, and couples the SDK's green build to a runtime checkout being present.
 - **Blast radius if wrong:** low — test fixtures. A drift is caught by a failing test, and the fix is a
   re-copy from the named commit.
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (2026-08-16). Verified: `verify/tests/goldens/` exists and is populated
+  (`attested_chain.jsonl`, `fabricated_chain.jsonl`, `payload_rewrite.jsonl`), the pin (seam-runtime
+  commit `fd633c9`) is a real, reachable commit in the sibling checkout, the SDK's goldens are
+  byte-for-byte identical (SHA-256) to that commit's fixtures, and there has been no runtime-side drift
+  since (`git log fd633c9..HEAD -- crates/seam-verify/tests/goldens/` is empty). See DECISIONS.md.
 
 ## The streamed digest-recompute helper lives on the admin module, keyed to a single record
 - **Assumed:** Phase 6 (the plan marks it optional; implemented per the "do it fully" decision) needs an
@@ -73,7 +96,10 @@ Each is the strongest option given what the code showed; none is a one-way door.
   runtime.
 - **Blast radius if wrong:** low — additive API. If a full streamed-chain verify is later wanted, it builds
   on the same `record_digest_v2` + `verify_chain_head_attestation` primitives already shipped.
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (2026-08-16). Verified: `verify_streamed_record_digest`/`verifyStreamedRecordDigest`
+  are behaviorally equivalent in both languages, both tested (genuine/rewrite/strip/v1/v3-plus), and
+  documented in `README.md`. No consumer has asked for the broader `verify_streamed_chain` since — the
+  minimal scope holds. See DECISIONS.md.
 
 ## `timeout` means per-RPC, not an overall call budget
 
@@ -82,7 +108,7 @@ Each is the strongest option given what the code showed; none is a one-way door.
   `asyncio.wait_for`, and `SessionBinder` does the same per step.
 - **Chose:** keep per-RPC and **document it explicitly** (`client.py`, above `DEFAULT_TIMEOUT_S`).
   Most methods make one wire call, so the distinction is invisible; it bites on `authorize`,
-  which can make up to four (a cold/stale admit is 2 RTT, then Authorize, then on
+  which can make up to six (a cold/stale admit is 2 RTT, then Authorize, then on
   `UNAUTHENTICATED` a refresh of 2 RTT plus the retried Authorize), and on `run_decision` /
   `open_session`, which each begin with the challenge→Admit handshake.
 - **Alternatives:** an overall budget — the semantics most callers would assume from the name.
@@ -92,8 +118,13 @@ Each is the strongest option given what the code showed; none is a one-way door.
 - **Blast radius if wrong:** a caller sizing an outer deadline as `1x timeout` sees spurious
   cancellations on the refresh path, where the SDK legitimately needs more. That is the failure
   the documentation above is meant to prevent; the adapters' `Gate` already sizes for it.
-- **Status:** UNCONFIRMED — revisit if a second consumer wants an overall budget. Changing it
-  later is additive if introduced as a distinct parameter rather than a redefinition of `timeout`.
+- **Status:** CONFIRMED (2026-08-16). Verified: `client.py`'s doc comment is still accurate to the
+  code (the six-call worst case above), TS carries the mirrored doc, and Go/Java/Kotlin have no
+  client (crypto-shim only) so no gap there. No second consumer wanting an overall budget has
+  surfaced — `seam-aegis` calls `seam_sdk` directly but only from a diagnostic check harness with
+  no hard-bound requirement; its production path goes through `seam-agent-core`, which already
+  imposes `timeout_s`. Revisit if that changes; an overall budget stays addable later as a distinct
+  parameter rather than a redefinition of `timeout`. See DECISIONS.md.
 
 ## The `protobuf` floor is derived from the generated stubs, not chosen
 
@@ -114,8 +145,13 @@ Each is the strongest option given what the code showed; none is a one-way door.
   seam-sdk. That is the correct outcome — the alternative is resolving successfully and failing
   at `import seam_sdk` — but it IS a breaking change for such a consumer and wants a minor bump
   and a release note.
-- **Status:** UNCONFIRMED — the `requires-python` and floor bumps are metadata breaking changes;
-  confirm the release framing before publishing.
+- **Status:** CONFIRMED (2026-08-16). The floors shipped in 0.7.13 (2026-08-03) exactly as chosen
+  (`protobuf>=7.35.1,<8`, `requires-python>=3.10`), with the release-framing concern this entry
+  raised already addressed: `CHANGELOG.md`'s 0.7.13 section carries an explicit warning block
+  stating the version number can't signal the break (seam-sdk follows the runtime's version; a
+  minor bump was structurally impossible under "one version everywhere"), a table of what each old
+  floor allowed, and confirmation that resolvers still do the safe thing. `test_protobuf_floor.py`
+  still derives and enforces the floor from the emitted stubs. See DECISIONS.md.
 
 ## The `grpcio` floor is derived the same way, and needs the LATER of two versions
 - **Assumed:** consumers can move to grpcio 1.64+. Same reasoning as protobuf above, and found by
@@ -134,4 +170,6 @@ Each is the strongest option given what the code showed; none is a one-way door.
 - **Blast radius if wrong:** a consumer pinned below grpcio 1.64 can no longer resolve seam-sdk.
   As above, that is the correct outcome — the old `>=1.60` let a resolver pick a grpcio where
   `SeamClient.connect()` dies with an opaque `TypeError` — but it is breaking for such a consumer.
-- **Status:** UNCONFIRMED — folds into the same release framing as the protobuf floor above.
+- **Status:** CONFIRMED (2026-08-16). Same resolution as the protobuf floor above — shipped in
+  0.7.13 with the same framing. `test_grpcio_floor.py` still derives and enforces `grpcio>=1.64`
+  from the calling-convention markers present in `_gen`. See DECISIONS.md.

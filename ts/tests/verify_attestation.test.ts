@@ -7,11 +7,14 @@
 // (`seamd/tests/grpc.rs::grpc_verify_party_attestation_trio`).
 //
 // The live valid case pins the runtime's committed `chain_head_attestation` KAT (seed + precomputed
-// signature), so the test does not re-derive the signature framing. Regenerated from seam-runtime
-// conformance_vectors.json `chain_head_attestation`.
+// signature), so the test does not re-derive the signature framing. Loaded from
+// `conformance/vectors.json`'s `chain_head_attestation` entry — the SAME source `conformance.test.ts`
+// reads for the signature-verification unit test — so a runtime KAT regen updates one file and reddens
+// both tests, instead of leaving a hand-copied literal here silently stale.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { connect as tcpConnect } from "node:net";
 import { ed25519 } from "@noble/curves/ed25519";
@@ -26,22 +29,20 @@ import {
 const BIN = process.env.SEAM_GRPC_BIN;
 const SKIP = !BIN;
 
-// ── The runtime chain_head_attestation KAT ────────────────────────────────────────────────────────────
-const KAT_SEED = Uint8Array.from(Buffer.from("07".repeat(32), "hex"));
+// ── The runtime chain_head_attestation KAT, from conformance/vectors.json ────────────────────────────
+const vectors = JSON.parse(
+  readFileSync(new URL("../../conformance/vectors.json", import.meta.url), "utf8"),
+);
+const VECTOR = vectors.chain_head_attestation;
+const KAT_SEED = Uint8Array.from(Buffer.from(VECTOR.inputs.issuer_seed_hex, "hex"));
 function katAttestation(): ChainHeadAttestation {
   return create(ChainHeadAttestationSchema, {
-    attestedLen: 1000n,
-    attestedHead: Uint8Array.from(Buffer.from("ab".repeat(32), "hex")),
-    attestedAt: 1700000000000n,
-    issuerAid: "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
-    digestSchema: 2,
-    signature: Uint8Array.from(
-      Buffer.from(
-        "5169458689b92af81fbbfbd1bd07aff82cb68993919837232a1b54204a0e565e" +
-          "e58791b607c40a48dae6a9dbf8c6129e7028fdbd0e14095d7a4c0a99c775a90a",
-        "hex",
-      ),
-    ),
+    attestedLen: BigInt(VECTOR.inputs.attested_len),
+    attestedHead: Uint8Array.from(Buffer.from(VECTOR.inputs.attested_head_hex, "hex")),
+    attestedAt: BigInt(VECTOR.inputs.attested_at),
+    issuerAid: VECTOR.issuer_aid as string,
+    digestSchema: VECTOR.inputs.digest_schema,
+    signature: Uint8Array.from(Buffer.from(VECTOR.signature_hex, "hex")),
   });
 }
 const katPubkey = () => ed25519.getPublicKey(KAT_SEED);

@@ -9,12 +9,17 @@ Two layers:
 
 The live valid case pins the runtime's committed `chain_head_attestation` KAT (seed + precomputed
 signature) so the test does not re-derive the signature framing — a known-good signature from the runtime
-is the gold standard. Regenerated from seam-runtime conformance_vectors.json `chain_head_attestation`.
+is the gold standard. Loaded from `conformance/vectors.json`'s `chain_head_attestation` entry — the SAME
+source `test_conformance.py::test_chain_head_attestation_signature_verifies` reads — so a runtime KAT
+regen updates one file and reddens both tests, instead of leaving a hand-copied literal here silently
+stale.
 """
 
 from __future__ import annotations
 
+import json
 import os
+import pathlib
 import socket
 import subprocess
 import time
@@ -26,22 +31,22 @@ from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
 from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as ev
 from seam_sdk import SeamAdminClient, SeamClient  # noqa: E402
 
-# ── The runtime chain_head_attestation KAT (seam-client/tests/conformance_vectors.json) ───────────────
+# ── The runtime chain_head_attestation KAT, from conformance/vectors.json ────────────────────────────
 # The counterparty signs with the ed25519 key derived from this seed; the signature is over the
 # domain-separated, length-prefixed preimage in docs/specs/seam-event.v1.md §CHAIN_HEAD_ATTESTATION. We
 # register the derived pubkey and submit the attestation verbatim — the `issuer_aid` string is part of the
-# signed preimage, so it is passed exactly as the KAT has it (short `aid:pubkey:` form).
-_KAT_ISSUER_SEED = bytes.fromhex("07" * 32)
+# signed preimage, so it is passed exactly as the vector has it (short `aid:pubkey:` form).
+_VECTOR = json.loads(
+    (pathlib.Path(__file__).parents[2] / "conformance" / "vectors.json").read_text()
+)["chain_head_attestation"]
+_KAT_ISSUER_SEED = bytes.fromhex(_VECTOR["inputs"]["issuer_seed_hex"])
 _KAT_ATTESTATION = dict(
-    attested_len=1000,
-    attested_head=bytes.fromhex("ab" * 32),
-    attested_at=1700000000000,
-    issuer_aid="aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
-    digest_schema=2,
-    signature=bytes.fromhex(
-        "5169458689b92af81fbbfbd1bd07aff82cb68993919837232a1b54204a0e565e"
-        "e58791b607c40a48dae6a9dbf8c6129e7028fdbd0e14095d7a4c0a99c775a90a"
-    ),
+    attested_len=_VECTOR["inputs"]["attested_len"],
+    attested_head=bytes.fromhex(_VECTOR["inputs"]["attested_head_hex"]),
+    attested_at=_VECTOR["inputs"]["attested_at"],
+    issuer_aid=_VECTOR["issuer_aid"],
+    digest_schema=_VECTOR["inputs"]["digest_schema"],
+    signature=bytes.fromhex(_VECTOR["signature_hex"]),
 )
 
 
