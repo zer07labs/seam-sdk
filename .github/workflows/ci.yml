@@ -248,7 +248,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: gradle test
         working-directory: java
-        run: gradle test --no-daemon
+        run: ./gradlew test --no-daemon
 
   kotlin:
     name: kotlin (gradle test)
@@ -262,7 +262,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: gradle test
         working-directory: kotlin
-        run: gradle test --no-daemon
+        run: ./gradlew test --no-daemon
 
   verify:
     name: verify (the independent verifier)

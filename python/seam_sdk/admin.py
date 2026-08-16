@@ -253,20 +253,28 @@ class SeamAdminClient:
         subject: str,
         confirm_count: int,
         *,
+        now_millis: Optional[int] = None,
         timeout: float = DEFAULT_ADMIN_TIMEOUT_S,
     ) -> ev.ErasureCertificate:
         """Crypto-shred every record bound to ``subject`` in ``tenant`` and return the signed,
         chain-anchored certificate. ``tenant`` is REQUIRED (empty ⇒ server rejects); ``confirm_count``
-        MUST equal the preview's ``len(would_erase)`` or the server rejects (``INVALID_ARGUMENT``)."""
-        return self._admin.EraseSubject(
-            pb.ErasureRequest(
-                subject=subject, tenant=tenant, confirm_count=confirm_count
-            ),
-            timeout=timeout,
+        MUST equal the preview's ``len(would_erase)`` or the server rejects (``INVALID_ARGUMENT``).
+        ``now_millis`` overrides the injected run time (default: the server clock) — mirrors
+        ``enforce_retention``'s identical field."""
+        req = pb.ErasureRequest(
+            subject=subject, tenant=tenant, confirm_count=confirm_count
         )
+        if now_millis is not None:
+            req.now_millis = now_millis
+        return self._admin.EraseSubject(req, timeout=timeout)
 
     def erase_subject_confirmed(
-        self, tenant: str, subject: str, *, timeout: float = DEFAULT_ADMIN_TIMEOUT_S
+        self,
+        tenant: str,
+        subject: str,
+        *,
+        now_millis: Optional[int] = None,
+        timeout: float = DEFAULT_ADMIN_TIMEOUT_S,
     ) -> ev.ErasureCertificate:
         """The common, safe path: preview, then erase with the preview's ``would_erase`` count.
 
@@ -275,7 +283,11 @@ class SeamAdminClient:
         SessionBinder documents for its own two-call failure path."""
         preview = self.preview_erasure(tenant, subject, timeout=timeout)
         return self.erase_subject(
-            tenant, subject, len(preview.would_erase), timeout=timeout
+            tenant,
+            subject,
+            len(preview.would_erase),
+            now_millis=now_millis,
+            timeout=timeout,
         )
 
     # ── Governance / tenancy ─────────────────────────────────────────────────────────────────────

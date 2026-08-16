@@ -113,8 +113,8 @@ const ADMIN_CALLS: Record<
   (a: SeamAdminClient, o?: { timeoutMs?: number }) => Promise<unknown>
 > = {
   previewErasure: (a, o) => a.previewErasure("acme", "cust-42", o),
-  eraseSubject: (a, o) => a.eraseSubject("acme", "cust-42", 0n, o),
-  eraseSubjectConfirmed: (a, o) => a.eraseSubjectConfirmed("acme", "cust-42", o),
+  eraseSubject: (a, o) => a.eraseSubject("acme", "cust-42", 0n, undefined, o),
+  eraseSubjectConfirmed: (a, o) => a.eraseSubjectConfirmed("acme", "cust-42", undefined, o),
   enrollTenant: (a, o) => a.enrollTenant("aid:x", "acme", "ns", o),
   listTenants: (a, o) => a.listTenants(o),
   registerParty: (a, o) => a.registerParty("p", new Uint8Array(32), o),
