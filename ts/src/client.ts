@@ -564,6 +564,11 @@ export class SeamClient {
    * ordinary invalid decision. Rejects with {@link IssuerMismatchError} when the proof's issuer AID does
    * not match `expectedIssuer` — a distinct security signal (an attempted key substitution), never
    * downgraded to a bland `false`. Mirrors the Rust reference's distinct `ClientError::Crypto`.
+   *
+   * `signedArtifact` must decode as UTF-8; a non-UTF-8 artifact throws `TypeError` rather than
+   * decoding lossily. Mirrors the Python SDK, where the equivalent `.decode()` raises
+   * `UnicodeDecodeError` — both SDKs fail loud on a corrupted artifact instead of silently
+   * returning `false`, which would be indistinguishable from an ordinary invalid decision.
    */
   async verifyDecision(
     decisionId: string,
@@ -575,7 +580,7 @@ export class SeamClient {
       throw new IssuerMismatchError(proof.issuerAid, expectedIssuer);
     const c = proof.commitment;
     if (!c) return false;
-    return verifyTct(expectedIssuer, new TextDecoder().decode(c.signedArtifact), {
+    return verifyTct(expectedIssuer, new TextDecoder("utf-8", { fatal: true }).decode(c.signedArtifact), {
       id: c.id,
       action: c.action,
       authority: c.authority,

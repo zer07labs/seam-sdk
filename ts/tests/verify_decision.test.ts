@@ -16,8 +16,9 @@ const vectors = JSON.parse(
 
 /** A client whose `getCommitmentProof` returns a stub proof carrying `issuerAid` — no I/O ever happens.
  * `action` overrides the committed action; a wrong value makes the commitment digest miss the TCT's grant
- * (an ordinary invalid/tampered decision, signature still well-formed). */
-function clientWithProof(issuerAid: string, action?: string): SeamClient {
+ * (an ordinary invalid/tampered decision, signature still well-formed). `signedArtifact` overrides the raw
+ * artifact bytes, for exercising the UTF-8 decode path directly. */
+function clientWithProof(issuerAid: string, action?: string, signedArtifact?: Uint8Array): SeamClient {
   const t = vectors.tct;
   const c = t.inputs.commitment;
   const proof = {
@@ -29,7 +30,7 @@ function clientWithProof(issuerAid: string, action?: string): SeamClient {
       authMethod: c.auth_method,
       trustBasis: c.trust_basis,
       supersedes: c.supersedes ?? "",
-      signedArtifact: new TextEncoder().encode(t.signed_artifact_jws),
+      signedArtifact: signedArtifact ?? new TextEncoder().encode(t.signed_artifact_jws),
     },
   };
   const client = SeamClient.connect("http://127.0.0.1:1"); // lazy transport; never dialed
@@ -56,4 +57,15 @@ test("verifyDecision: matching issuer but invalid TCT resolves to false (no thro
   // Issuer matches the pin, so we pass the mismatch gate; the tampered action ⇒ digest miss ⇒ invalid.
   const client = clientWithProof(issuer, "TAMPERED");
   assert.equal(await client.verifyDecision("dec-1", issuer), false);
+});
+
+test("verifyDecision: non-UTF-8 signedArtifact throws rather than decoding lossily to a bland false", async () => {
+  // Mirrors the Python SDK, where `c.signed_artifact.decode()` raises `UnicodeDecodeError` uncaught.
+  // A corrupted artifact must be distinguishable from an ordinary invalid decision, not silently folded
+  // into `false` by a lossy decode (which would replace the bad bytes with U+FFFD and just fail the TCT
+  // signature check for an unrelated reason).
+  const issuer = vectors.tct.issuer_aid as string;
+  const invalidUtf8 = new Uint8Array([0xff, 0xfe, 0xfd]);
+  const client = clientWithProof(issuer, undefined, invalidUtf8);
+  await assert.rejects(client.verifyDecision("dec-1", issuer), TypeError);
 });

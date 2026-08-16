@@ -21,6 +21,7 @@ import {
   Agent,
   DEFAULT_TIMEOUT_MS,
   SeamClient,
+  UnknownVerdictError,
 } from "../src/client.js";
 import { DEFAULT_ADMIN_TIMEOUT_MS, SeamAdminClient } from "../src/admin.js";
 import {
@@ -328,6 +329,60 @@ test("a TRANSFORM verdict with no transformed_input throws ProtocolViolationErro
     assert.ok(e instanceof ProtocolViolationError, "must be the typed violation, not a bare Error");
     assert.equal((e as ProtocolViolationError).name, "ProtocolViolationError");
     assert.equal((e as ProtocolViolationError).authorizeId, "az-9");
+    return true;
+  });
+});
+
+// ── Verdict decoding: every named verdict round-trips; an unknown one never implicitly allows ────
+
+test("authorize decodes every named verdict, with TRANSFORM carrying transformedInput", async () => {
+  const seam = fakeSeam();
+  const cases: [AuthorizeVerdict, "ALLOW" | "DENY" | "TRANSFORM" | "ESCALATE"][] = [
+    [AuthorizeVerdict.ALLOW, "ALLOW"],
+    [AuthorizeVerdict.DENY, "DENY"],
+    [AuthorizeVerdict.TRANSFORM, "TRANSFORM"],
+    [AuthorizeVerdict.ESCALATE, "ESCALATE"],
+  ];
+  for (const [wire, name] of cases) {
+    const client = new SeamClient(
+      fakeTransport([], (method, input) =>
+        method === "Authorize"
+          ? {
+              verdict: wire,
+              authorizeId: "01AUTHZ",
+              policyVersion: "policy-v1",
+              transformedInput:
+                wire === AuthorizeVerdict.TRANSFORM
+                  ? new TextEncoder().encode('{"redacted":true}')
+                  : new Uint8Array(0),
+            }
+          : seam.handle(method, input),
+      ),
+    );
+    const r = await client.authorize(new Agent(SEED), "t", {});
+    assert.equal(r.verdict, name);
+    assert.equal(r.authorizeId, "01AUTHZ");
+    assert.equal(r.policyVersion, "policy-v1");
+    assert.equal(r.allowed, name === "ALLOW");
+    if (name === "TRANSFORM") {
+      assert.deepEqual(r.transformedInput, new TextEncoder().encode('{"redacted":true}'));
+    } else {
+      assert.equal(r.transformedInput, undefined);
+    }
+  }
+});
+
+test("an unrecognized verdict (incl. UNSPECIFIED) throws UnknownVerdictError, never an implicit allow", async () => {
+  const seam = fakeSeam();
+  const client = new SeamClient(
+    fakeTransport([], (method, input) =>
+      method === "Authorize"
+        ? { verdict: AuthorizeVerdict.AUTHORIZE_VERDICT_UNSPECIFIED, authorizeId: "az-0" }
+        : seam.handle(method, input),
+    ),
+  );
+  await assert.rejects(client.authorize(new Agent(SEED), "t", {}), (e: unknown) => {
+    assert.ok(e instanceof UnknownVerdictError, "must be the typed error, not an implicit allow");
     return true;
   });
 });
