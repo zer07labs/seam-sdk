@@ -6,6 +6,11 @@ from the **`seam.api.v1`** protobuf contract. Languages: **Go, Java, Kotlin, Pyt
 Licensed Apache-2.0. The Seam runtime itself is a separate, private repository — these SDKs depend only on
 the public contract, never on the runtime internals.
 
+> ⚠️ **If you are pinned below 0.7.20, upgrade.** 0.7.13–0.7.15 published an unimportable wheel;
+> 0.7.16–0.7.19 import fine but fail every `authorize()` call against a current runtime
+> (`UNAUTHENTICATED: admission ticket is not valid` — the ticket is fine). Neither defect is visible
+> from the version number. Full detail and root cause: [`CHANGELOG.md`](CHANGELOG.md).
+
 ## Architecture
 
 The single source of truth is the `seam.api.v1` protobuf contract, published as the buf module

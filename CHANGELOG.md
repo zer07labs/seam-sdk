@@ -16,9 +16,126 @@ than trusting a summary here.
 
 ## Unreleased
 
-_Nothing yet._
+### Added
+
+- `now_millis` / `nowMillis` exposed on `erase_subject`/`eraseSubject` and
+  `erase_subject_confirmed`/`eraseSubjectConfirmed` (Python + TS) — the field already existed on
+  the wire; only the hand-written wrappers omitted it, unlike `enforce_retention`, which already
+  exposed the identical field (#39).
+
+### Fixed
+
+- **TS `verifyDecision` decoded a non-UTF-8 `signedArtifact` lossily and returned `false`**, where
+  Python's equivalent `.decode()` raises `UnicodeDecodeError` — the two SDKs disagreed on identical
+  corrupted input, and the TS path silently downgraded a corrupted-artifact signal to the same
+  `false` an ordinary invalid decision returns. TS now decodes with `{ fatal: true }` and throws,
+  matching Python's fail-loud behavior.
+
+## 0.7.26 — 2026-08-14
+
+### Added
+
+- `SeamAdminClient.report_events_consumed(consumed_cursor)` / `reportEventsConsumed(consumedCursor)`
+  — wraps the additive `SeamEvents.ReportEventsConsumed` RPC (seam-runtime #317), so the
+  `seam-event.v1` relay can report its durably-consumed outbox cursor and let the runtime bound
+  (garbage-collect) its outbox. `check-contract.sh` gates the RPC's presence under `EVENTS=1` (#32).
+
+_(0.7.22–0.7.25 carry no seam-sdk tag in this repo's history — no client-facing SDK change shipped
+under those version numbers.)_
+
+## ⚠️ Advisory: 0.7.13–0.7.19 do not work against a current runtime
+
+**If you have anything pinned below 0.7.20, upgrade.** These versions remain installable from
+Cloudsmith — this advisory, not a yank, is the mitigation (see below) — but they fail in two
+different ways, and a matching version number does **not** imply a matching wire contract:
+
+| Range | Symptom | Root cause | Fixed by |
+|---|---|---|---|
+| 0.7.13–0.7.15 | `import seam_sdk` fails: `ModuleNotFoundError: No module named 'seam'` | `publish.yml` ran raw `buf generate` instead of `make generate` (which also runs `scripts/root_gen.py` to rewrite the top-level `seam.*` imports protoc emits into the rooted `seam_sdk._gen.*` form); the published wheel was never actually importable, and the publish guard couldn't tell because it checked file presence, not import. | 0.7.16 (#28) |
+| 0.7.16–0.7.19 | Every `authorize()` call fails `UNAUTHENTICATED: admission ticket is not valid` — **the ticket is fine.** | seam-runtime #286 moved the per-call proof-of-possession signature from v1 (`ticket ‖ digest`) to v2 (five length-framed fields including `tool_name`/`agent_id`). Every SDK published before the fix still signed v1; 0.7.17 shipped 11 minutes *after* the runtime change landed and still carried it. The framing had no conformance vector, and both SDKs' tests verified a signature against a payload the test itself rebuilt — so a self-consistent signature looked conformant and stayed green. | 0.7.20 (#30) |
+
+0.7.13–0.7.15 and 0.7.16–0.7.19 are each confirmed broken by their own defect (the two do not
+overlap — 0.7.16 fixed the import bug the same release it stopped mattering for anyone hitting the
+wire bug instead). Per git evidence (`import seam_sdk` failing on "every wheel this repo has ever
+published" per #28) the import breakage may reach back further than 0.7.13 — this advisory covers
+the versions this repo's own history can attribute with confidence. **0.7.20 is the first release
+that is both importable and wire-correct.**
+
+No yank: the existing `yank.yml` workflow (dry-run default) was not run for this window: the
+versions install and produce a "reasonable anti-oracle" auth error rather than corrupting data or
+executing anything unsafe, and revoking installability under a floor already in wide use (adapters,
+aegis) is a bigger blast radius than a loud advisory. If that call needs revisiting, `yank.yml` is
+ready. Downstream: `seam-adapters` and `seam-aegis` should pin `seam-sdk>=0.7.20` rather than the
+current `>=0.7,<0.8`, which admits the whole broken range.
+
+## 0.7.21 — 2026-08-09
+
+### Internal
+
+- CI's required-checks aggregator now treats a **skipped** job as a failure, closing a gap where a
+  workflow condition quietly skipping a check let it read as passing (#29).
+- Docs: import the shared cross-repo context from `zer07labs/seam` (#31).
+
+## 0.7.20 — 2026-08-08
+
+> **First wire-correct release since 0.7.16 — see the advisory above if you are on an older
+> version.**
+
+### Fixed
+
+- **`authorize()` signed the v1 `call_sig` payload; the runtime has required v2 since seam-runtime
+  #286.** Every ENFORCE call was rejected `UNAUTHENTICATED: admission ticket is not valid` — a
+  first-line-misdiagnosis-shaped failure, since the ticket itself was fine. Fixed by signing the v2
+  framing (`frame(context) ‖ frame(ticket) ‖ frame(digest) ‖ frame(tool_name) ‖ frame(agent_id)`,
+  binding the tool and agent identity to the signature so a captured signature can't be re-pointed
+  at a different tool or registry agent while the ticket is live) (#30).
+- The fix ships with `conformance/call_sig_payload_vector.json`, generated by executing the
+  runtime's own Rust `call_sig_payload` rather than transcribed from it, so both languages now
+  assert against runtime-derived bytes instead of a self-consistent construction that could drift
+  again silently.
+
+## 0.7.19 — 2026-08-08
+
+⚠️ **Broken — see the advisory above.** Version bump only; still signs the v1 `call_sig` payload.
+
+## 0.7.18 — 2026-08-08
+
+⚠️ **Broken — see the advisory above.** Version bump only; still signs the v1 `call_sig` payload.
+
+## 0.7.17 — 2026-08-07
+
+⚠️ **Broken — see the advisory above.** Version bump only, published 11 minutes after
+seam-runtime #286 landed the v2 `call_sig` requirement; still signs v1.
+
+## 0.7.16 — 2026-08-05
+
+⚠️ **Wire-broken — see the advisory above** (still signs v1 `call_sig`), but this is the **first
+importable wheel**.
+
+### Fixed
+
+- **Every published wheel back through 0.7.13 was unimportable**: `import seam_sdk` raised
+  `ModuleNotFoundError: No module named 'seam'`. `publish.yml` ran raw `buf generate` in both its
+  jobs instead of `make generate`, which also runs `scripts/root_gen.py` to rewrite the top-level
+  `seam.*` imports protoc emits into the package-rooted form. CI tested the `make generate` output;
+  the release published the raw one — never the same code. The publish guard listed the wheel's
+  contents and confirmed the file was present, but never imported it, so it could not catch this.
+  Found by `seam-adapters`' `live-wire` CI job, the first thing anywhere to install the published
+  artifact rather than resolve a sibling checkout (#28).
+
+## 0.7.15 — 2026-08-04
+
+⚠️ **Broken — see the advisory above.** Version bump only; unimportable (`import seam_sdk` fails).
+
+## 0.7.14 — 2026-08-03
+
+⚠️ **Broken — see the advisory above.** Version bump only; unimportable (`import seam_sdk` fails).
 
 ## 0.7.13 — 2026-08-03
+
+⚠️ **Also unimportable — see the advisory above.** `publish.yml`'s raw-`buf generate` defect
+(fixed in 0.7.16, #28) predates this release too; the packaging fixes below landed in source but
+never reached a consumer, because the wheel that shipped them couldn't be imported.
 
 > **Shipped as a patch, but the packaging changes below are breaking.** The version number could not
 > say so: seam-sdk follows the runtime's version, and the runtime's own history for this release
