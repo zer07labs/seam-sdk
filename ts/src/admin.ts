@@ -177,14 +177,20 @@ export class SeamAdminClient {
   }
 
   /** Crypto-shred every record bound to `subject` in `tenant`; returns the signed certificate. `tenant`
-   * is REQUIRED (empty ⇒ rejected); `confirmCount` MUST equal the preview's `wouldErase.length`. */
+   * is REQUIRED (empty ⇒ rejected); `confirmCount` MUST equal the preview's `wouldErase.length`.
+   * `nowMillis` overrides the injected run time (default: the server clock) — mirrors
+   * `enforceRetention`'s identical field. */
   eraseSubject(
     tenant: string,
     subject: string,
     confirmCount: bigint,
+    nowMillis?: bigint,
     opts?: UnaryCallOptions,
   ): Promise<ErasureCertificate> {
-    return this.admin.eraseSubject({ tenant, subject, confirmCount }, call(opts));
+    return this.admin.eraseSubject(
+      { tenant, subject, confirmCount, nowMillis },
+      call(opts),
+    );
   }
 
   /** The common, safe path: preview, then erase with the preview's `wouldErase` count.
@@ -192,6 +198,7 @@ export class SeamAdminClient {
   async eraseSubjectConfirmed(
     tenant: string,
     subject: string,
+    nowMillis?: bigint,
     opts?: UnaryCallOptions,
   ): Promise<ErasureCertificate> {
     const preview = await this.previewErasure(tenant, subject, opts);
@@ -199,6 +206,7 @@ export class SeamAdminClient {
       tenant,
       subject,
       BigInt(preview.wouldErase.length),
+      nowMillis,
       opts,
     );
   }
