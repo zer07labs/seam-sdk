@@ -8,7 +8,7 @@
 # generated stubs carry the symbols the SDK depends on, and FAILS LOUD when they don't — so a stale
 # contract is caught here, at the SDK, not days later by a consumer.
 #
-# Four probe groups, each checked PER LANGUAGE (Python and TypeScript are probed independently — the
+# Five probe groups, each checked PER LANGUAGE (Python and TypeScript are probed independently — the
 # two stub trees are generated together but can go stale separately, e.g. a stale ts/gen beside a fresh
 # python/_gen; a symbol present in one language must never vouch for the other):
 #
@@ -17,6 +17,15 @@
 #
 #   1b. Authorize-surface probe (HARD GATE, always) — SeamAuthorization / AdmissionTicket / call_sig /
 #       on_behalf_of, the Phase-1 client surface.
+#
+#   1c. Admin-surface probe (HARD GATE, always) — SeamAdmin + RemoveParty / PlaceGrant / RevokeGrant /
+#       ListGrants, the party-registry and grant surface. Hard rather than flag-gated for the same reason
+#       as 1b: `python/seam_sdk/admin.py` and `ts/src/admin.ts` import and call these, so admin-less stubs
+#       break those clients at import — this is not a "not mirrored yet" condition, it is a regression.
+#       Without it the gate stayed green through exactly the failure it exists to catch, on the most
+#       recently added surface (a BSR label slip or a `buf.gen.yaml` change is enough to cause it).
+#       Only Python and TS carry an admin surface; Go/Java/Kotlin are crypto + conformance by design and
+#       are not probed here.
 #
 #   2.  Streamed-payload probe (reported; hard under STREAM=1) — the four fields a `StreamEvents` consumer
 #       decodes: `session_lifecycle` (tag 21), `chain_head_attestation` (tag 22), `ciphertext_digest`
@@ -27,10 +36,10 @@
 #   3.  ReportEventsConsumed probe (reported; hard under EVENTS=1) — `SeamEvents.ReportEventsConsumed`
 #       (R1). Also on the BSR now; CI runs with EVENTS=1 as a permanent hard gate.
 #
-# Usage:  scripts/check-contract.sh                     # hard gates 1+1b; report 2+3
+# Usage:  scripts/check-contract.sh                     # hard gates 1+1b+1c; report 2+3
 #         STREAM=1 EVENTS=1 scripts/check-contract.sh   # additionally hard-gate 2 and 3 (the CI mode)
 #
-# Exit codes: 0 OK · 1 RPC/Authorize surface stale · 2 streamed-payload fields stale (STREAM=1) ·
+# Exit codes: 0 OK · 1 RPC/Authorize/admin surface stale · 2 streamed-payload fields stale (STREAM=1) ·
 #             3 stubs not generated at all · 4 ReportEventsConsumed stale (EVENTS=1).
 #
 # Run it AFTER `make generate` / `make generate-local` — it inspects the emitted stubs, it does not
@@ -139,6 +148,22 @@ for spec in \
   probe_api "$label" "${pats[@]}" || authz_rc=1
 done
 
+# ── Probe 1c: the admin surface (HARD GATE) ───────────────────────────────────────────────────────────
+# SeamAdmin + the party-registry/grant RPCs the hand-written admin clients call
+# (python/seam_sdk/admin.py, ts/src/admin.ts). These landed together in #36; probe each so a partial
+# generation shows which one is missing rather than just "admin is broken".
+admin_rc=0
+for spec in \
+  "SeamAdmin (service)|SeamAdmin" \
+  "SeamAdmin.RemoveParty|RemoveParty|removeParty" \
+  "SeamAdmin.PlaceGrant|PlaceGrant|placeGrant" \
+  "SeamAdmin.RevokeGrant|RevokeGrant|revokeGrant" \
+  "SeamAdmin.ListGrants|ListGrants|listGrants" ; do
+  label="${spec%%|*}"; rest="${spec#*|}"
+  IFS='|' read -r -a pats <<< "$rest"
+  probe_api "$label" "${pats[@]}" || admin_rc=1
+done
+
 # ── Probe 2: the streamed-payload mirror fields (reported; hard under STREAM=1) ────────────────────────
 # All four must be present together (they land in one Phase-0 push); probe each so a partial mirror shows.
 stream_rc=0
@@ -176,6 +201,15 @@ if [ "$authz_rc" -ne 0 ]; then
   exit 1
 fi
 echo "OK — Authorize surface present (Phase 1 unblocked)."
+
+if [ "$admin_rc" -ne 0 ]; then
+  err "the active contract is STALE for the admin surface: SeamAdmin / RemoveParty / PlaceGrant /"
+  err "RevokeGrant / ListGrants are not fully in the stubs. seam_sdk/admin.py and ts/src/admin.ts import"
+  err "these, so they cannot even load against this generation. Regenerate from a contract that has them:"
+  err "'make generate-local RUNTIME=../seam-runtime' (always fresh), or 'make generate' from the BSR."
+  exit 1
+fi
+echo "OK — admin surface present (party registry + grants unblocked)."
 
 if [ "${STREAM:-0}" = "1" ]; then
   if [ "$stream_rc" -ne 0 ]; then
