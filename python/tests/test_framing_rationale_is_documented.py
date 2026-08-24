@@ -4,7 +4,7 @@ The framing is mirrored byte-for-byte in five languages, and the length prefixes
 maintainer is most likely to read as noise. Without them, ``("a\\0b","c")`` and ``("a","b\\0c")``
 produce identical preimages — so one artifact can verify under another's signature. Both
 ``seam-store`` and ``seam-trust-aitp`` record that reason in their own source, and
-``plans/sdk-exec-w1-w7.md`` §9 names "simplifying" the framing as a thing never to do.
+``plans/archive/sdk-exec-w1-w7.md`` §9 names "simplifying" the framing as a thing never to do.
 
 Go, Python and TypeScript carried that rationale. **Java and Kotlin carried none** — a maintainer
 opening `SeamCrypto.java` saw a loop over byte arrays with a length prefix and no stated reason for

@@ -1,5 +1,28 @@
 # SDK exec workstream — adopt the landed contract, then close the release-exposure gaps (W1–W7)
 
+> **📦 ARCHIVED 2026-08-24 — DELIVERED, all nine phases verified.** Shipped as PR
+> [#51](https://github.com/zer07labs/seam-sdk/pull/51) (squashed to `f68572f`), green across five
+> languages. It went through three adversarial verification rounds at the PR level, the last two of
+> which found real defects in the preceding round's own fixes; those rounds were a working-session
+> record and left **no trace in this repo or on the PR**, so do not go looking for them below. The
+> per-phase `Status:` fields record only each phase's own verify rounds.
+>
+> **What "delivered" does and does not mean here.** Phases 1–8 landed as code and docs in this repo.
+> Phase 9's deliverable was *filing* the cross-repo asks, and it did: `seam-runtime`
+> [#418](https://github.com/zer07labs/seam-runtime/issues/418)–[#423](https://github.com/zer07labs/seam-runtime/issues/423).
+> The runtime-side work those describe is **not** delivered and is not this plan's to deliver — it
+> is tracked in those issues. [`plans/close-out-w1-w7-loose-ends.md`](../close-out-w1-w7-loose-ends.md)
+> Phase 4 mirrors them as local `plans/cross-repo/` plan files; until that lands, the issues are the
+> only record.
+>
+> **Known follow-ups, tracked elsewhere rather than left implicit:** the MSRV was asserted but never
+> compiled, `plans/consolidation-2026-08-14.md`'s backlog had gone stale, and the CrewAI/protobuf
+> finding lived only in an issue comment — all three are
+> [`plans/close-out-w1-w7-loose-ends.md`](../close-out-w1-w7-loose-ends.md). `verify/` is prepared
+> for publication but **nothing has been published**; issue
+> [#52](https://github.com/zer07labs/seam-sdk/issues/52) records a 0.7.43 defect this plan's own
+> `ci-green` gate would have caught had it landed 74 minutes earlier.
+>
 > **Status: COMPLETE** — all nine phases DONE (2026-08-23). Written 2026-08-23 against `origin/main` @ `5f98ddd` (v0.7.42), branch
 > `feat/sdk-exec-w1-w7`. Each phase's own `Status:` field below is authoritative — this banner is a
 > summary of them, never a substitute.
@@ -708,7 +731,7 @@ And do **not** describe `verify/` as a sixth mirror: `seam-commitment-digest` ap
 
 ### Phase 9 — Cross-repo issues, and the §8 decision that has no W-number
 
-**Status:** DONE (2026-08-23). Five issues filed: **#418** (W5.5 framing handshake), **#419** (W1.1
+**Status:** DONE (2026-08-23). Six issues filed: **#418** (W5.5 framing handshake), **#419** (W1.1
 crate rename — blocks the publish), **#420** (W2.1, re-scoped after correcting a stale claim),
 **#421** (W2.2/W2.3 evidence bundle), **#422** (W3.1 anchor feed), **#423** (§8 commitment-digest
 spec). The §8 decision is **schedule it, rescoped to the commitment digest only** per D4, logged in
