@@ -173,3 +173,22 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Status:** CONFIRMED (2026-08-16). Same resolution as the protobuf floor above — shipped in
   0.7.13 with the same framing. `test_grpcio_floor.py` still derives and enforces `grpcio>=1.64`
   from the calling-convention markers present in `_gen`. See DECISIONS.md.
+
+## Testing (not just building) `verify/` at its declared MSRV
+- **Plan:** `plans/close-out-w1-w7-loose-ends.md` (Phase 1)
+- **Assumed:** running the *test* profile at the MSRV does not overstate the promise made to
+  consumers, who never build the tests.
+- **Chose:** run both `cargo build --locked` and `cargo test --locked` in the `verify-msrv` job.
+  Verified rather than assumed at the time of writing: `verify/`'s direct dev-dependencies are a
+  strict subset of its normal dependencies and declare a strictly lower MSRV, so the test profile
+  cannot raise the floor above what a consumer needs. Testing is the stronger check and catches a
+  dependency that requires more than it declares — the whole point of the job.
+- **Alternatives:** build-only at MSRV (weaker — misses anything only the tests exercise); a
+  separate build-at-MSRV and test-at-MSRV pair (correct if the two ever diverge, but two jobs today
+  for a condition that does not exist).
+- **Blast radius if wrong:** if a dev-dependency ever declares a higher MSRV than the normal
+  dependencies, this job would force `rust-version` upward to satisfy something consumers never
+  compile — an MSRV that is *too high*, i.e. an unnecessarily narrow promise rather than a broken
+  one. Reversible in one commit by splitting the job. The `verify-msrv` job comment records the
+  condition and the correct response.
+- **Status:** UNCONFIRMED

@@ -5,7 +5,81 @@ assumption, the independent recommender's analysis, the human verdict, and the r
 `/ship` and any later reconciliation read this file instead of replaying the conversation that
 produced it.
 
-## 2026-08-23 — `plans/sdk-exec-w1-w7.md` Phase 8 (W7): the digest dual-verify obligation
+## 2026-08-24 — `plans/close-out-w1-w7-loose-ends.md` Phase 3: framework co-installability is a probe, not a table of versions
+
+### Scope: the frameworks are the ones `seam-adapters` ships a shim for
+
+Four, and no more: `crewai`, `langchain` (+`langgraph`), `strands-agents`, `claude-agent-sdk`
+(`seam-adapters/crewai/pyproject.toml:13`, `langchain/pyproject.toml:18`, `strands/pyproject.toml:11`,
+`claude_agent/pyproject.toml:11`). `seam-aegis` adds nothing — it reaches frameworks only through
+`seam-langchain`. A framework with no shim is out of scope; adding a shim is what adds a row.
+
+### The mechanism, generalised past CrewAI
+
+Issue [#48](https://github.com/zer07labs/seam-sdk/issues/48) is about CrewAI, but CrewAI is an
+*instance*, not the rule. Our `protobuf` floor is **derived** from unpinned buf remote plugins, so it
+moves on its own; protobuf then refuses a runtime older than the gencode. Any framework whose closure
+caps `protobuf` below our floor is un-co-installable — in practice, **one that exact-pins or
+`~=`-pins `opentelemetry-exporter-otlp-proto-http` below the release where `opentelemetry-proto`
+lifted its own `protobuf<7` cap.**
+
+The generalisation is worth stating because it is *not* "OpenTelemetry is incompatible": OTel lifted
+the cap. `strands-agents` depends on the exporter by **range** and rides over the change; `crewai`
+pins with `~=` and cannot. Same ecosystem, opposite outcome, and the difference is the pin style.
+
+### The record is a probe, because a table of versions is stale on arrival
+
+`COMPATIBILITY.md` §4a carries the table; `scripts/probe_framework_coinstall.py` **reads that table
+as its input** and resolves each row against live PyPI, so doc and check cannot disagree. Run via
+`make probe-frameworks`, weekly in `.github/workflows/framework-coinstall.yml`, and on any PR
+touching the floors, the table, the probe or `buf.gen.yaml`.
+
+It fails in both directions, and the second is the one that matters: **a row flipping to
+`compatible` means the upstream fix landed**, and nothing else in this org watches for that —
+`seam-adapters`' resolution-probe installs its shims *without* the `[sdk]` extra, so it stays green
+either way.
+
+**Two implementation facts, both learned by getting them wrong first:**
+1. **Resolve with the shim's declared constraint, never the bare name.** Bare `crewai` resolves fine
+   — by backtracking to **1.6.1**, a release predating the conflict — and reports a false
+   `compatible`. With `crewai>=1.15.3,<2` the same resolver proves it unsatisfiable. A probe that
+   confidently reports the wrong answer is worse than no probe.
+2. **Exit codes cannot classify the outcome.** uv exits non-zero for an unsatisfiable graph, a
+   missing package *and* a disabled network, and all three say "unsatisfiable". The probe classifies
+   on the message and treats anything it cannot positively identify as **infrastructure (exit 2)**,
+   never as a verdict.
+
+*Rejected:* generating the table into the doc. The generator needs a staleness guard, the guard needs
+the network to know what stale means, and that forces either network in the default suite or a
+skip-when-offline path — both of which this repo rejects elsewhere. Doc-as-input gets the
+no-disagreement property without either.
+
+*Rejected:* a pytest in the default suite. Same skip-when-offline objection. The suite stays offline
+and honest; the probe is a script with its own workflow.
+
+### Widening our own protobuf floor: considered and rejected
+
+It is not a metadata edit. The floor is derived, so widening means **pinning `buf.gen.yaml`'s remote
+plugins** to emit older gencode — and protobuf's same-major rule (enforced by
+`python/tests/test_protobuf_floor.py`) means the result is `>=6.x,<7`, not a wide `>=6,<8`.
+
+- It **relocates** the incompatibility rather than removing it: `<7` co-installs with CrewAI and
+  conflicts with everything on the current line.
+- It freezes the codegen pipeline on the release source of record, indefinitely, with no owner for
+  the "when do we unpin" decision.
+- It does not fix the root cause — CrewAI's pin breaks it against *any* protobuf-7 neighbour.
+- The 6.x line stops receiving fixes, and a `<7` cap forbids consumers from taking them.
+
+The strongest counter — that a derived floor exports churn to consumers — is real and is stated
+plainly in `COMPATIBILITY.md` §4. But the remedy for exported churn is the loud derived-floor
+machinery that already exists, not a pin that converts churn into stagnation. **One upstream PR
+against CrewAI's exporter pin is cheaper than a permanent pipeline pin**, and the probe is what
+notices when it lands.
+
+**Status:** RECORDED. Re-answer if a second framework becomes incompatible, or if the pin-style
+generalisation above stops explaining the cases.
+
+## 2026-08-23 — `plans/archive/sdk-exec-w1-w7.md` Phase 8 (W7): the digest dual-verify obligation
 
 Written **before** v3 exists, because the failure this prevents is unrecoverable and the moment to
 agree the rule is not the moment someone is mid-migration.
@@ -65,7 +139,7 @@ digest costs one new thing; extending the tuple costs every past artifact a migr
 **Status:** RECORDED. Java and Kotlin gained the length-prefix rationale they lacked (Go, Python and
 TypeScript already had it), and a grep-guard keeps all five honest.
 
-## 2026-08-23 — `plans/sdk-exec-w1-w7.md` Phase 6 (W1): publishing `verify/` — to Cloudsmith, not crates.io
+## 2026-08-23 — `plans/archive/sdk-exec-w1-w7.md` Phase 6 (W1): publishing `verify/` — to Cloudsmith, not crates.io
 
 Three decisions, taken together because publishing is irreversible and they interact.
 
@@ -147,7 +221,7 @@ A build-time check confirms the registry declaration does not compromise the sta
 `cargo build` and `cargo test` pass with no registry access and no credentials, because every
 dependency comes from crates.io. The private registry is reachable only on the publish path.
 
-## 2026-08-23 — `plans/sdk-exec-w1-w7.md` Phase 3 (W4.3): does a new field enter the record-digest preimage?
+## 2026-08-23 — `plans/archive/sdk-exec-w1-w7.md` Phase 3 (W4.3): does a new field enter the record-digest preimage?
 
 W4.3 requires an **explicit, written** answer per new field, because "an unanswered question here is
 how v1→v2 happened." Answering it in a PR comment and moving on is what this entry exists to prevent.

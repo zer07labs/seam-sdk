@@ -107,7 +107,61 @@ The practical consequence: **a new RPC verb costs the three shims nothing**, and
 | Python: `protobuf` | `>=7.36.0,<8` | **Derived, not chosen** — must be ≥ the gencode compiled into `seam_sdk/_gen`. `python/tests/test_protobuf_floor.py` derives it from the emitted stubs and fails when a regeneration outruns it. |
 | Python: `grpcio` | `>=1.64` | Derived the same way — needs both halves of the registered-method calling convention. |
 | Python | `>=3.10` | The gencode's own floor. |
-| Rust (`verify/`) | **MSRV 1.85** | Derived from the resolved dependency graph (`prost` 0.14.4, `base64ct` 1.8.3, `zeroize` 1.9.0); `verify/tests/msrv.rs` asserts it. |
+| Rust (`verify/`) | **MSRV 1.85** | Derived from the resolved dependency graph, and checked two ways: `verify/tests/msrv.rs` asserts the declaration covers every *declared* `rust-version`, and CI's `verify-msrv` job **actually compiles and tests the crate at that floor** — which is the only thing that catches a dependency requiring more than it declares. |
+
+### Agent-framework co-installability
+
+The protobuf floor above has a consequence that only shows up when you install this SDK **beside an
+agent framework**, so it gets its own section rather than a footnote.
+
+**The mechanism — this is the durable part; the version numbers below are not.** The floor is
+derived, not chosen (`python/pyproject.toml`, asserted by `python/tests/test_protobuf_floor.py`), and
+it moves on its own because `buf.gen.yaml` uses **unpinned** buf remote plugins. protobuf's
+runtime-version check then rejects any runtime older than the gencode that produced our stubs. So any
+framework whose transitive closure caps `protobuf` below our floor cannot share a virtualenv with
+this SDK — and in practice that means **a framework that exact-pins or `~=`-pins
+`opentelemetry-exporter-otlp-proto-http` below the release where `opentelemetry-proto` lifted its own
+`protobuf<7` cap.** A framework that depends on a *range* rides over the cap change automatically;
+one that pins tightly is stuck until it bumps.
+
+Note what this is **not**: it is not "OpenTelemetry is incompatible". OTel lifted the cap. The
+breakage is carried by downstream packages that pinned the exporter too tightly to receive it.
+
+<!-- PROBE-TABLE: parsed by scripts/probe_framework_coinstall.py. Columns and order are load-bearing.
+     `Constraint` MUST be the range the seam-adapters shim declares — without it a resolver
+     backtracks to an ancient release and reports a false "compatible". -->
+
+| Framework | Constraint | Expected | Tracking |
+|---|---|---|---|
+| `crewai` | `>=1.15.3,<2` | `incompatible` | [#48](https://github.com/zer07labs/seam-sdk/issues/48) — pins the OTLP exporter `~=1.42.0`, below the lift |
+| `langchain` | `>=1.2,<2` | `compatible` | — pulls no OpenTelemetry at all |
+| `strands-agents` | `>=1.50.2,<2` | `compatible` | — base install pulls no exporter at all; the `otel`/`all` extras add it by *range*, so those take the lift too |
+| `claude-agent-sdk` | `>=0.2,<0.3` | `compatible` | — `opentelemetry-api` only, no protobuf edge |
+
+Scope is set by the shims `seam-adapters` ships — `seam-adapters/crewai/pyproject.toml:13`,
+`seam-adapters/langchain/pyproject.toml:18`, `seam-adapters/strands/pyproject.toml:11`,
+`seam-adapters/claude_agent/pyproject.toml:11`. A framework with no shim is out of scope here.
+
+**Re-derive it rather than trusting the table**, which is dated the moment it is written:
+
+```sh
+make probe-frameworks      # resolves every row above against this SDK's real floors, live
+```
+
+That probe is the anti-rot mechanism, and it fails in **both** directions: a row that starts failing
+tells you a framework moved under us, and a row marked `incompatible` that starts *resolving* is the
+signal that the upstream fix landed and this table (and #48) should be updated. Nothing else watches
+for the second case.
+
+**The workaround for an incompatible framework is not ours to document.** `seam-adapters` owns it —
+see its `CONTRIBUTING.md` for the two-virtualenv arrangement and the resolution-probe that keeps that
+setup honest. This section records *why* the conflict exists and *when it ends*; that repo records
+*how to work in spite of it*.
+
+**Widening our own floor is not the answer, and was considered.** The reasoning is recorded in
+`DECISIONS.md`; in short, the floor is derived from unpinned codegen, so "widening" means pinning the
+codegen pipeline indefinitely — which relocates the incompatibility to everything modern rather than
+removing it, and does not fix the upstream pin.
 
 **A protobuf floor bump is a real upgrade cost even when the contract change is additive.** The
 `>=7.35.1 → >=7.36.0` move is an example: the wire change that triggered it was additive

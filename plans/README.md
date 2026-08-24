@@ -10,13 +10,23 @@ against a status table alone.
 
 | Plan | Status |
 |---|---|
-| `build-agent-ingress.md` | **PENDING** — adapters + partner compose shipped in `seam-adapters` v0.1.0, but the plan's core scenes (Suspended→raise→resume, denied admission), the §B MCP server, §C `StepUsage` wiring, and the public-access DoD remain. See the refresh header in the plan. |
-| `consolidation-2026-08-14.md` | **RECORD + BACKLOG** — the 2026-08-14 full-repo review (plan triage, 6-track code review of seam-sdk + the runtime contract boundary), the fixes applied, and the residual backlog. |
+| `close-out-w1-w7-loose-ends.md` | **IN PROGRESS** — the loose ends #51 left: the MSRV compiled rather than asserted, this backlog sweep, the CrewAI/protobuf record, and `cross-repo/` plan files for the six seam-runtime asks. |
+| `build-agent-ingress.md` | **PENDING** — narrowed 2026-08-24. The §A core scenes (Suspended→raise→resume, denied admission) and §C `StepUsage` wiring shipped in `seam-adapters` PR #42; what remains is the **§B MCP server** (seam-sdk [#40](https://github.com/zer07labs/seam-sdk/issues/40), deliberately unbuilt — no named customer) and the **§D public-access DoD**. See the refresh header in the plan. |
+| `consolidation-2026-08-14.md` | **RECORD + BACKLOG** — the 2026-08-14 full-repo review (plan triage, 6-track code review of seam-sdk + the runtime contract boundary), the fixes applied, and the residual backlog. Backlog swept 2026-08-24: four of five entries retired in place with citations; the survivors are §B/§D of `build-agent-ingress.md`. |
+
+## Cross-repo asks
+
+[`cross-repo/`](cross-repo/) holds plans that target **other** repos — currently six asks against
+`seam-runtime` ([#418–#423](https://github.com/zer07labs/seam-runtime/issues/418)). They live here
+because writing into a sibling repo needs a gate and reading one never does: the plan stays where it
+was written, and the target repo fetches it. Each is paired with a tracking issue there. See
+[`cross-repo/README.md`](cross-repo/README.md) for the index and what blocks what.
 
 ## Archived (delivered, verified)
 
 | Plan | Delivered |
 |---|---|
+| `archive/sdk-exec-w1-w7.md` | The W1–W7 exec workstream: one batched contract regeneration (additive, proven under `buf breaking --config FILE`), the release-exposure gates (CI-green gating, npm install gate, registry smoke, cross-language framing coverage, the wire-framing handshake), `COMPATIBILITY.md`, and the digest dual-verify obligation. Cross-repo asks filed as seam-runtime #418–#423 rather than delivered here. *(PR #51.)* |
 | `archive/build-sdk-session-budget.md` | Py + TS incremental session lifecycle + the enterprise-6.2 budget surface (suspend→raise→resume), live-verified against a real `seam-grpc`. Resume later moved to the management plane (rt-D); data-plane `resume_session` is a documented tombstone. *(PR #4.)* |
 | `archive/build-sdk-hardening-p110-h3-h4.md` | Typed issuer-mismatch error (P1.10), `SeamAdminClient` with admin/erasure wrappers (H3), `features` on `run_decision` (H4), data-plane parity (H5), `SeamEvents` streaming + the typed-error taxonomy. Bearer model superseded by operator tokens (runtime #175 / SDK PR #16). *(PRs #5/#7/#8, versions 0.1.0→0.3.0.)* |
 | `archive/adopt-runtime-2026-07.md` | SDK adoption of the runtime backlog-closeout landing: `verify_party_attestation` wrappers, `verify/` upgraded INTEGRITY→AUTHENTICITY (`chain --issuer`: attestation + digest-v2 recompute), conformance KATs, differential-harness parity. Phase 0 landed runtime-side as the `seam.event.v1` extraction. *(Merged; the #175 bearer residual closed by PR #16.)* |

@@ -23,25 +23,51 @@
 > - **§A example — PARTIAL.** `examples/fraud/run.py` (observe→enforce→seal + issuer-pinned
 >   `verify_decision` + wrong-pin `IssuerMismatchError` assert) and `examples/fraud_council/run.py`
 >   (true open→propose→vote→commit with `chain_verified` assert) are real and self-asserting;
->   `scripts/enroll_dev_identities.py` covers identity provisioning. **Missing: the two scenes the
+>   `scripts/enroll_dev_identities.py` covers identity provisioning.
+>
+>   > **UPDATE 2026-08-24 — §A is now DONE; the paragraph below is kept as the record of what was
+>   > missing, not as a current claim.** Both scenes landed in `seam-adapters` PR #42 (`9a05a04`,
+>   > 2026-08-17): `seam-adapters/examples/fraud_budget/` drives the budget breach → `SUSPENDED` →
+>   > `SeamAdminClient.resume_session` → seal (so the "nothing in any repo calls it from an example"
+>   > clause is no longer true), and `seam-adapters/examples/fraud_admission_denied/` refuses a
+>   > never-enrolled identity **at Admit**, which is the scope violation the clause below asked for
+>   > rather than a tool-gate denial. Both are self-asserting and run in that repo's fake and live
+>   > CI lanes.
+>
+>   ~~**Missing: the two scenes the
 >   plan called the demo** — (1) a budget breach driving `Suspended` → R9 raise →
 >   `SeamAdminClient.resume_session` (nothing in any repo calls it from an example; the shipped
 >   "escalate→resume" is LangGraph `interrupt()`, a different mechanism), and (2) a **denied
->   admission** (scope violation at Admit — shipped DENYs are tool-gate denials only).
+>   admission** (scope violation at Admit — shipped DENYs are tool-gate denials only).~~
 > - **§B MCP server — MISSING entirely, org-wide.** Recorded as a deliberate deferral in
 >   seam-adapters `ASSUMPTIONS.md` ("MCP proof is adapter-SHAPED"). No `seam_*` tool surface, no
 >   per-agent key-custody design for a shared server.
 > - **§C adapter — OVERSHOT.** Four framework shims + a council harness shipped (plan said one,
->   with an explicit no-second-adapter non-goal). The §C "map tool usage to `StepUsage` so budgets
->   bind" element is absent — no `StepUsage` reference anywhere in seam-adapters.
+>   with an explicit no-second-adapter non-goal).
+>
+>   > **UPDATE 2026-08-24 — §C is now DONE; the struck clause below is the record of what was
+>   > missing, not a current claim.** `StepUsage` landed in `seam-adapters` PR #42 (`9a05a04`,
+>   > 2026-08-17): `seam-adapters/core/seam_agent_core/session_binder.py:43` defines it and threads
+>   > it through propose/vote/commit, and
+>   > `seam-adapters/core/seam_agent_core/transport_grpc.py:581-589` translates it to the SDK's
+>   > `StepUsage` at the RPC boundary. So budgets do bind to reported tool usage.
+>
+>   ~~The §C "map tool usage to `StepUsage` so budgets bind" element is absent — no `StepUsage`
+>   reference anywhere in seam-adapters.~~
 > - **§D packaging — PARTIAL.** Partner compose + ≤5-min quickstart + nightly quickstart CI exist
 >   (`seam-adapters/compose/`), but every path needs partner credentials (private image, private
 >   wheels). **The DoD — "a stranger, with no access to any private repo" — is not met.**
 >
-> **Remaining work (the refreshed scope):** §A's Suspended/resume + denied-admission example
-> scenes; §B the MCP server; §C `StepUsage` wiring in the adapters; §D a public evaluation path
-> (or an explicit product decision that partner-gated is the intended distribution, recorded and
-> the DoD amended). The original plan below stands as written for those items.
+> **Remaining work (narrowed 2026-08-24):** **§B** the MCP server (tracked as seam-sdk
+> [#40](https://github.com/zer07labs/seam-sdk/issues/40), deliberately unbuilt — no named customer
+> for the surface; and its tool mapping now predates the quorum verbs, so it needs revisiting
+> before it is built); and **§D** a public evaluation path (or an explicit product decision that
+> partner-gated is the intended distribution, recorded and the DoD amended). The original plan
+> below stands as written for those two.
+>
+> ~~§A's Suspended/resume + denied-admission example scenes~~ and ~~§C `StepUsage` wiring in the
+> adapters~~ both shipped in `seam-adapters` PR #42 (`9a05a04`, 2026-08-17) — see the dated UPDATE
+> blocks above. Narrowed rather than rewritten so the original scope stays legible.
 
 > **The finding that produced this plan.** There is **no way for a real agent to get into a Seam session.**
 > Not "no good way" — no way. Across the entire org there is:

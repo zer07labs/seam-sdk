@@ -1,0 +1,64 @@
+name: framework co-installability
+
+# Does each agent framework in COMPATIBILITY.md §4a still share a virtualenv with this SDK?
+#
+# DELIBERATELY NOT A JOB IN ci.yml. The answer to this question changes when **PyPI** changes, not
+# when this repository changes — so running it on every PR would hold unrelated merges hostage to a
+# third party's release cadence and to PyPI's uptime, and a red result would usually mean "the world
+# moved", not "your diff is wrong". `ci-ok` stays a statement about the diff.
+#
+# It therefore runs:
+#   * weekly, which bounds staleness to seven days for the world-moved-without-us case;
+#   * on demand;
+#   * and on a PR that touches something which can change the answer FROM OUR SIDE — the dependency
+#     floors, the table itself, the probe, or the codegen config that derives the floors.
+#
+# FAILING IS THE FEATURE, IN BOTH DIRECTIONS. A row flipping to `incompatible` means a framework
+# moved under us. A row flipping to `compatible` means the upstream fix LANDED — and nothing else in
+# this org watches for that: seam-adapters' own resolution-probe installs its shims without the
+# `[sdk]` extra, so it stays green whether or not the conflict is still real.
+#
+# There is no skip path. Exit 2 (infrastructure — network, missing tool, unparseable table) is
+# reported as infrastructure and never as a verdict, so a PyPI outage cannot masquerade as either
+# answer, and cannot quietly pass either.
+
+on:
+  schedule:
+    # Mondays 06:00 UTC. Weekly is a deliberate trade: daily would mostly re-prove an unchanged
+    # answer, and anything slower lets a landed upstream fix sit unnoticed for too long.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "python/pyproject.toml"          # the floors the probe resolves against
+      - "COMPATIBILITY.md"               # the table it reads its expectations from
+      - "scripts/probe_framework_coinstall.py"
+      - "buf.gen.yaml"                   # unpinned plugins here are WHY the floor moves
+      - ".github/workflows/framework-coinstall.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: resolve every framework in COMPATIBILITY.md §4a
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # 3.11+ for tomllib, which the probe uses to read the floors out of pyproject.toml
+          # rather than duplicating them.
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+
+      # uv, not pip, and the reason is empirical: pip cannot even prove the known crewai conflict —
+      # it gives up with `resolution-too-deep`. uv states the unsatisfiability with the exact
+      # dependency chain, which is what makes a red result actionable instead of just red.
+      - name: probe
+        run: python3 scripts/probe_framework_coinstall.py
+
+      # No credentials anywhere in this job: the probe substitutes seam-sdk's own declared floors for
+      # the package itself, precisely so it can run on a schedule without a Cloudsmith token. The
+      # floors are what collide with a framework's dependency closure; the package name is not.
