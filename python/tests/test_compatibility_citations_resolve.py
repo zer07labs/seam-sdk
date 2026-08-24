@@ -85,7 +85,7 @@ ANCHORED = [
     (".github/workflows/publish.yml", 130, "npm.cloudsmith.io"),
     (".github/workflows/publish.yml", 255, "python.cloudsmith.io"),
     (".github/workflows/release-on-runtime.yml", 120, "go/v$VER"),
-    ("README.md", 124, "crypto shims"),
+    ("README.md", 128, "crypto shims"),
     (".github/workflows/ci.yml", 289, "must link NOTHING"),
 ]
 

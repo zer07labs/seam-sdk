@@ -6,6 +6,10 @@ from the **`seam.api.v1`** protobuf contract. Languages: **Go, Java, Kotlin, Pyt
 Licensed Apache-2.0. The Seam runtime itself is a separate, private repository — these SDKs depend only on
 the public contract, never on the runtime internals.
 
+> **Using the SDK end-to-end?** See the [SDK guides](https://github.com/zer07labs/seam/blob/main/docs/sdk/README.md)
+> in `zer07labs/seam` — separate internal-developer and partner guides over a shared base, plus how to
+> request access. This README stays focused on building, generating, and releasing the SDK itself.
+
 > ⚠️ **If you are pinned below 0.7.20, upgrade.** 0.7.13–0.7.15 published an unimportable wheel;
 > 0.7.16–0.7.19 import fine but fail every `authorize()` call against a current runtime
 > (`UNAUTHENTICATED: admission ticket is not valid` — the ticket is fine). Neither defect is visible
