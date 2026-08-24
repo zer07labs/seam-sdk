@@ -69,9 +69,14 @@ jobs:
           # `filter=latest` dedupes re-runs WITHIN a suite, not ACROSS suites. Taking `head -1` there
           # would let a green run mask a red one, which is precisely the "treat ambiguity as fine"
           # reasoning this job exists to refuse.
+          #
+          # `.conclusion // "pending"` because a check run STILL IN PROGRESS has `conclusion: null`,
+          # and gh's --jq renders null as an EMPTY LINE. A trailing empty line is stripped by `$(...)`,
+          # so an unfinished ci-ok listed last would vanish and the gate would pass mid-run. Mapping
+          # it to a concrete token makes it fail the success comparison like any other non-success.
           CONCLUSIONS="$(gh api --paginate \
             "repos/$REPO/commits/$SHA/check-runs" \
-            --jq '.check_runs[] | select(.name == "ci-ok") | .conclusion')"
+            --jq '.check_runs[] | select(.name == "ci-ok") | (.conclusion // "pending")')"
 
           if [ -z "$CONCLUSIONS" ]; then
             echo "::error::No 'ci-ok' check run for $SHA. CI has not run on this commit, so there is"
@@ -302,6 +307,10 @@ jobs:
     name: seam-verify → Cloudsmith
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    env:
+      # Job-level, because the dry-run needs it too (see the step comment below). Cloudsmith's
+      # cargo:token provider expects a literal "Bearer " prefix on the value.
+      CARGO_REGISTRIES_ZER07LABS_TOKEN: ${{ secrets.CARGO_REGISTRIES_ZER07LABS_TOKEN }}
     defaults:
       run:
         working-directory: verify
@@ -329,13 +338,13 @@ jobs:
       - name: the shipped fixtures must still verify
         run: cargo test --locked
 
+      # BOTH the dry-run and the publish need the registry token. `publish = ["zer07labs"]` makes
+      # even the DRY RUN resolve the private sparse index, so a token-less dry-run dies with
+      # "no token found for `zer07labs`" — every dispatch would fail before reaching the publish.
       - name: cargo publish --dry-run
         run: cargo publish --dry-run --locked
 
       - name: publish to Cloudsmith
-        env:
-          # Cloudsmith's cargo:token provider expects a literal "Bearer " prefix on the value.
-          CARGO_REGISTRIES_ZER07LABS_TOKEN: ${{ secrets.CARGO_REGISTRIES_ZER07LABS_TOKEN }}
         run: |
           if [ -z "${CARGO_REGISTRIES_ZER07LABS_TOKEN:-}" ]; then
             echo "::error::CARGO_REGISTRIES_ZER07LABS_TOKEN is not set — cannot publish to Cloudsmith."
@@ -425,7 +434,12 @@ jobs:
           # worse than none.
           #
           # `--report` gives the resolver's own answer: download_info.url is where the file came from.
-          /tmp/registrycheck/bin/pip install --dry-run --no-deps --quiet \
+          # `--ignore-installed` is REQUIRED, not defensive: the retry loop above really installed
+          # seam-sdk into this venv, and `--dry-run --report` reports only what WOULD be installed —
+          # an already-satisfied requirement yields `"install": []`. Without this the check fails on
+          # every legitimate release, which is worse than the vacuous grep it replaced: a gate that
+          # always fails gets read as flakiness and then weakened.
+          /tmp/registrycheck/bin/pip install --dry-run --no-deps --quiet --ignore-installed \
             --report /tmp/resolve.json \
             --index-url "https://pypi.org/simple/" \
             --extra-index-url "$INDEX" "seam-sdk==$VER"
@@ -439,8 +453,11 @@ jobs:
               if name.replace("_", "-").lower() != "seam-sdk":
                   continue
               print(f"seam-sdk resolved from: {host}")
-              if not host.endswith("cloudsmith.io"):
-                  print(f"::error::seam-sdk was resolved from {host!r}, not Cloudsmith.")
+              # Exact host, not a suffix: `endswith("cloudsmith.io")` would also accept
+              # `notcloudsmith.io`. A provenance check whose own comment claims rigor should not
+              # have a hole that cheap.
+              if host != "dl.cloudsmith.io":
+                  print(f"::error::seam-sdk was resolved from {host!r}, not dl.cloudsmith.io.")
                   print("::error::A same-named package on a public index would satisfy a weaker check;")
                   print("::error::this one reads the resolver's own download_info.url. Refusing.")
                   sys.exit(1)

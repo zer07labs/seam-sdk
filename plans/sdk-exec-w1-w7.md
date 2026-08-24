@@ -510,6 +510,14 @@ publishable manifest; a recorded lib-vs-bin decision; and a publish gated on the
 
 **Approach.**
 
+> **SUPERSEDED 2026-08-23 (owner directive): packages go to Cloudsmith, not crates.io.** The
+> paragraphs below narrate the crates.io-era plan and are kept for the reasoning, not the
+> conclusion. What actually shipped: `verify/Cargo.toml` declares `publish = ["zer07labs"]` (an
+> allow-list, so an accidental public publish is a cargo error), `publish-verify` targets the private
+> registry and does publish there, and `seam-runtime#419` drops from **blocker to hygiene** because
+> the two crates never share a namespace. Acceptance criterion 1 below is therefore **no longer the
+> operative gate**. See `DECISIONS.md` for what a private registry does and does not buy.
+
 **W1.1 — the collision, first.** Both crates are literally named `seam-verify`
 (`verify/Cargo.toml:9`; `seam-runtime/crates/seam-verify/Cargo.toml:2`). crates.io has one
 namespace and the first publish claims the name **permanently**. The runtime crate is the one that
@@ -552,10 +560,9 @@ Selling it as unblocking the audit is the overclaim §9 exists to stop, and the 
 make it.
 
 **Acceptance criteria.**
-1. The runtime rename issue is **closed** before any `cargo publish` runs. ✅ filed as
-   **#419**; nothing is published. `publish-verify` runs the proof, the fixtures and a dry-run, then
-   stops — and the real publish is left as a human step rather than gated behind a flag someone
-   could flip without reading why it is off.
+1. ~~The runtime rename issue is closed before any `cargo publish` runs.~~ **Superseded** — with
+   the crate on Cloudsmith and the runtime's at `publish = false`, there is no shared namespace to
+   race for, so #419 is hygiene rather than a gate. Filed and open.
 2. `cargo publish --dry-run --locked` clean; `cargo metadata` shows a declared MSRV. ✅ — and the
    MSRV is **derived, not asserted**: the first value written was 1.74 (from memory) and the real
    floor is **1.85**. `tests/msrv.rs` derives it from `cargo metadata` and was driven red.

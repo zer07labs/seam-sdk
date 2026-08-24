@@ -86,8 +86,8 @@ this by trying.
 
 | Language | How you get it | Versioned? | Status |
 |---|---|---|---|
-| **Python** (`seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:250`) | Yes | **Published + supported** |
-| **TypeScript** (`@zer07labs/seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:125`, `ts/package.json:12`) | Yes | **Published + supported** |
+| **Python** (`seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:255`) | Yes | **Published + supported** |
+| **TypeScript** (`@zer07labs/seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:130`, `ts/package.json:12`) | Yes | **Published + supported** |
 | **Go** | Module proxy, from the `go/vX.Y.Z` tag (`.github/workflows/release-on-runtime.yml:120`) | Tag only — no in-tree version | Resolvable, crypto shim only |
 | **Java** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |
 | **Kotlin** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |

@@ -120,7 +120,10 @@ Three decisions, taken together because publishing is irreversible and they inte
 `cargo publish` to default to crates.io, and this crate shares a package name with
 `seam-runtime/crates/seam-verify`. Naming the registry makes an accidental public publish a *cargo
 error* rather than an irreversible namespace claim — verified: `cargo publish --dry-run` now reports
-*"found `zer07labs` as only allowed registry"* and never contacts crates.io.
+*"found `zer07labs` as only allowed registry"*, and `--registry crates-io` is refused outright
+(*"The registry `crates-io` is not listed in the `package.publish` value"*). Precisely: dependency
+resolution still reads the crates.io **index** — that is where the six dependencies come from — but
+nothing is ever *published* there.
 
 **What this does NOT buy, said plainly so it is not overstated later.** Cloudsmith `internal` is
 private, so **an external auditor cannot install the verifier from it.** Their path is what it always
