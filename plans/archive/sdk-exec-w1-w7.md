@@ -345,7 +345,7 @@ the reasoning, so the next regeneration inherits the method and not just the con
 3. The decoder distinguishes absent / `UNSPECIFIED` / out-of-range, per language. ✅ Python 14
    tests, TS 8 tests. *Amended from "returns cannot-decide":* absent returns `None`/`undefined`
    and unrecognized **raises** — following this repo's own established `AuthorizeVerdict`
-   precedent (`_authorize.py:46-51`, `errors.py:41`) rather than inventing a second shape for the
+   precedent (`_authorize.py:46-51`, `errors.py:58`) rather than inventing a second shape for the
    same problem. Raising is also the only form with no truthiness that can go the wrong way.
 4. A test asserts the helper has **no** boolean-returning public form. ✅ *Amended:* there is
    exactly one, `approved`, and a test asserts no `declined` twin exists — `not approved` must

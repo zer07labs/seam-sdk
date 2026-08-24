@@ -5,6 +5,23 @@ semantic error (a key-substitution signal from ``verify_decision``). Server-retu
 mapped to typed ``SeamRpcError`` subclasses keyed by status code — but each is **also** a
 ``grpc.RpcError`` with the usual ``.code()``/``.details()``, so existing ``except grpc.RpcError`` handlers
 and ``.code()`` checks keep working unchanged. This is purely additive.
+
+**This module is import-light, and that is a contract — not an accident.** It may import the standard
+library and ``grpc``, and nothing else: no ``seam_sdk._gen``, no package-relative imports, and the
+whole ``SeamError`` hierarchy stays defined *here* rather than split across modules.
+
+``seam-adapters`` depends on that. It is adding a scheduled lane that loads **this one file** with
+``importlib.util.spec_from_file_location`` and diffs the class hierarchy against its own
+classification rosters, to catch a new non-RPC ``SeamError`` before a release rather than after — an
+unclassified one resolves as a ``TransportFailure`` there, and under ``FAIL_OPEN`` that runs a gated
+tool ungated. It reads the file rather than installing the package because ``_gen/`` is gitignored
+and ``__init__.py`` imports it at import time, so a git install yields an unimportable package.
+
+So an import added here has a cost that is invisible from inside this repo. ``buf``-free and
+credential-free is the point. Enforced by ``python/tests/test_errors_is_import_light.py``; the
+constraint and its escape hatch are stated in `seam-sdk#54
+<https://github.com/zer07labs/seam-sdk/issues/54>`_ — if it ever needs to change, say so there
+first, don't discover it downstream.
 """
 
 from __future__ import annotations

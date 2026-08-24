@@ -386,15 +386,31 @@ jobs:
       - name: test at the declared MSRV
         run: cd verify && cargo test --locked
 
+  # The credential-free lane: guards that hold on a bare checkout, with no BUF_TOKEN and no
+  # generated code. Everything else that tests Python is gated on `preflight` — so if this lane
+  # ever needed a token, the guards below would vanish in exactly the situations they matter.
   workflow-guards:
-    name: workflow guards
+    name: guards (no credentials required)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - run: pip install --quiet pyyaml pytest
+      - uses: actions/setup-python@v5
+        with:
+          # Pinned rather than ambient: `sys.stdlib_module_names` (used by the import-light guard)
+          # needs 3.10+, and a runner image bump should not be able to change what these assert.
+          python-version: "3.11"
+      # grpcio is here for one reason: the import-light guard loads `errors.py` standalone, and that
+      # file imports grpc. If this list ever needs `buf`, a BUF_TOKEN, or the generated tree, the
+      # contract in seam-sdk#54 has already been broken — the install list is itself the assertion.
+      - run: pip install --quiet pyyaml pytest grpcio
       - name: the required-check gate covers every job
         run: python -m pytest scripts/test_ci_gate.py -q
+      # Also runs inside the `python` job. Duplicated on purpose: there it proves the guard passes,
+      # here it proves the guard needs nothing but a checkout — which is the actual claim
+      # seam-adapters relies on (seam-sdk#54).
+      - name: errors.py is loadable standalone (seam-adapters reads it without installing us)
+        run: python -m pytest python/tests/test_errors_is_import_light.py -q
 
   # The single check branch protection requires. Requiring the jobs directly does not work here:
   # `integration` is SKIPPED on every PR that cannot reach a live runtime, and a skipped required
