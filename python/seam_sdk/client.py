@@ -137,6 +137,20 @@ class StepUsage:
         return pb.StepUsage(tokens=self.tokens, cost_micros=self.cost_micros)
 
 
+def _u32(value: int, field: str) -> int:
+    """Range-check a ``uint32`` at the client boundary.
+
+    protobuf-python raises on out-of-range assignment, but the error names the generated field and
+    not the SDK argument the caller actually passed — and a ``bool`` would sail through silently as
+    0/1, because ``bool`` is an ``int`` subclass. Fail here, naming the SDK argument.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{field} must be an int, got {type(value).__name__}")
+    if not 0 <= value <= 0xFFFFFFFF:
+        raise ValueError(f"{field} must fit in a uint32 (0..4294967295), got {value}")
+    return value
+
+
 class SeamClient:
     """A high-level client over a gRPC channel to a Seam server."""
 
@@ -447,6 +461,68 @@ class SeamClient:
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
         return self._coord.SubmitCommit(req, timeout=timeout)
+
+    # ── Quorum-mode-only steps (`macp.mode.quorum.v1`) ─────────────────────────────────────────
+    # request → ballot × N → submit_commit (reused unchanged). Both verbs are rejected with a typed
+    # mode-mismatch error against a session opened in any other mode. That check is the server's to
+    # make and is deliberately NOT mirrored here: a client-side copy of a server-side rule is a
+    # second grammar to keep in sync, and the first thing to drift.
+
+    def submit_approval_request(
+        self,
+        session_id: str,
+        requester: str,
+        request_id: str,
+        action: str,
+        required_approvals: int,
+        *,
+        usage: Optional[StepUsage] = None,
+        timeout: float = DEFAULT_TIMEOUT_S,
+    ) -> pb.SessionStep:
+        """Open an N-of-M approval round. Only the session initiator may submit one (enforced by
+        the mode engine, not the contract).
+
+        ``required_approvals`` is the N: how many APPROVE ballots close the round.
+        """
+        req = pb.ApprovalRequestRequest(
+            session_id=session_id,
+            requester=requester,
+            request_id=request_id,
+            action=action,
+            required_approvals=_u32(required_approvals, "required_approvals"),
+        )
+        if usage is not None:
+            req.usage.CopyFrom(usage.to_pb())
+        return self._coord.SubmitApprovalRequest(req, timeout=timeout)
+
+    def submit_ballot(
+        self,
+        session_id: str,
+        voter: str,
+        request_id: str,
+        choice: "pb.BallotChoice.ValueType",
+        *,
+        reason: str = "",
+        usage: Optional[StepUsage] = None,
+        timeout: float = DEFAULT_TIMEOUT_S,
+    ) -> pb.SessionStep:
+        """Cast one ballot against an open approval request.
+
+        ``choice`` is a :class:`BallotChoice` — ``BALLOT_CHOICE_APPROVE`` / ``_REJECT`` /
+        ``_ABSTAIN``. One RPC covers all three: the three upstream MACP payloads are structurally
+        identical, and the tag is what selects the wire envelope. ``BALLOT_CHOICE_UNSPECIFIED`` is
+        not a vote — passing it is the server's INVALID_ARGUMENT to raise.
+        """
+        req = pb.BallotRequest(
+            session_id=session_id,
+            voter=voter,
+            request_id=request_id,
+            choice=choice,
+            reason=reason,
+        )
+        if usage is not None:
+            req.usage.CopyFrom(usage.to_pb())
+        return self._coord.SubmitBallot(req, timeout=timeout)
 
     def resume_session(
         self,

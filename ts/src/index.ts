@@ -37,6 +37,8 @@ export type {
   TenantView,
   TerminalResponse,
 } from "../gen/seam/api/v1/seam_pb.js";
+// seam.api.v1 — request-side enums a caller must NAME to build a request.
+export { BallotChoice } from "../gen/seam/api/v1/seam_pb.js";
 // seam.api.v1 — schemas (constructing / decoding those messages).
 export {
   AnchorSchema,

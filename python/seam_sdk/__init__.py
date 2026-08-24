@@ -13,6 +13,10 @@ from .admin import (
     SeamAdminClient,
     verify_streamed_record_digest,
 )
+# Request-side enum on the quorum verbs. Re-exported so a caller can NAME a ballot choice
+# (`BallotChoice.BALLOT_CHOICE_APPROVE`) without importing from the private `_gen` tree.
+from seam_sdk._gen.seam.api.v1.seam_pb2 import BallotChoice
+
 from .client import (
     DEFAULT_TIMEOUT_S,
     Agent,
@@ -57,6 +61,7 @@ __all__ = [
     "SeamAdminClient",
     "BudgetLimits",
     "StepUsage",
+    "BallotChoice",
     "aio",
     "aid_from_pubkey",
     "build_presentation",

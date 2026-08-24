@@ -8,6 +8,7 @@ import { ed25519 } from "@noble/curves/ed25519";
 
 import {
   AuthorizeVerdict,
+  BallotChoice,
   SeamAdmission,
   SeamAuthorization,
   SeamContext,
@@ -63,6 +64,21 @@ const call = (opts?: UnaryCallOptions) => ({
 
 function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
   return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
+/** Range-check a `uint32` at the client boundary.
+ *
+ * protobuf-es coerces silently here in a way Python's does not: a negative or fractional `number`
+ * assigned to a `uint32` field marshals to *some* value rather than throwing, so an off-by-one in
+ * `requiredApprovals` would reach the server as a different quorum than the caller asked for. Fail
+ * here instead, naming the SDK argument. */
+function u32(value: number, field: string): number {
+  if (!Number.isInteger(value) || value < 0 || value > 0xffffffff) {
+    throw new RangeError(
+      `${field} must be an integer in a uint32 (0..4294967295), got ${value}`,
+    );
+  }
+  return value;
 }
 
 /**
@@ -448,6 +464,57 @@ export class SeamClient {
     opts?: UnaryCallOptions,
   ) {
     return this.coord.submitCommit({ sessionId, commitmentId, action, usage }, call(opts));
+  }
+
+  // ── Quorum-mode-only steps (`macp.mode.quorum.v1`) ────────────────────────────────────────────
+  // request -> ballot x N -> submitCommit (reused unchanged). Both are rejected with a typed
+  // mode-mismatch error against a session opened in any other mode. That check is the server's to
+  // make and is deliberately NOT mirrored here: a client-side copy of a server-side rule is a
+  // second grammar to keep in sync, and the first thing to drift.
+
+  /** Open an N-of-M approval round. Only the session initiator may submit one (enforced by the
+   * mode engine, not the contract). `requiredApprovals` is the N: how many APPROVE ballots close
+   * the round. Range-checked as a `uint32` here so an out-of-range value names this argument
+   * rather than surfacing from the generated setter. */
+  submitApprovalRequest(
+    sessionId: string,
+    requester: string,
+    requestId: string,
+    action: string,
+    requiredApprovals: number,
+    usage?: StepUsage,
+    opts?: UnaryCallOptions,
+  ) {
+    return this.coord.submitApprovalRequest(
+      {
+        sessionId,
+        requester,
+        requestId,
+        action,
+        requiredApprovals: u32(requiredApprovals, "requiredApprovals"),
+        usage,
+      },
+      call(opts),
+    );
+  }
+
+  /** Cast one ballot against an open approval request. One RPC covers approve/reject/abstain: the
+   * three upstream MACP payloads are structurally identical, and `choice` is what selects the wire
+   * envelope. `BALLOT_CHOICE_UNSPECIFIED` is not a vote — passing it is the server's
+   * INVALID_ARGUMENT to raise. */
+  submitBallot(
+    sessionId: string,
+    voter: string,
+    requestId: string,
+    choice: BallotChoice,
+    reason = "",
+    usage?: StepUsage,
+    opts?: UnaryCallOptions,
+  ) {
+    return this.coord.submitBallot(
+      { sessionId, voter, requestId, choice, reason, usage },
+      call(opts),
+    );
   }
 
   /** @deprecated Resume moved to the **management** plane (rt-D): this data-plane RPC now returns

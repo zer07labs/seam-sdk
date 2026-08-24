@@ -175,7 +175,9 @@ verifier. That disposes of W4.3; see Phase 3.
 
 ### Phase 2 — W4.2: the two quorum verbs and the three new response fields, on the hand-written clients
 
-**Status:** PENDING.
+**Status:** DONE (2026-08-23, 1 round). Diverged from plan in one way, amended in the acceptance
+criteria below: the regeneration also **moved the protobuf gencode floor**, which this phase had to
+raise. See *Outcome* at the end of the phase.
 
 **Delivers.** `SubmitApprovalRequest` and `SubmitBallot` on all three transport clients, and the
 `policy_enforcement` / `participant_verdicts` / `collective_outcome` response fields reachable
@@ -215,10 +217,31 @@ in any of the three (method inventories: `client.py:203-610`, `aio.py:157-517`,
 **Acceptance criteria.**
 1. `submit_approval_request` and `submit_ballot` exist on `SeamClient` (sync) and the `aio` mirror,
    with identical signatures modulo `async`; `submitApprovalRequest`/`submitBallot` on the TS client.
+   ✅
 2. A test asserts the sync and async Python method inventories are **equal as sets** — the drift
-   guard, not a spot check.
-3. `BallotChoice` is importable from `seam_sdk` and from the TS package root.
-4. `mypy`/`tsc` clean; existing conformance and unit suites still green.
+   guard, not a spot check. ✅ `python/tests/test_client_parity.py`. *Extended during
+   implementation:* set equality alone would pass if a verb were forgotten on **both** sides, and
+   would miss a parameter added to one side only — so it also asserts the two verbs by name and
+   compares **parameter lists** per shared method.
+3. `BallotChoice` is importable from `seam_sdk` and from the TS package root. ✅
+4. `mypy`/`tsc` clean; existing conformance and unit suites still green. ✅ `tsc --noEmit` exit 0;
+   Python 212 passed / 16 skipped; TS 49 passed / 10 skipped, 0 failed.
+5. *Added during implementation:* the derived protobuf floor guard passes. ✅
+
+**Outcome — the regeneration moved the protobuf floor, and the repo's own guard caught it.**
+`make generate` emitted gencode **7.36.0**, while `python/pyproject.toml` declared
+`protobuf>=7.35.1,<8`. `tests/test_protobuf_floor.py` failed exactly as designed — it derives the
+floor from the emitted stubs rather than trusting a hand-maintained number, precisely because buf's
+remote plugins track latest and move without anyone editing this repo. Floor raised to
+`protobuf>=7.36.0,<8`.
+
+This **refines Phase 1's additivity claim and must not be allowed to blur it**: the *contract* change
+is additive (`buf breaking` clean under `FILE`). The *package* change is not purely so — a consumer
+pinned at `protobuf==7.35.1` will fail to resolve, and one who force-installs it gets a
+`VersionError` at `import seam_sdk`, not a wire error. "Additive on the wire" and "no consumer
+impact" are different claims, and only the first one is true here. It goes in `COMPATIBILITY.md`
+(Phase 7) as a matrix row, and it is the same defect class that once took `seam-adapters` from 88
+passing to zero collected — caught this time before publication rather than in a consumer's CI.
 
 ---
 
@@ -636,11 +659,21 @@ spec text.
    also means merging it before the runtime emits `wire_framing_version` halts all releases. Land it
    behind the runtime issue, or land it with an explicit dated escape hatch? Recommendation: behind
    the issue; a release-halting gate with an escape hatch is a gate that will be escaped.
-2. **W1.3 lib-vs-bin.** Recommendation is lib+bin (embeddability is the point of publishing at all),
-   but it commits this repo to a public Rust API surface with its own semver — under a version
-   number the SDK does not control (`CHANGELOG.md:9-12`). `verify/`'s version is `0.1.0`, independent
-   of the SDK's `0.7.42`; whether that independence is deliberate is worth confirming before
-   publishing locks it in.
+2. ~~**W1.3 lib-vs-bin.**~~ **RESOLVED 2026-08-23.** **lib + bin.** A thin `src/lib.rs` re-exports
+   the existing `verify::{link, dedup, chain, erasure_certificate, verify_authenticity}` and
+   `main.rs` becomes a shell over it. Embeddability is the point of publishing at all — bin-only
+   would leave an auditor shelling out and parsing `--json`. Accepted cost: a public Rust API
+   surface with its own semver.
+3. ~~**`verify/`'s version independence.**~~ **RESOLVED 2026-08-23.** **Deliberate — keep `verify/`
+   independently versioned** (`0.1.0`, not the SDK's `0.7.42`). `verify/` is its own cargo
+   workspace with zero Seam dependencies, and an independent version lets it express real semver,
+   which this SDK explicitly **cannot** (`CHANGELOG.md:9-12`). Recorded as an ADR in `DECISIONS.md`
+   before anything is published.
+4. ~~**The publish step itself.**~~ **RESOLVED 2026-08-23.** **Prepare everything; stop before
+   `cargo publish`.** Phase 6 lands the rename issue, the manifest, the ADR and the `publish-verify`
+   CI job, and runs `cargo publish --dry-run --locked` with the transcript in the PR. The real
+   publish is a human step: the crates.io name claim is permanent and the `seam-runtime` rename must
+   close first.
 
 ## Repo map
 

@@ -37,10 +37,36 @@ than trusting a summary here.
   `COLLECTIVE_VERDICT_UNSPECIFIED`**, must route to the caller's fail policy and never to allow. The
   field is `optional`, so absent and `UNSPECIFIED` are distinct wire states and must not be
   flattened into each other.
+
+- **Quorum-mode verbs on the hand-written clients** — `submit_approval_request` / `submit_ballot`
+  (Python sync **and** the `aio` mirror) and `submitApprovalRequest` / `submitBallot` (TypeScript),
+  with `BallotChoice` re-exported from both package roots so a caller never reaches into the private
+  generated tree to name a ballot. `required_approvals` is range-checked as a `uint32` at the client
+  boundary, so an out-of-range value names the SDK argument instead of surfacing from a generated
+  setter — or, in TypeScript, marshalling silently as a different quorum than the caller asked for.
+  Go, Java and Kotlin are unchanged: they are crypto shims with no transport, so a new verb costs
+  them nothing.
+- `python/tests/test_client_parity.py` — asserts the sync and async clients expose the **same verbs
+  with the same parameters**. A verb landing on one client and not the other is this package's
+  standing drift hazard, and a per-verb spot check only ever proves the one you remembered.
 - `now_millis` / `nowMillis` exposed on `erase_subject`/`eraseSubject` and
   `erase_subject_confirmed`/`eraseSubjectConfirmed` (Python + TS) — the field already existed on
   the wire; only the hand-written wrappers omitted it, unlike `enforce_retention`, which already
   exposed the identical field (#39).
+
+### Changed
+
+- **`protobuf` floor raised `>=7.35.1` → `>=7.36.0`** (still `<8`). Not a chosen number: buf's remote
+  plugins track latest, the batched regeneration above emitted **gencode 7.36.0**, and protobuf's
+  runtime-version check rejects a runtime older than the gencode that produced a file.
+  `tests/test_protobuf_floor.py` derives the floor from the emitted stubs and caught this before
+  publication — which is the whole reason it derives rather than trusts.
+
+  **This is the one part of the regeneration that is not additive for consumers.** The contract
+  change is additive on the wire (`buf breaking` clean under `FILE`); the package's dependency floor
+  is not. A consumer pinned at `protobuf==7.35.1` will fail to resolve, and one who force-installs
+  gets a `VersionError` at `import seam_sdk` rather than a wire error.
+
 
 ### Fixed
 
