@@ -92,7 +92,7 @@ this by trying.
 | **Java** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |
 | **Kotlin** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |
 
-**Go, Java and Kotlin are crypto shims, not clients** (`README.md:124`). They carry no generated
+**Go, Java and Kotlin are crypto shims, not clients** (`README.md:128`). They carry no generated
 transport and no verb methods — they implement AID derivation, the pinned-key presentation, TCT
 verification and the commitment digest, and nothing else. If you need to *call* Seam, that is Python
 or TypeScript.
