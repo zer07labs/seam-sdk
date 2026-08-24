@@ -65,14 +65,14 @@ digest costs one new thing; extending the tuple costs every past artifact a migr
 **Status:** RECORDED. Java and Kotlin gained the length-prefix rationale they lacked (Go, Python and
 TypeScript already had it), and a grep-guard keeps all five honest.
 
-## 2026-08-23 — `plans/sdk-exec-w1-w7.md` Phase 6 (W1): publishing `verify/` to crates.io
+## 2026-08-23 — `plans/sdk-exec-w1-w7.md` Phase 6 (W1): publishing `verify/` — to Cloudsmith, not crates.io
 
 Three decisions, taken together because publishing is irreversible and they interact.
 
 ### `verify/` ships as a LIBRARY as well as a binary
 
 - **The question.** `verify/` was bin-only — `[[bin]]` and no `src/lib.rs`. A published bin-only
-  crate is installable (`cargo install seam-verify`) but **not embeddable**: an auditor who wants
+  crate is installable but **not embeddable**: an auditor who wants
   verification inside their own pipeline must shell out and parse `--json`.
 - **Verdict: lib + bin.** `src/lib.rs` holds the logic; `main.rs` is a shell over it, so the CLI and
   an embedding caller run **exactly the same code** and there is no second implementation to drift.
@@ -98,7 +98,7 @@ Three decisions, taken together because publishing is irreversible and they inte
 
 ### The MSRV is derived, and the first number written down was wrong
 
-- `rust-version` was **absent**, which crates.io accepts silently — a published crate without one
+- `rust-version` was **absent**, which a registry accepts silently — a published crate without one
   gives a consumer no signal and they find out from a compile error.
 - It was first written as **1.74**, from recalling `ed25519-dalek`'s floor. **That was wrong.** The
   resolved graph requires **1.85** (`prost` 0.14.4, `base64ct` 1.8.3, `zeroize` 1.9.0). A floor that
@@ -110,20 +110,39 @@ Three decisions, taken together because publishing is irreversible and they inte
   (third-party crates raise their MSRVs on their own schedule, with nobody editing this manifest).
 - **Status:** DONE, and the guard was driven red (declaring 1.74 fails, naming `base64ct`).
 
-### Nothing is published yet, and that is the decision
+### It goes to Cloudsmith, not crates.io — and that changes what publishing buys
 
-`publish = false` → `publish = true` in the manifest, but **no `cargo publish` has run**. The
-crates.io name claim is permanent and `seam-runtime/crates/seam-verify` carries the same package
-name, so the first publish would decide the namespace for both. The rename is filed as
-[`seam-runtime#419`](https://github.com/zer07labs/seam-runtime/issues/419) and **the real publish is
-a human step until it closes** — `publish-verify` in `publish.yml` runs the independence proof, the
-fixtures and `cargo publish --dry-run`, and stops there.
+**Decision (owner directive, 2026-08-23): binaries and packages for this org stay on Cloudsmith.**
+`verify/Cargo.toml` therefore declares `publish = ["zer07labs"]`, the same private Cargo registry
+(`sparse+https://cargo.cloudsmith.io/zer07labs/internal/`) the runtime crates use.
 
-**And the value is stated honestly, per §9.** Acquisition was never the break: this repo is already
-**public** and Apache-2.0, `verify/` is a standalone workspace by design, and its
-zero-Seam-dependency claim is a **CI gate** (`ci.yml:283-292`), not a comment. Publishing is a
-**distribution and trust-anchoring improvement** — not the thing that unblocks an audit. Anyone can
-already clone and build it today.
+**The allow-list form is load-bearing, not stylistic.** A bare `publish = true` permits
+`cargo publish` to default to crates.io, and this crate shares a package name with
+`seam-runtime/crates/seam-verify`. Naming the registry makes an accidental public publish a *cargo
+error* rather than an irreversible namespace claim — verified: `cargo publish --dry-run` now reports
+*"found `zer07labs` as only allowed registry"* and never contacts crates.io.
+
+**What this does NOT buy, said plainly so it is not overstated later.** Cloudsmith `internal` is
+private, so **an external auditor cannot install the verifier from it.** Their path is what it always
+was: clone this **public, Apache-2.0** repository and build. `verify/` is a standalone cargo
+workspace with zero Seam dependencies precisely so that works anywhere, and the claim is a **CI
+gate** (`.github/workflows/ci.yml:289-297` runs `cargo tree -e normal`), not a comment.
+
+So publishing is **distribution convenience for internal and partner consumers** — *not* a
+trust-anchoring improvement and *not* the thing that makes the verifier independently obtainable.
+The earlier framing in this entry said "distribution and trust-anchoring"; against a private
+registry only the first half survives, and §9's rule against overclaiming applies to our own ADRs
+too.
+
+**Consequence for the name collision.** With this crate on Cloudsmith and the runtime's copy at
+`publish = false`, the two never meet in a shared namespace. The rename
+([`seam-runtime#419`](https://github.com/zer07labs/seam-runtime/issues/419)) drops from **blocker to
+hygiene** — worth doing so two crates in one org do not share a package name, but no longer gating
+anything here.
+
+A build-time check confirms the registry declaration does not compromise the standalone claim:
+`cargo build` and `cargo test` pass with no registry access and no credentials, because every
+dependency comes from crates.io. The private registry is reachable only on the publish path.
 
 ## 2026-08-23 — `plans/sdk-exec-w1-w7.md` Phase 3 (W4.3): does a new field enter the record-digest preimage?
 

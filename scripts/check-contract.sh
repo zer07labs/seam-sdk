@@ -148,16 +148,20 @@ probe_event() {
 # Each language is read from the artifact that actually declares its RPCs, not from a shared source:
 #   * Python — the grpc stub emits the full method path once per RPC: '/seam.api.v1.<Svc>/<Method>'.
 #   * TS     — protobuf-es annotates each RPC: `@generated from rpc seam.api.v1.<Svc>.<Method>`.
+# The char class is [A-Za-z0-9_]+, not [A-Za-z]+: proto identifiers admit digits and underscores, so a
+# verb like `AuthorizeV2` would otherwise extract MANGLED — the gate still fails, but on a truncated
+# name the Python extractor cannot see at all and `--write-manifest` can never record, which is a
+# permanently red gate rather than an actionable one.
 # Reading them independently is what makes a stale ts/gen beside a fresh python/_gen visible; deriving
 # one from the other would let either vouch for the other, which is exactly what this script refuses to
 # do everywhere else.
 rpcs_python() {
-  grep -oE "'/seam\.api\.v1\.[A-Za-z]+/[A-Za-z]+'" "$PY_GRPC" \
+  grep -oE "'/seam\.api\.v1\.[A-Za-z0-9_]+/[A-Za-z0-9_]+'" "$PY_GRPC" \
     | tr -d "'" | sed 's|^/seam\.api\.v1\.||' | sort -u
 }
 
 rpcs_ts() {
-  grep -oE '@generated from rpc seam\.api\.v1\.[A-Za-z]+\.[A-Za-z]+' "$TS_GEN" \
+  grep -oE '@generated from rpc seam\.api\.v1\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+' "$TS_GEN" \
     | sed 's|^@generated from rpc seam\.api\.v1\.||' | tr '.' '/' | sort -u
 }
 

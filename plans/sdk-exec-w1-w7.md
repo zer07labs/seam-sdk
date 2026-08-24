@@ -1,6 +1,6 @@
 # SDK exec workstream — adopt the landed contract, then close the release-exposure gaps (W1–W7)
 
-> **Status: IN PROGRESS.** Written 2026-08-23 against `origin/main` @ `5f98ddd` (v0.7.42), branch
+> **Status: COMPLETE** — all nine phases DONE (2026-08-23). Written 2026-08-23 against `origin/main` @ `5f98ddd` (v0.7.42), branch
 > `feat/sdk-exec-w1-w7`. Each phase's own `Status:` field below is authoritative — this banner is a
 > summary of them, never a substitute.
 > **Source:** `seam-aegis/plans/exec/seam-sdk.md` (559 lines, items W1–W7 plus §0 corrections and a
@@ -491,10 +491,14 @@ present — both were run, and Kotlin's red-first mutation was executed too.
 
 ---
 
-### Phase 6 — W1: resolve the crates.io name collision, then make the manifest publishable
+### Phase 6 — W1: settle the registry and the name, then make the manifest publishable
 
-**Status:** DONE except the publish itself, which is **deliberately a human step**, blocked on
-[`seam-runtime#419`](https://github.com/zer07labs/seam-runtime/issues/419) (2026-08-23, 1 round).
+**Status:** DONE (2026-08-23, 2 rounds). **Superseded mid-flight by an owner directive: packages go
+to Cloudsmith, not crates.io.** `verify/Cargo.toml` declares `publish = ["zer07labs"]` and
+`publish-verify` targets the private registry. That drops
+[`seam-runtime#419`](https://github.com/zer07labs/seam-runtime/issues/419) from **blocker to
+hygiene** — with this crate on Cloudsmith and the runtime's at `publish = false`, the two never share
+a namespace. See `DECISIONS.md` for what publishing to a private registry does and does not buy.
 
 **Delivers.** The one irreversible decision in this plan, settled before anything is published; a
 publishable manifest; a recorded lib-vs-bin decision; and a publish gated on the independence proof.

@@ -30,19 +30,28 @@ categories = ["command-line-utilities", "cryptography"]
 # anyone remembering to look.
 rust-version = "1.85"
 
-# PUBLISHED to crates.io, deliberately, and this is the one irreversible decision in the crate.
+# Published to the org's PRIVATE Cloudsmith Cargo registry (`zer07labs` -> repo `internal`), the same
+# registry the runtime crates use. NOT crates.io — binaries and packages stay on Cloudsmith.
 #
-# `seam-runtime/crates/seam-verify` is named `seam-verify` too, and crates.io has ONE namespace —
-# the first publish claims the name permanently. This is the copy that goes out, because it is the
-# one that can: public repo, Apache-2.0, its own standalone workspace, and ZERO Seam dependencies
-# (a CI gate, not a comment — ci.yml runs `cargo tree -e normal` and fails on any `seam-*`).
+# The allow-list form matters: a bare `publish = true` would permit `cargo publish` to crates.io by
+# default, and this crate shares a package name with `seam-runtime/crates/seam-verify`. Naming the
+# registry explicitly makes an accidental public publish a cargo error rather than an irreversible
+# namespace claim.
 #
-# The runtime's copy must NOT be published: it links `seam-store` and `seam-trust-aitp`, which
-# inverts the claim its own comment defends. It is the differential ORACLE — the second
+# WHAT THIS DOES AND DOES NOT BUY. Cloudsmith `internal` is private, so an external auditor CANNOT
+# `cargo install seam-verify` from it. That is fine, and it is worth being precise about why: this
+# repository is PUBLIC and Apache-2.0, `verify/` is its own standalone workspace, and its
+# zero-Seam-dependency claim is a CI gate (ci.yml runs `cargo tree -e normal` and fails on any
+# `seam-*`). An adverse third party's path has always been "clone the public repo and build it" —
+# publishing here is distribution convenience for internal and partner consumers, NOT the thing that
+# makes the verifier independently obtainable. Do not describe it as the latter.
+#
+# The runtime's copy stays `publish = false` regardless: it links `seam-store` and `seam-trust-aitp`,
+# which inverts the claim its own comment defends. It is the differential ORACLE — the second
 # implementation the parity harness drives over the same streams so neither side becomes a rubber
-# stamp — and that role needs it internal. Rename tracked at zer07labs/seam-runtime#419; nothing
-# here publishes until that closes.
-publish = true
+# stamp — and that role needs it internal. The rename (zer07labs/seam-runtime#419) is still worth
+# doing for clarity, but with both crates off crates.io it is hygiene, not a blocker.
+publish = ["zer07labs"]
 
 # ==================================================================================================
 # THE DEPENDENCY LIST IS THE ARGUMENT.

@@ -61,7 +61,7 @@ mismatch cannot ship.
 
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
-**Nothing was yanked.** That decision is recorded at `CHANGELOG.md:64-67` and is not being
+**Nothing was yanked.** That decision is recorded at `CHANGELOG.md:227-231` and is not being
 re-litigated here: the affected versions install and produce a clear auth error rather than
 corrupting data, and revoking installability under a floor already in wide use has a larger blast
 radius than a loud advisory. The consequence is that **these versions remain installable**, so this
@@ -86,13 +86,13 @@ this by trying.
 
 | Language | How you get it | Versioned? | Status |
 |---|---|---|---|
-| **Python** (`seam-sdk`) | Cloudsmith `zer07labs/internal` (`publish.yml:135`) | Yes | **Published + supported** |
-| **TypeScript** (`@zer07labs/seam-sdk`) | Cloudsmith `zer07labs/internal` (`publish.yml:55`, `ts/package.json:12`) | Yes | **Published + supported** |
-| **Go** | Module proxy, from the `go/vX.Y.Z` tag (`release-on-runtime.yml:72`) | Tag only — no in-tree version | Resolvable, crypto shim only |
+| **Python** (`seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:250`) | Yes | **Published + supported** |
+| **TypeScript** (`@zer07labs/seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:125`, `ts/package.json:12`) | Yes | **Published + supported** |
+| **Go** | Module proxy, from the `go/vX.Y.Z` tag (`.github/workflows/release-on-runtime.yml:120`) | Tag only — no in-tree version | Resolvable, crypto shim only |
 | **Java** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |
 | **Kotlin** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |
 
-**Go, Java and Kotlin are crypto shims, not clients** (`README.md:110`). They carry no generated
+**Go, Java and Kotlin are crypto shims, not clients** (`README.md:124`). They carry no generated
 transport and no verb methods — they implement AID derivation, the pinned-key presentation, TCT
 verification and the commitment digest, and nothing else. If you need to *call* Seam, that is Python
 or TypeScript.
@@ -120,7 +120,7 @@ the wire" and "no consumer impact" are different claims.
 ## 5. What "independently verifiable" does and does not cover
 
 The published verifier (`verify/`) links **zero** Seam crates, and that is a CI gate rather than a
-comment — `ci.yml:283-292` runs `cargo tree -e normal` and fails on any `seam-*`. What it verifies:
+comment — `.github/workflows/ci.yml:289-297` runs `cargo tree -e normal` and fails on any `seam-*`. What it verifies:
 
 **Covered:**
 
