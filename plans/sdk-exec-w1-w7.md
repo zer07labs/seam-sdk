@@ -493,7 +493,8 @@ present — both were run, and Kotlin's red-first mutation was executed too.
 
 ### Phase 6 — W1: resolve the crates.io name collision, then make the manifest publishable
 
-**Status:** PENDING (blocked on a cross-repo rename — see below).
+**Status:** DONE except the publish itself, which is **deliberately a human step**, blocked on
+[`seam-runtime#419`](https://github.com/zer07labs/seam-runtime/issues/419) (2026-08-23, 1 round).
 
 **Delivers.** The one irreversible decision in this plan, settled before anything is published; a
 publishable manifest; a recorded lib-vs-bin decision; and a publish gated on the independence proof.
@@ -547,13 +548,32 @@ Selling it as unblocking the audit is the overclaim §9 exists to stop, and the 
 make it.
 
 **Acceptance criteria.**
-1. The runtime rename issue is **closed** before any `cargo publish` runs. Cited by number here.
-2. `cargo publish --dry-run --locked` clean in `verify/`; `cargo metadata` shows a declared MSRV.
-3. `ci.yml:283-292` still passes **unmodified**.
-4. An ADR in `DECISIONS.md` records the lib-vs-bin choice; if lib is added, a doc-test verifies the
-   shipped fixture **through the library API**, not the CLI.
-5. On a machine with no Seam checkout: `cargo install seam-verify && seam-verify chain <fixture>
-   --issuer <AID>` exits 0. Transcript in the PR.
+1. The runtime rename issue is **closed** before any `cargo publish` runs. ✅ filed as
+   **#419**; nothing is published. `publish-verify` runs the proof, the fixtures and a dry-run, then
+   stops — and the real publish is left as a human step rather than gated behind a flag someone
+   could flip without reading why it is off.
+2. `cargo publish --dry-run --locked` clean; `cargo metadata` shows a declared MSRV. ✅ — and the
+   MSRV is **derived, not asserted**: the first value written was 1.74 (from memory) and the real
+   floor is **1.85**. `tests/msrv.rs` derives it from `cargo metadata` and was driven red.
+3. `ci.yml:283-292` still passes **unmodified**. ✅ zero Seam crates; the same assertion now also
+   gates the publish job.
+4. An ADR records the lib-vs-bin choice; a doctest verifies the shipped fixture **through the
+   library API**, not the CLI. ✅ both. The doctest also asserts a wrong issuer fails closed, so it
+   proves the signature is actually checked rather than that the call returns.
+5. ~~On a machine with no Seam checkout, `cargo install seam-verify` exits 0.~~ **Not possible
+   yet** — that requires the crate to be published, which is blocked on #419. Deferred with the
+   publish, not silently dropped.
+
+**Outcome — one finding worth carrying, and one honest limit.**
+
+*Finding:* moving the logic into a library surfaced that the CLI's certificate shape-sniffing was
+inline in `main.rs`, so an embedder would have had to **reimplement it** to accept the same files the
+CLI accepts. That is a second implementation of exactly the kind this crate exists to avoid, so it
+moved into `Cert::parse_document` and the CLI now calls it.
+
+*Limit:* the MSRV is derived from **declared** `rust-version` fields in the resolved graph, not from
+compiling under 1.85. A dependency that requires more than it declares would slip through. That is a
+real gap, stated rather than papered over; closing it needs a toolchain matrix in CI.
 
 ---
 

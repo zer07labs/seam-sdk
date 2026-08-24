@@ -5,6 +5,66 @@ assumption, the independent recommender's analysis, the human verdict, and the r
 `/ship` and any later reconciliation read this file instead of replaying the conversation that
 produced it.
 
+## 2026-08-23 — `plans/sdk-exec-w1-w7.md` Phase 6 (W1): publishing `verify/` to crates.io
+
+Three decisions, taken together because publishing is irreversible and they interact.
+
+### `verify/` ships as a LIBRARY as well as a binary
+
+- **The question.** `verify/` was bin-only — `[[bin]]` and no `src/lib.rs`. A published bin-only
+  crate is installable (`cargo install seam-verify`) but **not embeddable**: an auditor who wants
+  verification inside their own pipeline must shell out and parse `--json`.
+- **Verdict: lib + bin.** `src/lib.rs` holds the logic; `main.rs` is a shell over it, so the CLI and
+  an embedding caller run **exactly the same code** and there is no second implementation to drift.
+  A parse step between the answer and the decision is somewhere a wrong answer can be introduced,
+  and embeddability is most of the reason to publish at all.
+- **Accepted cost:** a public Rust API surface with its own semver obligations.
+- **Consequence taken while doing it:** the CLI's certificate shape-sniffing moved into
+  `Cert::parse_document`. While it was inline in the binary, an embedder had to reimplement it to
+  accept the same files the CLI accepts — a second implementation of exactly the kind this crate
+  exists to avoid.
+- **Status:** DONE. A doctest verifies the shipped fixture **through the library API** (not the
+  CLI), and asserts a wrong issuer fails closed.
+
+### `verify/` keeps its own version, independent of the SDK's
+
+- **The question.** `verify/` is `0.1.0` while the SDK is `0.7.42`. Publishing locks that in.
+- **Verdict: deliberate — keep it independent.** `verify/` is its own cargo workspace with zero Seam
+  dependencies, and an independent version lets it express **real semver**, which this SDK
+  explicitly **cannot**: *"this SDK cannot express its own semver. A breaking change here ships under
+  whatever number the runtime's history computes, which may be a patch"* (`CHANGELOG.md:9-12`).
+  Binding the verifier to that would inherit a defect for the sake of a slogan.
+- **Status:** CONFIRMED.
+
+### The MSRV is derived, and the first number written down was wrong
+
+- `rust-version` was **absent**, which crates.io accepts silently — a published crate without one
+  gives a consumer no signal and they find out from a compile error.
+- It was first written as **1.74**, from recalling `ed25519-dalek`'s floor. **That was wrong.** The
+  resolved graph requires **1.85** (`prost` 0.14.4, `base64ct` 1.8.3, `zeroize` 1.9.0). A floor that
+  is too low is worse than none: absent is honestly silent, a wrong number reads as a checked
+  promise.
+- **Verdict:** declare 1.85, and **derive rather than pin it** — `verify/tests/msrv.rs` reads
+  `cargo metadata` and fails when a dependency outruns the declared floor, the same discipline
+  `python/tests/test_protobuf_floor.py` applies to the protobuf floor and for the same reason
+  (third-party crates raise their MSRVs on their own schedule, with nobody editing this manifest).
+- **Status:** DONE, and the guard was driven red (declaring 1.74 fails, naming `base64ct`).
+
+### Nothing is published yet, and that is the decision
+
+`publish = false` → `publish = true` in the manifest, but **no `cargo publish` has run**. The
+crates.io name claim is permanent and `seam-runtime/crates/seam-verify` carries the same package
+name, so the first publish would decide the namespace for both. The rename is filed as
+[`seam-runtime#419`](https://github.com/zer07labs/seam-runtime/issues/419) and **the real publish is
+a human step until it closes** — `publish-verify` in `publish.yml` runs the independence proof, the
+fixtures and `cargo publish --dry-run`, and stops there.
+
+**And the value is stated honestly, per §9.** Acquisition was never the break: this repo is already
+**public** and Apache-2.0, `verify/` is a standalone workspace by design, and its
+zero-Seam-dependency claim is a **CI gate** (`ci.yml:283-292`), not a comment. Publishing is a
+**distribution and trust-anchoring improvement** — not the thing that unblocks an audit. Anyone can
+already clone and build it today.
+
 ## 2026-08-23 — `plans/sdk-exec-w1-w7.md` Phase 3 (W4.3): does a new field enter the record-digest preimage?
 
 W4.3 requires an **explicit, written** answer per new field, because "an unanswered question here is

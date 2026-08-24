@@ -22,6 +22,10 @@ name: publish (internal — Cloudsmith zer07labs/internal)
 on:
   push:
     tags: ["v*"]
+  # Manual only, for `publish-verify` (the crates.io verifier job). The tag-triggered jobs below all
+  # need a `vX.Y.Z` ref and are skipped on a manual run; `publish-verify` gates on this event
+  # explicitly. Without this trigger that job could never run at all.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -44,6 +48,8 @@ jobs:
   # would have let 0.7.17 through. No conclusion is a refusal.
   ci-green:
     name: CI is green for this commit
+    # Tag-triggered only: a manual run has no vX.Y.Z ref to check (see workflow_dispatch above).
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: resolve ci-ok's conclusion for ${{ github.sha }}
@@ -77,6 +83,8 @@ jobs:
 
   version-check:
     name: tag matches the in-tree versions
+    # Tag-triggered only: a manual run has no vX.Y.Z ref to check (see workflow_dispatch above).
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -93,6 +101,7 @@ jobs:
 
   npm:
     name: npm → Cloudsmith
+    if: github.event_name == 'push'
     needs: [version-check, ci-green]
     runs-on: ubuntu-latest
     steps:
@@ -185,6 +194,7 @@ jobs:
 
   python:
     name: python wheel → Cloudsmith
+    if: github.event_name == 'push'
     needs: [version-check, ci-green]
     runs-on: ubuntu-latest
     steps:
@@ -262,6 +272,58 @@ jobs:
           cd "$GITHUB_WORKSPACE/python"
           twine upload dist/*
 
+  # ── The public verifier → crates.io ────────────────────────────────────────────────────────────
+  # DELIBERATELY NOT WIRED TO THE TAG YET. This job exists, is testable, and does everything up to
+  # (but not including) `cargo publish`, because the crates.io name claim is IRREVERSIBLE and it is
+  # blocked on a cross-repo rename: `seam-runtime/crates/seam-verify` is named `seam-verify` too,
+  # and crates.io has one namespace. Tracked at zer07labs/seam-runtime#419.
+  #
+  # Not reusing the npm/python jobs: their Cloudsmith credentials are irrelevant here. This goes to
+  # PUBLIC crates.io, which is a different trust boundary entirely — the whole point of publishing
+  # the verifier is that an adverse party can fetch it without going through Seam.
+  #
+  # `workflow_dispatch` only, until #419 closes and a human decides to claim the name.
+  publish-verify:
+    name: seam-verify → crates.io (dry-run until seam-runtime#419 closes)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      # THE INDEPENDENCE PROOF IS THE PRODUCT, so it gates the publish rather than merely running
+      # beside it. Same assertion as ci.yml's `verify` job, repeated here on purpose: a publish that
+      # skipped it could ship a verifier that links Seam's own crates, which inverts the only claim
+      # the crate makes.
+      - name: the verifier must link NOTHING of Seam's
+        run: |
+          TREE=$(cargo tree -e normal)
+          echo "$TREE"
+          if echo "$TREE" | grep -vE '^seam-verify ' | grep -qiE '\bseam-(store|types|traits|trust|kernel|crypto|api|client|guard|coord|context|bandit)'; then
+            echo "::error::seam-verify links a Seam crate. The independence claim is now false — that is the whole product."
+            exit 1
+          fi
+          echo "OK — zero Seam crates."
+
+      # Re-verify the shipped fixture before publishing it. The crate's credibility rests on a third
+      # party being able to check a real signature with it; shipping a fixture that no longer
+      # verifies would be worse than shipping none.
+      - name: the shipped fixtures must still verify
+        run: cargo test --locked
+
+      - name: cargo publish --dry-run
+        run: cargo publish --dry-run --locked
+
+      # The real publish is a HUMAN step until #419 closes. Leaving it commented rather than gated
+      # behind a flag is deliberate: a flag invites someone to flip it without reading why it is off.
+      - name: publish is deliberately not automated yet
+        run: |
+          echo '::notice::Dry-run only. `cargo publish` is a human step until zer07labs/seam-runtime#419'
+          echo '::notice::(the seam-verify crate-name rename) closes - the crates.io name claim is permanent.'
+
   # ── G2: install what was actually PUBLISHED, from the registry ─────────────────────────────────
   # Everything above proves the ARTIFACT. Nothing proved the PUBLICATION: no workflow in this repo
   # has ever installed seam-sdk from Cloudsmith. The only thing that ever has is seam-adapters'
@@ -277,6 +339,7 @@ jobs:
   # host is the whole point: it is the path a consumer actually takes.
   registry-smoke:
     name: install from Cloudsmith and run the vectors
+    if: github.event_name == 'push'
     needs: [npm, python]
     runs-on: ubuntu-latest
     steps:

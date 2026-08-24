@@ -12,7 +12,37 @@ edition = "2021"
 license = "Apache-2.0"
 description = "Independently verify a Seam audit chain and an erasure certificate. Links nothing of Seam's."
 repository = "https://github.com/zer07labs/seam-sdk"
-publish = false
+readme = "README.md"
+keywords = ["audit", "verification", "ed25519", "hash-chain", "gdpr"]
+categories = ["command-line-utilities", "cryptography"]
+
+# MSRV. There was NONE before publishing was contemplated, and crates.io would have accepted that
+# silently: a published crate with no `rust-version` gives a consumer no signal at all, and they find
+# out from a compile error instead.
+#
+# DERIVED, not chosen — the same discipline `python/pyproject.toml`'s protobuf floor follows, and for
+# the same reason. It is the maximum `rust-version` declared anywhere in the resolved dependency
+# graph: 1.85, from `prost` 0.14.4 / `base64ct` 1.8.3 / `zeroize` 1.9.0 (`ed25519-dalek` 2.2.0 wants
+# only 1.81). A guessed floor here is worse than none, because it reads as a checked promise.
+#
+# The dependencies move on their own schedule, so this number moves too. `tests/msrv.rs` derives it
+# from `cargo metadata` and fails when a dependency outruns it — which keeps the two in step without
+# anyone remembering to look.
+rust-version = "1.85"
+
+# PUBLISHED to crates.io, deliberately, and this is the one irreversible decision in the crate.
+#
+# `seam-runtime/crates/seam-verify` is named `seam-verify` too, and crates.io has ONE namespace —
+# the first publish claims the name permanently. This is the copy that goes out, because it is the
+# one that can: public repo, Apache-2.0, its own standalone workspace, and ZERO Seam dependencies
+# (a CI gate, not a comment — ci.yml runs `cargo tree -e normal` and fails on any `seam-*`).
+#
+# The runtime's copy must NOT be published: it links `seam-store` and `seam-trust-aitp`, which
+# inverts the claim its own comment defends. It is the differential ORACLE — the second
+# implementation the parity harness drives over the same streams so neither side becomes a rubber
+# stamp — and that role needs it internal. Rename tracked at zer07labs/seam-runtime#419; nothing
+# here publishes until that closes.
+publish = true
 
 # ==================================================================================================
 # THE DEPENDENCY LIST IS THE ARGUMENT.
@@ -55,6 +85,8 @@ serde_json = "1"
 [dev-dependencies]
 sha2 = "0.10"
 base64 = "0.22"
+# tests/msrv.rs parses `cargo metadata` to derive the real MSRV from the resolved graph.
+serde_json = "1"
 
 [[bin]]
 name = "seam-verify"
