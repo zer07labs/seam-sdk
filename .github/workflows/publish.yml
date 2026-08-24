@@ -25,8 +25,56 @@ on:
 
 permissions:
   contents: read
+  # `ci-green` below reads this commit's check runs to decide whether CI passed. Read-only.
+  checks: read
+  actions: read
 
 jobs:
+  # ── G3: publish is gated on CI, not just on the tag matching ───────────────────────────────────
+  # Before this job, `publish.yml` needed only `version-check` — so a tag pushed at a red commit
+  # published anyway. That is not hypothetical here: 0.7.17 shipped ELEVEN MINUTES after the
+  # runtime wire change that broke it, and 0.7.18/0.7.19 repeated it.
+  #
+  # This cannot be a plain `needs:` on ci.yml's `ci-ok`. Workflows are separate runs: CI runs on
+  # the branch push/PR, publish runs on the tag push, and `needs:` only orders jobs WITHIN a run.
+  # So the CI conclusion for this exact commit has to be resolved through the API.
+  #
+  # FAILS CLOSED ON ABSENT, not only on failure. A tag pushed at a commit CI never ran on has no
+  # `ci-ok` conclusion to read, and treating "not failed" as "fine" is exactly the reasoning that
+  # would have let 0.7.17 through. No conclusion is a refusal.
+  ci-green:
+    name: CI is green for this commit
+    runs-on: ubuntu-latest
+    steps:
+      - name: resolve ci-ok's conclusion for ${{ github.sha }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          echo "resolving the 'ci-ok' check run for $SHA"
+          # `--paginate` because a commit can carry more check runs than one page holds; without it
+          # a green ci-ok on page 2 would read as absent and refuse a legitimate release.
+          CONCLUSION="$(gh api --paginate \
+            "repos/$REPO/commits/$SHA/check-runs" \
+            --jq '.check_runs[] | select(.name == "ci-ok") | .conclusion' | head -1)"
+
+          if [ -z "$CONCLUSION" ]; then
+            echo "::error::No 'ci-ok' check run for $SHA. CI has not run on this commit, so there is"
+            echo "::error::no evidence it passes — refusing to publish. Push the commit to a branch,"
+            echo "::error::let CI finish, and re-tag. (Absent is refused deliberately: 'not failed' is"
+            echo "::error::not the same as 'passed', and treating it as such is how 0.7.17 shipped.)"
+            exit 1
+          fi
+
+          echo "ci-ok conclusion: $CONCLUSION"
+          if [ "$CONCLUSION" != "success" ]; then
+            echo "::error::CI is '$CONCLUSION' for $SHA — refusing to publish."
+            exit 1
+          fi
+          echo "CI is green for $SHA."
+
   version-check:
     name: tag matches the in-tree versions
     runs-on: ubuntu-latest
@@ -45,7 +93,7 @@ jobs:
 
   npm:
     name: npm → Cloudsmith
-    needs: version-check
+    needs: [version-check, ci-green]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -89,11 +137,55 @@ jobs:
           export NODE_AUTH_TOKEN="$TOKEN"   # setup-node wrote _authToken=${NODE_AUTH_TOKEN} into .npmrc
           npm ci
           npm run build
+
+          # ── G1: PACK THE TARBALL, INSTALL IT, IMPORT IT — before publishing. ──────────────────
+          # This job used to be `npm ci && npm run build && npm publish` with nothing in between.
+          # The Python job has installed and imported its wheel since 0.7.16; npm had no equivalent
+          # at all, so a TypeScript packaging defect of the 0.7.13 shape (files present, package
+          # unusable) would ship undetected.
+          #
+          # OUTSIDE the repo, for the same reason the Python gate uses a fresh venv: this directory
+          # has src/ and node_modules/ on the resolution path, so an import here would succeed no
+          # matter what the tarball contains. /tmp/packcheck resolves only what was packed.
+          TARBALL="$(npm pack --silent --pack-destination /tmp)"
+          echo "packed /tmp/$TARBALL"
+          mkdir -p /tmp/packcheck && cd /tmp/packcheck
+          npm init -y >/dev/null
+          npm install --silent "/tmp/$TARBALL"
+          VECTORS="$GITHUB_WORKSPACE/conformance/vectors.json" node --input-type=module - <<'JS'
+          import { Agent, buildPresentation, collectiveOutcomeOf } from "@zer07labs/seam-sdk";
+          import { readFileSync } from "node:fs";
+          import assert from "node:assert/strict";
+
+          // Exercise the package, not just its module graph. The 0.7.13 lesson is that a package
+          // whose files are ALL PRESENT can still be unusable, so a presence check proves nothing —
+          // only running something real does.
+          assert.equal(typeof buildPresentation, "function", "buildPresentation missing from the published entry point");
+          assert.equal(typeof collectiveOutcomeOf, "function", "collectiveOutcomeOf missing from the published entry point");
+
+          const { inputs, derived, presentation } = JSON.parse(readFileSync(process.env.VECTORS, "utf8")).admission;
+          const seed = Uint8Array.from(Buffer.from(inputs.agent_seed_hex, "hex"));
+
+          // Two real crypto operations against the COMMITTED conformance vector, not a self-check:
+          // the AID derivation, and the byte-exact pinned-key presentation. Both are generated by
+          // executing the runtime's Rust, so agreement here means agreement with the reference —
+          // which is precisely what 0.7.17's tests could not establish, because they verified a
+          // payload they rebuilt themselves.
+          assert.equal(new Agent(seed).aid, derived.sender_aid, "AID derivation disagrees with the conformance vector");
+          assert.deepEqual(
+            buildPresentation(seed, inputs.receiver_aid, inputs.pop_nonce, inputs.now_ms),
+            presentation,
+            "the published package builds a presentation that differs from the conformance vector",
+          );
+          console.log("tarball installs, imports, and reproduces the conformance vectors — OK");
+          JS
+          cd "$GITHUB_WORKSPACE/ts"
+
           npm publish   # registry + access come from package.json publishConfig
 
   python:
     name: python wheel → Cloudsmith
-    needs: version-check
+    needs: [version-check, ci-green]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -169,3 +261,134 @@ jobs:
           PY
           cd "$GITHUB_WORKSPACE/python"
           twine upload dist/*
+
+  # ── G2: install what was actually PUBLISHED, from the registry ─────────────────────────────────
+  # Everything above proves the ARTIFACT. Nothing proved the PUBLICATION: no workflow in this repo
+  # has ever installed seam-sdk from Cloudsmith. The only thing that ever has is seam-adapters'
+  # live-wire job, in another repo, by accident of being a consumer.
+  #
+  # Note this DETECTS, it does not PREVENT — it runs after upload, and a published version is
+  # immutable per registry, so a failure here means "advertise the floor and cut a fix", not
+  # "roll back". The preventive gates are ci-green (G3) and the pack/wheel install gates (G1).
+  # Stating that plainly so a later reader does not mistake this job for a safety net it is not.
+  #
+  # The install host is DIFFERENT from the upload host — dl.cloudsmith.io vs
+  # python.cloudsmith.io / npm.cloudsmith.io (README.md:144-147). Resolving through the download
+  # host is the whole point: it is the path a consumer actually takes.
+  registry-smoke:
+    name: install from Cloudsmith and run the vectors
+    needs: [npm, python]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: install the PUBLISHED wheel from dl.cloudsmith.io and run the conformance vectors
+        env:
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
+          CARGO_REGISTRIES_ZER07LABS_TOKEN: ${{ secrets.CARGO_REGISTRIES_ZER07LABS_TOKEN }}
+        run: |
+          set -euo pipefail
+          TOKEN="$CLOUDSMITH_API_KEY"
+          [ -z "$TOKEN" ] && TOKEN="${CARGO_REGISTRIES_ZER07LABS_TOKEN#Bearer }"
+          if [ -z "$TOKEN" ]; then
+            echo "::error::No Cloudsmith credential — cannot install from the registry."
+            exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+          VER="${GITHUB_REF_NAME#v}"
+          INDEX="https://token:${TOKEN}@dl.cloudsmith.io/basic/zer07labs/internal/python/simple/"
+
+          python -m venv /tmp/registrycheck
+          # Cloudsmith indexes asynchronously, so a just-uploaded version is briefly absent. Bounded
+          # retry with a HARD ceiling — a timeout FAILS the job. "Probably fine, it'll appear" is the
+          # reasoning this whole workstream exists to remove.
+          ok=0
+          for attempt in $(seq 1 10); do
+            if /tmp/registrycheck/bin/pip install --quiet \
+                 --index-url "https://pypi.org/simple/" \
+                 --extra-index-url "$INDEX" \
+                 "seam-sdk==$VER"; then
+              ok=1; break
+            fi
+            echo "attempt $attempt: seam-sdk==$VER not resolvable yet; waiting 30s"
+            sleep 30
+          done
+          if [ "$ok" != 1 ]; then
+            echo "::error::seam-sdk==$VER never became installable from dl.cloudsmith.io within 5 minutes."
+            echo "::error::The upload reported success, so the artifact exists but the PUBLICATION is not"
+            echo "::error::usable. Do not treat this as flaky — check Cloudsmith before announcing the release."
+            exit 1
+          fi
+
+          # Prove we resolved the REGISTRY, not a local path — the assertion the acceptance criteria
+          # names. A wheel installed from ./dist would satisfy every check below and prove nothing.
+          /tmp/registrycheck/bin/pip download --no-deps --dest /tmp/whence \
+            --index-url "https://pypi.org/simple/" \
+            --extra-index-url "$INDEX" "seam-sdk==$VER" -v 2>&1 \
+            | grep -iE 'dl\.cloudsmith\.io' | head -3 \
+            || { echo "::error::resolved seam-sdk==$VER from somewhere other than dl.cloudsmith.io"; exit 1; }
+
+          cd /tmp && /tmp/registrycheck/bin/python - "$GITHUB_WORKSPACE/conformance/vectors.json" <<'PY'
+          import json, sys
+          import seam_sdk
+          from seam_sdk import Agent, build_presentation
+
+          admission = json.load(open(sys.argv[1]))["admission"]
+          seed = bytes.fromhex(admission["inputs"]["agent_seed_hex"])
+
+          assert Agent(seed).aid == admission["derived"]["sender_aid"], "AID disagrees with the vector"
+          assert build_presentation(
+              seed,
+              admission["inputs"]["receiver_aid"],
+              admission["inputs"]["pop_nonce"],
+              admission["inputs"]["now_ms"],
+          ) == admission["presentation"], "presentation disagrees with the vector"
+          print(f"published seam-sdk {seam_sdk.__version__ if hasattr(seam_sdk, '__version__') else ''} reproduces the conformance vectors — OK")
+          PY
+      - name: install the PUBLISHED npm package from Cloudsmith and run the vectors
+        env:
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
+          CARGO_REGISTRIES_ZER07LABS_TOKEN: ${{ secrets.CARGO_REGISTRIES_ZER07LABS_TOKEN }}
+        run: |
+          set -euo pipefail
+          TOKEN="$CLOUDSMITH_API_KEY"
+          [ -z "$TOKEN" ] && TOKEN="${CARGO_REGISTRIES_ZER07LABS_TOKEN#Bearer }"
+          echo "::add-mask::$TOKEN"
+          VER="${GITHUB_REF_NAME#v}"
+
+          mkdir -p /tmp/npmsmoke && cd /tmp/npmsmoke && npm init -y >/dev/null
+          cat > .npmrc <<NPMRC
+          @zer07labs:registry=https://npm.cloudsmith.io/zer07labs/internal/
+          //npm.cloudsmith.io/zer07labs/internal/:_authToken=${TOKEN}
+          NPMRC
+          ok=0
+          for attempt in $(seq 1 10); do
+            if npm install --silent "@zer07labs/seam-sdk@$VER"; then ok=1; break; fi
+            echo "attempt $attempt: @zer07labs/seam-sdk@$VER not resolvable yet; waiting 30s"
+            sleep 30
+          done
+          if [ "$ok" != 1 ]; then
+            echo "::error::@zer07labs/seam-sdk@$VER never became installable from Cloudsmith within 5 minutes."
+            exit 1
+          fi
+
+          VECTORS="$GITHUB_WORKSPACE/conformance/vectors.json" node --input-type=module - <<'JS'
+          import { Agent, buildPresentation } from "@zer07labs/seam-sdk";
+          import { readFileSync } from "node:fs";
+          import assert from "node:assert/strict";
+
+          const { inputs, derived, presentation } = JSON.parse(readFileSync(process.env.VECTORS, "utf8")).admission;
+          const seed = Uint8Array.from(Buffer.from(inputs.agent_seed_hex, "hex"));
+          assert.equal(new Agent(seed).aid, derived.sender_aid, "AID disagrees with the vector");
+          assert.deepEqual(
+            buildPresentation(seed, inputs.receiver_aid, inputs.pop_nonce, inputs.now_ms),
+            presentation,
+            "presentation disagrees with the vector",
+          );
+          console.log("published @zer07labs/seam-sdk reproduces the conformance vectors — OK");
+          JS

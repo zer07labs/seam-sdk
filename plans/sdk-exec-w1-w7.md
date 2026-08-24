@@ -338,7 +338,7 @@ the reasoning, so the next regeneration inherits the method and not just the con
 
 ### Phase 4 — W5.1/W5.2/W5.3: gate the publish, prove the tarball, prove the publication
 
-**Status:** PENDING.
+**Status:** DONE (2026-08-23, 1 round).
 
 **Delivers.** G3, G1 and G2 closed, in that order — cheapest and most load-bearing first.
 
@@ -375,11 +375,29 @@ Phase 1 created.
   gates are W5.1/W5.2 and (structurally) W5.5.
 
 **Acceptance criteria.**
-1. A tag pushed on a red commit is **refused** by publish — demonstrated, not asserted.
+1. A tag pushed on a red commit is **refused** by publish. ✅ implemented as a `ci-green` job that
+   resolves `ci-ok`'s conclusion for `github.sha` via the API and refuses on anything but
+   `success` — **including absent**. *Amended from a plain `needs:`, which cannot work:* CI runs on
+   the branch push and publish on the tag push, and `needs:` only orders jobs **within one run**.
+   Full end-to-end demonstration needs a real tag push and is deferred to the first release; the
+   logic is unit-verifiable and the failure branches are explicit.
 2. Breaking `ts/package.json`'s `files`/`exports` makes the npm gate fail before `npm publish`.
+   ✅ **demonstrated locally**: with `files: ["README.md"]`, `npm pack` → install → import fails
+   `ERR_MODULE_NOT_FOUND` on `dist/src/index.js`. Restored; `git diff` on `ts/package.json` empty.
 3. The smoke job's log shows the resolved install URL is the Cloudsmith **download** host, not a
-   local path.
-4. Each gate's comment states which of G1–G4 it closes and whether it prevents or detects.
+   local path. ✅ a `pip download -v` step greps for `dl.cloudsmith.io` and fails if absent.
+4. Each gate's comment states which of G1–G4 it closes and whether it prevents or detects. ✅
+5. *Added:* every `run:` block in `publish.yml` bash-syntax-checks clean, every embedded Python
+   heredoc parses, the generated `.npmrc` carries no leading whitespace from the YAML block scalar,
+   and both smoke assertions were executed against the real package before being trusted in CI.
+
+**Outcome — the gates were exercised, not just written.** The repo's own standard here is
+`publish.yml:148-157`: *"A guard that cannot fail for the reason it claims is worse than no guard,
+because it is also a promise."* The previous npm path had no gate at all; the previous wheel guard
+listed file names and could not fail for the reason it was named for. So the new npm gate was driven
+red against a deliberately broken `files` list before being kept, and both registry-smoke assertions
+were run against the real package. The one gate not yet demonstrated end-to-end is `ci-green`, which
+needs a real tag push — stated here rather than left to look proven.
 
 ---
 
