@@ -86,6 +86,11 @@ jobs:
       # hand-written clients call, per language (the SDK analogue of the runtime's published-surface
       # gate). STREAM=1 + EVENTS=1 are permanent hard gates: the BSR module carries the streamed-payload
       # mirror fields and SeamEvents.ReportEventsConsumed, so their absence here is a regression.
+      #
+      # This also hard-gates the WHOLE RPC surface against contract/rpc-manifest.txt, in both
+      # directions and per language. A verb that lands on the contract and is never wired into the
+      # hand-written clients now reddens CI instead of passing silently — which is exactly what
+      # SubmitApprovalRequest/SubmitBallot did while every named probe stayed green.
       - name: check-contract (full surface gate)
         env:
           STREAM: "1"
@@ -147,7 +152,8 @@ jobs:
         # `seam_sdk._gen.*` subpackages. Raw buf output does not import.
         run: make generate
       # Same contract-freshness gate as the python job. The script probes the Python and TS stub trees
-      # independently, so running it here catches a stale ts/gen even when python/_gen is fresh.
+      # independently, so running it here catches a stale ts/gen even when python/_gen is fresh —
+      # including the RPC-manifest comparison, which is likewise per-language for that reason.
       - name: check-contract (full surface gate)
         env:
           STREAM: "1"

@@ -351,6 +351,54 @@ pub struct Cert {
     pub signature: Vec<u8>,
 }
 
+impl Cert {
+    /// Parse an erasure-certificate **document** in any of the shapes the reference emitter produces.
+    ///
+    /// A verifier that only accepts the form its author happened to test with is a verifier nobody can
+    /// run, so all three are accepted:
+    ///
+    /// 1. a `{"issuer_aid": …, "cert": {…}}` wrapper (what `fixtures/` ships),
+    /// 2. a bare `seam-event.v1` event line carrying an `ErasureCertificate` payload,
+    /// 3. a bare certificate object.
+    ///
+    /// This lives here rather than in `main.rs` so the CLI and an embedding caller share ONE parse.
+    /// When it was inline in the binary, an embedder had to reimplement the shape-sniffing to accept
+    /// the same files the CLI accepts — which is exactly the kind of second implementation this crate
+    /// exists to avoid.
+    pub fn parse_document(raw: &str) -> Result<Self, String> {
+        let raw = raw.trim();
+
+        // Unwrap `{"cert": {...}}` if present; otherwise work on the input as given.
+        let unwrapped: String = serde_json::from_str::<serde_json::Value>(raw)
+            .ok()
+            .and_then(|v| v.get("cert").cloned())
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| raw.to_string());
+        let raw = unwrapped.as_str();
+
+        if let Some(cert) = Event::parse(raw).ok().and_then(|e| e.cert) {
+            return Ok(cert);
+        }
+
+        let j: ErasureCertificateJson =
+            serde_json::from_str(raw).map_err(|e| format!("not an erasure certificate: {e}"))?;
+        use base64::Engine;
+        let d = |s: &str| base64::engine::general_purpose::STANDARD.decode(s);
+        match (d(&j.chain_head), d(&j.signature)) {
+            (Ok(chain_head), Ok(signature)) => Ok(Cert {
+                subject: j.subject,
+                erased: j.erased,
+                held: j.held,
+                erased_at: j.erased_at,
+                chain_head,
+                issuer_aid: j.issuer_aid,
+                signature,
+            }),
+            _ => Err("chain_head/signature are not valid base64".to_string()),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Attestation {
     pub attested_len: u64,

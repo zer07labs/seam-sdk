@@ -18,10 +18,173 @@ than trusting a summary here.
 
 ### Added
 
+- **Contract regenerated from the BSR against the landed coordination surface** — one batched
+  regeneration covering four `seam.api.v1` changes rather than four separate ones, because each
+  regeneration is a release and each release is an exposure event. Adds `PolicyEnforcement`
+  (`DecisionResponse.policy_enforcement`, `SessionStep.policy_enforcement`), `ParticipantVerdict`
+  (`DecisionResponse.participant_verdicts`), `CollectiveOutcome` + the `CollectiveVerdict` enum
+  (`DecisionResponse.collective_outcome`), and the quorum-mode verbs
+  `SeamCoordination.SubmitApprovalRequest` / `SubmitBallot`.
+
+  **This is additive — a minor, not a break — and that was proven rather than assumed:**
+  `buf breaking` against the module commit the previous stubs were generated from
+  (`8bef4b57…`, 2026-08-16) is clean under `FILE`, buf's strictest ruleset, which covers source
+  compatibility and not only the wire. A descriptor-level symbol diff confirms zero removals and no
+  reused field tags — the three new `DecisionResponse` fields take previously unused tags 7, 8 and 9.
+
+  Note for consumers of `collective_outcome`: `CollectiveVerdict`'s growth policy is normative and
+  fail-closed — any value a client does not recognize, **including
+  `COLLECTIVE_VERDICT_UNSPECIFIED`**, must route to the caller's fail policy and never to allow. The
+  field is `optional`, so absent and `UNSPECIFIED` are distinct wire states and must not be
+  flattened into each other.
+
+- **Quorum-mode verbs on the hand-written clients** — `submit_approval_request` / `submit_ballot`
+  (Python sync **and** the `aio` mirror) and `submitApprovalRequest` / `submitBallot` (TypeScript),
+  with `BallotChoice` re-exported from both package roots so a caller never reaches into the private
+  generated tree to name a ballot. `required_approvals` is range-checked as a `uint32` at the client
+  boundary, so an out-of-range value names the SDK argument instead of surfacing from a generated
+  setter — or, in TypeScript, marshalling silently as a different quorum than the caller asked for.
+  Go, Java and Kotlin are unchanged: they are crypto shims with no transport, so a new verb costs
+  them nothing.
+- `python/tests/test_client_parity.py` — asserts the sync and async clients expose the **same verbs
+  with the same parameters**. A verb landing on one client and not the other is this package's
+  standing drift hazard, and a per-verb spot check only ever proves the one you remembered.
+- **`collective_outcome_of` / `collectiveOutcomeOf`** — fail-closed decoding of
+  `DecisionResponse.collective_outcome`, the `CollectiveVerdict` twin of the existing
+  `AuthorizeVerdict` handling and following the same discipline. An **absent** field returns
+  `None`/`undefined` ("this response does not answer the question"); `COLLECTIVE_VERDICT_UNSPECIFIED`
+  or any value this SDK version does not know **raises** `UnknownCollectiveVerdictError`, never an
+  implicit allow.
+
+  Both are required by the proto's normative growth policy, and both are easy to get wrong from the
+  generated surface alone: the field is `optional`, so absent and UNSPECIFIED are distinct wire
+  states a naive read flattens together; and proto3 makes `0` the silent default, so the natural
+  negative test (`verdict != DECLINED`) allows on every unrecognized value — the exact inversion the
+  policy forbids. The decoder never re-derives the verdict from `approve_count`/`reject_count`: the
+  proto states those are observability and that a client-side tally is self-grading and
+  unverifiable, which is the whole reason `verdict` is a field.
+- **`contract/rpc-manifest.txt` + an RPC-completeness gate in `check-contract`.** The gate previously
+  probed 15 named symbols, **none of them a `SeamCoordination` verb** — so a verb could land on the
+  contract, regenerate into the stubs, and never be wired into the clients with CI green throughout.
+  That is exactly what `SubmitApprovalRequest`/`SubmitBallot` did. The whole verb surface is now
+  declared in one committed file and compared **as a set, per language, in both directions**: an RPC
+  missing from the stubs is a stale generation; an RPC missing from the manifest is a new verb, and
+  refusing there is the point — it forces someone to decide whether the clients take it. Set
+  equality rather than a count comparison, because two verbs renamed in one release keeps the count
+  identical while the surface changes underneath.
 - `now_millis` / `nowMillis` exposed on `erase_subject`/`eraseSubject` and
   `erase_subject_confirmed`/`eraseSubjectConfirmed` (Python + TS) — the field already existed on
   the wire; only the hand-written wrappers omitted it, unlike `enforce_retention`, which already
   exposed the identical field (#39).
+
+### Fixed — release-exposure gaps (W5, G1–G3)
+
+Three independently sufficient causes of a 0.7.17-shaped incident, closed.
+
+- **G3 — publish is now gated on CI.** `publish.yml` needed only `version-check`, so a tag pushed
+  at a red commit published anyway. A new `ci-green` job resolves `ci-ok`'s conclusion for the
+  tagged commit and refuses on anything but `success` — **including absent**. This could not be a
+  plain `needs:`: CI runs on the branch push and publish on the tag push, and `needs:` only orders
+  jobs within a single run. Absent is refused deliberately; "not failed" is not "passed", and
+  treating it as such is how 0.7.17 shipped eleven minutes after the change that broke it.
+- **G1 — the npm package is now packed, installed and imported before publish.** The job was
+  `npm ci && npm run build && npm publish` with nothing in between, while the Python job has
+  installed and imported its wheel since 0.7.16. The tarball is now installed **outside the repo**
+  (the working tree would satisfy an import no matter what was packed — the same reasoning behind
+  the Python gate's fresh venv) and must reproduce the committed conformance AID **and** the
+  byte-exact pinned-key presentation. Verified by driving it red against a deliberately broken
+  `files` list, per this repo's own standard that a guard which cannot fail for the reason it
+  claims is worse than no guard.
+- **G2 — a post-publish smoke installs from the registry.** Nothing in this repo had ever installed
+  the published artifact; the only thing that ever had was `seam-adapters`' `live-wire` job, in
+  another repo, by accident of being a consumer. Both packages are now installed from
+  **`dl.cloudsmith.io`** — a different host from the upload host — and run the vectors, with bounded
+  retry for index propagation and a hard ceiling that **fails**. This job **detects, it does not
+  prevent**: it runs after upload, and a published version is immutable. Its own comment says so,
+  so a later reader does not mistake it for a safety net it is not.
+
+### Fixed — commitment-digest framing coverage and the release handshake (W5, G4 + W5.5)
+
+- **All five crypto shims now prove the commitment digest binds every field it claims to**, not just
+  one. G4's premise needed correcting: Go/Java/Kotlin do not implement `record_digest_v2` or
+  `chain_head_attestation`, so never running those vectors was not a coverage gap. They *do*
+  implement `seam-commitment-digest:v1`, and it was already covered indirectly — `verify_tct`
+  recomputes it and compares against the grant inside the runtime-signed JWS.
+
+  The real gap was the **field tuple**: the only tamper test changed `action`, so exactly one of
+  seven framing inputs was proven bound. **An implementation that silently dropped `supersedes` from
+  the preimage passed every test in all five languages** — the vector's commitment has no
+  `supersedes`, so the KAT bytes are identical — and would have let a supersession be stripped from
+  a sealed record undetected. Verified by applying that mutation in Go, Python and Kotlin and
+  watching the old tests pass and the new ones fail.
+
+  Each language now pins every field (including the previously unreachable `supersedes`
+  present-branch) and asserts the framing is injective across field boundaries — the test that
+  notices if someone "simplifies" the length prefixes away, letting one artifact verify under
+  another's signature. Consumption-side only: `conformance/vectors.json` is byte-identical, because
+  `seam-runtime`'s `sdk-digest-parity` job diffs the whole file against its own emitter.
+- **`contract/wire-framing.json` + a framing handshake on the release path (W5.5).** This SDK has no
+  independent version by design, so a runtime wire change automatically triggers an SDK release
+  **whether or not the SDK has adapted** — the structural cause of 0.7.17, which published eleven
+  minutes after the change that broke it. Every other gate here detects that after publication; this
+  one refuses to tag.
+
+  `release-on-runtime.yml` compares the dispatch's `wire_framing_version` against the supported value
+  and refuses on mismatch, before any commit, tag or publish. It cannot be armed unilaterally —
+  until the runtime emits the field every dispatch would look like a mismatch and halt all releases —
+  so a committed `runtime_emits_version` latch tolerates absent for now, with a loud warning naming
+  [`seam-runtime#418`](https://github.com/zer07labs/seam-runtime/issues/418). Flipping that latch
+  once the runtime lands makes absent a refusal too, so a field that later stops being emitted is
+  caught as a regression rather than silently reopening the hole.
+
+### Added — compatibility, and the caveats this repo is not entitled to drop (W6 + W7)
+
+- **`COMPATIBILITY.md`.** There was no compatibility matrix, no support window, no version-skew
+  policy and no MSRV anywhere in the repo. It quotes the lockstep corollary verbatim and unsoftened
+  (a version range cannot protect a consumer from a break here), carries only rows citing a
+  verified `file:line`, records the known-bad bands permanently — nothing was yanked, so the
+  document is the only barrier — states that Python and TypeScript are published while **Java and
+  Kotlin are unversioned and build-from-source**, and declares an N-2-minors support window with
+  the caveat that "minor" is the runtime's.
+
+  It also states plainly what **"independently verifiable" does not cover**: the published verifier
+  **cannot detect truncation** (a stream cut at the tail verifies green — there is no anchor feed,
+  [`seam-runtime#422`](https://github.com/zer07labs/seam-runtime/issues/422)), does **not** implement
+  the commitment digest, and cannot help an external auditor *acquire* a proof.
+- **`python/tests/test_retracted_claims.py`.** The truncation caveat is a capability limit, not a
+  wording preference, so it is test-enforced rather than trusted to survive editing. The guard also
+  fails if any document *claims* truncation detection, or if a known-bad band is dropped.
+- **Java and Kotlin gained the length-prefix rationale they never had** (Go, Python and TypeScript
+  already carried it), and `python/tests/test_framing_rationale_is_documented.py` keeps all five
+  honest. The comment is the only thing standing between a future maintainer and a "simplification"
+  that would let one artifact verify under another's signature — so it is now load-bearing
+  documentation with a test behind it.
+
+### Fixed
+
+- **Retracted a stale claim in `plans/build-agent-ingress.md:5`** that a live consumer pinned
+  `seam-sdk >=0.7,<0.8` and therefore sat inside the wire-broken band. `seam-adapters` raised its
+  floor to `>=0.7.20,<0.8` and this note did not follow, so it generated false alarms against a
+  consumer that was fine.
+
+  The retraction is **deliberately narrow**: only the *pin* half was wrong. The *lock* half — that
+  `uv.lock` resolves 0.7.9 — is still literally true, because the adapters root overrides with an
+  unconditional editable path source, so the lock records a sibling checkout rather than a resolved
+  release. Retracting the whole line would have been a second false claim.
+
+### Changed
+
+- **`protobuf` floor raised `>=7.35.1` → `>=7.36.0`** (still `<8`). Not a chosen number: buf's remote
+  plugins track latest, the batched regeneration above emitted **gencode 7.36.0**, and protobuf's
+  runtime-version check rejects a runtime older than the gencode that produced a file.
+  `tests/test_protobuf_floor.py` derives the floor from the emitted stubs and caught this before
+  publication — which is the whole reason it derives rather than trusts.
+
+  **This is the one part of the regeneration that is not additive for consumers.** The contract
+  change is additive on the wire (`buf breaking` clean under `FILE`); the package's dependency floor
+  is not. A consumer pinned at `protobuf==7.35.1` will fail to resolve, and one who force-installs
+  gets a `VersionError` at `import seam_sdk` rather than a wire error.
+
 
 ### Fixed
 

@@ -2,7 +2,23 @@
 
 > **🔄 REFRESHED 2026-08-14 — PENDING (verified against code; the earlier "delivered" claim was
 > wrong).** What actually shipped, all in the sibling `seam-adapters` repo (v0.1.0, six packages,
-> private Cloudsmith index; pins `seam-sdk >=0.7,<0.8`, lock resolves 0.7.9 — **not** "0.7.20"):
+> private Cloudsmith index):
+>
+> > **RETRACTION (2026-08-23).** This line previously read *"pins `seam-sdk >=0.7,<0.8`, lock
+> > resolves 0.7.9 — **not** '0.7.20'"*, implying a live consumer sits inside the wire-broken band.
+> > **The pin half is stale.** `seam-adapters/core/pyproject.toml:22` reads
+> > `sdk = ["seam-sdk>=0.7.20,<0.8"]`, with the reason recorded inline at `:15-21`. The floor was
+> > raised; this note was not.
+> >
+> > **The lock half is still literally true and is retracted only as an implication.**
+> > `seam-adapters/uv.lock:3921` does resolve `0.7.9` — because
+> > `seam-adapters/pyproject.toml:32` overrides the dependency with an unconditional editable path
+> > source (`{ path = "../seam-sdk/python", editable = true }`), so the lock records the sibling
+> > checkout rather than a resolved release. That is not the consumer ignoring the floor.
+> >
+> > Retracting the whole line would have been a *second* false claim, which is why this says exactly
+> > which half was wrong. See `COMPATIBILITY.md` §2, and
+> > `python/tests/test_retracted_claims.py`, which fails if the stale wording returns.
 >
 > - **§A example — PARTIAL.** `examples/fraud/run.py` (observe→enforce→seal + issuer-pinned
 >   `verify_decision` + wrong-pin `IssuerMismatchError` assert) and `examples/fraud_council/run.py`

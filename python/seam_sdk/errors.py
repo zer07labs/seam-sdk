@@ -58,6 +58,34 @@ class UnknownVerdictError(SeamError):
         return (type(self), (self.raw_value, self.authorize_id))
 
 
+class UnknownCollectiveVerdictError(SeamError):
+    """``DecisionResponse.collective_outcome`` carried a ``CollectiveVerdict`` this SDK version does
+    not recognize — including the proto zero value ``COLLECTIVE_VERDICT_UNSPECIFIED``, which a
+    correct server never emits.
+
+    Growth policy (normative, copied verbatim into the proto from ``AuthorizeVerdict``'s): any value
+    a client does not recognize, INCLUDING ``COLLECTIVE_VERDICT_UNSPECIFIED``, MUST route to the
+    adapter's FailPolicy, never to allow. Raising a typed error is how this SDK enforces that, for
+    the same reason :class:`UnknownVerdictError` does on the Authorize path.
+
+    Why an exception rather than a falsy return: proto3 makes ``0`` the silent default, so an
+    unrecognized verdict read as a plain value is indistinguishable from "nothing was decided" — and
+    the natural negative test (``verdict != DECLINED``) would then ALLOW on it, which is precisely
+    the inversion the growth policy forbids."""
+
+    def __init__(self, raw_value: int, decision_id: str = ""):
+        self.raw_value = raw_value
+        self.decision_id = decision_id
+        super().__init__(
+            f"unrecognized CollectiveVerdict value {raw_value} "
+            f"(decision_id={decision_id or '<none>'}); treat as failure, never allow"
+        )
+
+    def __reduce__(self):
+        # Same rebuild-from-real-arguments discipline as SeamRpcError below.
+        return (type(self), (self.raw_value, self.decision_id))
+
+
 class ProtocolViolationError(SeamError):
     """The server answered something the wire contract forbids — e.g. a TRANSFORM verdict with no
     ``transformed_input``. Typed (not a bare ``SeamError``) so adapters can route it to their

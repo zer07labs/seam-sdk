@@ -11,6 +11,13 @@ the public contract, never on the runtime internals.
 > (`UNAUTHENTICATED: admission ticket is not valid` — the ticket is fine). Neither defect is visible
 > from the version number. Full detail and root cause: [`CHANGELOG.md`](CHANGELOG.md).
 
+> **Before you pin a version, read [`COMPATIBILITY.md`](COMPATIBILITY.md).** This SDK takes the
+> runtime's version and therefore **cannot express its own semver** — a breaking change here can ship
+> as a patch. That document carries the verified compatibility rows, the permanently known-bad
+> bands, which languages are actually published (two of five), the derived dependency floors, and —
+> importantly — what "independently verifiable" does **not** cover: the published verifier cannot
+> detect a truncated chain, and does not implement the commitment digest.
+
 ## Architecture
 
 The single source of truth is the `seam.api.v1` protobuf contract, published as the buf module
@@ -70,9 +77,20 @@ and probes the emitted stubs:
   Each probe checks the Python and TypeScript stubs **independently**, so a partial regen that leaves one
   language stale fails loudly.
 
-> **BSR state (probed 2026-08-14, `buf export buf.build/zer07labs/seam` + grep):** the BSR carries the
-> full surface — `VerifyPartyAttestation`, all four streamed-payload mirror fields, and
-> `ReportEventsConsumed`. Their absence is now a regression, which is why the gates above are permanent.
+> **BSR state (probed 2026-08-23, `buf build buf.build/zer07labs/seam` → descriptor, module commit
+> `7a28eb9417894fe29e33390bf2eccfaf`):** the BSR carries the full surface — `VerifyPartyAttestation`,
+> all four streamed-payload mirror fields, and `ReportEventsConsumed`. Their absence is now a
+> regression, which is why the gates above are permanent.
+>
+> It also carries the coordination surface added since the 2026-08-14 probe: `PolicyEnforcement`
+> (`DecisionResponse.policy_enforcement = 7`, `SessionStep.policy_enforcement = 3`),
+> `ParticipantVerdict` (`participant_verdicts = 8`), `CollectiveOutcome` +
+> `CollectiveVerdict` (`collective_outcome = 9`), and the quorum verbs
+> `SeamCoordination.SubmitApprovalRequest` / `SubmitBallot` with `ApprovalRequestRequest`,
+> `BallotRequest` and `BallotChoice`. **Additive:** `buf breaking` against the module commit the
+> previous stubs were built from (`8bef4b5774ee454da5266574678662ab`, 2026-08-16) is clean under
+> `FILE` — buf's strictest ruleset, covering source compatibility and not just the wire — with zero
+> removals and no reused field tags.
 
 ## Build & test
 

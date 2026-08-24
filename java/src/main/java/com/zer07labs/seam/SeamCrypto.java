@@ -136,6 +136,30 @@ public final class SeamCrypto {
         popNonce);
   }
 
+  /**
+   * SHA-256 (hex) over a <b>length-prefixed</b> framing of a domain tag plus the commitment fields —
+   * each field preceded by its 8-byte big-endian length. Mirrors the runtime byte-for-byte, and
+   * mirrors the Go/Kotlin/Python/TypeScript shims.
+   *
+   * <p><b>The length prefixes are not decoration and must never be "simplified" to a separator.</b>
+   * The fields are arbitrary text that may itself contain NUL — UTF-8 permits U+0000, and it
+   * survives the JSON/prost decision path — so with a {@code \0} separator the tuples
+   * {@code ("a\0b","c")} and {@code ("a","b\0c")} produce IDENTICAL preimages, and therefore
+   * identical digests. That would let one Commitment verify under another's TCT: an attacker who
+   * controls a field boundary could shift bytes across it and reuse a signature that was never
+   * issued for their artifact. Length-prefixing makes the digest injective over the field tuple
+   * regardless of content.
+   *
+   * <p>The same rationale is recorded at {@code seam-trust-aitp/src/lib.rs:350-354} in the runtime.
+   * It is written out here because this comment is the only thing standing between a future
+   * maintainer and a "cleanup" that silently breaks artifact binding — and Java and Kotlin were the
+   * two shims that carried no rationale at all while Go, Python and TypeScript did.
+   *
+   * <p>Field order is also load-bearing and must match the runtime exactly: domain, id, action,
+   * authority, supersedes, auth_method, trust_basis. Binding {@code auth_method}/{@code trust_basis}
+   * is what makes the artifact attest <i>who</i> committed it and <i>how</i> they authed, not just
+   * the decision. {@code ConformanceTest} asserts every one of these is bound.
+   */
   private static String seamCommitmentDigest(Commitment c) {
     ByteArrayOutputStream h = new ByteArrayOutputStream();
     byte[][] fields = {

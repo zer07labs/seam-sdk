@@ -1,0 +1,67 @@
+# seam.api.v1 RPC manifest — the SDK's declaration of the verb surface it expects.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# `check-contract.sh` probes named symbols. Before this manifest it probed 15 things and NONE of
+# them was a `SeamCoordination` verb — so when SubmitApprovalRequest and SubmitBallot landed on the
+# contract, the gate stayed green while both clients were missing them. A new verb missing from a
+# regeneration passed silently. That is the same class of gap as the missing call_sig vector, and
+# adding two more hand-written probes would only have moved it one release down the road.
+#
+# So the expectation is a FILE, not a list of probes: every RPC the generated stubs declare must
+# appear here, and every RPC here must appear in the stubs. Both directions fail loud.
+#
+#   * stub is MISSING an RPC listed here      -> stale/partial generation. Regenerate.
+#   * stub has an RPC NOT listed here         -> a new verb landed on the contract. Wire it into the
+#                                                hand-written clients (or record why not), then add
+#                                                the line here. That refusal IS the human moment
+#                                                this gate exists to force.
+#
+# It is also checked PER LANGUAGE. Python and TypeScript generate together but go stale separately,
+# and a symbol present in one must never vouch for the other.
+#
+# Set equality, not a count: two RPCs renamed in one release would keep the count identical while
+# the surface changed underneath.
+#
+# Sorted, one `Service/Method` per line. Regenerate with:
+#   scripts/check-contract.sh --write-manifest
+SeamAdmin/AuditTrail
+SeamAdmin/EnforceRetention
+SeamAdmin/EnrollTenant
+SeamAdmin/EraseSubject
+SeamAdmin/ListGrants
+SeamAdmin/ListTenants
+SeamAdmin/PlaceGrant
+SeamAdmin/PlaceLegalHold
+SeamAdmin/PreviewErasure
+SeamAdmin/RegisterParty
+SeamAdmin/ReleaseLegalHold
+SeamAdmin/RemoveParty
+SeamAdmin/ResumeSession
+SeamAdmin/RevokeGrant
+SeamAdmission/Admit
+SeamAdmission/IssueChallenge
+SeamAuthorization/Authorize
+SeamContext/RegisterContext
+SeamContext/ResolveContext
+SeamCoordination/CancelSession
+SeamCoordination/ExpireSession
+SeamCoordination/GetCommitmentProof
+SeamCoordination/GetDecision
+SeamCoordination/OpenSession
+SeamCoordination/ReplayDecision
+SeamCoordination/ReportOutcome
+SeamCoordination/ResumeSession
+SeamCoordination/RunDecision
+SeamCoordination/SessionStatus
+SeamCoordination/SubmitApprovalRequest
+SeamCoordination/SubmitBallot
+SeamCoordination/SubmitCommit
+SeamCoordination/SubmitProposal
+SeamCoordination/SubmitVote
+SeamEvents/ReportEventsConsumed
+SeamEvents/StreamEvents
+SeamTrust/IssuerAid
+SeamTrust/VerifyCommitment
+SeamTrust/VerifyPartyAnchor
+SeamTrust/VerifyPartyAttestation
