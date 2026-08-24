@@ -1,9 +1,9 @@
-# PROGRESS — `plans/close-out-w1-w7-loose-ends.md`
+# PROGRESS — `plans/archive/close-out-w1-w7-loose-ends.md`
 
 Checkpoint trail and repo map for the close-out workstream. `/implement` writes a block per phase;
 a resumed run reads this instead of re-scanning the repo.
 
-**Plan:** [`plans/close-out-w1-w7-loose-ends.md`](plans/close-out-w1-w7-loose-ends.md) — 4 phases.
+**Plan:** [`plans/archive/close-out-w1-w7-loose-ends.md`](plans/archive/close-out-w1-w7-loose-ends.md) — 4 phases.
 **Branch:** `feat/close-out-loose-ends`, cut from `origin/main` @ `f68572f` (v0.7.43).
 
 ## Repo map

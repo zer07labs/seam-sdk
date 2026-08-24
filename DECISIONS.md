@@ -5,7 +5,7 @@ assumption, the independent recommender's analysis, the human verdict, and the r
 `/ship` and any later reconciliation read this file instead of replaying the conversation that
 produced it.
 
-## 2026-08-24 — `plans/close-out-w1-w7-loose-ends.md` Phase 3: framework co-installability is a probe, not a table of versions
+## 2026-08-24 — `plans/archive/close-out-w1-w7-loose-ends.md` Phase 3: framework co-installability is a probe, not a table of versions
 
 ### Scope: the frameworks are the ones `seam-adapters` ships a shim for
 

@@ -175,7 +175,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   from the calling-convention markers present in `_gen`. See DECISIONS.md.
 
 ## Testing (not just building) `verify/` at its declared MSRV
-- **Plan:** `plans/close-out-w1-w7-loose-ends.md` (Phase 1)
+- **Plan:** `plans/archive/close-out-w1-w7-loose-ends.md` (Phase 1)
 - **Assumed:** running the *test* profile at the MSRV does not overstate the promise made to
   consumers, who never build the tests.
 - **Chose:** run both `cargo build --locked` and `cargo test --locked` in the `verify-msrv` job.
