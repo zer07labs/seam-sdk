@@ -7,12 +7,14 @@ vectors generated from the Rust runtime pin the exact bytes (see ``conformance/v
 
 from . import aio
 from ._authorize import AuthorizeResult
+from ._collective import CollectiveOutcome, collective_outcome_of
 from .admin import (
     DEFAULT_ADMIN_TIMEOUT_S,
     KNOWN_KINDS,
     SeamAdminClient,
     verify_streamed_record_digest,
 )
+
 # Request-side enum on the quorum verbs. Re-exported so a caller can NAME a ballot choice
 # (`BallotChoice.BALLOT_CHOICE_APPROVE`) without importing from the private `_gen` tree.
 from seam_sdk._gen.seam.api.v1.seam_pb2 import BallotChoice
@@ -51,6 +53,7 @@ from .errors import (
     UnauthenticatedError,
     UnavailableError,
     UnimplementedError,
+    UnknownCollectiveVerdictError,
     UnknownVerdictError,
     map_rpc_error,
 )
@@ -68,6 +71,9 @@ __all__ = [
     "verify_tct",
     # Advisory authorization (Authorize verb)
     "AuthorizeResult",
+    # Collective outcome (C5) — fail-closed decoding of DecisionResponse.collective_outcome
+    "CollectiveOutcome",
+    "collective_outcome_of",
     "DEFAULT_TIMEOUT_S",
     "DEFAULT_ADMIN_TIMEOUT_S",
     "jcs_canonicalize",
@@ -97,4 +103,5 @@ __all__ = [
     "UnimplementedError",
     "InternalError",
     "UnknownVerdictError",
+    "UnknownCollectiveVerdictError",
 ]

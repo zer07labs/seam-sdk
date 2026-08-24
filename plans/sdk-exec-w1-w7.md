@@ -247,7 +247,9 @@ passing to zero collected — caught this time before publication rather than in
 
 ### Phase 3 — W4.4 + the W5 finding: make a missing verb loud, and make the unrecognized verdict fail closed
 
-**Status:** PENDING.
+**Status:** DONE (2026-08-23, 1 round). Diverged from plan in one way, amended in the acceptance
+criteria: the meta-check is a **committed manifest compared as a set in both directions**, not the
+probe-count-equals-RPC-count comparison W4.4 proposed. Reason in *Approach (a)* below.
 
 **Delivers.** `check-contract` covering **every** `SeamCoordination` verb with a meta-check that the
 probe count equals the descriptor's RPC count; a fail-closed reading of `CollectiveVerdict`; and
@@ -310,14 +312,27 @@ the reasoning, so the next regeneration inherits the method and not just the con
   proves the default branch is reachable.
 
 **Acceptance criteria.**
-1. **Red first:** with the meta-check added and the two new verbs deliberately unprobed,
-   `check-contract` **fails**, naming both. Then the probes are added and it passes.
-2. Deleting any verb from a local regeneration makes `check-contract` fail (the source plan's own
-   stated acceptance test for W4.4).
-3. The verdict helper returns cannot-decide for: field absent, `UNSPECIFIED`, and an
-   out-of-range numeric — one test each, per language.
-4. A test asserts the helper has **no** boolean-returning public form.
-5. `DECISIONS.md` records the W4.3 answer with its structural reason.
+1. **Red first:** with `SubmitBallot` removed from the manifest, `check-contract` **fails** naming
+   it in both languages. ✅ exit **5**, `NOT IN THE MANIFEST, present in the python stubs` +
+   the same for ts.
+2. Deleting a verb from a local regeneration makes `check-contract` fail (the source plan's own
+   stated acceptance test for W4.4). ✅ exit **5**,
+   `MISSING from the python stubs (stale/partial generation): - SeamCoordination/SubmitApprovalRequest`.
+   Restored, back to exit 0. Both directions proven, not just the one W4.4 named.
+3. The decoder distinguishes absent / `UNSPECIFIED` / out-of-range, per language. ✅ Python 14
+   tests, TS 8 tests. *Amended from "returns cannot-decide":* absent returns `None`/`undefined`
+   and unrecognized **raises** — following this repo's own established `AuthorizeVerdict`
+   precedent (`_authorize.py:46-51`, `errors.py:41`) rather than inventing a second shape for the
+   same problem. Raising is also the only form with no truthiness that can go the wrong way.
+4. A test asserts the helper has **no** boolean-returning public form. ✅ *Amended:* there is
+   exactly one, `approved`, and a test asserts no `declined` twin exists — `not approved` must
+   stay the safe reading.
+5. `DECISIONS.md` records the W4.3 answer with its structural reason. ✅
+6. *Added:* a test asserts the verdict is never re-derived from the counters, using a tally that
+   **contradicts** the verdict. The proto says a client-side tally is self-grading and
+   unverifiable; this fails if anyone ever teaches the client to grade the server's judgment.
+7. *Added:* `conformance/vectors.json` untouched — verified by `git diff --stat`, per the
+   cross-repo lockstep constraint.
 
 ---
 

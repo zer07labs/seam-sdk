@@ -49,6 +49,29 @@ than trusting a summary here.
 - `python/tests/test_client_parity.py` — asserts the sync and async clients expose the **same verbs
   with the same parameters**. A verb landing on one client and not the other is this package's
   standing drift hazard, and a per-verb spot check only ever proves the one you remembered.
+- **`collective_outcome_of` / `collectiveOutcomeOf`** — fail-closed decoding of
+  `DecisionResponse.collective_outcome`, the `CollectiveVerdict` twin of the existing
+  `AuthorizeVerdict` handling and following the same discipline. An **absent** field returns
+  `None`/`undefined` ("this response does not answer the question"); `COLLECTIVE_VERDICT_UNSPECIFIED`
+  or any value this SDK version does not know **raises** `UnknownCollectiveVerdictError`, never an
+  implicit allow.
+
+  Both are required by the proto's normative growth policy, and both are easy to get wrong from the
+  generated surface alone: the field is `optional`, so absent and UNSPECIFIED are distinct wire
+  states a naive read flattens together; and proto3 makes `0` the silent default, so the natural
+  negative test (`verdict != DECLINED`) allows on every unrecognized value — the exact inversion the
+  policy forbids. The decoder never re-derives the verdict from `approve_count`/`reject_count`: the
+  proto states those are observability and that a client-side tally is self-grading and
+  unverifiable, which is the whole reason `verdict` is a field.
+- **`contract/rpc-manifest.txt` + an RPC-completeness gate in `check-contract`.** The gate previously
+  probed 15 named symbols, **none of them a `SeamCoordination` verb** — so a verb could land on the
+  contract, regenerate into the stubs, and never be wired into the clients with CI green throughout.
+  That is exactly what `SubmitApprovalRequest`/`SubmitBallot` did. The whole verb surface is now
+  declared in one committed file and compared **as a set, per language, in both directions**: an RPC
+  missing from the stubs is a stale generation; an RPC missing from the manifest is a new verb, and
+  refusing there is the point — it forces someone to decide whether the clients take it. Set
+  equality rather than a count comparison, because two verbs renamed in one release keeps the count
+  identical while the surface changes underneath.
 - `now_millis` / `nowMillis` exposed on `erase_subject`/`eraseSubject` and
   `erase_subject_confirmed`/`eraseSubjectConfirmed` (Python + TS) — the field already existed on
   the wire; only the hand-written wrappers omitted it, unlike `enforce_retention`, which already

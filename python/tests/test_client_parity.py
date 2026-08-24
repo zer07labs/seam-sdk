@@ -57,7 +57,9 @@ def test_the_two_clients_agree_on_each_verbs_signature() -> None:
     sync path and raises `TypeError` on the async one, for callers who pass it.
     """
     mismatches = []
-    for name in sorted(_public_methods(client.SeamClient) & _public_methods(aio.SeamClient)):
+    for name in sorted(
+        _public_methods(client.SeamClient) & _public_methods(aio.SeamClient)
+    ):
         sync_sig = inspect.signature(getattr(client.SeamClient, name))
         async_sig = inspect.signature(getattr(aio.SeamClient, name))
         if list(sync_sig.parameters) != list(async_sig.parameters):

@@ -5,6 +5,37 @@ assumption, the independent recommender's analysis, the human verdict, and the r
 `/ship` and any later reconciliation read this file instead of replaying the conversation that
 produced it.
 
+## 2026-08-23 — `plans/sdk-exec-w1-w7.md` Phase 3 (W4.3): does a new field enter the record-digest preimage?
+
+W4.3 requires an **explicit, written** answer per new field, because "an unanswered question here is
+how v1→v2 happened." Answering it in a PR comment and moving on is what this entry exists to prevent.
+
+### None of the four landed contract changes enters the record-digest preimage
+
+- **The question.** The batched regeneration added `DecisionResponse.policy_enforcement` (7),
+  `.participant_verdicts` (8), `.collective_outcome` (9), `SessionStep.policy_enforcement` (3), and
+  the quorum verbs. Does any of them change what `verify/` must hash — which would make this a
+  digest **version bump**, not an additive field, and pull in the whole of W7?
+- **Answer: no, and the reason is structural rather than a judgment call.** Every one of those
+  fields is on a `seam.api.v1` **response** message. The record digest is computed over
+  `DECISION_SEALED`'s payload columns — specified byte-exactly at
+  `seam-runtime/docs/specs/seam-event.v1.md:379-393` — and `verify/src/wire.rs` mirrors the
+  **event** wire only (`SeamEventPb`, `DecisionSealedPb`, `ErasureCertificatePb`, …). A response
+  field is not a sealed column and never reaches the preimage.
+- **The one event-wire addition in the same window** is `seam.event.v1 LearningOutcome.policy_key`
+  (tag 3), found by the descriptor diff rather than by the PR list. `verify/` does not mirror
+  `LearningOutcome` at all (grep: zero hits), so it does not reach the verifier either.
+- **Consequence:** `verify/src/wire.rs` needs no change, `conformance/vectors.json` is untouched,
+  and W7 does not apply to this regeneration.
+- **The method, which outlives this answer:** the test is not "is the field new?" but **"is it a
+  sealed column?"** Ask it against the event proto and `verify/src/wire.rs`, per field, every
+  regeneration. `GetDecision`/`ReplayDecision` deliberately do **not** carry the three new response
+  fields precisely because that *would* require a `DecisionRecord` schema + archive-format
+  migration — the proto says so itself. The day a field lands on `DecisionSealed`, the answer flips
+  and W7 engages.
+- **Status:** RECORDED. Re-answer per regeneration; do not inherit this conclusion without redoing
+  the check.
+
 ## 2026-08-16 — reconcile `plans/archive/adopt-runtime-2026-07.md`'s ASSUMPTIONS.md (8 entries)
 
 Ranked by blast radius, highest first. The two dependency-floor entries are genuine one-way

@@ -9,6 +9,7 @@ import { ed25519 } from "@noble/curves/ed25519";
 import {
   AuthorizeVerdict,
   BallotChoice,
+  CollectiveVerdict,
   SeamAdmission,
   SeamAuthorization,
   SeamContext,
@@ -17,6 +18,7 @@ import {
   type Anchor,
   type Commitment,
   type ContextBinding,
+  type DecisionResponse,
 } from "../gen/seam/api/v1/seam_pb.js";
 // ChainHeadAttestation moved to the canonical seam.event.v1 package.
 import { type ChainHeadAttestation } from "../gen/seam/event/v1/seam_event_pb.js";
@@ -124,6 +126,94 @@ export class UnknownVerdictError extends Error {
       `unrecognized AuthorizeVerdict value ${rawValue} (authorize_id=${authorizeId || "<none>"}); treat as failure, never allow`,
     );
   }
+}
+
+/**
+ * `DecisionResponse.collective_outcome` carried a `CollectiveVerdict` this SDK version does not
+ * recognize — including the proto zero value `COLLECTIVE_VERDICT_UNSPECIFIED`, which a correct
+ * server never emits.
+ *
+ * Growth policy (normative, copied verbatim into the proto from `AuthorizeVerdict`'s): any value a
+ * client does not recognize, INCLUDING `COLLECTIVE_VERDICT_UNSPECIFIED`, MUST route to the adapter's
+ * FailPolicy, never to allow. Throwing is how this SDK enforces that — the same discipline
+ * {@link UnknownVerdictError} applies on the Authorize path, and for the same reason: a returned
+ * value has a truthiness that can go the wrong way, and a thrown one does not.
+ */
+export class UnknownCollectiveVerdictError extends Error {
+  readonly name = "UnknownCollectiveVerdictError";
+  constructor(
+    readonly rawValue: number,
+    readonly decisionId: string,
+  ) {
+    super(
+      `unrecognized CollectiveVerdict value ${rawValue} (decision_id=${decisionId || "<none>"}); treat as failure, never allow`,
+    );
+  }
+}
+
+/** The closed verdict set this SDK version understands. Anything outside it — including the zero
+ * value — is a failure per the growth policy above. */
+// NOTE the bare names. The proto deliberately PREFIXES these values (`COLLECTIVE_VERDICT_APPROVED`)
+// because proto3 scopes enum values at the FILE level, so bare `APPROVED`/`DECLINED` would collide
+// with `AuthorizeVerdict`'s vocabulary. protobuf-es strips that prefix back off per-enum, so in
+// TypeScript they are `CollectiveVerdict.APPROVED` — the collision the prefix guards against cannot
+// occur here, since each enum is its own object.
+const COLLECTIVE_VERDICT_NAMES: Record<number, CollectiveOutcome["verdict"]> = {
+  [CollectiveVerdict.APPROVED]: "APPROVED",
+  [CollectiveVerdict.DECLINED]: "DECLINED",
+  [CollectiveVerdict.SPLIT]: "SPLIT",
+  [CollectiveVerdict.ESCALATED]: "ESCALATED",
+  [CollectiveVerdict.NO_VOTES]: "NO_VOTES",
+};
+
+/** The runtime's own judgment of what a panel decided, as it derived it from the actual tally.
+ *
+ * `verdict` is the judgment and the only field to branch on. The counters are OBSERVABILITY — they
+ * are here so a caller can *show* the tally, not so it can recompute the verdict from them. The
+ * proto is explicit that a client-side tally is self-grading and unverifiable, which is the whole
+ * reason `verdict` exists as a field. */
+export interface CollectiveOutcome {
+  verdict: "APPROVED" | "DECLINED" | "SPLIT" | "ESCALATED" | "NO_VOTES";
+  approveCount: number;
+  /** REJECT and BLOCK both, matching the runtime's own fold. */
+  rejectCount: number;
+  /** Includes ESCALATE / REVIEW. */
+  abstainCount: number;
+  /** Not redundant with the vote counts — MACP's `unanimous` algorithm uses DECLARED participants
+   * as its denominator, so a panel of 3 with 2 APPROVE votes is denied for not all having voted. */
+  declaredParticipantCount: number;
+  statedValueContradictedTally: boolean;
+}
+
+/** Decode `resp.collectiveOutcome`, fail-closed.
+ *
+ * Returns `undefined` **iff the field is absent** — the runtime did not carry one on this response
+ * (an older runtime, or a read verb that per the proto never does). That is not "the panel decided
+ * nothing"; it is "this response does not answer the question", and the caller must decide what
+ * that means for its own fail policy rather than being handed a value.
+ *
+ * Throws {@link UnknownCollectiveVerdictError} for `COLLECTIVE_VERDICT_UNSPECIFIED` or any value
+ * this SDK version does not know — never an implicit allow.
+ *
+ * Why this helper exists at all: `collectiveOutcome` is `optional`, and proto3 makes `0` the silent
+ * default, so reading `resp.collectiveOutcome?.verdict` on an absent field is indistinguishable
+ * from UNSPECIFIED — and the natural negative test (`verdict !== DECLINED`) allows on every
+ * unrecognized value, which is the exact inversion the growth policy forbids. */
+export function collectiveOutcomeOf(resp: DecisionResponse): CollectiveOutcome | undefined {
+  const outcome = resp.collectiveOutcome;
+  if (outcome === undefined) return undefined;
+
+  const verdict = COLLECTIVE_VERDICT_NAMES[outcome.verdict];
+  if (!verdict) throw new UnknownCollectiveVerdictError(outcome.verdict, resp.decisionId);
+
+  return {
+    verdict,
+    approveCount: outcome.approveCount,
+    rejectCount: outcome.rejectCount,
+    abstainCount: outcome.abstainCount,
+    declaredParticipantCount: outcome.declaredParticipantCount,
+    statedValueContradictedTally: outcome.statedValueContradictedTally,
+  };
 }
 
 /** One advisory verdict. `transformedInput` is the guard-redacted canonical JSON, set iff
