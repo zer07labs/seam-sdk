@@ -77,6 +77,32 @@ than trusting a summary here.
   the wire; only the hand-written wrappers omitted it, unlike `enforce_retention`, which already
   exposed the identical field (#39).
 
+### Fixed — release-exposure gaps (W5, G1–G3)
+
+Three independently sufficient causes of a 0.7.17-shaped incident, closed.
+
+- **G3 — publish is now gated on CI.** `publish.yml` needed only `version-check`, so a tag pushed
+  at a red commit published anyway. A new `ci-green` job resolves `ci-ok`'s conclusion for the
+  tagged commit and refuses on anything but `success` — **including absent**. This could not be a
+  plain `needs:`: CI runs on the branch push and publish on the tag push, and `needs:` only orders
+  jobs within a single run. Absent is refused deliberately; "not failed" is not "passed", and
+  treating it as such is how 0.7.17 shipped eleven minutes after the change that broke it.
+- **G1 — the npm package is now packed, installed and imported before publish.** The job was
+  `npm ci && npm run build && npm publish` with nothing in between, while the Python job has
+  installed and imported its wheel since 0.7.16. The tarball is now installed **outside the repo**
+  (the working tree would satisfy an import no matter what was packed — the same reasoning behind
+  the Python gate's fresh venv) and must reproduce the committed conformance AID **and** the
+  byte-exact pinned-key presentation. Verified by driving it red against a deliberately broken
+  `files` list, per this repo's own standard that a guard which cannot fail for the reason it
+  claims is worse than no guard.
+- **G2 — a post-publish smoke installs from the registry.** Nothing in this repo had ever installed
+  the published artifact; the only thing that ever had was `seam-adapters`' `live-wire` job, in
+  another repo, by accident of being a consumer. Both packages are now installed from
+  **`dl.cloudsmith.io`** — a different host from the upload host — and run the vectors, with bounded
+  retry for index propagation and a hard ceiling that **fails**. This job **detects, it does not
+  prevent**: it runs after upload, and a published version is immutable. Its own comment says so,
+  so a later reader does not mistake it for a safety net it is not.
+
 ### Changed
 
 - **`protobuf` floor raised `>=7.35.1` → `>=7.36.0`** (still `<8`). Not a chosen number: buf's remote
