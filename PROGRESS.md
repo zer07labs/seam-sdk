@@ -1,144 +1,72 @@
-# PROGRESS — `plans/archive/close-out-w1-w7-loose-ends.md`
+# PROGRESS — `plans/record-digest-v3.md`
 
-Checkpoint trail and repo map for the close-out workstream. `/implement` writes a block per phase;
-a resumed run reads this instead of re-scanning the repo.
+Checkpoint trail and repo map for the `record_digest_v3` workstream (issue #56, B3 Phase 2).
+`/implement` writes a block per phase; a resumed run reads this instead of re-scanning the repo.
 
-**Plan:** [`plans/archive/close-out-w1-w7-loose-ends.md`](plans/archive/close-out-w1-w7-loose-ends.md) — 4 phases.
-**Branch:** `feat/close-out-loose-ends`, cut from `origin/main` @ `f68572f` (v0.7.43).
+**Plan:** [`plans/record-digest-v3.md`](plans/record-digest-v3.md) — 6 phases (Phase 6 BLOCKED on
+seam-runtime B3 Phase 1 + BSR push).
+**Hard constraint:** clean-room — `../seam-runtime/crates/**` is NEVER read. Spec + runtime plan +
+runtime gate script are the only permitted sibling reads.
+
+> The previous occupant of this file tracked `plans/close-out-w1-w7-loose-ends.md`, which was
+> delivered (PR #53) and archived on 2026-08-24 (PR #57). Its checkpoint trail lives in that PR's
+> history; nothing here carries over.
 
 ## Repo map
 
 | Path | Purpose / relevance |
 |---|---|
-| `.github/workflows/ci.yml` | Phase 1's only file. `verify` job builds on `stable` only; `ci-ok` is the single required check and its `needs:` list is the gate. |
-| `scripts/test_ci_gate.py` | Asserts `ci-ok.needs` covers every job — makes forgetting Phase 1's gate entry impossible. REQUIRED vs ADVISORY split; `integration` is the only allowed advisory. |
-| `verify/Cargo.toml` | `rust-version = "1.85"` — the single source Phase 1 derives the toolchain from. Also `publish = ["zer07labs"]` (Cloudsmith, not crates.io). |
-| `verify/tests/msrv.rs` | Guards the *declared* half of the MSRV promise (derives from `cargo metadata`). Phase 1 adds the *compiled* half. |
-| `verify/.cargo/config.toml` | Declares the private Cargo registry; publish-path only, does not affect a credential-less build. |
-| `plans/consolidation-2026-08-14.md` | Phase 2 primary. Residual backlog `:71-83`; stale version at `:58`; stale plan-triage row at `:24`. |
-| `plans/build-agent-ingress.md` | Phase 2. Stale "Missing: the two scenes" at `:26-30`; the model retraction block at `:6-16`. |
-| `plans/README.md` | Phase 2 + 4. Active/pending table at `:13-14`. |
-| `plans/cross-repo/` | Phase 4 creates it. Does not exist today — the deviation Phase 4 closes. |
-| `COMPATIBILITY.md` | Phase 1 (floor table `:103-112`) and Phase 3 (§4). Every `file:line` citation in it is guarded. |
-| `DECISIONS.md` | Phase 3. The durable decision ledger. |
-| `python/tests/test_retracted_claims.py` | Scans every markdown file; guards the stale adapters pin and the truncation caveat. Phases 2/3/4 must keep it green. |
-| `python/tests/test_compatibility_citations_resolve.py` | Every `COMPATIBILITY.md` citation must resolve; `ANCHORED` pins the load-bearing ones. Phase 3 may need to extend it. |
+| `python/seam_sdk/crypto.py:343-384` | `_frame`/`_opt` helpers and `record_digest_v2` (`:351`). Phase 1 adds `record_digest_v3` + `_opt_bytes` beside them. Function name is resolved EXACTLY by the runtime's parity gate. |
+| `python/seam_sdk/__init__.py:35,86` | `record_digest_v2` export points; Phase 1 mirrors for v3. |
+| `python/seam_sdk/admin.py:70` | `verify_streamed_record_digest` — refuses `schema_version != 2` with `ValueError`. Phase 6 ONLY; untouched in Phases 1–5. |
+| `python/tests/test_streamed_decode.py:85` | Pins v3 ⇒ `ValueError` on the streamed helper. Must stay green through Phase 5; flips to v4 in Phase 6. |
+| `python/tests/test_conformance.py` | Vector consumption + the binds-every-field test pattern Phases 1–3 copy. Phase 2 extends. |
+| `scripts/emit_record_digest_v3_vectors.py` | Phase 2 creates — the committed emitter; a pytest byte-compares its output against the committed block. |
+| `conformance/vectors.json` | Keys: `_comment`, `admission`, `tct`, `chain_head_attestation`, `record_digest_v2` (single `{inputs, digest_hex}` object). Phase 2 appends `record_digest_v3: {cases:[…4 cases…]}`; ONLY allowed foreign diff line: the v2 block's closing `}` gains a comma. |
+| `ts/src/crypto.ts:272-330` | `frameLE`/`optLE`/`u32le`/`u64le` and `recordDigestV2` (`:299`, object param). Phase 3 adds `recordDigestV3` + bytes-opt helper. `export *` via `ts/src/index.ts`. |
+| `ts/tests/conformance.test.ts` | Reads `../../conformance/vectors.json`. Phase 3 extends. |
+| `ts/src/admin.ts:79-94` | `verifyStreamedRecordDigest` — distinct `<2` / `>2` refusals already. Phase 6 only. |
+| `verify/src/verify.rs:273-299` | `record_digest_v2` (private, local `frame`/`opt` closures). Phase 4 adds the v3 sibling. |
+| `verify/src/verify.rs:~343-393` | `verify_authenticity`'s recompute loop: `schema_version < 2 ⇒ skip; else v2` — TODAY misreports a v3 record as a payload rewrite. Phase 4 replaces with the 1/2/3/≥4 match; tag-10 strip and mismatch error texts live here and are the wording precedents. |
+| `verify/src/wire.rs:132-155` | `DecisionSealedPb` tags 1–10; tag 10 is NON-optional (absent==empty — fine for tag 10's non-empty check, NOT for 11/12). Phase 4 adds tags 11/12/13 as `optional bytes`. |
+| `verify/src/wire.rs:261-283` | `DecisionSealedJson` (base64/`Option`); Phase 4 adds three `Option<String>` fields. `Decision` struct at `:330`; both `Event::parse` arms map payloads. |
+| `verify/src/main.rs` | CLI. Exit contract 0/1/2; `fail()` banners; `--json` = `{"verified":false,"error":…}`. Phase 4 updates usage text + report line only — NO new exit code, NO new JSON field. |
+| `verify/tests/authenticity.rs` | `mutate_first_sealed` helper + synthesized-stream pattern for the Phase 4 strip/rewrite/unknown-version/mixed-chain tests. Goldens in `verify/tests/goldens/` are v2-era; v3 streams are synthesized in-test. |
+| `verify/tests/conformance.rs` | Phase 4 creates — reads `../conformance/vectors.json` via `CARGO_MANIFEST_DIR`; FAILS (never skips) when block missing; listed in Cargo.toml package `exclude`. |
+| `verify/docs/seam-event.v1.md` | STALE vendored spec — no v3 section (its §Record digest at `:356` has v2/v1 only). Phase 4 refreshes verbatim from the runtime spec. |
+| `verify/proto/seam/event/v1/seam_event.proto:186-201` | Vendored `DecisionSealed`, tags 1–10. Phase 4 adds `optional bytes` 11/12/13 transcribed from the spec. |
+| `verify/Cargo.toml` | Empty `[workspace]` (standalone build — keep); `publish = ["zer07labs"]`; MSRV 1.85 derived. No new dependencies allowed (CI gates zero Seam crates). |
+| `CHANGELOG.md`, `COMPATIBILITY.md` (§5, §7), `verify/README.md`, `verify/DECISIONS.md`, `plans/README.md` | Phase 5. §7's "new vectors must originate in the runtime" is inverted for NEW version blocks by issue #56 — rewrite with citation. Doc-guard tests: `test_retracted_claims.py`, `test_compatibility_citations_resolve.py`, `test_framing_rationale_is_documented.py`. |
+| `.github/workflows/ci.yml` | No new **jobs** needed — `python`/`typescript`/`verify` already run the suites Phases 1–4 extend. Phase 1 did touch the credential-free `workflow-guards` lane (it installs `cryptography` now, because the seam-sdk#54 import-light guard was widened to cover `crypto.py`), and `scripts/test_ci_gate.py` asserts that install list. |
 
-### Sibling repos (read-only — referenced, never written)
+### Sibling repos (read-only — referenced, never written; `crates/**` NEVER read)
 
 | Path | Why it matters |
 |---|---|
-| `../seam-adapters/plans/cross-repo/README.md` | The index format Phase 4 models its README on. |
-| `../seam-learning/plans/cross-repo/seam-runtime-feature-schema-rule.md` | The header-block format Phase 4 copies (`Owner` / `Filed by` / `Issue` / one-plan-one-home). |
-| `../seam-adapters/examples/fraud_budget/`, `fraud_admission_denied/` | Evidence that closes §A of Phase 2's bullet 1 (seam-adapters PR #42, `9a05a04`). |
-| `../seam-adapters/core/seam_agent_core/session_binder.py:43` | Evidence that closes §C (`StepUsage`). |
-| `../seam-runtime/crates/seam-verify/tests/differential.rs:177,453-468` | Evidence that closes Phase 2's bullet 5 (rotation coverage). |
+| `../seam-runtime/docs/specs/seam-event.v1.md:372-660` | THE input. v3 formula `:385-399`; slots `:401`; raw-UTF-8 `:410`; None≠""≠[] `:570`; strip semantics `:594`; v2 `:621`; v1 `:641`; never-silently-green `:648`. |
+| `../seam-runtime/plans/b3-digest-v3.md` | Phase 2 = this work; merge-order contract; "do not share code with Phase 1". |
+| `../seam-runtime/scripts/sdk-digest-parity.sh` | Gate mechanics (no digest code): byte-diffs the WHOLE `vectors.json` vs their emitter, then loads `crypto.py` standalone and calls discovered `record_digest_v*` functions — currently with the fixed v2 ten-tuple (their Phase 1 fixes; our `cases` shape is designed for that fix). |
 
 ## Phase log
 
-_(appended per phase)_
+### Phase 1 — Python `record_digest_v3` · **PASS** · 2026-08-24
 
-### Phase 1 — MSRV compiled, not just asserted — **PASS**
-
-- **When:** 2026-08-24. **Rounds:** 1. **Verifier:** Sonnet (CI/CD tier per `/implement` §2).
-- **Files:** `.github/workflows/ci.yml` (new `verify-msrv` job + `ci-ok.needs` entry),
-  `COMPATIBILITY.md` (floor row now says asserted **and** compiled).
-- **Verdict:** PASS on all six acceptance criteria, each checked by execution.
-- **Round-1 note (not a gap — a latent fragility the verifier raised and I closed):** the planned
-  `grep -m1 '^rust-version'` would read a `[workspace.package]` `rust-version` if one were ever
-  added, because this manifest opens with an empty `[workspace]`. Replaced with an `awk` pass scoped
-  to `[package]`; verified with a decoy that the scoped form ignores.
-- **Proven by execution, not inspection:**
-  - builds + full suite pass at 1.85 (`cargo +1.85 test --locked`, 7 binaries + doctest);
-  - **fails at 1.83** (`zeroize-1.9.0` needs `edition2024`) — so the job discriminates rather than
-    passing vacuously, and 1.85 is exact rather than a safe over-estimate;
-  - extraction fails **loudly** on a missing key, a garbage value and an unquoted value (all exit 1
-    with an actionable `::error::`, not a silent `set -e` death);
-  - removing `verify-msrv` from `ci-ok.needs` turns `scripts/test_ci_gate.py` red.
-- **Suites:** Python 265 passed / 16 skipped; `scripts/test_ci_gate.py` 12 passed.
-- **Assumptions logged:** 1 (`cargo test` as well as `cargo build` at MSRV).
-- **Next:** Phase 2 — retire the stale residual-backlog entries across three plan files.
-
-### Phase 2 — Residual-backlog sweep across three plan files — **PASS**
-
-- **When:** 2026-08-24. **Rounds:** 3. **Verifier:** Opus (docs tier).
-- **Files:** `plans/consolidation-2026-08-14.md`, `plans/build-agent-ingress.md`, `plans/README.md`,
-  `plans/sdk-exec-w1-w7.md` → `plans/archive/` (git mv), `DECISIONS.md` (3 paths repointed),
-  `python/tests/test_framing_rationale_is_documented.py` (1 docstring path).
-- **Outcome:** of the five residual bullets, three retired outright (gradle wrapper, `now_millis`,
-  differential-harness rotation), one narrowed (§A/§C done, §B/§D still open), one rewritten (the
-  adapters lock — the observation is true, two of its clauses were not). Plus two stale claims that
-  had spread into other files, and a plan archived per the repo's own convention.
-- **Round 1 (6 gaps, 2 HIGH):** the "Remaining work" summary still listed §A/§C as remaining,
-  contradicting the UPDATE block above it; the §C bullet asserted "no `StepUsage` reference anywhere
-  in seam-adapters", false since PR #42; **a date I asserted without checking** (08-23 vs the real
-  08-17); a COMPLETE plan sitting in the Active table; two citation ranges overshooting into the
-  next symbol.
-- **Round 2 (4 gaps):** the same wrong date surviving in this plan file — invisible to round 1,
-  whose diff covered only tracked files; a dangling path left by the archive move; and an ARCHIVED
-  note of mine claiming verification rounds were "recorded in the phase sections below" when they
-  are not.
-- **Round 3 (1 gap):** that same ARCHIVED note asserting `plans/cross-repo/` exists "as of
-  2026-08-24" — it is Phase 4's deliverable and does not exist yet.
-- **The honest read:** three rounds, each catching a defect one level up, in the phase *about*
-  documentation accuracy. Nothing shipped wrong only because the gate ran three times.
-- **Verified independently by the gate, not asserted by me:** PR #42 (`9a05a04`) really is
-  2026-08-17; `fraud_budget` really drives SUSPENDED → `resume_session` → seal; `fraud_admission_denied`
-  really refuses **at Admit** rather than at the tool gate; `StepUsage` really is at
-  `session_binder.py:43`; the rotation cases really are at `differential.rs:453-468`.
-- **Suites:** Python 265 passed / 16 skipped; `scripts/test_ci_gate.py` 12 passed.
-- **Assumptions logged:** none new.
-- **Next:** Phase 3 — the framework co-installability record (design returned by Fable; scope is
-  wider than the plan's original Phase 3 — see that section).
-
-### Phase 3 — Framework co-installability, recorded as a probe — **PASS**
-
-- **When:** 2026-08-24. **Rounds:** 1. **Verifier:** Fable (the phase grew executable code + a
-  network-dependent CI job — above the docs tier the plan assumed).
-- **Scope widened mid-phase by the owner** from "record the #48 CrewAI finding" to "this and other
-  agent frameworks", with a design agent asked to find the right solution.
-- **Files:** `COMPATIBILITY.md` (§4a + machine-parsed table), `scripts/probe_framework_coinstall.py`
-  (new), `Makefile` (`probe-frameworks`), `.github/workflows/framework-coinstall.yml` (new),
-  `DECISIONS.md`.
-- **The matrix, resolved live rather than asserted:** `crewai` **incompatible**; `langchain`,
-  `strands-agents`, `claude-agent-sdk` **compatible**. Independently re-resolved by the gate.
-- **Two corrections to the design, both found by executing it rather than reading it:**
-  1. a bare `crewai` resolves by backtracking to **1.6.1** and would report a false `compatible` —
-     the probe must use the shim's declared constraint;
-  2. `uv` exits non-zero for unsatisfiable, not-found **and** offline, all saying "unsatisfiable",
-     so exit-code classification is impossible; infra markers are checked first and anything
-     unrecognised is infra, never a verdict.
-- **Proven non-vacuous by execution:** both flip directions exit 1 with actionable messages; a
-  missing table marker, a de-backticked table, a missing `uv`, `UV_OFFLINE=1` and a bogus index all
-  exit **2**; and widening the floor in `pyproject.toml` flowed through to flip crewai's verdict,
-  proving nothing is hardcoded.
-- **Gate findings closed:** the Python-version guard exited 1 where infra must exit 2; the
-  `strands-agents` row overstated where the exporter dependency lives.
-- **Suites:** Python 270 passed / 16 skipped.
-- **Assumptions logged:** none new (the design's open choices were settled by execution).
-- **Next:** Phase 4 — `plans/cross-repo/` for the six seam-runtime asks.
-
-### Phase 4 — `plans/cross-repo/` for the six seam-runtime asks — **PASS**
-
-- **When:** 2026-08-24. **Rounds:** 1. **Verifier:** Opus (docs tier).
-- **Files:** `plans/cross-repo/README.md` + six plan files (#418–#423), `plans/README.md`.
-- **Why it existed:** the W1–W7 workstream put all six asks' detail in the GitHub issue bodies and
-  wrote no local plans — a deviation from the convention `seam-adapters`, `seam-learning`,
-  `seam-connectors` and `seam-runtime` all follow. Introduced by that workstream, closed here.
-- **Gate findings closed (3, all content accuracy):** a quote attributed to the wrong source file;
-  `SEAM_CHAIN_ANCHOR` described as an enable-flag when it is an *override* (a durable deployment
-  already emits the events, so the ask is smaller than stated); and an ask for a `docs/specs/`
-  document that omitted `docs/specs/audit-anchor.md` — which exists, is **Normative**, and states the
-  runtime never anchors in-process.
-- **Independently re-verified by the gate against seam-runtime source**, not taken from the issues:
-  #420's derived-enforcement claims *and* the surviving Embedded+non-loopback gap; #422's zero-hit
-  greps for `checkpoint`/`transparency`; #423's both-halves claim about which digest has a spec;
-  #418/#419's seam-sdk-side state.
-- **Repo scope held:** nothing written into any sibling. `seam-runtime`'s dirty worktree belongs to a
-  **different concurrent session** (`.drive.lock` → `30a26ad5-…`, feature
-  `a1-real-participation-and-deliberation`) doing AITP delegation-voucher work — confirmed unrelated.
-- **Deferred by design:** the issue comments linking to each plan are posted **after merge**, so the
-  blob URLs resolve instead of 404ing. Those comments should also correct each issue's footer, which
-  points at `plans/sdk-exec-w1-w7.md` — a path this branch moves to `plans/archive/`.
-- **Suites:** Python 270 passed / 16 skipped.
-- **Next:** all four phases done — ship.
+- **Verifier:** Fable, 1 round (crypto formula on a cross-repo contract). 6 findings, all minor,
+  all closed; the transcription itself was independently re-derived and matched on 51 cases.
+- **Files:** `python/seam_sdk/crypto.py` (+`record_digest_v3`, `RecordDigestStripError`,
+  `_v3_required`, `_opt_bytes` — additions only, zero removed lines), `python/seam_sdk/__init__.py`,
+  `python/tests/test_record_digest_v3.py` (new, 45 tests),
+  `python/tests/test_errors_is_import_light.py` (widened to cover `crypto.py`),
+  `scripts/test_ci_gate.py`, `.github/workflows/ci.yml` (credential-free lane installs
+  `cryptography`).
+- **Decoys driven red:** slot 10/11 swap · frame↔opt both directions · append-after-`schema_version`
+  · default-a-missing-digest · big-endian length prefix · le32 `sealed_at` · opted `schema_version`
+  · v2-suffixed domain · dropped `opt(supersedes)` · UTF-16 codec · `.encode("ascii")` ·
+  NFC-normalize · plain `ValueError` for a strip · unchecked lengths · swapped tag in the message.
+  Plus, on the widened #54 guard: `from .errors import` in `crypto.py`, absolute package import,
+  new third-party dep, renamed `record_digest_v*`.
+- **Watch out:** stale `__pycache__` gave two false negatives during mutation testing (the `.pyc`
+  records source mtime at second granularity, so an edit inside the same second is not seen). Clear
+  `__pycache__` BEFORE each mutant run, not after.
+- **Suite:** 328 passed / 17 skipped · ruff clean · ci-gate 13 · credential-free lane 26 passed.
+- **Next:** Phase 2 — the machine-emitted v3 vectors. Add a non-ASCII case per Phase 1's finding.

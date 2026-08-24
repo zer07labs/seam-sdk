@@ -400,10 +400,13 @@ jobs:
           # Pinned rather than ambient: `sys.stdlib_module_names` (used by the import-light guard)
           # needs 3.10+, and a runner image bump should not be able to change what these assert.
           python-version: "3.11"
-      # grpcio is here for one reason: the import-light guard loads `errors.py` standalone, and that
-      # file imports grpc. If this list ever needs `buf`, a BUF_TOKEN, or the generated tree, the
-      # contract in seam-sdk#54 has already been broken — the install list is itself the assertion.
-      - run: pip install --quiet pyyaml pytest grpcio
+      # grpcio and cryptography are here for one reason each: the import-light guard loads
+      # `errors.py` and `crypto.py` standalone, and those files import grpc and cryptography
+      # respectively. Both have an out-of-repo consumer that loads them as a single file —
+      # seam-adapters' drift lane (seam-sdk#54) and seam-runtime's sdk-digest-parity gate. If this
+      # list ever needs `buf`, a BUF_TOKEN, or the generated tree, that contract has already been
+      # broken — the install list is itself the assertion.
+      - run: pip install --quiet pyyaml pytest grpcio cryptography
       - name: the required-check gate covers every job
         run: python -m pytest scripts/test_ci_gate.py -q
       # Also runs inside the `python` job. Duplicated on purpose: there it proves the guard passes,

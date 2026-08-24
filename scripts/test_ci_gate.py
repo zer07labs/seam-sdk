@@ -142,11 +142,16 @@ def test_credential_free_lane_keeps_what_it_claims_to_prove() -> None:
     steps = jobs[LANE]["steps"]
     runs = "\n".join(str(step.get("run", "")) for step in steps)
 
-    assert "grpcio" in runs, (
-        "workflow-guards no longer installs grpcio. errors.py imports grpc, so without it "
-        "test_errors_is_import_light.py skips its runtime checks and exits 0 — the lane reports "
-        "success while proving less than it claims (seam-sdk#54)."
-    )
+    # One entry per import-light module's third-party dependency. A missing one does not redden the
+    # guard — it makes that module's standalone-load checks SKIP as an environment gap and the lane
+    # exits 0, proving less than it claims. That silent degradation is the whole reason this asserts
+    # the install list rather than trusting it.
+    for dep, module in (("grpcio", "errors.py"), ("cryptography", "crypto.py")):
+        assert dep in runs, (
+            f"workflow-guards no longer installs {dep}. {module} imports it, so without it "
+            f"test_errors_is_import_light.py skips that module's standalone-load checks and exits "
+            f"0 — the lane reports success while proving less than it claims (seam-sdk#54)."
+        )
     assert "test_errors_is_import_light.py" in runs, (
         "workflow-guards no longer runs the import-light guard. It also runs in the `python` job, "
         "so nothing goes red — but `python` needs BUF_TOKEN and generated code, which is exactly "

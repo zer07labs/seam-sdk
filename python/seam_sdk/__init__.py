@@ -33,6 +33,8 @@ from .crypto import (
     call_sig_payload,
     jcs_canonicalize,
     record_digest_v2,
+    record_digest_v3,
+    RecordDigestStripError,
     tool_input_digest,
     verify_chain_head_attestation,
     verify_tct,
@@ -84,6 +86,8 @@ __all__ = [
     "KNOWN_KINDS",
     "verify_streamed_record_digest",
     "record_digest_v2",
+    "record_digest_v3",
+    "RecordDigestStripError",
     "verify_chain_head_attestation",
     # Error taxonomy
     "SeamError",

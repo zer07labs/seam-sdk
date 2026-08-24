@@ -381,6 +381,123 @@ def record_digest_v2(
     return hashlib.sha256(pre).digest()
 
 
+#: The three v3 sub-digests are fixed-width by the spec. A wrong-length value is refused rather than
+#: framed, because framing one would produce a garbage digest that a caller reports as a *rewrite* —
+#: mislabelling "this field is malformed" as "someone altered the record".
+_V3_DIGEST_LEN = 32
+
+
+class RecordDigestStripError(ValueError):
+    """A ``schema_version = 3`` record is missing a field the v3 formula requires (wire tag 11 or 12).
+
+    **This is deliberately not a digest mismatch, and must never be reported as one.** The spec
+    (`seam-event.v1.md`, "Strip semantics for tags 11/12/13") makes `context_digest` and
+    `participation_digest` mandatory on a v3 payload and requires a consumer to *refuse* — never to
+    substitute an empty digest, and never to fall back to the v2 formula. Absent-when-required is a
+    strip attack, and an operator has to be able to tell "someone removed a field" from "someone
+    rewrote one", because the two have different responses.
+
+    Raising is what makes that distinction structural rather than advisory: a mismatch is a `False`
+    from a comparison, a strip is an exception, and no caller can conflate them by accident.
+
+    Subclasses ``ValueError`` so existing ``except ValueError`` handlers around the digest helpers
+    keep working — the same additive discipline `SeamRpcError` follows for `grpc.RpcError`.
+    """
+
+
+def _v3_required(name: str, tag: int, value: bytes | None) -> bytes:
+    """A mandatory v3 sub-digest: present, and exactly 32 bytes. Absent or malformed ⇒ refuse."""
+    if value is None:
+        raise RecordDigestStripError(
+            f"a schema_version=3 record carries no {name} (wire tag {tag}), which the v3 formula "
+            f"requires. This is a STRIP, not a digest mismatch: refuse the record, do not substitute "
+            f"an empty digest and do not fall back to the v2 formula."
+        )
+    if len(value) != _V3_DIGEST_LEN:
+        raise RecordDigestStripError(
+            f"{name} (wire tag {tag}) is {len(value)} bytes, not {_V3_DIGEST_LEN} — malformed, so no "
+            f"v3 digest can be computed from it. Reported as a refusal rather than hashed, because "
+            f"hashing it would surface a malformed field as though the record had been rewritten."
+        )
+    return value
+
+
+def _opt_bytes(b: bytes | None) -> bytes:
+    """``opt`` over raw bytes. Same presence byte as :func:`_opt`, which takes a `str`."""
+    return b"\x00" if b is None else b"\x01" + _frame(b)
+
+
+def record_digest_v3(
+    decision_id: str,
+    tenant: str,
+    namespace: str,
+    ciphertext_digest: bytes,
+    sealed_at: int,
+    outcome: str,
+    mode: str | None,
+    policy_version: str | None,
+    supersedes: str | None,
+    context_digest: bytes,
+    participation_digest: bytes,
+    policy_rules_digest: bytes | None,
+    schema_version: int = 3,
+) -> bytes:
+    """Recompute a v3 ``DECISION_SEALED`` record digest (``seam.audit.record-digest.v3``).
+
+    v3 is v2 plus the three columns carrying the product's actual claims — what context the decision
+    consumed, who participated, and which policy rules gated the commitment. They arrive as **opaque
+    32-byte sub-digests on the wire** (tags 11/12/13); their internal formulas belong to the runtime
+    and to auditors, and are deliberately not reimplemented here. This function is a wire-input
+    recompute, exactly as :func:`record_digest_v2` is.
+
+    Three things the spec singles out as easy to get wrong, all of them load-bearing:
+
+    * **Digest slots are offset by one from the proto tags.** ``context_digest`` is preimage slot 10
+      but wire tag 11. The new slots are *inserted before* ``schema_version``, never appended after
+      it — a verifier selects the whole formula by ``schema_version``, so position is fixed by the
+      spec rather than by append order.
+    * **Slots 10 and 11 are framed; slot 12 is opted.** The asymmetry is deliberate, not an
+      oversight: framing the two mandatory digests is precisely what stops "no participants" from
+      aliasing with "field stripped". ``policy_rules_digest`` is genuinely optional — absent means
+      no policy was bound, today's common case.
+    * **``None`` is not ``b""``.** ``opt(None)`` is one byte; ``opt(b"")`` is five. A present-but-
+      empty value is data, not absence, and the presence byte is what keeps them apart.
+
+    Raises :class:`RecordDigestStripError` when ``context_digest`` or ``participation_digest`` is
+    absent or is not 32 bytes, and when a *present* ``policy_rules_digest`` is not 32 bytes. That is
+    a refusal, categorically distinct from the digest mismatch this function's *return value* is
+    compared for — see the class docstring.
+    """
+    context_digest = _v3_required("context_digest", 11, context_digest)
+    participation_digest = _v3_required(
+        "participation_digest", 12, participation_digest
+    )
+    if policy_rules_digest is not None and len(policy_rules_digest) != _V3_DIGEST_LEN:
+        raise RecordDigestStripError(
+            f"policy_rules_digest (wire tag 13) is present but {len(policy_rules_digest)} bytes, not "
+            f"{_V3_DIGEST_LEN} — malformed. Absent is legitimate (no policy was bound); present and "
+            f"wrong-length is not, and is refused rather than hashed."
+        )
+
+    pre = (
+        _frame(b"seam.audit.record-digest.v3")
+        + _frame(decision_id.encode())
+        + _frame(tenant.encode())
+        + _frame(namespace.encode())
+        + _frame(ciphertext_digest)
+        + _frame(struct.pack("<Q", sealed_at))
+        + _frame(outcome.encode())
+        + _opt(mode)
+        + _opt(policy_version)
+        + _opt(supersedes)
+        + _frame(context_digest)
+        + _frame(participation_digest)
+        + _opt_bytes(policy_rules_digest)
+        + _frame(struct.pack("<I", schema_version))
+    )
+    return hashlib.sha256(pre).digest()
+
+
 def _chain_head_attestation_digest(
     attested_len: int,
     attested_head: bytes,

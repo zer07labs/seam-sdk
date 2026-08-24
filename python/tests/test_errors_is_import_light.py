@@ -65,12 +65,48 @@ pytestmark = pytest.mark.skipif(
 
 REPO = pathlib.Path(__file__).parents[2]
 ERRORS = REPO / "python" / "seam_sdk" / "errors.py"
+CRYPTO = REPO / "python" / "seam_sdk" / "crypto.py"
 INIT = REPO / "python" / "seam_sdk" / "__init__.py"
 
-#: The only non-stdlib import this file may carry. ``grpc`` is load-bearing — the taxonomy's RPC half
-#: subclasses ``grpc.RpcError`` so existing ``except grpc.RpcError`` handlers keep working — and the
-#: consumer installs grpcio anyway, since it talks to the runtime.
-ALLOWED_THIRD_PARTY = frozenset({"grpc"})
+#: Modules that a consumer outside this repo loads as a SINGLE FILE, with no package and no
+#: generated code, and the reason each one is loaded that way. Every entry gets the import-set and
+#: standalone-load checks below; only `errors.py` gets the hierarchy checks, which are about the
+#: taxonomy rather than about loadability.
+#:
+#: `crypto.py` is here because seam-runtime's `sdk-digest-parity` gate loads it exactly this way to
+#: call `record_digest_v*` and byte-diff the result against its own emitter. That makes it a
+#: cross-repo CI dependency on one file's import list — the same shape as seam-adapters' dependency
+#: on `errors.py`, and previously just as unguarded. It is also why `RecordDigestStripError` is
+#: defined in `crypto.py` as a `ValueError` rather than pulled from `.errors`: the obvious taxonomy
+#: placement would have made the parity gate unable to load the module at all.
+#: ``basename -> (path, who_loads_it_standalone, may_import, must_import)``.
+#: ``may_import`` is the non-stdlib allow-list — every entry is a package the standalone consumer
+#: must install to read one file, so widening it is a decision, not a detail. ``must_import`` pins
+#: the positive half: an allow-list alone would happily pass a file that imported nothing, so each
+#: module names the dependency that proves it is still the module we think it is.
+IMPORT_LIGHT = {
+    "errors.py": (
+        ERRORS,
+        "seam-adapters' SeamError drift lane (seam-sdk#54)",
+        frozenset({"grpc"}),
+        "grpc",
+    ),
+    "crypto.py": (
+        CRYPTO,
+        "seam-runtime's sdk-digest-parity gate",
+        frozenset({"cryptography"}),
+        "cryptography",
+    ),
+}
+
+#: The union across every import-light module — what the credential-free CI lane must install for
+#: the standalone loads below to be possible at all. Per-module allow-lists live in IMPORT_LIGHT.
+ALLOWED_THIRD_PARTY = frozenset({"grpc", "cryptography"})
+
+#: import name -> pip distribution name, for the "install it" hint below. `import grpc` comes from
+#: the `grpcio` distribution; telling someone to `pip install grpc` sends them to a different,
+#: unrelated package.
+_PIP_NAME = {"grpc": "grpcio"}
 
 #: Any import naming these is a straight break: the consumer has no such package on its path.
 FORBIDDEN_ROOTS = frozenset({"seam_sdk"})
@@ -94,14 +130,21 @@ def _module_imports(tree: ast.Module) -> list[tuple[str, int, int]]:
     return found
 
 
+@pytest.fixture(params=sorted(IMPORT_LIGHT), scope="module")
+def module(request):
+    """One import-light module: ``(basename, path, why, may_import, must_import)``."""
+    return (request.param, *IMPORT_LIGHT[request.param])
+
+
 @pytest.fixture(scope="module")
-def imports() -> list[tuple[str, int, int]]:
-    tree = ast.parse(ERRORS.read_text(encoding="utf-8"), filename=str(ERRORS))
+def imports(module) -> list[tuple[str, int, int]]:
+    _name, path, _why, _may, _must = module
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     found = _module_imports(tree)
     # Guard-the-guard: a parser that finds nothing makes every assertion below vacuously true, which
-    # is how a gate stops meaning anything. `errors.py` imports at minimum `__future__` and `grpc`.
+    # is how a gate stops meaning anything. Both files import at least `__future__`.
     assert found, (
-        f"parsed ZERO imports out of {ERRORS} — the check is not looking at anything"
+        f"parsed ZERO imports out of {path} — the check is not looking at anything"
     )
     return found
 
@@ -109,14 +152,15 @@ def imports() -> list[tuple[str, int, int]]:
 # ── 1. the import set ────────────────────────────────────────────────────────────────────────────
 
 
-def test_no_import_reaches_the_package_or_its_generated_code(imports):
+def test_no_import_reaches_the_package_or_its_generated_code(module, imports):
+    name, _path, why, _may, _must = module
     offenders = [
-        f"{ERRORS.name}:{lineno} imports {root!r}"
+        f"{name}:{lineno} imports {root!r}"
         for root, _level, lineno in imports
         if root in FORBIDDEN_ROOTS
     ]
     assert not offenders, (
-        "errors.py must not import the package it lives in (seam-sdk#54).\n"
+        f"{name} must not import the package it lives in — it is loaded standalone by {why}.\n"
         + "\n".join(f"  - {o}" for o in offenders)
         + "\n\nseam-adapters loads this file standalone, with no `seam_sdk` on its path and no "
         "generated `_gen/` tree — an absolute import of the package resolves fine here, where the "
@@ -125,21 +169,23 @@ def test_no_import_reaches_the_package_or_its_generated_code(imports):
     )
 
 
-def test_no_relative_imports(imports):
+def test_no_relative_imports(module, imports):
+    name, _path, why, _may, _must = module
     offenders = [
-        f"{ERRORS.name}:{lineno} uses a level-{level} relative import"
+        f"{name}:{lineno} uses a level-{level} relative import"
         for _root, level, lineno in imports
         if level > 0
     ]
     assert not offenders, (
-        "errors.py must not use package-relative imports (seam-sdk#54).\n"
+        f"{name} must not use package-relative imports — it is loaded standalone by {why}.\n"
         + "\n".join(f"  - {o}" for o in offenders)
         + "\n\n`spec_from_file_location` gives the module no package context, so a relative import "
         "raises ImportError there regardless of what is installed."
     )
 
 
-def test_third_party_imports_are_limited_to_grpc(imports):
+def test_third_party_imports_stay_on_the_declared_allow_list(module, imports):
+    name, _path, why, may_import, _must = module
     stdlib = sys.stdlib_module_names
     extras = sorted(
         {
@@ -147,28 +193,30 @@ def test_third_party_imports_are_limited_to_grpc(imports):
             for root, _level, _lineno in imports
             if root
             and root not in stdlib
-            and root not in ALLOWED_THIRD_PARTY
+            and root not in may_import
             # Package imports are the check above's to report; naming them here too would offer
             # "grew a third-party dependency" as the diagnosis for what is actually a self-import.
             and root not in FORBIDDEN_ROOTS
         }
     )
     assert not extras, (
-        f"errors.py grew a third-party dependency: {extras}. Only {sorted(ALLOWED_THIRD_PARTY)} and "
-        "the standard library are allowed (seam-sdk#54) — every addition is a package the standalone "
-        "consumer must now install to read one file. If the dependency is genuinely needed, widen "
-        "ALLOWED_THIRD_PARTY here deliberately and say so on the issue, so it is a decision rather "
-        "than a drift."
+        f"{name} grew a third-party dependency: {extras}. Only {sorted(may_import)} and the standard "
+        f"library are allowed — {why} loads this file standalone, so every addition is a package "
+        f"that consumer must now install to read one file. If it is genuinely needed, widen "
+        f"IMPORT_LIGHT's allow-list deliberately and tell the consumer, so it is a decision rather "
+        f"than a drift."
     )
 
 
-def test_grpc_is_actually_among_the_imports(imports):
-    # The allow-list above only constrains; it would pass an errors.py that imported nothing at all.
-    # This pins the positive half, so a refactor that moves the grpc-coupled taxonomy elsewhere trips
-    # here rather than leaving a permissive check guarding an empty file.
-    assert "grpc" in {root for root, _level, _lineno in imports}, (
-        "errors.py no longer imports grpc — the RPC half of the taxonomy is what makes "
-        "`except grpc.RpcError` keep working. If it really moved, this contract moved with it."
+def test_the_declared_dependency_is_actually_there(module, imports):
+    # The allow-list above only constrains; it would pass a file that imported nothing at all. This
+    # pins the positive half, so gutting a module trips here rather than leaving a permissive check
+    # guarding an empty file.
+    name, _path, _why, _may, must_import = module
+    assert must_import in {root for root, _level, _lineno in imports}, (
+        f"{name} no longer imports {must_import!r}. For errors.py that means the RPC half of the "
+        f"taxonomy moved (it is what makes `except grpc.RpcError` keep working); for crypto.py it "
+        f"means the signing/hashing primitives moved. Either way the contract moved with it."
     )
 
 
@@ -203,23 +251,28 @@ _STANDALONE = textwrap.dedent(
         "the standalone module claims a package context: %r" % module.__package__
     )
 
-    base = module.SeamError
+    base = getattr(module, "SeamError", None)
     roster = sorted(
         name
         for name, obj in vars(module).items()
-        if inspect.isclass(obj) and issubclass(obj, base)
+        if inspect.isclass(obj) and (base is None or issubclass(obj, base))
     )
-    print(json.dumps({"roster": roster}))
+    callables = sorted(
+        name for name, obj in vars(module).items()
+        if callable(obj) and not name.startswith("_") and getattr(obj, "__module__", "") == module.__name__
+    )
+    print(json.dumps({"roster": roster, "callables": callables}))
     """
 )
 
 
 @pytest.fixture(scope="module")
-def standalone(tmp_path_factory) -> dict:
-    script = tmp_path_factory.mktemp("standalone") / "load_errors.py"
+def standalone(module, tmp_path_factory) -> dict:
+    name, path, why, _may, _must = module
+    script = tmp_path_factory.mktemp("standalone") / "load_module.py"
     script.write_text(_STANDALONE, encoding="utf-8")
     proc = subprocess.run(
-        [sys.executable, str(script), str(ERRORS)],
+        [sys.executable, str(script), str(path)],
         capture_output=True,
         text=True,
         timeout=120,
@@ -241,27 +294,40 @@ def standalone(tmp_path_factory) -> dict:
         # `test_no_seam_error_subclass_is_defined_outside_errors_py`. It was NOT survivable in the
         # first draft of this file, where the hierarchy check existed only downstream of this
         # fixture: in a venv without grpcio, moving a class out of errors.py exited 0.
-        for allowed in ALLOWED_THIRD_PARTY:
+        # Scoped to what THIS module declares it may import, not the union — naming a package the
+        # module under test never imports would be a wrong diagnosis dressed as a precise one.
+        for allowed in sorted(_may):
             if f"No module named '{allowed}'" in proc.stderr:
                 pytest.skip(
-                    f"{allowed!r} is not installed in this environment, so errors.py cannot be "
-                    f"loaded at all here. This is an environment gap, not a contract break — "
-                    f"install it (`pip install grpcio`) to run this guard."
+                    f"{allowed!r} is not installed in this environment, so {name} cannot be loaded "
+                    f"at all here. This is an environment gap, not a contract break — install it "
+                    f"(`pip install {_PIP_NAME.get(allowed, allowed)}`) to run this guard."
                 )
         pytest.fail(
-            "errors.py no longer loads standalone (seam-sdk#54). seam-adapters' drift lane loads "
-            "this one file with `spec_from_file_location`, no package and no generated code:\n"
+            f"{name} no longer loads standalone. {why} loads this one file with "
+            f"`spec_from_file_location`, no package and no generated code:\n"
             f"{proc.stdout}\n{proc.stderr}"
         )
     return json.loads(proc.stdout.strip().splitlines()[-1])
 
 
-def test_errors_py_loads_with_no_package_present(standalone):
-    roster = standalone["roster"]
-    assert "SeamError" in roster
-    # Not a count assertion — see the module docstring. Just proof the load yielded a taxonomy and
-    # not a module that happens to define one class.
-    assert len(roster) > 1, f"standalone load yielded only {roster}"
+def test_it_loads_with_no_package_present(module, standalone):
+    name, _path, _why, _may, _must = module
+    # Not a count assertion — see the module docstring. Just proof the load yielded something real
+    # rather than an empty module that happens to import cleanly.
+    if name == "errors.py":
+        assert "SeamError" in standalone["roster"]
+        assert len(standalone["roster"]) > 1, standalone["roster"]
+    else:
+        # crypto.py defines no class hierarchy; what its consumer needs is the FUNCTIONS, resolved
+        # by exact name — seam-runtime's gate looks up `record_digest_v*` on the loaded module.
+        digests = [
+            c for c in standalone["callables"] if c.startswith("record_digest_v")
+        ]
+        assert digests, (
+            f"{name} loaded standalone but exposes no record_digest_v* function — seam-runtime's "
+            f"parity gate resolves those by exact name on the standalone-loaded module."
+        )
 
 
 # ── 3. hierarchy completeness ────────────────────────────────────────────────────────────────────
@@ -359,6 +425,42 @@ def _taxonomy_imports(tree: ast.Module) -> set[str]:
     }
 
 
+def _seam_error_closure(
+    by_module: dict[str, list[tuple[str, list[str], int]]],
+) -> tuple[set[str], list[tuple[str, str, int]]]:
+    """Transitive closure from ``SeamError`` across module boundaries, to a fixed point.
+
+    Returns ``(descendant_names, [(module, name, lineno), …])``. Membership is earned through a
+    class's own BASES, never through its name — matching on the name alone was the first version of
+    this, and it flagged an unrelated ``class InternalError(ValueError)`` in client.py purely for
+    colliding with a taxonomy member's name.
+
+    Shared by both consumers below so there is exactly one definition of "is a SeamError". The
+    second consumer needs it for a subtler reason than the first: ``seam_sdk.__all__`` exports names
+    ending in ``Error`` that are deliberately NOT part of this taxonomy — ``RecordDigestStripError``
+    is a ``ValueError`` living in ``crypto.py``, because that module must stay standalone-loadable
+    for seam-runtime's digest-parity gate, and importing it from ``.errors`` would break that. A
+    name-suffix filter treats such a class as a taxonomy member and fires falsely.
+    """
+    descendants = {"SeamError"}
+    qualified: list[tuple[str, str, int]] = []
+    while True:
+        grew = False
+        for module, classes in by_module.items():
+            for name, bases, lineno in classes:
+                if (module, name, lineno) in qualified or not (
+                    descendants & set(bases)
+                ):
+                    continue
+                descendants.add(name)
+                qualified.append((module, name, lineno))
+                grew = True
+        if not grew:
+            break
+
+    return descendants, qualified
+
+
 def test_the_cross_module_resolution_this_check_depends_on_is_live():
     """Guard-the-guard, aimed at the half the obvious one misses.
 
@@ -420,27 +522,7 @@ def test_no_seam_error_subclass_is_defined_outside_errors_py():
         "found no modules under seam_sdk/ — the scan is not looking at anything"
     )
 
-    # Transitive closure from SeamError, across module boundaries, to a fixed point.
-    #
-    # `qualified` records WHERE each descendant was defined, and membership is earned through a
-    # class's own bases — never through its name. Matching on the name alone was the first version
-    # of this, and it flagged an unrelated `class InternalError(ValueError)` in client.py purely for
-    # colliding with a taxonomy member's name.
-    descendants = {"SeamError"}
-    qualified: list[tuple[str, str, int]] = []
-    while True:
-        grew = False
-        for module, classes in by_module.items():
-            for name, bases, lineno in classes:
-                if (module, name, lineno) in qualified or not (
-                    descendants & set(bases)
-                ):
-                    continue
-                descendants.add(name)
-                qualified.append((module, name, lineno))
-                grew = True
-        if not grew:
-            break
+    descendants, qualified = _seam_error_closure(by_module)
 
     errors_rel = str(ERRORS.relative_to(REPO))
     # Guard-the-guard: if the closure found nothing beyond the root, the assertion below is vacuous.
@@ -479,10 +561,10 @@ def _exported_error_names() -> list[str]:
     Importing ``seam_sdk`` to read ``__all__`` would need the generated ``_gen`` tree — which would
     couple this test to the very machinery it certifies the consumer does not need.
 
-    The ``*Error`` suffix filter is safe *here*, unlike in the check above: this only asks whether
-    names that are already known to be errors resolve in the standalone module. A subclass named
-    without the suffix is caught by ``test_no_seam_error_subclass_is_defined_outside_errors_py``,
-    which does not filter by name at all.
+    The ``*Error`` suffix is a cheap pre-filter only; the caller intersects with the real
+    ``SeamError`` closure afterwards, because the suffix over-matches — see ``_seam_error_closure``.
+    A subclass named *without* the suffix is caught by
+    ``test_no_seam_error_subclass_is_defined_outside_errors_py``, which does not look at names at all.
     """
     tree = ast.parse(INIT.read_text(encoding="utf-8"), filename=str(INIT))
     for node in ast.walk(tree):
@@ -499,13 +581,24 @@ def _exported_error_names() -> list[str]:
     raise AssertionError(f"no `__all__` assignment found in {INIT}")
 
 
-def test_every_exported_error_is_importable_from_the_standalone_module(standalone):
+def test_every_exported_error_is_importable_from_the_standalone_module(
+    module, standalone
+):
+    if module[0] != "errors.py":
+        pytest.skip("the exported-taxonomy cross-check is about errors.py")
     """The complement to the static check: the names the package *exports* must actually be present
     in what a standalone load yields. Catches an export that resolves through a re-export chain the
     consumer's single-file read cannot follow."""
-    exported = _exported_error_names()
+    named = _exported_error_names()
     # Guard-the-guard again: an `__all__` that parsed to nothing would pass this trivially.
-    assert exported, f"parsed ZERO exported *Error names from {INIT}"
+    assert named, f"parsed ZERO exported *Error names from {INIT}"
+
+    descendants, _qualified = _seam_error_closure(_classes_by_module())
+    exported = [name for name in named if name in descendants]
+    assert exported, (
+        f"none of the exported *Error names in {INIT} resolved into the SeamError closure — the "
+        f"closure or the __all__ parse has broken, and this check has nothing left to assert"
+    )
 
     roster = set(standalone["roster"])
     missing = sorted(name for name in exported if name not in roster)
