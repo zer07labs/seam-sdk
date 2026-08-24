@@ -55,3 +55,28 @@ a moved line as evidence the surrounding design may have moved too.
 ```
 
 `#419` blocks nothing since `seam-sdk` moved to Cloudsmith.
+
+## Asks in other repos (no local plan — the issue body is the whole ask)
+
+Small, self-contained asks that do not warrant a plan file. Listed here so `plans/` remains the one
+place to find every outstanding cross-repo need.
+
+| Ask | Target | Issue | State |
+|---|---|---|---|
+| Point `CLAUDE.md`'s services-table row at `seam-sdk`'s `COMPATIBILITY.md` — a one-line edit, filed rather than made directly per that file's own maintenance rules | `seam` | [#18](https://github.com/zer07labs/seam/issues/18) | 🔴 live |
+| Heads-up that `seam-sdk` now probes framework co-installability weekly and will detect when CrewAI's pin is fixed — plus the finding that their `resolution-probe` cannot see it resolve | `seam-adapters` | [#57](https://github.com/zer07labs/seam-adapters/issues/57) | 🔴 live — informational, no action asked |
+
+### Not filed: the upstream CrewAI pin
+
+The root cause of `seam-sdk` [#48](https://github.com/zer07labs/seam-sdk/issues/48) is CrewAI's
+`opentelemetry-exporter-otlp-proto-http~=1.42.0`, which cannot reach the release where
+`opentelemetry-proto` lifted its own `protobuf<7` cap. That is a **third-party** repo
+(`crewAIInc/crewAI`), and the same conflict has been reported there at least three times —
+[#4511](https://github.com/crewAIInc/crewAI/issues/4511) asked for precisely this relaxation and was
+auto-closed **NOT_PLANNED** by a stale bot after five days; [#4474](https://github.com/crewAIInc/crewAI/issues/4474)
+and [#5845](https://github.com/crewAIInc/crewAI/issues/5845) went the same way.
+
+So a fourth issue is unlikely to land on its own. Deliberately **not filed** pending an owner
+decision on whether to engage upstream at all, and if so whether as an issue or a one-line PR. The
+weekly probe means nothing is lost by waiting: it goes red the day the pin relaxes, whoever relaxes
+it.
