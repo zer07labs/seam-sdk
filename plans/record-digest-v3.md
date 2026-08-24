@@ -328,7 +328,42 @@ clean; a reviewer can map every preimage line to a spec line using only the diff
 
 ### Phase 2 — v3 conformance vectors, machine-emitted
 
-**Status:** TODO · **Depends on:** Phase 1.
+**Status:** DONE (2026-08-24, 1 verify round, Fable — a cross-repo byte-diffed artifact). The
+committed block is 109 added lines and **zero** removed: v2/admission/tct/attestation are byte-
+untouched, and the structural comma landed inside the added region rather than as an edit. The
+strongest attack the verifier could build — change an input *and* splice in the correctly recomputed
+digest — is caught, because the emitter regenerates inputs from its own constants rather than from
+the file.
+
+**Three divergences from D2, each with a reason found during verification:**
+
+1. **A fifth case, `non_ascii_nfd`.** Carried over from Phase 1's finding: the spec names
+   normalization as the step "three of four implementations would implement differently, or skip",
+   and an all-ASCII vector set cannot falsify a normalizing implementation. Genuinely decomposed
+   (`e` + U+0301), and now pinned as such on both sides — the emitter refuses to run if its source
+   literal is ever NFC-normalized, and a test asserts the *committed bytes* are still decomposed.
+   Without that pin, an editor's normalize-on-save would leave every test green while the case
+   silently lost its only purpose.
+2. **`why` is NOT emitted into the JSON.** D2 put it there. Every byte of that file is a cross-repo
+   contract, so five paragraphs of English would have to be reproduced character-for-character,
+   em-dashes included, by the runtime's Rust emitter — a maintenance tax with no machine consumer.
+   The prose lives in the emitter source, where the person changing a case will read it.
+3. **`ensure_ascii=True` is a decision with a disclosed cost, not an inherited convention.** The
+   plan implied the existing file established it. It did not — that file has no non-ASCII at all
+   (its one `\u0000` is a control char every JSON writer emits). Both settings round-trip the old
+   bytes; only the new case differs. Escaping was kept because this artifact's *bytes* are the
+   contract and ASCII-only bytes survive editors and transfer encodings unchanged — but serde_json
+   has no `ensure_ascii`, so the runtime needs a custom `Formatter`. **Phase 5 must put this in
+   front of them explicitly rather than let them meet it as a red gate.**
+
+**Also fixed in verification:** the emitter reported infrastructure failures (malformed JSON, a
+renamed `record_digest_v3`, an import error) as exit 1 — i.e. as *drift* — violating the
+never-report-infra-as-a-verdict rule the repo already follows in
+`scripts/probe_framework_coinstall.py`. All four exit paths are now proven: infra 2, drift 1, healthy
+0. That included one subtle case: internal refusals originally raised `SystemExit`, which derives
+from `BaseException` and so sailed straight past the handler meant to catch them.
+
+**Depends on:** Phase 1.
 
 **Delivers.** `scripts/emit_record_digest_v3_vectors.py` (committed emitter, loads `crypto.py`
 standalone via `spec_from_file_location` exactly as the runtime's parity gate does — no `_gen`
