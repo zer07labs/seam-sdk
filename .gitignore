@@ -20,3 +20,6 @@ ts/gen/
 
 .claude/
 CLAUDE.md
+
+# transient /drive concurrency lock — never committed
+.drive.lock

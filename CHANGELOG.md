@@ -18,6 +18,25 @@ than trusting a summary here.
 
 ### Added
 
+- **Contract regenerated from the BSR against the landed coordination surface** — one batched
+  regeneration covering four `seam.api.v1` changes rather than four separate ones, because each
+  regeneration is a release and each release is an exposure event. Adds `PolicyEnforcement`
+  (`DecisionResponse.policy_enforcement`, `SessionStep.policy_enforcement`), `ParticipantVerdict`
+  (`DecisionResponse.participant_verdicts`), `CollectiveOutcome` + the `CollectiveVerdict` enum
+  (`DecisionResponse.collective_outcome`), and the quorum-mode verbs
+  `SeamCoordination.SubmitApprovalRequest` / `SubmitBallot`.
+
+  **This is additive — a minor, not a break — and that was proven rather than assumed:**
+  `buf breaking` against the module commit the previous stubs were generated from
+  (`8bef4b57…`, 2026-08-16) is clean under `FILE`, buf's strictest ruleset, which covers source
+  compatibility and not only the wire. A descriptor-level symbol diff confirms zero removals and no
+  reused field tags — the three new `DecisionResponse` fields take previously unused tags 7, 8 and 9.
+
+  Note for consumers of `collective_outcome`: `CollectiveVerdict`'s growth policy is normative and
+  fail-closed — any value a client does not recognize, **including
+  `COLLECTIVE_VERDICT_UNSPECIFIED`**, must route to the caller's fail policy and never to allow. The
+  field is `optional`, so absent and `UNSPECIFIED` are distinct wire states and must not be
+  flattened into each other.
 - `now_millis` / `nowMillis` exposed on `erase_subject`/`eraseSubject` and
   `erase_subject_confirmed`/`eraseSubjectConfirmed` (Python + TS) — the field already existed on
   the wire; only the hand-written wrappers omitted it, unlike `enforce_retention`, which already
