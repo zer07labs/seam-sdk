@@ -198,6 +198,22 @@ message DecisionSealed {
   // digest-v2 (§Record digest) and compares to `digest` (tag 19) to catch a payload rewrite. A v2 record
   // missing it is a strip/downgrade — `seam-verify chain --issuer` REFUSES it.
   bytes ciphertext_digest = 10;
+  // tags 11/12/13 (B3) — the three columns carrying the decision's actual claims, each a 32-byte
+  // sub-digest. They are OPAQUE to a consumer: the record-digest v3 formula takes them as inputs and
+  // never re-derives them, so recomputation needs no access to the context or participation data
+  // itself (which is the point — `participation[].subject` is the GDPR erasure predicate, and
+  // publishing subjects on an append-only outbox would make erasure unenforceable at the sink).
+  //
+  // `optional` is load-bearing on all three, and for a different reason than on tags 4/5/7. Those
+  // carry `None` vs `Some("")` into the digest's `opt` encoding. These carry ABSENT vs PRESENT into
+  // a REFUSAL: tags 11 and 12 are mandatory on schema_version = 3, and a v3 payload missing either
+  // must be refused as a strip — never defaulted to an empty digest, never recomputed under the v2
+  // formula. A bare `bytes` here would make "no participants" (a legitimate 32-byte digest of an
+  // empty list) indistinguishable from "somebody deleted the field", which is exactly the collision
+  // the digest's framing rules are designed to prevent.
+  optional bytes context_digest = 11;        // MANDATORY on v3 — what context the decision consumed
+  optional bytes participation_digest = 12;  // MANDATORY on v3 — who participated
+  optional bytes policy_rules_digest = 13;   // OPTIONAL — absent means no policy was bound
 }
 
 // The posterior-keying tuple, shared verbatim with the seam-learning engine so the runtime and the

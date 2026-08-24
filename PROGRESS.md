@@ -121,3 +121,51 @@ runtime gate script are the only permitted sibling reads.
 - **Next:** Phase 4 (Rust), NOT started. One hazard already recorded in its plan section:
   `wire.rs`'s `with_identity()` must carry tags 11/12/13, or two v3 records differing only in tag 12
   collapse to one event identity — the single Phase 4 omission that fails silently.
+
+### Phase 4 — Rust: wire fields, `record_digest_v3`, version dispatch, strip refusal · **PASS** · 2026-08-24
+
+- **Verifier:** Fable, 1 round, `PASS` with 5 non-blocking observations (4 acted on, 1 recorded).
+  Fable tier because this is the riskiest phase in the plan: it parses UNTRUSTED wire bytes, changes a
+  published wire contract, and its output is what an auditor acts on.
+- **Files:** `verify/src/wire.rs` (tags 11/12/13 on `DecisionSealedPb` as `optional bytes`, on
+  `DecisionSealedJson` as base64 `Option<String>`, on `Decision` as `Option<Vec<u8>>`; both parse arms;
+  `with_identity`), `verify/src/verify.rs` (`V3_DIGEST_LEN`, `v3_required`, `v3_optional`,
+  `record_digest_v3`, the schema-version dispatch, the v1-downgrade guard, 5 new unit tests),
+  `verify/src/main.rs`, `verify/src/lib.rs`, `verify/README.md`, `verify/Cargo.toml`,
+  `verify/tests/conformance.rs` (new), `verify/tests/authenticity.rs` (+8 tests),
+  `verify/proto/seam/event/v1/seam_event.proto`, `verify/docs/seam-event.v1.md` (verbatim refresh).
+- **`record_digest_v2` untouched.** Its two unit-test constructors gained three `None` fields because
+  the struct did; no v2 input or expectation changed. Existing goldens still verify, which is also the
+  proof that a v2 record's wire IDENTITY is unchanged (prost emits nothing for an absent `optional`).
+- **Decoys driven red: 20.** slot 10/11 swap · tag-13 `opt`→`frame` · slots appended after
+  `schema_version` · v2 domain suffix · dropped `opt(supersedes)` · mode `opt`→`frame` · big-endian
+  length · defaulting a stripped sub-digest to empty · falling back to v2 for a v3 record · skipping
+  unknown versions · dropping the 32-byte length check · mismatch vocabulary in a strip message ·
+  tag 11/12 swap on the JSON arm · tag 11/12 swap on the PROTOBUF arm · dropping the columns from
+  `with_identity` · collapsing absent-into-empty on the JSON arm · re-opening the v1 downgrade hole ·
+  and the downgrade guard for each of tags 10/11/12/13 independently.
+- **Three of my own tests were caught being vacuous, by decoys rather than by reading:**
+  1. The protobuf parse arm had **no test at all** — every stream-level test synthesizes the JSON
+     projection, so a swapped PB mapping would have shipped. Fixed with a `wire.rs` unit test asserting
+     each tag lands in the slot its number names, on both transports.
+  2. The `with_identity` test was vacuous **twice**: first the two events differed in `seq`/
+     `prev_checksum`; then, after a fix, in `digest`/`checksum` — which are themselves part of the
+     identity projection. Neither version could ever have failed. Now the two lines are identical in
+     every identity-bearing field, so the payload column is the only discriminator.
+  3. The v1-downgrade test passed with a decoy that guarded only on tag 10, because it kept all four
+     columns present at once. Now parametrized per column, each with the other three removed.
+- **Verifier observations acted on:** a literal NUL byte in `plans/record-digest-v3.md` (the file read
+  as binary to `file` and `grep`); missing in-package v3 unit tests, which mattered because
+  `tests/conformance.rs` is package-`exclude`d; the tag-10 strip message still saying "v2" under a v3
+  header; and the v1-downgrade shape, which the verifier suggested documenting and which I closed
+  instead. Recorded, not fixed: `frame`'s `len() as u32` truncation above 4 GiB, which mirrors v2.
+- **Suite:** `cargo test` 62 passing, 0 failing · `cargo fmt --check` clean · `cargo clippy
+  --all-targets -- -D warnings` clean · `cargo tree -e normal | grep seam` shows only `seam-verify`
+  itself (the zero-Seam-dependency claim holds). Python 393 passed / 17 skipped; TS 96 tests / 86 pass.
+- **Vendored spec refreshed VERBATIM** from `seam-runtime@0b62cb7`: `diff <(tail -n +12
+  verify/docs/seam-event.v1.md) ../seam-runtime/docs/specs/seam-event.v1.md` is empty, which is a
+  checkable claim a reviewer can re-run. It was stale in a way that mattered — it carried no
+  §Record digest (v3) at all while `verify.rs` implements it.
+- **Next:** Phase 5 — docs (`CHANGELOG.md`, `COMPATIBILITY.md` §5/§7, `verify/DECISIONS.md`,
+  `plans/README.md`) and the cross-repo handshake comment to seam-runtime, which MUST transmit the
+  `ensure_ascii=True` vector-rendering decision and its custom-`Formatter` cost on their side.

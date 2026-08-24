@@ -634,3 +634,30 @@ def test_a_str_subclass_cannot_choose_its_own_bytes():
         assert digest(**{slot: Liar(honest)}) == digest(), (
             f"{slot} hashed the bytes its value CHOSE rather than the bytes it IS"
         )
+
+
+def test_a_bytes_subclass_cannot_choose_its_own_bytes():
+    """The bytes-side twin of :func:`test_a_str_subclass_cannot_choose_its_own_bytes`, and the reason
+    ``_as_bytes`` has no ``isinstance(value, bytes)`` fast path.
+
+    ``bytes(value)`` honors ``__bytes__``. A ``bytes`` subclass whose real buffer is 32 zeros but
+    whose ``__bytes__`` returns 32 ``0xff``s would therefore be hashed as the bytes it CLAIMS rather
+    than the bytes it HOLDS — the same "ask the object what it would like to be hashed as" mistake,
+    one type over. ``memoryview(...).tobytes()`` reads the C buffer, which no Python method can
+    override."""
+
+    class Liar(bytes):
+        def __bytes__(self):  # noqa: ANN204
+            return b"\xff" * 32
+
+    honest = bytes(32)
+    liar = Liar(honest)
+    assert bytes(liar) == b"\xff" * 32, "the fixture no longer demonstrates the hazard"
+
+    for slot in ("context_digest", "participation_digest", "policy_rules_digest"):
+        assert digest(**{slot: liar}) == digest(**{slot: honest}), (
+            f"{slot} hashed the bytes its value CLAIMED rather than the bytes it HOLDS"
+        )
+        assert digest(**{slot: liar}) != digest(**{slot: b"\xff" * 32}), (
+            f"{slot} was hashed as 0xff*32 — the __bytes__ override won"
+        )

@@ -396,8 +396,9 @@ const taBuffer = taGet("buffer");
  * result is 32 zero bytes under a prefix that says 32 — byte-identical to a legitimate all-zeros
  * digest. That is the same alias this module refuses everywhere else, arriving through a right-typed
  * object with lying metadata rather than a wrong-typed one, which is why no amount of type-checking
- * would have caught it. Python's twin gets this for free: `bytes(value)` copies through the C buffer
- * protocol, so what it measures is what it hashes. This is that same discipline, spelled out.
+ * would have caught it. Python's twin reaches the same place through `memoryview(...).tobytes()`,
+ * which reads the C buffer that no Python method can override — deliberately NOT `bytes(value)`,
+ * which honors a `__bytes__` override and would ask the object what it would like to be hashed as.
  *
  * Element size is checked as `byteLength === length` — both internal — rather than
  * `BYTES_PER_ELEMENT`, which is an ordinary property and shadowable like any other. Wide-element

@@ -80,7 +80,7 @@ CHAIN AUTHENTICATED (integrity + issuer-signed head)
   links checked     : 767
   attestations      : 3 (issuer-signed)
   covered prefix    : 750 links
-  records recomputed: 764 (v2 digest-v2 recompute)
+  records recomputed: 764 (v2/v3 record-digest recompute)
   head              : 9f2c…
 ```
 
@@ -91,10 +91,16 @@ Two things a forger cannot fake:
   attested head is the running head at that position — so a fabricated chain (which carries no valid
   attestation) is **REFUSED**, and an authentic attestation spliced onto a different chain fails the
   position check. A stream with no attestation at all is refused, not passed: its absence is the tell.
-* **Recomputable record digests.** Every v2 `DECISION_SEALED` commits to its structural columns via
-  `digest = SHA256(record-digest-v2 framing)`. `--issuer` recomputes it from the payload and compares — so
-  a **payload rewrite** (flip an `outcome`, keep the triple) is caught even in an unattested tail, and a v2
-  record stripped of its `ciphertext_digest` (a downgrade) is refused.
+* **Recomputable record digests.** Every v2 and v3 `DECISION_SEALED` commits to its structural columns via
+  `digest = SHA256(record-digest framing)`. `--issuer` recomputes it from the payload and compares — so
+  a **payload rewrite** (flip an `outcome`, keep the triple) is caught even in an unattested tail, and a
+  record stripped of its `ciphertext_digest` (a downgrade) is refused. v3 additionally binds what context
+  the decision consumed, who participated, and which policy rules gated it; a v3 record missing its
+  `context_digest` or `participation_digest` is refused as a **STRIP**, worded distinctly from a digest
+  mismatch — "someone removed a field" and "someone rewrote one" call for different responses, so the
+  verifier does not blur them. A `schema_version` this build does not implement is refused outright: a
+  formula it does not have is not a record it can vouch for, and "cannot check, therefore fine" is the
+  shape of a downgrade.
 
 The pin is load-bearing for exactly the reason it is on the erasure certificate (below): deriving the key
 from the chain's own attestation would let a forgery verify against its forger. `--issuer` is strictly

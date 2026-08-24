@@ -53,10 +53,13 @@ fn usage() -> ! {
                        against a PINNED issuer key AND sit at the head it attests, and at least one must\n                      \
                        be present — a plain SHA-256 chain over a public genesis can be rebuilt by a\n                      \
                        transport-controlling forger, but an issuer-signed head cannot be minted without\n                      \
-                       the key. A stream with no attestation is REFUSED, not passed. Additionally, every v2\n                      \
-                       DECISION_SEALED's digest is RECOMPUTED from its payload and compared to the wire\n                      \
-                       digest (catching a payload rewrite in an unattested tail), and a v2 record missing\n                      \
-                       its ciphertext_digest (a strip/downgrade) is REFUSED.\n                      \
+                       the key. A stream with no attestation is REFUSED, not passed. Additionally, every\n                      \
+                       v2 and v3 DECISION_SEALED's digest is RECOMPUTED from its payload and compared to\n                      \
+                       the wire digest (catching a payload rewrite in an unattested tail); a record missing\n                      \
+                       its ciphertext_digest (a strip/downgrade) is REFUSED, as is a v3 record missing its\n                      \
+                       context_digest or participation_digest -- reported as a STRIP, distinctly from a\n                      \
+                       digest mismatch. A schema_version this build does not implement is REFUSED, never\n                      \
+                       skipped.\n                      \
                        REPEATABLE: pass once per trusted issuer to verify a chain spanning a key ROTATION\n                      \
                        (an attestation passes iff it verifies against ANY pinned AID; one naming an issuer\n                      \
                        outside the pinned set is a FAIL).\n\
@@ -204,7 +207,7 @@ fn cmd_chain(path: &str, strict: bool, json: bool, issuers: &[String]) -> ExitCo
                     println!("  attestations      : {} (issuer-signed)", ir.attestations);
                     println!("  covered prefix    : {} links", ir.covered_prefix);
                     println!(
-                        "  records recomputed: {} (v2 digest-v2 recompute)",
+                        "  records recomputed: {} (v2/v3 record-digest recompute)",
                         ir.records_recomputed
                     );
                 }

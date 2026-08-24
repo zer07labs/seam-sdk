@@ -226,3 +226,47 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   runtime — so no correct caller breaks. Cheap to reverse: the validators are a contiguous block at
   the top of one function in each language.
 - **Status:** UNCONFIRMED
+
+## The v1 skip is a downgrade hole, closed structurally rather than documented
+
+- **Plan:** `plans/record-digest-v3.md` (Phase 4)
+- **Assumed:** `seam-verify` should REFUSE a `DECISION_SEALED` that declares `schema_version < 2`
+  while carrying `ciphertext_digest` (tag 10) or any of tags 11/12/13, rather than skipping it as the
+  link-only v1 record it claims to be.
+- **Chose:** Refuse. `schema_version < 2` exempts a record from the digest recompute, because a v1
+  record's historical digest genuinely is not stream-recomputable. That exemption is reachable by an
+  attacker: rewrite a structural column, relabel the version to 1, and no recompute ever runs. It is
+  the one downgrade direction the recompute cannot catch by construction — every other version is
+  dispatched to a formula and fails the comparison; a downgrade *into the skip* means there is no
+  comparison to fail. The spec supplies the discriminator: `ciphertext_digest` "is absent (no wire
+  bytes) only on `schema_version = 1` payloads", and tags 11/12/13 arrived with v3, so a payload
+  declaring v1 while carrying any of them is a covered record wearing v1's exemption. Each of the four
+  columns is decoy-proven independently (a decoy guarding only on tag 10 initially passed the test,
+  which is how the per-column parametrization got written).
+- **Alternatives:** (a) Document it as a residual in `COMPATIBILITY.md`, as the Phase 4 verifier
+  suggested — rejected: a verifier's entire job is catching downgrades, and this is one, with a cheap
+  spec-grounded test for it. (b) Refuse every v1 record — rejected outright: real pre-A14 records
+  exist in real chains, and refusing them would make the verifier unrunnable over an archive. The
+  guard therefore keys on the COLUMNS, never on the version alone, and a genuine v1 record still
+  verifies and is still counted as not-recomputed.
+- **Blast radius if wrong:** A producer that emits `schema_version = 1` alongside a `ciphertext_digest`
+  — i.e. one contradicting the spec — would now be refused where it previously passed. No conforming
+  producer is affected, and the existing v1 golden still verifies green. Cheap to reverse: one
+  contiguous block in `verify_authenticity`.
+- **Status:** UNCONFIRMED
+
+## `frame`'s `len() as u32` truncates above 4 GiB, in Rust only
+
+- **Plan:** `plans/record-digest-v3.md` (Phase 4)
+- **Assumed:** It is acceptable that `record_digest_v3`'s `frame` closure casts `part.len() as u32`,
+  which truncates silently for a single field of 4 GiB or more. Python raises there and TypeScript
+  wraps.
+- **Chose:** Mirror `record_digest_v2` exactly. The cast is v2's, byte-for-byte, and the phase's
+  contract is that v3's framing is v2's framing plus three slots — introducing a divergence in the
+  shared closure would be a worse defect than the one it fixes. Reaching it also requires a
+  multi-gigabyte single field already parsed into memory, at which point the stream has other problems.
+- **Alternatives:** Check the length and refuse. Worth doing for BOTH versions at once, as its own
+  change, not asymmetrically inside a v3 transcription.
+- **Blast radius if wrong:** A >4 GiB field would frame with a truncated length prefix and produce a
+  digest that disagrees with every other implementation — reported as a mismatch, never as a pass.
+- **Status:** UNCONFIRMED

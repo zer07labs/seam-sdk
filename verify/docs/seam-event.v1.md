@@ -1,6 +1,11 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ da5f556 (refreshed 2026-08-14).
-     The runtime spec is the source of truth; refresh this copy whenever the spec changes —
-     a stale copy here once shipped a real verifier bug (the AUTHORIZE_EVALUATED advisory omission).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 0b62cb7 (refreshed 2026-08-24 for B3
+     record-digest v3). The runtime spec is the source of truth; refresh this copy whenever the spec
+     changes — a stale copy here once shipped a real verifier bug (the AUTHORIZE_EVALUATED advisory
+     omission), and it was stale again before this refresh: it carried no §Record digest (v3) at all,
+     while src/verify.rs implements it.
+     Refreshed VERBATIM, whole-file, deliberately: a reviewer can `diff` it against the sibling
+     checkout and get nothing, which is a checkable claim. Cherry-picking only the v3 sections would
+     read as tidier and would quietly end that property.
      The advisory-kind tripwire in src/wire.rs cross-checks the LIVE runtime spec when the sibling
      checkout is present; this file is what third parties build from when it is not. -->
 
@@ -302,8 +307,30 @@ LearningDecision {                         // payload at SeamEvent tag 14
 LearningOutcome {                          // payload at SeamEvent tag 15
   correct:     bool       // did the decision turn out right?
   verified_by: string?    // the reporter (system / human / automated feed) — for filter/weight
+  policy_key:  PolicyKey? // the arm's OWNER KEY (tag 3) — additive, may be absent. See below.
 }
 ```
+
+**`LearningOutcome.policy_key` (tag 3, additive — #354).** Carries the per-arm **owner key
+`(tenant, task_type, mode)`**, so a relay can partition by arm and give `seam-learning`'s
+`OnlineEngine` the "one arm, one owner" precondition its LinUCB order-dependent γ discounting and
+absolute-write posterior folding require. Without it, two relay partitions can carry the same arm and
+race on the same posterior (a same-arm lost update).
+
+Two contract properties consumers MUST respect:
+
+- **`context_class` is always empty here** — it is computed from request-scoped features that are
+  never sealed (see `DecisionRequest.features`), so it cannot be recomputed at outcome time. The owner
+  key deliberately excludes it. **Do not treat this field as full arm identity**; it is not the same
+  tuple as `LearningDecision.policy_key`, which does carry a real `context_class`.
+- **Absent, never partial.** It is omitted entirely when the sealed record has no `mode`, or when the
+  learning plane is disabled. A partial key with an empty `mode` would be *coarser than declared* and
+  would silently merge distinct arms — the exact bug this field exists to prevent.
+
+Being `optional`, an absent `policy_key` costs zero wire bytes, so pre-#354 goldens remain
+byte-identical. Consumers that do not yet mirror tag 3 will **silently drop it on
+decode→re-encode** (the tolerant-reader rule cuts both ways): mirror the field before keying
+anything on it, or it will read as permanently absent.
 
 The decision being scored is identified by the **envelope `decision_id`**, not a payload field — so the
 `LEARNING_DECISION` (per dimension) and the later `LEARNING_OUTCOME` join on it.
@@ -359,6 +386,248 @@ The `digest` field (tag 19) on a `DECISION_SEALED` event is selected by the payl
 All framing is byte-exact and any-language-reproducible. `frame(x) = le32(len(x)) ‖ x` (a little-endian
 u32 length prefix, then the bytes). `opt(x) = 0x00` when the field is absent, `0x01 ‖ frame(x)` when
 present — so `None` and `Some("")` are distinct. `le64`/`le32` are little-endian fixed-width integers.
+
+### Record digest (v3) — `schema_version = 3` (B3)
+
+v2 binds identity, the ciphertext, and every structural column on the wire. It does **not** bind the two
+columns carrying the product's actual claims: **who participated** and **what context the decision
+consumed**. Until B1/B2 those were a placeholder and an engine backfill, so digesting them would have
+bound noise. v3 binds them, as two rolled-up 32-byte sub-digests plus the policy rules that gated the
+commitment.
+
+```
+digest_v3 = SHA256(
+    frame("seam.audit.record-digest.v3")          // domain + version, in-preimage
+  ‖ frame(decision_id) ‖ frame(tenant) ‖ frame(namespace)
+  ‖ frame(SHA256(ciphertext))                      // == the wire ciphertext_digest (payload tag 10)
+  ‖ frame(le64(sealed_at))
+  ‖ frame(outcome) ‖ opt(mode) ‖ opt(policy_version) ‖ opt(supersedes)
+  ‖ frame(context_digest)                          // 32 bytes, below — wire tag 11
+  ‖ frame(participation_digest)                    // 32 bytes, below — wire tag 12
+  ‖ opt(policy_rules_digest)                       // 32 bytes when a policy was bound — wire tag 13
+  ‖ frame(le32(schema_version))                    // == 3
+)
+```
+
+Slot indices below are **0-based over the preimage above**, with slot 0 the domain tag: so
+`context_digest` is slot 10, `participation_digest` 11, `policy_rules_digest` 12, `schema_version` 13.
+(These are digest-preimage positions, not proto field numbers — on `DecisionSealed` the three new
+columns take the free wire tags 11/12/13, which happen to be offset by one.)
+
+Slots 1–9 are byte-identical to v2, and slot 0 differs only in its version suffix, and `schema_version` stays last. **The three
+new slots are inserted before `schema_version`, not appended after it** — a verifier selects the whole formula by
+`schema_version`, so position is fixed by this spec rather than by append order.
+
+**Strings hash as their raw UTF-8 bytes**, with no normalization of any kind — no Unicode NFC/NFD, no
+case folding, no trimming. This covers `ctx_ref`, `lineage_id`, mode ids, `agent_id`, `pinned_version`,
+and the enum strings below. Ingress already constrains most of these to a safe ASCII charset, but the
+digest does not rely on that and must not: normalization is a step three of four implementations would
+implement differently, or skip.
+
+**One framing rule, and exactly one exception, named.** In both sub-preimages below: *every field is
+framed, every optional is `opt`-encoded, and every list is preceded by a bare `le32` count* — including
+fixed-width fields such as the 32-byte `manifest_digest`. A list count is **4 bytes, not framed**. There
+are four independent implementations of this in three languages; a rule with exceptions is where they
+drift, so the single exception is called out where it occurs rather than left to be discovered: the
+`scope(...)` blob is pre-existing bytes v3 reuses verbatim, and *its* internal counts are framed. See
+`scope(...)` below. Nothing else in v3 frames a count.
+
+The two sub-digest domain tags below are `seam.audit.context-provenance.v3` and
+`seam.audit.participation.v3`, rather than the shorter `seam.ctx.v3` / `seam.part.v3` the B3 plan named.
+The change is deliberate: every other domain string in this system is `seam.audit.<thing>.<version>`, and
+a domain tag whose only job is to be unique and unmistakable should not be the one place the convention
+breaks. It is recorded here because it is a change to a decided one-way door, and a silent one would be
+worse than the inconsistency it fixes.
+
+#### `context_digest` — `seam.audit.context-provenance.v3`
+
+```
+context_digest = SHA256(
+    frame("seam.audit.context-provenance.v3")
+  ‖ le32(len(context_provenance))                  // OUTER count, BARE le32 — see the collision note
+  ‖ for each binding, in STORED ORDER:
+        frame(ctx_ref) ‖ frame(fidelity) ‖ frame(classification)
+      ‖ opt(lineage_id) ‖ frame(le32(version))
+      ‖ le32(len(derived_from)) ‖ for each: frame(derived_from[i])
+      ‖ opt(content_hash) ‖ opt(receipt_hash) ‖ opt(key_status) ‖ opt(resolved_status)
+)
+```
+
+`fidelity` and `classification` encode as their **canonical PascalCase strings** — `Reference` /
+`Digest` / `Value` / `Derivation`, and `Public` / `Internal` / `Confidential` / `Financial` / `Pii` /
+`Phi` — never as ordinals. An ordinal silently renumbers the moment a variant is inserted into the
+middle of an enum, and three of the four implementations would not notice.
+
+**This PascalCase rule is scoped to these two fields and does not generalize.** It applies because both
+are *closed* Seam-owned enums with a fixed variant list. It must **not** be extended by analogy to the
+reserved slots below — see the payload note there.
+
+`lineage_id`, `derived_from`, and `version` live on a nested `provenance` struct in the runtime's type;
+the preimage **flattens them** into the order shown and adds no marker for the nesting. The nesting is
+a Rust convenience, not a wire fact.
+
+**Stored order is the caller's order** and is normative: inline `contexts` (as their content refs) first,
+then cited `context_refs`, each in request order. Duplicates are refused at ingress. **The digest never
+sorts and never de-duplicates** — it hashes what was stored. Sorting would force every implementation to
+replicate a canonicalization step; de-duplicating would let a sealed record diverge from the request that
+produced it.
+
+The order is also the *open-time* order: the kernel seals the view's frozen bindings and never re-reads,
+so a mid-session registration can never enter this preimage.
+
+**The last four fields are RESERVED and are `0x00` (absent) on every record this build seals.** They are
+where ACDP receipt provenance lands — retained `content_hash`, `receipt_hash`, `key_status`, and resolved
+lifecycle status. Reserving them now means adopting receipts later fills presence bytes rather than
+forcing a v4: a record sealed today and a record sealed after receipts land both recompute under this one
+formula. Without the reservation, `schema_version` would stay 3 while the encoding changed underneath it,
+and a verifier could not tell the two apart.
+
+The reservation was confirmed against the ACDP implementation at the version this runtime pins, not
+inferred: a remote resolution yields exactly these four pieces of provenance, each a **scalar**, and a
+registry receipt is **0-or-1 per binding by schema** — not a chain. A per-hop receipt chain is the one
+shape that would have forced a counted list here, and it does not exist: derivation ancestry resolves
+each ancestor as its own binding with its own four slots.
+
+**The four payload encodings are D3's to pin, and one of them is a trap.** Filling these slots changes no
+grammar, but D3 must state, for each: the ASCII `sha256:<hex>` form for `content_hash`; *which* preimage
+`receipt_hash` covers (ACDP's own receipt signing-hash excludes the signature block, so "the receipt's
+hash" is ambiguous and two implementations will choose differently); the closed PascalCase strings for
+`key_status`; and — the trap — that `resolved_status` is an **open** enum whose canonical form is ACDP's
+*lowercase* wire string, taken verbatim, including values this spec cannot enumerate. Applying the
+PascalCase rule above to it by analogy would produce a cross-language mismatch.
+
+Two semantics D3 must also fix, because they are what keep a mutable registry value safe to seal:
+`resolved_status` is the status **observed at resolution time** and is **never refreshed** — a future
+"status refresh" job would invalidate every sealed digest — and a sealed `retracted` should be
+impossible by ingress, so a verifier that sees one should raise an anomaly rather than accept it.
+
+**Named residuals, recorded so they are not rediscovered as bugs:** an ACDP lineage-head receipt (a
+serve-time freshness attestation, mutable by design), a transparency-log inclusion proof (re-derivable
+against a growing tree), and — in the no-receipt case only — the fingerprint of the key that verified the
+body. The first two are correctly excluded from an immutable digest. The third is a real, accepted gap: a
+third-party verifier recovers it by re-fetching the body, which carries its own key id.
+
+#### `participation_digest` — `seam.audit.participation.v3`
+
+```
+participation_digest = SHA256(
+    frame("seam.audit.participation.v3")
+  ‖ le32(len(participation))                       // OUTER count, BARE le32
+  ‖ for each decl, in STORED ORDER:
+        frame(agent_id) ‖ opt(subject)
+      ‖ le32(len(declared_modes)) ‖ for each: frame(declared_modes[i])
+      ‖ frame(scope(declared_scope)) ‖ frame(pinned_version) ‖ frame(manifest_digest)
+)
+```
+
+**Stored order for `participation` is admission order, then delegated subjects.** The column is the
+session view's admitted participants in the order the kernel admitted them, followed by one synthetic
+declaration per `on_behalf_of` entry in request order — `agent_id = "subject:{i}"`, `subject = Some(..)`,
+no declared modes, an empty bounded scope, unpinned version and manifest. Those synthetic decls exist so
+that delegation is inside the erasure predicate; they are ordinary rows to the digest. As with context,
+**no sorting and no de-duplication.**
+
+`scope(...)` is the **existing** canonical scope encoding — the same bytes the runtime already writes
+when it computes `manifest_digest`. It is **reused, never re-derived**: a second encoding of the same
+value is a second thing to keep in sync. It is written out in full here because "reuse it" is not
+implementable by someone who does not have the Rust source:
+
+```
+scope(Unrestricted) = frame(0x00)
+
+scope(Bounded{tools, actions, mode_cap}) =
+    frame(0x01)
+  ‖ frame(le32(len(tools)))    ‖ for each: frame(tools[i])
+  ‖ frame(le32(len(actions)))  ‖ for each: frame(actions[i])
+  ‖ frame(le32(len(mode_cap))) ‖ for each: frame(mode_cap[i])
+```
+
+**Every component is `frame`d, the counts included** — so a count occupies 8 bytes (`le32(4)` then four
+count bytes), not 4, and the variant tag occupies 5, not 1.
+
+**This is the one place in v3 where a count is framed, and it is a deliberate exception, not the rule.**
+Everywhere else — the two outer counts, `derived_from`, `declared_modes` — a count is a bare 4-byte
+`le32`. The difference exists because these are not bytes v3 encodes: they are the existing `put_scope`
+output, reused verbatim so that the scope encoding has exactly one definition. Copying its convention
+outward, or v3's convention inward, both produce a digest that no other implementation reproduces. The
+other natural misreading is "a tag byte then a count" — also wrong, for the same reason: every component
+here goes through the same framing helper. `scope(Unrestricted)` is 5 bytes; an **empty** `Bounded` is 29. The empty
+bounded case is not hypothetical: every synthetic `subject:{i}` declaration carries exactly it, so any
+record with a delegated subject exercises it.
+
+The three sets are in this order — tools, actions, mode_cap — and each is in **sorted** order, which
+costs the implementer nothing because they are stored as ordered sets; sorted order is a property of the
+container, not a canonicalization step.
+
+The result is one opaque blob, which the participation preimage then frames again as a single field.
+`frame(scope(...))` is deliberate, not a doubled frame to be optimized away: it keeps the scope encoding
+substitutable as a unit.
+
+`pinned_version` and `manifest_digest` are **always present**, never optional. An unpinned participant
+carries the **empty version string** and the sentinel unpinned manifest digest, which is **32 zero
+bytes** — both are *values that mean unpinned*, and the record is meant to be auditable as such.
+Encoding "unpinned" as an absent field would make a legacy deployment's records indistinguishable from
+stripped ones.
+
+**Why a rolled-up digest and not the list itself.** `participation[].subject` is the GDPR erasure
+predicate. Publishing raw subjects on an append-only outbox that connectors fan out to SIEM and Iceberg
+would make erasure unenforceable at the sink. Publishing their digest does not. The same reasoning
+applies to context content.
+
+**Erasure keeps working.** Crypto-shred destroys the record's DEK; it never touches the `participation`
+or `context_provenance` columns. So a shredded record still recomputes `digest_v3` identically and still
+proves its place in the chain — exactly as it does under v2.
+
+#### `None` is not `Some("")` is not an empty list
+
+Three distinct things that a careless implementation collapses:
+
+- **`None`** — `opt` emits a single `0x00` byte and nothing else.
+- **`Some("")`** — `opt` emits `0x01 ‖ le32(0)`, five bytes. A present-but-empty string is *data*.
+- **an empty list** — a bare `le32(0)` and no elements, 4 bytes. (Inside the `scope(...)` blob only,
+  an empty set is `frame(le32(0))` = 8 bytes, per the named exception above.) A binding with
+  `derived_from = []` and one with
+  `derived_from = [""]` therefore differ, as do a record with zero participants and one whose single
+  participant has an empty id (which ingress refuses, but the digest must not depend on that).
+
+The same holds at the top level: a record with `participation = []` has a perfectly well-defined
+`participation_digest` — `SHA256(frame(domain) ‖ le32(0))` — not an absent slot. Slots 10 and 11 are
+`frame`d, never `opt`ed, precisely so that "no participants" and "field stripped" cannot alias.
+
+#### The outer count, and the collision it prevents
+
+Each per-element preimage is arguably self-delimiting, so the outer `le32` count looks redundant. It is
+not, and the reason is on the record: the erasure-certificate **v1** framing omitted exactly this and
+collided — `erased=["a","b"], held=[]` hashed identically to `erased=["a"], held=["b"]`, because the
+concatenation could not tell where one list ended and the next began. v3 counts every list, inner and
+outer, so no rearrangement of elements between lists can produce the same preimage.
+
+#### Strip semantics for tags 11/12/13
+
+`context_digest` (11) and `participation_digest` (12) are **mandatory** on a `schema_version = 3`
+payload. A consumer that receives a v3 payload with either absent **must refuse to verify** — it must not
+substitute an empty digest, and it must not fall back to the v2 formula. Absent-when-required is a strip
+attack, and it must be reported distinctly from a digest mismatch so an operator can tell "someone
+removed a field" from "someone rewrote one".
+
+`policy_rules_digest` is `SHA256(JCS(policy_definition))` over the policy actually bound to the
+session — JCS rather than file bytes, so the digest is representation-independent and an unchanged
+policy keeps its digest when policy delivery moves from local files to the control plane. As a
+`digest_v3` input it is opaque, so recomputation does not require re-deriving it; the formula is stated
+so an auditor can independently check *what the slot attests*, which is the point of sealing it.
+
+It attests **which bytes the runtime applied**, not that those bytes were authentic. Authenticity is
+signed-control-plane-policy work, orthogonal and later. An unsigned policy's digest is exactly as
+seal-worthy as an unsigned decision payload's ciphertext hash, which v2 already seals.
+
+`policy_rules_digest` (13) is genuinely optional: absent means no policy was bound to that commitment,
+which is today's common case. Absent ≠ `Some(empty)` — the `opt` presence byte distinguishes them.
+
+#### What v3 still does not cover
+
+`trust_basis`, `classification`, and `participants` (the flat id list) remain outside the digest. They
+are bound inside the commitment TCT, which is why this is acceptable rather than an oversight — but it
+is a real residual and a v4 candidate, recorded here rather than left to be rediscovered.
 
 ### Record digest (v2) — `schema_version = 2` (A14)
 

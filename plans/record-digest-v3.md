@@ -377,7 +377,7 @@ import, no BUF token); `conformance/vectors.json` gains the D2 block; python con
 `record_digest_v3` per case, and splices the block after `record_digest_v2`. **Byte-preservation is
 verified by execution, not assumed:** first check whether
 `json.dumps(json.loads(file), indent=2) + "\n"` round-trips the current file byte-identically (the
-` ` escape in the admission block suggests `ensure_ascii=True` matches); if yes, splice via
+`\x00` escape in the admission block suggests `ensure_ascii=True` matches); if yes, splice via
 dict insertion + dump; if not, splice textually before the final `}` — whichever survives the
 byte-diff test below. Idempotent: re-running on a file already carrying the block rewrites only the
 block.
@@ -444,7 +444,28 @@ v2 tests untouched and green.
 
 ### Phase 4 — Rust: wire fields, `record_digest_v3`, version dispatch, distinct strip refusal
 
-**Status:** TODO · **Depends on:** Phase 2 (vectors); independent of Phase 3.
+**Status:** DONE (verifier `PASS`, 1 round) · **Depends on:** Phase 2 (vectors); independent of Phase 3.
+
+**Divergences from the plan, recorded.**
+
+1. **Added a guard the plan did not anticipate: a covered record relabelled as v1.** The plan kept
+   `schema_version < 2 ⇒ skip` unchanged, and that skip is a hole — rewrite a column, set
+   `schema_version` to 1, and the record is exempted from the recompute entirely. It is the ONE
+   downgrade direction the recompute cannot catch by construction (every other version is dispatched
+   to a formula and fails the comparison; a downgrade *into* the skip means no comparison happens).
+   Closed structurally: a payload declaring v1 while carrying `ciphertext_digest` or tags 11/12/13 is
+   not a v1 record, because a genuine v1 payload has none of them. Each of the four columns is
+   decoy-proven independently. Logged in `ASSUMPTIONS.md`.
+2. **Added in-package unit tests for v3 in `verify.rs`** (`None` vs `Some("")`, tag-13 absent vs
+   zeroed, the tag-11/12 slot binding, strip-vs-mismatch). The plan put the vector coverage in
+   `tests/conformance.rs`, which is package-`exclude`d — so without these the *published* tarball
+   would ship a v3 implementation whose distinguishing behaviour nothing in the package tests.
+3. **Acceptance criterion (4) — "v2 KAT tests untouched in the diff" — could not hold literally.**
+   `Decision` gained three fields, so both v2 test constructors had to name them. No v2 input or
+   expectation changed, and `record_digest_v2` itself is byte-identical.
+4. **The tag-10 strip message was reworded** ("A v2 record is required" → "Every covered record
+   (schema_version >= 2)"). The plan said unchanged wording; that wording became false once the
+   message became reachable from a v3 record.
 
 **Delivers.** D5 in full: `wire.rs` tags 11/12/13 with explicit presence on both PB and JSON paths;
 `Decision` carrying the three `Option<Vec<u8>>`; `record_digest_v3(d: &Decision) -> Result<[u8;32],

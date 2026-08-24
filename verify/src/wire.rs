@@ -152,6 +152,27 @@ pub struct DecisionSealedPb {
     /// strip/downgrade attack, refused under `--issuer`.
     #[prost(bytes = "vec", tag = "10")]
     pub ciphertext_digest: Vec<u8>,
+    /// tag 11 (B3) — `context_digest`, 32 bytes: what context the decision consumed. MANDATORY on
+    /// `schema_version = 3`; absent on v1/v2.
+    ///
+    /// `optional` (proto3 explicit presence) is load-bearing here in a way it is NOT for tag 10.
+    /// Tag 10 gets away with a bare `bytes` because absent and present-empty are both refused by its
+    /// non-empty check. These three cannot: the spec gives a record with **no participants** a
+    /// perfectly well-defined `participation_digest`, and slots 10/11 of the preimage are `frame`d
+    /// rather than `opt`ed *precisely* so that "no participants" and "field stripped" cannot alias.
+    /// Collapsing absent into empty here would re-create at the wire layer the very collision the
+    /// digest framing was designed to prevent.
+    #[prost(bytes = "vec", optional, tag = "11")]
+    pub context_digest: Option<Vec<u8>>,
+    /// tag 12 (B3) — `participation_digest`, 32 bytes: who participated. MANDATORY on v3. See tag 11
+    /// for why the presence bit matters.
+    #[prost(bytes = "vec", optional, tag = "12")]
+    pub participation_digest: Option<Vec<u8>>,
+    /// tag 13 (B3) — `policy_rules_digest`, 32 bytes: which policy rules gated the commitment.
+    /// Genuinely OPTIONAL — absent means no policy was bound, which is today's common case — so this
+    /// one carries a real absent/present distinction into the digest (preimage slot 12 is `opt`ed).
+    #[prost(bytes = "vec", optional, tag = "13")]
+    pub policy_rules_digest: Option<Vec<u8>>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -280,6 +301,16 @@ pub struct DecisionSealedJson {
     /// base64 (STANDARD); absent/empty on v1.
     #[serde(default)]
     pub ciphertext_digest: Option<String>,
+    /// base64 (STANDARD), tags 11/12/13 (B3). `None` = the key was absent from the JSON object;
+    /// `Some("")` = the key was present with an empty value, which decodes to `Some(vec![])` and is
+    /// then refused as malformed — NOT silently folded into absent. The two mean different things
+    /// (nobody sent the field vs somebody sent an empty one) and only one of them is a strip.
+    #[serde(default)]
+    pub context_digest: Option<String>,
+    #[serde(default)]
+    pub participation_digest: Option<String>,
+    #[serde(default)]
+    pub policy_rules_digest: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -338,6 +369,13 @@ pub struct Decision {
     pub sealed_at: u64,
     pub schema_version: u32,
     pub ciphertext_digest: Vec<u8>,
+    /// Tags 11/12/13 (B3), carried with EXPLICIT presence all the way through — `None` is "the field
+    /// was not on the wire", never "the field was empty". `record_digest_v3` depends on the
+    /// difference: absent on a v3 record is a strip and must be refused, while a 32-byte digest of
+    /// an empty participation list is a legitimate value.
+    pub context_digest: Option<Vec<u8>>,
+    pub participation_digest: Option<Vec<u8>>,
+    pub policy_rules_digest: Option<Vec<u8>>,
 }
 
 #[derive(Clone)]
@@ -471,6 +509,13 @@ impl Event {
                         .map(b64)
                         .transpose()?
                         .unwrap_or_default(),
+                    // NOTE the missing `.unwrap_or_default()`: unlike tag 10, these three keep their
+                    // `Option`. Defaulting them here would erase the strip signal before the digest
+                    // code ever sees it, and a stripped v3 record would then be reported as a
+                    // rewrite — the one confusion the spec's strip semantics exist to prevent.
+                    context_digest: p.context_digest.as_deref().map(b64).transpose()?,
+                    participation_digest: p.participation_digest.as_deref().map(b64).transpose()?,
+                    policy_rules_digest: p.policy_rules_digest.as_deref().map(b64).transpose()?,
                 })
             });
             let ev = Event {
@@ -568,6 +613,9 @@ impl Event {
                 sealed_at: p.sealed_at,
                 schema_version: p.schema_version,
                 ciphertext_digest: p.ciphertext_digest,
+                context_digest: p.context_digest,
+                participation_digest: p.participation_digest,
+                policy_rules_digest: p.policy_rules_digest,
             }),
             bytes: raw,
         }
@@ -602,6 +650,15 @@ impl Event {
                 sealed_at: d.sealed_at,
                 schema_version: d.schema_version,
                 ciphertext_digest: d.ciphertext_digest.clone(),
+                // These MUST be carried. Identity is the re-encoded payload, and it is what collapses
+                // the same event arriving as JSON on a webhook and as protobuf on a relay into one
+                // chain link. Drop the three new fields here and two v3 records differing ONLY in
+                // `participation_digest` re-encode to identical bytes — the dedup that exists to
+                // prevent a false forgery alarm would start erasing evidence instead. This is the one
+                // omission in the v3 wire work that fails silently rather than loudly.
+                context_digest: d.context_digest.clone(),
+                participation_digest: d.participation_digest.clone(),
+                policy_rules_digest: d.policy_rules_digest.clone(),
             }),
             // The FULL payload, not just `action`: identity narrowed to one field would dedup two audit
             // entries that differ only in subject/reason — two events collapsed into one, evidence gone.
@@ -815,6 +872,115 @@ mod tests {
         assert_eq!(
             from_pb.bytes, from_json.bytes,
             "one event, two transports — the canonical identity must collapse them"
+        );
+    }
+
+    /// The v3 columns (tags 11/12/13) must survive BOTH transports, land in the slots their tag names,
+    /// and canonicalize to the same identity.
+    ///
+    /// The slot assertions are the point. `context_digest` and `participation_digest` are adjacent,
+    /// identically typed and identically sized, so a mapping that reads tag 12 into `context_digest`
+    /// compiles, parses, and produces a perfectly well-formed record. Nothing but distinct values and
+    /// a direct check can see it — and a swap on the PROTOBUF arm in particular is invisible to every
+    /// stream-level test in this crate, because those all synthesize the JSON projection.
+    #[test]
+    fn the_v3_columns_survive_both_transports_and_land_in_the_slots_their_tags_name() {
+        let ctx = vec![0x11u8; 32];
+        let part = vec![0x22u8; 32];
+        let rules = vec![0x33u8; 32];
+        let cipher = vec![0x44u8; 32];
+
+        let pb = SeamEventPb {
+            schema_version: "seam-event.v1".into(),
+            event_id: "d1#7".into(),
+            seq: 7,
+            occurred_at: 1_700,
+            tenant: "acme".into(),
+            namespace: "fraud".into(),
+            kind: "DECISION_SEALED".into(),
+            payload: Some(DecisionSealedPb {
+                decision_id: "dec:v3".into(),
+                tenant: "acme".into(),
+                namespace: "fraud".into(),
+                mode: None,
+                policy_version: None,
+                outcome: "Resolved".into(),
+                supersedes: None,
+                sealed_at: 1_700_000_000_000,
+                schema_version: 3,
+                ciphertext_digest: cipher.clone(),
+                context_digest: Some(ctx.clone()),
+                participation_digest: Some(part.clone()),
+                policy_rules_digest: Some(rules.clone()),
+            }),
+            ..Default::default()
+        };
+        let from_pb = Event::parse(&b64e(&pb.encode_to_vec())).expect("pb transport must parse");
+        let d = from_pb.decision.as_ref().expect("a decision payload");
+        assert_eq!(d.context_digest.as_deref(), Some(&ctx[..]), "tag 11");
+        assert_eq!(d.participation_digest.as_deref(), Some(&part[..]), "tag 12");
+        assert_eq!(d.policy_rules_digest.as_deref(), Some(&rules[..]), "tag 13");
+
+        let json = format!(
+            r#"{{"schema_version":"seam-event.v1","event_id":"d1#7","seq":7,"occurred_at":1700,
+            "tenant":"acme","namespace":"fraud","kind":"DECISION_SEALED","prev_checksum":"",
+            "payload":{{"decision_id":"dec:v3","tenant":"acme","namespace":"fraud",
+            "outcome":"Resolved","sealed_at":1700000000000,"schema_version":3,
+            "ciphertext_digest":"{}","context_digest":"{}","participation_digest":"{}",
+            "policy_rules_digest":"{}"}}}}"#,
+            b64e(&cipher),
+            b64e(&ctx),
+            b64e(&part),
+            b64e(&rules)
+        )
+        .replace('\n', "");
+        let from_json = Event::parse(&json).expect("JSON transport must parse");
+        let j = from_json.decision.as_ref().expect("a decision payload");
+        assert_eq!(j.context_digest.as_deref(), Some(&ctx[..]), "tag 11 (JSON)");
+        assert_eq!(
+            j.participation_digest.as_deref(),
+            Some(&part[..]),
+            "tag 12 (JSON)"
+        );
+        assert_eq!(
+            j.policy_rules_digest.as_deref(),
+            Some(&rules[..]),
+            "tag 13 (JSON)"
+        );
+
+        assert_eq!(
+            from_pb.bytes, from_json.bytes,
+            "one v3 event, two transports — the canonical identity must collapse them, which it can \
+             only do if `with_identity` carries the three new columns"
+        );
+    }
+
+    /// Absent, present-and-empty, and present-and-set are THREE things on the wire, and the parse must
+    /// keep them apart. Folding `""` into absent would report a malformed record as a strip; folding
+    /// absent into `""` would make a strip undetectable. Only the digest layer decides what to do with
+    /// each — the wire layer's job is to not destroy the distinction before it gets there.
+    #[test]
+    fn the_v3_columns_distinguish_absent_from_present_and_empty() {
+        let parse = |field: &str| {
+            Event::parse(&format!(
+                r#"{{"schema_version":"seam-event.v1","event_id":"d1#7","seq":7,
+                   "kind":"DECISION_SEALED","prev_checksum":"","payload":{{"decision_id":"dec:v3",
+                   "tenant":"acme","namespace":"fraud","outcome":"Resolved","sealed_at":1,
+                   "schema_version":3{field}}}}}"#
+            ))
+            .expect("parse")
+            .decision
+            .expect("a decision payload")
+        };
+        assert_eq!(
+            parse("").context_digest,
+            None,
+            "an absent key must stay absent, not become empty"
+        );
+        assert_eq!(
+            parse(r#","context_digest":"""#).context_digest,
+            Some(Vec::new()),
+            "a present-but-empty key must stay present, not become absent"
         );
     }
 

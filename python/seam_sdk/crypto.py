@@ -425,8 +425,11 @@ def _as_bytes(value: object) -> bytes | None:
     its own content, which is precisely the property framing exists to provide. Converting through
     ``bytes()`` here settles it: what gets measured is what gets hashed.
     """
-    if isinstance(value, (bytes, bytearray)):
-        return bytes(value)
+    # NOTE there is no `isinstance(value, bytes)` fast path, and its absence is the point.
+    # `bytes(value)` HONORS `__bytes__`, so a `bytes` subclass whose real buffer is 32 zeros but whose
+    # `__bytes__` returns 32 `0xff`s would be hashed as the bytes it CLAIMS rather than the bytes it
+    # HOLDS — the same "ask the object what it would like to be hashed as" mistake `_v3_enc` avoids
+    # for text. `memoryview(...).tobytes()` reads the C buffer, which no Python method can override.
     try:
         view = memoryview(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
