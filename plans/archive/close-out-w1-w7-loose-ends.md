@@ -1,6 +1,25 @@
 # Close out the loose ends left by the W1–W7 workstream
 
-> **Status: TODO.** Written 2026-08-24 against `main` @ `f68572f` (v0.7.43).
+> **📦 ARCHIVED 2026-08-24 — DELIVERED, all four phases.** Shipped as PR
+> [#53](https://github.com/zer07labs/seam-sdk/pull/53) (squashed to `cb87f30`), CI green.
+> Written 2026-08-24 against `main` @ `f68572f` (v0.7.43).
+>
+> **Verified against this tree, not against the status table** (per `plans/README.md`'s archiving
+> rule): Phase 1 — `verify-msrv` at `.github/workflows/ci.yml:326`, required via `ci-ok`'s `needs`
+> at `:436`, with the floor derived in `verify/tests/msrv.rs` from `verify/Cargo.toml:31`. Phase 2 —
+> the retirements are in place and dated in `plans/consolidation-2026-08-14.md`. Phase 3 — the
+> finding is in `COMPATIBILITY.md` §4a and `DECISIONS.md`, and is re-derived weekly by
+> `scripts/probe_framework_coinstall.py` via `.github/workflows/framework-coinstall.yml`. Phase 4 —
+> six plan files plus an index under `plans/cross-repo/`.
+>
+> **What "delivered" does not mean.** Phase 4's deliverable was giving the six `seam-runtime` asks a
+> version-controlled home here; the runtime-side work itself is **not** delivered and is not this
+> plan's to deliver — `seam-runtime`
+> [#418](https://github.com/zer07labs/seam-runtime/issues/418)–[#423](https://github.com/zer07labs/seam-runtime/issues/423)
+> remain open. Phase 2 retired only the backlog entries that were actually done; §B (the MCP server,
+> [#40](https://github.com/zer07labs/seam-sdk/issues/40)) and §D (the public-access DoD) survive in
+> [`build-agent-ingress.md`](../build-agent-ingress.md).
+>
 > Each phase's own `Status:` field below is authoritative — this banner summarises them,
 > never substitutes for them.
 > **Source:** the three limits stated honestly at the end of

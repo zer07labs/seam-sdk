@@ -10,7 +10,6 @@ against a status table alone.
 
 | Plan | Status |
 |---|---|
-| `close-out-w1-w7-loose-ends.md` | **IN PROGRESS** — the loose ends #51 left: the MSRV compiled rather than asserted, this backlog sweep, the CrewAI/protobuf record, and `cross-repo/` plan files for the six seam-runtime asks. |
 | `build-agent-ingress.md` | **PENDING** — narrowed 2026-08-24. The §A core scenes (Suspended→raise→resume, denied admission) and §C `StepUsage` wiring shipped in `seam-adapters` PR #42; what remains is the **§B MCP server** (seam-sdk [#40](https://github.com/zer07labs/seam-sdk/issues/40), deliberately unbuilt — no named customer) and the **§D public-access DoD**. See the refresh header in the plan. |
 | `consolidation-2026-08-14.md` | **RECORD + BACKLOG** — the 2026-08-14 full-repo review (plan triage, 6-track code review of seam-sdk + the runtime contract boundary), the fixes applied, and the residual backlog. Backlog swept 2026-08-24: four of five entries retired in place with citations; the survivors are §B/§D of `build-agent-ingress.md`. |
 
@@ -26,6 +25,7 @@ was written, and the target repo fetches it. Each is paired with a tracking issu
 
 | Plan | Delivered |
 |---|---|
+| `archive/close-out-w1-w7-loose-ends.md` | The loose ends #51 left: `verify/` now **compiled** at its declared MSRV in CI (not merely asserted), the 2026-08-14 residual backlog swept and retired in place with citations, the CrewAI/protobuf finding recorded in `COMPATIBILITY.md` + `DECISIONS.md` and re-derived weekly by a live resolution probe, and the six `seam-runtime` asks given a version-controlled home in `cross-repo/`. *(PR #53.)* |
 | `archive/sdk-exec-w1-w7.md` | The W1–W7 exec workstream: one batched contract regeneration (additive, proven under `buf breaking --config FILE`), the release-exposure gates (CI-green gating, npm install gate, registry smoke, cross-language framing coverage, the wire-framing handshake), `COMPATIBILITY.md`, and the digest dual-verify obligation. Cross-repo asks filed as seam-runtime #418–#423 rather than delivered here. *(PR #51.)* |
 | `archive/build-sdk-session-budget.md` | Py + TS incremental session lifecycle + the enterprise-6.2 budget surface (suspend→raise→resume), live-verified against a real `seam-grpc`. Resume later moved to the management plane (rt-D); data-plane `resume_session` is a documented tombstone. *(PR #4.)* |
 | `archive/build-sdk-hardening-p110-h3-h4.md` | Typed issuer-mismatch error (P1.10), `SeamAdminClient` with admin/erasure wrappers (H3), `features` on `run_decision` (H4), data-plane parity (H5), `SeamEvents` streaming + the typed-error taxonomy. Bearer model superseded by operator tokens (runtime #175 / SDK PR #16). *(PRs #5/#7/#8, versions 0.1.0→0.3.0.)* |

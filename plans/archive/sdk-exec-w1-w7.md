@@ -11,14 +11,14 @@
 > Phase 9's deliverable was *filing* the cross-repo asks, and it did: `seam-runtime`
 > [#418](https://github.com/zer07labs/seam-runtime/issues/418)–[#423](https://github.com/zer07labs/seam-runtime/issues/423).
 > The runtime-side work those describe is **not** delivered and is not this plan's to deliver — it
-> is tracked in those issues. [`plans/close-out-w1-w7-loose-ends.md`](../close-out-w1-w7-loose-ends.md)
-> Phase 4 mirrors them as local `plans/cross-repo/` plan files; until that lands, the issues are the
-> only record.
+> is tracked in those issues. [`plans/archive/close-out-w1-w7-loose-ends.md`](close-out-w1-w7-loose-ends.md)
+> Phase 4 has since mirrored them as local `plans/cross-repo/` plan files (PR #53), so the issues
+> are no longer the only record.
 >
 > **Known follow-ups, tracked elsewhere rather than left implicit:** the MSRV was asserted but never
 > compiled, `plans/consolidation-2026-08-14.md`'s backlog had gone stale, and the CrewAI/protobuf
 > finding lived only in an issue comment — all three are
-> [`plans/close-out-w1-w7-loose-ends.md`](../close-out-w1-w7-loose-ends.md). `verify/` is prepared
+> [`plans/archive/close-out-w1-w7-loose-ends.md`](close-out-w1-w7-loose-ends.md). `verify/` is prepared
 > for publication but **nothing has been published**; issue
 > [#52](https://github.com/zer07labs/seam-sdk/issues/52) records a 0.7.43 defect this plan's own
 > `ci-green` gate would have caught had it landed 74 minutes earlier.
