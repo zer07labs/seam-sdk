@@ -1,0 +1,15 @@
+# The org's private Cloudsmith Cargo registry, declared so `cargo publish` can resolve the
+# `publish = ["zer07labs"]` allow-list in Cargo.toml. Mirrors seam-runtime/.cargo/config.toml.
+#
+# THIS DOES NOT AFFECT BUILDING. Every dependency of this crate comes from crates.io — prost, sha2,
+# ed25519-dalek, base64, serde, serde_json and nothing else (that is the product claim, and
+# ci.yml enforces it with `cargo tree -e normal`). So a third party who clones this public repo can
+# `cargo build` and `cargo test` with no access to this registry and no credentials. The registry is
+# reachable only on the publish path, which is ours.
+#
+# Cloudsmith auths with the `cargo:token` provider, and the token value carries a literal "Bearer "
+# prefix — set CARGO_REGISTRIES_ZER07LABS_TOKEN to `Bearer <cloudsmith-api-key>`. A wrong prefix
+# 401s exactly like a bad key. Never committed here.
+[registries.zer07labs]
+index = "sparse+https://cargo.cloudsmith.io/zer07labs/internal/"
+credential-provider = "cargo:token"

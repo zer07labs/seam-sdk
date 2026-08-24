@@ -36,11 +36,28 @@
 #   3.  ReportEventsConsumed probe (reported; hard under EVENTS=1) — `SeamEvents.ReportEventsConsumed`
 #       (R1). Also on the BSR now; CI runs with EVENTS=1 as a permanent hard gate.
 #
-# Usage:  scripts/check-contract.sh                     # hard gates 1+1b+1c; report 2+3
+#   4.  RPC-completeness meta-check (HARD GATE, always) — the probes above name symbols one at a time,
+#       and for a long time none of them named a `SeamCoordination` verb. So a verb could land on the
+#       contract, regenerate into the stubs, and never be wired into the hand-written clients, with
+#       this gate green throughout: THAT is what happened to SubmitApprovalRequest / SubmitBallot.
+#       Adding two more named probes would have moved the gap one release down the road, not closed
+#       it. Instead the whole verb surface is declared in `contract/rpc-manifest.txt` and compared as
+#       a SET, per language, in both directions:
+#         * an RPC in the manifest but missing from a language's stubs -> stale/partial generation;
+#         * an RPC in the stubs but missing from the manifest -> a NEW verb landed. Refusing here is
+#           the point: it forces someone to wire it into the clients (or record why not) before the
+#           surface can move. A count comparison would not do this — two verbs renamed in one release
+#           keeps the count identical while the surface changes underneath.
+#
+# Usage:  scripts/check-contract.sh                     # hard gates 1+1b+1c+4; report 2+3
 #         STREAM=1 EVENTS=1 scripts/check-contract.sh   # additionally hard-gate 2 and 3 (the CI mode)
+#         scripts/check-contract.sh --write-manifest    # rewrite contract/rpc-manifest.txt from the
+#                                                       # active stubs (review the diff — it is the
+#                                                       # record of a contract surface change)
 #
 # Exit codes: 0 OK · 1 RPC/Authorize/admin surface stale · 2 streamed-payload fields stale (STREAM=1) ·
-#             3 stubs not generated at all · 4 ReportEventsConsumed stale (EVENTS=1).
+#             3 stubs not generated at all · 4 ReportEventsConsumed stale (EVENTS=1) ·
+#             5 RPC surface disagrees with contract/rpc-manifest.txt.
 #
 # Run it AFTER `make generate` / `make generate-local` — it inspects the emitted stubs, it does not
 # generate them.
@@ -60,6 +77,7 @@ PY_GRPC="python/seam_sdk/_gen/seam/api/v1/seam_pb2_grpc.py"
 PY_EV="python/seam_sdk/_gen/seam/event/v1/seam_event_pb2.pyi"
 TS_GEN="ts/gen/seam/api/v1/seam_pb.ts"
 TS_EV="ts/gen/seam/event/v1/seam_event_pb.ts"
+MANIFEST="contract/rpc-manifest.txt"
 
 err()  { echo "ERROR: $*" >&2; }
 note() { echo "  $*"; }
@@ -126,6 +144,49 @@ probe_event() {
   return "$rc"
 }
 
+# ── RPC surface extraction (Probe 4) ──────────────────────────────────────────────────────────────────
+# Each language is read from the artifact that actually declares its RPCs, not from a shared source:
+#   * Python — the grpc stub emits the full method path once per RPC: '/seam.api.v1.<Svc>/<Method>'.
+#   * TS     — protobuf-es annotates each RPC: `@generated from rpc seam.api.v1.<Svc>.<Method>`.
+# The char class is [A-Za-z0-9_]+, not [A-Za-z]+: proto identifiers admit digits and underscores, so a
+# verb like `AuthorizeV2` would otherwise extract MANGLED — the gate still fails, but on a truncated
+# name the Python extractor cannot see at all and `--write-manifest` can never record, which is a
+# permanently red gate rather than an actionable one.
+# Reading them independently is what makes a stale ts/gen beside a fresh python/_gen visible; deriving
+# one from the other would let either vouch for the other, which is exactly what this script refuses to
+# do everywhere else.
+rpcs_python() {
+  grep -oE "'/seam\.api\.v1\.[A-Za-z0-9_]+/[A-Za-z0-9_]+'" "$PY_GRPC" \
+    | tr -d "'" | sed 's|^/seam\.api\.v1\.||' | sort -u
+}
+
+rpcs_ts() {
+  grep -oE '@generated from rpc seam\.api\.v1\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+' "$TS_GEN" \
+    | sed 's|^@generated from rpc seam\.api\.v1\.||' | tr '.' '/' | sort -u
+}
+
+# The manifest, minus comments and blank lines.
+manifest_rpcs() {
+  grep -vE '^\s*(#|$)' "$MANIFEST" | sort -u
+}
+
+if [ "${1:-}" = "--write-manifest" ]; then
+  if [ ! -f "$PY_GRPC" ]; then
+    err "cannot write the manifest: $PY_GRPC is absent. Run 'make generate' first."
+    exit 3
+  fi
+  tmp="$(mktemp)"
+  # Keep the existing header verbatim — it is the rationale, and regenerating must never silently
+  # drop it. Only the RPC lines are rewritten.
+  grep -E '^\s*(#|$)' "$MANIFEST" > "$tmp" 2>/dev/null || true
+  rpcs_python >> "$tmp"
+  mv "$tmp" "$MANIFEST"
+  echo "wrote $MANIFEST ($(manifest_rpcs | wc -l | tr -d ' ') RPCs) — REVIEW THE DIFF."
+  echo "A line added here is a contract surface change: wire the verb into the hand-written clients"
+  echo "(python/seam_sdk/client.py + aio.py, ts/src/client.ts) or record why not, before committing."
+  exit 0
+fi
+
 echo "== check-contract: probing the active generated stubs =="
 
 # ── Probe 1: the VerifyPartyAttestation RPC (HARD GATE) ───────────────────────────────────────────────
@@ -184,6 +245,39 @@ done
 # CI runs with EVENTS=1 as a permanent hard gate; the plain default stays report-only for local trees.
 probe_api "SeamEvents.ReportEventsConsumed (R1)" "ReportEventsConsumed" "reportEventsConsumed"
 report_consumed_rc=$?
+
+# ── Probe 4: RPC-completeness against the manifest (HARD GATE) ─────────────────────────────────────────
+# See the header. Set comparison, per language, in BOTH directions.
+rpc_surface_rc=0
+rpc_surface_report=""
+if [ ! -f "$MANIFEST" ]; then
+  err "$MANIFEST is absent — the RPC surface has no declared expectation to check against."
+  err "Create it with: scripts/check-contract.sh --write-manifest"
+  rpc_surface_rc=1
+else
+  _want="$(manifest_rpcs)"
+  for lang in python ts; do
+    case "$lang" in
+      python) _have="$(rpcs_python)" ;;
+      ts)     _have="$(rpcs_ts)" ;;
+    esac
+    _missing="$(comm -23 <(echo "$_want") <(echo "$_have"))"
+    _extra="$(comm -13 <(echo "$_want") <(echo "$_have"))"
+    if [ -n "$_missing" ]; then
+      rpc_surface_rc=1
+      rpc_surface_report+="  MISSING from the $lang stubs (stale/partial generation):"$'\n'
+      while IFS= read -r r; do [ -n "$r" ] && rpc_surface_report+="    - $r"$'\n'; done <<< "$_missing"
+    fi
+    if [ -n "$_extra" ]; then
+      rpc_surface_rc=1
+      rpc_surface_report+="  NOT IN THE MANIFEST, present in the $lang stubs (a new verb landed):"$'\n'
+      while IFS= read -r r; do [ -n "$r" ] && rpc_surface_report+="    + $r"$'\n'; done <<< "$_extra"
+    fi
+    if [ -z "$_missing" ] && [ -z "$_extra" ]; then
+      note "PRESENT all $(echo "$_want" | wc -l | tr -d ' ') declared RPCs [$lang]"
+    fi
+  done
+fi
 
 echo
 if [ "$rpc_rc" -ne 0 ]; then
@@ -244,3 +338,22 @@ else
     echo "OK — ReportEventsConsumed present (relay cursor reporting unblocked)."
   fi
 fi
+
+
+if [ "$rpc_surface_rc" -ne 0 ]; then
+  echo
+  err "the generated RPC surface disagrees with $MANIFEST:"
+  printf '%s' "$rpc_surface_report" >&2
+  echo "" >&2
+  err "A verb MISSING from the stubs is a stale or partial generation — rerun 'make generate' (BSR)"
+  err "or 'make generate-local RUNTIME=../seam-runtime'."
+  echo "" >&2
+  err "A verb NOT IN THE MANIFEST is a new one on the contract, and this refusal is deliberate: it is"
+  err "the moment someone decides whether the hand-written clients take it. Wire it into"
+  err "python/seam_sdk/client.py AND python/seam_sdk/aio.py AND ts/src/client.ts (or record in the PR"
+  err "why not — e.g. a server-to-server verb no client calls), then run:"
+  err "    scripts/check-contract.sh --write-manifest"
+  err "and commit the manifest diff alongside the client change."
+  exit 5
+fi
+echo "OK — the RPC surface matches $MANIFEST in both languages."

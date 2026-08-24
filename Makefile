@@ -19,7 +19,7 @@
 BUF_MODULE ?= buf.build/zer07labs/seam
 RUNTIME    ?= ../seam-runtime
 
-.PHONY: generate generate-local check-contract clean lint
+.PHONY: generate generate-local check-contract clean lint probe-frameworks
 
 generate:
 	buf generate $(BUF_MODULE)
@@ -38,6 +38,21 @@ generate-local:
 # emitted stubs, it does not generate them.
 check-contract:
 	./scripts/check-contract.sh
+
+# Resolve, against live PyPI, whether each agent framework in COMPATIBILITY.md §4a can still share a
+# virtualenv with this SDK. The doc's table is the expectation; this derives the answer and fails on
+# any disagreement — in BOTH directions, because a row flipping to `compatible` is the signal that an
+# upstream fix landed and nothing else in the org watches for it.
+#
+# Needs `uv` and Python 3.11+ (tomllib). Hits the network; not part of the default test suite by
+# design — the answer changes when PyPI changes, not when this repo does.
+# PROBE_PYTHON prefers the project venv, because a system `python3` older than 3.11 has no tomllib
+# and the target would fail for a reason that has nothing to do with the answer. Override to point
+# at any 3.11+ interpreter: `make probe-frameworks PROBE_PYTHON=python3.12`.
+PROBE_PYTHON ?= $(shell [ -x python/.venv/bin/python ] && echo python/.venv/bin/python || echo python3)
+
+probe-frameworks:
+	$(PROBE_PYTHON) scripts/probe_framework_coinstall.py
 
 clean:
 	rm -rf gen python/seam_sdk/_gen ts/gen ts/dist

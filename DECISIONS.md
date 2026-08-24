@@ -5,6 +5,253 @@ assumption, the independent recommender's analysis, the human verdict, and the r
 `/ship` and any later reconciliation read this file instead of replaying the conversation that
 produced it.
 
+## 2026-08-24 — `plans/close-out-w1-w7-loose-ends.md` Phase 3: framework co-installability is a probe, not a table of versions
+
+### Scope: the frameworks are the ones `seam-adapters` ships a shim for
+
+Four, and no more: `crewai`, `langchain` (+`langgraph`), `strands-agents`, `claude-agent-sdk`
+(`seam-adapters/crewai/pyproject.toml:13`, `langchain/pyproject.toml:18`, `strands/pyproject.toml:11`,
+`claude_agent/pyproject.toml:11`). `seam-aegis` adds nothing — it reaches frameworks only through
+`seam-langchain`. A framework with no shim is out of scope; adding a shim is what adds a row.
+
+### The mechanism, generalised past CrewAI
+
+Issue [#48](https://github.com/zer07labs/seam-sdk/issues/48) is about CrewAI, but CrewAI is an
+*instance*, not the rule. Our `protobuf` floor is **derived** from unpinned buf remote plugins, so it
+moves on its own; protobuf then refuses a runtime older than the gencode. Any framework whose closure
+caps `protobuf` below our floor is un-co-installable — in practice, **one that exact-pins or
+`~=`-pins `opentelemetry-exporter-otlp-proto-http` below the release where `opentelemetry-proto`
+lifted its own `protobuf<7` cap.**
+
+The generalisation is worth stating because it is *not* "OpenTelemetry is incompatible": OTel lifted
+the cap. `strands-agents` depends on the exporter by **range** and rides over the change; `crewai`
+pins with `~=` and cannot. Same ecosystem, opposite outcome, and the difference is the pin style.
+
+### The record is a probe, because a table of versions is stale on arrival
+
+`COMPATIBILITY.md` §4a carries the table; `scripts/probe_framework_coinstall.py` **reads that table
+as its input** and resolves each row against live PyPI, so doc and check cannot disagree. Run via
+`make probe-frameworks`, weekly in `.github/workflows/framework-coinstall.yml`, and on any PR
+touching the floors, the table, the probe or `buf.gen.yaml`.
+
+It fails in both directions, and the second is the one that matters: **a row flipping to
+`compatible` means the upstream fix landed**, and nothing else in this org watches for that —
+`seam-adapters`' resolution-probe installs its shims *without* the `[sdk]` extra, so it stays green
+either way.
+
+**Two implementation facts, both learned by getting them wrong first:**
+1. **Resolve with the shim's declared constraint, never the bare name.** Bare `crewai` resolves fine
+   — by backtracking to **1.6.1**, a release predating the conflict — and reports a false
+   `compatible`. With `crewai>=1.15.3,<2` the same resolver proves it unsatisfiable. A probe that
+   confidently reports the wrong answer is worse than no probe.
+2. **Exit codes cannot classify the outcome.** uv exits non-zero for an unsatisfiable graph, a
+   missing package *and* a disabled network, and all three say "unsatisfiable". The probe classifies
+   on the message and treats anything it cannot positively identify as **infrastructure (exit 2)**,
+   never as a verdict.
+
+*Rejected:* generating the table into the doc. The generator needs a staleness guard, the guard needs
+the network to know what stale means, and that forces either network in the default suite or a
+skip-when-offline path — both of which this repo rejects elsewhere. Doc-as-input gets the
+no-disagreement property without either.
+
+*Rejected:* a pytest in the default suite. Same skip-when-offline objection. The suite stays offline
+and honest; the probe is a script with its own workflow.
+
+### Widening our own protobuf floor: considered and rejected
+
+It is not a metadata edit. The floor is derived, so widening means **pinning `buf.gen.yaml`'s remote
+plugins** to emit older gencode — and protobuf's same-major rule (enforced by
+`python/tests/test_protobuf_floor.py`) means the result is `>=6.x,<7`, not a wide `>=6,<8`.
+
+- It **relocates** the incompatibility rather than removing it: `<7` co-installs with CrewAI and
+  conflicts with everything on the current line.
+- It freezes the codegen pipeline on the release source of record, indefinitely, with no owner for
+  the "when do we unpin" decision.
+- It does not fix the root cause — CrewAI's pin breaks it against *any* protobuf-7 neighbour.
+- The 6.x line stops receiving fixes, and a `<7` cap forbids consumers from taking them.
+
+The strongest counter — that a derived floor exports churn to consumers — is real and is stated
+plainly in `COMPATIBILITY.md` §4. But the remedy for exported churn is the loud derived-floor
+machinery that already exists, not a pin that converts churn into stagnation. **One upstream PR
+against CrewAI's exporter pin is cheaper than a permanent pipeline pin**, and the probe is what
+notices when it lands.
+
+**Status:** RECORDED. Re-answer if a second framework becomes incompatible, or if the pin-style
+generalisation above stops explaining the cases.
+
+## 2026-08-23 — `plans/archive/sdk-exec-w1-w7.md` Phase 8 (W7): the digest dual-verify obligation
+
+Written **before** v3 exists, because the failure this prevents is unrecoverable and the moment to
+agree the rule is not the moment someone is mid-migration.
+
+### W7.1 is DONE UPSTREAM — do not re-file it
+
+The source plan's headline W7 defect was `compute_record_digest`'s catch-all: `1 => v1, _ => v2`,
+meaning a record stamped `schema_version == 3` would be **silently hashed with the v2 framing**.
+
+`seam-runtime` `d7f27c7` (#408, 2026-08-23) already fixed it. `crates/seam-store/src/lib.rs:357-380`
+now reads `1 => …`, `2 => …`, `_ => None`, with the comment *"No catch-all. An unknown stamp is
+refused so it can never verify green under the wrong formula"*, and `recompute_sealed_digest` is
+symmetric. **Verified directly, not taken from the plan.** Filing it would be filing a fixed bug.
+
+### The rule, for when v3 lands
+
+1. **Every verifier verifies v1, v2 and v3 simultaneously, selected by the record's own
+   `schema_version`.** Never "latest wins", never a global flag. The version is in-band precisely so
+   it can be dispatched per record.
+2. **v2 code is never deleted.** A record sealed under v2 must verify in 2126. Removing a live path
+   is the one irreversible mistake available here. The same applies to `compute_record_digest_v1`,
+   which looks like dead code and is the only way a `schema_version == 1` record verifies.
+3. **Both implementations move together** — `seam-sdk/verify/src/verify.rs` and
+   `seam-runtime/crates/seam-verify` — and the differential harness must be extended to drive
+   **mixed-version streams**, not just a homogeneous one. A harness that only ever sees one version
+   cannot catch a dispatch bug.
+4. **A KAT per version, generated from the Rust**, and the v2 vector stays forever.
+5. **A mixed-version chain test** — one stream containing v1, v2 and v3 records verifying end to
+   end — is the acceptance test for the whole item. A version bump that cannot produce a passing
+   mixed stream is not ready.
+
+### Two mechanics the source plan could not have known
+
+- **Item 4 is already enforced from the runtime side.** `seam-runtime`'s `sdk-digest-parity`
+  discovers vector blocks by **`record_digest_v*` prefix** (`scripts/sdk-digest-parity.sh:90`), so
+  the day a `record_digest_v3` block exists the gate covers it automatically rather than silently
+  continuing to check only v2. Point at that rather than restating it.
+- **The gate resolves the Python function by EXACT NAME** (`getattr(crypto, name)`), so
+  `python/seam_sdk/crypto.py` must expose `record_digest_v3` under precisely that name. TypeScript
+  (`recordDigestV2`, camelCase) and Rust (`verify/src/verify.rs`'s private `record_digest_v2`) are
+  **not** checked by it — their parity rests only on this repo's own suites. **That asymmetry is
+  where drift would hide**, and it is the reason item 3 says both implementations move together
+  rather than trusting the cross-repo gate to notice.
+
+### The commitment digest carries the same obligation and worse fan-out (W7.3)
+
+`seam-commitment-digest:v1` is at v1 with no v2 planned, and is mirrored byte-for-byte in **all five**
+SDK shims. Any change to what it binds costs **six coordinated edits** (five shims + the runtime), a
+bumped domain label, and a permanent dual-verify obligation.
+
+**When the need is additive, add a SEPARATE digest — do not extend v1's field tuple.** A second
+digest costs one new thing; extending the tuple costs every past artifact a migration.
+
+`verify/` is **not** a sixth mirror — it does not implement the commitment digest at all, and
+`python/tests/test_framing_rationale_is_documented.py` now guards against a doc claiming otherwise.
+
+**Status:** RECORDED. Java and Kotlin gained the length-prefix rationale they lacked (Go, Python and
+TypeScript already had it), and a grep-guard keeps all five honest.
+
+## 2026-08-23 — `plans/archive/sdk-exec-w1-w7.md` Phase 6 (W1): publishing `verify/` — to Cloudsmith, not crates.io
+
+Three decisions, taken together because publishing is irreversible and they interact.
+
+### `verify/` ships as a LIBRARY as well as a binary
+
+- **The question.** `verify/` was bin-only — `[[bin]]` and no `src/lib.rs`. A published bin-only
+  crate is installable but **not embeddable**: an auditor who wants
+  verification inside their own pipeline must shell out and parse `--json`.
+- **Verdict: lib + bin.** `src/lib.rs` holds the logic; `main.rs` is a shell over it, so the CLI and
+  an embedding caller run **exactly the same code** and there is no second implementation to drift.
+  A parse step between the answer and the decision is somewhere a wrong answer can be introduced,
+  and embeddability is most of the reason to publish at all.
+- **Accepted cost:** a public Rust API surface with its own semver obligations.
+- **Consequence taken while doing it:** the CLI's certificate shape-sniffing moved into
+  `Cert::parse_document`. While it was inline in the binary, an embedder had to reimplement it to
+  accept the same files the CLI accepts — a second implementation of exactly the kind this crate
+  exists to avoid.
+- **Status:** DONE. A doctest verifies the shipped fixture **through the library API** (not the
+  CLI), and asserts a wrong issuer fails closed.
+
+### `verify/` keeps its own version, independent of the SDK's
+
+- **The question.** `verify/` is `0.1.0` while the SDK is `0.7.42`. Publishing locks that in.
+- **Verdict: deliberate — keep it independent.** `verify/` is its own cargo workspace with zero Seam
+  dependencies, and an independent version lets it express **real semver**, which this SDK
+  explicitly **cannot**: *"this SDK cannot express its own semver. A breaking change here ships under
+  whatever number the runtime's history computes, which may be a patch"* (`CHANGELOG.md:9-12`).
+  Binding the verifier to that would inherit a defect for the sake of a slogan.
+- **Status:** CONFIRMED.
+
+### The MSRV is derived, and the first number written down was wrong
+
+- `rust-version` was **absent**, which a registry accepts silently — a published crate without one
+  gives a consumer no signal and they find out from a compile error.
+- It was first written as **1.74**, from recalling `ed25519-dalek`'s floor. **That was wrong.** The
+  resolved graph requires **1.85** (`prost` 0.14.4, `base64ct` 1.8.3, `zeroize` 1.9.0). A floor that
+  is too low is worse than none: absent is honestly silent, a wrong number reads as a checked
+  promise.
+- **Verdict:** declare 1.85, and **derive rather than pin it** — `verify/tests/msrv.rs` reads
+  `cargo metadata` and fails when a dependency outruns the declared floor, the same discipline
+  `python/tests/test_protobuf_floor.py` applies to the protobuf floor and for the same reason
+  (third-party crates raise their MSRVs on their own schedule, with nobody editing this manifest).
+- **Status:** DONE, and the guard was driven red (declaring 1.74 fails, naming `base64ct`).
+
+### It goes to Cloudsmith, not crates.io — and that changes what publishing buys
+
+**Decision (owner directive, 2026-08-23): binaries and packages for this org stay on Cloudsmith.**
+`verify/Cargo.toml` therefore declares `publish = ["zer07labs"]`, the same private Cargo registry
+(`sparse+https://cargo.cloudsmith.io/zer07labs/internal/`) the runtime crates use.
+
+**The allow-list form is load-bearing, not stylistic.** A bare `publish = true` permits
+`cargo publish` to default to crates.io, and this crate shares a package name with
+`seam-runtime/crates/seam-verify`. Naming the registry makes an accidental public publish a *cargo
+error* rather than an irreversible namespace claim — verified: `cargo publish --dry-run` now reports
+*"found `zer07labs` as only allowed registry"*, and `--registry crates-io` is refused outright
+(*"The registry `crates-io` is not listed in the `package.publish` value"*). Precisely: dependency
+resolution still reads the crates.io **index** — that is where the six dependencies come from — but
+nothing is ever *published* there.
+
+**What this does NOT buy, said plainly so it is not overstated later.** Cloudsmith `internal` is
+private, so **an external auditor cannot install the verifier from it.** Their path is what it always
+was: clone this **public, Apache-2.0** repository and build. `verify/` is a standalone cargo
+workspace with zero Seam dependencies precisely so that works anywhere, and the claim is a **CI
+gate** (`.github/workflows/ci.yml:289-297` runs `cargo tree -e normal`), not a comment.
+
+So publishing is **distribution convenience for internal and partner consumers** — *not* a
+trust-anchoring improvement and *not* the thing that makes the verifier independently obtainable.
+The earlier framing in this entry said "distribution and trust-anchoring"; against a private
+registry only the first half survives, and §9's rule against overclaiming applies to our own ADRs
+too.
+
+**Consequence for the name collision.** With this crate on Cloudsmith and the runtime's copy at
+`publish = false`, the two never meet in a shared namespace. The rename
+([`seam-runtime#419`](https://github.com/zer07labs/seam-runtime/issues/419)) drops from **blocker to
+hygiene** — worth doing so two crates in one org do not share a package name, but no longer gating
+anything here.
+
+A build-time check confirms the registry declaration does not compromise the standalone claim:
+`cargo build` and `cargo test` pass with no registry access and no credentials, because every
+dependency comes from crates.io. The private registry is reachable only on the publish path.
+
+## 2026-08-23 — `plans/archive/sdk-exec-w1-w7.md` Phase 3 (W4.3): does a new field enter the record-digest preimage?
+
+W4.3 requires an **explicit, written** answer per new field, because "an unanswered question here is
+how v1→v2 happened." Answering it in a PR comment and moving on is what this entry exists to prevent.
+
+### None of the four landed contract changes enters the record-digest preimage
+
+- **The question.** The batched regeneration added `DecisionResponse.policy_enforcement` (7),
+  `.participant_verdicts` (8), `.collective_outcome` (9), `SessionStep.policy_enforcement` (3), and
+  the quorum verbs. Does any of them change what `verify/` must hash — which would make this a
+  digest **version bump**, not an additive field, and pull in the whole of W7?
+- **Answer: no, and the reason is structural rather than a judgment call.** Every one of those
+  fields is on a `seam.api.v1` **response** message. The record digest is computed over
+  `DECISION_SEALED`'s payload columns — specified byte-exactly at
+  `seam-runtime/docs/specs/seam-event.v1.md:379-393` — and `verify/src/wire.rs` mirrors the
+  **event** wire only (`SeamEventPb`, `DecisionSealedPb`, `ErasureCertificatePb`, …). A response
+  field is not a sealed column and never reaches the preimage.
+- **The one event-wire addition in the same window** is `seam.event.v1 LearningOutcome.policy_key`
+  (tag 3), found by the descriptor diff rather than by the PR list. `verify/` does not mirror
+  `LearningOutcome` at all (grep: zero hits), so it does not reach the verifier either.
+- **Consequence:** `verify/src/wire.rs` needs no change, `conformance/vectors.json` is untouched,
+  and W7 does not apply to this regeneration.
+- **The method, which outlives this answer:** the test is not "is the field new?" but **"is it a
+  sealed column?"** Ask it against the event proto and `verify/src/wire.rs`, per field, every
+  regeneration. `GetDecision`/`ReplayDecision` deliberately do **not** carry the three new response
+  fields precisely because that *would* require a `DecisionRecord` schema + archive-format
+  migration — the proto says so itself. The day a field lands on `DecisionSealed`, the answer flips
+  and W7 engages.
+- **Status:** RECORDED. Re-answer per regeneration; do not inherit this conclusion without redoing
+  the check.
+
 ## 2026-08-16 — reconcile `plans/archive/adopt-runtime-2026-07.md`'s ASSUMPTIONS.md (8 entries)
 
 Ranked by blast radius, highest first. The two dependency-floor entries are genuine one-way

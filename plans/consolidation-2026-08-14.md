@@ -21,7 +21,7 @@ deep review, and the fix wave it produced. Companion to the plan archive notes i
 | `build-sdk-session-budget` | DELIVERED (deviations: raw-pb returns, node:test not vitest) | → `archive/` |
 | `build-sdk-hardening-p110-h3-h4` | DELIVERED (residual: grants RPCs unwrapped — fixed below) | → `archive/` |
 | `adopt-runtime-2026-07` | DELIVERED Phases 0–5 (+ partial 6); post-archive drift found (AUTHORIZE_EVALUATED) | → `archive/` |
-| `build-agent-ingress` | **PENDING** — MCP server, Suspended/resume + denied-admission scenes, StepUsage wiring, public-access DoD all missing | refreshed in place |
+| `build-agent-ingress` | **PENDING** — as of 2026-08-24 the §A scenes and §C `StepUsage` wiring have shipped (seam-adapters PR #42); the §B MCP server (seam-sdk #40) and the §D public-access DoD remain. See the residual backlog below. | refreshed in place |
 
 ## Findings and fixes
 
@@ -55,7 +55,8 @@ timeout-matrix completeness (Py tests).
 **Verified non-issues:** goldens + all shared conformance vectors byte-identical to the
 runtime; bearer/#175 drift fully resolved (operator tokens end-to-end, SDK PR #16); no
 constant-time gaps in the shims; no fail-open path in `verify/` beyond the P1 above;
-version lockstep py==ts==0.7.21 intact.
+version lockstep py==ts intact (the sweep observed 0.7.21; the invariant is the point, not
+the number, and it is CI-enforced by `ci.yml`'s `version-lockstep` job).
 
 ## Deliberate decisions (recorded, not bugs)
 
@@ -70,14 +71,48 @@ version lockstep py==ts==0.7.21 intact.
 
 ## Residual backlog (not fixed this sweep)
 
-- `build-agent-ingress.md` refreshed scope: §A Suspended/resume + denied-admission example
-  scenes, §B MCP server, §C `StepUsage` wiring in adapters, §D public evaluation path (or an
-  amended DoD).
-- No gradle wrapper in `java/`/`kotlin/` (CI-installed gradle is unpinned; local builds need
-  a toolchain). Needs a machine with gradle to generate the wrapper.
-- `ErasureRequest.now_millis` unexposed in both erasure wrappers (exposed on
-  `enforce_retention`; add on demand).
-- seam-adapters: lock still resolves seam-sdk 0.7.9 against an SDK at 0.7.21; unconditional
-  editable path source in root `pyproject.toml` documented as applying to partners/CI.
-- Differential-harness coverage for issuer *rotation* streams (multi-pin) — the SDK verifier
-  now supports it; the harness should pin agreement.
+> **Swept 2026-08-24.** Four of the five bullets below were done or materially misstated. Each is
+> retired *in place* with what closed it, rather than deleted — `plans/README.md` calls this file a
+> **RECORD + BACKLOG**, and deleting the record loses why the item existed. Retirements are dated and
+> cited so a reader can check them without trusting this line.
+
+- **§A and §C RETIRED 2026-08-24; §B and §D still open.** `build-agent-ingress.md` refreshed scope:
+  - ~~§A Suspended/resume + denied-admission example scenes~~ — **done** in `seam-adapters` PR #42
+    (`9a05a04`, 2026-08-17): `seam-adapters/examples/fraud_budget/` drives a budget breach →
+    `SUSPENDED` → `SeamAdminClient.resume_session` → seal, and
+    `seam-adapters/examples/fraud_admission_denied/` refuses a never-enrolled identity at Admit.
+    Both are self-asserting and wired into that repo's fake and live CI lanes.
+  - **§B MCP server — STILL OPEN.** Tracked as seam-sdk
+    [#40](https://github.com/zer07labs/seam-sdk/issues/40), deliberately unbuilt: no named customer
+    for this surface yet. Note its tool mapping now predates the quorum verbs and needs revisiting.
+  - ~~§C `StepUsage` wiring in adapters~~ — **done**, same PR #42.
+    `seam-adapters/core/seam_agent_core/session_binder.py:43` defines it and threads it through
+    propose/vote/commit; `transport_grpc.py:581-589` translates it to the SDK type at the RPC edge.
+  - **§D public evaluation path — STILL OPEN.** `seam-adapters/compose/README.md:12-30` still
+    requires a Cloudsmith entitlement and a private image-pull credential, so there is no
+    stranger-reachable path.
+- ~~No gradle wrapper in `java/`/`kotlin/`~~ — **RETIRED 2026-08-24, both halves.** The wrappers are
+  committed and tracked (`cf23722`, PR #39), and both `gradle/wrapper/gradle-wrapper.properties`
+  pin `gradle-8.7-bin.zip`. The "CI-installed gradle is unpinned" half is resolved by the same
+  change: `.github/workflows/ci.yml`'s java and kotlin jobs invoke `./gradlew`, so the wrapper —
+  not an ambient gradle — drives CI too.
+- ~~`ErasureRequest.now_millis` unexposed in both erasure wrappers~~ — **RETIRED 2026-08-24.**
+  Exposed on all four wrappers, both languages: `python/seam_sdk/admin.py:250-269` and `:271-290`;
+  `ts/src/admin.ts:183-194` and `:198-210`. Shipped per `CHANGELOG.md`'s `now_millis` / `nowMillis`
+  entry.
+- **REWRITTEN 2026-08-24 — the observation holds, two of its clauses did not.** `seam-adapters`'
+  lockfile does still resolve an old `seam-sdk` (`seam-adapters/uv.lock:3920-3922`), and that is
+  *not* a consumer sitting in a broken band: it is an artifact of the unconditional editable path
+  source at `seam-adapters/pyproject.toml:32`, so the lock records a sibling checkout rather than a
+  resolved release. Dropped from the original bullet: the SDK version it named (long superseded),
+  and the claim that the override is "documented as applying to partners/CI" — upstream has since
+  **retracted** that framing at `seam-adapters/pyproject.toml:17-29`. The authoritative current
+  statement lives in `build-agent-ingress.md`'s dated retraction block; `COMPATIBILITY.md` §2
+  carries the consumer-facing version. Not a seam-sdk defect — recorded here only so the earlier
+  wording is not read as still standing.
+- ~~Differential-harness coverage for issuer *rotation* streams (multi-pin)~~ — **RETIRED
+  2026-08-24, and it was never ours to fix.** The SDK verifier supports multi-pin
+  (`verify/src/main.rs:296-298`, repeatable `--issuer`). The harness lives in **seam-runtime**
+  (`crates/seam-verify/tests/differential.rs`) and already pins agreement: `two_issuer_attested_stream()`
+  at `:177` plus the `rotation-both-issuers` and `rotation-new-issuer-only` cases at `:453-468`,
+  landed in `28e26af`.

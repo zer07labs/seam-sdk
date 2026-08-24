@@ -12,7 +12,46 @@ edition = "2021"
 license = "Apache-2.0"
 description = "Independently verify a Seam audit chain and an erasure certificate. Links nothing of Seam's."
 repository = "https://github.com/zer07labs/seam-sdk"
-publish = false
+readme = "README.md"
+keywords = ["audit", "verification", "ed25519", "hash-chain", "gdpr"]
+categories = ["command-line-utilities", "cryptography"]
+
+# MSRV. There was NONE before publishing was contemplated, and crates.io would have accepted that
+# silently: a published crate with no `rust-version` gives a consumer no signal at all, and they find
+# out from a compile error instead.
+#
+# DERIVED, not chosen — the same discipline `python/pyproject.toml`'s protobuf floor follows, and for
+# the same reason. It is the maximum `rust-version` declared anywhere in the resolved dependency
+# graph: 1.85, from `prost` 0.14.4 / `base64ct` 1.8.3 / `zeroize` 1.9.0 (`ed25519-dalek` 2.2.0 wants
+# only 1.81). A guessed floor here is worse than none, because it reads as a checked promise.
+#
+# The dependencies move on their own schedule, so this number moves too. `tests/msrv.rs` derives it
+# from `cargo metadata` and fails when a dependency outruns it — which keeps the two in step without
+# anyone remembering to look.
+rust-version = "1.85"
+
+# Published to the org's PRIVATE Cloudsmith Cargo registry (`zer07labs` -> repo `internal`), the same
+# registry the runtime crates use. NOT crates.io — binaries and packages stay on Cloudsmith.
+#
+# The allow-list form matters: a bare `publish = true` would permit `cargo publish` to crates.io by
+# default, and this crate shares a package name with `seam-runtime/crates/seam-verify`. Naming the
+# registry explicitly makes an accidental public publish a cargo error rather than an irreversible
+# namespace claim.
+#
+# WHAT THIS DOES AND DOES NOT BUY. Cloudsmith `internal` is private, so an external auditor CANNOT
+# `cargo install seam-verify` from it. That is fine, and it is worth being precise about why: this
+# repository is PUBLIC and Apache-2.0, `verify/` is its own standalone workspace, and its
+# zero-Seam-dependency claim is a CI gate (ci.yml runs `cargo tree -e normal` and fails on any
+# `seam-*`). An adverse third party's path has always been "clone the public repo and build it" —
+# publishing here is distribution convenience for internal and partner consumers, NOT the thing that
+# makes the verifier independently obtainable. Do not describe it as the latter.
+#
+# The runtime's copy stays `publish = false` regardless: it links `seam-store` and `seam-trust-aitp`,
+# which inverts the claim its own comment defends. It is the differential ORACLE — the second
+# implementation the parity harness drives over the same streams so neither side becomes a rubber
+# stamp — and that role needs it internal. The rename (zer07labs/seam-runtime#419) is still worth
+# doing for clarity, but with both crates off crates.io it is hygiene, not a blocker.
+publish = ["zer07labs"]
 
 # ==================================================================================================
 # THE DEPENDENCY LIST IS THE ARGUMENT.
@@ -55,6 +94,8 @@ serde_json = "1"
 [dev-dependencies]
 sha2 = "0.10"
 base64 = "0.22"
+# tests/msrv.rs parses `cargo metadata` to derive the real MSRV from the resolved graph.
+serde_json = "1"
 
 [[bin]]
 name = "seam-verify"

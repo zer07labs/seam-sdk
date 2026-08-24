@@ -35,6 +35,54 @@ jobs:
           [ -n "$VER" ] || { echo "::error::no version in the dispatch payload / input"; exit 1; }
           echo "version=$VER" >> "$GITHUB_OUTPUT"
 
+      # ── W5.5: the framing handshake — the one gate that PREVENTS a 0.7.17 rather than
+      #    detecting it ────────────────────────────────────────────────────────────────────────────
+      # The SDK has no independent version by design, so a runtime wire change automatically
+      # triggers an SDK release WHETHER OR NOT THE SDK HAS ADAPTED. That is the structural cause of
+      # 0.7.17, which published eleven minutes after the runtime change that broke it. Every other
+      # W5 gate makes that failure louder, after publication. This one stops the tag.
+      #
+      # Runs BEFORE the token is minted and before anything is stamped, so a refusal leaves no
+      # commit, no tag, and nothing published.
+      - name: The runtime's wire framing must be one this SDK implements
+        env:
+          DISPATCHED: ${{ github.event.client_payload.wire_framing_version }}
+        run: |
+          set -euo pipefail
+          SUPPORTED="$(python3 -c "import json;print(json.load(open('contract/wire-framing.json'))['supported'])")"
+          LATCHED="$(python3 -c "import json;print(str(json.load(open('contract/wire-framing.json'))['runtime_emits_version']).lower())")"
+
+          if [ -z "$DISPATCHED" ]; then
+            if [ "$LATCHED" = "true" ]; then
+              echo "::error::The release dispatch carried no wire_framing_version, but"
+              echo "::error::contract/wire-framing.json has runtime_emits_version=true — meaning the runtime"
+              echo "::error::is known to emit it. A field that stopped being emitted is a REGRESSION in the"
+              echo "::error::handshake, not a reason to proceed. Refusing to tag."
+              exit 1
+            fi
+            echo "::warning::No wire_framing_version in the dispatch payload. Allowed ONLY because"
+            echo "::warning::contract/wire-framing.json has runtime_emits_version=false — the runtime has not"
+            echo "::warning::adopted the handshake yet. Until it does, this gate cannot protect a release."
+            echo "::warning::Tracking: $(python3 -c "import json;print(json.load(open('contract/wire-framing.json'))['runtime_adoption_issue'])")"
+            exit 0
+          fi
+
+          echo "runtime wire framing: $DISPATCHED   SDK supports: $SUPPORTED"
+          if [ "$DISPATCHED" != "$SUPPORTED" ]; then
+            echo "::error::WIRE FRAMING MISMATCH — refusing to tag."
+            echo "::error::  the runtime release carries framing v$DISPATCHED"
+            echo "::error::  this SDK implements                v$SUPPORTED"
+            echo "::error::"
+            echo "::error::Releasing now would publish an SDK that signs the wrong bytes, under a version"
+            echo "::error::number that says it matches the runtime. That is exactly what 0.7.17-0.7.19 did."
+            echo "::error::"
+            echo "::error::Adapt the shims (all five: go/, java/, kotlin/, python/, ts/ — plus verify/ if the"
+            echo "::error::record digest moved), land the runtime-generated conformance vector for the new"
+            echo "::error::framing, then bump 'supported' in contract/wire-framing.json in the same PR."
+            exit 1
+          fi
+          echo "framing agrees — safe to tag."
+
       - name: Mint the seam-deps-bot App token
         id: app
         uses: actions/create-github-app-token@v2

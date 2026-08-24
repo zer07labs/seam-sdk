@@ -29,6 +29,7 @@ from .client import (
     BudgetLimits,
     StepUsage,
     _now_ms,
+    _u32,
 )
 from .crypto import build_presentation, verify_tct
 from .errors import IssuerMismatchError, UnauthenticatedError, map_rpc_error
@@ -359,6 +360,67 @@ class SeamClient:
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
         return await self._coord.SubmitCommit(req, timeout=timeout)
+
+    # ── Quorum-mode-only steps (`macp.mode.quorum.v1`) ─────────────────────────────────────────
+    # The async mirror of the sync client's pair. These two move in lockstep with `client.py` —
+    # `test_sync_async_parity` asserts the two method inventories are equal as sets, because a
+    # verb landing on one client and not the other is this package's standing drift hazard.
+
+    async def submit_approval_request(
+        self,
+        session_id: str,
+        requester: str,
+        request_id: str,
+        action: str,
+        required_approvals: int,
+        *,
+        usage: Optional[StepUsage] = None,
+        timeout: float = DEFAULT_TIMEOUT_S,
+    ) -> pb.SessionStep:
+        """Open an N-of-M approval round. Only the session initiator may submit one (enforced by
+        the mode engine, not the contract).
+
+        ``required_approvals`` is the N: how many APPROVE ballots close the round.
+        """
+        req = pb.ApprovalRequestRequest(
+            session_id=session_id,
+            requester=requester,
+            request_id=request_id,
+            action=action,
+            required_approvals=_u32(required_approvals, "required_approvals"),
+        )
+        if usage is not None:
+            req.usage.CopyFrom(usage.to_pb())
+        return await self._coord.SubmitApprovalRequest(req, timeout=timeout)
+
+    async def submit_ballot(
+        self,
+        session_id: str,
+        voter: str,
+        request_id: str,
+        choice: "pb.BallotChoice.ValueType",
+        *,
+        reason: str = "",
+        usage: Optional[StepUsage] = None,
+        timeout: float = DEFAULT_TIMEOUT_S,
+    ) -> pb.SessionStep:
+        """Cast one ballot against an open approval request.
+
+        ``choice`` is a :class:`BallotChoice` — ``BALLOT_CHOICE_APPROVE`` / ``_REJECT`` /
+        ``_ABSTAIN``. One RPC covers all three: the three upstream MACP payloads are structurally
+        identical, and the tag is what selects the wire envelope. ``BALLOT_CHOICE_UNSPECIFIED`` is
+        not a vote — passing it is the server's INVALID_ARGUMENT to raise.
+        """
+        req = pb.BallotRequest(
+            session_id=session_id,
+            voter=voter,
+            request_id=request_id,
+            choice=choice,
+            reason=reason,
+        )
+        if usage is not None:
+            req.usage.CopyFrom(usage.to_pb())
+        return await self._coord.SubmitBallot(req, timeout=timeout)
 
     async def resume_session(
         self,

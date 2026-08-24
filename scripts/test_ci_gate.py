@@ -27,6 +27,9 @@ import pytest
 import yaml
 
 CI = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
+
+#: The credential-free lane — the only job that runs without BUF_TOKEN (see seam-sdk#54).
+LANE = "workflow-guards"
 GATE = "ci-ok"
 ALLOWED_ADVISORY = {"integration"}
 
@@ -114,6 +117,63 @@ def _run(results: dict[str, str]) -> subprocess.CompletedProcess:
         text=True,
         check=False,  # a non-zero exit IS the thing under test
     )
+
+
+def test_credential_free_lane_keeps_what_it_claims_to_prove() -> None:
+    """`workflow-guards` is the lane that proves the seam-sdk#54 guard needs nothing but a checkout.
+
+    Its own comment says "the install list is itself the assertion" — which was, until this test,
+    an assertion nobody made. Both halves can be dropped while CI stays green, and dropping the
+    grpcio install is the quiet one: the import-light guard's two standalone-load tests skip
+    themselves as an environment gap, the run still exits 0, and the runtime half of the contract
+    silently stops being checked. (Stated as a shape, not a pass/skip count — the count moves every
+    time a test is added to that file, and a stale number here would be the same defect this test
+    exists to prevent.)
+
+    Deliberately narrow. This pins only that the lane still installs the dependency and still runs
+    the file — not how, so `uv pip install` or a different pytest invocation is free to land.
+    """
+    jobs = _workflow()["jobs"]
+    assert LANE in jobs, (
+        f"the {LANE!r} job is gone or renamed. It is the only lane that runs without BUF_TOKEN, so "
+        f"the seam-sdk#54 guard's credential-independence stops being demonstrated — update this "
+        f"test deliberately rather than deleting the lane."
+    )
+    steps = jobs[LANE]["steps"]
+    runs = "\n".join(str(step.get("run", "")) for step in steps)
+
+    assert "grpcio" in runs, (
+        "workflow-guards no longer installs grpcio. errors.py imports grpc, so without it "
+        "test_errors_is_import_light.py skips its runtime checks and exits 0 — the lane reports "
+        "success while proving less than it claims (seam-sdk#54)."
+    )
+    assert "test_errors_is_import_light.py" in runs, (
+        "workflow-guards no longer runs the import-light guard. It also runs in the `python` job, "
+        "so nothing goes red — but `python` needs BUF_TOKEN and generated code, which is exactly "
+        "the coupling this lane exists to disprove (seam-sdk#54)."
+    )
+    assert any("setup-python" in str(step.get("uses", "")) for step in steps), (
+        "workflow-guards no longer pins a Python. The import-light guard skips itself entirely "
+        "below 3.10 (sys.stdlib_module_names), so an ambient runner Python can turn this lane "
+        "into a green no-op."
+    )
+
+    # The negative half, and the one the ci.yml comment is actually about. Asserting what the lane
+    # HAS says nothing about what it acquired along the way: `buf` plus a BUF_TOKEN login could be
+    # added here and every other assertion above would stay green, while the claim the lane exists
+    # to demonstrate — that this guard needs no credential and no generated code — quietly stopped
+    # being true.
+    body = yaml.safe_dump(jobs[LANE])
+    for banned, why in (
+        ("BUF_TOKEN", "a credential"),
+        ("buf-setup-action", "the contract toolchain"),
+        ("make generate", "generated code"),
+    ):
+        assert banned not in body, (
+            f"{LANE} acquired {banned!r} ({why}). This lane's whole claim is that the seam-sdk#54 "
+            f"guard runs on a bare checkout — a lane that needs a token proves the opposite of what "
+            f"its comment says, and the `python` job already covers the credentialed case."
+        )
 
 
 @pytest.mark.parametrize(

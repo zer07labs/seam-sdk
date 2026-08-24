@@ -17,8 +17,11 @@
 //! `0` verified · `1` usage/IO error · `2` **VERIFICATION FAILED**
 #![forbid(unsafe_code)]
 
-mod verify;
-mod wire;
+// The verification logic lives in `lib.rs` so it is EMBEDDABLE, not only invocable: an auditor
+// running verification inside their own pipeline should not have to shell out and parse `--json`.
+// This binary is a shell over that library, so the CLI and an embedding caller run exactly the same
+// code — there is no second implementation here to drift.
+use seam_verify::{verify, wire};
 
 use std::process::ExitCode;
 use wire::Event;
@@ -235,48 +238,22 @@ fn cmd_cert(path: &str, issuer: &str, json: bool) -> ExitCode {
     //   * the bare certificate             — what `GET /v1/erasure/certificate` returns;
     //   * a `{ "cert": { ... } }` wrapper  — the published reference vector's shape.
     // A verifier that only accepts the form its author happened to test with is a verifier nobody can run.
-    let raw = raw.trim();
-    let unwrapped: String = serde_json::from_str::<serde_json::Value>(raw)
-        .ok()
-        .and_then(|v| v.get("cert").cloned())
-        .map(|c| c.to_string())
-        .unwrap_or_else(|| raw.to_string());
-    let raw = unwrapped.as_str();
-
-    let cert = match Event::parse(raw).ok().and_then(|e| e.cert) {
-        Some(c) => c,
-        None => match serde_json::from_str::<wire::ErasureCertificateJson>(raw) {
-            Ok(j) => {
-                use base64::Engine;
-                let d = |s: &str| base64::engine::general_purpose::STANDARD.decode(s);
-                match (d(&j.chain_head), d(&j.signature)) {
-                    (Ok(chain_head), Ok(signature)) => wire::Cert {
-                        subject: j.subject,
-                        erased: j.erased,
-                        held: j.held,
-                        erased_at: j.erased_at,
-                        chain_head,
-                        issuer_aid: j.issuer_aid,
-                        signature,
-                    },
-                    _ => {
-                        return io_error(
-                            &format!("{path}: chain_head/signature are not valid base64"),
-                            json,
-                        );
-                    }
-                }
-            }
-            Err(e) => {
-                return io_error(
-                    &format!(
-                        "{path}: not a certificate in any recognised shape (a seam-event.v1 \
-                         event, a bare certificate, or a {{\"cert\": ...}} wrapper): {e}"
-                    ),
-                    json,
-                );
-            }
-        },
+    //
+    // The shape-sniffing lives in `Cert::parse_document` rather than here, so the CLI and an embedding
+    // caller share ONE parse. While it was inline in this binary, an embedder had to reimplement it to
+    // accept the same files the CLI accepts — a second implementation of exactly the kind this crate
+    // exists to avoid.
+    let cert = match wire::Cert::parse_document(&raw) {
+        Ok(c) => c,
+        Err(e) => {
+            return io_error(
+                &format!(
+                    "{path}: not a certificate in any recognised shape (a seam-event.v1 \
+                     event, a bare certificate, or a {{\"cert\": ...}} wrapper): {e}"
+                ),
+                json,
+            );
+        }
     };
 
     match verify::erasure_certificate(issuer, &cert) {

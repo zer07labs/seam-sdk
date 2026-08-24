@@ -5,6 +5,23 @@ semantic error (a key-substitution signal from ``verify_decision``). Server-retu
 mapped to typed ``SeamRpcError`` subclasses keyed by status code — but each is **also** a
 ``grpc.RpcError`` with the usual ``.code()``/``.details()``, so existing ``except grpc.RpcError`` handlers
 and ``.code()`` checks keep working unchanged. This is purely additive.
+
+**This module is import-light, and that is a contract — not an accident.** It may import the standard
+library and ``grpc``, and nothing else: no ``seam_sdk._gen``, no package-relative imports, and the
+whole ``SeamError`` hierarchy stays defined *here* rather than split across modules.
+
+``seam-adapters`` depends on that. It is adding a scheduled lane that loads **this one file** with
+``importlib.util.spec_from_file_location`` and diffs the class hierarchy against its own
+classification rosters, to catch a new non-RPC ``SeamError`` before a release rather than after — an
+unclassified one resolves as a ``TransportFailure`` there, and under ``FAIL_OPEN`` that runs a gated
+tool ungated. It reads the file rather than installing the package because ``_gen/`` is gitignored
+and ``__init__.py`` imports it at import time, so a git install yields an unimportable package.
+
+So an import added here has a cost that is invisible from inside this repo. ``buf``-free and
+credential-free is the point. Enforced by ``python/tests/test_errors_is_import_light.py``; the
+constraint and its escape hatch are stated in `seam-sdk#54
+<https://github.com/zer07labs/seam-sdk/issues/54>`_ — if it ever needs to change, say so there
+first, don't discover it downstream.
 """
 
 from __future__ import annotations
@@ -56,6 +73,34 @@ class UnknownVerdictError(SeamError):
     def __reduce__(self):
         # Same rebuild-from-real-arguments discipline as SeamRpcError below.
         return (type(self), (self.raw_value, self.authorize_id))
+
+
+class UnknownCollectiveVerdictError(SeamError):
+    """``DecisionResponse.collective_outcome`` carried a ``CollectiveVerdict`` this SDK version does
+    not recognize — including the proto zero value ``COLLECTIVE_VERDICT_UNSPECIFIED``, which a
+    correct server never emits.
+
+    Growth policy (normative, copied verbatim into the proto from ``AuthorizeVerdict``'s): any value
+    a client does not recognize, INCLUDING ``COLLECTIVE_VERDICT_UNSPECIFIED``, MUST route to the
+    adapter's FailPolicy, never to allow. Raising a typed error is how this SDK enforces that, for
+    the same reason :class:`UnknownVerdictError` does on the Authorize path.
+
+    Why an exception rather than a falsy return: proto3 makes ``0`` the silent default, so an
+    unrecognized verdict read as a plain value is indistinguishable from "nothing was decided" — and
+    the natural negative test (``verdict != DECLINED``) would then ALLOW on it, which is precisely
+    the inversion the growth policy forbids."""
+
+    def __init__(self, raw_value: int, decision_id: str = ""):
+        self.raw_value = raw_value
+        self.decision_id = decision_id
+        super().__init__(
+            f"unrecognized CollectiveVerdict value {raw_value} "
+            f"(decision_id={decision_id or '<none>'}); treat as failure, never allow"
+        )
+
+    def __reduce__(self):
+        # Same rebuild-from-real-arguments discipline as SeamRpcError below.
+        return (type(self), (self.raw_value, self.decision_id))
 
 
 class ProtocolViolationError(SeamError):
