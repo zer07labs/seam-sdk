@@ -406,7 +406,15 @@ but merge timing should be coordinated (Open question 3).
 
 ### Phase 3 — TypeScript `recordDigestV3`
 
-**Status:** TODO · **Depends on:** Phase 2 (consumes the committed vectors).
+**Status:** IMPLEMENTED — verification gate NOT closed (round cap fired; see `PROGRESS.md`) ·
+**Depends on:** Phase 2 (consumes the committed vectors).
+
+**Divergence from the plan, recorded.** The plan said "throw `Error`"; the delivered refusal is a
+typed `RecordDigestStripError` carrying `field` and `wireTag`, mirroring Phase 1's Python twin (which
+gained the same two attributes this phase, closing a parity gap the gate found). The plan also did
+not anticipate input validation at all — it scoped Phase 3 as a transcription. Four verification
+rounds turned that into the phase's largest sub-problem; see the Long-term posture note below and
+`ASSUMPTIONS.md`'s entry "v3 validates every input; v2 deliberately still does not".
 
 **Delivers.** `recordDigestV3` in `ts/src/crypto.ts` per D3/D4 (plus a bytes-opt helper beside
 `optLE`, which takes `string`), reproduction + mutation tests.
@@ -457,7 +465,16 @@ helpers would put v2's frozen bytes behind a refactor surface). The strip/malfor
 refusals return through the same `Err(String)` channel the tag-10 strip already uses, so the CLI
 and `--json` shapes are untouched (exit 2, distinct text).
 
-**Edge cases & failure modes.** JSON `context_digest: ""` (present-but-empty base64 ⇒
+**Edge cases & failure modes.** `wire.rs`'s `with_identity()` (`:583-605`) re-encodes every event
+through `DecisionSealedPb` to give it a canonical byte identity — deliberately, so the same event
+arriving as JSON on a webhook and as protobuf on a relay collapses to one link instead of looking
+like a forgery. **The three new fields must be carried there too.** If they are added to `Decision`
+and to both parse arms but missed in `with_identity`, identity is computed over a payload with tags
+11/12/13 stripped: two v3 records differing ONLY in `participation_digest` become the same event,
+and the dedup that exists to prevent a false forgery alarm starts erasing evidence instead. This is
+the one place in Phase 4 where an omission fails *silently* rather than loudly, so it gets its own
+test (two v3 events differing only in tag 12 must have distinct identities). Beyond that: JSON
+`context_digest: ""` (present-but-empty base64 ⇒
 `Some(vec![])` ⇒ malformed-length refusal, NOT treated as absent, NOT a mismatch); PB absent vs
 present-empty distinguished by `optional`; v3 record with tag 10 missing ⇒ tag-10 strip error
 (unchanged wording, now reachable from the v3 arm); mixed v2+v3 chain; v3 with tag 13 absent ⇒

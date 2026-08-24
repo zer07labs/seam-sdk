@@ -192,3 +192,37 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   one. Reversible in one commit by splitting the job. The `verify-msrv` job comment records the
   condition and the correct response.
 - **Status:** UNCONFIRMED
+
+## v3 validates every input; v2 deliberately still does not
+
+- **Plan:** `plans/record-digest-v3.md` (Phase 3)
+- **Assumed:** `record_digest_v3` / `recordDigestV3` should refuse any input it cannot faithfully
+  represent, rather than coerce it — and `record_digest_v2` should keep its current lenient
+  behaviour, leaving the two versions with different opinions about what a valid call is.
+- **Chose:** Validate every v3 slot, inside `recordDigestV3`'s own body, touching no helper v2
+  shares. Bytes slots must be a one-byte-per-element buffer of the right length; string slots must be
+  actual strings with no unpaired surrogates; integer slots must be in range and exactly
+  representable. Every refusal happens before a single byte is hashed.
+
+  The trigger is not tidiness — it is that three of these coercions produce an **alias**, not a
+  mismatch. A 32-character string passed as a sub-digest hashes as 32 zero bytes, which is a digest a
+  legitimate all-zeros sub-digest also produces; `2**64 + 5` hashes as `5`. A mismatch is caught
+  downstream by the comparison the function exists to feed. An alias is caught nowhere. That is the
+  same class of collision the spec's own framing rules exist to prevent (`seam-event.v1.md`, "The
+  outer count, and the collision it prevents"), so refusing is the version-consistent answer, not
+  extra strictness.
+
+  v2 keeps the coercions. Issue #56 requires `record_digest_v2` to stay byte-identical forever and
+  the v2 vectors untouched in the diff; adding guards there would not change a single digest byte,
+  but it would put v2's frozen function back under review, which is precisely what that requirement
+  is protecting against.
+- **Alternatives:** (a) Leave v3 lenient too, for symmetry — rejected once the alias was demonstrated
+  rather than theorised: symmetry is not worth a silent collision. (b) Harden v2 in the same change —
+  rejected as out of scope for a phase whose contract is "v2 is untouched"; it is a decision about
+  the v2/v3 pair and belongs to whoever revisits v2 next.
+- **Blast radius if wrong:** A caller relying on one of the coercions (passing a `number` above 2^53
+  for `sealedAt`, say, or a plain object with a `length`) now gets an exception where it previously
+  got a digest. Every such digest was wrong — it could not have matched a wire value produced by the
+  runtime — so no correct caller breaks. Cheap to reverse: the validators are a contiguous block at
+  the top of one function in each language.
+- **Status:** UNCONFIRMED

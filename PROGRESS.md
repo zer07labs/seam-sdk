@@ -70,3 +70,54 @@ runtime gate script are the only permitted sibling reads.
   `__pycache__` BEFORE each mutant run, not after.
 - **Suite:** 328 passed / 17 skipped · ruff clean · ci-gate 13 · credential-free lane 26 passed.
 - **Next:** Phase 2 — the machine-emitted v3 vectors. Add a non-ASCII case per Phase 1's finding.
+
+### Phase 3 — TypeScript `recordDigestV3` · **GATE NOT CLOSED (round cap fired)** · 2026-08-24
+
+- **Verifier:** Fable, **4 rounds** — one more than `/implement`'s cap allows, which is why this phase
+  stops here for a human call rather than continuing. Round 1 `PASS` (5 advisories), rounds 2/3/4
+  `GAPS`. **No gap item ever survived two consecutive rounds** — each was confirmed closed by the next
+  round — so this is convergence, not oscillation. But four rounds is itself the signal the cap
+  exists to surface.
+- **What each round found** (all confirmed by execution, not argued):
+  1. Five silent-coercion paths in `recordDigestV3`; transcription itself independently re-derived
+     from the spec and correct on all 5 vector cases.
+  2. The tag-11/12 coercion fix left **tag 13** with the identical hole, and the test parametrized
+     only 11/12. Junk as `policyRulesDigest` produced a digest byte-identical to a legitimate
+     all-zeros one. Plus: Python measured `memoryview` with `len()` (elements), not `nbytes`.
+  3. `v3Uint` fell through to `BigInt(value)`, which coerces `"5"`, `""`→`0n`, `true`, `[5]`.
+     Sharpest: **proto3 JSON renders int64 as a string**, so `sealedAt: "1700000000000"` produced the
+     legitimate baseline digest exactly.
+  4. A **genuine `Uint8Array` with a shadowed `length`**: `frameLE` wrote a prefix of 32 from the
+     property while `concat`'s `set` copied the internal `[[ArrayLength]]` of 0 — a length prefix
+     that lies about its own content, from inside a right-typed object. No type check could catch it.
+- **The through-line.** Every one of these is the same defect: not a mismatch (which the caller's
+  comparison catches) but an **alias** onto a digest a legitimate caller also produces (which nothing
+  catches). Rounds 2–4 each closed one instance; round 4's response closed the class instead —
+  `asBytes` now reads byte views through `%TypedArray%.prototype`'s internal-slot accessors, and both
+  languages carry a **wrong-kind corpus test** driving every parameter with values of every other
+  kind, with a completeness guard so a new parameter cannot be silently exempt.
+- **Files:** `ts/src/crypto.ts` (`recordDigestV3`, `RecordDigestStripError`, `asBytes`,
+  `v3SubDigest`, `v3Text`, `v3Uint`, `optBytesLE`, `hasLoneSurrogate` extracted from the JCS path),
+  `ts/tests/record_digest_v3.test.ts` (new), `ts/tests/conformance.test.ts`,
+  `python/seam_sdk/crypto.py` (`_as_bytes`, `_v3_sub_digest`, `_v3_text`, `_v3_uint`, `_v3_enc`,
+  `_v3_opt_text`; `RecordDigestStripError` gained `field`/`wire_tag`),
+  `python/tests/test_record_digest_v3.py`, `ASSUMPTIONS.md`, `plans/record-digest-v3.md`.
+- **v2 is provably untouched:** `record_digest_v2` and `recordDigestV2` extract byte-identical to
+  `HEAD` in both languages (asserted mechanically, not by reading the diff). `conformance/vectors.json`
+  unmodified this phase.
+- **Decoys driven red:** 19 in TS (slot 10/11 swap · tag-13 `opt`→`frame` · slots appended after
+  `schema_version` · v2 domain suffix · dropped `opt(supersedes)` · mode `opt`→`frame` ·
+  `schemaVersion` default 2 · NFC normalize · tags 11/12 made optional · tag 13 made mandatory ·
+  dropping each of the byte-ness, length, surrogate, string-type, uint-range, safe-integer and
+  element-size checks · plain `Error` for a strip · mismatch vocabulary in a strip message ·
+  restoring the `instanceof` fast path that caused round 4's hole); 6 in Python. The corpus test was
+  separately shown to catch three historical holes on its own.
+- **Suite:** Python 392 passed / 17 skipped · ruff check + format clean · TS `tsc --noEmit` clean,
+  96 tests / 86 pass / 0 fail / 10 skipped.
+- **Open, and why it needs a human:** the round-4 fix (internal-slot reads in TS; `str.encode`
+  bypassing subclass overrides in Python) went in AFTER the last independent review. I drove both red
+  by decoy, but no fresh agent has reviewed them. The real question underneath is scope, not
+  correctness — see the report.
+- **Next:** Phase 4 (Rust), NOT started. One hazard already recorded in its plan section:
+  `wire.rs`'s `with_identity()` must carry tags 11/12/13, or two v3 records differing only in tag 12
+  collapse to one event identity — the single Phase 4 omission that fails silently.

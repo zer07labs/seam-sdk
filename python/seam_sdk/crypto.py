@@ -402,23 +402,136 @@ class RecordDigestStripError(ValueError):
 
     Subclasses ``ValueError`` so existing ``except ValueError`` handlers around the digest helpers
     keep working — the same additive discipline `SeamRpcError` follows for `grpc.RpcError`.
+
+    ``field`` and ``wire_tag`` carry the same information as the message, structurally: a caller
+    routing a refusal (to an alert, a metric label, a retry decision) should never have to parse
+    English to learn *which* field was stripped. The TypeScript twin exposes the same two.
     """
 
+    def __init__(self, message: str, field: str, wire_tag: int) -> None:
+        super().__init__(message)
+        #: The spec's field name, e.g. ``context_digest``.
+        self.field = field
+        #: The ``DecisionSealed`` wire tag the field occupies — 11, 12 or 13.
+        self.wire_tag = wire_tag
 
-def _v3_required(name: str, tag: int, value: bytes | None) -> bytes:
-    """A mandatory v3 sub-digest: present, and exactly 32 bytes. Absent or malformed ⇒ refuse."""
+
+def _as_bytes(value: object) -> bytes | None:
+    """The bytes a caller actually holds, or ``None`` if this is not a byte sequence.
+
+    ``memoryview`` needs care: ``len(mv)`` is the ELEMENT count, not the byte count. A
+    ``memoryview(array("I", [0] * 32))`` has ``len() == 32`` and ``nbytes == 128``, so a length check
+    over ``len()`` would frame it as 32 bytes and then append 128 — a length prefix that lies about
+    its own content, which is precisely the property framing exists to provide. Converting through
+    ``bytes()`` here settles it: what gets measured is what gets hashed.
+    """
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value)
+    try:
+        view = memoryview(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        # TypeError: not a buffer at all — a str, an int, a list.
+        # ValueError: a RELEASED memoryview or a closed mmap. Both are "no readable bytes here", and
+        # both must come back as this function's named refusal rather than as whatever exception the
+        # buffer protocol happened to raise.
+        return None
+    try:
+        if view.itemsize != 1 or not view.c_contiguous:
+            return None
+        return view.tobytes()
+    except (BufferError, ValueError):  # released, or otherwise unreadable
+        return None
+    finally:
+        view.release()
+
+
+def _v3_sub_digest(name: str, tag: int, value: object, optional: bool) -> bytes | None:
+    """One of the three v3 sub-digests (wire tags 11/12/13), validated as the spec requires: tags 11
+    and 12 are mandatory, tag 13 is genuinely optional, and all three must be exactly 32 bytes when
+    present. ``optional`` selects which of those two contracts applies.
+
+    Every refusal is a :class:`RecordDigestStripError`, whatever the proximate cause — absent, wrong
+    type, wrong length. From the caller's side those are one condition: *this field is not a usable
+    32-byte digest, so no v3 digest exists.* Splitting them into different exception types would push
+    the work of re-joining them onto every caller, for no gain.
+
+    The type check matters more in the TypeScript twin than here — there a 32-character string
+    coerces to 32 zero bytes and produces a well-formed digest that ALIASES a legitimate all-zeros
+    one. Python would raise inside ``_frame`` instead, but as a bare ``TypeError`` naming neither the
+    field nor the tag: a caller mistake reported as an internal one. Both are worth refusing by name.
+    """
     if value is None:
+        if optional:
+            return None
         raise RecordDigestStripError(
             f"a schema_version=3 record carries no {name} (wire tag {tag}), which the v3 formula "
             f"requires. This is a STRIP, not a digest mismatch: refuse the record, do not substitute "
-            f"an empty digest and do not fall back to the v2 formula."
+            f"an empty digest and do not fall back to the v2 formula.",
+            name,
+            tag,
         )
-    if len(value) != _V3_DIGEST_LEN:
+    raw = _as_bytes(value)
+    if raw is None:
         raise RecordDigestStripError(
-            f"{name} (wire tag {tag}) is {len(value)} bytes, not {_V3_DIGEST_LEN} — malformed, so no "
-            f"v3 digest can be computed from it. Reported as a refusal rather than hashed, because "
-            f"hashing it would surface a malformed field as though the record had been rewritten."
+            f"{name} (wire tag {tag}) is a {type(value).__name__}, not bytes — malformed.",
+            name,
+            tag,
         )
+    if len(raw) != _V3_DIGEST_LEN:
+        raise RecordDigestStripError(
+            f"{name} (wire tag {tag}) is {len(raw)} bytes, not {_V3_DIGEST_LEN} — malformed, so no "
+            f"v3 digest can be computed from it. Reported as a refusal rather than hashed, because "
+            f"hashing it would surface a malformed field as though the record had been rewritten.",
+            name,
+            tag,
+        )
+    return raw
+
+
+def _v3_enc(s: str) -> bytes:
+    """UTF-8 bytes of ``s``, read through the UNBOUND ``str.encode``.
+
+    The Python analogue of the TypeScript twin's shadowed-``length`` hole: a ``str`` subclass may
+    override ``.encode()`` and return whatever bytes it likes, so ``value.encode()`` asks the value
+    what it would like to be hashed as. ``str.encode(value)`` asks the string. Same discipline as
+    :func:`_as_bytes` — measure what you hash — applied to text.
+
+    Deliberately NOT routed through :func:`_opt`, which ``record_digest_v2`` shares and issue #56
+    freezes; the v3 optionals use :func:`_v3_opt_text` below instead. The duplication is the safety
+    property, as it is for the rest of the v3 formula.
+    """
+    return str.encode(s)
+
+
+def _v3_opt_text(x: str | None) -> bytes:
+    """``opt`` over text, encoded the same honest way. Same presence byte as :func:`_opt`."""
+    return b"\x00" if x is None else b"\x01" + _frame(_v3_enc(x))
+
+
+def _v3_text(name: str, value: object, optional: bool) -> str | None:
+    """A string slot of the v3 preimage, type-checked before it is encoded. Python's ``.encode()``
+    already refuses a non-string (``AttributeError``) and a lone surrogate (``UnicodeEncodeError``);
+    naming the slot turns both into a diagnosis instead of a traceback, and keeps the refusal set
+    identical to the TypeScript twin's, where neither refusal comes for free."""
+    if optional and value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError(
+            f"{name} must be a str{' (or None when absent)' if optional else ''}, not "
+            f"{type(value).__name__}"
+        )
+    return value
+
+
+def _v3_uint(name: str, value: int, bits: int) -> int:
+    """A fixed-width unsigned integer slot, range-checked before ``struct.pack`` refuses it less
+    legibly. Python raises here either way; the TypeScript twin does NOT — ``DataView`` applies
+    ToBigUint64/ToUint32 and wraps silently, so ``2**64 + 5`` writes the same bytes as ``5``. Checking
+    in both keeps the two implementations agreeing on which inputs have a digest at all."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be an int, not {type(value).__name__}")
+    if not 0 <= value < (1 << bits):
+        raise ValueError(f"{name} is {value}, outside [0, 2^{bits})")
     return value
 
 
@@ -468,28 +581,45 @@ def record_digest_v3(
     a refusal, categorically distinct from the digest mismatch this function's *return value* is
     compared for — see the class docstring.
     """
-    context_digest = _v3_required("context_digest", 11, context_digest)
-    participation_digest = _v3_required(
-        "participation_digest", 12, participation_digest
+    # Every slot is validated before a single byte is hashed. The rule is one sentence: this
+    # function refuses any input it cannot faithfully represent, rather than coercing it. Python
+    # refuses most of these on its own, but as bare `TypeError`/`AttributeError`/`struct.error` from
+    # somewhere inside the preimage — and the TypeScript twin refuses almost none of them without
+    # help. Validating explicitly is what makes the two agree on which inputs have a digest at all.
+    context_digest = _v3_sub_digest("context_digest", 11, context_digest, False)
+    participation_digest = _v3_sub_digest(
+        "participation_digest", 12, participation_digest, False
     )
-    if policy_rules_digest is not None and len(policy_rules_digest) != _V3_DIGEST_LEN:
-        raise RecordDigestStripError(
-            f"policy_rules_digest (wire tag 13) is present but {len(policy_rules_digest)} bytes, not "
-            f"{_V3_DIGEST_LEN} — malformed. Absent is legitimate (no policy was bound); present and "
-            f"wrong-length is not, and is refused rather than hashed."
+    policy_rules_digest = _v3_sub_digest(
+        "policy_rules_digest", 13, policy_rules_digest, True
+    )
+    ciphertext_bytes = _as_bytes(ciphertext_digest)
+    if ciphertext_bytes is None:
+        raise TypeError(
+            f"ciphertext_digest (wire tag 10) must be bytes, not "
+            f"{type(ciphertext_digest).__name__}"
         )
+    decision_id = _v3_text("decision_id", decision_id, False)
+    tenant = _v3_text("tenant", tenant, False)
+    namespace = _v3_text("namespace", namespace, False)
+    outcome = _v3_text("outcome", outcome, False)
+    mode = _v3_text("mode", mode, True)
+    policy_version = _v3_text("policy_version", policy_version, True)
+    supersedes = _v3_text("supersedes", supersedes, True)
+    sealed_at = _v3_uint("sealed_at", sealed_at, 64)
+    schema_version = _v3_uint("schema_version", schema_version, 32)
 
     pre = (
         _frame(b"seam.audit.record-digest.v3")
-        + _frame(decision_id.encode())
-        + _frame(tenant.encode())
-        + _frame(namespace.encode())
-        + _frame(ciphertext_digest)
+        + _frame(_v3_enc(decision_id))
+        + _frame(_v3_enc(tenant))
+        + _frame(_v3_enc(namespace))
+        + _frame(ciphertext_bytes)
         + _frame(struct.pack("<Q", sealed_at))
-        + _frame(outcome.encode())
-        + _opt(mode)
-        + _opt(policy_version)
-        + _opt(supersedes)
+        + _frame(_v3_enc(outcome))
+        + _v3_opt_text(mode)
+        + _v3_opt_text(policy_version)
+        + _v3_opt_text(supersedes)
         + _frame(context_digest)
         + _frame(participation_digest)
         + _opt_bytes(policy_rules_digest)

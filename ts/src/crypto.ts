@@ -26,6 +26,14 @@ function concat(...parts: Uint8Array[]): Uint8Array {
   }
   return out;
 }
+/** A UTF-16 string containing an unpaired surrogate — not valid Unicode, and not encodable to UTF-8.
+ * `TextEncoder` substitutes U+FFFD rather than failing, so any digest taken over such a string is one
+ * that Python (`UnicodeEncodeError`) and Rust (`String` is always well-formed) cannot produce: a
+ * cross-language divergence in a value the whole point of which is to be identical everywhere. */
+function hasLoneSurrogate(s: string): boolean {
+  return /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(s);
+}
+
 function uuidFromBytes(b: Uint8Array): string {
   const h = Buffer.from(b.subarray(0, 16)).toString("hex");
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
@@ -176,7 +184,7 @@ function jcsWrite(v: unknown): string {
       // A lone surrogate cannot encode to UTF-8; Python raises on it (UnicodeEncodeError) and the
       // Rust runtime cannot represent it — silently emitting `\udXXX` here would let TS digest a
       // string no other implementation can, a cross-language divergence in a signed digest.
-      if (/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(v))
+      if (hasLoneSurrogate(v))
         throw new Error("lone surrogate in string cannot be canonicalized (not valid Unicode)");
       return JSON.stringify(v);
   }
@@ -320,6 +328,299 @@ export function recordDigestV2(d: {
     optLE(d.policyVersion),
     optLE(d.supersedes),
     frameLE(u32le(d.schemaVersion ?? 2)),
+  );
+  return sha256(pre);
+}
+
+// ── v3 record digest (B3) ────────────────────────────────────────────────────────────────────────
+
+const V3_DIGEST_LEN = 32;
+
+/**
+ * A `schema_version = 3` record is missing a field the v3 formula requires (wire tag 11 or 12), or
+ * carries one that is not 32 bytes.
+ *
+ * **This is deliberately not a digest mismatch, and must never be reported as one.** The spec
+ * (`seam-event.v1.md`, "Strip semantics for tags 11/12/13") makes `context_digest` and
+ * `participation_digest` mandatory on a v3 payload and requires a consumer to *refuse* — never to
+ * substitute an empty digest, and never to fall back to the v2 formula. Absent-when-required is a
+ * strip attack, and an operator has to be able to tell "someone removed a field" from "someone
+ * rewrote one", because the two have different responses.
+ *
+ * Throwing is what makes that distinction structural rather than advisory: a mismatch is an unequal
+ * return value, a strip is a thrown error, and no caller can conflate them by accident.
+ *
+ * Lives here rather than in `errors.ts` for the same reason the Python twin lives in `crypto.py`:
+ * this module deliberately imports nothing but the two noble primitives, so a caller can verify a
+ * record digest without pulling in `@connectrpc/connect` or the generated protobuf surface. It is
+ * still re-exported from the package root via `export *`.
+ */
+export class RecordDigestStripError extends Error {
+  override readonly name: string = "RecordDigestStripError";
+  constructor(
+    message: string,
+    /** The spec's field name, e.g. `context_digest`. */
+    readonly field: string,
+    /** The `DecisionSealed` wire tag the field occupies — 11, 12 or 13. */
+    readonly wireTag: number,
+  ) {
+    super(message);
+  }
+}
+
+/** `opt` over raw bytes. Same presence byte as `optLE`, which takes a `string`. */
+function optBytesLE(b: Uint8Array | null | undefined): Uint8Array {
+  if (b === null || b === undefined) return new Uint8Array([0]);
+  return concat(new Uint8Array([1]), frameLE(b));
+}
+
+// The %TypedArray%.prototype accessors, captured once. These read INTERNAL SLOTS, so they cannot be
+// shadowed by an own property on the instance — which is the whole reason they are used below instead
+// of the obvious `value.length` / `value.byteLength`.
+const TA_PROTO = Object.getPrototypeOf(Uint8Array.prototype) as object;
+const taGet = (name: string) =>
+  Object.getOwnPropertyDescriptor(TA_PROTO, name)!.get! as (this: unknown) => never;
+const taLength = taGet("length");
+const taByteLength = taGet("byteLength");
+const taByteOffset = taGet("byteOffset");
+const taBuffer = taGet("buffer");
+
+/** Bytes, in the sense the framing needs: a one-byte-per-element view over an `ArrayBuffer`,
+ * measured by what it actually holds.
+ *
+ * **Everything here is read through internal slots, never through properties on the instance.** A
+ * real `Uint8Array` can have its `length` shadowed —
+ * `Object.defineProperty(new Uint8Array(0), "length", { value: 32 })`, or a subclass with a `length`
+ * getter — and the two readers downstream then disagree: `frameLE` writes a length prefix of 32 from
+ * the shadowed property, while `concat`'s `set` copies the internal `[[ArrayLength]]` of 0. The
+ * result is 32 zero bytes under a prefix that says 32 — byte-identical to a legitimate all-zeros
+ * digest. That is the same alias this module refuses everywhere else, arriving through a right-typed
+ * object with lying metadata rather than a wrong-typed one, which is why no amount of type-checking
+ * would have caught it. Python's twin gets this for free: `bytes(value)` copies through the C buffer
+ * protocol, so what it measures is what it hashes. This is that same discipline, spelled out.
+ *
+ * Element size is checked as `byteLength === length` — both internal — rather than
+ * `BYTES_PER_ELEMENT`, which is an ordinary property and shadowable like any other. Wide-element
+ * views are refused rather than reinterpreted because their backing bytes are in HOST order, so
+ * accepting one would make the digest depend on the machine that computed it; every length prefix in
+ * this module is explicitly little-endian to prevent exactly that. */
+function asBytes(value: unknown): Uint8Array | null {
+  if (!ArrayBuffer.isView(value)) return null;
+  try {
+    const byteLength = taByteLength.call(value) as unknown as number;
+    if ((taLength.call(value) as unknown as number) !== byteLength) return null;
+    return new Uint8Array(
+      taBuffer.call(value) as unknown as ArrayBuffer,
+      taByteOffset.call(value) as unknown as number,
+      byteLength,
+    );
+  } catch {
+    // Not a TypedArray at all (a `DataView` — the getters reject the receiver), or its buffer has
+    // been detached. Either way there are no bytes here to hash.
+    return null;
+  }
+}
+
+/** One of the three v3 sub-digests (wire tags 11/12/13), validated as the spec requires: tags 11 and
+ * 12 are mandatory, tag 13 is genuinely optional, and all three must be exactly 32 bytes when
+ * present. `optional` selects which of those two contracts applies.
+ *
+ * Every refusal here is a `RecordDigestStripError`, whatever the proximate cause — absent, wrong
+ * type, wrong length. From the caller's side those are one condition: *this field is not a usable
+ * 32-byte digest, so no v3 digest exists*. Splitting them into different error types would push the
+ * work of re-joining them onto every caller, for no gain.
+ *
+ * The type check is not defensive padding — it is the sharp edge. A 32-CHARACTER STRING has
+ * `.length === 32`, so it passes a length-only gate, and `Uint8Array.prototype.set` then coerces each
+ * character via ToNumber → NaN → 0. The result is a *well-formed digest over 32 zero bytes*, which
+ * collides exactly with a legitimate all-zeros digest: not a mismatch a verifier would catch, but an
+ * alias. That is the same class of collision the spec's framing rules exist to prevent. */
+function v3SubDigest(
+  name: string,
+  tag: number,
+  value: unknown,
+  optional: boolean,
+): Uint8Array | null {
+  if (value === null || value === undefined) {
+    if (optional) return null;
+    throw new RecordDigestStripError(
+      `a schema_version=3 record carries no ${name} (wire tag ${tag}), which the v3 formula ` +
+        `requires. This is a STRIP, not a digest mismatch: refuse the record, do not substitute ` +
+        `an empty digest and do not fall back to the v2 formula.`,
+      name,
+      tag,
+    );
+  }
+  const bytes = asBytes(value);
+  if (bytes === null) {
+    throw new RecordDigestStripError(
+      `${name} (wire tag ${tag}) is a ${typeof value}, not bytes — malformed. Refused rather than ` +
+        `coerced: a non-bytes value of the right length would hash as 32 zero bytes and produce a ` +
+        `well-formed digest over a field that was never supplied.`,
+      name,
+      tag,
+    );
+  }
+  if (bytes.length !== V3_DIGEST_LEN) {
+    throw new RecordDigestStripError(
+      `${name} (wire tag ${tag}) is ${bytes.length} bytes, not ${V3_DIGEST_LEN} — malformed, so no ` +
+        `v3 digest can be computed from it. Reported as a refusal rather than hashed, because ` +
+        `hashing it would surface a malformed field as though the record had been rewritten.`,
+      name,
+      tag,
+    );
+  }
+  return bytes;
+}
+
+/** A string slot of the v3 preimage, validated before it is encoded.
+ *
+ * Two things `TextEncoder` would otherwise do silently, both of them producing a digest no other
+ * Seam implementation can reproduce: encode a non-string (`undefined` → `"undefined"`, `null` →
+ * `"null"`, `5` → `"5"`), and substitute U+FFFD for an unpaired surrogate. Python raises on both
+ * (`AttributeError`, `UnicodeEncodeError`); Rust cannot represent either. Refusing here is what
+ * keeps the three implementations agreeing on which inputs have a digest at all. */
+function v3Text(name: string, value: unknown, optional: boolean): string | null {
+  if (optional && (value === null || value === undefined)) return null;
+  if (typeof value !== "string") {
+    throw new TypeError(
+      `${name} must be a string${optional ? " (or null/undefined when absent)" : ""}, not ` +
+        `${value === null ? "null" : typeof value} — refused rather than coerced, because ` +
+        `TextEncoder would encode it as its ToString and produce a digest over text the caller ` +
+        `never supplied.`,
+    );
+  }
+  if (hasLoneSurrogate(value)) {
+    throw new TypeError(
+      `${name} contains a lone surrogate, which is not valid Unicode and has no UTF-8 encoding. ` +
+        `Refused rather than encoded as U+FFFD, which would produce a digest no other Seam ` +
+        `implementation can reproduce.`,
+    );
+  }
+  return value;
+}
+
+/** A fixed-width unsigned integer slot, range-checked before `DataView` silently wraps it.
+ * `setBigUint64`/`setUint32` apply ToBigUint64/ToUint32, so `2n ** 64n + 5n` writes the same eight
+ * bytes as `5` — an alias, not an error. A `number` above 2^53 is refused outright: it is already
+ * inexact, so the value hashed would be the nearest double rather than the integer the caller meant,
+ * and Python (exact ints) would disagree. `bigint` is the way to express those. */
+function v3Uint(name: string, value: number | bigint, bits: 32 | 64): bigint {
+  if (typeof value !== "number" && typeof value !== "bigint") {
+    // `BigInt()` coerces far more than it looks like it does: `BigInt("5")` is `5n`, `BigInt(true)` is
+    // `1n`, `BigInt([5])` is `5n`, and `BigInt("")` is `0n`. Each yields a digest that ALIASES the one
+    // a legitimate caller produces — and the string case is not exotic: **proto3 JSON renders int64 as
+    // a string**, so anyone feeding this from `JSON.parse` of a protobuf-JSON payload lands here on
+    // the first record. Refused, and the message says what to pass instead.
+    throw new TypeError(
+      `${name} must be a number or bigint, not ${value === null ? "null" : typeof value} — refused ` +
+        `rather than coerced. Note that proto3 JSON encodes int64 as a STRING: convert it with ` +
+        `BigInt(...) at the boundary, where you can see it, rather than here, where it would silently ` +
+        `become a digest.`,
+    );
+  }
+  if (typeof value === "number") {
+    if (!Number.isInteger(value)) throw new RangeError(`${name} must be an integer, got ${value}`);
+    if (!Number.isSafeInteger(value)) {
+      throw new RangeError(
+        `${name} exceeds 2^53 as a number and can no longer round-trip as an IEEE double — pass a ` +
+          `bigint so the digest covers the integer you meant`,
+      );
+    }
+  }
+  const v = BigInt(value);
+  if (v < 0n || v >= 1n << BigInt(bits)) {
+    throw new RangeError(
+      `${name} is ${v}, outside [0, 2^${bits}) — refused rather than wrapped, because the wrap is ` +
+        `silent and aliases distinct values onto the same digest`,
+    );
+  }
+  return v;
+}
+
+/** Recompute a v3 `DECISION_SEALED` record digest (`seam.audit.record-digest.v3`).
+ *
+ * v3 is v2 plus the three columns carrying the product's actual claims — what context the decision
+ * consumed, who participated, and which policy rules gated the commitment. They arrive as **opaque
+ * 32-byte sub-digests on the wire** (tags 11/12/13); their internal formulas belong to the runtime
+ * and to auditors, and are deliberately not reimplemented here. This is a wire-input recompute,
+ * exactly as `recordDigestV2` is.
+ *
+ * Three things the spec singles out as easy to get wrong, all of them load-bearing:
+ *
+ * - **Digest slots are offset by one from the proto tags.** `contextDigest` is preimage slot 10 but
+ *   wire tag 11. The new slots are *inserted before* `schemaVersion`, never appended after it — a
+ *   verifier selects the whole formula by `schema_version`, so position is fixed by the spec rather
+ *   than by append order.
+ * - **Slots 10 and 11 are framed; slot 12 is opted.** The asymmetry is deliberate: framing the two
+ *   mandatory digests is precisely what stops "no participants" from aliasing with "field
+ *   stripped". `policyRulesDigest` is genuinely optional — absent means no policy was bound.
+ * - **`null` is not an empty `Uint8Array`.** `opt(null)` is one byte; `opt(new Uint8Array())` is
+ *   five. A present-but-empty value is data, not absence.
+ *
+ * Strings hash as their **raw UTF-8 bytes with no normalization of any kind** — the spec names
+ * normalization as the step "three of four implementations would implement differently, or skip".
+ * `TextEncoder` is correct here precisely because it does not normalize; never call `.normalize()`
+ * on an input.
+ *
+ * Throws {@link RecordDigestStripError} when `contextDigest` or `participationDigest` is absent or
+ * is not 32 bytes, and when a *present* `policyRulesDigest` is not 32 bytes. */
+export function recordDigestV3(d: {
+  decisionId: string;
+  tenant: string;
+  namespace: string;
+  ciphertextDigest: Uint8Array;
+  sealedAt: number | bigint;
+  outcome: string;
+  mode: string | null;
+  policyVersion: string | null;
+  supersedes: string | null;
+  contextDigest: Uint8Array;
+  participationDigest: Uint8Array;
+  policyRulesDigest: Uint8Array | null;
+  schemaVersion?: number;
+}): Uint8Array {
+  // Every slot is validated before a single byte is hashed. The rule is one sentence: **this
+  // function refuses any input it cannot faithfully represent, rather than coercing it.** JavaScript
+  // will happily turn a 32-character string into 32 zero bytes, `undefined` into `"undefined"`, and
+  // 2^64+5 into 5 — each of which yields a perfectly well-formed digest over a value nobody supplied,
+  // and two of which ALIAS onto digests a legitimate input could also produce. An alias is worse than
+  // a mismatch: a mismatch is caught downstream, an alias is not caught at all.
+  const contextDigest = v3SubDigest("context_digest", 11, d.contextDigest, false)!;
+  const participationDigest = v3SubDigest("participation_digest", 12, d.participationDigest, false)!;
+  const policyRulesDigest = v3SubDigest("policy_rules_digest", 13, d.policyRulesDigest, true);
+  const ciphertextDigest = asBytes(d.ciphertextDigest);
+  if (ciphertextDigest === null) {
+    throw new TypeError(
+      `ciphertextDigest (wire tag 10) must be bytes, not a ${typeof d.ciphertextDigest} — refused ` +
+        `rather than coerced to zero bytes`,
+    );
+  }
+  const decisionId = v3Text("decisionId", d.decisionId, false)!;
+  const tenant = v3Text("tenant", d.tenant, false)!;
+  const namespace = v3Text("namespace", d.namespace, false)!;
+  const outcome = v3Text("outcome", d.outcome, false)!;
+  const mode = v3Text("mode", d.mode, true);
+  const policyVersion = v3Text("policyVersion", d.policyVersion, true);
+  const supersedes = v3Text("supersedes", d.supersedes, true);
+  const sealedAt = v3Uint("sealedAt", d.sealedAt, 64);
+  const schemaVersion = v3Uint("schemaVersion", d.schemaVersion ?? 3, 32);
+
+  const pre = concat(
+    frameLE(enc.encode("seam.audit.record-digest.v3")),
+    frameLE(enc.encode(decisionId)),
+    frameLE(enc.encode(tenant)),
+    frameLE(enc.encode(namespace)),
+    frameLE(ciphertextDigest),
+    frameLE(u64le(sealedAt)),
+    frameLE(enc.encode(outcome)),
+    optLE(mode),
+    optLE(policyVersion),
+    optLE(supersedes),
+    frameLE(contextDigest),
+    frameLE(participationDigest),
+    optBytesLE(policyRulesDigest),
+    frameLE(u32le(Number(schemaVersion))),
   );
   return sha256(pre);
 }

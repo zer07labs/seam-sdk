@@ -31,7 +31,9 @@ its own except the frozen v2 regression pin — a second copy of a digest is a s
 
 from __future__ import annotations
 
+import array
 import hashlib
+import inspect
 
 import pytest
 
@@ -358,3 +360,277 @@ def test_the_new_slots_precede_schema_version():
     assert digest() != appended, (
         "the three v3 slots are being appended after schema_version instead of inserted before it"
     )
+
+
+# ── 6. inputs that would otherwise produce a silently-wrong digest ───────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "overrides,field,tag",
+    [
+        ({"context_digest": None}, "context_digest", 11),
+        ({"participation_digest": None}, "participation_digest", 12),
+        ({"context_digest": b"\x00" * 31}, "context_digest", 11),
+        ({"policy_rules_digest": b"\x00" * 16}, "policy_rules_digest", 13),
+    ],
+)
+def test_a_refusal_carries_the_field_and_tag_structurally(overrides, field, tag):
+    """A caller routing a refusal — to an alert, a metric label, a retry decision — should never have
+    to parse English to learn WHICH field was stripped. The TypeScript twin exposes the same two
+    attributes; a divergence here would mean the two SDKs cannot be handled by one runbook."""
+    with pytest.raises(RecordDigestStripError) as excinfo:
+        digest(**overrides)
+    assert excinfo.value.field == field
+    assert excinfo.value.wire_tag == tag
+
+
+@pytest.mark.parametrize(
+    "key,tag",
+    [
+        ("context_digest", 11),
+        ("participation_digest", 12),
+        # Tag 13 is in this table because leaving it out is exactly the mistake that shipped once:
+        # the first fix guarded tags 11 and 12, the test parametrized 11 and 12, and
+        # `policy_rules_digest` kept the hole with a green suite three lines away from the guard.
+        ("policy_rules_digest", 13),
+    ],
+)
+@pytest.mark.parametrize(
+    "decoy",
+    ["x" * 32, ["x"] * 32, 32, object()],
+    ids=["str", "list", "int", "object"],
+)
+def test_a_non_bytes_sub_digest_is_refused_as_a_named_field(key, tag, decoy):
+    """A 32-character `str` has the right `len()`. Without a type check it reaches `_frame` and dies
+    there as a bare `TypeError` naming neither the field nor the tag — a caller mistake reported as
+    an internal one. The TypeScript twin has the sharper version of the same problem: there it
+    coerces to 32 zero bytes and produces a digest that ALIASES a legitimate all-zeros one."""
+    with pytest.raises(RecordDigestStripError) as excinfo:
+        digest(**{key: decoy})
+    assert excinfo.value.field == key
+    assert excinfo.value.wire_tag == tag
+    assert "not bytes" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "key,tag",
+    [("context_digest", 11), ("participation_digest", 12), ("policy_rules_digest", 13)],
+)
+def test_a_wide_element_memoryview_is_refused_rather_than_mismeasured(key, tag):
+    """``len(memoryview)`` is the ELEMENT count, not the byte count. A ``memoryview`` over an
+    ``array("H", [0] * 16)`` has ``len() == 16`` and ``nbytes == 32``, so a length check written over
+    ``len()`` would frame it as 16 bytes and then append 32 — a length prefix that lies about its own
+    content, which is exactly the property framing exists to provide."""
+    # Exactly 32 BYTES, so the length check cannot catch it — only the itemsize check can. Two
+    # hazards in one fixture: `len()` reports 16 where `nbytes` is 32 (a length prefix that would lie
+    # about its own content), and the backing bytes are in HOST order, so accepting it would make the
+    # digest depend on the endianness of the machine that computed it.
+    wide = memoryview(array.array("H", [0] * 16))
+    assert len(wide) == 16 and wide.nbytes == 32, (
+        "the fixture no longer shows the hazard"
+    )
+    with pytest.raises(RecordDigestStripError) as excinfo:
+        digest(**{key: wide})
+    assert excinfo.value.field == key
+    assert excinfo.value.wire_tag == tag
+
+
+def test_any_one_byte_buffer_is_accepted_as_the_bytes_it_holds():
+    """The guard must not overshoot. `bytes`, `bytearray`, a `memoryview` and a one-byte `array` are
+    four spellings of the same 32 bytes and must digest identically — the TypeScript twin accepts the
+    same set (`Buffer`, `Uint8Array`, `Uint8ClampedArray`, `Int8Array`) for the same reason: what is
+    hashed is the bytes the caller holds, however they chose to hold them."""
+    expected = digest()
+    for spelling in (
+        bytearray(CTX),
+        memoryview(CTX),
+        array.array("b", CTX),
+        array.array("B", CTX),
+    ):
+        assert digest(context_digest=spelling) == expected
+
+
+@pytest.mark.parametrize(
+    "overrides,exc",
+    [
+        ({"sealed_at": -1}, ValueError),
+        ({"sealed_at": 1 << 64}, ValueError),
+        ({"sealed_at": 1.5}, TypeError),
+        ({"sealed_at": True}, TypeError),
+        ({"schema_version": -1}, ValueError),
+        ({"schema_version": 1 << 32}, ValueError),
+        ({"schema_version": "3"}, TypeError),
+    ],
+)
+def test_an_out_of_range_integer_is_refused(overrides, exc):
+    """Python's ``struct.pack`` refuses these anyway, but less legibly — and the TypeScript twin does
+    NOT refuse them at all without help: ``DataView`` applies ToBigUint64/ToUint32 and wraps
+    silently, so ``2**64 + 5`` writes the same bytes as ``5``. Checking in both keeps the two
+    implementations agreeing on which inputs have a digest at all."""
+    with pytest.raises(exc):
+        digest(**overrides)
+
+
+@pytest.mark.parametrize("slot", ["decision_id", "tenant", "namespace", "outcome"])
+@pytest.mark.parametrize(
+    "bad", [None, 5, b"bytes", object()], ids=["none", "int", "bytes", "obj"]
+)
+def test_a_non_string_in_a_mandatory_string_slot_is_refused(slot, bad):
+    """`.encode()` on a non-str raises `AttributeError` — a traceback, not a diagnosis. The named
+    `TypeError` says which slot. In TypeScript the same inputs are far worse: `TextEncoder` encodes
+    whatever ToString gives it, so `None` would hash as the four-byte string "null"."""
+    with pytest.raises(TypeError):
+        digest(**{slot: bad})
+
+
+@pytest.mark.parametrize("slot", ["mode", "policy_version", "supersedes"])
+def test_an_optional_string_slot_takes_none_as_absence_but_refuses_a_non_string(slot):
+    """`None` is data here (the `opt` presence byte), not a type error — so the type check must not
+    swallow the distinction the whole `opt` encoding exists to express."""
+    assert digest(**{slot: None}) != digest()
+    with pytest.raises(TypeError):
+        digest(**{slot: 5})
+
+
+def test_a_non_bytes_ciphertext_digest_is_refused():
+    """Wire tag 10 coerces exactly as the v3 sub-digests do, and is refused for the same reason."""
+    with pytest.raises(TypeError):
+        digest(ciphertext_digest="x" * 32)
+
+
+@pytest.mark.parametrize(
+    "slot",
+    [
+        "decision_id",
+        "tenant",
+        "namespace",
+        "outcome",
+        "mode",
+        "policy_version",
+        "supersedes",
+    ],
+)
+def test_a_lone_surrogate_cannot_be_digested(slot):
+    """``"\\ud800".encode()`` raises, so Python refuses this for free — but "for free" is exactly the
+    kind of property that disappears in a refactor. TypeScript had to add an explicit guard (its
+    ``TextEncoder`` silently substitutes U+FFFD instead), so this asserts the two languages agree
+    that a string with no valid UTF-8 encoding produces no digest at all, rather than two different
+    ones."""
+    with pytest.raises(UnicodeEncodeError):
+        digest(**{slot: "ctx-\ud800-tail"})
+
+
+# ── 7. the class of defect, closed structurally ──────────────────────────────────────────────────
+#
+# Three verification rounds each found ONE more coercion path — tag 13 after tags 11 and 12, then
+# `BigInt("5")` in the TypeScript twin after the range checks. Each fix was correct and each left the
+# same class open, because "did I guard every slot against every wrong-typed value" is not a question
+# hand-written per-slot tests can answer. This does answer it: every parameter is declared with the
+# KIND of value it accepts, and every kind is driven with a corpus of values of the other kinds.
+#
+# The property is refusal, not correctness-of-digest: for anything outside a slot's declared kind
+# there IS no correct digest, so returning one at all is the defect. The opposite direction — that
+# legitimate values are still accepted, and that equivalent spellings of the same bytes agree — is
+# what the vector loop and `test_any_one_byte_buffer_is_accepted_as_the_bytes_it_holds` cover.
+
+SLOT_KINDS = {
+    "decision_id": "text",
+    "tenant": "text",
+    "namespace": "text",
+    "outcome": "text",
+    "mode": "text",
+    "policy_version": "text",
+    "supersedes": "text",
+    "ciphertext_digest": "bytes",
+    "context_digest": "bytes",
+    "participation_digest": "bytes",
+    "policy_rules_digest": "bytes",
+    "sealed_at": "uint",
+    "schema_version": "uint",
+}
+
+#: Values that are NOT of the given kind. Python is far less eager to coerce than JavaScript, so most
+#: of these already raise — but "already raises" is a property that disappears in a refactor, and the
+#: two implementations have to agree on the refusal set, not merely each refuse something.
+WRONG_KIND = {
+    "bytes": [
+        ("a 32-char str", "x" * 32),
+        ("a list of 32", ["x"] * 32),
+        ("an int", 32),
+        ("a bool", True),
+        ("a 32-byte wide-element view", memoryview(array.array("H", [0] * 16))),
+    ],
+    "text": [
+        ("an int", 5),
+        ("a bool", True),
+        ("a list", ["a"]),
+        ("bytes", b"abcd"),
+        ("an object with __str__", type("S", (), {"__str__": lambda self: "a"})()),
+    ],
+    "uint": [
+        ("a numeric str", "5"),
+        # proto3 JSON renders int64 as a string. The TypeScript twin coerced this into the LEGITIMATE
+        # digest via `BigInt("1700000000000")` until round 3 caught it; Python must refuse it too, or
+        # the two SDKs disagree about whether a proto3-JSON caller gets a digest.
+        ("a proto3-JSON int64 str", "1700000000000"),
+        ("an empty str", ""),
+        ("a bool", True),
+        ("a float", 5.0),
+        ("bytes", b"\x05"),
+    ],
+}
+
+
+def test_no_slot_accepts_a_value_outside_its_declared_kind():
+    baseline = digest()
+
+    # Completeness: a parameter added to the signature and not classified here would be silently
+    # exempt from every check below — which is precisely how tag 13 was missed the first time.
+    params = set(inspect.signature(record_digest_v3).parameters)
+    assert params == set(SLOT_KINDS), (
+        f"SLOT_KINDS and the signature disagree: "
+        f"missing {params - set(SLOT_KINDS)}, stale {set(SLOT_KINDS) - params}"
+    )
+
+    for slot, kind in SLOT_KINDS.items():
+        for label, value in WRONG_KIND[kind]:
+            try:
+                got = digest(**{slot: value})
+            except Exception:
+                continue  # refused — the only acceptable outcome
+            alias = (
+                " (BYTE-IDENTICAL to the legitimate digest)" if got == baseline else ""
+            )
+            raise AssertionError(
+                f"{slot} (declared {kind}) accepted {label} and returned a digest{alias}"
+            )
+
+
+def test_a_str_subclass_cannot_choose_its_own_bytes():
+    """The Python analogue of the TypeScript twin's shadowed-``length`` hole, and the same discipline
+    closes both: measure what you hash.
+
+    ``value.encode()`` asks the VALUE what bytes it would like to be hashed as; a ``str`` subclass
+    that overrides ``encode`` therefore controls the preimage while still passing every type check,
+    every length check and every normalization check — it really is a ``str``, it is simply lying
+    about its UTF-8. ``str.encode(value)`` asks the string. The digest must come out as though the
+    override were not there."""
+
+    class Liar(str):
+        def encode(self, *a, **kw):  # noqa: ANN002, ANN003, ANN201
+            return b"totally-different-bytes"
+
+    for slot in (
+        "decision_id",
+        "tenant",
+        "namespace",
+        "outcome",
+        "mode",
+        "policy_version",
+        "supersedes",
+    ):
+        honest = BASE[slot]
+        assert isinstance(honest, str), f"{slot} is not a text slot"
+        assert digest(**{slot: Liar(honest)}) == digest(), (
+            f"{slot} hashed the bytes its value CHOSE rather than the bytes it IS"
+        )
