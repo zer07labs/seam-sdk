@@ -115,6 +115,29 @@ object SeamCrypto {
         )
     }
 
+    /**
+     * SHA-256 (hex) over a **length-prefixed** framing of a domain tag plus the commitment fields —
+     * each field preceded by its 8-byte big-endian length. Mirrors the runtime byte-for-byte, and
+     * mirrors the Go/Java/Python/TypeScript shims.
+     *
+     * **The length prefixes are not decoration and must never be "simplified" to a separator.** The
+     * fields are arbitrary text that may itself contain NUL — UTF-8 permits U+0000, and it survives
+     * the JSON/prost decision path — so with a `\u0000` separator the tuples `("a\u0000b","c")` and
+     * `("a","b\u0000c")` produce IDENTICAL preimages, and therefore identical digests. That would
+     * let one Commitment verify under another's TCT: an attacker who controls a field boundary could
+     * shift bytes across it and reuse a signature that was never issued for their artifact.
+     * Length-prefixing makes the digest injective over the field tuple regardless of content.
+     *
+     * The same rationale is recorded at `seam-trust-aitp/src/lib.rs:350-354` in the runtime. It is
+     * written out here because this comment is the only thing standing between a future maintainer
+     * and a "cleanup" that silently breaks artifact binding — and Kotlin and Java were the two shims
+     * that carried no rationale at all while Go, Python and TypeScript did.
+     *
+     * Field order is also load-bearing and must match the runtime exactly: domain, id, action,
+     * authority, supersedes, auth_method, trust_basis. Binding `authMethod`/`trustBasis` is what
+     * makes the artifact attest *who* committed it and *how* they authed, not just the decision.
+     * `ConformanceTest` asserts every one of these is bound.
+     */
     private fun seamCommitmentDigest(c: Commitment): String {
         val h = ByteArrayOutputStream()
         val fields = listOf(

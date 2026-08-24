@@ -151,7 +151,11 @@ def test_commitment_digest_binds_every_field():
     authed, not just the decision.
     """
     t = VECTORS["tct"]
-    base, jws, iss = t["inputs"]["commitment"], t["signed_artifact_jws"], t["issuer_aid"]
+    base, jws, iss = (
+        t["inputs"]["commitment"],
+        t["signed_artifact_jws"],
+        t["issuer_aid"],
+    )
 
     assert verify_tct(iss, jws, base, now_s=NOW_S) is True, (
         "the unmodified vector commitment must verify — nothing below means anything otherwise"
@@ -184,7 +188,11 @@ def test_commitment_digest_is_injective_across_field_boundaries():
     path), so this is reachable rather than theoretical.
     """
     t = VECTORS["tct"]
-    base, jws, iss = t["inputs"]["commitment"], t["signed_artifact_jws"], t["issuer_aid"]
+    base, jws, iss = (
+        t["inputs"]["commitment"],
+        t["signed_artifact_jws"],
+        t["issuer_aid"],
+    )
 
     # Fold the id/action boundary into `id` with a NUL. Under a NUL-joined framing this collides
     # with the real commitment; under length-prefixing it cannot.

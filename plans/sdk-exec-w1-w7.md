@@ -579,7 +579,7 @@ real gap, stated rather than papered over; closing it needs a toolchain matrix i
 
 ### Phase 7 — W6: the compatibility statement, and a precise retraction
 
-**Status:** PENDING.
+**Status:** DONE (2026-08-23, 1 round).
 
 **Delivers.** `COMPATIBILITY.md`; the `build-agent-ingress.md:5` retraction, correct in both halves;
 and the matrix linked where consumers look.
@@ -636,7 +636,7 @@ same treatment. **A blanket retraction here would itself be a false claim** — 
 
 ### Phase 8 — W7: the dual-verify obligation, and the two shims missing their rationale
 
-**Status:** PENDING.
+**Status:** DONE (2026-08-23, 1 round). W7.1 closed as **done-upstream**, not re-filed.
 
 **Delivers.** The record-digest dual-verify rule written where implementers will hit it; the
 length-prefix rationale added to Java and Kotlin; W7.1 closed as done-upstream rather than re-filed.
@@ -697,7 +697,11 @@ And do **not** describe `verify/` as a sixth mirror: `seam-commitment-digest` ap
 
 ### Phase 9 — Cross-repo issues, and the §8 decision that has no W-number
 
-**Status:** PENDING.
+**Status:** DONE (2026-08-23). Five issues filed: **#418** (W5.5 framing handshake), **#419** (W1.1
+crate rename — blocks the publish), **#420** (W2.1, re-scoped after correcting a stale claim),
+**#421** (W2.2/W2.3 evidence bundle), **#422** (W3.1 anchor feed), **#423** (§8 commitment-digest
+spec). The §8 decision is **schedule it, rescoped to the commitment digest only** per D4, logged in
+`DECISIONS.md`.
 
 **Delivers.** Every runtime-side item filed with a `file:line`; and an explicit, recorded decision on
 the spec — scheduled or not, but **decided**.

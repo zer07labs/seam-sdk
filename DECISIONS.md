@@ -5,6 +5,66 @@ assumption, the independent recommender's analysis, the human verdict, and the r
 `/ship` and any later reconciliation read this file instead of replaying the conversation that
 produced it.
 
+## 2026-08-23 — `plans/sdk-exec-w1-w7.md` Phase 8 (W7): the digest dual-verify obligation
+
+Written **before** v3 exists, because the failure this prevents is unrecoverable and the moment to
+agree the rule is not the moment someone is mid-migration.
+
+### W7.1 is DONE UPSTREAM — do not re-file it
+
+The source plan's headline W7 defect was `compute_record_digest`'s catch-all: `1 => v1, _ => v2`,
+meaning a record stamped `schema_version == 3` would be **silently hashed with the v2 framing**.
+
+`seam-runtime` `d7f27c7` (#408, 2026-08-23) already fixed it. `crates/seam-store/src/lib.rs:357-380`
+now reads `1 => …`, `2 => …`, `_ => None`, with the comment *"No catch-all. An unknown stamp is
+refused so it can never verify green under the wrong formula"*, and `recompute_sealed_digest` is
+symmetric. **Verified directly, not taken from the plan.** Filing it would be filing a fixed bug.
+
+### The rule, for when v3 lands
+
+1. **Every verifier verifies v1, v2 and v3 simultaneously, selected by the record's own
+   `schema_version`.** Never "latest wins", never a global flag. The version is in-band precisely so
+   it can be dispatched per record.
+2. **v2 code is never deleted.** A record sealed under v2 must verify in 2126. Removing a live path
+   is the one irreversible mistake available here. The same applies to `compute_record_digest_v1`,
+   which looks like dead code and is the only way a `schema_version == 1` record verifies.
+3. **Both implementations move together** — `seam-sdk/verify/src/verify.rs` and
+   `seam-runtime/crates/seam-verify` — and the differential harness must be extended to drive
+   **mixed-version streams**, not just a homogeneous one. A harness that only ever sees one version
+   cannot catch a dispatch bug.
+4. **A KAT per version, generated from the Rust**, and the v2 vector stays forever.
+5. **A mixed-version chain test** — one stream containing v1, v2 and v3 records verifying end to
+   end — is the acceptance test for the whole item. A version bump that cannot produce a passing
+   mixed stream is not ready.
+
+### Two mechanics the source plan could not have known
+
+- **Item 4 is already enforced from the runtime side.** `seam-runtime`'s `sdk-digest-parity`
+  discovers vector blocks by **`record_digest_v*` prefix** (`scripts/sdk-digest-parity.sh:90`), so
+  the day a `record_digest_v3` block exists the gate covers it automatically rather than silently
+  continuing to check only v2. Point at that rather than restating it.
+- **The gate resolves the Python function by EXACT NAME** (`getattr(crypto, name)`), so
+  `python/seam_sdk/crypto.py` must expose `record_digest_v3` under precisely that name. TypeScript
+  (`recordDigestV2`, camelCase) and Rust (`verify/src/verify.rs`'s private `record_digest_v2`) are
+  **not** checked by it — their parity rests only on this repo's own suites. **That asymmetry is
+  where drift would hide**, and it is the reason item 3 says both implementations move together
+  rather than trusting the cross-repo gate to notice.
+
+### The commitment digest carries the same obligation and worse fan-out (W7.3)
+
+`seam-commitment-digest:v1` is at v1 with no v2 planned, and is mirrored byte-for-byte in **all five**
+SDK shims. Any change to what it binds costs **six coordinated edits** (five shims + the runtime), a
+bumped domain label, and a permanent dual-verify obligation.
+
+**When the need is additive, add a SEPARATE digest — do not extend v1's field tuple.** A second
+digest costs one new thing; extending the tuple costs every past artifact a migration.
+
+`verify/` is **not** a sixth mirror — it does not implement the commitment digest at all, and
+`python/tests/test_framing_rationale_is_documented.py` now guards against a doc claiming otherwise.
+
+**Status:** RECORDED. Java and Kotlin gained the length-prefix rationale they lacked (Go, Python and
+TypeScript already had it), and a grep-guard keeps all five honest.
+
 ## 2026-08-23 — `plans/sdk-exec-w1-w7.md` Phase 6 (W1): publishing `verify/` to crates.io
 
 Three decisions, taken together because publishing is irreversible and they interact.

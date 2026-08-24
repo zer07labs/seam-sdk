@@ -137,6 +137,41 @@ Three independently sufficient causes of a 0.7.17-shaped incident, closed.
   once the runtime lands makes absent a refusal too, so a field that later stops being emitted is
   caught as a regression rather than silently reopening the hole.
 
+### Added — compatibility, and the caveats this repo is not entitled to drop (W6 + W7)
+
+- **`COMPATIBILITY.md`.** There was no compatibility matrix, no support window, no version-skew
+  policy and no MSRV anywhere in the repo. It quotes the lockstep corollary verbatim and unsoftened
+  (a version range cannot protect a consumer from a break here), carries only rows citing a
+  verified `file:line`, records the known-bad bands permanently — nothing was yanked, so the
+  document is the only barrier — states that Python and TypeScript are published while **Java and
+  Kotlin are unversioned and build-from-source**, and declares an N-2-minors support window with
+  the caveat that "minor" is the runtime's.
+
+  It also states plainly what **"independently verifiable" does not cover**: the published verifier
+  **cannot detect truncation** (a stream cut at the tail verifies green — there is no anchor feed,
+  [`seam-runtime#422`](https://github.com/zer07labs/seam-runtime/issues/422)), does **not** implement
+  the commitment digest, and cannot help an external auditor *acquire* a proof.
+- **`python/tests/test_retracted_claims.py`.** The truncation caveat is a capability limit, not a
+  wording preference, so it is test-enforced rather than trusted to survive editing. The guard also
+  fails if any document *claims* truncation detection, or if a known-bad band is dropped.
+- **Java and Kotlin gained the length-prefix rationale they never had** (Go, Python and TypeScript
+  already carried it), and `python/tests/test_framing_rationale_is_documented.py` keeps all five
+  honest. The comment is the only thing standing between a future maintainer and a "simplification"
+  that would let one artifact verify under another's signature — so it is now load-bearing
+  documentation with a test behind it.
+
+### Fixed
+
+- **Retracted a stale claim in `plans/build-agent-ingress.md:5`** that a live consumer pinned
+  `seam-sdk >=0.7,<0.8` and therefore sat inside the wire-broken band. `seam-adapters` raised its
+  floor to `>=0.7.20,<0.8` and this note did not follow, so it generated false alarms against a
+  consumer that was fine.
+
+  The retraction is **deliberately narrow**: only the *pin* half was wrong. The *lock* half — that
+  `uv.lock` resolves 0.7.9 — is still literally true, because the adapters root overrides with an
+  unconditional editable path source, so the lock records a sibling checkout rather than a resolved
+  release. Retracting the whole line would have been a second false claim.
+
 ### Changed
 
 - **`protobuf` floor raised `>=7.35.1` → `>=7.36.0`** (still `<8`). Not a chosen number: buf's remote

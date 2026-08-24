@@ -11,6 +11,13 @@ the public contract, never on the runtime internals.
 > (`UNAUTHENTICATED: admission ticket is not valid` — the ticket is fine). Neither defect is visible
 > from the version number. Full detail and root cause: [`CHANGELOG.md`](CHANGELOG.md).
 
+> **Before you pin a version, read [`COMPATIBILITY.md`](COMPATIBILITY.md).** This SDK takes the
+> runtime's version and therefore **cannot express its own semver** — a breaking change here can ship
+> as a patch. That document carries the verified compatibility rows, the permanently known-bad
+> bands, which languages are actually published (two of five), the derived dependency floors, and —
+> importantly — what "independently verifiable" does **not** cover: the published verifier cannot
+> detect a truncated chain, and does not implement the commitment digest.
+
 ## Architecture
 
 The single source of truth is the `seam.api.v1` protobuf contract, published as the buf module

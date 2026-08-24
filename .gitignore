@@ -23,3 +23,6 @@ CLAUDE.md
 
 # transient /drive concurrency lock — never committed
 .drive.lock
+
+# Kotlin compile-daemon scratch logs
+kotlin/.kotlin/
