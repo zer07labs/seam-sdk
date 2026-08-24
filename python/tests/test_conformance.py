@@ -120,3 +120,77 @@ def test_chain_head_attestation_signature_verifies():
         )
         is False
     )
+
+
+# ── Commitment-digest framing coverage (W5.4 / G4) ────────────────────────────────────────────────
+#
+# `seam-commitment-digest:v1` is implemented byte-for-byte in ALL FIVE SDK languages — the widest
+# fan-out of any framing in this repo — and it has no vector section of its own. It cannot get one
+# here either: seam-runtime's `sdk-digest-parity` job byte-diffs the whole of
+# `conformance/vectors.json` against its own emitter, so a block added on this side turns the
+# runtime's CI red. A vector for it must originate there.
+#
+# What is available is stronger than it first appears. `verify_tct` recomputes the digest and
+# compares it to the `seam-commitment-digest:` grant inside the runtime-signed JWS, so the vector
+# already carries a runtime-produced expected value for one commitment. The gap was never coverage
+# of the digest — it was coverage of the FIELD TUPLE: the only pre-existing test tampered `action`,
+# so exactly one of the seven framing inputs was proven bound.
+#
+# That gap is not theoretical, and the difference is demonstrable: an implementation that silently
+# drops `supersedes` from the preimage passes the pre-existing KAT test — the vector's commitment
+# has no `supersedes`, so the bytes are identical — and fails the first test below.
+
+NOW_S = 1_700_000_001
+
+
+def test_commitment_digest_binds_every_field():
+    """Every field the digest binds must actually be bound.
+
+    A field dropped from the preimage, or reordered, lets one artifact verify under another's
+    signature — which is the whole point of the digest: it attests *who* committed and *how* they
+    authed, not just the decision.
+    """
+    t = VECTORS["tct"]
+    base, jws, iss = t["inputs"]["commitment"], t["signed_artifact_jws"], t["issuer_aid"]
+
+    assert verify_tct(iss, jws, base, now_s=NOW_S) is True, (
+        "the unmodified vector commitment must verify — nothing below means anything otherwise"
+    )
+
+    mutations = {
+        "id": {"id": base["id"] + "-x"},
+        "action": {"action": "ALLOW"},
+        "authority": {"authority": base["authority"] + "-x"},
+        # The vector's commitment omits `supersedes`, so absent is the branch already exercised.
+        # This pins the PRESENT branch, which nothing covered: absent and present must differ, or a
+        # supersession could be stripped from a sealed record undetected.
+        "supersedes (absent -> present)": {"supersedes": "k-previous"},
+        "auth_method": {"auth_method": base["auth_method"] + "-x"},
+        "trust_basis": {"trust_basis": base["trust_basis"] + "-x"},
+    }
+    for field, change in mutations.items():
+        assert verify_tct(iss, jws, {**base, **change}, now_s=NOW_S) is False, (
+            f"changing {field} did not change the commitment digest — that field is not bound"
+        )
+
+
+def test_commitment_digest_is_injective_across_field_boundaries():
+    """The length prefixes are load-bearing; this notices if someone "simplifies" them away.
+
+    Both `seam-store` and `seam-trust-aitp` record the reason in their own source: without an
+    8-byte big-endian length before each field, ``("a\\0b","c")`` and ``("a","b\\0c")`` produce
+    identical preimages, letting one Commitment verify under another's TCT. The fields are arbitrary
+    text that may itself contain NUL (UTF-8 permits U+0000, and it survives the JSON/prost decision
+    path), so this is reachable rather than theoretical.
+    """
+    t = VECTORS["tct"]
+    base, jws, iss = t["inputs"]["commitment"], t["signed_artifact_jws"], t["issuer_aid"]
+
+    # Fold the id/action boundary into `id` with a NUL. Under a NUL-joined framing this collides
+    # with the real commitment; under length-prefixing it cannot.
+    shifted = {**base, "id": base["id"] + "\x00" + base["action"], "action": ""}
+
+    assert verify_tct(iss, jws, shifted, now_s=NOW_S) is False, (
+        "a boundary-shifted commitment verified — the framing is separator-joined, not "
+        "length-prefixed, and one artifact can now verify under another's signature"
+    )

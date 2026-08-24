@@ -115,4 +115,112 @@ class ConformanceTest {
       assertFalse(SeamCrypto.verifyTct(k.issuer(), k.token(), c, k.now()), k.name() + " must fail closed");
     }
   }
+
+  // -- Commitment-digest framing coverage (W5.4 / G4) --------------------------------------------
+  //
+  // `seam-commitment-digest:v1` is implemented byte-for-byte in ALL FIVE SDK languages -- the widest
+  // fan-out of any framing in this repo -- and has no vector section of its own. It cannot get one
+  // here either: seam-runtime's `sdk-digest-parity` job byte-diffs the whole of
+  // conformance/vectors.json against its own emitter, so a block added on this side turns the
+  // runtime's CI red. A vector for it must originate there.
+  //
+  // What IS available is stronger than it looks. `verifyTct` recomputes the digest and compares it
+  // to the `seam-commitment-digest:` grant inside the runtime-signed JWS, so the vector already
+  // carries a runtime-produced expected value. The gap was never coverage of the digest -- it was
+  // coverage of the FIELD TUPLE: the pre-existing tests tampered `action` only, so exactly one of
+  // the seven framing inputs was proven bound.
+  //
+  // The difference is demonstrable, not theoretical: an implementation that silently drops
+  // `supersedes` from the preimage PASSES the pre-existing KAT test (the vector's commitment has no
+  // `supersedes`, so the bytes are identical) and FAILS the first test below. Verified in Go and
+  // Python, where that mutation could be run directly.
+
+  private static final long NOW_S = 1_700_000_001L;
+
+  /**
+   * Every field the commitment digest binds must actually be bound. A field dropped from the
+   * preimage -- or reordered -- lets one artifact verify under another's signature, which is the
+   * whole point of the digest: it attests WHO committed and HOW they authed, not just the decision.
+   */
+  @Test
+  void commitmentDigestBindsEveryField() throws Exception {
+    Map<String, Object> t = m(vectors(), "tct");
+    SeamCrypto.Commitment base = commitment(m(m(t, "inputs"), "commitment"));
+    String iss = (String) t.get("issuer_aid");
+    String jws = (String) t.get("signed_artifact_jws");
+
+    assertTrue(
+        SeamCrypto.verifyTct(iss, jws, base, NOW_S),
+        "the unmodified vector commitment must verify -- nothing below means anything otherwise");
+
+    record Mutation(String field, SeamCrypto.Commitment commitment) {}
+    List<Mutation> mutations =
+        List.of(
+            new Mutation(
+                "id",
+                new SeamCrypto.Commitment(
+                    base.id() + "-x", base.action(), base.authority(),
+                    base.supersedes(), base.authMethod(), base.trustBasis())),
+            new Mutation(
+                "action",
+                new SeamCrypto.Commitment(
+                    base.id(), "ALLOW", base.authority(),
+                    base.supersedes(), base.authMethod(), base.trustBasis())),
+            new Mutation(
+                "authority",
+                new SeamCrypto.Commitment(
+                    base.id(), base.action(), base.authority() + "-x",
+                    base.supersedes(), base.authMethod(), base.trustBasis())),
+            // The vector's commitment omits `supersedes`, so absent is the branch already
+            // exercised. This pins the PRESENT branch, which nothing covered: absent and present
+            // must differ, or a supersession could be stripped from a sealed record undetected.
+            new Mutation(
+                "supersedes (absent -> present)",
+                new SeamCrypto.Commitment(
+                    base.id(), base.action(), base.authority(),
+                    "k-previous", base.authMethod(), base.trustBasis())),
+            new Mutation(
+                "auth_method",
+                new SeamCrypto.Commitment(
+                    base.id(), base.action(), base.authority(),
+                    base.supersedes(), base.authMethod() + "-x", base.trustBasis())),
+            new Mutation(
+                "trust_basis",
+                new SeamCrypto.Commitment(
+                    base.id(), base.action(), base.authority(),
+                    base.supersedes(), base.authMethod(), base.trustBasis() + "-x")));
+
+    for (Mutation mut : mutations) {
+      assertFalse(
+          SeamCrypto.verifyTct(iss, jws, mut.commitment(), NOW_S),
+          "changing " + mut.field() + " did not change the commitment digest -- that field is not bound");
+    }
+  }
+
+  /**
+   * The length prefixes are load-bearing, and this notices if someone "simplifies" them away. Both
+   * seam-store and seam-trust-aitp record the reason in their own source: without an 8-byte
+   * big-endian length before each field, ("a\0b","c") and ("a","b\0c") produce identical preimages,
+   * letting one Commitment verify under another's TCT. The fields are arbitrary text that may
+   * itself contain NUL (UTF-8 permits U+0000, and it survives the JSON/prost decision path), so
+   * this is reachable rather than theoretical.
+   */
+  @Test
+  void commitmentDigestIsInjectiveAcrossFieldBoundaries() throws Exception {
+    Map<String, Object> t = m(vectors(), "tct");
+    SeamCrypto.Commitment base = commitment(m(m(t, "inputs"), "commitment"));
+
+    // Fold the id/action boundary into `id` with a NUL. Under a NUL-joined framing this collides
+    // with the real commitment; under length-prefixing it cannot.
+    SeamCrypto.Commitment shifted =
+        new SeamCrypto.Commitment(
+            base.id() + "\u0000" + base.action(), "", base.authority(),
+            base.supersedes(), base.authMethod(), base.trustBasis());
+
+    assertFalse(
+        SeamCrypto.verifyTct(
+            (String) t.get("issuer_aid"), (String) t.get("signed_artifact_jws"), shifted, NOW_S),
+        "a boundary-shifted commitment verified -- the framing is separator-joined, not "
+            + "length-prefixed, and one artifact can now verify under another's signature");
+  }
 }

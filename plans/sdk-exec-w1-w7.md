@@ -403,7 +403,9 @@ needs a real tag push — stated here rather than left to look proven.
 
 ### Phase 5 — W5.4/W5.5: a vector per framing per language, and close the 11-minute window
 
-**Status:** PENDING (W5.5 partly cross-repo — see below).
+**Status:** DONE (2026-08-23, 1 round). **G4's premise needed correcting** — see *Outcome*. W5.5's
+SDK half is landed and armed-but-latched behind
+[`seam-runtime#418`](https://github.com/zer07labs/seam-runtime/issues/418).
 
 **Delivers.** G4 closed; and the structural fix for the cause of 0.7.17, or a filed, cited issue if
 its runtime half cannot land here.
@@ -446,12 +448,46 @@ in the right order. File the runtime half as an issue, land the SDK half **behin
 issue number on the blocked line.
 
 **Acceptance criteria.**
-1. Adding a dummy framing to the Go shim with no vector makes CI fail (the source plan's own test).
-2. Each of Go/Java/Kotlin consumes every section it implements; the equality assertion is a CI gate.
-3. `conformance/vectors.json` is **byte-identical** to its pre-phase state — verified by
-   `git diff --stat` showing it untouched.
-4. A simulated dispatch with a bumped/absent `wire_framing_version` makes the tag step refuse.
-5. The runtime-side issue exists and is cited on the blocked line here.
+1. ~~Adding a dummy framing to the Go shim with no vector makes CI fail.~~ **Superseded by the G4
+   correction below** — the premise (shims implement framings with no coverage) turned out false.
+   Replaced with a stronger, demonstrated criterion: **an implementation bug the existing KAT is
+   blind to must now fail.** ✅ Dropping `supersedes` from the preimage leaves the pre-existing KAT
+   test **passing** (the vector's commitment has no `supersedes`, so the bytes are identical) and
+   makes the new test **fail** — demonstrated in Go, Python **and** Kotlin by actually applying the
+   mutation and running it.
+2. Each of Go/Java/Kotlin covers every framing it implements. ✅ all five languages now pin the
+   full commitment-digest field tuple, not just `action`.
+3. `conformance/vectors.json` **byte-identical**. ✅ `git diff --stat` empty — required by the
+   cross-repo lockstep gate, and the reason (1) had to be solved consumption-side.
+4. A dispatch with a bumped/absent `wire_framing_version` makes the tag step refuse. ✅ all four
+   branches exercised against the extracted script: absent+unlatched → warn/allow (exit 0);
+   matching → allow; **mismatch → refuse (exit 1)**; **absent+latched → refuse (exit 1)**.
+5. The runtime-side issue exists and is cited. ✅ `seam-runtime#418`, cited in
+   `contract/wire-framing.json` and surfaced in the workflow's own warning output.
+
+**Outcome — G4's premise was wrong, and the real gap was narrower and sharper.**
+
+The source plan says Go/Java/Kotlin "never run the vector that would have caught it" — true of
+`record_digest_v2` and `chain_head_attestation`, but **those are verifier-side framings the shims do
+not implement**, so that is not a coverage gap. What the shims implement is AID derivation, the
+pinned-key presentation, `verify_tct`, and `seam-commitment-digest:v1` — and all four already had
+coverage, because `verify_tct` recomputes the commitment digest and compares it to the grant inside
+the runtime-signed JWS.
+
+The actual gap was **coverage of the field tuple**. The only pre-existing tamper test changed
+`action`, so exactly **one of seven framing inputs** was proven bound in any language. A bug that
+dropped `supersedes` from the preimage passed every test in all five languages — verified by
+applying it — because the vector's commitment has no `supersedes` and the KAT bytes are unchanged.
+That bug would let a supersession be stripped from a sealed record undetected.
+
+Fixed consumption-side in all five languages, as the lockstep constraint requires: each now proves
+every field is bound (including the previously-unreachable `supersedes` present-branch) and that the
+framing is injective across field boundaries — the test that notices if someone "simplifies" the
+length prefixes §9 forbids touching.
+
+*Verification note, stated rather than implied:* Go, Python and TypeScript were run locally,
+including the red-first mutation. Java and Kotlin needed `openjdk@17` from Homebrew, which was
+present — both were run, and Kotlin's red-first mutation was executed too.
 
 ---
 

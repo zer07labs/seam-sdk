@@ -103,6 +103,40 @@ Three independently sufficient causes of a 0.7.17-shaped incident, closed.
   prevent**: it runs after upload, and a published version is immutable. Its own comment says so,
   so a later reader does not mistake it for a safety net it is not.
 
+### Fixed — commitment-digest framing coverage and the release handshake (W5, G4 + W5.5)
+
+- **All five crypto shims now prove the commitment digest binds every field it claims to**, not just
+  one. G4's premise needed correcting: Go/Java/Kotlin do not implement `record_digest_v2` or
+  `chain_head_attestation`, so never running those vectors was not a coverage gap. They *do*
+  implement `seam-commitment-digest:v1`, and it was already covered indirectly — `verify_tct`
+  recomputes it and compares against the grant inside the runtime-signed JWS.
+
+  The real gap was the **field tuple**: the only tamper test changed `action`, so exactly one of
+  seven framing inputs was proven bound. **An implementation that silently dropped `supersedes` from
+  the preimage passed every test in all five languages** — the vector's commitment has no
+  `supersedes`, so the KAT bytes are identical — and would have let a supersession be stripped from
+  a sealed record undetected. Verified by applying that mutation in Go, Python and Kotlin and
+  watching the old tests pass and the new ones fail.
+
+  Each language now pins every field (including the previously unreachable `supersedes`
+  present-branch) and asserts the framing is injective across field boundaries — the test that
+  notices if someone "simplifies" the length prefixes away, letting one artifact verify under
+  another's signature. Consumption-side only: `conformance/vectors.json` is byte-identical, because
+  `seam-runtime`'s `sdk-digest-parity` job diffs the whole file against its own emitter.
+- **`contract/wire-framing.json` + a framing handshake on the release path (W5.5).** This SDK has no
+  independent version by design, so a runtime wire change automatically triggers an SDK release
+  **whether or not the SDK has adapted** — the structural cause of 0.7.17, which published eleven
+  minutes after the change that broke it. Every other gate here detects that after publication; this
+  one refuses to tag.
+
+  `release-on-runtime.yml` compares the dispatch's `wire_framing_version` against the supported value
+  and refuses on mismatch, before any commit, tag or publish. It cannot be armed unilaterally —
+  until the runtime emits the field every dispatch would look like a mismatch and halt all releases —
+  so a committed `runtime_emits_version` latch tolerates absent for now, with a loud warning naming
+  [`seam-runtime#418`](https://github.com/zer07labs/seam-runtime/issues/418). Flipping that latch
+  once the runtime lands makes absent a refusal too, so a field that later stops being emitted is
+  caught as a regression rather than silently reopening the hole.
+
 ### Changed
 
 - **`protobuf` floor raised `>=7.35.1` → `>=7.36.0`** (still `<8`). Not a chosen number: buf's remote
