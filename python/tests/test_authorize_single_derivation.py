@@ -227,3 +227,95 @@ def test_explicit_none_tool_input_is_not_treated_as_supplied() -> None:
         tool_input=None, canonical=jcs_canonicalize({"a": 1}), **_ARGS
     )
     assert req.tool_input == b'{"a":1}'
+
+
+# ── the public surface: a caller can own the derivation outright ─────────────────────────────────
+
+
+@pytest.mark.parametrize("flavour", ["sync", "aio"])
+def test_client_canonical_derives_nothing_at_all(
+    recording_server, monkeypatch, flavour
+) -> None:
+    """The end state #60 actually asked for: with the caller supplying the bytes, the SDK does not
+    canonicalize even once — so there is no second derivation left to disagree with the first."""
+    servicer, addr = recording_server
+    calls = []
+    real = jcs_canonicalize
+    monkeypatch.setattr(
+        _authorize, "jcs_canonicalize", lambda o: (calls.append(o), real(o))[1]
+    )
+
+    tool_input = {"path": "/tmp/x", "n": 2.5}
+    canonical = real(tool_input)  # derived by the CALLER, outside the counter
+    calls.clear()
+    servicer.fail_next_unauthenticated = 1  # and it survives the retry too
+
+    if flavour == "sync":
+        SeamClient.connect(addr).authorize(
+            Agent(SEED), "read_file", canonical=canonical
+        )
+    else:
+
+        async def scenario() -> None:
+            async with AioSeamClient.connect(addr) as client:
+                await client.authorize(Agent(SEED), "read_file", canonical=canonical)
+
+        asyncio.run(scenario())
+
+    assert len(servicer.requests) == 2, "the retry path was not exercised"
+    assert calls == [], (
+        f"the SDK canonicalized {len(calls)} time(s) despite being handed the bytes"
+    )
+    assert servicer.requests[0].tool_input == canonical
+
+
+@pytest.mark.parametrize("flavour", ["sync", "aio"])
+def test_client_canonical_matches_passing_the_object(recording_server, flavour) -> None:
+    servicer, addr = recording_server
+    tool_input = {"zeta": 1, "alpha": [True, None, "x"], "n": 2.5}
+
+    if flavour == "sync":
+        client = SeamClient.connect(addr)
+        client.authorize(Agent(SEED), "wire_transfer", tool_input)
+        client.authorize(
+            Agent(SEED), "wire_transfer", canonical=jcs_canonicalize(tool_input)
+        )
+    else:
+
+        async def scenario() -> None:
+            async with AioSeamClient.connect(addr) as client:
+                await client.authorize(Agent(SEED), "wire_transfer", tool_input)
+                await client.authorize(
+                    Agent(SEED), "wire_transfer", canonical=jcs_canonicalize(tool_input)
+                )
+
+        asyncio.run(scenario())
+
+    by_object, by_bytes = servicer.requests
+    assert by_object.tool_input_digest == by_bytes.tool_input_digest
+    assert by_object.tool_input == by_bytes.tool_input
+    assert (
+        by_object.call_sig == by_bytes.call_sig
+    )  # same ticket, same digest, same signature
+
+
+@pytest.mark.parametrize("flavour", ["sync", "aio"])
+def test_client_rejects_both_at_once(recording_server, flavour) -> None:
+    """Mutual exclusion has to hold at the layer a consumer actually calls, not only in the builder
+    underneath it — otherwise the guard exists but nothing reaches it."""
+    _servicer, addr = recording_server
+    if flavour == "sync":
+        with pytest.raises(CanonicalizationError):
+            SeamClient.connect(addr).authorize(
+                Agent(SEED), "t", {"a": 1}, canonical=b'{"a":1}'
+            )
+    else:
+
+        async def scenario() -> None:
+            async with AioSeamClient.connect(addr) as client:
+                with pytest.raises(CanonicalizationError):
+                    await client.authorize(
+                        Agent(SEED), "t", {"a": 1}, canonical=b'{"a":1}'
+                    )
+
+        asyncio.run(scenario())

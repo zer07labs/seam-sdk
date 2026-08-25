@@ -19,8 +19,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from ._authorize import (
     AuthorizeResult,
     TicketCache,
+    _resolve_canonical,
     build_authorize_request,
-    canonicalize_tool_input,
     result_of,
 )
 from .crypto import aid_from_pubkey, build_presentation, verify_tct
@@ -254,6 +254,7 @@ class SeamClient:
         tool_name: str,
         tool_input=None,
         *,
+        canonical: Optional[bytes] = None,
         digest_only: bool = False,
         features: Optional[Mapping[str, str]] = None,
         session_id: str = "",
@@ -272,6 +273,13 @@ class SeamClient:
         :class:`~seam_sdk.errors.UnknownVerdictError` — never an implicit allow. An old runtime
         without the Authorize service raises ``UnimplementedError``; adapters typically degrade to
         their Observe tier on it.
+
+        ``canonical`` is the alternative to ``tool_input`` and the reason this parameter exists: pass
+        the JCS bytes you already derived (via :func:`seam_sdk.canonicalize_tool_input`) and the value
+        is derived exactly ONCE, by you. Otherwise a caller that needs the digest before the call —
+        to record it on a handle row, say — canonicalizes the object, the SDK canonicalizes it again,
+        and the two derivations can disagree across the gap between them (seam-sdk#60). The two
+        parameters are mutually exclusive; passing both is an error rather than a precedence rule.
         """
         # Canonicalized ONCE, before the ticket is acquired and outside the closure below. Both
         # halves of that are load-bearing. Inside the closure it was re-derived on the refresh-and-
@@ -280,7 +288,7 @@ class SeamClient:
         # request was internally consistent, so the runtime accepted it (seam-sdk#60). Before the
         # ticket, so uncanonicalizable input fails without first spending an admit round trip.
         # `ts/src/client.ts` has always hoisted it; this is the Python twin catching up.
-        canonical = canonicalize_tool_input(tool_input)
+        canonical = _resolve_canonical(tool_input, canonical)
         ticket = self._ticket_for(agent, timeout)
         build = lambda t: build_authorize_request(  # noqa: E731 — rebuilt on refresh (new call_sig)
             ticket=t,

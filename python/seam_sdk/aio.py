@@ -20,8 +20,8 @@ import grpc.aio
 from ._authorize import (
     AuthorizeResult,
     TicketCache,
+    _resolve_canonical,
     build_authorize_request,
-    canonicalize_tool_input,
     result_of,
 )
 from .client import (
@@ -192,6 +192,7 @@ class SeamClient:
         tool_name: str,
         tool_input=None,
         *,
+        canonical: Optional[bytes] = None,
         digest_only: bool = False,
         features: Optional[Mapping[str, str]] = None,
         session_id: str = "",
@@ -204,12 +205,20 @@ class SeamClient:
         ``(tool_name, tool_input) -> verdict`` question; 1 RTT steady-state, seals nothing.
         Ticket lifecycle: lazy admit, cached, refreshed at 80% TTL, retried exactly once on
         ``UNAUTHENTICATED``. An unknown verdict raises ``UnknownVerdictError`` — never an
-        implicit allow."""
+        implicit allow.
+
+        ``canonical`` is the alternative to ``tool_input`` and the reason this parameter exists: pass
+        the JCS bytes you already derived (via :func:`seam_sdk.canonicalize_tool_input`) and the value
+        is derived exactly ONCE, by you. Otherwise a caller that needs the digest before the call —
+        to record it on a handle row, say — canonicalizes the object, the SDK canonicalizes it again,
+        and the two derivations can disagree across the gap between them (seam-sdk#60). The two
+        parameters are mutually exclusive; passing both is an error rather than a precedence rule.
+        """
         # Canonicalized ONCE, before the admit and outside the closure — see the sync twin in
         # client.py for why. It matters MORE here: an aio client is the one most likely to have
         # hundreds of authorizes genuinely in flight, so it has the widest window for a framework to
         # mutate a tool_input dict between the first attempt and the retry (seam-sdk#60).
-        canonical = canonicalize_tool_input(tool_input)
+        canonical = _resolve_canonical(tool_input, canonical)
         cache, lock = await self._cache_and_lock(agent.aid)
         async with lock:
             ticket = cache.get(_now_ms())
