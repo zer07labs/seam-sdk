@@ -48,10 +48,13 @@ than trusting a summary here.
   re-pin, and the copy is now pinned to `main` at `25272a6`. The spec content is byte-identical
   either way — only the pin moved.
 
-  One limit, stated because the headline above does not carry it: `spec-pin` needs a token, so it
-  **skips** on a fork PR. Drift introduced that way is caught on the next push to `main`, not at
-  merge time. Its checker is separately exercised credential-free in `workflow-guards`, so a fork
-  PR still proves the logic even when it cannot run the comparison.
+  The job reads the private runtime through a **short-lived seam-deps-bot App token scoped to
+  `seam-runtime` alone**, not a PAT — the App already exists org-wide and is already installed
+  there, so this needs no new long-lived credential. One limit, stated because the headline above
+  does not carry it: a fork PR has no secrets, so `spec-pin` **skips** there and drift introduced
+  that way is caught on the next push to `main` rather than at merge time. Its checker is
+  separately exercised credential-free in `workflow-guards`, so a fork PR still proves the logic
+  even when it cannot run the comparison.
 
 - **`record_digest_v3` on the streamed authenticity helpers** — `verify_streamed_record_digest`
   (Python) and `verifyStreamedRecordDigest` (TypeScript) now recompute `schema_version = 3`

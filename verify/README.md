@@ -208,9 +208,9 @@ byte-identical to that ref's tip. Drift is red and blocks the merge. Run it your
 `python scripts/check_vendored_spec.py --from local:../seam-runtime` if you have a sibling checkout, or
 `--from gh` to read the repository directly.
 
-One honest limit: `seam-runtime` is private, so the job needs a token and **skips** on a pull request that
-cannot see it (a fork). Drift introduced that way is caught on the next push to `main` rather than at merge
-time. The job is also only triggered by pushes and pull requests here — if this repo goes quiet while the
+One honest limit: `seam-runtime` is private, so the job reads it with a short-lived App token and **skips**
+on a pull request that cannot see the org's secrets (a fork). Drift introduced that way is caught on the
+next push to `main` rather than at merge time. The job is also only triggered by pushes and pull requests here — if this repo goes quiet while the
 runtime spec moves, nothing notices until the next push.
 
 The copy may deliberately sit **ahead** of the runtime's default branch, which happens when this verifier

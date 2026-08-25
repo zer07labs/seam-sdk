@@ -514,7 +514,17 @@ def test_ci_runs_this_gate_against_the_real_api() -> None:
     assert "--from gh" in body, (
         "spec-pin must use the GitHub API. `--from local:` depends on a fetch CI never performs."
     )
-    assert "RUNTIME_REPO_TOKEN" in body, "seam-runtime is private; the job needs the token"
+    # seam-runtime is private, so github.token cannot read it. The App token must be minted AND
+    # scoped: an unscoped App token would reach every repo the App is installed on, for a job that
+    # reads one file.
+    assert "create-github-app-token" in body, (
+        "spec-pin no longer mints an App token. seam-runtime is private and github.token is scoped "
+        "to this repo, so the job would 404 and go red for a reason unrelated to the spec."
+    )
+    assert "SEAM_BOT_APP_ID" in body and "SEAM_BOT_PRIVATE_KEY" in body
+    assert "repositories: seam-runtime" in body, (
+        "the App token must be scoped to seam-runtime alone — this job reads one file"
+    )
     assert "spec-pin" in yaml.safe_dump(jobs["ci-ok"]["needs"]), (
         "spec-pin is not in ci-ok's needs, so it can fail while the required check reports success"
     )

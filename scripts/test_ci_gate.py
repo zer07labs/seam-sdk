@@ -39,7 +39,8 @@ GATE = "ci-ok"
 #: and FAILS still blocks the merge.
 #:
 #:   * integration — needs a live seam-grpc built from the private runtime.
-#:   * spec-pin    — needs RUNTIME_REPO_TOKEN to read the private spec it compares against. It is
+#:   * spec-pin    — reads the private runtime spec it compares against (via a scoped seam-deps-bot
+#:     App token), which a fork PR's secretless run cannot do. It is
 #:     the only job that can check the vendored copy at all, because the proof lives in another
 #:     repository; drift blocking the merge was a deliberate call, since the copy went stale three
 #:     times and a warning would have been ignored a fourth. Its CHECKER is separately exercised

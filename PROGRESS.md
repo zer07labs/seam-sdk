@@ -496,3 +496,21 @@ actually waits on their call.
 - **Suites:** scripts 56 passed; rust green across all targets + clippy `-D warnings` clean; python
   409 passed / 17 skipped; ts 104 tests, 94 pass, 0 fail.
 - **Next:** ship.
+- PR #66 opened: https://github.com/zer07labs/seam-sdk/pull/66
+- **The gate's first CI run skipped — caught before merge.** `spec-pin` was gated on
+  `RUNTIME_REPO_TOKEN`, which is configured **neither on this repo nor on the org**. `ci-ok` went
+  green with the new check never having executed: the silent-green pattern this repo rejects, one
+  layer down, in the CI config rather than in the code. Merging on that green would have shipped a
+  gate that does nothing while three documents claimed it was enforcing.
+- **Fixed by using what the org already has.** `spec-pin` now mints a **seam-deps-bot App token
+  scoped to `seam-runtime` alone**. Precedent: `seam/.github/workflows/golden-gate.yml` scopes the
+  same App to three repos for the same kind of cross-repo byte-identity check, which is also the
+  evidence that the App is installed on `seam-runtime` and can read it. Short-lived and per-run,
+  and no new long-lived credential — a PAT would have created one for a read two org workflows
+  already perform.
+- **Pre-existing, found in passing and NOT fixed here:** `integration` is gated on the same missing
+  `RUNTIME_REPO_TOKEN`, so **it has always skipped** — the live seam-grpc round-trip has never run
+  in this repo's CI, and nothing went red because the job is advisory. Left as found and recorded
+  in `ci.yml` next to the job: pointing it at the App means handing a token to a job that BUILDS
+  and RUNS another repo's code, a wider grant than reading one file, and that deserves its own
+  decision rather than being folded into this change.
