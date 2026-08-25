@@ -8,6 +8,8 @@ against a real server.
 import json
 import pathlib
 
+import pytest
+
 from seam_sdk.crypto import aid_from_pubkey, build_presentation, verify_tct
 
 VECTORS = json.loads(
@@ -206,20 +208,58 @@ def test_commitment_digest_is_injective_across_field_boundaries():
 
 # ── record_digest_v3 (issue #56, B3 Phase 2) ─────────────────────────────────────────────────────
 #
-# Unlike v2, whose vector was copied from a runtime reference that already existed, the v3 block is
-# emitted by THIS repo's implementation — seam-sdk merges first, so no runtime KAT exists yet. That
-# inverts what the vector proves: it is not "we agree with the runtime" (that comes later, when
-# seam-runtime's own emitter byte-diffs this file in its Phase 1), it is "the committed bytes are
-# what the code actually produces, and no human typed them."
+# The v3 cases come from TWO files, and the split is deliberate:
 #
-# So the tests below are of two kinds: reproduce every case, AND prove the block was not hand-edited.
+#   * `conformance/vectors.json` carries `record_digest_v3` and `record_digest_v3_absent_policy`,
+#     one `{inputs, digest_hex}` each. Those bytes are seam-runtime's — its `sdk-digest-parity` gate
+#     runs `diff -u` between that whole file and its own emitter's output, so the two repos agree on
+#     every byte, not merely on every digest. Reproducing them is what "four independent
+#     implementations agree" actually means, and it is the check that must never be skipped.
+#
+#   * `conformance/record_digest_v3_extended.json` carries five more cases, emitted by THIS repo's
+#     implementation. Two fixtures cannot express `mode: ""` vs `mode: null`, and carry no decomposed
+#     non-ASCII — both traps the spec singles out. Adopting these upstream is proposed separately;
+#     until then they live here so the coverage exists somewhere rather than nowhere.
+#
+# So the tests below are of two kinds: reproduce every case from both files, AND prove the extended
+# file was not hand-edited.
+
+EXTENDED_V3 = json.loads(
+    (
+        pathlib.Path(__file__).parents[2]
+        / "conformance"
+        / "record_digest_v3_extended.json"
+    ).read_text()
+)
+
+#: block name in `vectors.json` → the name it takes once normalised into the extended shape.
+RUNTIME_V3_BLOCKS = {
+    "record_digest_v3": "runtime_bound_policy",
+    "record_digest_v3_absent_policy": "runtime_absent_policy",
+}
 
 
 def _v3_cases():
-    block = VECTORS["record_digest_v3"]
-    cases = block["cases"]
+    cases = []
+    for block, name in RUNTIME_V3_BLOCKS.items():
+        # A renamed or dropped runtime block is a BROKEN CROSS-REPO CONTRACT, not a thinner vector
+        # set — fail loudly here rather than quietly testing five SDK-authored cases and calling it
+        # parity.
+        assert block in VECTORS, (
+            f"conformance/vectors.json has no `{block}` block. That file is byte-diffed by "
+            "seam-runtime's sdk-digest-parity gate; a missing block means this repo and the "
+            "runtime have stopped agreeing on the vector set, not that a case was tidied away."
+        )
+        b = VECTORS[block]
+        cases.append(
+            {"name": name, "inputs": b["inputs"], "digest_hex": b["digest_hex"]}
+        )
+    extended = EXTENDED_V3["cases"]
     # Guard-the-guard: an empty or renamed block would make every loop below vacuous.
-    assert cases, "record_digest_v3 carries zero cases — the vector proves nothing"
+    assert extended, (
+        "record_digest_v3_extended.json carries zero cases — the vector proves nothing"
+    )
+    cases.extend(extended)
     return cases
 
 
@@ -265,6 +305,10 @@ def test_the_v3_cases_cover_the_traps_they_exist_for():
     """Each case is here for a named reason; assert the set has not been quietly trimmed."""
     names = {c["name"] for c in _v3_cases()}
     assert {
+        # seam-runtime's own two blocks — the cross-repo contract.
+        "runtime_bound_policy",
+        "runtime_absent_policy",
+        # this repo's extended set.
         "all_optionals_present",
         "policy_rules_absent",
         "optionals_none",
@@ -328,13 +372,45 @@ def test_the_non_ascii_case_is_still_in_a_decomposed_form():
     )
 
 
-def test_the_v3_block_is_what_the_emitter_produces():
-    """The committed block must be byte-identical to a fresh run of the emitter.
+def test_the_case_loader_refuses_a_missing_runtime_block():
+    """The property every v3 test above rests on: the loader cannot quietly stop testing anything.
+
+    A guard that has never been watched to fire is not a guard — it is a comment with a keyword in
+    it. So this doctors the loaded document and requires the refusal, per block: a version that
+    checked only the first would let the second disappear in silence, which is the exact hole the
+    Rust twin had before it was parametrized.
+    """
+    for block in RUNTIME_V3_BLOCKS:
+        saved = VECTORS.pop(block)
+        try:
+            with pytest.raises(AssertionError, match=block):
+                _v3_cases()
+        finally:
+            VECTORS[block] = saved
+
+
+def test_the_case_loader_refuses_an_emptied_extended_set():
+    # The other way the loop goes vacuous: the file is present and parses, but carries nothing.
+    saved = EXTENDED_V3["cases"]
+    EXTENDED_V3["cases"] = []
+    try:
+        with pytest.raises(AssertionError, match="zero cases"):
+            _v3_cases()
+    finally:
+        EXTENDED_V3["cases"] = saved
+
+
+def test_the_extended_v3_file_is_what_the_emitter_produces():
+    """The committed extended file must be byte-identical to a fresh run of the emitter.
 
     This is the check that makes "vectors are never transcribed by hand" enforceable rather than
     aspirational: edit a `digest_hex` in the file and this goes red, because the emitter recomputes
-    it. It also pins the RENDERING (indent, escaping, key order), which matters because
-    seam-runtime's parity gate byte-diffs this whole file against its own emitter.
+    it. It also pins the RENDERING (indent, escaping, key order) — which is what makes adopting
+    these cases into `conformance/vectors.json` upstream a copy rather than a re-render.
+
+    `conformance/vectors.json` itself is deliberately NOT emitted here: those bytes are
+    seam-runtime's. What proves them is recomputation — `test_record_digest_v3_matches_reference_
+    all_cases` runs this repo's implementation against them like any other case.
     """
     import subprocess
     import sys
@@ -351,6 +427,7 @@ def test_the_v3_block_is_what_the_emitter_produces():
         timeout=120,
     )
     assert proc.returncode == 0, (
-        "conformance/vectors.json is not what scripts/emit_record_digest_v3_vectors.py emits.\n"
+        "conformance/record_digest_v3_extended.json is not what "
+        "scripts/emit_record_digest_v3_vectors.py emits.\n"
         f"{proc.stdout}\n{proc.stderr}"
     )

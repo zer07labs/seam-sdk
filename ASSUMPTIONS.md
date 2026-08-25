@@ -270,3 +270,27 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Blast radius if wrong:** A >4 GiB field would frame with a truncated length prefix and produce a
   digest that disagrees with every other implementation — reported as a mismatch, never as a pass.
 - **Status:** UNCONFIRMED
+
+## The v3 conformance cases this repo designed live in a second file, not in `conformance/vectors.json`
+
+- **Plan:** `plans/record-digest-v3.md` (Phase 4.5)
+- **Assumed:** that `conformance/vectors.json` has exactly one author — seam-runtime's emitter —
+  because `sdk-digest-parity` byte-diffs the whole file, and that adding this repo's five extra
+  cases to it would therefore turn seam-runtime's CI red for a reason that is not drift.
+- **Chose:** take the runtime's bytes verbatim, and put the five extra cases in
+  `conformance/record_digest_v3_extended.json`, loaded alongside by all three SDK conformance suites.
+  Strongest option because it keeps coverage the shared file cannot carry (`mode: ""` vs
+  `mode: null`; decomposed non-ASCII) without either side losing byte-identity, and because adopting
+  those cases upstream later is then a copy rather than a re-render — the extended file uses the same
+  `indent=2` / `ensure_ascii=True` rendering.
+- **Alternatives:** (a) push this repo's `cases`-array shape upstream — rejected: reopens a landed
+  runtime PR to make the file cosmetically different and no more correct, and the array shape was the
+  outlier among that file's blocks; (b) drop the five cases — rejected: they are the only vectors
+  covering the two traps the spec singles out; (c) keep them as unit tests only — rejected: they are
+  cross-language contracts, and a unit test in one language cannot pin a distinction a TS or Rust
+  transcription is liable to collapse.
+- **Blast radius if wrong:** low and local. If seam-runtime adopts the cases, the extended file is
+  deleted and its cases move into the shared one; nothing else changes. If it declines, the file
+  stays and the SDK keeps coverage the runtime does not. Neither outcome touches the wire, the
+  formula, or any published digest.
+- **Status:** UNCONFIRMED — proposed to seam-runtime; their call.

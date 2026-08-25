@@ -10,6 +10,7 @@ against a status table alone.
 
 | Plan | Status |
 |---|---|
+| `record-digest-v3.md` | **IN PROGRESS** — Phases 1–5 delivered (issue [#56](https://github.com/zer07labs/seam-sdk/issues/56)): `record_digest_v3` in Python, TypeScript and `verify/`, all three transcribed clean-room from the spec, agreeing with seam-runtime's fourth implementation on every committed vector. **Phase 6 remains BLOCKED** on seam-runtime publishing tags 11/12/13 on `seam.event.v1` to the BSR — the streamed helpers (`admin.py`/`admin.ts`) cannot grow a v3 arm until stubs carry the fields. |
 | `build-agent-ingress.md` | **PENDING** — narrowed 2026-08-24. The §A core scenes (Suspended→raise→resume, denied admission) and §C `StepUsage` wiring shipped in `seam-adapters` PR #42; what remains is the **§B MCP server** (seam-sdk [#40](https://github.com/zer07labs/seam-sdk/issues/40), deliberately unbuilt — no named customer) and the **§D public-access DoD**. See the refresh header in the plan. |
 | `consolidation-2026-08-14.md` | **RECORD + BACKLOG** — the 2026-08-14 full-repo review (plan triage, 6-track code review of seam-sdk + the runtime contract boundary), the fixes applied, and the residual backlog. Backlog swept 2026-08-24: four of five entries retired in place with citations; the survivors are §B/§D of `build-agent-ingress.md`. |
 

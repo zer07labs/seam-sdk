@@ -19,13 +19,36 @@ import { readFileSync } from "node:fs";
 
 import { recordDigestV2, recordDigestV3, RecordDigestStripError } from "../src/crypto.js";
 
+// The extended set, not `conformance/vectors.json`: the baseline this file mutates needs every
+// optional slot POPULATED, so that dropping one is a visible change. `vectors.json`'s two blocks
+// leave `policy_version` and `supersedes` null, which would make several mutations below no-ops.
+const extendedV3 = JSON.parse(
+  readFileSync(
+    new URL("../../conformance/record_digest_v3_extended.json", import.meta.url),
+    "utf8",
+  ),
+);
+
+// The runtime's own two blocks, in the same `{name, inputs, digest_hex}` shape, so the independent
+// transcription below runs over the cross-repo vectors as well as this repo's extended set. If
+// either block is missing, `vectors.json` and seam-runtime's emitter have stopped agreeing -- throw
+// rather than quietly transcription-check five SDK-authored cases and call that agreement.
 const vectors = JSON.parse(
   readFileSync(new URL("../../conformance/vectors.json", import.meta.url), "utf8"),
 );
 
+const ALL_V3_CASES: { name: string; inputs: any; digest_hex: string }[] = [
+  ...["record_digest_v3", "record_digest_v3_absent_policy"].map((block) => {
+    const b = vectors[block];
+    if (!b) throw new Error(`conformance/vectors.json has no '${block}' block`);
+    return { name: block, inputs: b.inputs, digest_hex: b.digest_hex };
+  }),
+  ...(extendedV3.cases as { name: string; inputs: any; digest_hex: string }[]),
+];
+
 type Args = Parameters<typeof recordDigestV3>[0];
 
-const BASE_INPUTS = vectors.record_digest_v3.cases.find(
+const BASE_INPUTS = extendedV3.cases.find(
   (c: any) => c.name === "all_optionals_present",
 )!.inputs;
 
@@ -90,7 +113,7 @@ function refDigestV3(a: Args, order: "spec" | "appended" = "spec"): string {
 }
 
 test("the implementation agrees with an independent transcription on every vector case", () => {
-  for (const c of vectors.record_digest_v3.cases) {
+  for (const c of ALL_V3_CASES) {
     const i = c.inputs;
     const a: Args = {
       ...baseArgs(),

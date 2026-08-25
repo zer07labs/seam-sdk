@@ -46,47 +46,76 @@ fn unhex(s: &str) -> Vec<u8> {
         .collect()
 }
 
-/// The vectors file, read from the repo rather than vendored.
+/// A conformance file, read from the repo rather than vendored.
 ///
 /// Vendoring a copy here would defeat the purpose: the runtime's parity job byte-diffs the ONE file,
 /// and a second copy is a second thing to drift. Loading it from `../conformance/` is also why this
 /// test is in `Cargo.toml`'s package `exclude` — the published crate is a standalone tarball with no
 /// parent directory, so a test that reads one has to be left out of it rather than ship broken.
-fn vectors() -> Value {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../conformance/vectors.json");
-    let raw = std::fs::read_to_string(path).unwrap_or_else(|e| {
+fn conformance_file(name: &str) -> Value {
+    let path = format!("{}/../conformance/{name}", env!("CARGO_MANIFEST_DIR"));
+    let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
         panic!(
-            "conformance/vectors.json is unreadable ({e}).\n  \
+            "conformance/{name} is unreadable ({e}).\n  \
              This is a FAILURE, not a reason to skip: the whole point of a conformance test is that \
              it cannot quietly stop testing anything."
         )
     });
-    serde_json::from_str(&raw).expect("conformance/vectors.json must be valid JSON")
+    serde_json::from_str(&raw)
+        .unwrap_or_else(|e| panic!("conformance/{name} must be valid JSON: {e}"))
 }
 
-/// The v3 cases, or a loud failure.
+fn vectors() -> Value {
+    conformance_file("vectors.json")
+}
+
+fn extended() -> Value {
+    conformance_file("record_digest_v3_extended.json")
+}
+
+/// seam-runtime's own v3 blocks in `vectors.json`, and the name each takes once normalised.
+///
+/// These two are the CROSS-REPO contract: `sdk-digest-parity` byte-diffs the whole of `vectors.json`
+/// against seam-runtime's emitter, so agreeing on them is what "independent implementations agree"
+/// actually means here.
+const RUNTIME_V3_BLOCKS: [(&str, &str); 2] = [
+    ("record_digest_v3", "runtime_bound_policy"),
+    ("record_digest_v3_absent_policy", "runtime_absent_policy"),
+];
+
+/// The v3 cases from both files, or a loud failure.
 ///
 /// A conformance test that SKIPS when its fixtures go missing is worse than no test at all: it
 /// reports green while proving nothing, and the day someone renames the block is the day the
 /// cross-repo contract stops being checked without anyone noticing. So this panics, and
 /// `the_case_loader_fails_loudly_when_the_block_is_missing` proves it panics.
-fn v3_cases(v: &Value) -> Vec<Value> {
-    let block = v.get("record_digest_v3").unwrap_or_else(|| {
-        panic!(
-            "conformance/vectors.json has no `record_digest_v3` block.\n  \
-             Refusing to pass: this test exists to prove the v3 formula matches the committed \
-             vectors, and with no vectors it proves nothing."
-        )
-    });
-    let cases = block
+fn v3_cases(v: &Value, ext: &Value) -> Vec<Value> {
+    let mut cases: Vec<Value> = Vec::new();
+    for (block, name) in RUNTIME_V3_BLOCKS {
+        let b = v.get(block).unwrap_or_else(|| {
+            panic!(
+                "conformance/vectors.json has no `{block}` block.\n  \
+                 Refusing to pass: that file is byte-diffed by seam-runtime's sdk-digest-parity \
+                 gate, so a missing block means this repo and the runtime have stopped agreeing on \
+                 the vector set — not that a case was tidied away."
+            )
+        });
+        cases.push(json!({
+            "name": name,
+            "inputs": b.get("inputs").unwrap_or_else(|| panic!("`{block}` must carry `inputs`")),
+            "digest_hex": b.get("digest_hex").unwrap_or_else(|| panic!("`{block}` must carry `digest_hex`")),
+        }));
+    }
+    let extra = ext
         .get("cases")
         .and_then(Value::as_array)
-        .unwrap_or_else(|| panic!("`record_digest_v3` must carry a `cases` array"));
+        .unwrap_or_else(|| panic!("record_digest_v3_extended.json must carry a `cases` array"));
     assert!(
-        !cases.is_empty(),
-        "`record_digest_v3.cases` is empty — nothing below would assert anything"
+        !extra.is_empty(),
+        "record_digest_v3_extended.json carries zero cases — nothing below would assert anything"
     );
-    cases.clone()
+    cases.extend(extra.iter().cloned());
+    cases
 }
 
 /// The JSON payload object for one vector case.
@@ -220,7 +249,7 @@ fn run_stream(name: &str, records: &[(Value, Vec<u8>)]) -> (i32, String) {
 }
 
 fn records() -> Vec<(Value, Vec<u8>)> {
-    v3_cases(&vectors())
+    v3_cases(&vectors(), &extended())
         .iter()
         .map(|c| {
             (
@@ -291,17 +320,21 @@ fn a_swapped_tag_11_12_mapping_cannot_cancel() {
 fn the_case_loader_fails_loudly_when_the_block_is_missing() {
     // The property this file's value rests on: it cannot quietly stop testing anything. Proven by
     // running the loader against a doctored document rather than by reading the code.
-    let mut doctored = vectors();
-    doctored.as_object_mut().unwrap().remove("record_digest_v3");
-    let missing = std::panic::catch_unwind(|| v3_cases(&doctored));
-    assert!(
-        missing.is_err(),
-        "a vectors file with no record_digest_v3 block was accepted — this test would then pass \
-         while proving nothing"
-    );
+    // Every runtime block, one at a time — a guard that only covers the first would let the second
+    // disappear silently, which is exactly the class of hole this file exists to close.
+    for (block, _) in RUNTIME_V3_BLOCKS {
+        let mut doctored = vectors();
+        doctored.as_object_mut().unwrap().remove(block);
+        let missing = std::panic::catch_unwind(|| v3_cases(&doctored, &extended()));
+        assert!(
+            missing.is_err(),
+            "a vectors file with no `{block}` block was accepted — this test would then pass while \
+             proving nothing"
+        );
+    }
 
-    let mut emptied = vectors();
-    emptied["record_digest_v3"]["cases"] = json!([]);
-    let empty = std::panic::catch_unwind(|| v3_cases(&emptied));
-    assert!(empty.is_err(), "an EMPTY cases array was accepted");
+    let mut emptied = extended();
+    emptied["cases"] = json!([]);
+    let empty = std::panic::catch_unwind(|| v3_cases(&vectors(), &emptied));
+    assert!(empty.is_err(), "an EMPTY extended cases array was accepted");
 }

@@ -194,6 +194,56 @@ Three independently sufficient causes of a 0.7.17-shaped incident, closed.
   `false` an ordinary invalid decision returns. TS now decodes with `{ fatal: true }` and throws,
   matching Python's fail-loud behavior.
 
+### Added — `record_digest_v3` across three implementations (issue #56, B3)
+
+- **`record_digest_v3` in Python, TypeScript and the published Rust verifier, plus conformance
+  vectors** (issue [#56](https://github.com/zer07labs/seam-sdk/issues/56)). The v3 formula covers
+  three more columns than v2 — `context_digest` (wire tag 11), `participation_digest` (tag 12), both
+  mandatory, and `policy_rules_digest` (tag 13), optional. All three arrive as opaque 32-byte inputs;
+  this SDK commits to them, it does not compute them. `record_digest_v2` is **byte-identical** and
+  stays that way forever — the v2 vectors in `conformance/vectors.json` are untouched by this change,
+  which is checked mechanically rather than by reading the diff.
+
+  Three transcriptions were written independently from the published spec
+  (`seam-runtime/docs/specs/seam-event.v1.md`, vendored at `verify/docs/`), never from the runtime's
+  Rust. That is the point of the exercise: agreement between implementations that copied each other
+  is not evidence. They agree with seam-runtime's fourth, independent implementation on every
+  committed vector.
+
+- **A distinct STRIP refusal**, in all three implementations. A v3 payload missing tag 11 or 12 is
+  **refused** — never defaulted to an empty digest, never recomputed under the v2 formula — and the
+  refusal is reported separately from a digest mismatch. Both fallbacks are worse than they look:
+  falling back to v2 is what a downgrade attack wants, and defaulting to empty makes "nobody
+  participated" indistinguishable from "somebody deleted the field". Python raises
+  `RecordDigestStripError`; TypeScript throws the same-named class carrying `field` and `wireTag`;
+  the verifier exits 2 with STRIP wording.
+
+### Changed — `seam-verify` refusals that used to be misreported
+
+- **`seam-verify` refuses an unimplemented `schema_version` instead of reporting a mismatch.**
+  Previously a record whose `schema_version` this build did not implement was recomputed under the v2
+  formula, which produced a *digest mismatch* — a confident wrong diagnosis, since the bytes may be
+  perfectly intact and simply newer than the verifier. It now refuses, naming the version, and says
+  the verifier is older than the record. **A record that used to report FAILED for the wrong reason
+  now reports FAILED for the right one.**
+
+  One previously-green shape does turn red, and it is stated rather than glossed: a `DECISION_SEALED`
+  declaring a `schema_version` above 3 while carrying **no** event `digest` at all used to fall
+  through as a non-link — unverifiable, but green without `--strict` — because the digest-presence
+  check came first. The version refusal now runs before it (`verify/src/verify.rs:545`). This is the
+  intended ordering: an unknown formula means the record cannot be checked *at all*, which is a
+  refusal independent of whether there is a digest to compare, and "I cannot check this, so it
+  passes" is the exact shape of a downgrade. No conforming producer emits it — the chain fields are
+  mandatory for every covered record, and any v4 producer postdates that — so the real-world
+  exposure is nil, but the claim "nothing turns red" would have been false as stated.
+
+- **`seam-verify` refuses a `schema_version = 1` record that carries any digest-covered column.**
+  v1 has no stream-recomputable digest, so v1 records are skipped by the recompute — which makes
+  "relabel a v3 record as v1" the one downgrade the recompute cannot catch by construction, because
+  a downgrade *into* the skip leaves nothing to compare. The spec supplies the tell: tag 10 is absent
+  only on v1 payloads. A record declaring v1 while carrying tags 10, 11, 12 or 13 is now refused as a
+  DOWNGRADE. Genuine v1 records still verify.
+
 ## 0.7.26 — 2026-08-14
 
 ### Added

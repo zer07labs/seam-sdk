@@ -328,6 +328,17 @@ clean; a reviewer can map every preimage line to a spec line using only the diff
 
 ### Phase 2 — v3 conformance vectors, machine-emitted
 
+**SUPERSEDED IN PART (2026-08-24, during Phase 5).** The digests this phase produced were right —
+seam-runtime's independent emitter reproduces them exactly. The *file shape* was wrong, and the
+reasoning that produced it was the wrong reasoning. D2 chose a `cases` array on the premise that this
+repo merges first, so it gets to define the new block. That premise ignored what §7 of
+`COMPATIBILITY.md` already said: the parity job byte-diffs the whole file, and byte-identity does not
+converge — it settles wholesale, in one direction. seam-runtime landed
+`record_digest_v3` + `record_digest_v3_absent_policy`, one `{inputs, digest_hex}` each, matching the
+shape every other block in that file already used; those bytes are now taken verbatim, and the five
+cases from this phase live in `conformance/record_digest_v3_extended.json`, loaded alongside by all
+three SDK suites. See Phase 4.5. Nothing about the formula changed.
+
 **Status:** DONE (2026-08-24, 1 verify round, Fable — a cross-repo byte-diffed artifact). The
 committed block is 109 added lines and **zero** removed: v2/admission/tct/attestation are byte-
 untouched, and the structural comma landed inside the added region rather than as an edit. The
@@ -530,9 +541,61 @@ builds the JSON event from case inputs where context ≠ participation, so a tag
 sentence). Makes stale: `COMPATIBILITY.md:183` ("every v2 `DECISION_SEALED` digest is recomputed")
 — Phase 5.
 
+### Phase 4.5 — take seam-runtime's vector bytes (unplanned; added 2026-08-24)
+
+**Status:** DONE (2026-08-24). **Depends on:** Phases 1–4. **Not in the original plan** — it exists
+because seam-runtime landed its side while Phases 3–4 were running here.
+
+**Delivers.** `conformance/vectors.json` byte-identical to what
+`cargo run -p seam-client --example conformance_vectors` emits in seam-runtime, so
+`sdk-digest-parity` goes green and seam-runtime PR #432 can merge. Plus
+`conformance/record_digest_v3_extended.json`, carrying the five cases Phase 2 designed, loaded by all
+three SDK conformance suites alongside the shared file.
+
+**Why not push this repo's shape upstream instead.** Three reasons, in order of weight. The gate is a
+whole-file `diff -u`, so exactly one side can define the bytes; the runtime's two-block shape matches
+what every other block in that file already does, where the `cases` array was the outlier; and their
+emitter has already merged, so re-shaping it means reopening a landed PR to make a file cosmetically
+different and no more correct. The digests were never in question — this repo's Python reproduces
+both runtime blocks exactly, which is what four independent transcriptions agreeing actually means.
+
+**What was checked before adopting, not after.** Every pre-existing block (`admission`, `tct`,
+`chain_head_attestation`, `record_digest_v2`) compared structurally against `origin/main` and found
+untouched — `record_digest_v2` byte-identity is the standing promise in issue #56, and "the diff
+looks clean" is not how you keep it.
+
+**Acceptance criteria.** `bash seam-runtime/scripts/sdk-digest-parity.sh <this checkout>` exits 0 with
+both steps green (drift byte-identical; the Python implementation reproducing `record_digest_v2`,
+`record_digest_v3` and `record_digest_v3_absent_policy`). All three SDK suites reproduce the union of
+both files. A missing runtime block fails loudly in each language rather than silently shrinking the
+case set.
+
+**Tests.** Each language's loader gained a hard failure for a missing runtime block, each driven red
+with a doctored document — the Rust one parametrized per block after a single-block guard would have
+let the second disappear silently.
+
 ### Phase 5 — docs, decision record, and the cross-repo handshake
 
-**Status:** TODO · **Depends on:** Phases 1–4.
+**Status:** DONE (2026-08-24). **Depends on:** Phases 1–4.
+
+**Divergence from the plan, and it is the interesting one.** This phase was written expecting to
+*tell* seam-runtime what the vectors are. By the time it ran, seam-runtime had already landed its
+side (PR #432) and pinned the `record_digest_v3` signature on issue #56 — so the handshake inverted:
+this repo verified it matched (it did, positionally, exactly) and adopted the runtime's vector bytes,
+rather than publishing its own for them to converge on. The `ensure_ascii` ask survives, but as a
+*proposal* attached to an extended vector file rather than as a cost imposed by a red gate.
+
+**Coordination artifact delivered** in two parts, because a comment thread is where a durable ask
+goes to die: the confirmation and timing note on
+[seam-sdk#56](https://github.com/zer07labs/seam-sdk/issues/56#issuecomment-5403239868) (signature
+match, both blocks reproduced, and an explicit "your gate stays red until this merges, don't re-run
+it"), and the extended-cases proposal as a tracked issue,
+[seam-runtime#433](https://github.com/zer07labs/seam-runtime/issues/433), carrying the `ensure_ascii`
+cost and three options including declining.
+
+`COMPATIBILITY.md` §7 was updated to record that the rule this plan proposed inverting held instead —
+including the resolution (a separate file, never a block) so the next person who needs vector coverage
+the shared file cannot carry does not re-derive it.
 
 **Delivers.** All prose brought true in the same change-set that made it stale, plus the runtime
 coordination artifact.

@@ -166,15 +166,60 @@ test("commitment digest is injective across field boundaries", () => {
 
 // -- record_digest_v3 (B3) -----------------------------------------------------------------------
 //
-// The v3 block is a `cases` array, not v2's single `{inputs, digest_hex}` object: v3 has an optional
-// slot (tag 13) and a mandatory-vs-absent distinction that one fixture cannot express. Every case is
-// machine-emitted by `scripts/emit_record_digest_v3_vectors.py` -- no digest here was typed by hand --
-// and seam-runtime's `sdk-digest-parity` job byte-diffs this whole file against its own emitter, so
-// these bytes are a cross-repo contract, not a local fixture.
+// The v3 cases come from two files, and the split is deliberate:
+//
+//   * `conformance/vectors.json` carries `record_digest_v3` and `record_digest_v3_absent_policy`,
+//     one `{inputs, digest_hex}` each -- the same shape every other block in that file uses. Those
+//     bytes are seam-runtime's: its `sdk-digest-parity` job runs `diff -u` between that whole file
+//     and its own emitter, so the two repos agree on every byte, not merely on every digest.
+//   * `conformance/record_digest_v3_extended.json` carries five more, machine-emitted by
+//     `scripts/emit_record_digest_v3_vectors.py` -- no digest in it was typed by hand. Two fixtures
+//     cannot express `mode: ""` vs `mode: null`, and carry no decomposed non-ASCII; both are traps
+//     the spec singles out, so the cases live here until they are adopted upstream.
+//
+// Everything below runs over the union, so the runtime's own vectors get exactly the same scrutiny
+// as this repo's.
 
 type V3Case = { name: string; inputs: Record<string, any>; digest_hex: string };
 
-const v3Cases: V3Case[] = vectors.record_digest_v3.cases;
+const extendedV3 = JSON.parse(
+  readFileSync(
+    new URL("../../conformance/record_digest_v3_extended.json", import.meta.url),
+    "utf8",
+  ),
+);
+
+// block name in `vectors.json` -> the name it takes once normalised into the extended shape.
+const RUNTIME_V3_BLOCKS: Record<string, string> = {
+  record_digest_v3: "runtime_bound_policy",
+  record_digest_v3_absent_policy: "runtime_absent_policy",
+};
+
+function loadV3Cases(src: any = vectors, ext: any = extendedV3): V3Case[] {
+  const cases: V3Case[] = [];
+  for (const [block, name] of Object.entries(RUNTIME_V3_BLOCKS)) {
+    const b = src[block];
+    // A dropped runtime block is a broken cross-repo contract, not a thinner fixture set. Throwing
+    // here is deliberate: the alternative is silently testing only this repo's own cases and
+    // reporting that as parity.
+    if (!b) {
+      throw new Error(
+        `conformance/vectors.json has no '${block}' block -- that file is byte-diffed by ` +
+          `seam-runtime's sdk-digest-parity gate, so a missing block means the two repos have ` +
+          `stopped agreeing on the vector set.`,
+      );
+    }
+    cases.push({ name, inputs: b.inputs, digest_hex: b.digest_hex });
+  }
+  const extra = ext.cases as V3Case[];
+  if (!extra || extra.length === 0) {
+    throw new Error("record_digest_v3_extended.json carries zero cases -- the loop proves nothing");
+  }
+  cases.push(...extra);
+  return cases;
+}
+
+const v3Cases: V3Case[] = loadV3Cases();
 
 const hex = (s: string | null): Uint8Array | null => (s === null ? null : Buffer.from(s, "hex"));
 
@@ -195,6 +240,24 @@ function v3Args(i: Record<string, any>) {
     schemaVersion: i.schema_version as number,
   };
 }
+
+test("the v3 case loader refuses a missing runtime block", () => {
+  // The property every v3 test below rests on: the loader cannot quietly stop testing anything. A
+  // guard that has never been watched to fire is not a guard, so this doctors the document and
+  // requires the throw -- per block, because a version checking only the first would let the second
+  // disappear in silence (the exact hole the Rust twin had before it was parametrized).
+  for (const block of Object.keys(RUNTIME_V3_BLOCKS)) {
+    const doctored = { ...vectors };
+    delete doctored[block];
+    assert.throws(
+      () => loadV3Cases(doctored),
+      new RegExp(block),
+      `a vectors document with no '${block}' block was accepted`,
+    );
+  }
+  // The other way the loop goes vacuous: the extended file parses but carries nothing.
+  assert.throws(() => loadV3Cases(vectors, { cases: [] }), /zero cases/);
+});
 
 test("record digest v3 reproduces every conformance case", () => {
   assert.ok(v3Cases.length > 0, "the v3 block is empty -- nothing below proves anything");
@@ -222,6 +285,10 @@ test("the v3 case set covers the distinctions it exists to cover", () => {
   // the contract: each one pins a branch of the formula that no other case reaches.
   const names = new Set(v3Cases.map((c) => c.name));
   for (const required of [
+    // seam-runtime's own two blocks -- the cross-repo contract.
+    "runtime_bound_policy",
+    "runtime_absent_policy",
+    // this repo's extended set.
     "all_optionals_present",
     "policy_rules_absent",
     "optionals_none",

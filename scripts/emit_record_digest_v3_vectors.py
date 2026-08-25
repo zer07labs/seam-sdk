@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Emit the `record_digest_v3` block of `conformance/vectors.json` by EXECUTING the implementation.
+"""Emit `conformance/record_digest_v3_extended.json` by EXECUTING the implementation.
 
 WHY THIS EXISTS RATHER THAN A HAND-WRITTEN BLOCK
 -------------------------------------------------
@@ -13,39 +13,45 @@ and every `digest_hex` is produced by calling `record_digest_v3` here and now. A
 in `--check` mode and byte-compares, which is what turns "we don't hand-edit vectors" from a habit
 into something CI enforces.
 
-WHY IT LOADS `crypto.py` AS A SINGLE FILE
-------------------------------------------
-Not for convenience — to stay honest about the contract. seam-runtime's `sdk-digest-parity` gate
-loads `python/seam_sdk/crypto.py` exactly this way (`spec_from_file_location`, no package install, no
-`BUF_TOKEN`, no generated `_gen/` tree) and calls `record_digest_v*` by exact name. Emitting the
-vectors through the same door means this script fails the moment that cross-repo assumption breaks,
-in this repo, rather than in their CI. `python/tests/test_errors_is_import_light.py` guards the same
-property from the other side.
+WHY THIS IS A SEPARATE FILE FROM `conformance/vectors.json`
+------------------------------------------------------------
+`conformance/vectors.json` is a CROSS-REPO artifact with a byte-identity contract: seam-runtime's
+`sdk-digest-parity` gate runs `diff -u` between that file and what its own emitter produces, so the
+two repos must agree on every byte, not merely on every digest. seam-runtime landed the v3 blocks
+first (`record_digest_v3` and `record_digest_v3_absent_policy`, one `{inputs, digest_hex}` each,
+matching the shape every other block in that file already uses), and this repo takes those bytes
+verbatim.
 
-THE RENDERING IS PART OF THE CONTRACT, AND ONE CHOICE IN IT COSTS THE RUNTIME SOMETHING
-----------------------------------------------------------------------------------------
-The gate byte-diffs the WHOLE file against the runtime's own emitter, so how this renders matters as
-much as what it computes: `json.dumps(..., indent=2)`, `ensure_ascii=True`, a trailing newline,
-lowercase hex, `null` for an absent optional. That round-trips the pre-existing file byte-identically
-(verified in `--check`, not assumed), so the untouched blocks stay untouched.
+That shape carries two cases. The set below carries five, because a single fixture per block cannot
+express `mode: ""` vs `mode: null`, and cannot carry decomposed non-ASCII text. Those are exactly
+the traps the spec singles out, so they are kept here rather than dropped — the SDK's own
+conformance tests in all three languages load this file alongside `vectors.json` and reproduce both
+sets. Merging them into `vectors.json` is proposed upstream (see `verify/DECISIONS.md`); until
+seam-runtime's emitter can produce these bytes too, adding them here would turn their gate red for
+a reason that is not drift.
+
+THE RENDERING, AND THE `ensure_ascii` COST THIS FILE WOULD PUT ON THE RUNTIME
+------------------------------------------------------------------------------
+Rendering is pinned the same way `vectors.json` pins it — `json.dumps(..., indent=2)`,
+`ensure_ascii=True`, a trailing newline, lowercase hex, `null` for an absent optional — so that
+adopting this set upstream is a copy, not a re-render.
 
 `ensure_ascii=True` is a real decision with a real cost, stated here rather than left to be
-discovered. It is **not** inherited from the existing file: that file contains no non-ASCII at all —
-its one escape, `\u0000`, is a control character every JSON writer emits, serde_json included. This
-block is what first introduces the question, because `non_ascii_nfd` carries combining marks and CJK.
-Both settings round-trip the old bytes; they differ only on the new case.
+discovered. `vectors.json` does not settle it: that file contains no non-ASCII at all. The
+`non_ascii_nfd` case below is what first introduces the question, because it carries combining marks
+and CJK.
 
-Escaping was chosen anyway, and the reason is that this artifact's BYTES are the contract. ASCII-only
-bytes survive editors, terminals, transfer encodings and well-meaning normalization passes unchanged;
-a raw combining acute does not, and a tool that silently NFC-normalized this file would corrupt the
-one case whose entire job is to detect normalization. The cost lands on the runtime: serde_json has
-no `ensure_ascii` equivalent, so their emitter needs a custom `Formatter` to reproduce `\u0301`,
-`\u65e5` and friends. That is a genuine ask, it is theirs to weigh, and Phase 5 puts it in front of
-them explicitly rather than letting them meet it as a red gate.
+Escaping was chosen because this artifact's BYTES are the contract. ASCII-only bytes survive editors,
+terminals, transfer encodings and well-meaning normalization passes unchanged; a raw combining acute
+does not, and a tool that silently NFC-normalized this file would corrupt the one case whose entire
+job is to detect normalization. The cost lands on whoever adopts it: serde_json has no `ensure_ascii`
+equivalent, so seam-runtime's emitter would need a custom `Formatter` to reproduce `\u0301`,
+`\u65e5` and friends. That is a genuine ask, it is theirs to weigh, and it goes to them as a written
+proposal rather than as a red gate.
 
 Usage:
-    scripts/emit_record_digest_v3_vectors.py            # rewrite conformance/vectors.json
-    scripts/emit_record_digest_v3_vectors.py --check    # exit 1 if the committed block has drifted
+    scripts/emit_record_digest_v3_vectors.py            # rewrite the extended vector file
+    scripts/emit_record_digest_v3_vectors.py --check    # exit 1 if the committed file has drifted
 Exit: 0 = in sync (or written) · 1 = drift · 2 = infrastructure problem
 """
 
@@ -62,7 +68,7 @@ from typing import Any
 
 REPO = Path(__file__).resolve().parents[1]
 CRYPTO = REPO / "python" / "seam_sdk" / "crypto.py"
-VECTORS = REPO / "conformance" / "vectors.json"
+EXTENDED = REPO / "conformance" / "record_digest_v3_extended.json"
 BLOCK = "record_digest_v3"
 
 #: Fixed inputs shared by every case. Chosen, not computed — the point of a vector is that its
@@ -243,16 +249,27 @@ def build_cases(crypto: Any) -> list[dict]:
 
 
 def render(document: dict) -> str:
-    """The one rendering, used for both writing and checking. `ensure_ascii` stays at its default:
-    the existing file escapes non-ASCII as `\\uXXXX`, and the gate byte-diffs the whole file."""
+    """The one rendering, used for both writing and checking. `ensure_ascii` stays at its default,
+    so this file renders exactly the way `conformance/vectors.json` does — see the module docstring
+    for why that matters to anyone adopting these cases upstream."""
     return json.dumps(document, indent=2) + "\n"
+
+
+#: Written into the file itself, so a reader who opens it outside this repo learns where the bytes
+#: came from and why they are not in `conformance/vectors.json`.
+PROVENANCE = (
+    "seam-sdk's EXTENDED record_digest_v3 conformance cases. Machine-emitted by "
+    "scripts/emit_record_digest_v3_vectors.py -- no digest here was typed by hand. These are a "
+    "SUPERSET of the two record_digest_v3 blocks in conformance/vectors.json, which is a byte-"
+    "identity contract with seam-runtime and is not edited here. The extra cases pin traps a "
+    "single fixture per block cannot express: empty-string vs absent optionals, and decomposed "
+    "non-ASCII text. All three SDK implementations reproduce both files."
+)
 
 
 def build_document() -> dict:
     crypto = _load_crypto()
-    document = json.loads(VECTORS.read_text(encoding="utf-8"))
-    document[BLOCK] = {"cases": build_cases(crypto)}
-    return document
+    return {"$comment": PROVENANCE, "cases": build_cases(crypto)}
 
 
 def main() -> int:
@@ -264,12 +281,14 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    if not VECTORS.exists() or not CRYPTO.exists():
-        print(f"::error::missing {VECTORS} or {CRYPTO}", file=sys.stderr)
+    if not CRYPTO.exists():
+        print(f"::error::missing {CRYPTO}", file=sys.stderr)
         return 2
 
     try:
-        current = VECTORS.read_text(encoding="utf-8")
+        # A missing file is drift, not an infrastructure problem: `--check` must fail loudly when
+        # the committed artifact is gone, rather than exit 2 and be read as "could not tell".
+        current = EXTENDED.read_text(encoding="utf-8") if EXTENDED.exists() else ""
         emitted = render(build_document())
     except Exception as exc:  # noqa: BLE001 — the type is not the point, the exit code is
         # NB: every internal refusal above raises an ordinary Exception, never SystemExit.
@@ -290,11 +309,11 @@ def main() -> int:
     if args.check:
         if emitted == current:
             print(
-                f"{VECTORS.name}: {BLOCK} is byte-identical to what the implementation emits"
+                f"{EXTENDED.name}: byte-identical to what the implementation emits"
             )
             return 0
         print(
-            f"::error::{VECTORS.name} has drifted from what `record_digest_v3` actually produces.\n"
+            f"::error::{EXTENDED.name} has drifted from what `record_digest_v3` actually produces.\n"
             f"::error::Either a digest was edited by hand (never do this — the whole point of the\n"
             f"::error::vector is that its output is derived), or the formula changed and the block\n"
             f"::error::was not regenerated. Run: python3 scripts/{Path(__file__).name}",
@@ -302,8 +321,8 @@ def main() -> int:
         )
         return 1
 
-    VECTORS.write_text(emitted, encoding="utf-8")
-    print(f"wrote {VECTORS.relative_to(REPO)} ({len(emitted)} bytes)")
+    EXTENDED.write_text(emitted, encoding="utf-8")
+    print(f"wrote {EXTENDED.relative_to(REPO)} ({len(emitted)} bytes)")
     return 0
 
 

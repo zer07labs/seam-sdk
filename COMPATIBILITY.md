@@ -61,7 +61,7 @@ mismatch cannot ship.
 
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
-**Nothing was yanked.** That decision is recorded at `CHANGELOG.md:227-231` and is not being
+**Nothing was yanked.** That decision is recorded at `CHANGELOG.md:277-281` and is not being
 re-litigated here: the affected versions install and produce a clear auth error rather than
 corrupting data, and revoking installability under a floor already in wide use has a larger blast
 radius than a loud advisory. The consequence is that **these versions remain installable**, so this
@@ -180,7 +180,14 @@ comment — `.github/workflows/ci.yml:289-297` runs `cargo tree -e normal` and f
 
 - **Chain integrity** — the `seam-event.v1` hash chain, from the stream alone.
 - **Authenticity** — every `CHAIN_HEAD_ATTESTATION` verifies against a pinned issuer key and sits at
-  the head it attests; every v2 `DECISION_SEALED` digest is recomputed from its payload.
+  the head it attests; every v2 **and v3** `DECISION_SEALED` digest is recomputed from its payload
+  (`verify/src/verify.rs:579`). Three refusals are reported **distinctly from a digest mismatch**,
+  because a caller that treats them as one cannot tell "these bytes were altered" from "a field was
+  removed": a v3 record missing `context_digest` or `participation_digest` is refused as a **STRIP**;
+  a `schema_version` this build does not implement is refused, never skipped; and a record declaring
+  `schema_version = 1` while carrying any digest-covered column (wire tags 10–13) is refused as a
+  **DOWNGRADE** — v1 has no stream-recomputable digest, so relabelling a v3 record as v1 is the one
+  direction the recompute cannot catch by construction.
 - **Erasure certificates** — from the issuer AID alone, no Seam credential and no network call.
 
 **NOT covered — stated plainly, because the phrase "independently verifiable" would otherwise carry
@@ -240,6 +247,25 @@ Concretely:
   byte-diffs the *whole file* against `cargo run -p seam-client --example conformance_vectors`. A
   block added here by hand — even a correct one — turns `seam-runtime`'s CI red. **New vectors must
   originate in the runtime.**
+
+  This rule was tested by the `record_digest_v3` work (issue
+  [#56](https://github.com/zer07labs/seam-sdk/issues/56)) and it held. That issue proposed inverting
+  it for a *brand-new* version block, on the reasoning that this repo merges first so no runtime
+  vector exists yet, and this repo did emit a v3 block of its own. It did not survive contact: the
+  runtime's emitter landed with its own two blocks (`record_digest_v3` and
+  `record_digest_v3_absent_policy`, one `{inputs, digest_hex}` each), and byte-identity is not a
+  thing two emitters converge on by accident — it settles wholesale, in one direction. The runtime's
+  bytes were taken verbatim.
+
+  **The resolution, if you need vector coverage this file cannot carry: add a separate file, never a
+  block.** `conformance/record_digest_v3_extended.json` holds five more cases — `mode: ""` vs
+  `mode: null`, and decomposed non-ASCII, neither of which two fixtures can express — and every SDK
+  conformance suite loads it alongside `vectors.json`. It is invisible to the parity job by
+  construction, so coverage grows here without the gate going red for a reason that is not drift.
+  Merging those cases upstream is a proposal to the runtime, not something this repo can do
+  unilaterally (`scripts/emit_record_digest_v3_vectors.py` documents what it would cost them:
+  serde_json has no `ensure_ascii` equivalent, so reproducing the escaped non-ASCII needs a custom
+  `Formatter`).
 - **`python/seam_sdk/crypto.py`'s digest functions are resolved by exact name** from that job. A
   rename here breaks merges there.
 

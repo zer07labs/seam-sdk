@@ -166,6 +166,86 @@ runtime gate script are the only permitted sibling reads.
   verify/docs/seam-event.v1.md) ../seam-runtime/docs/specs/seam-event.v1.md` is empty, which is a
   checkable claim a reviewer can re-run. It was stale in a way that mattered — it carried no
   §Record digest (v3) at all while `verify.rs` implements it.
-- **Next:** Phase 5 — docs (`CHANGELOG.md`, `COMPATIBILITY.md` §5/§7, `verify/DECISIONS.md`,
-  `plans/README.md`) and the cross-repo handshake comment to seam-runtime, which MUST transmit the
-  `ensure_ascii=True` vector-rendering decision and its custom-`Formatter` cost on their side.
+- **Next:** Phase 5 — see below; overtaken by seam-runtime landing its side first.
+
+## 2026-08-24 — Phase 4.5 (unplanned) + Phase 5 · verifier tier: Fable (cross-repo contract file)
+
+**What forced Phase 4.5.** seam-runtime landed PR #432 while Phases 3–4 ran here, and posted the
+exact `record_digest_v3` signature its parity gate calls on issue #56. Two facts had to be
+established before anything else, and both were, by execution rather than by reading:
+
+1. **The signature matches**, positionally and exactly — `python/seam_sdk/crypto.py`'s
+   `record_digest_v3` takes their thirteen arguments in their order. No adaptation needed on either
+   side.
+2. **The formulas agree.** This repo's Python reproduces *their* two emitted vector blocks
+   byte-for-byte, including the `opt(None)` vs `opt(Some(b""))` case that is the whole reason they
+   ship two blocks. Four independent transcriptions from the same spec, agreeing.
+
+**What did not match: the file shape.** Phase 2 emitted one `record_digest_v3` block holding a
+`cases` array; seam-runtime emits `record_digest_v3` and `record_digest_v3_absent_policy`, one
+`{inputs, digest_hex}` each. The gate is a whole-file `diff -u`, so exactly one side defines the
+bytes. Took theirs verbatim — their shape is what every other block in that file already uses, and
+the `cases` array was the outlier. Phase 2's premise (this repo merges first, so it defines the new
+block) was wrong, and `COMPATIBILITY.md` §7 already said so; §7 now records that it was tested and
+held.
+
+**Coverage kept rather than dropped.** Phase 2's five cases moved to
+`conformance/record_digest_v3_extended.json` — they pin `mode: ""` vs `mode: null` and decomposed
+non-ASCII, which two fixtures cannot express. All three SDK suites now load the union of both files,
+so the runtime's own vectors get the same scrutiny as this repo's. The extended file is invisible to
+the parity gate by construction.
+
+- **Verified against the real gate, not a simulation:** `bash ../seam-runtime/scripts/
+  sdk-digest-parity.sh <this checkout>` exits 0 — drift byte-identical, and all three digest blocks
+  reproduced by this repo's Python.
+- **v2 byte-identity re-proven mechanically** after the reshape: every pre-existing block compared
+  against `origin/main` structurally, all unchanged; the only delta is the two added blocks.
+- **New guards, each driven red with a decoy:** a missing runtime block now fails loudly in Python,
+  TypeScript and Rust rather than silently shrinking the case set. The Rust guard is parametrized per
+  block — a single-block version would have let the second disappear unnoticed, the same hole the
+  Phase 4 downgrade test had.
+
+**Phase 5 (docs).** `CHANGELOG.md` (themed Added/Changed sections, including the two verifier
+behavior changes — the unimplemented-`schema_version` refusal and the v1 downgrade guard — stated so
+a reader can tell no previously-green stream turns red); `COMPATIBILITY.md` §5 (v3 recompute + the
+three distinct refusals, citation resolving to `verify/src/verify.rs:579`) and §7 (the rule held;
+the separate-file resolution recorded); `verify/DECISIONS.md` **D-035**, earned per the existing
+protocol — the strip repro watched to fail through the shipped binary against a stream built outside
+the Rust harness, with the transcript in the entry; `plans/README.md` active row; `plans/record-
+digest-v3.md` Phase 2 marked superseded-in-part, Phase 4.5 added, Phase 5 DONE.
+
+- **Suite:** Rust 62 passing / 0 failing, fmt + clippy clean, `cargo tree` still zero Seam crates ·
+  Python 396 passed / 17 skipped, ruff clean · TS 97 tests / 87 pass / 0 fail / 10 skipped ·
+  `tsc --noEmit` clean.
+- **Handshake delivered** (it was the one Phase 5 deliverable the verifier caught still outstanding
+  while the phase was marked DONE): seam-sdk#56 comment 5403239868 confirms the signature match, both
+  blocks reproduced, and states plainly that their gate stays red until this merges; seam-runtime#433
+  carries the extended-cases proposal with the `ensure_ascii` / custom-`Formatter` cost and three
+  options, one of them declining.
+**Verify round 1 — Fable — GAPS (2 items), both closed:** (1) this entry claimed 393 Python tests
+where the real figure is 394; (2) Phase 5 was marked DONE while its own listed cross-repo deliverable
+was undelivered — closed by delivering it, not by relabelling the status. Two observations were also
+acted on rather than filed: the CHANGELOG's "no previously-green stream turns red" had one
+constructible counterexample (`schema_version > 3` carrying no event digest — the version refusal now
+runs before the digest-presence check), and the missing-block guards were only test-pinned in Rust.
+Python and TypeScript now carry committed guard-the-guard tests too, each driven red by softening the
+guard, so all three languages hold the same standard rather than two of them resting on a dev-time
+check nobody can re-run. The verifier reproduced every test claim, the parity gate, and the v2
+byte-identity comparison independently. (Round 1 was interrupted by a model quota after it had read
+the diff; resumed from transcript rather than restarted.)
+
+**Verify round 2 — Fable — GAPS (1 item), closed:** the suite figures on this very line were stale
+again, because the three guard tests round 1 asked for moved them after the line was written. Third
+occurrence of one class of error — a hand-maintained count that goes stale the moment the thing it
+counts changes — so the numbers here are now written first and re-run afterwards, which is the only
+ordering that can catch it. Everything else round 2 checked came back closed, and it re-derived
+rather than trusted: it softened each new Python and TypeScript guard itself and watched them go red,
+confirmed `loadV3Cases()`'s defaulted parameters leave the real module-load path armed, read both
+cross-repo artifacts and matched every claim the plan makes about them against what they actually
+say, resolved `verify/src/verify.rs:545` to the character, and confirmed against `origin/main` that a
+v4 record which ALSO stripped tag 10 was already red — so the CHANGELOG's "one previously-green
+shape" survives that subset exactly.
+
+- **Next:** `/reconcile` the `ASSUMPTIONS.md` entries tagged to this plan, then `/ship` with the
+  pre-merge pause (cumulative diff is well past the >500-line / >15-file threshold and touches a
+  public contract).
