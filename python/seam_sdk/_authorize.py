@@ -104,8 +104,8 @@ def canonicalize_tool_input(tool_input) -> bytes:
     :class:`~seam_sdk.errors.CanonicalizationError` instead of a builtin.
 
     This is the entry point a caller should use when it needs the canonical bytes (or the digest)
-    *before* the call — recording them on a handle row, say. Pair it with ``authorize(...,
-    canonical=...)`` so the value is derived exactly once: two derivations of one caller-supplied
+    *before* the call — recording them on a handle row, say. Pair it with the ``canonical=``
+    parameter so the value is derived exactly once: two derivations of one caller-supplied
     object, separated by a round trip, can disagree, and the failure lands in an availability arm
     (seam-sdk#60, seam-adapters#59).
 
@@ -125,8 +125,15 @@ def canonicalize_tool_input(tool_input) -> bytes:
     except CanonicalizationError:
         raise  # already typed — re-wrapping would bury the real cause one level deeper
     except Exception as e:
+        # Formatting the cause is itself untrusted work. If a subclass can raise anything from the
+        # dunders JCS reads it through, it can also raise one whose own __str__ raises — and that
+        # exception would escape from inside this handler, untyped, defeating the whole function.
+        try:
+            detail = f"{type(e).__name__}: {e}"
+        except Exception:
+            detail = "an exception whose own repr could not be rendered"
         raise CanonicalizationError(
-            f"tool_input could not be JCS-canonicalized ({type(e).__name__}: {e})"
+            f"tool_input could not be JCS-canonicalized ({detail})"
         ) from e
 
 

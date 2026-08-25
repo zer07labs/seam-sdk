@@ -32,9 +32,12 @@ from seam_sdk._authorize import build_authorize_request
 from seam_sdk.crypto import jcs_canonicalize
 from seam_sdk.errors import CanonicalizationError, SeamError
 
-#: Everything `jcs_canonicalize` refuses on its own, with the builtin each one used to raise. The
-#: pairing is the compatibility assertion: after this change they are still caught by the same
-#: `except` clause a consumer wrote before it.
+#: Everything `jcs_canonicalize` refuses on its own, with the builtin each one used to raise.
+#:
+#: The per-input pairing is documentation, NOT an assertion — `CanonicalizationError` is both a
+#: `ValueError` and a `TypeError`, so swapping any entry's expected builtin leaves this file green.
+#: The compatibility property it hints at is real but is proven by `test_..._is_all_three_bases`
+#: below; recorded here so nobody later mistakes this column for a guard it cannot be.
 REJECTED = [
     pytest.param(float("nan"), ValueError, id="nan"),
     pytest.param(float("inf"), ValueError, id="inf"),
@@ -184,3 +187,36 @@ def test_an_already_typed_error_is_not_double_wrapped() -> None:
         canonicalize_tool_input(_AlreadyTyped(a=1))
     assert exc.value.__cause__ is None
     assert str(exc.value) == "raised from inside the traversal"
+
+
+class _Unprintable(Exception):
+    """An exception whose own ``__str__`` raises. Contrived, but strictly implied by this module's
+    premise: if a subclass can raise anything from the dunders JCS reads it through, it can raise
+    this."""
+
+    def __str__(self) -> str:
+        raise ZeroDivisionError("rendering the cause blows up too")
+
+
+class _RaisesUnprintable(dict):
+    def __iter__(self):
+        raise _Unprintable()
+
+
+def test_a_cause_that_cannot_be_rendered_does_not_leak_out_of_the_handler() -> None:
+    """The handler formats the cause into its message, and that formatting is itself untrusted work.
+
+    Before this was guarded, the ``ZeroDivisionError`` from ``str(cause)`` escaped from *inside* the
+    ``except`` block — untyped, past every wrap, and out through ``build_authorize_request`` — which
+    is precisely the failure this module exists to prevent, reintroduced by the code preventing it.
+    """
+    with pytest.raises(CanonicalizationError) as exc:
+        canonicalize_tool_input(_RaisesUnprintable(a=1))
+    assert isinstance(exc.value.__cause__, _Unprintable)
+    with pytest.raises(CanonicalizationError):
+        build_authorize_request(
+            ticket=b"t",
+            agent_seed=bytes(32),
+            tool_name="x",
+            tool_input=_RaisesUnprintable(a=1),
+        )

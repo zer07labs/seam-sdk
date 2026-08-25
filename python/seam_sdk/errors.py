@@ -50,8 +50,9 @@ class CanonicalizationError(SeamError, ValueError, TypeError):
     failure runs the gated tool with zero RPCs sent. Naming the failure is what lets a consumer route
     it as an input error instead of an outage.
 
-    **Residual, stated rather than hidden.** ``seam_sdk.crypto.jcs_canonicalize`` called directly
-    still raises builtins. ``crypto.py`` may import ``cryptography`` and nothing else — seam-runtime's
+    **Residual, stated rather than hidden.** ``jcs_canonicalize`` called directly still raises
+    builtins — both as ``seam_sdk.crypto.jcs_canonicalize`` and, more discoverably, as
+    ``seam_sdk.jcs_canonicalize``, which is the same raw function re-exported at the package root. ``crypto.py`` may import ``cryptography`` and nothing else — seam-runtime's
     ``sdk-digest-parity`` gate loads that one file standalone — so it cannot import this module, while
     this module is where the taxonomy must live. Use :func:`seam_sdk.canonicalize_tool_input` to get
     the typed error. Tracked on seam-sdk#54, where the import-light contract is owned.
