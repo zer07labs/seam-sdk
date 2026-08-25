@@ -130,12 +130,42 @@ def canonicalize_tool_input(tool_input) -> bytes:
         ) from e
 
 
+def _resolve_canonical(tool_input, canonical: Optional[bytes]) -> bytes:
+    """Return the canonical bytes for exactly one of ``tool_input`` / ``canonical``.
+
+    ``bytearray`` and ``memoryview`` are rejected along with ``str``. Not pedantry: a mutable buffer
+    could be changed between the digest being taken and the bytes being assembled onto the request,
+    which is a smaller version of the same two-derivations-disagree bug in a place a caller would
+    never think to look.
+    """
+    if canonical is None:
+        return canonicalize_tool_input(tool_input)
+    if tool_input is not None:
+        raise CanonicalizationError(
+            "tool_input and canonical are mutually exclusive — pass the object OR the bytes you "
+            "already derived from it, never both. Accepting both would mean choosing one silently, "
+            "which is the failure this parameter exists to remove (seam-sdk#60)."
+        )
+    if not isinstance(canonical, bytes):
+        raise CanonicalizationError(
+            f"canonical must be bytes, got {type(canonical).__name__}. A str would have to be "
+            "encoded here, and a bytearray/memoryview could still change after the digest is taken."
+        )
+    if not canonical:
+        raise CanonicalizationError(
+            "canonical is empty; JCS never produces zero bytes (a no-argument call is b'{}'). An "
+            "empty value would digest to something no re-derivation can reproduce."
+        )
+    return canonical
+
+
 def build_authorize_request(
     *,
     ticket: bytes,
     agent_seed: bytes,
     tool_name: str,
     tool_input=None,
+    canonical: Optional[bytes] = None,
     digest_only: bool = False,
     features: Optional[Mapping[str, str]] = None,
     session_id: str = "",
@@ -149,8 +179,20 @@ def build_authorize_request(
     (the digest is computed over those exact bytes, so client and server can never disagree on what
     was hashed). ``digest_only=True`` omits the raw bytes — the audit-grade mode for sensitive tools;
     the guard scan and TRANSFORM are unavailable without the input.
+
+    ``canonical`` is the alternative: already-canonical JCS bytes the caller derived itself, via
+    :func:`canonicalize_tool_input`. It is **mutually exclusive** with ``tool_input``, and the two
+    together are an error rather than a precedence rule — silently preferring one is exactly the
+    shape of failure this parameter exists to remove (seam-sdk#60). Supplying it means the value is
+    derived once, by the caller, so there is no second derivation to disagree with the first.
+
+    **The SDK does not re-canonicalize ``canonical`` to check it**, and that is the point rather than
+    an omission: re-deriving to validate would reinstate the very second derivation being removed.
+    Only what can be checked *without* re-deriving is checked — that it is ``bytes`` and non-empty.
+    Canonicality is the caller's assertion, and a caller can only misrepresent its own input, which
+    it already controls, under its own signature.
     """
-    canonical = canonicalize_tool_input(tool_input)
+    canonical = _resolve_canonical(tool_input, canonical)
     digest = tool_input_digest(canonical)
     req = pb.AuthorizeRequest(
         ticket=ticket,

@@ -21,6 +21,7 @@ from ._authorize import (
     AuthorizeResult,
     TicketCache,
     build_authorize_request,
+    canonicalize_tool_input,
     result_of,
 )
 from .client import (
@@ -204,6 +205,11 @@ class SeamClient:
         Ticket lifecycle: lazy admit, cached, refreshed at 80% TTL, retried exactly once on
         ``UNAUTHENTICATED``. An unknown verdict raises ``UnknownVerdictError`` — never an
         implicit allow."""
+        # Canonicalized ONCE, before the admit and outside the closure — see the sync twin in
+        # client.py for why. It matters MORE here: an aio client is the one most likely to have
+        # hundreds of authorizes genuinely in flight, so it has the widest window for a framework to
+        # mutate a tool_input dict between the first attempt and the retry (seam-sdk#60).
+        canonical = canonicalize_tool_input(tool_input)
         cache, lock = await self._cache_and_lock(agent.aid)
         async with lock:
             ticket = cache.get(_now_ms())
@@ -212,11 +218,12 @@ class SeamClient:
 
         def build(t: bytes) -> pb.AuthorizeRequest:
             # Rebuilt after a refresh — call_sig binds the ticket bytes, so it must be re-signed.
+            # The canonical bytes are NOT rebuilt; that is the fix.
             return build_authorize_request(
                 ticket=t,
                 agent_seed=agent.seed,
                 tool_name=tool_name,
-                tool_input=tool_input,
+                canonical=canonical,
                 digest_only=digest_only,
                 features=features,
                 session_id=session_id,

@@ -20,6 +20,7 @@ from ._authorize import (
     AuthorizeResult,
     TicketCache,
     build_authorize_request,
+    canonicalize_tool_input,
     result_of,
 )
 from .crypto import aid_from_pubkey, build_presentation, verify_tct
@@ -272,12 +273,20 @@ class SeamClient:
         without the Authorize service raises ``UnimplementedError``; adapters typically degrade to
         their Observe tier on it.
         """
+        # Canonicalized ONCE, before the ticket is acquired and outside the closure below. Both
+        # halves of that are load-bearing. Inside the closure it was re-derived on the refresh-and-
+        # retry path — `build` is called twice — so a tool_input mutated during the admit RTT was
+        # signed and sent with a DIFFERENT digest on the retry than on the first attempt, and the
+        # request was internally consistent, so the runtime accepted it (seam-sdk#60). Before the
+        # ticket, so uncanonicalizable input fails without first spending an admit round trip.
+        # `ts/src/client.ts` has always hoisted it; this is the Python twin catching up.
+        canonical = canonicalize_tool_input(tool_input)
         ticket = self._ticket_for(agent, timeout)
         build = lambda t: build_authorize_request(  # noqa: E731 — rebuilt on refresh (new call_sig)
             ticket=t,
             agent_seed=agent.seed,
             tool_name=tool_name,
-            tool_input=tool_input,
+            canonical=canonical,
             digest_only=digest_only,
             features=features,
             session_id=session_id,
