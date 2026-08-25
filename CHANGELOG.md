@@ -18,6 +18,30 @@ than trusting a summary here.
 
 ### Added
 
+- **`canonicalize_tool_input()` and `authorize(canonical=…)` — derive the tool-input digest once,
+  not twice** (seam-sdk#60). A caller that needs the digest *before* the call — to record it on a
+  handle row — canonicalized the input itself and then handed the object to the SDK, which
+  canonicalized it again. Two derivations of one caller-supplied object, separated by a round trip.
+  When they disagreed the SDK raised a **builtin**, which a consumer classifying `SeamError` as
+  policy and everything else as transport reads as an availability failure — and under `FAIL_OPEN`
+  an availability failure runs the gated tool with **zero RPCs sent**.
+
+  Pass `canonical=` (Python, both clients; `opts.canonical` in TypeScript) and the value is derived
+  once, by you. The bytes are deliberately **not** re-canonicalized to validate them — re-deriving
+  to check would reinstate the second derivation — so canonicality is the caller's assertion.
+  `tool_input` and `canonical` together is an error, not a precedence rule.
+
+- **`CanonicalizationError`**, a `SeamError` that is *also* a `ValueError` and a `TypeError`. Purely
+  additive: canonicalization already failed with one builtin or the other, a caller cannot predict
+  which a given input triggers, so any existing `except ValueError`/`except TypeError` keeps working
+  while new code can classify it. One behaviour change to know about: a consumer that specifically
+  caught `RuntimeError` around an authorize call — the mutating-dict case — no longer catches it
+  there. That is the intended effect, not a side effect.
+
+  Note the residual: `jcs_canonicalize` called directly still raises builtins, under both
+  `seam_sdk.jcs_canonicalize` and `seam_sdk.crypto.jcs_canonicalize`. `crypto.py` may import
+  `cryptography` and nothing else, so it cannot reach the error taxonomy — see `DECISIONS.md`.
+
 - **The vendored spec's "verbatim" claim is now enforced** — `verify/docs/seam-event.v1.md` opens by
   declaring itself a byte-identical copy of seam-runtime's `docs/specs/seam-event.v1.md` at a named
   commit. Nothing checked that, and it had gone stale three times: once omitting the
@@ -150,7 +174,35 @@ than trusting a summary here.
   the wire; only the hand-written wrappers omitted it, unlike `enforce_retention`, which already
   exposed the identical field (#39).
 
+### Changed
+
+- **`jcs_canonicalize` accepts more integers, and the rule is no longer a magnitude test.** It
+  previously refused any `int` with `|v| > 2^53`. It now accepts an integer iff JCS renders it *as
+  itself*, which admits `10**16`, `10**20` and their negatives, and still refuses `2**53 + 1`.
+
+  It also **refuses some integers that "exactly representable as an IEEE double" would admit**, and
+  that is the point rather than a limitation: `2**60` is exactly representable, but ES6 prints the
+  shortest round-tripping digits, so JCS renders it `1152921504606847000` — a different number.
+  Accepting it would sign a digest over a value nobody supplied.
+
+  No canonical output changed for any input that was already accepted, and every byte string the
+  integer path can now emit was already emittable for the equivalent float — so no new wire shape
+  reaches the runtime. TypeScript's `bigint` path follows the same rule and the same rendering,
+  pinned byte-for-byte against Python by `conformance/authorize_jcs_int_extended.json`.
+
 ### Fixed
+
+- **`authorize` canonicalized its input twice on the `UNAUTHENTICATED` retry path** (seam-sdk#60).
+  Both Python clients built the request through a closure that is called once before the ticket
+  refresh and once after, re-deriving the canonical bytes each time. A `tool_input` mutated during
+  the admit round trip was therefore signed and sent with a **different digest on the retry than on
+  the first attempt** — and the retried request is internally consistent, so the runtime accepts it.
+  The SDK authorized different input than it first asked about. No caller discipline could prevent
+  this; it was entirely inside the SDK. TypeScript never had it.
+
+- **An `IntEnum` could put invalid JSON inside a signed digest on Python 3.10**, this package's
+  declared floor. The integer path rendered with `str(v)`, and on 3.10 `str(SomeIntEnum.MEMBER)` is
+  `"Color.RED"`. It now renders through `int.__repr__`.
 
 - **`digest_schema` is documented as a ceiling, not a description** — `verify/proto/seam/event/v1/
   seam_event.proto` described it as "the record-digest formula the attested chain uses", a reading

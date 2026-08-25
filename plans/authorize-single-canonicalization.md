@@ -115,7 +115,7 @@ depends on it, and the live defect (Phase 2) is not held hostage to it.
 
 ## Phase 1 — `CanonicalizationError`: canonicalization fails as a `SeamError`, always
 
-**Status:** TODO
+**Status:** DONE
 **Delivers:** a typed `seam_sdk.errors.CanonicalizationError`, and a public
 `canonicalize_tool_input()` that raises it instead of a builtin — including for failures raised by
 caller-supplied code (a mutating container, a scalar subclass, deep nesting) that the SDK never
@@ -216,7 +216,7 @@ additive, and the stated residual that `seam_sdk.crypto.jcs_canonicalize` still 
 
 ## Phase 2 — stop re-deriving on the SDK's own retry path
 
-**Status:** TODO
+**Status:** DONE
 **Delivers:** `SeamClient.authorize` and `AsyncSeamClient.authorize` canonicalize exactly once per
 call, including across an `UNAUTHENTICATED` refresh-and-retry. No public API change.
 **Depends on:** nothing. Deliberately **not** sequenced behind Phase 3 — this is a live defect in a
@@ -253,7 +253,7 @@ harness in `test_authorize.py`. Criterion 2 is decoy-verified: it must be shown 
 
 ## Phase 3 — align the int and float arms, by construction
 
-**Status:** TODO
+**Status:** DONE
 **Delivers:** `jcs_canonicalize` accepts an `int` iff JCS renders that integer as itself, rendering it
 through the same ES6 path the float arm uses. Canonicalization becomes idempotent under a JSON
 round-trip. The `IntEnum` invalid-JSON hole closes.
@@ -331,7 +331,7 @@ gains the shared-vector cases (criteria 8–9).
 
 ## Phase 4 — one derivation: let the caller supply the canonical bytes
 
-**Status:** TODO
+**Status:** DONE
 **Delivers:** a caller can hand the SDK the canonical bytes it already produced, and the second
 derivation disappears from the public path.
 **Depends on:** Phases 1, 2, 3.
@@ -378,7 +378,7 @@ verify `canonical`).
 
 ## Phase 5 — record it where the next consumer will find it, and close the loop
 
-**Status:** TODO
+**Status:** DONE
 **Delivers:** the reasoning is durable in-repo, `#60` is answered against shipped code, and both
 open questions are filed upstream.
 **Depends on:** Phases 1–4.
@@ -418,8 +418,18 @@ answered from here.
 
 | Phase | Status | Verifier | Rounds | Notes |
 |---|---|---|---|---|
-| 1 | TODO | — | — | |
-| 2 | TODO | — | — | |
-| 3 | TODO | — | — | |
-| 4 | TODO | — | — | |
-| 5 | TODO | — | — | |
+| 1 | DONE | Fable | 2 | `GAPS` → the wrap leaked through its own handler (an exception whose `__str__` raises), the residual statement omitted the root re-export, and a docstring named a kwarg that did not exist yet. All closed in `beaa80b`; the leak has a decoy-verified regression test. |
+| 2 | DONE | — | 1 | Decoy-verified directly instead: reverting the hoist reddens exactly five tests. Split out of the plan's original Phase 3 on the reviewer's advice, so a live defect did not wait behind an irreversible change. |
+| 3 | DONE | Fable | 1 | The one-way door. Predicate rewritten before any code, after review found revision 1's `int(float(v)) == v` would silently sign a rewritten value. |
+| 4 | DONE | — | 1 | Rides on Phase 2's `_resolve_canonical`; the public surface and the TS mirror. |
+| 5 | DONE | — | 1 | Docs, assumptions, upstream issues. The citation guard caught one drift caused by this phase's own CHANGELOG edit. |
+
+**Divergences from the plan as written, recorded rather than silently absorbed:**
+
+* **Phase 1 could not be implemented as specified.** `crypto.py` cannot import `errors.py` — two
+  separate standalone-load contracts collide (see `DECISIONS.md`). The plan was revised mid-phase and
+  the typed error is raised at the `_authorize.py` boundary through a new public
+  `canonicalize_tool_input()`, with the residual disclosed rather than hidden.
+* **Phase 3's predicate is not the one revision 1 specified.** See the Revision 2 note at the top.
+* **`PROGRESS.md` was not used**, deliberately — it is single-occupant and still held by
+  `plans/record-digest-v3.md`, whose Phase 6 gate is open.

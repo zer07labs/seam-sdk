@@ -61,7 +61,7 @@ mismatch cannot ship.
 
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
-**Nothing was yanked.** That decision is recorded at `CHANGELOG.md:466-471` and is not being
+**Nothing was yanked.** That decision is recorded at `CHANGELOG.md:521-526` and is not being
 re-litigated here: the affected versions install and produce a clear auth error rather than
 corrupting data, and revoking installability under a floor already in wide use has a larger blast
 radius than a loud advisory. The consequence is that **these versions remain installable**, so this
@@ -271,6 +271,66 @@ Concretely:
 
 This is a real constraint on what a change in this repo can do unilaterally, and it is documented
 here because nothing else in the repo says so.
+
+---
+
+## 8. `Authorize` input canonicalization — what widened, and what that costs you
+
+This section exists because §1 already says the hard part: **this SDK cannot express its own
+semver.** The changes below ship under whatever number the runtime's history computes, possibly a
+patch, so the callouts have to live here rather than in a version number.
+
+### The accepted integer set widened, and that is irreversible
+
+`jcs_canonicalize` previously refused any `int` with `|v| > 2^53`. It now accepts an integer iff JCS
+renders it as itself (`python/seam_sdk/crypto.py:223`, `ts/src/crypto.ts:188`). Practically:
+
+| value | before | now | why |
+|---|---|---|---|
+| `10**16` | refused | **accepted** | ES6 prints it as itself; `1e16` was always accepted, so the two arms disagreed about one number |
+| `10**20`, negatives of both | refused | **accepted** | same |
+| `2**53 + 1` | refused | refused | rounds to `2**53`; not a double at all |
+| `2**55`, `2**60` | refused | refused | exactly representable, but ES6 prints shortest digits — `2**60` renders `1152921504606847000` |
+| `10**21` and up | refused | refused | ES6 goes exponential; no decimal form can match |
+
+Two things a reader should take from that table. First, "exactly representable as an IEEE double" is
+**not** the rule, and adopting it would have been a silent-corruption bug rather than a stricter one:
+`2**60` passes that test and canonicalizes to a different number. Second, **no canonical output
+changed for any input that was already accepted**, and every byte string the integer path can now
+emit was already emittable for the equivalent float — so no new wire shape reaches the runtime, which
+is what makes an irreversible widening safe to ship against a runtime this repo is not permitted to
+read.
+
+Widening is one-way. Once `10**16` produces a digest a caller depends on it.
+
+### `CanonicalizationError` is additive; one narrow catch stops working
+
+`python/seam_sdk/errors.py:36`. It inherits `SeamError`, `ValueError` **and** `TypeError`, so every
+pre-existing `except ValueError` / `except TypeError` around a canonicalizing call still fires. The
+one thing that changes: a consumer that specifically caught `RuntimeError` — the mutating-dict case —
+no longer catches it at that call site. That is the intended effect of the fix, not a side effect of
+it.
+
+**Residual, stated rather than buried.** `jcs_canonicalize` called directly still raises builtins,
+under both `seam_sdk.jcs_canonicalize` and `seam_sdk.crypto.jcs_canonicalize`. `crypto.py` may import
+`cryptography` and nothing else — seam-runtime's digest-parity gate loads that one file standalone —
+so it cannot reach the taxonomy. Use `canonicalize_tool_input()`
+(`python/seam_sdk/_authorize.py:102`) to get the typed error. Tracked on seam-sdk#54.
+
+### `canonical=` hands you the derivation, and the responsibility with it
+
+`authorize(canonical=…)` (`python/seam_sdk/client.py:291`, `python/seam_sdk/aio.py:221`; `opts.canonical`
+in TypeScript, `ts/src/client.ts:265`) is additive and keyword-only. The SDK does **not** verify the
+bytes — re-deriving to check would reinstate the second derivation the parameter exists to remove.
+So two things become possible that were not:
+
+- with `digest_only`, a signature can be bound to a digest of bytes never revealed to anyone;
+- non-canonical bytes in an advisory audit row silently break third-party re-derivation — an auditor
+  parsing `tool_input` and re-canonicalizing gets a different digest.
+
+Neither is visible to the runtime unless the runtime validates canonicality itself, which this repo
+cannot determine. Filed upstream. If you are not pre-computing the digest for your own records, keep
+passing `tool_input` and none of this applies to you.
 
 ---
 
