@@ -420,3 +420,5 @@ actually waits on their call.
   passed / 17 skipped; ts 104 tests / 94 pass / 0 fail. Cross-language verdict agreement verified by
   the gate on identical spliced bytes for six cases.
 - **Next:** ship.
+- pushed feat/record-digest-v3-streamed-arms 4b60f6a
+- PR #63 opened: https://github.com/zer07labs/seam-sdk/pull/63
