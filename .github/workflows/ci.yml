@@ -74,13 +74,14 @@ jobs:
             echo "have_bot_app=false" >> "$GITHUB_OUTPUT"
             echo "seam-deps-bot App secrets absent — skipping spec-pin (a fork PR cannot read the private spec)"
           fi
-          # `integration` needs BOTH: BUF_TOKEN to generate the stubs, and the App to pull the
-          # published seamd image the live binary comes out of.
-          if [ -n "$BUF_TOKEN" ] && [ -n "$SEAM_BOT_APP_ID" ] && [ -n "$SEAM_BOT_PRIVATE_KEY" ]; then
+          # `integration` needs only BUF_TOKEN. It pulls the seamd image with the workflow's own
+          # GITHUB_TOKEN, so it adds no secret of its own — but BUF_TOKEN is what a fork PR lacks,
+          # which is still why the job is allowed to skip rather than required.
+          if [ -n "$BUF_TOKEN" ]; then
             echo "can_integrate=true" >> "$GITHUB_OUTPUT"
           else
             echo "can_integrate=false" >> "$GITHUB_OUTPUT"
-            echo "integration cannot run (needs BUF_TOKEN + the seam-deps-bot App secrets)"
+            echo "integration cannot run (no BUF_TOKEN, so the transport stubs cannot be generated)"
           fi
 
   python:
@@ -202,12 +203,16 @@ jobs:
   # while appearing in every check list. Found while wiring `spec-pin` (2026-08-25), fixed here.
   #
   # It is NOT fixed by handing the old design a working token. That design checked out the private
-  # runtime and ran `cargo build` on it — which executes another repository's `build.rs` and proc
-  # macros with a repo-scoped credential live in the environment. This one pulls the already-published
-  # `seamd` image and lifts `seam-grpc` out of it, so the token buys `packages: read` on one internal
-  # package, is discarded before any foreign code runs, and no source is fetched at all. It is also
-  # minutes faster, and it exercises the artifact the fleet actually deploys rather than a debug build
-  # of the same commit.
+  # runtime and ran `cargo build` on it — executing another repository's `build.rs` and proc macros
+  # with a repo-scoped credential live in the environment for everything that followed. This one
+  # pulls the already-published `seamd` image and lifts `seam-grpc` out of it, so NO new credential
+  # exists at all: `seamd` is an `internal` package, readable by this workflow's own GITHUB_TOKEN
+  # with `packages: read`. No source is fetched. It is also minutes faster, and it exercises the
+  # artifact the fleet actually deploys rather than a debug build of the same commit.
+  #
+  # A seam-deps-bot App token was tried first and is strictly worse on both axes: GHCR denied it
+  # scoped to seam-runtime AND scoped to the org, because `internal` visibility does not extend to a
+  # GitHub App installation — and it would have been a wider credential for the identical read.
   #
   # `seam-grpc` links only libc/libm/libgcc (verified), and the image is Debian 12 (glibc 2.36) while
   # the runner is newer — so the extracted binary runs natively and BOTH suites spawn it exactly as
@@ -231,51 +236,19 @@ jobs:
       packages: read
     steps:
       - uses: actions/checkout@v4
-      - name: Mint a seam-deps-bot App token that can read GHCR packages
-        id: app
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ secrets.SEAM_BOT_APP_ID }}
-          private-key: ${{ secrets.SEAM_BOT_PRIVATE_KEY }}
-          owner: zer07labs
-          # NOT scoped with `repositories:`, unlike spec-pin's token, and the difference is not
-          # cosmetic: a repository-scoped installation token is denied by GHCR even for a package
-          # owned by that very repository (verified — `docker login` succeeds, `docker pull` returns
-          # `denied`). Package reads resolve against the ORG installation, so the scoping has to come
-          # from the permission instead. `packages: read` is the only one granted, and it is the only
-          # one requested: this token cannot read a line of source in any repo, which is the property
-          # that actually matters here.
-          permission-packages: read
       - name: lift seam-grpc out of the published seamd image
         env:
-          # Two candidates, tried narrowest-first. GITHUB_TOKEN is scoped to THIS repository and
-          # needs no secret at all; it works only if seam-runtime/seamd grants this repo package
-          # access. The App token is the fallback. Preferring the first means that if someone later
-          # grants the package properly, this job silently stops needing the App at all.
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APP_TOKEN: ${{ steps.app.outputs.token }}
+          # The repository's OWN token, and nothing else. `seamd` is an `internal` package, which a
+          # sibling repo's GITHUB_TOKEN can read given `packages: read` above — verified on this
+          # branch. A seam-deps-bot App token was tried first and is strictly worse: GHCR denied it
+          # both repo-scoped and org-scoped (internal visibility does not extend to an App
+          # installation), and it would have been a wider credential for the same read.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           IMAGE: ghcr.io/zer07labs/seam-runtime/seamd:main
         run: |
           set -euo pipefail
-          pulled=""
-          for who in GITHUB_TOKEN APP_TOKEN; do
-            token="${!who}"
-            [ -n "$token" ] || { echo "· $who: not available"; continue; }
-            if ! printf '%s' "$token" | docker login ghcr.io -u x-access-token --password-stdin >/dev/null 2>&1; then
-              echo "· $who: could not authenticate to ghcr.io"
-              continue
-            fi
-            if docker pull -q "$IMAGE" >/dev/null 2>&1; then
-              echo "· $who: authenticated AND authorised — using this one"
-              pulled="$who"
-              break
-            fi
-            # Authenticated but refused: that is an AUTHORISATION answer about this package, and it
-            # is worth distinguishing in the log from a credential that simply could not log in.
-            echo "· $who: authenticated, but the pull was denied (not authorised for this package)"
-            docker logout ghcr.io >/dev/null 2>&1 || true
-          done
-          if [ -z "$pulled" ]; then
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u x-access-token --password-stdin
+          if ! docker pull -q "$IMAGE"; then
             echo '::error::Cannot pull the seamd image. A successful docker login followed by a'\
                  ' denied pull means the token authenticated but is not authorised for this'\
                  ' package. GHCR does not treat an internal package as readable by a GitHub App'\
@@ -301,6 +274,29 @@ jobs:
           # it catches a missing library or a GLIBC symbol-version mismatch rather than mere presence.
           timeout 10s "$GITHUB_WORKSPACE/seam-grpc" --version 2>&1 | head -1 || true
           ldd "$GITHUB_WORKSPACE/seam-grpc"
+      # The suites spawn this binary with stdout and stderr sent to /dev/null, so when it fails to
+      # start they can only report `server never came up` — a message that describes the symptom and
+      # names nothing. Starting it ONCE here, with its output visible, is the difference between a
+      # diagnosable failure and a guess.
+      - name: smoke — the binary must actually serve before the suites depend on it
+        run: |
+          set -uo pipefail
+          SEAM_GRPC_LISTEN=127.0.0.1:8099 SEAM_DEV_INSECURE=1 \
+            "$GITHUB_WORKSPACE/seam-grpc" > /tmp/seam-grpc.log 2>&1 &
+          pid=$!
+          for _ in $(seq 1 60); do
+            if (exec 3<>/dev/tcp/127.0.0.1/8099) 2>/dev/null; then
+              echo "seam-grpc is serving on 8099"
+              kill "$pid" 2>/dev/null || true
+              exit 0
+            fi
+            kill -0 "$pid" 2>/dev/null || break   # it died; stop waiting on a corpse
+            sleep 0.5
+          done
+          echo "::error::seam-grpc did not serve. Its own output follows — this is the binary's"\
+               ' failure, not the test suite'"'"'s.'
+          cat /tmp/seam-grpc.log
+          exit 1
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
