@@ -38,7 +38,11 @@ GATE = "ci-ok"
 #: outside contribution forever. Advisory does NOT mean tolerated — a job in this set that RUNS
 #: and FAILS still blocks the merge.
 #:
-#:   * integration — needs a live seam-grpc built from the private runtime.
+#:   * integration — needs a live seam-grpc, lifted from the published (internal) seamd image via a
+#:     scoped seam-deps-bot App token. It had ALWAYS skipped until 2026-08-25, because it gated on a
+#:     `RUNTIME_REPO_TOKEN` that was never configured anywhere — a job in every check list that had
+#:     never once executed. That is the sharpest argument for this file existing: advisory made the
+#:     silence survivable, and nothing else would have noticed.
 #:   * spec-pin    — reads the private runtime spec it compares against (via a scoped seam-deps-bot
 #:     App token), which a fork PR's secretless run cannot do. It is
 #:     the only job that can check the vendored copy at all, because the proof lives in another

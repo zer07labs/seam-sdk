@@ -67,7 +67,8 @@ drifts from the published contract with nothing objecting.
 ## Backends
 
   * `--from gh` — the GitHub API, authenticated by `GH_TOKEN`. THE authoritative backend, and the
-    one CI uses; `seam-runtime` is private, so this needs `RUNTIME_REPO_TOKEN`.
+    one CI uses; `seam-runtime` is private, so this needs a token that can read it — in CI, a
+    short-lived seam-deps-bot App token scoped to that repo.
   * `--from local:<dir>` — a sibling checkout, via `git show`. A convenience for running this
     before pushing. It is only as current as the last `git fetch`, which is why CI does not use
     it, and why REACHABILITY exists.
