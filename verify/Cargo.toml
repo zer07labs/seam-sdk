@@ -16,6 +16,20 @@ readme = "README.md"
 keywords = ["audit", "verification", "ed25519", "hash-chain", "gdpr"]
 categories = ["command-line-utilities", "cryptography"]
 
+# `tests/conformance.rs` reads `../conformance/vectors.json` — the ONE copy of the cross-repo vector
+# file that seam-runtime's `sdk-digest-parity` job byte-diffs against its own emitter. A published
+# crate is a standalone tarball with no parent directory, so that test cannot run from it.
+#
+# Excluding it is the honest option. Vendoring a second copy of the vectors into the package would
+# make the test "work" while creating exactly what the single-file contract exists to prevent: a
+# second copy to drift. Shipping the test to fail on a missing path would be worse still — the test's
+# whole value is that it refuses to skip, and a package where it always fails teaches consumers to
+# ignore it. The formula's distinguishing behaviour — None vs Some(""), tag 13 absent vs zeroed,
+# the tag-11/12 slot binding, and strip-vs-mismatch — is therefore ALSO covered by unit tests in
+# `src/verify.rs`, which need nothing outside the package. Someone who installs this crate and
+# runs `cargo test` sees the formula defended, not merely present.
+exclude = ["tests/conformance.rs"]
+
 # MSRV. There was NONE before publishing was contemplated, and crates.io would have accepted that
 # silently: a published crate with no `rust-version` gives a consumer no signal at all, and they find
 # out from a compile error instead.

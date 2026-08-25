@@ -66,5 +66,45 @@
       "schema_version": 2
     },
     "digest_hex": "3817863521537d347c112bb95d7960d3d9f3007ee041f59c87bcaaf88ac40785"
+  },
+  "record_digest_v3": {
+    "inputs": {
+      "domain": "seam.audit.record-digest.v3",
+      "decision_id": "dec:conformance",
+      "tenant": "acme",
+      "namespace": "fraud",
+      "ciphertext_hex": "636f6e666f726d616e63652d636970686572746578742d0001ff",
+      "ciphertext_digest_hex": "67d9f6952981d85f7a2cabb0d5468e6934dc63ec55b480f18339277afc7635a6",
+      "sealed_at": 1700000000000,
+      "outcome": "Resolved",
+      "mode": "decision.v1",
+      "policy_version": null,
+      "supersedes": null,
+      "context_digest_hex": "206f43bde4db008ca2c9b648cd6782252cfd8dbbbd70f63e63765601c6e653cd",
+      "participation_digest_hex": "66c8ae346f5284cc62cf29e6681b16a98db7a3bba458a4d494273a267ba69c02",
+      "policy_rules_digest_hex": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+      "schema_version": 3
+    },
+    "digest_hex": "52cc843bebed28ac65b75a67bb70102f3d932b3507de5696905bb6baa3530927"
+  },
+  "record_digest_v3_absent_policy": {
+    "inputs": {
+      "domain": "seam.audit.record-digest.v3",
+      "decision_id": "dec:conformance",
+      "tenant": "acme",
+      "namespace": "fraud",
+      "ciphertext_hex": "636f6e666f726d616e63652d636970686572746578742d0001ff",
+      "ciphertext_digest_hex": "67d9f6952981d85f7a2cabb0d5468e6934dc63ec55b480f18339277afc7635a6",
+      "sealed_at": 1700000000000,
+      "outcome": "Resolved",
+      "mode": "decision.v1",
+      "policy_version": null,
+      "supersedes": null,
+      "context_digest_hex": "206f43bde4db008ca2c9b648cd6782252cfd8dbbbd70f63e63765601c6e653cd",
+      "participation_digest_hex": "66c8ae346f5284cc62cf29e6681b16a98db7a3bba458a4d494273a267ba69c02",
+      "policy_rules_digest_hex": null,
+      "schema_version": 3
+    },
+    "digest_hex": "e910e32e7df4aedd1846cf6d66201026e329759dd495b9d81343624ff0e2bfeb"
   }
 }

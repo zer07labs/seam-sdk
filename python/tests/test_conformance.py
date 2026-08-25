@@ -8,6 +8,8 @@ against a real server.
 import json
 import pathlib
 
+import pytest
+
 from seam_sdk.crypto import aid_from_pubkey, build_presentation, verify_tct
 
 VECTORS = json.loads(
@@ -201,4 +203,231 @@ def test_commitment_digest_is_injective_across_field_boundaries():
     assert verify_tct(iss, jws, shifted, now_s=NOW_S) is False, (
         "a boundary-shifted commitment verified — the framing is separator-joined, not "
         "length-prefixed, and one artifact can now verify under another's signature"
+    )
+
+
+# ── record_digest_v3 (issue #56, B3 Phase 2) ─────────────────────────────────────────────────────
+#
+# The v3 cases come from TWO files, and the split is deliberate:
+#
+#   * `conformance/vectors.json` carries `record_digest_v3` and `record_digest_v3_absent_policy`,
+#     one `{inputs, digest_hex}` each. Those bytes are seam-runtime's — its `sdk-digest-parity` gate
+#     runs `diff -u` between that whole file and its own emitter's output, so the two repos agree on
+#     every byte, not merely on every digest. Reproducing them is what "four independent
+#     implementations agree" actually means, and it is the check that must never be skipped.
+#
+#   * `conformance/record_digest_v3_extended.json` carries five more cases, emitted by THIS repo's
+#     implementation. Two fixtures cannot express `mode: ""` vs `mode: null`, and carry no decomposed
+#     non-ASCII — both traps the spec singles out. Adopting these upstream is proposed separately;
+#     until then they live here so the coverage exists somewhere rather than nowhere.
+#
+# So the tests below are of two kinds: reproduce every case from both files, AND prove the extended
+# file was not hand-edited.
+
+EXTENDED_V3 = json.loads(
+    (
+        pathlib.Path(__file__).parents[2]
+        / "conformance"
+        / "record_digest_v3_extended.json"
+    ).read_text()
+)
+
+#: block name in `vectors.json` → the name it takes once normalised into the extended shape.
+RUNTIME_V3_BLOCKS = {
+    "record_digest_v3": "runtime_bound_policy",
+    "record_digest_v3_absent_policy": "runtime_absent_policy",
+}
+
+
+def _v3_cases():
+    cases = []
+    for block, name in RUNTIME_V3_BLOCKS.items():
+        # A renamed or dropped runtime block is a BROKEN CROSS-REPO CONTRACT, not a thinner vector
+        # set — fail loudly here rather than quietly testing five SDK-authored cases and calling it
+        # parity.
+        assert block in VECTORS, (
+            f"conformance/vectors.json has no `{block}` block. That file is byte-diffed by "
+            "seam-runtime's sdk-digest-parity gate; a missing block means this repo and the "
+            "runtime have stopped agreeing on the vector set, not that a case was tidied away."
+        )
+        b = VECTORS[block]
+        cases.append(
+            {"name": name, "inputs": b["inputs"], "digest_hex": b["digest_hex"]}
+        )
+    extended = EXTENDED_V3["cases"]
+    # Guard-the-guard: an empty or renamed block would make every loop below vacuous.
+    assert extended, (
+        "record_digest_v3_extended.json carries zero cases — the vector proves nothing"
+    )
+    cases.extend(extended)
+    return cases
+
+
+def _recompute(case):
+    from seam_sdk.crypto import record_digest_v3
+
+    i = case["inputs"]
+    rules = i["policy_rules_digest_hex"]
+    return record_digest_v3(
+        i["decision_id"],
+        i["tenant"],
+        i["namespace"],
+        bytes.fromhex(i["ciphertext_digest_hex"]),
+        i["sealed_at"],
+        i["outcome"],
+        i["mode"],
+        i["policy_version"],
+        i["supersedes"],
+        bytes.fromhex(i["context_digest_hex"]),
+        bytes.fromhex(i["participation_digest_hex"]),
+        None if rules is None else bytes.fromhex(rules),
+        i["schema_version"],
+    )
+
+
+def test_record_digest_v3_matches_reference_all_cases():
+    for case in _v3_cases():
+        assert _recompute(case).hex() == case["digest_hex"], (
+            f"case {case['name']!r} disagrees"
+        )
+
+
+def test_the_v3_comparison_is_not_vacuous():
+    # A loop that compared a value to itself, or a `bytes.fromhex` that silently produced the same
+    # input for every case, would pass the test above forever. Corrupt one input and require the
+    # recompute to move.
+    case = dict(_v3_cases()[0])
+    case["inputs"] = dict(case["inputs"], tenant="not-acme")
+    assert _recompute(case).hex() != case["digest_hex"]
+
+
+def test_the_v3_cases_cover_the_traps_they_exist_for():
+    """Each case is here for a named reason; assert the set has not been quietly trimmed."""
+    names = {c["name"] for c in _v3_cases()}
+    assert {
+        # seam-runtime's own two blocks — the cross-repo contract.
+        "runtime_bound_policy",
+        "runtime_absent_policy",
+        # this repo's extended set.
+        "all_optionals_present",
+        "policy_rules_absent",
+        "optionals_none",
+        "mode_empty_string",
+        "non_ascii_nfd",
+    } <= names, f"a v3 vector case was removed: have {sorted(names)}"
+
+
+def test_absent_and_empty_mode_are_different_vectors():
+    # opt(None) is one byte, opt(Some("")) is five. Pinned cross-language here rather than only as a
+    # Python unit test, because it is a distinction a TS or Rust transcription can collapse on its
+    # own — `null` and `""` are easy to conflate at a JSON boundary.
+    by_name = {c["name"]: c for c in _v3_cases()}
+    none_case, empty_case = by_name["optionals_none"], by_name["mode_empty_string"]
+    assert none_case["inputs"]["mode"] is None and empty_case["inputs"]["mode"] == ""
+    assert none_case["digest_hex"] != empty_case["digest_hex"]
+
+
+def test_the_two_mandatory_sub_digests_differ_in_every_case():
+    # Slots 10 and 11 are adjacent and are offset by one from their wire tags, so an implementation
+    # that wires them by tag number produces a swap. Equal fixtures would make that swap invisible —
+    # this asserts the vectors can actually catch it.
+    for case in _v3_cases():
+        i = case["inputs"]
+        assert i["context_digest_hex"] != i["participation_digest_hex"], case["name"]
+
+
+def test_at_least_one_case_is_not_ascii():
+    # The spec requires raw UTF-8 with no normalization and singles it out as the step
+    # implementations get wrong. An all-ASCII vector set cannot distinguish a conforming
+    # implementation from one that normalizes or uses the wrong codec.
+    assert any(
+        not str(v).isascii()
+        for case in _v3_cases()
+        for v in case["inputs"].values()
+        if isinstance(v, str)
+    ), (
+        "every v3 vector input is ASCII — the normalization trap is untested cross-language"
+    )
+
+
+def test_the_non_ascii_case_is_still_in_a_decomposed_form():
+    """Non-ASCII is necessary but nowhere near sufficient.
+
+    `test_at_least_one_case_is_not_ascii` passes just as happily on NFC text — so if anything ever
+    normalized either the emitter's source literal or this file, that guard stays green while the
+    case quietly stops being able to fail a normalizing implementation. This asserts the property
+    the case actually claims, against the committed bytes rather than against the emitter.
+    """
+    import unicodedata
+
+    by_name = {c["name"]: c for c in _v3_cases()}
+    strings = [
+        v for v in by_name["non_ascii_nfd"]["inputs"].values() if isinstance(v, str)
+    ]
+    decomposed = [s for s in strings if unicodedata.normalize("NFC", s) != s]
+    assert decomposed, (
+        "the non_ascii_nfd vector carries no decomposed text any more — every string in it is "
+        "unchanged by NFC normalization, so an implementation that normalizes before hashing "
+        "would reproduce this case and the vector has stopped testing the spec rule it exists for."
+    )
+
+
+def test_the_case_loader_refuses_a_missing_runtime_block():
+    """The property every v3 test above rests on: the loader cannot quietly stop testing anything.
+
+    A guard that has never been watched to fire is not a guard — it is a comment with a keyword in
+    it. So this doctors the loaded document and requires the refusal, per block: a version that
+    checked only the first would let the second disappear in silence, which is the exact hole the
+    Rust twin had before it was parametrized.
+    """
+    for block in RUNTIME_V3_BLOCKS:
+        saved = VECTORS.pop(block)
+        try:
+            with pytest.raises(AssertionError, match=block):
+                _v3_cases()
+        finally:
+            VECTORS[block] = saved
+
+
+def test_the_case_loader_refuses_an_emptied_extended_set():
+    # The other way the loop goes vacuous: the file is present and parses, but carries nothing.
+    saved = EXTENDED_V3["cases"]
+    EXTENDED_V3["cases"] = []
+    try:
+        with pytest.raises(AssertionError, match="zero cases"):
+            _v3_cases()
+    finally:
+        EXTENDED_V3["cases"] = saved
+
+
+def test_the_extended_v3_file_is_what_the_emitter_produces():
+    """The committed extended file must be byte-identical to a fresh run of the emitter.
+
+    This is the check that makes "vectors are never transcribed by hand" enforceable rather than
+    aspirational: edit a `digest_hex` in the file and this goes red, because the emitter recomputes
+    it. It also pins the RENDERING (indent, escaping, key order) — which is what makes adopting
+    these cases into `conformance/vectors.json` upstream a copy rather than a re-render.
+
+    `conformance/vectors.json` itself is deliberately NOT emitted here: those bytes are
+    seam-runtime's. What proves them is recomputation — `test_record_digest_v3_matches_reference_
+    all_cases` runs this repo's implementation against them like any other case.
+    """
+    import subprocess
+    import sys
+
+    repo = pathlib.Path(__file__).resolve().parents[2]
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(repo / "scripts" / "emit_record_digest_v3_vectors.py"),
+            "--check",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert proc.returncode == 0, (
+        "conformance/record_digest_v3_extended.json is not what "
+        "scripts/emit_record_digest_v3_vectors.py emits.\n"
+        f"{proc.stdout}\n{proc.stderr}"
     )

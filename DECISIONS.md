@@ -5,6 +5,71 @@ assumption, the independent recommender's analysis, the human verdict, and the r
 `/ship` and any later reconciliation read this file instead of replaying the conversation that
 produced it.
 
+## 2026-08-24 — reconcile `plans/record-digest-v3.md`'s ASSUMPTIONS.md (4 entries)
+
+Issue #56, Phases 3–4.5. The owner delegated the call on all four to a Fable reviewer rather than
+taking it personally; it verified each against the code, the spec and the tests rather than against
+the entries' own reasoning, which matters here because every entry was written by the person who
+made the choice and is therefore an argument for itself. **All four CONFIRMED; none blocked the
+merge.** One entry's stated reasoning was corrected in the process — recorded below as corrected,
+not as written.
+
+### v3 validates every input; v2 deliberately still does not
+- **Reviewer (Fable):** CONFIRM, with the reasoning corrected. The alias argument is empirically
+  true **in TypeScript** — verified by execution, not by reading: a 32-character string frames
+  byte-identically to 32 zero bytes (`Uint8Array.set` coerces each char ToNumber→NaN→0), and
+  `setBigUint64(2**64+5)` writes the same eight bytes as `5`. **In Python those same two inputs
+  raise rather than alias**, so the entry's unscoped "three of these coercions produce an alias" was
+  over-generalized. Python's validation still earns its place by a different route: v2 accepts a
+  `memoryview(array("I", [0]*32))` and produces a digest whose length prefix claims 32 while 128
+  bytes are hashed — the exact injectivity break framing exists to prevent — and v3 refuses it
+  (`python/seam_sdk/crypto.py:378-408`).
+- **Correction to the entry's blast-radius claim:** "every such digest was wrong, so no correct
+  caller breaks" is too strong. A proto3-JSON int64-as-string (`sealedAt: "123"`) coerced
+  *correctly* through `BigInt` under the old TS behavior and is now refused. The refusal is loud, at
+  the first record, and names the fix (`ts/src/crypto.ts:509-522`) — and accepting strings reopens
+  `BigInt("")→0n` and `BigInt([5])→5n`. The choice stands; the justification does not extend to
+  "nothing that used to work stops working."
+- **v2 freeze held:** `git diff main...HEAD` shows zero removed lines in `crypto.py` and a purely
+  additive `vectors.json`.
+- **Verdict:** Confirm. **Status:** CONFIRMED.
+
+### The v1 skip is a downgrade hole, closed structurally rather than documented
+- **Reviewer (Fable):** CONFIRM. Every load-bearing claim resolves. The guard keys on the four
+  columns and never on the version alone (`verify/src/verify.rs:518-523`); a genuine v1 record falls
+  through to `continue` and is tested twice — `verify/tests/authenticity.rs:238` and `:878`, the
+  latter asserting skipped-not-recomputed. The per-column parametrization at `:843-875` exercises
+  each column with the other three removed, and the comment at `:841` records the decoy that forced
+  it. The spec sentence it rests on is verbatim at `verify/docs/seam-event.v1.md:271-272`:
+  `ciphertext_digest` "is absent (no wire bytes) only on `schema_version = 1` payloads."
+- **Verdict:** Confirm. **Status:** CONFIRMED.
+
+### `frame`'s `len() as u32` truncates above 4 GiB, in Rust only
+- **Reviewer (Fable):** CONFIRM, and the three-way divergence (Python raises, TS wraps, Rust
+  truncates) is moot because all three are **fail-closed**: a truncated prefix still appends the full
+  bytes, so the preimage cannot equal the runtime's, the recompute mismatches, and the record FAILS.
+  A false *pass* would need a SHA-256 second preimage. Reaching it at all needs a multi-gigabyte
+  single field parsed out of one JSONL line, and a JS string cannot hold 2^32 characters.
+- **Why not fix it here:** an asymmetric length guard inside v3's `frame` breaks the "v3 framing is
+  v2's framing plus three slots" transcription property for zero security gain. A guard in **both**
+  versions, as its own change, remains the right shape if anyone wants it — and does not need this
+  entry held open to exist.
+- **Verdict:** Confirm. **Status:** CONFIRMED.
+
+### The v3 conformance cases live in a second file, not in `conformance/vectors.json`
+- **Reviewer (Fable):** CONFIRM **now**, not pending seam-runtime's answer — overriding the
+  suggestion that this wait on them. The factual core is verifiable today and independent of the
+  outcome: `sdk-digest-parity.sh` byte-diffs the *entire* file against a fresh runtime emit, so
+  SDK-authored cases in it redden runtime CI as fake drift, exactly as assumed. The extended file is
+  loaded by all three suites (`python/tests/test_conformance.py:231`,
+  `ts/tests/conformance.test.ts:187`, `verify/tests/conformance.rs:73`).
+- **The deciding argument:** all three of seam-runtime#433's options leave the current arrangement
+  correct — adopt means copy-and-delete at the same rendering, decline means the file stays. Nothing
+  waits on their call, and deferring would leave `ASSUMPTIONS.md` shadowing a GitHub issue that
+  already tracks the follow-up.
+- **Verdict:** Confirm. **Status:** CONFIRMED. #433 owns the remainder.
+
+
 ## 2026-08-24 — `plans/archive/close-out-w1-w7-loose-ends.md` Phase 3: framework co-installability is a probe, not a table of versions
 
 ### Scope: the frameworks are the ones `seam-adapters` ships a shim for

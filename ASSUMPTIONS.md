@@ -192,3 +192,115 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   one. Reversible in one commit by splitting the job. The `verify-msrv` job comment records the
   condition and the correct response.
 - **Status:** UNCONFIRMED
+
+## v3 validates every input; v2 deliberately still does not
+
+- **Plan:** `plans/record-digest-v3.md` (Phase 3)
+- **Assumed:** `record_digest_v3` / `recordDigestV3` should refuse any input it cannot faithfully
+  represent, rather than coerce it — and `record_digest_v2` should keep its current lenient
+  behaviour, leaving the two versions with different opinions about what a valid call is.
+- **Chose:** Validate every v3 slot, inside `recordDigestV3`'s own body, touching no helper v2
+  shares. Bytes slots must be a one-byte-per-element buffer of the right length; string slots must be
+  actual strings with no unpaired surrogates; integer slots must be in range and exactly
+  representable. Every refusal happens before a single byte is hashed.
+
+  The trigger is not tidiness — it is that some of these coercions produce an **alias**, not a
+  mismatch. **In TypeScript**, a 32-character string passed as a sub-digest hashes as 32 zero bytes,
+  which is a digest a legitimate all-zeros sub-digest also produces; `2**64 + 5` hashes as `5`. A
+  mismatch is caught downstream by the comparison the function exists to feed. An alias is caught
+  nowhere. That is the same class of collision the spec's own framing rules exist to prevent
+  (`seam-event.v1.md`, "The outer count, and the collision it prevents"), so refusing is the
+  version-consistent answer, not extra strictness.
+
+  **Scoping corrected at reconcile (2026-08-24):** those two inputs *raise* in Python rather than
+  aliasing, so the alias argument is TypeScript-specific and was originally stated too broadly.
+  Python's validation earns its place by a different route — v2 accepts a
+  `memoryview(array("I", [0]*32))` and frames a length prefix claiming 32 while hashing 128 bytes,
+  which is the same injectivity break arriving through a different door.
+
+  v2 keeps the coercions. Issue #56 requires `record_digest_v2` to stay byte-identical forever and
+  the v2 vectors untouched in the diff; adding guards there would not change a single digest byte,
+  but it would put v2's frozen function back under review, which is precisely what that requirement
+  is protecting against.
+- **Alternatives:** (a) Leave v3 lenient too, for symmetry — rejected once the alias was demonstrated
+  rather than theorised: symmetry is not worth a silent collision. (b) Harden v2 in the same change —
+  rejected as out of scope for a phase whose contract is "v2 is untouched"; it is a decision about
+  the v2/v3 pair and belongs to whoever revisits v2 next.
+- **Blast radius if wrong:** A caller relying on one of the coercions (passing a `number` above 2^53
+  for `sealedAt`, say, or a plain object with a `length`) now gets an exception where it previously
+  got a digest. **Corrected at reconcile:** "every such digest was wrong, so no correct caller
+  breaks" is too strong. A proto3-JSON int64-as-string (`sealedAt: "123"`) coerced *correctly*
+  through `BigInt` before and is now refused — loudly, at the first record, with the fix named in the
+  message. Accepting strings is what reopens `BigInt("")→0n` and `BigInt([5])→5n`, so the trade is
+  still right; the justification simply does not extend to "nothing that used to work stops working."
+  Cheap to reverse: the validators are a contiguous block at the top of one function in each
+  language.
+- **Status:** CONFIRMED (2026-08-24) — see `DECISIONS.md`, "reconcile `plans/record-digest-v3.md`'s ASSUMPTIONS.md (4 entries)".
+
+## The v1 skip is a downgrade hole, closed structurally rather than documented
+
+- **Plan:** `plans/record-digest-v3.md` (Phase 4)
+- **Assumed:** `seam-verify` should REFUSE a `DECISION_SEALED` that declares `schema_version < 2`
+  while carrying `ciphertext_digest` (tag 10) or any of tags 11/12/13, rather than skipping it as the
+  link-only v1 record it claims to be.
+- **Chose:** Refuse. `schema_version < 2` exempts a record from the digest recompute, because a v1
+  record's historical digest genuinely is not stream-recomputable. That exemption is reachable by an
+  attacker: rewrite a structural column, relabel the version to 1, and no recompute ever runs. It is
+  the one downgrade direction the recompute cannot catch by construction — every other version is
+  dispatched to a formula and fails the comparison; a downgrade *into the skip* means there is no
+  comparison to fail. The spec supplies the discriminator: `ciphertext_digest` "is absent (no wire
+  bytes) only on `schema_version = 1` payloads", and tags 11/12/13 arrived with v3, so a payload
+  declaring v1 while carrying any of them is a covered record wearing v1's exemption. Each of the four
+  columns is decoy-proven independently (a decoy guarding only on tag 10 initially passed the test,
+  which is how the per-column parametrization got written).
+- **Alternatives:** (a) Document it as a residual in `COMPATIBILITY.md`, as the Phase 4 verifier
+  suggested — rejected: a verifier's entire job is catching downgrades, and this is one, with a cheap
+  spec-grounded test for it. (b) Refuse every v1 record — rejected outright: real pre-A14 records
+  exist in real chains, and refusing them would make the verifier unrunnable over an archive. The
+  guard therefore keys on the COLUMNS, never on the version alone, and a genuine v1 record still
+  verifies and is still counted as not-recomputed.
+- **Blast radius if wrong:** A producer that emits `schema_version = 1` alongside a `ciphertext_digest`
+  — i.e. one contradicting the spec — would now be refused where it previously passed. No conforming
+  producer is affected, and the existing v1 golden still verifies green. Cheap to reverse: one
+  contiguous block in `verify_authenticity`.
+- **Status:** CONFIRMED (2026-08-24) — see `DECISIONS.md`, "reconcile `plans/record-digest-v3.md`'s ASSUMPTIONS.md (4 entries)".
+
+## `frame`'s `len() as u32` truncates above 4 GiB, in Rust only
+
+- **Plan:** `plans/record-digest-v3.md` (Phase 4)
+- **Assumed:** It is acceptable that `record_digest_v3`'s `frame` closure casts `part.len() as u32`,
+  which truncates silently for a single field of 4 GiB or more. Python raises there and TypeScript
+  wraps.
+- **Chose:** Mirror `record_digest_v2` exactly. The cast is v2's, byte-for-byte, and the phase's
+  contract is that v3's framing is v2's framing plus three slots — introducing a divergence in the
+  shared closure would be a worse defect than the one it fixes. Reaching it also requires a
+  multi-gigabyte single field already parsed into memory, at which point the stream has other problems.
+- **Alternatives:** Check the length and refuse. Worth doing for BOTH versions at once, as its own
+  change, not asymmetrically inside a v3 transcription.
+- **Blast radius if wrong:** A >4 GiB field would frame with a truncated length prefix and produce a
+  digest that disagrees with every other implementation — reported as a mismatch, never as a pass.
+- **Status:** CONFIRMED (2026-08-24) — see `DECISIONS.md`, "reconcile `plans/record-digest-v3.md`'s ASSUMPTIONS.md (4 entries)".
+
+## The v3 conformance cases this repo designed live in a second file, not in `conformance/vectors.json`
+
+- **Plan:** `plans/record-digest-v3.md` (Phase 4.5)
+- **Assumed:** that `conformance/vectors.json` has exactly one author — seam-runtime's emitter —
+  because `sdk-digest-parity` byte-diffs the whole file, and that adding this repo's five extra
+  cases to it would therefore turn seam-runtime's CI red for a reason that is not drift.
+- **Chose:** take the runtime's bytes verbatim, and put the five extra cases in
+  `conformance/record_digest_v3_extended.json`, loaded alongside by all three SDK conformance suites.
+  Strongest option because it keeps coverage the shared file cannot carry (`mode: ""` vs
+  `mode: null`; decomposed non-ASCII) without either side losing byte-identity, and because adopting
+  those cases upstream later is then a copy rather than a re-render — the extended file uses the same
+  `indent=2` / `ensure_ascii=True` rendering.
+- **Alternatives:** (a) push this repo's `cases`-array shape upstream — rejected: reopens a landed
+  runtime PR to make the file cosmetically different and no more correct, and the array shape was the
+  outlier among that file's blocks; (b) drop the five cases — rejected: they are the only vectors
+  covering the two traps the spec singles out; (c) keep them as unit tests only — rejected: they are
+  cross-language contracts, and a unit test in one language cannot pin a distinction a TS or Rust
+  transcription is liable to collapse.
+- **Blast radius if wrong:** low and local. If seam-runtime adopts the cases, the extended file is
+  deleted and its cases move into the shared one; nothing else changes. If it declines, the file
+  stays and the SDK keeps coverage the runtime does not. Neither outcome touches the wire, the
+  formula, or any published digest.
+- **Status:** CONFIRMED (2026-08-24) — see `DECISIONS.md`, "reconcile `plans/record-digest-v3.md`'s ASSUMPTIONS.md (4 entries)". — proposed to seam-runtime; their call.

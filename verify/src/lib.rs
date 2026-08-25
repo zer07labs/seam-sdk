@@ -21,8 +21,10 @@
 //! * the **`seam-event.v1` hash chain** — internal consistency of a stream, from the stream alone
 //!   ([`chain`]);
 //! * **authenticity** — every `CHAIN_HEAD_ATTESTATION` verifies against a pinned issuer key and sits
-//!   at the head it attests, and every v2 `DECISION_SEALED` digest is recomputed from its payload
-//!   ([`verify_authenticity`]);
+//!   at the head it attests, and every v2 and v3 `DECISION_SEALED` digest is recomputed from its
+//!   payload ([`verify_authenticity`]). A v3 record missing `context_digest` or
+//!   `participation_digest` is refused as a **strip**, reported distinctly from a digest
+//!   mismatch; a `schema_version` this build does not implement is refused, never skipped;
 //! * **GDPR erasure certificates**, from the issuer AID alone ([`erasure_certificate`]).
 //!
 //! **Not** verified, and stated here so no caller infers otherwise:
