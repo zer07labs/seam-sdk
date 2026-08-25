@@ -389,12 +389,7 @@ fn v3_optional<'a>(
 /// purpose: v2's bytes are frozen forever, and a shared helper would put them behind a refactor
 /// surface. Duplication is the safety property here.
 fn record_digest_v3(d: &Decision) -> Result<[u8; 32], String> {
-    let context_digest = v3_required(
-        "context_digest",
-        11,
-        &d.context_digest,
-        &d.decision_id,
-    )?;
+    let context_digest = v3_required("context_digest", 11, &d.context_digest, &d.decision_id)?;
     let participation_digest = v3_required(
         "participation_digest",
         12,
@@ -526,7 +521,11 @@ pub fn verify_authenticity(
             let smuggled = [
                 ("ciphertext_digest", 10, !d.ciphertext_digest.is_empty()),
                 ("context_digest", 11, !d.context_digest.is_empty()),
-                ("participation_digest", 12, !d.participation_digest.is_empty()),
+                (
+                    "participation_digest",
+                    12,
+                    !d.participation_digest.is_empty(),
+                ),
                 ("policy_rules_digest", 13, !d.policy_rules_digest.is_empty()),
             ];
             if let Some((name, tag, _)) = smuggled.iter().find(|(_, _, present)| *present) {
@@ -885,10 +884,7 @@ mod tests {
     /// zero-length occurrence is a STRIP and is still refused.
     #[test]
     fn an_explicitly_encoded_zero_length_mandatory_digest_is_still_refused() {
-        for (name, set) in [
-            ("context_digest", 0usize),
-            ("participation_digest", 1usize),
-        ] {
+        for (name, set) in [("context_digest", 0usize), ("participation_digest", 1usize)] {
             let mut d = v3_decision();
             if set == 0 {
                 d.context_digest = Vec::new();

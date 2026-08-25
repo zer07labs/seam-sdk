@@ -966,16 +966,8 @@ mod tests {
         let from_json = Event::parse(&json).expect("JSON transport must parse");
         let j = from_json.decision.as_ref().expect("a decision payload");
         assert_eq!(j.context_digest, ctx, "tag 11 (JSON)");
-        assert_eq!(
-            j.participation_digest,
-            part,
-            "tag 12 (JSON)"
-        );
-        assert_eq!(
-            j.policy_rules_digest,
-            rules,
-            "tag 13 (JSON)"
-        );
+        assert_eq!(j.participation_digest, part, "tag 12 (JSON)");
+        assert_eq!(j.policy_rules_digest, rules, "tag 13 (JSON)");
 
         assert_eq!(
             from_pb.bytes, from_json.bytes,

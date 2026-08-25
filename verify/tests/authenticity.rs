@@ -648,13 +648,20 @@ fn an_empty_policy_rules_digest_verifies_green_because_absent_is_legitimate() {
     // refused it outright as MALFORMED until the `len == 0` mapping landed, rejecting a record the
     // contract calls valid and disagreeing with the Python and TS twins on identical bytes.
     let mut honest = v3_payload();
-    honest.as_object_mut().unwrap().remove("policy_rules_digest");
+    honest
+        .as_object_mut()
+        .unwrap()
+        .remove("policy_rules_digest");
     let digest = v3_record_digest(&honest);
 
     let mut presented = honest;
     presented["policy_rules_digest"] = serde_json::json!("");
 
-    let (code, out) = run("v3-empty-13", &v3_stream(&[(presented, digest)]), &["--issuer", ISSUER]);
+    let (code, out) = run(
+        "v3-empty-13",
+        &v3_stream(&[(presented, digest)]),
+        &["--issuer", ISSUER],
+    );
     assert_eq!(
         code, VERIFIED,
         "an empty policy_rules_digest is ABSENT, and absent is legitimate:\n{out}"
