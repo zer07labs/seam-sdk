@@ -246,7 +246,7 @@ def _jcs_int(v: int) -> str:
     invalid JSON into a signed digest. The unbound ``int.__str__`` is *not* the fix; it falls through
     to ``object.__str__`` and re-enters the subclass's ``__repr__``, which is strictly worse.
     """
-    text = int.__repr__(v)  # unspoofable, and the value all further checks are taken from
+    text = int.__repr__(v)  # unspoofable; every check below reads from this
     n = int(text)  # a plain int, free of any subclass's opinions about arithmetic
     if -_MAX_SAFE_INT <= n <= _MAX_SAFE_INT:
         return text
