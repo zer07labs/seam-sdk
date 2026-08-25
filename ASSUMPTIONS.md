@@ -204,13 +204,19 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   actual strings with no unpaired surrogates; integer slots must be in range and exactly
   representable. Every refusal happens before a single byte is hashed.
 
-  The trigger is not tidiness — it is that three of these coercions produce an **alias**, not a
-  mismatch. A 32-character string passed as a sub-digest hashes as 32 zero bytes, which is a digest a
-  legitimate all-zeros sub-digest also produces; `2**64 + 5` hashes as `5`. A mismatch is caught
-  downstream by the comparison the function exists to feed. An alias is caught nowhere. That is the
-  same class of collision the spec's own framing rules exist to prevent (`seam-event.v1.md`, "The
-  outer count, and the collision it prevents"), so refusing is the version-consistent answer, not
-  extra strictness.
+  The trigger is not tidiness — it is that some of these coercions produce an **alias**, not a
+  mismatch. **In TypeScript**, a 32-character string passed as a sub-digest hashes as 32 zero bytes,
+  which is a digest a legitimate all-zeros sub-digest also produces; `2**64 + 5` hashes as `5`. A
+  mismatch is caught downstream by the comparison the function exists to feed. An alias is caught
+  nowhere. That is the same class of collision the spec's own framing rules exist to prevent
+  (`seam-event.v1.md`, "The outer count, and the collision it prevents"), so refusing is the
+  version-consistent answer, not extra strictness.
+
+  **Scoping corrected at reconcile (2026-08-24):** those two inputs *raise* in Python rather than
+  aliasing, so the alias argument is TypeScript-specific and was originally stated too broadly.
+  Python's validation earns its place by a different route — v2 accepts a
+  `memoryview(array("I", [0]*32))` and frames a length prefix claiming 32 while hashing 128 bytes,
+  which is the same injectivity break arriving through a different door.
 
   v2 keeps the coercions. Issue #56 requires `record_digest_v2` to stay byte-identical forever and
   the v2 vectors untouched in the diff; adding guards there would not change a single digest byte,
@@ -222,10 +228,14 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   the v2/v3 pair and belongs to whoever revisits v2 next.
 - **Blast radius if wrong:** A caller relying on one of the coercions (passing a `number` above 2^53
   for `sealedAt`, say, or a plain object with a `length`) now gets an exception where it previously
-  got a digest. Every such digest was wrong — it could not have matched a wire value produced by the
-  runtime — so no correct caller breaks. Cheap to reverse: the validators are a contiguous block at
-  the top of one function in each language.
-- **Status:** UNCONFIRMED
+  got a digest. **Corrected at reconcile:** "every such digest was wrong, so no correct caller
+  breaks" is too strong. A proto3-JSON int64-as-string (`sealedAt: "123"`) coerced *correctly*
+  through `BigInt` before and is now refused — loudly, at the first record, with the fix named in the
+  message. Accepting strings is what reopens `BigInt("")→0n` and `BigInt([5])→5n`, so the trade is
+  still right; the justification simply does not extend to "nothing that used to work stops working."
+  Cheap to reverse: the validators are a contiguous block at the top of one function in each
+  language.
+- **Status:** CONFIRMED (2026-08-24) — see `DECISIONS.md`, "reconcile `plans/record-digest-v3.md`'s ASSUMPTIONS.md (4 entries)".
 
 ## The v1 skip is a downgrade hole, closed structurally rather than documented
 
@@ -253,7 +263,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   — i.e. one contradicting the spec — would now be refused where it previously passed. No conforming
   producer is affected, and the existing v1 golden still verifies green. Cheap to reverse: one
   contiguous block in `verify_authenticity`.
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (2026-08-24) — see `DECISIONS.md`, "reconcile `plans/record-digest-v3.md`'s ASSUMPTIONS.md (4 entries)".
 
 ## `frame`'s `len() as u32` truncates above 4 GiB, in Rust only
 
@@ -269,7 +279,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   change, not asymmetrically inside a v3 transcription.
 - **Blast radius if wrong:** A >4 GiB field would frame with a truncated length prefix and produce a
   digest that disagrees with every other implementation — reported as a mismatch, never as a pass.
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (2026-08-24) — see `DECISIONS.md`, "reconcile `plans/record-digest-v3.md`'s ASSUMPTIONS.md (4 entries)".
 
 ## The v3 conformance cases this repo designed live in a second file, not in `conformance/vectors.json`
 
@@ -293,4 +303,4 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   deleted and its cases move into the shared one; nothing else changes. If it declines, the file
   stays and the SDK keeps coverage the runtime does not. Neither outcome touches the wire, the
   formula, or any published digest.
-- **Status:** UNCONFIRMED — proposed to seam-runtime; their call.
+- **Status:** CONFIRMED (2026-08-24) — see `DECISIONS.md`, "reconcile `plans/record-digest-v3.md`'s ASSUMPTIONS.md (4 entries)". — proposed to seam-runtime; their call.

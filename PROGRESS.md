@@ -249,3 +249,35 @@ shape" survives that subset exactly.
 - **Next:** `/reconcile` the `ASSUMPTIONS.md` entries tagged to this plan, then `/ship` with the
   pre-merge pause (cumulative diff is well past the >500-line / >15-file threshold and touches a
   public contract).
+- pushed feat/record-digest-v3 32292d8
+- PR #58 opened: https://github.com/zer07labs/seam-sdk/pull/58
+
+## 2026-08-24 — /reconcile (delegated to Fable by the owner) + ship
+
+All four `ASSUMPTIONS.md` entries tagged to this plan came back **CONFIRMED**; none blocked the
+merge. Recorded in `DECISIONS.md`. The reviewer verified each against code, spec and tests rather
+than against the entries' own reasoning — which mattered, because it caught two overstatements in
+the Phase 3 entry that I had written and would otherwise have been recorded as settled fact:
+
+1. **The alias argument was over-generalized.** It is TypeScript-specific — a 32-character string
+   frames as 32 zero bytes there, but the same input *raises* in Python. Python's validation still
+   earns its place, by a different route: v2 accepts a `memoryview(array("I", [0]*32))` and frames a
+   prefix claiming 32 while hashing 128 bytes.
+2. **"Every such digest was wrong, so no correct caller breaks" was too strong.** A proto3-JSON
+   int64-as-string coerced correctly through `BigInt` before and is now refused. The trade is still
+   right — accepting strings reopens `BigInt("")→0n` — but the justification does not extend that
+   far.
+
+Both corrected in `ASSUMPTIONS.md` in place, and `DECISIONS.md` records the corrected reasoning
+rather than the entry's. The reviewer also overrode my own recommendation on entry 4: I proposed
+deferring the extended-vector-file split until seam-runtime answers #433, and it confirmed instead,
+on the grounds that all three of #433's options leave the current arrangement correct, so nothing
+actually waits on their call.
+
+- **Ship:** commit `32292d8`, pushed `feat/record-digest-v3`, PR
+  [#58](https://github.com/zer07labs/seam-sdk/pull/58). CI fully green — every language suite, both
+  `verify` jobs including the MSRV build, guards, preflight, version lockstep, the framework probe,
+  and all five CodeQL analyzers. The live `seam-grpc` integration job SKIPPED (no credentials in
+  CI) — a genuine skip, not a pass. `mergeable=MERGEABLE state=CLEAN`.
+- **Untracked `python/uv.lock`** deliberately left unstaged, as throughout this plan.
+
