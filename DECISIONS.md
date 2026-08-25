@@ -106,8 +106,8 @@ not as written.
 ### Scope: the frameworks are the ones `seam-adapters` ships a shim for
 
 Four, and no more: `crewai`, `langchain` (+`langgraph`), `strands-agents`, `claude-agent-sdk`
-(`seam-adapters/crewai/pyproject.toml:13`, `langchain/pyproject.toml:18`, `strands/pyproject.toml:11`,
-`claude_agent/pyproject.toml:11`). `seam-aegis` adds nothing — it reaches frameworks only through
+(`seam-adapters/crewai/pyproject.toml:13`, `seam-adapters/langchain/pyproject.toml:18`, `seam-adapters/strands/pyproject.toml:11`,
+`seam-adapters/claude_agent/pyproject.toml:11`). `seam-aegis` adds nothing — it reaches frameworks only through
 `seam-langchain`. A framework with no shim is out of scope; adding a shim is what adds a row.
 
 ### The mechanism, generalised past CrewAI
@@ -185,7 +185,7 @@ agree the rule is not the moment someone is mid-migration.
 The source plan's headline W7 defect was `compute_record_digest`'s catch-all: `1 => v1, _ => v2`,
 meaning a record stamped `schema_version == 3` would be **silently hashed with the v2 framing**.
 
-`seam-runtime` `d7f27c7` (#408, 2026-08-23) already fixed it. `crates/seam-store/src/lib.rs:357-380`
+`seam-runtime` `d7f27c7` (#408, 2026-08-23) already fixed it. `seam-runtime/crates/seam-store/src/lib.rs:357-380`
 now reads `1 => …`, `2 => …`, `_ => None`, with the comment *"No catch-all. An unknown stamp is
 refused so it can never verify green under the wrong formula"*, and `recompute_sealed_digest` is
 symmetric. **Verified directly, not taken from the plan.** Filing it would be filing a fixed bug.
@@ -210,7 +210,7 @@ symmetric. **Verified directly, not taken from the plan.** Filing it would be fi
 ### Two mechanics the source plan could not have known
 
 - **Item 4 is already enforced from the runtime side.** `seam-runtime`'s `sdk-digest-parity`
-  discovers vector blocks by **`record_digest_v*` prefix** (`scripts/sdk-digest-parity.sh:90`), so
+  discovers vector blocks by **`record_digest_v*` prefix** (`seam-runtime/scripts/sdk-digest-parity.sh:90`), so
   the day a `record_digest_v3` block exists the gate covers it automatically rather than silently
   continuing to check only v2. Point at that rather than restating it.
 - **The gate resolves the Python function by EXACT NAME** (`getattr(crypto, name)`), so
@@ -299,7 +299,7 @@ nothing is ever *published* there.
 private, so **an external auditor cannot install the verifier from it.** Their path is what it always
 was: clone this **public, Apache-2.0** repository and build. `verify/` is a standalone cargo
 workspace with zero Seam dependencies precisely so that works anywhere, and the claim is a **CI
-gate** (`.github/workflows/ci.yml:289-297` runs `cargo tree -e normal`), not a comment.
+gate** (`.github/workflows/ci.yml:315-323` runs `cargo tree -e normal`), not a comment.
 
 So publishing is **distribution convenience for internal and partner consumers** — *not* a
 trust-anchoring improvement and *not* the thing that makes the verifier independently obtainable.
