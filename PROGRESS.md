@@ -281,3 +281,10 @@ actually waits on their call.
   CI) — a genuine skip, not a pass. `mergeable=MERGEABLE state=CLEAN`.
 - **Untracked `python/uv.lock`** deliberately left unstaged, as throughout this plan.
 
+- **Merged `#58`** — squashed to `1faddf2` on `main`, 2026-08-25T00:35:23Z, branch deleted. 32 files,
+  +5988 / -243. This unblocks seam-runtime's `sdk-digest-parity` gate, which was red by design until
+  these vector bytes landed here (their PR #432).
+- **No deploy.** `seam-sdk` publishes packages; it has no Railway/Vercel service, so there is no
+  production deploy to watch for this merge. Release/publish is a separate, tagged action.
+- **Phase 6 stays BLOCKED** on seam-runtime publishing `DecisionSealed` tags 11/12/13 on
+  `seam.event.v1` to the BSR. Not startable in this run.
