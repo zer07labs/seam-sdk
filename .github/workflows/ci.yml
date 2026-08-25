@@ -233,7 +233,13 @@ jobs:
           app-id: ${{ secrets.SEAM_BOT_APP_ID }}
           private-key: ${{ secrets.SEAM_BOT_PRIVATE_KEY }}
           owner: zer07labs
-          repositories: seam-runtime
+          # NOT scoped with `repositories:`, unlike spec-pin's token, and the difference is not
+          # cosmetic: a repository-scoped installation token is denied by GHCR even for a package
+          # owned by that very repository (verified — `docker login` succeeds, `docker pull` returns
+          # `denied`). Package reads resolve against the ORG installation, so the scoping has to come
+          # from the permission instead. `packages: read` is the only one granted, and it is the only
+          # one requested: this token cannot read a line of source in any repo, which is the property
+          # that actually matters here.
           permission-packages: read
       - name: lift seam-grpc out of the published seamd image
         env:
@@ -242,7 +248,14 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u x-access-token --password-stdin
-          docker pull -q "$IMAGE"
+          if ! docker pull -q "$IMAGE"; then
+            echo "::error::Cannot pull $IMAGE. `docker login` succeeding while the pull is denied" \
+                 "means the token authenticated but is not authorised for this package — check that" \
+                 "the seam-deps-bot App still has packages:read, and that the token is NOT scoped" \
+                 "with `repositories:` (GHCR denies a repo-scoped token even for that repo's own" \
+                 "package). This is not a flake and re-running will not fix it."
+            exit 1
+          fi
           cid="$(docker create "$IMAGE")"
           docker cp "$cid:/usr/local/bin/seam-grpc" "$GITHUB_WORKSPACE/seam-grpc"
           docker rm "$cid" >/dev/null
