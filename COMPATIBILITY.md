@@ -61,7 +61,7 @@ mismatch cannot ship.
 
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
-**Nothing was yanked.** That decision is recorded at `CHANGELOG.md:277-281` and is not being
+**Nothing was yanked.** That decision is recorded at `CHANGELOG.md:317-321` and is not being
 re-litigated here: the affected versions install and produce a clear auth error rather than
 corrupting data, and revoking installability under a floor already in wide use has a larger blast
 radius than a loud advisory. The consequence is that **these versions remain installable**, so this
@@ -86,8 +86,8 @@ this by trying.
 
 | Language | How you get it | Versioned? | Status |
 |---|---|---|---|
-| **Python** (`seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:255`) | Yes | **Published + supported** |
-| **TypeScript** (`@zer07labs/seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:130`, `ts/package.json:12`) | Yes | **Published + supported** |
+| **Python** (`seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:303`) | Yes | **Published + supported** |
+| **TypeScript** (`@zer07labs/seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:178`, `ts/package.json:12`) | Yes | **Published + supported** |
 | **Go** | Module proxy, from the `go/vX.Y.Z` tag (`.github/workflows/release-on-runtime.yml:120`) | Tag only — no in-tree version | Resolvable, crypto shim only |
 | **Java** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |
 | **Kotlin** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |

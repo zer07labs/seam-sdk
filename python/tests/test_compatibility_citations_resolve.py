@@ -81,9 +81,9 @@ def test_each_citation_resolves(citation: tuple[str, int, int]) -> None:
 #: (cited path, cited line, a substring that must appear on or near that line).
 #: These are exactly the six that went stale once — pinned so they cannot again.
 ANCHORED = [
-    ("CHANGELOG.md", 298, "No yank"),
-    (".github/workflows/publish.yml", 130, "npm.cloudsmith.io"),
-    (".github/workflows/publish.yml", 255, "python.cloudsmith.io"),
+    ("CHANGELOG.md", 317, "No yank"),
+    (".github/workflows/publish.yml", 178, "npm.cloudsmith.io"),
+    (".github/workflows/publish.yml", 303, "python.cloudsmith.io"),
     (".github/workflows/release-on-runtime.yml", 126, "go/v$VER"),
     ("README.md", 128, "crypto shims"),
     (".github/workflows/ci.yml", 289, "must link NOTHING"),
