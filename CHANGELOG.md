@@ -244,7 +244,8 @@ Three independently sufficient causes of a 0.7.17-shaped incident, closed.
   only on v1 payloads. A record declaring v1 while carrying tags 10, 11, 12 or 13 is now refused as a
   DOWNGRADE. Genuine v1 records still verify.
 
-### Fixed — the release gate could never run
+### Fixed — the release path's two gates, neither of which had ever run
+
 
 - **`release-on-runtime.yml`'s wire-framing gate ran before `actions/checkout`, so it read
   `contract/wire-framing.json` out of an empty working directory and crashed on every release.**
@@ -264,6 +265,24 @@ Three independently sufficient causes of a 0.7.17-shaped incident, closed.
   ends — after checkout, before the stamp — so satisfying one by breaking the other fails CI. That
   guard was driven red against the shipped workflow before being trusted; it reports
   `assert 1 > 3`, the gate's step index against checkout's.
+
+- **`publish.yml`'s "CI is green for this commit" gate read once, and so lost a race it could not
+  win.** The release step pushes the commit and the tag seconds apart: the commit push starts
+  `ci.yml`, the tag push starts `publish.yml`. The gate then asked for a `ci-ok` conclusion that had
+  not registered yet and refused — correctly fail-closed, but for the wrong reason. `v0.7.47` hit
+  exactly this: publish fired at 03:24:39Z, `ci-ok` appeared at 03:25:26Z. **It lost by 47 seconds**
+  and the release needed a hand re-run to complete.
+
+  Like the framing gate above, this landed in `f68572f` and had never executed — every release since
+  died earlier — so its first real run was also the first sight of the race.
+
+  It now waits up to 20 minutes, and only on the states that are genuinely transient: absent, pending,
+  or a failed API call (an outage is not a verdict in either direction). A **settled** non-success
+  still refuses immediately rather than burning the ceiling on an answer already given, and a timeout
+  is still a refusal — running out of patience is not evidence of success. `scripts/test_publish_gate.py`
+  executes the real script against a stubbed `gh` across all of it; 6 of its 13 assertions fail
+  against the shipped gate, and the 7 that pass under both are the fail-closed ones, which is what
+  shows the wait did not soften anything.
 
 ## 0.7.26 — 2026-08-14
 

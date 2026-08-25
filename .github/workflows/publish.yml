@@ -46,6 +46,20 @@ jobs:
   # FAILS CLOSED ON ABSENT, not only on failure. A tag pushed at a commit CI never ran on has no
   # `ci-ok` conclusion to read, and treating "not failed" as "fine" is exactly the reasoning that
   # would have let 0.7.17 through. No conclusion is a refusal.
+  #
+  # It WAITS for a transient absence, because publish RACES the CI it is checking. Both the commit
+  # and the tag are pushed by the same release step seconds apart: the commit push starts ci.yml,
+  # the tag push starts this workflow. Read once, immediately, and the answer is "absent" — not
+  # because CI failed but because it has not registered yet. That is what happened on v0.7.47, which
+  # refused with publish fired at 03:24:39Z and ci-ok appearing at 03:25:26Z: it lost by 47 seconds
+  # and needed a hand re-run.
+  #
+  # Waiting does NOT soften the gate, because only the two genuinely transient states are waited on:
+  #   * absent    — CI has not registered yet; it may still appear
+  #   * pending   — a ci-ok is in flight; it may still settle
+  # A SETTLED non-success (failure/cancelled/timed_out/neutral/...) refuses IMMEDIATELY without
+  # burning the ceiling — waiting cannot turn a red run green. And a timeout is a REFUSAL, never a
+  # pass: running out of patience is not evidence of success.
   ci-green:
     name: CI is green for this commit
     # Tag-triggered only: a manual run has no vX.Y.Z ref to check (see workflow_dispatch above).
@@ -59,6 +73,15 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+
+          # 40 x 30s = 20 minutes. Sized well above observed CI on this repo (main runs settle in
+          # ~1-2 min; the v0.7.47 release commit took 47s from publish start to ci-ok appearing),
+          # with headroom for a cold-cache or CodeQL-heavy run. The loop exits the moment CI is
+          # green, so a generous ceiling costs nothing on the common path — it only bounds the
+          # pathological one.
+          ATTEMPTS=40
+          INTERVAL=30
+
           echo "resolving every 'ci-ok' check run for $SHA"
           # `--paginate` because a commit can carry more check runs than one page holds; without it
           # a green ci-ok on page 2 would read as absent and refuse a legitimate release.
@@ -74,30 +97,55 @@ jobs:
           # and gh's --jq renders null as an EMPTY LINE. A trailing empty line is stripped by `$(...)`,
           # so an unfinished ci-ok listed last would vanish and the gate would pass mid-run. Mapping
           # it to a concrete token makes it fail the success comparison like any other non-success.
-          CONCLUSIONS="$(gh api --paginate \
-            "repos/$REPO/commits/$SHA/check-runs" \
-            --jq '.check_runs[] | select(.name == "ci-ok") | (.conclusion // "pending")')"
+          STATE="not registered yet"
+          for attempt in $(seq 1 "$ATTEMPTS"); do
+            # A failed API call is NOT treated as "absent" — conflating an outage with a verdict is
+            # the same category error as conflating "not failed" with "passed". It keeps waiting and,
+            # if it never recovers, times out into a refusal with an accurate reason.
+            if ! CONCLUSIONS="$(gh api --paginate \
+              "repos/$REPO/commits/$SHA/check-runs" \
+              --jq '.check_runs[] | select(.name == "ci-ok") | (.conclusion // "pending")')"; then
+              CONCLUSIONS=""
+              STATE="the check-runs API call failed"
+            elif [ -z "$CONCLUSIONS" ]; then
+              STATE="not registered yet"
+            fi
 
-          if [ -z "$CONCLUSIONS" ]; then
-            echo "::error::No 'ci-ok' check run for $SHA. CI has not run on this commit, so there is"
-            echo "::error::no evidence it passes — refusing to publish. Push the commit to a branch,"
-            echo "::error::let CI finish, and re-tag. (Absent is refused deliberately: 'not failed' is"
-            echo "::error::not the same as 'passed', and treating it as such is how 0.7.17 shipped.)"
-            exit 1
-          fi
+            if [ -n "$CONCLUSIONS" ]; then
+              # Settled and not success — final. Refuse now rather than waiting out the ceiling on a
+              # verdict that is already in.
+              BAD="$(echo "$CONCLUSIONS" | grep -vx 'success' | grep -vx 'pending' || true)"
+              if [ -n "$BAD" ]; then
+                echo "ci-ok conclusions for $SHA:"
+                echo "$CONCLUSIONS" | sed 's/^/  - /'
+                echo "::error::At least one 'ci-ok' check run for $SHA is not success:"
+                echo "$BAD" | sed 's/^/::error::  - /'
+                echo "::error::Refusing to publish. One green run does not cancel a red one — a commit can"
+                echo "::error::carry a ci-ok per check suite (push and pull_request), and ALL must pass."
+                exit 1
+              fi
 
-          echo "ci-ok conclusions for $SHA:"
-          echo "$CONCLUSIONS" | sed 's/^/  - /'
+              if ! echo "$CONCLUSIONS" | grep -qx 'pending'; then
+                echo "ci-ok conclusions for $SHA:"
+                echo "$CONCLUSIONS" | sed 's/^/  - /'
+                echo "CI is green for $SHA ($(echo "$CONCLUSIONS" | wc -l | tr -d ' ') ci-ok run(s), all success)."
+                exit 0
+              fi
+              STATE="still running"
+            fi
 
-          BAD="$(echo "$CONCLUSIONS" | grep -vx 'success' || true)"
-          if [ -n "$BAD" ]; then
-            echo "::error::At least one 'ci-ok' check run for $SHA is not success:"
-            echo "$BAD" | sed 's/^/::error::  - /'
-            echo "::error::Refusing to publish. One green run does not cancel a red one — a commit can"
-            echo "::error::carry a ci-ok per check suite (push and pull_request), and ALL must pass."
-            exit 1
-          fi
-          echo "CI is green for $SHA ($(echo "$CONCLUSIONS" | wc -l | tr -d ' ') ci-ok run(s), all success)."
+            if [ "$attempt" -lt "$ATTEMPTS" ]; then
+              echo "attempt $attempt/$ATTEMPTS: ci-ok $STATE for $SHA; waiting ${INTERVAL}s"
+              sleep "$INTERVAL"
+            fi
+          done
+
+          echo "::error::Timed out after $(( ATTEMPTS * INTERVAL ))s waiting for 'ci-ok' on $SHA."
+          echo "::error::Last seen: $STATE."
+          echo "::error::Refusing to publish. A timeout is a REFUSAL, not a pass — running out of"
+          echo "::error::patience is not evidence that CI succeeded, and treating it as such is the"
+          echo "::error::same reasoning that shipped 0.7.17."
+          exit 1
 
   version-check:
     name: tag matches the in-tree versions

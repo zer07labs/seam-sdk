@@ -414,6 +414,11 @@ jobs:
       # releases closed without ever running its comparison — see the module docstring.
       - name: the release framing gate is where it can actually run
         run: python -m pytest scripts/test_release_gate.py -q
+      # publish.yml's CI gate races the CI it checks (commit push starts ci.yml, tag push starts
+      # publish.yml). These execute the real gate script against a stubbed gh, so "waits for a
+      # transient absence" and "still refuses a settled red" are both proven, not just read.
+      - name: the publish CI gate waits without going soft
+        run: python -m pytest scripts/test_publish_gate.py -q
       # Also runs inside the `python` job. Duplicated on purpose: there it proves the guard passes,
       # here it proves the guard needs nothing but a checkout — which is the actual claim
       # seam-adapters relies on (seam-sdk#54).
