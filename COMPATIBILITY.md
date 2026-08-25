@@ -61,7 +61,7 @@ mismatch cannot ship.
 
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
-**Nothing was yanked.** That decision is recorded at `CHANGELOG.md:419-424` and is not being
+**Nothing was yanked.** That decision is recorded at `CHANGELOG.md:466-471` and is not being
 re-litigated here: the affected versions install and produce a clear auth error rather than
 corrupting data, and revoking installability under a floor already in wide use has a larger blast
 radius than a loud advisory. The consequence is that **these versions remain installable**, so this
@@ -174,7 +174,7 @@ the wire" and "no consumer impact" are different claims.
 ## 5. What "independently verifiable" does and does not cover
 
 The published verifier (`verify/`) links **zero** Seam crates, and that is a CI gate rather than a
-comment — `.github/workflows/ci.yml:289-297` runs `cargo tree -e normal` and fails on any `seam-*`. What it verifies:
+comment — `.github/workflows/ci.yml:315-323` runs `cargo tree -e normal` and fails on any `seam-*`. What it verifies:
 
 **Covered:**
 

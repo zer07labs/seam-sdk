@@ -18,6 +18,44 @@ than trusting a summary here.
 
 ### Added
 
+- **The vendored spec's "verbatim" claim is now enforced** — `verify/docs/seam-event.v1.md` opens by
+  declaring itself a byte-identical copy of seam-runtime's `docs/specs/seam-event.v1.md` at a named
+  commit. Nothing checked that, and it had gone stale three times: once omitting the
+  `AUTHORIZE_EVALUATED` advisory kind (which shipped a real verifier bug), once missing
+  `§Record digest (v3)`, once missing `§"Presence on the wire"` — each caught by a person or a
+  review gate, never by a test, because **no test in this repository could**: the proof lives in
+  another repository and has to be fetched.
+
+  `scripts/check_vendored_spec.py` fetches it. It runs in CI as the `spec-pin` job and asserts three
+  things: the body is byte-identical at the pinned commit (INTEGRITY — a failure means the header is
+  lying), that commit is reachable from the ref the header names (REACHABILITY), and the body matches
+  that ref's tip (CURRENCY). Consumer-visible because this file is what a third party builds a
+  verifier from when they have no runtime checkout — a stale copy ships them a spec that does not
+  describe the verifier they are running.
+
+  Drift **blocks the merge** rather than warning. `spec-pin` is advisory in `ci-ok` only in the sense
+  that it may *skip* — it needs `RUNTIME_REPO_TOKEN`, which a fork PR has no access to — but an
+  advisory job that runs and fails still reddens the gate. A warning was considered and rejected:
+  three stalenesses survived precisely because nothing forced the issue.
+
+  A copy may deliberately sit ahead of the runtime's default branch — `verify/` implements the v3
+  record digest, whose spec text was still on an unmerged runtime branch. That has to be **declared**
+  in the header (`@ <sha> tracking <branch>`); an undeclared off-main pin is refused. The exception
+  expires by itself three ways — the branch stops existing, the pinned commit reaches the default
+  branch, or the file goes byte-identical on both refs (which is what catches a squash or rebase
+  merge, where the pinned commit never lands on the default branch at all). It expired within the
+  hour: the branch landed as seam-runtime#440 and was deleted, the gate went red and said to
+  re-pin, and the copy is now pinned to `main` at `25272a6`. The spec content is byte-identical
+  either way — only the pin moved.
+
+  The job reads the private runtime through a **short-lived seam-deps-bot App token scoped to
+  `seam-runtime` alone**, not a PAT — the App already exists org-wide and is already installed
+  there, so this needs no new long-lived credential. One limit, stated because the headline above
+  does not carry it: a fork PR has no secrets, so `spec-pin` **skips** there and drift introduced
+  that way is caught on the next push to `main` rather than at merge time. Its checker is
+  separately exercised credential-free in `workflow-guards`, so a fork PR still proves the logic
+  even when it cannot run the comparison.
+
 - **`record_digest_v3` on the streamed authenticity helpers** — `verify_streamed_record_digest`
   (Python) and `verifyStreamedRecordDigest` (TypeScript) now recompute `schema_version = 3`
   `DECISION_SEALED` records from the wire, not just v2. Both dispatch on `schema_version`; the v2 path
@@ -111,6 +149,18 @@ than trusting a summary here.
   `erase_subject_confirmed`/`eraseSubjectConfirmed` (Python + TS) — the field already existed on
   the wire; only the hand-written wrappers omitted it, unlike `enforce_retention`, which already
   exposed the identical field (#39).
+
+### Fixed
+
+- **`digest_schema` is documented as a ceiling, not a description** — `verify/proto/seam/event/v1/
+  seam_event.proto` described it as "the record-digest formula the attested chain uses", a reading
+  seam-runtime retracted in #439. Since a chain is mixed (v2 and v3 records interleave), no scalar
+  can name "the" formula in use; the field asserts every record in the attested prefix has
+  `schema_version <= digest_schema`, which is why existing attestations stay true and are never
+  re-signed. **No behaviour changed** — `verify/src/verify.rs` already dispatches per record on the
+  record's own `schema_version` (`:584`) and only ever frames `digest_schema` into the attestation
+  preimage (`:249`), which is exactly what the spec now mandates. The comment was the only thing
+  asserting otherwise.
 
 ### Fixed — three things that documented themselves incorrectly, and the bug the third was hiding
 

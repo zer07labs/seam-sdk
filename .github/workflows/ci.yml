@@ -4,10 +4,15 @@ name: ci
 # transport-coupled client needs read access to it. Configure these repo secrets to enable CI:
 #   * BUF_TOKEN          — a BSR token with read access to buf.build/zer07labs/seam (enables python + ts).
 #   * RUNTIME_REPO_TOKEN — a PAT that can check out the private zer07labs/seam-runtime (enables the live
-#                          integration job, which builds seam-grpc).
+#                          integration job, which builds seam-grpc). NOT CURRENTLY CONFIGURED, so that
+#                          job skips on every run — see the note on the integration job.
+#   * SEAM_BOT_APP_ID / SEAM_BOT_PRIVATE_KEY — the org's seam-deps-bot App, already installed on
+#                          seam-runtime. `spec-pin` mints a short-lived token from it, scoped to that
+#                          one repo, instead of needing a PAT of its own.
 # Jobs that need a secret self-skip when it is absent — but the single required check (`ci-ok`) treats a
 # skipped REQUIRED job as a failure, so a missing BUF_TOKEN turns the run red at the gate rather than
-# silently green. Only `integration` is advisory (may skip, must not fail) — see the ci-ok job below.
+# silently green. `integration` and `spec-pin` are the only advisory jobs (may skip, must not fail) — see
+# the ci-ok job below.
 
 on:
   push:
@@ -41,18 +46,33 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       have_buf_token: ${{ steps.check.outputs.have_buf_token }}
+      have_bot_app: ${{ steps.check.outputs.have_bot_app }}
       can_integrate: ${{ steps.check.outputs.can_integrate }}
     steps:
       - id: check
         env:
           BUF_TOKEN: ${{ secrets.BUF_TOKEN }}
           RUNTIME_REPO_TOKEN: ${{ secrets.RUNTIME_REPO_TOKEN }}
+          SEAM_BOT_APP_ID: ${{ secrets.SEAM_BOT_APP_ID }}
+          SEAM_BOT_PRIVATE_KEY: ${{ secrets.SEAM_BOT_PRIVATE_KEY }}
         run: |
           if [ -n "$BUF_TOKEN" ]; then
             echo "have_buf_token=true" >> "$GITHUB_OUTPUT"
           else
             echo "have_buf_token=false" >> "$GITHUB_OUTPUT"
             echo "BUF_TOKEN not set — skipping the build/test jobs (cannot read the private contract)"
+          fi
+          # `spec-pin` reads ONE doc out of the private runtime through the API and builds nothing,
+          # so it needs neither BUF_TOKEN nor a checkout — just something that can read that repo.
+          # It uses the seam-deps-bot App rather than a PAT: the App already exists org-wide, is
+          # already installed on seam-runtime (see seam's golden-gate.yml, which scopes a token to
+          # exactly that repo), and its token is short-lived and scoped per run. A PAT would have
+          # meant a new long-lived credential for a read two org workflows already perform.
+          if [ -n "$SEAM_BOT_APP_ID" ] && [ -n "$SEAM_BOT_PRIVATE_KEY" ]; then
+            echo "have_bot_app=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have_bot_app=false" >> "$GITHUB_OUTPUT"
+            echo "seam-deps-bot App secrets absent — skipping spec-pin (a fork PR cannot read the private spec)"
           fi
           if [ -n "$BUF_TOKEN" ] && [ -n "$RUNTIME_REPO_TOKEN" ]; then
             echo "can_integrate=true" >> "$GITHUB_OUTPUT"
@@ -173,6 +193,12 @@ jobs:
         working-directory: ts
         run: npm test
 
+  # NOTE, found while wiring `spec-pin` (2026-08-25): `RUNTIME_REPO_TOKEN` is configured neither on
+  # this repo nor on the org, so `can_integrate` is never true and THIS JOB HAS ALWAYS SKIPPED. It is
+  # advisory, so nothing ever went red over it — the live round-trip is simply not being run. Left as
+  # found rather than fixed in passing, because pointing it at the seam-deps-bot App (as `spec-pin`
+  # now does) means giving a token to a job that BUILDS and RUNS code from another repo, which is a
+  # wider grant than reading one file and deserves its own decision. Tracked, not forgotten.
   integration:
     name: integration (live seam-grpc round-trip)
     needs: preflight
@@ -389,6 +415,48 @@ jobs:
   # The credential-free lane: guards that hold on a bare checkout, with no BUF_TOKEN and no
   # generated code. Everything else that tests Python is gated on `preflight` — so if this lane
   # ever needed a token, the guards below would vanish in exactly the situations they matter.
+  # ── The vendored spec claims to be VERBATIM; this is the only thing that can check it ─────────
+  # `verify/docs/seam-event.v1.md` is a pinned copy of seam-runtime's spec, and it is what a third
+  # party builds a verifier from when they have no runtime checkout — the whole independence claim.
+  # It went stale three times, and each time a person or a review gate caught it, because no test
+  # in this repo COULD: the proof lives in another repository and has to be fetched.
+  #
+  # This is the only job that reaches out and fetches it. Advisory in `ci-ok` — it reads a private
+  # repo, so it cannot run on a fork PR — but advisory means "may skip, must not fail", so drift
+  # still blocks the merge. That is the point, and it was a deliberate call: a warning nobody acts
+  # on is how all three stalenesses survived.
+  #
+  # WHEN THIS GOES RED: re-copy the spec whole-file (never cherry-pick — verbatim is the property
+  # being claimed) and update the sha in its header. The failure message spells out the commands.
+  # If the diff changes normative behaviour, the verifier and its tests need the same change too.
+  spec-pin:
+    name: spec pin (the vendored spec is verbatim and current)
+    needs: preflight
+    if: needs.preflight.outputs.have_bot_app == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Scoped to seam-runtime and nothing else. The App can reach several repos (seam's
+      # golden-gate.yml scopes it to three); this job reads one file, so it asks for one repo.
+      - name: Mint a seam-deps-bot App token, scoped to seam-runtime
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.SEAM_BOT_APP_ID }}
+          private-key: ${{ secrets.SEAM_BOT_PRIVATE_KEY }}
+          owner: zer07labs
+          repositories: seam-runtime
+      - name: the vendored spec must match seam-runtime, byte for byte
+        env:
+          # NOT github.token: seam-runtime is private and the default token is scoped to this repo,
+          # so it would 404 and this gate would fail for a reason unrelated to the spec.
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: python scripts/check_vendored_spec.py --from gh
+
   workflow-guards:
     name: guards (no credentials required)
     runs-on: ubuntu-latest
@@ -419,6 +487,11 @@ jobs:
       # transient absence" and "still refuses a settled red" are both proven, not just read.
       - name: the publish CI gate waits without going soft
         run: python -m pytest scripts/test_publish_gate.py -q
+      # The spec-pin CHECKER, exercised here against throwaway git repos — no token, no network.
+      # spec-pin itself skips without RUNTIME_REPO_TOKEN, so on a fork PR this lane is the only
+      # thing keeping the checker's own logic honest.
+      - name: the vendored-spec checker fails on every kind of drift
+        run: python -m pytest scripts/test_vendored_spec_gate.py -q
       # Also runs inside the `python` job. Duplicated on purpose: there it proves the guard passes,
       # here it proves the guard needs nothing but a checkout — which is the actual claim
       # seam-adapters relies on (seam-sdk#54).
@@ -432,8 +505,11 @@ jobs:
   # and still shows green.
   #
   # So the gate splits the difference explicitly: REQUIRED jobs must succeed; ADVISORY jobs may
-  # skip but must not fail. `integration` is the only advisory one, and it is advisory because it
-  # needs a live seam-grpc a PR cannot always reach — a documented decision, not an accident.
+  # skip but must not fail. Two jobs are advisory, both for the same reason and no other — they
+  # need a secret a fork PR cannot have: `integration` needs a live seam-grpc built from the
+  # private runtime, and `spec-pin` needs RUNTIME_REPO_TOKEN to read the private spec it compares
+  # against. Documented decisions, not accidents. Note what advisory does NOT mean: a job here that
+  # RUNS and FAILS still reddens this gate, which is why spec-pin drift blocks a merge.
   ci-ok:
     if: always()
     needs:
@@ -447,6 +523,7 @@ jobs:
       - kotlin
       - verify
       - verify-msrv
+      - spec-pin
       - workflow-guards
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -455,7 +532,7 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
           # Comma-separated. scripts/test_ci_gate.py asserts this list stays minimal.
-          ADVISORY: integration
+          ADVISORY: integration,spec-pin
         run: |
           set -euo pipefail
           bad=$(printf '%s' "$NEEDS" | jq -r --arg adv "$ADVISORY" '

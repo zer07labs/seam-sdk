@@ -177,7 +177,7 @@ Stated plainly, because a verifier that oversells itself is worse than none:
 
 | | |
 |---|---|
-| `docs/seam-event.v1.md` | the wire format and the chain rule — **normative** |
+| `docs/seam-event.v1.md` | the wire format and the chain rule — **normative**, a verbatim pinned copy of the runtime's spec (see Drift) |
 | `docs/erasure-certificate.v1.md` | the certificate signing framing — **normative** |
 | `docs/audit-anchor.md` | the out-of-band anchor |
 | `proto/seam/event/v1/seam_event.proto` | the canonical protobuf schema |
@@ -194,6 +194,31 @@ runs in the runtime's CI against this public verifier, so drift is caught at the
 
 That test exists because a hand-transcribed verifier that quietly stops matching the encoder is worse than
 no verifier at all: it becomes a rubber stamp that agrees with everything, including a forgery.
+
+`docs/seam-event.v1.md` is the other half of the same problem, and it drifted for longer. It is a **pinned,
+byte-identical copy** of `seam-runtime/docs/specs/seam-event.v1.md`, and its header names the commit — but
+for a long time nothing checked that claim, and it went stale three times. Once it omitted an advisory event
+kind, which shipped a real verifier bug. That matters here specifically: if you have no `seam-runtime`
+checkout, this file is the spec you build against, so a stale copy describes a verifier other than the one
+you are running.
+
+`scripts/check_vendored_spec.py` now checks it against the real repository (the `spec-pin` CI job):
+byte-identical at the pinned commit, that commit reachable from the ref the header names, and
+byte-identical to that ref's tip. Drift is red and blocks the merge. Run it yourself with
+`python scripts/check_vendored_spec.py --from local:../seam-runtime` if you have a sibling checkout, or
+`--from gh` to read the repository directly.
+
+One honest limit: `seam-runtime` is private, so the job reads it with a short-lived App token and **skips**
+on a pull request that cannot see the org's secrets (a fork). Drift introduced that way is caught on the
+next push to `main` rather than at merge time. The job is also only triggered by pushes and pull requests here — if this repo goes quiet while the
+runtime spec moves, nothing notices until the next push.
+
+The copy may deliberately sit **ahead** of the runtime's default branch, which happens when this verifier
+implements something whose spec text is still on an unmerged runtime branch. When it does, the header must
+say so explicitly (`tracking <branch>`) and the gate refuses an undeclared one. The declaration expires by
+itself, three ways: the branch stops existing, the pinned commit reaches the default branch, or the file
+becomes byte-identical on both refs — the last being what catches a squash or rebase merge, where the
+pinned commit never appears on the default branch at all.
 
 ## Licence
 
