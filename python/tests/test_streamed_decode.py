@@ -317,6 +317,12 @@ def test_streamed_events_carry_a14_payloads_live(dual_plane):
 
     # §A14: the v2 DECISION_SEALED payload carries ciphertext_digest (tag 10), and it recomputes.
     assert sealed is not None, "the sealed decision must appear on the stream"
-    assert sealed.payload.schema_version == 2
+    # The runtime's record schema moved with B3: a chain is MIXED, and a freshly sealed decision
+    # now arrives as v3 where it used to be v2. Pinning 2 asserted a RUNTIME VERSION rather than SDK
+    # behaviour. It went stale the moment B3 shipped and nothing caught it, because this file was not
+    # even in the live CI step — its TypeScript twin was, which is the only reason this was found.
+    assert sealed.payload.schema_version in (2, 3), (
+        f"record schema_version {sealed.payload.schema_version}; this SDK knows 2 and 3"
+    )
     assert len(sealed.payload.ciphertext_digest) == 32
     assert verify_streamed_record_digest(sealed) is True

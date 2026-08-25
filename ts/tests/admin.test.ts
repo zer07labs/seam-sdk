@@ -15,6 +15,7 @@ import { SeamAdminClient } from "../src/admin.js";
 import { SeamRpcError, UnauthenticatedError } from "../src/errors.js";
 import {
   REGISTRY_SNAPSHOT_PATH,
+  signSnapshot,
   mintOperatorToken,
   tamperSignature,
 } from "./operator_token.js";
@@ -51,7 +52,14 @@ async function withPlanes(
     SEAM_GRPC_MGMT_LISTEN: `127.0.0.1:${mgmtPort}`,
     SEAM_DEV_INSECURE: "1",
   };
-  if (registrySnapshot) env.SEAM_REGISTRY_SNAPSHOT = registrySnapshot;
+  if (registrySnapshot) {
+    // Signed, not merely handed over: a trust-bearing snapshot is refused unsigned and the runtime
+    // will not boot at all, which surfaces here only as `no server`. See signSnapshot.
+    const [pubkey, sigPath] = signSnapshot(registrySnapshot);
+    env.SEAM_REGISTRY_SNAPSHOT = registrySnapshot;
+    env.SEAM_REGISTRY_SNAPSHOT_SIG = sigPath;
+    env.SEAM_SNAPSHOT_PUBKEY = pubkey;
+  }
   const proc = spawn(BIN!, { env, stdio: "ignore" });
   try {
     await waitPort(dataPort);

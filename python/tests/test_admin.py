@@ -182,6 +182,8 @@ def _free_port() -> int:
 
 
 def _spawn(data_port: int, mgmt_port: int, registry_snapshot: str | None = None):
+    from operator_token import sign_snapshot
+
     binary = os.environ.get("SEAM_GRPC_BIN")
     if not binary:
         pytest.skip("set SEAM_GRPC_BIN to run the live management-plane test")
@@ -196,7 +198,12 @@ def _spawn(data_port: int, mgmt_port: int, registry_snapshot: str | None = None)
         "SEAM_DEV_INSECURE": "1",
     }
     if registry_snapshot:
+        # Signed, not merely handed over: a trust-bearing snapshot is refused unsigned, and the
+        # runtime will not boot at all. See `sign_snapshot`.
+        pubkey, sig_path = sign_snapshot(registry_snapshot)
         env["SEAM_REGISTRY_SNAPSHOT"] = registry_snapshot
+        env["SEAM_REGISTRY_SNAPSHOT_SIG"] = sig_path
+        env["SEAM_SNAPSHOT_PUBKEY"] = pubkey
     proc = subprocess.Popen(
         [binary], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
