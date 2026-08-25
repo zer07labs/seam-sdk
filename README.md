@@ -238,8 +238,10 @@ those rows published — `ack` is drain-only and rejected with `follow=True`); *
 `EventStream` handle with `.cancel()`, TS takes an `AbortSignal`). A relay reports its durably-consumed
 cursor with `report_events_consumed` / `reportEventsConsumed` (destructive: advances the runtime's GC
 watermark; needs the `events:consume` scope). For streamed `DECISION_SEALED` events,
-`verify_streamed_record_digest` / `verifyStreamedRecordDigest` recomputes the v2 record digest
-client-side; `KNOWN_KINDS` lists the event kinds the SDK types (unknown kinds always pass through
+`verify_streamed_record_digest` / `verifyStreamedRecordDigest` recomputes the v2 **or v3** record
+digest client-side (a v3 record stripped of its mandatory `context_digest`/`participation_digest`
+raises `RecordDigestStripError` rather than returning a mismatch — a strip and a rewrite are
+different events); `KNOWN_KINDS` lists the event kinds the SDK types (unknown kinds always pass through
 opaque). Sealing a decision emits a `DECISION_SEALED` event — asserted live in both SDKs.
 
 ## Data-plane surface
@@ -256,8 +258,9 @@ emits a `LEARNING_OUTCOME`, never mutates the sealed record).
 revocation-stampede-safe) returning a typed `AuthorizeResult` with the closed verdict set
 ALLOW / DENY / TRANSFORM / ESCALATE; an unrecognized verdict raises `UnknownVerdictError` (never an
 implicit allow), and a TRANSFORM without a transformed input raises `ProtocolViolationError`. The
-offline helpers `record_digest_v2` and `verify_chain_head_attestation` are exported at top level for
-consumers verifying exported streams without the `verify/` binary.
+offline helpers `record_digest_v2`, `record_digest_v3` (with `RecordDigestStripError`) and
+`verify_chain_head_attestation` are exported at top level for consumers verifying exported streams
+without the `verify/` binary.
 
 **Async (Python).** `seam_sdk.aio` mirrors the full data-plane `SeamClient` for `asyncio` (same
 signatures, shared ticket core). The management plane is **sync-only by design** — an async operator

@@ -314,10 +314,14 @@ fn record_digest_v2(d: &Decision) -> [u8; 32] {
 fn v3_required<'a>(
     name: &str,
     tag: u32,
-    value: Option<&'a [u8]>,
+    value: &'a [u8],
     decision_id: &str,
 ) -> Result<&'a [u8], String> {
-    match value {
+    // `len == 0` IS absence here — a total mapping over any bytes a decoder can be handed, including
+    // an explicitly-encoded zero-length field (spec §"Presence on the wire"). A conforming producer
+    // never emits one; proto3 still obliges us to accept and classify it, and the classification is
+    // "absent", which on tags 11/12 means STRIP.
+    match if value.is_empty() { None } else { Some(value) } {
         None => Err(format!(
             "a v3 DECISION_SEALED ({decision_id}) carries NO {name} (wire tag {tag}).\n  \
              The v3 record-digest formula requires it. This is a STRIP, not a digest mismatch: the \
@@ -342,10 +346,14 @@ fn v3_required<'a>(
 fn v3_optional<'a>(
     name: &str,
     tag: u32,
-    value: Option<&'a [u8]>,
+    value: &'a [u8],
     decision_id: &str,
 ) -> Result<Option<&'a [u8]>, String> {
-    match value {
+    // Same total `len == 0` rule as `v3_required`, but here absence is a legitimate value rather than
+    // a strip: it frames as `opt(None)`. An explicitly-encoded `0x6a 0x00` from a non-conforming
+    // producer therefore verifies GREEN, identically to an omitted field — it must NOT be refused as
+    // malformed, which is what treating it as `Some(b"")` did.
+    match if value.is_empty() { None } else { Some(value) } {
         None => Ok(None),
         Some(b) if b.len() != V3_DIGEST_LEN => Err(format!(
             "a v3 DECISION_SEALED ({decision_id}) carries a MALFORMED {name} (wire tag {tag}): \
@@ -381,22 +389,17 @@ fn v3_optional<'a>(
 /// purpose: v2's bytes are frozen forever, and a shared helper would put them behind a refactor
 /// surface. Duplication is the safety property here.
 fn record_digest_v3(d: &Decision) -> Result<[u8; 32], String> {
-    let context_digest = v3_required(
-        "context_digest",
-        11,
-        d.context_digest.as_deref(),
-        &d.decision_id,
-    )?;
+    let context_digest = v3_required("context_digest", 11, &d.context_digest, &d.decision_id)?;
     let participation_digest = v3_required(
         "participation_digest",
         12,
-        d.participation_digest.as_deref(),
+        &d.participation_digest,
         &d.decision_id,
     )?;
     let policy_rules_digest = v3_optional(
         "policy_rules_digest",
         13,
-        d.policy_rules_digest.as_deref(),
+        &d.policy_rules_digest,
         &d.decision_id,
     )?;
 
@@ -517,9 +520,13 @@ pub fn verify_authenticity(
             // that no recompute happens.
             let smuggled = [
                 ("ciphertext_digest", 10, !d.ciphertext_digest.is_empty()),
-                ("context_digest", 11, d.context_digest.is_some()),
-                ("participation_digest", 12, d.participation_digest.is_some()),
-                ("policy_rules_digest", 13, d.policy_rules_digest.is_some()),
+                ("context_digest", 11, !d.context_digest.is_empty()),
+                (
+                    "participation_digest",
+                    12,
+                    !d.participation_digest.is_empty(),
+                ),
+                ("policy_rules_digest", 13, !d.policy_rules_digest.is_empty()),
             ];
             if let Some((name, tag, _)) = smuggled.iter().find(|(_, _, present)| *present) {
                 return Err(format!(
@@ -763,9 +770,9 @@ mod tests {
             ),
             // v2 carries none of the B3 columns. Present only because the struct gained the fields;
             // no v2 input or expectation in this test changed.
-            context_digest: None,
-            participation_digest: None,
-            policy_rules_digest: None,
+            context_digest: Vec::new(),
+            participation_digest: Vec::new(),
+            policy_rules_digest: Vec::new(),
         };
         assert_eq!(
             hex(&record_digest_v2(&d)),
@@ -787,9 +794,9 @@ mod tests {
             sealed_at: 1_700_000_000_000,
             schema_version: 3,
             ciphertext_digest: vec![0x44; 32],
-            context_digest: Some(vec![0x11; 32]),
-            participation_digest: Some(vec![0x22; 32]),
-            policy_rules_digest: Some(vec![0x33; 32]),
+            context_digest: vec![0x11; 32],
+            participation_digest: vec![0x22; 32],
+            policy_rules_digest: vec![0x33; 32],
         }
     }
 
@@ -814,15 +821,91 @@ mod tests {
         );
     }
 
+    /// An explicitly-encoded ZERO-LENGTH tag 13 must verify GREEN, identically to an omitted one.
+    ///
+    /// This is the case a hostile producer can actually send. A conforming encoder never emits it —
+    /// prost skips a singular scalar at its default — but proto3 *obliges a decoder to accept* an
+    /// explicitly-encoded default, so `0x6a 0x00` can be handed to this verifier. `seam-event.v1.md`
+    /// §"Presence on the wire" therefore states the consumer rule as a TOTAL mapping over every byte
+    /// sequence a decoder can be handed: on tags 10-13, `len == 0` means absent **however the bytes
+    /// arose**. For tag 13 absent is legitimate (no policy bound) and frames as `opt(None)`.
+    ///
+    /// This test is in two halves on purpose. The first asserts what the DECODER actually produces
+    /// from those bytes — without it the second half would be asserting a premise rather than a
+    /// behaviour, and would keep passing if the wire types changed underneath it.
+    #[test]
+    fn an_explicitly_encoded_zero_length_policy_rules_digest_is_absent_not_malformed() {
+        use prost::Message;
+
+        let pb = crate::wire::DecisionSealedPb {
+            decision_id: "dec:v3".into(),
+            tenant: "acme".into(),
+            namespace: "fraud".into(),
+            mode: Some("decision.v1".into()),
+            policy_version: Some("policy-7".into()),
+            outcome: "Resolved".into(),
+            supersedes: Some("dec:prior".into()),
+            sealed_at: 1_700_000_000_000,
+            schema_version: 3,
+            ciphertext_digest: vec![0x44; 32],
+            context_digest: vec![0x11; 32],
+            participation_digest: vec![0x22; 32],
+            policy_rules_digest: Vec::new(),
+        };
+
+        let mut bytes = Vec::new();
+        pb.encode(&mut bytes).expect("encode");
+        // A conforming encoder emits nothing for tag 13 here...
+        assert!(
+            !bytes.windows(2).any(|w| w == [0x6a, 0x00]),
+            "the encoder must not put a zero-length tag 13 on the wire"
+        );
+        // ...but a non-conforming one can append it, and proto3 says we must accept it.
+        bytes.extend_from_slice(&[0x6a, 0x00]);
+        let decoded = crate::wire::DecisionSealedPb::decode(&bytes[..]).expect("decode");
+        assert!(
+            decoded.policy_rules_digest.is_empty(),
+            "the crafted bytes must decode to an empty tag 13 — otherwise this test proves nothing"
+        );
+
+        // The verdict must be identical to the omitted case, not a MALFORMED refusal.
+        let mut crafted = v3_decision();
+        crafted.policy_rules_digest = decoded.policy_rules_digest;
+        let mut omitted = v3_decision();
+        omitted.policy_rules_digest = Vec::new();
+
+        let c = record_digest_v3(&crafted)
+            .expect("an explicitly-encoded zero-length tag 13 is ABSENT, not malformed");
+        let o = record_digest_v3(&omitted).expect("an omitted tag 13 is absent");
+        assert_eq!(c, o, "`len == 0` is absence however the bytes arose");
+    }
+
+    /// The same rule, in the direction that must NOT change: tags 11/12 are mandatory on v3, so a
+    /// zero-length occurrence is a STRIP and is still refused.
+    #[test]
+    fn an_explicitly_encoded_zero_length_mandatory_digest_is_still_refused() {
+        for (name, set) in [("context_digest", 0usize), ("participation_digest", 1usize)] {
+            let mut d = v3_decision();
+            if set == 0 {
+                d.context_digest = Vec::new();
+            } else {
+                d.participation_digest = Vec::new();
+            }
+            let err = record_digest_v3(&d)
+                .expect_err("a zero-length mandatory digest must be refused, never hashed");
+            assert!(err.contains(name), "the refusal must name {name}: {err}");
+        }
+    }
+
     /// Tag 13 is `opt`ed, so absent and present must differ — and absent must NOT equal a 32-zero-byte
     /// digest, which is what an implementation that framed the slot (or defaulted absence) would produce.
     #[test]
     fn record_digest_v3_distinguishes_an_absent_policy_rules_digest_from_a_present_one() {
         let base = v3_decision();
         let mut absent = base.clone();
-        absent.policy_rules_digest = None;
+        absent.policy_rules_digest = Vec::new();
         let mut zeros = base.clone();
-        zeros.policy_rules_digest = Some(vec![0u8; 32]);
+        zeros.policy_rules_digest = vec![0u8; 32];
 
         let a = record_digest_v3(&absent).unwrap();
         let z = record_digest_v3(&zeros).unwrap();
@@ -859,19 +942,19 @@ mod tests {
             (
                 "context_digest",
                 11,
-                (|d: &mut Decision| d.context_digest = None) as fn(&mut Decision),
+                (|d: &mut Decision| d.context_digest = Vec::new()) as fn(&mut Decision),
             ),
             ("participation_digest", 12, |d: &mut Decision| {
-                d.participation_digest = None
+                d.participation_digest = Vec::new()
             }),
             ("context_digest", 11, |d: &mut Decision| {
-                d.context_digest = Some(vec![0x11; 31])
+                d.context_digest = vec![0x11; 31]
             }),
             ("participation_digest", 12, |d: &mut Decision| {
-                d.participation_digest = Some(Vec::new())
+                d.participation_digest = Vec::new()
             }),
             ("policy_rules_digest", 13, |d: &mut Decision| {
-                d.policy_rules_digest = Some(vec![0x33; 33])
+                d.policy_rules_digest = vec![0x33; 33]
             }),
         ] {
             let mut d = base.clone();
@@ -927,9 +1010,9 @@ mod tests {
             sealed_at: 1,
             schema_version: 2,
             ciphertext_digest: vec![0u8; 32],
-            context_digest: None,
-            participation_digest: None,
-            policy_rules_digest: None,
+            context_digest: Vec::new(),
+            participation_digest: Vec::new(),
+            policy_rules_digest: Vec::new(),
         };
         let mut with_empty = base.clone();
         with_empty.mode = Some(String::new());

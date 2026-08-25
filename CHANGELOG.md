@@ -18,6 +18,41 @@ than trusting a summary here.
 
 ### Added
 
+- **`record_digest_v3` on the streamed authenticity helpers** — `verify_streamed_record_digest`
+  (Python) and `verifyStreamedRecordDigest` (TypeScript) now recompute `schema_version = 3`
+  `DECISION_SEALED` records from the wire, not just v2. Both dispatch on `schema_version`; the v2 path
+  is unchanged. The "newer than this SDK" refusal moves from `>= 3` to `>= 4` — a v4 record still
+  refuses loudly rather than being computed under a domain tag that does not apply to it, because
+  answering `false` for a genuine record is a tamper verdict fabricated by version skew.
+
+  **On a v3 record carrying its `ciphertext_digest`, a stripped `context_digest` (tag 11) or
+  `participation_digest` (tag 12) raises `RecordDigestStripError` rather than returning `false`.** The spec makes both mandatory on a v3 payload and requires a
+  consumer to refuse — never to substitute an empty digest, never to fall back to the v2 formula — and
+  requires the refusal be reported *distinctly* from a digest mismatch, because "someone removed a
+  field" and "someone rewrote one" have different responses. A mismatch remains the `false` it has
+  always been. `RecordDigestStripError` subclasses `ValueError` (and `Error` in TS) and carries
+  `field` plus `wire_tag` (`wireTag` in TS), so a caller routing a refusal to an alert or a metric
+  never has to parse English.
+
+  The qualifier on that rule is deliberate and worth knowing: the tag-10 strip check runs *before* the
+  v3 arm, so a record stripped of tags 10 **and** 11/12 returns `false` rather than raising — an
+  adversary who strips both gets the quieter diagnostic. The record fails either way; tag 10's rule is
+  the older and broader one, covering every v2+ record, so it is answered first.
+
+  **Absence on tags 10-13 is length, not field presence.** All four digest fields are singular proto3
+  `bytes`, so no presence bit exists and `HasField` raises rather than answering. Per `seam-event.v1`
+  §"Presence on the wire", `len == 0` is a **total** absence mapping over any bytes a decoder can be
+  handed — including an explicitly-encoded zero-length field, which proto3 obliges a decoder to accept
+  even though a conforming producer never emits one. Consumers writing their own verifier should test
+  length, not presence. `mode`/`policy_version`/`supersedes` (tags 4/5/7) are the opposite case: they
+  *are* optional, empty-string is a real value there, and absent stays distinct from `""`.
+
+  The case most likely to bite a hand-rolled implementation: an absent `policy_rules_digest` (tag 13)
+  is **legitimate** — it means no policy was bound — and frames as `opt(None)`, one byte. Passing the
+  decoded empty value straight through frames `opt(Some(""))`, five bytes, and reports a mismatch on a
+  perfectly genuine record. In TypeScript the `?? null` idiom does not help, because the generated
+  field is an empty `Uint8Array` rather than `undefined`.
+
 - **Contract regenerated from the BSR against the landed coordination surface** — one batched
   regeneration covering four `seam.api.v1` changes rather than four separate ones, because each
   regeneration is a release and each release is an exposure event. Adds `PolicyEnforcement`
@@ -76,6 +111,73 @@ than trusting a summary here.
   `erase_subject_confirmed`/`eraseSubjectConfirmed` (Python + TS) — the field already existed on
   the wire; only the hand-written wrappers omitted it, unlike `enforce_retention`, which already
   exposed the identical field (#39).
+
+### Fixed — three things that documented themselves incorrectly, and the bug the third was hiding
+
+- **A release-guard comment named a file that does not exist.**
+  `release-on-runtime.yml` told the reader that `scripts/test_release_gate_order.sh` asserts the
+  framing gate's step ordering. The guard is real but is named `scripts/test_release_gate.py`. A
+  comment pointing at a nonexistent guard is worse than no comment: it tells the next person the
+  ordering is protected and hands them a filename that returns nothing when they check it.
+
+- **The `COMPATIBILITY.md` citation checker validated its own copy of a line number instead of the
+  document's.** Its anchored table duplicated each cited line number and asserted the target file
+  still held the right content near *that* line — so the table and `COMPATIBILITY.md` could drift
+  apart silently, and did: the document cited `release-on-runtime.yml:120` (`git push origin
+  HEAD:main`) for a claim about the `go/vX.Y.Z` tag, six lines off, while the test happily passed
+  against its own pin of 126. The table had also needed repointing four times in one working
+  session, each repoint a chance to "fix" the test by aiming it at the wrong line.
+
+  The line numbers are gone. Each entry is now `(path, needle)`; the check finds the needle's line in
+  the target file and asserts `COMPATIBILITY.md` cites *that* line — the document checked against the
+  code, rather than against a copy kept in the test. The needle must be **unique** in its file, which
+  is not a formality: four of the six were substrings occurring two to four times (`npm.cloudsmith.io`
+  appears on four lines of `publish.yml`), so a search accepting any match would have let a citation
+  drift hundreds of lines and still call itself resolved.
+
+- **This repo's reference copy of `seam.event.v1` declared tags 11/12/13 `optional`, which the
+  contract says is a semantic break.** `verify/proto/seam/event/v1/seam_event.proto` was written
+  during the Rust v3 work, before seam-runtime#435 settled the cardinality question, and its comment
+  argued at length that `optional` was load-bearing — the exact position that issue considered and
+  rejected. The runtime's rule is the stronger one: a digest slot's domain is {absent} ∪ {32 bytes},
+  and a singular field makes the empty value unrepresentable by a conforming encoder rather than
+  merely discouraged. Corrected to singular, with the reasoning replaced rather than deleted, so the
+  next reader sees why the obvious-looking choice is the wrong one.
+
+  Nothing is generated from that file — `verify/` hand-decodes the wire in `src/wire.rs` and only
+  cites the proto in a doc comment, and there is no `build.rs` — so the proto edit itself changes no
+  behaviour. **The decoder beside it was a different story, and is fixed below.**
+
+- **`seam-verify` refused a valid record: an explicitly-encoded zero-length `policy_rules_digest`
+  (tag 13) was reported MALFORMED instead of read as absent.** `verify/src/wire.rs` declared tags
+  11/12/13 with prost `optional`, so a zero-length occurrence decoded as `Some(b"")` rather than as
+  absence. Tag 13 absent is legitimate — it means no policy was bound — so the verifier failed a
+  record the contract calls valid, and disagreed with the Python and TypeScript implementations on
+  identical bytes. A conforming producer never emits those bytes; proto3 obliges a decoder to accept
+  them, which is exactly why the spec states the consumer rule as a total mapping over anything a
+  decoder can be handed. Tags 11/12/13 are now singular and absence is carried by length, matching
+  the wire contract and the other two implementations.
+
+  Three behaviours change for consumers of `seam-verify`:
+
+  - **A record with an empty tag 13 now VERIFIES instead of failing.** This is the fix.
+  - **An empty tag 11 or 12 is still refused, but now reads as a STRIP rather than MALFORMED.** The
+    verdict is unchanged — the record fails either way, and still fails in the vocabulary of a strip
+    rather than a rewrite, which is the distinction that matters operationally. Only the diagnostic
+    moves. Telling "omitted" from "explicitly-encoded-empty" requires reading raw wire bytes rather
+    than a decoded message; the spec says both inputs verify identically and only the diagnostic
+    differs.
+  - **A `schema_version = 1` record carrying an explicitly-encoded zero-length tag 11/12/13 now
+    passes the v1 skip instead of being refused as a DOWNGRADE.** The v1-smuggling check asks whether
+    a v1-declared record carries a v2/v3-only column; under the old `Option` it read a zero-length
+    field as "carried", now it reads it as absent — which is what the contract says it is, so the
+    record really is v1-shaped and nothing with actual content slips through. Listed anyway, because
+    it is a FAILED-to-VERIFIED flip on bytes an adversary can craft, and a verdict flip that a
+    changelog does not mention is one an operator discovers from a graph.
+
+  The JSON projection follows the same rule: a missing key and `""` are one state, absent — pinned by
+  the spec because webhook and `GET /v1/events` consumers read the projection rather than the wire,
+  and two projections disagreeing about absence would recompute two different digests from one record.
 
 ### Fixed — release-exposure gaps (W5, G1–G3)
 

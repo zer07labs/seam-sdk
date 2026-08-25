@@ -77,32 +77,76 @@ def test_each_citation_resolves(citation: tuple[str, int, int]) -> None:
     )
 
 
-#: The claims whose citations MUST still point at the right content. Each entry is
-#: (cited path, cited line, a substring that must appear on or near that line).
-#: These are exactly the six that went stale once — pinned so they cannot again.
+#: The claims whose citations MUST still point at the right content — the six that went stale once.
+#:
+#: Each entry is (cited path, a needle that must be UNIQUE in that file). **There is deliberately no
+#: line number here.** An earlier version of this table pinned one, and it had to be repointed four
+#: times in a single working session — every repoint an opportunity to "fix" the test by pointing it
+#: at the wrong line, which is precisely the failure it exists to catch. The line number was also pure
+#: duplication: it is derivable from the needle, and a fact stored in two places is a fact that can
+#: disagree with itself.
+#:
+#: What the check does instead: find the needle's line in the target file, then assert COMPATIBILITY.md
+#: cites *that* line. So the document is checked against the code rather than against a copy of the
+#: line number kept here — which is the direction that catches a stale citation, and the direction that
+#: needs no maintenance when unrelated edits shift a file.
 ANCHORED = [
-    ("CHANGELOG.md", 317, "No yank"),
-    (".github/workflows/publish.yml", 178, "npm.cloudsmith.io"),
-    (".github/workflows/publish.yml", 303, "python.cloudsmith.io"),
-    (".github/workflows/release-on-runtime.yml", 126, "go/v$VER"),
-    ("README.md", 128, "crypto shims"),
-    (".github/workflows/ci.yml", 289, "must link NOTHING"),
+    ("CHANGELOG.md", "No yank"),
+    (".github/workflows/publish.yml", 'registry-url: "https://npm.cloudsmith.io'),
+    (
+        ".github/workflows/publish.yml",
+        'TWINE_REPOSITORY_URL: "https://python.cloudsmith.io',
+    ),
+    (".github/workflows/release-on-runtime.yml", 'git tag -a "go/v$VER"'),
+    ("README.md", "crypto shims + conformance tests only"),
+    (".github/workflows/ci.yml", "must link NOTHING"),
 ]
 
+#: How far a citation may sit from the needle's true line and still count. A citation naming a block
+#: usually points at its heading or its first line, not at the exact line carrying the string.
+CITATION_SLACK = 3
 
-@pytest.mark.parametrize(("path", "line", "needle"), ANCHORED, ids=lambda v: str(v))
+
+@pytest.mark.parametrize(("path", "needle"), ANCHORED, ids=lambda v: str(v))
 def test_the_load_bearing_citations_still_point_at_the_right_thing(
-    path: str, line: int, needle: str
+    path: str, needle: str
 ) -> None:
     """A line that exists but no longer says what it was cited for is the failure that happened.
 
-    Checked with a small window rather than an exact line, so ordinary edits nearby do not cause
-    churn — but a citation that has drifted to an unrelated part of the file still fails.
+    **Known limit, accepted deliberately:** citations are matched to a claim by PATH only, so if a file
+    is cited more than once, any of its citations landing within `CITATION_SLACK` of the needle
+    satisfies the check — a drifted citation could in principle be masked by an unrelated one. Binding
+    each claim to its own citation would mean parsing the document's table rows, which is materially
+    more machinery than the risk earns. Today only two paths are cited twice (`CHANGELOG.md` and
+    `publish.yml`) and their citations sit 125+ lines apart against a slack of 3, so every anchored
+    entry is satisfied by exactly its own citation. Revisit this if that stops being true.
     """
     lines = (REPO / path).read_text(encoding="utf-8", errors="ignore").splitlines()
-    window = "\n".join(lines[max(0, line - 4) : line + 3])
-    assert needle in window, (
-        f"COMPATIBILITY.md cites `{path}:{line}` for {needle!r}, but that is no longer what is "
-        f"there. Someone inserted or removed lines above it. Re-resolve the citation:\n"
-        f"--- {path}:{max(1, line - 3)}-{line + 3} ---\n{window}"
+    hits = [i + 1 for i, line in enumerate(lines) if needle in line]
+
+    # Absent and ambiguous are BOTH failures, and the second is the one worth being strict about.
+    # Four of these six needles were substrings occurring 2-4 times in their file when this check was
+    # rewritten (`npm.cloudsmith.io` appeared on four lines of publish.yml). A search that accepts any
+    # match would have let a citation drift hundreds of lines and still call itself resolved — passing
+    # vacuously, which is the same defect as the stale pin, just quieter. Uniqueness is what makes
+    # "the needle is at line N" a fact rather than a guess, so it is asserted, not assumed.
+    assert len(hits) == 1, (
+        f"{needle!r} occurs {len(hits)} times in {path} (lines {hits or 'none'}); this check needs "
+        f"exactly one. If it is 0, the cited content is gone — re-resolve or delete the claim, per "
+        f"COMPATIBILITY.md's own rule. If it is >1, the needle is too weak to identify a line: "
+        f"lengthen it here until it is unique, do NOT relax this assertion."
+    )
+    true_line = hits[0]
+
+    cited = [(s, e) for p, s, e in _citations() if p == path]
+    assert cited, (
+        f"ANCHORED pins {needle!r} in {path}, but COMPATIBILITY.md no longer cites {path} at all. "
+        f"Either the claim was dropped (then drop this entry too) or the citation format changed."
+    )
+    assert any(
+        s - CITATION_SLACK <= true_line <= e + CITATION_SLACK for s, e in cited
+    ), (
+        f"{needle!r} is at {path}:{true_line}, but COMPATIBILITY.md cites {path} only at "
+        f"{[str(s) if s == e else f'{s}-{e}' for s, e in cited]}. The citation has drifted — update "
+        f"COMPATIBILITY.md to {path}:{true_line}."
     )

@@ -152,27 +152,33 @@ pub struct DecisionSealedPb {
     /// strip/downgrade attack, refused under `--issuer`.
     #[prost(bytes = "vec", tag = "10")]
     pub ciphertext_digest: Vec<u8>,
-    /// tag 11 (B3) — `context_digest`, 32 bytes: what context the decision consumed. MANDATORY on
-    /// `schema_version = 3`; absent on v1/v2.
+    /// tags 11/12/13 (B3) — 32-byte sub-digests. 11 and 12 are MANDATORY on `schema_version = 3`;
+    /// 13 is genuinely optional (absent means no policy was bound, today's common case).
     ///
-    /// `optional` (proto3 explicit presence) is load-bearing here in a way it is NOT for tag 10.
-    /// Tag 10 gets away with a bare `bytes` because absent and present-empty are both refused by its
-    /// non-empty check. These three cannot: the spec gives a record with **no participants** a
-    /// perfectly well-defined `participation_digest`, and slots 10/11 of the preimage are `frame`d
-    /// rather than `opt`ed *precisely* so that "no participants" and "field stripped" cannot alias.
-    /// Collapsing absent into empty here would re-create at the wire layer the very collision the
-    /// digest framing was designed to prevent.
-    #[prost(bytes = "vec", optional, tag = "11")]
-    pub context_digest: Option<Vec<u8>>,
-    /// tag 12 (B3) — `participation_digest`, 32 bytes: who participated. MANDATORY on v3. See tag 11
-    /// for why the presence bit matters.
-    #[prost(bytes = "vec", optional, tag = "12")]
-    pub participation_digest: Option<Vec<u8>>,
-    /// tag 13 (B3) — `policy_rules_digest`, 32 bytes: which policy rules gated the commitment.
-    /// Genuinely OPTIONAL — absent means no policy was bound, which is today's common case — so this
-    /// one carries a real absent/present distinction into the digest (preimage slot 12 is `opt`ed).
-    #[prost(bytes = "vec", optional, tag = "13")]
-    pub policy_rules_digest: Option<Vec<u8>>,
+    /// **SINGULAR, not `optional` — this said the opposite until seam-runtime#435 settled it.** The
+    /// argument for explicit presence was that absent and present-empty must not alias, since a record
+    /// with no participants still has a well-defined `participation_digest`. That conclusion was right
+    /// and the mechanism was wrong. A digest slot's value domain is {absent} ∪ {exactly 32 bytes}, so
+    /// a singular field makes the empty value UNREPRESENTABLE by a conforming encoder — proto3 emits
+    /// no bytes for a singular scalar at its default. `optional` would make `Some(b"")` encodable and
+    /// meaningless, and a representable-but-meaningless value is one some implementation eventually
+    /// produces. Absent still drives the refusal; it is carried by LENGTH rather than by a presence bit.
+    ///
+    /// The consumer rule (spec §"Presence on the wire") is a TOTAL mapping: `len == 0` is absent
+    /// however the bytes arose — including an explicitly-encoded `0x6a 0x00`, which proto3 obliges a
+    /// decoder to accept even though a conforming producer never emits one. Keeping `Option` here made
+    /// prost decode exactly those bytes as `Some(b"")`, which this verifier then refused as MALFORMED
+    /// — refusing a record the contract calls valid, and disagreeing with the Python and TS twins on
+    /// identical bytes. Tags 4/5/7 above are the real `optional` case: the empty string IS in their
+    /// domain, so `None` and `Some("")` are two preimages the wire must keep apart.
+    #[prost(bytes = "vec", tag = "11")]
+    pub context_digest: Vec<u8>,
+    /// See tag 11 for the cardinality rule these three share.
+    #[prost(bytes = "vec", tag = "12")]
+    pub participation_digest: Vec<u8>,
+    /// See tag 11. Absent (`len == 0`) is legitimate and frames as `opt(None)` in the v3 preimage.
+    #[prost(bytes = "vec", tag = "13")]
+    pub policy_rules_digest: Vec<u8>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -301,10 +307,13 @@ pub struct DecisionSealedJson {
     /// base64 (STANDARD); absent/empty on v1.
     #[serde(default)]
     pub ciphertext_digest: Option<String>,
-    /// base64 (STANDARD), tags 11/12/13 (B3). `None` = the key was absent from the JSON object;
-    /// `Some("")` = the key was present with an empty value, which decodes to `Some(vec![])` and is
-    /// then refused as malformed — NOT silently folded into absent. The two mean different things
-    /// (nobody sent the field vs somebody sent an empty one) and only one of them is a strip.
+    /// base64 (STANDARD), tags 11/12/13 (B3). The `Option` here is serde's — "was the key in the
+    /// object?" — and is folded away at the parse site: a missing key and `""` BOTH mean absent,
+    /// matching the wire's total `len == 0` rule. This comment said the opposite (that `""` is a
+    /// distinct present-but-empty state, refused as malformed) until seam-runtime#435 pinned the
+    /// projection to the same rule as the wire. It matters because webhook and `GET /v1/events`
+    /// consumers read this projection rather than the wire, and two projections that disagreed about
+    /// absence would recompute two different digests from one record.
     #[serde(default)]
     pub context_digest: Option<String>,
     #[serde(default)]
@@ -369,13 +378,14 @@ pub struct Decision {
     pub sealed_at: u64,
     pub schema_version: u32,
     pub ciphertext_digest: Vec<u8>,
-    /// Tags 11/12/13 (B3), carried with EXPLICIT presence all the way through — `None` is "the field
-    /// was not on the wire", never "the field was empty". `record_digest_v3` depends on the
-    /// difference: absent on a v3 record is a strip and must be refused, while a 32-byte digest of
-    /// an empty participation list is a legitimate value.
-    pub context_digest: Option<Vec<u8>>,
-    pub participation_digest: Option<Vec<u8>>,
-    pub policy_rules_digest: Option<Vec<u8>>,
+    /// Tags 11/12/13 (B3). Absence is carried by LENGTH, not by `Option`: empty means "not on the
+    /// wire", per the spec's total `len == 0` mapping (§"Presence on the wire"). `record_digest_v3`
+    /// still depends on absent-vs-present — absent on a v3 record is a strip and is refused, while a
+    /// 32-byte digest of an empty participation list is a legitimate value — but the empty digest is
+    /// out of these slots' domain entirely, so there is no third state for `Option` to represent.
+    pub context_digest: Vec<u8>,
+    pub participation_digest: Vec<u8>,
+    pub policy_rules_digest: Vec<u8>,
 }
 
 #[derive(Clone)]
@@ -509,13 +519,32 @@ impl Event {
                         .map(b64)
                         .transpose()?
                         .unwrap_or_default(),
-                    // NOTE the missing `.unwrap_or_default()`: unlike tag 10, these three keep their
-                    // `Option`. Defaulting them here would erase the strip signal before the digest
-                    // code ever sees it, and a stripped v3 record would then be reported as a
-                    // rewrite — the one confusion the spec's strip semantics exist to prevent.
-                    context_digest: p.context_digest.as_deref().map(b64).transpose()?,
-                    participation_digest: p.participation_digest.as_deref().map(b64).transpose()?,
-                    policy_rules_digest: p.policy_rules_digest.as_deref().map(b64).transpose()?,
+                    // Missing key and `""` BOTH mean absent, exactly as `len == 0` does on the wire.
+                    // The spec pins this for the JSON projection explicitly ("all four fields
+                    // serialize omitted-when-empty and parse missing-as-empty, so missing/`\"\"` ⇔
+                    // absent there too"), and it matters because webhook and `GET /v1/events`
+                    // consumers read this rather than the wire — if the two projections disagreed
+                    // about absence they would recompute different digests from the same record.
+                    // The strip signal is NOT lost by collapsing them: empty IS the absent signal,
+                    // and `v3_required` refuses it for tags 11/12.
+                    context_digest: p
+                        .context_digest
+                        .as_deref()
+                        .map(b64)
+                        .transpose()?
+                        .unwrap_or_default(),
+                    participation_digest: p
+                        .participation_digest
+                        .as_deref()
+                        .map(b64)
+                        .transpose()?
+                        .unwrap_or_default(),
+                    policy_rules_digest: p
+                        .policy_rules_digest
+                        .as_deref()
+                        .map(b64)
+                        .transpose()?
+                        .unwrap_or_default(),
                 })
             });
             let ev = Event {
@@ -909,17 +938,17 @@ mod tests {
                 sealed_at: 1_700_000_000_000,
                 schema_version: 3,
                 ciphertext_digest: cipher.clone(),
-                context_digest: Some(ctx.clone()),
-                participation_digest: Some(part.clone()),
-                policy_rules_digest: Some(rules.clone()),
+                context_digest: ctx.clone(),
+                participation_digest: part.clone(),
+                policy_rules_digest: rules.clone(),
             }),
             ..Default::default()
         };
         let from_pb = Event::parse(&b64e(&pb.encode_to_vec())).expect("pb transport must parse");
         let d = from_pb.decision.as_ref().expect("a decision payload");
-        assert_eq!(d.context_digest.as_deref(), Some(&ctx[..]), "tag 11");
-        assert_eq!(d.participation_digest.as_deref(), Some(&part[..]), "tag 12");
-        assert_eq!(d.policy_rules_digest.as_deref(), Some(&rules[..]), "tag 13");
+        assert_eq!(d.context_digest, ctx, "tag 11");
+        assert_eq!(d.participation_digest, part, "tag 12");
+        assert_eq!(d.policy_rules_digest, rules, "tag 13");
 
         let json = format!(
             r#"{{"schema_version":"seam-event.v1","event_id":"d1#7","seq":7,"occurred_at":1700,
@@ -936,17 +965,9 @@ mod tests {
         .replace('\n', "");
         let from_json = Event::parse(&json).expect("JSON transport must parse");
         let j = from_json.decision.as_ref().expect("a decision payload");
-        assert_eq!(j.context_digest.as_deref(), Some(&ctx[..]), "tag 11 (JSON)");
-        assert_eq!(
-            j.participation_digest.as_deref(),
-            Some(&part[..]),
-            "tag 12 (JSON)"
-        );
-        assert_eq!(
-            j.policy_rules_digest.as_deref(),
-            Some(&rules[..]),
-            "tag 13 (JSON)"
-        );
+        assert_eq!(j.context_digest, ctx, "tag 11 (JSON)");
+        assert_eq!(j.participation_digest, part, "tag 12 (JSON)");
+        assert_eq!(j.policy_rules_digest, rules, "tag 13 (JSON)");
 
         assert_eq!(
             from_pb.bytes, from_json.bytes,
@@ -955,12 +976,19 @@ mod tests {
         );
     }
 
-    /// Absent, present-and-empty, and present-and-set are THREE things on the wire, and the parse must
-    /// keep them apart. Folding `""` into absent would report a malformed record as a strip; folding
-    /// absent into `""` would make a strip undetectable. Only the digest layer decides what to do with
-    /// each — the wire layer's job is to not destroy the distinction before it gets there.
+    /// Absent and present-and-empty are ONE thing on tags 11/12/13 — absent — and present-and-set is the
+    /// other. This comment (and this test's name) asserted the opposite three-state reading until
+    /// seam-runtime#435 pinned the rule; the body below always had to change with it, so leaving the
+    /// prose behind would have left the file arguing with itself.
+    ///
+    /// The retracted argument was that folding `""` into absent would report a malformed record as a
+    /// strip. It does reclassify that diagnostic — and the spec sanctions exactly that: telling
+    /// "omitted" from "explicitly-encoded-empty" requires reading raw wire bytes rather than a decoded
+    /// message, and "both inputs verify identically either way; only the diagnostic differs". What the
+    /// old reading actually cost was worse than a diagnostic: it made a zero-length tag 13 — a
+    /// legitimate absent policy — a MALFORMED refusal, failing records the contract calls valid.
     #[test]
-    fn the_v3_columns_distinguish_absent_from_present_and_empty() {
+    fn the_v3_columns_read_a_missing_key_and_an_empty_one_as_the_same_absence() {
         let parse = |field: &str| {
             Event::parse(&format!(
                 r#"{{"schema_version":"seam-event.v1","event_id":"d1#7","seq":7,
@@ -972,15 +1000,18 @@ mod tests {
             .decision
             .expect("a decision payload")
         };
-        assert_eq!(
-            parse("").context_digest,
-            None,
-            "an absent key must stay absent, not become empty"
+        // Missing key and `""` are the SAME state — absent — matching the wire's total `len == 0`
+        // rule. This assertion read the opposite way (`""` stays present) until seam-runtime#435
+        // pinned the JSON projection to the same rule as the wire. Keeping them distinct here meant
+        // a webhook consumer and a wire consumer could disagree about absence on the same record,
+        // and so recompute two different digests from it — each believing the other's was tampered.
+        assert!(
+            parse("").context_digest.is_empty(),
+            "an absent key is absent"
         );
-        assert_eq!(
-            parse(r#","context_digest":"""#).context_digest,
-            Some(Vec::new()),
-            "a present-but-empty key must stay present, not become absent"
+        assert!(
+            parse(r#","context_digest":"""#).context_digest.is_empty(),
+            "a present-but-empty key means absent too — missing/`\"\"` are one state, not two"
         );
     }
 

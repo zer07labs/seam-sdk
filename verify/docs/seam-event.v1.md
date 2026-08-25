@@ -1,13 +1,18 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 0b62cb7 (refreshed 2026-08-24 for B3
-     record-digest v3). The runtime spec is the source of truth; refresh this copy whenever the spec
-     changes — a stale copy here once shipped a real verifier bug (the AUTHORIZE_EVALUATED advisory
-     omission), and it was stale again before this refresh: it carried no §Record digest (v3) at all,
-     while src/verify.rs implements it.
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 76f36f5 (refreshed 2026-08-25 for the
+     tags 10-13 cardinality rule, seam-runtime#435). The runtime spec is the source of truth; refresh
+     this copy whenever the spec changes — a stale copy here once shipped a real verifier bug (the
+     AUTHORIZE_EVALUATED advisory omission), and it has now been stale twice more: it carried no
+     §Record digest (v3) before the previous refresh, and no §"Presence on the wire" before this one,
+     while src/verify.rs implements both. The second staleness was found by a review gate, not by a
+     test — see the note below.
      Refreshed VERBATIM, whole-file, deliberately: a reviewer can `diff` it against the sibling
-     checkout and get nothing, which is a checkable claim. Cherry-picking only the v3 sections would
-     read as tidier and would quietly end that property.
-     The advisory-kind tripwire in src/wire.rs cross-checks the LIVE runtime spec when the sibling
-     checkout is present; this file is what third parties build from when it is not. -->
+     checkout and get nothing, which is a checkable claim. Cherry-picking only the changed sections
+     would read as tidier and would quietly end that property.
+     NOTE the gap this sits in: nothing enforces the verbatim claim. The advisory-kind tripwire in
+     src/wire.rs cross-checks only the LIVE runtime spec's kind list when the sibling checkout is
+     present, and the cross-repo golden manifest does not cover seam-sdk at all. This file is what
+     third parties build from when no sibling checkout exists, so a stale copy ships them a spec that
+     does not describe the verifier they are running. -->
 
 # `seam-event.v1` — event-stream wire spec (language-neutral)
 
@@ -621,7 +626,94 @@ signed-control-plane-policy work, orthogonal and later. An unsigned policy's dig
 seal-worthy as an unsigned decision payload's ciphertext hash, which v2 already seals.
 
 `policy_rules_digest` (13) is genuinely optional: absent means no policy was bound to that commitment,
-which is today's common case. Absent ≠ `Some(empty)` — the `opt` presence byte distinguishes them.
+which is today's common case. Absent ≠ `Some(empty)` — the `opt` presence byte distinguishes them
+in the preimage, and *Presence on the wire* below explains why `Some(empty)` never reaches the preimage
+in the first place.
+
+#### Presence on the wire — why tags 10–13 are not `optional`
+
+Four `DecisionSealed` fields carry a digest: `ciphertext_digest` (10), `context_digest` (11),
+`participation_digest` (12), `policy_rules_digest` (13). None is declared `optional`, while `mode` (4),
+`policy_version` (5) and `supersedes` (7) all are. All four digest fields feed either an `opt(...)`
+slot or a strip check, so what `len == 0` means on them is load-bearing, and this section pins it.
+
+**Why the digest slots are singular.** A digest slot's value domain is *{absent} ∪ {exactly 32 bytes}* —
+the empty digest is not a value in it. Declaring the field singular makes that out-of-domain state
+**unrepresentable by a conforming encoder**: proto3 emits no bytes for a singular scalar holding its
+default, so a present-but-empty digest cannot leave a conforming producer. Declaring it `optional`
+would make `Some(b"")` representable, and a representable-but-meaningless value is one some
+implementation eventually produces.
+
+**Why tags 4/5/7 are `optional`.** Their sealed columns are `Option`s, and the empty string is inside
+their value domain — *`None` is not `Some("")`* above is explicit that a present-but-empty string is
+data and that the digest must not depend on ingress refusing one. `opt(None)` and `opt(Some(""))` are
+different preimages, so the wire must keep absence and emptiness apart. Were `mode` singular, a
+legitimately-empty mode would encode as no bytes and decode as absent: the consumer would recompute
+`opt(None)` against a record sealed over `opt(Some(""))` and report a rewrite that never happened.
+
+Together these give the rule `DecisionSealed` actually obeys — apply it when adding a field:
+
+> A `DecisionSealed` scalar is `optional` **iff** its preimage slot is `opt(...)` **and** the empty
+> value is inside its value domain — exactly when absence and emptiness are two preimages the wire must
+> keep apart. Every other field is singular: the always-`frame`d slots (tags 1–3, 6, 8–9) have no
+> absent state to track, and the digest slots (tags 10–13) exclude the empty value by domain, whether
+> their slot is `opt`ed (13) or not (10–12).
+
+> **The rule is `DecisionSealed`'s, not the package's — do not read it as a convention.** The envelope
+> does not obey it: `SeamEvent` declares `digest` (19) and `checksum` (20) `optional bytes` while
+> `prev_checksum` (12) is singular, and no one principle derives all three. The local facts instead: on
+> `prev_checksum`, empty **is** a domain value — an advisory event carries an empty `prev_checksum` by
+> design, and the genesis head is 32 zero bytes precisely so a chain-start link never aliases with "not
+> chained" — so singular is faithful there. On 19/20, presence itself is the chained-ness bit (chained ⇔
+> both present, §Ordering & integrity), and `optional` lets a stub consumer ask that question directly;
+> but the empty digest is out of domain there too, so a singular declaration read under this section's
+> `len == 0` rule would have served equally — that cardinality is a consistent choice, not a derivation.
+> Nor does the flip hazard below have an analogue there: `prev_checksum` and `digest` are hashed by
+> **raw concatenation** (`checksum == SHA256(prev_checksum ‖ digest)`), a preimage with no presence
+> byte, so absent-versus-empty can never yield two different digests that two conforming consumers each
+> believe.
+
+**Producers MUST NOT emit a zero-length tag 10, 11, 12 or 13.** The canonical encoder cannot: prost
+skips a singular scalar at its default, and the hand-written `DecisionSealedPb` it encodes through
+declares these fields singular — the cardinality the descriptor pin below holds to this contract.
+
+**Consumers MUST read a zero-length occurrence as absence** — on all four tags, whether the field was
+omitted or explicitly encoded with length zero. The second half is the part worth pinning: proto3
+requires a decoder to *accept* an explicitly-encoded default value, so a non-conforming or hostile
+producer can place `0x6a 0x00` (tag 13, length 0) on the wire even though a conforming one never will.
+Defining `len == 0` as absent makes the mapping **total** over every byte sequence a decoder can be
+handed, instead of resting on producers behaving:
+
+| tag | `len == 0` means | consequence |
+|-----|------------------|-------------|
+| 10 `ciphertext_digest` | absent | on `schema_version >= 2`, a tag-10 strip → **refuse** (the tag-10 strip rule above) |
+| 11 `context_digest` | absent | on `schema_version = 3`, a strip → **refuse**, reported distinctly from a digest mismatch |
+| 12 `participation_digest` | absent | as tag 11 |
+| 13 `policy_rules_digest` | absent | `opt(None)` in the v3 preimage — a legitimate state, never a strip |
+
+This is what keeps `Some(b"")` out of the `digest_v3` preimage: the `opt(policy_rules_digest)` slot is
+`opt(None)` or `opt(<32 bytes>)` and nothing else, which is why the conformance corpus ships exactly
+two v3 record-digest vector blocks — `record_digest_v3` and `record_digest_v3_absent_policy` — rather
+than three. The JSON projection obeys the same rule by construction: all four fields serialize
+omitted-when-empty and parse missing-as-empty, so missing/`""` ⇔ absent there too.
+
+A consumer decoding through generated stubs therefore cannot ask a presence question of these four
+fields (`HasField` and its equivalents are not generated for a proto3 scalar without explicit
+presence), and does not need to: `len == 0` **is** the presence answer, by this rule. A consumer that
+wants to tell "omitted" from "explicitly-encoded-empty" — to report a malformed producer rather than a
+strip — must parse raw wire bytes rather than a decoded message. Both inputs verify identically either
+way; only the diagnostic differs.
+
+**Flipping any of these four to `optional` would be a semantic break, even though it is wire-compatible.**
+The bytes of a present, non-empty digest would not change, and this repo's `buf breaking` runs
+`WIRE_JSON` (`buf.yaml`), which permits the flip — which is why this section exists rather than a lint
+rule. What breaks is agreement between consumers: after the flip, a zero-length tag 13 frames as
+`opt(None)` for a consumer testing emptiness and as `opt(Some(b""))` for one testing generated
+presence, and the two recompute different digests from identical bytes. Cardinality is therefore pinned
+per-tag in `fixtures/seam_event_descriptor.json`, which seam-store's
+`descriptor_matches_the_canonical_encoder` holds against both this package's `.proto` and the
+hand-written canonical encoder, and which is registered as its own group in the cross-repo golden
+manifest — so the flip surfaces as a reviewed, coordinated re-pin, never a quiet one-line edit.
 
 #### What v3 still does not cover
 
@@ -629,7 +721,13 @@ which is today's common case. Absent ≠ `Some(empty)` — the `opt` presence by
 are bound inside the commitment TCT, which is why this is acceptable rather than an oversight — but it
 is a real residual and a v4 candidate, recorded here rather than left to be rediscovered.
 
-### Record digest (v2) — `schema_version = 2` (A14)
+### Record digest (v2) — `schema_version = 2` (A14) — **historical, permanent on read**
+
+Since B3 Phase 3 the seal path stamps **v3**; v2 is no longer written. It is **not** deprecated and this
+section is never deleted: 97 production records are sealed under it, an RFC-3161 notary anchor timestamps
+their chain heads, and `seam-sdk/verify` — the independent, zero-Seam-crates verifier — must keep
+reproducing them forever. A verifier selects the formula from the record's own `schema_version`, so v2
+and v3 records interleave in one chain with no dual-emit and no rewrite.
 
 ```
 digest_v2 = SHA256(

@@ -18,6 +18,7 @@ import pytest
 
 from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as evpb
 from seam_sdk import KNOWN_KINDS, SeamClient, verify_streamed_record_digest  # noqa: E402
+from seam_sdk.crypto import RecordDigestStripError  # noqa: E402
 from seam_sdk.admin import SeamAdminClient  # noqa: E402
 
 VECTORS = json.loads(
@@ -72,7 +73,7 @@ def test_streamed_record_digest_refuses_a_stripped_ciphertext_digest():
     assert verify_streamed_record_digest(ev) is False
 
 
-def test_streamed_record_digest_rejects_non_v2_and_non_sealed():
+def test_streamed_record_digest_rejects_a_pre_v2_record_and_a_non_sealed_event():
     v1 = _kat_event()
     v1.payload.schema_version = 1
     with pytest.raises(ValueError):
@@ -83,13 +84,157 @@ def test_streamed_record_digest_rejects_non_v2_and_non_sealed():
 
 
 def test_streamed_record_digest_rejects_a_future_schema_version():
-    """A v3+ record is a framing this SDK does not know. Recomputing it with the v2 domain tag would
+    """A v4+ record is a framing this SDK does not know. Recomputing it with the v3 domain tag would
     report a spurious False on a GENUINE record — a tamper verdict fabricated by version skew — so it
-    must refuse loudly like v1 does, not answer."""
-    v3 = _kat_event()
-    v3.payload.schema_version = 3
+    must refuse loudly like v1 does, not answer. This test read `= 3` until the v3 arm landed; the
+    boundary moves with the SDK's knowledge, which is the whole point of asserting it."""
+    v4 = _kat_event()
+    v4.payload.schema_version = 4
     with pytest.raises(ValueError, match="not stream-recomputable"):
-        verify_streamed_record_digest(v3)
+        verify_streamed_record_digest(v4)
+
+
+# ── v3: the streamed arm, its strip refusals, and the tag-13 absence that must NOT be one ──
+
+
+def _kat_v3_event(vector: str = "record_digest_v3") -> evpb.SeamEvent:
+    """A v3 DECISION_SEALED whose payload + wire digest are a committed record_digest_v3 vector."""
+    v = VECTORS[vector]
+    i = v["inputs"]
+    payload = evpb.DecisionSealed(
+        decision_id=i["decision_id"],
+        tenant=i["tenant"],
+        namespace=i["namespace"],
+        outcome=i["outcome"],
+        sealed_at=i["sealed_at"],
+        schema_version=i["schema_version"],
+        ciphertext_digest=bytes.fromhex(i["ciphertext_digest_hex"]),
+        context_digest=bytes.fromhex(i["context_digest_hex"]),
+        participation_digest=bytes.fromhex(i["participation_digest_hex"]),
+    )
+    if i["mode"] is not None:
+        payload.mode = i["mode"]
+    if i["policy_version"] is not None:
+        payload.policy_version = i["policy_version"]
+    if i["supersedes"] is not None:
+        payload.supersedes = i["supersedes"]
+    if i["policy_rules_digest_hex"] is not None:
+        payload.policy_rules_digest = bytes.fromhex(i["policy_rules_digest_hex"])
+    return evpb.SeamEvent(
+        kind="DECISION_SEALED",
+        payload=payload,
+        digest=bytes.fromhex(v["digest_hex"]),
+    )
+
+
+def test_streamed_v3_matches_for_a_genuine_event():
+    assert verify_streamed_record_digest(_kat_v3_event()) is True
+
+
+def test_streamed_v3_catches_a_payload_rewrite():
+    ev = _kat_v3_event()
+    ev.payload.outcome = "Expired"
+    assert verify_streamed_record_digest(ev) is False
+
+
+def test_streamed_v3_binds_the_two_new_digests():
+    """The v3 arm must actually feed tags 11 and 12 into the preimage. Perturbing either has to change
+    the verdict — otherwise the arm could be quietly computing v2's formula and still pass the green
+    case, since v2's columns are a subset of v3's."""
+    for field in ("context_digest", "participation_digest"):
+        ev = _kat_v3_event()
+        perturbed = bytearray(getattr(ev.payload, field))
+        perturbed[0] ^= 0x01
+        setattr(ev.payload, field, bytes(perturbed))
+        assert verify_streamed_record_digest(ev) is False, field
+
+
+@pytest.mark.parametrize(
+    "field,tag", [("context_digest", 11), ("participation_digest", 12)]
+)
+def test_streamed_v3_refuses_a_stripped_mandatory_digest(field, tag):
+    """Absent tag 11/12 on a v3 payload is a strip attack. It must RAISE — distinctly from the False a
+    mismatch returns — so an operator can tell "someone removed a field" from "someone rewrote one"."""
+    ev = _kat_v3_event()
+    ev.payload.ClearField(field)
+    with pytest.raises(RecordDigestStripError) as excinfo:
+        verify_streamed_record_digest(ev)
+    assert excinfo.value.field == field
+    assert excinfo.value.wire_tag == tag
+
+
+@pytest.mark.parametrize("field", ["context_digest", "participation_digest"])
+def test_streamed_v3_refuses_an_explicitly_encoded_empty_mandatory_digest(field):
+    """`len == 0` is absence however the bytes arose. proto3 obliges a decoder to ACCEPT an explicitly
+    encoded zero-length field, so a hostile producer can put one on the wire even though a conforming
+    one never will — it must land on the same refusal as an omitted field, not slip past it."""
+    ev = _kat_v3_event()
+    # Append an explicit zero-length occurrence of the field; proto3 is last-wins, so this overwrites
+    # the genuine 32 bytes with empty on decode. Tag 11 -> key 0x5a, tag 12 -> key 0x62.
+    key = {"context_digest": b"\x5a\x00", "participation_digest": b"\x62\x00"}[field]
+    # The payload is a nested message (tag 22 on SeamEvent), so splice into the payload's own bytes.
+    payload_raw = ev.payload.SerializeToString() + key
+    tampered = evpb.SeamEvent()
+    tampered.CopyFrom(ev)
+    tampered.payload.CopyFrom(evpb.DecisionSealed.FromString(payload_raw))
+    assert len(getattr(tampered.payload, field)) == 0  # the splice landed
+    with pytest.raises(RecordDigestStripError):
+        verify_streamed_record_digest(tampered)
+
+
+@pytest.mark.parametrize("field", ["context_digest", "participation_digest"])
+def test_streamed_v3_refuses_a_wrong_length_mandatory_digest(field):
+    """A present-but-31-byte digest is malformed, not a mismatch. Framing it would produce a
+    well-formed digest over a value no sealer ever wrote."""
+    ev = _kat_v3_event()
+    setattr(ev.payload, field, bytes(getattr(ev.payload, field))[:31])
+    with pytest.raises(RecordDigestStripError):
+        verify_streamed_record_digest(ev)
+
+
+def test_streamed_v3_verifies_green_with_no_policy_rules_digest():
+    """Absent tag 13 is LEGITIMATE — no policy bound, today's common case — and frames as opt(None).
+    Passing the decoded empty bytes straight through would frame opt(Some(b"")), five bytes where the
+    sealer wrote one, and report a mismatch on a genuine record."""
+    assert (
+        verify_streamed_record_digest(_kat_v3_event("record_digest_v3_absent_policy"))
+        is True
+    )
+
+
+def test_streamed_v3_verifies_green_with_an_explicitly_encoded_empty_policy_rules_digest():
+    """The tag-13 counterpart of the tag-11/12 splice above, and the case the `len == 0` rule exists
+    for. A hostile producer can put `0x6a 0x00` on the wire; proto3 obliges the decoder to accept it.
+    It must verify GREEN as opt(None) — identical to omission — rather than framing opt(Some(b"")).
+
+    At the decoded-message layer this is provably the same input as omission (both yield `b""`), which
+    is exactly the claim worth pinning: the test exists to prove the two forms cannot diverge, not to
+    exercise a second code path."""
+    ev = _kat_v3_event("record_digest_v3_absent_policy")
+    payload_raw = ev.payload.SerializeToString() + b"\x6a\x00"  # tag 13, length 0
+    tampered = evpb.SeamEvent()
+    tampered.CopyFrom(ev)
+    tampered.payload.CopyFrom(evpb.DecisionSealed.FromString(payload_raw))
+    assert len(tampered.payload.policy_rules_digest) == 0  # the splice landed
+    assert verify_streamed_record_digest(tampered) is True
+
+
+def test_streamed_v3_absent_and_present_policy_rules_are_different_digests():
+    """The guard on the guard: the two vectors must not coincidentally share a digest, or the test
+    above would pass under a formula that ignores tag 13 entirely."""
+    assert (
+        VECTORS["record_digest_v3"]["digest_hex"]
+        != VECTORS["record_digest_v3_absent_policy"]["digest_hex"]
+    )
+
+
+def test_streamed_v3_refuses_a_stripped_ciphertext_digest_as_false_not_a_raise():
+    """Tag 10 is the older rule and keeps its older shape. The spec makes a tag-10 strip a REFUSE for
+    every schema_version >= 2 — a failing verdict, which for a boolean helper is False — but attaches
+    the distinct-reporting requirement only to tags 11/12. So this must NOT become a strip raise."""
+    ev = _kat_v3_event()
+    ev.payload.ClearField("ciphertext_digest")
+    assert verify_streamed_record_digest(ev) is False
 
 
 # ── Live: a streamed SESSION_LIFECYCLE carries its payload; a streamed v2 DECISION_SEALED recomputes ──
