@@ -218,8 +218,11 @@ def governed_server(tmp_path):
     binary = os.environ.get("SEAM_GRPC_BIN")
     if not binary:
         pytest.skip("set SEAM_GRPC_BIN to run the live authorize round-trip")
+    from operator_token import sign_snapshot
+
     snapshot = tmp_path / "registry_snapshot.json"
     snapshot.write_text(GOVERNED_SNAPSHOT.format(aid=Agent(bytes([42] * 32)).aid))
+    pubkey, sig_path = sign_snapshot(str(snapshot))
     addr = "127.0.0.1:8115"
     proc = subprocess.Popen(
         [binary],
@@ -227,7 +230,11 @@ def governed_server(tmp_path):
             **os.environ,
             "SEAM_GRPC_LISTEN": addr,
             "SEAM_DEV_INSECURE": "1",
+            # This snapshot carries `capability_registry`, which is trust-bearing — so it must be
+            # signed or the runtime refuses to boot outright. See `operator_token.sign_snapshot`.
             "SEAM_REGISTRY_SNAPSHOT": str(snapshot),
+            "SEAM_REGISTRY_SNAPSHOT_SIG": sig_path,
+            "SEAM_SNAPSHOT_PUBKEY": pubkey,
         },
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
