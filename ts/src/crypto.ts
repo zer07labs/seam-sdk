@@ -167,7 +167,39 @@ export function verifyTct(
 // ES6 is JCS's native habitat: `String(number)` IS the required Number::toString rendering, default
 // string sort IS UTF-16 code-unit order, and `JSON.stringify` of a *string* IS the minimal escaping.
 
-const MAX_SAFE = 9007199254740992n; // 2^53 — beyond it an integer cannot round-trip as an IEEE double
+const MAX_SAFE = 9007199254740992n; // 2^53 — inside this range a bigint's own decimal form IS its JCS rendering
+
+/** Render a bigint the way JCS renders it, or refuse it — never silently a different number.
+ *
+ * JCS numbers are IEEE doubles, so the only integers that can appear in canonical output are the
+ * ones ES6 `Number::toString` prints as themselves. That is the predicate, stated literally.
+ *
+ * The obvious alternative — "is it exactly representable as a double" — is wrong, and wrong in the
+ * direction that signs a digest over a value nobody supplied: `2n ** 60n` IS exactly representable,
+ * and `String(Number(2n ** 60n))` is `"1152921504606847000"`, not `"1152921504606846976"`. The two
+ * answers diverge from about 2^55.
+ *
+ * The RENDERING here must be `String(Number(v))` and not `v.toString()`, and that is not a detail.
+ * Accepting the same set as the Python SDK while rendering it differently would emit `…846976` where
+ * Python emits `…847000` — a cross-language divergence in a signed digest, in exactly the range this
+ * rule newly admits. Pinned byte-for-byte against Python by
+ * `conformance/authorize_jcs_int_extended.json`.
+ */
+function jcsBigInt(v: bigint): string {
+  const text = v.toString();
+  if (v <= MAX_SAFE && v >= -MAX_SAFE) return text;
+  const asNumber = Number(v);
+  if (!Number.isFinite(asNumber))
+    throw new Error(`integer ${text} is too large to represent as an IEEE double, so JCS cannot render it`);
+  const rendered = String(asNumber);
+  if (rendered !== text)
+    throw new Error(
+      `integer ${text} is not JCS-renderable as itself: canonicalizing it would emit ${rendered}, a different value. ` +
+        `JSON numbers are IEEE doubles; this integer is not one a double prints back unchanged, so digesting it ` +
+        `would sign a value nobody supplied.`,
+    );
+  return rendered;
+}
 
 function jcsWrite(v: unknown): string {
   if (v === null) return "null";
@@ -178,8 +210,7 @@ function jcsWrite(v: unknown): string {
       if (!Number.isFinite(v)) throw new Error("NaN and Infinity cannot be canonicalized (RFC 8785)");
       return v === 0 ? "0" : String(v); // String(-0) is "0", matching ES6 ToString
     case "bigint":
-      if (v > MAX_SAFE || v < -MAX_SAFE) throw new Error(`integer ${v} exceeds 2^53 and cannot round-trip as an IEEE double`);
-      return v.toString();
+      return jcsBigInt(v);
     case "string":
       // A lone surrogate cannot encode to UTF-8; Python raises on it (UnicodeEncodeError) and the
       // Rust runtime cannot represent it — silently emitting `\udXXX` here would let TS digest a

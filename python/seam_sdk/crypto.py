@@ -162,8 +162,10 @@ _JCS_ESCAPES = {
     0x5C: "\\\\",
 }
 
-# ECMAScript can only represent integers exactly within ±2^53; beyond that a decimal rendering here
-# would not round-trip through the runtime's f64 path, so it is rejected rather than silently skewed.
+# ECMAScript represents every JSON number as an IEEE double, and integers exactly only within ±2^53.
+# Inside that range a plain decimal rendering is always what JCS emits, so it is used directly.
+# Outside it, see `_jcs_int`: the question is not magnitude but whether JCS renders the integer AS
+# ITSELF, and anything that would be silently skewed is rejected rather than digested.
 _MAX_SAFE_INT = 2**53
 
 
@@ -218,6 +220,51 @@ def _jcs_number(v: float) -> str:
     return sign + body
 
 
+def _jcs_int(v: int) -> str:
+    """Render an integer the way JCS renders it, or refuse it — never silently a different number.
+
+    JCS numbers are IEEE doubles, so the only integers that can appear in canonical output are the
+    ones ES6 ``Number::toString`` prints as themselves. That is the predicate here, stated literally:
+    render the double and require it to equal the integer's own decimal form.
+
+    **Why not "is it exactly representable as a double".** That is the obvious test and it is wrong.
+    ``2**60`` is exactly representable, but ES6 prints the *shortest round-tripping* digits, so it
+    renders as ``1152921504606847000`` — a different number. Accepting it would sign a digest over a
+    value the caller never supplied. The two renderings part company from about ``2**55``, not at
+    ``10**21`` as a decimal-vs-exponential intuition suggests; roughly 43% of exactly-representable
+    integers just above 2^53 diverge. Above ``10**21`` ES6 switches to exponential notation, which a
+    plain decimal form can never match, so that boundary needs no separate rule — it falls out.
+
+    **What this buys.** Every byte string this arm can emit is one the float arm could already have
+    emitted, so widening what is accepted introduces no new wire shape for any conformant
+    implementation to disagree with. And `json.loads(jcs_canonicalize(x))` now re-canonicalizes to
+    the same bytes: an integral double in [2^53, 10^21) prints as a bare integer literal that JSON
+    parses back as a Python `int`, which the old ``> 2^53`` rule then refused outright (seam-sdk#60).
+
+    ``int.__repr__`` rather than ``str``: ``int`` defines no ``__str__``, so a subclass that overrides
+    it — an ``IntEnum`` on Python 3.10, this package's floor, renders as ``Color.RED`` — would emit
+    invalid JSON into a signed digest. The unbound ``int.__str__`` is *not* the fix; it falls through
+    to ``object.__str__`` and re-enters the subclass's ``__repr__``, which is strictly worse.
+    """
+    text = int.__repr__(v)  # unspoofable, and the value all further checks are taken from
+    n = int(text)  # a plain int, free of any subclass's opinions about arithmetic
+    if -_MAX_SAFE_INT <= n <= _MAX_SAFE_INT:
+        return text
+    try:
+        rendered = _jcs_number(float(n))
+    except OverflowError:
+        raise ValueError(
+            f"integer {text} is too large to represent as an IEEE double, so JCS cannot render it"
+        ) from None
+    if rendered != text:
+        raise ValueError(
+            f"integer {text} is not JCS-renderable as itself: canonicalizing it would emit "
+            f"{rendered}, a different value. JSON numbers are IEEE doubles; this integer is not one "
+            f"a double prints back unchanged, so digesting it would sign a value nobody supplied."
+        )
+    return rendered
+
+
 def _jcs_write(v, out: list) -> None:
     if v is None:
         out.append("null")
@@ -228,11 +275,7 @@ def _jcs_write(v, out: list) -> None:
     elif isinstance(v, str):
         out.append(_jcs_string(v))
     elif isinstance(v, int):
-        if abs(v) > _MAX_SAFE_INT:
-            raise ValueError(
-                f"integer {v} exceeds 2^53 and cannot round-trip as an IEEE double"
-            )
-        out.append(str(v))
+        out.append(_jcs_int(v))
     elif isinstance(v, float):
         out.append(_jcs_number(v))
     elif isinstance(v, (list, tuple)):
