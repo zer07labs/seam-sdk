@@ -422,3 +422,17 @@ actually waits on their call.
 - **Next:** ship.
 - pushed feat/record-digest-v3-streamed-arms 4b60f6a
 - PR #63 opened: https://github.com/zer07labs/seam-sdk/pull/63
+- **merged #63** — squashed to `a036126` on `main`, 2026-08-25T13:37:22Z, branch deleted. 21 files,
+  +1417 / -244. Phases 6a/6b/7/8 all shipped together.
+- **CI went red on the first push**, on `cargo fmt --check` in the `verify` job: I ran `cargo test`
+  and `cargo clippy` locally but not `cargo fmt`, so the drift only surfaced on the runner. One
+  fix-and-rewatch cycle (`0e2829e`), then fully green — including `verify (the independent verifier)`
+  and `ci-ok`, which the fmt failure had been cascading into.
+- **No deploy.** `seam-sdk` publishes packages; it has no Railway/Vercel service, so there is no
+  production deploy for this merge. Release/publish is a separate, tagged action driven by the
+  runtime's version dispatch.
+- **Plan complete.** Every phase of `plans/record-digest-v3.md` is `DONE`. The one assumption this
+  cycle logged (tag-10 strips stay `False`) is CONFIRMED in `DECISIONS.md`.
+- **Left open, deliberately:** nothing enforces that `verify/docs/seam-event.v1.md` matches the
+  runtime spec it claims to copy verbatim — it has now been stale three times, and each time was
+  caught by a human or a review gate rather than by a test. Its header records the gap.
