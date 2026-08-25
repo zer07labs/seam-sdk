@@ -35,6 +35,17 @@ jobs:
           [ -n "$VER" ] || { echo "::error::no version in the dispatch payload / input"; exit 1; }
           echo "version=$VER" >> "$GITHUB_OUTPUT"
 
+      - name: Mint the seam-deps-bot App token
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.SEAM_BOT_APP_ID }}
+          private-key: ${{ secrets.SEAM_BOT_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ steps.app.outputs.token }}
+
       # ── W5.5: the framing handshake — the one gate that PREVENTS a 0.7.17 rather than
       #    detecting it ────────────────────────────────────────────────────────────────────────────
       # The SDK has no independent version by design, so a runtime wire change automatically
@@ -42,8 +53,14 @@ jobs:
       # 0.7.17, which published eleven minutes after the runtime change that broke it. Every other
       # W5 gate makes that failure louder, after publication. This one stops the tag.
       #
-      # Runs BEFORE the token is minted and before anything is stamped, so a refusal leaves no
-      # commit, no tag, and nothing published.
+      # Runs immediately after checkout and BEFORE anything is stamped, committed, or tagged, so a
+      # refusal leaves no commit, no tag, and nothing published.
+      #
+      # It must stay AFTER actions/checkout: it reads contract/wire-framing.json out of the repo.
+      # It originally sat before the token mint — which is also before checkout — so it never once
+      # ran its comparison; it just crashed on a missing file and failed every release closed.
+      # scripts/test_release_gate_order.sh asserts this ordering so the next reorder cannot
+      # silently reintroduce it.
       - name: The runtime's wire framing must be one this SDK implements
         env:
           DISPATCHED: ${{ github.event.client_payload.wire_framing_version }}
@@ -82,17 +99,6 @@ jobs:
             exit 1
           fi
           echo "framing agrees — safe to tag."
-
-      - name: Mint the seam-deps-bot App token
-        id: app
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ secrets.SEAM_BOT_APP_ID }}
-          private-key: ${{ secrets.SEAM_BOT_PRIVATE_KEY }}
-
-      - uses: actions/checkout@v4
-        with:
-          token: ${{ steps.app.outputs.token }}
 
       # The stamp lives in scripts/set_version.sh so it is testable without cutting a release —
       # scripts/test_set_version.sh runs on every PR. It was inline here, matching pyproject's
