@@ -61,7 +61,7 @@ mismatch cannot ship.
 
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
-**Nothing was yanked.** That decision is recorded at `CHANGELOG.md:419-424` and is not being
+**Nothing was yanked.** That decision is recorded at `CHANGELOG.md:466-471` and is not being
 re-litigated here: the affected versions install and produce a clear auth error rather than
 corrupting data, and revoking installability under a floor already in wide use has a larger blast
 radius than a loud advisory. The consequence is that **these versions remain installable**, so this

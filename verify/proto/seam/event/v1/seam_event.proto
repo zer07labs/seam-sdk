@@ -178,7 +178,15 @@ message ChainHeadAttestation {
   bytes attested_head = 2;    // the checksum at position attested_len (32 bytes)
   uint64 attested_at = 3;
   string issuer_aid = 4;
-  uint32 digest_schema = 5;   // record-digest formula (2 = A14 v2); bound into the signature (downgrade guard)
+  // CEILING, not a description, and it selects nothing (spec §Chain-head attestation). Since B3 a
+  // chain is mixed — v2 and v3 records interleave — so no scalar can name "the" formula in use.
+  // This asserts every record in the attested prefix has `schema_version <= digest_schema`, which
+  // is why old attestations stay true and are never re-signed: a ceiling only rises.
+  // A verifier MUST NOT read it to choose a formula; src/verify.rs dispatches per record on the
+  // record's own `schema_version`. Its job is about the SIGNED artifact — an attestation goes to an
+  // external notary, so stamping v3 while signing `digest_schema = 2` would issue, under the issuer
+  // key, exactly the downgrade claim this field exists to prevent.
+  uint32 digest_schema = 5;   // 2 = A14 v2, 3 = B3 v3; bound into the signature (downgrade guard)
   bytes signature = 6;
 }
 

@@ -9,8 +9,9 @@ are conditional on `preflight` outputs, so a PR where a secret does not resolve 
 core test jobs and still shows green**. The gate therefore distinguishes:
 
   * REQUIRED — must report `success`. A skip means its assertions never ran.
-  * ADVISORY — may skip, must not fail. Only `integration`, which needs a live seam-grpc that a
-    PR cannot always reach.
+  * ADVISORY — may skip, must not fail. `integration` and `spec-pin`, each of which needs a secret
+    a fork PR cannot have. Advisory is not tolerance: one of these RUNNING and FAILING still
+    blocks the merge.
 
 Keeping that list minimal is the whole point, so it is asserted here too.
 
@@ -31,7 +32,19 @@ CI = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
 #: The credential-free lane — the only job that runs without BUF_TOKEN (see seam-sdk#54).
 LANE = "workflow-guards"
 GATE = "ci-ok"
-ALLOWED_ADVISORY = {"integration"}
+
+#: Jobs allowed to SKIP without reddening the gate. Both are here for the same reason and no
+#: other: they need a secret a fork PR cannot have, so requiring them outright would block every
+#: outside contribution forever. Advisory does NOT mean tolerated — a job in this set that RUNS
+#: and FAILS still blocks the merge.
+#:
+#:   * integration — needs a live seam-grpc built from the private runtime.
+#:   * spec-pin    — needs RUNTIME_REPO_TOKEN to read the private spec it compares against. It is
+#:     the only job that can check the vendored copy at all, because the proof lives in another
+#:     repository; drift blocking the merge was a deliberate call, since the copy went stale three
+#:     times and a warning would have been ignored a fourth. Its CHECKER is separately exercised
+#:     in `workflow-guards`, which needs no credential, so a fork PR still proves the logic.
+ALLOWED_ADVISORY = {"integration", "spec-pin"}
 
 
 def _workflow() -> dict:
@@ -86,8 +99,9 @@ def test_advisory_list_stays_minimal() -> None:
     extra = _advisory() - ALLOWED_ADVISORY
     assert not extra, (
         f"{sorted(extra)} were made advisory — they may now skip without failing the build. "
-        f"Only {sorted(ALLOWED_ADVISORY)} is justified (it needs a live runtime). If this is "
-        "deliberate, widen ALLOWED_ADVISORY here and say why in the same commit."
+        f"Only {sorted(ALLOWED_ADVISORY)} are justified, and only because each needs a secret a "
+        f"fork PR cannot have. If this is deliberate, widen ALLOWED_ADVISORY here and say why in "
+        f"the same commit."
     )
 
 

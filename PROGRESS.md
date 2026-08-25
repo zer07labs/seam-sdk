@@ -436,3 +436,63 @@ actually waits on their call.
 - **Left open, deliberately:** nothing enforces that `verify/docs/seam-event.v1.md` matches the
   runtime spec it claims to copy verbatim — it has now been stale three times, and each time was
   caught by a human or a review gate rather than by a test. Its header records the gap.
+
+## 2026-08-25 — the vendored-spec gate (closing the item above)
+
+- **Closed.** `scripts/check_vendored_spec.py` + the `spec-pin` CI job now enforce the verbatim
+  claim against the real seam-runtime. Severity was the owner's call: drift is **red and blocks the
+  merge**, not a warning — three stalenesses survived precisely because nothing forced the issue.
+  `spec-pin` is advisory in `ci-ok` only so it can SKIP without a token (fork PRs); an advisory job
+  that runs and fails still reddens the gate.
+- **What the gate found the moment it existed, before it was even wired into CI:** the vendored copy
+  was pinned to `76f36f5`, a commit that lives **only on the unmerged branch
+  `feat/b3-phase3-take-the-door`**. This was first read as "stale a fourth time" — wrong, and worth
+  recording as wrong: relative to seam-runtime's published `main` (`4964633`) the copy was *ahead*,
+  not behind, because it carries the v3 spec text that `verify/` implements and `main` does not yet
+  have. Deliberate, but undeclared, and nothing recorded it.
+- **So the gate models it rather than forbidding it.** A copy may track an unmerged branch if the
+  header *declares* it (`@ <sha> tracking <branch>`); an undeclared off-main pin is refused. The
+  exception is self-terminating — once the branch lands on `main`, or stops existing, the gate goes
+  red and says to re-pin. Otherwise a tracking note written once outlives the branch it names.
+- **The expiry then fired for real, within the hour.** Mid-session `feat/b3-phase3-take-the-door`
+  was squash-merged as seam-runtime#440 and deleted; `main` moved to `25272a6` at 16:16:27Z. The
+  gate went red on the *branch-gone* arm — its first live firing was the self-terminating clause
+  working — and the copy is now pinned to `main@25272a6` with the tracking clause dropped. The spec
+  bytes are identical either way; only the pin moved. Verified against the API, not assumed: a false
+  positive here would discredit the gate more than no gate would.
+- **Refreshed whole-file**, picking up seam-runtime#439: `digest_schema` is a signed CEILING, not a
+  description of "the"
+  formula a chain uses. **No SDK behaviour changed** — `verify/src/verify.rs:584` already dispatches
+  per record on `schema_version` and `:249` only frames `digest_schema` into the attestation
+  preimage, which is what the new text mandates. The stale prose was one comment in
+  `verify/proto/seam/event/v1/seam_event.proto`, now rewritten from the spec (not from the runtime's
+  Rust — the clean-room constraint holds).
+- **Two design details the tests forced, neither of which survived review as first written:**
+  (a) REACHABILITY had to run *before* INTEGRITY. A checkout whose `git fetch` predates the pin
+  cannot `git show` it at all, so integrity failed first with `fatal: invalid object name` — a red
+  that says nothing about the remedy. Worse, the very first run against the real sibling checkout
+  produced a confident CURRENCY failure against an *ancestor* of the pin; a verdict from a stale
+  view is worse than no verdict, because it is actionable and wrong.
+  (b) The "exactly one blank line" separator claim was over-stated and is now scoped honestly:
+  `-->\n\n\n# spec` cannot be distinguished from an upstream file that opens with a blank line, so
+  the parser takes the first `\n\n` and lets INTEGRITY catch the stray line with a diff. Guessing
+  would mean normalising, and a normalising comparison is one that can be argued with.
+- **A live citation drifted and had to be repointed twice:** `DECISIONS.md:74` cited
+  `verify/docs/seam-event.v1.md:271-272` for a sentence that the refresh moved to `:295-296` (and
+  that moved again when the header was rewritten for the re-pin). This is precisely the failure
+  `test_compatibility_citations_resolve.py` was rewritten to end — find the needle, never pin the
+  line — but that test reads `COMPATIBILITY.md` only.
+- **OPEN, and named rather than left to resurface:** `DECISIONS.md` carries `file:line` citations
+  that nothing checks. Hand-repointing one of them three times in a single session is the same
+  signal that motivated rewriting the COMPATIBILITY checker. Extending that checker to cover
+  `DECISIONS.md` is contained work; it was left out of this change deliberately, to keep a CI/docs
+  change from also becoming a test refactor.
+- **Tests:** 26 new cases in `scripts/test_vendored_spec_gate.py`, built on **real throwaway git
+  repos** rather than a mocked `git` — ancestry, merges, deleted branches and stale fetches are the
+  subject matter, and a mock would only assert my model of them. Every guard driven red: currency
+  drift, in-place edit, re-pin-without-re-copy, stale view, undeclared branch pin, landed branch,
+  deleted branch, six malformed headers, missing separator, empty registry, empty upstream fetch.
+  The GitHub backend is covered separately against a stubbed `gh`.
+- **Suites:** scripts 56 passed; rust green across all targets + clippy `-D warnings` clean; python
+  409 passed / 17 skipped; ts 104 tests, 94 pass, 0 fail.
+- **Next:** ship.

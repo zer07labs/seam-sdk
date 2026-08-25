@@ -1,18 +1,23 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 76f36f5 (refreshed 2026-08-25 for the
-     tags 10-13 cardinality rule, seam-runtime#435). The runtime spec is the source of truth; refresh
-     this copy whenever the spec changes — a stale copy here once shipped a real verifier bug (the
-     AUTHORIZE_EVALUATED advisory omission), and it has now been stale twice more: it carried no
-     §Record digest (v3) before the previous refresh, and no §"Presence on the wire" before this one,
-     while src/verify.rs implements both. The second staleness was found by a review gate, not by a
-     test — see the note below.
-     Refreshed VERBATIM, whole-file, deliberately: a reviewer can `diff` it against the sibling
-     checkout and get nothing, which is a checkable claim. Cherry-picking only the changed sections
-     would read as tidier and would quietly end that property.
-     NOTE the gap this sits in: nothing enforces the verbatim claim. The advisory-kind tripwire in
-     src/wire.rs cross-checks only the LIVE runtime spec's kind list when the sibling checkout is
-     present, and the cross-repo golden manifest does not cover seam-sdk at all. This file is what
-     third parties build from when no sibling checkout exists, so a stale copy ships them a spec that
-     does not describe the verifier they are running. -->
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 25272a6 (refreshed 2026-08-25 for the
+     `digest_schema` ceiling, seam-runtime#439, which reached `main` in #440). The runtime spec is the
+     source of truth; refresh this copy whenever the spec changes — a stale copy here once shipped a real
+     verifier bug (the AUTHORIZE_EVALUATED advisory omission), and it has been stale twice more since: it
+     carried no §Record digest (v3) before an earlier refresh, and no §"Presence on the wire" before the
+     last one, while src/verify.rs implemented both.
+     Refreshed VERBATIM, whole-file, deliberately: a reviewer can `diff` it against the sibling checkout
+     and get nothing, which is a checkable claim. Cherry-picking only the changed sections would read as
+     tidier and would quietly end that property.
+     ENFORCED, at last — this header used to say plainly that nothing checked it.
+     scripts/check_vendored_spec.py now proves all three claims against the real seam-runtime: the body
+     is byte-identical at the pinned commit, that commit is reachable from the ref named here, and the
+     body matches that ref's tip. It runs in CI as the `spec-pin` job, and drift is red. Each of the
+     three stalenesses above was found by a person or a review gate — no test in this repo could have
+     found them, because the proof lives in another repository and had to be fetched.
+     This pin briefly read `@ dde87c8 tracking feat/b3-phase3-take-the-door`: the v3 spec text that
+     src/verify.rs implements was on an unmerged runtime branch, so the copy sat ahead of `main` on
+     purpose. That declaration is how the checker permits being ahead — an UNDECLARED off-main pin is
+     refused. It is also self-terminating, and it terminated: the branch landed as #440 and was deleted,
+     the gate went red the same hour and said to re-pin here, which is what this line now is. -->
 
 # `seam-event.v1` — event-stream wire spec (language-neutral)
 
@@ -136,8 +141,9 @@ ChainHeadAttestation {                     // payload at SeamEvent tag 22
   attested_head: bytes    // the checksum at position attested_len (32 bytes)
   attested_at:   u64      // injected millis
   issuer_aid:    string   // the runtime issuer identity (same key as the TCT + erasure cert)
-  digest_schema: u32      // the record-digest formula the attested chain uses (2 = A14 v2) — the
-                          // downgrade guard: bound into the signature so a v2 chain can't be claimed v1
+  digest_schema: u32      // CEILING: the highest record-digest formula that may appear in the attested
+                          // prefix (2 = A14 v2, 3 = B3 v3) — the downgrade guard, bound into the
+                          // signature. A bound, not a description: see below.
   signature:     bytes    // Ed25519 over the signed framing below
 }
 ```
@@ -155,6 +161,19 @@ signature = Ed25519( SHA256(
 `attested_len` carries checksum `attested_head`, and the issuer said so.* The chain may advance between the
 head read and the append (no lock is held across read→sign→append), so a "stale" attestation is simply one
 over a shorter, still-covered prefix; a verifier checks the head **at that position**.
+
+**`digest_schema` is a ceiling, not a description — and it selects nothing.** Since B3 a chain is
+**mixed**: records sealed under v2 and v3 interleave in one chain, so no scalar can say which formula
+"the chain uses". The field instead asserts *every record in the attested prefix has `schema_version <=
+digest_schema`*. That statement is true of a 97×v2 prefix under `2` and of a mixed prefix under `3`,
+which is why **existing attestations remain true and are never re-signed** — a ceiling only ever rises.
+A producer sets it to the highest formula its build can stamp.
+
+A verifier **must not** read this field to choose a digest formula; it dispatches per record on the
+record's own `schema_version`, and an unknown version is refused rather than defaulted. The ceiling's job
+is narrower and is about the *signed artifact*: an attestation is handed to an external notary, so it
+must state the verification regime truthfully. A build that stamps v3 while signing `digest_schema = 2`
+would be issuing, under the issuer key, exactly the downgrade claim this field exists to prevent.
 
 **Triggers.** Emitted at **boot** (every restart leaves a signed head immediately, covering restart gaps),
 **every N chain entries** (`SEAM_CHAIN_ATTEST_EVERY`, default 1000; `0` disables — the every-N worker is

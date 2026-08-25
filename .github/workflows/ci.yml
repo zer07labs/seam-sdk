@@ -7,7 +7,8 @@ name: ci
 #                          integration job, which builds seam-grpc).
 # Jobs that need a secret self-skip when it is absent — but the single required check (`ci-ok`) treats a
 # skipped REQUIRED job as a failure, so a missing BUF_TOKEN turns the run red at the gate rather than
-# silently green. Only `integration` is advisory (may skip, must not fail) — see the ci-ok job below.
+# silently green. `integration` and `spec-pin` are the only advisory jobs (may skip, must not fail) — see
+# the ci-ok job below.
 
 on:
   push:
@@ -41,6 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       have_buf_token: ${{ steps.check.outputs.have_buf_token }}
+      have_runtime_token: ${{ steps.check.outputs.have_runtime_token }}
       can_integrate: ${{ steps.check.outputs.can_integrate }}
     steps:
       - id: check
@@ -53,6 +55,14 @@ jobs:
           else
             echo "have_buf_token=false" >> "$GITHUB_OUTPUT"
             echo "BUF_TOKEN not set — skipping the build/test jobs (cannot read the private contract)"
+          fi
+          # `spec-pin` needs only the runtime token — it reads one doc through the API and never
+          # builds anything, so gating it on BUF_TOKEN too would skip it for no reason.
+          if [ -n "$RUNTIME_REPO_TOKEN" ]; then
+            echo "have_runtime_token=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have_runtime_token=false" >> "$GITHUB_OUTPUT"
+            echo "RUNTIME_REPO_TOKEN not set — skipping spec-pin (cannot read the private spec)"
           fi
           if [ -n "$BUF_TOKEN" ] && [ -n "$RUNTIME_REPO_TOKEN" ]; then
             echo "can_integrate=true" >> "$GITHUB_OUTPUT"
@@ -389,6 +399,37 @@ jobs:
   # The credential-free lane: guards that hold on a bare checkout, with no BUF_TOKEN and no
   # generated code. Everything else that tests Python is gated on `preflight` — so if this lane
   # ever needed a token, the guards below would vanish in exactly the situations they matter.
+  # ── The vendored spec claims to be VERBATIM; this is the only thing that can check it ─────────
+  # `verify/docs/seam-event.v1.md` is a pinned copy of seam-runtime's spec, and it is what a third
+  # party builds a verifier from when they have no runtime checkout — the whole independence claim.
+  # It went stale three times, and each time a person or a review gate caught it, because no test
+  # in this repo COULD: the proof lives in another repository and has to be fetched.
+  #
+  # This is the only job that reaches out and fetches it. Advisory in `ci-ok` — it needs
+  # RUNTIME_REPO_TOKEN, which a fork PR does not have — but advisory means "may skip, must not
+  # fail", so drift still blocks the merge. That is the point, and it was a deliberate call: a
+  # warning nobody acts on is how all three stalenesses survived.
+  #
+  # WHEN THIS GOES RED: re-copy the spec whole-file (never cherry-pick — verbatim is the property
+  # being claimed) and update the sha in its header. The failure message spells out the commands.
+  # If the diff changes normative behaviour, the verifier and its tests need the same change too.
+  spec-pin:
+    name: spec pin (the vendored spec is verbatim and current)
+    needs: preflight
+    if: needs.preflight.outputs.have_runtime_token == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: the vendored spec must match seam-runtime, byte for byte
+        env:
+          # NOT github.token: seam-runtime is private, and the default token is scoped to this repo.
+          GH_TOKEN: ${{ secrets.RUNTIME_REPO_TOKEN }}
+        run: python scripts/check_vendored_spec.py --from gh
+
   workflow-guards:
     name: guards (no credentials required)
     runs-on: ubuntu-latest
@@ -419,6 +460,11 @@ jobs:
       # transient absence" and "still refuses a settled red" are both proven, not just read.
       - name: the publish CI gate waits without going soft
         run: python -m pytest scripts/test_publish_gate.py -q
+      # The spec-pin CHECKER, exercised here against throwaway git repos — no token, no network.
+      # spec-pin itself skips without RUNTIME_REPO_TOKEN, so on a fork PR this lane is the only
+      # thing keeping the checker's own logic honest.
+      - name: the vendored-spec checker fails on every kind of drift
+        run: python -m pytest scripts/test_vendored_spec_gate.py -q
       # Also runs inside the `python` job. Duplicated on purpose: there it proves the guard passes,
       # here it proves the guard needs nothing but a checkout — which is the actual claim
       # seam-adapters relies on (seam-sdk#54).
@@ -432,8 +478,11 @@ jobs:
   # and still shows green.
   #
   # So the gate splits the difference explicitly: REQUIRED jobs must succeed; ADVISORY jobs may
-  # skip but must not fail. `integration` is the only advisory one, and it is advisory because it
-  # needs a live seam-grpc a PR cannot always reach — a documented decision, not an accident.
+  # skip but must not fail. Two jobs are advisory, both for the same reason and no other — they
+  # need a secret a fork PR cannot have: `integration` needs a live seam-grpc built from the
+  # private runtime, and `spec-pin` needs RUNTIME_REPO_TOKEN to read the private spec it compares
+  # against. Documented decisions, not accidents. Note what advisory does NOT mean: a job here that
+  # RUNS and FAILS still reddens this gate, which is why spec-pin drift blocks a merge.
   ci-ok:
     if: always()
     needs:
@@ -447,6 +496,7 @@ jobs:
       - kotlin
       - verify
       - verify-msrv
+      - spec-pin
       - workflow-guards
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -455,7 +505,7 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
           # Comma-separated. scripts/test_ci_gate.py asserts this list stays minimal.
-          ADVISORY: integration
+          ADVISORY: integration,spec-pin
         run: |
           set -euo pipefail
           bad=$(printf '%s' "$NEEDS" | jq -r --arg adv "$ADVISORY" '
