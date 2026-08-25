@@ -33,6 +33,32 @@ class SeamError(Exception):
     """Base class for all Seam SDK errors."""
 
 
+class CanonicalizationError(SeamError, ValueError, TypeError):
+    """A tool input could not be JCS-canonicalized — raised by :func:`seam_sdk.canonicalize_tool_input`
+    and by every public ``Authorize`` path.
+
+    **Why it inherits three bases.** This is a widening, not a swap. Canonicalization already failed
+    with a builtin ``ValueError`` (NaN, an integer JCS cannot render as itself) or a builtin
+    ``TypeError`` (a non-string object key, an unserializable type), and a caller cannot predict which
+    one a given input will trigger — so any existing ``except ValueError`` or ``except TypeError``
+    around a canonicalizing call keeps working unchanged, while new code can classify it as a
+    ``SeamError``. ``RecordDigestStripError`` subclasses ``ValueError`` for the same reason.
+
+    **Why that classification matters here specifically** (seam-sdk#60, seam-adapters#59). A builtin
+    escaping an SDK call is indistinguishable from a bug in the consumer's own code, so it lands in
+    whatever generic arm treats failures as *availability* — and under ``FAIL_OPEN`` an availability
+    failure runs the gated tool with zero RPCs sent. Naming the failure is what lets a consumer route
+    it as an input error instead of an outage.
+
+    **Residual, stated rather than hidden.** ``jcs_canonicalize`` called directly still raises
+    builtins — both as ``seam_sdk.crypto.jcs_canonicalize`` and, more discoverably, as
+    ``seam_sdk.jcs_canonicalize``, which is the same raw function re-exported at the package root. ``crypto.py`` may import ``cryptography`` and nothing else — seam-runtime's
+    ``sdk-digest-parity`` gate loads that one file standalone — so it cannot import this module, while
+    this module is where the taxonomy must live. Use :func:`seam_sdk.canonicalize_tool_input` to get
+    the typed error. Tracked on seam-sdk#54, where the import-light contract is owned.
+    """
+
+
 class IssuerMismatchError(SeamError):
     """The fetched proof's issuer AID does not match the issuer the caller pinned out of band.
 

@@ -1,0 +1,207 @@
+{
+  "$comment": [
+    "seam-sdk's EXTENDED integer cases for RFC 8785 (JCS) canonicalization.",
+    "Machine-emitted by scripts/emit_jcs_int_vectors.py -- no digest here was typed by hand.",
+    "SDK-OWNED. conformance/authorize_jcs_digest_vector.json is the byte-identity contract",
+    "with seam-runtime and is not edited from this repo; this file is a superset for a trap",
+    "that fixture does not cover.",
+    "CONTRACT: an implementation MUST emit `canonical` byte-for-byte for every case that has",
+    "it, and MUST refuse every case marked `rejected` -- refusing an accepted case or",
+    "accepting a rejected one is equally a break. `digest` is tool_input_digest over the",
+    "canonical bytes.",
+    "`int` is a STRING because parsing it as a JSON number loses precision in JavaScript",
+    "before any implementation could be tested.",
+    "WHY: JCS numbers are IEEE doubles, so the only integers that can appear in canonical",
+    "output are those ES6 Number::toString prints as themselves. 'Exactly representable as a",
+    "double' is a DIFFERENT and wrong rule: 2**60 is representable and renders as",
+    "1152921504606847000. The two rules agree on every power of ten, so eight of the cases",
+    "below are machine-searched rather than chosen -- four accepted, four refused, drawn at",
+    "random from the interval where the two candidate rules disagree."
+  ],
+  "algorithm": "sha256",
+  "canonicalization": "RFC 8785 (JSON Canonicalization Scheme)",
+  "cases": [
+    {
+      "name": "zero",
+      "why": "the degenerate case, and -0 must not appear",
+      "int": "0",
+      "canonical": "0",
+      "digest": "sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    {
+      "name": "one",
+      "why": "a plain small integer takes the unchanged fast path",
+      "int": "1",
+      "canonical": "1",
+      "digest": "sha256:6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+    },
+    {
+      "name": "negative-one",
+      "why": "sign handling on the fast path",
+      "int": "-1",
+      "canonical": "-1",
+      "digest": "sha256:1bad6b8cf97131fceab8543e81f7757195fbb1d36b376ee994ad1cf17699c464"
+    },
+    {
+      "name": "max-safe",
+      "why": "the 2^53 boundary is INCLUSIVE \u2014 the old rule tested >, not >=",
+      "int": "9007199254740992",
+      "canonical": "9007199254740992",
+      "digest": "sha256:c681da39d7273a6a24c15c9cac3a75526ff2ecf8ba4ee60346a0c70c8163bdb2"
+    },
+    {
+      "name": "negative-max-safe",
+      "why": "the boundary is symmetric",
+      "int": "-9007199254740992",
+      "canonical": "-9007199254740992",
+      "digest": "sha256:83e109bfd7fb4984b47a46f363627c18dbbd7e57e36b05a04cd162d304df72e9"
+    },
+    {
+      "name": "max-safe-plus-one",
+      "why": "rounds to 2^53; not representable at all",
+      "int": "9007199254740993",
+      "rejected": true,
+      "reason": "integer 9007199254740993 is not JCS-renderable as itself: canonicalizing it would emit 9007199254740992, a different value. JSON numbers are IEEE doubles; this integer is not one a double prints back unchanged, so digesting it would sign a value nobody supplied."
+    },
+    {
+      "name": "max-safe-plus-two",
+      "why": "the first integer above the boundary that IS renderable",
+      "int": "9007199254740994",
+      "canonical": "9007199254740994",
+      "digest": "sha256:25aa68783313802627958889943e895749ac4c0c7469b2a305cd450a12120768"
+    },
+    {
+      "name": "ten-to-16",
+      "why": "the case reported in seam-sdk#60: accepted as 1e16, refused as an int",
+      "int": "10000000000000000",
+      "canonical": "10000000000000000",
+      "digest": "sha256:139eb393675707818651f879828a526159209ca3ad3b2f94f9f8ec8c4fb5e610"
+    },
+    {
+      "name": "negative-ten-to-16",
+      "why": "the reported case, negated",
+      "int": "-10000000000000000",
+      "canonical": "-10000000000000000",
+      "digest": "sha256:7b5bf442ee1c9dd7f9edebfc5a194e1c220a84ba06fe7fa107c855f44d78d992"
+    },
+    {
+      "name": "ten-to-20",
+      "why": "largest decade ES6 still prints without an exponent",
+      "int": "100000000000000000000",
+      "canonical": "100000000000000000000",
+      "digest": "sha256:c344e9487bfbd5c4e03c9fb90d62a5dde5e00b54d55c46e9f4a803aea162b80c"
+    },
+    {
+      "name": "two-to-55",
+      "why": "EXACTLY REPRESENTABLE and still refused \u2014 ES6 shortens it",
+      "int": "36028797018963968",
+      "rejected": true,
+      "reason": "integer 36028797018963968 is not JCS-renderable as itself: canonicalizing it would emit 36028797018963970, a different value. JSON numbers are IEEE doubles; this integer is not one a double prints back unchanged, so digesting it would sign a value nobody supplied."
+    },
+    {
+      "name": "two-to-60",
+      "why": "the case the obvious 'is it representable' predicate gets wrong",
+      "int": "1152921504606846976",
+      "rejected": true,
+      "reason": "integer 1152921504606846976 is not JCS-renderable as itself: canonicalizing it would emit 1152921504606847000, a different value. JSON numbers are IEEE doubles; this integer is not one a double prints back unchanged, so digesting it would sign a value nobody supplied."
+    },
+    {
+      "name": "ten-to-21",
+      "why": "ES6 switches to exponential here, so no integer can match",
+      "int": "1000000000000000000000",
+      "rejected": true,
+      "reason": "integer 1000000000000000000000 is not JCS-renderable as itself: canonicalizing it would emit 1e+21, a different value. JSON numbers are IEEE doubles; this integer is not one a double prints back unchanged, so digesting it would sign a value nobody supplied."
+    },
+    {
+      "name": "negative-max-safe-plus-one",
+      "why": "the refusal path must be symmetric, not just the acceptance path",
+      "int": "-9007199254740993",
+      "rejected": true,
+      "reason": "integer -9007199254740993 is not JCS-renderable as itself: canonicalizing it would emit -9007199254740992, a different value. JSON numbers are IEEE doubles; this integer is not one a double prints back unchanged, so digesting it would sign a value nobody supplied."
+    },
+    {
+      "name": "negative-two-to-60",
+      "why": "the case the obvious predicate gets wrong, negated",
+      "int": "-1152921504606846976",
+      "rejected": true,
+      "reason": "integer -1152921504606846976 is not JCS-renderable as itself: canonicalizing it would emit -1152921504606847000, a different value. JSON numbers are IEEE doubles; this integer is not one a double prints back unchanged, so digesting it would sign a value nobody supplied."
+    },
+    {
+      "name": "negative-ten-to-21",
+      "why": "the exponential boundary, negated",
+      "int": "-1000000000000000000000",
+      "rejected": true,
+      "reason": "integer -1000000000000000000000 is not JCS-renderable as itself: canonicalizing it would emit -1e+21, a different value. JSON numbers are IEEE doubles; this integer is not one a double prints back unchanged, so digesting it would sign a value nobody supplied."
+    },
+    {
+      "name": "ten-to-21-minus-one",
+      "why": "just below the exponential boundary, still not renderable",
+      "int": "999999999999999999999",
+      "rejected": true,
+      "reason": "integer 999999999999999999999 is not JCS-renderable as itself: canonicalizing it would emit 1e+21, a different value. JSON numbers are IEEE doubles; this integer is not one a double prints back unchanged, so digesting it would sign a value nobody supplied."
+    },
+    {
+      "name": "overflows-a-double",
+      "why": "float() itself overflows; must be refused, not crash",
+      "int": "10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "rejected": true,
+      "reason": "integer 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 is too large to represent as an IEEE double, so JCS cannot render it"
+    },
+    {
+      "name": "searched-refused-1",
+      "why": "machine-searched: representable or not, ES6 does not print it as itself",
+      "int": "669319985907781889151",
+      "rejected": true,
+      "reason": "integer 669319985907781889151 is not JCS-renderable as itself: canonicalizing it would emit 669319985907781900000, a different value. JSON numbers are IEEE doubles; this integer is not one a double prints back unchanged, so digesting it would sign a value nobody supplied."
+    },
+    {
+      "name": "searched-refused-2",
+      "why": "machine-searched: representable or not, ES6 does not print it as itself",
+      "int": "263163212168252719856",
+      "rejected": true,
+      "reason": "integer 263163212168252719856 is not JCS-renderable as itself: canonicalizing it would emit 263163212168252720000, a different value. JSON numbers are IEEE doubles; this integer is not one a double prints back unchanged, so digesting it would sign a value nobody supplied."
+    },
+    {
+      "name": "searched-refused-3",
+      "why": "machine-searched: representable or not, ES6 does not print it as itself",
+      "int": "543883714615600891538",
+      "rejected": true,
+      "reason": "integer 543883714615600891538 is not JCS-renderable as itself: canonicalizing it would emit 543883714615600900000, a different value. JSON numbers are IEEE doubles; this integer is not one a double prints back unchanged, so digesting it would sign a value nobody supplied."
+    },
+    {
+      "name": "searched-refused-4",
+      "why": "machine-searched: representable or not, ES6 does not print it as itself",
+      "int": "923105730817854379039",
+      "rejected": true,
+      "reason": "integer 923105730817854379039 is not JCS-renderable as itself: canonicalizing it would emit 923105730817854400000, a different value. JSON numbers are IEEE doubles; this integer is not one a double prints back unchanged, so digesting it would sign a value nobody supplied."
+    },
+    {
+      "name": "searched-accepted-1",
+      "why": "machine-searched, deliberately not a round number",
+      "int": "58109351127117636000",
+      "canonical": "58109351127117636000",
+      "digest": "sha256:df47aea2b26beaa028e2ba5e394f172e65566381ee2cdc5899c480a2a293c0e0"
+    },
+    {
+      "name": "searched-accepted-2",
+      "why": "machine-searched, deliberately not a round number",
+      "int": "23040772412573060",
+      "canonical": "23040772412573060",
+      "digest": "sha256:bedf81a0f03c4fac9a10d1f36843403c8308ac71e99875adfc4af28f1a16a581"
+    },
+    {
+      "name": "searched-accepted-3",
+      "why": "machine-searched, deliberately not a round number",
+      "int": "31464208826250104",
+      "canonical": "31464208826250104",
+      "digest": "sha256:1e92925dae76fe4000578ebc5f8ad8329dcef2216b94b40e7c9e5af59ec6c85f"
+    },
+    {
+      "name": "searched-accepted-4",
+      "why": "machine-searched, deliberately not a round number",
+      "int": "66460957889251746000",
+      "canonical": "66460957889251746000",
+      "digest": "sha256:a73cb5c788b5f87acbae2913e83252e3a74496861151df2edde6b2d91f7e1db6"
+    }
+  ]
+}

@@ -6,6 +6,104 @@ assumption, the independent recommender's analysis, the human verdict, and the r
 produced it.
 
 
+## 2026-08-25 — `plans/authorize-single-canonicalization.md` (issue #60): one derivation, and the integer rule that is not a magnitude test
+
+### Widen the integer arm rather than narrow the float arm
+
+The two arms disagreed about one number: `1e16` was accepted, `10**16` refused. Narrowing the float
+arm would have made the Python SDK refuse `{"t": 1e16}` — a legal RFC 8785 value TypeScript accepts
+and the runtime-owned vector's own `1e21` case shows the runtime handles — turning working calls into
+failures. Wrong direction. The int arm was the one describing reality incorrectly.
+
+### The predicate is "does JCS render this integer as itself", not "is it exactly representable"
+
+This is the decision worth recording, because the obvious alternative is wrong in the expensive
+direction and the first draft of this work shipped it.
+
+`int(float(v)) == v` — exact representability — reads as equivalent and is not. `2**60` is exactly
+representable, but ES6 `Number::toString` prints the **shortest round-tripping** digits, so JCS
+renders it `1152921504606847000`, not `1152921504606846976`. Under that predicate the SDK would have
+accepted `2**60` and signed a digest over a number the caller never supplied — silent corruption, in
+a value `call_sig` signs, in the direction nothing downstream can detect.
+
+The two predicates diverge from about `2**55`, not at the `10**21` decimal-to-exponential boundary
+intuition suggests, and they **agree on every power of ten**. That last fact is why this nearly
+shipped: the verification behind the first draft sampled powers of ten and boundary values, which is
+exactly the sample on which the wrong rule looks right. A randomized corpus separates them
+immediately — the wrong predicate breaks 1,996 of the committed corpus's 2,000 round trips. The test that proves the
+property is therefore randomized on purpose (`python/tests/test_jcs_roundtrip_stability.py:120`), and
+a companion test asserts the tidy corpus would *not* have caught it.
+
+The chosen rule also carries its own safety argument for an irreversible widening: every byte string
+the integer path can emit is one the float arm could already emit, so no new wire shape exists for a
+conformant runtime to disagree with. The `10**21` cap falls out for free — a plain decimal form can
+never match an exponential rendering — rather than being a separate rule anyone has to maintain.
+
+### The `int.__repr__` hardening is the int arm only, and the other arms stay spoofable
+
+Rendering the integer through unbound `int.__repr__` closes one real hole: on Python 3.10, this
+package's floor, `str(SomeIntEnum.MEMBER)` is `"Color.RED"`, so the previous `str(v)` put invalid
+JSON inside a signed digest. It must be `__repr__` and not `__str__` — `int` defines no `__str__`, so
+the unbound `int.__str__` falls through to `object.__str__` and re-enters the subclass's `__repr__`,
+which is strictly worse than the bug.
+
+**It does not generalise, and saying so is the point of this entry.** JCS reads every value through
+overridable methods, and the other arms are still spoofable by a subclass that *lies* rather than
+raises: a `float` subclass overriding `__abs__` (`python/seam_sdk/crypto.py:203` renders
+`repr(abs(v))`), a `str` subclass overriding `__iter__` (`python/seam_sdk/crypto.py:175`), a `dict`
+subclass overriding `__iter__` to drop keys. `CanonicalizationError` covers subclasses that raise;
+nothing covers ones that lie.
+
+That is judged acceptable rather than overlooked. It is a caller attacking its own input, under its
+own signature — the same trust model `canonical=` operates in, and the caller could simply pass
+different values instead. The int arm was hardened because a *non-malicious, stdlib* type hits it by
+accident; no stdlib type lies in the other arms. If that stops being true, the fix is the same shape
+and belongs here.
+
+### The SDK does not validate `canonical=`, and that is the design
+
+Re-canonicalizing the caller's bytes to check them would reinstate the second derivation the
+parameter exists to remove. Only what is checkable *without* re-deriving is checked — `bytes`,
+non-empty (`python/seam_sdk/_authorize.py:140`). `bytearray` and `memoryview` are refused with the
+rest: a mutable buffer could change between the digest being taken and the bytes being assembled onto
+the request, which is the same two-derivations-disagree bug in a place nobody would look for it.
+
+What this permits is bounded. A caller can only misrepresent its own input, which it already
+controls, under its own signature, and the digest stays self-consistent — so the runtime sees nothing
+different. Two consequences are real and are recorded in `COMPATIBILITY.md` rather than waved off:
+with `digest_only` a signature can be bound to a digest of bytes never revealed, and non-canonical
+bytes in an advisory audit row break third-party re-derivation. Whether the runtime validates
+canonicality at all is filed upstream; it cannot be answered from this repo under the clean-room
+constraint.
+
+### `CanonicalizationError` lives in `errors.py` and is raised from `_authorize.py`, because it cannot be both
+
+Ask 3 of #60 wanted canonicalization failures typed as `SeamError`. The obvious implementation —
+raise it from `jcs_canonicalize` — is unavailable, and the reason is a genuine collision between two
+existing cross-repo contracts rather than an oversight:
+
+- the whole `SeamError` tree must be defined in `errors.py`, because `seam-adapters` loads that one
+  file standalone and diffs its hierarchy against classification rosters
+  (`python/tests/test_errors_is_import_light.py:513`);
+- `crypto.py` may import `cryptography` and nothing else, with no relative imports, because
+  seam-runtime's `sdk-digest-parity` gate loads *that* one file standalone
+  (`python/tests/test_errors_is_import_light.py:86`). `errors.py` imports `grpc`.
+
+So `crypto.py` cannot import the taxonomy. This is the same tension that already made
+`RecordDigestStripError` a bare `ValueError` living in `crypto.py`; repeating that trick here would
+have defeated the purpose, since a non-`SeamError` is invisible to the adapters roster and lands in
+the transport bucket exactly as the builtins did. The typed error is therefore raised at the
+`_authorize.py` boundary, through a new public `canonicalize_tool_input()`, and the residual — direct
+`jcs_canonicalize` callers still get builtins — is stated in `COMPATIBILITY.md` and on seam-sdk#54,
+where the import-light contract is owned.
+
+The wrap catches `Exception`, not `BaseException`, and that breadth is the point rather than
+defensiveness: the motivating failure, `RuntimeError: dictionary changed size during iteration`, is
+raised by CPython's dict iterator, and a `str`/`int` subclass can raise anything from the dunders JCS
+reads it through. It also means a genuine SDK bug — an `AttributeError` in our own code — now
+surfaces as an input error; `__cause__` is what keeps that diagnosable, and is asserted.
+
+
 ## 2026-08-25 — `plans/record-digest-v3.md` (Phases 6a/6b/8): a tag-10 strip stays `False`; only tags 11/12 raise
 
 **Confirmed.** `verify_streamed_record_digest` / `verifyStreamedRecordDigest` return `False` for a

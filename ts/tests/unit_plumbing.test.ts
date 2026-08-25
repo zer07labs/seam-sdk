@@ -23,6 +23,7 @@ import {
   SeamClient,
   UnknownVerdictError,
 } from "../src/client.js";
+import { jcsCanonicalize } from "../src/crypto.js";
 import { DEFAULT_ADMIN_TIMEOUT_MS, SeamAdminClient } from "../src/admin.js";
 import {
   InvalidArgumentError,
@@ -435,4 +436,38 @@ test("streamEvents: aborting the passed AbortSignal terminates a follow-tail", a
   );
   assert.ok(seen >= 3, "the tail must have been live before the abort");
   assert.equal(calls[0]!.signal, ctl.signal, "the caller's signal must reach the transport");
+});
+
+test("authorize(canonical) is byte-identical to authorize(toolInput), and derives nothing", async () => {
+  // The TypeScript half of seam-sdk#60 ask 1. `canonical` must be a way to AVOID a derivation, not a
+  // second implementation of one — so the two forms are compared request-for-request rather than
+  // just both being asserted to work.
+  const toolInput = { zeta: 1, alpha: [true, null, "x"], n: 2.5 };
+  const canonical = jcsCanonicalize(toolInput);
+
+  const byObject: Recorded[] = [];
+  await new SeamClient(fakeTransport(byObject, fakeSeam().handle)).authorize(new Agent(SEED), "t", toolInput);
+  const byBytes: Recorded[] = [];
+  await new SeamClient(fakeTransport(byBytes, fakeSeam().handle)).authorize(new Agent(SEED), "t", undefined, {
+    canonical,
+  });
+
+  const a = byObject.find((c) => c.method === "Authorize")!.input;
+  const b = byBytes.find((c) => c.method === "Authorize")!.input;
+  assert.equal(a.toolInputDigest, b.toolInputDigest);
+  assert.deepEqual(a.toolInput, b.toolInput);
+});
+
+test("authorize rejects toolInput and canonical together rather than picking one", async () => {
+  // Silently preferring either is the exact shape of failure the option exists to remove: a
+  // disagreement resolved quietly, inside a signed digest, where nobody looks.
+  const client = new SeamClient(fakeTransport([], fakeSeam().handle));
+  await assert.rejects(
+    () => client.authorize(new Agent(SEED), "t", { a: 1 }, { canonical: jcsCanonicalize({ a: 1 }) }),
+    /mutually exclusive/,
+  );
+  await assert.rejects(
+    () => client.authorize(new Agent(SEED), "t", undefined, { canonical: new Uint8Array(0) }),
+    /empty/,
+  );
 });

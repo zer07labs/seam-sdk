@@ -323,3 +323,39 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   have wanted a raise. The record fails either way, so no record verifies that should not — the cost
   is diagnostic richness, not integrity. Reversible in one line.
 - **Status:** CONFIRMED (2026-08-25, /reconcile — see DECISIONS.md)
+
+## The runtime accepts an `AuthorizeRequest.tool_input` whose canonical bytes were derived by the caller
+- **Plan:** `plans/authorize-single-canonicalization.md` (Phase 4, issue #60)
+- **Assumed:** the runtime re-derives `tool_input_digest` from the `tool_input` bytes it receives and
+  compares it to the digest on the request, but does **not** independently assert that those bytes
+  are canonical JCS.
+- **Chose:** `authorize(canonical=…)` accepts the caller's bytes without re-canonicalizing them.
+  Re-deriving to validate would reinstate the second derivation the parameter exists to remove, so
+  there is no version of this feature that also checks its input.
+- **Alternatives:** re-canonicalize and compare (self-defeating — that IS the second derivation);
+  refuse to add the parameter at all and leave every consumer to reimplement the `seam-adapters`
+  normalization workaround (rejected: the workaround is what #60 asked us to make unnecessary).
+- **Blast radius if wrong:** if the runtime *does* validate canonicality, a caller passing
+  non-canonical bytes gets a clean server-side rejection rather than silent acceptance — which is a
+  better outcome than the one assumed here, not a worse one. The genuinely unbounded case is the
+  reverse: the runtime accepts them and an advisory audit row carries bytes a third-party auditor
+  cannot re-derive the digest from. Not reversible after the fact for rows already written.
+  **Cannot be answered from this repo** — `../seam-runtime/crates/**` is unreadable under the
+  clean-room constraint. Filed as a question upstream.
+- **Status:** UNCONFIRMED
+
+## The runtime's JCS renders an integer ≥ `10**21` the way ES6 does
+- **Plan:** `plans/authorize-single-canonicalization.md` (Phase 3, issue #60)
+- **Assumed:** unknown, and deliberately not relied on.
+- **Chose:** refuse the whole range. The committed predicate — accept an integer iff JCS renders it
+  as itself — refuses everything at or above `10**21` for free, because a plain decimal form can
+  never equal an exponential rendering. So the SDK never emits a byte string in that range that the
+  float arm could not already have emitted, and the question does not gate anything.
+- **Alternatives:** accept exactly-representable integers ≥ `10**21` and emit `1e+21` (correct per
+  RFC 8785, but it is the one range where a naive integer-preserving runtime could disagree, and
+  guessing there is a signed-digest interop break); ask upstream first and block on the answer
+  (rejected — it blocks a fix for a live defect on a question that changes nothing today).
+- **Blast radius if wrong:** none today. Being wrong means only that the SDK is stricter than it
+  needs to be for values essentially nobody sends. Widening later is additive; the reverse would not
+  be. Filed as a question upstream.
+- **Status:** UNCONFIRMED

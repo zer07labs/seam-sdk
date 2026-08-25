@@ -256,6 +256,30 @@ export interface StepUsage {
   costMicros?: bigint;
 }
 
+/** Return the canonical bytes for exactly one of `toolInput` / `canonical`.
+ *
+ * Passing both is an error rather than a precedence rule. Silently preferring one would be the same
+ * shape of failure this parameter exists to remove: a disagreement resolved quietly, in a signed
+ * digest, where nobody looks (seam-sdk#60).
+ */
+function resolveCanonical(toolInput: unknown, canonical: Uint8Array | undefined): Uint8Array {
+  if (canonical === undefined) return jcsCanonicalize(toolInput ?? {});
+  if (toolInput !== undefined)
+    throw new Error(
+      "toolInput and canonical are mutually exclusive — pass the value OR the bytes you already derived " +
+        "from it, never both. Accepting both would mean choosing one silently, which is the failure this " +
+        "option exists to remove (seam-sdk#60).",
+    );
+  if (!(canonical instanceof Uint8Array))
+    throw new Error(`canonical must be a Uint8Array, got ${typeof canonical}`);
+  if (canonical.length === 0)
+    throw new Error(
+      "canonical is empty; JCS never produces zero bytes (a no-argument call is `{}`). An empty value " +
+        "would digest to something no re-derivation can reproduce.",
+    );
+  return canonical;
+}
+
 export class SeamClient {
   private readonly admission: Client<typeof SeamAdmission>;
   private readonly coord: Client<typeof SeamCoordination>;
@@ -363,6 +387,13 @@ export class SeamClient {
     toolName: string,
     toolInput?: unknown,
     opts?: {
+      /** Already-canonical JCS bytes you derived yourself, via {@link jcsCanonicalize}. Mutually
+       * exclusive with `toolInput`, and the point of it: pass this and the value is derived exactly
+       * ONCE, by you. Otherwise a caller that needs the digest before the call canonicalizes the
+       * object, this SDK canonicalizes it again, and the two derivations can disagree across the gap
+       * between them (seam-sdk#60). The bytes are NOT re-canonicalized to validate them — doing so
+       * would reinstate the second derivation — so canonicality is your assertion. */
+      canonical?: Uint8Array;
       digestOnly?: boolean;
       features?: Record<string, string>;
       sessionId?: string;
@@ -372,7 +403,7 @@ export class SeamClient {
       timeoutMs?: number;
     },
   ): Promise<AuthorizeResult> {
-    const canonical = jcsCanonicalize(toolInput ?? {});
+    const canonical = resolveCanonical(toolInput, opts?.canonical);
     const digest = toolInputDigest(canonical);
     const request = (ticket: Uint8Array) => ({
       ticket,
