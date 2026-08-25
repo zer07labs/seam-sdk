@@ -514,3 +514,13 @@ actually waits on their call.
   in `ci.yml` next to the job: pointing it at the App means handing a token to a job that BUILDS
   and RUNS another repo's code, a wider grant than reading one file, and that deserves its own
   decision rather than being folded into this change.
+- **That decision was made on 2026-08-25 and shipped in PR #69** (`15d3b88`). It is not the grant
+  that was deferred: the job pulls the already-published `seamd` image and lifts `seam-grpc` out of
+  it, so it needs **no credential at all** beyond the workflow's own `GITHUB_TOKEN` with
+  `packages: read` — narrower than the App token, not wider. A seam-deps-bot token was tried first
+  and GHCR refused it both repo-scoped and org-scoped, because `internal` package visibility does
+  not extend to a GitHub App installation. Turning the job on immediately found three pre-existing
+  defects nothing else could have: fixtures spawning an **unsigned** registry snapshot that a
+  current runtime refuses to boot on, a `schema_version == 2` assertion in **both** languages that
+  B3 had made false, and a Python live step running two of the four files that carry a live gate.
+  Live coverage went from zero to 42 Python tests and 108 TypeScript tests.
