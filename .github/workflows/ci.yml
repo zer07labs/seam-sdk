@@ -325,7 +325,12 @@ jobs:
           SEAM_GRPC_BIN: ${{ github.workspace }}/seam-grpc
         run: |
           pip install -e ".[dev]"
-          pytest -q tests/test_integration.py tests/test_admin.py
+          # EVERY file with a live SEAM_GRPC_BIN gate, not a subset. This ran two of four, so
+          # test_streamed_decode.py and test_verify_attestation.py self-skipped here forever while
+          # `npm test` ran their TypeScript twins in full. That asymmetry is exactly how the stale
+          # `schema_version == 2` assertion survived on the Python side and was caught on the TS one.
+          pytest -q tests/test_integration.py tests/test_admin.py \
+                    tests/test_streamed_decode.py tests/test_verify_attestation.py
       - name: typescript live round-trip
         working-directory: ts
         env:

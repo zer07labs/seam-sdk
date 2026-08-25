@@ -7,6 +7,9 @@
 // token) accepts these tokens and refuses everything else. The SEED is a well-known TEST key.
 
 import { ed25519 } from "@noble/curves/ed25519";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // The golden operator key (seed → the public_key_hex pinned in the snapshot fixture's operator_keys).
@@ -46,4 +49,34 @@ export function tamperSignature(token: string): string {
   const sig = Buffer.from(token.slice(i + 1), "base64url");
   sig[0] ^= 0x01;
   return `${token.slice(0, i)}.${b64url(sig)}`;
+}
+
+/** Detach-sign a registry snapshot so the runtime will actually install it.
+ *
+ * Returns `[pubkeyHex, sigPath]` for SEAM_SNAPSHOT_PUBKEY and SEAM_REGISTRY_SNAPSHOT_SIG.
+ *
+ * A snapshot carrying a trust-bearing section — `operator_keys`, `capability_registry` or
+ * `namespaces` — must be signature-verified before the runtime installs it, and a current runtime
+ * REFUSES TO BOOT without that. Anyone who can influence the file could otherwise install their own
+ * operator key and own the management plane.
+ *
+ * This harness spawned an unsigned snapshot, so on a current runtime the server never came up and the
+ * management-plane test failed with a bare `no server`. Nobody noticed because the CI job that runs
+ * these has never executed — see the note on `integration` in .github/workflows/ci.yml.
+ *
+ * `SEAM_ALLOW_UNSIGNED_SNAPSHOT=1` would also work and is the wrong choice: it is the runtime's own
+ * migration escape hatch for the signing rollout. Signing means this exercises the path production
+ * uses and will not break when the hatch is removed. Mirrors python/tests/operator_token.py's
+ * `sign_snapshot`; the two must stay in step.
+ *
+ * The signing key is deliberately NOT the operator key above — snapshot-signature verification is
+ * independent of the snapshot's own operator_keys trust root.
+ */
+export function signSnapshot(snapshotPath: string): [string, string] {
+  const data = readFileSync(snapshotPath);
+  const seed = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) seed[i] = i; // well-known TEST key
+  const sigPath = join(mkdtempSync(join(tmpdir(), "seam-snap-")), "snapshot.sig");
+  writeFileSync(sigPath, Buffer.from(ed25519.sign(data, seed)).toString("hex"));
+  return [Buffer.from(ed25519.getPublicKey(seed)).toString("hex"), sigPath];
 }

@@ -229,7 +229,7 @@ function waitPort(port: number, timeoutMs = 8000): Promise<void> {
 }
 
 test(
-  "streamed events carry the A14 payloads live (SESSION_LIFECYCLE + v2 ciphertext_digest)",
+  "streamed events carry the A14 payloads live (SESSION_LIFECYCLE + ciphertext_digest)",
   { skip: !BIN },
   async () => {
     const dataPort = 8215;
@@ -275,7 +275,15 @@ test(
       assert.ok(lifecycle!.sessionLifecycle!.openedAtMillis > 0n);
 
       assert.ok(sealed, "the sealed decision must appear on the stream");
-      assert.equal(sealed!.payload!.schemaVersion, 2);
+      // The runtime's record schema moved with B3: a chain is MIXED, and a freshly sealed decision
+      // now arrives as v3 where it used to be v2. Pinning `2` asserted a RUNTIME VERSION rather than
+      // SDK behaviour, and it went stale the moment B3 shipped — invisibly, because this job had
+      // never run. What matters is that the SDK recomputes the digest under whichever formula the
+      // record declares, which is what verifyStreamedRecordDigest dispatches on.
+      assert.ok(
+        [2, 3].includes(sealed!.payload!.schemaVersion),
+        `record schema_version ${sealed!.payload!.schemaVersion}; this SDK knows 2 and 3`,
+      );
       assert.equal(sealed!.payload!.ciphertextDigest.length, 32);
       assert.equal(verifyStreamedRecordDigest(sealed!), true);
     } finally {
