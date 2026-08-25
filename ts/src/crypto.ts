@@ -179,10 +179,11 @@ const MAX_SAFE = 9007199254740992n; // 2^53 — inside this range a bigint's own
  * and `String(Number(2n ** 60n))` is `"1152921504606847000"`, not `"1152921504606846976"`. The two
  * answers diverge from about 2^55.
  *
- * The RENDERING here must be `String(Number(v))` and not `v.toString()`, and that is not a detail.
- * Accepting the same set as the Python SDK while rendering it differently would emit `…846976` where
- * Python emits `…847000` — a cross-language divergence in a signed digest, in exactly the range this
- * rule newly admits. Pinned byte-for-byte against Python by
+ * Returning `rendered` rather than `text` is defence in depth, not load-bearing, and it is worth
+ * being precise about which: the guard above already requires the two to be equal, so on every
+ * accepted value they are provably the same string. It is written this way so that if the guard is
+ * ever weakened, what escapes is still the ES6 rendering — matching Python — rather than the bigint's
+ * own decimal form. Byte-identity with Python is what actually holds the line, pinned by
  * `conformance/authorize_jcs_int_extended.json`.
  */
 function jcsBigInt(v: bigint): string {

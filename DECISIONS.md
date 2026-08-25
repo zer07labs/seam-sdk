@@ -30,7 +30,7 @@ The two predicates diverge from about `2**55`, not at the `10**21` decimal-to-ex
 intuition suggests, and they **agree on every power of ten**. That last fact is why this nearly
 shipped: the verification behind the first draft sampled powers of ten and boundary values, which is
 exactly the sample on which the wrong rule looks right. A randomized corpus separates them
-immediately — the wrong predicate leaves ~97% of random round trips broken. The test that proves the
+immediately — the wrong predicate breaks 1,996 of the committed corpus's 2,000 round trips. The test that proves the
 property is therefore randomized on purpose (`python/tests/test_jcs_roundtrip_stability.py:120`), and
 a companion test asserts the tidy corpus would *not* have caught it.
 
@@ -38,6 +38,27 @@ The chosen rule also carries its own safety argument for an irreversible widenin
 the integer path can emit is one the float arm could already emit, so no new wire shape exists for a
 conformant runtime to disagree with. The `10**21` cap falls out for free — a plain decimal form can
 never match an exponential rendering — rather than being a separate rule anyone has to maintain.
+
+### The `int.__repr__` hardening is the int arm only, and the other arms stay spoofable
+
+Rendering the integer through unbound `int.__repr__` closes one real hole: on Python 3.10, this
+package's floor, `str(SomeIntEnum.MEMBER)` is `"Color.RED"`, so the previous `str(v)` put invalid
+JSON inside a signed digest. It must be `__repr__` and not `__str__` — `int` defines no `__str__`, so
+the unbound `int.__str__` falls through to `object.__str__` and re-enters the subclass's `__repr__`,
+which is strictly worse than the bug.
+
+**It does not generalise, and saying so is the point of this entry.** JCS reads every value through
+overridable methods, and the other arms are still spoofable by a subclass that *lies* rather than
+raises: a `float` subclass overriding `__abs__` (`python/seam_sdk/crypto.py:203` renders
+`repr(abs(v))`), a `str` subclass overriding `__iter__` (`python/seam_sdk/crypto.py:175`), a `dict`
+subclass overriding `__iter__` to drop keys. `CanonicalizationError` covers subclasses that raise;
+nothing covers ones that lie.
+
+That is judged acceptable rather than overlooked. It is a caller attacking its own input, under its
+own signature — the same trust model `canonical=` operates in, and the caller could simply pass
+different values instead. The int arm was hardened because a *non-malicious, stdlib* type hits it by
+accident; no stdlib type lies in the other arms. If that stops being true, the fix is the same shape
+and belongs here.
 
 ### The SDK does not validate `canonical=`, and that is the design
 

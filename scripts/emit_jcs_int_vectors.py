@@ -17,8 +17,9 @@ JCS numbers are IEEE doubles, so the only integers that can appear in canonical 
 ES6 `Number::toString` prints as themselves. The trap is that "exactly representable as a double" is
 NOT the same question: 2**60 is exactly representable and still renders as 1152921504606847000 — a
 different number. The two answers diverge from about 2^55, and they agree on every power of ten, so
-a hand-picked case list looks fine under either rule. Half the accepted cases below are therefore
-machine-searched rather than chosen, precisely so they are not tidy.
+a hand-picked case list looks fine under either rule. Some of the cases below are therefore
+machine-searched rather than chosen, precisely so they are not tidy — four accepted and four refused,
+drawn at random from the interval where the two candidate rules disagree.
 
 Every `int` is a STRING. Parsing it as a JSON number would lose precision in JavaScript before any
 implementation got a chance to be tested.
@@ -54,6 +55,9 @@ CHOSEN: list[tuple[str, int, str]] = [
     ("two-to-55", 2**55, "EXACTLY REPRESENTABLE and still refused — ES6 shortens it"),
     ("two-to-60", 2**60, "the case the obvious 'is it representable' predicate gets wrong"),
     ("ten-to-21", 10**21, "ES6 switches to exponential here, so no integer can match"),
+    ("negative-max-safe-plus-one", -(2**53 + 1), "the refusal path must be symmetric, not just the acceptance path"),
+    ("negative-two-to-60", -(2**60), "the case the obvious predicate gets wrong, negated"),
+    ("negative-ten-to-21", -(10**21), "the exponential boundary, negated"),
     ("ten-to-21-minus-one", 10**21 - 1, "just below the exponential boundary, still not renderable"),
     ("overflows-a-double", 10**400, "float() itself overflows; must be refused, not crash"),
 ]
@@ -115,8 +119,9 @@ def main() -> None:
                     "WHY: JCS numbers are IEEE doubles, so the only integers that can appear in canonical",
                     "output are those ES6 Number::toString prints as themselves. 'Exactly representable as a",
                     "double' is a DIFFERENT and wrong rule: 2**60 is representable and renders as",
-                    "1152921504606847000. The two rules agree on every power of ten, so half the accepted",
-                    "cases below are machine-searched rather than chosen.",
+                    "1152921504606847000. The two rules agree on every power of ten, so eight of the cases",
+                    "below are machine-searched rather than chosen -- four accepted, four refused, drawn at",
+                    "random from the interval where the two candidate rules disagree.",
                 ],
                 "algorithm": "sha256",
                 "canonicalization": "RFC 8785 (JSON Canonicalization Scheme)",

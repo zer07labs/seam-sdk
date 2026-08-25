@@ -14,8 +14,9 @@
     "WHY: JCS numbers are IEEE doubles, so the only integers that can appear in canonical",
     "output are those ES6 Number::toString prints as themselves. 'Exactly representable as a",
     "double' is a DIFFERENT and wrong rule: 2**60 is representable and renders as",
-    "1152921504606847000. The two rules agree on every power of ten, so half the accepted",
-    "cases below are machine-searched rather than chosen."
+    "1152921504606847000. The two rules agree on every power of ten, so eight of the cases",
+    "below are machine-searched rather than chosen -- four accepted, four refused, drawn at",
+    "random from the interval where the two candidate rules disagree."
   ],
   "algorithm": "sha256",
   "canonicalization": "RFC 8785 (JSON Canonicalization Scheme)",
@@ -110,6 +111,27 @@
       "int": "1000000000000000000000",
       "rejected": true,
       "reason": "integer 1000000000000000000000 is not JCS-renderable as itself: canonicalizing it would emit 1e+21, a different value. JSON numbers are IEEE doubles; this integer is not one a double prints back unchanged, so digesting it would sign a value nobody supplied."
+    },
+    {
+      "name": "negative-max-safe-plus-one",
+      "why": "the refusal path must be symmetric, not just the acceptance path",
+      "int": "-9007199254740993",
+      "rejected": true,
+      "reason": "integer -9007199254740993 is not JCS-renderable as itself: canonicalizing it would emit -9007199254740992, a different value. JSON numbers are IEEE doubles; this integer is not one a double prints back unchanged, so digesting it would sign a value nobody supplied."
+    },
+    {
+      "name": "negative-two-to-60",
+      "why": "the case the obvious predicate gets wrong, negated",
+      "int": "-1152921504606846976",
+      "rejected": true,
+      "reason": "integer -1152921504606846976 is not JCS-renderable as itself: canonicalizing it would emit -1152921504606847000, a different value. JSON numbers are IEEE doubles; this integer is not one a double prints back unchanged, so digesting it would sign a value nobody supplied."
+    },
+    {
+      "name": "negative-ten-to-21",
+      "why": "the exponential boundary, negated",
+      "int": "-1000000000000000000000",
+      "rejected": true,
+      "reason": "integer -1000000000000000000000 is not JCS-renderable as itself: canonicalizing it would emit -1e+21, a different value. JSON numbers are IEEE doubles; this integer is not one a double prints back unchanged, so digesting it would sign a value nobody supplied."
     },
     {
       "name": "ten-to-21-minus-one",
