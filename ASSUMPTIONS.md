@@ -304,3 +304,22 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   stays and the SDK keeps coverage the runtime does not. Neither outcome touches the wire, the
   formula, or any published digest.
 - **Status:** CONFIRMED (2026-08-24) — see `DECISIONS.md`, "reconcile `plans/record-digest-v3.md`'s ASSUMPTIONS.md (4 entries)". — proposed to seam-runtime; their call.
+
+## A tag-10 strip stays `False`, while a tag-11/12 strip raises
+- **Plan:** plans/record-digest-v3.md (Phase 6a/6b)
+- **Assumed:** the spec's per-tag table (`seam-event.v1.md` §"Presence on the wire") saying a tag-10
+  strip on `schema_version >= 2` must **refuse** means the same thing our helper's `False` already
+  means — a failing verdict — and not that it must become an exception.
+- **Chose:** kept tag 10's long-standing boolean and gave only tags 11/12 the typed raise. The
+  distinct-reporting requirement ("reported distinctly from a digest mismatch") is attached in the
+  spec to 11/12 and to nothing else; §Ordering & integrity Verification (c), which the table cites,
+  is written for the chain verifier, where REFUSE is a *fail* verdict rather than an error channel.
+  A boolean helper answering "does this verify?" expresses that fail as `False`.
+- **Alternatives:** raising on a tag-10 strip too. Rejected because it would change shipped v2
+  behaviour, which the standing "`record_digest_v2` must stay byte-identical forever" constraint
+  covers behaviourally as well as byte-wise, and because it would invent a distinctness the spec
+  does not ask for.
+- **Blast radius if wrong:** a v3 record stripped of tag 10 reports `False` where an operator might
+  have wanted a raise. The record fails either way, so no record verifies that should not — the cost
+  is diagnostic richness, not integrity. Reversible in one line.
+- **Status:** CONFIRMED (2026-08-25, /reconcile — see DECISIONS.md)

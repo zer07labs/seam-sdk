@@ -16,8 +16,11 @@ this suite never asserts a digest against a number someone copied from somewhere
    tags (`context_digest` is slot 10, wire tag 11), and the new slots are *inserted before*
    `schema_version` rather than appended after it. A swap of the two mandatory digests is the decoy
    for the first; only distinct values can catch it, so the fixtures are distinct by construction.
-3. **`None` is not `b""`.** `opt(None)` is one byte, `opt(b"")` is five — a present-but-empty value
-   is data, not absence.
+3. **`None` is not `b""`.** `opt(None)` is one byte, `opt(b"")` is five — so at this API the two are
+   distinct inputs, and the empty one is REFUSED rather than hashed, because the empty digest is
+   outside these slots' value domain. ("Present-but-empty is data" applies to the *string* slots,
+   `mode`/`policy_version`/`supersedes`. On the WIRE, `len == 0` is absence for tags 10-13 — a total
+   mapping — which the streamed helpers apply before calling in.)
 4. **Strip is refused, and is not a mismatch.** The spec requires a v3 record missing tag 11 or 12 to
    be refused — never defaulted to an empty digest, never fallen back to v2 — and requires that
    refusal to be reported *distinctly* from a digest mismatch, because "someone removed a field" and

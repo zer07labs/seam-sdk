@@ -576,8 +576,16 @@ def record_digest_v3(
       oversight: framing the two mandatory digests is precisely what stops "no participants" from
       aliasing with "field stripped". ``policy_rules_digest`` is genuinely optional — absent means
       no policy was bound, today's common case.
-    * **``None`` is not ``b""``.** ``opt(None)`` is one byte; ``opt(b"")`` is five. A present-but-
-      empty value is data, not absence, and the presence byte is what keeps them apart.
+    * **``None`` is not ``b""`` — and at THIS layer they are two different refusals, not two
+      different digests.** ``opt(None)`` is one byte and ``opt(b"")`` is five, so the presence byte
+      does keep them apart in the preimage. But the empty digest is outside these slots' value
+      domain entirely ({absent} ∪ {32 bytes}), so this function never hashes ``b""``: it refuses it.
+      Absence is spelled ``None`` here. A **wire** consumer must not pass ``b""`` through expecting
+      ``opt(Some(b""))`` — on the wire ``len == 0`` IS absence (a total mapping, per
+      ``seam-event.v1`` §"Presence on the wire"), so the caller maps it to ``None`` first. That
+      mapping is the streamed helpers' job; see :func:`seam_sdk.admin.verify_streamed_record_digest`.
+      (The "present-but-empty is data" rule is real, but it belongs to the *string* slots — ``mode``,
+      ``policy_version``, ``supersedes`` — where the empty string IS in the domain.)
 
     Raises :class:`RecordDigestStripError` when ``context_digest`` or ``participation_digest`` is
     absent or is not 32 bytes, and when a *present* ``policy_rules_digest`` is not 32 bytes. That is

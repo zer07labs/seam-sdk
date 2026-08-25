@@ -615,21 +615,54 @@ fn stripping_a_mandatory_v3_digest_is_refused_as_a_strip() {
 }
 
 #[test]
-fn a_present_but_empty_v3_digest_is_malformed_not_absent() {
-    // The JSON-projection edge the wire mapping has to get right: `"context_digest": ""` is a field
-    // somebody SENT, empty — `Some(vec![])`, not `None`. Folding it into absent would report a
-    // malformed record as a strip; hashing it would report it as a rewrite. It is neither.
+fn a_present_but_empty_v3_digest_is_refused_as_a_strip() {
+    // `"context_digest": ""` in the JSON projection means ABSENT, exactly as a zero-length field does
+    // on the wire. This test asserted the opposite — that `""` is a distinct present-but-empty state
+    // and must be reported MALFORMED — until seam-runtime#435 pinned the rule
+    // (`seam-event.v1.md` §"Presence on the wire"): `len == 0` is absence *however the bytes arose*,
+    // and the JSON projection "serializes omitted-when-empty and parses missing-as-empty, so
+    // missing/`\"\"` ⇔ absent there too".
+    //
+    // The VERDICT is unchanged — the record still fails, and still fails as a strip rather than a
+    // rewrite, which is the property that actually protects an operator. Only the diagnostic moves,
+    // from MALFORMED to STRIP, and the spec explicitly sanctions that: telling "omitted" from
+    // "explicitly-encoded-empty" requires parsing raw wire bytes rather than a decoded message, and
+    // "both inputs verify identically either way; only the diagnostic differs."
     for (field, tag) in [("context_digest", 11u32), ("participation_digest", 12)] {
         let body = v3_tampered(|p| p[field] = serde_json::json!(""));
         let (code, out) = run("v3-empty", &body, &["--issuer", ISSUER]);
         assert_eq!(code, FAILED, "an empty {field} must fail:\n{out}");
-        assert!(out.contains("MALFORMED"), "{out}");
-        assert!(out.contains(&format!("wire tag {tag}")), "{out}");
-        assert!(
-            !out.contains("does NOT match its own digest"),
-            "a MALFORMED field is being reported as a rewrite:\n{out}"
-        );
+        assert_strip_not_mismatch(&out, field, tag);
     }
+}
+
+#[test]
+fn an_empty_policy_rules_digest_verifies_green_because_absent_is_legitimate() {
+    // The counterpart, and the case that motivated the whole correction. Tag 13 absent means no
+    // policy was bound — today's common case — so a record SEALED with no policy must still verify
+    // when the field arrives as `""` rather than omitted, because `""` and missing are one state.
+    //
+    // Note the record is sealed WITHOUT tag 13 (`opt(None)`, one byte) and then presented WITH `""`.
+    // That is the whole test: if the verifier read `""` as `opt(Some(b""))` — five bytes — it would
+    // recompute a different digest and report a rewrite that never happened. This verifier instead
+    // refused it outright as MALFORMED until the `len == 0` mapping landed, rejecting a record the
+    // contract calls valid and disagreeing with the Python and TS twins on identical bytes.
+    let mut honest = v3_payload();
+    honest.as_object_mut().unwrap().remove("policy_rules_digest");
+    let digest = v3_record_digest(&honest);
+
+    let mut presented = honest;
+    presented["policy_rules_digest"] = serde_json::json!("");
+
+    let (code, out) = run("v3-empty-13", &v3_stream(&[(presented, digest)]), &["--issuer", ISSUER]);
+    assert_eq!(
+        code, VERIFIED,
+        "an empty policy_rules_digest is ABSENT, and absent is legitimate:\n{out}"
+    );
+    assert!(
+        out.contains("records recomputed: 1"),
+        "it must be RECOMPUTED, not skipped — a skipped record also exits 0:\n{out}"
+    );
 }
 
 #[test]

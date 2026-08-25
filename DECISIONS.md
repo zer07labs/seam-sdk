@@ -5,6 +5,37 @@ assumption, the independent recommender's analysis, the human verdict, and the r
 `/ship` and any later reconciliation read this file instead of replaying the conversation that
 produced it.
 
+
+## 2026-08-25 — `plans/record-digest-v3.md` (Phases 6a/6b/8): a tag-10 strip stays `False`; only tags 11/12 raise
+
+**Confirmed.** `verify_streamed_record_digest` / `verifyStreamedRecordDigest` return `False` for a
+`DECISION_SEALED` (v2 or v3) missing its `ciphertext_digest`, and raise the typed
+`RecordDigestStripError` only for a v3 record missing `context_digest` (11) or `participation_digest`
+(12).
+
+**Why this is the right reading, not a convenience.** The spec's per-tag table (`seam-event.v1.md`
+§"Presence on the wire") marks a tag-10 strip **refuse** and cites §Ordering & integrity Verification
+(c) — which is written for the chain verifier, where REFUSE means the record *fails*. A helper whose
+whole answer is "does this verify?" expresses a failure as `False`. The requirement that a refusal be
+"reported distinctly from a digest mismatch" is attached in the spec to tags 11/12 and to nothing
+else, and that distinctness is what the exception exists to carry.
+
+**What was weighed against it.** Raising on a tag-10 strip too, for a richer diagnostic. Rejected: it
+would change shipped v2 behaviour — which the standing "`record_digest_v2` must stay byte-identical
+forever" constraint covers behaviourally as well as byte-wise — and would invent a distinction the
+contract does not ask for. Inventing distinctions in a verifier is how two implementations stop
+agreeing.
+
+**Corroborated after the fact, in two ways this cycle.** Phase 8's gate walked the spec independently
+and reached the same reading. And Phase 8's cross-language table now shows Rust, Python and TypeScript
+returning the same verdict on identical spliced bytes for all six absence cases — so the choice is not
+merely defensible, it is the one all three implementations actually make.
+
+**Known consequence, accepted.** A v3 record stripped of tags 10 *and* 11/12 reports `False` rather
+than the strip raise: an adversary who strips both gets the quieter diagnostic. The record fails
+either way, so nothing verifies that should not; the cost is diagnostic richness, not integrity. It is
+documented in both helpers' source rather than left to be rediscovered. Reversible in one line.
+
 ## 2026-08-24 — reconcile `plans/record-digest-v3.md`'s ASSUMPTIONS.md (4 entries)
 
 Issue #56, Phases 3–4.5. The owner delegated the call on all four to a Fable reviewer rather than

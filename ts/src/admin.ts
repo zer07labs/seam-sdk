@@ -35,7 +35,7 @@ import {
   type SeamEvent,
 } from "../gen/seam/event/v1/seam_event_pb.js";
 import { errorMappingInterceptor, InvalidArgumentError, toSeamError } from "./errors.js";
-import { recordDigestV2 } from "./crypto.js";
+import { recordDigestV2, recordDigestV3 } from "./crypto.js";
 import type { BudgetLimits, UnaryCallOptions } from "./client.js";
 
 // Management-plane calls get their own, larger default deadline — but they DO get one.
@@ -68,14 +68,33 @@ export const KNOWN_KINDS: ReadonlySet<string> = new Set([
   "AUTHORIZE_EVALUATED",
 ]);
 
-/** Recompute a streamed v2 `DECISION_SEALED`'s record digest from its payload (+ `ciphertextDigest`, tag
- * 10) and compare it to the wire `digest` (tag 19) — live authenticity for a single record, the in-client
- * counterpart of `seam-verify chain --issuer`'s design-a. Returns `true` iff they match; `false` for a
- * rewritten payload or a v2 record stripped of its `ciphertextDigest`. Throws for anything not
- * stream-recomputable (a non-`DECISION_SEALED` event, a v1 record, a record whose `schemaVersion` is
- * NEWER than this SDK knows — its digest would not compute under the v2 domain tag — or an event with no
- * wire digest). `mode`/`policyVersion`/`supersedes` map `undefined` → `null` so absent and `""` stay
- * distinct. */
+/** Recompute a streamed `DECISION_SEALED`'s record digest from its payload and compare it to the wire
+ * `digest` (tag 19) — live authenticity for a single record, the in-client counterpart of
+ * `seam-verify chain --issuer`'s design-a. Handles `schemaVersion` 2 and 3. Returns `true` iff they
+ * match; `false` for a rewritten payload or a record stripped of its `ciphertextDigest` (tag 10).
+ *
+ * Throws for anything not stream-recomputable: a non-`DECISION_SEALED` event, a v1 record, a
+ * `schemaVersion` NEWER than v3 (a future framing this SDK does not know — computing it under a known
+ * domain tag would report a spurious `false` on a genuine record), or an event with no wire digest.
+ *
+ * Throws `RecordDigestStripError` — deliberately **not** a `false` — when a v3 record is missing
+ * `contextDigest` (tag 11) or `participationDigest` (tag 12). The spec requires a strip to be reported
+ * distinctly from a digest mismatch; that distinction is enforced in `recordDigestV3`, and this
+ * helper's job is to hand it the wire values unaltered rather than re-implement the check beside it.
+ *
+ * **Presence on tags 10-13 is length, not a presence bit.** All four digest fields are singular proto3
+ * `bytes`, so the generated type is a plain `Uint8Array` that is *empty* — never `undefined` — when the
+ * field is absent. `seam-event.v1.md` §"Presence on the wire" pins the consumer rule as a total
+ * mapping: `length === 0` means absent however the bytes arose, including an explicitly-encoded
+ * zero-length field from a non-conforming producer, which proto3 obliges a decoder to accept.
+ * `mode`/`policyVersion`/`supersedes` (tags 4/5/7) are the opposite case — they ARE `optional`, because
+ * the empty string is a real value there, so those keep `?? null` and absent stays distinct from `""`.
+ *
+ * **`?? null` is the wrong idiom for tag 13 and would corrupt a verdict silently.** An absent
+ * `policyRulesDigest` arrives as an empty `Uint8Array`, not `undefined`, so `??` never fires: the empty
+ * value would frame as `opt(Some(empty))` (five bytes) where the sealer wrote `opt(None)` (one byte),
+ * reporting a mismatch on a genuine record. It must be tested for length. Tags 11/12 need no such
+ * mapping — passing the empty value through is precisely what raises the strip error. */
 export function verifyStreamedRecordDigest(event: SeamEvent): boolean {
   if (event.kind !== "DECISION_SEALED") {
     throw new Error(`not a DECISION_SEALED event: ${event.kind}`);
@@ -84,20 +103,29 @@ export function verifyStreamedRecordDigest(event: SeamEvent): boolean {
   if (!p) throw new Error("DECISION_SEALED event has no payload");
   if (p.schemaVersion < 2) {
     throw new Error(
-      `v${p.schemaVersion} record is not stream-recomputable (only v2)`,
+      `v${p.schemaVersion} record is not stream-recomputable (only v2 and v3)`,
     );
   }
-  if (p.schemaVersion > 2) {
-    // A future schema version does NOT compute under the v2 domain tag. Computing anyway would
-    // return `false` for a genuine record — a silent authenticity downgrade — so it throws like v1.
+  if (p.schemaVersion > 3) {
     throw new Error(
-      `v${p.schemaVersion} record is not recomputable by this SDK (knows only v2); upgrade the SDK`,
+      `v${p.schemaVersion} record is not recomputable by this SDK (knows v2 and v3); upgrade the SDK`,
     );
   }
   if (!event.digest)
     throw new Error("event carries no wire digest to compare against");
-  if (p.ciphertextDigest.length === 0) return false; // a v2 record with no ciphertext_digest is a strip
-  const recomputed = recordDigestV2({
+  if (p.ciphertextDigest.length === 0) {
+    // A tag-10 strip. Spec §Ordering & integrity Verification (c) makes this a REFUSE for every
+    // schemaVersion >= 2 — a failing verdict, which for a helper answering "does this verify?" is
+    // exactly `false`. Unlike tags 11/12, the spec attaches no distinct-reporting requirement to tag
+    // 10, so this stays the boolean it has always been rather than becoming a throw.
+    //
+    // This check precedes the v3 arm, so a v3 record stripped of tags 10 AND 11/12 reports `false`
+    // rather than the strip throw — an adversary who strips both gets the quieter diagnostic. That is
+    // deliberate and not a hole: the record still FAILS either way, and tag 10's rule is the older and
+    // broader one (every v2+ record), so it is the right thing to answer first.
+    return false;
+  }
+  const common = {
     decisionId: p.decisionId,
     tenant: p.tenant,
     namespace: p.namespace,
@@ -108,7 +136,18 @@ export function verifyStreamedRecordDigest(event: SeamEvent): boolean {
     policyVersion: p.policyVersion ?? null,
     supersedes: p.supersedes ?? null,
     schemaVersion: p.schemaVersion,
-  });
+  };
+  const recomputed =
+    p.schemaVersion === 3
+      ? recordDigestV3({
+          ...common,
+          contextDigest: p.contextDigest,
+          participationDigest: p.participationDigest,
+          // length === 0 => absent => opt(None). NOT `?? null` — see the note above.
+          policyRulesDigest:
+            p.policyRulesDigest.length === 0 ? null : p.policyRulesDigest,
+        })
+      : recordDigestV2(common);
   const wire = event.digest;
   if (recomputed.length !== wire.length) return false;
   return recomputed.every((b, i) => b === wire[i]);

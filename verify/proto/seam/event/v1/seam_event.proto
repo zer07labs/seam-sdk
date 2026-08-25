@@ -204,16 +204,32 @@ message DecisionSealed {
   // itself (which is the point — `participation[].subject` is the GDPR erasure predicate, and
   // publishing subjects on an append-only outbox would make erasure unenforceable at the sink).
   //
-  // `optional` is load-bearing on all three, and for a different reason than on tags 4/5/7. Those
-  // carry `None` vs `Some("")` into the digest's `opt` encoding. These carry ABSENT vs PRESENT into
-  // a REFUSAL: tags 11 and 12 are mandatory on schema_version = 3, and a v3 payload missing either
-  // must be refused as a strip — never defaulted to an empty digest, never recomputed under the v2
-  // formula. A bare `bytes` here would make "no participants" (a legitimate 32-byte digest of an
-  // empty list) indistinguishable from "somebody deleted the field", which is exactly the collision
-  // the digest's framing rules are designed to prevent.
-  optional bytes context_digest = 11;        // MANDATORY on v3 — what context the decision consumed
-  optional bytes participation_digest = 12;  // MANDATORY on v3 — who participated
-  optional bytes policy_rules_digest = 13;   // OPTIONAL — absent means no policy was bound
+  // These are SINGULAR, not `optional`, and this copy said the opposite until seam-runtime#435 settled
+  // it. The argument for `optional` — that presence is what separates "no participants" from "field
+  // deleted" — was put to the runtime and REJECTED, for a better reason than the one it proposed: a
+  // digest slot's value domain is {absent} ∪ {exactly 32 bytes}, and a singular field makes the
+  // out-of-domain empty value UNREPRESENTABLE by a conforming encoder, because proto3 emits no bytes
+  // for a singular scalar at its default. Declaring these `optional` would make `Some(b"")` encodable
+  // and meaningless — and a representable-but-meaningless value is one some implementation eventually
+  // produces. Absent vs present is still what drives the refusal; it is just carried by LENGTH.
+  //
+  // The consumer rule (spec §"Presence on the wire") is therefore a TOTAL mapping: on tags 10-13,
+  // `len == 0` means absent however the bytes arose — including an explicitly-encoded zero-length
+  // field, which proto3 obliges a decoder to accept even though a conforming producer never emits one.
+  // Tags 11/12 absent on schema_version = 3 is a strip and is REFUSED — never defaulted to an empty
+  // digest, never recomputed under the v2 formula. Tag 13 absent is legitimate and frames as opt(None).
+  //
+  // Tags 4/5/7 above are the genuine `optional` case, and the contrast is the whole rule: the empty
+  // string IS in their value domain, so `None` and `Some("")` are two preimages the wire must keep
+  // apart. The digest slots have no such second state to track.
+  //
+  // Flipping any of these to `optional` is a SEMANTIC break even though `buf breaking`'s WIRE_JSON
+  // ruleset permits it: afterwards a zero-length tag 13 frames as opt(None) for a consumer testing
+  // length and opt(Some(b"")) for one testing generated presence, and the two recompute different
+  // digests from identical bytes.
+  bytes context_digest = 11;        // MANDATORY on v3 — what context the decision consumed
+  bytes participation_digest = 12;  // MANDATORY on v3 — who participated
+  bytes policy_rules_digest = 13;   // OPTIONAL — absent (len == 0) means no policy was bound
 }
 
 // The posterior-keying tuple, shared verbatim with the seam-learning engine so the runtime and the

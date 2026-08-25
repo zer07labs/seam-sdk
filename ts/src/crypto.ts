@@ -556,8 +556,15 @@ function v3Uint(name: string, value: number | bigint, bits: 32 | 64): bigint {
  * - **Slots 10 and 11 are framed; slot 12 is opted.** The asymmetry is deliberate: framing the two
  *   mandatory digests is precisely what stops "no participants" from aliasing with "field
  *   stripped". `policyRulesDigest` is genuinely optional — absent means no policy was bound.
- * - **`null` is not an empty `Uint8Array`.** `opt(null)` is one byte; `opt(new Uint8Array())` is
- *   five. A present-but-empty value is data, not absence.
+ * - **`null` is not an empty `Uint8Array` — and at THIS layer they are two different refusals, not
+ *   two different digests.** `opt(null)` is one byte and `opt(new Uint8Array())` five, so the
+ *   presence byte does keep them apart in the preimage. But the empty digest is outside these slots'
+ *   value domain ({absent} ∪ {32 bytes}), so this function never hashes it: it refuses it. Absence
+ *   is spelled `null` here. A **wire** consumer must not pass an empty array through — on the wire
+ *   `length === 0` IS absence (a total mapping, per `seam-event.v1` §"Presence on the wire"), so the
+ *   caller maps it to `null` first; that is `verifyStreamedRecordDigest`'s job. (The
+ *   "present-but-empty is data" rule is real, but belongs to the STRING slots — `mode`,
+ *   `policyVersion`, `supersedes` — where the empty string IS in the domain.)
  *
  * Strings hash as their **raw UTF-8 bytes with no normalization of any kind** — the spec names
  * normalization as the step "three of four implementations would implement differently, or skip".

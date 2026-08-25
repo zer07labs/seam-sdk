@@ -288,3 +288,135 @@ actually waits on their call.
   production deploy to watch for this merge. Release/publish is a separate, tagged action.
 - **Phase 6 stays BLOCKED** on seam-runtime publishing `DecisionSealed` tags 11/12/13 on
   `seam.event.v1` to the BSR. Not startable in this run.
+
+## Phase 6a — Python streamed v3 arm · 2026-08-24 · PASS
+
+- **Verifier:** Fable, 1 round → `PASS` with 3 non-blocking observations (2 closed, 1 noted).
+  Fable-tier because the helper answers a live authenticity question against a published contract.
+- **The blocker cleared, and the plan was wrong about how.** `make generate` off the BSR
+  (`buf.build/zer07labs/seam`) now emits `DecisionSealed` tags 11/12/13 — verified against the
+  descriptor, not assumed. But all four digest fields report `has_presence=False`, so the plan's
+  `HasField` approach would have raised rather than answered. seam-runtime#435 (filed from this repo
+  in Phase 5, closed 2026-08-25) pinned the real rule: `len == 0` is a **total** absence mapping over
+  tags 10–13. Plan corrected in place before any code was written; Phase 6 split into 6a/6b/7 so each
+  language gets its own gate.
+- **Files:** `python/seam_sdk/admin.py`, `python/tests/test_streamed_decode.py`,
+  `plans/record-digest-v3.md`, `ASSUMPTIONS.md`. Regenerated `_gen` stubs (untracked, by design).
+- **Decoy discipline:** 5 decoys, each driving its intended guard red before the guard was trusted —
+  dropped tag-13 mapping (2 tests red), removed v3 dispatch (8 red), moved the future boundary to >4
+  (1 red), made the tag-10 strip raise (2 red), and the tag-13 splice test re-decoyed after it was
+  added. No guard in this phase is trusted on a green run alone.
+- **Gaps closed after the verdict:** added the tag-13 explicit-empty splice test the plan named but
+  the first pass omitted; documented why the tag-10 check deliberately precedes the v3 strip raise;
+  renamed a test whose "non_v2" name went stale when v3 became recomputable.
+- **Tests:** 409 passed, 17 skipped. ruff check + format clean.
+- **Next:** Phase 6b (TypeScript twin).
+
+## Phase 6b — TypeScript streamed v3 arm · 2026-08-24 · PASS
+
+- **Verifier:** Fable, 1 round → `PASS`. Tasked primarily with a line-by-line **parity audit** against
+  the 6a Python reference rather than a cold review, since divergence between the two helpers is the
+  failure mode this phase exists to design against. It walked 16 input classes (kind, missing payload,
+  schemaVersion 0/1/2/3/4/99, absent wire digest, present-but-empty wire digest, tag 10 empty on v2
+  and v3, tags 11/12 empty and 31/33 bytes, tag 13 empty/32/wrong-length, rewritten payload, and the
+  ORDER of the checks) plus the two crypto layers the helpers delegate to. **No behavioural
+  asymmetry.** The two differences found are diagnostic wording, forced by the protobuf runtimes:
+  Python's absent payload decodes to a default instance and reports "v0 not stream-recomputable" where
+  TS reports "no payload".
+- **Files:** `ts/src/admin.ts`, `ts/tests/streamed_decode.test.ts`, `plans/record-digest-v3.md`.
+- **Decoy discipline:** 4 decoys against the arm, plus one against the gap-closing assertion. Two of
+  the first four initially reported `fail 0` — which was **my `sed` pattern failing to match, not the
+  tests holding.** A decoy that does not apply proves nothing, exactly like a check that passes
+  vacuously; both were re-run with an assertion that the substitution landed before trusting the
+  result (then: 4 red and 2 red respectively). Recorded because the failure mode is easy to miss.
+- **Diff churn removed.** `npx prettier --write` reformatted ~90 lines of code this phase never
+  touched. Prettier is not a project tool here — no CI check, no `package.json` script — so that was
+  churn I introduced, not a standard being met. Both files were rebuilt from their committed base with
+  only the intended edits reapplied; the test file's only deletion is now the six-line v2-boundary test
+  the v4 one replaces.
+- **Gaps closed after the verdict:** the TS strip test asserted `wireTag` but not `field`; it now
+  asserts both, matching the Python twin, and was decoyed to confirm it bites.
+- **Tests:** ts 104 tests / 94 pass / 0 fail / 10 env-gated skips; `tsc --noEmit` clean. Python
+  unchanged at 409 passed / 17 skipped.
+- **Next:** Phase 7 (CHANGELOG + the two guard cleanups).
+
+## Phase 7 — CHANGELOG + two guard cleanups · 2026-08-24 · PASS (2 rounds)
+
+- **Verifier:** Opus, 2 rounds. Round 1 → `GAPS` (4 items), round 2 → gaps 1–4 confirmed closed.
+- **Round 1 caught damage this phase caused:** the CHANGELOG insertion split the heading
+  `### Fixed — release-exposure gaps (W5, G1–G3)` in half, orphaning its subtitle and re-parenting the
+  W5 bullets under the new section. Also flagged one overstated claim (the tag-11/12 raise was stated
+  absolutely; a record stripped of tags 10 **and** 11/12 returns `False`, because the tag-10 check runs
+  first) and a TS property named `wire_tag` where the code says `wireTag`. All repaired.
+- **The citations rewrite found a real, pre-existing bug — which is the point.** `COMPATIBILITY.md`
+  cited `release-on-runtime.yml:120` — `git push origin HEAD:main` — for a claim about the
+  `go/vX.Y.Z` tag. Six lines off, and green, because the old test compared the file against **its own
+  copy** of the line number rather than against the document's citation. The rewrite inverts that:
+  entries are `(path, needle)`, the line is derived from the file, and the document is checked against
+  it. Four of the six needles were also non-unique (`npm.cloudsmith.io` on four lines of `publish.yml`),
+  so a naive whole-file search would have passed vacuously; needles were lengthened and uniqueness is
+  now asserted, not assumed.
+- **Driven red three ways** before being trusted: needle deleted, needle duplicated (ambiguity), and
+  citation drifted in `COMPATIBILITY.md` — the last of which the old design could not detect at all.
+  It then caught two further drifts caused by my own CHANGELOG edits during this phase, and named the
+  correct line each time instead of leaving it to be guessed.
+- **Accepted limit, now documented in the test itself:** citations bind to a claim by path only, so a
+  file cited twice could in principle mask a drift. Today the two such files have citations 125+ lines
+  apart against a slack of 3. Binding per-row would mean parsing the document's table; not worth it yet.
+- **A contradiction inside this repo, corrected:** `verify/proto/seam/event/v1/seam_event.proto`
+  declared tags 11/12/13 `optional` and argued at length that this was load-bearing — the exact
+  position seam-runtime#435 rejected, and one the spec now calls a semantic break. Corrected to
+  singular with the reasoning replaced rather than deleted. Verified first that nothing consumes it
+  (no `build.rs`; `verify/src/wire.rs` hand-decodes and only cites it) and that seam-sdk is absent
+  from the cross-repo golden manifest, so no byte-pin was violated.
+- **Round 2 surfaced the decoder bug behind that proto** — `verify/src/wire.rs` still declares those
+  tags prost-`optional` and so refuses a zero-length tag 13 as MALFORMED where the spec says it is
+  absent and legitimate. That is a behavioural conformance bug, not documentation, so it became
+  **Phase 8** rather than being absorbed into a docs phase.
+- **Files:** `CHANGELOG.md`, `COMPATIBILITY.md`, `.github/workflows/release-on-runtime.yml`,
+  `python/tests/test_compatibility_citations_resolve.py`, `verify/proto/seam/event/v1/seam_event.proto`,
+  `plans/record-digest-v3.md`.
+- **Tests:** python 409 passed / 17 skipped, ruff clean; ts 104 tests / 94 pass / 0 fail; rust
+  `verify/` 48 tests ok, clippy `-D warnings` clean.
+- **Next:** Phase 8 (Rust tag-13 conformance).
+
+## Phase 8 — the Rust verifier's tag-13 zero-length divergence · 2026-08-25 · PASS (2 rounds)
+
+- **Verifier:** Fable, 2 rounds. Round 1 → `GAPS` (3, all documentation-level; it confirmed the
+  behaviour was correct and every acceptance criterion met). Round 2 → 2 closed, 1 residual, then
+  closed. Fable-tier because this CHANGES A VERDICT on the authenticity path.
+- **The bug.** `verify/src/wire.rs` declared tags 11/12/13 prost-`optional`, so a zero-length
+  occurrence decoded as `Some(b"")` rather than absence, and `v3_optional` refused a zero-length tag
+  13 as MALFORMED. Tag 13 absent is *legitimate* — no policy bound — so `seam-verify` **failed
+  records the contract calls valid**, and disagreed with the Python and TS implementations on
+  identical bytes. Found only because Phase 7's gate followed a stale proto comment into the decoder
+  beside it.
+- **Proven before it was fixed.** A throwaway test fed the decoder exactly what prost yields from
+  `0x6a 0x00` and captured the refusal verbatim, so the bug was demonstrated behaviourally rather
+  than inferred from the types. The two permanent tests were then written against the real decode
+  path, and the verifier independently reproduced red-before/green-after for both in a scratch
+  worktree.
+- **The same wrong rule was in the JSON projection**, asserted by a test claiming `""` stays
+  present-but-empty — against the spec's "missing/`""` ⇔ absent there too". Flipped. This mattered
+  more than it looks: webhook and `GET /v1/events` consumers read the projection rather than the
+  wire, so two projections disagreeing about absence would recompute two different digests from one
+  record, each side believing the other's was tampered.
+- **Three consumer-visible changes, not one** — the verifier caught that I had documented two. The
+  third is a FAILED→VERIFIED flip in the v1-smuggling check for a zero-length column. Spec-conformant
+  (`!is_empty()` still fires on any non-zero length, so nothing with content slips through), but it
+  is a verdict flip on adversary-craftable bytes, so it is in the CHANGELOG.
+- **The vendored spec copy was stale for the third time** — `verify/docs/seam-event.v1.md` lacked the
+  entire §"Presence on the wire" section that every new code comment cites as its authority.
+  Refreshed verbatim @ `76f36f5`; body confirmed byte-identical to the sibling. Its header now states
+  plainly that **nothing enforces** the verbatim claim: the `wire.rs` tripwire checks only the live
+  spec's kind list, and the cross-repo golden manifest does not cover seam-sdk at all.
+- **Round 2 residual:** a doc comment *and a test name* one screen below the fixed one still asserted
+  the retracted three-state reading, above a body that now proved the opposite. Renamed and rewritten
+  — a stale test *name* is the version a grep finds.
+- **Files:** `verify/src/wire.rs`, `verify/src/verify.rs`, `verify/tests/authenticity.rs`,
+  `verify/proto/seam/event/v1/seam_event.proto`, `verify/docs/seam-event.v1.md`, `CHANGELOG.md`,
+  `COMPATIBILITY.md`, `plans/record-digest-v3.md`.
+- **Tests:** rust 65 passed across 8 targets, clippy `--all-targets -D warnings` clean; python 409
+  passed / 17 skipped; ts 104 tests / 94 pass / 0 fail. Cross-language verdict agreement verified by
+  the gate on identical spliced bytes for six cases.
+- **Next:** ship.

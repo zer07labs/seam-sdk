@@ -59,7 +59,7 @@ jobs:
       # It must stay AFTER actions/checkout: it reads contract/wire-framing.json out of the repo.
       # It originally sat before the token mint — which is also before checkout — so it never once
       # ran its comparison; it just crashed on a missing file and failed every release closed.
-      # scripts/test_release_gate_order.sh asserts this ordering so the next reorder cannot
+      # scripts/test_release_gate.py asserts this ordering so the next reorder cannot
       # silently reintroduce it.
       - name: The runtime's wire framing must be one this SDK implements
         env:
