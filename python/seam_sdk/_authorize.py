@@ -13,7 +13,11 @@ from typing import Mapping, Optional
 from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
 
 from .crypto import call_sig, jcs_canonicalize, tool_input_digest
-from .errors import ProtocolViolationError, UnknownVerdictError
+from .errors import (
+    CanonicalizationError,
+    ProtocolViolationError,
+    UnknownVerdictError,
+)
 
 # The closed verdict set this SDK version understands. GROWTH POLICY (proto, normative): any value NOT
 # in this map — including AUTHORIZE_VERDICT_UNSPECIFIED — must surface as a typed failure the adapter's
@@ -95,6 +99,37 @@ class TicketCache:
         self._refresh_at_ms = 0
 
 
+def canonicalize_tool_input(tool_input) -> bytes:
+    """JCS-canonicalize a tool input to the exact bytes the digest is taken over, raising
+    :class:`~seam_sdk.errors.CanonicalizationError` instead of a builtin.
+
+    This is the entry point a caller should use when it needs the canonical bytes (or the digest)
+    *before* the call — recording them on a handle row, say. Pair it with ``authorize(...,
+    canonical=...)`` so the value is derived exactly once: two derivations of one caller-supplied
+    object, separated by a round trip, can disagree, and the failure lands in an availability arm
+    (seam-sdk#60, seam-adapters#59).
+
+    ``None`` canonicalizes to ``b"{}"``, matching a no-argument tool call.
+
+    **Every** failure becomes a ``CanonicalizationError``, not only the ones this SDK raises itself.
+    That is the point rather than defensive breadth: the motivating case,
+    ``RuntimeError: dictionary changed size during iteration``, comes from CPython's dict iterator,
+    and a ``str``/``int`` subclass can raise anything at all from the dunders JCS reads it through.
+    ``BaseException`` is deliberately not caught, so ``KeyboardInterrupt`` and ``SystemExit`` still
+    propagate; ``RecursionError`` from a deeply nested input is caught, because to a caller that is an
+    input error like any other. The original is always preserved as ``__cause__``, which is what keeps
+    a genuine SDK bug diagnosable after being typed as an input error.
+    """
+    try:
+        return jcs_canonicalize(tool_input if tool_input is not None else {})
+    except CanonicalizationError:
+        raise  # already typed — re-wrapping would bury the real cause one level deeper
+    except Exception as e:
+        raise CanonicalizationError(
+            f"tool_input could not be JCS-canonicalized ({type(e).__name__}: {e})"
+        ) from e
+
+
 def build_authorize_request(
     *,
     ticket: bytes,
@@ -115,7 +150,7 @@ def build_authorize_request(
     was hashed). ``digest_only=True`` omits the raw bytes — the audit-grade mode for sensitive tools;
     the guard scan and TRANSFORM are unavailable without the input.
     """
-    canonical = jcs_canonicalize(tool_input if tool_input is not None else {})
+    canonical = canonicalize_tool_input(tool_input)
     digest = tool_input_digest(canonical)
     req = pb.AuthorizeRequest(
         ticket=ticket,

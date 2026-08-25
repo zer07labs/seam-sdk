@@ -6,7 +6,7 @@ vectors generated from the Rust runtime pin the exact bytes (see ``conformance/v
 """
 
 from . import aio
-from ._authorize import AuthorizeResult
+from ._authorize import AuthorizeResult, canonicalize_tool_input
 from ._collective import CollectiveOutcome, collective_outcome_of
 from .admin import (
     DEFAULT_ADMIN_TIMEOUT_S,
@@ -41,6 +41,7 @@ from .crypto import (
 )
 from .errors import (
     AlreadyExistsError,
+    CanonicalizationError,
     DeadlineExceededError,
     FailedPreconditionError,
     InternalError,
@@ -73,6 +74,7 @@ __all__ = [
     "verify_tct",
     # Advisory authorization (Authorize verb)
     "AuthorizeResult",
+    "canonicalize_tool_input",
     # Collective outcome (C5) — fail-closed decoding of DecisionResponse.collective_outcome
     "CollectiveOutcome",
     "collective_outcome_of",
@@ -91,6 +93,7 @@ __all__ = [
     "verify_chain_head_attestation",
     # Error taxonomy
     "SeamError",
+    "CanonicalizationError",
     "map_rpc_error",
     "IssuerMismatchError",
     "SeamRpcError",
