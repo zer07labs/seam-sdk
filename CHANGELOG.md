@@ -244,6 +244,27 @@ Three independently sufficient causes of a 0.7.17-shaped incident, closed.
   only on v1 payloads. A record declaring v1 while carrying tags 10, 11, 12 or 13 is now refused as a
   DOWNGRADE. Genuine v1 records still verify.
 
+### Fixed — the release gate could never run
+
+- **`release-on-runtime.yml`'s wire-framing gate ran before `actions/checkout`, so it read
+  `contract/wire-framing.json` out of an empty working directory and crashed on every release.**
+  The gate is the one check that *prevents* a 0.7.17 instead of reporting one afterwards, and it was
+  placed early on a sound instinct — a refusal should leave no commit, no tag, and nothing
+  published. But `actions/checkout` has to follow the app-token mint, so "before the mint" also
+  meant "before the repo exists".
+
+  It failed **closed**, so nothing wrong was published — which is precisely why it went unnoticed
+  for a day: a gate that always refuses is externally indistinguishable from a gate that is working.
+  Four consecutive `seam-release` dispatches failed (2026-08-24 17:12Z through 2026-08-25 02:07Z)
+  without the framing comparison executing once. Releases from `f68572f` onward were blocked, so the
+  SDK stopped following the runtime version over that window.
+
+  The gate now sits immediately after checkout and still ahead of the stamp and tag steps, which is
+  where the invariant it was protecting actually lives. `scripts/test_release_gate.py` pins both
+  ends — after checkout, before the stamp — so satisfying one by breaking the other fails CI. That
+  guard was driven red against the shipped workflow before being trusted; it reports
+  `assert 1 > 3`, the gate's step index against checkout's.
+
 ## 0.7.26 — 2026-08-14
 
 ### Added

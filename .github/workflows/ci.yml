@@ -409,6 +409,11 @@ jobs:
       - run: pip install --quiet pyyaml pytest grpcio cryptography
       - name: the required-check gate covers every job
         run: python -m pytest scripts/test_ci_gate.py -q
+      # The release gate reads contract/wire-framing.json out of the checkout, so its position
+      # relative to actions/checkout is load-bearing. It sat before it for a day and failed four
+      # releases closed without ever running its comparison — see the module docstring.
+      - name: the release framing gate is where it can actually run
+        run: python -m pytest scripts/test_release_gate.py -q
       # Also runs inside the `python` job. Duplicated on purpose: there it proves the guard passes,
       # here it proves the guard needs nothing but a checkout — which is the actual claim
       # seam-adapters relies on (seam-sdk#54).
