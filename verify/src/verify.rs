@@ -28,6 +28,17 @@ pub struct ChainReport {
     /// `k` chained links. Its length is `links + 1`. This is what an attestation's `(attested_len,
     /// attested_head)` is checked against — `heads[attested_len]` must equal the attested head.
     pub heads: Vec<Vec<u8>>,
+    /// The highest `DECISION_SEALED.schema_version` seen in the first `k` chained links, in order:
+    /// `max_schema_by_link[0]` is 0 (empty prefix), `max_schema_by_link[k]` covers `k` links. Same
+    /// length and same indexing as `heads`, deliberately — spec clause (e) is a statement about the
+    /// **attested prefix**, exactly the span `heads` already indexes, so the two are maintained side by
+    /// side in `chain()` rather than the max being re-derived in a second pass that could disagree
+    /// about which events are links.
+    ///
+    /// A link carrying no decision (or a non-`DECISION_SEALED` chained kind) contributes 0, so a prefix
+    /// with no sealed records has max 0 and clause (e) cannot fire on it — the rule is existential over
+    /// the covered records, not a claim about the prefix's length.
+    pub max_schema_by_link: Vec<u32>,
 }
 
 /// Collapse at-least-once duplicates.
@@ -91,8 +102,10 @@ pub fn chain(events: &[Event]) -> Result<ChainReport, String> {
         duplicates: 0,
         unverifiable: Vec::new(),
         head: head.clone(),
-        heads: vec![head.clone()], // heads[0] = genesis
+        heads: vec![head.clone()],   // heads[0] = genesis
+        max_schema_by_link: vec![0], // [0] = the empty prefix, which covers no records
     };
+    let mut max_schema: u32 = 0;
 
     for e in events {
         let (Some(digest), Some(checksum)) = (e.digest.as_ref(), e.checksum.as_ref()) else {
@@ -133,6 +146,12 @@ pub fn chain(events: &[Event]) -> Result<ChainReport, String> {
         head = checksum.clone();
         r.links += 1;
         r.heads.push(head.clone());
+        // Clause (e): track the running max over the SAME span `heads` indexes. Taken from the decision
+        // this link actually carries — an event with no decision leaves the max where it was.
+        if let Some(d) = e.decision.as_ref() {
+            max_schema = max_schema.max(d.schema_version);
+        }
+        r.max_schema_by_link.push(max_schema);
     }
     r.head = head;
     Ok(r)
@@ -476,6 +495,7 @@ fn record_digest_v3(d: &Decision) -> Result<[u8; 32], String> {
 pub fn verify_authenticity(
     events: &[Event],
     heads: &[Vec<u8>],
+    max_schema_by_link: &[u32],
     pinned_aids: &[String],
 ) -> Result<IssuerReport, String> {
     use ed25519_dalek::{Signature, Verifier, VerifyingKey};
@@ -655,6 +675,51 @@ pub fn verify_authenticity(
                 hex(&a.attested_head),
                 a.attested_len,
                 hex(want)
+            ));
+        }
+        // spec (e): the CEILING check. `digest_schema` asserts that every record in the attested prefix
+        // has `schema_version <= digest_schema`. Checked here — after the position check above, so we
+        // already know this attestation really covers THIS chain at THIS length, and a ceiling failure
+        // is never reported for an attestation that was actually spliced.
+        //
+        // Indexed by `attested_len`, NOT a running max over everything seen so far. A stale attestation
+        // legitimately covers a SHORTER prefix than the chain's current length (the head is read, signed,
+        // and appended without a lock, so the chain advances underneath it) — comparing it against
+        // records sealed after it was signed would refuse a valid attestation for a race the design
+        // explicitly permits.
+        //
+        // `>=`, never `==`: a ceiling only ever rises and attestations are never re-signed, so a
+        // genuinely old `digest_schema = 2` attestation over a v2-only prefix stays valid forever.
+        // FAIL-CLOSED on a short slice, never `unwrap_or(0)`. Inside this crate the position check
+        // above already guarantees the index is in range, because both slices come from one
+        // `ChainReport` and are always the same length — so this arm is unreachable via the CLI.
+        //
+        // It is reachable by an EMBEDDER: `verify_authenticity` is a public API, and a caller passing
+        // a mismatched or empty `max_schema_by_link` would, under `unwrap_or(0)`, get the ceiling
+        // check SILENTLY DISABLED while every other check kept running — a verifier reporting green
+        // with one refusal quietly switched off. Defaulting to "no records covered" is the fail-OPEN
+        // direction, and this crate exists to refuse.
+        let Some(max_covered) = max_schema_by_link.get(a.attested_len as usize).copied() else {
+            return Err(format!(
+                "internal: max_schema_by_link has {} entries but an attestation covers len {}.\n  \
+                 This cannot happen for a report produced by `chain()` — the two vectors are built \
+                 together and are always the same length. It means a caller passed a `heads` and a \
+                 `max_schema_by_link` from different reports. Refusing rather than skipping the \
+                 ceiling check: a verifier that silently drops a refusal is worse than one that stops.",
+                max_schema_by_link.len(),
+                a.attested_len
+            ));
+        };
+        if a.digest_schema < max_covered {
+            return Err(format!(
+                "a CHAIN_HEAD_ATTESTATION claims digest_schema {} at len {}, but a DECISION_SEALED \
+                 in the prefix it covers is schema_version {}.\n  \
+                 The signature is authentic, so the ISSUER signed a false ceiling: the attestation \
+                 understates the verification regime of the very records it attests. This is a \
+                 SIGNED DOWNGRADE claim — distinct from a payload rewrite (the records are intact) \
+                 and from a tag-10 strip (nothing is missing). The usual cause is a rolled-back \
+                 producer whose CURRENT_SCHEMA_VERSION regressed while the chain ahead of it did not.",
+                a.digest_schema, a.attested_len, max_covered
             ));
         }
         attestations += 1;

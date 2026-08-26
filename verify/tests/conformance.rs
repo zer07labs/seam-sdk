@@ -174,7 +174,19 @@ fn sealed_line(seq: u64, prev: &[u8], digest: &[u8], payload: &Value) -> (String
 
 /// The signed head that turns integrity-only verification into authenticity (design-b). Without one,
 /// `--issuer` has nothing to check and the digest recompute never runs.
-fn attestation_line(seq: u64, prev: &[u8], len: u64, head: &[u8], sk: &SigningKey) -> String {
+///
+/// `digest_schema` is a PARAMETER because spec clause (e) makes it load-bearing — it must be >= the
+/// highest `schema_version` in the attested prefix. Hard-coded to `2`, this helper signed a false
+/// ceiling over every V3 conformance case, and the whole suite asserted GREEN on streams the spec
+/// says must be REFUSED.
+fn attestation_line(
+    seq: u64,
+    prev: &[u8],
+    len: u64,
+    head: &[u8],
+    sk: &SigningKey,
+    digest_schema: u32,
+) -> String {
     let at = 1_700 + seq;
     let mut pre: Vec<u8> = Vec::new();
     let frame = |b: &mut Vec<u8>, part: &[u8]| {
@@ -185,7 +197,7 @@ fn attestation_line(seq: u64, prev: &[u8], len: u64, head: &[u8], sk: &SigningKe
     frame(&mut pre, &len.to_le_bytes());
     frame(&mut pre, head);
     frame(&mut pre, &at.to_le_bytes());
-    frame(&mut pre, &2u32.to_le_bytes());
+    frame(&mut pre, &digest_schema.to_le_bytes());
     frame(&mut pre, ISSUER.as_bytes());
     let sig = sk.sign(&Sha256::digest(&pre)).to_bytes();
 
@@ -210,7 +222,7 @@ fn attestation_line(seq: u64, prev: &[u8], len: u64, head: &[u8], sk: &SigningKe
             "attested_head": b64e(head),
             "attested_at": at,
             "issuer_aid": ISSUER,
-            "digest_schema": 2,
+            "digest_schema": digest_schema,
             "signature": b64e(&sig),
         }
     })
@@ -234,7 +246,16 @@ fn run_stream(name: &str, records: &[(Value, Vec<u8>)]) -> (i32, String) {
         head = next;
     }
     let n = records.len() as u64;
-    lines.push(attestation_line(n, &head, n, &head, &sk));
+    // Derived from what the stream actually seals, as an honest producer derives it — never a
+    // constant. Deliberately-bogus versions (the unknown-version cases) are excluded so a fabricated
+    // `schema_version` cannot inflate the ceiling and change which refusal fires.
+    let ceiling = records
+        .iter()
+        .filter_map(|(p, _)| p["schema_version"].as_u64())
+        .filter(|v| (2..=3).contains(v))
+        .max()
+        .unwrap_or(2) as u32;
+    lines.push(attestation_line(n, &head, n, &head, &sk, ceiling));
 
     let path = std::env::temp_dir().join(format!("v3-conf-{name}-{}.jsonl", std::process::id()));
     std::fs::write(&path, lines.join("\n")).unwrap();
