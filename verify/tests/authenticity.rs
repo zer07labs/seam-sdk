@@ -313,6 +313,17 @@ fn att_digest(len: u64, head: &[u8], at: u64, schema: u32, issuer_aid: &str) -> 
 }
 
 /// A chained CHAIN_HEAD_ATTESTATION event over `(len, head)`, signed by `sk` naming `aid`.
+///
+/// `digest_schema` is a PARAMETER, not a constant, because spec clause (e) makes it load-bearing: it
+/// must be >= the highest `schema_version` in the attested prefix. It was hard-coded to `2` until
+/// 2026-08-26, which meant every attested-V3 fixture here was signing a false ceiling — four tests
+/// asserted GREEN on streams the spec says must be FAILED, and they went red the moment clause (e)
+/// was implemented. That is the fixture landmine `seam-runtime` hit in the same change; the value is
+/// threaded through so a future v4 cannot silently reintroduce it.
+///
+/// It is fed to BOTH the signed payload and the JSON field deliberately. Letting them diverge would
+/// produce an attestation whose signature covers a different ceiling than the one it advertises —
+/// which fails the signature check, masking whatever the test meant to prove.
 fn attestation_event(
     seq: u64,
     prev: &[u8],
@@ -320,11 +331,12 @@ fn attestation_event(
     attested_head: &[u8],
     sk: &ed25519_dalek::SigningKey,
     aid: &str,
+    digest_schema: u32,
 ) -> (String, Vec<u8>) {
     use ed25519_dalek::Signer;
     let at = 1_700 + seq;
     let sig = sk
-        .sign(&att_digest(len, attested_head, at, 2, aid))
+        .sign(&att_digest(len, attested_head, at, digest_schema, aid))
         .to_bytes();
     let digest = Sha256::digest(format!("att-{seq}").as_bytes()).to_vec();
     let checksum = {
@@ -338,7 +350,7 @@ fn attestation_event(
          \"occurred_at\":{at},\"kind\":\"CHAIN_HEAD_ATTESTATION\",\
          \"prev_checksum\":\"{}\",\"digest\":\"{}\",\"checksum\":\"{}\",\
          \"chain_head_attestation\":{{\"attested_len\":{len},\"attested_head\":\"{}\",\
-         \"attested_at\":{at},\"issuer_aid\":\"{aid}\",\"digest_schema\":2,\"signature\":\"{}\"}}}}",
+         \"attested_at\":{at},\"issuer_aid\":\"{aid}\",\"digest_schema\":{digest_schema},\"signature\":\"{}\"}}}}",
         b64e(prev),
         b64e(&digest),
         b64e(&checksum),
@@ -389,9 +401,9 @@ fn a_key_rotation_chain_passes_with_both_issuers_pinned_and_fails_with_one() {
         ));
         head = checksum;
     }
-    let (old_att, head3) = attestation_event(2, &head, 2, &head, &old_sk, &old_aid);
+    let (old_att, head3) = attestation_event(2, &head, 2, &head, &old_sk, &old_aid, 2);
     lines.push(old_att);
-    let (new_att, _) = attestation_event(3, &head3, 3, &head3, &new_sk, &new_aid);
+    let (new_att, _) = attestation_event(3, &head3, 3, &head3, &new_sk, &new_aid, 2);
     lines.push(new_att);
     let body = lines.join("\n");
 
@@ -552,7 +564,21 @@ fn v3_stream(records: &[(serde_json::Value, Vec<u8>)]) -> String {
         head = checksum;
     }
     let n = records.len() as u64;
-    let (att, _) = attestation_event(n, &head, n, &head, &sk, ISSUER);
+    // The ceiling is DERIVED from what this stream actually seals, exactly as an honest producer
+    // derives it from its own CURRENT_SCHEMA_VERSION — not hard-coded. `v3_stream` is used for mixed
+    // and deliberately-malformed streams alike, so any constant here would be wrong for some caller
+    // and would relocate the very landmine clause (e) exists to catch rather than remove it.
+    //
+    // Records carrying a deliberately bogus `schema_version` (the unknown-version and v1-relabel
+    // cases) are excluded from the max: those streams are refused for THAT reason, and letting a
+    // fabricated version inflate the ceiling would change which refusal fires.
+    let ceiling = records
+        .iter()
+        .filter_map(|(p, _)| p["schema_version"].as_u64())
+        .filter(|v| (2..=3).contains(v))
+        .max()
+        .unwrap_or(2) as u32;
+    let (att, _) = attestation_event(n, &head, n, &head, &sk, ISSUER, ceiling);
     lines.push(att);
     lines.join("\n")
 }
@@ -848,7 +874,7 @@ fn two_v3_records_differing_only_in_a_new_column_are_not_one_event() {
     // remaining stream is perfectly valid and verifies GREEN — which is what makes exit 2 below
     // evidence of the identity check rather than of some unrelated refusal.
     let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
-    let (att, _) = attestation_event(1, &checksum, 1, &checksum, &sk, ISSUER);
+    let (att, _) = attestation_event(1, &checksum, 1, &checksum, &sk, ISSUER, 3);
     let body = format!("{}\n{}\n{}", line(&honest), line(&substituted), att);
 
     let (code, out) = run("v3-identity", &body, &["--issuer", ISSUER]);
@@ -945,5 +971,251 @@ fn a_genuine_v1_record_is_still_skipped_not_refused() {
     assert!(
         out.contains("records recomputed: 0"),
         "a v1 record is link-only — it must be SKIPPED, not counted as recomputed:\n{out}"
+    );
+}
+
+/// A V2 payload and its `seam.audit.record-digest.v2`, transcribed from the spec alongside the v3
+/// pair above. Needed by the clause-(e) tests, which are the only ones here that must build a
+/// prefix whose maximum `schema_version` is LOWER than a record sealed after it — the shape that
+/// separates a prefix-indexed ceiling check from an encounter-time running maximum.
+///
+/// Self-validating: v2 omits slots 10-12 (`context_digest`, `participation_digest`,
+/// `policy_rules_digest`) and carries its own domain tag, so a transcription error here does not
+/// pass quietly — the digest simply stops matching and the verifier reports a payload rewrite.
+fn v2_payload() -> serde_json::Value {
+    serde_json::json!({
+        "decision_id": "dec:v2",
+        "tenant": "acme",
+        "namespace": "fraud",
+        "mode": "decision.v1",
+        "policy_version": "policy-7",
+        "outcome": "Resolved",
+        "supersedes": "dec:prior",
+        "sealed_at": 1_700_000_000_000u64,
+        "schema_version": 2,
+        "ciphertext_digest": b64e(&sha("ciphertext")),
+    })
+}
+
+fn v2_record_digest(p: &serde_json::Value) -> Vec<u8> {
+    let mut pre: Vec<u8> = Vec::new();
+    let f = |b: &mut Vec<u8>, x: &[u8]| {
+        b.extend_from_slice(&(x.len() as u32).to_le_bytes());
+        b.extend_from_slice(x);
+    };
+    let o = |b: &mut Vec<u8>, x: Option<&str>| match x {
+        None => b.push(0x00),
+        Some(s) => {
+            b.push(0x01);
+            b.extend_from_slice(&(s.len() as u32).to_le_bytes());
+            b.extend_from_slice(s.as_bytes());
+        }
+    };
+    let text = |k: &str| p[k].as_str().expect("mandatory text field").to_string();
+    let opt_text = |k: &str| p.get(k).and_then(|v| v.as_str()).map(str::to_string);
+    let bytes = |k: &str| b64d(p[k].as_str().expect("mandatory bytes field"));
+
+    f(&mut pre, b"seam.audit.record-digest.v2");
+    f(&mut pre, text("decision_id").as_bytes());
+    f(&mut pre, text("tenant").as_bytes());
+    f(&mut pre, text("namespace").as_bytes());
+    f(&mut pre, &bytes("ciphertext_digest"));
+    f(&mut pre, &p["sealed_at"].as_u64().unwrap().to_le_bytes());
+    f(&mut pre, text("outcome").as_bytes());
+    o(&mut pre, opt_text("mode").as_deref());
+    o(&mut pre, opt_text("policy_version").as_deref());
+    o(&mut pre, opt_text("supersedes").as_deref());
+    f(
+        &mut pre,
+        &(p["schema_version"].as_u64().unwrap() as u32).to_le_bytes(),
+    );
+    Sha256::digest(&pre).to_vec()
+}
+
+// ── spec clause (e): the attestation ceiling ─────────────────────────────────────────────────────
+//
+// `digest_schema` asserts that every record in the attested prefix has `schema_version <=
+// digest_schema`. seam-runtime#441. These four tests pin the rule AND its three boundaries — a
+// ceiling check that only refuses is half-tested, and the passing directions are the ones that
+// would quietly invalidate real production history if implemented wrong.
+
+/// The refusal itself: V3 records under a signed ceiling of 2.
+///
+/// Every link hashes, every digest recomputes, and the signature is authentic — so nothing else in
+/// the verifier can catch this. That is the whole point of the clause: the only reachable violation
+/// is an issuer honestly signing a false statement about the regime, which is what a rolled-back
+/// producer does.
+#[test]
+fn an_attestation_below_the_prefix_ceiling_is_refused() {
+    let p = v3_payload();
+    let d = v3_record_digest(&p);
+    // Build the stream by hand so the ceiling can be forced to 2 over a V3 record — `v3_stream`
+    // now derives an honest ceiling and cannot express this.
+    let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
+    let head0 = vec![0u8; 32];
+    let checksum = {
+        let mut h = Sha256::new();
+        h.update(&head0);
+        h.update(&d);
+        h.finalize().to_vec()
+    };
+    let sealed = serde_json::json!({
+        "schema_version": "seam-event.v1",
+        "event_id": "dec#0",
+        "seq": 0,
+        "occurred_at": 1_700,
+        "kind": "DECISION_SEALED",
+        "prev_checksum": b64e(&head0),
+        "digest": b64e(&d),
+        "checksum": b64e(&checksum),
+        "payload": p,
+    })
+    .to_string();
+    let (att, _) = attestation_event(1, &checksum, 1, &checksum, &sk, ISSUER, 2);
+    let (code, out) = run(
+        "ceiling-below-max",
+        &format!("{sealed}\n{att}"),
+        &["--issuer", ISSUER],
+    );
+    assert_eq!(code, FAILED, "a signed downgrade claim must REFUSE:\n{out}");
+    assert!(
+        out.contains("digest_schema 2") && out.contains("schema_version 3"),
+        "the refusal must name BOTH the claimed ceiling and the record that exceeds it, or an \
+         operator cannot tell which record forced it:\n{out}"
+    );
+    // Clause (e) requires this be reported DISTINCTLY from the other two refusals over the same
+    // events. Asserting the absence of their vocabulary is what makes "distinctly" checkable.
+    assert!(
+        out.contains("SIGNED DOWNGRADE"),
+        "the ceiling refusal must be self-identifying:\n{out}"
+    );
+    assert!(
+        !out.contains("does not match the running head") && !out.contains("SPLICED"),
+        "a ceiling violation must not be reported as a rewrite or a splice — the records are \
+         intact and the attestation covers this very chain:\n{out}"
+    );
+}
+
+/// ANTI-REGRESSION, and the reason the check indexes by `attested_len` rather than a running max.
+///
+/// A stale attestation covers a SHORTER prefix than the chain's current length: the head is read,
+/// signed and appended without a lock, so the chain advances underneath it. Here a ceiling-2
+/// attestation covers a V2-only prefix, and a V3 record is sealed AFTER it. The attestation is
+/// still true about what it covers and must PASS.
+///
+/// An encounter-time running max would compare it against the later V3 record and refuse — turning
+/// a race the design explicitly permits into a verification failure, and invalidating attestations
+/// that are correct.
+#[test]
+fn a_stale_attestation_over_an_earlier_prefix_still_passes() {
+    let v2 = v2_payload();
+    let d2 = v2_record_digest(&v2);
+    let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
+    let head0 = vec![0u8; 32];
+    let c1 = {
+        let mut h = Sha256::new();
+        h.update(&head0);
+        h.update(&d2);
+        h.finalize().to_vec()
+    };
+    let sealed_v2 = serde_json::json!({
+        "schema_version": "seam-event.v1", "event_id": "dec#0", "seq": 0, "occurred_at": 1_700,
+        "kind": "DECISION_SEALED", "prev_checksum": b64e(&head0), "digest": b64e(&d2),
+        "checksum": b64e(&c1), "payload": v2,
+    })
+    .to_string();
+    // Ceiling 2 over the 1-link V2-only prefix — honest at the moment it was signed.
+    let (att, c2) = attestation_event(1, &c1, 1, &c1, &sk, ISSUER, 2);
+    // ...and only THEN does a V3 record arrive.
+    let v3 = v3_payload();
+    let d3 = v3_record_digest(&v3);
+    let c3 = {
+        let mut h = Sha256::new();
+        h.update(&c2);
+        h.update(&d3);
+        h.finalize().to_vec()
+    };
+    let sealed_v3 = serde_json::json!({
+        "schema_version": "seam-event.v1", "event_id": "dec#2", "seq": 2, "occurred_at": 1_702,
+        "kind": "DECISION_SEALED", "prev_checksum": b64e(&c2), "digest": b64e(&d3),
+        "checksum": b64e(&c3), "payload": v3,
+    })
+    .to_string();
+    let (code, out) = run(
+        "ceiling-stale-ok",
+        &format!("{sealed_v2}\n{att}\n{sealed_v3}"),
+        &["--issuer", ISSUER],
+    );
+    assert_eq!(
+        code, VERIFIED,
+        "a ceiling-2 attestation over a V2-ONLY prefix is TRUE about what it covers and must pass, \
+         even though a V3 record was sealed after it. Refusing here would invalidate every \
+         attestation signed before B3 the moment a V3 record lands:\n{out}"
+    );
+}
+
+/// `>=`, not `==`: a ceiling that OVERSTATES is legitimate. A build stamping V3 attests a V2-only
+/// prefix at 3 whenever no V3 record has been sealed yet — true, and refusing it would break every
+/// post-B3 deployment during its quiet period.
+#[test]
+fn a_ceiling_above_the_prefix_maximum_is_legitimate() {
+    let v2 = v2_payload();
+    let d = v2_record_digest(&v2);
+    let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
+    let head0 = vec![0u8; 32];
+    let checksum = {
+        let mut h = Sha256::new();
+        h.update(&head0);
+        h.update(&d);
+        h.finalize().to_vec()
+    };
+    let sealed = serde_json::json!({
+        "schema_version": "seam-event.v1", "event_id": "dec#0", "seq": 0, "occurred_at": 1_700,
+        "kind": "DECISION_SEALED", "prev_checksum": b64e(&head0), "digest": b64e(&d),
+        "checksum": b64e(&checksum), "payload": v2,
+    })
+    .to_string();
+    let (att, _) = attestation_event(1, &checksum, 1, &checksum, &sk, ISSUER, 3);
+    let (code, out) = run(
+        "ceiling-above-ok",
+        &format!("{sealed}\n{att}"),
+        &["--issuer", ISSUER],
+    );
+    assert_eq!(
+        code, VERIFIED,
+        "digest_schema is a CEILING, not a description — 3 over a v2-only prefix is true:\n{out}"
+    );
+}
+
+/// The empty-witness case the spec calls out explicitly: a NON-EMPTY prefix carrying no
+/// `DECISION_SEALED` at all has no record to exceed any ceiling, so (e) cannot fire. Guards the
+/// off-by-one too — indexing `max_schema_by_link` at a real length must not panic or read garbage.
+#[test]
+fn a_prefix_with_no_sealed_records_cannot_violate_the_ceiling() {
+    let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
+    let head0 = vec![0u8; 32];
+    // A chained AUDIT_ENTRY: a real link that carries no decision.
+    let d = Sha256::digest(b"audit-0").to_vec();
+    let checksum = {
+        let mut h = Sha256::new();
+        h.update(&head0);
+        h.update(&d);
+        h.finalize().to_vec()
+    };
+    let entry = serde_json::json!({
+        "schema_version": "seam-event.v1", "event_id": "aud#0", "seq": 0, "occurred_at": 1_700,
+        "kind": "AUDIT_ENTRY", "prev_checksum": b64e(&head0), "digest": b64e(&d),
+        "checksum": b64e(&checksum),
+    })
+    .to_string();
+    let (att, _) = attestation_event(1, &checksum, 1, &checksum, &sk, ISSUER, 2);
+    let (code, out) = run(
+        "ceiling-no-records",
+        &format!("{entry}\n{att}"),
+        &["--issuer", ISSUER],
+    );
+    assert_eq!(
+        code, VERIFIED,
+        "the rule is existential over covered RECORDS, not a claim about the prefix's length:\n{out}"
     );
 }

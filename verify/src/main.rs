@@ -166,7 +166,8 @@ fn cmd_chain(path: &str, strict: bool, json: bool, issuers: &[String]) -> ExitCo
             let issuer_report = if issuers.is_empty() {
                 None
             } else {
-                match verify::verify_authenticity(&events, &r.heads, issuers) {
+                match verify::verify_authenticity(&events, &r.heads, &r.max_schema_by_link, issuers)
+                {
                     Ok(ir) => Some(ir),
                     Err(e) => return fail(&e, json, "AUTHENTICITY VERIFICATION FAILED"),
                 }
