@@ -1,5 +1,8 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 25272a6 (refreshed 2026-08-25 for the
-     `digest_schema` ceiling, seam-runtime#439, which reached `main` in #440). The runtime spec is the
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ d77db7d (refreshed 2026-08-26 for
+     verification clause (e) — the CONSUMER half of the `digest_schema` ceiling, seam-runtime#441
+     Phase 1, merged as seam-runtime#457. That clause is what this repo's ceiling check is
+     implemented FROM; without it there is no spec text to port and the check would have been a
+     transcription of the runtime's code, which is exactly what this copy exists to make unnecessary). The runtime spec is the
      source of truth; refresh this copy whenever the spec changes — a stale copy here once shipped a real
      verifier bug (the AUTHORIZE_EVALUATED advisory omission), and it has been stale twice more since: it
      carried no §Record digest (v3) before an earlier refresh, and no §"Presence on the wire" before the
@@ -197,9 +200,43 @@ copied unchanged, so the head still matches and the signature verifies) — or a
 Both fail under `--issuer`; treating the strip as *cannot-recompute, not-a-failure* is exactly the hole
 design (a) exists to close. This is scoped to the covered class: v1 (`schema_version = 1`) records are not
 recomputable and never required a commitment, so they are skipped, not failed; and without `--issuer` none
-of (a)–(d) runs (a consumer with no issuer key legitimately checks integrity only); (d) **zero valid
+of (a)–(e) runs (a consumer with no issuer key legitimately checks integrity only); (d) **zero valid
 attestations under `--issuer` ⇒ REFUSE** — a forger cannot mint one, so their absence is the
-fabricated-chain tell, and a green-with-no-attestations would be a coverage hole reporting green.
+fabricated-chain tell, and a green-with-no-attestations would be a coverage hole reporting green. (e)
+**an attestation whose `digest_schema` is BELOW the highest `schema_version` of any `DECISION_SEALED` in
+its attested prefix ⇒ REFUSE** — it is a signed downgrade claim, and it is reported **distinctly** from a
+payload rewrite (b) and from a tag-10 strip (c), because the three have different causes and different
+remediations.
+
+This is the consumer half of the ceiling the paragraph above makes normative for producers; without it
+the field is an assertion nobody checks. It is *nearly* redundant cryptographically — `schema_version` is
+framed into every record digest, which is bound into the checksum chain the attested head commits to, so
+a per-record downgrade already breaks a link under (b). What (e) adds is narrower and is the whole point
+of the field: it checks the **signed, externally-notarized artifact** against the chain it claims to
+cover. The artifact is what a third party is handed, and the case (b) cannot reach is a **rolled-back
+producer** — a build whose `CURRENT_SCHEMA_VERSION` regressed to 2 signing an honest, unmodified chain
+that already contains v3 records. Every link hashes, every digest recomputes, and the issuer has
+nonetheless signed a false statement about the verification regime.
+
+Three properties of (e) are load-bearing and a verifier that gets any of them wrong is worse than one
+that omits the check:
+
+- **`>=`, never `==`.** A ceiling only ever rises, and existing attestations are never re-signed, so a
+  genuinely old `digest_schema = 2` attestation over a v2-only prefix stays valid **forever**. An `==`
+  reading would refuse the entire pre-B3 history.
+- **Over the attested PREFIX only** — the first `attested_len` chained links, not the whole chain. A
+  stale attestation legitimately covers a shorter prefix than the chain's current length (see the
+  read→sign→append note above), so comparing it against records sealed *after* it were signed would
+  refuse a valid attestation for a race the design explicitly permits.
+- **Each attestation independently.** A chain carries many, at different lengths and possibly from
+  different issuer keys across a rotation; each is checked against its own prefix.
+
+An `attested_len == 0` prefix is empty, so its maximum is undefined and (e) cannot fire — but (d) already
+refuses a chain whose only attestations are vacuous. Likewise a **non-empty** prefix that happens to
+contain no `DECISION_SEALED` at all has no witness, so (e) cannot fire there either: the rule is
+existential over the covered records, not a claim about the prefix's length. Stated because the two
+natural implementations — a running maximum seeded at `0`, and an iterate-and-compare over the covered
+records — must agree here, and only one of them makes that obvious.
 
 ### `SESSION_LIFECYCLE` (additive, tag 21 — advisory, not chained) — CP-09
 
