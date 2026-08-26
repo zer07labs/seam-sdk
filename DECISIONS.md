@@ -169,7 +169,7 @@ not as written.
   through to `continue` and is tested twice — `verify/tests/authenticity.rs:238` and `:878`, the
   latter asserting skipped-not-recomputed. The per-column parametrization at `:843-875` exercises
   each column with the other three removed, and the comment at `:841` records the decoy that forced
-  it. The spec sentence it rests on is verbatim at `verify/docs/seam-event.v1.md:295-296`:
+  it. The spec sentence it rests on is verbatim at `verify/docs/seam-event.v1.md:332-333`:
   `ciphertext_digest` "is absent (no wire bytes) only on `schema_version = 1` payloads."
 - **Verdict:** Confirm. **Status:** CONFIRMED.
 
@@ -429,7 +429,8 @@ how v1→v2 happened." Answering it in a PR comment and moving on is what this e
 - **Answer: no, and the reason is structural rather than a judgment call.** Every one of those
   fields is on a `seam.api.v1` **response** message. The record digest is computed over
   `DECISION_SEALED`'s payload columns — specified byte-exactly at
-  `seam-runtime/docs/specs/seam-event.v1.md:379-393` — and `verify/src/wire.rs` mirrors the
+  `seam-runtime/docs/specs/seam-event.v1.md` §"Record digest" (v2 and v3 both) — and
+  `verify/src/wire.rs` mirrors the
   **event** wire only (`SeamEventPb`, `DecisionSealedPb`, `ErasureCertificatePb`, …). A response
   field is not a sealed column and never reaches the preimage.
 - **The one event-wire addition in the same window** is `seam.event.v1 LearningOutcome.policy_key`
