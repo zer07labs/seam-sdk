@@ -1219,3 +1219,59 @@ fn a_prefix_with_no_sealed_records_cannot_violate_the_ceiling() {
         "the rule is existential over covered RECORDS, not a claim about the prefix's length:\n{out}"
     );
 }
+
+/// `attested_len == 0` — the empty prefix. The maximum over zero records is undefined, so clause (e)
+/// cannot fire, and the index into the per-link max must land on the seeded `[0]` entry rather than
+/// running off the front. Pinned separately from the no-records case above because they exercise
+/// different arithmetic: that one indexes a REAL length whose prefix happens to seal nothing, this
+/// one indexes zero.
+///
+/// The stream is still refused — by clause (d), for carrying no VALID attestation over anything —
+/// so the assertion is on WHICH refusal fires. A ceiling complaint here would mean the empty prefix
+/// was being compared against records it does not cover.
+#[test]
+fn an_attestation_over_the_empty_prefix_does_not_trip_the_ceiling() {
+    let p = v3_payload();
+    let d = v3_record_digest(&p);
+    let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
+    let head0 = vec![0u8; 32];
+    let checksum = {
+        let mut h = Sha256::new();
+        h.update(&head0);
+        h.update(&d);
+        h.finalize().to_vec()
+    };
+    let sealed = serde_json::json!({
+        "schema_version": "seam-event.v1", "event_id": "dec#0", "seq": 0, "occurred_at": 1_700,
+        "kind": "DECISION_SEALED", "prev_checksum": b64e(&head0), "digest": b64e(&d),
+        "checksum": b64e(&checksum), "payload": p,
+    })
+    .to_string();
+    // len 0 over GENESIS: vacuous but structurally well-formed and correctly signed.
+    let (att, _) = attestation_event(1, &checksum, 0, &head0, &sk, ISSUER, 2);
+    let (code, out) = run(
+        "ceiling-empty-prefix",
+        &format!("{sealed}\n{att}"),
+        &["--issuer", ISSUER],
+    );
+    assert!(
+        !out.contains("SIGNED DOWNGRADE"),
+        "an attestation covering NOTHING cannot understate the regime of records it does not \
+         cover — the empty prefix has no maximum to violate:\n{out}"
+    );
+    // NOTE, and deliberately not asserted as a refusal here: this stream currently reports
+    // CHAIN AUTHENTICATED with `covered prefix: 0 links`. A vacuous attestation satisfies clause
+    // (d)'s "at least one valid attestation" while covering nothing, which is arguably the same
+    // coverage-hole-reporting-green that (d) exists to close — and the spec says a conforming
+    // producer never signs the empty chain at all.
+    //
+    // That is a PRE-EXISTING question about clause (d), not about clause (e), and changing a
+    // refusal that clause (e) does not require would put this verifier out of step with the
+    // internal one — the exact divergence the parity gate catches and this change is sequenced to
+    // avoid. Filed rather than fixed here; this test pins only the in-scope property.
+    assert_eq!(
+        code, VERIFIED,
+        "pinning TODAY's behaviour so the follow-up is a visible, deliberate change rather than a \
+         silent one:\n{out}"
+    );
+}

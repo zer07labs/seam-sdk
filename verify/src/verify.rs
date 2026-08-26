@@ -690,10 +690,22 @@ pub fn verify_authenticity(
         //
         // `>=`, never `==`: a ceiling only ever rises and attestations are never re-signed, so a
         // genuinely old `digest_schema = 2` attestation over a v2-only prefix stays valid forever.
-        let max_covered = max_schema_by_link
-            .get(a.attested_len as usize)
-            .copied()
-            .unwrap_or(0);
+        // FAIL-CLOSED on a short slice, never `unwrap_or(0)`. Inside this crate the position check
+        // above already guarantees the index is in range, because both slices come from one
+        // `ChainReport` and are always the same length — so this arm is unreachable via the CLI.
+        //
+        // It is reachable by an EMBEDDER: `verify_authenticity` is a public API, and a caller passing
+        // a mismatched or empty `max_schema_by_link` would, under `unwrap_or(0)`, get the ceiling
+        // check SILENTLY DISABLED while every other check kept running — a verifier reporting green
+        // with one refusal quietly switched off. Defaulting to "no records covered" is the fail-OPEN
+        // direction, and this crate exists to refuse.
+        let Some(max_covered) = max_schema_by_link.get(a.attested_len as usize).copied() else {
+            return Err(format!(
+                "internal: max_schema_by_link has {} entries but an attestation covers len {}.\n                   This cannot happen for a report produced by `chain()` — the two vectors are built                  together and are always the same length. It means a caller passed a `heads` and a                  `max_schema_by_link` from different reports. Refusing rather than skipping the                  ceiling check: a verifier that silently drops a refusal is worse than one that stops.",
+                max_schema_by_link.len(),
+                a.attested_len
+            ));
+        };
         if a.digest_schema < max_covered {
             return Err(format!(
                 "a CHAIN_HEAD_ATTESTATION claims digest_schema {} at len {}, but a DECISION_SEALED \
