@@ -1226,9 +1226,11 @@ fn a_prefix_with_no_sealed_records_cannot_violate_the_ceiling() {
 /// different arithmetic: that one indexes a REAL length whose prefix happens to seal nothing, this
 /// one indexes zero.
 ///
-/// The stream is still refused — by clause (d), for carrying no VALID attestation over anything —
-/// so the assertion is on WHICH refusal fires. A ceiling complaint here would mean the empty prefix
-/// was being compared against records it does not cover.
+/// The stream VERIFIES, which is itself the surprise — see the NOTE in the body. Clause (d) is
+/// satisfied vacuously: the attestation is valid, so "at least one valid attestation" holds even
+/// though it covers nothing. The load-bearing assertion here is the ceiling one: a verifier that
+/// indexed the chain's full length instead of `attested_len` would see ceiling 2 against the v3
+/// record this stream seals and wrongly report a downgrade.
 #[test]
 fn an_attestation_over_the_empty_prefix_does_not_trip_the_ceiling() {
     let p = v3_payload();
@@ -1273,5 +1275,75 @@ fn an_attestation_over_the_empty_prefix_does_not_trip_the_ceiling() {
         code, VERIFIED,
         "pinning TODAY's behaviour so the follow-up is a visible, deliberate change rather than a \
          silent one:\n{out}"
+    );
+}
+
+/// The fail-closed arm, exercised rather than merely reasoned about.
+///
+/// It is unreachable through the CLI — `chain()` builds `heads` and `max_schema_by_link` together,
+/// so they are always the same length, and the position check errors first anyway. It is reachable
+/// by an EMBEDDER, because `verify_authenticity` is a public API. Under the `unwrap_or(0)` this
+/// replaced, a caller passing a mismatched slice got the ceiling check SILENTLY DISABLED while
+/// every other check kept running — a green report with one refusal quietly switched off.
+///
+/// Driven at the library level deliberately: no CLI invocation can produce this state, so a
+/// process-level test would prove nothing.
+#[test]
+fn a_mismatched_prefix_max_slice_refuses_instead_of_skipping_the_check() {
+    let p = v3_payload();
+    let d = v3_record_digest(&p);
+    let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
+    let head0 = vec![0u8; 32];
+    let checksum = {
+        let mut h = Sha256::new();
+        h.update(&head0);
+        h.update(&d);
+        h.finalize().to_vec()
+    };
+    let sealed = serde_json::json!({
+        "schema_version": "seam-event.v1", "event_id": "dec#0", "seq": 0, "occurred_at": 1_700,
+        "kind": "DECISION_SEALED", "prev_checksum": b64e(&head0), "digest": b64e(&d),
+        "checksum": b64e(&checksum), "payload": p,
+    })
+    .to_string();
+    let (att, _) = attestation_event(1, &checksum, 1, &checksum, &sk, ISSUER, 3);
+    let body = format!("{sealed}\n{att}");
+
+    let events: Vec<seam_verify::wire::Event> = body
+        .lines()
+        .map(|l| seam_verify::wire::Event::parse(l).expect("parse"))
+        .collect();
+    let report = seam_verify::chain(&events).expect("chain");
+    let issuers = vec![ISSUER.to_string()];
+
+    // Honest slices: this stream is legitimate (ceiling 3 over a v3 record) and must pass.
+    assert!(
+        seam_verify::verify_authenticity(
+            &events,
+            &report.heads,
+            &report.max_schema_by_link,
+            &issuers
+        )
+        .is_ok(),
+        "an honest stream with matching slices must authenticate — otherwise the refusal below \
+         proves nothing about the slice length"
+    );
+
+    // Truncated prefix-max: the ceiling can no longer be evaluated for this attestation.
+    let err = match seam_verify::verify_authenticity(
+        &events,
+        &report.heads,
+        &report.max_schema_by_link[..1],
+        &issuers,
+    ) {
+        Err(e) => e,
+        Ok(_) => panic!(
+            "a short max_schema_by_link must REFUSE. Silently treating the missing entry as 0 \
+             would pass every ceiling check — fail-open, in the one crate whose job is refusing."
+        ),
+    };
+    assert!(
+        err.contains("max_schema_by_link"),
+        "the error must name the slice that was wrong, so an embedder can fix the call:\n{err}"
     );
 }

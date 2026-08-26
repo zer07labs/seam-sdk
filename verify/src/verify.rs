@@ -701,7 +701,11 @@ pub fn verify_authenticity(
         // direction, and this crate exists to refuse.
         let Some(max_covered) = max_schema_by_link.get(a.attested_len as usize).copied() else {
             return Err(format!(
-                "internal: max_schema_by_link has {} entries but an attestation covers len {}.\n                   This cannot happen for a report produced by `chain()` — the two vectors are built                  together and are always the same length. It means a caller passed a `heads` and a                  `max_schema_by_link` from different reports. Refusing rather than skipping the                  ceiling check: a verifier that silently drops a refusal is worse than one that stops.",
+                "internal: max_schema_by_link has {} entries but an attestation covers len {}.\n  \
+                 This cannot happen for a report produced by `chain()` — the two vectors are built \
+                 together and are always the same length. It means a caller passed a `heads` and a \
+                 `max_schema_by_link` from different reports. Refusing rather than skipping the \
+                 ceiling check: a verifier that silently drops a refusal is worse than one that stops.",
                 max_schema_by_link.len(),
                 a.attested_len
             ));
