@@ -477,6 +477,10 @@ fn record_digest_v3(d: &Decision) -> Result<[u8; 32], String> {
 ///   * **zero valid attestations ⇒ REFUSE.** A forger cannot mint one, so their absence over a stream the
 ///     caller asked to authenticate is the fabricated-chain tell; reporting green on it would be a
 ///     coverage hole reporting green.
+///   * **a vacuous attestation (`attested_len == 0`) ⇒ REFUSE, outright.** It claims nothing — a
+///     conforming producer never signs the empty chain — so its wire presence is itself the
+///     non-conforming-producer tell (spec clause (d), second sentence), and no valid attestation
+///     beside it can save the stream.
 ///
 /// `heads` is [`ChainReport::heads`] from a passing [`chain`] call (the caller runs integrity first).
 /// Every attestation present must pass; a single failure aborts with `Err` (a forged one in the mix is an
@@ -656,6 +660,25 @@ pub fn verify_authenticity(
                 a.attested_len
             )
         })?;
+        // spec clause (d), second sentence: an attestation whose `attested_len` is 0 makes no claim —
+        // a conforming producer never signs the empty chain (spec §Triggers), so its presence on the
+        // wire is itself the non-conforming-producer tell, and it can never be the attestation that
+        // satisfies clause (d). REFUSED outright and unconditionally, even when valid attestations sit
+        // beside it: a green verdict warranted by a signature over nothing is the same coverage hole
+        // reporting green, this time with the issuer's signature on it. Checked after the signature so
+        // "the pinned issuer really signed this nothing" is established fact, not conjecture, when the
+        // refusal is reported.
+        if a.attested_len == 0 {
+            return Err(format!(
+                "a CHAIN_HEAD_ATTESTATION is VACUOUS — attested_len is 0, a signed claim about the \
+                 empty prefix.\n  \
+                 It claims nothing (a conforming producer never signs the empty chain), so its very \
+                 presence on the wire means a non-conforming or rolled-back producer signed with \
+                 issuer '{}'. Refused outright per spec clause (d) — it can never be the attestation \
+                 that authenticates a stream.",
+                a.issuer_aid
+            ));
+        }
         // Head-at-position: the attested head must be the running head after `attested_len` links. An
         // attestation over a prefix the stream never reaches has no head to check against — a FAIL, not a
         // silent pass (it cannot be attesting *this* stream).
