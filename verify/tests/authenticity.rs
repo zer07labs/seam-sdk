@@ -1220,19 +1220,18 @@ fn a_prefix_with_no_sealed_records_cannot_violate_the_ceiling() {
     );
 }
 
-/// `attested_len == 0` — the empty prefix. The maximum over zero records is undefined, so clause (e)
-/// cannot fire, and the index into the per-link max must land on the seeded `[0]` entry rather than
-/// running off the front. Pinned separately from the no-records case above because they exercise
-/// different arithmetic: that one indexes a REAL length whose prefix happens to seal nothing, this
-/// one indexes zero.
+/// `attested_len == 0` — the VACUOUS attestation, REFUSED outright (spec clause (d), second
+/// sentence; seam-runtime#458). It makes no claim: a conforming producer never signs the empty
+/// chain (spec §Triggers), so its presence on the wire is itself the non-conforming-producer tell.
+/// Until #458 this test pinned the OLD behaviour — CHAIN AUTHENTICATED with `covered prefix: 0
+/// links`, a green verdict whose only warrant was a signature over nothing — and its NOTE promised
+/// the flip would be a visible, deliberate assertion change. This is that change.
 ///
-/// The stream VERIFIES, which is itself the surprise — see the NOTE in the body. Clause (d) is
-/// satisfied vacuously: the attestation is valid, so "at least one valid attestation" holds even
-/// though it covers nothing. The load-bearing assertion here is the ceiling one: a verifier that
-/// indexed the chain's full length instead of `attested_len` would see ceiling 2 against the v3
-/// record this stream seals and wrongly report a downgrade.
+/// Still pinned alongside the refusal: the diagnosis must be the vacuity, never the ceiling — a
+/// verifier that indexed the chain's full length instead of `attested_len` would see ceiling 2
+/// against the v3 record this stream seals and misreport a SIGNED DOWNGRADE.
 #[test]
-fn an_attestation_over_the_empty_prefix_does_not_trip_the_ceiling() {
+fn a_vacuous_attestation_is_refused_outright() {
     let p = v3_payload();
     let d = v3_record_digest(&p);
     let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
@@ -1252,29 +1251,68 @@ fn an_attestation_over_the_empty_prefix_does_not_trip_the_ceiling() {
     // len 0 over GENESIS: vacuous but structurally well-formed and correctly signed.
     let (att, _) = attestation_event(1, &checksum, 0, &head0, &sk, ISSUER, 2);
     let (code, out) = run(
-        "ceiling-empty-prefix",
+        "vacuous-attestation",
         &format!("{sealed}\n{att}"),
         &["--issuer", ISSUER],
     );
     assert!(
         !out.contains("SIGNED DOWNGRADE"),
-        "an attestation covering NOTHING cannot understate the regime of records it does not \
-         cover — the empty prefix has no maximum to violate:\n{out}"
+        "the refusal must be the vacuity, never a misindexed ceiling:\n{out}"
     );
-    // NOTE, and deliberately not asserted as a refusal here: this stream currently reports
-    // CHAIN AUTHENTICATED with `covered prefix: 0 links`. A vacuous attestation satisfies clause
-    // (d)'s "at least one valid attestation" while covering nothing, which is arguably the same
-    // coverage-hole-reporting-green that (d) exists to close — and the spec says a conforming
-    // producer never signs the empty chain at all.
-    //
-    // That is a PRE-EXISTING question about clause (d), not about clause (e), and changing a
-    // refusal that clause (e) does not require would put this verifier out of step with the
-    // internal one — the exact divergence the parity gate catches and this change is sequenced to
-    // avoid. Filed rather than fixed here; this test pins only the in-scope property.
     assert_eq!(
-        code, VERIFIED,
-        "pinning TODAY's behaviour so the follow-up is a visible, deliberate change rather than a \
-         silent one:\n{out}"
+        code, FAILED,
+        "an attestation over the empty prefix claims nothing and must be REFUSED outright — a \
+         CHAIN AUTHENTICATED warranted by a signature over nothing is the coverage hole clause (d) \
+         exists to close:\n{out}"
+    );
+    assert!(
+        out.contains("VACUOUS"),
+        "the refusal must be self-identifying:\n{out}"
+    );
+}
+
+/// The verdict's sharp edge: the vacuous attestation is refused as an ARTIFACT — not merely
+/// "streams whose only attestations are vacuous". A perfectly valid attestation over the real head
+/// sits right beside it and does not save the stream: a trusted issuer that signed the empty chain
+/// is a non-conforming or rolled-back producer regardless of what else it signed correctly. A
+/// verifier that only required "at least one valid attestation" (clause (d)'s first sentence alone)
+/// passes this stream; the second sentence is what refuses it.
+#[test]
+fn a_vacuous_attestation_is_refused_even_beside_a_valid_one() {
+    let p = v3_payload();
+    let d = v3_record_digest(&p);
+    let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
+    let head0 = vec![0u8; 32];
+    let checksum = {
+        let mut h = Sha256::new();
+        h.update(&head0);
+        h.update(&d);
+        h.finalize().to_vec()
+    };
+    let sealed = serde_json::json!({
+        "schema_version": "seam-event.v1", "event_id": "dec#0", "seq": 0, "occurred_at": 1_700,
+        "kind": "DECISION_SEALED", "prev_checksum": b64e(&head0), "digest": b64e(&d),
+        "checksum": b64e(&checksum), "payload": p,
+    })
+    .to_string();
+    // A GENUINE attestation over the real head first (len 1; ceiling 3 — the record is v3) …
+    let (good, c2) = attestation_event(1, &checksum, 1, &checksum, &sk, ISSUER, 3);
+    // … then the vacuous one, chained after it: len 0 over GENESIS, correctly signed by the SAME
+    // trusted issuer.
+    let (vac, _) = attestation_event(2, &c2, 0, &head0, &sk, ISSUER, 3);
+    let (code, out) = run(
+        "vacuous-beside-valid",
+        &format!("{sealed}\n{good}\n{vac}"),
+        &["--issuer", ISSUER],
+    );
+    assert_eq!(
+        code, FAILED,
+        "a valid attestation beside it must NOT save the stream — the vacuous artifact itself is \
+         refused:\n{out}"
+    );
+    assert!(
+        out.contains("VACUOUS"),
+        "the refusal must name the vacuity, not the neighbour:\n{out}"
     );
 }
 

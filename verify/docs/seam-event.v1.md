@@ -1,8 +1,8 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ d77db7d (refreshed 2026-08-26 for
-     verification clause (e) — the CONSUMER half of the `digest_schema` ceiling, seam-runtime#441
-     Phase 1, merged as seam-runtime#457. That clause is what this repo's ceiling check is
-     implemented FROM; without it there is no spec text to port and the check would have been a
-     transcription of the runtime's code, which is exactly what this copy exists to make unnecessary). The runtime spec is the
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 69a60c3 (refreshed 2026-08-27 for
+     clause (d)'s second sentence — a VACUOUS attestation (`attested_len` = 0) is REFUSED outright
+     and unconditionally, seam-runtime#458 PR 1, merged as seam-runtime#467. That sentence is
+     what this repo's vacuous-attestation refusal is implemented FROM; without it the refusal would
+     have been a transcription of the runtime's code, which is exactly what this copy exists to make unnecessary). The runtime spec is the
      source of truth; refresh this copy whenever the spec changes — a stale copy here once shipped a real
      verifier bug (the AUTHORIZE_EVALUATED advisory omission), and it has been stale twice more since: it
      carried no §Record digest (v3) before an earlier refresh, and no §"Presence on the wire" before the
@@ -202,7 +202,12 @@ design (a) exists to close. This is scoped to the covered class: v1 (`schema_ver
 recomputable and never required a commitment, so they are skipped, not failed; and without `--issuer` none
 of (a)–(e) runs (a consumer with no issuer key legitimately checks integrity only); (d) **zero valid
 attestations under `--issuer` ⇒ REFUSE** — a forger cannot mint one, so their absence is the
-fabricated-chain tell, and a green-with-no-attestations would be a coverage hole reporting green. (e)
+fabricated-chain tell, and a green-with-no-attestations would be a coverage hole reporting green.
+**An attestation whose `attested_len` is 0 ⇒ REFUSE, outright and unconditionally** — it makes no
+claim (a conforming producer never signs the empty chain; see Triggers above), so its presence on the
+wire is itself the non-conforming-producer tell, and it can never be the attestation that satisfies
+this clause: a `CHAIN AUTHENTICATED` whose only warrant is a signature over nothing is the same
+coverage hole reporting green, this time with the issuer's signature on it. (e)
 **an attestation whose `digest_schema` is BELOW the highest `schema_version` of any `DECISION_SEALED` in
 its attested prefix ⇒ REFUSE** — it is a signed downgrade claim, and it is reported **distinctly** from a
 payload rewrite (b) and from a tag-10 strip (c), because the three have different causes and different
@@ -231,8 +236,9 @@ that omits the check:
 - **Each attestation independently.** A chain carries many, at different lengths and possibly from
   different issuer keys across a rotation; each is checked against its own prefix.
 
-An `attested_len == 0` prefix is empty, so its maximum is undefined and (e) cannot fire — but (d) already
-refuses a chain whose only attestations are vacuous. Likewise a **non-empty** prefix that happens to
+An `attested_len == 0` prefix is empty, so its maximum is undefined and (e) cannot fire — it never gets
+the chance: clause (d) refuses the vacuous attestation itself, outright, before (e) is consulted.
+Likewise a **non-empty** prefix that happens to
 contain no `DECISION_SEALED` at all has no witness, so (e) cannot fire there either: the rule is
 existential over the covered records, not a claim about the prefix's length. Stated because the two
 natural implementations — a running maximum seeded at `0`, and an iterate-and-compare over the covered
