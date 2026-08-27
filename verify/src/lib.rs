@@ -77,5 +77,6 @@ pub mod wire;
 // reaching through the module path. These four are the verification surface; everything else in
 // `verify` is a helper they compose.
 pub use verify::{
-    chain, erasure_certificate, link, verify_authenticity, ChainReport, IssuerReport,
+    chain, chain_anchored, erasure_certificate, link, verify_anchor, verify_authenticity,
+    verify_authenticity_anchored, ChainReport, IssuerReport,
 };

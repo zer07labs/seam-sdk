@@ -131,6 +131,54 @@ consumer parsing the `--json` output should therefore assert `verified == true` 
 >
 > `--strict` refuses the stream instead. **Use it, unless you know exactly why you are not.**
 
+#### ANCHORED START — `chain <FILE> --issuer <AID> --from-anchor <FILE>`
+
+Both checks above assume you hold the stream **from genesis**. A consumer often holds only a *window*
+of it — a transport has a retention horizon, or an evidence bundle is deliberately scoped — and
+`--from-anchor` verifies exactly that window, seeded from an issuer-signed `CHAIN_HEAD_ATTESTATION`
+**anchor** instead of the public genesis constant:
+
+```
+seam-verify chain window.jsonl --issuer <AID> --from-anchor anchor.json
+```
+
+```
+WINDOW AUTHENTICATED (issuer-anchored start)
+  events            : 42
+  links checked     : 42
+  attestations      : 2 (issuer-signed)
+  covered prefix    : 793 links
+  records recomputed: 41 (v2/v3 record-digest recompute)
+  anchored start    : base_len 750 / base_head 9f2c…
+  covering (len > base_len): 1 (these satisfy spec clause (f4))
+  head              : a01d…
+```
+
+`anchor.json` is one `CHAIN_HEAD_ATTESTATION` — either a bare six-field object (byte-for-byte one
+element of the public `GET /v1/anchors` feed) or a full `seam-event.v1` event line carrying one (what
+an outbox consumer already holds). **An anchored start relocates the trust root**, so it is validated
+before anything is verified from it:
+
+* the anchor's signature MUST verify against the **pinned** `--issuer` AID — an unsigned, forged, or
+  wrong-issuer anchor is REFUSED (`ANCHOR REJECTED`), never silently seeded, and never falls back to
+  genesis;
+* a **vacuous** anchor (`attested_len == 0`) is REFUSED (`VACUOUS ANCHOR`) — it claims nothing, so
+  accepting it would re-create genesis seeding through the back door.
+
+A forger cannot mint an issuer-signed anchor over a tampered prefix, so an anchored verdict is no
+weaker than a genesis one *for the window it covers* — within-window truncation, insertion, and
+reorder are caught exactly as from genesis. What is different is scope: `covered prefix`/`covering`
+report the window's own coverage, and **the anchor itself never counts as the attestation that
+authenticates the window** — at least one attestation strictly past the anchor's position is required,
+the same "zero valid attestations ⇒ REFUSE" discipline plain `--issuer` applies, re-scoped to the
+window. An attestation that lands *below* the window (a legitimate race: the head is read, signed, and
+appended without a lock, so the chain can advance underneath it) is signature-verified but not
+checkable against a window that does not contain it — it is skipped and reported (`below_window`),
+never silently dropped and never treated as covering.
+
+`docs/seam-event.v1.md` §"Anchored verification (clause (f))" is the full normative text this
+implements.
+
 ### 2. A GDPR erasure certificate — `erasure-cert <FILE> --issuer <AID>`
 
 When Seam erases a data subject, it destroys the encryption key (the ciphertext is unreadable forever) and
