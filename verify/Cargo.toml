@@ -7,7 +7,7 @@
 
 [package]
 name = "seam-verify"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "Independently verify a Seam audit chain and an erasure certificate. Links nothing of Seam's."

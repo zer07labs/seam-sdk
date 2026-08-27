@@ -39,6 +39,12 @@ pub struct ChainReport {
     /// with no sealed records has max 0 and clause (e) cannot fire on it — the rule is existential over
     /// the covered records, not a claim about the prefix's length.
     pub max_schema_by_link: Vec<u32>,
+    /// **Spec clause (f) — the anchored start.** The absolute position this report's window begins
+    /// at: `0` for a genesis start (produced by [`chain`]), or an anchor's `attested_len` for an
+    /// anchored one (produced by [`chain_anchored`]). `heads`/`max_schema_by_link` are indexed
+    /// **relative to this** — `heads[k]` is the head after `k` links PAST the start, at absolute
+    /// position `base_len + k` — never by the absolute position itself.
+    pub base_len: u64,
 }
 
 /// Collapse at-least-once duplicates.
@@ -86,15 +92,25 @@ pub fn dedup(events: Vec<Event>) -> Result<(Vec<Event>, usize), String> {
     Ok((out, duplicates))
 }
 
-/// Verify the hash chain from the stream alone.
+/// Verify the hash chain from the stream alone, from an **anchored start** (spec clause (f)):
+/// `base_len`/`base_head` seed the running head in place of genesis. [`chain`] is the special case
+/// `base_len == 0, base_head == GENESIS`.
 ///
-/// Per `seam-event.v1.md`: start at genesis; for each event **that carries a `digest`**, in `seq` order,
-/// assert `prev_checksum == running_head` and `checksum == H(prev_checksum ‖ digest)`, then advance.
+/// Per `seam-event.v1.md`: for each event **that carries a `digest`**, in `seq` order, assert
+/// `prev_checksum == running_head` and `checksum == H(prev_checksum ‖ digest)`, then advance.
 ///
 /// **Chained-ness is by field PRESENCE, not by `kind`.** A verifier keyed on `kind` trips over the first
 /// `LEARNING_DECISION` in an unfiltered stream, and over the deliberately off-chain `chain_anchor`.
-pub fn chain(events: &[Event]) -> Result<ChainReport, String> {
-    let mut head: Vec<u8> = GENESIS.to_vec();
+///
+/// This function does **not** validate `base_head` — the caller (`cmd_chain` / [`verify_anchor`]) must
+/// have already verified it against a pinned issuer key before seeding it here. Seeding an unverified
+/// head is exactly the "bare `(len, head)` pair" shape spec clause (f1) forbids as an input.
+pub fn chain_anchored(
+    events: &[Event],
+    base_len: u64,
+    base_head: &[u8],
+) -> Result<ChainReport, String> {
+    let mut head: Vec<u8> = base_head.to_vec();
     let mut r = ChainReport {
         events: events.len(),
         links: 0,
@@ -102,8 +118,9 @@ pub fn chain(events: &[Event]) -> Result<ChainReport, String> {
         duplicates: 0,
         unverifiable: Vec::new(),
         head: head.clone(),
-        heads: vec![head.clone()],   // heads[0] = genesis
-        max_schema_by_link: vec![0], // [0] = the empty prefix, which covers no records
+        heads: vec![head.clone()], // heads[0] = the start (genesis, or the anchor's head)
+        max_schema_by_link: vec![0], // [0] = the empty window, which covers no records
+        base_len,
     };
     let mut max_schema: u32 = 0;
 
@@ -155,6 +172,12 @@ pub fn chain(events: &[Event]) -> Result<ChainReport, String> {
     }
     r.head = head;
     Ok(r)
+}
+
+/// Verify the hash chain from the stream alone, from **genesis**. The common case; see
+/// [`chain_anchored`] for the general form spec clause (f) adds.
+pub fn chain(events: &[Event]) -> Result<ChainReport, String> {
+    chain_anchored(events, 0, &GENESIS)
 }
 
 // ---- the erasure certificate -----------------------------------------------------------------------
@@ -271,15 +294,30 @@ fn chain_head_attestation_payload(a: &Attestation) -> [u8; 32] {
 }
 
 pub struct IssuerReport {
-    /// The number of `CHAIN_HEAD_ATTESTATION`s that verified (signature + head-at-position). At least 1
-    /// is required — see [`verify_authenticity`].
+    /// The number of `CHAIN_HEAD_ATTESTATION`s that verified (signature + non-vacuous). In genesis
+    /// mode this always equals `covering` (every valid attestation is, trivially, past position 0).
+    /// In anchored mode it also counts below-window and at-anchor attestations (verified, but not
+    /// covering — see [`ChainReport::base_len`]).
     pub attestations: usize,
-    /// The longest prefix any valid attestation covers (its `attested_len`) — the issuer-signed reach.
+    /// The longest `attested_len` of any valid attestation — **absolute**, i.e. not relative to
+    /// `base_len`, unlike `heads`/`max_schema_by_link` indexing.
     pub covered_prefix: u64,
     /// The number of v2/v3 `DECISION_SEALED` records whose record digest recomputed and matched the wire
     /// `digest` (design-a). v1 records are link-only (not recomputable) and not counted; a version this
     /// build does not implement is refused outright rather than left uncounted.
     pub records_recomputed: usize,
+    /// **Spec clause (f4).** The number of valid attestations whose `attested_len` is strictly greater
+    /// than `base_len` — the ones that actually warrant the window, as opposed to the anchor (which
+    /// never counts, clause (f4)) or a below-window straggler (clause (f3), which never counts either).
+    /// At least one is required for an anchored start to pass — see [`verify_authenticity_anchored`].
+    /// In genesis mode (`base_len == 0`) this equals `attestations`, and is what the old zero-attestation
+    /// refusal already required.
+    pub covering: usize,
+    /// **Spec clause (f3).** The number of valid attestations whose `attested_len` is strictly less
+    /// than `base_len` — signature-verified (a forged one anywhere still fails the whole chain), but
+    /// their position is not checkable against a window that does not contain it, so they are skipped
+    /// and reported here rather than silently dropped. Always `0` in genesis mode.
+    pub below_window: usize,
 }
 
 /// Every v3 sub-digest is a SHA-256, so exactly this many bytes. A wire value of any other length
@@ -460,33 +498,51 @@ fn record_digest_v3(d: &Decision) -> Result<[u8; 32], String> {
     Ok(Sha256::digest(&buf).into())
 }
 
-/// Verify every `CHAIN_HEAD_ATTESTATION` in the stream against the **pinned** issuer AIDs (A14, design-b).
+/// Verify every `CHAIN_HEAD_ATTESTATION` in a window against the **pinned** issuer AIDs (A14,
+/// design-b), from an **anchored start** (spec clause (f)): `base_len`/`base_head` are the position
+/// and head the window begins at — `0`/[`GENESIS`] for a plain chain, or a validated anchor's
+/// `(attested_len, attested_head)` for an anchored one. [`verify_authenticity`] is the special case.
 ///
-/// # Why every attestation, and why at least one
+/// # Why every attestation, and why at least one covers the window
 ///
-/// A plain SHA-256 chain over a public genesis is *unkeyed*: a transport-controlling adversary can rebuild
-/// a self-consistent chain from any fork point, and integrity-only verification passes it. The signed head
-/// is the keyed root that closes this — a forger cannot mint a valid attestation without the issuer key.
-/// So:
+/// A plain SHA-256 chain over a public genesis (or a public anchor — `GET /v1/anchors` is
+/// unauthenticated) is *unkeyed*: a transport-controlling adversary can rebuild a self-consistent
+/// chain from any fork point, and integrity-only verification passes it. The signed head is the
+/// keyed root that closes this — a forger cannot mint a valid attestation without the issuer key. So:
 ///   * **the pin is load-bearing** (as for the erasure cert): the key comes from the caller's `--issuer`
 ///     AID, never from the attestation's own `issuer_aid` (that would let a forgery verify against its
 ///     forger). A named issuer that differs from the pin is refused before any signature work.
-///   * **head-at-position** (`heads[attested_len] == attested_head`) is what kills an *authentic*
-///     attestation spliced into a forged chain: the signature checks out, but it attests a head the
-///     fabricated chain never produced at that position.
-///   * **zero valid attestations ⇒ REFUSE.** A forger cannot mint one, so their absence over a stream the
-///     caller asked to authenticate is the fabricated-chain tell; reporting green on it would be a
-///     coverage hole reporting green.
-///   * **a vacuous attestation (`attested_len == 0`) ⇒ REFUSE, outright.** It claims nothing — a
-///     conforming producer never signs the empty chain — so its wire presence is itself the
-///     non-conforming-producer tell (spec clause (d), second sentence), and no valid attestation
-///     beside it can save the stream.
+///   * **head-at-position** is what kills an *authentic* attestation spliced into a forged chain: the
+///     signature checks out, but it attests a head the fabricated chain never produced at that
+///     position. Position is **anchor-relative** (clause (f3)): link *k* of the window sits at
+///     absolute position `base_len + k`, so an attestation at absolute `attested_len = P` is checked
+///     against `heads[P - base_len]`.
+///   * **zero COVERING attestations ⇒ REFUSE** (clause (f4), which re-scopes plain clause (d)). A
+///     covering attestation is one whose `attested_len` is strictly greater than `base_len` — the
+///     anchor itself never counts (the anchor feed is public, so a fabricated window appended to a
+///     genuine anchor would otherwise authenticate with zero issuer coverage of its own), and neither
+///     does an attestation landing exactly on the anchor's own position. A forger cannot mint a
+///     covering attestation, so its absence over a window the caller asked to authenticate is the
+///     fabricated-window tell.
+///   * **a vacuous attestation (`attested_len == 0`) ⇒ REFUSE, outright**, wherever it lands. It
+///     claims nothing — a conforming producer never signs the empty chain — so its wire presence is
+///     itself the non-conforming-producer tell (spec clause (d), second sentence), and no valid
+///     attestation beside it can save the window. Checked before window classification, so it applies
+///     uniformly (this can only actually fire when `base_len == 0`, i.e. genesis mode — an anchored
+///     window's `base_len` is never 0, spec clause (f2), so `attested_len == 0` there is necessarily
+///     `< base_len` and would otherwise read as a below-window straggler).
+///   * **a below-window attestation (`attested_len < base_len`) is signature-verified but its
+///     position is uncheckable** — the window holds no head for it (clause (f3)). It is skipped and
+///     REPORTED (`IssuerReport::below_window`), never silently dropped and never counted toward
+///     coverage: the read→sign→append race the spec permits can legitimately place such an
+///     attestation inside a window cut right after it.
 ///
-/// `heads` is [`ChainReport::heads`] from a passing [`chain`] call (the caller runs integrity first).
-/// Every attestation present must pass; a single failure aborts with `Err` (a forged one in the mix is an
-/// attack, even if others pass).
+/// `heads`/`max_schema_by_link` are [`ChainReport::heads`]/[`ChainReport::max_schema_by_link`] from a
+/// passing [`chain_anchored`] call with the SAME `base_len`/`base_head` (the caller runs integrity
+/// first). Every attestation present must pass signature verification; a single failure aborts with
+/// `Err` (a forged one in the mix is an attack, even if others pass).
 ///
-/// # design-a — every v2 record self-verifies (Phase 4)
+/// # design-a — every v2/v3 record self-verifies (Phase 4 / B3)
 ///
 /// The attestation (design-b) covers a *prefix* and only exists if the runtime emitted one; a payload
 /// rewrite in an unattested tail would slip past it. So under `--issuer` this ALSO recomputes each v2
@@ -496,11 +552,13 @@ fn record_digest_v3(d: &Decision) -> Result<[u8; 32], String> {
 /// non-empty `ciphertext_digest` (tag 10) is REFUSED — a **tag-10 strip / downgrade**, the exact hole
 /// "cannot recompute ⇒ not a failure" would leave open. v1 records are not recomputable and are skipped,
 /// never failed (selected by `schema_version`, never silently green on a version we cannot recompute).
-pub fn verify_authenticity(
+pub fn verify_authenticity_anchored(
     events: &[Event],
     heads: &[Vec<u8>],
     max_schema_by_link: &[u32],
     pinned_aids: &[String],
+    base_len: u64,
+    base_head: &[u8],
 ) -> Result<IssuerReport, String> {
     use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
@@ -517,6 +575,8 @@ pub fn verify_authenticity(
         .collect::<Result<_, String>>()?;
 
     let mut attestations = 0usize;
+    let mut covering = 0usize;
+    let mut below_window = 0usize;
     let mut covered_prefix = 0u64;
     let mut records_recomputed = 0usize;
 
@@ -660,14 +720,13 @@ pub fn verify_authenticity(
                 a.attested_len
             )
         })?;
-        // spec clause (d), second sentence: an attestation whose `attested_len` is 0 makes no claim —
-        // a conforming producer never signs the empty chain (spec §Triggers), so its presence on the
-        // wire is itself the non-conforming-producer tell, and it can never be the attestation that
-        // satisfies clause (d). REFUSED outright and unconditionally, even when valid attestations sit
-        // beside it: a green verdict warranted by a signature over nothing is the same coverage hole
-        // reporting green, this time with the issuer's signature on it. Checked after the signature so
-        // "the pinned issuer really signed this nothing" is established fact, not conjecture, when the
-        // refusal is reported.
+        // spec clause (d), second sentence, checked FIRST and unconditionally — before any window
+        // classification — exactly as spec clause (f)'s position table orders it: an attestation whose
+        // `attested_len` is 0 makes no claim (a conforming producer never signs the empty chain, spec
+        // §Triggers), so its presence on the wire is itself the non-conforming-producer tell, and it
+        // can never be the attestation that satisfies coverage. REFUSED outright and unconditionally,
+        // even when valid attestations sit beside it. Checked after the signature so "the pinned
+        // issuer really signed this nothing" is established fact, not conjecture, when refused.
         if a.attested_len == 0 {
             return Err(format!(
                 "a CHAIN_HEAD_ATTESTATION is VACUOUS — attested_len is 0, a signed claim about the \
@@ -679,20 +738,59 @@ pub fn verify_authenticity(
                 a.issuer_aid
             ));
         }
-        // Head-at-position: the attested head must be the running head after `attested_len` links. An
-        // attestation over a prefix the stream never reaches has no head to check against — a FAIL, not a
-        // silent pass (it cannot be attesting *this* stream).
-        let want = heads.get(a.attested_len as usize).ok_or_else(|| {
+
+        attestations += 1;
+        covered_prefix = covered_prefix.max(a.attested_len);
+
+        // Spec clause (f3) — window positions are anchor-relative. `attested_len` is an ABSOLUTE
+        // position; the window only holds heads for positions >= base_len.
+        if a.attested_len < base_len {
+            // Uncheckable against this window (it has no head there) — the signature above already
+            // proved this is a genuine, issuer-signed artifact, so it is not a failure, just not
+            // evidence FOR this window either. Skipped and reported, never counted toward coverage.
+            below_window += 1;
+            continue;
+        }
+        if a.attested_len == base_len {
+            // Checkable against the anchor itself (or, in genesis mode with base_len == 0, this arm is
+            // unreachable — attested_len == 0 already returned above). The head must match the start
+            // this window began at; it does NOT count toward coverage (clause (f4)) — attesting the
+            // anchor's own position warrants nothing IN the window.
+            if a.attested_head.as_slice() != base_head {
+                return Err(format!(
+                    "a CHAIN_HEAD_ATTESTATION attests head {} at len {}, this window's anchor \
+                     position, but the anchor's head there is {}.\n  \
+                     The signature is authentic, so this is an issuer-signed head SPLICED onto a \
+                     different (forged or diverged) chain — exactly what the position check exists to \
+                     catch.",
+                    hex(&a.attested_head),
+                    a.attested_len,
+                    hex(base_head)
+                ));
+            }
+            continue;
+        }
+
+        // base_len < attested_len: a genuine in-window position. Relative index into THIS window's
+        // heads/max_schema_by_link — `heads[0]` is the start, `heads[k]` is after k links past it.
+        let rel = (a.attested_len - base_len) as usize;
+
+        // Head-at-position: the attested head must be the running head after `rel` links past the
+        // start. An attestation over a position the window never reaches has no head to check against
+        // — a FAIL, not a silent pass (it cannot be attesting *this* window).
+        let want = heads.get(rel).ok_or_else(|| {
             format!(
-                "a CHAIN_HEAD_ATTESTATION attests len {}, but the stream has only {} chained links — it \
-                 cannot be covering this chain.",
+                "a CHAIN_HEAD_ATTESTATION attests len {}, but the window (anchored at {}) has only {} \
+                 chained links — it cannot be covering this window.",
                 a.attested_len,
+                base_len,
                 heads.len().saturating_sub(1)
             )
         })?;
-        if want != &a.attested_head {
+        if want.as_slice() != a.attested_head.as_slice() {
             return Err(format!(
-                "a CHAIN_HEAD_ATTESTATION attests head {} at len {}, but this chain's head there is {}.\n  \
+                "a CHAIN_HEAD_ATTESTATION attests head {} at len {}, but this window's head there is \
+                 {}.\n  \
                  The signature is authentic, so this is an issuer-signed head SPLICED onto a different \
                  (forged or diverged) chain — exactly what the position check exists to catch.",
                 hex(&a.attested_head),
@@ -700,34 +798,31 @@ pub fn verify_authenticity(
                 hex(want)
             ));
         }
-        // spec (e): the CEILING check. `digest_schema` asserts that every record in the attested prefix
-        // has `schema_version <= digest_schema`. Checked here — after the position check above, so we
-        // already know this attestation really covers THIS chain at THIS length, and a ceiling failure
-        // is never reported for an attestation that was actually spliced.
+        // spec (e)/(f5): the CEILING check, re-scoped to the window. `digest_schema` asserts that
+        // every record in the attested SPAN (from the start to `rel` links past it) has
+        // `schema_version <= digest_schema`. Checked here — after the position check above, so we
+        // already know this attestation really covers THIS window at THIS length, and a ceiling
+        // failure is never reported for an attestation that was actually spliced.
         //
-        // Indexed by `attested_len`, NOT a running max over everything seen so far. A stale attestation
-        // legitimately covers a SHORTER prefix than the chain's current length (the head is read, signed,
-        // and appended without a lock, so the chain advances underneath it) — comparing it against
-        // records sealed after it was signed would refuse a valid attestation for a race the design
-        // explicitly permits.
+        // Indexed by `rel`, NOT a running max over everything seen so far, and never seeded from the
+        // anchor's own `digest_schema` (clause (f5) — that field is a CEILING on the prefix below the
+        // window, not the window's actual max; seeding from it would refuse a genuinely old in-window
+        // attestation over an all-v2 span). A stale attestation legitimately covers a SHORTER prefix
+        // than the window's current length (the head is read, signed, and appended without a lock, so
+        // the chain advances underneath it) — comparing it against records sealed after it was signed
+        // would refuse a valid attestation for a race the design explicitly permits.
         //
         // `>=`, never `==`: a ceiling only ever rises and attestations are never re-signed, so a
-        // genuinely old `digest_schema = 2` attestation over a v2-only prefix stays valid forever.
-        // FAIL-CLOSED on a short slice, never `unwrap_or(0)`. Inside this crate the position check
-        // above already guarantees the index is in range, because both slices come from one
-        // `ChainReport` and are always the same length — so this arm is unreachable via the CLI.
-        //
-        // It is reachable by an EMBEDDER: `verify_authenticity` is a public API, and a caller passing
-        // a mismatched or empty `max_schema_by_link` would, under `unwrap_or(0)`, get the ceiling
-        // check SILENTLY DISABLED while every other check kept running — a verifier reporting green
-        // with one refusal quietly switched off. Defaulting to "no records covered" is the fail-OPEN
-        // direction, and this crate exists to refuse.
-        let Some(max_covered) = max_schema_by_link.get(a.attested_len as usize).copied() else {
+        // genuinely old `digest_schema = 2` attestation over a v2-only span stays valid forever.
+        // FAIL-CLOSED on a short slice, never `unwrap_or(0)` — see [`verify_authenticity`]'s doc for
+        // why (reachable by an embedder passing mismatched vectors, not by this crate's own CLI).
+        let Some(max_covered) = max_schema_by_link.get(rel).copied() else {
             return Err(format!(
-                "internal: max_schema_by_link has {} entries but an attestation covers len {}.\n  \
-                 This cannot happen for a report produced by `chain()` — the two vectors are built \
-                 together and are always the same length. It means a caller passed a `heads` and a \
-                 `max_schema_by_link` from different reports. Refusing rather than skipping the \
+                "internal: max_schema_by_link has {} entries but an attestation covers len {} (window \
+                 position {rel}).\n  \
+                 This cannot happen for a report produced by `chain_anchored()` — the two vectors are \
+                 built together and are always the same length. It means a caller passed a `heads` and \
+                 a `max_schema_by_link` from different reports. Refusing rather than skipping the \
                  ceiling check: a verifier that silently drops a refusal is worse than one that stops.",
                 max_schema_by_link.len(),
                 a.attested_len
@@ -736,7 +831,7 @@ pub fn verify_authenticity(
         if a.digest_schema < max_covered {
             return Err(format!(
                 "a CHAIN_HEAD_ATTESTATION claims digest_schema {} at len {}, but a DECISION_SEALED \
-                 in the prefix it covers is schema_version {}.\n  \
+                 in the window it covers is schema_version {}.\n  \
                  The signature is authentic, so the ISSUER signed a false ceiling: the attestation \
                  understates the verification regime of the very records it attests. This is a \
                  SIGNED DOWNGRADE claim — distinct from a payload rewrite (the records are intact) \
@@ -745,24 +840,105 @@ pub fn verify_authenticity(
                 a.digest_schema, a.attested_len, max_covered
             ));
         }
-        attestations += 1;
-        covered_prefix = covered_prefix.max(a.attested_len);
+        covering += 1;
     }
 
-    if attestations == 0 {
-        return Err(
-            "--issuer was given, but the stream carries NO chain-head attestation.\n  \
-             An issuer-signed head cannot be minted without the issuer key, so its absence over a stream \
-             you asked to authenticate is the fabricated-chain tell — refusing rather than reporting a \
-             green chain no issuer ever signed."
-                .to_string(),
-        );
+    if covering == 0 {
+        return Err(format!(
+            "--issuer was given, but the window carries NO chain-head attestation covering it \
+             (attested_len strictly greater than {base_len}).\n  \
+             An issuer-signed head cannot be minted without the issuer key, so its absence over a \
+             window you asked to authenticate is the fabricated-window tell. The start's own anchor \
+             cannot satisfy this by itself — spec clause (f4): the anchor feed is public, so a \
+             fabricated window appended to a genuine anchor would otherwise authenticate with zero \
+             issuer coverage of its own — refusing rather than reporting a green window no issuer \
+             ever signed."
+        ));
     }
     Ok(IssuerReport {
         attestations,
         covered_prefix,
         records_recomputed,
+        covering,
+        below_window,
     })
+}
+
+/// Verify every `CHAIN_HEAD_ATTESTATION` in the stream against the **pinned** issuer AIDs, from
+/// **genesis**. The common case; see [`verify_authenticity_anchored`] for the general form spec
+/// clause (f) adds, and for the full rationale (every point below still applies here — genesis is
+/// simply `base_len == 0, base_head == GENESIS`).
+pub fn verify_authenticity(
+    events: &[Event],
+    heads: &[Vec<u8>],
+    max_schema_by_link: &[u32],
+    pinned_aids: &[String],
+) -> Result<IssuerReport, String> {
+    verify_authenticity_anchored(events, heads, max_schema_by_link, pinned_aids, 0, &GENESIS)
+}
+
+/// Validate an anchor `CHAIN_HEAD_ATTESTATION` against a **pinned** issuer AID, BEFORE it is trusted
+/// as an anchored start (spec clauses (f1)/(f2)). Run standalone, ahead of [`chain_anchored`]: the
+/// anchor seeds the window that function verifies, so it must be validated before that window is even
+/// parsed — seeding an unverified head is exactly the "bare `(len, head)` pair" shape clause (f1)
+/// forbids as an input.
+///
+/// This is deliberately a small, self-contained duplicate of the pin+signature+vacuous checks inside
+/// [`verify_authenticity_anchored`]'s attestation loop, in the spirit of this crate's `record_digest_v2`
+/// / `record_digest_v3` duplication: the anchor check runs at a different point in the caller's control
+/// flow (before a `ChainReport` exists at all) and sharing a helper across that seam is not worth the
+/// coupling.
+pub fn verify_anchor(anchor: &Attestation, pinned_aids: &[String]) -> Result<(), String> {
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
+    let keys: Vec<(&str, VerifyingKey)> = pinned_aids
+        .iter()
+        .map(|aid| {
+            let key = aid_to_key(aid)?;
+            let vk = VerifyingKey::from_bytes(&key).map_err(|e| format!("bad issuer key: {e}"))?;
+            Ok((aid.as_str(), vk))
+        })
+        .collect::<Result<_, String>>()?;
+
+    let Some((_, vk)) = keys.iter().find(|(aid, _)| *aid == anchor.issuer_aid) else {
+        return Err(format!(
+            "the anchor names issuer '{}', but you pinned [{}].\n  \
+             A signature only means something relative to a key you already trusted; deriving the key \
+             from the anchor's own issuer would let a forged anchor verify against its forger.",
+            anchor.issuer_aid,
+            pinned_aids.join(", ")
+        ));
+    };
+    let sig: [u8; 64] = anchor
+        .signature
+        .as_slice()
+        .try_into()
+        .map_err(|_| "anchor signature is not 64 bytes".to_string())?;
+    vk.verify(
+        &chain_head_attestation_payload(anchor),
+        &Signature::from_bytes(&sig),
+    )
+    .map_err(|_| {
+        "the anchor's signature does not verify against the pinned issuer's key. It is forged, or its \
+         (len, head) was altered after signing."
+            .to_string()
+    })?;
+
+    // spec clause (f2): a vacuous anchor (attested_len == 0) claims the empty prefix — a conforming
+    // producer never signs it (spec clause (d)), so accepting it as a start would re-create genesis
+    // seeding through the back door, under an artifact no conforming producer emits. Checked AFTER the
+    // signature, per (f1): "the anchor's signature MUST verify ... before anything is verified from
+    // it" — so "the pinned issuer really signed this nothing" is established fact when refused.
+    if anchor.attested_len == 0 {
+        return Err(format!(
+            "the anchor is VACUOUS — attested_len is 0, a signed claim about the empty prefix.\n  \
+             It claims nothing (a conforming producer never signs the empty chain), so accepting it \
+             as an anchored start would re-create genesis seeding through the back door, under an \
+             artifact no conforming producer emits, signed by issuer '{}'.",
+            anchor.issuer_aid
+        ));
+    }
+    Ok(())
 }
 
 pub fn hex(b: &[u8]) -> String {

@@ -457,6 +457,61 @@ pub struct Attestation {
     pub signature: Vec<u8>,
 }
 
+impl Attestation {
+    /// Parse an **anchor document** — the seed for `--from-anchor` (spec clause (f)) — in either
+    /// shape a caller can plausibly have:
+    ///
+    /// 1. a **bare six-field JSON object**, byte-for-byte one element of `GET /v1/anchors`' `anchors`
+    ///    array;
+    /// 2. a **full `seam-event.v1` event** (one line) carrying `chain_head_attestation` — what an
+    ///    outbox consumer already holds.
+    ///
+    /// A file containing the WHOLE `/v1/anchors` feed response (`{"anchors": [...]}`) is refused by
+    /// name rather than silently parsed as *something* — picking one element for the caller would
+    /// mean the start actually verified is not the start the caller chose.
+    ///
+    /// This lives here, not in `main.rs`, so the CLI and an embedding caller share ONE parse — the
+    /// same reasoning as [`Cert::parse_document`].
+    pub fn parse_document(raw: &str) -> Result<Self, String> {
+        let raw = raw.trim();
+
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {
+            if v.get("anchors").is_some() {
+                return Err(
+                    "this is the whole /v1/anchors feed — pick ONE element (e.g. jq -c \
+                     '.anchors[0]') so the start you verify from is the start you chose"
+                        .to_string(),
+                );
+            }
+        }
+
+        // Shape 2: a full seam-event.v1 event (JSON projection or base64 protobuf) carrying the
+        // attestation. `Event::parse` requires schema_version/event_id, so a bare six-field object
+        // (shape 1) fails here and falls through to the bare parse below — it never satisfies those.
+        if let Ok(ev) = Event::parse(raw) {
+            return ev.attestation.ok_or_else(|| {
+                "this seam-event.v1 event carries no chain_head_attestation".into()
+            });
+        }
+
+        // Shape 1: the bare six-field object.
+        let j: ChainHeadAttestationJson = serde_json::from_str(raw).map_err(|e| {
+            format!(
+                "not a CHAIN_HEAD_ATTESTATION in any recognised shape (a bare six-field object, or a \
+                 seam-event.v1 event carrying one): {e}"
+            )
+        })?;
+        Ok(Attestation {
+            attested_len: j.attested_len,
+            attested_head: b64(&j.attested_head)?,
+            attested_at: j.attested_at,
+            issuer_aid: j.issuer_aid,
+            digest_schema: j.digest_schema,
+            signature: b64(&j.signature)?,
+        })
+    }
+}
+
 fn b64(s: &str) -> Result<Vec<u8>, String> {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD

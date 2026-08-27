@@ -33,7 +33,7 @@ fn usage() -> ! {
         "seam-verify — check Seam's audit chain and erasure certificates without trusting Seam\n\
          \n\
          USAGE:\n    \
-             seam-verify chain <FILE> [--strict] [--issuer <AID>] [--json]\n    \
+             seam-verify chain <FILE> [--strict] [--issuer <AID>] [--from-anchor <FILE>] [--json]\n    \
              seam-verify erasure-cert <FILE> --issuer <AID> [--json]\n\
          \n\
          chain <FILE>\n    \
@@ -63,6 +63,13 @@ fn usage() -> ! {
                        REPEATABLE: pass once per trusted issuer to verify a chain spanning a key ROTATION\n                      \
                        (an attestation passes iff it verifies against ANY pinned AID; one naming an issuer\n                      \
                        outside the pinned set is a FAIL).\n\
+         \n    \
+             --from-anchor <FILE>  ANCHORED START (spec clause (f)): seed the running head from an\n                      \
+                       issuer-signed CHAIN_HEAD_ATTESTATION instead of genesis, and verify the window from\n                      \
+                       there. FILE is one anchor: a bare six-field JSON object (one element of\n                      \
+                       GET /v1/anchors) or a full seam-event.v1 CHAIN_HEAD_ATTESTATION event line.\n                      \
+                       Requires --issuer: the anchor is verified against the pinned AID before it is\n                      \
+                       trusted — an unsigned or wrong-issuer anchor is REFUSED, never silently seeded.\n\
          \n\
          erasure-cert <FILE> --issuer <AID>\n    \
              Verify a signed GDPR erasure certificate against the issuer AID and NOTHING else. Get the\n    \
@@ -117,7 +124,48 @@ fn io_error(msg: &str, json: bool) -> ExitCode {
     ExitCode::from(1)
 }
 
-fn cmd_chain(path: &str, strict: bool, json: bool, issuers: &[String]) -> ExitCode {
+/// Load and validate the `--from-anchor` FILE, spec clauses (f1)/(f2), BEFORE anything is verified
+/// from it — an unsigned, forged, or unpinned-issuer anchor must never seed a running head.
+///
+/// Returns `Ok(None)` when no anchor was requested (`--from-anchor` absent), `Ok(Some(attestation))`
+/// on a validated anchor, or a pre-formed `ExitCode` on a load/validation failure — a parse failure
+/// (bad file, wrong shape) is exit 1 (usage/IO), while a signature/pin/vacuous failure is exit 2 under
+/// a banner naming which: `ANCHOR REJECTED` or `VACUOUS ANCHOR`.
+fn load_anchor(
+    from_anchor: Option<&str>,
+    issuers: &[String],
+    json: bool,
+) -> Result<Option<wire::Attestation>, ExitCode> {
+    let Some(anchor_path) = from_anchor else {
+        return Ok(None);
+    };
+    let raw = std::fs::read_to_string(anchor_path)
+        .map_err(|e| io_error(&format!("{anchor_path}: {e}"), json))?;
+    let anchor = wire::Attestation::parse_document(&raw)
+        .map_err(|e| io_error(&format!("{anchor_path}: {e}"), json))?;
+    if let Err(e) = verify::verify_anchor(&anchor, issuers) {
+        let banner = if e.contains("VACUOUS") {
+            "VACUOUS ANCHOR"
+        } else {
+            "ANCHOR REJECTED"
+        };
+        return Err(fail(&e, json, banner));
+    }
+    Ok(Some(anchor))
+}
+
+fn cmd_chain(
+    path: &str,
+    strict: bool,
+    json: bool,
+    issuers: &[String],
+    from_anchor: Option<&str>,
+) -> ExitCode {
+    let anchor = match load_anchor(from_anchor, issuers, json) {
+        Ok(a) => a,
+        Err(code) => return code,
+    };
+
     let lines = match read_lines(path) {
         Ok(l) => l,
         Err(e) => return io_error(&e, json),
@@ -146,7 +194,12 @@ fn cmd_chain(path: &str, strict: bool, json: bool, issuers: &[String]) -> ExitCo
     // Delivery is not ordered (at-least-once, replays, merged shards). Sort rather than demand order.
     events.sort_by_key(|e| e.seq);
 
-    match verify::chain(&events) {
+    let report = match &anchor {
+        Some(a) => verify::chain_anchored(&events, a.attested_len, &a.attested_head),
+        None => verify::chain(&events),
+    };
+
+    match report {
         Err(e) => fail(&e, json, "CHAIN VERIFICATION FAILED"),
         Ok(mut r) => {
             r.duplicates = duplicates;
@@ -161,24 +214,55 @@ fn cmd_chain(path: &str, strict: bool, json: bool, issuers: &[String]) -> ExitCo
                 return fail(&msg, json, "REFUSED (--strict)");
             }
             // --issuer upgrades integrity → AUTHENTICITY: every chain-head attestation must verify against
-            // the pinned key AND sit at the head it attests, and at least one must be present. Integrity
-            // has already passed (the head sequence in `r.heads` is trustworthy to check positions against).
+            // the pinned key AND sit at the head it attests, and at least one covering attestation must be
+            // present. Integrity has already passed (the head sequence in `r.heads` is trustworthy to
+            // check positions against).
             let issuer_report = if issuers.is_empty() {
                 None
             } else {
-                match verify::verify_authenticity(&events, &r.heads, &r.max_schema_by_link, issuers)
-                {
+                let res = match &anchor {
+                    Some(a) => verify::verify_authenticity_anchored(
+                        &events,
+                        &r.heads,
+                        &r.max_schema_by_link,
+                        issuers,
+                        a.attested_len,
+                        &a.attested_head,
+                    ),
+                    None => verify::verify_authenticity(
+                        &events,
+                        &r.heads,
+                        &r.max_schema_by_link,
+                        issuers,
+                    ),
+                };
+                match res {
                     Ok(ir) => Some(ir),
                     Err(e) => return fail(&e, json, "AUTHENTICITY VERIFICATION FAILED"),
                 }
             };
             if json {
                 let authenticity = match &issuer_report {
-                    Some(ir) => format!(
-                        ",\"authenticated\":true,\"attestations\":{},\"covered_prefix\":{},\
-                         \"records_recomputed\":{}",
-                        ir.attestations, ir.covered_prefix, ir.records_recomputed
-                    ),
+                    Some(ir) => {
+                        // Anchored-only keys, so genesis-mode JSON stays byte-identical to before this
+                        // flag existed — `anchor_extra` is the empty string there.
+                        let anchor_extra = match &anchor {
+                            Some(a) => format!(
+                                ",\"anchored\":true,\"base_len\":{},\"base_head\":\"{}\",\
+                                 \"covering_attestations\":{},\"below_window\":{}",
+                                a.attested_len,
+                                verify::hex(&a.attested_head),
+                                ir.covering,
+                                ir.below_window,
+                            ),
+                            None => String::new(),
+                        };
+                        format!(
+                            ",\"authenticated\":true,\"attestations\":{},\"covered_prefix\":{},\
+                             \"records_recomputed\":{}{}",
+                            ir.attestations, ir.covered_prefix, ir.records_recomputed, anchor_extra,
+                        )
+                    }
                     None => String::new(),
                 };
                 println!(
@@ -195,10 +279,10 @@ fn cmd_chain(path: &str, strict: bool, json: bool, issuers: &[String]) -> ExitCo
             } else {
                 println!(
                     "{}",
-                    if issuer_report.is_some() {
-                        "CHAIN AUTHENTICATED (integrity + issuer-signed head)"
-                    } else {
-                        "CHAIN VERIFIED"
+                    match (&anchor, &issuer_report) {
+                        (Some(_), Some(_)) => "WINDOW AUTHENTICATED (issuer-anchored start)",
+                        (None, Some(_)) => "CHAIN AUTHENTICATED (integrity + issuer-signed head)",
+                        _ => "CHAIN VERIFIED",
                     }
                 );
                 println!("  events            : {}", r.events);
@@ -211,6 +295,23 @@ fn cmd_chain(path: &str, strict: bool, json: bool, issuers: &[String]) -> ExitCo
                         "  records recomputed: {} (v2/v3 record-digest recompute)",
                         ir.records_recomputed
                     );
+                    if let Some(a) = &anchor {
+                        println!(
+                            "  anchored start    : base_len {} / base_head {}",
+                            a.attested_len,
+                            verify::hex(&a.attested_head)
+                        );
+                        println!(
+                            "  covering (len > base_len): {} (these satisfy spec clause (f4))",
+                            ir.covering
+                        );
+                        if ir.below_window > 0 {
+                            println!(
+                                "  below-window      : {} (skipped, reported — spec clause (f3))",
+                                ir.below_window
+                            );
+                        }
+                    }
                 }
                 if r.duplicates > 0 {
                     println!(
@@ -301,6 +402,10 @@ fn main() -> ExitCode {
     // from the retired key AND the new one) can be authenticated end-to-end. One --issuer behaves as before.
     let mut issuers: Vec<String> = Vec::new();
     let mut positional: Option<String> = None;
+    // Anchored start (spec clause (f)): exactly one anchor seeds a start, so a second `--from-anchor`
+    // is refused loudly, the same shape as a second positional FILE below — silently keeping the LAST
+    // one would seed a start the caller never actually asked for.
+    let mut from_anchor: Option<String> = None;
 
     let mut it = argv[1..].iter();
     while let Some(a) = it.next() {
@@ -311,6 +416,21 @@ fn main() -> ExitCode {
                 Some(v) => issuers.push(v.clone()),
                 None => {
                     eprintln!("seam-verify: --issuer requires an AID");
+                    usage();
+                }
+            },
+            "--from-anchor" => match it.next() {
+                Some(v) => {
+                    if from_anchor.is_some() {
+                        eprintln!(
+                            "seam-verify: --from-anchor given twice — exactly one anchor seeds a start"
+                        );
+                        usage();
+                    }
+                    from_anchor = Some(v.clone());
+                }
+                None => {
+                    eprintln!("seam-verify: --from-anchor requires a FILE");
                     usage();
                 }
             },
@@ -336,13 +456,27 @@ fn main() -> ExitCode {
 
     match cmd {
         "chain" => match positional {
-            Some(p) => cmd_chain(&p, strict, json, &issuers),
+            Some(p) => {
+                if from_anchor.is_some() && issuers.is_empty() {
+                    eprintln!(
+                        "seam-verify: --from-anchor requires --issuer — the anchor is verified against \
+                         the pinned AID before it is trusted; an unsigned or wrong-issuer anchor is \
+                         REFUSED, never silently seeded"
+                    );
+                    usage();
+                }
+                cmd_chain(&p, strict, json, &issuers, from_anchor.as_deref())
+            }
             None => {
                 eprintln!("seam-verify: chain requires a FILE (or '-')");
                 usage();
             }
         },
         "erasure-cert" => {
+            if from_anchor.is_some() {
+                eprintln!("seam-verify: --from-anchor is a chain-only flag");
+                usage();
+            }
             // A certificate names exactly ONE signer; repeatable --issuer is a chain-only affordance for
             // key rotation. Anything but exactly one pin here is a usage error.
             let (Some(p), [i]) = (positional, issuers.as_slice()) else {
