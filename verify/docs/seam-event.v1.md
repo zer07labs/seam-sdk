@@ -1,8 +1,4 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 69a60c3 (refreshed 2026-08-27 for
-     clause (d)'s second sentence — a VACUOUS attestation (`attested_len` = 0) is REFUSED outright
-     and unconditionally, seam-runtime#458 PR 1, merged as seam-runtime#467. That sentence is
-     what this repo's vacuous-attestation refusal is implemented FROM; without it the refusal would
-     have been a transcription of the runtime's code, which is exactly what this copy exists to make unnecessary). The runtime spec is the
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 5d8c177 (refreshed 2026-08-27 for clause (f) — anchored verification, seam-runtime#386/#421 Wave 2 Phase 12). The runtime spec is the
      source of truth; refresh this copy whenever the spec changes — a stale copy here once shipped a real
      verifier bug (the AUTHORIZE_EVALUATED advisory omission), and it has been stale twice more since: it
      carried no §Record digest (v3) before an earlier refresh, and no §"Presence on the wire" before the
@@ -243,6 +239,53 @@ contain no `DECISION_SEALED` at all has no witness, so (e) cannot fire there eit
 existential over the covered records, not a claim about the prefix's length. Stated because the two
 natural implementations — a running maximum seeded at `0`, and an iterate-and-compare over the covered
 records — must agree here, and only one of them makes that obvious.
+
+**Anchored verification (clause (f) — windowed start).** A consumer may hold only a *window* of the
+stream — a transport has a retention horizon, and an evidence bundle is deliberately scoped — so a
+verifier MAY accept an **anchored start**: a `CHAIN_HEAD_ATTESTATION` artifact (the six payload fields
+above, supplied out of band — e.g. one element of the public `GET /v1/anchors` feed) whose
+`(attested_len, attested_head)` seeds the running head in place of genesis. An anchored start
+**relocates the trust root**, so all of the following are normative:
+
+- **(f1) — the anchor is validated before it is trusted, and only under a pinned issuer.** An
+  anchored start is accepted only when `--issuer` is given, and the anchor's signature MUST verify
+  against a pinned issuer AID under the signed framing above, before anything is verified from it.
+  An unsigned, forged, or unpinned-issuer anchor ⇒ REFUSE — never fall back to genesis, and never
+  seed an unverified head. A verifier that seeds an arbitrary caller-supplied head can be told to
+  skip a tampered prefix; a bare `(len, head)` pair with no signature is a premise, not a claim, and
+  MUST NOT be an accepted input shape. A forger cannot mint an issuer-signed anchor over a tampered
+  prefix's head, which is exactly what makes this mode no weaker than a genesis start.
+- **(f2) — a vacuous anchor is refused.** An anchor whose `attested_len` is 0 ⇒ REFUSE: it is the
+  artifact clause (d) already refuses on the wire, and as a start it would re-create genesis seeding
+  through the back door under an artifact no conforming producer signs.
+- **(f3) — window positions are anchor-relative.** Link *k* of the window sits at absolute position
+  `attested_len + k`, and the first chained event MUST extend `attested_head` (clause-(a) linking is
+  otherwise unchanged). An in-window attestation attesting a position beyond the window ⇒ REFUSE
+  (unchanged); attesting exactly the anchor's `attested_len` ⇒ its head MUST equal the anchor's;
+  attesting a position *below* the anchor's cannot be checked against heads the window does not
+  contain — its signature is still verified, and it is then skipped and REPORTED, never silently
+  dropped and never counted toward (f4). (The read→sign→append race above can legitimately place
+  such an attestation inside the window.)
+- **(f4) — clause (d), re-scoped.** At least one valid attestation whose `attested_len` is
+  **strictly greater** than the anchor's MUST be present, else REFUSE. The anchor itself never
+  satisfies (d): the anchor feed is public, so a fabricated window appended to a genuine anchor
+  would otherwise authenticate with zero issuer coverage of its own. The anchor warrants the
+  prefix; only an in-window attestation warrants the window.
+- **(f5) — clause (e), re-scoped.** The ceiling is checked over the window's covered links only,
+  with the running maximum seeded at 0 — never seeded from the anchor's `digest_schema`, which is a
+  ceiling, not the prefix's actual maximum (seeding from it would refuse a genuinely old in-window
+  attestation over an all-v2 span, violating the `>=`-never-`==` property above). Records at or
+  below the anchor are not in the input; their regime is warranted solely by the anchor's own
+  signed ceiling.
+- **(f6) — the verdict states its premise.** An anchored verdict MUST report the anchor's
+  `attested_len` and head. A green anchored verdict is a claim about the window and about the
+  issuer-signed anchor — never about the prefix below it, which is covered exactly as far as an
+  issuer signature covers it and no further.
+
+What anchored verification does **not** weaken: within-window truncation, insertion, and reorder are
+caught by (a) exactly as from genesis; tail truncation is exactly as visible as from genesis (the
+integrity-only tail, and comparison against a later anchor); and a tampered prefix cannot be skipped,
+because a forger cannot produce the issuer-signed anchor an anchored start requires.
 
 ### `SESSION_LIFECYCLE` (additive, tag 21 — advisory, not chained) — CP-09
 
