@@ -197,6 +197,7 @@ class SeamClient:
         features: Optional[Mapping[str, str]] = None,
         session_id: str = "",
         subject: str = "",
+        subjects: Sequence[str] = (),
         agent_id: str = "",
         client_request_id: str = "",
         timeout: float = DEFAULT_TIMEOUT_S,
@@ -213,6 +214,13 @@ class SeamClient:
         to record it on a handle row, say — canonicalizes the object, the SDK canonicalizes it again,
         and the two derivations can disagree across the gap between them (seam-sdk#60). The two
         parameters are mutually exclusive; passing both is an error rather than a precedence rule.
+
+        ``subjects`` supersedes the deprecated singular ``subject``: the server takes the union of
+        both, drops empty entries, dedupes first-wins, and caps the effective set at 16. **Today the
+        server refuses an effective subject set larger than one** — supplying more than one is the
+        server's ``INVALID_ARGUMENT`` until Phase B ships ``AuthorizeEvaluated.subject_digests``; this
+        parameter exists now so callers can migrate off ``subject`` one at a time. It is not part of
+        the signed payload (``call_sig`` does not cover ``subject`` or ``subjects``).
         """
         # Canonicalized ONCE, before the admit and outside the closure — see the sync twin in
         # client.py for why. It matters MORE here: an aio client is the one most likely to have
@@ -237,6 +245,7 @@ class SeamClient:
                 features=features,
                 session_id=session_id,
                 subject=subject,
+                subjects=list(subjects),
                 agent_id=agent_id,
                 client_request_id=client_request_id,
             )
@@ -358,6 +367,74 @@ class SeamClient:
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
         return await self._coord.SubmitVote(req, timeout=timeout)
+
+    async def submit_evaluation(
+        self,
+        session_id: str,
+        evaluator: str,
+        proposal_id: str,
+        recommendation: str,
+        *,
+        confidence: Optional[float] = None,
+        reason: str = "",
+        rationale_ref: Optional[str] = None,
+        usage: Optional[StepUsage] = None,
+        timeout: float = DEFAULT_TIMEOUT_S,
+    ) -> pb.SessionStep:
+        """Async twin of :meth:`seam_sdk.SeamClient.submit_evaluation`.
+
+        ``recommendation`` is MACP's closed vocabulary: ``APPROVE | REVIEW | BLOCK | REJECT``.
+
+        ``confidence`` is EXPLICIT PRESENCE on the wire: absent means *declined to claim* and is
+        **not** ``0.0`` — the runtime never fabricates a value into the caller's intent. When
+        present it must be in ``[0.0, 1.0]``; out-of-range is the server's ``INVALID_ARGUMENT``
+        (MACP refuses it — ``macp-modes-0.5.0 src/mode/decision.rs:166-171``), deliberately not
+        mirrored client-side.
+
+        ``rationale_ref`` is a ``sha256:<hex>`` context ref. It is accepted and recorded on the
+        request path only — it is **NOT YET SEALED**.
+        """
+        req = pb.EvaluationRequest(
+            session_id=session_id,
+            evaluator=evaluator,
+            proposal_id=proposal_id,
+            recommendation=recommendation,
+            reason=reason,
+        )
+        if confidence is not None:
+            req.confidence = confidence  # presence; NEVER default it to 0.0
+        if rationale_ref is not None:
+            req.rationale_ref = rationale_ref
+        if usage is not None:
+            req.usage.CopyFrom(usage.to_pb())
+        return await self._coord.SubmitEvaluation(req, timeout=timeout)
+
+    async def submit_objection(
+        self,
+        session_id: str,
+        objector: str,
+        proposal_id: str,
+        reason: str,
+        *,
+        severity: str = "",
+        usage: Optional[StepUsage] = None,
+        timeout: float = DEFAULT_TIMEOUT_S,
+    ) -> pb.SessionStep:
+        """Async twin of :meth:`seam_sdk.SeamClient.submit_objection`.
+
+        ``severity`` is one of ``low | medium | high | critical``; empty defaults to ``medium``
+        (the MACP default, applied server-side).
+        """
+        req = pb.ObjectionRequest(
+            session_id=session_id,
+            objector=objector,
+            proposal_id=proposal_id,
+            reason=reason,
+            severity=severity,
+        )
+        if usage is not None:
+            req.usage.CopyFrom(usage.to_pb())
+        return await self._coord.SubmitObjection(req, timeout=timeout)
 
     async def submit_commit(
         self,

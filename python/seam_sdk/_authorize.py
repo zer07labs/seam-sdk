@@ -8,7 +8,7 @@ and async ticket lifecycles from drifting apart.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping, Optional
+from typing import Mapping, Optional, Sequence
 
 from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
 
@@ -177,6 +177,7 @@ def build_authorize_request(
     features: Optional[Mapping[str, str]] = None,
     session_id: str = "",
     subject: str = "",
+    subjects: Sequence[str] = (),
     agent_id: str = "",
     client_request_id: str = "",
 ) -> "pb.AuthorizeRequest":
@@ -198,6 +199,13 @@ def build_authorize_request(
     Only what can be checked *without* re-deriving is checked — that it is ``bytes`` and non-empty.
     Canonicality is the caller's assertion, and a caller can only misrepresent its own input, which
     it already controls, under its own signature.
+
+    ``subjects`` supersedes the deprecated singular ``subject``: the server takes the union of both,
+    drops empty entries, dedupes first-wins, and caps the effective set at 16. It is **not** part of
+    the signed payload — ``call_sig`` covers ticket, digest, ``tool_name``, and ``agent_id`` only, not
+    ``subject`` or ``subjects`` — so adding it here requires no change to ``call_sig``. Today the
+    server refuses an effective subject set larger than one (``INVALID_ARGUMENT``); Phase B
+    (``AuthorizeEvaluated.subject_digests``) lifts that cap.
     """
     canonical = _resolve_canonical(tool_input, canonical)
     digest = tool_input_digest(canonical)
@@ -212,6 +220,7 @@ def build_authorize_request(
         ),
         session_id=session_id,
         subject=subject,
+        subjects=list(subjects),
         agent_id=agent_id,
         client_request_id=client_request_id,
     )

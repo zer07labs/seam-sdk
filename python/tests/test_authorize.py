@@ -629,3 +629,29 @@ def test_request_canonical_bytes_round_trip(fake_server):
     original = {"b": [1, 2.5, "x"], "a": {"nested": True, "z": None}}
     client.authorize(Agent(SEED), "t", original)
     assert json.loads(servicer.last_request.tool_input.decode()) == original
+
+
+# ── `subjects` (A-3/A-4): signature-neutral, additive to `subject` ─────────────────────────────
+
+
+def test_subjects_reach_the_wire_and_subject_stays_empty(fake_server):
+    servicer, addr = fake_server
+    client = SeamClient.connect(addr)
+    client.authorize(Agent(SEED), "t", {}, subjects=["a", "b"])
+    req = servicer.last_request
+    assert list(req.subjects) == ["a", "b"]
+    assert req.subject == ""
+
+
+def test_subjects_does_not_change_call_sig():
+    """`call_sig` covers ticket, digest, `tool_name`, `agent_id` — NOT `subject` or `subjects`
+    (A-3). This pins that a future change cannot quietly bring `subjects` under the signature
+    without a test failing here first."""
+    from seam_sdk._authorize import build_authorize_request
+
+    kwargs = dict(ticket=b"tkt:1", agent_seed=SEED, tool_name="t", tool_input={"k": 1})
+    req_without = build_authorize_request(**kwargs)
+    req_with = build_authorize_request(**kwargs, subjects=["a", "b"])
+
+    assert req_without.call_sig == req_with.call_sig
+    assert req_without.call_sig != b""
