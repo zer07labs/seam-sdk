@@ -398,6 +398,13 @@ export class SeamClient {
       features?: Record<string, string>;
       sessionId?: string;
       subject?: string;
+      /** Supersedes the deprecated singular `subject`: the server takes the union of both, drops
+       * empty entries, dedupes first-wins, and caps the effective set at 16. **Today the server
+       * refuses an effective subject set larger than one** — supplying more than one is the
+       * server's `INVALID_ARGUMENT` until Phase B ships `AuthorizeEvaluated.subject_digests`; this
+       * field exists now so callers can migrate off `subject` one at a time. It is not part of the
+       * signed payload (`callSig` does not cover `subject` or `subjects`). */
+      subjects?: string[];
       agentId?: string;
       clientRequestId?: string;
       timeoutMs?: number;
@@ -416,6 +423,7 @@ export class SeamClient {
       features: opts?.features ?? {},
       sessionId: opts?.sessionId ?? "",
       subject: opts?.subject ?? "",
+      subjects: opts?.subjects ?? [],
       agentId: opts?.agentId ?? "",
       clientRequestId: opts?.clientRequestId ?? "",
     });
@@ -575,6 +583,72 @@ export class SeamClient {
     opts?: UnaryCallOptions,
   ) {
     return this.coord.submitVote({ sessionId, voter, proposalId, value, usage }, call(opts));
+  }
+
+  /**
+   * Submit a MACP evaluation for a proposal.
+   *
+   * `recommendation` is MACP's closed vocabulary: `APPROVE | REVIEW | BLOCK | REJECT`.
+   *
+   * `confidence` is EXPLICIT PRESENCE on the wire: omitting it means *declined to claim* and is
+   * **not** `0`  — the runtime never fabricates a value into the caller's intent. When present it
+   * must be in `[0.0, 1.0]`; out-of-range is the server's `INVALID_ARGUMENT` (MACP refuses it —
+   * `macp-modes-0.5.0 src/mode/decision.rs:166-171`), deliberately not mirrored client-side.
+   *
+   * `rationaleRef` is a `sha256:<hex>` context ref. It is accepted and recorded on the request
+   * path only — it is **NOT YET SEALED**.
+   */
+  submitEvaluation(
+    sessionId: string,
+    evaluator: string,
+    proposalId: string,
+    recommendation: string,
+    opts?: {
+      confidence?: number;
+      reason?: string;
+      rationaleRef?: string;
+      usage?: StepUsage;
+      timeoutMs?: number;
+    },
+  ) {
+    return this.coord.submitEvaluation(
+      {
+        sessionId,
+        evaluator,
+        proposalId,
+        recommendation,
+        reason: opts?.reason ?? "",
+        // Omitting the key is absence on the wire — never `?? 0`, which would collapse "declined
+        // to claim" into a real confidence value the caller never gave.
+        ...(opts?.confidence !== undefined ? { confidence: opts.confidence } : {}),
+        ...(opts?.rationaleRef !== undefined ? { rationaleRef: opts.rationaleRef } : {}),
+        usage: opts?.usage,
+      },
+      call(opts),
+    );
+  }
+
+  /**
+   * Submit a MACP objection against a proposal.
+   *
+   * `severity` is one of `low | medium | high | critical`; empty defaults to `medium` (the MACP
+   * default, applied server-side).
+   */
+  submitObjection(
+    sessionId: string,
+    objector: string,
+    proposalId: string,
+    reason: string,
+    opts?: {
+      severity?: string;
+      usage?: StepUsage;
+      timeoutMs?: number;
+    },
+  ) {
+    return this.coord.submitObjection(
+      { sessionId, objector, proposalId, reason, severity: opts?.severity ?? "", usage: opts?.usage },
+      call(opts),
+    );
   }
 
   submitCommit(

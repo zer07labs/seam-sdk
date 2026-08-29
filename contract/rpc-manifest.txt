@@ -57,6 +57,8 @@ SeamCoordination/SessionStatus
 SeamCoordination/SubmitApprovalRequest
 SeamCoordination/SubmitBallot
 SeamCoordination/SubmitCommit
+SeamCoordination/SubmitEvaluation
+SeamCoordination/SubmitObjection
 SeamCoordination/SubmitProposal
 SeamCoordination/SubmitVote
 SeamEvents/ReportEventsConsumed

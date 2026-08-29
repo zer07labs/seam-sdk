@@ -50,6 +50,17 @@ def test_the_quorum_verbs_are_present_on_both() -> None:
     assert inspect.iscoroutinefunction(aio.SeamClient.submit_ballot)
 
 
+def test_the_coordination_verbs_are_present_on_both() -> None:
+    # Same rationale as the quorum verbs above: named explicitly because the set test alone passes
+    # if submit_evaluation AND submit_objection are both forgotten on the same side.
+    for verb in ("submit_evaluation", "submit_objection"):
+        assert hasattr(client.SeamClient, verb), f"sync client is missing {verb}"
+        assert hasattr(aio.SeamClient, verb), f"async client is missing {verb}"
+
+    assert inspect.iscoroutinefunction(aio.SeamClient.submit_evaluation)
+    assert inspect.iscoroutinefunction(aio.SeamClient.submit_objection)
+
+
 def test_the_two_clients_agree_on_each_verbs_signature() -> None:
     """Same names is not enough — same *arguments*, modulo `async`.
 
