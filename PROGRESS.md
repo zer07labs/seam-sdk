@@ -76,7 +76,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:339-359`. |
 | `python/tests/test_protobuf_floor.py:72,88` | The two pure-file-read assertions Phase 6 runs at publish time. `:29-31` reads only `_gen/seam/api/v1/seam_pb2.py`; `:47-51` **skips** when `_gen` is absent. `:88-99` forces `cap == gencode_major + 1` — this is why "widen the floor" is not a metadata edit. |
 | `python/tests/test_grpcio_floor.py:38` | Module-level `import grpc` — matters if Phase 6 runs it in the publish job. |
-| `.github/workflows/yank.yml` | `workflow_dispatch`, `dry_run` default `"true"`. A hard **DELETE** (`:69-70`), not a PyPI-style yank. `:38` does **not** strip the cargo token's `"Bearer "` prefix (`publish.yml:369-371` does) — **Phase 10** fixes that one line and nothing else. |
+| `.github/workflows/yank.yml` | `workflow_dispatch`, `dry_run` default `"true"`. A hard **DELETE** (`:91-92`), not a PyPI-style yank. Its token line did **not** strip the cargo token's `"Bearer "` prefix (`.github/workflows/publish.yml:369-371` does) — **Phase 10 fixed it** (DONE 2026-08-31) at `.github/workflows/yank.yml:55-60`, and left the version/format/name filters (`:73-76`) byte-unchanged. `scripts/test_yank_gate.py` now executes the resolution and pins those filters. |
 | `COMPATIBILITY.md:99-136` | §3 known-bad table + the "Nothing was yanked" preamble. **Phase 7 added the `0.7.39 – 0.7.43` row** (DONE 2026-08-31) — *not* the hedged `≥ 0.7.40` this row first planned: both edges are proven from CI history, so the hedge was deleted rather than softened. `:181-188` dependency floors · `:203-262` §4a co-installability (`:221-223` machine-read `PROBE-TABLE` marker — columns and order load-bearing; `:227` crewai row, whose Tracking cell links **#48 and not crewAI#7103**) · `:328-364` §7 cross-repo coupling, incl. `:337-355` vector origination. **§7 documents `seam-sdk` main → `seam-runtime` CI, *not* a spec-side merge-order courtesy — do not cite it for one.** |
 | `python/tests/test_retracted_claims.py:170-184` | Parametrized presence check over `COMPATIBILITY.md`. **Phase 7 added `"0.7.39"`** — the *lower* edge, which is the one a reader is most likely to assume they are outside of — plus two real row guards (`python/tests/test_retracted_claims.py:194-256`), because this parametrize is a substring check and could not fail for a deleted row. `python/tests/test_retracted_claims.py:27-30` globs **every `*.md` in the repo including `plans/` and this file**; `python/tests/test_retracted_claims.py:39-48` are the qualifier markers that make a paragraph "discussing, not claiming". |
 | `python/tests/test_compatibility_citations_resolve.py` | Every backticked `file:line` in `COMPATIBILITY.md`/`DECISIONS.md` must resolve; `:61-64,:92` ≥10 each; `:76` sibling paths need a `seam-runtime/` prefix; `:141-172` `ANCHORED` needles must hit **exactly once** within `CITATION_SLACK` (`:176`). **Phase 8** adds the vendored-file rule. |
@@ -384,7 +384,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 ### Phase 10 — The no-yank disposition, recorded; and `yank.yml` made to actually authenticate · 2026-08-31
 
 - **Delivered:** a `DECISIONS.md` entry that makes the forward reference Phase 7 left dangling
-  true; `yank.yml`'s credential resolution fixed (`.github/workflows/yank.yml:52`); and
+  true; `yank.yml`'s credential resolution fixed (`.github/workflows/yank.yml:55-60`); and
   `scripts/test_yank_gate.py` (12 tests) wired into `workflow-guards`
   (`.github/workflows/ci.yml:585`).
 - **Nothing was dispatched and nothing was deleted.** The scoping filters — exact version equality,
@@ -437,5 +437,53 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 - **Files:** `DECISIONS.md` (new entry), `.github/workflows/yank.yml`, `.github/workflows/ci.yml`
   (one step in an existing job — `ci-ok`'s `needs:` unchanged), `scripts/test_yank_gate.py` (new),
   `CHANGELOG.md` + `COMPATIBILITY.md` + `python/tests/test_retracted_claims.py` (the "No yank"
-  anchor shifted when Phase 7's advisory row landed), `ASSUMPTIONS.md`, `PROGRESS.md`, the plan.
+  anchor shifted when Phase 7's advisory row landed), `ASSUMPTIONS.md`, `PROGRESS.md`, the plan. (*Not* `CHANGELOG.md` — an earlier draft of this line
+  claimed it; the `"No yank"` anchor moved when Phase 7's advisory row landed in the preceding
+  commit, and only the citations pointing *at* it were repaired here.)
+- **Verify gate — GAPS(8), all closed. The blocking one was mine, and it is the third of its kind
+  this run.** Two of `test_yank_gate.py`'s static assertions matched against the step's **raw**
+  text, which includes comments — and the comment I added beside the token fix quotes
+  `set -euo pipefail` verbatim. Deleting the real `set -euo pipefail` line left the file **12
+  passed**. Deleting all three destructive-scoping filters from the jq chain and leaving them
+  behind as comments also left it **12 passed**. The file already computed a comment-stripped
+  list for one of its four static assertions and did not use it for the others.
+  - Hoisted into `_code()`, with the reason recorded next to it so the next assertion added
+    inherits it. The `set -e` check is now an exact **line** match, not a substring of the file.
+    Proved both ways: delete the real line → 1 red naming it; comment out the filters → 1 red
+    naming which filter moved; restored byte-identically → 12 green.
+  - **The pattern across all three vacuous guards this run is one thing:** each matched a string
+    against text that included the prose explaining the string. A guard a comment can satisfy is
+    a search for a word someone wrote.
+- **Second finding: this commit broke three of the plan's own citations** into `yank.yml`, in the
+  section it was editing and marking DONE, because its `+19`-line divergence block shifted the file
+  under them. Then, fixing those, I repointed them and *afterwards* expanded a `yank.yml` comment —
+  shifting them again. Both passes are the same mistake: repoint before the target file is final.
+  The rule now applied — **repoint once, last, with the cited file frozen.**
+- **Third: a batched-write script silently discarded four fixes.** Three `DECISIONS.md` edits and
+  one citation repoint printed `ok` and were never written, because the script wrote once at the
+  end and a later match failed first. Re-applied with a write after *every* edit.
+- **Fourth: nine literal `'\"'\"'` shell-quoting artifacts had leaked into `DECISIONS.md`** from
+  the heredoc that wrote it. Repaired; the one remaining match in the repo (`ci.yml:297`) is
+  legitimate quoting inside a `run:` block.
+- **Substantive corrections from the gate, not just hygiene:**
+  - *Fail-closed was overstated.* "A token that is only the prefix strips to empty and is refused"
+    holds only when it is the **sole** credential; with a usable Cargo token it correctly falls
+    through. Verified by executing the real step. Not a regression — the refused set is a strict
+    superset of the pre-fix one — but the sentence was wrong, and the untested shape is now a
+    parametrized case (13 tests).
+  - *The rule's gloss contradicted the entry's own lead precedent.* I wrote that the distinction is
+    "what a consumer can discover for themselves"; nineteen lines later the entry cites
+    0.7.16-0.7.19, which failed with an *actively misleading* error and was still documented. The
+    rule turns on **corruption and security, not diagnosability** — restated, with that precedent
+    named as the reason diagnosability cannot be the line.
+  - *#52's quote stopped one sentence before its rebuttal of my own lead argument.* It continues
+    "That was the stated reason not to yank before, and it does not apply here." Restored in full
+    and answered: it is **right** that "a floor already in wide use" does not describe this band —
+    which is why `COMPATIBILITY.md:101-128` scopes that limb to the first two — and the precedent
+    bullet turns on defect severity, which the objection leaves untouched.
+- **What the gate confirmed:** all 12 original guards killed by 14 mutations except the two above;
+  the destructive scoping byte-identical to HEAD~1 (it split both revisions at the token block and
+  hashed the remainder); no credential shape proceeds with a malformed token where it previously
+  refused; `ci-ok`'s `needs:` and `ADVISORY` unchanged; every factual claim in the entry
+  independently re-derived, including the workspace-wide lockfile check over 23 lockfiles.
 - **Next:** PR 1 (Phases 6, 7, 10) — then the #48/#76 replies, which have waited for it.

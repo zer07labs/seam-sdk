@@ -47,8 +47,11 @@ jobs:
           # than one known to be broken, because it is discovered in the incident, not before it.
           #
           # Both sources are stripped, not just the Cargo one: a dedicated key never carries the
-          # prefix, so stripping it costs nothing and removes one way to be wrong. A token that is
-          # ONLY the prefix strips to empty and is refused below — fail-closed is preserved.
+          # prefix, so stripping it costs nothing and removes one way to be wrong. A source that is
+          # ONLY the prefix strips to empty, so it is skipped: if it is the sole credential the
+          # step refuses below, and otherwise the other source is used. Either way nothing
+          # malformed is sent — the set of inputs this refuses is a superset of what it refused
+          # before the strip, so the fix cannot make a previously-refused shape proceed.
           TOKEN="${CLOUDSMITH_API_KEY:-}"
           TOKEN="${TOKEN#Bearer }"
           if [ -z "$TOKEN" ]; then

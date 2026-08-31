@@ -22,19 +22,31 @@ conclusion.
 
 **Delete when a defect corrupts silently or is a security hazard. Document when it fails loud.**
 
-The distinction is about what a consumer can discover for themselves. A wheel that writes wrong
-bytes, or accepts a signature it should reject, gives them nothing to notice — the damage is done
+The distinction is **corruption and security — not diagnosability.** A wheel that writes wrong
+bytes, or accepts a signature it should reject, gives nobody anything to notice: the damage is done
 before anyone knows to look, and the only remedy is to make the artifact unobtainable. A wheel that
-refuses to import gives them a message, a version number and a fix. Deleting the second class buys
-no protection a document does not already provide, and costs the one thing deletion always
-costs: it breaks whoever was working.
+fails, even confusingly, leaves untouched the thing you would have had to undo. Deleting the second
+class buys no protection a document does not already provide, and costs the one thing deletion
+always costs — it breaks whoever was working.
+
+Diagnosability cannot be the line, and the precedent below is why: 0.7.16-0.7.19 failed with an
+actively misleading error, and was documented rather than deleted. It corrupted nothing. That this
+band is *also* self-diagnosing makes it an easier call, not a differently reasoned one.
 
 ### Issue #52 recommended the opposite, and it deserves the argument, not silence
 
 #52 recommends yanking, on two grounds. Both are answered here rather than passed over.
 
-**"0.7.43 is hours old and unlikely to be in anyone'"'"'s lock yet, so the blast radius of yanking is
-much smaller than it was there."** That was true when written and has since inverted. A week on,
+**"Unlike the 0.7.13-0.7.19 window, 0.7.43 is hours old and unlikely to be in anyone's lock yet, so
+the blast radius of yanking is much smaller than it was there. That was the stated reason not to
+yank before, and it does not apply here."** The last sentence is aimed squarely at the precedent
+this entry leads with, so it goes first: it is **right**. *"A floor already in wide use"* does not
+describe this band, and that limb is not relied on — `COMPATIBILITY.md:101-128` scopes it to the
+first two bands for exactly this reason. What the precedent bullet below turns on is **defect
+severity**, which the objection leaves untouched: the milder defect would be deleted while worse
+ones stay installable.
+
+On the blast radius itself: that was true when written and has since inverted. A week on,
 the absence of locks no longer means *nobody has it* — it means anyone who installed it resolved
 `protobuf` freely, got 7.36.0, and **is working right now**. Deleting turns a working install into
 a hard resolution failure at their next `pip install`. The fact that nothing pins the version is
@@ -43,7 +55,7 @@ what makes deletion cheap for us and expensive for them.
 **"(1) alone leaves a wheel published whose metadata is untrue, which is a different and worse
 thing than a wheel that is honestly broken."** This is the stronger point and it is conceded in
 part: the metadata *is* untrue. What makes it survivable is that it is **self-detecting**.
-protobuf'"'"'s generated preamble calls `ValidateProtobufRuntimeVersion`, which raises on the first
+protobuf's generated preamble calls `ValidateProtobufRuntimeVersion`, which raises on the first
 `import seam_sdk`, naming both versions. The wheel cannot quietly do the wrong thing — the untrue
 metadata is caught by the very mechanism the metadata is about, at the earliest possible moment,
 before any call reaches a runtime. An honestly-broken wheel and a wheel whose lie fails closed on
@@ -70,9 +82,9 @@ destroy the bad artifacts, which is the narrower question answered above.
   in the band. The only `seam-sdk` entry in `seam-adapters/uv.lock` is `0.7.9` via an editable path
   source. The other workspace matches for "0.7.43" are prose in documents and tests, not
   dependencies. (Read alongside the inversion above — this fact cuts toward *not* deleting.)
-- **Deletion would destroy a healthy artifact.** The defect is Python-only: v0.7.43'"'"'s
+- **Deletion would destroy a healthy artifact.** The defect is Python-only: v0.7.43's
   `ts/package.json` depends on `@bufbuild/protobuf` at `^2.12.1`, a caret range, and protobuf-es
-  has no analogue of Python'"'"'s gencode/runtime hard gate. But `yank.yml` deletes python **and** npm
+  has no analogue of Python's gencode/runtime hard gate. But `yank.yml` deletes python **and** npm
   together — the format filter is a fixed allowlist with no input to narrow it. Running it as
   written would break registry lockstep between the two published languages for a defect only one
   of them has.
@@ -87,12 +99,12 @@ destroy the bad artifacts, which is the narrower question answered above.
   question the recommendation does not turn on: present or absent, the reasoning above is
   unchanged. It buys a workflow dispatch and no information.
 - **Python-only deletion.** `yank.yml` cannot express it — there is no format input, by design
-  (`.github/workflows/yank.yml:71`), and adding one widens what a destructive tool can do. That is
+  (`.github/workflows/yank.yml:74`), and adding one widens what a destructive tool can do. That is
   its own reviewed change, not a side effect of a decision record.
 - **Cloudsmith quarantine** — blocks download, retains the artifact, reversible. This is the
   genuinely better middle path *if* blocking installs is ever wanted, and it is the one option
   worth raising rather than settling unilaterally. Not taken now: it has the same cost to a working
-  consumer as deletion, without deletion'"'"'s finality to justify it. Logged in `ASSUMPTIONS.md` as
+  consumer as deletion, without deletion's finality to justify it. Logged in `ASSUMPTIONS.md` as
   the open question.
 
 ### Divergence from the phase as planned
@@ -105,7 +117,7 @@ returning to green at 0.7.47. Both edges are proven, the band is five releases r
 and no hedge is recorded because none is warranted.
 
 That correction strengthens the no-yank case in one direction and weakens it in another, which is
-worth stating plainly: five artifacts is a larger footprint than four, but it also means #52'"'"'s
+worth stating plainly: five artifacts is a larger footprint than four, but it also means #52's
 "one hours-old release" framing no longer describes the choice.
 
 ### The `yank.yml` token fix, and why a latent bug in a safety tool matters
@@ -120,14 +132,16 @@ What was not possible either was the tool working at all — including in dry ru
 dedicated secret happened to be set. A safety tool that silently does not work is worse than one
 known to be broken: the defect is discovered during the incident, by the person who needed it.
 
-The fix resolves both sources with the prefix stripped (`.github/workflows/yank.yml:52`), written
-as an explicit `if` rather than `publish.yml`'"'"'s `&&` one-liner because this step runs under
-`set -euo pipefail`, where an AND-list'"'"'s exit status is a rule most readers do not hold. Fail-closed
-is preserved: a token that is *only* the prefix strips to empty and is refused
-(`.github/workflows/yank.yml:59`).
+The fix resolves both sources with the prefix stripped (`.github/workflows/yank.yml:55-60`), written
+as an explicit `if` rather than `publish.yml`'s `&&` one-liner because this step runs under
+`set -euo pipefail`, where an AND-list's exit status is a rule most readers do not hold. Fail-closed
+is preserved, and precisely: a source that is *only* the prefix strips to empty and is skipped —
+refused outright when it is the sole credential (`.github/workflows/yank.yml:62`), and otherwise
+falling through to the other source. The inputs this refuses are a **superset** of what it refused
+before the fix, so no shape that previously refused can now proceed.
 
 The scoping was **not** touched. Exact version equality, the python+npm format allowlist, and the
-exact-name match that keeps the org'"'"'s Cargo crates unreachable are all unchanged — and are now
+exact-name match that keeps the org's Cargo crates unreachable are all unchanged — and are now
 pinned by `scripts/test_yank_gate.py`, which executes the credential resolution rather than reading
 it and asserts the three filters. It runs in `workflow-guards` (`.github/workflows/ci.yml:585`),
 needs no credential, and was proved falsifiable three ways: restoring the original one-liner,

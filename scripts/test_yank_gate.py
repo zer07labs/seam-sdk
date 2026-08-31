@@ -48,6 +48,20 @@ def _token_script() -> str:
     return run[: run.index(marker)] + 'echo "TOKEN=[$TOKEN]"\n'
 
 
+def _code() -> list[str]:
+    """The step's shell with comment lines removed.
+
+    **Every static assertion in this file must go through this, not through the raw `run`.** Two
+    of them did not, and both were vacuous: this workflow's comments quote the very strings the
+    guards look for — the comment added beside the token fix contains the literal
+    `set -euo pipefail`, and a filter can be deleted from the jq chain while surviving as prose
+    beside it. Deleting the real `set -euo pipefail` line left the whole file green.
+
+    A guard that a comment can satisfy is not a guard; it is a search for a word someone wrote.
+    """
+    return [ln for ln in _step()["run"].splitlines() if not ln.strip().startswith("#")]
+
+
 def _run(dedicated: str | None, cargo: str | None) -> subprocess.CompletedProcess:
     """Run the real extracted shell with the two secrets set as GitHub would set them.
 
@@ -84,8 +98,18 @@ def _run(dedicated: str | None, cargo: str | None) -> subprocess.CompletedProces
         ("", "cargo-tok", "cargo-tok"),
         ("Bearer cs-key", "", "cs-key"),
         ("cs-key", "Bearer cargo-tok", "cs-key"),
+        # The shape the first version of these guards did not cover: a dedicated key that is ONLY
+        # the prefix strips to empty and must fall through to the Cargo token, never be sent as "".
+        ("Bearer ", "Bearer cargo-tok", "cargo-tok"),
     ],
-    ids=["dedicated-only", "cargo-with-bearer", "cargo-without-bearer", "dedicated-with-bearer", "both-set"],
+    ids=[
+        "dedicated-only",
+        "cargo-with-bearer",
+        "cargo-without-bearer",
+        "dedicated-with-bearer",
+        "both-set",
+        "prefix-only-dedicated-falls-through",
+    ],
 )
 def test_the_bearer_prefix_is_stripped_from_whichever_source_is_used(
     dedicated: str, cargo: str, expected: str
@@ -96,7 +120,9 @@ def test_the_bearer_prefix_is_stripped_from_whichever_source_is_used(
     `publish.yml:369-371` strips it while this workflow did not.
     """
     p = _run(dedicated, cargo)
-    assert p.returncode == 0, f"the step refused a usable credential: {p.stdout}{p.stderr}"
+    assert p.returncode == 0, (
+        f"the step refused a usable credential: {p.stdout}{p.stderr}"
+    )
     assert f"TOKEN=[{expected}]" in p.stdout, (
         f"resolved token is not {expected!r} — got {p.stdout.strip()!r}. A token that still "
         f"carries 'Bearer ' authenticates as nothing and every call 401s."
@@ -106,7 +132,12 @@ def test_the_bearer_prefix_is_stripped_from_whichever_source_is_used(
 @pytest.mark.parametrize(
     ("dedicated", "cargo"),
     [("", ""), (None, None), ("", "Bearer "), ("Bearer ", "")],
-    ids=["both-empty", "both-unset", "cargo-is-only-the-prefix", "dedicated-is-only-the-prefix"],
+    ids=[
+        "both-empty",
+        "both-unset",
+        "cargo-is-only-the-prefix",
+        "dedicated-is-only-the-prefix",
+    ],
 )
 def test_an_unusable_credential_refuses_rather_than_proceeding(
     dedicated: str | None, cargo: str | None
@@ -135,14 +166,16 @@ def test_the_token_resolution_does_not_rely_on_an_and_list() -> None:
     trip `-e`), but it is safe by a rule most readers do not hold, and it becomes the step's exit
     status if it is ever moved last. The explicit `if` is immune to both.
     """
-    run = _step()["run"]
-    code = [ln for ln in run.splitlines() if not ln.strip().startswith("#")]
+    code = _code()
     offenders = [ln for ln in code if "&&" in ln and "TOKEN=" in ln]
     assert not offenders, (
         f"the token resolution uses an AND-list under `set -euo pipefail`: {offenders}. Use the "
         f"explicit `if`, which does not depend on the AND-OR exit-status rule."
     )
-    assert "set -euo pipefail" in run, (
+    # An EXACT line match, not a substring of the file: the comment four lines below the token
+    # fix contains this literal, so `in run` was satisfied by prose and stayed green with the
+    # real line deleted.
+    assert any(ln.strip() == "set -euo pipefail" for ln in code), (
         "yank.yml's step lost `set -euo pipefail`. Every guard in this file assumes it, and "
         "without it a failed curl no longer aborts before the DELETE loop."
     )
@@ -159,13 +192,24 @@ def test_the_delete_scope_stays_exactly_as_narrow_as_it_was() -> None:
     stripping an npm scope — the org's Cargo crates live in the same Cloudsmith repository and
     must remain unreachable from this workflow.
     """
-    run = _step()["run"]
+    # Comment-stripped, so a filter cannot be deleted from the jq chain and left behind as prose
+    # beside it — which passed all three of these assertions.
+    code = "\n".join(_code())
     for needle, why in (
-        ('select(.version == env.VERSION)', "exact version equality — a prefix match would take 0.7.43 when asked for 0.7.4"),
-        ('select(.format == "python" or .format == "npm")', "the format allowlist that keeps Cargo crates out of reach"),
-        ('sub("^@[^/]+/"; "")) == "seam-sdk"', "exact name match after stripping the npm scope"),
+        (
+            "select(.version == env.VERSION)",
+            "exact version equality — a prefix match would take 0.7.43 when asked for 0.7.4",
+        ),
+        (
+            'select(.format == "python" or .format == "npm")',
+            "the format allowlist that keeps Cargo crates out of reach",
+        ),
+        (
+            'sub("^@[^/]+/"; "")) == "seam-sdk"',
+            "exact name match after stripping the npm scope",
+        ),
     ):
-        assert needle in run, f"yank.yml no longer applies: {why}"
+        assert needle in code, f"yank.yml no longer applies: {why}"
 
 
 def test_nothing_automatic_can_ever_trigger_a_yank() -> None:
