@@ -13,18 +13,28 @@ produced it.
 `v0.7.43` declared `protobuf>=7.35.1,<8` in metadata while bundling gencode emitted by protoc
 7.36.0. protobuf's generated preamble calls `ValidateProtobufRuntimeVersion`, which raises when the
 *installed* runtime is older than the gencode — so the wheel's own stated minimum was a version at
-which it could not be imported. It shipped anyway, and CI was green when it did.
+which it could not be imported. It shipped anyway — and, correcting this entry's own first
+telling, **CI was red when it did**: all three `ci` runs at `ff0139a` failed, on that exact
+floor test. Which mechanism this phase closes turns on that, so it is worth being exact.
 
-The green was honest. `ci.yml` runs `python/tests/test_protobuf_floor.py`, which derives the required
-floor **from the stubs generated in that run** and compares it to `python/pyproject.toml:50`. The
-publish job then regenerates the stubs from scratch — against buf's *unpinned* remote plugins
-(`buf.gen.yaml:29`) — and nothing re-checked the floor against **those** stubs. The two runs measure
-different artifacts and only one of them is the artifact that ships.
+**There are two separate paths to shipping this defect, and `v0.7.43` took the first.**
 
-This is why Phase 6 could not be discharged by strengthening the CI gate, and why `ci-green` (added
-after `v0.7.17` and `v0.7.47`) is orthogonal rather than sufficient: `ci-green` answers *did CI pass
-for this commit?* — it did — and the defect lives entirely in the gap between what CI measured and
-what publish built. The headroom is currently **zero**: the declared floor and the emitted gencode
+*Path one — publish past a red gate.* The floor test was failing and `publish.yml` never consulted
+the result. That is what happened, five times over four days: 0.7.39 through 0.7.43 each published
+while `ci` was red on it. `ci-green`, added in #51, closes this path.
+
+*Path two — a genuinely green CI, then a skew at publish time.* `ci.yml` runs
+`python/tests/test_protobuf_floor.py`, which derives the required floor **from the stubs generated
+in that run** and compares it to `python/pyproject.toml:50`. The publish job then regenerates the
+stubs from scratch — against buf's *unpinned* remote plugins (`buf.gen.yaml:29`) — and nothing
+re-checked the floor against **those** stubs. The two runs measure different artifacts, and only one
+of them is the artifact that ships. **No release is known to have taken this path, and until this
+phase nothing closed it** — which is why the phase exists.
+
+This is why Phase 6 could not be discharged by strengthening the CI gate, and why `ci-green` is
+necessary but **not sufficient**: it answers *did CI pass for this commit?*, which closes path one
+completely, while path two lives entirely in the gap between what CI measured and what publish
+built — where the honest answer to that question is *yes*. The headroom is currently **zero**: the declared floor and the emitted gencode
 are both `7.36.0`, so the very next remote-plugin roll between a CI run and a publish reproduces it.
 
 ### Why a floor-pinned install, rather than pinning the buf plugins

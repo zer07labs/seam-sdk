@@ -169,8 +169,10 @@ def test_the_gate_actually_waits_rather_than_asking_once(tmp_path: Path) -> None
 # ══════════════════════════════════════════════════════════════════════════════════════════
 # The publish-time floor guard, and the tag-ancestry guard.
 #
-# v0.7.43 declared `protobuf>=7.35.1,<8` over 7.36.0 gencode and shipped it. `ci.yml` was
-# green and honestly so: it ran the floor tests against the stubs generated in ITS run.
+# v0.7.43 declared `protobuf>=7.35.1,<8` over 7.36.0 gencode and shipped it. Its CI was RED
+# on that exact test (all three runs at ff0139a), and `ci-green` closes the path it took.
+# What these guards close is the OTHER path: `ci.yml` runs the floor tests against the stubs
+# generated in ITS run, so a genuinely green CI proves nothing about the shipped wheel.
 # `publish.yml` regenerates from scratch against buf's unpinned REMOTE plugins, so the
 # gencode it bundles can differ from the gencode CI measured — and nothing re-checked the
 # floor afterwards. Both smoke tests then install protobuf unconstrained, which by

@@ -500,14 +500,16 @@ Three independently sufficient causes of a 0.7.17-shaped incident, closed.
 _(0.7.22–0.7.25 carry no seam-sdk tag in this repo's history — no client-facing SDK change shipped
 under those version numbers.)_
 
-## ⚠️ Advisory: 0.7.13–0.7.19 do not work against a current runtime
+## ⚠️ Advisory: 0.7.13–0.7.19 do not work against a current runtime; 0.7.39–0.7.43 may not import
 
-**If you have anything pinned below 0.7.20, upgrade.** These versions remain installable from
-Cloudsmith — this advisory, not a yank, is the mitigation (see below) — but they fail in two
-different ways, and a matching version number does **not** imply a matching wire contract:
+**If you have anything pinned below 0.7.20, upgrade — and if you are on 0.7.39–0.7.43, upgrade to
+0.7.47.** These versions remain installable from Cloudsmith — this advisory, not a yank, is the
+mitigation (see below) — but they fail in three different ways, and a matching version number does
+**not** imply a matching wire contract:
 
 | Range | Symptom | Root cause | Fixed by |
 |---|---|---|---|
+| 0.7.39–0.7.43 | `import seam_sdk` raises `VersionError` — **only** where something else caps `protobuf` below 7.36.0; installation itself succeeds either way | The wheel declares `protobuf>=7.35.1,<8` over gencode **7.36.0**; protobuf rejects a runtime older than its gencode. `buf.gen.yaml` pins no plugin version, so a remote-plugin roll moved the gencode under a floor nobody re-derived. All five releases published while `ci` was **red** on the test that catches it. | **0.7.47** |
 | 0.7.13–0.7.15 | `import seam_sdk` fails: `ModuleNotFoundError: No module named 'seam'` | `publish.yml` ran raw `buf generate` instead of `make generate` (which also runs `scripts/root_gen.py` to rewrite the top-level `seam.*` imports protoc emits into the rooted `seam_sdk._gen.*` form); the published wheel was never actually importable, and the publish guard couldn't tell because it checked file presence, not import. | 0.7.16 (#28) |
 | 0.7.16–0.7.19 | Every `authorize()` call fails `UNAUTHENTICATED: admission ticket is not valid` — **the ticket is fine.** | seam-runtime #286 moved the per-call proof-of-possession signature from v1 (`ticket ‖ digest`) to v2 (five length-framed fields including `tool_name`/`agent_id`). Every SDK published before the fix still signed v1; 0.7.17 shipped 11 minutes *after* the runtime change landed and still carried it. The framing had no conformance vector, and both SDKs' tests verified a signature against a payload the test itself rebuilt — so a self-consistent signature looked conformant and stayed green. | 0.7.20 (#30) |
 

@@ -238,8 +238,15 @@ def test_the_skew_band_row_renders_inside_the_table() -> None:
     that no prose review catches and no substring check notices.
     """
     lines = COMPATIBILITY.read_text(encoding="utf-8").splitlines()
+    # Not a bare `next(...)`: with the row absent that raises StopIteration carrying no message,
+    # and a guard whose failure explains nothing is half a guard.
     idx = next(
-        i for i, ln in enumerate(lines) if ln.startswith("| **0.7.39 – 0.7.43**")
+        (i for i, ln in enumerate(lines) if ln.startswith("| **0.7.39 – 0.7.43**")),
+        None,
+    )
+    assert idx is not None, (
+        "COMPATIBILITY.md §3 has no 0.7.39-0.7.43 row at all, so its rendering cannot be checked. "
+        "The sibling test above says why the row has to exist."
     )
     assert lines[idx - 1].startswith("|"), (
         "the 0.7.39-0.7.43 row is not contiguous with the rows above it — the preceding line is "

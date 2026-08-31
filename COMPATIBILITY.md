@@ -60,7 +60,7 @@ repo holds to, and it is deliberately the weaker of the two available readings.
 **Scope first, because this document uses the same word for a weaker claim.** What follows defines
 a cell in the runtime × SDK × adapters matrix. §4a's co-installability table below also says
 `compatible`, and it asserts strictly less: those cells come from
-`scripts/probe_framework_coinstall.py`, which is a **resolution probe** — it opens no socket and
+`scripts/probe_framework_coinstall.py`, which is a **resolution probe** — it makes no gRPC call and
 starts no runtime. Where a cell asserts less, say so in the cell rather than stretching one
 definition across both.
 
@@ -103,16 +103,26 @@ mismatch cannot ship.
 clear auth error — and revoking installability under a floor already in wide use has a larger blast
 radius than a loud advisory.
 
-**The third band is a different argument, and it is worth stating because [#52](https://github.com/zer07labs/seam-sdk/issues/52) argued the
-other way.** That issue calls this defect *"the silent-skew shape, not a loud one: the install
-succeeds, so the failure surfaces later and looks like the consumer's problem"*, and recommends a
-yank on that basis. It is right about **installation** — resolution succeeds, nothing warns, and
-that is how the defect survived five releases. It is not silent at **use**: the first
-`import seam_sdk` raises a `VersionError` naming both versions, so no call ever reaches a runtime
-under a mismatched gencode and nothing is written wrongly. The disposition rests on that, plus two
-things the yank argument did not yet have — the band is now bounded at both edges and documented,
-and no lockfile anywhere in this workspace pins it (checked 2026-08-31). `DECISIONS.md` carries the
-full reasoning, including why deletion would harm a consumer who is working today.
+**The third band is a different argument, and [#52](https://github.com/zer07labs/seam-sdk/issues/52) argued the other way — so state its case
+before answering it.** That issue recommends **yanking**, on two grounds: that 0.7.43 was then
+"hours old and unlikely to be in anyone's lock yet, so the blast radius of yanking is much smaller",
+and that documenting alone "leaves a wheel published whose metadata is untrue, which is a different
+and worse thing than a wheel that is honestly broken". It also describes the defect as *"the
+silent-skew shape, not a loud one: the install succeeds, so the failure surfaces later and looks
+like the consumer's problem"*.
+
+It is right that installation is silent — resolution succeeds and nothing warns, which is why no
+consumer reported this. (What let five releases *ship* is separate and worse: the gate was red and
+`publish.yml` never read it. See below.) The untrue metadata is real, and the answer is that it is
+**self-detecting**: protobuf's own runtime check fails closed on the first `import seam_sdk` with a
+`VersionError` naming both versions, so the wheel cannot quietly do the wrong thing — no call
+reaches a runtime under a mismatched gencode.
+
+The lock argument has since inverted. #52 reasoned that with nothing locked, deletion was cheap; a
+week on, the same fact cuts the other way — a consumer who installed and resolved `protobuf` freely
+is working *today*, and deletion turns that into a hard resolution failure for no gain. And the
+action #52 sized no longer exists: it weighed deleting one hours-old release, where the measured
+band is **five**. `DECISIONS.md` records the disposition and its reasoning.
 
 The consequence either way is that **these versions remain installable**, so this table is the
 mitigation.
@@ -180,8 +190,10 @@ The practical consequence: **a new RPC verb costs the three shims nothing**, and
 **The floors are re-derived at PUBLISH time, not only in CI, and the wheel is installed at the one
 it declares.** `ci.yml` measures the floor against the stubs generated in *its* run; `publish.yml`
 regenerates from scratch against buf's unpinned remote plugins, so the gencode it bundles need not
-be the gencode CI measured. `v0.7.43` shipped through exactly that gap — `protobuf>=7.35.1,<8`
-declared over 7.36.0 gencode, on green CI. Two steps close it: the floor guards run again after the
+be the gencode CI measured. `v0.7.43` shipped `protobuf>=7.35.1,<8` over 7.36.0
+gencode — though **not** through this gap: its CI was *red* on exactly that floor test, and
+`ci-green` closes the path that release actually took. This gap is the one a *genuinely green*
+release can still ship through, and nothing closed it. Two steps close it: the floor guards run again after the
 publish job's own generation (`.github/workflows/publish.yml:340`), and the built wheel is then
 installed into a venv with `protobuf` pinned at the floor it declares and imported there
 (`.github/workflows/publish.yml:413`) — the only check that answers *is this metadata true?*, since

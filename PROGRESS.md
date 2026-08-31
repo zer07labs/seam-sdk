@@ -77,8 +77,8 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `python/tests/test_protobuf_floor.py:72,88` | The two pure-file-read assertions Phase 6 runs at publish time. `:29-31` reads only `_gen/seam/api/v1/seam_pb2.py`; `:47-51` **skips** when `_gen` is absent. `:88-99` forces `cap == gencode_major + 1` — this is why "widen the floor" is not a metadata edit. |
 | `python/tests/test_grpcio_floor.py:38` | Module-level `import grpc` — matters if Phase 6 runs it in the publish job. |
 | `.github/workflows/yank.yml` | `workflow_dispatch`, `dry_run` default `"true"`. A hard **DELETE** (`:69-70`), not a PyPI-style yank. `:38` does **not** strip the cargo token's `"Bearer "` prefix (`publish.yml:369-371` does) — **Phase 10** fixes that one line and nothing else. |
-| `COMPATIBILITY.md:99-126` | §3 known-bad table + the "Nothing was yanked" preamble. **Phase 7** adds the 0.7.40-0.7.43 row (hedged — `protobuf>=7.35.1,<8` dates to v0.7.13, so the floor string does not bound the band). `:171-178` dependency floors · `:191-250` §4a co-installability (`:209-211` machine-read `PROBE-TABLE` marker — columns and order load-bearing; `:215` crewai row, whose Tracking cell links **#48 and not crewAI#7103**) · `:316-352` §7 cross-repo coupling, incl. `:325-343` vector origination. **§7 documents `seam-sdk` main → `seam-runtime` CI, *not* a spec-side merge-order courtesy — do not cite it for one.** |
-| `python/tests/test_retracted_claims.py:170-184` | Parametrized presence check over `COMPATIBILITY.md`. **Phase 7** adds `"0.7.43"`. `:27-30` globs **every `*.md` in the repo including `plans/` and this file**; `:39-48` are the qualifier markers that make a paragraph "discussing, not claiming". |
+| `COMPATIBILITY.md:99-136` | §3 known-bad table + the "Nothing was yanked" preamble. **Phase 7 added the `0.7.39 – 0.7.43` row** (DONE 2026-08-31) — *not* the hedged `≥ 0.7.40` this row first planned: both edges are proven from CI history, so the hedge was deleted rather than softened. `:181-188` dependency floors · `:203-262` §4a co-installability (`:221-223` machine-read `PROBE-TABLE` marker — columns and order load-bearing; `:227` crewai row, whose Tracking cell links **#48 and not crewAI#7103**) · `:328-364` §7 cross-repo coupling, incl. `:337-355` vector origination. **§7 documents `seam-sdk` main → `seam-runtime` CI, *not* a spec-side merge-order courtesy — do not cite it for one.** |
+| `python/tests/test_retracted_claims.py:170-184` | Parametrized presence check over `COMPATIBILITY.md`. **Phase 7 added `"0.7.39"`** — the *lower* edge, which is the one a reader is most likely to assume they are outside of — plus two real row guards (`python/tests/test_retracted_claims.py:194-256`), because this parametrize is a substring check and could not fail for a deleted row. `python/tests/test_retracted_claims.py:27-30` globs **every `*.md` in the repo including `plans/` and this file**; `python/tests/test_retracted_claims.py:39-48` are the qualifier markers that make a paragraph "discussing, not claiming". |
 | `python/tests/test_compatibility_citations_resolve.py` | Every backticked `file:line` in `COMPATIBILITY.md`/`DECISIONS.md` must resolve; `:61-64,:92` ≥10 each; `:76` sibling paths need a `seam-runtime/` prefix; `:141-172` `ANCHORED` needles must hit **exactly once** within `CITATION_SLACK` (`:176`). **Phase 8** adds the vendored-file rule. |
 | `verify/docs/seam-event.v1.md` | Byte-verbatim vendored spec, pinned in its header. **Phase 9** refreshes it whole-file. Source of #73's citation drift. |
 | `scripts/check_vendored_spec.py:22-38` | Integrity (`:24-26`) / reachability (`:28-32`) / **currency** (`:34-38`) — fails on staleness by explicit decision. This is what will announce runtime P1a Phase 6 by reddening `spec-pin` (`.github/workflows/ci.yml:517-543`) on every PR. |
@@ -90,7 +90,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `python/tests/test_workflows_generate_through_the_makefile.py:43,72` | No workflow may call `buf generate` directly; the `generate:` target must keep both `buf generate` and `root_gen.py` (without which the wheel is unimportable). |
 | `Makefile:24,29,57-58` | `generate` (BSR) · `generate-local RUNTIME=../seam-runtime` (reads `crates/seam-api/proto` via `buf`) · **`clean` `rm -rf`s all three stub trees — never run it; recovery needs a BSR login.** |
 | `plans/README.md:1-6` | Archive convention: delivered plans move to `plans/archive/` with a dated verification note, verified **against code, never a status table**. `:13` **carried** the stale `record-digest-v3` Active row (*"Phases 1–5 delivered … Phase 6 remains BLOCKED"*) and the index was **missing a row entirely** for `plans/authorize-single-canonicalization.md` — both corrected in Phase 1, which archived each plan against code. `:13` now holds this plan's own Active row. The cross-repo *table* lives in `plans/cross-repo/README.md`, not here — **Phase 2** edits that file. |
-| `CHANGELOG.md:3-7` | The SDK does not choose its own version; entries accumulate under `## Unreleased`. `:516-518` is the hedging style Phase 7's row mirrors; `:521-526` the no-yank decision of record. |
+| `CHANGELOG.md:3-7` | The SDK does not choose its own version; entries accumulate under `## Unreleased`. `:516-518` is the hedging style Phase 7 *was* to mirror — it did not, the band being provable, and the citation was removed as it sat within `CITATION_SLACK` of the `"No yank"` needle; `:521-526` the no-yank decision of record. **This advisory still names only 0.7.13-0.7.19** — see the Phase 7 checkpoint. |
 
 ### Sibling repos (read-only — referenced, never written)
 
@@ -271,9 +271,9 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 
 ### Phase 7 — `COMPATIBILITY.md` pass: the 0.7.39-0.7.43 band, the upstream link, #76 · 2026-08-31
 
-- **Delivered:** §3 carries a third known-bad band (`COMPATIBILITY.md:124`) with the narrow
+- **Delivered:** §3 carries a third known-bad band (`COMPATIBILITY.md:134`) with the narrow
   condition, the root cause, 0.7.47 as the fixed release, and **both edges proven**; the crewai row
-  (`COMPATIBILITY.md:215`) names the upstream PR that actually ends it; §2 gains a definition of
+  (`COMPATIBILITY.md:227`) names the upstream PR that actually ends it; §2 gains a definition of
   what a compatibility-matrix cell asserts (`COMPATIBILITY.md:54-89`), which is #76's ask.
 - **The band is 0.7.39-0.7.43, and round 1 of the gate is why.** I first wrote `≥ 0.7.40` with a
   paragraph arguing the lower edge was *unprovable* — "per-tag gencode is not recoverable from this
@@ -298,7 +298,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   every band "fails loudly rather than quietly". Issue #52 says of this defect: *"the silent-skew
   shape, not a loud one: the install succeeds"* — and recommends a yank on that basis. Resting the
   disposition on loudness made load-bearing the one claim the cited issue disputes. It now
-  distinguishes **silent at installation** (true, and why it survived five releases) from **loud at
+  distinguishes **silent at installation** (true, and why no consumer reported it) from **loud at
   use** (a `VersionError` on first import, so nothing runs against a mismatched gencode), and adds
   the two facts the yank argument did not have.
 - **§2's definition was falsified by this document's own table.** It said a `compatible` cell means
@@ -336,6 +336,45 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   guards), `PROGRESS.md`, `plans/post-adoption-hardening-and-acdp-readiness.md`.
 - **Tests:** full python suite, `scripts/` gates, ruff — see the commit. The
   `<!-- PROBE-TABLE: -->` contract still parses 4 rows, columns and order unchanged.
+- **Verify gate round 2 — GAPS(10), all closed. It confirmed round 1's ten by experiment** (five
+  separate mutations of the row, each proving a guard fails for the reason it exists), **and found
+  ten more.** Two mattered:
+  - **`v0.7.43`'s CI was RED, and three places on this branch said it was green.** Phase 6's
+    `DECISIONS.md` entry opened *"CI was green when it did… The green was honest"*, and
+    `COMPATIBILITY.md` and `scripts/test_publish_gate.py` repeated it. All three runs at `ff0139a`
+    are `failure`, on that exact floor test. `publish.yml:325-327` had it right the whole time
+    ("a red CI at the tagged commit"), so the branch contradicted itself. **Phase 6's conclusion
+    survives and its worked example does not:** there are *two* paths to shipping this defect —
+    publish past a red gate (what actually happened, five times; `ci-green` closes it) and a
+    genuinely green CI followed by a publish-time skew (**no release is known to have taken it**;
+    that is what Phase 6's guards close). Conflating them made `ci-green` look insufficient for the
+    wrong reason. All three passages now separate them.
+  - **The rebuttal to #52 cited reasoning that does not exist.** `COMPATIBILITY.md` said
+    "`DECISIONS.md` carries the full reasoning" — `DECISIONS.md` contains zero occurrences of
+    "yank"; that is Phase 10's deliverable, still TODO. Present-tense assertion about content never
+    checked: the same shape as round 1's critical finding, two commits later.
+  - **I also inverted #52's own argument.** It cites "unlikely to be in anyone's lock yet" as a
+    reason the blast radius of yanking is *small* — an argument **for** deleting. I presented the
+    absence of locks as a no-yank fact. §3 now states #52's case in its own terms, including its
+    crux ("untrue metadata is worse than honestly broken"), and answers it: the metadata is
+    self-detecting, and the action #52 sized — one hours-old release — is not the action available,
+    since the band is five.
+  - **Smaller:** "that is how the defect survived five releases" attributed survival to install-time
+    silence when the same section says a red gate nobody read is the cause; the probe was described
+    as opening "no socket" when it is a live PyPI resolution (it makes no *gRPC* call); the plan's
+    heading and AC1/AC2 still demanded the hedge and the `"0.7.43"` literal that round 1 replaced,
+    making AC2 literally unsatisfiable; three repo-map rows still described the retracted Phase 7;
+    `CHANGELOG.md`'s advisory named two bands while `README.md` now points there for three; and a
+    row guard failed with a bare `StopIteration` carrying no message.
+- **The bare-citation defect appeared twice more, making four distinct forms.** Round 2 found a
+  `COMPATIBILITY.md:101-118` sitting alone in a paragraph, where paragraph-scoped inheritance
+  resolves it against the *previous* paragraph's file — and it resolves there structurally, so
+  nothing catches it. Then, fixing that, the remapper captured a `:194-256` that pointed at the test
+  file, because a bare `COMPATIBILITY.md` appeared earlier in the row; and the parenthetical I wrote
+  *explaining that hazard* named `COMPATIBILITY.md` again and re-captured the two citations after
+  it. Explicit-vs-bare, line-vs-paragraph, subject-vs-target, and now the explanation capturing its
+  own example. **The rule that actually holds: write the path explicitly and never rely on
+  inheritance in a row that names another file.** Applied to row 81.
 - **AC3/AC4 remain half-done on purpose.** The `COMPATIBILITY.md` half of each is complete; the
   replies on #48 and #76 are drafted and held until the PR exists, so they point at a landed
   paragraph. Carried into ship as an explicit step.
