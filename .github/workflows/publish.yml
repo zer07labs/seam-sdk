@@ -344,6 +344,14 @@ jobs:
           # grpcio one exits 0 and publishes the defect this step exists to catch. That is not
           # hypothetical — it is what the first draft of this step did.
           set -euo pipefail
+          # ASSERT the stubs are where the guards look, do not assume it. `test_protobuf_floor.py`
+          # SKIPS when `_gen/seam/api/v1/seam_pb2.py` is absent, and pytest exits 0 when every
+          # selected test skips — so a `make generate` that succeeds while writing the tree
+          # somewhere else leaves this step green having checked nothing. That is not an invented
+          # risk: writing `_gen` without rooting the imports is the exact defect this job shipped
+          # when it ran raw `buf generate`, and "green because it never ran" is the failure shape
+          # this whole step exists to remove.
+          test -f python/seam_sdk/_gen/seam/api/v1/seam_pb2.py
           python -m pip install --quiet pytest grpcio
           python -m pytest python/tests/test_protobuf_floor.py -q \
             -k "declared_floor_is_at_least or caps_the_major"

@@ -226,7 +226,12 @@ dependencies = [
 
 
 def _stub_repo(
-    tmp_path: Path, *, floor: str, gencode: str, grpcio: str = "1.64"
+    tmp_path: Path,
+    *,
+    floor: str,
+    gencode: str,
+    grpcio: str = "1.64",
+    generated: bool = True,
 ) -> Path:
     """A miniature repo with the SAME layout the floor guards resolve against.
 
@@ -243,10 +248,11 @@ def _stub_repo(
         shutil.copy(PY_TESTS / name, tests / name)
 
     major, minor, patch = (int(p) for p in gencode.split("."))
-    (gen / "seam_pb2.py").write_text(
-        _GENCODE_STUB.format(major=major, minor=minor, patch=patch)
-    )
-    (gen / "seam_pb2_grpc.py").write_text(_GRPC_STUB)
+    if generated:
+        (gen / "seam_pb2.py").write_text(
+            _GENCODE_STUB.format(major=major, minor=minor, patch=patch)
+        )
+        (gen / "seam_pb2_grpc.py").write_text(_GRPC_STUB)
     (root / "python" / "pyproject.toml").write_text(
         _PYPROJECT_STUB.format(floor=floor, cap=major + 1, grpcio=grpcio)
     )
@@ -349,6 +355,24 @@ def test_a_grpcio_floor_below_the_emitted_convention_fails_the_publish_step(
     )
     assert "add_registered_method_handlers" in p.stdout + p.stderr, (
         f"failed for some other reason than the grpcio floor:\n{p.stdout}{p.stderr}"
+    )
+
+
+def test_stubs_in_the_wrong_place_fail_rather_than_skip_the_guard(tmp_path: Path) -> None:
+    """The guard's own blind spot, asserted shut.
+
+    `test_protobuf_floor.py` calls `pytest.skip()` when `seam_pb2.py` is absent, and pytest exits
+    **0** when every selected test skips — only *zero collected* is exit 5. So a `make generate`
+    that succeeds while writing the tree somewhere else would leave the step green having checked
+    nothing. Writing `_gen` in a place the package cannot import from is precisely the defect this
+    job shipped once already, so "it was just generated, it must be there" is an assumption, not an
+    assertion.
+    """
+    root = _stub_repo(tmp_path, floor="7.36.0", gencode="7.36.0", generated=False)
+    p = _run_floor_step(root)
+    assert p.returncode != 0, (
+        "the floor guard passed with NO generated stubs to measure — it skipped, exited 0, and "
+        f"would have published unchecked:\n{p.stdout}{p.stderr}"
     )
 
 

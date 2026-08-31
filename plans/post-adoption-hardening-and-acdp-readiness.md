@@ -39,7 +39,7 @@ Stated so `/implement` does not invent it:
 - **No change to `record_digest_v2`/`v3`** in Python, TS or Rust; no new `schema_version` arm at `verify/src/verify.rs:668-674`; no `verify/proto/` change; no `contract/wire-framing.json` bump (its own `_comment` at `:31-33` says a bump is *not* for an additive field or a new verb).
 - **No Go/Java/Kotlin work.** They carry no hand-written RPC layer — only crypto shims over generated stubs (`go/crypto/crypto.go`, `java/.../SeamCrypto.java`, `kotlin/.../SeamCrypto.kt`). A new verb or field costs them nothing.
 - **No re-release for #52.** `v0.7.47` already carries the corrected floor.
-- **No widening of the protobuf floor.** It is derived, not chosen; widening means pinning `buf.gen.yaml`'s remote plugins, which `DECISIONS.md:254-274` records as rejected with a stated re-open trigger ("a second framework becomes incompatible") that has **not** fired — a live probe confirms three of four frameworks resolve today.
+- **No widening of the protobuf floor.** It is derived, not chosen; widening means pinning `buf.gen.yaml`'s remote plugins, which `DECISIONS.md:339-359` records as rejected with a stated re-open trigger ("a second framework becomes incompatible") that has **not** fired — a live probe confirms three of four frameworks resolve today.
 - **No populated-slot ACDP conformance vectors.** The SDK cannot author them (no clean-room source until runtime Phase 6) and the runtime will not emit them — its plan pins its example bindings all-`None` specifically to keep `sdk-digest-parity` green (`seam-runtime/plans/acdp-p1a-receipt-slots.md:103-109`, at `533f218`).
 - **Never `make clean`.** `Makefile:57-58` deletes all three stub trees and recovery needs a BSR login this session may not hold.
 
@@ -254,13 +254,22 @@ Note also that probe 1b already hardcodes two `seam.api.v1` **field** names (`Au
 > `bash -e {0}` would have masked how fragile that is, since a step's status is otherwise just its
 > last command's, and a red protobuf-floor test followed by a green grpcio one publishes anyway. Both
 > new steps now carry an explicit `set -euo pipefail`, and the harness deliberately runs them with a
-> plain `bash -c` so removing it goes red.
+> plain `bash -c` so removing it goes red. (c) A third, found by the verify gate rather than by me:
+> the floor guards **skip** when the generated tree is absent, and pytest exits 0 when everything
+> skips — so the step could pass having measured nothing, which is the failure shape it exists to
+> remove. It now asserts the stubs are present before invoking pytest, with a test for that case.
 >
-> **Divergence 3 — the phase had to repoint two anchored citations it broke.** Inserting into
-> `publish.yml` shifted the needles COMPATIBILITY.md cites for the npm and PyPI registry URLs
-> (178→199, 303→359), which is precisely the rot `test_compatibility_citations_resolve.py` was
-> written for — its docstring records six citations going stale the day they were written, for the
-> same reason.
+> **Divergence 3 — this phase broke more citations than it first repointed, and the guard only
+> covers two documents.** Inserting into `publish.yml` shifted the needles COMPATIBILITY.md anchors
+> for the npm and PyPI registry URLs, and `test_compatibility_citations_resolve.py` caught those. It
+> does **not** scan `PROGRESS.md` or this plan, and the 75-line `DECISIONS.md` prepend plus the
+> 11-line `COMPATIBILITY.md` paragraph silently invalidated eleven anchors in the repo map and two
+> in this file — including the one Phase 7 navigates `COMPATIBILITY.md` by, and one that had come to
+> point at a bare `fi`. The verify gate found them; nothing mechanical would have. All are
+> repointed. This is exactly the rot the guard's own docstring records happening the day
+> COMPATIBILITY.md was written, and the lesson is that the guard's *scope* is the gap: an unchecked
+> document rots the same way, just invisibly. `PROGRESS.md` is now the most-cited unguarded file in
+> the repo — a candidate for the `DOCS` dict, deliberately not widened here (out of phase scope).
 >
 > Not fixed here, as the plan directed: `ci-green` still executes from `publish.yml` *as it exists on
 > the tagged ref*, so it remains only as strong as branch protection. The ancestry check materially
@@ -282,7 +291,7 @@ Note also that probe 1b already hardcodes two `seam.api.v1` **field** names (`Au
 
 Also add the branch-ancestry assertion that `version-check` (`publish.yml:150-166`) lacks: tags are not branch-scoped and `ci.yml:19` runs on every branch push, so a tag pushed at a green **feature-branch** commit that never reached `main` publishes cleanly today. `git merge-base --is-ancestor "$GITHUB_SHA" origin/main` closes it.
 
-Rejected: pinning `buf.gen.yaml`'s remote plugins for reproducibility. It collides with the already-recorded rejection at `DECISIONS.md:254-274` and freezes the codegen pipeline; (a) and (b) buy reproducibility *of correctness* without that cost.
+Rejected: pinning `buf.gen.yaml`'s remote plugins for reproducibility. It collides with the already-recorded rejection at `DECISIONS.md:339-359` and freezes the codegen pipeline; (a) and (b) buy reproducibility *of correctness* without that cost.
 
 **Edge cases & failure modes.** If the floor pin is unavailable on the index at publish time, the job must fail loudly rather than fall back to unconstrained (a silent fallback recreates the exact blind spot). `ci-green`'s existing behaviour is sound and must not regress — still-running maps to `pending` (`publish.yml:107`), absent is a refusal (`:143-148`), and one green must not mask one red (`:117-126`); `scripts/test_publish_gate.py` already pins all three. The ancestry check needs `origin/main` fetched in that job — a shallow checkout will fail it spuriously. **This phase makes the half-publish window measurably more likely, and that must be traded deliberately.** `npm` (`publish.yml:168-171`) and `python` (`:261-264`) run in parallel with no cross-gate; guard (b) adds a *new* way for the python job to fail after `npm publish` may already have succeeded, and a half-published version cannot be re-cut at that number. Two ways out, pick one and record it: put the floor-pinned install in a job that both `npm` and `python` `needs:` (strictly better, costs one job and a `needs:` edit that `scripts/test_ci_gate.py:79` will check), or keep it in-job and accept that a half-publish is the *safe* failure relative to shipping a false-metadata wheel. Do not leave it unstated. Also note but do not fix here: `ci-green` executes from `publish.yml` *as it exists on the tagged ref*, so it is only as strong as branch protection — the ancestry check materially narrows that.
 

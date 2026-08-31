@@ -40,7 +40,7 @@ resolve the *newest* runtime, which by construction satisfies any gencode; neith
 So the publish job does two things instead. It re-runs the floor guards against the stubs it just
 generated (`.github/workflows/publish.yml:340`), and it installs the built wheel into a clean venv
 with `protobuf` pinned at the floor the wheel itself declares, then imports the generated module
-there (`.github/workflows/publish.yml:405`). The second is the one that asks *is this metadata
+there (`.github/workflows/publish.yml:413`). The second is the one that asks *is this metadata
 true?* — it reproduces exactly the resolution a consumer gets when their dependency closure caps
 protobuf at our stated minimum. The floor is parsed out of the wheel's own `pyproject.toml` rather
 than hardcoded, and an unparseable pin **refuses to publish** rather than falling back to an
@@ -64,14 +64,24 @@ deliberately, not overlooked.
 
 `scripts/test_publish_gate.py` drives both new steps against stub trees rather than asserting on
 their text: a stub `pyproject.toml` whose floor trails a stub gencode constant must fail the real
-extracted step (`scripts/test_publish_gate.py:317`), and a matching floor must pass it, so the red
+extracted step (`scripts/test_publish_gate.py:322`), and a matching floor must pass it, so the red
 case is red for the floor rather than for a broken harness. The same file drives the tag-ancestry
-guard against throwaway git repos (`scripts/test_publish_gate.py:472`).
+guard against throwaway git repos (`scripts/test_publish_gate.py:495`).
 
 That was not ceremony. The first draft of the ancestry step ran `git fetch --no-tags --depth=0`,
 which git rejects outright — *"depth 0 is not a positive number"* — and would have failed every
 publish. It survived a read-through and died the first time it was executed, which is the same
 argument the `ci-green` tests in that file already make (`.github/workflows/ci.yml:573`).
+
+A third defect was subtler and is worth stating as a rule. `test_protobuf_floor.py` **skips** when
+the generated tree is absent, and pytest exits **0** when every selected test skips — only *zero
+collected* is exit 5. So a `make generate` that succeeded while writing `_gen` somewhere the package
+cannot import from would have left the re-derivation step green having measured nothing, which is
+the same "green because it never ran" shape the step exists to remove. Writing `_gen` unimportably
+is not a hypothetical failure here — it is what this job did when it ran raw `buf generate`. The
+step now asserts the file is present before invoking pytest, and a test drives that case red. **The
+rule: a guard that delegates to a suite which can skip must assert its own preconditions, because a
+skip and a pass are the same exit code.**
 
 ### The tag-ancestry assertion, filed under the same phase
 

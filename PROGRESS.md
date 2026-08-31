@@ -70,14 +70,14 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi:106,163` | `AuthorizeRequest.FeaturesEntry` / `RunDecisionRequest.FeaturesEntry` — **synthetic map-entry messages Python emits and protobuf-es does not**. Phase 5's extractors must exclude them **by nesting, not by the `*Entry` name** — `AuditEntry` (`:716`) is a real top-level message. `.pyi` carries **no `oneof` grouping at all** (and `seam.api.v1` has zero `oneof`s). |
 | `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi:409,418` | **`__slots__` is NOT the field list.** `ResumeRequest`/`AdminResumeRequest` carry a proto field named `raise`; the `.pyi` generator cannot emit a Python keyword, so `__slots__` omits it and only `RAISE_FIELD_NUMBER` (`:412`, `:424`) survives. Measured: `__slots__` = 221 fields, protobuf-es = 223. **Phase 5 must extract from `<NAME>_FIELD_NUMBER: _ClassVar[int]` lowercased** — that reconciles both sides at 223 with zero diff. |
 | `contract/wire-framing.json:31-33` | `_comment`: a bump is **NOT** for an additive proto field or a new RPC verb. Do not touch it for ACDP. |
-| `.github/workflows/publish.yml:295` | `make generate` **again at publish time**, against unpinned plugins — the open half of #52. `:326-337` pre-upload smoke installs protobuf *unconstrained*, so the skew is invisible to it; `registry-smoke` (`:418`) likewise. Verified: `grep -rn protobuf .github/workflows/` yields **one** hit, a prose comment — **no workflow pins protobuf anywhere**, so nothing catches the skew. The declared floor and the emitted gencode are both **7.36.0** today (`python/pyproject.toml:50`, `_gen/.../seam_pb2.py:12-18`) — zero headroom. **Phase 6, and it should run first.** |
-| `.github/workflows/publish.yml:63-148` | `ci-green` — resolves every `ci-ok` conclusion for the tagged commit. Sound: `:107` still-running ⇒ `pending`, `:117-126` one-green-cannot-mask-one-red, `:143-148` timeout is a refusal. `:171`/`:264` gate both npm and python. **Must not regress.** |
-| `.github/workflows/publish.yml:150-166` | `version-check` — tag vs in-tree versions only. **No branch-ancestry check**; Phase 6 adds one (`ci.yml:19` runs on every branch push, so a tag at a green feature-branch commit publishes today). |
-| `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:254-274`. |
+| `.github/workflows/publish.yml:316` | `make generate` **again at publish time**, against unpinned plugins — the open half of #52. `:390-401` pre-upload smoke installs protobuf *unconstrained*, so the skew is invisible to it; `registry-smoke` (`:519`) likewise. Verified: `grep -rn protobuf .github/workflows/` yields **one** hit, a prose comment — **no workflow pins protobuf anywhere**, so nothing catches the skew. The declared floor and the emitted gencode are both **7.36.0** today (`python/pyproject.toml:50`, `_gen/.../seam_pb2.py:12-18`) — zero headroom. **Phase 6, and it should run first.** |
+| `.github/workflows/publish.yml:63-148` | `ci-green` — resolves every `ci-ok` conclusion for the tagged commit. Sound: `:107` still-running ⇒ `pending`, `:117-126` one-green-cannot-mask-one-red, `:143-148` timeout is a refusal. `:192`/`:285` gate both npm and python. **Must not regress.** |
+| `.github/workflows/publish.yml:150-188` | `version-check` — tag vs in-tree versions only. **No branch-ancestry check**; Phase 6 adds one (`ci.yml:19` runs on every branch push, so a tag at a green feature-branch commit publishes today). |
+| `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:339-359`. |
 | `python/tests/test_protobuf_floor.py:72,88` | The two pure-file-read assertions Phase 6 runs at publish time. `:29-31` reads only `_gen/seam/api/v1/seam_pb2.py`; `:47-51` **skips** when `_gen` is absent. `:88-99` forces `cap == gencode_major + 1` — this is why "widen the floor" is not a metadata edit. |
 | `python/tests/test_grpcio_floor.py:38` | Module-level `import grpc` — matters if Phase 6 runs it in the publish job. |
 | `.github/workflows/yank.yml` | `workflow_dispatch`, `dry_run` default `"true"`. A hard **DELETE** (`:69-70`), not a PyPI-style yank. `:38` does **not** strip the cargo token's `"Bearer "` prefix (`publish.yml:361-363` does) — **Phase 10** fixes that one line and nothing else. |
-| `COMPATIBILITY.md:62-75` | §3 known-bad table + the "Nothing was yanked" preamble. **Phase 7** adds the 0.7.40-0.7.43 row (hedged — `protobuf>=7.35.1,<8` dates to v0.7.13, so the floor string does not bound the band). `:103-110` dependency floors · `:112-171` §4a co-installability (`:130-132` machine-read `PROBE-TABLE` marker — columns and order load-bearing; `:136` crewai row, whose Tracking cell links **#48 and not crewAI#7103**) · `:237-273` §7 cross-repo coupling, incl. `:246-264` vector origination. **§7 documents `seam-sdk` main → `seam-runtime` CI, *not* a spec-side merge-order courtesy — do not cite it for one.** |
+| `COMPATIBILITY.md:62-75` | §3 known-bad table + the "Nothing was yanked" preamble. **Phase 7** adds the 0.7.40-0.7.43 row (hedged — `protobuf>=7.35.1,<8` dates to v0.7.13, so the floor string does not bound the band). `:103-110` dependency floors · `:123-182` §4a co-installability (`:141-143` machine-read `PROBE-TABLE` marker — columns and order load-bearing; `:147` crewai row, whose Tracking cell links **#48 and not crewAI#7103**) · `:248-284` §7 cross-repo coupling, incl. `:257-275` vector origination. **§7 documents `seam-sdk` main → `seam-runtime` CI, *not* a spec-side merge-order courtesy — do not cite it for one.** |
 | `python/tests/test_retracted_claims.py:170-184` | Parametrized presence check over `COMPATIBILITY.md`. **Phase 7** adds `"0.7.43"`. `:27-30` globs **every `*.md` in the repo including `plans/` and this file**; `:39-48` are the qualifier markers that make a paragraph "discussing, not claiming". |
 | `python/tests/test_compatibility_citations_resolve.py` | Every backticked `file:line` in `COMPATIBILITY.md`/`DECISIONS.md` must resolve; `:61-64,:92` ≥10 each; `:76` sibling paths need a `seam-runtime/` prefix; `:141-172` `ANCHORED` needles must hit **exactly once** within `CITATION_SLACK` (`:176`). **Phase 8** adds the vendored-file rule. |
 | `verify/docs/seam-event.v1.md` | Byte-verbatim vendored spec, pinned in its header. **Phase 9** refreshes it whole-file. Source of #73's citation drift. |
@@ -139,7 +139,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   - *R2 GAPS (3):* the `:109`→`:141` fix reached `PROGRESS.md` but missed
     `plans/archive/record-digest-v3.md:12`; removing a duplicated execution-order block ate the
     blank line and merged two paragraphs; and the path repoint **over-replaced** four quoted
-    `DECISIONS.md` section titles, which are lookup keys that must match `DECISIONS.md:137`
+    `DECISIONS.md` section titles, which are lookup keys that must match `DECISIONS.md:222`
     verbatim, not paths.
   - *R3 PASS:* all three closed, both halves of the over-replacement checked (quoted titles reverted,
     `**Plan:**` paths still archive-pointed), no new breakage, 545/17 green.
@@ -199,11 +199,17 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 - **Rejected, consistent with `DECISIONS.md`:** pinning `buf.gen.yaml`'s remote plugins. It converts a
   self-correcting derivation into a number someone must remember to bump, and its failure mode is
   silent.
-- **Citations this phase broke and repointed:** inserting into `publish.yml` shifted the needles
-  COMPATIBILITY.md anchors for the npm and PyPI registry URLs (178→199, 303→359) — the same rot
-  `test_compatibility_citations_resolve.py`'s docstring records happening the day that document was
-  written. Also repointed this file's own `publish.yml:306-307` → `:361-363`.
-- **Files:** `.github/workflows/publish.yml`, `scripts/test_publish_gate.py` (+9 tests),
+- **Citations this phase broke, and the guard's blind spot it exposed:** inserting into
+  `publish.yml` shifted the needles COMPATIBILITY.md anchors for the npm and PyPI registry URLs —
+  `test_compatibility_citations_resolve.py` caught those, twice (the second time after the
+  skip-hole fix moved them again). It does **not** scan `PROGRESS.md` or the plan, and the 75-line
+  `DECISIONS.md` prepend plus the 11-line `COMPATIBILITY.md` paragraph silently invalidated
+  **eleven** anchors in this file's repo map and two in the plan — among them the `COMPATIBILITY.md`
+  ranges Phase 7 navigates by, and `publish.yml:418`, which had come to point at a bare `fi`. The
+  verify gate found them; nothing mechanical would have. All repointed. Worth carrying forward:
+  `PROGRESS.md` is now the most-cited unguarded document here, and adding it to that test's `DOCS`
+  dict is a real candidate — deliberately not done in this phase, which is about the publish path.
+- **Files:** `.github/workflows/publish.yml`, `scripts/test_publish_gate.py` (+11 tests),
   `COMPATIBILITY.md` (dependency-floors note + two citations), `DECISIONS.md` (new entry),
   `plans/post-adoption-hardening-and-acdp-readiness.md`, `PROGRESS.md`.
 - **Tests:** the 9 new gate tests pass; `cd python && .venv/bin/pytest -q` → **555 passed, 17
@@ -215,4 +221,18 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 - **Not done here, as the plan directed:** `ci-green` still executes from `publish.yml` *as it exists
   on the tagged ref*, so it stays only as strong as branch protection. The ancestry check narrows
   that materially without closing it.
+- **Verify gate (fresh Opus):** R1 **GAPS (5)** → all closed → suite re-green.
+  - *G1/G2 (the same class, 13 sites):* citations broken by this phase's own insertions in
+    `PROGRESS.md` and the plan — the two documents the citation guard does not scan.
+  - *G3, the one that mattered:* `.github/workflows/publish.yml`'s floor step could **exit 0 having
+    asserted nothing**. `test_protobuf_floor.py` skips when the generated tree is absent and pytest
+    exits 0 when everything skips, so a `make generate` that wrote `_gen` somewhere unimportable —
+    the exact defect this job shipped when it ran raw `buf generate` — would have left the guard
+    green. The step's own comment claimed this *could not happen*, which made it an assumption
+    wearing an assertion's clothes. Now `test -f` before pytest, plus
+    `test_stubs_in_the_wrong_place_fail_rather_than_skip_the_guard`.
+  - *G4:* the test count here said +9; it is +11.
+  - *G5:* `test_compatibility_citations_resolve.py`'s docstring promised a 125-line masking margin
+    between duplicate `publish.yml` citations; this phase's fourth citation cut it to 19. Still
+    clear of `CITATION_SLACK` 3, but the note was false and is now accurate.
 - **Next:** Phase 7 (`COMPATIBILITY.md` pass — known-bad band, CrewAI cross-link, #76).
