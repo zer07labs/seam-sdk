@@ -76,7 +76,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:339-359`. |
 | `python/tests/test_protobuf_floor.py:72,88` | The two pure-file-read assertions Phase 6 runs at publish time. `:29-31` reads only `_gen/seam/api/v1/seam_pb2.py`; `:47-51` **skips** when `_gen` is absent. `:88-99` forces `cap == gencode_major + 1` — this is why "widen the floor" is not a metadata edit. |
 | `python/tests/test_grpcio_floor.py:38` | Module-level `import grpc` — matters if Phase 6 runs it in the publish job. |
-| `.github/workflows/yank.yml` | `workflow_dispatch`, `dry_run` default `"true"`. A hard **DELETE** (`:69-70`), not a PyPI-style yank. `:38` does **not** strip the cargo token's `"Bearer "` prefix (`publish.yml:361-363` does) — **Phase 10** fixes that one line and nothing else. |
+| `.github/workflows/yank.yml` | `workflow_dispatch`, `dry_run` default `"true"`. A hard **DELETE** (`:69-70`), not a PyPI-style yank. `:38` does **not** strip the cargo token's `"Bearer "` prefix (`publish.yml:369-371` does) — **Phase 10** fixes that one line and nothing else. |
 | `COMPATIBILITY.md:62-75` | §3 known-bad table + the "Nothing was yanked" preamble. **Phase 7** adds the 0.7.40-0.7.43 row (hedged — `protobuf>=7.35.1,<8` dates to v0.7.13, so the floor string does not bound the band). `:103-110` dependency floors · `:123-182` §4a co-installability (`:141-143` machine-read `PROBE-TABLE` marker — columns and order load-bearing; `:147` crewai row, whose Tracking cell links **#48 and not crewAI#7103**) · `:248-284` §7 cross-repo coupling, incl. `:257-275` vector origination. **§7 documents `seam-sdk` main → `seam-runtime` CI, *not* a spec-side merge-order courtesy — do not cite it for one.** |
 | `python/tests/test_retracted_claims.py:170-184` | Parametrized presence check over `COMPATIBILITY.md`. **Phase 7** adds `"0.7.43"`. `:27-30` globs **every `*.md` in the repo including `plans/` and this file**; `:39-48` are the qualifier markers that make a paragraph "discussing, not claiming". |
 | `python/tests/test_compatibility_citations_resolve.py` | Every backticked `file:line` in `COMPATIBILITY.md`/`DECISIONS.md` must resolve; `:61-64,:92` ≥10 each; `:76` sibling paths need a `seam-runtime/` prefix; `:141-172` `ANCHORED` needles must hit **exactly once** within `CITATION_SLACK` (`:176`). **Phase 8** adds the vendored-file rule. |
@@ -176,7 +176,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 - **Commit:** see below · branch `feat/publish-integrity-and-tracking-state`
 - **Delivered:** the publish path now re-derives the dependency floors from the stubs *it* generated
   (`.github/workflows/publish.yml:340`), installs the built wheel with `protobuf` pinned at the floor
-  the wheel itself declares and imports the generated module there (`:405`), and refuses a tag whose
+  the wheel itself declares and imports the generated module there (`:413`), and refuses a tag whose
   commit is not an ancestor of `origin/main` (`:176`). All three are executed — not merely
   asserted — by `scripts/test_publish_gate.py`.
 - **The hazard was live, and this is the phase that was losing ground while it waited:** the declared
@@ -203,25 +203,29 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   `publish.yml` shifted the needles COMPATIBILITY.md anchors for the npm and PyPI registry URLs —
   `test_compatibility_citations_resolve.py` caught those, twice (the second time after the
   skip-hole fix moved them again). It does **not** scan `PROGRESS.md` or the plan, and the 75-line
-  `DECISIONS.md` prepend plus the 11-line `COMPATIBILITY.md` paragraph silently invalidated
-  **eleven** anchors in this file's repo map and two in the plan — among them the `COMPATIBILITY.md`
-  ranges Phase 7 navigates by, and `publish.yml:418`, which had come to point at a bare `fi`. The
-  verify gate found them; nothing mechanical would have. All repointed. Worth carrying forward:
-  `PROGRESS.md` is now the most-cited unguarded document here, and adding it to that test's `DOCS`
-  dict is a real candidate — deliberately not done in this phase, which is about the publish path.
+  `DECISIONS.md` prepend plus the 11-line `COMPATIBILITY.md` paragraph silently invalidated twelve
+  anchors in this file's repo map and eleven in the plan — among them the `COMPATIBILITY.md` ranges
+  Phase 7 navigates by, the Bearer-strip line Phase 10 navigates by, and one that had drifted onto a
+  bare `fi`. **Repointing them by hand then missed six and re-broke one**, which round 2 of the gate
+  caught; the fix was to stop repointing by eye and sweep both documents against the current files
+  mechanically. Worth carrying forward: `PROGRESS.md` and the plan are the most-cited unguarded
+  documents here, and adding them to that test's `DOCS` dict is a real candidate — deliberately not
+  done in this phase, which is about the publish path, but the case is now evidence not tidiness.
 - **Files:** `.github/workflows/publish.yml`, `scripts/test_publish_gate.py` (+11 tests),
   `COMPATIBILITY.md` (dependency-floors note + two citations), `DECISIONS.md` (new entry),
   `plans/post-adoption-hardening-and-acdp-readiness.md`, `PROGRESS.md`.
-- **Tests:** the 9 new gate tests pass; `cd python && .venv/bin/pytest -q` → **555 passed, 17
-  skipped** (up from 545 — the doc guards parametrize per citation, and this phase added ten);
-  `scripts/test_ci_gate.py` + `scripts/test_release_gate.py` → 17 passed. Note: locally this
-  machine spends ~14s in a security scan on every exec of a freshly-written stub script, so the
-  pre-existing `ci-green` patience cases (~79 stub execs each) take about an hour here; they are
-  unmodified and run in seconds in CI.
+- **Tests:** `scripts/test_publish_gate.py` → **24 passed** (13 pre-existing `ci-green` race and
+  patience cases, unmodified and byte-identical, plus this phase's 11); `cd python &&
+  .venv/bin/pytest -q` → **555 passed, 17 skipped** (up from 545 — the doc guards parametrize per
+  citation and this phase added ten); `scripts/test_ci_gate.py` + `scripts/test_release_gate.py` →
+  17 passed; ruff clean. *(An earlier note here claimed the pre-existing patience cases take ~an
+  hour locally because every exec of a freshly-written stub script cost ~14s. That was a symptom of
+  the machine's disk being full, not a property of the tests — with space free the whole file runs
+  in under 9 seconds. Recorded because the wrong explanation was the more flattering one.)*
 - **Not done here, as the plan directed:** `ci-green` still executes from `publish.yml` *as it exists
   on the tagged ref*, so it stays only as strong as branch protection. The ancestry check narrows
   that materially without closing it.
-- **Verify gate (fresh Opus):** R1 **GAPS (5)** → all closed → suite re-green.
+- **Verify gate (fresh Opus), two rounds:** R1 **GAPS (5)**, R2 **GAPS (7)**, both closed.
   - *G1/G2 (the same class, 13 sites):* citations broken by this phase's own insertions in
     `PROGRESS.md` and the plan — the two documents the citation guard does not scan.
   - *G3, the one that mattered:* `.github/workflows/publish.yml`'s floor step could **exit 0 having
@@ -233,6 +237,15 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
     `test_stubs_in_the_wrong_place_fail_rather_than_skip_the_guard`.
   - *G4:* the test count here said +9; it is +11.
   - *G5:* `test_compatibility_citations_resolve.py`'s docstring promised a 125-line masking margin
-    between duplicate `publish.yml` citations; this phase's fourth citation cut it to 19. Still
+    between duplicate `publish.yml` citations; this phase's fourth citation cut it to 27. Still
     clear of `CITATION_SLACK` 3, but the note was false and is now accurate.
+  - *R2's blocking finding — the G3 test was vacuous.* `test_stubs_in_the_wrong_place_…` passed
+    **with the guard deleted**: `_stub_repo` created `_gen/` unconditionally and only skipped writing
+    the files, so `test_grpcio_floor.py`'s `assert sources` hard-failed and the step exited non-zero
+    for an unrelated reason. A test that green-lights the thing it protects being removed is worse
+    than none. It now omits the tree entirely and asserts the guard's own `::error::` text; verified
+    both ways — guard removed → red (exit 0, `1 skipped, 4 deselected`, the hole exactly), guard
+    restored → green. The guard also gained that message, so the failure it catches is diagnosable.
+  - *R2's other six:* the hand-repointing above missed six citations and re-broke one (its own +8
+    lines moved the Bearer strip it had just fixed). Closed by mechanical sweep, not by eye.
 - **Next:** Phase 7 (`COMPATIBILITY.md` pass — known-bad band, CrewAI cross-link, #76).

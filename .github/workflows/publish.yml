@@ -351,7 +351,7 @@ jobs:
           # risk: writing `_gen` without rooting the imports is the exact defect this job shipped
           # when it ran raw `buf generate`, and "green because it never ran" is the failure shape
           # this whole step exists to remove.
-          test -f python/seam_sdk/_gen/seam/api/v1/seam_pb2.py
+          test -f python/seam_sdk/_gen/seam/api/v1/seam_pb2.py || { echo "::error::the generated tree is not at python/seam_sdk/_gen — the floor guards would SKIP, and a skip exits 0. Refusing to publish a wheel whose dependency floors were never actually measured."; exit 1; }
           python -m pip install --quiet pytest grpcio
           python -m pytest python/tests/test_protobuf_floor.py -q \
             -k "declared_floor_is_at_least or caps_the_major"

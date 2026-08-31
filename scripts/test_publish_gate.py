@@ -235,13 +235,19 @@ def _stub_repo(
 ) -> Path:
     """A miniature repo with the SAME layout the floor guards resolve against.
 
+    `generated=False` omits the `_gen` TREE, not merely the files in it. That distinction is the
+    whole test: an empty `_gen/` makes `test_grpcio_floor.py`'s `assert sources` hard-fail, so the
+    step exits non-zero for a reason that has nothing to do with the guard under test — which is
+    how the first version of this passed with the guard deleted.
+
     They locate the tree from their own `__file__` (`parents[2]`), so copying the real test
     files into a stub tree makes them measure the stub's pyproject and stub's gencode. The
     logic under test is therefore the shipped logic, not a re-description of it.
     """
     root = tmp_path / "stubrepo"
     gen = root / "python" / "seam_sdk" / "_gen" / "seam" / "api" / "v1"
-    gen.mkdir(parents=True)
+    if generated:
+        gen.mkdir(parents=True)
     tests = root / "python" / "tests"
     tests.mkdir(parents=True)
     for name in ("test_protobuf_floor.py", "test_grpcio_floor.py"):
@@ -373,6 +379,13 @@ def test_stubs_in_the_wrong_place_fail_rather_than_skip_the_guard(tmp_path: Path
     assert p.returncode != 0, (
         "the floor guard passed with NO generated stubs to measure — it skipped, exited 0, and "
         f"would have published unchecked:\n{p.stdout}{p.stderr}"
+    )
+    # Anchored to the guard's OWN message, not merely to a non-zero exit. Without this the test
+    # passes on any failure — which is exactly how its first version stayed green while the guard
+    # it protects was deleted.
+    assert "the generated tree is not at python/seam_sdk/_gen" in p.stdout + p.stderr, (
+        "it failed, but not at the presence check — so this test would not notice that check "
+        f"being removed:\n{p.stdout}{p.stderr}"
     )
 
 

@@ -192,10 +192,10 @@ def test_the_load_bearing_citations_still_point_at_the_right_thing(
     it is exactly the state this entry was added in. Today the duplicated paths within a single
     document are `CHANGELOG.md` and `publish.yml` in COMPATIBILITY.md. That margin has NARROWED:
     COMPATIBILITY.md now cites `publish.yml` four times (`:199`, `:340`, `:367`, `:413`), and the
-    closest pair is 19 lines apart, not the 125+ this note originally recorded. 19 is still well
+    closest pair is 27 lines apart, not the 125+ this note originally recorded. 27 is still well
     clear of `CITATION_SLACK` 3, so every anchored entry is still satisfied by exactly its own
-    citation — but the headroom is a sixth of what it was, and a fifth citation landing between
-    `:340` and `:359` would close it. Revisit this before adding one, not after.
+    citation — but the headroom is a fifth of what it was, and a fifth citation landing between
+    `:340` and `:367` would close it. Revisit this before adding one, not after.
     """
     lines = (REPO / path).read_text(encoding="utf-8", errors="ignore").splitlines()
     hits = [i + 1 for i, line in enumerate(lines) if needle in line]
