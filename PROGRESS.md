@@ -70,9 +70,9 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi:106,163` | `AuthorizeRequest.FeaturesEntry` / `RunDecisionRequest.FeaturesEntry` — **synthetic map-entry messages Python emits and protobuf-es does not**. Phase 5's extractors must exclude them **by nesting, not by the `*Entry` name** — `AuditEntry` (`:716`) is a real top-level message. `.pyi` carries **no `oneof` grouping at all** (and `seam.api.v1` has zero `oneof`s). |
 | `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi:409,418` | **`__slots__` is NOT the field list.** `ResumeRequest`/`AdminResumeRequest` carry a proto field named `raise`; the `.pyi` generator cannot emit a Python keyword, so `__slots__` omits it and only `RAISE_FIELD_NUMBER` (`:412`, `:424`) survives. Measured: `__slots__` = 221 fields, protobuf-es = 223. **Phase 5 must extract from `<NAME>_FIELD_NUMBER: _ClassVar[int]` lowercased** — that reconciles both sides at 223 with zero diff. |
 | `contract/wire-framing.json:31-33` | `_comment`: a bump is **NOT** for an additive proto field or a new RPC verb. Do not touch it for ACDP. |
-| `.github/workflows/publish.yml:316` | `make generate` **again at publish time**, against unpinned plugins — the open half of #52. `:390-401` pre-upload smoke installs protobuf *unconstrained*, so the skew is invisible to it; `registry-smoke` (`:519`) likewise. Verified: `grep -rn protobuf .github/workflows/` yields **one** hit, a prose comment — **no workflow pins protobuf anywhere**, so nothing catches the skew. The declared floor and the emitted gencode are both **7.36.0** today (`python/pyproject.toml:50`, `_gen/.../seam_pb2.py:12-18`) — zero headroom. **Phase 6, and it should run first.** |
+| `.github/workflows/publish.yml:316` | `make generate` **again at publish time**, against unpinned plugins — the open half of #52. `:390-401` pre-upload smoke installs protobuf *unconstrained*, so the skew is invisible to it; `registry-smoke` (`:519`) likewise. Measured at planning: `grep -rn protobuf .github/workflows/` yielded **one** hit, a prose comment — no workflow pinned protobuf anywhere, so nothing caught the skew. **Phase 6 closed that** (DONE 2026-08-31): the same grep now yields 17, and `publish.yml:423` installs the built wheel with `protobuf==$FLOOR`. The declared floor and the emitted gencode are both **7.36.0** (`python/pyproject.toml:50`, `_gen/.../seam_pb2.py:12-18`) — zero headroom, which is why this phase ran first. |
 | `.github/workflows/publish.yml:63-148` | `ci-green` — resolves every `ci-ok` conclusion for the tagged commit. Sound: `:107` still-running ⇒ `pending`, `:117-126` one-green-cannot-mask-one-red, `:143-148` timeout is a refusal. `:192`/`:285` gate both npm and python. **Must not regress.** |
-| `.github/workflows/publish.yml:150-188` | `version-check` — tag vs in-tree versions only. **No branch-ancestry check**; Phase 6 adds one (`ci.yml:19` runs on every branch push, so a tag at a green feature-branch commit publishes today). |
+| `.github/workflows/publish.yml:150-188` | `version-check` — tag vs in-tree versions. It had **no branch-ancestry check** (`ci.yml:19` runs on every branch push, so a tag at a green feature-branch commit published cleanly); **Phase 6 added one at `:176`**, which is inside this row's own range. Read the range as the job, not as evidence of the gap — it was widened in round 1 until it contained the very step it is cited for lacking. |
 | `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:339-359`. |
 | `python/tests/test_protobuf_floor.py:72,88` | The two pure-file-read assertions Phase 6 runs at publish time. `:29-31` reads only `_gen/seam/api/v1/seam_pb2.py`; `:47-51` **skips** when `_gen` is absent. `:88-99` forces `cap == gencode_major + 1` — this is why "widen the floor" is not a metadata edit. |
 | `python/tests/test_grpcio_floor.py:38` | Module-level `import grpc` — matters if Phase 6 runs it in the publish job. |
@@ -203,12 +203,16 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   `publish.yml` shifted the needles COMPATIBILITY.md anchors for the npm and PyPI registry URLs —
   `test_compatibility_citations_resolve.py` caught those, twice (the second time after the
   skip-hole fix moved them again). It does **not** scan `PROGRESS.md` or the plan, and the 75-line
-  `DECISIONS.md` prepend plus the 11-line `COMPATIBILITY.md` paragraph silently invalidated twelve
-  anchors in this file's repo map and eleven in the plan — among them the `COMPATIBILITY.md` ranges
-  Phase 7 navigates by, the Bearer-strip line Phase 10 navigates by, and one that had drifted onto a
-  bare `fi`. **Repointing them by hand then missed six and re-broke one**, which round 2 of the gate
-  caught; the fix was to stop repointing by eye and sweep both documents against the current files
-  mechanically. Worth carrying forward: `PROGRESS.md` and the plan are the most-cited unguarded
+  `DECISIONS.md` prepend plus the 11-line `COMPATIBILITY.md` paragraph silently invalidated anchors
+  throughout this file's repo map and the plan — among them the `COMPATIBILITY.md` ranges Phase 7
+  navigates by, the Bearer-strip line Phase 10 navigates by, and one that had drifted onto a bare
+  `fi`. **No count is recorded here, deliberately.** Three verify rounds each produced a different
+  one, and for a round the two documents contradicted each other on it because a fix updated one
+  copy and not the other — a number that has to be maintained in two places is one more thing that
+  rots. **Repointing by hand missed six and re-broke one** (round 2), and round 3 then found four
+  survivors of the *mechanical* sweep that replaced it: that sweep read only explicit `path:line`
+  citations, not the bare `:line` form that inherits its path from earlier in the sentence, and
+  every survivor lived in the form it did not read. It now reads both. Worth carrying forward: `PROGRESS.md` and the plan are the most-cited unguarded
   documents here, and adding them to that test's `DOCS` dict is a real candidate — deliberately not
   done in this phase, which is about the publish path, but the case is now evidence not tidiness.
 - **Files:** `.github/workflows/publish.yml`, `scripts/test_publish_gate.py` (+11 tests),
