@@ -6,6 +6,81 @@ assumption, the independent recommender's analysis, the human verdict, and the r
 produced it.
 
 
+## 2026-08-31 — `plans/post-adoption-hardening-and-acdp-readiness.md` Phase 6 (issue #52): the publish path re-derives the floors it ships
+
+### The mechanism, and why a green `ci-green` could never have closed it
+
+`v0.7.43` declared `protobuf>=7.35.1,<8` in metadata while bundling gencode emitted by protoc
+7.36.0. protobuf's generated preamble calls `ValidateProtobufRuntimeVersion`, which raises when the
+*installed* runtime is older than the gencode — so the wheel's own stated minimum was a version at
+which it could not be imported. It shipped anyway, and CI was green when it did.
+
+The green was honest. `ci.yml` runs `python/tests/test_protobuf_floor.py`, which derives the required
+floor **from the stubs generated in that run** and compares it to `python/pyproject.toml:50`. The
+publish job then regenerates the stubs from scratch — against buf's *unpinned* remote plugins
+(`buf.gen.yaml:29`) — and nothing re-checked the floor against **those** stubs. The two runs measure
+different artifacts and only one of them is the artifact that ships.
+
+This is why Phase 6 could not be discharged by strengthening the CI gate, and why `ci-green` (added
+after `v0.7.17` and `v0.7.47`) is orthogonal rather than sufficient: `ci-green` answers *did CI pass
+for this commit?* — it did — and the defect lives entirely in the gap between what CI measured and
+what publish built. The headroom is currently **zero**: the declared floor and the emitted gencode
+are both `7.36.0`, so the very next remote-plugin roll between a CI run and a publish reproduces it.
+
+### Why a floor-pinned install, rather than pinning the buf plugins
+
+Pinning `buf.gen.yaml` to fixed plugin versions is the obvious alternative and it is the wrong
+trade. The floor is **derived** precisely because the codegen moves on its own schedule; pinning the
+plugins converts a self-correcting derivation into a number someone must remember to bump, and the
+failure mode of forgetting is silent — old gencode, indefinitely, with no signal. It also would not
+answer the question that matters. Both existing smokes install `protobuf` unconstrained, so they
+resolve the *newest* runtime, which by construction satisfies any gencode; neither could have caught
+`0.7.43`, and neither could catch its successor.
+
+So the publish job does two things instead. It re-runs the floor guards against the stubs it just
+generated (`.github/workflows/publish.yml:340`), and it installs the built wheel into a clean venv
+with `protobuf` pinned at the floor the wheel itself declares, then imports the generated module
+there (`.github/workflows/publish.yml:405`). The second is the one that asks *is this metadata
+true?* — it reproduces exactly the resolution a consumer gets when their dependency closure caps
+protobuf at our stated minimum. The floor is parsed out of the wheel's own `pyproject.toml` rather
+than hardcoded, and an unparseable pin **refuses to publish** rather than falling back to an
+unconstrained install; a silent fallback would restore the blind spot the step exists to remove.
+
+### Accepted trade-off: a failure here can half-publish, and that is the safer half
+
+The floor check runs inside the `python` job, after `python -m build` and before `twine upload`, and
+the `npm` job publishes independently. So a wheel that fails the floor check leaves npm published and
+PyPI not — a version live in one registry and absent from the other.
+
+The alternative was a shared validation job gating both uploads. It was rejected: the `python` job
+already builds, smokes, and uploads the *same* `dist/*.whl` in one step, so extracting validation
+would mean rebuilding the wheel in the gate — introducing a validated-vs-published skew of exactly
+the kind this phase exists to remove. Between the two failure modes, a half-published version is
+recoverable by a patch release and is visible immediately; a wheel whose declared floor is a lie is
+neither, and it fails in the consumer's process rather than ours. The half-publish is accepted
+deliberately, not overlooked.
+
+### The guards are executed, not read — which caught a defect in this very change
+
+`scripts/test_publish_gate.py` drives both new steps against stub trees rather than asserting on
+their text: a stub `pyproject.toml` whose floor trails a stub gencode constant must fail the real
+extracted step (`scripts/test_publish_gate.py:317`), and a matching floor must pass it, so the red
+case is red for the floor rather than for a broken harness. The same file drives the tag-ancestry
+guard against throwaway git repos (`scripts/test_publish_gate.py:472`).
+
+That was not ceremony. The first draft of the ancestry step ran `git fetch --no-tags --depth=0`,
+which git rejects outright — *"depth 0 is not a positive number"* — and would have failed every
+publish. It survived a read-through and died the first time it was executed, which is the same
+argument the `ci-green` tests in that file already make (`.github/workflows/ci.yml:573`).
+
+### The tag-ancestry assertion, filed under the same phase
+
+`publish.yml` triggers on a tag push, and a tag can be created from any local commit. `ci-green` then
+resolves *that commit's* check runs, which a pushed branch happily has. Nothing asserted the tagged
+commit was ever on `main`. `version-check` now refuses a tag whose commit is not an ancestor of
+`origin/main` (`.github/workflows/publish.yml:176`), and its checkout takes full history because
+`merge-base --is-ancestor` cannot answer in a depth-1 clone.
+
 ## 2026-08-25 — `plans/authorize-single-canonicalization.md` (issue #60): one derivation, and the integer rule that is not a magnitude test
 
 ### Widen the integer arm rather than narrow the float arm

@@ -86,8 +86,8 @@ this by trying.
 
 | Language | How you get it | Versioned? | Status |
 |---|---|---|---|
-| **Python** (`seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:303`) | Yes | **Published + supported** |
-| **TypeScript** (`@zer07labs/seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:178`, `ts/package.json:12`) | Yes | **Published + supported** |
+| **Python** (`seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:359`) | Yes | **Published + supported** |
+| **TypeScript** (`@zer07labs/seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:199`, `ts/package.json:12`) | Yes | **Published + supported** |
 | **Go** | Module proxy, from the `go/vX.Y.Z` tag (`.github/workflows/release-on-runtime.yml:126`) | Tag only — no in-tree version | Resolvable, crypto shim only |
 | **Java** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |
 | **Kotlin** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |
@@ -108,6 +108,17 @@ The practical consequence: **a new RPC verb costs the three shims nothing**, and
 | Python: `grpcio` | `>=1.64` | Derived the same way — needs both halves of the registered-method calling convention. |
 | Python | `>=3.10` | The gencode's own floor. |
 | Rust (`verify/`) | **MSRV 1.85** | Derived from the resolved dependency graph, and checked two ways: `verify/tests/msrv.rs` asserts the declaration covers every *declared* `rust-version`, and CI's `verify-msrv` job **actually compiles and tests the crate at that floor** — which is the only thing that catches a dependency requiring more than it declares. |
+
+**The floors are re-derived at PUBLISH time, not only in CI, and the wheel is installed at the one
+it declares.** `ci.yml` measures the floor against the stubs generated in *its* run; `publish.yml`
+regenerates from scratch against buf's unpinned remote plugins, so the gencode it bundles need not
+be the gencode CI measured. `v0.7.43` shipped through exactly that gap — `protobuf>=7.35.1,<8`
+declared over 7.36.0 gencode, on green CI. Two steps close it: the floor guards run again after the
+publish job's own generation (`.github/workflows/publish.yml:340`), and the built wheel is then
+installed into a venv with `protobuf` pinned at the floor it declares and imported there
+(`.github/workflows/publish.yml:405`) — the only check that answers *is this metadata true?*, since
+every other smoke installs unconstrained and so satisfies any gencode by construction. Both are
+executed against stub trees by `scripts/test_publish_gate.py`, including the red case.
 
 ### Agent-framework co-installability
 

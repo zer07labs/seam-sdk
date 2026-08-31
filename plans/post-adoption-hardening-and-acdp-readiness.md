@@ -236,7 +236,35 @@ Note also that probe 1b already hardcodes two `seam.api.v1` **field** names (`Au
 
 ### Phase 6 — Close the publish-time gencode/floor skew
 
-**Status:** TODO
+**Status:** DONE (2026-08-31)
+
+> **Divergence 1 — the half-publish fork was settled as option 2 (keep it in-job).** The plan's
+> "strictly better" option was a shared validation job both `npm` and `python` `needs:`. It was
+> rejected on inspection: the `python` job already builds, smokes, and uploads the *same*
+> `dist/*.whl` in one step, so extracting validation would mean **rebuilding** the wheel in the gate
+> and introducing a validated-vs-published skew — the exact class of defect this phase removes.
+> Recorded in `DECISIONS.md` under "Accepted trade-off", with the reasoning that a half-published
+> version is recoverable by a patch release and visible immediately, whereas a false-metadata wheel
+> is neither and fails in the consumer's process.
+>
+> **Divergence 2 — the falsifiable negative found two real defects in this phase's own code, both
+> invisible to review.** (a) The ancestry step's first draft ran `git fetch --no-tags --depth=0`,
+> which git rejects outright ("depth 0 is not a positive number"); it would have failed every
+> publish. (b) The floor step's inner pytest went red while the **step exited 0** — GitHub's implicit
+> `bash -e {0}` would have masked how fragile that is, since a step's status is otherwise just its
+> last command's, and a red protobuf-floor test followed by a green grpcio one publishes anyway. Both
+> new steps now carry an explicit `set -euo pipefail`, and the harness deliberately runs them with a
+> plain `bash -c` so removing it goes red.
+>
+> **Divergence 3 — the phase had to repoint two anchored citations it broke.** Inserting into
+> `publish.yml` shifted the needles COMPATIBILITY.md cites for the npm and PyPI registry URLs
+> (178→199, 303→359), which is precisely the rot `test_compatibility_citations_resolve.py` was
+> written for — its docstring records six citations going stale the day they were written, for the
+> same reason.
+>
+> Not fixed here, as the plan directed: `ci-green` still executes from `publish.yml` *as it exists on
+> the tagged ref*, so it remains only as strong as branch protection. The ancestry check materially
+> narrows that but does not close it.
 
 **Delivers:** a green publish gate that actually implies the published wheel's metadata is true.
 

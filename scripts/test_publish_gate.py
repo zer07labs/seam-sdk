@@ -22,8 +22,9 @@ Run: `python -m pytest scripts/test_publish_gate.py -q`
 
 from __future__ import annotations
 
-import os
+import shutil
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -162,4 +163,334 @@ def test_the_gate_actually_waits_rather_than_asking_once(tmp_path: Path) -> None
     assert p.gh_calls > 1, (  # type: ignore[attr-defined]
         f"the gate asked {p.gh_calls} time(s) before giving up — it is not waiting at all, which "  # type: ignore[attr-defined]
         "is the v0.7.47 failure"
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# The publish-time floor guard, and the tag-ancestry guard.
+#
+# v0.7.43 declared `protobuf>=7.35.1,<8` over 7.36.0 gencode and shipped it. `ci.yml` was
+# green and honestly so: it ran the floor tests against the stubs generated in ITS run.
+# `publish.yml` regenerates from scratch against buf's unpinned REMOTE plugins, so the
+# gencode it bundles can differ from the gencode CI measured — and nothing re-checked the
+# floor afterwards. Both smoke tests then install protobuf unconstrained, which by
+# construction satisfies any gencode, so the skew was invisible end to end.
+#
+# These execute the new steps rather than reading them, for the same reason the block above
+# does. That is not theoretical here: a read-only pass over this very workflow missed
+# `git fetch --depth=0`, which git refuses outright ("depth 0 is not a positive number"),
+# and which would have failed every publish.
+# ══════════════════════════════════════════════════════════════════════════════════════════
+
+PY_TESTS = REPO / "python" / "tests"
+
+
+def _steps(job: str) -> list[dict]:
+    return yaml.safe_load(PUBLISH.read_text())["jobs"][job]["steps"]
+
+
+def _step(job: str, needle: str) -> dict:
+    return next(s for s in _steps(job) if needle in str(s.get("name", "")))
+
+
+def _step_names(job: str) -> list[str]:
+    return [str(s.get("name", s.get("uses", ""))) for s in _steps(job)]
+
+
+# ── the floor re-derivation step ──────────────────────────────────────────────────────────
+
+_GENCODE_STUB = """\
+from google.protobuf import runtime_version as _runtime_version
+
+_runtime_version.ValidateProtobufRuntimeVersion(
+    _runtime_version.Domain.PUBLIC, {major}, {minor}, {patch}, '', 'seam/api/v1/seam.proto'
+)
+"""
+
+# Both calling-convention markers the grpcio guard knows about, so the stub tree exercises
+# the same derivation the real stubs do rather than a degenerate one.
+_GRPC_STUB = """\
+channel.unary_unary('/seam.api.v1.Seam/Authorize', _registered_method=True)
+server.add_registered_method_handlers('seam.api.v1.Seam', rpc_method_handlers)
+"""
+
+_PYPROJECT_STUB = """\
+[project]
+name = "seam-sdk"
+version = "0.0.0"
+dependencies = [
+  "protobuf>={floor},<{cap}",
+  "grpcio>={grpcio}",
+]
+"""
+
+
+def _stub_repo(
+    tmp_path: Path, *, floor: str, gencode: str, grpcio: str = "1.64"
+) -> Path:
+    """A miniature repo with the SAME layout the floor guards resolve against.
+
+    They locate the tree from their own `__file__` (`parents[2]`), so copying the real test
+    files into a stub tree makes them measure the stub's pyproject and stub's gencode. The
+    logic under test is therefore the shipped logic, not a re-description of it.
+    """
+    root = tmp_path / "stubrepo"
+    gen = root / "python" / "seam_sdk" / "_gen" / "seam" / "api" / "v1"
+    gen.mkdir(parents=True)
+    tests = root / "python" / "tests"
+    tests.mkdir(parents=True)
+    for name in ("test_protobuf_floor.py", "test_grpcio_floor.py"):
+        shutil.copy(PY_TESTS / name, tests / name)
+
+    major, minor, patch = (int(p) for p in gencode.split("."))
+    (gen / "seam_pb2.py").write_text(
+        _GENCODE_STUB.format(major=major, minor=minor, patch=patch)
+    )
+    (gen / "seam_pb2_grpc.py").write_text(_GRPC_STUB)
+    (root / "python" / "pyproject.toml").write_text(
+        _PYPROJECT_STUB.format(floor=floor, cap=major + 1, grpcio=grpcio)
+    )
+    return root
+
+
+def _inner_python() -> str:
+    """An interpreter that can actually run the two floor guards.
+
+    The step's first line installs `pytest grpcio`; the harness neuters that rather than
+    reaching PyPI, so something on this machine has to already have them. CI's
+    `workflow-guards` job installs exactly that list, so `sys.executable` qualifies there.
+    Locally the outer suite may run on an interpreter without grpcio, so the repo venv is
+    tried as well — `test_grpcio_floor.py` imports grpc at module scope and would otherwise
+    error out for a reason that has nothing to do with the floor.
+    """
+    candidates = [sys.executable, str(REPO / "python" / ".venv" / "bin" / "python")]
+    for exe in candidates:
+        probe = subprocess.run(
+            [exe, "-c", "import pytest, grpc"], capture_output=True, check=False
+        )
+        if probe.returncode == 0:
+            return exe
+    pytest.skip(f"no interpreter with both pytest and grpcio among {candidates}")
+
+
+def _run_floor_step(root: Path) -> subprocess.CompletedProcess:
+    """Run the workflow's floor step verbatim against `root`, with `pip install` neutered."""
+    exe = _inner_python()
+    bin_dir = root.parent / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    (bin_dir / "python").write_text(
+        textwrap.dedent(f"""\
+        #!/usr/bin/env bash
+        if [ "$1" = "-m" ] && [ "$2" = "pip" ]; then exit 0; fi
+        exec {exe} "$@"
+        """)
+    )
+    (bin_dir / "python").chmod(0o755)
+
+    return subprocess.run(
+        ["bash", "-c", _step("python", "re-derive the dependency floors")["run"]],
+        cwd=root,
+        env={
+            "PATH": f"{bin_dir}:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
+            "HOME": str(root.parent),
+        },
+        capture_output=True,
+        text=True,
+        check=False,  # a non-zero exit IS the thing under test
+    )
+
+
+def test_the_floors_are_re_derived_after_generation_and_before_the_wheel_is_built() -> None:
+    """Order is the whole mechanism. Re-deriving before `make generate` would measure the
+    gencode of a previous run, which is exactly the stale answer `ci.yml` already gives."""
+    names = _step_names("python")
+    gen = next(i for i, n in enumerate(names) if "generate the transport stubs" in n)
+    derive = next(i for i, n in enumerate(names) if "re-derive the dependency floors" in n)
+    build = next(i for i, n in enumerate(names) if n.startswith("build ("))
+    assert gen < derive < build, (
+        f"floor re-derivation must sit between generation and build; got "
+        f"generate={gen}, re-derive={derive}, build={build} in {names}"
+    )
+
+
+def test_a_floor_that_trails_the_gencode_fails_the_publish_step(tmp_path: Path) -> None:
+    """v0.7.43, reconstructed: floor 7.35.1 declared over 7.36.0 gencode. This is the case
+    that shipped, and the publish path must now refuse it."""
+    root = _stub_repo(tmp_path, floor="7.35.1", gencode="7.36.0")
+    p = _run_floor_step(root)
+    assert p.returncode != 0, (
+        "the publish step accepted a floor BELOW its own bundled gencode — this is the "
+        f"0.7.43 defect and it must not pass:\n{p.stdout}{p.stderr}"
+    )
+    assert "Raise the floor to >=7.36.0" in p.stdout + p.stderr, (
+        f"it failed, but not for the floor reason — check the harness:\n{p.stdout}{p.stderr}"
+    )
+
+
+def test_a_floor_that_matches_the_gencode_passes_the_publish_step(tmp_path: Path) -> None:
+    """Guards the guard above: proves the red case is red for the floor, not because the
+    harness cannot run the tests at all (a `-k` that matches nothing exits 5, not 0)."""
+    root = _stub_repo(tmp_path, floor="7.36.0", gencode="7.36.0")
+    p = _run_floor_step(root)
+    assert p.returncode == 0, (
+        f"a correctly-derived floor must publish:\n{p.stdout}{p.stderr}"
+    )
+
+
+def test_a_grpcio_floor_below_the_emitted_convention_fails_the_publish_step(
+    tmp_path: Path,
+) -> None:
+    """The same skew in the other dependency: the stubs call
+    `add_registered_method_handlers` (grpcio 1.64) while pyproject claims 1.63."""
+    root = _stub_repo(tmp_path, floor="7.36.0", gencode="7.36.0", grpcio="1.63")
+    p = _run_floor_step(root)
+    assert p.returncode != 0, (
+        f"a grpcio floor the emitted stubs outrun must not publish:\n{p.stdout}{p.stderr}"
+    )
+    assert "add_registered_method_handlers" in p.stdout + p.stderr, (
+        f"failed for some other reason than the grpcio floor:\n{p.stdout}{p.stderr}"
+    )
+
+
+# ── the floor-pinned wheel install ────────────────────────────────────────────────────────
+
+
+def _floor_parse_snippet() -> str:
+    """Just the `FLOOR=...` derivation out of the build step — the part that can run without
+    a wheel, a venv, or a network."""
+    run = _step("python", "build (")["run"]
+    return run[run.index("FLOOR=$(") : run.index("python -m venv /tmp/floorcheck")]
+
+
+def _run_floor_parse(cwd: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["bash", "-c", _floor_parse_snippet()],
+        cwd=cwd,
+        env={"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_the_floor_is_parsed_out_of_pyproject_rather_than_hardcoded(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        _PYPROJECT_STUB.format(floor="7.36.0", cap=8, grpcio="1.64")
+    )
+    p = _run_floor_parse(tmp_path)
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "declared protobuf floor: 7.36.0" in p.stdout, p.stdout + p.stderr
+
+
+def test_an_unparseable_pyproject_refuses_to_publish(tmp_path: Path) -> None:
+    """Fail closed. If the pin's spelling ever changes, the wheel must not sail through
+    unchecked — that silent pass is the shape of the defect this whole step exists for."""
+    (tmp_path / "pyproject.toml").write_text('[project]\ndependencies = ["protobuf"]\n')
+    p = _run_floor_parse(tmp_path)
+    assert p.returncode == 1, p.stdout + p.stderr
+    assert "could not parse the declared protobuf floor" in p.stdout + p.stderr
+
+
+def test_the_floor_pinned_install_has_no_unconstrained_fallback() -> None:
+    """A `|| pip install dist/*.whl` rescue would recreate the exact blind spot: the
+    unconstrained resolution always satisfies the gencode, so it can only ever pass."""
+    run = _step("python", "build (")["run"]
+    tail = run[run.index("FLOOR=$(") :]
+    assert 'protobuf==$FLOOR" dist/*.whl' in tail, (
+        "the floor-pinned install is gone; the wheel's metadata is no longer checked"
+    )
+    assert tail.count("/tmp/floorcheck/bin/python -m pip install") == 1, (
+        "more than one install into the floor venv — a fallback resolution defeats the pin"
+    )
+    assert "from seam_sdk._gen.seam.api.v1 import seam_pb2" in tail, (
+        "the floor venv must import seam_pb2 — that module's preamble is where protobuf's "
+        "runtime-version check fires, and it is the entire assertion"
+    )
+
+
+# ── the tag-ancestry guard ────────────────────────────────────────────────────────────────
+
+
+def _git(cwd: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=cwd, capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
+@pytest.fixture
+def pushed_and_unpushed(tmp_path: Path) -> tuple[Path, str, str]:
+    """A clone whose `origin/main` holds one commit, plus a local commit that never merged."""
+    origin = tmp_path / "origin.git"
+    wc = tmp_path / "wc"
+    wc.mkdir()
+    subprocess.run(
+        ["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True
+    )
+    _git(wc, "init", "-q", "-b", "main")
+    _git(wc, "config", "user.email", "t@example.invalid")
+    _git(wc, "config", "user.name", "t")
+    _git(wc, "remote", "add", "origin", str(origin))
+    (wc / "a").write_text("a")
+    _git(wc, "add", "-A")
+    _git(wc, "commit", "-qm", "merged")
+    merged = _git(wc, "rev-parse", "HEAD")
+    _git(wc, "push", "-q", "origin", "main")
+    (wc / "b").write_text("b")
+    _git(wc, "add", "-A")
+    _git(wc, "commit", "-qm", "never merged")
+    unmerged = _git(wc, "rev-parse", "HEAD")
+    return wc, merged, unmerged
+
+
+def _run_ancestry(wc: Path, sha: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["bash", "-c", _step("version-check", "ancestor")["run"]],
+        cwd=wc,
+        env={
+            "GITHUB_SHA": sha,
+            "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
+            "HOME": str(wc.parent),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_a_tag_on_a_merged_commit_publishes(
+    pushed_and_unpushed: tuple[Path, str, str],
+) -> None:
+    wc, merged, _ = pushed_and_unpushed
+    p = _run_ancestry(wc, merged)
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "is on origin/main — OK" in p.stdout
+
+
+def test_a_tag_on_a_commit_that_never_merged_is_refused(
+    pushed_and_unpushed: tuple[Path, str, str],
+) -> None:
+    """A tag can be pushed from any local commit. Without this, `ci-green` would happily
+    resolve that commit's own CI run and publish code no reviewer ever saw on main."""
+    wc, _, unmerged = pushed_and_unpushed
+    p = _run_ancestry(wc, unmerged)
+    assert p.returncode == 1, p.stdout + p.stderr
+    assert "is not an ancestor of origin/main" in p.stdout + p.stderr
+
+
+def test_the_ancestry_check_has_the_history_it_needs() -> None:
+    """`actions/checkout` defaults to a depth-1 clone, in which `merge-base --is-ancestor`
+    cannot answer and the guard refuses every release."""
+    checkout = next(
+        s for s in _steps("version-check") if "checkout" in str(s.get("uses", ""))
+    )
+    assert str(checkout.get("with", {}).get("fetch-depth")) == "0", (
+        "version-check must check out full history for the ancestry assertion"
+    )
+    run = _step("version-check", "ancestor")["run"]
+    commands = [ln for ln in run.splitlines() if not ln.lstrip().startswith("#")]
+    assert not any("--depth=0" in ln for ln in commands), (
+        "git rejects `--depth=0` outright (\"depth 0 is not a positive number\"), which "
+        "would fail every publish"
     )

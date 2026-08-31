@@ -76,7 +76,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:254-274`. |
 | `python/tests/test_protobuf_floor.py:72,88` | The two pure-file-read assertions Phase 6 runs at publish time. `:29-31` reads only `_gen/seam/api/v1/seam_pb2.py`; `:47-51` **skips** when `_gen` is absent. `:88-99` forces `cap == gencode_major + 1` — this is why "widen the floor" is not a metadata edit. |
 | `python/tests/test_grpcio_floor.py:38` | Module-level `import grpc` — matters if Phase 6 runs it in the publish job. |
-| `.github/workflows/yank.yml` | `workflow_dispatch`, `dry_run` default `"true"`. A hard **DELETE** (`:69-70`), not a PyPI-style yank. `:38` does **not** strip the cargo token's `"Bearer "` prefix (`publish.yml:306-307` does) — **Phase 10** fixes that one line and nothing else. |
+| `.github/workflows/yank.yml` | `workflow_dispatch`, `dry_run` default `"true"`. A hard **DELETE** (`:69-70`), not a PyPI-style yank. `:38` does **not** strip the cargo token's `"Bearer "` prefix (`publish.yml:361-363` does) — **Phase 10** fixes that one line and nothing else. |
 | `COMPATIBILITY.md:62-75` | §3 known-bad table + the "Nothing was yanked" preamble. **Phase 7** adds the 0.7.40-0.7.43 row (hedged — `protobuf>=7.35.1,<8` dates to v0.7.13, so the floor string does not bound the band). `:103-110` dependency floors · `:112-171` §4a co-installability (`:130-132` machine-read `PROBE-TABLE` marker — columns and order load-bearing; `:136` crewai row, whose Tracking cell links **#48 and not crewAI#7103**) · `:237-273` §7 cross-repo coupling, incl. `:246-264` vector origination. **§7 documents `seam-sdk` main → `seam-runtime` CI, *not* a spec-side merge-order courtesy — do not cite it for one.** |
 | `python/tests/test_retracted_claims.py:170-184` | Parametrized presence check over `COMPATIBILITY.md`. **Phase 7** adds `"0.7.43"`. `:27-30` globs **every `*.md` in the repo including `plans/` and this file**; `:39-48` are the qualifier markers that make a paragraph "discussing, not claiming". |
 | `python/tests/test_compatibility_citations_resolve.py` | Every backticked `file:line` in `COMPATIBILITY.md`/`DECISIONS.md` must resolve; `:61-64,:92` ≥10 each; `:76` sibling paths need a `seam-runtime/` prefix; `:141-172` `ANCHORED` needles must hit **exactly once** within `CITATION_SLACK` (`:176`). **Phase 8** adds the vendored-file rule. |
@@ -170,3 +170,49 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   doc-guards that scan every `*.md` — `test_retracted_claims.py`, `test_compatibility_citations_resolve.py`
   — pass against the two new archive notes and the rewritten index.
 - **Next:** Phase 6 (publish-time gencode/floor skew) — the actively-firing hazard.
+
+### Phase 6 — Close the publish-time gencode/floor skew · 2026-08-31
+
+- **Commit:** see below · branch `feat/publish-integrity-and-tracking-state`
+- **Delivered:** the publish path now re-derives the dependency floors from the stubs *it* generated
+  (`.github/workflows/publish.yml:340`), installs the built wheel with `protobuf` pinned at the floor
+  the wheel itself declares and imports the generated module there (`:405`), and refuses a tag whose
+  commit is not an ancestor of `origin/main` (`:176`). All three are executed — not merely
+  asserted — by `scripts/test_publish_gate.py`.
+- **The hazard was live, and this is the phase that was losing ground while it waited:** the declared
+  floor (`python/pyproject.toml:50`, `protobuf>=7.36.0,<8`) and the emitted gencode are **equal**, so
+  the next unpinned remote-plugin roll between a green CI run and a publish-time `make generate`
+  reproduces the `0.7.43` defect exactly.
+- **The falsifiable negative earned its keep twice, on this phase's own code:**
+  - `git fetch --no-tags --depth=0` — git rejects it outright (*"depth 0 is not a positive
+    number"*). It read fine; it would have failed **every** publish. Found on first execution.
+  - The floor step's inner pytest went red and the **step still exited 0**. GitHub's implicit
+    `bash -e {0}` would have hidden how fragile that was: a step's status is otherwise just its last
+    command's, so a red protobuf-floor test followed by a green grpcio one publishes anyway. Both new
+    steps now carry an explicit `set -euo pipefail`, and the harness runs them under a plain
+    `bash -c` **on purpose**, so deleting that line goes red.
+- **Half-publish trade-off, settled and recorded (not left unstated, as the plan required):** kept
+  in-job rather than extracted to a shared gate both `npm` and `python` `needs:`. The `python` job
+  already builds, smokes, and uploads the *same* `dist/*.whl` in one step, so extracting validation
+  would mean rebuilding the wheel in the gate — a validated-vs-published skew of exactly the kind
+  this phase removes. Reasoning in `DECISIONS.md` under "Accepted trade-off".
+- **Rejected, consistent with `DECISIONS.md`:** pinning `buf.gen.yaml`'s remote plugins. It converts a
+  self-correcting derivation into a number someone must remember to bump, and its failure mode is
+  silent.
+- **Citations this phase broke and repointed:** inserting into `publish.yml` shifted the needles
+  COMPATIBILITY.md anchors for the npm and PyPI registry URLs (178→199, 303→359) — the same rot
+  `test_compatibility_citations_resolve.py`'s docstring records happening the day that document was
+  written. Also repointed this file's own `publish.yml:306-307` → `:361-363`.
+- **Files:** `.github/workflows/publish.yml`, `scripts/test_publish_gate.py` (+9 tests),
+  `COMPATIBILITY.md` (dependency-floors note + two citations), `DECISIONS.md` (new entry),
+  `plans/post-adoption-hardening-and-acdp-readiness.md`, `PROGRESS.md`.
+- **Tests:** the 9 new gate tests pass; `cd python && .venv/bin/pytest -q` → **555 passed, 17
+  skipped** (up from 545 — the doc guards parametrize per citation, and this phase added ten);
+  `scripts/test_ci_gate.py` + `scripts/test_release_gate.py` → 17 passed. Note: locally this
+  machine spends ~14s in a security scan on every exec of a freshly-written stub script, so the
+  pre-existing `ci-green` patience cases (~79 stub execs each) take about an hour here; they are
+  unmodified and run in seconds in CI.
+- **Not done here, as the plan directed:** `ci-green` still executes from `publish.yml` *as it exists
+  on the tagged ref*, so it stays only as strong as branch protection. The ancestry check narrows
+  that materially without closing it.
+- **Next:** Phase 7 (`COMPATIBILITY.md` pass — known-bad band, CrewAI cross-link, #76).
