@@ -364,3 +364,22 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   needs to be for values essentially nobody sends. Widening later is additive; the reverse would not
   be. Filed as a question upstream.
 - **Status:** UNCONFIRMED
+
+## Cloudsmith quarantine is not wanted for the 0.7.39-0.7.43 band
+- **Plan:** `plans/post-adoption-hardening-and-acdp-readiness.md` (Phase 10, issue #52)
+- **Assumed:** that nobody wants installs of the band *blocked* — only documented. Issue #52
+  recommended yanking; Phase 10 decided to document instead, and quarantine is the reversible
+  middle path between the two (Cloudsmith blocks download while retaining the artifact).
+- **Chose:** do nothing beyond documenting. Quarantine costs a working consumer exactly what
+  deletion costs them — their next install fails — while buying back only reversibility, and the
+  no-yank reasoning in `DECISIONS.md` turns on the harm to that consumer rather than on whether
+  the act can be undone.
+- **Alternatives:** quarantine the five versions (blocks the affected *and* the unaffected, but is
+  reversible); yank as #52 asked (same harm, permanent); do nothing at all and skip the row
+  (rejected outright — nothing was yanked, so the document is the only barrier).
+- **Blast radius if wrong:** low and reversible in the direction that matters. If blocking installs
+  turns out to be wanted, quarantine is still available and `yank.yml` now actually authenticates.
+  Being wrong the other way — quarantining when it was not wanted — breaks builds that work today
+  and cannot be undone for anyone whose CI ran in the interim.
+- **Status:** UNCONFIRMED — this is the one option worth raising rather than settling unilaterally,
+  per the phase's own Rejected-alternatives note.

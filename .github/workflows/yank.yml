@@ -35,7 +35,26 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
-          TOKEN="${CLOUDSMITH_API_KEY:-$CARGO_REGISTRIES_ZER07LABS_TOKEN}"
+          # Dedicated key if set, else the org Cargo token — each with a leading "Bearer "
+          # stripped. Same resolution as `publish.yml:369-371`, written as an `if` rather than
+          # that file's `&&` one-liner because this step runs under `set -euo pipefail` and the
+          # explicit form is immune to both the AND-list exit-status rule and unset variables.
+          #
+          # Why it matters even though it fails CLOSED: without the strip this sends
+          # `X-Api-Key: Bearer …`, Cloudsmith 401s, and `curl -sf` aborts before any DELETE. So it
+          # cannot delete the wrong thing — it simply never works, including in dry run, unless the
+          # dedicated secret happens to be set. A safety tool that silently does not work is worse
+          # than one known to be broken, because it is discovered in the incident, not before it.
+          #
+          # Both sources are stripped, not just the Cargo one: a dedicated key never carries the
+          # prefix, so stripping it costs nothing and removes one way to be wrong. A token that is
+          # ONLY the prefix strips to empty and is refused below — fail-closed is preserved.
+          TOKEN="${CLOUDSMITH_API_KEY:-}"
+          TOKEN="${TOKEN#Bearer }"
+          if [ -z "$TOKEN" ]; then
+            TOKEN="${CARGO_REGISTRIES_ZER07LABS_TOKEN:-}"
+            TOKEN="${TOKEN#Bearer }"
+          fi
           if [ -z "$TOKEN" ]; then
             echo "::error::No Cloudsmith credential in scope."; exit 1
           fi

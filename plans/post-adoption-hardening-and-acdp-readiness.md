@@ -451,9 +451,32 @@ No hand-written wrapper change is expected: `resolve_context` returns `pb.Contex
 
 ---
 
-### Phase 10 — Record the **at least** 0.7.40-0.7.43 disposition and fix `yank.yml`'s token handling
+### Phase 10 — Record the 0.7.39-0.7.43 disposition and fix `yank.yml`'s token handling
 
-**Status:** TODO
+**Status:** DONE (2026-08-31)
+
+> **Divergence 1 — the band is the proven `0.7.39-0.7.43`, not "at least 0.7.40".** AC2 asked this
+> entry to record the lower bound as unrecoverable because `_gen/` is gitignored. Phase 7's verify
+> gate falsified that premise (the evidence is in CI history, not the tree), so the entry records
+> five proven releases and no hedge. AC2 as written is superseded; the substance it wanted — the
+> band, why the bound is what it is, and the lockfile check with its date — is all present.
+>
+> **Divergence 2 — the entry argues with #52 rather than around it.** The plan's four evidence
+> lines all pointed one way, and one of them ("no consumer has it locked") is a fact #52 deploys
+> in the *opposite* direction: with nothing locked, it argued, the blast radius of yanking is
+> small. The entry now states #52's case in its own words — including its crux, that untrue
+> metadata is worse than an honestly broken wheel — and answers both, rather than presenting a
+> contested fact as settled.
+>
+> **Divergence 3 — a guard was added where the plan said "if cheap".** `scripts/test_yank_gate.py`
+> (12 tests) *executes* the credential resolution rather than reading it, and pins the three
+> filters that scope the deletion. It earned its place: the first draft of the fix copied
+> `publish.yml`'s `&&` one-liner, which behaves differently under this workflow's
+> `set -euo pipefail`. It runs in `workflow-guards` — an existing job, so `ci-ok`'s `needs:` is
+> unchanged — and needs no credential.
+>
+> **Held to, exactly as instructed:** no workflow was dispatched and nothing was deleted from any
+> registry. The scoping filters are byte-unchanged.
 
 **Delivers:** the no-delete decision written down with its reasoning, so it stops being re-litigated; and a `yank.yml` that would actually authenticate if it is ever needed.
 

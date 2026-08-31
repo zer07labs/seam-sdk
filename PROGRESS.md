@@ -380,3 +380,62 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   paragraph. Carried into ship as an explicit step.
 - **Next:** Phase 10 (`DECISIONS.md` yank disposition + the one-line `yank.yml` token-prefix fix),
   which closes PR 1.
+
+### Phase 10 — The no-yank disposition, recorded; and `yank.yml` made to actually authenticate · 2026-08-31
+
+- **Delivered:** a `DECISIONS.md` entry that makes the forward reference Phase 7 left dangling
+  true; `yank.yml`'s credential resolution fixed (`.github/workflows/yank.yml:52`); and
+  `scripts/test_yank_gate.py` (12 tests) wired into `workflow-guards`
+  (`.github/workflows/ci.yml:585`).
+- **Nothing was dispatched and nothing was deleted.** The scoping filters — exact version equality,
+  the python+npm allowlist, the exact-name match keeping the org's Cargo crates unreachable — are
+  byte-unchanged, and are now pinned by tests so that widening one is deliberate and visible.
+- **The decision: document, don't delete.** The rule stated so it stops being re-litigated —
+  *delete when a defect corrupts silently or is a security hazard; document when it fails loud* —
+  turns on what a consumer can discover for themselves. This band raises `VersionError` at first
+  import, naming both versions and the fix.
+- **The entry argues with #52 instead of past it, which the plan did not ask for and needed.** The
+  plan's four evidence lines all pointed one way, and one of them — "no consumer has it locked" —
+  is a fact **#52 deploys in the opposite direction**: nothing locked meant, to it, that deletion
+  was cheap. A week on the same fact inverts (anyone who installed it resolved `protobuf` freely
+  and is working now), but presenting it as a settled no-yank point, as I first did in Phase 7,
+  was wrong. The entry now states #52's case in its own words — including its crux, that untrue
+  metadata is worse than an honestly broken wheel — and answers it: the metadata is
+  **self-detecting**, caught by the very mechanism it is about, before any call reaches a runtime.
+- **And the action #52 sized no longer exists.** It weighed deleting *one* hours-old release; the
+  measured band is **five**. Its third option, re-release with a corrected floor, is already
+  satisfied — 0.7.47 shipped the fix — so the only live question was whether to destroy the bad
+  artifacts.
+- **Evidence re-checked, not carried from the plan:** no lockfile anywhere in the workspace pins
+  any version in the band (2026-08-31; the only `seam-sdk` entry in `seam-adapters/uv.lock` is
+  0.7.9 via an editable path); v0.7.43's npm artifact is **healthy** (`@bufbuild/protobuf ^2.12.1`,
+  a caret range with no analogue of Python's gencode gate), yet `yank.yml` deletes python and npm
+  together with no format input — so running it as written would break registry lockstep for a
+  defect only one language has.
+- **The `yank.yml` bug was latent and fails closed, which is the argument for fixing it.** It
+  resolved `${CLOUDSMITH_API_KEY:-$CARGO_REGISTRIES_ZER07LABS_TOKEN}` without stripping the
+  `"Bearer "` the org Cargo token carries — a strip `.github/workflows/publish.yml:371` has always
+  done. Cloudsmith 401s and `curl -sf` aborts before any DELETE, so no wrong deletion was possible;
+  neither was the tool working *at all*, dry run included, unless the dedicated secret happened to
+  be set. A safety tool that silently does not work is discovered during the incident.
+- **The first draft of the fix was wrong, and executing it is what showed that.** Copying
+  `publish.yml`'s `[ -z "$TOKEN" ] && TOKEN=…` one-liner into a step that runs under
+  `set -euo pipefail` depends on the AND-OR exit-status rule — safe here, but by a rule most
+  readers do not hold, and it becomes the step's status if ever moved last. Replaced with an
+  explicit `if`, and tested across all eight credential shapes including "token is *only* the
+  prefix" (strips to empty → refused, fail-closed preserved) and both variables unset (`set -u`).
+- **The guards are falsifiable, proved three ways:** restoring the original one-liner → 5 red;
+  widening the format filter → 1 red; flipping the `dry_run` default to `false` → 1 red. Each
+  restored byte-identically (`shasum`) → 12 green.
+- **Two stale citations found in my own Phase 6 entry while sweeping this one.**
+  `scripts/test_publish_gate.py:322` and `:495` still resolved — to the wrong lines, after my
+  later edits shifted that file. Resolution is not correctness; only reading the target catches it.
+  Repointed to `:330` and `:510`.
+- **`ASSUMPTIONS.md`:** Cloudsmith quarantine logged **UNCONFIRMED** — the one option the phase
+  said was worth raising rather than settling unilaterally. It costs a working consumer exactly
+  what deletion costs them and buys back only reversibility.
+- **Files:** `DECISIONS.md` (new entry), `.github/workflows/yank.yml`, `.github/workflows/ci.yml`
+  (one step in an existing job — `ci-ok`'s `needs:` unchanged), `scripts/test_yank_gate.py` (new),
+  `CHANGELOG.md` + `COMPATIBILITY.md` + `python/tests/test_retracted_claims.py` (the "No yank"
+  anchor shifted when Phase 7's advisory row landed), `ASSUMPTIONS.md`, `PROGRESS.md`, the plan.
+- **Next:** PR 1 (Phases 6, 7, 10) — then the #48/#76 replies, which have waited for it.
