@@ -1,5 +1,29 @@
 # `record_digest_v3` in Rust/Python/TS + v3 conformance vectors — issue #56 (B3 Phase 2)
 
+> **📦 ARCHIVED 2026-08-31 — DELIVERED, all phases including 6a/6b/7/8.** Issue
+> [#56](https://github.com/zer07labs/seam-sdk/issues/56) closed 2026-08-25. Archived while
+> implementing `plans/post-adoption-hardening-and-acdp-readiness.md` Phase 1, whose whole
+> premise was that this plan's tracking state had gone stale in two places.
+>
+> **Verified against this tree, not against the status table** (per `plans/README.md`'s archiving
+> rule): `record_digest_v3` exists in all three languages — `python/seam_sdk/crypto.py:589`,
+> `ts/src/crypto.ts:608`, `verify/src/verify.rs:448`. The Phase 6a/6b streamed arms are live and
+> version-bounded in both helpers: `python/seam_sdk/admin.py:129` takes the v3 branch and `:107`
+> refuses `schema_version > 3`; `ts/src/admin.ts:141` mirrors the branch and `:109` the refusal.
+> The committed KATs are at
+> `conformance/vectors.json:70`. The Phase 6 blocker cleared explicitly in this file's own log —
+> `seam.event.v1` carrying `DecisionSealed` tags 11/12/13 reached the BSR.
+>
+> **One claim in this file did not survive and is left uncorrected on purpose**, because an archived
+> plan is a historical record rather than a maintained document: its §"what this makes stale" says
+> version-block origination became SDK-first per issue #56. That inversion **did not survive contact**
+> — the runtime's emitter landed with its own blocks and its bytes were taken verbatim.
+> `COMPATIBILITY.md` §7 is the settled text, and it says new vectors originate in the runtime, with a
+> separate file — never a new block — as the sanctioned escape.
+>
+> Its `../seam-runtime/crates/**` clean-room wording is likewise preserved as-written: it was that
+> plan's own operating constraint, and the corrected, narrower form now lives in `PROGRESS.md`.
+
 **Status:** phases TODO. **Issue:** [seam-sdk#56](https://github.com/zer07labs/seam-sdk/issues/56).
 **Spec (the ONLY normative input):** `../seam-runtime/docs/specs/seam-event.v1.md` §"Record digest"
 (`:372`), §"Record digest (v3)" (`:379`), strip semantics (`:594`), `None`/`Some("")`/empty-list

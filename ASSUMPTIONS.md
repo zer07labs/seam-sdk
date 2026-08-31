@@ -195,7 +195,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 
 ## v3 validates every input; v2 deliberately still does not
 
-- **Plan:** `plans/record-digest-v3.md` (Phase 3)
+- **Plan:** `plans/archive/record-digest-v3.md` (Phase 3)
 - **Assumed:** `record_digest_v3` / `recordDigestV3` should refuse any input it cannot faithfully
   represent, rather than coerce it — and `record_digest_v2` should keep its current lenient
   behaviour, leaving the two versions with different opinions about what a valid call is.
@@ -239,7 +239,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 
 ## The v1 skip is a downgrade hole, closed structurally rather than documented
 
-- **Plan:** `plans/record-digest-v3.md` (Phase 4)
+- **Plan:** `plans/archive/record-digest-v3.md` (Phase 4)
 - **Assumed:** `seam-verify` should REFUSE a `DECISION_SEALED` that declares `schema_version < 2`
   while carrying `ciphertext_digest` (tag 10) or any of tags 11/12/13, rather than skipping it as the
   link-only v1 record it claims to be.
@@ -267,7 +267,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 
 ## `frame`'s `len() as u32` truncates above 4 GiB, in Rust only
 
-- **Plan:** `plans/record-digest-v3.md` (Phase 4)
+- **Plan:** `plans/archive/record-digest-v3.md` (Phase 4)
 - **Assumed:** It is acceptable that `record_digest_v3`'s `frame` closure casts `part.len() as u32`,
   which truncates silently for a single field of 4 GiB or more. Python raises there and TypeScript
   wraps.
@@ -283,7 +283,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 
 ## The v3 conformance cases this repo designed live in a second file, not in `conformance/vectors.json`
 
-- **Plan:** `plans/record-digest-v3.md` (Phase 4.5)
+- **Plan:** `plans/archive/record-digest-v3.md` (Phase 4.5)
 - **Assumed:** that `conformance/vectors.json` has exactly one author — seam-runtime's emitter —
   because `sdk-digest-parity` byte-diffs the whole file, and that adding this repo's five extra
   cases to it would therefore turn seam-runtime's CI red for a reason that is not drift.
@@ -306,7 +306,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Status:** CONFIRMED (2026-08-24) — see `DECISIONS.md`, "reconcile `plans/record-digest-v3.md`'s ASSUMPTIONS.md (4 entries)". — proposed to seam-runtime; their call.
 
 ## A tag-10 strip stays `False`, while a tag-11/12 strip raises
-- **Plan:** plans/record-digest-v3.md (Phase 6a/6b)
+- **Plan:** `plans/archive/record-digest-v3.md` (Phase 6a/6b)
 - **Assumed:** the spec's per-tag table (`seam-event.v1.md` §"Presence on the wire") saying a tag-10
   strip on `schema_version >= 2` must **refuse** means the same thing our helper's `False` already
   means — a failing verdict — and not that it must become an exception.
@@ -325,7 +325,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Status:** CONFIRMED (2026-08-25, /reconcile — see DECISIONS.md)
 
 ## The runtime accepts an `AuthorizeRequest.tool_input` whose canonical bytes were derived by the caller
-- **Plan:** `plans/authorize-single-canonicalization.md` (Phase 4, issue #60)
+- **Plan:** `plans/archive/authorize-single-canonicalization.md` (Phase 4, issue #60)
 - **Assumed:** the runtime re-derives `tool_input_digest` from the `tool_input` bytes it receives and
   compares it to the digest on the request, but does **not** independently assert that those bytes
   are canonical JCS.
@@ -340,12 +340,17 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   better outcome than the one assumed here, not a worse one. The genuinely unbounded case is the
   reverse: the runtime accepts them and an advisory audit row carries bytes a third-party auditor
   cannot re-derive the digest from. Not reversible after the fact for rows already written.
-  **Cannot be answered from this repo** — `../seam-runtime/crates/**` is unreadable under the
-  clean-room constraint. Filed as a question upstream.
+  **Cannot be answered from this repo** — answering it needs the runtime's **Rust**, and the
+  clean-room constraint is that this repo's crypto/digest implementations are written from the
+  published spec and never from that Rust. (The constraint targets the implementation, not the
+  contract: `../seam-runtime/crates/seam-api/proto/**` *is* read — `Makefile:29`'s `generate-local`
+  runs `buf generate ../seam-runtime` against exactly that path. An earlier wording of this line
+  said `crates/**` was unreadable outright, which forbade the proto and contradicted the build.)
+  Filed as a question upstream.
 - **Status:** UNCONFIRMED
 
 ## The runtime's JCS renders an integer ≥ `10**21` the way ES6 does
-- **Plan:** `plans/authorize-single-canonicalization.md` (Phase 3, issue #60)
+- **Plan:** `plans/archive/authorize-single-canonicalization.md` (Phase 3, issue #60)
 - **Assumed:** unknown, and deliberately not relied on.
 - **Chose:** refuse the whole range. The committed predicate — accept an integer iff JCS renders it
   as itself — refuses everything at or above `10**21` for free, because a plain decimal form can
