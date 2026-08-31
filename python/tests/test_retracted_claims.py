@@ -173,6 +173,7 @@ def test_the_commitment_digest_exclusion_is_stated() -> None:
         "0.7.20",  # the floor
         "0.7.13",  # unimportable band
         "0.7.17",  # wire-broken band
+        "0.7.43",  # gencode/floor skew band — the upper edge, which is the proven one
     ],
 )
 def test_the_known_bad_bands_stay_documented(required: str) -> None:

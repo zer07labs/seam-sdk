@@ -77,7 +77,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `python/tests/test_protobuf_floor.py:72,88` | The two pure-file-read assertions Phase 6 runs at publish time. `:29-31` reads only `_gen/seam/api/v1/seam_pb2.py`; `:47-51` **skips** when `_gen` is absent. `:88-99` forces `cap == gencode_major + 1` — this is why "widen the floor" is not a metadata edit. |
 | `python/tests/test_grpcio_floor.py:38` | Module-level `import grpc` — matters if Phase 6 runs it in the publish job. |
 | `.github/workflows/yank.yml` | `workflow_dispatch`, `dry_run` default `"true"`. A hard **DELETE** (`:69-70`), not a PyPI-style yank. `:38` does **not** strip the cargo token's `"Bearer "` prefix (`publish.yml:369-371` does) — **Phase 10** fixes that one line and nothing else. |
-| `COMPATIBILITY.md:62-75` | §3 known-bad table + the "Nothing was yanked" preamble. **Phase 7** adds the 0.7.40-0.7.43 row (hedged — `protobuf>=7.35.1,<8` dates to v0.7.13, so the floor string does not bound the band). `:103-110` dependency floors · `:123-182` §4a co-installability (`:141-143` machine-read `PROBE-TABLE` marker — columns and order load-bearing; `:147` crewai row, whose Tracking cell links **#48 and not crewAI#7103**) · `:248-284` §7 cross-repo coupling, incl. `:257-275` vector origination. **§7 documents `seam-sdk` main → `seam-runtime` CI, *not* a spec-side merge-order courtesy — do not cite it for one.** |
+| `COMPATIBILITY.md:88-106` | §3 known-bad table + the "Nothing was yanked" preamble. **Phase 7** adds the 0.7.40-0.7.43 row (hedged — `protobuf>=7.35.1,<8` dates to v0.7.13, so the floor string does not bound the band). `:147-154` dependency floors · `:167-226` §4a co-installability (`:185-187` machine-read `PROBE-TABLE` marker — columns and order load-bearing; `:191` crewai row, whose Tracking cell links **#48 and not crewAI#7103**) · `:292-328` §7 cross-repo coupling, incl. `:301-319` vector origination. **§7 documents `seam-sdk` main → `seam-runtime` CI, *not* a spec-side merge-order courtesy — do not cite it for one.** |
 | `python/tests/test_retracted_claims.py:170-184` | Parametrized presence check over `COMPATIBILITY.md`. **Phase 7** adds `"0.7.43"`. `:27-30` globs **every `*.md` in the repo including `plans/` and this file**; `:39-48` are the qualifier markers that make a paragraph "discussing, not claiming". |
 | `python/tests/test_compatibility_citations_resolve.py` | Every backticked `file:line` in `COMPATIBILITY.md`/`DECISIONS.md` must resolve; `:61-64,:92` ≥10 each; `:76` sibling paths need a `seam-runtime/` prefix; `:141-172` `ANCHORED` needles must hit **exactly once** within `CITATION_SLACK` (`:176`). **Phase 8** adds the vendored-file rule. |
 | `verify/docs/seam-event.v1.md` | Byte-verbatim vendored spec, pinned in its header. **Phase 9** refreshes it whole-file. Source of #73's citation drift. |
@@ -229,7 +229,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 - **Not done here, as the plan directed:** `ci-green` still executes from `publish.yml` *as it exists
   on the tagged ref*, so it stays only as strong as branch protection. The ancestry check narrows
   that materially without closing it.
-- **Verify gate (fresh Opus), two rounds:** R1 **GAPS (5)**, R2 **GAPS (7)**, both closed.
+- **Verify gate (fresh Opus), three rounds:** R1 **GAPS (5)**, R2 **GAPS (7)**, R3 **GAPS (8)** — all closed. The rounds converged on substance and diverged on records: R3 found **no code defect at all**, and every one of its eight findings was a document that no longer described the tree.
   - *G1/G2 (the same class, 13 sites):* citations broken by this phase's own insertions in
     `PROGRESS.md` and the plan — the two documents the citation guard does not scan.
   - *G3, the one that mattered:* `.github/workflows/publish.yml`'s floor step could **exit 0 having
@@ -252,4 +252,67 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
     restored → green. The guard also gained that message, so the failure it catches is diagnosable.
   - *R2's other six:* the hand-repointing above missed six citations and re-broke one (its own +8
     lines moved the Bearer strip it had just fixed). Closed by mechanical sweep, not by eye.
+  - *R3 proved the R2 fix rather than reading it.* It deleted `publish.yml`'s `test -f` line and
+    confirmed `test_stubs_in_the_wrong_place_…` goes red **on the hole itself** (`1 skipped, 4
+    deselected`), then restored it for 24 green. It also re-derived every citation independently
+    rather than trusting this record. That is the standard a gate has to meet to be worth running.
+  - *R3's eight, all records:* four citations the round-2 "mechanical" sweep had not covered — it
+    read only explicit `path:line` and missed the bare `:line` form, which is where all four lived,
+    one of them the `python` half of the very sentence whose `npm` half round 2 repointed. Two
+    stale claims in the repo map that **this phase itself falsified** ("no workflow pins protobuf
+    anywhere" — 17 hits now; and a `version-check` range widened until it contained the ancestry
+    step it is cited for lacking). The anchor counts contradicting each other across the two
+    records. One overstated docstring claim about the citation margin.
+  - *Closing the phase here rather than running a round 4.* R3 found no code defect and confirmed
+    the code by experiment; its findings were record hygiene, now fixed and re-verified
+    mechanically against the files rather than by eye. Spending the next fresh-Opus gate on
+    Phase 7 is worth more than a fourth pass over prose.
 - **Next:** Phase 7 (`COMPATIBILITY.md` pass — known-bad band, CrewAI cross-link, #76).
+
+### Phase 7 — `COMPATIBILITY.md` pass: the 0.7.40-0.7.43 band, the upstream link, #76 · 2026-08-31
+
+- **Delivered:** §3 carries a third known-bad band (`COMPATIBILITY.md:104`) with the narrow
+  condition, the root cause, 0.7.47 as the fixed release, and an explicit *"may reach back further"*
+  hedge; the crewai row (`:191`) names the upstream PR that actually ends it; §2 gains a definition
+  of what a compatibility-matrix cell asserts (`:54-78`), which is #76's ask.
+- **Every claim in the new row was measured, not carried from the plan.** `git show
+  vX:python/pyproject.toml` across every tag from `v0.7.12` to `v0.7.48`: `protobuf>=7.35.1,<8` is
+  declared **continuously** from `v0.7.13` through `v0.7.43`, and `v0.7.47` is the first tag
+  declaring `>=7.36.0`. Tag timestamps put `v0.7.40` (2026-08-23T23:10:18Z) to `v0.7.43`
+  (2026-08-24T02:14:57Z) inside **3h04m**, with a **40h30m** gap back to `v0.7.39` — which is what
+  makes 0.7.40 a defensible lower edge and nothing stronger.
+- **The plan said 27 tags; it is 26.** 0.7.22-0.7.25 and 0.7.33 were never tagged. Corrected in the
+  document. The argument does not depend on the count — it depends on the floor string predating
+  the skew, which 26 tags establish as well as 27 would.
+- **The lower bound is deliberately not manufactured.** Per-tag gencode is unrecoverable here: the
+  stubs are gitignored and each wheel's came from whatever the unpinned remote plugin emitted that
+  day. The row says `≥ 0.7.40` and says why, in the same hedged style as `CHANGELOG.md:516-518`.
+  Resisting "just say 0.7.43 because that is what the issue names" was the point — the per-tag
+  check covers 26 tags, not four.
+- **The §3 preamble needed the amendment the phase flagged as conditional.** Its stated rationale
+  was an auth error and a floor in wide use; neither describes a `VersionError` at import in a
+  three-day-old band. Rewritten around the limb all three bands share — *fails loudly rather than
+  quietly* — with the wide-use limb scoped to the first two. The `CHANGELOG.md:521-526` citation
+  (an `ANCHORED` needle) was preserved, not reflowed.
+- **`crewAIInc/crewAI#7103` is a PR, not an issue** — open since 2026-08-24, *"widen opentelemetry
+  pins so protobuf 7 resolves"*. Linked as a PR, with what its merge would mean stated, since that
+  is the event the row's `incompatible` verdict actually turns on.
+- **Citations repointed by computed line map, not by eye — the Phase 6 lesson applied.** The §2
+  insert shifted `COMPATIBILITY.md` by 44 lines from §4 onward and 26 from §3. Rather than
+  hand-repointing (which failed twice in Phase 6), a `difflib.SequenceMatcher` over
+  `git show HEAD:COMPATIBILITY.md` vs the working file produced an old→new map, applied
+  mechanically to both records. It ran in **two passes** because the first handled only explicit
+  `COMPATIBILITY.md:N` citations and left every bare `:N` untouched — the exact form that survived
+  round 2 of Phase 6, failing the same way a second time within one run. Three lines I rewrote have
+  no difflib counterpart and were mapped by hand against `grep`, named explicitly in the script.
+- **Files:** `COMPATIBILITY.md`, `python/tests/test_retracted_claims.py` (parametrize +`"0.7.43"`),
+  `PROGRESS.md`, `plans/post-adoption-hardening-and-acdp-readiness.md`.
+- **Tests:** `cd python && .venv/bin/pytest -q` → **557 passed, 17 skipped** (up from 555: the new
+  parametrize case, plus one more parametrized citation); `python3 -m pytest scripts/ -q` → **68
+  passed**; ruff clean. `probe_framework_coinstall.table_rows()` still parses **4 rows** with
+  columns and order unchanged — the `<!-- PROBE-TABLE: -->` contract is intact.
+- **AC3/AC4 are half-done on purpose.** The `COMPATIBILITY.md` half of each is complete; the replies
+  on #48 and #76 are **drafted and held until the PR exists**, so they point at a paragraph that has
+  landed rather than at nothing. This is carried into ship as an explicit step, not dropped.
+- **Next:** Phase 10 (`DECISIONS.md` yank disposition + the one-line `yank.yml` token-prefix fix),
+  which closes PR 1.
