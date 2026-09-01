@@ -201,7 +201,7 @@ fields_python() {
         if (cls == "") next
         f=$1; sub(/_FIELD_NUMBER:$/,"",f); print cls "/" tolower(f)
     }
-  ' "$PY_GEN" | sort -u
+  ' "$PY_GEN" | LC_ALL=C sort -u
 }
 
 # TS reads protobuf-es's `@generated from field: <type...> <name> = <tag>;` under the enclosing
@@ -209,6 +209,12 @@ fields_python() {
 # generic types (`seam.api.v1.Foo bar = 3;`, `map<string, string> features = 9;`) without a type grammar.
 fields_ts() {
   awk '
+    # A NESTED type name carries a dot (`seam.api.v1.Outer.Inner`). Match it explicitly and blank
+    # `cls`, so its fields are skipped instead of being attributed to the previous top-level message.
+    # Without this the TS side does not exclude nesting at all — it MISATTRIBUTES, which is worse.
+    /^export type [A-Za-z0-9_]+ = Message<"seam\.api\.v1\.[A-Za-z0-9_]+\.[A-Za-z0-9_.]+">/ {
+        cls=""; next
+    }
     /^export type [A-Za-z0-9_]+ = Message<"seam\.api\.v1\.[A-Za-z0-9_]+">/ {
         m=$0; sub(/^.*Message<"seam\.api\.v1\./,"",m); sub(/">.*$/,"",m); cls=m; next
     }
@@ -218,13 +224,13 @@ fields_ts() {
         sub(/^.*@generated from field: /,"",line)
         sub(/ *= *[0-9]+;.*$/,"",line)
         n=split(line, parts, " ")
-        print cls "/" parts[n]
+        print cls "/" tolower(parts[n])
     }
-  ' "$TS_GEN" | sort -u
+  ' "$TS_GEN" | LC_ALL=C sort -u
 }
 
 manifest_fields() {
-  grep -vE '^\s*(#|$)' "$FIELD_MANIFEST" | sort -u
+  grep -vE '^\s*(#|$)' "$FIELD_MANIFEST" | LC_ALL=C sort -u
 }
 
 if [ "${1:-}" = "--write-manifest" ]; then
@@ -476,16 +482,22 @@ if [ "$field_surface_rc" -ne 0 ]; then
   err "the generated FIELD surface disagrees with $FIELD_MANIFEST:"
   printf '%s' "$field_surface_report" >&2
   echo "" >&2
+  # Print ONLY the explanation for the direction that fired. A refusal whose whole job is to say what
+  # happened should not hand the reader both stories and make them work out which one applies.
+  if [[ "$field_surface_report" == *"MISSING from the"* ]]; then
   err "A field MISSING from the stubs is either a stale generation — rerun 'make generate' (BSR) or"
   err "'make generate-local RUNTIME=../seam-runtime' — or a field REMOVED from the contract, which is"
   err "a breaking change and must be handled, never silently rewritten away."
   echo "" >&2
+  fi
+  if [[ "$field_surface_report" == *"NOT IN THE MANIFEST"* ]]; then
   err "A field NOT IN THE MANIFEST is a new one on the contract, and this refusal is deliberate: it is"
   err "the moment someone DECIDES whether this SDK carries it. Decide first — wire it into the"
   err "hand-written clients, or record in the PR why not — and only then run:"
   err "    scripts/check-contract.sh --write-manifest"
   err "and commit the manifest diff alongside that decision. Running the escape first turns a"
   err "deliberate refusal back into the silent pass this gate exists to remove."
+  fi
   exit 6
 fi
 echo "OK — the field surface matches $FIELD_MANIFEST in both languages."

@@ -32,10 +32,17 @@ SCRIPT = REPO / "scripts" / "check-contract.sh"
 PY_STUB = REPO / "python" / "seam_sdk" / "_gen" / "seam" / "api" / "v1" / "seam_pb2.pyi"
 TS_STUB = REPO / "ts" / "gen" / "seam" / "api" / "v1" / "seam_pb.ts"
 
-pytestmark = pytest.mark.skipif(
-    not (PY_STUB.exists() and TS_STUB.exists()),
-    reason="generated stubs absent — run `make generate` (this gate inspects stubs, it cannot invent them)",
-)
+
+# NOT a file-level `pytestmark`: a whole-file skip makes an absent stub tree read as a green run, which
+# is the same "skip == pass" shape this repo has already had to fix once. Only the tests that execute
+# the script against stubs are skippable; the ones that read the COMMITTED manifest need no stubs and
+# must run everywhere, so a header regression cannot hide behind a missing `make generate`.
+def _require_stubs() -> None:
+    if not (PY_STUB.exists() and TS_STUB.exists()):
+        pytest.skip(
+            "generated stubs absent — run `make generate` "
+            "(this gate inspects stubs, it cannot invent them)"
+        )
 
 
 def _run(field_manifest: pathlib.Path, rpc_manifest: pathlib.Path, *args: str):
@@ -62,6 +69,7 @@ def manifests(tmp_path: pathlib.Path):
     `--write-manifest` writes both, so the RPC one is redirected too — otherwise running this suite
     would rewrite the repo's real `contract/rpc-manifest.txt` as a side effect of testing fields.
     """
+    _require_stubs()
     fm, rm = tmp_path / "field-manifest.txt", tmp_path / "rpc-manifest.txt"
     r = _run(fm, rm, "--write-manifest")
     assert r.returncode == 0, r.stderr
@@ -193,6 +201,7 @@ def test_a_phantom_field_in_the_manifest_reddens_the_gate_and_names_it(
 def test_an_absent_manifest_refuses_rather_than_passing_vacuously(tmp_path) -> None:
     """No manifest must never mean 'nothing to check'. That is the shape of failure this whole file
     exists to rule out."""
+    _require_stubs()
     fm, rm = tmp_path / "field-manifest.txt", tmp_path / "rpc-manifest.txt"
     assert _run(fm, rm, "--write-manifest").returncode == 0
     fm.unlink()
@@ -248,3 +257,74 @@ def test_the_committed_manifest_declares_the_acdp_slots_it_deliberately_does_not
     assert "DELIBERATELY NOT" in header
     assert "key_status" in header and "resolved_status" in header
     assert "Phase 9" in header
+
+
+def test_the_committed_manifest_header_carries_every_rule_the_gate_depends_on() -> None:
+    """`--write-manifest` preserves the header by grepping the file it is about to overwrite, so a
+    DELETED manifest regenerates headerless and every rule below would vanish silently. These are not
+    prose: each one is a rule someone re-deriving this extractor has to know, and getting any of them
+    wrong produces a gate that is either permanently red or silently blind.
+
+    Runs without stubs on purpose — a header regression must not be able to hide behind an absent
+    `make generate`."""
+    header = "\n".join(
+        ln
+        for ln in (REPO / "contract" / "field-manifest.txt").read_text().splitlines()
+        if ln.lstrip().startswith("#")
+    )
+    for needle, why in [
+        ("<Message>/<field_name>", "the spelling rule"),
+        ("--write-manifest` WRITES FROM", "which side the escape writes from"),
+        ("**Python**", "the authoritative side, named"),
+        ("`*_FIELD_NUMBER`", "what the Python extractor reads"),
+        ("__slots__", "and what it must NOT read"),
+        ("raise", "the field that proves why"),
+        ("NESTING", "how map entries are excluded"),
+        ("AuditEntry", "the real message a name filter would drop"),
+        ("Names only", "that tags and types are NOT checked"),
+        ("buf breaking", "what does cover them"),
+    ]:
+        assert needle in header, (
+            f"the manifest header no longer states {why} ({needle!r})"
+        )
+
+
+def test_the_ts_extractor_excludes_nested_types_rather_than_misattributing_them(
+    tmp_path,
+) -> None:
+    """protobuf-es names a nested type `seam.api.v1.Outer.Inner`. The top-level pattern cannot match
+    it (the dot), so without an explicit nested arm `cls` retains the PREVIOUS top-level message and
+    the nested fields are attributed to it — Python drops them, TypeScript invents them on the wrong
+    owner, and the Python-authoritative escape can never clear the disagreement.
+
+    Latent today only because protobuf-es emits no type for map entries. That is not an exclusion, so
+    this pins the real one."""
+    stub = tmp_path / "seam_pb.ts"
+    stub.write_text(
+        'export type Outer = Message<"seam.api.v1.Outer"> & {\n'
+        "  /**\n   * @generated from field: string alpha = 1;\n   */\n  alpha: string;\n};\n"
+        'export type Outer_Inner = Message<"seam.api.v1.Outer.Inner"> & {\n'
+        "  /**\n   * @generated from field: string beta = 1;\n   */\n  beta: string;\n};\n"
+        'export type Later = Message<"seam.api.v1.Later"> & {\n'
+        "  /**\n   * @generated from field: string delta = 1;\n   */\n  delta: string;\n};\n"
+    )
+    extracted = subprocess.run(
+        ["bash", "-c", f'{_ts_extractor_src()}\nTS_GEN="{stub}"\nfields_ts'],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+    )
+    got = extracted.stdout.split()
+    assert got == ["Later/delta", "Outer/alpha"], got
+    assert "Outer/beta" not in got, (
+        "nested field misattributed to the enclosing message"
+    )
+
+
+def _ts_extractor_src() -> str:
+    """The real `fields_ts` function, lifted out of the shipped script rather than retyped — a copy
+    would only prove that two copies agree."""
+    src = (REPO / "scripts" / "check-contract.sh").read_text().splitlines(True)
+    start = next(i for i, ln in enumerate(src) if ln.startswith("fields_ts() {"))
+    end = next(i for i in range(start, len(src)) if src[i].rstrip() == "}")
+    return "".join(src[start : end + 1])

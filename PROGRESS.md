@@ -685,3 +685,49 @@ ERROR: the generated FIELD surface disagrees with contract/field-manifest.txt:
   passes (13 tests) — the gate rides inside the existing `check-contract` step in both language jobs.
 - **Gates:** python 594 passed/17 skipped · scripts 81 passed · ts typecheck OK, 112 passed ·
   ruff clean · gate exit 0 against the BSR-shaped surface, exit 6 against the stale local one.
+
+**Fresh-Opus verifier on Phase 5: GAPS** — all 8 acceptance criteria substantively met, both contested
+claims independently confirmed (it decoded the BSR descriptor by a third path and got
+`IDENTICAL — committed manifest == BSR surface exactly`, with the local tree exactly 5 fields stale).
+Seven of eight findings are fixed here; one is informational.
+
+- **G3 — the TS extractor had no nesting exclusion at all; it MISATTRIBUTED.** The header and the
+  `DECISIONS.md` entry both claimed the exclusion was "structural". That was true of the Python awk
+  only. `Message<"seam.api.v1.[A-Za-z0-9_]+">` cannot match a nested `...Outer.Inner` (the dot), so
+  `cls` silently retained the **previous top-level message** and the nested type's fields were
+  attributed to it. Python drops them, TS invents them on the wrong owner — red in both directions and
+  unclearable by a Python-authoritative escape, which is the exact failure shape the header claims to
+  have eliminated for `raise`. Latent only because protobuf-es emits no type for map entries, which is
+  an accident of this contract, not an exclusion. Fixed with an explicit nested arm, pinned by a test
+  that lifts the real `fields_ts` out of the shipped script rather than retyping it.
+- **G4 — a non-snake_case proto field split the two extractors, unclearably.** Confirmed by the
+  verifier with real `protoc --pyi_out`: `string myField = 1;` emits `MYFIELD_FIELD_NUMBER`, so the
+  Python side can only ever produce `myfield` while protobuf-es yields `myField`. Both sides now fold
+  case — a no-op for all 228 fields today. Note the two hazards have **opposite** fixes: `__slots__`
+  would carry `myField` correctly and drops `raise` entirely.
+- **G5 — `sort` was unpinned, so the "reviewable one-command diff" churned by locale.** Under
+  `en_US.UTF-8` the escape reordered eight lines with zero contract change. The verdict was never
+  affected (both sides re-sort at compare time), but that is not the reviewable diff the plan requires.
+  `LC_ALL=C` pinned in both extractors and the manifest reader; re-verified under `en_US.UTF-8`, the
+  regenerated body now differs by exactly the five expected lines and nothing else.
+- **G1/G2 — four `DECISIONS.md` citations were wrong, and one pointed at a blank line.** Self-inflicted
+  and instructive: I recorded them, then ran `ruff format`, which reformatted the test file and shifted
+  every line under them. The repoint discipline exists precisely for this and I broke it. All are now
+  repointed **once, last, against frozen files**, and each was checked for *content*, not just
+  resolution — which caught a fifth landing inside a string literal. The citation guard cannot catch
+  this class: for a non-anchored citation it only checks that the file exists and the line is in range,
+  so a blank line passes.
+- **G6** — the refusal printed both direction explanations regardless of which fired; now conditional.
+- **G7** — `--write-manifest` preserves the header by grepping the file it overwrites, so a *deleted*
+  manifest regenerated headerless with only four of criterion 1's items guarded. A new test pins all
+  ten needles, and runs **without stubs** so a header regression cannot hide behind a missing
+  `make generate`.
+- **G8 — the file-level `skipif` meant all 14 tests could skip and pytest would exit 0** — the same
+  "skip reads as green" shape this repo already had to fix once, and which I had flagged myself in the
+  Phase 6 note. The skip moved into the fixture, so the three tests that need no stubs now always run.
+- **Informational, not fixed:** a brand-new message with **zero** fields is invisible to both manifests
+  (fields are the unit); `PY_GRPC` is not env-overridable, so `--write-manifest` still needs the real
+  `_gen` tree even with both manifests redirected.
+
+Post-fix: python **600 passed**/17 skipped · scripts 81 · ruff clean · gate exit 0 against the
+BSR-shaped surface. No workflow sets any `SEAM_*` override (verifier checked independently).

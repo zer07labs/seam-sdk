@@ -23,7 +23,7 @@ produced it.
   that matters.
 - **Decision.** Mirror the RPC manifest exactly one level down: a committed declaration
   (`contract/field-manifest.txt`), set-compared per language in both directions
-  (`scripts/check-contract.sh:364`), exiting 6 with the field named (`:489`). `STREAM`/`EVENTS` stay as
+  (`scripts/check-contract.sh:383`), exiting 6 with the field named (`scripts/check-contract.sh:501`). `STREAM`/`EVENTS` stay as
   they are — they gate *event* fields for a different reason (BSR publication lag) and are not what
   this replaces. Scope is `seam.api.v1` only; `seam.event.v1` is already covered by those probes and
   by the vendored-spec gate, and duplicating it would mean two gates failing for different reasons on
@@ -35,21 +35,34 @@ produced it.
      223. A `__slots__`-derived manifest is permanently red on two fields the documented escape can
      never clear, and blind to any future field named `class`, `from`, `import`, `lambda`, `return`…
      Reading `*_FIELD_NUMBER` lowercased reconciles both sides at 223 = 223, zero diff.
+
+     The lowercasing has a second edge, found in verification: protoc emits `MYFIELD_FIELD_NUMBER` for
+     a `myField` proto field, so the Python side can only ever produce `myfield`. An un-folded TS side
+     yields `myField`, and the two diverge permanently — again unclearable by the escape. Both sides
+     now fold case. Two spellings cannot coexist in one message, so nothing is lost, and it is a no-op
+     for every snake_case field, which today is all 228. Note the two hazards have OPPOSITE fixes:
+     `__slots__` would have carried `myField` correctly and drops `raise` entirely.
   2. **Exclude synthetic map entries by *nesting*, never by the name `*Entry`.** Python emits
      `AuthorizeRequest.FeaturesEntry` and `RunDecisionRequest.FeaturesEntry`; protobuf-es emits no type
      for either. Filtering on the name looks equivalent and is not: **`AuditEntry` is a real top-level
      message** with `seq` and `decision_id`, and a name filter drops it from *both* sides — symmetric,
      so the gate stays green while going blind to a real message. That is this manifest's own failure
-     mode, reintroduced by the fix for a different one. The exclusion is structural: top-level classes
-     at column 0, their fields at four spaces, nested classes' fields at eight and never collected
-     (`contract/field-manifest.txt:48-50`).
+     mode, reintroduced by the fix for a different one. The exclusion is structural on BOTH sides:
+     Python keys on indentation (top-level classes at column 0, their fields at four spaces, a nested
+     class's at eight and never collected, `contract/field-manifest.txt:48-50`); TypeScript keys on the
+     **dot** in protobuf-es's nested type name. Verification caught that the TS half was missing: the
+     top-level pattern cannot match `seam.api.v1.Outer.Inner`, so `cls` silently retained the PREVIOUS
+     message and a nested type's fields were attributed to it — not excluded, *misattributed*, which is
+     worse, and unclearable by a Python-authoritative escape. It was latent only because protobuf-es
+     emits no type for map entries, which is an accident of this contract rather than an exclusion.
+     Pinned by `python/tests/test_field_manifest_gate.py:292`.
 - **The escape names its authoritative side.** `--write-manifest` writes **both** manifests from
-  **Python** (`scripts/check-contract.sh:195`), with TypeScript as the cross-check
-  (`:210`) — one command to document, not two. If it wrote from a side that cannot see every field, it
+  **Python** (`scripts/check-contract.sh:262`), with TypeScript as the cross-check
+  (`scripts/check-contract.sh:210`) — one command to document, not two. If it wrote from a side that cannot see every field, it
   would produce failures the documented escape could never clear, which is exactly what `raise` does
   under a `__slots__` extractor.
 - **The refusal deliberately puts the escape second.** It says decide first, then run it
-  (`scripts/check-contract.sh:484`). A failure message that leads with the fix trains the reader to
+  (`scripts/check-contract.sh:495`). A failure message that leads with the fix trains the reader to
   run the fix, which turns the gate back into the silent pass it replaced.
 - **What it does NOT check: names only, not tags or types.** A field retagged or retyped is
   wire-breaking and invisible here, exactly as the RPC manifest records names and not signatures.
@@ -58,6 +71,10 @@ produced it.
   decides and runs the escape. That is the same trade already accepted for verbs. Measured churn is
   low — zero fields were added across the last 78 runtime commits before ACDP — and the first thing
   the gate did was refuse five real ones, which is the trade paying out immediately.
+- **Both extractors and the manifest reader pin `LC_ALL=C`.** A bare `sort` follows the ambient locale,
+  and under `en_US.UTF-8` the documented escape reordered eight lines with zero contract change. The
+  gate's verdict was never affected (both sides re-sort at compare time), but a one-command escape
+  whose diff is full of phantom moves is not the reviewable diff the plan requires it to be.
 - **The five ACDP fields are declared and deliberately NOT interpreted.** The gate refused them (exit
   6, naming all five in both languages); that refusal forced a decision, and the decision is recorded
   in the manifest header itself rather than only here. They are carried — `resolve_context` returns
@@ -66,8 +83,9 @@ produced it.
   `resolved_status` an open lowercase one, both byte-identical to the digest preimage, so any SDK-side
   re-spelling silently breaks third-party recomputation. Declaring without interpreting is what stops
   that happening by accident. Wiring them is Phase 9.
-- **Falsifiability.** Both directions are driven red in `python/tests/test_field_manifest_gate.py:146`
-  and `:165`, against temporary copies so no test can corrupt the gitignored stub trees.
+- **Falsifiability.** Both directions are driven red in `python/tests/test_field_manifest_gate.py:158`
+  and `python/tests/test_field_manifest_gate.py:183`, against temporary copies so no test can corrupt
+  the gitignored stub trees.
 - **Status:** ACCEPTED.
 
 ### The decision
