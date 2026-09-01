@@ -41,11 +41,13 @@ LIVE_SUITES = (
 #: its own hermetic tests (which drive it with fake binaries), plus this guard.
 _EXEMPT = {"live_server.py", "test_live_server_helper.py", Path(__file__).name}
 
-#: A literal TCP port in the range the old fixtures squatted on. Matched as a bare word so it catches
-#: BOTH spellings the old code used — `"127.0.0.1:8099"` and `data_port, mgmt_port = 8115, 8116`.
-#: The colon-anchored pattern this replaced matched only the first, and so was blind to three of the
-#: four collision sites it was written to find. This is the *historical* window only; the two rules
-#: below are the ones that catch a fixed port at any number.
+#: A literal TCP port in the range the old fixtures squatted on, matched inside a *string* constant.
+#: Bare integers go through the separate numeric range check in ``_port_offenders`` — two mechanisms,
+#: because a regex over source text is what this replaced and it was blind to three of the four
+#: collision sites. This is the *historical* window only; rules (1) and (2) below are the ones that
+#: catch a fixed port at any number. Its cost is a known false-positive surface: `timeout_ms = 8000`
+#: or `max_bytes = 8192` in a live suite would redden. That has not happened, and the alternative —
+#: dropping the window — loses the spelling a copy-paste of the old fixtures actually produces.
 FIXED_PORT = re.compile(r"\b(8[0-9]{3})\b")
 
 #: A whole-string loopback address with a literal port. Ports below 1024 are exempt: the helper
@@ -121,6 +123,62 @@ def _name_hits(src: str, names: set[str], dotted: frozenset = frozenset()) -> li
     return hits
 
 
+def _docstring_ids(tree: ast.AST) -> set[int]:
+    """Identities of the string constants that are docstrings.
+
+    The exemption the module-level comment promises has to be *real*. The first version leaned on a
+    ``len(value) < 60`` cutoff, which is not an exemption but a coincidence: it happened to spare the
+    live suites' docstrings while ``test_streamed_decode.py``'s — which names 8113/8114 — sat 27
+    characters from firing, and it simultaneously blinded the string rule to a fixed port buried in a
+    long argv-style literal. Skipping docstring nodes by identity does exactly what it says instead.
+    """
+    out: set[int] = set()
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if (
+            not isinstance(
+                node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+            )
+            or not body
+        ):
+            continue
+        first = body[0]
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        ):
+            out.add(id(first.value))
+    return out
+
+
+def _assigned_pairs(node: ast.AST):
+    """``(target_name, value_node)`` for every assignment form, tuples and lists flattened.
+
+    ``ast.Assign`` alone was not enough: ``DATA_PORT: int = 9113`` is an ``ast.AnnAssign`` and a
+    dataclass field is too — and ``live_server.LiveServer`` is itself a dataclass, so that is the
+    idiom a copied fixture reaches for. ``PORTS = [9113, 9114]`` (a list, where the first version
+    only unpacked tuples) was the same kind of arbitrary hole.
+    """
+
+    def _flat(x):
+        if isinstance(x, (ast.Tuple, ast.List)):
+            return list(x.elts)
+        return [x]
+
+    if isinstance(node, ast.Assign):
+        targets = [t for tgt in node.targets for t in _flat(tgt)]
+        values = _flat(node.value)
+    elif isinstance(node, ast.AnnAssign) and node.value is not None:
+        targets, values = _flat(node.target), _flat(node.value)
+    else:
+        return []
+    # A bare `PORTS = [9113, 9114]` has one target and many values; pair them all against it.
+    if len(targets) == 1 and len(values) > 1:
+        return [(targets[0], v) for v in values]
+    return list(zip(targets, values))
+
+
 def _port_offenders(src: str) -> list[str]:
     """Every fixed-port spelling this guard can see, in one pass.
 
@@ -135,42 +193,35 @@ def _port_offenders(src: str) -> list[str]:
 
     Deliberately NOT "any int that could be a port": ``test_integration.py`` legitimately holds
     ``BudgetLimits(tokens=5000)``, and a guard that reddens on a token budget is a guard someone
-    deletes.
+    deletes. Rule 1 is what buys coverage outside the 8xxx window without that cost, because a
+    *port-named target* is the thing being asserted about, not the number.
+
+    Docstrings are exempt by identity (see ``_docstring_ids``); comments are invisible to the parser
+    and so are exempt for free.
     """
     tree = ast.parse(src)
+    docstrings = _docstring_ids(tree)
     offenders: list[str] = []
 
     for node in ast.walk(tree):
-        # (1) `DATA_PORT = 9113`, `data_port, mgmt_port = 8115, 8116`
-        if isinstance(node, ast.Assign):
-            targets: list[ast.expr] = []
-            values: list[ast.expr] = []
-            for tgt in node.targets:
-                if isinstance(tgt, ast.Tuple):
-                    targets.extend(tgt.elts)
-                else:
-                    targets.append(tgt)
-            if isinstance(node.value, ast.Tuple):
-                values.extend(node.value.elts)
-            else:
-                values.append(node.value)
-            for tgt, val in zip(targets, values):
-                name = tgt.id if isinstance(tgt, ast.Name) else getattr(tgt, "attr", "")
-                if (
-                    "port" in name.lower()
-                    and isinstance(val, ast.Constant)
-                    and isinstance(val.value, int)
-                    and not isinstance(val.value, bool)
-                    and val.value >= 1024
-                ):
-                    offenders.append(f"line {node.lineno}: {name} = {val.value}")
+        # (1) `DATA_PORT = 9113`, `data_port, mgmt_port = 8115, 8116`, `port: int = 9113`
+        for tgt, val in _assigned_pairs(node):
+            name = tgt.id if isinstance(tgt, ast.Name) else getattr(tgt, "attr", "")
+            if (
+                "port" in name.lower()
+                and isinstance(val, ast.Constant)
+                and isinstance(val.value, int)
+                and not isinstance(val.value, bool)
+                and val.value >= 1024
+            ):
+                offenders.append(f"line {node.lineno}: {name} = {val.value}")
 
-        elif isinstance(node, ast.Constant):
+        if isinstance(node, ast.Constant) and id(node) not in docstrings:
             # (3) numeric literals in the historical window
             if isinstance(node.value, int) and not isinstance(node.value, bool):
                 if 8000 <= node.value <= 8999:
                     offenders.append(f"line {node.lineno}: literal {node.value}")
-            elif isinstance(node.value, str) and len(node.value) < 60:
+            elif isinstance(node.value, str):
                 # (2) a whole-string loopback address with a real port
                 m = LOOPBACK_ADDR.match(node.value)
                 if m and int(m.group(1)) >= 1024:
@@ -180,6 +231,38 @@ def _port_offenders(src: str) -> list[str]:
                     offenders.append(f"line {node.lineno}: string {node.value!r}")
 
     return sorted(set(offenders))
+
+
+def _looks_like_a_live_suite(src: str) -> str:
+    """Why ``src`` looks like a suite that spawns a live server, or ``""`` if it does not.
+
+    Two independent signals, both from the AST so prose cannot trip either one:
+
+    * it imports ``live_server`` — an unambiguous declaration;
+    * it spawns a process **and** talks TCP (``socket`` or ``grpc``). The conjunction is what makes
+      this usable: ``test_conformance.py``, ``test_packaging.py``, ``test_field_manifest_gate.py``
+      and ``test_errors_is_import_light.py`` all legitimately spawn subprocesses, and none of them
+      opens a socket. A rule on "spawns anything" would redden all four.
+
+    A raw fixture that does neither — spawning through a helper imported from a third module under a
+    new name, say — is out of reach. The module docstring says so rather than implying a sandbox.
+    """
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return ""
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(a.name.split(".")[0] for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module.split(".")[0])
+    if "live_server" in imported:
+        return "imports live_server"
+    spawns = _name_hits(src, SPAWN_NAMES, SPAWN_DOTTED)
+    if spawns and imported & {"socket", "grpc"}:
+        return f"spawns a process at {spawns} and opens a socket"
+    return ""
 
 
 def test_every_named_live_suite_exists_and_spawns() -> None:
@@ -205,19 +288,30 @@ def test_no_unregistered_file_spawns_a_server() -> None:
     Every check in this file iterates that tuple, so a fifth live suite added without registering it
     here would be exempt from all of them while the file still reported green — the same
     "the search found nothing, so it passed" shape the anti-vacuity floor exists to close.
+
+    The scan itself gets a floor for the same reason. An independent reviewer broke the first version
+    of this test by pointing its glob at ``*.NOPE``: the scan found no files, the absence assertion
+    held, and all 21 tests passed. Asserting the denominator is the only thing that catches that.
     """
-    unregistered = sorted(
-        p.name
-        for p in HERE.glob("*.py")
-        if p.name not in LIVE_SUITES
-        and p.name not in _EXEMPT
-        and any(
-            marker in p.read_text()
-            for marker in ("SEAM_GRPC_BIN", "spawn_server", "live_server")
-        )
+    scanned = sorted(HERE.glob("*.py"))
+    assert len(scanned) >= 30, (
+        f"the scan found only {len(scanned)} files in {HERE} — the glob is broken, and every "
+        f"assertion below would pass over nothing"
     )
-    assert unregistered == [], (
-        f"these files touch the live-server surface but are not in LIVE_SUITES: {unregistered}. "
+    checked = [
+        p for p in scanned if p.name not in LIVE_SUITES and p.name not in _EXEMPT
+    ]
+    assert len(checked) >= 25, (
+        f"only {len(checked)} files left after exemptions — _EXEMPT has grown into a blanket"
+    )
+
+    unregistered = {}
+    for path in checked:
+        reason = _looks_like_a_live_suite(path.read_text())
+        if reason:
+            unregistered[path.name] = reason
+    assert unregistered == {}, (
+        f"these files look like live suites but are not in LIVE_SUITES: {unregistered}. "
         f"Add them, or this guard is silently blind to them."
     )
 
@@ -297,6 +391,11 @@ def test_the_guard_would_actually_fire() -> None:
     assert _port_offenders('addr = "127.0.0.1:9113"\n'), (
         "evaded before: address outside the window"
     )
+    # ...and the two assignment forms the first version could not see.
+    assert _port_offenders("DATA_PORT: int = 9113\n"), (
+        "evaded before: an annotated assignment"
+    )
+    assert _port_offenders("PORTS = [9113, 9114]\n"), "evaded before: a list of ports"
     # Innocent source must stay green — a guard that reddens on a token budget gets deleted.
     assert _port_offenders("limits = BudgetLimits(tokens=5000)\n") == []
     assert _port_offenders('port = server.add_insecure_port("127.0.0.1:0")\n') == []
@@ -340,10 +439,19 @@ def test_the_guard_would_actually_fire() -> None:
         "from subprocess import DEVNULL\nf(stdout=DEVNULL)\n", DISCARD_NAMES
     ), "evaded before: bare DEVNULL"
 
-    # And the prose exemption that motivated the AST approach in the first place.
+    # And the prose exemption that motivated the AST approach in the first place — for the name
+    # detectors, and for the port detectors, whose exemption used to be a length coincidence.
     assert (
         _name_hits('"""do not call proc.terminate() here"""\n', SIGNAL_NAMES) == []
     ), "the detector must not fire on prose that names the defect it prevents"
+    assert _port_offenders('def f():\n    """was 8099 before #85"""\n') == [], (
+        "a docstring naming the old port must be exempt — by identity, not by being short enough"
+    )
+    assert _port_offenders(
+        'x = "--listen=127.0.0.1:8099 --and-a-long-tail-of-other-flags-here"\n'
+    ), (
+        "a fixed port inside a long literal must NOT be exempt; the old len<60 cutoff missed it"
+    )
 
 
 def test_the_whole_evasion_fixture_is_caught() -> None:
@@ -386,3 +494,52 @@ def test_the_helper_itself_is_exempt_and_owns_the_teardown() -> None:
     assert "proc.wait(" in src, (
         "teardown must WAIT, not merely signal — that is the whole point"
     )
+
+
+def test_an_unregistered_raw_live_suite_is_caught() -> None:
+    """H2's proof: the registry check must catch a suite that never names the helper.
+
+    An independent reviewer dropped exactly this file into the directory and all 21 tests passed —
+    the first version searched for the substrings ``SEAM_GRPC_BIN``/``spawn_server``/``live_server``,
+    so a fixture spawning its own server under a different env var was invisible to the very check
+    written to close that hole.
+    """
+    raw = (
+        "import os, socket, subprocess\n"
+        "DATA_PORT = 9113\n"
+        "def fixture():\n"
+        "    p = subprocess.Popen([os.environ['SEAMD_BIN']], stdout=subprocess.DEVNULL)\n"
+        "    socket.create_connection(('127.0.0.1', DATA_PORT))\n"
+        "    p.terminate()\n"
+    )
+    assert _looks_like_a_live_suite(raw), (
+        "a raw live suite that never names the helper evades"
+    )
+    assert _looks_like_a_live_suite("from live_server import spawn_server\n"), (
+        "a suite that imports the helper evades"
+    )
+
+
+def test_the_registry_check_does_not_fire_on_innocent_files() -> None:
+    """The conjunction is load-bearing.
+
+    Four real files here spawn subprocesses for entirely ordinary reasons — running the conformance
+    CLI, building a wheel, importing in a clean interpreter — and none opens a socket. A rule on
+    "spawns anything" would redden all four, and this guard would be deleted rather than fixed.
+    """
+    assert (
+        _looks_like_a_live_suite('import subprocess\nsubprocess.run(["x"])\n') == ""
+    ), "spawning without talking TCP is not a live suite"
+    assert (
+        _looks_like_a_live_suite('"""See live_server for the shared spawn helper."""\n')
+        == ""
+    ), "prose naming the helper must not register a file as a live suite"
+    for name in (
+        "test_conformance.py",
+        "test_packaging.py",
+        "test_field_manifest_gate.py",
+        "test_errors_is_import_light.py",
+    ):
+        assert _looks_like_a_live_suite((HERE / name).read_text()) == "", (
+            f"{name} spawns subprocesses legitimately and must not be flagged"
+        )

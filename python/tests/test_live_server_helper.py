@@ -148,7 +148,7 @@ def test_readiness_refuses_a_port_the_spawned_process_never_bound(
 ) -> None:
     """The fix for the test above: a port that already answers is refused before the spawn.
 
-    ``free_port`` is monkeypatched to hand back a port that is already held, which is exactly the
+    ``free_ports`` is monkeypatched to hand back a port that is already held, which is exactly the
     situation a leaked or draining server creates. The helper must refuse rather than hand back an
     address that answers now and resets on the first RPC.
     """

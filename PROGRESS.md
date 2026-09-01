@@ -92,7 +92,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `python/tests/test_retracted_claims.py:170-184` | Parametrized presence check over `COMPATIBILITY.md`. **Phase 7 added `"0.7.39"`** — the *lower* edge, which is the one a reader is most likely to assume they are outside of — plus two real row guards (`python/tests/test_retracted_claims.py:194-256`), because this parametrize is a substring check and could not fail for a deleted row. `python/tests/test_retracted_claims.py:27-30` globs **every `*.md` in the repo including `plans/` and this file**; `python/tests/test_retracted_claims.py:39-48` are the qualifier markers that make a paragraph "discussing, not claiming". |
 | `python/tests/test_compatibility_citations_resolve.py` | Every backticked `file:line` in `COMPATIBILITY.md`/`DECISIONS.md` must resolve; `:61-64,:92` ≥10 each; `:76` sibling paths need a `seam-runtime/` prefix; `:141-172` `ANCHORED` needles must hit **exactly once** within `CITATION_SLACK` (`:176`). **Phase 8** adds the vendored-file rule. |
 | `verify/docs/seam-event.v1.md` | Byte-verbatim vendored spec, pinned in its header. **Phase 9** refreshes it whole-file. Source of #73's citation drift. |
-| `scripts/check_vendored_spec.py:22-38` | Integrity (`:24-26`) / reachability (`:28-32`) / **currency** (`:34-38`) — fails on staleness by explicit decision. This is what will announce runtime P1a Phase 6 by reddening `spec-pin` (`.github/workflows/ci.yml:517-543`) on every PR. |
+| `scripts/check_vendored_spec.py:22-38` | Integrity (`:24-26`) / reachability (`:28-32`) / **currency** (`:34-38`) — fails on staleness by explicit decision. This is what will announce runtime P1a Phase 6 by reddening `spec-pin` (`.github/workflows/ci.yml:585-586`) on every PR. |
 | `python/seam_sdk/crypto.py:606-610` | `record_digest_v3` takes `context_digest` as an **opaque 32-byte sub-digest**, deliberately not reimplemented. **This is why ACDP P1a costs the digest layer nothing** — verified: `context_digest` appears only as an input (`:599,643,677`, `python/seam_sdk/admin.py:141`), and no context-provenance formula exists in `python/`, `ts/` or `verify/`. `:386` `_frame` · `:390` `_opt` · `:584` `_opt_bytes` · `:394` `record_digest_v2`. |
 | `verify/src/verify.rs:668-674` | `schema_version` dispatch (2 ⇒ v2, 3 ⇒ v3, else refuse); `:636-644` ceiling refusal. P1a keeps `schema_version = 3`, so **no new arm**. |
 | `python/tests/test_errors_is_import_light.py:87-100` | `crypto.py` may import only `cryptography`; `errors.py` only `grpc`. seam-runtime's `sdk-digest-parity` gate loads `crypto.py` standalone. **No phase may add an import to either.** |
@@ -479,7 +479,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   one citation repoint printed `ok` and were never written, because the script wrote once at the
   end and a later match failed first. Re-applied with a write after *every* edit.
 - **Fourth: nine literal `'\"'\"'` shell-quoting artifacts had leaked into `DECISIONS.md`** from
-  the heredoc that wrote it. Repaired; the one remaining match in the repo (`.github/workflows/ci.yml:297`) is
+  the heredoc that wrote it. Repaired; the one remaining match in the repo (`.github/workflows/ci.yml:311`) is
   legitimate quoting inside a `run:` block.
 - **Substantive corrections from the gate, not just hygiene:**
   - *Fail-closed was overstated.* "A token that is only the prefix strips to empty and is refused"
@@ -1009,11 +1009,13 @@ them change what the phases do:
 - `ts/src/client.ts:218` already carries `collectiveOutcomeOf` over a `DecisionResponse | SessionStep`
   union. TypeScript is not a judgement call — it gets the twin.
 - The #85 failing set is the shared-8099 set **minus the first test**, not the whole set. Four tests
-  use the `server` fixture (`python/tests/test_integration.py:69`, `:93`, `:108`, `:306`); the three
+  use the `server` fixture (in `python/tests/test_integration.py` at `960cf81`, lines 69/93/108/306 —
+  quoted rather than line-anchored, per #73, since Phase 2 rewrote the file out from under them); the three
   that failed are the last three in collection order. This also refutes the issue's own "seamd
   crashes on seal/authorize" hypothesis, since `test_full_round_trip` seals and passed.
-- Port 8115 is **also** shared, by `python/tests/test_integration.py:143` and `:226`, across three
-  tests. A third instance of the same defect that did not fire in the observed runs.
+- Port 8115 is **also** shared, by `data_port, mgmt_port = 8115, 8116` and `addr = "127.0.0.1:8115"`
+  (`960cf81`, lines 143 and 226 of `python/tests/test_integration.py`), across three tests. A third
+  instance of the same defect that did not fire in the observed runs.
 - `python/tests/test_compatibility_citations_resolve.py:95-99` checks exactly three documents.
   `plans/*.md` is not under citation resolution; this file is.
 - The `v0.7.71` publish run 33479578480 **skipped** `seam-verify → Cloudsmith`. The three jobs that
@@ -1029,16 +1031,16 @@ them change what the phases do:
 | `ts/src/client.ts:218` | `collectiveOutcomeOf` over the union. **Phase 4 inserts `policyEnforcementOf` immediately after it** so this citation survives; the `submitCommit` citation below cannot survive and is repointed in the same commit. |
 | `ts/src/index.ts:18` | The shadowed-generated-names comment. It opens with the word "Two" and lists three names; Phase 4 must update the count word as well as the list. |
 | `python/tests/test_collective_outcome.py:208` | The `SessionStep` arm — the model for `test_policy_enforcement.py`. |
-| `python/tests/test_integration.py:48` | `addr = "127.0.0.1:8099"`, hardcoded, four tests. `_wait` at `:26-34` proves only that *something* listens; `:66` tears down with a bare `terminate()`. **Phase 2's primary target.** |
-| `python/tests/test_integration.py:143` | `dual_plane`, 8115/8116 — collides with `governed_server` at `:226`. |
-| `python/tests/test_streamed_decode.py:259` | `dual_plane`, 8113/8114 hardcoded; `:276` bare `terminate()`. |
-| `python/tests/test_admin.py:175` | `_free_port()` — the ephemeral-port helper that already exists and that Phase 2 makes the single copy. Its docstring already says fixed ports collide. |
-| `python/tests/test_verify_attestation.py:122` | The second copy of `_free_port()`. |
+| `python/tests/test_integration.py` | At `960cf81`: `addr = "127.0.0.1:8099"` (line 48), hardcoded, four tests; `_wait` (26-34) proved only that *something* listens; a bare `terminate()` (66). **Phase 2's primary target** — all three are gone, so this row quotes rather than line-anchors. |
+| `python/tests/test_integration.py` (cont.) | At `960cf81`: `dual_plane`, 8115/8116 (line 143) — collided with `governed_server` (216, addr at 226). |
+| `python/tests/test_streamed_decode.py` | At `960cf81`: `dual_plane`, 8113/8114 hardcoded (line 259); bare `terminate()` (276). |
+| `python/tests/test_admin.py` | At `960cf81`: `_free_port()` (line 175) — the ephemeral-port helper that already existed and that Phase 2 made the single copy. Its docstring already said fixed ports collide. |
+| `python/tests/test_verify_attestation.py` | At `960cf81`: the second, verbatim copy of `_free_port()` (line 122). |
 | `python/tests/live_server.py` | **Phase 2 creates.** One spawn/readiness/teardown/log-capture helper for all four live suites. |
 | `ts/tests/integration.test.ts:51` | "Distinct ports avoid cross-test collisions" — the TS suite reached this conclusion and applied it everywhere. It has never shown this flake. |
-| `.github/workflows/ci.yml:290` | The smoke step's `kill "$pid"`, immediately followed by `exit 0` — it never waits for the process it started. |
-| `.github/workflows/ci.yml:322-333` | The python live step (`:332` is the `pytest` line inside it). Phase 2 adds an `if: failure()` log dump + artifact upload **after `:333`**, and after the TypeScript step. |
-| `.github/workflows/ci.yml:627` | `ADVISORY: integration,spec-pin`. Advisory means *may skip*, not *may fail* — a red `integration` still reddens `ci-ok` (`:612`). |
+| `.github/workflows/ci.yml` (cont.) | At `960cf81`: the smoke step's `kill "$pid"` (line 290), immediately followed by `exit 0` — it never waited for the process it started. Replaced by `reap()`. |
+| `.github/workflows/ci.yml:336-347` | The python live step (the `pytest` line is `.github/workflows/ci.yml:346`). Phase 2 added an `if: failure()` log dump + artifact upload at the **end of the job**, after the TypeScript step at `.github/workflows/ci.yml:348` — a step is evaluated at its own position, so anything placed earlier cannot see a TypeScript failure. |
+| `.github/workflows/ci.yml:701` | `ADVISORY: integration,spec-pin`. Advisory means *may skip*, not *may fail* — a red `integration` still reddens `ci-ok`, which lists it at `.github/workflows/ci.yml:686`. |
 | `scripts/check-contract.sh:203` | `fields_python`; `:218` `fields_ts`. **Phase 5 parameterises both on stub path + package** — measured, they already yield 90/90 on the event stubs with zero one-sided entries. |
 | `scripts/check-contract.sh:240` | `manifest_fields` — its stripper claims every `#`-free line, which is why the event surface cannot share `contract/field-manifest.txt`. |
 | `scripts/check-contract.sh:472-476` | `--write-manifest` deletes `contract/expected-local-lag.txt` (the guard is `:472`, the `rm -f` is `:473`). The second reason the event surface needs its own file. |
@@ -1148,7 +1150,7 @@ every socket open until all the numbers are taken — allocating one at a time a
 lets the kernel legitimately return the same number twice, which would put both planes on one port.
 Both new tests were proved red-first against a reverted copy.
 
-**Verification:** python **789 passed / 17 skipped** (from 754) · `scripts/` guards **100** ·
+**Verification:** python **790 passed / 17 skipped** (from 754) · `scripts/` guards **100** ·
 `ruff check` + `ruff format --check` clean · contract gate **exit 6** with the expected NOTE ·
 independence gate **exit 0** · `ci-ok`'s `needs:` byte-identical to `HEAD` · the failure-dump step
 executed under `bash -e` against a synthetic `pytest-of-runner` tree in all three of its paths
@@ -1160,3 +1162,75 @@ is caught, and that the next occurrence leaves a log instead of destroying it. I
 the shape cannot return: the guard is name- and AST-based, so a port computed by arithmetic or a
 spawn helper imported under a new name still gets through, and the guard's own docstring says so
 rather than implying a sandbox.
+
+#### Verification round 2 — verdict **GAP** again, and the headline finding was this record
+
+A second independent Opus verifier confirmed G2, G5, G6 and both nits sound, and confirmed G1's depth
+arithmetic by executing the step. It then found that **the fix for G4 had scoped itself to two of the
+three citation-enforced documents** — and the third is this file. `python/tests/test_compatibility_citations_resolve.py`
+lists `COMPATIBILITY.md`, `DECISIONS.md` **and** `PROGRESS.md`. Phase 2's own edits to `ci.yml` and to
+the four live suites invalidated **thirteen** citations here, four of them within sixty lines of the
+paragraph above congratulating itself on re-measuring. The correction note was true and useless at the
+same time.
+
+All thirteen are fixed, but not all in the same way, and the difference is the point:
+
+- **Nine described state Phase 2 deleted** — `addr = "127.0.0.1:8099"`, the two `_free_port()` copies,
+  the smoke step's bare `kill "$pid"`. A line anchor cannot point at a line that no longer exists, so
+  those rows now **quote the construct and name the commit** (`960cf81`) instead of line-anchoring it.
+  That is the convention Phase 8 established for vendored files under #73, applied to the same problem
+  one layer in: content that moves out from under a citation should not be cited by position.
+- **Four described current state** and were simply re-measured.
+
+The verifier also found the gate cannot see the worst class of these. `CITATION` at
+`python/tests/test_compatibility_citations_resolve.py:109` requires a path with an extension, so the
+bare companion form — `` `:306` `` following a full citation — is never extracted. There are **156** of
+those across `DECISIONS.md` and `PROGRESS.md`, entirely unchecked, and one of them pointed past the end
+of a 261-line file while the suite stayed green. Not fixed here: resolving a bare anchor needs its
+antecedent, and the sweep would surface far more than this PR's scope. Filed as follow-up, along with
+the **22 pre-existing citations** the verifier found that resolve while pointing at the wrong
+construct.
+
+Five code findings, all closed:
+
+- **H1 · the new registry check passed when its own scanner was blinded.** Pointing its glob at
+  `*.NOPE` made it scan zero files and report success — the exact "asserts an absence, green when the
+  detector broke" shape, committed *in the test written to close a blindness hole*, one function below
+  a test whose entire purpose is pinning a denominator. It now asserts the denominator too.
+- **H2 · the check caught only suites that volunteered.** It matched three substrings, so a fixture
+  spawning its own server under a different env var was invisible. The verifier dropped exactly that
+  file in and all 21 tests passed. The check is now AST-based with two independent signals: importing
+  `live_server`, or spawning a process **and** opening a socket. The conjunction is load-bearing —
+  four real files here (`test_conformance.py`, `test_packaging.py`, `test_field_manifest_gate.py`,
+  `test_errors_is_import_light.py`) spawn subprocesses legitimately and none touches a socket.
+- **H3 · it reddened on prose.** Being a substring scan, a file whose only content was
+  `"""See live_server for the shared spawn helper."""` failed it — the "guard punishes its own
+  explanation" failure that AST detection was chosen to avoid, reintroduced two functions away from
+  the docstring saying so. Fixed by the same AST rewrite.
+- **H4 · the port rule handled `ast.Assign` only.** `DATA_PORT: int = 9113` and a dataclass field both
+  evaded — and `LiveServer` is itself a dataclass, so that is the idiom a copied fixture reaches for.
+  `PORTS = [9113, 9114]` evaded while the tuple spelling did not. Both forms now covered.
+- **H5 · the docstring exemption was a coincidence, not an exemption.** It rested on a
+  `len(value) < 60` cutoff; `test_streamed_decode.py`'s docstring names 8113/8114 and sat **27
+  characters** from reddening the build. Docstrings are now exempt by node identity, which also
+  un-blinds the string rule to a fixed port buried in a long argv literal.
+
+Three CI robustness holes, all closed: `find` had no `-type f` and `cat` no `|| true`, so one
+unreadable match aborted the whole dump under `bash -e` (reproduced); the dedup was exact-match only;
+and the artifact step's static glob could not follow `$TMPDIR` even though the dump step had just been
+taught to. Every found log is now **staged into one fixed directory** that the upload points at, so
+the artifact no longer depends on where pytest put `tmp_path`.
+
+**And a fourth vacuous criterion, in this plan.** Phase 2's acceptance criterion 1 demanded
+`grep -rnE '\b(80|81|82)[0-9][0-9]\b'` over the five live files return **nothing** — over files whose
+docstrings deliberately name the old ports so the history stays with the code. It could not go green
+without deleting the explanation. That is the third criterion in this plan satisfiable only by
+damaging what it measures, and the paragraph immediately below it in `plans/consumer-decoders-and-event-surface.md`
+is a warning box about the previous one. Rewritten: the AST guard is the gate, the grep is evidence a
+human reads.
+
+**Verification:** python **787 passed / 17 skipped** · `scripts/` guards **100** · `ruff` clean ·
+contract gate **exit 6** with the expected NOTE · independence gate **exit 0** · shipped code
+untouched · H1 and H2 both proved red-first on scratch copies · the hardened dump step executed under
+`bash -e` against a tree containing a *directory* named `seam-grpc-*.log`, which aborted the previous
+version.

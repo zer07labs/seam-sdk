@@ -468,11 +468,23 @@ issue exists to stop, encoded in the suite.
 1. Over the **four live files only** — `python/tests/test_integration.py`,
    `test_streamed_decode.py`, `test_admin.py`, `test_verify_attestation.py`, plus the new
    `live_server.py` —
-   `grep -rnE '\b(80|81|82)[0-9][0-9]\b' <those five files>` returns **nothing**.
-   *Red-first, re-measured at `HEAD`:* it returns
+   `python/.venv/bin/pytest -q python/tests/test_live_fixtures_are_isolated.py` is green, and every
+   remaining match of `grep -rnE '\b(80|81|82)[0-9][0-9]\b' <those five files>` is inside a
+   **docstring**. Paste both outputs into the PR.
+   *Red-first, measured at `960cf81`:* the grep returned
    `test_integration.py:4` (8090, the docstring example — rewritten by this phase's Docs item),
    `:48` (8099), `:63` (`_wait(8099)`), `:143` (`= 8115, 8116`), `:226` (8115), `:243` (`_wait(8115)`),
-   and `test_streamed_decode.py:259` (`= 8113, 8114`). Paste that output into the PR.
+   and `test_streamed_decode.py:259` (`= 8113, 8114`). At the phase's end it returns six matches, all
+   prose: `test_integration.py:113`, `test_streamed_decode.py:243`, and `live_server.py:13`/`:14`/
+   `:28`/`:29` — the records of what was fixed.
+
+   > **This criterion was ALSO broken, and by its own argument.** As first written it demanded the
+   > grep return **nothing** — over files whose module docstrings deliberately name the old ports so
+   > the history stays with the code. It could not go green without deleting the explanation, which
+   > is the third time in this plan a criterion has been satisfiable only by damaging what it
+   > measures. Caught by an independent verifier *after* Phase 2 shipped, not before. The fix is to
+   > let the machine-checkable half be the AST guard — which exempts docstrings by identity — and to
+   > let the grep be evidence a human reads, not a gate.
 
    > **The first draft's version of this criterion was broken in both directions, and it is the kind
    > of break that ships.** It read `grep -rnE ':(80|81|82)[0-9][0-9]' python/tests/` returns

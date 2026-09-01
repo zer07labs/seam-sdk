@@ -949,7 +949,7 @@ nothing is ever *published* there.
 private, so **an external auditor cannot install the verifier from it.** Their path is what it always
 was: clone this **public, Apache-2.0** repository and build. `verify/` is a standalone cargo
 workspace with zero Seam dependencies precisely so that works anywhere, and the claim is a **CI
-gate** (`.github/workflows/ci.yml:464-465` runs `scripts/check-independence.sh`, which renders
+gate** (`.github/workflows/ci.yml:476-477` runs `scripts/check-independence.sh`, which renders
 `cargo tree -e normal`), not a comment.
 
 So publishing is **distribution convenience for internal and partner consumers** — *not* a

@@ -377,12 +377,23 @@ jobs:
           if [ -n "${TMPDIR:-}" ] && [ "${TMPDIR%/}" != "/tmp" ]; then
             roots="$roots ${TMPDIR%/}"
           fi
+          # Everything found is ALSO staged under one fixed directory, because the upload step's
+          # `path:` is a static glob and cannot follow $TMPDIR. Staging makes the artifact
+          # independent of where pytest actually put its tmp_path, rather than silently uploading
+          # nothing — the same "the glob quietly stopped matching" failure as the depth bug above.
+          stage=/tmp/seam-live-logs
+          mkdir -p "$stage"
+          cp /tmp/seam-grpc.log "$stage/smoke.log" 2>/dev/null || true
           found=0
-          for f in $(find $roots -maxdepth 6 -name 'seam-grpc-*.log' 2>/dev/null | head -40); do
+          # `-type f` and `|| true`: this step runs while things are already broken, so one
+          # unreadable or vanished match must not abort the loop under `bash -e` and take the
+          # remaining logs — and the warning below — down with it.
+          for f in $(find $roots -maxdepth 6 -type f -name 'seam-grpc-*.log' 2>/dev/null | head -40); do
             found=1
             echo "::group::$f"
-            cat "$f"
+            cat "$f" || true
             echo "::endgroup::"
+            cp "$f" "$stage/$(printf '%s' "${f#/}" | tr / _)" 2>/dev/null || true
           done
           if [ "$found" = 0 ]; then
             echo "::warning::no per-spawn seam-grpc log found under $roots — either no live fixture" \
@@ -399,6 +410,7 @@ jobs:
           retention-days: 14
           path: |
             /tmp/seam-grpc.log
+            /tmp/seam-live-logs/**
             /tmp/**/seam-grpc-*.log
 
   # The Go/Java/Kotlin crypto shims are standalone (no generated transport) — they need no BUF_TOKEN and
