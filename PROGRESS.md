@@ -1026,7 +1026,7 @@ them change what the phases do:
 | Path | Purpose / relevance |
 |---|---|
 | `python/seam_sdk/_collective.py:84` | `collective_outcome_of` — the shape Phase 3 mirrors: `HasField` gate at `:116`, frozen dataclass at `:52`, union signature at `:84-86`. |
-| `python/seam_sdk/_policy.py` | **Phase 3 creates.** `policy_enforcement_of(resp)` returning `None` iff absent. New module, not a `_collective.py` addition — that module's docstring is entirely about a growth policy this field does not have. |
+| `python/seam_sdk/_policy.py` | **Phase 3 created it.** `policy_enforcement_of(resp)` returning `None` iff absent. New module, not a `_collective.py` addition — that module's docstring is entirely about a growth policy this field does not have. |
 | `python/seam_sdk/__init__.py:10` | Where `_collective`'s exports are imported; Phase 3 adds `_policy`'s alongside, plus two `__all__` entries. |
 | `ts/src/client.ts:218` | `collectiveOutcomeOf` over the union. **Phase 4 inserts `policyEnforcementOf` immediately after it** so this citation survives; the `submitCommit` citation below cannot survive and is repointed in the same commit. |
 | `ts/src/index.ts:18` | The shadowed-generated-names comment. It opens with the word "Two" and lists three names; Phase 4 must update the count word as well as the list. |
@@ -1364,3 +1364,65 @@ of the safety margin).
 **Verification:** python **790 passed / 17 skipped** · `scripts/` guards **100** · `ruff` clean ·
 contract gate **exit 6** with the expected NOTE · independence gate **exit 0** · shipped code
 untouched · both new fixes proved red-first by reverting them on scratch copies.
+
+
+### Phase 3 — `policy_enforcement_of`: absent and `enforced=False` stop being the same answer · **DONE**
+
+**What shipped.** `python/seam_sdk/_policy.py` — a frozen `PolicyEnforcement` and
+`policy_enforcement_of(resp)` over a `DecisionResponse` **or** a `SessionStep`, returning `None` iff
+the field is absent. Exported from `python/seam_sdk/__init__.py` in both the import block and
+`__all__`. `python/tests/test_policy_enforcement.py`: **12 test functions, 17 collected**.
+
+**The hazard, measured rather than asserted.** Three states, two of them value-identical:
+
+| state | `HasField` | `.policy_enforcement.enforced` |
+|---|---|---|
+| absent | `False` | `False` |
+| present, `enforced=False` | `True` | `False` |
+| present, `enforced=True` | `True` | `True` |
+
+`absent.policy_enforcement == present.policy_enforcement` is **`True`** — verified against the
+generated descriptors, and asserted in
+`test_the_two_states_this_module_separates_are_value_identical` so that if it ever stops holding, the
+module's reason for existing has changed and someone finds out from a red test rather than from a
+docstring that quietly went stale. Only `HasField` separates them, so
+`if resp.policy_enforcement.enforced:` reads "the runtime did not tell me" as "the runtime told me
+no", which is the fail-open direction.
+
+**The red-first sequence was run, not skipped.** The plan asks for the naive form to be built and
+watched fail, and it was worth the two minutes: the version without the `HasField` gate fails
+**eight** assertions — every absence case, on both message types, across four session states and the
+expiry-seal shape — and passes all nine others, including the frozen-type and export checks. One
+line, one direction, eight ways to see it.
+
+**Ground truth verified before writing anything**, against the descriptors rather than the proto text:
+`policy_enforcement` has presence on **both** carriers at **different field numbers** (7 on
+`DecisionResponse`, 3 on `SessionStep`), so one gate covers both and the two-message-type test is not
+a tautology. `enforced` has **no** presence — `HasField("enforced")` raises
+`ValueError: ... does not have presence` — so it is read directly, and the code carries that as a
+comment rather than an unexplained asymmetry. `policy_id` **does** have presence, which is the same
+three-state trap one level down: absent maps to `None`, explicitly-encoded-empty maps to `""`.
+
+**The docstring enumerates the three presence sites and refuses to generalise** — the commit-terminal
+step, the sealed-idempotent replay, and the pending-commitment seal retry — citing
+**zer07labs/seam-runtime#526**, which publishes the measured matrix in its own body. That citation is
+deliberate: `PROGRESS.md`'s clean-room constraint forbids reading `../seam-runtime/crates/**`, and the
+issue is the readable source. Both of the proto comment's own general rules are false and the
+docstring says so: it is *not* "only on a step that resolves the session via commit" (the
+sealed-idempotent replay resolves nothing and carries it), and presence is *not* tied to `decision_id`
+(the expiry seal carries a `decision_id` with no enforcement, so the comment's analogy points a reader
+at the opposite of the truth). Even the issue's own first draft proposed a general rule that was
+self-contradictory. Enumeration is the only thing that has survived contact.
+
+**Deliberately not added.** No `allowed`/`unenforced` convenience boolean — `enforced` is already the
+boolean and `None` is already the unsafe-to-guess case, so a twin would be a second truthiness that
+can go the wrong way (the argument `_collective.py` makes for `approved` with no `declined`, asserted
+here by `test_the_type_is_frozen_and_has_no_second_boolean`). Not folded into `_collective.py`, whose
+docstring is entirely about a growth policy and fail-closed verdict decoding that this field does not
+have — folding it in would make that module's own documentation false, which is the failure #88 exists
+to prevent, one file over. No `errors.py` symbol: nothing to fail closed on, and
+`test_errors_is_import_light.py` makes any addition there a deliberate act.
+
+**Verification:** python **808 passed / 17 skipped** (from 791 at the branch point; skips unchanged) ·
+`ruff check` + `ruff format --check` clean · every message in the suite constructed in-test, so
+nothing depends on the ambient generated surface beyond the two message classes it instantiates.

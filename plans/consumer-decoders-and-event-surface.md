@@ -549,7 +549,9 @@ per-file `_wait`/spawn convention that will no longer exist.
 
 ### Phase 3 — `policy_enforcement_of` in Python
 
-**Status:** TODO
+**Status:** **DONE** — implemented as planned, no divergence. The red-first sequence the criteria ask
+for was run in full: the naive `return PolicyEnforcement(...)` form fails the absence property from
+eight angles and passes every other criterion, which is the one-line inversion made visible.
 
 **Delivers:** `seam_sdk.policy_enforcement_of(resp) -> Optional[PolicyEnforcement]`, on a
 `DecisionResponse` **or** a `SessionStep`, returning `None` **iff** the field is absent and never a

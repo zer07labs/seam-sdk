@@ -8,6 +8,7 @@ vectors generated from the Rust runtime pin the exact bytes (see ``conformance/v
 from . import aio
 from ._authorize import AuthorizeResult, canonicalize_tool_input
 from ._collective import CollectiveOutcome, collective_outcome_of
+from ._policy import PolicyEnforcement, policy_enforcement_of
 from .admin import (
     DEFAULT_ADMIN_TIMEOUT_S,
     KNOWN_KINDS,
@@ -79,6 +80,8 @@ __all__ = [
     # DecisionResponse or a SessionStep
     "CollectiveOutcome",
     "collective_outcome_of",
+    "PolicyEnforcement",
+    "policy_enforcement_of",
     "DEFAULT_TIMEOUT_S",
     "DEFAULT_ADMIN_TIMEOUT_S",
     "jcs_canonicalize",
