@@ -59,7 +59,9 @@
 #             3 stubs not generated at all · 4 ReportEventsConsumed stale (EVENTS=1) ·
 #             5 RPC surface disagrees with contract/rpc-manifest.txt ·
 #             6 field or enum-value surface disagrees with contract/field-manifest.txt ·
-#             7 a nested enum was found (the extractors assume none exist — see assert_no_nested_enums).
+#             7 a structural precondition the extractors assume failed: a nested enum was found (see
+#               assert_no_nested_enums), or a nested message was found outside the known map-entry
+#               synthetics (see assert_known_nested_messages_only).
 #
 # Run it AFTER `make generate` / `make generate-local` — it inspects the emitted stubs, it does not
 # generate them.
@@ -86,6 +88,10 @@ TS_GEN="${SEAM_TS_GEN:-ts/gen/seam/api/v1/seam_pb.ts}"
 TS_EV="ts/gen/seam/event/v1/seam_event_pb.ts"
 MANIFEST="${SEAM_RPC_MANIFEST:-contract/rpc-manifest.txt}"
 FIELD_MANIFEST="${SEAM_FIELD_MANIFEST:-contract/field-manifest.txt}"
+# The recorded pre-ACDP local/BSR field lag — see the file's own header. Overridable for the same
+# reason PY_GEN/TS_GEN/FIELD_MANIFEST are: so tests can drive the real script against a SCRATCH copy
+# without ever touching (or deleting, via --write-manifest) the committed file.
+EXPECTED_LOCAL_LAG="${SEAM_EXPECTED_LOCAL_LAG:-contract/expected-local-lag.txt}"
 
 err()  { echo "ERROR: $*" >&2; }
 note() { echo "  $*"; }
@@ -235,6 +241,116 @@ manifest_fields() {
   grep -vE '^\s*(#|$)' "$FIELD_MANIFEST" | grep -v '#' | LC_ALL=C sort -u
 }
 
+# ── The recorded local/BSR field lag ────────────────────────────────────────────────────────────────
+# See $EXPECTED_LOCAL_LAG's own header for why this exists. Reading it is the same discipline as
+# manifest_fields: comments and blanks stripped, sorted, deduplicated — so an EXACT string comparison
+# against a MISSING set (also sorted via comm) is a correct test of "these two sets are equal", not an
+# approximation of one.
+expected_local_lag_fields() {
+  [ -f "$EXPECTED_LOCAL_LAG" ] || return 1
+  grep -vE '^\s*(#|$)' "$EXPECTED_LOCAL_LAG" | LC_ALL=C sort -u
+}
+
+expected_local_lag_date() {
+  grep -oE '^# EXPECTED-FROM: [0-9]{4}-[0-9]{2}-[0-9]{2}' "$EXPECTED_LOCAL_LAG" 2>/dev/null \
+    | awk '{print $3}'
+}
+
+# Age in whole days since EXPECTED-FROM, printed on every match so the file cannot quietly become
+# permanent scenery. `date` parsing differs between GNU (Linux CI) and BSD (macOS dev) — try both
+# rather than assume one.
+expected_local_lag_age_days() {
+  local d="$1" now_epoch d_epoch
+  [ -z "$d" ] && { echo "unknown age"; return; }
+  now_epoch="$(date -u +%s)"
+  if d_epoch="$(date -u -d "$d" +%s 2>/dev/null)"; then
+    :
+  elif d_epoch="$(date -u -j -f '%Y-%m-%d' "$d" +%s 2>/dev/null)"; then
+    :
+  else
+    echo "unknown age"
+    return
+  fi
+  echo "$(( (now_epoch - d_epoch) / 86400 )) day(s)"
+}
+
+# ── Nested-message guard ────────────────────────────────────────────────────────────────────────────
+# fields_python/fields_ts exclude a nested message BY NESTING (see their own header above), which is
+# correct for the two known map-entry synthetics — but that exclusion is SYMMETRIC across both
+# languages, so a genuine nested message (not a map entry) is invisible to BOTH extractors at once:
+# exactly the "the gate stays green while going blind" failure the manifest header warns about,
+# reproduced here by the fix for the *other* case of it. Proven by mutation: adding
+# `EscrowDirective.Hold{amount_cents, release_after_ms}` to both scratch stub trees left the gate
+# reporting only the top-level sibling field (`EscrowDirective/amount_cents`) and exiting 0 — `Hold`'s
+# two fields never reached either extractor, so nothing could ever disagree about them.
+#
+# The contract has ZERO real nested messages today, so this is a tripwire, not a speculative
+# extractor: assert the only nested message types are the known map-entry synthetics, with an EXACT
+# allowlist (not a floor) — removing a known synthetic must trip this exactly as loudly as an unknown
+# one appearing, or the allowlist could decay silently in either direction.
+#
+# Python reads the same column-0-header-tracks-owner discipline as fields_python, printing
+# `<Owner>.<Nested>` for every INDENTED `class ...(_message.Message):` under a top-level message. TS
+# reads `Message<"seam.api.v1.<Owner>.<Nested...>">` — the same dotted-name shape fields_ts already
+# matches to SKIP a nested type, extracted here instead of discarded. Both read only $PY_GEN/$TS_GEN
+# (seam.api.v1) — never seam.event.v1, which is out of this gate's scope.
+nested_messages_python() {
+  awk '
+    /^class [A-Za-z0-9_]+\(_message\.Message\):/ {
+        cls=$2; sub(/\(_message\.Message\):/,"",cls); next
+    }
+    /^class / { cls=""; next }
+    /^[[:space:]]+class [A-Za-z0-9_]+\(_message\.Message\):/ {
+        if (cls == "") next
+        n=$0; sub(/^[[:space:]]+class /,"",n); sub(/\(_message\.Message\):.*$/,"",n)
+        print cls "." n
+    }
+  ' "$PY_GEN" | LC_ALL=C sort -u
+}
+
+nested_messages_ts() {
+  grep -oE 'Message<"seam\.api\.v1\.[A-Za-z0-9_]+\.[A-Za-z0-9_.]+">' "$TS_GEN" \
+    | sed -E 's/^Message<"seam\.api\.v1\.//; s/">$//' | LC_ALL=C sort -u
+}
+
+# The two known map-entry synthetics — see fields_python's own comment above for why they exist and why
+# they are excluded by nesting rather than by an `*Entry` name filter. protobuf-es emits NO type for
+# either, so the TS allowlist is empty: today, ANY nested `Message<...>` at all in TS means a real
+# nested message landed.
+_KNOWN_NESTED_MESSAGES_PY="AuthorizeRequest.FeaturesEntry
+RunDecisionRequest.FeaturesEntry"
+_KNOWN_NESTED_MESSAGES_TS=""
+
+assert_known_nested_messages_only() {
+  local py_have py_want py_extra py_missing ts_have ts_want ts_extra
+  py_have="$(nested_messages_python)"
+  py_want="$(printf '%s\n' "$_KNOWN_NESTED_MESSAGES_PY" | LC_ALL=C sort -u)"
+  ts_have="$(nested_messages_ts)"
+  ts_want="$_KNOWN_NESTED_MESSAGES_TS"
+  py_extra="$(comm -23 <(echo "$py_have") <(echo "$py_want"))"
+  py_missing="$(comm -13 <(echo "$py_have") <(echo "$py_want"))"
+  ts_extra="$(comm -23 <(echo "$ts_have") <(echo "$ts_want"))"
+  if [ -n "$py_extra" ] || [ -n "$py_missing" ] || [ -n "$ts_extra" ]; then
+    err "the nested-message allowlist disagrees with the stubs — fields_python/fields_ts silently drop"
+    err "ANY nested message's fields (see their own comment above), so this must be exact, not a floor:"
+    if [ -n "$py_extra" ]; then
+      err "  python ($PY_GEN) has an UNKNOWN nested message not in the allowlist:"
+      while IFS= read -r r; do [ -n "$r" ] && err "    + $r"; done <<< "$py_extra"
+    fi
+    if [ -n "$py_missing" ]; then
+      err "  python ($PY_GEN) is MISSING a known synthetic the allowlist still expects:"
+      while IFS= read -r r; do [ -n "$r" ] && err "    - $r"; done <<< "$py_missing"
+    fi
+    if [ -n "$ts_extra" ]; then
+      err "  ts ($TS_GEN) has a nested message the allowlist does not expect (should be empty today):"
+      while IFS= read -r r; do [ -n "$r" ] && err "    + $r"; done <<< "$ts_extra"
+    fi
+    err "if this is a genuine new nested message, extend fields_python/fields_ts to extract its fields"
+    err "(with a concrete example in hand, not a guess) before adding it to the allowlist deliberately."
+    exit 7
+  fi
+}
+
 # ── Enum-value extraction, one level below FIELD, same discipline ─────────────────────────────────────
 # Same design as fields_python/fields_ts: read each language's stubs INDEPENDENTLY, never derive one
 # from the other, spelling `<Enum>#<VALUE>` (see contract/field-manifest.txt's own header for why `#`
@@ -334,8 +450,9 @@ if [ "${1:-}" = "--write-manifest" ]; then
     exit 3
   fi
   # Same authoritative side, same file, same rule as the FIELD lines just above: refuse to write a
-  # manifest the enum extractor cannot yet represent, rather than writing one silently missing a
-  # nested value.
+  # manifest the field or enum extractor cannot yet represent, rather than writing one silently
+  # missing a nested value.
+  assert_known_nested_messages_only
   assert_no_nested_enums
   ftmp="$(mktemp)"
   grep -E '^\s*(#|$)' "$FIELD_MANIFEST" > "$ftmp" 2>/dev/null || true
@@ -345,11 +462,21 @@ if [ "${1:-}" = "--write-manifest" ]; then
   echo "wrote $FIELD_MANIFEST ($(manifest_fields | wc -l | tr -d ' ') fields, $(manifest_enums | wc -l | tr -d ' ') enum values) — REVIEW THE DIFF."
   echo "A line added here is a contract surface change one level below a verb: wire the field or enum"
   echo "value into the hand-written clients, or record in the PR why not, before committing."
+
+  # The manifest just written is a NEW forward set — a recorded "expected to be missing exactly these
+  # fields locally" from before this write may no longer even parse against it. Delete rather than
+  # leave a stale recording that could downgrade a REAL new gap into a NOTE by coincidence.
+  if [ -f "$EXPECTED_LOCAL_LAG" ]; then
+    rm -f "$EXPECTED_LOCAL_LAG"
+    echo "removed $EXPECTED_LOCAL_LAG — the recorded local/BSR lag no longer matches the manifest just"
+    echo "written. Re-record it deliberately (see the file's own header) if a real gap is still expected."
+  fi
   exit 0
 fi
 
 # The probing path below (unlike --write-manifest, which checks this itself just before it writes)
-# needs the same guarantee before it trusts what enums_python/enums_ts return.
+# needs the same guarantee before it trusts what fields_python/fields_ts/enums_python/enums_ts return.
+assert_known_nested_messages_only
 assert_no_nested_enums
 
 echo "== check-contract: probing the active generated stubs =="
@@ -450,8 +577,18 @@ fi
 # two unwired surfaces (`collective_outcome` regenerated in and sat unread), and it is what let the
 # five ACDP D3 slots arrive on ContextBinding with every gate green.
 #
-# Scoped to seam.api.v1 on purpose: seam.event.v1 fields are covered by the STREAM/EVENTS probes and by
-# the vendored-spec gate, and pulling them in here would duplicate a gate that fails for other reasons.
+# Scoped to seam.api.v1 on purpose — and the honest state of seam.event.v1's coverage, not the
+# aspirational one it used to claim here. Measured: the STREAM/EVENTS probes above assert PRESENCE of
+# 4 named fields (session_lifecycle, chain_head_attestation, ciphertext_digest, AuditEntryEvent.actor)
+# out of ~90 total on the event stubs
+# (`grep -c FIELD_NUMBER python/seam_sdk/_gen/seam/event/v1/seam_event_pb2.pyi` -> 90); they never fail
+# on an ADDITIVE field elsewhere on seam.event.v1, removed or renamed. `scripts/check_vendored_spec.py`
+# (the "vendored-spec gate") only catches drift in `verify/docs/seam-event.v1.md` when the RUNTIME also
+# edits that markdown spec doc — a field added to (or removed from) the .proto with no matching
+# spec-doc edit is invisible to it too. So seam.event.v1 has NO field-surface manifest the way
+# seam.api.v1 has one here: the residual is real, not merely undocumented, and closing it needs its own
+# manifest (a different generated file, and on the runtime side a different owning surface) — not a
+# widening of this one.
 field_surface_rc=0
 field_surface_report=""
 if [ ! -f "$FIELD_MANIFEST" ]; then
@@ -467,6 +604,13 @@ else
     esac
     _fmissing="$(comm -23 <(echo "$_fwant") <(echo "$_fhave"))"
     _fextra="$(comm -13 <(echo "$_fwant") <(echo "$_fhave"))"
+    # Kept per-language, past the loop, so the local/BSR expected-lag check below can compare each
+    # language's MISSING set against the recorded file individually — the exact-match rule requires
+    # BOTH languages to match it, not just the union of the two.
+    case "$lang" in
+      python) _fmissing_python="$_fmissing"; _fextra_python="$_fextra" ;;
+      ts)     _fmissing_ts="$_fmissing"; _fextra_ts="$_fextra" ;;
+    esac
     if [ -n "$_fmissing" ]; then
       field_surface_rc=1
       field_surface_report+="  MISSING from the $lang stubs (stale/partial generation, or a REMOVED field):"$'\n'
@@ -613,13 +757,45 @@ if [ "$rpc_surface_rc" -ne 0 ]; then
 fi
 echo "OK — the RPC surface matches $MANIFEST in both languages."
 
+# ── Is this FIELD disagreement exactly the recorded local/BSR lag? ────────────────────────────────
+# See $EXPECTED_LOCAL_LAG's own header. A local checkout regenerates stubs from the BSR, which is
+# EXPECTED to lag the committed manifest by a known, recorded set of fields until it republishes them
+# — CI always regenerates fresh and remains the sole authority on the contract itself, so this NEVER
+# changes the exit code below, only whether the reader has to parse the full refusal or a short,
+# unmistakable NOTE. Requires an EXACT match: both languages' MISSING sets equal to the file, AND
+# nothing else disagreeing (no NOT-IN-THE-MANIFEST/"extra" entries, no enum failure at all) — a
+# superset, subset, or any other kind of disagreement alongside it is real drift and stays undowngraded.
+lag_match=0
+_lag_declared=""
+if [ "$field_surface_rc" -ne 0 ] && [ "$enum_surface_rc" -eq 0 ] \
+   && [ -z "${_fextra_python:-}" ] && [ -z "${_fextra_ts:-}" ] \
+   && [ -f "$EXPECTED_LOCAL_LAG" ]; then
+  _lag_declared="$(expected_local_lag_fields)"
+  if [ -n "$_lag_declared" ] \
+     && [ "${_fmissing_python:-}" = "$_lag_declared" ] \
+     && [ "${_fmissing_ts:-}" = "$_lag_declared" ]; then
+    lag_match=1
+  fi
+fi
+
 # FIELD and ENUM-VALUE surfaces share one exit code (6) and are reported TOGETHER, in one pass, before
 # either can exit: if both disagree at once, a script that exited on the field report first would never
 # show the enum one, and a re-run-after-fixing-only-the-first-thing-you-saw loop is exactly the kind of
 # blindness this gate exists to prevent one level up.
 if [ "$field_surface_rc" -ne 0 ] || [ "$enum_surface_rc" -ne 0 ]; then
   echo
-  if [ "$field_surface_rc" -ne 0 ]; then
+  if [ "$field_surface_rc" -ne 0 ] && [ "$lag_match" -eq 1 ]; then
+  _lag_date="$(expected_local_lag_date)"
+  _lag_age="$(expected_local_lag_age_days "$_lag_date")"
+  echo "NOTE — the FIELD surface disagrees with $FIELD_MANIFEST, but EXACTLY as recorded in"
+  echo "       $EXPECTED_LOCAL_LAG (expected from ${_lag_date:-an unrecorded date}, $_lag_age old):"
+  while IFS= read -r r; do [ -n "$r" ] && echo "         - $r"; done <<< "$_lag_declared"
+  echo "       This is the known local-checkout/BSR gap (stubs regenerate from a BSR module that has"
+  echo "       not yet republished these), not a new regression. CI always regenerates fresh from the"
+  echo "       BSR and remains the sole authority on the contract itself, so this STILL exits 6 below —"
+  echo "       only the output is different. If a run ever names anything beyond exactly these fields,"
+  echo "       THAT is real drift, not this recorded lag. See CLAUDE.md's Gotchas."
+  elif [ "$field_surface_rc" -ne 0 ]; then
   err "the generated FIELD surface disagrees with $FIELD_MANIFEST:"
   printf '%s' "$field_surface_report" >&2
   echo "" >&2
@@ -629,6 +805,10 @@ if [ "$field_surface_rc" -ne 0 ] || [ "$enum_surface_rc" -ne 0 ]; then
   err "A field MISSING from the stubs is either a stale generation — rerun 'make generate' (BSR) or"
   err "'make generate-local RUNTIME=../seam-runtime' — or a field REMOVED from the contract, which is"
   err "a breaking change and must be handled, never silently rewritten away."
+  if [ -f "$EXPECTED_LOCAL_LAG" ]; then
+  err "(This did not match the recorded lag in $EXPECTED_LOCAL_LAG exactly — a superset, subset, or"
+  err "other deviation from that file is treated as real, not the known gap.)"
+  fi
   echo "" >&2
   fi
   if [[ "$field_surface_report" == *"NOT IN THE MANIFEST"* ]]; then

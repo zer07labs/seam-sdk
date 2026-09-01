@@ -252,7 +252,13 @@ the check into a single script both call, so the two copies cannot drift.
 
 ### Phase 4 — nested-message tripwire, and correct a scoping comment that is not true
 
-**Status:** TODO
+**Status:** DONE. The blindness was reproduced by mutation before anything was built: the unmodified
+script wrote a 224-field manifest (the top-level sibling only) and exited **0** with a nested
+message's fields invisible to both extractors. The "two known `FeaturesEntry` synthetics" claim and
+the 90-field event count both checked out exactly. Note for anyone re-running the proof:
+`EscrowDirective` does not exist in this contract — it was a hypothetical in the audit, and injecting
+into it is a silent no-op that looks like the tripwire failing. Inject into a message that is
+actually there.
 
 **Delivers:** the first real nested message on `seam.api.v1` fails loudly instead of being silently
 excluded by both extractors symmetrically; and `check-contract.sh:368` stops claiming coverage that
@@ -305,7 +311,18 @@ red, real-tree green.
 
 ### Phase 5 — make the expected local lag distinguishable from real drift
 
-**Status:** TODO
+**Status:** DONE — with one addition the plan did not specify but which it needed. `--write-manifest`
+deletes the lag file by design, so every pre-existing test that exercises `--write-manifest` would
+have deleted the *real committed* `contract/expected-local-lag.txt` as a side effect. A
+`SEAM_EXPECTED_LOCAL_LAG` override was added (same idiom as `SEAM_FIELD_MANIFEST`) and the test
+harness auto-redirects to a scratch path unless a test explicitly opts into the real file. Verified:
+the committed lag file is byte-identical after a full suite run.
+
+The downgrade is correctly conjunctive, which is the part that could have gone wrong quietly. It
+requires the MISSING sets to match in BOTH languages AND no NOT-IN-THE-MANIFEST entries AND a clean
+enum surface AND no generation skew. A run where the five lag fields match but an enum value has
+drifted produces the full un-downgraded error — verified directly, since that is exactly the case
+where a downgrade would hide a real finding behind an expected one.
 
 **Delivers:** a pre-ACDP local checkout can tell "the known five" from "the known five plus one" by
 machine, not by a human reading five lines they have learned to skim.

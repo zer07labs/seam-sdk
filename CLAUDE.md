@@ -27,6 +27,12 @@ deliberately links nothing of Seam's.
   `test_grpcio_floor.py` go red after a `make generate` that bumps gencode. Raise the floor; don't relax the test.
 - Python CI installs editable **and** builds the wheel to import it in a clean venv — an editable install
   cannot see a packaging defect. Don't trust a green suite alone before a release.
+- **`STREAM=1 EVENTS=1 make check-contract` exits 6 on every pre-ACDP local checkout** — local stubs
+  lag the committed manifest by five `ContextBinding` fields (`content_hash`, `receipt_hash`,
+  `key_status`, `resolved_status`, `retraction`) until a regeneration pulls a BSR module that carries
+  them. The gate recognises exactly that case and downgrades its output to a NOTE naming
+  `contract/expected-local-lag.txt` — it still exits 6, since CI is the authority, not this checkout.
+  Anything the gate names beyond exactly those five fields is real drift, not this known lag.
 
 <!-- Shared cross-repo context (zer07labs/seam, cloned as a sibling). -->
 @../seam/CLAUDE.md

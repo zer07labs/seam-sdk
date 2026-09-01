@@ -1,0 +1,39 @@
+# expected-local-lag — the field-surface gap every pre-ACDP local checkout is expected to show.
+#
+# WHY THIS FILE EXISTS
+# ---------------------
+# `STREAM=1 EVENTS=1 make check-contract` exits 6 on EVERY local checkout generated before the BSR
+# republished ACDP P1a/P2: the committed `contract/field-manifest.txt` already declares five
+# `ContextBinding` fields the local stubs do not carry yet, because `make generate`/`make
+# generate-local` pull whatever the BSR (or a local runtime checkout) currently publishes, and that
+# has not caught up. That is EXPECTED, not a regression — but the gate's own refusal text
+# ("...or a field REMOVED from the contract, which is a breaking change") is the exact wording, exit
+# code, and direction a REAL removal produces. A gate that is red locally and green in CI trains
+# readers to stop looking at it, which is worse than the gate not existing.
+#
+# This file names exactly the fields that lag is expected to be. When `scripts/check-contract.sh`'s
+# FIELD-surface probe finds a MISSING set — in BOTH languages, with no other kind of discrepancy: no
+# NOT-IN-THE-MANIFEST entries, no enum-value failures, no generation skew — that matches this file
+# EXACTLY, it downgrades its OUTPUT to a NOTE naming this file. It does NOT downgrade the exit code:
+# the lag is real, and CI is the authority (it always regenerates fresh from the BSR) — exiting 0 here
+# would make a genuinely stale local tree look clean, which is strictly worse than the status quo.
+#
+# Any SUPERSET (these five plus another), SUBSET (fewer than these five), or other deviation is NOT a
+# match and produces the FULL, un-downgraded refusal — this file is a precise recording, not a floor,
+# and it must never be edited to chase a gate that has started reporting something new.
+#
+# `--write-manifest` DELETES this file. After a manifest rewrite the recorded lag is meaningless — the
+# manifest's forward set just moved, so "expected to be missing exactly these five" may no longer even
+# parse against it. Re-record deliberately (bump EXPECTED-FROM below) if a new, real local/BSR gap is
+# expected after the next regeneration.
+#
+# `scripts/check-contract.sh` prints this file's age on every match so it cannot quietly become
+# permanent scenery: see `plans/gate-blindness-hardening.md`'s Open Questions for the re-open trigger
+# if it is still present and matching 60 days from EXPECTED-FROM.
+#
+# EXPECTED-FROM: 2026-08-31 (ACDP P1a/P2 adoption landed on the contract; PR #84 / commit 27dda87)
+ContextBinding/content_hash
+ContextBinding/key_status
+ContextBinding/receipt_hash
+ContextBinding/resolved_status
+ContextBinding/retraction
