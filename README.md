@@ -113,8 +113,8 @@ and probes the emitted stubs:
 >
 > Two of the five carry vocabularies that are **wire commitments**: `key_status` is a closed,
 > PascalCase set; `resolved_status` is an open, lowercase one. Both are byte-identical to what
-> *enters* the `context_digest` preimage — the spec's own wording, and the reason the exact bytes
-> matter. This SDK passes both through verbatim. Do not case-fold, normalise or map them: a
+> *enters* the `context_digest` preimage — which is how the spec frames it, and the reason the exact
+> bytes matter. This SDK passes both through verbatim. Do not case-fold, normalise or map them: a
 > re-spelling silently breaks a third party's digest recomputation, and nothing in this repo would
 > notice, because nothing in this repo recomputes that digest.
 >

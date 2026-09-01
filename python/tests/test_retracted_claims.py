@@ -177,7 +177,7 @@ def test_the_commitment_digest_exclusion_is_stated() -> None:
     ],
 )
 def test_the_known_bad_bands_stay_documented(required: str) -> None:
-    """Nothing was yanked (CHANGELOG.md:523-528), so these versions remain installable and this
+    """Nothing was yanked (see CHANGELOG.md's "No yank" entry), so these versions remain installable
     document is the only barrier. Dropping a band silently re-exposes it.
 
     This is a WEAK check by construction — a version string can appear for unrelated reasons, so
