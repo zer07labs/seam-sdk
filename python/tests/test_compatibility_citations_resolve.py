@@ -216,10 +216,28 @@ def _line_anchors_into_vendored(text: str) -> list[str]:
 GENERATED = ("ts/gen/", "python/seam_sdk/_gen/", "gen/")
 
 
+#: `` `path/to/generated.pyi:106,163` `` — a comma-list. It line-anchors into a generated tree just as
+#: hard as an ordinary citation, and `CITATION` matches it not at all (the regex needs the closing
+#: backtick straight after the number). Three such citations sat in `PROGRESS.md` while the rule
+#: forbidding them was stated in the table one row above; the ban was enforced only against the
+#: spelling that happened to be checkable. Scanned separately rather than by widening `CITATION`,
+#: which would change what every other test in this file counts.
+COMMA_LIST_CITATION = re.compile(
+    r"`([\w./-]+\.[A-Za-z]\w*):(\d+(?:-\d+)?(?:,\d+(?:-\d+)?)+)`"
+)
+
+
 def _line_anchors_into_generated(text: str) -> list[str]:
-    """Every line-anchored citation in `text` that names a generated path. Empty is the good case."""
+    """Every line-anchored citation in `text` that names a generated path. Empty is the good case.
+
+    Both spellings, because the rule is about line-anchoring into a tree that regenerates, and a
+    comma separating two line numbers does not make them less line numbers.
+    """
     return [
-        m.group(0) for m in CITATION.finditer(text) if m.group(1).startswith(GENERATED)
+        m.group(0)
+        for pattern in (CITATION, COMMA_LIST_CITATION)
+        for m in pattern.finditer(text)
+        if m.group(1).startswith(GENERATED)
     ]
 
 
@@ -623,54 +641,197 @@ ANCHORED = [
 CITATION_SLACK = 3
 
 
-def test_no_anchored_needle_is_satisfied_only_by_a_foreign_citation() -> None:
-    """Every anchored needle must be satisfied by ITS OWN citation, not by an unrelated one.
+#: For an anchored needle whose document cites its path more than once, a substring identifying the
+#: DOCUMENT line that carries the claim. Without it, "its own citation" has no definition and the
+#: check below can only ask "is SOME citation of this path near the needle" — which masking satisfies,
+#: because masking leaves exactly one citation in range, just the wrong one.
+#:
+#: Two needles may share a claim line (`submit_evaluation` / `submit_objection` are one table row),
+#: and that is fine: the candidate set is then both of that row's citations, which is still far
+#: narrower than every citation of the path in the document.
+CLAIM_LINES = {
+    # COMPATIBILITY.md
+    ("COMPATIBILITY.md", "CHANGELOG.md", "No yank"): "is not being re-litigated",
+    (
+        "COMPATIBILITY.md",
+        ".github/workflows/publish.yml",
+        'registry-url: "https://npm.cloudsmith.io',
+    ): "**TypeScript** (`@zer07labs/seam-sdk`)",
+    (
+        "COMPATIBILITY.md",
+        ".github/workflows/publish.yml",
+        'TWINE_REPOSITORY_URL: "https://python.cloudsmith.io',
+    ): "**Python** (`seam-sdk`)",
+    # DECISIONS.md
+    (
+        "DECISIONS.md",
+        ".github/workflows/ci.yml",
+        "must link NOTHING",
+    ): "runs `scripts/check-independence.sh`",
+    (
+        "DECISIONS.md",
+        "CHANGELOG.md",
+        "this SDK cannot express its own",
+    ): "whatever number the runtime's history computes",
+    ("DECISIONS.md", "CHANGELOG.md", "No yank"): "The precedent already covers worse",
+    (
+        "DECISIONS.md",
+        "verify/tests/authenticity.rs",
+        "fn a_v1_record_is_link_verified_but_not_recomputed",
+    ): "through to `continue` and is tested twice",
+    (
+        "DECISIONS.md",
+        "verify/tests/authenticity.rs",
+        "the v1 record is skipped, not recomputed",
+    ): "whose skipped-not-recomputed assertion is at",
+    (
+        "DECISIONS.md",
+        "verify/tests/authenticity.rs",
+        "fn a_genuine_v1_record_is_still_skipped_not_refused",
+    ): "(`a_genuine_v1_record_is_still_skipped_not_refused`)",
+    (
+        "DECISIONS.md",
+        "verify/tests/authenticity.rs",
+        "Each column is tested ALONE, with the other three removed",
+    ): "exercises each column with the other three removed",
+    # PROGRESS.md — the four Phase 4 anchors.
+    (
+        "PROGRESS.md",
+        "ts/src/client.ts",
+        "export function collectiveOutcomeOf",
+    ): "the TS twin",
+    (
+        "PROGRESS.md",
+        "ts/src/client.ts",
+        "  submitCommit(",
+    ): "`submit_commit` / `submitCommit`",
+    (
+        "PROGRESS.md",
+        "ts/src/client.ts",
+        "  submitEvaluation(",
+    ): "`submit_evaluation` / `submit_objection`",
+    (
+        "PROGRESS.md",
+        "ts/src/client.ts",
+        "  submitObjection(",
+    ): "`submit_evaluation` / `submit_objection`",
+}
 
-    This is the property the path-only matching above cannot enforce per-claim, and it used to be
-    maintained by hand in a docstring — which put three wrong numbers in the file whose job is to
-    catch wrong numbers. It is computed here instead. The assertion is exactly "no foreign citation
-    currently satisfies this needle"; the printed distances are headroom, not the contract, and are
-    reported so a narrowing shows up in the failure rather than in someone's memory.
+
+def _citations_on_claim_line(doc: str, path: str, claim: str) -> list[tuple[int, int]]:
+    """Citations of `path` written on the document line that carries `claim`.
+
+    **A table row is a self-contained claim; wrapped prose is not.** A markdown row holds its claim
+    and its citations on one physical line, and the row above it is a *different* claim — so for rows
+    the scope is exactly that line, which is what makes this able to catch a citation drifting into a
+    neighbouring row's territory. Prose wraps, and a claim's citation routinely lands on the next
+    physical line, so for non-row lines the scope extends one line either side. Widening prose to a
+    whole paragraph was rejected: `DECISIONS.md`'s `authenticity.rs` paragraph carries all four of
+    that file's citations, so paragraph scope would narrow nothing there and would silently merge
+    adjacent table rows elsewhere.
     """
-    report, offenders = [], []
-    for doc, path, needle in ANCHORED:
-        lines = (REPO / path).read_text(encoding="utf-8", errors="ignore").splitlines()
-        hits = [i + 1 for i, line in enumerate(lines) if needle in line]
-        if len(hits) != 1:
-            continue  # the per-entry test above owns uniqueness; do not double-report it here
-        true_line = hits[0]
-        cited = [(s, e) for _d, p, s, e in _citations(doc) if p == path]
-        within = [
-            c
-            for c in cited
-            if c[0] - CITATION_SLACK <= true_line <= c[1] + CITATION_SLACK
-        ]
-        foreign = [c for c in cited if c not in within]
-        gap = (
-            min(min(abs(true_line - a), abs(true_line - b)) for a, b in foreign)
-            if foreign
-            else None
-        )
-        report.append(
-            f"{gap if gap is not None else '-':>5}  {doc} -> {path}:{true_line} {needle!r}"
-        )
-        # Deduped: `PROGRESS.md` cites `ts/src/client.ts:218` three times for three different
-        # claims about the same line, which is one citation repeated, not one masking another. Two
-        # DISTINCT line numbers both satisfying one needle is the masking case.
-        if len(set(within)) > 1:
-            offenders.append(
-                f"{doc} -> {path}:{true_line} {needle!r} satisfied by {sorted(set(within))}"
-            )
+    lines = (REPO / doc).read_text(encoding="utf-8").splitlines()
+    scope: set[int] = set()
+    for i, line in enumerate(lines):
+        if claim not in line:
+            continue
+        scope.add(i)
+        if not line.lstrip().startswith("|"):
+            scope.update({i - 1, i + 1})
 
-    assert report, (
-        "no anchored needle resolved uniquely; ANCHORED or the corpus has broken"
+    out = []
+    for i in sorted(scope):
+        if 0 <= i < len(lines):
+            for m in CITATION.finditer(lines[i]):
+                if m.group(1) == path:
+                    out.append((int(m.group(2)), int(m.group(3) or m.group(2))))
+    return out
+
+
+def test_every_claim_binding_actually_narrows_the_candidate_set() -> None:
+    """A claim whose scope catches every citation of its path binds nothing.
+
+    The point of `CLAIM_LINES` is that the needle is measured against ITS citation rather than any of
+    them; an entry that admits the full set would pass while checking exactly what the path-only
+    assertion already checks. `authenticity.rs` is the one place this cannot be fully achieved — the
+    paragraph genuinely carries two citations on one line — so it is allowed to narrow to two of
+    four rather than to one, and that ceiling is asserted rather than assumed.
+    """
+    weak = []
+    for (doc, path, needle), claim in CLAIM_LINES.items():
+        allc = {(s, e) for _d, p, s, e in _citations(doc) if p == path}
+        own = set(_citations_on_claim_line(doc, path, claim))
+        if len(allc) > 1 and not own < allc:
+            weak.append(
+                f"{doc} -> {path} {needle!r}: scope {sorted(own)} is not narrower than "
+                f"{sorted(allc)}"
+            )
+    assert not weak, "these claim bindings do not narrow anything:\n  " + "\n  ".join(
+        weak
     )
-    assert not offenders, (
-        "an anchored needle is satisfied by more than one citation of the same path, so a drifted "
-        "citation could be masked by an unrelated one:\n  "
-        + "\n  ".join(offenders)
-        + "\n\nmargins (needle -> nearest foreign citation):\n  "
-        + "\n  ".join(sorted(report))
+
+
+@pytest.mark.parametrize(
+    ("key", "claim"), sorted(CLAIM_LINES.items()), ids=lambda v: str(v)[:60]
+)
+def test_an_anchored_needle_is_satisfied_by_its_own_citation(
+    key: tuple[str, str, str], claim: str
+) -> None:
+    """The property the path-only matching above cannot enforce: the RIGHT citation is the near one.
+
+    This replaces a check that asserted "more than one citation of this path satisfies the needle",
+    which sounds like the masking condition and is not: masking leaves exactly one citation in range.
+    The scenario the record itself describes — delete fourteen lines between `submitEvaluation` and
+    `submitObjection`, so `submitObjection` lands on the confidence mapping's citation and
+    `submitCommit` lands on `submitObjection`'s — passed that check with the whole suite green.
+    It fails this one, because each needle is now measured only against the citations written on the
+    document line that makes the claim about it.
+    """
+    doc, path, needle = key
+    lines = (REPO / path).read_text(encoding="utf-8", errors="ignore").splitlines()
+    hits = [i + 1 for i, line in enumerate(lines) if needle in line]
+    assert len(hits) == 1, (
+        f"{needle!r} occurs {len(hits)} times in {path}; see the test above"
+    )
+    true_line = hits[0]
+
+    own = _citations_on_claim_line(doc, path, claim)
+    assert own, (
+        f"no citation of {path} appears on any {doc} line containing {claim!r}. Either the claim "
+        f"line was reworded (update CLAIM_LINES) or its citation was dropped."
+    )
+    assert any(a - CITATION_SLACK <= true_line <= b + CITATION_SLACK for a, b in own), (
+        f"{needle!r} is at {path}:{true_line}, but the {doc} line that claims it cites {path} only "
+        f"at {[str(a) if a == b else f'{a}-{b}' for a, b in own]}. The citation on the claim's own "
+        f"line has drifted — another citation elsewhere in {doc} may still be covering for it, "
+        f"which is exactly why this check exists alongside the path-only one."
+    )
+
+
+def test_the_claim_line_map_covers_every_needle_that_needs_it() -> None:
+    """`CLAIM_LINES` is opt-in, so a new anchored needle into an already-multiply-cited path would
+    silently get only the weaker path-only check. Anything whose document cites its path more than
+    once must be listed."""
+    missing = []
+    for doc, path, needle in ANCHORED:
+        distinct = {(s, e) for _d, p, s, e in _citations(doc) if p == path}
+        if len(distinct) > 1 and (doc, path, needle) not in CLAIM_LINES:
+            missing.append(
+                f"{doc} -> {path} {needle!r} ({len(distinct)} distinct citations)"
+            )
+    assert not missing, (
+        "these anchored needles point at a path their document cites more than once, so a foreign "
+        "citation can satisfy them, and they are not in CLAIM_LINES:\n  "
+        + "\n  ".join(missing)
+    )
+
+
+def test_the_anchored_table_is_not_empty() -> None:
+    """A floor with a real margin: 17 entries at the time of writing. The check this replaced
+    asserted only `report` was non-empty, a floor of one against seventeen — the weakest calibration
+    in a file whose stated discipline is a third."""
+    assert len(ANCHORED) >= 12, (
+        f"ANCHORED has shrunk to {len(ANCHORED)}; entries are being deleted"
     )
 
 
@@ -680,30 +841,28 @@ def test_the_load_bearing_citations_still_point_at_the_right_thing(
 ) -> None:
     """A line that exists but no longer says what it was cited for is the failure that happened.
 
-    **Known limit, accepted deliberately:** within a document, citations are matched to a claim by
-    PATH only, so if a document cites one file more than once, any of those citations landing within
-    `CITATION_SLACK` of the needle satisfies the check — a drifted citation could in principle be
-    masked by an unrelated one. Binding each claim to its own citation would mean parsing the
-    document's prose structure, which is materially more machinery than the risk earns. Documents do
-    NOT mask each other: `cited` is scoped to `doc`, so `ci.yml` being correctly cited in
-    COMPATIBILITY.md cannot cover for its being stale in DECISIONS.md — which is not hypothetical,
-    it is exactly the state this entry was added in.
+    **Known limit, and where it is now closed:** *this* check matches citations to a claim by PATH
+    only, so if a document cites one file more than once, any of those citations landing within
+    `CITATION_SLACK` of the needle satisfies it — a drifted citation can be masked by an unrelated
+    one. That is not merely theoretical; it is how three of these entries went stale unnoticed. It is
+    closed one level up, by `test_an_anchored_needle_is_satisfied_by_its_own_citation`, which binds
+    each needle in `CLAIM_LINES` to the citations on *the line making the claim* — the single line
+    for a `|`-prefixed table row, ±1 for wrapped prose. Both checks run: path-only catches a citation
+    that has no correct twin anywhere, claim-bound catches the one that does.
 
-    **How close that limit actually is, is measured rather than described** —
-    `test_no_anchored_needle_is_satisfied_only_by_a_foreign_citation` computes every needle's
-    distance to its nearest foreign citation and prints the whole table on failure. This paragraph
-    used to carry those numbers by hand, and every one of them rotted: it named
-    `verify/tests/authenticity.rs`'s tightest margin as 16 lines "needle at 256, citation at 238"
-    when 16 is needle 238's margin and 256's is 18; it told a reader to "revisit before adding a
-    citation near `:199`, `:340`, `:367` or `:413`" when `publish.yml` is cited at 199, 354, 381 and
-    428; and after Phase 4 anchored two more needles it claimed 14 had displaced `publish.yml`'s 27
-    when what 14 displaced was `authenticity.rs`'s 16. Three wrong numbers in a docstring attached to
-    the assertion that could have computed all of them. The qualitative point is the part worth
-    keeping in prose: the danger zone is `2 * CITATION_SLACK + 1` lines wide, not the whole span
-    between two citations, so what closes it is a citation landing within three lines of an anchored
-    needle — and Phase 4's anchoring of `submitEvaluation`/`submitObjection` deliberately traded
-    margin for coverage, since those two positions had been wrong twice while being checked by
-    nothing at all.
+    Documents do NOT mask each other either: `cited` is scoped to `doc`, so `ci.yml` being correctly
+    cited in COMPATIBILITY.md cannot cover for its being stale in DECISIONS.md — which is not
+    hypothetical, it is exactly the state this entry was added in.
+
+    **No margin numbers here, on purpose.** This paragraph used to carry them by hand and every one
+    rotted — three wrong figures in the docstring attached to the assertion that could have computed
+    them, one of which contradicted a sentence fifteen lines above it. The round-3 replacement
+    computed margins but asserted the wrong property ("more than one citation satisfies", when
+    masking leaves exactly one) and is gone. The qualitative point is the part worth keeping in
+    prose: the danger zone is `2 * CITATION_SLACK + 1` lines wide, not the whole span between two
+    citations, so what masks a needle is a *foreign* citation landing within three lines of it — and
+    a claim-bound needle cannot be masked at all, since a citation elsewhere in the document is not
+    on its claim line.
     """
     lines = (REPO / path).read_text(encoding="utf-8", errors="ignore").splitlines()
     hits = [i + 1 for i, line in enumerate(lines) if needle in line]

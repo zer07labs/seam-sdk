@@ -71,8 +71,12 @@ INDEX = SRC / "index.ts"
 DECL = re.compile(
     r"^export\s+(?:declare\s+|abstract\s+|async\s+)*"
     # `const enum` first, or the alternation matches `const` and captures the word "enum".
-    r"(?:const\s+enum|interface|type|class|const|let|var|function\*?|enum)"
-    r"\s+([A-Za-z_$][\w$]*)"
+    # `function` is split out of the shared `\s+` tail: a generator may be written `function* g`,
+    # `function *g` or `function * g`, and the middle form has NO whitespace between `*` and the
+    # name. `(?:\s*\*\s*|\s+)` accepts all three while still rejecting `functionFoo`, which the
+    # looser `\s*` spelling would have captured as `Foo`.
+    r"(?:(?:const\s+enum|interface|type|class|const|let|var|enum)\s+|function(?:\s*\*\s*|\s+))"
+    r"([A-Za-z_$][\w$]*)"
 )
 #: `export default class Foo` is deliberately NOT matched: it binds the root name `default`, not
 #: `Foo`, so it cannot collide with a generated name and counting it would inflate both sides.
@@ -275,12 +279,21 @@ def test_the_count_word_also_matches_the_list_it_introduces() -> None:
 #: LATER block's `} from "../gen/`, swallowing an intervening local re-export and garbling the first
 #: name of the generated list. Excluding braces confines each match to one block.
 GEN_REEXPORT = re.compile(
-    r"^export\s+(?:type\s+)?\{([^{}]*?)\}\s*from\s*\"\.\./gen/", re.S | re.M
+    r"^export\s+(?:type\s+)?\{([^{}]*?)\}\s*from\s*['\"][^'\"]*?/gen/", re.S | re.M
 )
 
-#: An inline `//` comment runs to end of line, so it must be stripped BEFORE splitting on commas —
-#: otherwise `Anchor, // the party anchor` swallows the next entry, which is the following line.
+#: `export * from "…/gen/…"` — a form the braced regex cannot see, and a worse hazard than a named
+#: re-export: it brings EVERY generated name to the root, so each dual-declared name becomes an
+#: ambiguous star export and ESM excludes it, leaving BOTH the hand-written type and the generated
+#: one unreachable at the root. Refused outright rather than measured.
+GEN_STAR = re.compile(r"^export\s+\*\s+from\s*['\"][^'\"]*?/gen/", re.M)
+
+#: Comments must be stripped BEFORE splitting on commas. `//` runs to end of line, so
+#: `Anchor, // the party anchor` swallows the entry on the following line; `/* … */` sits inside one
+#: entry and leaves a token matching no declared name — the quieter of the two, because it makes a
+#: real collision invisible rather than inventing a spurious one.
 _LINE_COMMENT = re.compile(r"//[^\n]*")
+_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
 
 
 def _explicitly_reexported() -> set[str]:
@@ -295,15 +308,57 @@ def _explicitly_reexported() -> set[str]:
     * a local ``export { X } from "./y.js"`` sitting above a generated list, which the old
       ``.*?`` spanned straight across.
     """
-    src = INDEX.read_text(encoding="utf-8")
     names: set[str] = set()
-    for block in GEN_REEXPORT.findall(src):
-        for raw in _LINE_COMMENT.sub("", block).split(","):
-            token = raw.strip().split(" as ")[0].strip()
-            token = re.sub(r"^(?:type|typeof)\s+", "", token).strip()
-            if token:
-                names.add(token)
+    for path in _root_reachable_sources():
+        for block in GEN_REEXPORT.findall(path.read_text(encoding="utf-8")):
+            block = _LINE_COMMENT.sub("", _BLOCK_COMMENT.sub("", block))
+            for raw in block.split(","):
+                # `A as B` binds **B** at the root, so B is the name that can collide. Taking the
+                # source name instead both missed `CollectiveOutcomeSchema as CollectiveOutcome` and
+                # would have flagged `CollectiveOutcome as CO`, which collides with nothing.
+                token = raw.strip().split(" as ")[-1].strip()
+                token = re.sub(r"^(?:type|typeof)\s+", "", token).strip()
+                if token:
+                    names.add(token)
     return names
+
+
+def _root_reachable_sources() -> list[pathlib.Path]:
+    """Files whose exports reach the package root: `index.ts` and everything it star-exports.
+
+    Scanning only `index.ts` missed a generated re-export placed in `client.ts`, which reaches the
+    root just as directly, through `export * from "./client.js"`.
+    """
+    out = [INDEX]
+    for rel in re.findall(
+        r"^export\s+\*\s+from\s*['\"]\./([\w./-]+)\.js['\"]",
+        INDEX.read_text(encoding="utf-8"),
+        re.M,
+    ):
+        candidate = SRC / f"{rel}.ts"
+        if candidate.exists():
+            out.append(candidate)
+    return out
+
+
+def test_no_root_reachable_file_star_exports_a_generated_module() -> None:
+    """`export * from "../gen/…"` would make every dual-declared name an AMBIGUOUS star export, which
+    ESM excludes — so the hand-written type and the generated one would BOTH vanish from the root.
+
+    A worse outcome than the named-re-export hazard and invisible to the braced regex, so it gets its
+    own refusal rather than a measurement.
+    """
+    offenders = [
+        f"{p.name}: {m!r}"
+        for p in _root_reachable_sources()
+        for m in GEN_STAR.findall(p.read_text(encoding="utf-8"))
+    ]
+    assert not offenders, (
+        "a root-reachable file star-exports a generated module:\n  "
+        + "\n  ".join(offenders)
+        + "\nEvery dual-declared name becomes ambiguous and ESM excludes it from the root. Use an "
+        "explicit named list, or reach the module through `pb.`/`ev.`."
+    )
 
 
 def test_the_explicit_lists_do_not_contain_a_dual_declared_name() -> None:

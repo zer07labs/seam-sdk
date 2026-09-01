@@ -413,7 +413,7 @@ so it cannot reach the taxonomy. Use `canonicalize_tool_input()`
 ### `canonical=` hands you the derivation, and the responsibility with it
 
 `authorize(canonical=…)` (`python/seam_sdk/client.py:291`, `python/seam_sdk/aio.py:221`; `opts.canonical`
-in TypeScript, `ts/src/client.ts:521`) is additive and keyword-only. The SDK does **not** verify the
+in TypeScript, `ts/src/client.ts:531`) is additive and keyword-only. The SDK does **not** verify the
 bytes — re-deriving to check would reinstate the second derivation the parameter exists to remove.
 So two things become possible that were not:
 

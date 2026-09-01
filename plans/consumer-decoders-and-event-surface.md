@@ -1111,6 +1111,13 @@ but note it).
    on `submitCommit` is 14 lines and is recorded in `PROGRESS.md` as a knowing trade, not as a
    measurement to trust.
 
+   **Superseded by round 4.** That computed check asserts the wrong property — "more than one
+   citation satisfies" is not "a *foreign* citation satisfies", and masking leaves exactly one, so
+   the check was green on the very scenario this paragraph describes. It has been deleted and
+   replaced by claim binding (`CLAIM_LINES` +
+   `test_an_anchored_needle_is_satisfied_by_its_own_citation`), which scopes a needle's candidate
+   citations to the line making the claim. The line number cited above no longer names that test.
+
 ---
 
 ## Re-verification pass — 2026-09-01, fresh agent, against `960cf81`

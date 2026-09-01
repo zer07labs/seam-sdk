@@ -25,6 +25,11 @@ rather than being handed a value that answers it wrongly.
 
 When the field is present
 =========================
+Both carriers, since this decoder takes both. On a ``DecisionResponse`` the field accompanies the
+immediate ``RunDecision`` response only; per the generated ``PolicyEnforcement`` message comment,
+``GetDecision``/``ReplayDecision`` do **not** carry it at all, so a fetched or replayed decision
+reads ``None`` regardless of what was enforced when it was sealed.
+
 On a ``SessionStep``, **absence is the common case**, not an error and not a missing feature. The
 field is populated on exactly three steps:
 

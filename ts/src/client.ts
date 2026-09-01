@@ -289,8 +289,12 @@ export interface PolicyEnforcement {
  * the one shape whose falsiness cannot answer the unanswered question: absent is `undefined`, and
  * every other state is a truthy object whose `.enforced` the caller must then actually read.
  *
- * **On a `SessionStep`, absent is the common case** — not an error, and not a missing feature. The
- * field is populated on exactly three steps: the **commit-terminal** step; the **sealed-idempotent
+ * **When the field is present at all — on both carriers, since this decoder takes both.** On a
+ * `DecisionResponse` it accompanies the immediate `RunDecision` response only; per the generated
+ * `PolicyEnforcement` message comment, `GetDecision`/`ReplayDecision` do **not** carry the field,
+ * so a fetched or replayed decision reads `undefined` regardless of what was enforced when it was
+ * sealed. On a `SessionStep`, **absent is the common case** — not an error, and not a missing
+ * feature: the field is populated on exactly three steps: the **commit-terminal** step; the **sealed-idempotent
  * replay** (a resubmit against an already-sealed session, re-reporting a seal this call did not
  * perform); and the **pending-commitment seal retry**. It is absent on every non-terminal step —
  * open, propose, vote, ballot — on **both suspended shapes** (awaiting an approver, and the budget
@@ -320,11 +324,17 @@ export interface PolicyEnforcement {
  * `undefined` check covers both; a second implementation per carrier would be a second place for the
  * same inversion to reappear.
  *
- * Never throws. Unlike {@link collectiveOutcomeOf} there is no enum here and no growth policy, so
- * there is no unrecognized value to fail closed on — the only distinction to preserve is
- * present-versus-absent. The Python twin has to qualify this (its `HasField` raises on a message
- * type lacking the field); here the union is enforced by the compiler and a non-carrier is a
- * compile error rather than a runtime one. */
+ * Never throws — for every input, not only the ones the union admits. Unlike
+ * {@link collectiveOutcomeOf} there is no enum here and no growth policy, so there is no
+ * unrecognized value to fail closed on; the only distinction to preserve is present-versus-absent.
+ * Worth stating directly rather than by comparison, because the languages genuinely differ here: the
+ * Python twin's `HasField` **raises** on a message type that has no such field, and its docstring
+ * qualifies "never raises" for exactly that reason. A TypeScript caller cannot reach that case — the
+ * union is a compile error. **A JavaScript caller can**, and this package ships `dist/*.js`: pass an
+ * `AuthorizeResponse`, a `TerminalResponse` or a `SessionStatusResponse` from plain JS and you get
+ * `undefined`, indistinguishable from a genuine absent field. So on a non-carrier the two languages
+ * disagree — Python surfaces the programming error, this reports "not answered" — and only the type
+ * system stands between a JS caller and that. */
 export function policyEnforcementOf(
   resp: DecisionResponse | SessionStep,
 ): PolicyEnforcement | undefined {

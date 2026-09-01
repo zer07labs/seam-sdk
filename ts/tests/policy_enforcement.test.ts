@@ -21,6 +21,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { create, toBinary, fromBinary } from "@bufbuild/protobuf";
+import type { DescMessage } from "@bufbuild/protobuf";
+import { FeatureSet_FieldPresence } from "@bufbuild/protobuf/wkt";
 
 import {
   DecisionResponseSchema,
@@ -105,6 +107,87 @@ test("policyId carries through unchanged when set", () => {
   assert.equal(
     policyEnforcementOf(step({ enforced: true, policyId: "pol-42" }))?.policyId,
     "pol-42",
+  );
+});
+
+test("enforced=true is reported as true — the whole value, against a literal", () => {
+  // The gap this closes was real and it was the worst kind: every `enforced: true` case in this
+  // suite read back only `policyId`, and the only two assertions on `enforced` itself both asserted
+  // `false`. Replacing the decoder's `enforced: enforcement.enforced` with a hardcoded
+  // `enforced: false` — reporting every policy-gated decision to the caller as NOT enforced, the
+  // exact fail-open this decoder exists to close — passed `tsc --noEmit` and all 136 tests. The
+  // Python twin killed the identical mutation because its equivalent asserts the whole value.
+  // So this asserts the whole value, against a literal rather than against another call.
+  assert.deepEqual(policyEnforcementOf(step({ enforced: true, policyId: "pol-1" })), {
+    enforced: true,
+    policyId: "pol-1",
+  });
+  assert.deepEqual(policyEnforcementOf(resp({ enforced: true, policyId: "pol-1" })), {
+    enforced: true,
+    policyId: "pol-1",
+  });
+});
+
+test("enforced=false is reported as false — the same assertion, the other way", () => {
+  // Its mirror, so neither direction can be satisfied by a constant. `policyId` is absent here
+  // because `enforced: false` is the shape the runtime emits with no bound policy.
+  assert.deepEqual(policyEnforcementOf(step({ enforced: false })), {
+    enforced: false,
+    policyId: undefined,
+  });
+});
+
+test("enforced is not derived from policyId presence", () => {
+  // Two mutations survived alongside the one above: deriving `enforced` from `policyId !== undefined`,
+  // and `enforced && policyId !== undefined`. Both cases below are legal wire states that break the
+  // correlation, so a decoder inferring one field from the other cannot pass them.
+  assert.deepEqual(policyEnforcementOf(step({ enforced: true })), {
+    enforced: true,
+    policyId: undefined,
+  });
+  assert.deepEqual(policyEnforcementOf(step({ enforced: false, policyId: "pol-9" })), {
+    enforced: false,
+    policyId: "pol-9",
+  });
+});
+
+test("the field numbers and presence the TSDoc claims are what the schemas say", () => {
+  // The Python twin pins these against the descriptors; the TS side asserted nothing, so "7 on
+  // DecisionResponse, 3 on SessionStep, both explicit presence" was prose that could go stale
+  // silently. `FeatureSet_FieldPresence` is imported rather than written as 1/2 — the first draft of
+  // this test hardcoded those numbers and had them backwards.
+  const field = (schema: DescMessage, name: string) => {
+    const f = schema.fields.find((x) => x.name === name);
+    assert.ok(f, `${schema.typeName} has no field ${name}`);
+    return f;
+  };
+
+  // One `=== undefined` check covers both carriers only because both give the field EXPLICIT
+  // presence, at different numbers.
+  for (const [schema, no] of [
+    [DecisionResponseSchema, 7],
+    [SessionStepSchema, 3],
+  ] as const) {
+    const f = field(schema, "policy_enforcement");
+    assert.equal(f.number, no, `${schema.typeName}.policy_enforcement number`);
+    assert.equal(f.presence, FeatureSet_FieldPresence.EXPLICIT, `${schema.typeName} presence`);
+  }
+
+  // `enforced` is IMPLICIT — a plain proto3 bool with no presence of its own. That is exactly why
+  // absent and present-with-false are the states this decoder exists to keep apart, and why the
+  // Python twin reads it directly instead of asking `HasField`.
+  assert.equal(field(PolicyEnforcementSchema, "enforced").number, 1);
+  assert.equal(
+    field(PolicyEnforcementSchema, "enforced").presence,
+    FeatureSet_FieldPresence.IMPLICIT,
+  );
+
+  // `policy_id` is EXPLICIT — the same three-state trap one level down, which is why absent maps to
+  // `undefined` and an encoded empty string maps to `""`.
+  assert.equal(field(PolicyEnforcementSchema, "policy_id").number, 2);
+  assert.equal(
+    field(PolicyEnforcementSchema, "policy_id").presence,
+    FeatureSet_FieldPresence.EXPLICIT,
   );
 });
 
