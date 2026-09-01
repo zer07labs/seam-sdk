@@ -1356,7 +1356,7 @@ stays green). The `free_port` uniqueness scan missed `free_ports` — the plural
 exports, and therefore the name a re-implementation would copy — while its own docstring enumerated
 three singular spellings.
 
-Left as follow-ups, per the verifier's own recommendation that a fifth round has negative marginal
+Left as **#92**, per the verifier's own recommendation that a fifth round has negative marginal
 return: the real-fixture calibration corpus, `connect_ex`, and the false-positive margin (eleven files
 here already call a `CONNECT_NAME` with zero spawns; the sets are disjoint today and that is the whole
 of the safety margin).
