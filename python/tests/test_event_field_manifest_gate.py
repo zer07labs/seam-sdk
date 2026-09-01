@@ -376,53 +376,100 @@ def test_the_committed_manifest_is_not_empty_and_names_every_message() -> None:
     )
 
 
+#: The four STREAM presence probes, each with a DECLARATION-ONLY rename of the field it names and a
+#: string that must SURVIVE that rename. The residual is the anti-vacuity half: it proves the probe
+#: fired because its anchor moved, not because the field name vanished from the file. `actor` is the
+#: case that forced this shape — `ts/gen`'s comment for it ("Mirrors `AuditEntryPb.actor` (tag 4).")
+#: carries the word verbatim from the proto, so the old `\bactor\b` pattern reported PRESENT against
+#: a stub whose declaration had been renamed to `principal`. The other three had the same hole one
+#: step further away, in `__slots__` and the `__init__` signature.
+PROBES = [
+    pytest.param(
+        "SeamEvent.session_lifecycle (tag 21)",
+        ("SESSION_LIFECYCLE_FIELD_NUMBER", "RENAMEDLC_FIELD_NUMBER"),
+        ("session_lifecycle = 21;", "renamedlc = 21;"),
+        "session_lifecycle",
+        "sessionLifecycle?",
+        id="session_lifecycle",
+    ),
+    pytest.param(
+        "SeamEvent.chain_head_attestation (tag 22)",
+        ("CHAIN_HEAD_ATTESTATION_FIELD_NUMBER", "RENAMEDCHA_FIELD_NUMBER"),
+        ("chain_head_attestation = 22;", "renamedcha = 22;"),
+        "chain_head_attestation",
+        "chainHeadAttestation?",
+        id="chain_head_attestation",
+    ),
+    pytest.param(
+        "DecisionSealed.ciphertext_digest (tag 10)",
+        ("CIPHERTEXT_DIGEST_FIELD_NUMBER", "RENAMEDCD_FIELD_NUMBER"),
+        ("ciphertext_digest = 10;", "renamedcd = 10;"),
+        "ciphertext_digest",
+        "ciphertextDigest",
+        id="ciphertext_digest",
+    ),
+    pytest.param(
+        "AuditEntryEvent.actor (tag 4)",
+        ("ACTOR_FIELD_NUMBER", "RENAMEDACTOR_FIELD_NUMBER"),
+        ("actor = 4;", "renamedactor = 4;"),
+        "actor: str",
+        "AuditEntryPb.actor",
+        id="actor",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "py_sub", "ts_sub", "residual_py", "residual_ts"), PROBES
+)
 def test_the_presence_probes_still_refuse_what_the_manifest_gate_accepts(
-    scratch,
+    scratch, label, py_sub, ts_sub, residual_py, residual_ts
 ) -> None:
-    """The manifest does not replace the four presence probes — proven by a case only they catch.
+    """The manifest does not replace the four presence probes — proven per probe, by a case only that
+    probe catches.
 
-    Grepping the script's source for the four field names cannot make this claim, and used to be
-    what this test did. Those names also appear in the header comment describing probe 2 and in the
-    comment above the field gate saying the probes must not be deleted, so the grep passed with the
-    entire probe loop removed: a guard that could not fire.
+    Grepping the script's source for the four field names cannot make this claim, and used to be what
+    this test did. Those names also appear in the header comment describing probe 2 and in the comment
+    above the field gate saying the probes must not be deleted, so the grep passed with the entire
+    probe loop removed: a guard that could not fire.
 
-    The mutation instead RENAMES `SeamEvent.session_lifecycle` in both event trees and then records
-    the rename with `--write-manifest`. The manifest gate is left with nothing to say — trees and
-    manifest agree exactly, and the second run below asserts it says so out loud. The probe is the
-    only thing that can still notice the field a `StreamEvents` consumer decodes is gone.
+    Each case instead renames ONE field's DECLARATION in both event trees and then records the rename
+    with `--write-manifest`. The manifest gate is left with nothing to say — trees and manifest agree
+    exactly, and the second run below asserts it says so out loud — so the probe is the only thing
+    that can still notice a field a `StreamEvents` consumer decodes is gone.
+
+    Parametrized over all four rather than run once on `session_lifecycle`: a single case leaves the
+    other three probes deletable with this file still green, which is the same "one test stands for
+    four" gap the version it replaced had.
+
+    `residual_py`/`residual_ts` are asserted to SURVIVE the rename. Without them a case would pass
+    just as well against a probe keyed on the bare field name, and would not distinguish "the anchor
+    moved" from "the word is gone from the file" — the distinction `actor` exists to make.
     """
-    for key, pairs in (
-        (
-            "py_ev",
-            (
-                ("session_lifecycle", "renamed_lifecycle"),
-                ("SESSION_LIFECYCLE", "RENAMED_LIFECYCLE"),
-            ),
-        ),
-        (
-            "ts_ev",
-            (
-                ("session_lifecycle", "renamed_lifecycle"),
-                ("sessionLifecycle", "renamedLifecycle"),
-            ),
-        ),
+    for key, sub, residual in (
+        ("py_ev", py_sub, residual_py),
+        ("ts_ev", ts_sub, residual_ts),
     ):
         text = scratch[key].read_text(encoding="utf-8")
-        for before, after in pairs:
-            assert before in text, f"{key} no longer carries {before}"
-            text = text.replace(before, after)
+        before, after = sub
+        assert text.count(before) == 1, f"{key}: {before!r} is not a unique anchor"
+        text = text.replace(before, after)
+        assert residual in text, (
+            f"{key}: {residual!r} did not survive the rename, so this case cannot tell an anchored "
+            f"probe from one satisfied by any mention of the field"
+        )
         scratch[key].write_text(text, encoding="utf-8")
     assert _run(scratch, "--write-manifest").returncode == OK
 
     hard = _run(scratch)
     assert hard.returncode == 2, (
         f"expected exit 2 — STREAM=1 hard-gates the presence probes. Got {hard.returncode}; if "
-        f"that is 0, the probes no longer refuse a field only they can see.\n"
+        f"that is 0, the {label} probe no longer refuses a field only it can see.\n"
         f"{hard.stdout}\n{hard.stderr}"
     )
     out = hard.stdout + hard.stderr
     for lang in ("python", "ts"):
-        assert f"ABSENT  SeamEvent.session_lifecycle (tag 21) [{lang}]" in out, out
+        assert f"ABSENT  {label} [{lang}]" in out, out
 
     # The other half, and what makes the first half mean anything: with the probes back to
     # report-only the run is CLEAN. The manifest gate accepts this mutation.

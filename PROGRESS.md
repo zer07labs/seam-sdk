@@ -1044,12 +1044,12 @@ them change what the phases do:
 | `.github/workflows/ci.yml` (cont.) | At `960cf81`: the smoke step's `kill "$pid"` (line 290), immediately followed by `exit 0` — it never waited for the process it started. Replaced by `reap()`. |
 | `.github/workflows/ci.yml:336-347` | The python live step (the `pytest` line is `.github/workflows/ci.yml:346`). Phase 2 added an `if: failure()` log dump + artifact upload at the **end of the job**, after the TypeScript step at `.github/workflows/ci.yml:348` — a step is evaluated at its own position, so anything placed earlier cannot see a TypeScript failure. |
 | `.github/workflows/ci.yml:704` | `ADVISORY: integration,spec-pin`. Advisory means *may skip*, not *may fail* — a red `integration` still reddens `ci-ok`, which lists it at `.github/workflows/ci.yml:689`. |
-| `scripts/check-contract.sh:226` | `fields_python`; `:243` `fields_ts`. **Phase 5 parameterises both on stub path + package** — measured, they already yield 90/90 on the event stubs with zero one-sided entries. |
-| `scripts/check-contract.sh:266` | `manifest_fields` — its stripper claims every `#`-free line, which is why the event surface cannot share `contract/field-manifest.txt`. |
+| `scripts/check-contract.sh:228` · `scripts/check-contract.sh:248` | `fields_python` and `fields_ts`. **Phase 5 parameterises both on stub path + package** — measured, they yield 90/90 on the event stubs with zero one-sided entries. Two full citations on one row, not `` `:248` `` as a bare number: a pathless line reference matches `CITATION` not at all, so it is invisible to every check in `test_compatibility_citations_resolve.py`. Both needles are in `ANCHORED` and bound to this row by `CLAIM_LINES`. |
+| `scripts/check-contract.sh:271` | `manifest_fields` — its stripper claims every `#`-free line, which is why the event surface cannot share `contract/field-manifest.txt`. |
 | `scripts/check-contract.sh:566-575` | `--write-manifest` deletes `contract/expected-local-lag.txt`; the cited block is the comment scoping that delete to the api write, and the `-f` guard and `rm -f` are the two lines immediately below it. The second reason the event surface needs its own file. Deliberately no bare `:NNN` for those two — a naked line number inside a row is invisible to `test_compatibility_citations_resolve.py` (it checks backticked `file:line`, and a bare `:473` has no path), so it rots unnoticed. This one had: it still said `:473` after the guard moved to `:571`. |
-| `scripts/check-contract.sh:678` | The corrected comment #88 was filed from. **Phase 5 must rewrite it** or it becomes false. |
+| `scripts/check-contract.sh:702` | The comment #88 was filed from, which used to record the event surface as an OPEN gap. **Phase 5 rewrote it** — leaving it would have described a closed gap as open. |
 | `contract/event-field-manifest.txt` | **Phase 5 creates.** 90 fields, 11 messages, zero enums, zero nested messages — all measured, not assumed. |
-| `python/tests/test_field_manifest_gate.py:69` | `_run()` — the scratch-copy-plus-env-override pattern Phase 5's tests mirror. Nothing may mutate the real gitignored stub trees. |
+| `python/tests/test_field_manifest_gate.py:91` | `_run()` — the scratch-copy-plus-env-override pattern Phase 5's tests mirror. Nothing may mutate the real gitignored stub trees. |
 | `python/tests/test_compatibility_citations_resolve.py:625` | The `submitCommit` `ANCHORED` needle into `ts/src/client.ts`. Its siblings in the same list pin `collectiveOutcomeOf` (just above) and, from Phase 4, `submitEvaluation` and `submitObjection` — named rather than cited, for the reason the row above records: the bare `:606` and `:617-618` that used to sit here were both stale, and nothing could have told anyone. The plan predicted the insertion would break the `submitCommit` anchor for any K of 4+ lines *except* a 125-131 window where it would go green against the unrelated `:804` citation. **Measured K = 101 at the time of that check, 103 as finally committed** — outside that window at every intermediate value, and the anchor failed red-first as required before `PROGRESS.md` was touched. |
 
 ## Phase log
@@ -1909,8 +1909,14 @@ undocumented" and that closing it "needs its own manifest". Both sentences are n
 comment that describes a closed gap as open is worse than no comment. It now names
 `contract/event-field-manifest.txt`, and says explicitly why the four presence probes survive it
 rather than being duplication — they fire when the manifest is absent or just rewritten, and they
-assert what the SDK *reads* rather than what the contract *contains*. `test_the_four_named_presence_probes_are_still_there`
-pins both halves, so a later reader cannot delete them as redundant.
+assert what the SDK *reads* rather than what the contract *contains*.
+`test_the_presence_probes_still_refuse_what_the_manifest_gate_accepts` pins the behavioural half (one
+case per probe, each isolating that probe from the manifest) and
+`test_the_comment_that_stops_the_probes_being_deleted_is_still_there` pins the comment, so a later
+reader cannot delete them as redundant. *(This paragraph named
+`test_the_four_named_presence_probes_are_still_there` until 2026-09-01 — round 5 established that it
+could not fire and replaced it, and this sentence was left behind pointing at a test that no longer
+exists.)*
 
 **`Makefile`'s exit-code comment was already stale before this phase**, listing 0-4 when 5, 6 and 7
 had all shipped. Adding 8 to a list that stopped at 4 would have shipped a comment more wrong than
@@ -1996,4 +2002,52 @@ TS **130 pass / 0 fail**, `tsc` clean · `ruff` clean · `STREAM=1 EVENTS=1 ./sc
 still exits **6**, still NOTEs exactly the five recorded `ContextBinding` fields, and now says out
 loud that the api surface is the only thing that fired · `git diff contract/` empty after a full
 pytest run · both new tests measured red against the mutations they exist to catch.
+
+### Round-6 verification (whole feature) — seven findings, all closed
+
+The final gate over the cumulative diff, run after the reconcile record was written. It confirmed the
+round-5 fixes are sound — it could not make any of them vacuous, and it independently reproduced the
+`lag_match == 1` construction, both NOTE branches, and the completeness of the `SEAM_PY_EV`/
+`SEAM_TS_EV` redirect — and then found seven defects, five of them created by the round-5 commit
+itself.
+
+**The gate's corrected output still pointed at an uncorrected claim.** Round 5 made the script's NOTE
+conditional because "so this STILL exits 6 below" was false on the exit-8 path. `CLAUDE.md`'s Gotchas
+said the same thing unconditionally — and the NOTE's closing line is literally *"See CLAUDE.md's
+Gotchas."* So the exit-8 run printed "This run does NOT exit 6" and then sent the reader to a document
+asserting it always exits 6. Nothing guards that text; it is the unchecked-claim class this whole plan
+is about, one document further out than anyone was looking.
+
+**The commit that closed a stale-citation finding broke five citations of its own.** All five were
+exact at `0fc3ab7` and wrong at `d09e505`: it added 5 lines of comment to `scripts/check-contract.sh`
+and 22 to `python/tests/test_field_manifest_gate.py` above the cited constructs and repointed one row.
+`:226` landed on a comment, `:266` inside `fields_ts`'s awk body, `:69` on a blank line — and all
+three still *resolved*, because `ANCHORED` held no entry for either path. Repointed, and all five are
+now anchored with `CLAIM_LINES` bindings. Measured: reverting them to their stale values fails **8**
+tests where it previously failed none. The row that had argued a citation should "name what it points
+at rather than where it sits" was the row directly above them.
+
+**The replacement anti-vacuity guard pinned one probe of four.** Round 5's behavioural test mutated
+only `session_lifecycle`. Deleting the other three probes from the loop left the whole suite
+**byte-identical to baseline**. Now parametrized over all four; measured, deleting three reddens
+exactly those three cases and leaves `session_lifecycle` green.
+
+**And one of the four probes could be satisfied by a comment about the field.** `AuditEntryEvent.actor`
+matched on `\bactor\b`, and `ts/gen`'s generated comment carries *"Mirrors `AuditEntryPb.actor` (tag
+4)."* verbatim from the proto — so renaming the TS declaration to `principal` still reported PRESENT.
+All four probes are now anchored to declarations (`\b<NAME>_FIELD_NUMBER:` in Python,
+`\b<name> = <tag>;` in TypeScript), which additionally makes each probe check the **tag** its own
+label advertises. The leading `\b` is load-bearing too: without it `ACTOR_FIELD_NUMBER` matches inside
+`REDACTOR_FIELD_NUMBER`, measured.
+
+Also closed: a paragraph here naming a test round 5 had deleted, thirty-five lines above the paragraph
+recording that it deleted it; the reconcile arithmetic in `DECISIONS.md`, which gave two different
+wrong partitions of its own seven sub-sections and counted an eighth entry that has no sub-section;
+and `Makefile:33`, which said "the RPC + Authorize probes are always hard gates" two lines above the
+exit-code list that round 5 had just corrected to include admin.
+
+**Re-verified after these fixes:** python **878 passed / 17 skipped** · `scripts/` **100 passed** ·
+TS **130 pass / 0 fail**, `tsc` clean · `ruff` clean · contract gate exits **6** with the five
+recorded fields and the positive event lines · `git diff contract/` empty after a full pytest run ·
+the event gate file is now **10 test functions collecting 16 tests**.
 

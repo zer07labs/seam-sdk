@@ -622,12 +622,31 @@ done
 
 # ── Probe 2: the streamed-payload mirror fields (reported; hard under STREAM=1) ────────────────────────
 # All four must be present together (they land in one Phase-0 push); probe each so a partial mirror shows.
+#
+# The patterns are anchored to DECLARATIONS, not to the bare field name, and that is load-bearing.
+# `actor` is the case that proved it: the old pattern was `\bactor\b`, and `ts/gen`'s comment for the
+# field — "Mirrors `AuditEntryPb.actor` (tag 4)." — carries the word verbatim from the proto. Measured:
+# renaming the TS declaration to `principal` while leaving that prose line alone still reported
+# `PRESENT ... [ts]`. A probe satisfied by a comment about a field is not a probe for the field. The
+# other three had the same hole one step further away (`__slots__` and the `__init__` signature keep a
+# renamed field's old name until they are regenerated too), so all four are anchored rather than only
+# the one that was demonstrably reachable.
+#
+# Python anchors on `<NAME>_FIELD_NUMBER`, the same construct `fields_python` extracts from. TS anchors
+# on `<name> = <tag>;` inside protobuf-es's `@generated from field:` line, which additionally makes the
+# probe check the TAG its own label advertises — these are mirror fields, and a tag that moved is the
+# failure that matters.
+#
+# The leading `\b` is not decoration: without it a substring satisfies the probe. `ACTOR_FIELD_NUMBER`
+# matches inside `REDACTOR_FIELD_NUMBER`, and `actor = 4;` inside `renamedactor = 4;` — measured, both
+# reported PRESENT before the boundary was added. A trailing `\b` is unnecessary because every pattern
+# already ends in a character (`:` or `;`) that cannot continue an identifier.
 stream_rc=0
 for spec in \
-  "SeamEvent.session_lifecycle (tag 21)|session_lifecycle|sessionLifecycle" \
-  "SeamEvent.chain_head_attestation (tag 22)|chain_head_attestation|chainHeadAttestation" \
-  "DecisionSealed.ciphertext_digest (tag 10)|ciphertext_digest|ciphertextDigest" \
-  "AuditEntryEvent.actor (tag 4)|\\bactor\\b" ; do
+  "SeamEvent.session_lifecycle (tag 21)|\\bSESSION_LIFECYCLE_FIELD_NUMBER:|\\bsession_lifecycle = 21;" \
+  "SeamEvent.chain_head_attestation (tag 22)|\\bCHAIN_HEAD_ATTESTATION_FIELD_NUMBER:|\\bchain_head_attestation = 22;" \
+  "DecisionSealed.ciphertext_digest (tag 10)|\\bCIPHERTEXT_DIGEST_FIELD_NUMBER:|\\bciphertext_digest = 10;" \
+  "AuditEntryEvent.actor (tag 4)|\\bACTOR_FIELD_NUMBER:|\\bactor = 4;" ; do
   label="${spec%%|*}"; rest="${spec#*|}"
   # split the remaining |-separated patterns
   IFS='|' read -r -a pats <<< "$rest"

@@ -30,8 +30,9 @@ generate-local:
 	python3 scripts/root_gen.py
 
 # Assert the active stubs carry the surface the hand-written clients call, probing the Python and TS
-# stub trees INDEPENDENTLY (one can be stale beside the other). The RPC + Authorize probes are always
-# hard gates; STREAM=1 additionally hard-gates the streamed-payload mirror fields and EVENTS=1 hard-gates
+# stub trees INDEPENDENTLY (one can be stale beside the other). The RPC, Authorize and admin probes are
+# always hard gates, as are the RPC / field / enum / seam.event.v1 manifest comparisons; STREAM=1
+# additionally hard-gates the streamed-payload mirror fields and EVENTS=1 hard-gates
 # SeamEvents.ReportEventsConsumed — CI sets both, since the BSR module carries that surface. Exit codes:
 # 0 OK · 1 RPC/Authorize/admin surface stale · 2 stream fields stale (STREAM=1) · 3 stubs not
 # generated · 4 ReportEventsConsumed stale (EVENTS=1) · 5 RPC surface disagrees with

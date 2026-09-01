@@ -33,6 +33,10 @@ deliberately links nothing of Seam's.
   them. The gate recognises exactly that case and downgrades its output to a NOTE naming
   `contract/expected-local-lag.txt` — it still exits 6, since CI is the authority, not this checkout.
   Anything the gate names beyond exactly those five fields is real drift, not this known lag.
+  **Read the exit code, not just this bullet:** the same run exits **8** if `seam.event.v1`'s field
+  surface also disagrees with `contract/event-field-manifest.txt`. That is never the recorded lag —
+  8 exists precisely so an event regression cannot arrive wearing the code this bullet tells you to
+  read past — and the gate's own NOTE says which of the two happened on the run in front of you.
 
 <!-- Shared cross-repo context (zer07labs/seam, cloned as a sibling). -->
 @../seam/CLAUDE.md

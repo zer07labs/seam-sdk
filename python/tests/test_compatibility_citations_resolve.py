@@ -634,6 +634,23 @@ ANCHORED = [
     # margin in this table, deliberately, and that trade is recorded rather than absorbed.
     ("PROGRESS.md", "ts/src/client.ts", "  submitEvaluation("),
     ("PROGRESS.md", "ts/src/client.ts", "  submitObjection("),
+    # Added in the round-5 fixes of consumer-decoders-and-event-surface, for the same reason the
+    # four above were: the commit that CLOSED a stale-citation finding broke five of its own. It
+    # added 5 lines of comment to check-contract.sh and 22 to test_field_manifest_gate.py above
+    # these five constructs and repointed only one row, so `:226` landed on a comment, `:266` landed
+    # inside `fields_ts`'s awk body, and `:69` landed on a blank line — all three still "resolved".
+    # These are files this repo edits constantly, which is exactly the case the QUOTED trade-off note
+    # says line anchors are the right mechanism for; what was missing was the anchoring, not the
+    # citation.
+    ("PROGRESS.md", "scripts/check-contract.sh", "fields_python() {"),
+    ("PROGRESS.md", "scripts/check-contract.sh", "fields_ts() {"),
+    ("PROGRESS.md", "scripts/check-contract.sh", "manifest_fields() {"),
+    (
+        "PROGRESS.md",
+        "scripts/check-contract.sh",
+        "# Scoped to seam.api.v1 — and seam.event.v1 is now manifested too",
+    ),
+    ("PROGRESS.md", "python/tests/test_field_manifest_gate.py", "def _run("),
 ]
 
 #: How far a citation may sit from the needle's true line and still count. A citation naming a block
@@ -715,6 +732,35 @@ CLAIM_LINES = {
         "ts/src/client.ts",
         "  submitObjection(",
     ): "`submit_evaluation` / `submit_objection`",
+    # PROGRESS.md — the five round-5 anchors. Both paths are cited more than once in the document,
+    # so `test_the_claim_line_map_covers_every_needle_that_needs_it` requires every one of them here.
+    # `fields_python` and `fields_ts` share a claim line on purpose: one repo-map row makes one claim
+    # about both extractors, and it now carries a full citation for each rather than a bare `:248`.
+    (
+        "PROGRESS.md",
+        "scripts/check-contract.sh",
+        "fields_python() {",
+    ): "**Phase 5 parameterises both on stub path + package**",
+    (
+        "PROGRESS.md",
+        "scripts/check-contract.sh",
+        "fields_ts() {",
+    ): "**Phase 5 parameterises both on stub path + package**",
+    (
+        "PROGRESS.md",
+        "scripts/check-contract.sh",
+        "manifest_fields() {",
+    ): "its stripper claims every",
+    (
+        "PROGRESS.md",
+        "scripts/check-contract.sh",
+        "# Scoped to seam.api.v1 — and seam.event.v1 is now manifested too",
+    ): "The comment #88 was filed from",
+    (
+        "PROGRESS.md",
+        "python/tests/test_field_manifest_gate.py",
+        "def _run(",
+    ): "the scratch-copy-plus-env-override pattern",
 }
 
 

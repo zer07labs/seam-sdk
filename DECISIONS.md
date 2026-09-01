@@ -9,9 +9,11 @@ produced it.
 ## 2026-09-01 — `/reconcile` over `plans/consumer-decoders-and-event-surface.md` (7 entries)
 
 All five phases are DONE. Phases 1-2 shipped in #90, Phases 3-4 in #93, Phase 5 in #94. Seven
-`ASSUMPTIONS.md` entries were open across this plan and the two before it. Two are confirmed on new
-evidence, two more on re-measurement or review, and three stay open on triggers that live outside
-this repo.
+`ASSUMPTIONS.md` entries were open across this plan and the two before it: **two confirmed** — one on
+evidence this cycle produced, one on re-measuring the condition it named — **three reviewed and left
+unchanged** with the reasoning recorded, and **two deferred** to triggers that live outside this repo.
+Those three numbers are the count of the seven sub-sections below, and they are stated once here so
+they cannot disagree with the summary at the bottom, as an earlier draft of both did.
 
 ### `seam.event.v1` gets its own manifest file, not a partition of the api one — CONFIRMED
 
@@ -90,14 +92,20 @@ this repo.
 
 ---
 
-**Summary:** 2 confirmed on new evidence, 2 reviewed and unchanged with the reasoning recorded, 2
-deferred to triggers outside this repo, and 1 — the Cloudsmith quarantine question for the
-0.7.39-0.7.43 band — deliberately **not** settled here. That one is the plan's only genuine one-way
-door in the harmful direction (quarantining breaks builds that work today and cannot be undone for
-anyone whose CI ran in the interim), and it stays with the human. No code work is outstanding before
-the next `/ship`. Two further entries — whether the runtime validates caller-supplied canonical
-bytes, and how its JCS renders an integer at or above `10**21` — remain unanswerable here by
-construction: both need the runtime's Rust, which this repo's clean-room constraint does not read.
+**Summary of the seven:** **2 confirmed** · **3 reviewed and unchanged** · **2 deferred** to
+triggers outside this repo.
+
+Three further entries are open and are deliberately **not** counted among those seven, because none
+of them was settleable in this pass:
+
+- **The Cloudsmith quarantine question** for the 0.7.39-0.7.43 band. The plan's only genuine one-way
+  door in the harmful direction — quarantining breaks builds that work today and cannot be undone for
+  anyone whose CI ran in the interim — so it stays with the human.
+- **Whether the runtime validates caller-supplied canonical bytes**, and **how its JCS renders an
+  integer at or above `10**21`.** Both need the runtime's Rust, which this repo's clean-room
+  constraint does not read, so neither is answerable here by construction.
+
+No code work is outstanding before the next `/ship`.
 
 
 ## 2026-08-31 — `/reconcile` over `plans/post-adoption-hardening-and-acdp-readiness.md` (3 entries)
