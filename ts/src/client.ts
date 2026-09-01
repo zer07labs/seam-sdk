@@ -19,6 +19,7 @@ import {
   type Commitment,
   type ContextBinding,
   type DecisionResponse,
+  type SessionStep,
 } from "../gen/seam/api/v1/seam_pb.js";
 // ChainHeadAttestation moved to the canonical seam.event.v1 package.
 import { type ChainHeadAttestation } from "../gen/seam/event/v1/seam_event_pb.js";
@@ -129,9 +130,12 @@ export class UnknownVerdictError extends Error {
 }
 
 /**
- * `DecisionResponse.collective_outcome` carried a `CollectiveVerdict` this SDK version does not
- * recognize — including the proto zero value `COLLECTIVE_VERDICT_UNSPECIFIED`, which a correct
- * server never emits.
+ * A `collectiveOutcome` — on a `DecisionResponse` **or** a `SessionStep` — carried a
+ * `CollectiveVerdict` this SDK version does not recognize, including the proto zero value
+ * `COLLECTIVE_VERDICT_UNSPECIFIED`, which a correct server never emits.
+ *
+ * `decisionId` may be `""`: it is required on `DecisionResponse` but `optional` on `SessionStep`,
+ * and an absent one renders as `<none>` rather than blocking the throw.
  *
  * Growth policy (normative, copied verbatim into the proto from `AuthorizeVerdict`'s): any value a
  * client does not recognize, INCLUDING `COLLECTIVE_VERDICT_UNSPECIFIED`, MUST route to the adapter's
@@ -185,12 +189,24 @@ export interface CollectiveOutcome {
   statedValueContradictedTally: boolean;
 }
 
-/** Decode `resp.collectiveOutcome`, fail-closed.
+/** Decode `resp.collectiveOutcome`, fail-closed. Accepts a `DecisionResponse` **or** a `SessionStep`.
  *
  * Returns `undefined` **iff the field is absent** — the runtime did not carry one on this response
  * (an older runtime, or a read verb that per the proto never does). That is not "the panel decided
  * nothing"; it is "this response does not answer the question", and the caller must decide what
  * that means for its own fail policy rather than being handed a value.
+ *
+ * **On a `SessionStep`, absent is the common case and does not mean "not supported".** The field is
+ * present ONLY on the step that applied the commit envelope and sealed the session; it is absent on
+ * every open/propose/vote/ballot step, and also on the sealed-idempotent replay and the
+ * pending-commitment seal retry (`seam.api.v1`, `SessionStep.collective_outcome` field 4 — cited by
+ * field, not by line: the proto lives in another repository that nothing here tracks or gates).
+ * Read `undefined` from a non-terminal step as "not yet decided", never as a missing feature.
+ *
+ * One decoder, two message types, on purpose: the hazard being guarded is a property of the FIELD —
+ * `optional` presence over an open enum whose zero value is UNSPECIFIED — not of the message that
+ * carries it. A second implementation per message type is a second place for the fail-open inversion
+ * to reappear.
  *
  * Throws {@link UnknownCollectiveVerdictError} for `COLLECTIVE_VERDICT_UNSPECIFIED` or any value
  * this SDK version does not know — never an implicit allow.
@@ -199,12 +215,18 @@ export interface CollectiveOutcome {
  * default, so reading `resp.collectiveOutcome?.verdict` on an absent field is indistinguishable
  * from UNSPECIFIED — and the natural negative test (`verdict !== DECLINED`) allows on every
  * unrecognized value, which is the exact inversion the growth policy forbids. */
-export function collectiveOutcomeOf(resp: DecisionResponse): CollectiveOutcome | undefined {
+export function collectiveOutcomeOf(
+  resp: DecisionResponse | SessionStep,
+): CollectiveOutcome | undefined {
   const outcome = resp.collectiveOutcome;
   if (outcome === undefined) return undefined;
 
   const verdict = COLLECTIVE_VERDICT_NAMES[outcome.verdict];
-  if (!verdict) throw new UnknownCollectiveVerdictError(outcome.verdict, resp.decisionId);
+  // `decisionId` is required on DecisionResponse but `optional` on SessionStep, so the union
+  // narrows it to `string | undefined`. Coalesce rather than widen the error's field: the message
+  // already renders an empty id as `<none>` (see the constructor above).
+  if (!verdict)
+    throw new UnknownCollectiveVerdictError(outcome.verdict, resp.decisionId ?? "");
 
   return {
     verdict,

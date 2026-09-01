@@ -143,7 +143,7 @@ Rejected alternative: waiting until runtime Phase 4 merges to raise Ask A. That 
 
 ### Phase 3 — Close the fail-open: `SessionStep.collective_outcome`
 
-**Status:** TODO
+**Status:** DONE (2026-08-31) — no divergence. The TS compile error was reproduced before the fix (`TS2345`, exactly as predicted) and the `resp.decisionId ?? ""` coalesce was required, also as predicted.
 
 **Delivers:** a safe, typed, tested read of the commit-terminal step's collective verdict in both Python and TypeScript.
 
@@ -176,7 +176,7 @@ Rejected alternatives: a separate `collective_outcome_of_step` twin (two impleme
 
 ### Phase 4 — Close issue #50: docs true-up and disposition
 
-**Status:** TODO
+**Status:** DONE (2026-08-31). **Divergence, in our favour:** the phase's edge case allowed for the BSR probe being impossible without a `buf registry login`. It was possible — the module commit was re-probed (`4bf014bd5b194010b569ec6bbc006d60`), so the README carries a real stamp rather than the fallback disclaimer.
 
 **Delivers:** issue #50 closed against evidence, and the two docs that describe the adopted surface made true.
 
@@ -206,7 +206,7 @@ Rejected alternative: closing #50 in Phase 3's commit. The issue's checklist inc
 
 ### Phase 5 — A field-level contract manifest: fix the class, not the instance
 
-**Status:** TODO
+**Status:** DONE (2026-08-31). **Divergence: the manifest is 228 entries, not the planned 223.** The plan's measurement was taken before ACDP P1a/P2 reached the BSR. Both extractors still agree at **223 against the local stub tree** — exactly as planned, all four canaries present, zero diff — but CI regenerates from the BSR on every run and sees **228**. The gate was built at 223, made to **refuse the five real ACDP fields** (exit 6, naming each in both languages, captured verbatim in `PROGRESS.md`), and only then were they adopted with the decision recorded in the manifest header. Committing 223 would have meant knowingly-red CI; adopting silently would have wasted the tripwire. The refusal happened, and it is on the record.
 
 **Delivers:** `check-contract` refuses when a `seam.api.v1` message field appears in the generated stubs that the manifest does not declare — closing the hole that let `collective_outcome` regenerate in unwired, and arming the tripwire for ACDP tags 7-10.
 

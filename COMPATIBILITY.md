@@ -99,7 +99,7 @@ mismatch cannot ship.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **Nothing was yanked.** For the first two bands that decision is recorded at
-`CHANGELOG.md:540-545` and is not being re-litigated: they fail loudly — an unimportable wheel, or a
+`CHANGELOG.md:586-591` and is not being re-litigated: they fail loudly — an unimportable wheel, or a
 clear auth error — and revoking installability under a floor already in wide use has a larger blast
 radius than a loud advisory.
 
@@ -170,7 +170,7 @@ this by trying.
 | **Java** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |
 | **Kotlin** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |
 
-**Go, Java and Kotlin are crypto shims, not clients** (`README.md:128`). They carry no generated
+**Go, Java and Kotlin are crypto shims, not clients** (`README.md:147`). They carry no generated
 transport and no verb methods — they implement AID derivation, the pinned-key presentation, TCT
 verification and the commitment digest, and nothing else. If you need to *call* Seam, that is Python
 or TypeScript.

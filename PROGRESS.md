@@ -55,8 +55,8 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 
 | Path | Purpose / relevance |
 |---|---|
-| `python/seam_sdk/_collective.py:83` | `collective_outcome_of(resp: "pb.DecisionResponse")` — fail-closed decode. **Phase 3** widens to accept `SessionStep`. `:1-30` documents why raw field access is unsafe (optional presence + `UNSPECIFIED` == 0 ⇒ a naive negative test allows on every unknown value). |
-| `ts/src/client.ts:202` | `collectiveOutcomeOf(resp: DecisionResponse)` — the TS twin. **Phase 3.** Needs a real union: protobuf-es brands messages, so passing a `SessionStep` is a *compile error* today (reproduced: `TS2345`, `$typeName` mismatch). `:144-146` `UnknownCollectiveVerdictError(rawValue, decisionId: string)` — **required** `string`, so `:207`'s `resp.decisionId` must become `resp.decisionId ?? ""` once the parameter is a union. |
+| `python/seam_sdk/_collective.py:83` | `collective_outcome_of(resp: Union["pb.DecisionResponse", "pb.SessionStep"])` — fail-closed decode. **Phase 3 DONE**: widened to the union. `:1-30` documents why raw field access is unsafe (optional presence + `UNSPECIFIED` == 0 ⇒ a naive negative test allows on every unknown value). |
+| `ts/src/client.ts:202` | `collectiveOutcomeOf(resp: DecisionResponse | SessionStep)` — the TS twin. **Phase 3 DONE.** It needed a real union: protobuf-es brands messages, so passing a `SessionStep` is a *compile error* today (reproduced: `TS2345`, `$typeName` mismatch). `:144-146` `UnknownCollectiveVerdictError(rawValue, decisionId: string)` — **required** `string`, so `:207`'s `resp.decisionId` became `resp.decisionId ?? ""`; a verifier mutation removing that coalesce reddens a test, so it is load-bearing, not decoration. |
 | `ts/gen/seam/api/v1/seam_pb.ts:942` | Branded `SessionStep = Message<"seam.api.v1.SessionStep"> & {…}` — the reason Phase 3's TS half is a hard block, not a typing nicety. `:971` carries `collectiveOutcome?`. |
 | `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi:289,297` | `SessionStep.collective_outcome` in the Python stubs — generated, never surfaced. |
 | `python/seam_sdk/client.py:541`, `ts/src/client.ts:654` | `submit_commit` / `submitCommit` return a `SessionStep` — the caller Phase 3 exists for. |
@@ -554,3 +554,180 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   `p1a:103-107`, `:290-291`, `:439-441`, `p2:1009`, runtime `ci.yml:186` (`buf push`), `:299`
   (`sdk-digest-parity`), `sdk-digest-parity.sh:40,51,55`. Ask B's: `seam` `01-…:110`, `04-…:14`.
 - **Next:** Phases 3, 4, 5 → PR 2; Phase 8 → PR 3; then Phase 9's regeneration half.
+
+### Phase 3 — `collective_outcome` readable off a `SessionStep` · 2026-08-31
+
+- **The plan's premise was verified, not assumed.** A probe file calling `collectiveOutcomeOf(step)`
+  was compiled *before* any change and produced exactly the predicted
+  `TS2345: Argument of type 'SessionStep' is not assignable to parameter of type 'DecisionResponse'`.
+  The `resp.decisionId ?? ""` coalesce was also required exactly as predicted, because `decisionId`
+  is required on `DecisionResponse` and `optional` on `SessionStep`.
+- **Delivered:** a union signature in both languages — `Union["pb.DecisionResponse", "pb.SessionStep"]`
+  and `DecisionResponse | SessionStep` — one decoder, not a per-message twin. 6 new Python cases,
+  7 new TS cases.
+- **The new tests were proven non-vacuous by mutation, not by passing.** Python already accepted a
+  `SessionStep` by duck typing, so the new tests pass *without* the change and passing proves nothing.
+  Two mutations were run: (a) unknown verdict returns `"APPROVED"` instead of raising → 6 red,
+  including 2 of the new SessionStep cases; (b) the absent-field branch made unreachable → 4 red,
+  including 2 new ones. In TS the fail-open mutation reddened 6, three of them new. Restored and
+  re-verified green after each.
+- **A finding for Phase 8.** `COMPATIBILITY.md`'s citation into `CHANGELOG.md` ("No yank") was
+  repointed for the **third** time this session — `:521-526` → `:538-543` → `:540-545` → `:563-568`.
+  Every changelog entry moves it, so the citation is structurally fragile in the way Phase 8 is about,
+  even though the target is not a vendored file. Phase 8 should cover it.
+- **Gates:** python 574 passed/17 skipped · ts typecheck + build OK, 112 passed/0 failed ·
+  go ok · verify 9 suites ok · scripts 81 passed · `STREAM=1 EVENTS=1 check-contract` exit 0 ·
+  ruff clean.
+
+**Fresh-Opus verifier: PASS**, with seven advisories. Five were acted on in a follow-up commit; two
+are recorded rather than fixed.
+
+- **Acted: two brand-new cross-repo line anchors, in shipped source.** The same commit that logged
+  anchor fragility as a Phase 8 finding introduced `seam.proto:461-465` citations into
+  `_collective.py` and `client.ts` — a line range into a sibling repo's file that this repo neither
+  tracks nor gates, which is a worse case than the one being logged. Both now cite
+  `SessionStep.collective_outcome` **field 4** by name. A field number cannot rot; a line number can.
+- **Acted: four docs under-described the widened surface.** Most materially, both error classes
+  (`errors.py`, `client.ts`) still said "`DecisionResponse.collective_outcome` carried …" while the
+  identical error now raises off a `SessionStep`. The plan scoped Phase 3's docs to `CHANGELOG.md`,
+  so this was not a criterion miss — it was true drift, and it is fixed.
+- **Acted:** the repo map's own rows still described Phase 3 in the future tense; the TS `step()`
+  helper re-spread `state`, making its default dead whenever a caller passed one.
+- **Recorded, not fixed — nothing type-checks Python.** There is no `mypy` or `pyright` config
+  anywhere in this repo. So the Python half of this phase's contract, the `Union[...]` annotation, is
+  enforced by **nothing**; only the runtime tests hold it. TypeScript is genuinely gated by `tsc`.
+  The commit message's "the accident is now a declared contract" is therefore true of TS and
+  aspirational of Python, and saying so is more useful than quietly leaving the asymmetry implied.
+- **Recorded:** one new test per suite is structurally un-reddenable — the
+  step-vs-response parity case survives every mutation, because both sides call the same code. That
+  is correct for a guard against a *future* per-message branch, but it should not be counted among
+  the load-bearing cases. The other five (Python) and six (TS) are proven load-bearing.
+- **Correction to the Phase 3 commit message:** it reports the Python unknown-verdict mutation as
+  "6 red (2 new)". The verifier measured 6 red with **3** new. Under-counted, not over-claimed.
+
+### Phase 4 — #50 closed against evidence; README and CHANGELOG made true · 2026-08-31
+
+- **The BSR probe was possible, so the fallback was not used.** The phase allowed for
+  `buf registry login` being unavailable and for stamping a disclaimer instead. `buf` was
+  authenticated: the module commit is re-probed at `4bf014bd5b194010b569ec6bbc006d60`, read
+  immediately **before and after** the descriptor build and unchanged both times, so the stamp and
+  the surface it describes come from one module state rather than two moments either side of a push.
+  The descriptor was byte-identical to an independent pull made earlier in the session.
+- **`buf breaking … --config FILE` against the previously recorded probe exits 0** — re-derived, not
+  inherited from the line above it in the README.
+- **#50's substantive item checked out.** `EvaluationRequest.confidence` is `proto3_optional=True` on
+  the live descriptor, and all three client layers map an omitted value to field-absent with an
+  explicit *"NEVER default it to 0.0"*. `rationale_ref` (field 7, also optional) is exposed too,
+  though the issue never asked for it.
+- **A correction recorded in the close comment:** #50 names `EvaluationPayload.confidence`. No
+  `EvaluationPayload` message exists in `seam.api.v1`; the field is `EvaluationRequest.confidence`
+  (field 5). The behaviour asked for was right, only the name was wrong — and the plan specifically
+  warned not to restate that framing in a doc.
+- **The `recommendation` vs `evaluation` divergence is recorded as deliberate**, so a future reader
+  does not "correct" the SDK into disagreeing with the proto it is generated from.
+- **The README now also states what the SDK has *not* adopted** — `ContextBinding` tags 7–11 are on
+  the contract and absent from this repo's field-level expectations. Saying so in the surface
+  blockquote is what keeps Phase 9's regeneration from looking like an oversight.
+- **The `No yank` citation was repointed a fourth and fifth time** (`:563-568` → `:586-591`), and a
+  `README.md` citation moved `:128` → `:147`. Every changelog or README edit moves them. Phase 8.
+- **Gates:** python 574 passed/17 skipped · ruff clean.
+
+### Phase 5 — the field manifest, and the tripwire firing for real · 2026-08-31
+
+- **Both extractors agree at 223 on the local stubs — exactly as planned.** 65 top-level messages,
+  zero diff in either direction, and all four canaries present: `ResumeRequest/raise`,
+  `AdminResumeRequest/raise`, `AuditEntry/seq`, `AuditEntry/decision_id`. The plan's two hazards were
+  confirmed live before being coded around: `RAISE_FIELD_NUMBER` appears twice in the `.pyi` while
+  `"raise"` appears in **no** `__slots__`, and the synthetic `FeaturesEntry` classes are distinguishable
+  from the real top-level `AuditEntry` by indentation alone.
+- **The committed manifest is 228, not 223 — and that divergence is the phase's main finding.** The
+  plan measured the surface before ACDP P1a/P2 reached the BSR. CI runs `make generate` from the BSR
+  (`.github/workflows/ci.yml:108`) and *then* the gate (`:122`), so CI sees 228. Committing 223 would
+  have meant knowingly-red CI on every job.
+- **The tripwire was made to fire on the real fields before they were adopted**, against temporary
+  stub copies carrying them. Verbatim, exit **6**:
+
+```
+ERROR: the generated FIELD surface disagrees with contract/field-manifest.txt:
+  NOT IN THE MANIFEST, present in the python stubs (a new field landed):
+    + ContextBinding/content_hash
+    + ContextBinding/key_status
+    + ContextBinding/receipt_hash
+    + ContextBinding/resolved_status
+    + ContextBinding/retraction
+  NOT IN THE MANIFEST, present in the ts stubs (a new field landed):
+    + ContextBinding/content_hash
+    + ContextBinding/key_status
+    + ContextBinding/receipt_hash
+    + ContextBinding/resolved_status
+    + ContextBinding/retraction
+```
+
+  Each language named it independently, which is the property that makes a stale `ts/gen` beside a
+  fresh `python/_gen` visible. Only then were the five adopted, with the decision written into the
+  manifest header: **declared, deliberately not interpreted** — carried on the generated type, never
+  read, and neither status vocabulary re-spelled. Wiring them is Phase 9.
+- **Known and stated: a bare local `check-contract` now exits 6 on this machine.** The local stub tree
+  predates ACDP by exactly those five fields, so the gate reports them as MISSING and says
+  "stale/partial generation" — which is **true**, and is the gate working. CI, which regenerates
+  first, is the authoritative run. Running `make generate` locally would reconcile it; that was not
+  done here because this session is under a standing instruction not to, and the instruction was not
+  worth reasoning around when CI verifies the same thing in minutes.
+- **The tests do not depend on any of that.** `python/tests/test_field_manifest_gate.py` (14 tests)
+  drives the **real** script against manifests it writes itself into `tmp_path`, so it is correct
+  whether a developer's stubs are fresh or stale. Four paths became env-overridable
+  (`SEAM_PY_GEN`, `SEAM_TS_GEN`, `SEAM_FIELD_MANIFEST`, `SEAM_RPC_MANIFEST`) purely so a test can never
+  write to the real manifests or corrupt the **gitignored** stub trees — which git could not restore.
+  Verified: with both overridden, `--write-manifest` left both real manifests byte-identical.
+- **`--write-manifest` writes both manifests**, so there is one escape command to document rather than
+  two, and `contract/rpc-manifest.txt` came back byte-identical (42 RPCs, empty `git diff`).
+- **No CI job was added**, so `ci-ok`'s `needs:` is untouched and `scripts/test_ci_gate.py` still
+  passes (13 tests) — the gate rides inside the existing `check-contract` step in both language jobs.
+- **Gates:** python 594 passed/17 skipped · scripts 81 passed · ts typecheck OK, 112 passed ·
+  ruff clean · gate exit 0 against the BSR-shaped surface, exit 6 against the stale local one.
+
+**Fresh-Opus verifier on Phase 5: GAPS** — all 8 acceptance criteria substantively met, both contested
+claims independently confirmed (it decoded the BSR descriptor by a third path and got
+`IDENTICAL — committed manifest == BSR surface exactly`, with the local tree exactly 5 fields stale).
+Seven of eight findings are fixed here; one is informational.
+
+- **G3 — the TS extractor had no nesting exclusion at all; it MISATTRIBUTED.** The header and the
+  `DECISIONS.md` entry both claimed the exclusion was "structural". That was true of the Python awk
+  only. `Message<"seam.api.v1.[A-Za-z0-9_]+">` cannot match a nested `...Outer.Inner` (the dot), so
+  `cls` silently retained the **previous top-level message** and the nested type's fields were
+  attributed to it. Python drops them, TS invents them on the wrong owner — red in both directions and
+  unclearable by a Python-authoritative escape, which is the exact failure shape the header claims to
+  have eliminated for `raise`. Latent only because protobuf-es emits no type for map entries, which is
+  an accident of this contract, not an exclusion. Fixed with an explicit nested arm, pinned by a test
+  that lifts the real `fields_ts` out of the shipped script rather than retyping it.
+- **G4 — a non-snake_case proto field split the two extractors, unclearably.** Confirmed by the
+  verifier with real `protoc --pyi_out`: `string myField = 1;` emits `MYFIELD_FIELD_NUMBER`, so the
+  Python side can only ever produce `myfield` while protobuf-es yields `myField`. Both sides now fold
+  case — a no-op for all 228 fields today. Note the two hazards have **opposite** fixes: `__slots__`
+  would carry `myField` correctly and drops `raise` entirely.
+- **G5 — `sort` was unpinned, so the "reviewable one-command diff" churned by locale.** Under
+  `en_US.UTF-8` the escape reordered eight lines with zero contract change. The verdict was never
+  affected (both sides re-sort at compare time), but that is not the reviewable diff the plan requires.
+  `LC_ALL=C` pinned in both extractors and the manifest reader; re-verified under `en_US.UTF-8`, the
+  regenerated body now differs by exactly the five expected lines and nothing else.
+- **G1/G2 — four `DECISIONS.md` citations were wrong, and one pointed at a blank line.** Self-inflicted
+  and instructive: I recorded them, then ran `ruff format`, which reformatted the test file and shifted
+  every line under them. The repoint discipline exists precisely for this and I broke it. All are now
+  repointed **once, last, against frozen files**, and each was checked for *content*, not just
+  resolution — which caught a fifth landing inside a string literal. The citation guard cannot catch
+  this class: for a non-anchored citation it only checks that the file exists and the line is in range,
+  so a blank line passes.
+- **G6** — the refusal printed both direction explanations regardless of which fired; now conditional.
+- **G7** — `--write-manifest` preserves the header by grepping the file it overwrites, so a *deleted*
+  manifest regenerated headerless with only four of criterion 1's items guarded. A new test pins all
+  ten needles, and runs **without stubs** so a header regression cannot hide behind a missing
+  `make generate`.
+- **G8 — the file-level `skipif` meant all 14 tests could skip and pytest would exit 0** — the same
+  "skip reads as green" shape this repo already had to fix once, and which I had flagged myself in the
+  Phase 6 note. The skip moved into the fixture, so the three tests that need no stubs now always run.
+- **Informational, not fixed:** a brand-new message with **zero** fields is invisible to both manifests
+  (fields are the unit); `PY_GRPC` is not env-overridable, so `--write-manifest` still needs the real
+  `_gen` tree even with both manifests redirected.
+
+Post-fix: python **600 passed**/17 skipped · scripts 81 · ruff clean · gate exit 0 against the
+BSR-shaped surface. No workflow sets any `SEAM_*` override (verifier checked independently).

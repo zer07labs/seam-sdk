@@ -72,12 +72,18 @@ cd "$REPO_ROOT"
 # `ciphertext_digest` didn't, which shipped a false ABSENT). The .pyi files declare every field as plain
 # source text and ship in the wheel. The _grpc.py file stays for service/RPC probes (RPCs aren't in .pyi
 # message stubs).
-PY_GEN="python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi"
+# The three paths the FIELD gate reads are overridable by environment variable, defaulting to the real
+# trees. This exists so `python/tests/test_field_manifest_gate.py` can drive the REAL script against
+# TEMPORARY COPIES of the stubs instead of mutating the originals — `python/seam_sdk/_gen` and `ts/gen`
+# are gitignored, so a test that corrupted them could not restore them with git, and recovery would
+# need a `make generate` (and a BSR login). Nothing in CI sets these.
+PY_GEN="${SEAM_PY_GEN:-python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi}"
 PY_GRPC="python/seam_sdk/_gen/seam/api/v1/seam_pb2_grpc.py"
 PY_EV="python/seam_sdk/_gen/seam/event/v1/seam_event_pb2.pyi"
-TS_GEN="ts/gen/seam/api/v1/seam_pb.ts"
+TS_GEN="${SEAM_TS_GEN:-ts/gen/seam/api/v1/seam_pb.ts}"
 TS_EV="ts/gen/seam/event/v1/seam_event_pb.ts"
-MANIFEST="contract/rpc-manifest.txt"
+MANIFEST="${SEAM_RPC_MANIFEST:-contract/rpc-manifest.txt}"
+FIELD_MANIFEST="${SEAM_FIELD_MANIFEST:-contract/field-manifest.txt}"
 
 err()  { echo "ERROR: $*" >&2; }
 note() { echo "  $*"; }
@@ -170,6 +176,63 @@ manifest_rpcs() {
   grep -vE '^\s*(#|$)' "$MANIFEST" | sort -u
 }
 
+# ── Field extraction, one level below the RPC surface ────────────────────────────────────────────────
+# Same discipline as rpcs_python/rpcs_ts: read each language INDEPENDENTLY so a stale ts/gen beside a
+# fresh python/_gen is visible, and never derive one from the other.
+#
+# Python reads `<NAME>_FIELD_NUMBER: _ClassVar[int]`, lowercased — deliberately NOT `__slots__`.
+# `ResumeRequest.raise` and `AdminResumeRequest.raise` are real proto fields, but `raise` is a Python
+# keyword, so the .pyi generator cannot emit it in `__slots__` or as an attribute annotation. It DOES
+# emit RAISE_FIELD_NUMBER. A __slots__-derived set yields 221 against protobuf-es's 223 and is
+# permanently red on two fields no escape hatch can clear.
+#
+# Nesting is the map-entry filter, NOT the name. Python emits synthetic `AuthorizeRequest.FeaturesEntry`
+# / `RunDecisionRequest.FeaturesEntry`; protobuf-es emits no type for either. Top-level classes match at
+# column 0 and their own fields at exactly four spaces, so a nested class's fields (eight spaces) are
+# skipped structurally. Filtering on the name `*Entry` instead would drop `AuditEntry` — a REAL
+# top-level message — from BOTH sides: symmetric, so the gate would stay green while going blind, which
+# is precisely the failure this manifest exists to prevent.
+fields_python() {
+  awk '
+    /^class [A-Za-z0-9_]+\(_message\.Message\):/ {
+        cls=$2; sub(/\(_message\.Message\):/,"",cls); next
+    }
+    /^    [A-Z0-9_]+_FIELD_NUMBER: _ClassVar\[int\]/ {
+        if (cls == "") next
+        f=$1; sub(/_FIELD_NUMBER:$/,"",f); print cls "/" tolower(f)
+    }
+  ' "$PY_GEN" | LC_ALL=C sort -u
+}
+
+# TS reads protobuf-es's `@generated from field: <type...> <name> = <tag>;` under the enclosing
+# `Message<"seam.api.v1.X">`. The name is the last token before `=`, which handles qualified and
+# generic types (`seam.api.v1.Foo bar = 3;`, `map<string, string> features = 9;`) without a type grammar.
+fields_ts() {
+  awk '
+    # A NESTED type name carries a dot (`seam.api.v1.Outer.Inner`). Match it explicitly and blank
+    # `cls`, so its fields are skipped instead of being attributed to the previous top-level message.
+    # Without this the TS side does not exclude nesting at all — it MISATTRIBUTES, which is worse.
+    /^export type [A-Za-z0-9_]+ = Message<"seam\.api\.v1\.[A-Za-z0-9_]+\.[A-Za-z0-9_.]+">/ {
+        cls=""; next
+    }
+    /^export type [A-Za-z0-9_]+ = Message<"seam\.api\.v1\.[A-Za-z0-9_]+">/ {
+        m=$0; sub(/^.*Message<"seam\.api\.v1\./,"",m); sub(/">.*$/,"",m); cls=m; next
+    }
+    /@generated from field: / {
+        if (cls == "") next
+        line=$0
+        sub(/^.*@generated from field: /,"",line)
+        sub(/ *= *[0-9]+;.*$/,"",line)
+        n=split(line, parts, " ")
+        print cls "/" tolower(parts[n])
+    }
+  ' "$TS_GEN" | LC_ALL=C sort -u
+}
+
+manifest_fields() {
+  grep -vE '^\s*(#|$)' "$FIELD_MANIFEST" | LC_ALL=C sort -u
+}
+
 if [ "${1:-}" = "--write-manifest" ]; then
   if [ ! -f "$PY_GRPC" ]; then
     err "cannot write the manifest: $PY_GRPC is absent. Run 'make generate' first."
@@ -184,6 +247,23 @@ if [ "${1:-}" = "--write-manifest" ]; then
   echo "wrote $MANIFEST ($(manifest_rpcs | wc -l | tr -d ' ') RPCs) — REVIEW THE DIFF."
   echo "A line added here is a contract surface change: wire the verb into the hand-written clients"
   echo "(python/seam_sdk/client.py + aio.py, ts/src/client.ts) or record why not, before committing."
+
+  # The field manifest is written by the SAME command, from the SAME authoritative side (Python), so
+  # there is exactly one escape to document and remember. Writing from Python and cross-checking
+  # against TS is deliberate and is the reason the Python extractor must not read `__slots__`: a
+  # TS-only field would otherwise produce a failure this escape could never clear, which is exactly
+  # what `raise` does under a __slots__-derived extractor.
+  if [ ! -f "$PY_GEN" ]; then
+    err "cannot write the field manifest: $PY_GEN is absent. Run 'make generate' first."
+    exit 3
+  fi
+  ftmp="$(mktemp)"
+  grep -E '^\s*(#|$)' "$FIELD_MANIFEST" > "$ftmp" 2>/dev/null || true
+  fields_python >> "$ftmp"
+  mv "$ftmp" "$FIELD_MANIFEST"
+  echo "wrote $FIELD_MANIFEST ($(manifest_fields | wc -l | tr -d ' ') fields) — REVIEW THE DIFF."
+  echo "A line added here is a contract surface change one level below a verb: wire the field into the"
+  echo "hand-written clients, or record in the PR why not, before committing."
   exit 0
 fi
 
@@ -279,6 +359,45 @@ else
   done
 fi
 
+# ── Probe: the FIELD surface against contract/field-manifest.txt (HARD GATE) ─────────────────────────
+# One level below the RPC manifest, and for the same reason. The RPC manifest catches a new VERB
+# landing unwired; it is blind to a new FIELD on an existing message. That blindness has already cost
+# two unwired surfaces (`collective_outcome` regenerated in and sat unread), and it is what let the
+# five ACDP D3 slots arrive on ContextBinding with every gate green.
+#
+# Scoped to seam.api.v1 on purpose: seam.event.v1 fields are covered by the STREAM/EVENTS probes and by
+# the vendored-spec gate, and pulling them in here would duplicate a gate that fails for other reasons.
+field_surface_rc=0
+field_surface_report=""
+if [ ! -f "$FIELD_MANIFEST" ]; then
+  err "$FIELD_MANIFEST is absent — the field surface has no declared expectation to check against."
+  err "Create it with: scripts/check-contract.sh --write-manifest"
+  field_surface_rc=1
+else
+  _fwant="$(manifest_fields)"
+  for lang in python ts; do
+    case "$lang" in
+      python) _fhave="$(fields_python)" ;;
+      ts)     _fhave="$(fields_ts)" ;;
+    esac
+    _fmissing="$(comm -23 <(echo "$_fwant") <(echo "$_fhave"))"
+    _fextra="$(comm -13 <(echo "$_fwant") <(echo "$_fhave"))"
+    if [ -n "$_fmissing" ]; then
+      field_surface_rc=1
+      field_surface_report+="  MISSING from the $lang stubs (stale/partial generation, or a REMOVED field):"$'\n'
+      while IFS= read -r r; do [ -n "$r" ] && field_surface_report+="    - $r"$'\n'; done <<< "$_fmissing"
+    fi
+    if [ -n "$_fextra" ]; then
+      field_surface_rc=1
+      field_surface_report+="  NOT IN THE MANIFEST, present in the $lang stubs (a new field landed):"$'\n'
+      while IFS= read -r r; do [ -n "$r" ] && field_surface_report+="    + $r"$'\n'; done <<< "$_fextra"
+    fi
+    if [ -z "$_fmissing" ] && [ -z "$_fextra" ]; then
+      note "PRESENT all $(echo "$_fwant" | wc -l | tr -d ' ') declared fields [$lang]"
+    fi
+  done
+fi
+
 echo
 if [ "$rpc_rc" -ne 0 ]; then
   err "the active contract is STALE for Phase 2: VerifyPartyAttestation is not in the stubs."
@@ -357,3 +476,28 @@ if [ "$rpc_surface_rc" -ne 0 ]; then
   exit 5
 fi
 echo "OK — the RPC surface matches $MANIFEST in both languages."
+
+if [ "$field_surface_rc" -ne 0 ]; then
+  echo
+  err "the generated FIELD surface disagrees with $FIELD_MANIFEST:"
+  printf '%s' "$field_surface_report" >&2
+  echo "" >&2
+  # Print ONLY the explanation for the direction that fired. A refusal whose whole job is to say what
+  # happened should not hand the reader both stories and make them work out which one applies.
+  if [[ "$field_surface_report" == *"MISSING from the"* ]]; then
+  err "A field MISSING from the stubs is either a stale generation — rerun 'make generate' (BSR) or"
+  err "'make generate-local RUNTIME=../seam-runtime' — or a field REMOVED from the contract, which is"
+  err "a breaking change and must be handled, never silently rewritten away."
+  echo "" >&2
+  fi
+  if [[ "$field_surface_report" == *"NOT IN THE MANIFEST"* ]]; then
+  err "A field NOT IN THE MANIFEST is a new one on the contract, and this refusal is deliberate: it is"
+  err "the moment someone DECIDES whether this SDK carries it. Decide first — wire it into the"
+  err "hand-written clients, or record in the PR why not — and only then run:"
+  err "    scripts/check-contract.sh --write-manifest"
+  err "and commit the manifest diff alongside that decision. Running the escape first turns a"
+  err "deliberate refusal back into the silent pass this gate exists to remove."
+  fi
+  exit 6
+fi
+echo "OK — the field surface matches $FIELD_MANIFEST in both languages."

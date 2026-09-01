@@ -102,9 +102,12 @@ class UnknownVerdictError(SeamError):
 
 
 class UnknownCollectiveVerdictError(SeamError):
-    """``DecisionResponse.collective_outcome`` carried a ``CollectiveVerdict`` this SDK version does
-    not recognize — including the proto zero value ``COLLECTIVE_VERDICT_UNSPECIFIED``, which a
-    correct server never emits.
+    """A ``collective_outcome`` — on a ``DecisionResponse`` **or** a ``SessionStep`` — carried a
+    ``CollectiveVerdict`` this SDK version does not recognize, including the proto zero value
+    ``COLLECTIVE_VERDICT_UNSPECIFIED``, which a correct server never emits.
+
+    ``decision_id`` may be ``""``: it is required on ``DecisionResponse`` but ``optional`` on
+    ``SessionStep``, and an absent one renders as ``<none>`` rather than blocking the raise.
 
     Growth policy (normative, copied verbatim into the proto from ``AuthorizeVerdict``'s): any value
     a client does not recognize, INCLUDING ``COLLECTIVE_VERDICT_UNSPECIFIED``, MUST route to the

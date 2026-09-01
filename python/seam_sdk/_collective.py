@@ -1,4 +1,5 @@
-"""Fail-closed decoding of ``DecisionResponse.collective_outcome`` (C5).
+"""Fail-closed decoding of ``collective_outcome`` — on a ``DecisionResponse`` or a
+``SessionStep`` (C5).
 
 This is the `CollectiveVerdict` twin of :mod:`seam_sdk._authorize`'s verdict decoding, and it exists
 for the same reason: the proto's growth policy is normative and fail-closed, and the *generated*
@@ -31,7 +32,7 @@ counters are carried through untouched for display; nothing here branches on the
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Union
 
 from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
 
@@ -80,13 +81,34 @@ class CollectiveOutcome:
         return self.verdict == "APPROVED"
 
 
-def collective_outcome_of(resp: "pb.DecisionResponse") -> Optional[CollectiveOutcome]:
-    """Decode ``resp.collective_outcome``, fail-closed.
+def collective_outcome_of(
+    resp: Union["pb.DecisionResponse", "pb.SessionStep"],
+) -> Optional[CollectiveOutcome]:
+    """Decode ``resp.collective_outcome``, fail-closed. Accepts a ``DecisionResponse`` **or** a
+    ``SessionStep``.
 
     Returns ``None`` **iff the field is absent** — the runtime did not carry one on this response
     (an older runtime, or a read verb that never does). ``None`` is not "the panel decided nothing";
     it is "this response does not answer the question", and a caller must decide what that means for
     its own fail policy rather than being handed a value.
+
+    **On a ``SessionStep``, absent is the common case and does not mean "not supported".** The field
+    is present ONLY on the step that applied the commit envelope and sealed the session; it is absent
+    on every open/propose/vote/ballot step, and also on the sealed-idempotent replay and the
+    pending-commitment seal retry
+    (``seam.api.v1``, ``SessionStep.collective_outcome`` field 4 — cited by field, not by line: the
+    proto lives in another repository that nothing here tracks or gates). Read ``None`` from a
+    non-terminal step as "not yet decided", never as a missing feature.
+
+    One decoder, two message types, on purpose: the hazard being guarded is a property of the FIELD —
+    ``optional`` presence over an open enum whose zero value is UNSPECIFIED — not of the message that
+    carries it. A second implementation per message type would be a second place for the fail-open
+    inversion to reappear.
+
+    Python accepted a ``SessionStep`` here by accident before this was declared — both ``HasField``
+    and ``decision_id`` happen to exist on it — but an accident is not a contract, and TypeScript's
+    branded types rejected the same call outright. The union is the contract; the behaviour is
+    unchanged.
 
     Raises :class:`UnknownCollectiveVerdictError` for ``COLLECTIVE_VERDICT_UNSPECIFIED`` or any
     value this SDK version does not know — never an implicit allow.
