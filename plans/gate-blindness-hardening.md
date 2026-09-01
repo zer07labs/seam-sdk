@@ -190,7 +190,19 @@ closed state rather than the known hole.
 
 ### Phase 3 — invert the verifier-independence allowlist
 
-**Status:** TODO
+**Status:** DONE. The six-crate list and the "`bandit` matches nothing" claim both checked out
+exactly against the real `seam-runtime/crates` tree. Two things worth recording:
+
+1. **The new test caught a real bug in the new script, in the acceptance criterion's own direction.**
+   `grep -v` exits 1 when it filters out *every* line — which is exactly the root-only,
+   zero-dependency case, acceptance criterion 2. Under `set -e` that aborted the script before it
+   could print OK, so the GREEN case was failing closed for a reason that had nothing to do with
+   independence. Fixed with an explicit `|| true` and a comment saying why. A gate that fails closed
+   for the wrong reason is still wrong; it just fails in the direction nobody investigates.
+2. **`verify`'s crate version is 0.3.0, not the 0.7.70 this section's acceptance criterion assumed.**
+   The SDK's published version and the verifier crate's version are not the same number and were
+   never meant to be. Criterion 2 below is corrected to say "the root line", which is what it always
+   meant.
 
 **Delivers:** the "must link NOTHING of Seam's" gate can see every Seam crate, present and future,
 instead of a hardcoded list that has already drifted.
@@ -229,7 +241,7 @@ the check into a single script both call, so the two copies cannot drift.
 
 **Acceptance criteria:**
 1. A synthetic `cargo tree` containing `seam-serving v0.1.0` fails the extracted script.
-2. The same synthetic containing only the root `seam-verify v0.7.70` passes.
+2. The same synthetic containing only the root `seam-verify` line passes.
 3. `seamd` in a synthetic tree fails.
 4. `ci.yml` and `publish.yml` both invoke the one script; `grep -c 'seam-(store|types' .github/workflows/*.yml` returns 0.
 5. `cd verify && cargo tree -e normal` on the real tree still passes the new script.

@@ -542,15 +542,12 @@ jobs:
       # beside it. Same assertion as ci.yml's `verify` job, repeated here on purpose: a publish that
       # skipped it could ship a verifier that links Seam's own crates, which inverts the only claim
       # the crate makes.
+      # The check itself lives in one script (`scripts/check-independence.sh`), also called from
+      # ci.yml's `verify` job, so the two copies cannot drift — see that script's header for why it
+      # is a denylist rather than the allowlist this replaced. Job `defaults.run.working-directory`
+      # is `verify` here, so the script is reached via `..`.
       - name: the verifier must link NOTHING of Seam's
-        run: |
-          TREE=$(cargo tree -e normal)
-          echo "$TREE"
-          if echo "$TREE" | grep -vE '^seam-verify ' | grep -qiE '\bseam-(store|types|traits|trust|kernel|crypto|api|client|guard|coord|context|bandit)'; then
-            echo "::error::seam-verify links a Seam crate. The independence claim is now false — that is the whole product."
-            exit 1
-          fi
-          echo "OK — zero Seam crates."
+        run: ../scripts/check-independence.sh
 
       # Re-verify the shipped fixture before publishing it. The crate's credibility rests on a third
       # party being able to check a real signature with it; shipping a fixture that no longer
