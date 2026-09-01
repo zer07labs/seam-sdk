@@ -55,8 +55,8 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 
 | Path | Purpose / relevance |
 |---|---|
-| `python/seam_sdk/_collective.py:83` | `collective_outcome_of(resp: "pb.DecisionResponse")` — fail-closed decode. **Phase 3** widens to accept `SessionStep`. `:1-30` documents why raw field access is unsafe (optional presence + `UNSPECIFIED` == 0 ⇒ a naive negative test allows on every unknown value). |
-| `ts/src/client.ts:202` | `collectiveOutcomeOf(resp: DecisionResponse)` — the TS twin. **Phase 3.** Needs a real union: protobuf-es brands messages, so passing a `SessionStep` is a *compile error* today (reproduced: `TS2345`, `$typeName` mismatch). `:144-146` `UnknownCollectiveVerdictError(rawValue, decisionId: string)` — **required** `string`, so `:207`'s `resp.decisionId` must become `resp.decisionId ?? ""` once the parameter is a union. |
+| `python/seam_sdk/_collective.py:83` | `collective_outcome_of(resp: Union["pb.DecisionResponse", "pb.SessionStep"])` — fail-closed decode. **Phase 3 DONE**: widened to the union. `:1-30` documents why raw field access is unsafe (optional presence + `UNSPECIFIED` == 0 ⇒ a naive negative test allows on every unknown value). |
+| `ts/src/client.ts:202` | `collectiveOutcomeOf(resp: DecisionResponse | SessionStep)` — the TS twin. **Phase 3 DONE.** It needed a real union: protobuf-es brands messages, so passing a `SessionStep` is a *compile error* today (reproduced: `TS2345`, `$typeName` mismatch). `:144-146` `UnknownCollectiveVerdictError(rawValue, decisionId: string)` — **required** `string`, so `:207`'s `resp.decisionId` became `resp.decisionId ?? ""`; a verifier mutation removing that coalesce reddens a test, so it is load-bearing, not decoration. |
 | `ts/gen/seam/api/v1/seam_pb.ts:942` | Branded `SessionStep = Message<"seam.api.v1.SessionStep"> & {…}` — the reason Phase 3's TS half is a hard block, not a typing nicety. `:971` carries `collectiveOutcome?`. |
 | `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi:289,297` | `SessionStep.collective_outcome` in the Python stubs — generated, never surfaced. |
 | `python/seam_sdk/client.py:541`, `ts/src/client.ts:654` | `submit_commit` / `submitCommit` return a `SessionStep` — the caller Phase 3 exists for. |
@@ -578,3 +578,29 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 - **Gates:** python 574 passed/17 skipped · ts typecheck + build OK, 112 passed/0 failed ·
   go ok · verify 9 suites ok · scripts 81 passed · `STREAM=1 EVENTS=1 check-contract` exit 0 ·
   ruff clean.
+
+**Fresh-Opus verifier: PASS**, with seven advisories. Five were acted on in a follow-up commit; two
+are recorded rather than fixed.
+
+- **Acted: two brand-new cross-repo line anchors, in shipped source.** The same commit that logged
+  anchor fragility as a Phase 8 finding introduced `seam.proto:461-465` citations into
+  `_collective.py` and `client.ts` — a line range into a sibling repo's file that this repo neither
+  tracks nor gates, which is a worse case than the one being logged. Both now cite
+  `SessionStep.collective_outcome` **field 4** by name. A field number cannot rot; a line number can.
+- **Acted: four docs under-described the widened surface.** Most materially, both error classes
+  (`errors.py`, `client.ts`) still said "`DecisionResponse.collective_outcome` carried …" while the
+  identical error now raises off a `SessionStep`. The plan scoped Phase 3's docs to `CHANGELOG.md`,
+  so this was not a criterion miss — it was true drift, and it is fixed.
+- **Acted:** the repo map's own rows still described Phase 3 in the future tense; the TS `step()`
+  helper re-spread `state`, making its default dead whenever a caller passed one.
+- **Recorded, not fixed — nothing type-checks Python.** There is no `mypy` or `pyright` config
+  anywhere in this repo. So the Python half of this phase's contract, the `Union[...]` annotation, is
+  enforced by **nothing**; only the runtime tests hold it. TypeScript is genuinely gated by `tsc`.
+  The commit message's "the accident is now a declared contract" is therefore true of TS and
+  aspirational of Python, and saying so is more useful than quietly leaving the asymmetry implied.
+- **Recorded:** one new test per suite is structurally un-reddenable — the
+  step-vs-response parity case survives every mutation, because both sides call the same code. That
+  is correct for a guard against a *future* per-message branch, but it should not be counted among
+  the load-bearing cases. The other five (Python) and six (TS) are proven load-bearing.
+- **Correction to the Phase 3 commit message:** it reports the Python unknown-verdict mutation as
+  "6 red (2 new)". The verifier measured 6 red with **3** new. Under-counted, not over-claimed.

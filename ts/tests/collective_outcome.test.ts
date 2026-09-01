@@ -165,7 +165,7 @@ function step(
   outcome?: Partial<{ verdict: number } & Record<string, unknown>>,
   fields: { state?: string; decisionId?: string } = {},
 ) {
-  const s = create(SessionStepSchema, { state: fields.state ?? "sealed", ...fields });
+  const s = create(SessionStepSchema, { ...fields, state: fields.state ?? "sealed" });
   if (outcome !== undefined) {
     s.collectiveOutcome = create(CollectiveOutcomeSchema, outcome as never);
   }

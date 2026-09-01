@@ -75,7 +75,8 @@ __all__ = [
     # Advisory authorization (Authorize verb)
     "AuthorizeResult",
     "canonicalize_tool_input",
-    # Collective outcome (C5) — fail-closed decoding of DecisionResponse.collective_outcome
+    # Collective outcome (C5) — fail-closed decoding of collective_outcome, on either a
+    # DecisionResponse or a SessionStep
     "CollectiveOutcome",
     "collective_outcome_of",
     "DEFAULT_TIMEOUT_S",

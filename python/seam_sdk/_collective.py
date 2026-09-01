@@ -1,4 +1,5 @@
-"""Fail-closed decoding of ``DecisionResponse.collective_outcome`` (C5).
+"""Fail-closed decoding of ``collective_outcome`` — on a ``DecisionResponse`` or a
+``SessionStep`` (C5).
 
 This is the `CollectiveVerdict` twin of :mod:`seam_sdk._authorize`'s verdict decoding, and it exists
 for the same reason: the proto's growth policy is normative and fail-closed, and the *generated*
@@ -95,7 +96,8 @@ def collective_outcome_of(
     is present ONLY on the step that applied the commit envelope and sealed the session; it is absent
     on every open/propose/vote/ballot step, and also on the sealed-idempotent replay and the
     pending-commitment seal retry
-    (``seam-runtime/crates/seam-api/proto/seam/api/v1/seam.proto:461-465``). Read ``None`` from a
+    (``seam.api.v1``, ``SessionStep.collective_outcome`` field 4 — cited by field, not by line: the
+    proto lives in another repository that nothing here tracks or gates). Read ``None`` from a
     non-terminal step as "not yet decided", never as a missing feature.
 
     One decoder, two message types, on purpose: the hazard being guarded is a property of the FIELD —
