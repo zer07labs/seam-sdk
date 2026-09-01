@@ -373,7 +373,35 @@ write-manifest invalidation.
 
 ### Phase 6 — the citation guard reaches the record that misdirects the next run
 
-**Status:** TODO
+**Status:** DONE. The rot was far worse than the three anchors this section named — **19 fixes in
+`PROGRESS.md` and one in `CHANGELOG.md`**, and the extra sixteen are the interesting part because
+they are mostly a *different* class than the one predicted:
+
+* **Three citations RESOLVED while pointing at unrelated content.** `PROGRESS.md:80` cited
+  `DECISIONS.md:339-359` for "pinning buf.gen.yaml plugins is rejected"; that range is the #52
+  wheel-band decision. Two more cited the `Bearer`-prefix strip at a line holding something else.
+  Structural resolution cannot see this class at all — only `ANCHORED` can, and it covered none of
+  them.
+* **Two more generated-tree anchors** beyond the one this section named, both converted to symbol
+  references.
+* **Nine basename-only citations** (`ci.yml:19`, `admin.py:141`, `aio.py:404-405`, …) that the regex
+  declines silently, so they were never checked. Repathed.
+* One of those, `test_field_manifest_gate.py:240`, had **also** drifted 121 lines.
+* This section's own estimate of the `CHANGELOG.md` rot — "~44 lines off" — was wrong. It is ~90
+  lines, and the target had moved to `:636-645`.
+
+**One divergence taken at the gate, not by the executor.** The executor found that `` `127.0.0.1:8099` ``
+parses as a citation — `\w+` matches a purely numeric extension, so an IP and port reads as "file
+`127.0.0.1`, line 8099" — and worked around it by rewording the prose. That closes the instance and
+leaves the class. The guard was making writers edit around it, which teaches them to edit around it.
+`CITATION` now requires the extension to begin with a letter. Measured before changing it: across all
+four documents that drops **zero** real citations (27 / 56 / 71 / 3, unchanged in every file), and no
+source file in this repo has a digit-initial extension. Narrowing a pattern is exactly how a guard
+goes blind, so a test pins that it narrows by this class only — asserting both that IP:port shapes are
+inert and that every real extension shape in the repo still parses.
+
+Deliberately still out: `CHANGELOG.md` (append-at-top; the previous plan priced and declined it) and
+`plans/` (historical records rot by design).
 
 **Delivers:** `PROGRESS.md` under the citation guard; line anchors into gitignored generated trees
 refused outright; the three live rotted anchors fixed.
