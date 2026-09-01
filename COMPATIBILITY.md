@@ -99,7 +99,7 @@ mismatch cannot ship.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **Nothing was yanked.** For the first two bands that decision is recorded at
-`CHANGELOG.md:523-528` and is not being re-litigated: they fail loudly — an unimportable wheel, or a
+`CHANGELOG.md:540-545` and is not being re-litigated: they fail loudly — an unimportable wheel, or a
 clear auth error — and revoking installability under a floor already in wide use has a larger blast
 radius than a loud advisory.
 

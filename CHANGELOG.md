@@ -488,6 +488,23 @@ Three independently sufficient causes of a 0.7.17-shaped incident, closed.
   against the shipped gate, and the 7 that pass under both are the fail-closed ones, which is what
   shows the wait did not soften anything.
 
+### Changed — the vendored `seam-event.v1` spec, refreshed for ACDP P1a and P2
+
+- **`verify/docs/seam-event.v1.md` re-pinned `5d8c177` → `3b3d4ae`** (+125/-28). The runtime landed
+  ACDP D3 receipt provenance — four `ContextBinding` slots (`content_hash`, `receipt_hash`,
+  `key_status`, `resolved_status`) sealed into the v3 record digest (seam-runtime#520) — and P2
+  `retraction`, which is served on `ResolveContext` and deliberately never sealed (seam-runtime#523).
+  The `spec-pin` job had been red on `main` and on every open pull request since those merged; this
+  is the refresh it was asking for, taken whole-file and byte-verbatim as the header requires.
+
+  **What this refresh does not claim.** The copy documents the *runtime's* event stream, not this
+  repository's verifier coverage. `verify/src/verify.rs` does not compute `context_digest` and does
+  not read the four receipt slots; the spec describing them and the verifier not implementing them
+  are both correct, and the header now says so rather than leaving a reader to infer it. The two
+  vocabularies the slots carry are wire commitments and must never be re-spelled by a consumer:
+  `key_status` is closed and PascalCase, `resolved_status` is open and lowercase, and both are
+  byte-identical to what enters the digest preimage.
+
 ## 0.7.26 — 2026-08-14
 
 ### Added
