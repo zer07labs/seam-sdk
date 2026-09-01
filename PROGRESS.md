@@ -84,7 +84,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `.github/workflows/publish.yml:316` | `make generate` **again at publish time**, against unpinned plugins — the open half of #52. `:390-401` pre-upload smoke installs protobuf *unconstrained*, so the skew is invisible to it; `registry-smoke` (`:519`) likewise. Measured at planning: `grep -rn protobuf .github/workflows/` yielded **one** hit, a prose comment — no workflow pinned protobuf anywhere, so nothing caught the skew. **Phase 6 closed that** (DONE 2026-08-31): the same grep now yields 17, and `.github/workflows/publish.yml:423` installs the built wheel with `protobuf==$FLOOR`. The declared floor and the emitted gencode are both **7.36.0** (`python/pyproject.toml:50`, `python/seam_sdk/_gen/seam/api/v1/seam_pb2.py`'s `Protobuf Python Version` header — cited by symbol, not by line, since it is a generated, gitignored file) — zero headroom, which is why this phase ran first. |
 | `.github/workflows/publish.yml:63-148` | `ci-green` — resolves every `ci-ok` conclusion for the tagged commit. Sound: `:107` still-running ⇒ `pending`, `:117-126` one-green-cannot-mask-one-red, `:143-148` timeout is a refusal. `:192`/`:285` gate both npm and python. **Must not regress.** |
 | `.github/workflows/publish.yml:150-188` | `version-check` — tag vs in-tree versions. It had **no branch-ancestry check** (`.github/workflows/ci.yml:19` runs on every branch push, so a tag at a green feature-branch commit published cleanly); **Phase 6 added one at `:176`**, which is inside this row's own range. Read the range as the job, not as evidence of the gap — it was widened in round 1 until it contained the very step it is cited for lacking. |
-| `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:476-489`. |
+| `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:578`. |
 | `python/tests/test_protobuf_floor.py:72,88` | The two pure-file-read assertions Phase 6 runs at publish time. `:29-31` reads only `_gen/seam/api/v1/seam_pb2.py`; `:47-51` **skips** when `_gen` is absent. `:88-99` forces `cap == gencode_major + 1` — this is why "widen the floor" is not a metadata edit. |
 | `python/tests/test_grpcio_floor.py:38` | Module-level `import grpc` — matters if Phase 6 runs it in the publish job. |
 | `.github/workflows/yank.yml` | `workflow_dispatch`, `dry_run` default `"true"`. A hard **DELETE** (`:91-92`), not a PyPI-style yank. Its token line did **not** strip the cargo token's `"Bearer "` prefix (`.github/workflows/publish.yml:383-385` does) — **Phase 10 fixed it** (DONE 2026-08-31) at `.github/workflows/yank.yml:55-60`, and left the version/format/name filters (`:73-76`) byte-unchanged. `scripts/test_yank_gate.py` now executes the resolution and pins those filters. |
@@ -155,7 +155,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   - *R2 GAPS (3):* the `:109`→`:141` fix reached `PROGRESS.md` but missed
     `plans/archive/record-digest-v3.md:12`; removing a duplicated execution-order block ate the
     blank line and merged two paragraphs; and the path repoint **over-replaced** four quoted
-    `DECISIONS.md` section titles, which are lookup keys that must match `DECISIONS.md:222`
+    `DECISIONS.md` section titles, which are lookup keys that must match `DECISIONS.md:770`
     verbatim, not paths.
   - *R3 PASS:* all three closed, both halves of the over-replacement checked (quoted titles reverted,
     `**Plan:**` paths still archive-pointed), no new breakage, 545/17 green.
@@ -1044,10 +1044,10 @@ them change what the phases do:
 | `.github/workflows/ci.yml` (cont.) | At `960cf81`: the smoke step's `kill "$pid"` (line 290), immediately followed by `exit 0` — it never waited for the process it started. Replaced by `reap()`. |
 | `.github/workflows/ci.yml:336-347` | The python live step (the `pytest` line is `.github/workflows/ci.yml:346`). Phase 2 added an `if: failure()` log dump + artifact upload at the **end of the job**, after the TypeScript step at `.github/workflows/ci.yml:348` — a step is evaluated at its own position, so anything placed earlier cannot see a TypeScript failure. |
 | `.github/workflows/ci.yml:704` | `ADVISORY: integration,spec-pin`. Advisory means *may skip*, not *may fail* — a red `integration` still reddens `ci-ok`, which lists it at `.github/workflows/ci.yml:689`. |
-| `scripts/check-contract.sh:228` · `scripts/check-contract.sh:248` | `fields_python` and `fields_ts`. **Phase 5 parameterises both on stub path + package** — measured, they yield 90/90 on the event stubs with zero one-sided entries. Two full citations on one row, not `` `:248` `` as a bare number: a pathless line reference matches `CITATION` not at all, so it is invisible to every check in `test_compatibility_citations_resolve.py`. Both needles are in `ANCHORED` and bound to this row by `CLAIM_LINES`. |
-| `scripts/check-contract.sh:271` | `manifest_fields` — its stripper claims every `#`-free line, which is why the event surface cannot share `contract/field-manifest.txt`. |
+| `scripts/check-contract.sh:252` · `scripts/check-contract.sh:272` | `fields_python` and `fields_ts`. **Phase 5 parameterises both on stub path + package** — measured, they yield 90/90 on the event stubs with zero one-sided entries. Two full citations on one row, not `` `:248` `` as a bare number: a pathless line reference matches `CITATION` not at all, so it is invisible to every check in `test_compatibility_citations_resolve.py`. Both needles are in `ANCHORED` and bound to this row by `CLAIM_LINES`. |
+| `scripts/check-contract.sh:295` | `manifest_fields` — its stripper claims every `#`-free line, which is why the event surface cannot share `contract/field-manifest.txt`. |
 | `scripts/check-contract.sh:566-575` | `--write-manifest` deletes `contract/expected-local-lag.txt`; the cited block is the comment scoping that delete to the api write, and the `-f` guard and `rm -f` are the two lines immediately below it. The second reason the event surface needs its own file. Deliberately no bare `:NNN` for those two — a naked line number inside a row is invisible to `test_compatibility_citations_resolve.py` (it checks backticked `file:line`, and a bare `:473` has no path), so it rots unnoticed. This one had: it still said `:473` after the guard moved to `:571`. |
-| `scripts/check-contract.sh:702` | The comment #88 was filed from, which used to record the event surface as an OPEN gap. **Phase 5 rewrote it** — leaving it would have described a closed gap as open. |
+| `scripts/check-contract.sh:729` | The comment #88 was filed from, which used to record the event surface as an OPEN gap. **Phase 5 rewrote it** — leaving it would have described a closed gap as open. |
 | `contract/event-field-manifest.txt` | **Phase 5 creates.** 90 fields, 11 messages, zero enums, zero nested messages — all measured, not assumed. |
 | `python/tests/test_field_manifest_gate.py:91` | `_run()` — the scratch-copy-plus-env-override pattern Phase 5's tests mirror. Nothing may mutate the real gitignored stub trees. |
 | `python/tests/test_compatibility_citations_resolve.py:625` | The `submitCommit` `ANCHORED` needle into `ts/src/client.ts`. Its siblings in the same list pin `collectiveOutcomeOf` (just above) and, from Phase 4, `submitEvaluation` and `submitObjection` — named rather than cited, for the reason the row above records: the bare `:606` and `:617-618` that used to sit here were both stale, and nothing could have told anyone. The plan predicted the insertion would break the `submitCommit` anchor for any K of 4+ lines *except* a 125-131 window where it would go green against the unrelated `:804` citation. **Measured K = 101 at the time of that check, 103 as finally committed** — outside that window at every intermediate value, and the anchor failed red-first as required before `PROGRESS.md` was touched. |
@@ -2035,10 +2035,8 @@ exactly those three cases and leaves `session_lifecycle` green.
 **And one of the four probes could be satisfied by a comment about the field.** `AuditEntryEvent.actor`
 matched on `\bactor\b`, and `ts/gen`'s generated comment carries *"Mirrors `AuditEntryPb.actor` (tag
 4)."* verbatim from the proto — so renaming the TS declaration to `principal` still reported PRESENT.
-All four probes are now anchored to declarations (`\b<NAME>_FIELD_NUMBER:` in Python,
-`\b<name> = <tag>;` in TypeScript), which additionally makes each probe check the **tag** its own
-label advertises. The leading `\b` is load-bearing too: without it `ACTOR_FIELD_NUMBER` matches inside
-`REDACTOR_FIELD_NUMBER`, measured.
+Round 6 anchored all four probes to declarations; round 7 found that this narrowed the hole without
+closing it and replaced the mechanism outright — see below.
 
 Also closed: a paragraph here naming a test round 5 had deleted, thirty-five lines above the paragraph
 recording that it deleted it; the reconcile arithmetic in `DECISIONS.md`, which gave two different
@@ -2050,4 +2048,59 @@ exit-code list that round 5 had just corrected to include admin.
 TS **130 pass / 0 fail**, `tsc` clean · `ruff` clean · contract gate exits **6** with the five
 recorded fields and the positive event lines · `git diff contract/` empty after a full pytest run ·
 the event gate file is now **10 test functions collecting 16 tests**.
+
+### Round-7 verification — four findings, two of them created by round 6's own fixes
+
+Scoped to the round-6 commit, on the reasoning that six rounds running had found the defects there
+rather than in the phase. Two were.
+
+**The exit-code paragraph was wrong for the third consecutive time.** Round 5 removed "so this STILL
+exits 6" from the script because it was false on the exit-8 path; round 6 removed the matching claim
+from `CLAUDE.md`; and round 6's replacement — "the same run exits **8** if `seam.event.v1`'s field
+surface also disagrees" — is false too. A regression in one of the four streamed-payload mirror
+fields, which are the only `seam.event.v1` fields the SDK actually decodes, is refused earlier by
+`STREAM=1` with exit **2** and no NOTE printed at all. Measured, running exactly the command the
+Gotcha documents. Three rewrites of one sentence, each replacing a wrong unconditional claim with a
+different wrong unconditional claim, because nothing ever measured it.
+
+That is now guarded. `test_claude_mds_gotcha_names_the_exit_codes_this_gate_actually_produces`
+constructs all three runs — matched lag with a clean event surface (**6**), matched lag with an event
+disagreement (**8**), and a renamed mirror field (**2**) — and requires the paragraph to name every
+code it just measured. It locates the paragraph by the *command*, never by a code, so a paragraph that
+dropped one cannot escape by no longer being found. Measured red against deleting the exit-2 sentence.
+
+**Anchoring the probes to declarations left a bigger hole than the one it closed.** A file-wide grep
+does not know which *message* declares a field. Moving `actor` from `AuditEntryEvent` to
+`ChainHeadAttestation` in both trees and re-recording the manifest left the entire gate green at
+exit 0, printing `PRESENT AuditEntryEvent.actor (tag 4)` against an `AuditEntryEvent` that no longer
+declares it. The label named a message; nothing checked the message.
+
+The probes no longer grep the stub files at all. `probe_event_field` asks `fields_python`/`fields_ts`
+— the same class-scoped extractors the manifest gate uses — for an exact `Message/field` line, and
+checks the tag separately on the TS side. `test_a_field_moved_to_another_message_still_fires_its_probe`
+is the strongest form of this file's manifest-cannot-see-it case: the manifest is perfectly content,
+the field exists on *some* message in both languages, and only a probe that knows where it belongs
+can refuse. Measured red against the round-6 mechanism.
+
+**The tag claim was over-general** — `.pyi` files record no tag values anywhere, so the Python arm is
+structurally tag-blind and the manifest gate is too (it compares `Message/field`). The TS arm is the
+gate's only tag check, on four fields. The script's own comment scoped it correctly; this document
+did not, and now says which arm carries it.
+
+**And round 6 repeated its own finding one document over.** It shifted `DECISIONS.md` by +8 lines and
+repointed none of the citations *into* it: `PROGRESS.md:87` landed on the yank/no-yank decision
+instead of the buf-plugin one, and `:158` on a line of prose instead of the section heading it calls
+a "lookup key". Both still resolved. `DECISIONS.md` is the highest-drift citation target in the repo
+— every reconcile pass prepends to it — and it had no anchors at all. Both are repointed and both are
+now in `ANCHORED` + `CLAIM_LINES`.
+
+The mechanism then proved itself inside this same round: adding `probe_event_field` shifted
+`check-contract.sh` by 24 lines, and the five anchors added in round 6 failed **immediately**, naming
+each construct and its new line. That is the first time in seven rounds a citation drift was caught
+by a test rather than by a verifier reading the file.
+
+**Re-verified:** python **884 passed / 17 skipped** · `scripts/` **100 passed** · TS **130 pass /
+0 fail**, `tsc` clean · `ruff` clean · all eight probe/language pairs PRESENT on the real tree ·
+contract gate exits **6** with the five recorded fields and both positive event lines ·
+`git diff contract/` empty after a full pytest run.
 

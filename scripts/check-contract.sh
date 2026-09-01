@@ -163,6 +163,30 @@ probe_api() {
   return "$rc"
 }
 
+# A seam.event.v1 FIELD probe, message-scoped. `$1` = human label, `$2` = the `Message/field` line the
+# extractors must yield, `$3` = the proto tag. Defined here beside `probe_event` but used only by
+# probe 2; see that block for why a raw grep of the stub file is not sufficient. The extractors are
+# defined further down, which is fine — this is a function body, evaluated when probe 2 calls it.
+probe_event_field() {
+  local label="$1" want="$2" tag="$3"
+  local rc=0 field="${2#*/}"
+  if fields_python "$PY_EV" | grep -qxF "$want"; then
+    note "PRESENT $label [python]"
+  else
+    note "ABSENT  $label [python]"; rc=1
+  fi
+  # BOTH conditions on the TS side: the field is declared on that message, AND it still carries the
+  # tag this probe's label advertises. `grep -qxF` for the first (exact line, no regex), `grep -qE`
+  # for the second (the tag lives in protobuf-es's generated comment, not in the extracted set).
+  if fields_ts "$TS_EV" seam.event.v1 | grep -qxF "$want" \
+     && grep -qE "\\b${field} = ${tag};" "$TS_EV"; then
+    note "PRESENT $label [ts]"
+  else
+    note "ABSENT  $label [ts]"; rc=1
+  fi
+  return "$rc"
+}
+
 # Same, for the seam.event.v1 stubs (the event contract split out of api).
 probe_event() {
   local label="$1"; shift
@@ -623,34 +647,37 @@ done
 # ── Probe 2: the streamed-payload mirror fields (reported; hard under STREAM=1) ────────────────────────
 # All four must be present together (they land in one Phase-0 push); probe each so a partial mirror shows.
 #
-# The patterns are anchored to DECLARATIONS, not to the bare field name, and that is load-bearing.
-# `actor` is the case that proved it: the old pattern was `\bactor\b`, and `ts/gen`'s comment for the
-# field — "Mirrors `AuditEntryPb.actor` (tag 4)." — carries the word verbatim from the proto. Measured:
-# renaming the TS declaration to `principal` while leaving that prose line alone still reported
-# `PRESENT ... [ts]`. A probe satisfied by a comment about a field is not a probe for the field. The
-# other three had the same hole one step further away (`__slots__` and the `__init__` signature keep a
-# renamed field's old name until they are regenerated too), so all four are anchored rather than only
-# the one that was demonstrably reachable.
+# Each probe is MESSAGE-SCOPED, and that is the property a raw grep of the stub file cannot have.
+# Two measured failures got it here:
 #
-# Python anchors on `<NAME>_FIELD_NUMBER`, the same construct `fields_python` extracts from. TS anchors
-# on `<name> = <tag>;` inside protobuf-es's `@generated from field:` line, which additionally makes the
-# probe check the TAG its own label advertises — these are mirror fields, and a tag that moved is the
-# failure that matters.
+#   1. A grep for the bare name is satisfied by a COMMENT about the field. `actor`'s pattern was
+#      `\bactor\b`, and `ts/gen`'s generated comment carries "Mirrors `AuditEntryPb.actor` (tag 4)."
+#      verbatim from the proto — renaming the TS declaration to `principal` still reported PRESENT.
+#   2. Anchoring to the declaration fixed that and left a bigger hole open: a file-wide grep does not
+#      know which MESSAGE declares the field. Moving `actor` from `AuditEntryEvent` to
+#      `ChainHeadAttestation` in both trees and re-recording the manifest left the whole gate green
+#      at exit 0, with `PRESENT AuditEntryEvent.actor (tag 4)` printed against an `AuditEntryEvent`
+#      that no longer declares it. The label named a message; nothing checked the message.
 #
-# The leading `\b` is not decoration: without it a substring satisfies the probe. `ACTOR_FIELD_NUMBER`
-# matches inside `REDACTOR_FIELD_NUMBER`, and `actor = 4;` inside `renamedactor = 4;` — measured, both
-# reported PRESENT before the boundary was added. A trailing `\b` is unnecessary because every pattern
-# already ends in a character (`:` or `;`) that cannot continue an identifier.
+# So the presence half is decided by `fields_python`/`fields_ts` — the same class-scoped extractors the
+# manifest gate uses — asked for an exact `Message/field` line. Reusing them rather than writing a
+# third parser is the same argument the extractors' own header makes for being parameterised.
+#
+# The TAG is checked on the TS side only, and that asymmetry is real rather than an oversight: a
+# `.pyi` records no tag values anywhere, so Python is structurally tag-blind, and the manifest gate is
+# tag-blind too (it compares `Message/field`). protobuf-es's `@generated from field:` comment is the
+# only place either tree states a tag, which makes this the gate's ONLY tag check — on four fields, the
+# four a `StreamEvents` consumer decodes, where a silently renumbered tag is the failure that matters.
+# The leading `\b` is not decoration: without it `actor = 4;` matches inside `renamedactor = 4;`.
 stream_rc=0
 for spec in \
-  "SeamEvent.session_lifecycle (tag 21)|\\bSESSION_LIFECYCLE_FIELD_NUMBER:|\\bsession_lifecycle = 21;" \
-  "SeamEvent.chain_head_attestation (tag 22)|\\bCHAIN_HEAD_ATTESTATION_FIELD_NUMBER:|\\bchain_head_attestation = 22;" \
-  "DecisionSealed.ciphertext_digest (tag 10)|\\bCIPHERTEXT_DIGEST_FIELD_NUMBER:|\\bciphertext_digest = 10;" \
-  "AuditEntryEvent.actor (tag 4)|\\bACTOR_FIELD_NUMBER:|\\bactor = 4;" ; do
+  "SeamEvent.session_lifecycle (tag 21)|SeamEvent/session_lifecycle|21" \
+  "SeamEvent.chain_head_attestation (tag 22)|SeamEvent/chain_head_attestation|22" \
+  "DecisionSealed.ciphertext_digest (tag 10)|DecisionSealed/ciphertext_digest|10" \
+  "AuditEntryEvent.actor (tag 4)|AuditEntryEvent/actor|4" ; do
   label="${spec%%|*}"; rest="${spec#*|}"
-  # split the remaining |-separated patterns
-  IFS='|' read -r -a pats <<< "$rest"
-  probe_event "$label" "${pats[@]}" || stream_rc=1
+  want="${rest%%|*}"; tag="${rest#*|}"
+  probe_event_field "$label" "$want" "$tag" || stream_rc=1
 done
 
 # ── Probe 3: the ReportEventsConsumed RPC (reported; hard under EVENTS=1) ──────────────────────────────

@@ -42,6 +42,7 @@ TS_EV = REPO / "ts" / "gen" / "seam" / "event" / "v1" / "seam_event_pb.ts"
 PY_API = REPO / "python" / "seam_sdk" / "_gen" / "seam" / "api" / "v1" / "seam_pb2.pyi"
 TS_API = REPO / "ts" / "gen" / "seam" / "api" / "v1" / "seam_pb.ts"
 COMMITTED = REPO / "contract" / "event-field-manifest.txt"
+CLAUDE_MD = REPO / "CLAUDE.md"
 
 #: Exit codes this file asserts on. Named rather than inlined, because the whole argument for 8 is
 #: that it is NOT 6 — a bare integer literal in an assertion does not carry that.
@@ -479,6 +480,133 @@ def test_the_presence_probes_still_refuse_what_the_manifest_gate_accepts(
         "the manifest gate was supposed to accept this rename; if it did not, the case above no "
         "longer isolates the probes\n" + soft.stdout
     )
+
+
+def test_a_field_moved_to_another_message_still_fires_its_probe(scratch) -> None:
+    """The probes are MESSAGE-scoped, which a grep of the stub file cannot be.
+
+    Anchoring the patterns to declarations closed the "a comment about the field satisfies the probe"
+    hole and left a larger one open: a file-wide grep does not know which message declares what.
+    Measured against the anchored-but-unscoped version — moving `actor` from `AuditEntryEvent` to
+    `ChainHeadAttestation` in both trees and re-recording the manifest left the whole gate green at
+    exit 0, printing `PRESENT AuditEntryEvent.actor (tag 4)` against an `AuditEntryEvent` that no
+    longer declares it. The label named a message; nothing checked the message.
+
+    This is the strongest form of the manifest-cannot-see-it case in this file: the manifest is
+    perfectly happy — the field exists, on some message, in both languages — and only a probe that
+    knows where it belongs can refuse.
+    """
+    py = scratch["py_ev"].read_text(encoding="utf-8")
+    py_line = "    ACTOR_FIELD_NUMBER: _ClassVar[int]\n"
+    assert py.count(py_line) == 1
+    py = py.replace(py_line, "")
+    assert py.count(PY_ANCHOR) == 1
+    scratch["py_ev"].write_text(
+        py.replace(PY_ANCHOR, PY_ANCHOR + py_line), encoding="utf-8"
+    )
+
+    ts = scratch["ts_ev"].read_text(encoding="utf-8")
+    ts_line = "   * @generated from field: optional string actor = 4;\n"
+    assert ts.count(ts_line) == 1
+    ts = ts.replace(ts_line, "")
+    assert ts.count(TS_ANCHOR) == 1
+    scratch["ts_ev"].write_text(
+        ts.replace(TS_ANCHOR, TS_ANCHOR + ts_line), encoding="utf-8"
+    )
+
+    assert _run(scratch, "--write-manifest").returncode == OK
+    # The manifest now says ChainHeadAttestation/actor, in both languages, and agrees with itself.
+    assert "ChainHeadAttestation/actor" in scratch["event_manifest"].read_text(
+        encoding="utf-8"
+    )
+
+    r = _run(scratch)
+    out = r.stdout + r.stderr
+    assert r.returncode == 2, (
+        f"expected exit 2; got {r.returncode}. If this is 0 the probe is matching the field "
+        f"anywhere in the file rather than on the message its own label names.\n{out}"
+    )
+    for lang in ("python", "ts"):
+        assert f"ABSENT  AuditEntryEvent.actor (tag 4) [{lang}]" in out, out
+
+
+def test_claude_mds_gotcha_names_the_exit_codes_this_gate_actually_produces(
+    scratch,
+) -> None:
+    """`CLAUDE.md`'s Gotchas paragraph is prose about exit codes, and prose about exit codes has now
+    been wrong twice in a row.
+
+    It said "it still exits 6" unconditionally while the event surface could make the same run exit
+    8. That was corrected to name 8 — and the correction was wrong too, because a regression in one
+    of the four streamed-payload mirror fields is refused earlier, at exit 2, with no NOTE printed.
+    Nothing guarded the paragraph either time; the script's own NOTE ends "See CLAUDE.md's Gotchas",
+    so a reader was being sent from corrected output to an uncorrected claim.
+
+    So all three codes are measured here and required to appear in that paragraph. This is not a
+    grep for plausible-looking numbers: each is produced by a run this test constructs, and the
+    paragraph must name every one of them.
+    """
+    gotcha = CLAUDE_MD.read_text(encoding="utf-8")
+    # Located by the command, not by any exit code in the prose — the needle must not be a thing
+    # this test is about to assert, or a paragraph that dropped a code would simply stop being found.
+    start = gotcha.index("`STREAM=1 EVENTS=1 make check-contract` exits")
+    para = gotcha[start : gotcha.index("\n\n", start)]
+
+    # 8 — a matched api lag with the event surface also disagreeing.
+    scratch["field_manifest"].write_text(
+        scratch["field_manifest"].read_text(encoding="utf-8")
+        + "ContextBinding/pretend_lag_one\n",
+        encoding="utf-8",
+    )
+    scratch["lag"].write_text(
+        "# EXPECTED-FROM: 2026-08-31 (synthetic; this test only)\nContextBinding/pretend_lag_one\n",
+        encoding="utf-8",
+    )
+    _append_field_both(scratch)
+    eight = _run(scratch)
+    assert eight.returncode == EVENT_SURFACE_DISAGREES, (
+        f"{eight.returncode}\n{eight.stdout}\n{eight.stderr}"
+    )
+
+    # 6 — the same matched lag with the event surface clean.
+    for key, anchor in (("py_ev", PY_ANCHOR), ("ts_ev", TS_ANCHOR)):
+        text = scratch[key].read_text(encoding="utf-8")
+        scratch[key].write_text(
+            text.replace(
+                anchor + "    NOTARY_RECEIPT_FIELD_NUMBER: _ClassVar[int]\n", anchor
+            ).replace(
+                anchor + "   * @generated from field: bytes notary_receipt = 99;\n",
+                anchor,
+            ),
+            encoding="utf-8",
+        )
+    six = _run(scratch)
+    assert six.returncode == 6, f"{six.returncode}\n{six.stdout}\n{six.stderr}"
+    assert "STILL exits 6" in six.stdout, six.stdout
+
+    # 2 — a mirror field, refused before either of the above can be reached.
+    py = scratch["py_ev"].read_text(encoding="utf-8")
+    scratch["py_ev"].write_text(
+        py.replace("SESSION_LIFECYCLE_FIELD_NUMBER", "RENAMEDLC_FIELD_NUMBER"),
+        encoding="utf-8",
+    )
+    ts = scratch["ts_ev"].read_text(encoding="utf-8")
+    scratch["ts_ev"].write_text(
+        ts.replace("session_lifecycle = 21;", "renamedlc = 21;"), encoding="utf-8"
+    )
+    two = _run(scratch)
+    assert two.returncode == 2, f"{two.returncode}\n{two.stdout}\n{two.stderr}"
+    assert "NOTE" not in two.stdout, (
+        "exit 2 preempts the field-report block entirely, so no NOTE is printed — if one appears "
+        "here the ordering changed and CLAUDE.md's paragraph needs rewriting again\n"
+        + two.stdout
+    )
+
+    for code in ("6", "8", "2"):
+        assert f"**{code}**" in para, (
+            f"CLAUDE.md's Gotchas paragraph does not name exit {code}, which this test just "
+            f"measured the documented command producing:\n{para}"
+        )
 
 
 def test_the_comment_that_stops_the_probes_being_deleted_is_still_there() -> None:

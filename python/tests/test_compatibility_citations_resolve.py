@@ -651,6 +651,23 @@ ANCHORED = [
         "# Scoped to seam.api.v1 — and seam.event.v1 is now manifested too",
     ),
     ("PROGRESS.md", "python/tests/test_field_manifest_gate.py", "def _run("),
+    # Added in round 7, and the reason is the round-6 fix repeating itself one document over: the
+    # commit that repointed and anchored the five citations above shifted `DECISIONS.md` by +8 lines
+    # and repointed none of the citations INTO it. `PROGRESS.md:87` landed on the yank/no-yank
+    # decision instead of the buf-plugin one, and `:158` on a line of prose instead of the section
+    # heading it calls a "lookup key". Both still resolved. `DECISIONS.md` is a file this repo edits
+    # constantly and every reconcile pass prepends to it, which makes it the highest-drift citation
+    # target in the repo and the one that had no anchors at all.
+    (
+        "PROGRESS.md",
+        "DECISIONS.md",
+        "### Why a floor-pinned install, rather than pinning the buf plugins",
+    ),
+    (
+        "PROGRESS.md",
+        "DECISIONS.md",
+        "## 2026-08-24 — reconcile `plans/record-digest-v3.md`'s ASSUMPTIONS.md (4 entries)",
+    ),
 ]
 
 #: How far a citation may sit from the needle's true line and still count. A citation naming a block
@@ -761,6 +778,17 @@ CLAIM_LINES = {
         "python/tests/test_field_manifest_gate.py",
         "def _run(",
     ): "the scratch-copy-plus-env-override pattern",
+    # Round 7's two, into the document every reconcile pass prepends to.
+    (
+        "PROGRESS.md",
+        "DECISIONS.md",
+        "### Why a floor-pinned install, rather than pinning the buf plugins",
+    ): "Unpinned remote plugins",
+    (
+        "PROGRESS.md",
+        "DECISIONS.md",
+        "## 2026-08-24 — reconcile `plans/record-digest-v3.md`'s ASSUMPTIONS.md (4 entries)",
+    ): "which are lookup keys that must match",
 }
 
 
