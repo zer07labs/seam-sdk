@@ -594,6 +594,19 @@ ERROR: a breaking change and must be handled, never silently rewritten away.
   is gencode 7.36.0 and `python/pyproject.toml:50` declares `protobuf>=7.36.0,<8` — exact equality,
   zero headroom, and against *pre-ACDP* stubs. The assertion that matters runs in CI, after
   `make generate`. Recorded rather than reported as a local green.
+- **A required gate is flaky, and that is filed rather than re-run away (#85).**
+  `integration (live seam-grpc round-trip)` produced both outcomes twice on byte-identical code:
+  push-run attempts 1 and 2 red, attempt 3 green, and the concurrent `pull_request` run green — same
+  SHA, same `seamd:main` image, minutes apart, and the passing runs executed all 15 steps rather
+  than skipping. The same three tests failed each time with `Connection reset by peer` on
+  `127.0.0.1:8099`, *after* the workflow's smoke step had printed `seam-grpc is serving on 8099` —
+  so the server listens and then dies on the session-seal and authorize paths. It cannot be this
+  diff: nothing here changes behaviour, and none of the three tests touches `resolve_context`.
+  I re-ran three times to establish the pattern, not to obtain a green. The reason it is worth an
+  issue: a *required* gate that is red half the time on identical code teaches everyone to reach for
+  "re-run" before "investigate", which is how a real failure gets waved through — the same class of
+  habit that let #52 publish on red CI. #85 also notes that `/tmp/seam-grpc.log` is only printed
+  when the *smoke* step fails, so every re-run destroys the one artifact that would name the crash.
 - **Suites:** python 616 passed / 17 skipped · TypeScript 112 passed, 0 failed · Go ok ·
   `verify` 87 passed · ruff clean · `tsc --noEmit` clean. **Java and Kotlin were not run here** — no
   JDK in this environment; CI covers them, and this is flagged rather than implied green.
