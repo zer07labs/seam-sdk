@@ -192,6 +192,36 @@ pip install seam-sdk --extra-index-url \
 The contract is versioned and **backward-compatibility-checked** in the runtime repo's CI (`buf breaking`),
 so a change there can never silently break a generated client. Regenerate after a contract release.
 
+**Regenerating is not adopting.** Two committed manifests declare the surface this SDK expects, and
+`check-contract` set-compares each against the generated stubs **per language, in both directions**:
+
+| Manifest | Declares | Catches |
+|---|---|---|
+| `contract/rpc-manifest.txt` | every `seam.api.v1` RPC | a new **verb** landing unwired |
+| `contract/field-manifest.txt` | every `seam.api.v1` message **field** | a new **field** landing unwired |
+
+The field manifest exists because the RPC one is blind a level down, and that blindness has already
+cost real surfaces: `collective_outcome` regenerated in and sat unread, and the four ACDP D3 receipt
+slots plus P2 `retraction` landed on `ContextBinding` with every gate green.
+
+Both directions fail loud, and they mean different things — a symbol **missing** from the stubs is a
+stale generation or a *removed* (breaking) contract change; a symbol **not in the manifest** is
+something new that landed, and that refusal is the moment someone decides whether this SDK carries it.
+
+**The escape is one command, and it comes second:**
+
+```sh
+scripts/check-contract.sh --write-manifest   # rewrites BOTH manifests, from the Python stubs
+```
+
+Decide first — wire the verb/field into the hand-written clients, or record in the PR why not — then
+run it and commit the manifest diff alongside that decision. Running it first turns a deliberate
+refusal back into the silent pass the manifests replaced. TypeScript is the cross-check, never the
+source, so the two stub trees are read independently and neither can vouch for the other.
+
+Both manifests record **names only** — not tags, not types. A field retagged or retyped is a
+wire-breaking change and is invisible to them; `buf breaking` is what covers that.
+
 ## Session lifecycle & budgets (enterprise 6.2)
 
 Python and TypeScript expose the **incremental session** path — `open_session` → `submit_proposal`/

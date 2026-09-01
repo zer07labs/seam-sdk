@@ -1,0 +1,310 @@
+# seam.api.v1 FIELD manifest — the SDK's declaration of the message-field surface it expects.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# `contract/rpc-manifest.txt` closed the "a new VERB landed and nobody wired it" hole. It is blind one
+# level down: a new FIELD on an existing message passes every gate silently. That blindness is not
+# hypothetical and has already cost two surfaces —
+#
+#   * `collective_outcome` regenerated in and sat unread, on DecisionResponse and then on SessionStep;
+#   * the four ACDP D3 receipt slots plus P2 `retraction` landed on `ContextBinding` with CI green.
+#
+# So the expectation is a FILE, in both directions, per language — same shape as the RPC manifest:
+#
+#   * stub is MISSING a field listed here  -> a stale/partial generation, OR a field REMOVED from the
+#                                             contract. The second is a breaking change; handle it,
+#                                             never rewrite it away.
+#   * stub has a field NOT listed here     -> something landed. DECIDE whether this SDK carries it,
+#                                             then record the decision. That refusal IS the human
+#                                             moment this gate exists to force.
+#
+# It is checked PER LANGUAGE, from the two generated stub trees read independently, so a stale ts/gen
+# beside a fresh python/_gen is visible. Neither language is derived from the other.
+#
+# SPELLING
+# --------
+# One line per field: `<Message>/<field_name>`, proto spelling (snake_case), sorted, no tags, no types.
+# A `map` field is ONE entry on its owner — `AuthorizeRequest/features` — never a key/value pair.
+#
+# WHICH SIDE `--write-manifest` WRITES FROM
+# -----------------------------------------
+# **Python**, exactly as the RPC manifest does. TypeScript is the cross-check, never the source. This
+# matters: if the escape wrote from a side that cannot see every field, it would produce failures that
+# the documented escape could never clear.
+#
+# THE PYTHON EXTRACTOR READS `*_FIELD_NUMBER`, **NOT** `__slots__`
+# ----------------------------------------------------------------
+# `ResumeRequest.raise` (tag 3) and `AdminResumeRequest.raise` (tag 6) are real fields. `raise` is a
+# Python keyword, so the .pyi generator cannot put it in `__slots__` or in an attribute annotation —
+# it emits only `RAISE_FIELD_NUMBER` and a `**kwargs` catch-all. Measured: `__slots__` yields 221,
+# protobuf-es yields 223. A `__slots__`-derived manifest is therefore permanently red on two fields no
+# escape hatch can clear, and — worse — blind to any future field named `class`, `from`, `import`,
+# `global`, `lambda`, `pass`, `return`, `in`, `is`, `not` or `and`.
+#
+# SYNTHETIC MAP-ENTRY MESSAGES ARE EXCLUDED BY **NESTING**, NEVER BY NAME
+# -----------------------------------------------------------------------
+# Python's .pyi emits `AuthorizeRequest.FeaturesEntry` and `RunDecisionRequest.FeaturesEntry`, each
+# with `key`/`value`; protobuf-es emits no type for either. Carried naively they are 2 messages x 2
+# fields TypeScript can never produce — a permanently red gate. They are excluded structurally: a
+# top-level class matches at column 0 and its own fields at exactly four spaces, so a nested class's
+# fields (eight) are never collected.
+#
+# Filtering on the NAME `*Entry` would be a bug, not a shortcut: **`AuditEntry` is a real top-level
+# `seam.api.v1` message** with two fields (`seq`, `decision_id`). A name filter drops it from BOTH
+# sides — symmetric, so the gate stays green while going blind to a real message. That is the exact
+# failure this manifest exists to prevent, reintroduced by the fix for a different one.
+#
+# WHAT THIS FILE DOES **NOT** CHECK
+# ----------------------------------
+# Names only. A field RETAGGED or RETYPED is a wire-breaking change and is invisible here, exactly as
+# the RPC manifest records names and not signatures. `buf breaking` is what covers that; do not read a
+# green gate here as wire compatibility.
+#
+# DECISIONS RECORDED HERE
+# -----------------------
+# `ContextBinding/{content_hash,receipt_hash,key_status,resolved_status}` (ACDP D3 receipt provenance,
+# tags 7-10) and `ContextBinding/retraction` (ACDP P2, tag 11) are **DECLARED AND DELIBERATELY NOT
+# INTERPRETED**. This gate refused them first — exit 6, naming all five in both languages — and this
+# is the decision that refusal forced, not a silent adoption:
+#
+#   * They are CARRIED, not read. `resolve_context` returns `pb.ContextBinding` directly, so the five
+#     appear on the generated type with no wrapper needed and a caller can already see them.
+#   * This SDK does not compute `context_digest` and `verify/src/verify.rs` does not read these slots,
+#     so there is nothing here that could interpret them correctly yet.
+#   * `key_status` is a CLOSED, PascalCase vocabulary; `resolved_status` is an OPEN, lowercase one.
+#     Both are byte-identical to what enters the digest preimage, so any SDK-side re-spelling —
+#     case-folding, normalising, mapping to an enum — silently breaks third-party digest recomputation.
+#     Declaring them without interpreting them is what keeps that from happening by accident.
+#
+# Wiring them is `plans/post-adoption-hardening-and-acdp-readiness.md` Phase 9, not this phase.
+#
+# TO REGENERATE (after deciding, not before):
+#     scripts/check-contract.sh --write-manifest
+AdminResumeRequest/approver
+AdminResumeRequest/budget
+AdminResumeRequest/namespace
+AdminResumeRequest/raise
+AdminResumeRequest/session_id
+AdminResumeRequest/tenant
+AdmissionTicket/expires_at_ms
+AdmissionTicket/ticket
+Anchor/chain_head
+Anchor/signature
+Anchor/timestamp_millis
+ApprovalRequestRequest/action
+ApprovalRequestRequest/request_id
+ApprovalRequestRequest/requester
+ApprovalRequestRequest/required_approvals
+ApprovalRequestRequest/session_id
+ApprovalRequestRequest/usage
+AuditEntry/decision_id
+AuditEntry/seq
+AuditTrailResponse/entries
+AuthorizeRequest/agent_id
+AuthorizeRequest/call_sig
+AuthorizeRequest/client_request_id
+AuthorizeRequest/features
+AuthorizeRequest/presentation
+AuthorizeRequest/session_id
+AuthorizeRequest/subject
+AuthorizeRequest/subjects
+AuthorizeRequest/ticket
+AuthorizeRequest/tool_input
+AuthorizeRequest/tool_input_digest
+AuthorizeRequest/tool_name
+AuthorizeResponse/authorize_id
+AuthorizeResponse/policy_version
+AuthorizeResponse/reason
+AuthorizeResponse/transformed_input
+AuthorizeResponse/verdict
+BallotRequest/choice
+BallotRequest/reason
+BallotRequest/request_id
+BallotRequest/session_id
+BallotRequest/usage
+BallotRequest/voter
+BudgetLimits/cost_micros
+BudgetLimits/messages
+BudgetLimits/soft_pct
+BudgetLimits/tokens
+BudgetLimits/wall_ms
+Challenge/nonce
+Challenge/receiver_aid
+CollectiveOutcome/abstain_count
+CollectiveOutcome/approve_count
+CollectiveOutcome/declared_participant_count
+CollectiveOutcome/reject_count
+CollectiveOutcome/stated_value_contradicted_tally
+CollectiveOutcome/verdict
+CommitRequest/action
+CommitRequest/commitment_id
+CommitRequest/session_id
+CommitRequest/usage
+Commitment/action
+Commitment/auth_method
+Commitment/authority
+Commitment/id
+Commitment/signed_artifact
+Commitment/supersedes
+Commitment/trust_basis
+CommitmentProof/commitment
+CommitmentProof/issuer_aid
+ContextBinding/classification
+ContextBinding/content_hash
+ContextBinding/ctx_ref
+ContextBinding/derived_from
+ContextBinding/fidelity
+ContextBinding/key_status
+ContextBinding/lineage_id
+ContextBinding/receipt_hash
+ContextBinding/resolved_status
+ContextBinding/retraction
+ContextBinding/version
+ContextInput/content
+ContextInput/derived_from
+ContextInput/fidelity
+ContextRef/content_ref
+DecisionRecordView/classification
+DecisionRecordView/decision_id
+DecisionRecordView/key_ref
+DecisionRecordView/namespace
+DecisionRecordView/outcome
+DecisionRecordView/sealed_at
+DecisionRecordView/tenant
+DecisionRecordView/worm
+DecisionRef/decision_id
+DecisionResponse/collective_outcome
+DecisionResponse/decided_value
+DecisionResponse/decision_id
+DecisionResponse/namespace
+DecisionResponse/outcome
+DecisionResponse/participant_verdicts
+DecisionResponse/policy_enforcement
+DecisionResponse/policy_version
+DecisionResponse/tenant
+EnrollTenantRequest/namespace
+EnrollTenantRequest/subject_aid
+EnrollTenantRequest/tenant
+ErasurePreview/already_erased
+ErasurePreview/held
+ErasurePreview/would_erase
+ErasureRequest/confirm_count
+ErasureRequest/now_millis
+ErasureRequest/subject
+ErasureRequest/tenant
+EvaluationRequest/confidence
+EvaluationRequest/evaluator
+EvaluationRequest/proposal_id
+EvaluationRequest/rationale_ref
+EvaluationRequest/reason
+EvaluationRequest/recommendation
+EvaluationRequest/session_id
+EvaluationRequest/usage
+GrantView/expires_at
+GrantView/from_ns
+GrantView/grantor
+GrantView/tenant
+GrantView/to_ns
+IssuerAidResponse/issuer_aid
+ListGrantsResponse/grants
+ListTenantsResponse/tenants
+ObjectionRequest/objector
+ObjectionRequest/proposal_id
+ObjectionRequest/reason
+ObjectionRequest/session_id
+ObjectionRequest/severity
+ObjectionRequest/usage
+OpenSessionRequest/budget
+OpenSessionRequest/context_refs
+OpenSessionRequest/contexts
+OpenSessionRequest/limits
+OpenSessionRequest/mode
+OpenSessionRequest/on_behalf_of
+OpenSessionRequest/participants
+OpenSessionRequest/presentation
+OpenSessionRequest/session_id
+ParticipantVerdict/agent
+ParticipantVerdict/recommendation
+ParticipantVerdict/vote
+PinnedPresentation/presentation_json
+PlaceGrantRequest/expires_at
+PlaceGrantRequest/from_ns
+PlaceGrantRequest/grantor
+PlaceGrantRequest/tenant
+PlaceGrantRequest/to_ns
+PolicyEnforcement/enforced
+PolicyEnforcement/policy_id
+ProposalRequest/option
+ProposalRequest/proposal_id
+ProposalRequest/proposer
+ProposalRequest/session_id
+ProposalRequest/usage
+RegisterContextRequest/content
+RegisterContextRequest/derived_from
+RegisterContextRequest/fidelity
+RegisterPartyRequest/party_id
+RegisterPartyRequest/pubkey
+RemovePartyRequest/party_id
+ReplayView/chain_verified
+ReplayView/decided_value
+ReplayView/terminal
+ReportConsumedRequest/consumed_cursor
+ReportOutcomeRequest/correct
+ReportOutcomeRequest/decision_id
+ReportOutcomeRequest/verified_by
+ReportOutcomeResponse/recorded
+ResolveContextRequest/refs
+ResolveContextResponse/bindings
+ResumeRequest/budget
+ResumeRequest/raise
+ResumeRequest/session_id
+RetentionRequest/commitment_only_days
+RetentionRequest/full_days
+RetentionRequest/now_millis
+RetentionRequest/sealed_digest_days
+RetentionResponse/purged
+RevokeGrantRequest/from_ns
+RevokeGrantRequest/revoker
+RevokeGrantRequest/tenant
+RevokeGrantRequest/to_ns
+RunDecisionRequest/context_refs
+RunDecisionRequest/contexts
+RunDecisionRequest/features
+RunDecisionRequest/on_behalf_of
+RunDecisionRequest/participants
+RunDecisionRequest/presentation
+RunDecisionRequest/session_id
+RunDecisionRequest/votes
+SessionRef/session_id
+SessionStatusResponse/decision_id
+SessionStatusResponse/state
+SessionStep/collective_outcome
+SessionStep/decision_id
+SessionStep/policy_enforcement
+SessionStep/state
+StepUsage/cost_micros
+StepUsage/tokens
+StreamEventsRequest/ack
+StreamEventsRequest/follow
+StreamEventsRequest/from_seq
+TenantView/aid
+TenantView/namespace
+TenantView/tenant
+TerminalResponse/decision_id
+TrustDecision/auth_method
+TrustDecision/level
+TrustDecision/subject
+VerifyAnchorRequest/anchor
+VerifyAnchorRequest/party_id
+VerifyAttestationRequest/attestation
+VerifyAttestationRequest/party_id
+VerifyCommitmentRequest/commitment
+VerifyCommitmentRequest/signed_artifact
+VerifyResponse/valid
+Vote/agent
+Vote/value
+VoteRequest/proposal_id
+VoteRequest/session_id
+VoteRequest/usage
+VoteRequest/value
+VoteRequest/voter

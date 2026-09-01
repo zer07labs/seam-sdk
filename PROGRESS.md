@@ -631,3 +631,57 @@ are recorded rather than fixed.
 - **The `No yank` citation was repointed a fourth and fifth time** (`:563-568` → `:586-591`), and a
   `README.md` citation moved `:128` → `:147`. Every changelog or README edit moves them. Phase 8.
 - **Gates:** python 574 passed/17 skipped · ruff clean.
+
+### Phase 5 — the field manifest, and the tripwire firing for real · 2026-08-31
+
+- **Both extractors agree at 223 on the local stubs — exactly as planned.** 65 top-level messages,
+  zero diff in either direction, and all four canaries present: `ResumeRequest/raise`,
+  `AdminResumeRequest/raise`, `AuditEntry/seq`, `AuditEntry/decision_id`. The plan's two hazards were
+  confirmed live before being coded around: `RAISE_FIELD_NUMBER` appears twice in the `.pyi` while
+  `"raise"` appears in **no** `__slots__`, and the synthetic `FeaturesEntry` classes are distinguishable
+  from the real top-level `AuditEntry` by indentation alone.
+- **The committed manifest is 228, not 223 — and that divergence is the phase's main finding.** The
+  plan measured the surface before ACDP P1a/P2 reached the BSR. CI runs `make generate` from the BSR
+  (`.github/workflows/ci.yml:108`) and *then* the gate (`:122`), so CI sees 228. Committing 223 would
+  have meant knowingly-red CI on every job.
+- **The tripwire was made to fire on the real fields before they were adopted**, against temporary
+  stub copies carrying them. Verbatim, exit **6**:
+
+```
+ERROR: the generated FIELD surface disagrees with contract/field-manifest.txt:
+  NOT IN THE MANIFEST, present in the python stubs (a new field landed):
+    + ContextBinding/content_hash
+    + ContextBinding/key_status
+    + ContextBinding/receipt_hash
+    + ContextBinding/resolved_status
+    + ContextBinding/retraction
+  NOT IN THE MANIFEST, present in the ts stubs (a new field landed):
+    + ContextBinding/content_hash
+    + ContextBinding/key_status
+    + ContextBinding/receipt_hash
+    + ContextBinding/resolved_status
+    + ContextBinding/retraction
+```
+
+  Each language named it independently, which is the property that makes a stale `ts/gen` beside a
+  fresh `python/_gen` visible. Only then were the five adopted, with the decision written into the
+  manifest header: **declared, deliberately not interpreted** — carried on the generated type, never
+  read, and neither status vocabulary re-spelled. Wiring them is Phase 9.
+- **Known and stated: a bare local `check-contract` now exits 6 on this machine.** The local stub tree
+  predates ACDP by exactly those five fields, so the gate reports them as MISSING and says
+  "stale/partial generation" — which is **true**, and is the gate working. CI, which regenerates
+  first, is the authoritative run. Running `make generate` locally would reconcile it; that was not
+  done here because this session is under a standing instruction not to, and the instruction was not
+  worth reasoning around when CI verifies the same thing in minutes.
+- **The tests do not depend on any of that.** `python/tests/test_field_manifest_gate.py` (14 tests)
+  drives the **real** script against manifests it writes itself into `tmp_path`, so it is correct
+  whether a developer's stubs are fresh or stale. Four paths became env-overridable
+  (`SEAM_PY_GEN`, `SEAM_TS_GEN`, `SEAM_FIELD_MANIFEST`, `SEAM_RPC_MANIFEST`) purely so a test can never
+  write to the real manifests or corrupt the **gitignored** stub trees — which git could not restore.
+  Verified: with both overridden, `--write-manifest` left both real manifests byte-identical.
+- **`--write-manifest` writes both manifests**, so there is one escape command to document rather than
+  two, and `contract/rpc-manifest.txt` came back byte-identical (42 RPCs, empty `git diff`).
+- **No CI job was added**, so `ci-ok`'s `needs:` is untouched and `scripts/test_ci_gate.py` still
+  passes (13 tests) — the gate rides inside the existing `check-contract` step in both language jobs.
+- **Gates:** python 594 passed/17 skipped · scripts 81 passed · ts typecheck OK, 112 passed ·
+  ruff clean · gate exit 0 against the BSR-shaped surface, exit 6 against the stale local one.

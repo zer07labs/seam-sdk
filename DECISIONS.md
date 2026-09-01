@@ -8,6 +8,68 @@ produced it.
 
 ## 2026-08-31 — `plans/post-adoption-hardening-and-acdp-readiness.md` Phase 10 (issue #52): the 0.7.39-0.7.43 band is documented, not deleted
 
+### A whole-surface field manifest, not an ACDP-shaped probe
+
+- **Context.** `contract/rpc-manifest.txt` closed "a new verb landed and nobody wired it". It is blind
+  one level down. That blindness is not theoretical: `collective_outcome` regenerated in and sat
+  unread on `DecisionResponse` and then on `SessionStep`, and the four ACDP D3 receipt slots plus P2
+  `retraction` landed on `ContextBinding` with every gate green — CI regenerates from the BSR on every
+  run, so the SDK had already *built* against all five and noticed nothing.
+- **The narrower option, and why it lost.** An `ACDP=1` flag mirroring the `STREAM=1`/`EVENTS=1`
+  pattern (`scripts/check-contract.sh:53`) would have caught these five fields and nothing else. It
+  treats ACDP as special when the defect is general — the gate had never watched fields at all — and
+  it has to be *remembered* at each change, which is the exact property `rpc-manifest.txt` was
+  introduced to remove. A probe you must remember to add is a probe that will be missing on the change
+  that matters.
+- **Decision.** Mirror the RPC manifest exactly one level down: a committed declaration
+  (`contract/field-manifest.txt`), set-compared per language in both directions
+  (`scripts/check-contract.sh:364`), exiting 6 with the field named (`:489`). `STREAM`/`EVENTS` stay as
+  they are — they gate *event* fields for a different reason (BSR publication lag) and are not what
+  this replaces. Scope is `seam.api.v1` only; `seam.event.v1` is already covered by those probes and
+  by the vendored-spec gate, and duplicating it would mean two gates failing for different reasons on
+  one cause.
+- **Two extraction traps, both live in the stubs today rather than hypothetical.**
+  1. **Do not read `__slots__`.** `ResumeRequest.raise` and `AdminResumeRequest.raise` are real
+     fields, but `raise` is a Python keyword, so the `.pyi` generator emits neither an attribute nor a
+     `__slots__` entry — only `RAISE_FIELD_NUMBER`. Measured: `__slots__` gives 221, protobuf-es gives
+     223. A `__slots__`-derived manifest is permanently red on two fields the documented escape can
+     never clear, and blind to any future field named `class`, `from`, `import`, `lambda`, `return`…
+     Reading `*_FIELD_NUMBER` lowercased reconciles both sides at 223 = 223, zero diff.
+  2. **Exclude synthetic map entries by *nesting*, never by the name `*Entry`.** Python emits
+     `AuthorizeRequest.FeaturesEntry` and `RunDecisionRequest.FeaturesEntry`; protobuf-es emits no type
+     for either. Filtering on the name looks equivalent and is not: **`AuditEntry` is a real top-level
+     message** with `seq` and `decision_id`, and a name filter drops it from *both* sides — symmetric,
+     so the gate stays green while going blind to a real message. That is this manifest's own failure
+     mode, reintroduced by the fix for a different one. The exclusion is structural: top-level classes
+     at column 0, their fields at four spaces, nested classes' fields at eight and never collected
+     (`contract/field-manifest.txt:48-50`).
+- **The escape names its authoritative side.** `--write-manifest` writes **both** manifests from
+  **Python** (`scripts/check-contract.sh:195`), with TypeScript as the cross-check
+  (`:210`) — one command to document, not two. If it wrote from a side that cannot see every field, it
+  would produce failures the documented escape could never clear, which is exactly what `raise` does
+  under a `__slots__` extractor.
+- **The refusal deliberately puts the escape second.** It says decide first, then run it
+  (`scripts/check-contract.sh:484`). A failure message that leads with the fix trains the reader to
+  run the fix, which turns the gate back into the silent pass it replaced.
+- **What it does NOT check: names only, not tags or types.** A field retagged or retyped is
+  wire-breaking and invisible here, exactly as the RPC manifest records names and not signatures.
+  `buf breaking` covers that; a green gate here is not a wire-compatibility claim.
+- **The cost, stated rather than discovered.** Every additive proto field now reddens CI until someone
+  decides and runs the escape. That is the same trade already accepted for verbs. Measured churn is
+  low — zero fields were added across the last 78 runtime commits before ACDP — and the first thing
+  the gate did was refuse five real ones, which is the trade paying out immediately.
+- **The five ACDP fields are declared and deliberately NOT interpreted.** The gate refused them (exit
+  6, naming all five in both languages); that refusal forced a decision, and the decision is recorded
+  in the manifest header itself rather than only here. They are carried — `resolve_context` returns
+  `pb.ContextBinding` directly — but not read: this SDK does not compute `context_digest`, and
+  `verify/src/verify.rs` does not read these slots. `key_status` is a closed PascalCase vocabulary and
+  `resolved_status` an open lowercase one, both byte-identical to the digest preimage, so any SDK-side
+  re-spelling silently breaks third-party recomputation. Declaring without interpreting is what stops
+  that happening by accident. Wiring them is Phase 9.
+- **Falsifiability.** Both directions are driven red in `python/tests/test_field_manifest_gate.py:146`
+  and `:165`, against temporary copies so no test can corrupt the gitignored stub trees.
+- **Status:** ACCEPTED.
+
 ### The decision
 
 **Do not yank 0.7.39 through 0.7.43. Document them.** `COMPATIBILITY.md:134` carries the row and

@@ -206,7 +206,7 @@ Rejected alternative: closing #50 in Phase 3's commit. The issue's checklist inc
 
 ### Phase 5 — A field-level contract manifest: fix the class, not the instance
 
-**Status:** TODO
+**Status:** DONE (2026-08-31). **Divergence: the manifest is 228 entries, not the planned 223.** The plan's measurement was taken before ACDP P1a/P2 reached the BSR. Both extractors still agree at **223 against the local stub tree** — exactly as planned, all four canaries present, zero diff — but CI regenerates from the BSR on every run and sees **228**. The gate was built at 223, made to **refuse the five real ACDP fields** (exit 6, naming each in both languages, captured verbatim in `PROGRESS.md`), and only then were they adopted with the decision recorded in the manifest header. Committing 223 would have meant knowingly-red CI; adopting silently would have wasted the tripwire. The refusal happened, and it is on the record.
 
 **Delivers:** `check-contract` refuses when a `seam.api.v1` message field appears in the generated stubs that the manifest does not declare — closing the hole that let `collective_outcome` regenerate in unwired, and arming the tripwire for ACDP tags 7-10.
 
