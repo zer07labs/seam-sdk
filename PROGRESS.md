@@ -1044,13 +1044,13 @@ them change what the phases do:
 | `.github/workflows/ci.yml` (cont.) | At `960cf81`: the smoke step's `kill "$pid"` (line 290), immediately followed by `exit 0` — it never waited for the process it started. Replaced by `reap()`. |
 | `.github/workflows/ci.yml:336-347` | The python live step (the `pytest` line is `.github/workflows/ci.yml:346`). Phase 2 added an `if: failure()` log dump + artifact upload at the **end of the job**, after the TypeScript step at `.github/workflows/ci.yml:348` — a step is evaluated at its own position, so anything placed earlier cannot see a TypeScript failure. |
 | `.github/workflows/ci.yml:704` | `ADVISORY: integration,spec-pin`. Advisory means *may skip*, not *may fail* — a red `integration` still reddens `ci-ok`, which lists it at `.github/workflows/ci.yml:689`. |
-| `scripts/check-contract.sh:203` | `fields_python`; `:218` `fields_ts`. **Phase 5 parameterises both on stub path + package** — measured, they already yield 90/90 on the event stubs with zero one-sided entries. |
-| `scripts/check-contract.sh:240` | `manifest_fields` — its stripper claims every `#`-free line, which is why the event surface cannot share `contract/field-manifest.txt`. |
-| `scripts/check-contract.sh:472-476` | `--write-manifest` deletes `contract/expected-local-lag.txt` (the guard is `:472`, the `rm -f` is `:473`). The second reason the event surface needs its own file. |
-| `scripts/check-contract.sh:583` | The corrected comment #88 was filed from. **Phase 5 must rewrite it** or it becomes false. |
+| `scripts/check-contract.sh:226` | `fields_python`; `:243` `fields_ts`. **Phase 5 parameterises both on stub path + package** — measured, they already yield 90/90 on the event stubs with zero one-sided entries. |
+| `scripts/check-contract.sh:266` | `manifest_fields` — its stripper claims every `#`-free line, which is why the event surface cannot share `contract/field-manifest.txt`. |
+| `scripts/check-contract.sh:566-570` | `--write-manifest` deletes `contract/expected-local-lag.txt` (the guard is `:566`, the `rm -f` is `:473`). The second reason the event surface needs its own file. |
+| `scripts/check-contract.sh:678` | The corrected comment #88 was filed from. **Phase 5 must rewrite it** or it becomes false. |
 | `contract/event-field-manifest.txt` | **Phase 5 creates.** 90 fields, 11 messages, zero enums, zero nested messages — all measured, not assumed. |
-| `python/tests/test_field_manifest_gate.py:54` | `_run()` — the scratch-copy-plus-env-override pattern Phase 5's tests mirror. Nothing may mutate the real gitignored stub trees. |
-| `python/tests/test_compatibility_citations_resolve.py:607` | The `submitCommit` `ANCHORED` needle into `ts/src/client.ts` (`:606` is the `collectiveOutcomeOf` one; Phase 4 added two more at `:617-618`). The plan predicted the insertion would break the `submitCommit` anchor for any K of 4+ lines *except* a 125-131 window where it would go green against the unrelated `:804` citation. **Measured K = 101 at the time of that check, 103 as finally committed** — outside that window at every intermediate value, and the anchor failed red-first as required before `PROGRESS.md` was touched. |
+| `python/tests/test_field_manifest_gate.py:69` | `_run()` — the scratch-copy-plus-env-override pattern Phase 5's tests mirror. Nothing may mutate the real gitignored stub trees. |
+| `python/tests/test_compatibility_citations_resolve.py:625` | The `submitCommit` `ANCHORED` needle into `ts/src/client.ts` (`:606` is the `collectiveOutcomeOf` one; Phase 4 added two more at `:617-618`). The plan predicted the insertion would break the `submitCommit` anchor for any K of 4+ lines *except* a 125-131 window where it would go green against the unrelated `:804` citation. **Measured K = 101 at the time of that check, 103 as finally committed** — outside that window at every intermediate value, and the anchor failed red-first as required before `PROGRESS.md` was touched. |
 
 ## Phase log
 
@@ -1826,3 +1826,112 @@ tests / 130 pass / 0 fail · `tsc` + `npm run build` clean · `ruff check` + `ru
 clean · `scripts/` 100 passed · contract gate exit 6, naming exactly the five recorded lag fields.
 The `enforced` mutation set re-run at 2 / 1 / 1 / 4 failures where it was 0 / 0 / 0 / 2. Missing
 generated tree re-measured: still six failing tests.
+
+### Phase 5 — the `seam.event.v1` field surface stops being unmanifested (#88) · **DONE**
+
+`contract/event-field-manifest.txt` declares all **90** `seam.event.v1` fields across **11** messages,
+compared per language in both directions plus python-against-ts directly, exiting **8**. The last
+contract surface this SDK generates from that nothing checked as a whole.
+
+**What was actually covering it before, measured rather than assumed.** Four presence probes
+(`session_lifecycle`, `chain_head_attestation`, `ciphertext_digest`, `AuditEntryEvent.actor`) out of
+ninety fields — the four the SDK decodes. They never fire on anything else added, removed or renamed.
+`scripts/check_vendored_spec.py` only catches drift in `verify/docs/seam-event.v1.md`, and only when
+the runtime also edits that markdown doc; a `.proto` change with no spec-doc edit is invisible to it.
+So the outbox contract `seam-connectors` consume and `verify/` reads could grow a field, reach every
+consumer through this SDK, and leave every gate green. Red-first, captured against `HEAD`'s script
+run from the repo root: **exit 6, the api NOTE, and zero lines mentioning the event field surface** —
+and no `SEAM_PY_EV`/`SEAM_TS_EV` override existed, so a mutated event tree could not even be shown to
+it without mutating the real gitignored stubs.
+
+**The extractors are parameterised, not duplicated.** `fields_python` takes the stub path;
+`fields_ts` takes the path and the proto package, passed as an awk variable rather than interpolated
+into the program text so a package can never be read as a regex. With only those two substitutions
+the existing extractors yield 90 and 90 with **zero** one-sided entries. A second pair would have
+been a second place for the nesting and keyword-name bugs those two already solved, and only one copy
+would ever get the fix. `fields_python` deliberately takes no package argument: a `.pyi` carries no
+package qualification anywhere, so the file *is* the selector — stated in its header, since the
+asymmetry otherwise reads as an oversight.
+
+**A separate file, and the reason is in the code rather than in taste.** `manifest_fields` is
+`grep -vE '^\s*(#|$)' | grep -v '#'` — a **negative** filter, "everything that is not an enum line".
+An event line carries no `#`, so it would land in the api field set and be reported MISSING from the
+api stubs. No delimiter fixes that: `%`, `@`, `!` are all free in a proto identifier and all still
+land in `manifest_fields`' set, so a third partition is unreachable whatever character it picks.
+Sharing the file means rewriting the api gate's filter for the event gate's benefit. Second reason:
+`--write-manifest` deletes `contract/expected-local-lag.txt` on every api field write, and the api
+surface has a real recorded lag while the event surface has none — one file means every event rewrite
+destroys the api recording. The delete is now explicitly scoped to the api write, with the reasoning
+next to it.
+
+**Placement is the whole design, and it is the one thing a single test cannot pin.** On every local
+checkout the api field surface disagrees (the recorded ACDP lag), so `exit 6` always fires. A probe
+after it never runs locally — `make check-contract` would gate nothing on `seam.event.v1`, forever,
+while looking exactly like a run that did. A probe that exits 8 on the spot preempts the api report.
+Correct is the third option: computed in the same single pass as `field_surface_rc`/`enum_surface_rc`,
+reported alongside them, decided once at the end — which is what the script already argues for the
+enum probe ("a script that exited on the field report first would never show the enum one").
+
+Both wrong placements were **built and measured**, not reasoned about. Exiting on the spot is caught
+by `test_both_surfaces_disagreeing_at_once_reports_both_and_exits_8` and only by it — the api report
+vanishes from the output. Reporting after the exit is caught by the three single-surface cases, which
+go exit 0 instead of 8; that variant leaves the both-surfaces test green, since the api failure
+carries the block. The test docstring says which case catches which, because a reader looking for one
+decisive test will not find one.
+
+**Precedence: 8 wins over 6, decided rather than inherited.** 6 is the code a local checkout produces
+on every single run and that CI and `CLAUDE.md`'s Gotchas both say to read past after checking the
+NOTE. An event regression exiting 6 would be a real failure wearing the code that means "ignore
+this". Exit **7** is shared with the api-side asserts, and that is not inconsistent with 8 being
+distinct from 6: 7 names a **failure class** — "a structural precondition the extractors assume
+failed" — which is the same class for either contract, while 6 and 8 name a **contract**.
+
+**Zero enums and zero nested messages are asserted, not assumed.** Both facts are load-bearing and
+both would fail silently *and symmetrically*: a nested message's fields are dropped from Python and
+TypeScript at once by the shared extractors, and an enum value has nothing on either side to compare
+against. An empty event-enum partition compared in both directions would pass for the wrong reason
+and keep passing after the contract grew an enum — the exact vacuity
+`plans/gate-blindness-hardening.md` exists about. `assert_event_surface_preconditions` refuses
+(exit 7) on any of the four shapes, and all four are proved red.
+
+**`--write-manifest` now writes three files, and that is a hazard the same commit had to close.**
+`python/tests/test_field_manifest_gate.py`'s `manifests` and `enum_manifests` fixtures call the real
+script with `--write-manifest`; without `SEAM_EVENT_FIELD_MANIFEST` in `_run()`, an ordinary `pytest`
+run would have rewritten the committed `contract/event-field-manifest.txt` as a side effect — verbatim
+the hazard that fixture's own docstring already names for the RPC manifest. Beyond the write: every
+`returncode == 0` assertion in that file would otherwise have depended on the committed event manifest
+agreeing with the ambient event stubs. That is true today, which is exactly what makes it dangerous —
+an api-gate test silently decided by an unrelated contract and by whichever checkout it runs in.
+Verified after the change: a full `pytest` run leaves `git diff contract/` empty.
+
+**The `:583` comment was rewritten, not amended.** It claimed the event gap "is real, not merely
+undocumented" and that closing it "needs its own manifest". Both sentences are now false, and a
+comment that describes a closed gap as open is worse than no comment. It now names
+`contract/event-field-manifest.txt`, and says explicitly why the four presence probes survive it
+rather than being duplication — they fire when the manifest is absent or just rewritten, and they
+assert what the SDK *reads* rather than what the contract *contains*. `test_the_four_named_presence_probes_are_still_there`
+pins both halves, so a later reader cannot delete them as redundant.
+
+**`Makefile`'s exit-code comment was already stale before this phase**, listing 0-4 when 5, 6 and 7
+had all shipped. Adding 8 to a list that stopped at 4 would have shipped a comment more wrong than
+the one it replaced, so all four were added together and the omission is recorded in the comment
+itself.
+
+**Also:** `plans/README.md`'s Active table gained a row for this plan, which had none — and one for
+`gate-blindness-hardening.md`, which had none either despite being the plan this repo's whole vacuity
+discipline comes from and which nearly every guard test added since cites.
+
+**Phase-5 verification:** python **862 passed / 17 skipped** (851 before; +11 test functions, one of
+them parametrized four ways) · `contract/event-field-manifest.txt` 90 field lines, 11 messages, no
+field line carrying `#` · independently reproducible:
+`grep -c FIELD_NUMBER python/seam_sdk/_gen/seam/event/v1/seam_event_pb2.pyi` → 90 and
+`grep -c '@generated from field:' ts/gen/seam/event/v1/seam_event_pb.ts` → 90 ·
+`STREAM=1 EVENTS=1 ./scripts/check-contract.sh` on the real tree still exits **6**, still NOTEs
+exactly the five recorded `ContextBinding` lag fields, **and prints
+`OK — the event field surface matches contract/event-field-manifest.txt in both languages`** plus
+`PRESENT all 90 declared seam.event.v1 fields` for both languages — so "checked and clean" is
+distinguishable from "never ran", which is the failure mode the placement guards against ·
+`git diff contract/` empty after a full pytest run · `grep -n 'has NO field-surface manifest'
+scripts/check-contract.sh` no longer matches and `contract/event-field-manifest.txt` appears 5 times ·
+`ci-ok`'s `needs:` and `ADVISORY` untouched.
+

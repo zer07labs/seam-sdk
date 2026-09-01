@@ -523,3 +523,74 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   still present and its five fields still match the local/BSR gap at that point, the split recorded
   here is not a window and this assumption needs to be revisited, per the plan's own Open Q3 text.
 - **Status:** UNCONFIRMED.
+
+## `seam.event.v1` gets its own manifest file, not a partition of the api one
+
+- **Plan:** `plans/consumer-decoders-and-event-surface.md`, Phase 5
+- **Assumed:** the two contract surfaces this SDK generates from are better served by two manifest
+  files with two exit codes than by one file with a third partition — even though everything else in
+  the field gate (extractors, comparison, write escape) is shared.
+- **Chose:** `contract/event-field-manifest.txt`, exit 8, precedence over exit 6. The decisive reason
+  is mechanical rather than aesthetic: `manifest_fields`' stripper is a NEGATIVE filter,
+  "everything that is not an enum line", so a third partition is unreachable *whatever* delimiter it
+  picks — `%`, `@` and `!` are all free in a proto identifier and all still land in its set. Sharing
+  the file means rewriting the api gate's filter for the event gate's benefit. Second reason:
+  `--write-manifest` deletes `contract/expected-local-lag.txt` on every api field write, and the api
+  surface has a recorded lag while the event surface has none.
+- **Alternatives:** one file with a `seam.event.v1/` line prefix (still `#`-free, so
+  `manifest_fields` still claims it — trades a file boundary for a convention the stripper cannot
+  see); reuse exit 6 (makes a real event regression indistinguishable at the exit status from the
+  recorded api lag that CI and `CLAUDE.md` both say to read past).
+- **Blast radius if wrong:** low and cheap to reverse. Merging the two files later is a stripper
+  rewrite plus a manifest concatenation; nothing outside `scripts/check-contract.sh` and its two test
+  files reads either manifest.
+- **Owner / re-open trigger:** whoever next needs an ENUM partition on the event side. That is the
+  moment the "no enums" precondition is deliberately retired, and it is also the moment the
+  one-file-with-two-partitions question is worth re-asking, since the event file would then need the
+  same negative-filter problem solved anyway.
+- **Status:** UNCONFIRMED.
+
+## `PolicyEnforcement` and `CollectiveOutcome` stay off `ts/src/index.ts`'s named export list
+
+- **Plan:** `plans/consumer-decoders-and-event-surface.md`, Open question 1
+- **Assumed:** consumers reach the decoded DTO types through inference from
+  `policyEnforcementOf`/`collectiveOutcomeOf`'s return types and reach the generated schemas through
+  `pb.`, so neither hand-written DTO type needs promoting to a root named export.
+- **Chose:** leave both off. Phase 4 did not need them there — `ts/tests/policy_enforcement.test.ts`
+  imports `PolicyEnforcementSchema` straight from the generated module, exactly as
+  `collective_outcome.test.ts` does — and the public surface is easier to widen later than to narrow.
+- **Alternatives:** add both to the named type list now. Rejected as an unforced public-surface
+  decision, and it carries a hazard that runs OPPOSITE to the intuition: both names are also declared
+  by the generated module, so adding the *generated* name to the explicit list makes the generated
+  type win the root name and silently displace the hand-written DTO. Proven — `tsc --noEmit` exits 0
+  and a `$typeName` probe compiles. The dual-declaration comment at `ts/src/index.ts:18` records it.
+- **Blast radius if wrong:** low. Adding a named export later is additive; removing one is breaking.
+  The failure mode of the current choice is ergonomic (a consumer writes `ReturnType<typeof …>`),
+  not correctness.
+- **Owner / re-open trigger:** whoever next has a consumer that genuinely cannot name the type — or
+  the next time a third decoder of this shape lands, since three is when a pattern is worth exporting
+  deliberately rather than case by case.
+- **Status:** UNCONFIRMED.
+
+## `policy_enforcement_of`'s presence enumeration is orientation, not contract
+
+- **Plan:** `plans/consumer-decoders-and-event-surface.md`, Phase 3 / Open question 2
+- **Assumed:** the three sites that carry `policy_enforcement` on a `SessionStep` (commit-terminal,
+  sealed-idempotent replay, pending-commitment seal retry) are stable enough to document, and the
+  runtime will not quietly add a fourth.
+- **Chose:** enumerate the three rather than state a general rule, and say in the docstring that the
+  list describes the runtime as measured rather than a guarantee to branch on. Every short general
+  rule anyone has written for this field has been wrong, including both in the proto's own comment
+  and one in the issue that measured them.
+- **Alternatives:** state a rule ("populated on any step that reports a seal") — self-contradictory,
+  since the expiry seal reports a seal and carries no `policy_enforcement`. Or say nothing — leaves a
+  reader to infer presence from `decision_id`, which the proto comment's analogy actively encourages
+  and which is exactly backwards.
+- **Blast radius if wrong:** low for correctness (`None` is returned either way and the decoder does
+  not branch on the list), medium for trust: a docstring that enumerates and is wrong is worse than
+  one that declines to enumerate.
+- **Owner / re-open trigger:** seam-runtime#526. If `freshly_sealed` lands — a client currently
+  cannot tell whether *this* call performed the seal or re-reported one — this docstring is the first
+  thing that goes stale.
+- **Status:** UNCONFIRMED.
+

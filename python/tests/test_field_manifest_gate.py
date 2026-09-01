@@ -36,6 +36,8 @@ REPO = pathlib.Path(__file__).parents[2]
 SCRIPT = REPO / "scripts" / "check-contract.sh"
 PY_STUB = REPO / "python" / "seam_sdk" / "_gen" / "seam" / "api" / "v1" / "seam_pb2.pyi"
 TS_STUB = REPO / "ts" / "gen" / "seam" / "api" / "v1" / "seam_pb.ts"
+#: The committed seam.event.v1 manifest, read only to SEED scratch copies — never driven directly.
+EVENT_MANIFEST = REPO / "contract" / "event-field-manifest.txt"
 LAG_FILE = REPO / "contract" / "expected-local-lag.txt"
 
 
@@ -49,6 +51,19 @@ def _require_stubs() -> None:
             "generated stubs absent — run `make generate` "
             "(this gate inspects stubs, it cannot invent them)"
         )
+
+
+def _seed_event_manifest(scratch_dir: pathlib.Path) -> pathlib.Path:
+    """A scratch copy of the committed event manifest, created once per scratch directory.
+
+    A copy and not an empty file: the script reports an absent event manifest as a failure, so an
+    empty seed would turn every exit-0 assertion in this file into a red for a reason none of these
+    tests are about. A copy and not the original: `--write-manifest` writes it.
+    """
+    dst = scratch_dir / "event-field-manifest.txt"
+    if not dst.exists():
+        dst.write_text(EVENT_MANIFEST.read_text(encoding="utf-8"), encoding="utf-8")
+    return dst
 
 
 def _run(
@@ -65,6 +80,21 @@ def _run(
         "SEAM_RPC_MANIFEST": str(rpc_manifest),
         "STREAM": "1",
         "EVENTS": "1",
+        # The EVENT field manifest is redirected for the same two reasons the RPC one is, and both
+        # bite the moment the script grew an event gate:
+        #
+        #  1. `--write-manifest` now writes THREE files. Without this, `manifests` and
+        #     `enum_manifests` would rewrite the repo's real `contract/event-field-manifest.txt` as a
+        #     side effect of running this suite — verbatim the hazard `manifests`' own docstring
+        #     already names for `contract/rpc-manifest.txt`.
+        #  2. Every `returncode == 0` assertion in this file would otherwise depend on the COMMITTED
+        #     event manifest agreeing with the ambient event stub trees. That is true today (90/90/90,
+        #     no lag) — which is exactly what makes it dangerous: an api-gate test would be silently
+        #     decided by an unrelated contract and by whichever checkout it happens to run in.
+        #
+        # Seeded from the committed file rather than left empty, since an absent manifest is itself a
+        # failure the script reports. See `_seed_event_manifest`.
+        "SEAM_EVENT_FIELD_MANIFEST": str(_seed_event_manifest(field_manifest.parent)),
     }
     # Only the enum-mutation tests need these — they drive the real script against SCRATCH COPIES of
     # the stub trees (never the real gitignored ones; see the module docstring) so an enum value can
@@ -453,7 +483,10 @@ def test_the_ts_extractor_excludes_nested_types_rather_than_misattributing_them(
         "  /**\n   * @generated from field: string delta = 1;\n   */\n  delta: string;\n};\n"
     )
     extracted = subprocess.run(
-        ["bash", "-c", f'{_ts_extractor_src()}\nTS_GEN="{stub}"\nfields_ts'],
+        # `fields_ts` takes the stub path and the proto package as arguments — it is shared
+        # with the seam.event.v1 gate rather than duplicated for it, so the package is no longer
+        # baked into the awk program text.
+        ["bash", "-c", f'{_ts_extractor_src()}\nfields_ts "{stub}" seam.api.v1'],
         cwd=REPO,
         capture_output=True,
         text=True,

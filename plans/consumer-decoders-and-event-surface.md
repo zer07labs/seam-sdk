@@ -790,7 +790,9 @@ seam-runtime#526 sourcing as the Python docstring, so neither language is the au
 
 ### Phase 5 — A field-surface manifest for `seam.event.v1`
 
-**Status:** TODO
+**Status:** **DONE** (2026-09-01). No divergence from the planned approach. The two wrong placements
+the Approach section rules out were both built and measured rather than argued: each is caught by a
+different test, recorded in `PROGRESS.md` and in the test docstring.
 
 **Delivers:** `contract/event-field-manifest.txt` declares all 90 `seam.event.v1` message fields, set-
 compared per language in both directions by `scripts/check-contract.sh`, with a `--write-manifest`
