@@ -488,6 +488,29 @@ Three independently sufficient causes of a 0.7.17-shaped incident, closed.
   against the shipped gate, and the 7 that pass under both are the fail-closed ones, which is what
   shows the wait did not soften anything.
 
+### Added — the evaluation verbs and `AuthorizeRequest.subjects` (the entry `c49d005` never wrote)
+
+- **`SubmitEvaluation` / `SubmitObjection`** on `SeamCoordination`, wrapped in both Python clients
+  (sync and async) and in TypeScript. `submit_evaluation(session_id, evaluator, proposal_id,
+  recommendation, *, confidence=None, reason="", rationale_ref=None, usage=None)` and
+  `submit_objection(session_id, objector, proposal_id, reason, severity, *, usage=None)`.
+
+  **`confidence` expresses absence, and that is the whole point of it.** It is `optional` on the wire
+  (`proto3_optional`), so omitting it means *declined to claim* — not `0.0`. The clients map an
+  omitted value to field-absent and never default it, because MACP's evaluator gates commitment on
+  that value: a fabricated zero is a manufactured input to a governed decision. `seam-adapters`
+  stopped fabricating one deliberately, and an SDK that zero-filled would re-create the defect one
+  layer down, invisibly.
+
+  **The parameter is `recommendation`, not `evaluation`** — matching the proto field name. The
+  divergence from the vocabulary `seam-adapters` uses at its own boundary is deliberate and must not
+  be "corrected": renaming it here would make the SDK disagree with the contract it is generated from.
+
+- **`AuthorizeRequest.subjects = 12`**, carried on the authorize path.
+
+- These shipped in `c49d005` without a changelog entry. This records them rather than leaving the
+  adoption legible only from git history.
+
 ### Added — `collective_outcome` readable from a `SessionStep`, not just a `DecisionResponse`
 
 - **`collective_outcome_of()` / `collectiveOutcomeOf()` now accept a `SessionStep`.** `submit_commit`

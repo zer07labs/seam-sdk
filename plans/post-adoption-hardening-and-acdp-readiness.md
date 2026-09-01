@@ -176,7 +176,7 @@ Rejected alternatives: a separate `collective_outcome_of_step` twin (two impleme
 
 ### Phase 4 — Close issue #50: docs true-up and disposition
 
-**Status:** TODO
+**Status:** DONE (2026-08-31). **Divergence, in our favour:** the phase's edge case allowed for the BSR probe being impossible without a `buf registry login`. It was possible — the module commit was re-probed (`4bf014bd5b194010b569ec6bbc006d60`), so the README carries a real stamp rather than the fallback disclaimer.
 
 **Delivers:** issue #50 closed against evidence, and the two docs that describe the adopted surface made true.
 

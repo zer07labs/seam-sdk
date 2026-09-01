@@ -604,3 +604,30 @@ are recorded rather than fixed.
   the load-bearing cases. The other five (Python) and six (TS) are proven load-bearing.
 - **Correction to the Phase 3 commit message:** it reports the Python unknown-verdict mutation as
   "6 red (2 new)". The verifier measured 6 red with **3** new. Under-counted, not over-claimed.
+
+### Phase 4 — #50 closed against evidence; README and CHANGELOG made true · 2026-08-31
+
+- **The BSR probe was possible, so the fallback was not used.** The phase allowed for
+  `buf registry login` being unavailable and for stamping a disclaimer instead. `buf` was
+  authenticated: the module commit is re-probed at `4bf014bd5b194010b569ec6bbc006d60`, read
+  immediately **before and after** the descriptor build and unchanged both times, so the stamp and
+  the surface it describes come from one module state rather than two moments either side of a push.
+  The descriptor was byte-identical to an independent pull made earlier in the session.
+- **`buf breaking … --config FILE` against the previously recorded probe exits 0** — re-derived, not
+  inherited from the line above it in the README.
+- **#50's substantive item checked out.** `EvaluationRequest.confidence` is `proto3_optional=True` on
+  the live descriptor, and all three client layers map an omitted value to field-absent with an
+  explicit *"NEVER default it to 0.0"*. `rationale_ref` (field 7, also optional) is exposed too,
+  though the issue never asked for it.
+- **A correction recorded in the close comment:** #50 names `EvaluationPayload.confidence`. No
+  `EvaluationPayload` message exists in `seam.api.v1`; the field is `EvaluationRequest.confidence`
+  (field 5). The behaviour asked for was right, only the name was wrong — and the plan specifically
+  warned not to restate that framing in a doc.
+- **The `recommendation` vs `evaluation` divergence is recorded as deliberate**, so a future reader
+  does not "correct" the SDK into disagreeing with the proto it is generated from.
+- **The README now also states what the SDK has *not* adopted** — `ContextBinding` tags 7–11 are on
+  the contract and absent from this repo's field-level expectations. Saying so in the surface
+  blockquote is what keeps Phase 9's regeneration from looking like an oversight.
+- **The `No yank` citation was repointed a fourth and fifth time** (`:563-568` → `:586-591`), and a
+  `README.md` citation moved `:128` → `:147`. Every changelog or README edit moves them. Phase 8.
+- **Gates:** python 574 passed/17 skipped · ruff clean.
