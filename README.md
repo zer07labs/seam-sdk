@@ -104,9 +104,17 @@ and probes the emitted stubs:
 > TypeScript client map an omitted value to field-absent, never to `0.0`.
 >
 > It further carries ACDP D3 receipt provenance — `ContextBinding` tags 7–10 (`content_hash`,
-> `receipt_hash`, `key_status`, `resolved_status`) — and P2 `retraction` (tag 11). **This SDK has not
-> adopted those five fields yet**; they are present on the contract and absent from this repo's
-> field-level expectations, which is the gap the contract manifest closes.
+> `receipt_hash`, `key_status`, `resolved_status`) — and P2 `retraction` (tag 11). All five are
+> **declared and deliberately not interpreted**: they are in `contract/field-manifest.txt`, so the
+> gate knows about them and a sixth would be refused by name, and they arrive on the generated
+> `ContextBinding` that `resolve_context` / `resolveContext` return — no wrapper stands between a
+> caller and them. What this SDK does *not* do is read them, and that is a decision rather than a
+> gap: `verify/` does not compute `context_digest`, so there is nothing here to check them against.
+>
+> Two of the five carry vocabularies that are **wire commitments, byte-identical to the digest
+> preimage**: `key_status` is a closed, PascalCase set; `resolved_status` is an open, lowercase one.
+> This SDK passes both through verbatim. Do not case-fold, normalise or map them — a re-spelling
+> silently breaks a third party's digest recomputation, and nothing in this repo would notice.
 >
 > **Additive:** `buf breaking` against the previously recorded probe
 > (`7a28eb9417894fe29e33390bf2eccfaf`, 2026-08-23) is clean under `FILE` — buf's strictest ruleset,

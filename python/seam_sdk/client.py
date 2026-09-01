@@ -718,7 +718,14 @@ class SeamClient:
     def resolve_context(
         self, refs: Sequence[str], *, timeout: float = DEFAULT_TIMEOUT_S
     ) -> Sequence[pb.ContextBinding]:
-        """Resolve context refs to their bindings (fidelity, classification, lineage, version)."""
+        """Resolve context refs to their bindings.
+
+        Returns the generated `ContextBinding` unchanged. Nothing is projected or renamed here, so
+        every field the contract carries arrives — including the ACDP receipt slots (`content_hash`,
+        `receipt_hash`, `key_status`, `resolved_status`) and `retraction`, which this SDK passes
+        through without interpreting. `key_status` and `resolved_status` are byte-identical to the
+        `context_digest` preimage; do not case-fold or normalise them.
+        """
         return list(
             self._context.ResolveContext(
                 pb.ResolveContextRequest(refs=list(refs)), timeout=timeout

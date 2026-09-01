@@ -534,6 +534,30 @@ Three independently sufficient causes of a 0.7.17-shaped incident, closed.
   every open/propose/vote/ballot step as well as on the sealed-idempotent replay and the
   pending-commitment seal retry. `None`/`undefined` there means "not yet decided", never "unsupported".
 
+### Added — ACDP P1a/P2 fields reach the generated types, declared and not interpreted
+
+- **`ContextBinding` now carries eleven fields, not six.** The runtime sealed four ACDP D3 receipt
+  slots into the v3 record digest (`content_hash` = 7, `receipt_hash` = 8, `key_status` = 9,
+  `resolved_status` = 10; seam-runtime#520) and added P2 `retraction` = 11, served on
+  `ResolveContext` and deliberately never sealed (seam-runtime#523). Regenerating against the BSR
+  brings all five onto the generated type.
+
+  **No wrapper change was needed, by design.** `resolve_context` / `resolveContext` return the
+  generated `ContextBinding` directly — nothing projects or renames — so the five fields arrive at
+  callers with no SDK work. A consumer that already reads a binding gets them by regenerating.
+
+  **They are declared, not interpreted, and that is a decision.** All five are in
+  `contract/field-manifest.txt`, so the contract gate knows about them and would refuse a *sixth*
+  by name. This SDK does not read them: `verify/` does not compute `context_digest`, so there is
+  nothing here to check a receipt slot against, and inventing a projection would create a second
+  spelling of a wire commitment for no verification gain.
+
+  **Two vocabularies that a consumer must not re-spell.** `key_status` is a **closed, PascalCase**
+  set; `resolved_status` is an **open, lowercase** one. Both are byte-identical to what enters the
+  `context_digest` preimage. This SDK passes both through verbatim, and a consumer that case-folds,
+  normalises or maps either one silently breaks third-party digest recomputation — a failure with
+  no local symptom, which is why it is stated here rather than left to be inferred.
+
 ### Changed — the vendored `seam-event.v1` spec, refreshed for ACDP P1a and P2
 
 - **`verify/docs/seam-event.v1.md` re-pinned `5d8c177` → `3b3d4ae`** (+125/-28). The runtime landed

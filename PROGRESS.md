@@ -526,6 +526,70 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   That is Phase 5's subject exactly; regenerating before the manifest exists would adopt the fields
   silently and waste the tripwire.
 
+### Phase 9 — ACDP P1a/P2 adopted: declared, deliberately not interpreted · 2026-08-31
+
+- **One divergence from the plan, stated first because it changes what the evidence is.**
+  `make generate` was **not run locally** — the operator forbade it for this session. So the
+  regenerated-stub evidence is **CI's, not this checkout's**. That is sound rather than a shortcut:
+  the stub trees are gitignored, nothing committed depends on them, and CI runs `make generate` from
+  the BSR (`.github/workflows/ci.yml:108`) and *then* the gate (`:122`) on every run — PR #82 was
+  green at 228 = 228, which is the regeneration this phase asks for, executed by the machine that
+  will execute it on every future PR.
+- **AC3, the gate's failing output, in the direction this checkout can actually demonstrate.**
+  Phase 5 captured the manifest-behind-stubs direction against temporary copies. Today the *live*
+  local state gives the other direction — manifest at 228, this checkout's stubs at 223 — and the
+  gate exits **6**, naming all five, independently per language:
+
+```
+ERROR: the generated FIELD surface disagrees with contract/field-manifest.txt:
+  MISSING from the python stubs (stale/partial generation, or a REMOVED field):
+    - ContextBinding/content_hash
+    - ContextBinding/key_status
+    - ContextBinding/receipt_hash
+    - ContextBinding/resolved_status
+    - ContextBinding/retraction
+  MISSING from the ts stubs (stale/partial generation, or a REMOVED field):
+    - ContextBinding/content_hash
+    - ContextBinding/key_status
+    - ContextBinding/receipt_hash
+    - ContextBinding/resolved_status
+    - ContextBinding/retraction
+
+ERROR: A field MISSING from the stubs is either a stale generation — rerun 'make generate' (BSR) or
+ERROR: 'make generate-local RUNTIME=../seam-runtime' — or a field REMOVED from the contract, which is
+ERROR: a breaking change and must be handled, never silently rewritten away.
+```
+
+  A developer with pre-ACDP stubs meets exactly this, and it tells them what to do. The tripwire
+  fires in both directions and neither is silent.
+- **AC4, the manifest diff, was closed in Phase 5** and is recorded there: 228 entries, the 223→228
+  divergence explained (the plan measured the surface before ACDP reached the BSR), and every
+  `ContextBinding` field present — all eleven, `content_hash` / `receipt_hash` / `key_status` /
+  `resolved_status` / `retraction` among them.
+- **No wrapper change was needed, exactly as the plan predicted** — verified rather than assumed:
+  `resolve_context` (`python/seam_sdk/client.py:718`) and `resolveContext` (`ts/src/client.ts:804`)
+  return the generated `ContextBinding` straight through, so the five fields reach callers with no
+  SDK work. What both *did* carry was a docstring enumerating four of the eleven fields as if that
+  were the set; both now say what they actually return, and both carry the vocabulary warning.
+- **`README.md`'s ACDP paragraph had gone stale in its second clause** — it said the five fields were
+  "absent from this repo's field-level expectations, which is the gap the contract manifest closes".
+  Phase 5 closed it. Corrected to what is true: declared in the manifest, present on the generated
+  type, deliberately not interpreted, with the reason (`verify/` does not compute `context_digest`,
+  so there is nothing here to check a receipt slot against).
+- **The two vocabularies are carried verbatim and are now stated in four places** (README, CHANGELOG,
+  both client docstrings). `key_status` closed/PascalCase, `resolved_status` open/lowercase, both
+  byte-identical to the `context_digest` preimage. A consumer that normalises either breaks
+  third-party digest recomputation with **no local symptom** — which is why it is written down
+  rather than left to be inferred.
+- **The "No yank" citation drifted a twelfth time, by my own hand, minutes after Phase 8 documented
+  that it would.** Adding the CHANGELOG entry moved it `:586-591` → `:610-615`, and the README edit
+  moved `README.md:147` → `:155`. Both were caught by the anchored check and repointed with content
+  verified, not merely resolved. Unplanned, and the best available argument for #73's open half: the
+  vendored rule that shipped in Phase 8 does not reach `CHANGELOG.md`, and this is what that costs.
+- **Suites:** python 615 passed / 17 skipped · TypeScript 112 passed, 0 failed · Go ok ·
+  `verify` 87 passed · ruff clean · `tsc --noEmit` clean. **Java and Kotlin were not run here** — no
+  JDK in this environment; CI covers them, and this is flagged rather than implied green.
+
 ### Phase 8 — Vendored files are quoted, never line-anchored (issue #73) · 2026-08-31
 
 - **Converted, not grandfathered.** The plan allowed either and flagged that grandfathering leaves
