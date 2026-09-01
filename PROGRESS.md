@@ -4,13 +4,13 @@ Checkpoint trail and repo map for the post-adoption hardening / ACDP P1a readine
 `/implement` writes a block per phase; a resumed run reads this instead of re-scanning the repo.
 
 **Plan:** [`plans/post-adoption-hardening-and-acdp-readiness.md`](plans/post-adoption-hardening-and-acdp-readiness.md)
-— 10 phases (Phase 9 BLOCKED on `seam-runtime` ACDP P1a Phases 4 and 6).
+— 10 phases. (Phase 9 was BLOCKED on `seam-runtime` ACDP P1a Phases 4 and 6 when this plan was written; both merged 2026-08-31 and it is now DONE.)
 
 **Execution order ≠ numbering:** 1 → 6 → 7 → 10 → 3 → 4 → 5 → 2 → 8. **Phase 6 runs immediately after
 Phase 1** per its own Sequencing block: it depends on nothing and is the only phase guarding a hazard that
 fires on every release — and releases follow the runtime, five in the three days to 2026-08-31, with zero
 floor/gencode headroom. Phase 1 cannot yield to it because it syncs the checkout and establishes this file.
-Phase 9 is not attempted.
+Phase 9 was not attemptable when this was written; the upstream merges on 2026-08-31 unblocked it and it is DONE.
 
 **PR strategy — 3 PRs.** Chosen over one big PR because the phases have genuinely different review
 audiences, and over one-PR-per-phase because several phases are too small to review alone.
@@ -526,6 +526,99 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   That is Phase 5's subject exactly; regenerating before the manifest exists would adopt the fields
   silently and waste the tripwire.
 
+### Phase 9 — ACDP P1a/P2 adopted: declared, deliberately not interpreted · 2026-08-31
+
+- **One divergence from the plan, stated first because it changes what the evidence is.**
+  `make generate` was **not run locally** — the operator forbade it for this session. So the
+  regenerated-stub evidence is **CI's, not this checkout's**. That is sound rather than a shortcut:
+  the stub trees are gitignored, nothing committed depends on them, and CI runs `make generate` from
+  the BSR (`.github/workflows/ci.yml:108`) and *then* the gate (`:122`) on every run — PR #82 was
+  green at 228 = 228, which is the regeneration this phase asks for, executed by the machine that
+  will execute it on every future PR.
+- **AC3, the gate's failing output, in the direction this checkout can actually demonstrate.**
+  Phase 5 captured the manifest-behind-stubs direction against temporary copies. Today the *live*
+  local state gives the other direction — manifest at 228, this checkout's stubs at 223 — and the
+  gate exits **6**, naming all five, independently per language:
+
+```
+ERROR: the generated FIELD surface disagrees with contract/field-manifest.txt:
+  MISSING from the python stubs (stale/partial generation, or a REMOVED field):
+    - ContextBinding/content_hash
+    - ContextBinding/key_status
+    - ContextBinding/receipt_hash
+    - ContextBinding/resolved_status
+    - ContextBinding/retraction
+  MISSING from the ts stubs (stale/partial generation, or a REMOVED field):
+    - ContextBinding/content_hash
+    - ContextBinding/key_status
+    - ContextBinding/receipt_hash
+    - ContextBinding/resolved_status
+    - ContextBinding/retraction
+
+ERROR: A field MISSING from the stubs is either a stale generation — rerun 'make generate' (BSR) or
+ERROR: 'make generate-local RUNTIME=../seam-runtime' — or a field REMOVED from the contract, which is
+ERROR: a breaking change and must be handled, never silently rewritten away.
+```
+
+  A developer with pre-ACDP stubs meets exactly this, and it tells them what to do. The tripwire
+  fires in both directions and neither is silent.
+- **AC4, the manifest diff, was closed in Phase 5** and is recorded there: 228 entries, the 223→228
+  divergence explained (the plan measured the surface before ACDP reached the BSR), and every
+  `ContextBinding` field present — all eleven, `content_hash` / `receipt_hash` / `key_status` /
+  `resolved_status` / `retraction` among them.
+- **No wrapper change was needed, exactly as the plan predicted** — verified rather than assumed:
+  `resolve_context` (`python/seam_sdk/client.py:718`) and `resolveContext` (`ts/src/client.ts:804`)
+  return the generated `ContextBinding` straight through, so the five fields reach callers with no
+  SDK work. What both *did* carry was a docstring enumerating four of the eleven fields as if that
+  were the set; both now say what they actually return, and both carry the vocabulary warning.
+- **`README.md`'s ACDP paragraph had gone stale in its second clause** — it said the five fields were
+  "absent from this repo's field-level expectations, which is the gap the contract manifest closes".
+  Phase 5 closed it. Corrected to what is true: declared in the manifest, present on the generated
+  type, deliberately not interpreted, with the reason (`verify/` does not compute `context_digest`,
+  so there is nothing here to check a receipt slot against).
+- **The two vocabularies are carried verbatim and are now stated in four places** (README, CHANGELOG,
+  both client docstrings). `key_status` closed/PascalCase, `resolved_status` open/lowercase, both
+  byte-identical to the `context_digest` preimage. A consumer that normalises either breaks
+  third-party digest recomputation with **no local symptom** — which is why it is written down
+  rather than left to be inferred.
+- **The "No yank" citation drifted a twelfth time, by my own hand, minutes after Phase 8 documented
+  that it would.** Adding the CHANGELOG entry moved it `:586-591` → `:610-615`, and the README edit
+  moved `README.md:147` → `:155`. Both were caught by the anchored check and repointed with content
+  verified, not merely resolved. Unplanned, and the best available argument for #73's open half: the
+  vendored rule that shipped in Phase 8 does not reach `CHANGELOG.md`, and this is what that costs.
+- **Where the exit-0 half of AC3 actually comes from, precisely.** The "green at 228 = 228" run was
+  **PR #82's**, on a different branch. This branch's own CI proves it again on push, but until then
+  the exit-0 direction is inherited evidence, not this commit's — worth saying, because the exit-6
+  output above *is* this checkout's and the two should not be read as the same kind of proof.
+- **AC5's floor tests pass here but prove little here.** `python/seam_sdk/_gen/.../seam_pb2.py:14-16`
+  is gencode 7.36.0 and `python/pyproject.toml:50` declares `protobuf>=7.36.0,<8` — exact equality,
+  zero headroom, and against *pre-ACDP* stubs. The assertion that matters runs in CI, after
+  `make generate`. Recorded rather than reported as a local green.
+- **A required gate is flaky, and that is filed rather than re-run away (#85).**
+  `integration (live seam-grpc round-trip)` produced both outcomes twice on byte-identical code:
+  push-run attempts 1 and 2 red, attempt 3 green, and the concurrent `pull_request` run green — same
+  SHA, same `seamd:main` image, minutes apart, and the passing runs executed all 15 steps rather
+  than skipping. The same three tests failed each time with `Connection reset by peer` on
+  `127.0.0.1:8099`, *after* the workflow's smoke step had printed `seam-grpc is serving on 8099` —
+  so the server listens and then dies on the session-seal and authorize paths. It cannot be this
+  diff: nothing here changes behaviour, and none of the three tests touches `resolve_context`.
+  I re-ran three times to establish the pattern, not to obtain a green. The reason it is worth an
+  issue: a *required* gate that is red half the time on identical code teaches everyone to reach for
+  "re-run" before "investigate", which is how a real failure gets waved through — the same class of
+  habit that let #52 publish on red CI. #85 also notes that `/tmp/seam-grpc.log` is only printed
+  when the *smoke* step fails, so every re-run destroys the one artifact that would name the crash.
+- **Suites:** python 616 passed / 17 skipped · TypeScript 112 passed, 0 failed · Go ok ·
+  `verify` 87 passed · ruff clean · `tsc --noEmit` clean. **Java and Kotlin were not run here** — no
+  JDK in this environment; CI covers them, and this is flagged rather than implied green.
+- **The verify gate caught the drift's second copy, which I had missed.** `DECISIONS.md` cites the
+  same "No yank" claim as COMPATIBILITY.md. This commit's CHANGELOG entry moved the target; I
+  repaired COMPATIBILITY.md's citation (the anchored one, which went red) and wrote a bullet about
+  catching it — while DECISIONS.md's copy sat **87 lines stale**, 24 of them added by this very
+  commit, passing because `ANCHORED` paired that needle with one document only. `ANCHORED`'s own
+  docstring records exactly this for the `ci.yml` needle: *"cited from BOTH documents and drifted in
+  both — repaired in COMPATIBILITY.md and left stale here."* The lesson had been written down and
+  not wired. Now repointed **and** anchored for both documents.
+
 ### Phase 8 — Vendored files are quoted, never line-anchored (issue #73) · 2026-08-31
 
 - **Converted, not grandfathered.** The plan allowed either and flagged that grandfathering leaves
@@ -632,7 +725,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 - **Every runtime anchor was re-verified before filing**, against `f4e105f` / spec `3b3d4ae`:
   `p1a:103-107`, `:290-291`, `:439-441`, `p2:1009`, runtime `ci.yml:186` (`buf push`), `:299`
   (`sdk-digest-parity`), `sdk-digest-parity.sh:40,51,55`. Ask B's: `seam` `01-…:110`, `04-…:14`.
-- **Next:** Phases 3, 4, 5 → PR 2; Phase 8 → PR 3; then Phase 9's regeneration half.
+- **Next:** all ten phases are DONE. Remaining: this phase's PR, the §4 finalization pass, and `/reconcile`.
 
 ### Phase 3 — `collective_outcome` readable off a `SessionStep` · 2026-08-31
 

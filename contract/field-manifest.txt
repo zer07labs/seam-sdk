@@ -76,7 +76,10 @@
 #     case-folding, normalising, mapping to an enum — silently breaks third-party digest recomputation.
 #     Declaring them without interpreting them is what keeps that from happening by accident.
 #
-# Wiring them is `plans/post-adoption-hardening-and-acdp-readiness.md` Phase 9, not this phase.
+# Phase 9 of `plans/post-adoption-hardening-and-acdp-readiness.md` settled this rather than
+# reversing it: the fields are carried and never wired. `verify/` does not compute
+# `context_digest`, so there is nothing here to check a receipt slot against, and a projection
+# would create a second spelling of a wire commitment for no verification gain.
 #
 # TO REGENERATE (after deciding, not before):
 #     scripts/check-contract.sh --write-manifest

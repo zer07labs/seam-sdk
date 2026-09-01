@@ -800,7 +800,16 @@ export class SeamClient {
       .contentRef;
   }
 
-  /** Resolve context refs to their bindings (fidelity, classification, lineage, version). */
+  /**
+   * Resolve context refs to their bindings.
+   *
+   * Returns the generated `ContextBinding` unchanged — nothing is projected or renamed, so every
+   * field the contract carries arrives, including the ACDP receipt slots (`contentHash`,
+   * `receiptHash`, `keyStatus`, `resolvedStatus`) and `retraction`, which this SDK passes through
+   * without interpreting. `keyStatus` (closed, PascalCase) and `resolvedStatus` (open, lowercase)
+   * are byte-identical to what enters the `context_digest` preimage — do not case-fold, normalise
+   * or map them.
+   */
   async resolveContext(refs: string[], opts?: UnaryCallOptions): Promise<ContextBinding[]> {
     return (await this.context.resolveContext({ refs }, call(opts))).bindings;
   }

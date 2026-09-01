@@ -297,6 +297,11 @@ ANCHORED = [
     # five times as the vendored spec was refreshed. It moved to QUOTED (bottom of this file)
     # under issue #73 — same needle, same uniqueness assertion, no line number to rot.
     ("DECISIONS.md", "CHANGELOG.md", "this SDK cannot express its own"),
+    # "No yank" is cited from BOTH documents. It was anchored in COMPATIBILITY.md only — so when
+    # Phase 9's own CHANGELOG entry moved it, COMPATIBILITY.md's copy went red and was repaired
+    # while DECISIONS.md's sat 87 lines stale, passing the in-range check. That is verbatim the
+    # `ci.yml` failure recorded above, repeating because the lesson was written down and not wired.
+    ("DECISIONS.md", "CHANGELOG.md", "No yank"),
     # The four references in the v1-skip entry. They were written as bare `:N` shorthand continuing
     # an earlier path, which `CITATION` cannot match — so nothing resolved them and nothing checked
     # them, and all three of the bare ones had rotted by 5 to 66 lines before Phase 8 repointed

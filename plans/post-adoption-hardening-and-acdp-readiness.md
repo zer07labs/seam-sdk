@@ -430,9 +430,18 @@ Scope deliberately to the *rule plus guard*, not the full mechanism swap. Conver
 
 ---
 
-### Phase 9 — Adopt ACDP P1a **[UNBLOCKED — spec half DONE, regeneration half TODO]**
+### Phase 9 — Adopt ACDP P1a **[DONE — both halves]**
 
-**Status:** PARTIAL (2026-08-31). **The block is gone.** Both upstream triggers this phase waited on
+**Status:** DONE (2026-08-31). Spec half shipped as #80; regeneration half completed with one
+divergence from the written approach, stated plainly: **`make generate` was NOT run locally.** The
+operator forbade it for this session (the stub trees are gitignored and recovery needs a BSR login
+this session may not hold), so the regenerated-stub evidence is CI's, not this checkout's — CI runs
+`make generate` from the BSR (`.github/workflows/ci.yml:108`) then the gate (`:122`) on every run,
+and PR #82 was green at 228 = 228. Nothing in the commit depends on local stubs: they are gitignored,
+so the deliverable is the manifest, the documentation, and CI's proof. This checkout's stubs remain
+pre-ACDP at 223, which makes the gate exit 6 locally — the tripwire working, not a failure.
+
+**The block is gone.** Both upstream triggers this phase waited on
 have fired: `7c1d16d` merged the proto and `3b3d4ae` published the spec, both on runtime `main`, and
 the BSR now serves `ContextBinding` tags 7–11.
 
