@@ -691,7 +691,7 @@ distinction, and a consumer reading `resp.policyEnforcement?.enforced` gets `und
 
 **Placement is load-bearing, not stylistic.** `PROGRESS.md:66` cites `ts/src/client.ts:218` for
 `collectiveOutcomeOf` and `:69` cites `:676` for `submitCommit`, and **both are `ANCHORED` needles**
-(`python/tests/test_compatibility_citations_resolve.py:606-607`, `CITATION_SLACK = 3` at `:612`).
+(`python/tests/test_compatibility_citations_resolve.py:606-607`, `CITATION_SLACK = 3` at `:623`).
 Verified at `HEAD`: `export function collectiveOutcomeOf` is at `ts/src/client.ts:218`, the function
 ends at `:239`, and `  submitCommit(` occurs exactly once, at `:676`. Inserting after `:239` keeps
 `:218` correct. It will not keep `:676` correct: a documented decoder is far more than 3 lines. So:
@@ -1096,13 +1096,20 @@ but note it).
    elsewhere entirely.
 
 6. **Should the `PROGRESS.md` → `ts/src/client.ts` slack margin be re-measured after Phase 4?**
-   `test_the_load_bearing_citations_still_point_at_the_right_thing`'s docstring
-   (`python/tests/test_compatibility_citations_resolve.py:644-647`) records the closest
-   needle-to-foreign-citation distance in `PROGRESS.md` as **53 lines** (needle 676, foreign citation
-   623). Phase 4's insertion moves the needle away from 623 and toward 804, shrinking that margin by
-   exactly the insertion size. The docstring is a hand-maintained measurement, not a computed one, so
-   nothing reddens when it goes stale. Re-measure it in Phase 4's commit; do not widen
-   `CITATION_SLACK` (issue #73 ruled that out).
+   **Answered, and the answer outgrew the question.** As drafted this asked for a re-measurement of a
+   docstring number recorded as 53 lines, and correctly observed that "the docstring is a
+   hand-maintained measurement, not a computed one, so nothing reddens when it goes stale." Phase 4
+   re-measured it twice and got it wrong both times — first claiming 53 had been wrong rather than
+   stale (it was correct for the state it described), then failing to notice that anchoring two more
+   needles had displaced `verify/tests/authenticity.rs`'s 16, not `publish.yml`'s 27. Three separate
+   hand-carried numbers in that docstring were found rotten, in the file whose job is catching rotten
+   numbers. So the margins are no longer hand-maintained:
+   `test_no_anchored_needle_is_satisfied_only_by_a_foreign_citation`
+   (`python/tests/test_compatibility_citations_resolve.py:626`) computes every needle's distance and
+   asserts the property the numbers were standing in for — that no needle is satisfied by more than
+   one distinct citation of its path. `CITATION_SLACK` was not widened (#73). The residual headroom
+   on `submitCommit` is 14 lines and is recorded in `PROGRESS.md` as a knowing trade, not as a
+   measurement to trust.
 
 ---
 

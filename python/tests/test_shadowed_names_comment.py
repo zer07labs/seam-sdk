@@ -69,9 +69,13 @@ INDEX = SRC / "index.ts"
 #: A top-level `export <kind> <Name>`. Anchored at column 0 on purpose — a nested or indented
 #: declaration is not a module export and must not count toward either side.
 DECL = re.compile(
-    r"^export\s+(?:declare\s+|abstract\s+|async\s+|default\s+)*"
-    r"(?:interface|type|class|const|function|enum)\s+([A-Za-z_$][\w$]*)"
+    r"^export\s+(?:declare\s+|abstract\s+|async\s+)*"
+    # `const enum` first, or the alternation matches `const` and captures the word "enum".
+    r"(?:const\s+enum|interface|type|class|const|let|var|function\*?|enum)"
+    r"\s+([A-Za-z_$][\w$]*)"
 )
+#: `export default class Foo` is deliberately NOT matched: it binds the root name `default`, not
+#: `Foo`, so it cannot collide with a generated name and counting it would inflate both sides.
 
 #: One entry of the comment's list: a comment line whose first content is an indented
 #: `` `pb.Name` `` or `` `ev.Name` ``. Indentation is what separates a list entry from prose, and that
@@ -267,18 +271,37 @@ def test_the_count_word_also_matches_the_list_it_introduces() -> None:
 
 #: `export … { A, B } from "../gen/…"` — the explicit re-export lists. A dual-declared name appearing
 #: in one of these is the hazard the comment warns about, so it is asserted rather than described.
+#: `[^{}]*?` rather than `.*?`: a non-greedy dot with `re.S` happily spans from one `export {` to a
+#: LATER block's `} from "../gen/`, swallowing an intervening local re-export and garbling the first
+#: name of the generated list. Excluding braces confines each match to one block.
 GEN_REEXPORT = re.compile(
-    r"^export\s+(?:type\s+)?\{(.*?)\}\s*from\s*\"\.\./gen/", re.S | re.M
+    r"^export\s+(?:type\s+)?\{([^{}]*?)\}\s*from\s*\"\.\./gen/", re.S | re.M
 )
+
+#: An inline `//` comment runs to end of line, so it must be stripped BEFORE splitting on commas —
+#: otherwise `Anchor, // the party anchor` swallows the next entry, which is the following line.
+_LINE_COMMENT = re.compile(r"//[^\n]*")
 
 
 def _explicitly_reexported() -> set[str]:
+    """Every generated name re-exported at the root by an explicit list.
+
+    Three spellings defeated the first version of this, and all three are ordinary rather than
+    exotic — the first is what `verbatimModuleSyntax` encourages people to write:
+
+    * ``export { BallotChoice, type PolicyEnforcement } from "../gen/…"`` — an inline ``type``
+      modifier inside the braces, which left the token as ``"type PolicyEnforcement"``,
+    * an inline ``//`` comment after a name, which hid the name on the following line,
+    * a local ``export { X } from "./y.js"`` sitting above a generated list, which the old
+      ``.*?`` spanned straight across.
+    """
     src = INDEX.read_text(encoding="utf-8")
     names: set[str] = set()
     for block in GEN_REEXPORT.findall(src):
-        for raw in block.split(","):
+        for raw in _LINE_COMMENT.sub("", block).split(","):
             token = raw.strip().split(" as ")[0].strip()
-            if token and not token.startswith("//"):
+            token = re.sub(r"^(?:type|typeof)\s+", "", token).strip()
+            if token:
                 names.add(token)
     return names
 

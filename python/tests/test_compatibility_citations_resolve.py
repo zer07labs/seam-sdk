@@ -623,6 +623,57 @@ ANCHORED = [
 CITATION_SLACK = 3
 
 
+def test_no_anchored_needle_is_satisfied_only_by_a_foreign_citation() -> None:
+    """Every anchored needle must be satisfied by ITS OWN citation, not by an unrelated one.
+
+    This is the property the path-only matching above cannot enforce per-claim, and it used to be
+    maintained by hand in a docstring — which put three wrong numbers in the file whose job is to
+    catch wrong numbers. It is computed here instead. The assertion is exactly "no foreign citation
+    currently satisfies this needle"; the printed distances are headroom, not the contract, and are
+    reported so a narrowing shows up in the failure rather than in someone's memory.
+    """
+    report, offenders = [], []
+    for doc, path, needle in ANCHORED:
+        lines = (REPO / path).read_text(encoding="utf-8", errors="ignore").splitlines()
+        hits = [i + 1 for i, line in enumerate(lines) if needle in line]
+        if len(hits) != 1:
+            continue  # the per-entry test above owns uniqueness; do not double-report it here
+        true_line = hits[0]
+        cited = [(s, e) for _d, p, s, e in _citations(doc) if p == path]
+        within = [
+            c
+            for c in cited
+            if c[0] - CITATION_SLACK <= true_line <= c[1] + CITATION_SLACK
+        ]
+        foreign = [c for c in cited if c not in within]
+        gap = (
+            min(min(abs(true_line - a), abs(true_line - b)) for a, b in foreign)
+            if foreign
+            else None
+        )
+        report.append(
+            f"{gap if gap is not None else '-':>5}  {doc} -> {path}:{true_line} {needle!r}"
+        )
+        # Deduped: `PROGRESS.md` cites `ts/src/client.ts:218` three times for three different
+        # claims about the same line, which is one citation repeated, not one masking another. Two
+        # DISTINCT line numbers both satisfying one needle is the masking case.
+        if len(set(within)) > 1:
+            offenders.append(
+                f"{doc} -> {path}:{true_line} {needle!r} satisfied by {sorted(set(within))}"
+            )
+
+    assert report, (
+        "no anchored needle resolved uniquely; ANCHORED or the corpus has broken"
+    )
+    assert not offenders, (
+        "an anchored needle is satisfied by more than one citation of the same path, so a drifted "
+        "citation could be masked by an unrelated one:\n  "
+        + "\n  ".join(offenders)
+        + "\n\nmargins (needle -> nearest foreign citation):\n  "
+        + "\n  ".join(sorted(report))
+    )
+
+
 @pytest.mark.parametrize(("doc", "path", "needle"), ANCHORED, ids=lambda v: str(v))
 def test_the_load_bearing_citations_still_point_at_the_right_thing(
     doc: str, path: str, needle: str
@@ -636,49 +687,23 @@ def test_the_load_bearing_citations_still_point_at_the_right_thing(
     document's prose structure, which is materially more machinery than the risk earns. Documents do
     NOT mask each other: `cited` is scoped to `doc`, so `ci.yml` being correctly cited in
     COMPATIBILITY.md cannot cover for its being stale in DECISIONS.md — which is not hypothetical,
-    it is exactly the state this entry was added in. The duplicated paths within a single document
-    are `CHANGELOG.md` and `publish.yml` in COMPATIBILITY.md, and now `verify/tests/authenticity.rs`
-    in DECISIONS.md — cited four times (`:238`, `:254-257`, `:906-909`, `:944`) with four anchored
-    needles, one per citation. The closest needle-to-foreign-citation distance there is 16 lines
-    (needle at 256, citation at 238), which is the tightest margin in this table: still clear of
-    `CITATION_SLACK` 3, but it is now the case to check first when adding anything nearby. Each
-    needle is satisfied only by its own citation — verified by hand, because that is the property
-    the path-only matching cannot enforce. That margin has NARROWED:
-    COMPATIBILITY.md now cites `publish.yml` four times (`:199`, `:340`, `:367`, `:413`), and the
-    closest pair is 27 lines apart, not the 125+ this note originally recorded. 27 is still well
-    clear of `CITATION_SLACK` 3, so every anchored entry is still satisfied by exactly its own
-    citation — but the headroom is a fifth of what it was. What would actually close it is a fifth
-    citation landing WITHIN 3 lines of an anchored one, not merely one landing somewhere in the
-    span between them; the span is wide, the danger zone is six lines wide. Revisit before adding
-    a citation near `:199`, `:340`, `:367` or `:413`, not after.
+    it is exactly the state this entry was added in.
 
-    `PROGRESS.md` duplicates a path too, and these numbers come from `_citations()` — the same
-    function the assertion below uses — not from reading the document by hand. `ts/src/client.ts` is
-    cited **eleven** times at **eight** distinct lines: `:218` x3 and `:328` x2, plus `:521`, `:726`,
-    `:748`, `:762`, `:779`, `:916`. **Four** are anchored here, and the needle-to-nearest-foreign-citation
-    distances are 110 (`collectiveOutcomeOf` at 218), 22 (`  submitEvaluation(` at 726),
-    **14** (`  submitObjection(` at 762) and 17 (`  submitCommit(` at 779). All clear
-    `CITATION_SLACK` 3, so every needle is satisfied by exactly its own citation — but **14 is now
-    the tightest margin in this table**, displacing `publish.yml`'s 27, and it got that way on
-    purpose. Phase 4 split `` `ts/src/client.ts:723,759` `` — a comma-list, therefore matching
-    CITATION not at all and checked by nothing, and wrong twice running — into two ordinary
-    citations and anchored both. That trades margin for coverage knowingly: two positions that could
-    not be wrong-and-detected are now checked, and the cost is that the six-line danger zone around
-    `submitObjection` sits 14 lines from `submitCommit`'s citation rather than 31. Revisit before
-    inserting anything between `submitEvaluation` and `submitCommit`, not after.
-
-    **The 53 this paragraph used to record was not wrong, and correcting it took two attempts.** It
-    predated Phase 4, whose Open Question 6 predicted the insertion would shrink the margin. It did.
-    But the first correction claimed 53 had been *wrong all along*, reasoning that the foreign
-    citation `:623` named the confidence mapping while the mapping really sat at 645. That
-    misidentifies the metric: the distance that governs foreign-citation masking, and the only one
-    this assertion consults, is from the needle to a citation **as written**, never to the true
-    location of what it names. By that definition 53 was exactly right for the state it described.
-    The margin moved because the citation was *corrected* — 623 to 748, +125, of which +103 is the
-    insertion and +22 the correction — while the needle moved only +103; the insertion alone would
-    have left 779 - 726 = 53 untouched. A hand-maintained margin measured against an unverified
-    citation is a real hazard, and it is not what happened here. Keeping the two apart is why this
-    paragraph is long.
+    **How close that limit actually is, is measured rather than described** —
+    `test_no_anchored_needle_is_satisfied_only_by_a_foreign_citation` computes every needle's
+    distance to its nearest foreign citation and prints the whole table on failure. This paragraph
+    used to carry those numbers by hand, and every one of them rotted: it named
+    `verify/tests/authenticity.rs`'s tightest margin as 16 lines "needle at 256, citation at 238"
+    when 16 is needle 238's margin and 256's is 18; it told a reader to "revisit before adding a
+    citation near `:199`, `:340`, `:367` or `:413`" when `publish.yml` is cited at 199, 354, 381 and
+    428; and after Phase 4 anchored two more needles it claimed 14 had displaced `publish.yml`'s 27
+    when what 14 displaced was `authenticity.rs`'s 16. Three wrong numbers in a docstring attached to
+    the assertion that could have computed all of them. The qualitative point is the part worth
+    keeping in prose: the danger zone is `2 * CITATION_SLACK + 1` lines wide, not the whole span
+    between two citations, so what closes it is a citation landing within three lines of an anchored
+    needle — and Phase 4's anchoring of `submitEvaluation`/`submitObjection` deliberately traded
+    margin for coverage, since those two positions had been wrong twice while being checked by
+    nothing at all.
     """
     lines = (REPO / path).read_text(encoding="utf-8", errors="ignore").splitlines()
     hits = [i + 1 for i, line in enumerate(lines) if needle in line]

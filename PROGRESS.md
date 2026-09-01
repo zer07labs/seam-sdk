@@ -65,7 +65,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `python/seam_sdk/_collective.py:83` | `collective_outcome_of(resp: Union["pb.DecisionResponse", "pb.SessionStep"])` — fail-closed decode. **Phase 3 DONE**: widened to the union. `:1-30` documents why raw field access is unsafe (optional presence + `UNSPECIFIED` == 0 ⇒ a naive negative test allows on every unknown value). |
 | `ts/src/client.ts:218` | `collectiveOutcomeOf(resp: DecisionResponse | SessionStep)` — the TS twin. **Phase 3 DONE.** It needed a real union: protobuf-es brands messages, so passing a `SessionStep` is a *compile error* today (reproduced: `TS2345`, `$typeName` mismatch). `:146-151` `UnknownCollectiveVerdictError(rawValue, decisionId: string)` — **required** `string`, so `:229`'s `resp.decisionId` became `resp.decisionId ?? ""`; a verifier mutation removing that coalesce reddens a test, so it is load-bearing, not decoration. |
 | `ts/gen/seam/api/v1/seam_pb.ts` | Branded `SessionStep = Message<"seam.api.v1.SessionStep"> & {…}` — the reason Phase 3's TS half is a hard block, not a typing nicety. Also carries `collectiveOutcome?` on the same branded type. Cited by symbol, not by line: this is a generated, gitignored file, and a line number into it is correct only until the next `make generate`. |
-| `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi:289,297` | `SessionStep.collective_outcome` in the Python stubs — generated, never surfaced. |
+| `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi` | `SessionStep.collective_outcome` in the Python stubs — generated, never surfaced. Cited by symbol for the same reason as the row above; it carried `:289,297` until round 3, in direct violation of that rule and of `test_no_document_line_anchors_into_a_generated_file`, which it evaded **only** because a comma-list matches `CITATION` not at all. The rule was stated one row up and broken the next. |
 | `python/seam_sdk/client.py:541`, `ts/src/client.ts:779` | `submit_commit` / `submitCommit` return a `SessionStep` — the caller Phase 3 exists for. |
 | `python/tests/test_collective_outcome.py`, `ts/tests/collective_outcome.test.ts` | `DecisionResponse` cases only. **Phase 3** adds the `SessionStep` cases (absent ⇒ none; `UNSPECIFIED` ⇒ raise; unknown ⇒ raise; non-commit step ⇒ none). Drive red first. |
 | `python/seam_sdk/client.py:473` + `python/seam_sdk/client.py:514` · `python/seam_sdk/aio.py:371` + `python/seam_sdk/aio.py:412` · `ts/src/client.ts:726` + `ts/src/client.ts:762` | `submit_evaluation` / `submit_objection` — **already delivered** by `c49d005`. Do not re-plan. Written as six separate citations rather than three comma-lists, because a comma-list matches `CITATION` **not at all**: `` `…:723,759` `` was wrong twice in a row — once before this phase and once *inside the commit whose message claims it shifted every citation below `:239`* — and nothing ever said so. |
@@ -564,8 +564,9 @@ never saw the thing"* is in scope rather than a nit.
   CHANGELOG entry had added the twelfth after that paragraph was written. So the paragraph had to be
   updated by the very drift it describes.
 - **The same claim's thirteenth drift, in two files no guard watches.** `plans/…:524` and
-  `python/tests/test_retracted_claims.py:180` both cited `CHANGELOG.md:523-528`, which is now
-  unrelated prose. `DOCS` covers only COMPATIBILITY.md and DECISIONS.md, so neither resolved nor
+  `python/tests/test_retracted_claims.py:180` both cited what were then lines 523-528 of
+  `CHANGELOG.md` (written without backticks, since it names a past position — round 3 caught this as
+  the third such case, after the two round 2 rewrote), which is now unrelated prose. `DOCS` covers only COMPATIBILITY.md and DECISIONS.md, so neither resolved nor
   failed. Both repointed; the test's is now needle-based. Widening `DOCS` to the plan and this file
   stays deferred — Phase 6's Divergence 3 predicted this exact cost and declined it deliberately.
 - **Two Phase 5 acceptance criteria were false at final state and unmarked**, while Phase 7's
@@ -1049,7 +1050,7 @@ them change what the phases do:
 | `scripts/check-contract.sh:583` | The corrected comment #88 was filed from. **Phase 5 must rewrite it** or it becomes false. |
 | `contract/event-field-manifest.txt` | **Phase 5 creates.** 90 fields, 11 messages, zero enums, zero nested messages — all measured, not assumed. |
 | `python/tests/test_field_manifest_gate.py:54` | `_run()` — the scratch-copy-plus-env-override pattern Phase 5's tests mirror. Nothing may mutate the real gitignored stub trees. |
-| `python/tests/test_compatibility_citations_resolve.py:606` | The `ANCHORED` needle into `ts/src/client.ts`. The plan predicted the insertion would break the `submitCommit` anchor for any K of 4+ lines *except* a 125-131 window where it would go green against the unrelated `:804` citation. **Measured K = 101 at the time of that check, 103 as finally committed** — outside that window at every intermediate value, and the anchor failed red-first as required before `PROGRESS.md` was touched. |
+| `python/tests/test_compatibility_citations_resolve.py:607` | The `submitCommit` `ANCHORED` needle into `ts/src/client.ts` (`:606` is the `collectiveOutcomeOf` one; Phase 4 added two more at `:617-618`). The plan predicted the insertion would break the `submitCommit` anchor for any K of 4+ lines *except* a 125-131 window where it would go green against the unrelated `:804` citation. **Measured K = 101 at the time of that check, 103 as finally committed** — outside that window at every intermediate value, and the anchor failed red-first as required before `PROGRESS.md` was touched. |
 
 ## Phase log
 
@@ -1488,7 +1489,8 @@ caught more widely than before (drop-gate 8 → 9 failures, empty-`policy_id` 1 
 
 `ts/src/client.ts:328`, inserted immediately after `collectiveOutcomeOf` ends at `:239`, so `:218`
 survived unchanged. **K = 103 as finally committed** — 100 lines at first commit, +1 for a blank line
-round 1 caught missing against the file's own convention (the only such gap in the file), +2 for a
+round 1 caught missing against the file's own convention (the only such gap between **top-level**
+declarations; member-level `}`-then-declaration adjacencies are ordinary and plentiful), +2 for a
 TSDoc paragraph round 2 made retract a wrong claim. Every intermediate value is outside
 `CITATION_SLACK`'s vacuous band and outside the 125-131 window the plan warned would go green against
 the unrelated `resolveContext` citation, so the red-first result holds for the committed state and
@@ -1513,9 +1515,12 @@ mapping was cited `:623`, which is `submitEvaluation(`, not the mapping. None of
 phase caused: `:601,637` matches the `CITATION` regex not at all (a comma list has no closing
 backtick after the number), and the other two are non-anchored, where the gate asserts only that the
 line exists. This is issue #91's blindness measured on live data rather than argued. Final, measured
-after the file was frozen — then re-measured once more when the blank-line fix moved everything below
-`:239` by one: `collectiveOutcomeOf` `:218`, `policyEnforcementOf` `:326`, the confidence mapping
-`:746`, `submitCommit` `:777`, `resolveContext` `:914`. The bare companions on the
+after the file was frozen, and re-measured after **each** of the two later edits that moved lines
+below `:239` — the blank line (+1) and the TSDoc rewording (+2). Round 3 caught this very sentence
+still carrying the round-1 values while the commit that produced it repointed the same five numbers
+in four other places; they are bare `:N` companions with no path, so the gate could not see them.
+At HEAD: `collectiveOutcomeOf` `:218`, `policyEnforcementOf` `:328`, the confidence mapping `:748`,
+`submitCommit` `:779`, `resolveContext` `:916`. The bare companions on the
 `collectiveOutcomeOf` row moved too — `:144-146` → `:146-151` (the constructor, not the doc-comment
 tail) and `:207` → `:229`, the latter also stale at `HEAD`.
 
@@ -1542,8 +1547,23 @@ would only have made them *resolve*, which would not have caught 723-versus-724.
 makes them falsifiable, and a citation that resolves but cannot be wrong is the vacuity this whole
 plan is written against. 14 still clears `CITATION_SLACK` 3 by nearly five times, and the docstring
 now says to revisit before inserting anything between `submitEvaluation` and `submitCommit`.
-`CITATION_SLACK` itself was not widened (#73), and both margins are now derived from the same
-`_citations()` the assertion uses, so the recorded number cannot disagree with the check again.
+**Round 3 priced that trade properly, and it is worse than "17" makes it sound.** Putting the new
+number in a list is not disclosing a regression: `submitCommit`'s masking headroom went from 31 to
+17, and the drift that now goes undetected is small. Delete fourteen lines between
+`submitEvaluation` and `submitObjection` — trimming a doc comment in a 36-line span reaches that —
+and `submitObjection` lands on 748 where the confidence citation already sits, while `submitCommit`
+lands on 765 within slack of `:762`; all four anchors stay green with two citations stale by 14.
+Before the anchors, both cases needed a 31-line delta.
+
+Disclosure is not the fix, and `CITATION_SLACK` was not widened (#73). What closes it is
+`test_no_anchored_needle_is_satisfied_only_by_a_foreign_citation`, added in round 3: it asserts that
+no needle is satisfied by more than one **distinct** citation of its path — exactly the masking
+condition — and reports every needle's margin on failure. Repeated identical citations are deduped
+first: `ts/src/client.ts:218` appears three times for three claims about one line, which is one
+citation repeated, not one covering for another. Proved red-first by moving the `resolveContext`
+citation to `:780`, one line off `submitCommit(` — the check names the needle and both citations.
+Headroom is still 14 and still worth watching, but a realized masking now reddens instead of sitting
+in a docstring nobody re-measures.
 
 **`ts/src/index.ts:18` said "Two" and listed three; four names were dual-declared, and five are now.**
 `CollectiveOutcome` had been in that state since Phase 3 of the previous plan and was never added, so
@@ -1583,25 +1603,27 @@ matched by indentation and prose cannot satisfy them, with
 synthetic block, and the offending sentence moved out of the comment into this record where it
 belongs. Five mutations re-run against the fixed guard — delete a list entry, drop a name, FIVE →
 FOUR, list a non-dual-declared name, demote a name from list entry to prose — each caught by two
-tests. A missing generated tree now fails four tests instead of aborting collection (the
+tests. A missing generated tree now fails **six** tests instead of aborting collection (the
 `parametrize` that evaluated at import time is gone), verified by running the whole suite with `GEN`
-pointed at a nonexistent file: 4 failed, 818 passed.
+pointed at a nonexistent file: **6 failed, 827 passed**. Round 2 measured four and round 3 found six:
+the two guards round 2 itself added also read `GEN`, so the sentence was invalidated by the same
+commit that corrected its number from 819 to 818.
 
 **Open Question 1 answered, narrowly: `PolicyEnforcement` was NOT promoted to a named export.**
 `ts/tests/policy_enforcement.test.ts` imports `PolicyEnforcementSchema` from the generated module
 directly, exactly as `ts/tests/collective_outcome.test.ts` does for `CollectiveOutcomeSchema`, so
 nothing in this phase needed it. `pb.PolicyEnforcementSchema` remains the consumer path and the
-shadowed-names comment now documents it. The broader public-surface question — whether the two DTO
+dual-declaration comment now documents it. The broader public-surface question — whether the two DTO
 types should be named exports alongside the schemas — stays open and unchanged by this phase.
 
 **Verification, re-measured after the gap fixes rather than carried forward.** `npm run typecheck`
 and `npm run build` clean · `npm test` **136 tests, 126 pass, 10 skip, 0 fail**. The branch point was
 **112 pass / 122 tests**, measured by checking out `978d05d` and running it, not inferred — the first
 draft of this line said 120 and was wrong; `ts/` is byte-identical between the branch point and this
-phase's parent, so the whole +14 is the new suite. Python **833 passed / 17 skipped**, decomposed
-against 812 at the Phase 3 commit: **+10** from the dual-declaration guard, **+9** from citations
+phase's parent, so the whole +14 is the new suite. Python **835 passed / 17 skipped**, decomposed
+against 812 at the Phase 3 commit: **+10** from the dual-declaration guard, **+10** from citations
 this phase added to the three enforced docs (which `test_each_citation_resolves` parametrizes over),
-and **+2** from the two new `ANCHORED` entries. Every arm counted, because the first draft of this
+**+2** from the two new `ANCHORED` entries, and **+1** for the computed margin check. Every arm counted, because the first draft of this
 line reported 821 with a `+9` that omitted the citation arm entirely — a number written before the
 prose that changed it, and never re-measured; the second draft said 822 and was overtaken by round 2.
 Skips unchanged throughout. `ruff check` + `ruff format --check` clean · `scripts/` 100 passed ·
@@ -1665,14 +1687,69 @@ becoming the wire message) and proved all seven tests stayed green while it was.
 
 Also corrected: "4 failed, 819 passed" was 818; two `CHANGELOG.md` companions in the repo map
 (`:516-518`, `:521-526`) that this phase pushed 28 lines further from targets they had already missed
-by ~115; a COMPATIBILITY.md citation for `opts.canonical` that pointed at line 265 of
+by ~87 (round 3 caught the first figure double-counting that push — 115 is the *post*-push drift); a COMPATIBILITY.md citation for `opts.canonical` that pointed at line 265 of
 `ts/src/client.ts` (written without backticks here, since it names a position that was already wrong
 before this phase widened it) and now lands inside the new `PolicyEnforcement` interface — repointed
 to `ts/src/client.ts:521`; and a historical mention of a
 long-removed citation that was written in backticks and so read as a live one.
 
-**Round-2 verification:** python **833 passed / 17 skipped** · TS 136 / 126 pass / 0 fail ·
+**Round-2 verification:** python **833 passed / 17 skipped** (835 at the end of round 3) · TS 136 / 126 pass / 0 fail ·
 `tsc --noEmit` + `npm run build` clean · `ruff` clean · `scripts/` 100 · contract gate exit 6 naming
 exactly the five recorded lag fields. Four new guard mutations, each caught: a dual-declared name
 placed on the explicit re-export list, an `abstract`/`async` declaration pair, an event-module name
 listed under the wrong namespace, and a blinded re-export detector. Ten tests in the guard now.
+
+#### Round 3 — verdict **GAP**, fourteen findings, all closed
+
+Round 2's nine verified closed on re-check, every number re-derived and correct, and Phase 4's six
+acceptance criteria confirmed met against the final state. The pattern held a third time: three HIGH
+findings, and the two most interesting are both the same failure — *a commit that corrected a number
+and invalidated the sentence around it in the same edit.*
+
+- **The guard added to close round 2's headline hazard was bypassed by the idiomatic spelling.**
+  `export { BallotChoice, type PolicyEnforcement } from "../gen/…"` — an inline `type` modifier
+  inside the braces, which is what `verbatimModuleSyntax` encourages — left the token as
+  `"type PolicyEnforcement"` and all ten tests green. A verifier applied it to the real file and
+  proved the consequence: `npm run typecheck` exit 0, and a probe on `PolicyEnforcement["$typeName"]`
+  **compiles**, so the generated wire message had silently won the root name. Two more ordinary
+  spellings did the same — an inline `//` comment after a name hid the *next* entry, and any local
+  `export { … } from "./x.js"` above a generated list let the non-greedy `.*?` span across it and
+  garble the first generated name. The tokenizer now strips `type`/`typeof` and line comments, and
+  the block regex uses `[^{}]*?` so a match cannot cross a block. All three reproduced red.
+- **"4 failed, 818 passed" was corrected from 819 by the same commit that made the whole sentence
+  wrong.** Round 2 added two guards that also read `GEN`, so a missing generated tree now fails
+  **six** tests: `6 failed, 827 passed`, re-measured.
+- **The "final, measured" citation list was stale by 2** — invalidated by the very commit that
+  repointed those same five numbers in four other places and missed this paragraph. They are bare
+  `:N` companions with no path, so the gate could not see them. This is the third time this phase
+  that the unanchored-companion form has carried a wrong number through a commit that claimed to
+  have swept it.
+
+**The margin table is no longer maintained by hand, which is the real fix.** Round 3 found *three*
+wrong numbers in the docstring that documents the anchoring limit: it named `authenticity.rs`'s
+tightest margin as 16 "needle at 256, citation at 238" when 16 is needle 238's margin and 256's is
+18; it told a reader to revisit before citing near `:199`, `:340`, `:367`, `:413` when `publish.yml`
+is cited at 199, 354, 381, 428; and Phase 4's own claim that 14 "displaced `publish.yml`'s 27" was
+wrong, since what 14 displaced was `authenticity.rs`'s 16 — a claim that contradicted a sentence
+fifteen lines above it in the same docstring. Three hand-carried numbers rotting inside the file
+whose job is catching rotten numbers is not a docstring problem, so
+`test_no_anchored_needle_is_satisfied_only_by_a_foreign_citation` now computes them and asserts the
+property they stood in for. See the margin paragraph above for the red-first proof.
+
+Also closed: `PROGRESS.md:68` line-anchored into the gitignored `_gen/` tree in violation of
+`test_no_document_line_anchors_into_a_generated_file` **and** of the rule stated in the row directly
+above it, evading both only because a comma-list matches `CITATION` not at all — the same commit that
+split the comma-lists one row down left this one, which was the actual rule violation. `DECL` still
+mis-parsed `export const enum` (capturing the word "enum"), missed `let`/`var`/`function*`, and
+counted `export default class` as a root name it is not. A third live-looking citation naming a past
+position. "~115" double-counted a 28-line push over an ~87-line pre-existing drift. A third
+present-tense "shadowed-names comment". `CITATION_SLACK`'s citation in the plan, off by 11 after this
+phase's own insertions. A repo-map row citing `:606` for a claim about `:607`. And "the only such gap
+in the file" had dropped the "between top-level declarations" qualifier that makes it true.
+
+**Round-3 verification:** python **835 passed / 17 skipped** · TS 136 / 126 pass / 0 fail · `tsc` +
+`npm run build` clean · `ruff` clean · `scripts/` 100 · contract gate exit 6 naming exactly the five
+recorded lag fields. Four new guard bypasses reproduced red then caught: the inline `type` modifier,
+the inline comment, the cross-block span, and `const enum`/`let`/`function*` declarations. The
+masking check proved red-first by moving the `resolveContext` citation to `:780`. An independent
+mutation set against the TS decoder found no new survivor.
