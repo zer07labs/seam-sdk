@@ -91,9 +91,23 @@ Also correct the two stale claims named in Context, and **tighten the clean-room
 
 ---
 
-### Phase 2 — Write the ACDP cross-repo asks (seam-sdk files only — do NOT file issues)
+### Phase 2 — Write the ACDP cross-repo asks (**and file them** — restriction lifted mid-run)
 
-**Status:** TODO
+**Status:** DONE (2026-08-31) — **both asks written AND FILED.** The scope restriction below was
+lifted by the user mid-run ("Go to next phases, file the cross repo - requests"), which reverses this
+phase's original "do not file" instruction. Filed as
+[seam-runtime#525](https://github.com/zer07labs/seam-runtime/issues/525) and
+[seam#26](https://github.com/zer07labs/seam/issues/26). Writing *files* into a sibling repo remains
+un-authorized and neither issue did so.
+
+**Divergence from the plan, and it is the substantive one:** Ask A as drafted asked `seam-runtime` to
+publish the four payload encodings and push the contract. **That was already delivered** by the time
+this phase ran — `7c1d16d` (P1a, #520) and `3b3d4ae` (P2, #523) are on runtime `main`, the spec is
+published, and the BSR carries `ContextBinding` tags 7–11 (verified by decoding the module's
+`FileDescriptorSet`). Filing the drafted text would have asked for finished work. Ask A was re-scoped
+to the three things that *are* outstanding: the tracking issue their own plan says "must be filed,
+not forgotten" and which was never filed; sequencing the `sdk-digest-parity` un-pin; and a heads-up
+channel for spec changes that is not another repo's red CI.
 
 **SCOPE RESTRICTION — set by the user on 2026-08-31, and it overrides this phase's original shape.** This plan and its implementation touch **`seam-sdk` only**. That means: write the two ask documents, which are `seam-sdk` files under `plans/cross-repo/`, and **do not create issues in `zer07labs/seam-runtime` or `zer07labs/seam`, do not comment on issues there, and do not edit any file outside this repo.** The `/plan` convention treats issue-filing as an unrestricted tracked ask rather than a cross-repo write; that convention is deliberately overridden here. **The consequence is real and must be reported, not buried: nobody upstream learns of these asks, so Phase 9 stays blocked until someone files them by hand.** Record them as un-filed in `PROGRESS.md` so the gap is visible rather than assumed done.
 
@@ -416,9 +430,21 @@ Scope deliberately to the *rule plus guard*, not the full mechanism swap. Conver
 
 ---
 
-### Phase 9 — Adopt ACDP P1a **[BLOCKED]**
+### Phase 9 — Adopt ACDP P1a **[UNBLOCKED — spec half DONE, regeneration half TODO]**
 
-**Status:** TODO — **BLOCKED on `seam-runtime` P1a Phase 4 (proto merge + BSR push) and Phase 6 (spec publication).**
+**Status:** PARTIAL (2026-08-31). **The block is gone.** Both upstream triggers this phase waited on
+have fired: `7c1d16d` merged the proto and `3b3d4ae` published the spec, both on runtime `main`, and
+the BSR now serves `ContextBinding` tags 7–11.
+
+- **Spec refresh — DONE**, shipped alone as [#80](https://github.com/zer07labs/seam-sdk/pull/80) per
+  this phase's own "the two triggers are independent and each is separately shippable". It had become
+  urgent rather than optional: `spec-pin` was red on `main` itself and on every open PR until it
+  landed. Re-pinned `5d8c177` → `3b3d4ae`, whole-file and byte-verbatim; the `DECISIONS.md` citation
+  into the copy was repointed in the same commit.
+- **Regeneration — TODO**, and deliberately still gated behind Phase 5. Regenerating now would adopt
+  five new fields silently: CI already regenerates from the BSR every run and every gate stayed green
+  across #79 and #80 with all five present. That blindness *is* Phase 5's subject, so the manifest
+  lands first and the contract gate then refuses and names them.
 
 **Delivers:** the SDK regenerated against `ContextBinding` tags 7-10, with the vendored spec refreshed and citations repointed.
 
