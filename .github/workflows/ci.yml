@@ -382,12 +382,15 @@ jobs:
           # independent of where pytest actually put its tmp_path, rather than silently uploading
           # nothing — the same "the glob quietly stopped matching" failure as the depth bug above.
           stage=/tmp/seam-live-logs
-          mkdir -p "$stage"
+          mkdir -p "$stage" 2>/dev/null || true   # `|| true`: see the note on `cat` below — this
           cp /tmp/seam-grpc.log "$stage/smoke.log" 2>/dev/null || true
           found=0
           # `-type f` and `|| true`: this step runs while things are already broken, so one
           # unreadable or vanished match must not abort the loop under `bash -e` and take the
-          # remaining logs — and the warning below — down with it.
+          # remaining logs — and the warning below — down with it. The `mkdir` above carries the
+          # same guard for the same reason: the commit that added these guards introduced an
+          # unguarded `mkdir`, and with $stage existing as a regular file the whole step exited 1
+          # before printing a single log. Every command in this step must be unable to abort it.
           for f in $(find $roots -maxdepth 6 -type f -name 'seam-grpc-*.log' 2>/dev/null | head -40); do
             found=1
             echo "::group::$f"

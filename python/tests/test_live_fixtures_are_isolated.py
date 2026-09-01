@@ -82,15 +82,32 @@ def _source(name: str) -> str:
     return path.read_text()
 
 
-def _dotted(node: ast.AST) -> str:
-    """``subprocess.run`` for the Attribute chain, ``""`` for anything that isn't a plain chain."""
+def _import_aliases(tree: ast.AST) -> dict[str, str]:
+    """``{"sp": "subprocess"}`` for every ``import x as y``.
+
+    Without this, ``import subprocess as sp`` followed by ``sp.run([binary])`` resolves to ``sp.run``,
+    which is in no banned set — an ordinary spelling, not a contrived evasion.
+    """
+    out: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                out[alias.asname or alias.name.split(".")[0]] = alias.name
+    return out
+
+
+def _dotted(node: ast.AST, aliases: dict[str, str] | None = None) -> str:
+    """``subprocess.run`` for the Attribute chain, ``""`` for anything that isn't a plain chain.
+
+    The root is resolved through ``aliases`` so an aliased import lands on its real module name.
+    """
     parts: list[str] = []
     while isinstance(node, ast.Attribute):
         parts.append(node.attr)
         node = node.value
     if not isinstance(node, ast.Name):
         return ""
-    parts.append(node.id)
+    parts.append((aliases or {}).get(node.id, node.id))
     return ".".join(reversed(parts))
 
 
@@ -108,9 +125,11 @@ def _name_hits(src: str, names: set[str], dotted: frozenset = frozenset()) -> li
     an attribute-only detector reads as clean source.
     """
     hits: list[str] = []
-    for node in ast.walk(ast.parse(src)):
+    tree = ast.parse(src)
+    aliases = _import_aliases(tree)
+    for node in ast.walk(tree):
         if isinstance(node, ast.Attribute):
-            if node.attr in names or _dotted(node) in dotted:
+            if node.attr in names or _dotted(node, aliases) in dotted:
                 hits.append(f"line {node.lineno} ({node.attr})")
         elif isinstance(node, ast.Name):
             if node.id in names:
@@ -179,6 +198,28 @@ def _assigned_pairs(node: ast.AST):
     return list(zip(targets, values))
 
 
+def _is_port_literal(node: ast.AST) -> bool:
+    """An int constant big enough to be a real, bindable TCP port."""
+    return (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, int)
+        and not isinstance(node.value, bool)
+        and node.value >= 1024
+    )
+
+
+def _defaults(args: ast.arguments):
+    """``(arg, default)`` pairs for positional and keyword-only parameters alike."""
+    positional = list(args.posonlyargs) + list(args.args)
+    for arg, default in zip(
+        positional[len(positional) - len(args.defaults) :], args.defaults
+    ):
+        yield arg, default
+    for arg, default in zip(args.kwonlyargs, args.kw_defaults):
+        if default is not None:
+            yield arg, default
+
+
 def _port_offenders(src: str) -> list[str]:
     """Every fixed-port spelling this guard can see, in one pass.
 
@@ -216,6 +257,32 @@ def _port_offenders(src: str) -> list[str]:
             ):
                 offenders.append(f"line {node.lineno}: {name} = {val.value}")
 
+        # (1b) the other ways a port-named thing is bound to a literal: a keyword argument
+        # (`LiveServer(data_port=9113)`), a function default (`def spawn(data_port=9113)`), and a
+        # dict entry (`CFG = {"data_port": 9113}`). The assignment form alone justified itself by
+        # "a dataclass is the idiom a copied fixture reaches for" — but *constructing* that dataclass
+        # and `field(default=...)` are both keyword arguments, so the justification argued for these.
+        if isinstance(node, ast.keyword) and node.arg and "port" in node.arg.lower():
+            if _is_port_literal(node.value):
+                offenders.append(
+                    f"line {node.value.lineno}: {node.arg}={node.value.value}"
+                )
+        elif isinstance(node, ast.arguments):
+            for arg, default in _defaults(node):
+                if "port" in arg.arg.lower() and _is_port_literal(default):
+                    offenders.append(
+                        f"line {default.lineno}: {arg.arg}={default.value}"
+                    )
+        elif isinstance(node, ast.Dict):
+            for key, val in zip(node.keys, node.values):
+                if (
+                    isinstance(key, ast.Constant)
+                    and isinstance(key.value, str)
+                    and "port" in key.value.lower()
+                    and _is_port_literal(val)
+                ):
+                    offenders.append(f"line {val.lineno}: {key.value!r}: {val.value}")
+
         if isinstance(node, ast.Constant) and id(node) not in docstrings:
             # (3) numeric literals in the historical window
             if isinstance(node.value, int) and not isinstance(node.value, bool):
@@ -233,23 +300,38 @@ def _port_offenders(src: str) -> list[str]:
     return sorted(set(offenders))
 
 
+#: Calling one of these is how a test reaches a server it just spawned. This is the discriminator,
+#: and it was chosen by measurement over BOTH sets rather than by intuition: it is present in all four
+#: registered live suites and absent from all four files here that spawn subprocesses for ordinary
+#: reasons (running the conformance CLI, building a wheel, importing in a clean interpreter).
+CONNECT_NAMES = {"connect", "create_connection", "insecure_channel", "secure_channel"}
+
+
 def _looks_like_a_live_suite(src: str) -> str:
     """Why ``src`` looks like a suite that spawns a live server, or ``""`` if it does not.
 
     Two independent signals, both from the AST so prose cannot trip either one:
 
     * it imports ``live_server`` — an unambiguous declaration;
-    * it spawns a process **and** talks TCP (``socket`` or ``grpc``). The conjunction is what makes
-      this usable: ``test_conformance.py``, ``test_packaging.py``, ``test_field_manifest_gate.py``
-      and ``test_errors_is_import_light.py`` all legitimately spawn subprocesses, and none of them
-      opens a socket. A rule on "spawns anything" would redden all four.
+    * it **spawns a process and then connects a client to it**. That conjunction is the definition of
+      a live suite, and it is why ``test_conformance.py``, ``test_packaging.py``,
+      ``test_field_manifest_gate.py`` and ``test_errors_is_import_light.py`` — which all legitimately
+      spawn subprocesses and read their output — are not flagged.
+
+    **The previous version of this used ``socket``/``grpc`` imports as the second signal, and it was
+    wrong.** Three of the four suites in ``LIVE_SUITES`` import neither. It was calibrated against the
+    four innocent files it must not redden and never re-run against the true positives already in this
+    directory, so a de-adopted copy of ``test_integration.py`` — fixed ports, raw ``Popen``, ``DEVNULL``,
+    bare ``terminate()`` — passed the whole guard. That is the third round in a row a detector was
+    tuned only against its negative set; ``test_the_detector_is_calibrated_against_real_live_suites``
+    below is what stops the fourth.
 
     A raw fixture that does neither — spawning through a helper imported from a third module under a
-    new name, say — is out of reach. The module docstring says so rather than implying a sandbox.
+    new name — is out of reach. The module docstring says so rather than implying a sandbox.
     """
     try:
         tree = ast.parse(src)
-    except SyntaxError:
+    except (SyntaxError, ValueError):
         return ""
     imported: set[str] = set()
     for node in ast.walk(tree):
@@ -260,9 +342,29 @@ def _looks_like_a_live_suite(src: str) -> str:
     if "live_server" in imported:
         return "imports live_server"
     spawns = _name_hits(src, SPAWN_NAMES, SPAWN_DOTTED)
-    if spawns and imported & {"socket", "grpc"}:
-        return f"spawns a process at {spawns} and opens a socket"
+    connects = _name_hits(src, CONNECT_NAMES)
+    if spawns and connects:
+        return f"spawns a process at {spawns} and connects to it at {connects}"
     return ""
+
+
+def _deadopt(src: str) -> str:
+    """``src`` with the shared helper torn back out and the #85 shape put back.
+
+    Not a synthetic fixture — the real file, regressed the way a real regression happens: someone
+    copies a suite, drops the import they do not understand, and reinstates a local spawn. Used by the
+    calibration test below, which is the only thing that checks the detector against a *positive*.
+    """
+    out = src.replace(
+        "from live_server import spawn_server",
+        "import subprocess\n\nDATA_PORT = 9113\n\n\n"
+        "def _spawn_raw(binary):\n"
+        "    return subprocess.Popen(\n"
+        "        [binary], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL\n"
+        "    )",
+    )
+    assert out != src, "the suite no longer imports the helper the way _deadopt expects"
+    return out
 
 
 def test_every_named_live_suite_exists_and_spawns() -> None:
@@ -517,6 +619,49 @@ def test_an_unregistered_raw_live_suite_is_caught() -> None:
     )
     assert _looks_like_a_live_suite("from live_server import spawn_server\n"), (
         "a suite that imports the helper evades"
+    )
+
+
+def test_the_detector_is_calibrated_against_real_live_suites() -> None:
+    """The check no round performed, and the reason three rounds of this guard were evadable.
+
+    Every previous version of ``_looks_like_a_live_suite`` was tuned until a reviewer's synthetic
+    example was caught and the four known-innocent files stayed green. Nobody ran it against the
+    **true positives already in this directory**. Had they, the ``socket``/``grpc`` signal would have
+    died in one line: three of the four registered suites import neither.
+
+    So this asserts the positive direction directly. Each registered suite is de-adopted — the helper
+    import torn out, a raw ``Popen`` with ``DEVNULL`` and a fixed port put back, which is exactly what
+    the regression looks like — and the detector must catch all four. A future narrowing of the signal
+    cannot pass this without being checked against the files it exists to protect.
+    """
+    missed = []
+    for name in LIVE_SUITES:
+        regressed = _deadopt(_source(name))
+        if not _looks_like_a_live_suite(regressed):
+            missed.append(name)
+    assert missed == [], (
+        f"a de-adopted copy of {missed} would sit in python/tests/ unregistered and unguarded — "
+        f"the detector is calibrated against innocent files only"
+    )
+
+    # ...and the de-adopted copy must also trip the three defect detectors, not merely the registry.
+    regressed = _deadopt(_source("test_integration.py"))
+    assert _port_offenders(regressed), (
+        "the fixed port in a de-adopted suite is invisible"
+    )
+    assert _name_hits(regressed, SPAWN_NAMES, SPAWN_DOTTED), (
+        "the raw spawn is invisible"
+    )
+    assert _name_hits(regressed, DISCARD_NAMES), "the discarded output is invisible"
+
+
+def test_the_helper_itself_hardcodes_no_port() -> None:
+    """``live_server.py`` is exempt from the spawn and teardown rules — it owns both — but nothing
+    exempts it from the port rule, and a fixed port *there* is the worst available regression: it
+    would put every suite back on one socket at once."""
+    assert _port_offenders((HERE / "live_server.py").read_text()) == [], (
+        "the helper that exists to allocate ports must not contain one"
     )
 
 

@@ -287,16 +287,44 @@ def test_stop_timeout_is_bounded() -> None:
 
 def test_the_helper_is_the_only_copy_of_free_port() -> None:
     """``_free_port`` used to exist twice, verbatim, in two suites. Collapsing duplicates is only
-    durable if a third copy cannot quietly reappear."""
+    durable if a third copy cannot quietly reappear.
+
+    Two corrections a third verification round called for, both of the shape this repo keeps
+    shipping. The scan now asserts its own denominator — an absence assertion over a glob that has
+    silently stopped matching reports success — and it parses rather than substring-matches, so it
+    sees a definition however it is spelled (``_free_port``, ``free_port``, ``_alloc_port``) and does
+    not see one named in prose.
+    """
+    import ast
+
     here = Path(__file__).parent
     me = Path(__file__).name
-    offenders = [
-        p.name
-        for p in sorted(here.glob("test_*.py"))
-        if p.name != me and "def _free_port(" in p.read_text()
-    ]
-    assert offenders == [], (
-        f"these files redefine _free_port instead of importing it: {offenders}"
+    scanned = sorted(here.glob("test_*.py"))
+    assert len(scanned) >= 25, (
+        f"the scan found only {len(scanned)} files in {here} — the glob is broken, and the "
+        f"assertion below would pass over nothing"
+    )
+
+    offenders: dict[str, list[str]] = {}
+    for path in scanned:
+        if path.name == me:
+            continue
+        try:
+            tree = ast.parse(path.read_text())
+        except (SyntaxError, ValueError):
+            continue
+        found = [
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name.endswith("port")
+            and ("free" in node.name or "alloc" in node.name)
+        ]
+        if found:
+            offenders[path.name] = found
+    assert offenders == {}, (
+        f"these files define their own port allocator instead of importing live_server.free_port: "
+        f"{offenders}"
     )
 
 
