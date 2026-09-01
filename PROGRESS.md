@@ -1187,9 +1187,9 @@ The verifier also found the gate cannot see the worst class of these. `CITATION`
 bare companion form — `` `:306` `` following a full citation — is never extracted. There are **156** of
 those across `DECISIONS.md` and `PROGRESS.md`, entirely unchecked, and one of them pointed past the end
 of a 261-line file while the suite stayed green. Not fixed here: resolving a bare anchor needs its
-antecedent, and the sweep would surface far more than this PR's scope. Filed as follow-up, along with
-the **22 pre-existing citations** the verifier found that resolve while pointing at the wrong
-construct.
+antecedent, and the sweep would surface far more than this PR's scope. Filed as **#91**, along with the
+**22 pre-existing citations** the verifier found that resolve while pointing at the wrong construct
+and the four that point at outright wrong targets.
 
 Five code findings, all closed:
 
