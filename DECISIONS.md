@@ -6,6 +6,57 @@ assumption, the independent recommender's analysis, the human verdict, and the r
 produced it.
 
 
+## 2026-08-31 — `plans/post-adoption-hardening-and-acdp-readiness.md` Phase 8 (issue #73): citations into vendored files are quoted, never line-anchored
+
+### Citations into vendored files are quoted, never line-anchored
+
+- **Context.** `verify/docs/seam-event.v1.md` is a byte-verbatim copy of seam-runtime's
+  `docs/specs/seam-event.v1.md`, refreshed **whole-file** by policy — `scripts/check_vendored_spec.py`
+  asserts the copy is upstream's bytes under a header, so a refresh replaces the entire body rather
+  than patching it. One `DECISIONS.md` citation pointed into that body at a line number.
+- **The failure, three times over.** Every upstream insertion above the cited sentence shifts it, so
+  the citation went stale on each refresh: PR #71, PR #72, and again on the ACDP P1a/P2 refresh in
+  this run. Each repair was a one-line bump carrying no information — and each was an opportunity to
+  "resolve" the citation onto a plausible wrong line, which is the failure the citation test exists
+  to catch, not one it should be generating. This is structural, not carelessness: a line number is a
+  claim about a file's *layout*, and a vendored copy has no stable layout by design. The rot rate is
+  set by upstream's commit cadence, which this repo does not control and cannot slow down.
+- **Decision.** No checked document may line-anchor into a vendored path. Enforced mechanically by
+  `VENDORED` in `python/tests/test_compatibility_citations_resolve.py:101`, over every document in
+  `DOCS`, with a red-first test proving the guard fires on a line anchor and leaves both sanctioned
+  alternatives alone (`python/tests/test_compatibility_citations_resolve.py:145`).
+- **What to do instead**, in preference order:
+  1. **Cite the upstream file** with its `seam-runtime/` prefix. It is the actual source of the
+     sentence, and `SIBLING_PREFIXES` already skips it when the sibling repo is not checked out. The
+     line number still rots there, but it rots in the repo that owns the file and can see the edit.
+  2. **Quote the sentence** and register it in `QUOTED`
+     (`python/tests/test_compatibility_citations_resolve.py:318`). The check asserts the needle is
+     unique in the target, that the document quotes it verbatim, and that the document still
+     attributes it to that path — no line number on either side.
+- **Widening `CITATION_SLACK` was considered and rejected.** Slack large enough to absorb a
+  whole-file refresh is slack that no longer distinguishes a correct citation from a wrong one, and
+  it would weaken every non-vendored anchor to buy tolerance for the one case that should not be
+  line-anchored at all. Issue #73 rules it out for the same reason.
+- **The one existing anchor was converted, not grandfathered.** The plan permitted either. Converting
+  won because Phase 9's regeneration half refreshes that same vendored file again — grandfathering
+  would have left a known-doomed anchor in place across the exact event it was doomed by. The quoted
+  form is also strictly stronger than what it replaced: an anchor confirms the document points at the
+  line holding the sentence, while the quote confirms the document and the file **say the same
+  words**. A refresh that silently reworded the sentence would satisfy a dutifully-repointed anchor
+  and fail the quote check, which is the right way round.
+- **Scope, and what remains open in #73.** This covers `verify/docs/` — the only tree this repo
+  vendors verbatim — and it stops new line anchors from being added there. It does **not** convert
+  the nine remaining `ANCHORED` entries into non-vendored files; those point into files this repo
+  edits itself, where a line number is a claim about our own layout and a drifting one is a real
+  signal. The adjacent case is recorded here rather than fixed: `COMPATIBILITY.md`'s "No yank"
+  citation into `CHANGELOG.md` was repointed **five times in this session** (`:521-526` → `:538-543`
+  → `:540-545` → `:563-568` → `:586-591`) because a changelog grows at the top. That is the same
+  zero-information churn with a different cause — an append-only file rather than a vendored one —
+  and the same conversion would fix it. It is deliberately out of scope here: `CHANGELOG.md` is ours,
+  the fix is a mechanism change to a check that is currently working, and #73 has not decided whether
+  the rule should widen from "vendored" to "any file whose line numbers are structurally unstable".
+
+
 ## 2026-08-31 — `plans/post-adoption-hardening-and-acdp-readiness.md` Phase 10 (issue #52): the 0.7.39-0.7.43 band is documented, not deleted
 
 ### A whole-surface field manifest, not an ACDP-shaped probe
@@ -485,8 +536,10 @@ not as written.
   through to `continue` and is tested twice — `verify/tests/authenticity.rs:238` and `:878`, the
   latter asserting skipped-not-recomputed. The per-column parametrization at `:843-875` exercises
   each column with the other three removed, and the comment at `:841` records the decoy that forced
-  it. The spec sentence it rests on is verbatim at `verify/docs/seam-event.v1.md:388-389`:
-  `ciphertext_digest` "is absent (no wire bytes) only on `schema_version = 1` payloads."
+  it. The spec sentence it rests on is quoted verbatim from `verify/docs/seam-event.v1.md`:
+  `ciphertext_digest` "is absent (no wire bytes) only on `schema_version = 1` payloads." That
+  quote is checked by content rather than by line number — see *Citations into vendored files are
+  quoted, never line-anchored* in this file for why this one carries no `:N`.
 - **Verdict:** Confirm. **Status:** CONFIRMED.
 
 ### `frame`'s `len() as u32` truncates above 4 GiB, in Rust only

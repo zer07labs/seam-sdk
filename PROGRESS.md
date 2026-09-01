@@ -526,6 +526,37 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   That is Phase 5's subject exactly; regenerating before the manifest exists would adopt the fields
   silently and waste the tripwire.
 
+### Phase 8 — Vendored files are quoted, never line-anchored (issue #73) · 2026-08-31
+
+- **Converted, not grandfathered.** The plan allowed either and flagged that grandfathering leaves
+  Phase 9's refresh free to drift the anchor again. Since Phase 9's regeneration half is still ahead
+  and refreshes that exact file, converting is the only choice that actually makes the ordering mean
+  something.
+- **The guard fires on real content, not only on a fixture.** Before converting `DECISIONS.md`, the
+  suite went red on the live document —
+  `test_no_document_line_anchors_into_a_vendored_file[DECISIONS.md]` plus the new `QUOTED` check —
+  so acceptance 1 is demonstrated against the repo's own prose, not just a synthetic string. The
+  synthetic red-first test remains, with negative controls proving the rule leaves the two
+  sanctioned alternatives (a `seam-runtime/`-prefixed citation, a bare quoted path) alone. A rule
+  that rejected those too would leave vendored quotes with nowhere legal to go, which is how a
+  check gets deleted under deadline.
+- **Coverage went up, not down.** Removing the entry from `ANCHORED` would have lost the content
+  check that had been going red usefully. `QUOTED` replaces it with three assertions and no line
+  number: needle unique in the target, quoted verbatim in the document, still attributed to the
+  path. An anchor confirms the document *points at* the sentence; the quote confirms both sides
+  **say the same words** — so a refresh that reworded the sentence would satisfy a dutifully
+  repointed anchor and fail here.
+- **Citation floors after the conversion:** COMPATIBILITY.md 27, DECISIONS.md 51, floor 10 each.
+  Acceptance 4 holds with wide margin.
+- **The adjacent case is recorded, not fixed.** COMPATIBILITY.md's "No yank" citation into
+  `CHANGELOG.md` was repointed five times in this session (`:521-526` → `:538-543` → `:540-545` →
+  `:563-568` → `:586-591`) — identical zero-information churn, different cause: an append-only file
+  rather than a vendored one. The plan scopes Phase 8 to vendored files and #73 has not decided
+  whether the rule should widen, so it is written into DECISIONS.md as the open half rather than
+  silently converted.
+- **Full python suite: 606 passed, 17 skipped.** Run whole, never a subset — the doc guards scan
+  every `*.md` including this file.
+
 ### Phase 2 — The two cross-repo asks, written and **filed** · 2026-08-31
 
 - **The "do not file" restriction was lifted mid-run** by the user. Both asks are now real issues:

@@ -11,13 +11,18 @@ the day the document was written**, because the same PR that wrote them also ins
 `publish.yml`, `release-on-runtime.yml` and `CHANGELOG.md` and shifted the targets underneath. A
 citation that points at the wrong line is worse than no citation — it looks checked.
 
-Two levels of check, because line numbers rot in two different ways:
+Three levels of check, because line numbers rot in three different ways:
 
 1. **Structural** — the file exists and the cited line is in range. Catches a deleted file or a
    citation past EOF.
 2. **Anchored** — for the load-bearing claims, the cited line must still contain the thing it is
    cited *for*. This is what catches the failure that actually happened: the line existing, but now
    holding something else entirely.
+3. **Quoted** — for claims resting on a file this repo vendors verbatim, there is no line number at
+   all: the document quotes the sentence, and the check confirms the file still says it. Levels 1
+   and 2 both presume a line number worth keeping true; against a file replaced whole-file on every
+   upstream refresh, that presumption is false, and the `VENDORED` rule below now rejects the
+   attempt outright (issue #73).
 
 `DECISIONS.md` was brought under the same checks later, and the argument for it is the argument
 against ever scoping a check to the tidiest document. It is a live record a reader trusts exactly as
@@ -75,6 +80,33 @@ CITATION = re.compile(r"`([\w./-]+\.\w+):(\d+)(?:-(\d+))?`")
 #: of the same name and be checked against the wrong one entirely.
 SIBLING_PREFIXES = ("seam-adapters/", "seam-aegis/", "seam-runtime/")
 
+#: Paths vendored into this repo **byte-verbatim from upstream** — refreshed whole-file, by policy,
+#: whenever upstream moves. A line number into one of these is not a citation, it is a countdown.
+#:
+#: This is issue #73. `verify/docs/seam-event.v1.md` is a verbatim copy of seam-runtime's
+#: `docs/specs/seam-event.v1.md`; refreshing it replaces the whole body, so every line below an
+#: upstream insertion shifts. One citation into it drifted in PR #71, again in PR #72, and again in
+#: the ACDP refresh — three repoints carrying zero information, each one an opportunity to "fix" the
+#: citation by pointing it at a plausible wrong line. Widening `CITATION_SLACK` was considered and
+#: ruled out in #73: slack that survives a whole-file refresh is slack that no longer checks anything.
+#:
+#: The rule, enforced below: **no line-anchored citation into a vendored path, from any checked
+#: document.** Two sanctioned alternatives, neither of which rots:
+#:
+#: * Cite the *upstream* file with its `seam-runtime/` prefix. It is the real source, and
+#:   `SIBLING_PREFIXES` already skips it when the sibling repo is not checked out.
+#: * Quote the sentence and let `QUOTED` (bottom of this file) check it by content. Strictly
+#:   stronger than a line anchor: it verifies the document and the file still say the same words,
+#:   which is what the citation was ever for.
+VENDORED = ("verify/docs/",)
+
+
+def _line_anchors_into_vendored(text: str) -> list[str]:
+    """Every line-anchored citation in `text` that names a vendored path. Empty is the good case."""
+    return [
+        m.group(0) for m in CITATION.finditer(text) if m.group(1).startswith(VENDORED)
+    ]
+
 
 def _citations(doc: str) -> list[tuple[str, str, int, int]]:
     out = []
@@ -95,6 +127,48 @@ def test_the_document_actually_cites_things(doc: str, floor: int) -> None:
         f"{doc} carries almost no file:line citations. Either the document was gutted or the "
         f"citation regex no longer matches its format; both need looking at."
     )
+
+
+@pytest.mark.parametrize("doc", DOCS)
+def test_no_document_line_anchors_into_a_vendored_file(doc: str) -> None:
+    """Issue #73's rule. A line number into a whole-file-refreshed copy has a shelf life."""
+    offenders = _line_anchors_into_vendored((REPO / doc).read_text(encoding="utf-8"))
+    assert not offenders, (
+        f"{doc} line-anchors into a vendored file: {', '.join(offenders)}. Those files are "
+        f"refreshed whole and verbatim from upstream, so the line number is guaranteed to rot at "
+        f"the next refresh — it has already been repointed three times for zero information. Cite "
+        f"the upstream file instead (`seam-runtime/docs/specs/...:N`), or quote the sentence and "
+        f"add it to QUOTED at the bottom of this file, which checks it by content and never drifts."
+    )
+
+
+def test_the_vendored_rule_fires_on_a_line_anchor_and_leaves_the_alternatives_alone() -> (
+    None
+):
+    """Red-first: prove the guard above catches the thing it exists for, and nothing else.
+
+    Without this, the guard passing on today's documents is indistinguishable from a `VENDORED`
+    prefix that matches no path at all — the vacuous-pass failure this file already guards against
+    twice elsewhere. The negative controls matter just as much: a rule that also rejected the two
+    sanctioned alternatives would leave a citation into vendored content with nowhere legal to go,
+    and the way that gets resolved under deadline is by deleting the check.
+    """
+    vendored = f"{VENDORED[0]}seam-event.v1.md"
+
+    assert _line_anchors_into_vendored(f"verbatim at `{vendored}:388-389`:") == [
+        f"`{vendored}:388-389`"
+    ]
+    assert _line_anchors_into_vendored(f"see `{vendored}:388`") == [f"`{vendored}:388`"]
+
+    # The two sanctioned forms, and an unrelated local citation, must all pass clean.
+    assert _line_anchors_into_vendored(f"quoted verbatim from `{vendored}`") == []
+    assert (
+        _line_anchors_into_vendored(
+            "`seam-runtime/docs/specs/seam-event.v1.md:388-389`"
+        )
+        == []
+    )
+    assert _line_anchors_into_vendored("`python/seam_sdk/crypto.py:378-408`") == []
 
 
 @pytest.mark.parametrize(
@@ -161,13 +235,9 @@ ANCHORED = [
     # documents and drifted in both — it was repaired in COMPATIBILITY.md and left stale here,
     # which is exactly the argument for checking every document rather than the tidiest one.
     ("DECISIONS.md", ".github/workflows/ci.yml", "must link NOTHING"),
-    # The sentence the whole v1-skip decision rests on. Repointed three times in one session as
-    # the vendored spec was refreshed and its header rewritten; nothing caught any of them.
-    (
-        "DECISIONS.md",
-        "verify/docs/seam-event.v1.md",
-        "is absent (no wire bytes) only on",
-    ),
+    # The sentence the whole v1-skip decision rests on used to be pinned here, and was repointed
+    # three times as the vendored spec was refreshed. It moved to QUOTED (bottom of this file)
+    # under issue #73 — same needle, same uniqueness assertion, no line number to rot.
     ("DECISIONS.md", "CHANGELOG.md", "this SDK cannot express its own"),
 ]
 
@@ -228,4 +298,74 @@ def test_the_load_bearing_citations_still_point_at_the_right_thing(
         f"{needle!r} is at {path}:{true_line}, but {doc} cites {path} only at "
         f"{[str(a) if a == b else f'{a}-{b}' for a, b in cited]}. The citation has drifted — update "
         f"{doc} to {path}:{true_line}."
+    )
+
+
+#: Claims a document supports by **quoting** a file rather than by pointing at a line in it.
+#:
+#: Each entry is (document, cited path, the quoted needle). There is no line number in this table,
+#: and there deliberately never will be: these are the claims whose target is a `VENDORED` file, so
+#: a line number is exactly the thing that cannot be kept true.
+#:
+#: What this checks is strictly stronger than what the line anchor checked. `ANCHORED` verifies the
+#: document points at the line holding the needle; this verifies the document and the file **contain
+#: the same words** — which is the fact the reader actually relies on, and the line number was only
+#: ever a lossy proxy for it. A refresh that silently reworded the sentence would satisfy a repointed
+#: line anchor and fail here, which is the right way round.
+#:
+#: Uniqueness in the target file is asserted for the same reason `ANCHORED` asserts it, and the same
+#: guidance holds: if a needle stops being unique, LENGTHEN it, do not relax the assertion.
+QUOTED = [
+    # The sentence the whole v1-skip decision rests on. Held in ANCHORED until issue #73; moved here
+    # after its line anchor into the vendored spec had to be repointed three times in one session.
+    (
+        "DECISIONS.md",
+        "verify/docs/seam-event.v1.md",
+        "is absent (no wire bytes) only on",
+    ),
+]
+
+
+def test_the_quoted_table_is_not_empty() -> None:
+    """Guard the guard, same as the citation floor — an empty table parametrizes to no tests."""
+    assert QUOTED, (
+        "QUOTED is empty, so nothing below runs. If the last entry was genuinely retired, delete "
+        "this test and the mechanism with it rather than leaving a check that asserts nothing."
+    )
+
+
+@pytest.mark.parametrize(("doc", "path", "needle"), QUOTED, ids=lambda v: str(v))
+def test_the_quoted_claims_still_match_their_source_word_for_word(
+    doc: str, path: str, needle: str
+) -> None:
+    """The document quotes it, the file still says it, and no line number is involved either way."""
+    target = REPO / path
+    assert target.exists(), (
+        f"{doc} quotes {path}, but that file does not exist. Re-source the claim or delete it, "
+        f"per COMPATIBILITY.md's own rule."
+    )
+
+    hits = [
+        i + 1
+        for i, line in enumerate(
+            target.read_text(encoding="utf-8", errors="ignore").splitlines()
+        )
+        if needle in line
+    ]
+    assert len(hits) == 1, (
+        f"{needle!r} occurs {len(hits)} times in {path} (lines {hits or 'none'}); this check needs "
+        f"exactly one. If it is 0, the refresh changed or dropped the sentence {doc} quotes — the "
+        f"claim is now unsupported, so re-quote it or delete it. If it is >1, the needle is too "
+        f"weak to identify the sentence: lengthen it here until it is unique, do NOT relax this."
+    )
+
+    doc_text = (REPO / doc).read_text(encoding="utf-8")
+    assert needle in doc_text, (
+        f"{doc} no longer quotes {needle!r}, so there is nothing here to check it against. Either "
+        f"the claim was dropped (then drop this entry too) or the quote was paraphrased — and a "
+        f"paraphrase is the failure this table exists to catch, not a cosmetic edit."
+    )
+    assert f"`{path}`" in doc_text, (
+        f"{doc} quotes {needle!r} but no longer attributes it to `{path}`. An unattributed quote "
+        f"cannot be re-verified by a reader, which is the whole point of citing anything."
     )
