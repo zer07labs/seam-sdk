@@ -193,7 +193,8 @@ regenerates from scratch against buf's unpinned remote plugins, so the gencode i
 be the gencode CI measured. `v0.7.43` shipped `protobuf>=7.35.1,<8` over 7.36.0
 gencode — though **not** through this gap: its CI was *red* on exactly that floor test, and
 `ci-green` closes the path that release actually took. This gap is the one a *genuinely green*
-release can still ship through, and nothing closed it. Two steps close it: the floor guards run again after the
+release could still have shipped through, and nothing closed it until Phase 6. Two steps close it now:
+the floor guards run again after the
 publish job's own generation (`.github/workflows/publish.yml:340`), and the built wheel is then
 installed into a venv with `protobuf` pinned at the floor it declares and imported there
 (`.github/workflows/publish.yml:413`) — the only check that answers *is this metadata true?*, since

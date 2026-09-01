@@ -63,10 +63,14 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `python/tests/test_collective_outcome.py`, `ts/tests/collective_outcome.test.ts` | `DecisionResponse` cases only. **Phase 3** adds the `SessionStep` cases (absent ⇒ none; `UNSPECIFIED` ⇒ raise; unknown ⇒ raise; non-commit step ⇒ none). Drive red first. |
 | `python/seam_sdk/client.py:473,514` · `aio.py:371,412` · `ts/src/client.ts:601,637` | `submit_evaluation` / `submit_objection` — **already delivered** by `c49d005`. Do not re-plan. |
 | `python/seam_sdk/client.py:506-507` · `aio.py:404-405` · `ts/src/client.ts:623` | `confidence` presence mapping — `None` ⇒ field-absent, never `0.0`. Correct in both languages; pinned by `python/tests/test_evaluation_confidence.py:55,64,87,100` and `ts/tests/evaluation.test.ts:59,70,85,93`. |
+> **Read every row below as *as at plan time*, 2026-08-31, unless the row says otherwise.** Some
+> were updated mid-run and some were not, which is worse than either — an unstamped map invites a
+> reader to treat a stale row as current. The rows known to have moved since are corrected inline.
+
 | `python/seam_sdk/_authorize.py:180,223` | `AuthorizeRequest.subjects` — one shared builder feeds sync + aio + TS. Delivered; tests at `python/tests/test_authorize.py:637,646`. |
 | `scripts/check-contract.sh` | The contract-freshness gate. `:192` probe 1 (one named RPC) · `:196-210` probe 1b and `:212-226` probe 1c (hardcoded names; 1b includes **two `seam.api.v1` field names**, `call_sig` and `on_behalf_of`, at `:205-206`) · `:228-241` probe 2 (**exactly four hardcoded field names, all on `seam.event.v1`**; `STREAM=1` hardens) · `:242-247` probe 3 (`EVENTS=1`) · `:249-275` probe 4 (RPC set comparison, both directions). Every field probe names a *pre-existing* field, so **a new message field is invisible to all of them — that is the hole Phase 5 closes.** Extractors to mirror: `:158-161` `rpcs_python` (greps `_pb2_grpc.py`), `:163-166` `rpcs_ts` (greps `@generated from rpc`), `:173-188` `--write-manifest` (**writes from Python only**, preserves the header verbatim), `:88-97` the exit-3 no-stubs guard. |
 | `contract/rpc-manifest.txt:60-61` | Declares `SubmitEvaluation`/`SubmitObjection`. The model Phase 5 mirrors one level down. |
-| `contract/field-manifest.txt` | **Phase 5 creates.** Whole-surface `seam.api.v1` field declaration (measured: **223 fields over 65 messages** — both extractors agree exactly, given the `_FIELD_NUMBER` rule in the row below), set-compared per language both directions, `--write-manifest` escape. Also the ACDP tags-7-10 tripwire. |
+| `contract/field-manifest.txt` | **Phase 5 creates.** Whole-surface `seam.api.v1` field declaration (measured: **223 fields over 65 messages** — both extractors agree exactly, given the `_FIELD_NUMBER` rule in the row below), set-compared per language both directions, `--write-manifest` escape. Also the ACDP tags-7-10 tripwire. **As shipped: 228, not 223** — the plan measured the surface before ACDP reached the BSR. |
 | `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi:106,163` | `AuthorizeRequest.FeaturesEntry` / `RunDecisionRequest.FeaturesEntry` — **synthetic map-entry messages Python emits and protobuf-es does not**. Phase 5's extractors must exclude them **by nesting, not by the `*Entry` name** — `AuditEntry` (`:716`) is a real top-level message. `.pyi` carries **no `oneof` grouping at all** (and `seam.api.v1` has zero `oneof`s). |
 | `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi:409,418` | **`__slots__` is NOT the field list.** `ResumeRequest`/`AdminResumeRequest` carry a proto field named `raise`; the `.pyi` generator cannot emit a Python keyword, so `__slots__` omits it and only `RAISE_FIELD_NUMBER` (`:412`, `:424`) survives. Measured: `__slots__` = 221 fields, protobuf-es = 223. **Phase 5 must extract from `<NAME>_FIELD_NUMBER: _ClassVar[int]` lowercased** — that reconciles both sides at 223 with zero diff. |
 | `contract/wire-framing.json:31-33` | `_comment`: a bump is **NOT** for an additive proto field or a new RPC verb. Do not touch it for ACDP. |
@@ -77,7 +81,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `python/tests/test_protobuf_floor.py:72,88` | The two pure-file-read assertions Phase 6 runs at publish time. `:29-31` reads only `_gen/seam/api/v1/seam_pb2.py`; `:47-51` **skips** when `_gen` is absent. `:88-99` forces `cap == gencode_major + 1` — this is why "widen the floor" is not a metadata edit. |
 | `python/tests/test_grpcio_floor.py:38` | Module-level `import grpc` — matters if Phase 6 runs it in the publish job. |
 | `.github/workflows/yank.yml` | `workflow_dispatch`, `dry_run` default `"true"`. A hard **DELETE** (`:91-92`), not a PyPI-style yank. Its token line did **not** strip the cargo token's `"Bearer "` prefix (`.github/workflows/publish.yml:369-371` does) — **Phase 10 fixed it** (DONE 2026-08-31) at `.github/workflows/yank.yml:55-60`, and left the version/format/name filters (`:73-76`) byte-unchanged. `scripts/test_yank_gate.py` now executes the resolution and pins those filters. |
-| `COMPATIBILITY.md:99-136` | §3 known-bad table + the "Nothing was yanked" preamble. **Phase 7 added the `0.7.39 – 0.7.43` row** (DONE 2026-08-31) — *not* the hedged `≥ 0.7.40` this row first planned: both edges are proven from CI history, so the hedge was deleted rather than softened. `:181-188` dependency floors · `:203-262` §4a co-installability (`:221-223` machine-read `PROBE-TABLE` marker — columns and order load-bearing; `:227` crewai row, whose Tracking cell links **#48 and not crewAI#7103**) · `:328-364` §7 cross-repo coupling, incl. `:337-355` vector origination. **§7 documents `seam-sdk` main → `seam-runtime` CI, *not* a spec-side merge-order courtesy — do not cite it for one.** |
+| `COMPATIBILITY.md:99-136` | §3 known-bad table + the "Nothing was yanked" preamble. **Phase 7 added the `0.7.39 – 0.7.43` row** (DONE 2026-08-31) — *not* the hedged `≥ 0.7.40` this row first planned: both edges are proven from CI history, so the hedge was deleted rather than softened. `:181-188` dependency floors · `:203-262` §4a co-installability (`:221-223` machine-read `PROBE-TABLE` marker — columns and order load-bearing; `:227` crewai row, whose Tracking cell linked **#48 and not crewAI#7103** — **Phase 7 fixed this; the cell now links the PR**) · `:328-364` §7 cross-repo coupling, incl. `:337-355` vector origination. **§7 documents `seam-sdk` main → `seam-runtime` CI, *not* a spec-side merge-order courtesy — do not cite it for one.** |
 | `python/tests/test_retracted_claims.py:170-184` | Parametrized presence check over `COMPATIBILITY.md`. **Phase 7 added `"0.7.39"`** — the *lower* edge, which is the one a reader is most likely to assume they are outside of — plus two real row guards (`python/tests/test_retracted_claims.py:194-256`), because this parametrize is a substring check and could not fail for a deleted row. `python/tests/test_retracted_claims.py:27-30` globs **every `*.md` in the repo including `plans/` and this file**; `python/tests/test_retracted_claims.py:39-48` are the qualifier markers that make a paragraph "discussing, not claiming". |
 | `python/tests/test_compatibility_citations_resolve.py` | Every backticked `file:line` in `COMPATIBILITY.md`/`DECISIONS.md` must resolve; `:61-64,:92` ≥10 each; `:76` sibling paths need a `seam-runtime/` prefix; `:141-172` `ANCHORED` needles must hit **exactly once** within `CITATION_SLACK` (`:176`). **Phase 8** adds the vendored-file rule. |
 | `verify/docs/seam-event.v1.md` | Byte-verbatim vendored spec, pinned in its header. **Phase 9** refreshes it whole-file. Source of #73's citation drift. |
@@ -93,6 +97,11 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `CHANGELOG.md:3-7` | The SDK does not choose its own version; entries accumulate under `## Unreleased`. `:516-518` is the hedging style Phase 7 *was* to mirror — it did not, the band being provable, and the citation was removed as it sat within `CITATION_SLACK` of the `"No yank"` needle; `:521-526` the no-yank decision of record. **This advisory still names only 0.7.13-0.7.19** — see the Phase 7 checkpoint. |
 
 ### Sibling repos (read-only — referenced, never written)
+
+> **Superseded in one respect that matters:** the rows below describe the P1a work as committed
+> on an unpushed branch, with nothing on `origin/main` and nothing on the BSR. Both merged on
+> 2026-08-31 (`7c1d16d` proto, `3b3d4ae` spec), which is precisely what unblocked Phase 9 — see
+> its checkpoint. Read the anchors below as historical.
 
 | Path | Why it matters |
 |---|---|
@@ -526,6 +535,57 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   That is Phase 5's subject exactly; regenerating before the manifest exists would adopt the fields
   silently and waste the tripwire.
 
+### Finalization + `/reconcile` — the record did not agree with itself · 2026-08-31
+
+The final whole-feature verify found **no defect in code, gates or behaviour** — every phase's
+substance shipped, no phase weakened an earlier phase's check, and every mechanical check holds.
+What it found was record integrity, which in a plan whose thesis is *"a check that passes because it
+never saw the thing"* is in scope rather than a nit.
+
+- **The Phase 8 convert-vs-grandfather justification was counterfactual, and I had asserted it in
+  four places.** It read *"Phase 9's regeneration half refreshes that same vendored file again."* It
+  does not: the refresh (`c7331b6`, PR #80) landed at 18:26, about two hours **before** Phase 8 at
+  20:14, and Phase 9's regeneration commit never touches the file. Worse, the reconcile pass then
+  stamped the entry CONFIRMED citing *"the converted citation did not move"* — which is **vacuous**:
+  it did not move because nothing refreshed the file, and a grandfathered anchor would equally not
+  have moved. The comparison was against a `CHANGELOG.md` citation, a different file with a
+  different cause that the rule explicitly does not reach. The decision stands on the durable reason
+  (whole-file refresh on upstream's cadence drifts any anchor); the evidence offered for it is
+  retracted, and the choice is recorded as **not yet exercised**.
+- **The "No yank" chain in `DECISIONS.md` said eleven values and stopped one short** — Phase 9's own
+  CHANGELOG entry had added the twelfth after that paragraph was written. So the paragraph had to be
+  updated by the very drift it describes.
+- **The same claim's thirteenth drift, in two files no guard watches.** `plans/…:524` and
+  `python/tests/test_retracted_claims.py:180` both cited `CHANGELOG.md:523-528`, which is now
+  unrelated prose. `DOCS` covers only COMPATIBILITY.md and DECISIONS.md, so neither resolved nor
+  failed. Both repointed; the test's is now needle-based. Widening `DOCS` to the plan and this file
+  stays deferred — Phase 6's Divergence 3 predicted this exact cost and declined it deliberately.
+- **Two Phase 5 acceptance criteria were false at final state and unmarked**, while Phase 7's
+  superseded criterion *was* struck. Both now struck the same way: the gate exits 6 (not 0) in a
+  pre-ACDP checkout, and the manifest is 228 (not 223). The surviving invariant is *agreement
+  between the extractors*, not a literal count — the count is a property of the contract on the day
+  it is read.
+- **A decision reversed in two of four places.** Phase 9 corrected "wiring them is Phase 9" in the
+  manifest header and DECISIONS.md but left it in this file and in
+  `test_field_manifest_gate.py:240` — the docstring of the test asserting the slots are declared and
+  *not* interpreted. Verbatim the "repaired in one document, left stale in the other" failure the
+  same commit claimed to have caught elsewhere.
+- **The repo map above is now stamped** *as at plan time*. Some rows were updated mid-run and some
+  were not, which is worse than either: an unstamped map invites a reader to treat a stale row as
+  current. Rows known to have moved are corrected inline.
+- **"Both edges proven from CI history" now names its run ids.** It was asserted in four documents
+  with one run id behind one of six data points — not false, but thinner than "proven" implies. The
+  table is in `DECISIONS.md`: `v0.7.38` green (`32410597866`), `v0.7.39` red (`32557539171`),
+  `v0.7.43` red (`32682442846`), `v0.7.47` green (`32805064452`).
+- **The reconcile pass had itself skipped a directive** — the plan told it to look at the three
+  pre-existing UNCONFIRMED entries and the first draft said nothing about them. A second instance of
+  its own headline finding. All three are now stated and stay UNCONFIRMED, with reasons. The
+  Cloudsmith deferral gained the re-open trigger and owner this file's own convention requires.
+- **Final state:** python **618 passed / 17 skipped** · TS 112 passed · Go ok · `verify` 87 passed ·
+  ruff and `tsc --noEmit` clean · `check-contract` exits **6**, and the verify confirmed the five
+  ACDP fields are the *only* reason — every other probe present, all 42 RPCs matching in both
+  languages. Citations: COMPATIBILITY.md 27, DECISIONS.md 57.
+
 ### Phase 9 — ACDP P1a/P2 adopted: declared, deliberately not interpreted · 2026-08-31
 
 - **One divergence from the plan, stated first because it changes what the evidence is.**
@@ -607,7 +667,8 @@ ERROR: a breaking change and must be handled, never silently rewritten away.
   "re-run" before "investigate", which is how a real failure gets waved through — the same class of
   habit that let #52 publish on red CI. #85 also notes that `/tmp/seam-grpc.log` is only printed
   when the *smoke* step fails, so every re-run destroys the one artifact that would name the crash.
-- **Suites:** python 616 passed / 17 skipped · TypeScript 112 passed, 0 failed · Go ok ·
+- **Suites:** python 618 passed / 17 skipped (616 at the phase's own commit; the final
+  whole-feature verify's fixes added two citations) · TypeScript 112 passed, 0 failed · Go ok ·
   `verify` 87 passed · ruff clean · `tsc --noEmit` clean. **Java and Kotlin were not run here** — no
   JDK in this environment; CI covers them, and this is flagged rather than implied green.
 - **The verify gate caught the drift's second copy, which I had missed.** `DECISIONS.md` cites the
@@ -838,7 +899,8 @@ ERROR: the generated FIELD surface disagrees with contract/field-manifest.txt:
   Each language named it independently, which is the property that makes a stale `ts/gen` beside a
   fresh `python/_gen` visible. Only then were the five adopted, with the decision written into the
   manifest header: **declared, deliberately not interpreted** — carried on the generated type, never
-  read, and neither status vocabulary re-spelled. Wiring them is Phase 9.
+  read, and neither status vocabulary re-spelled. Phase 9 then settled this rather than reversing
+  it: the fields are carried and never wired.
 - **Known and stated: a bare local `check-contract` now exits 6 on this machine.** The local stub tree
   predates ACDP by exactly those five fields, so the gate reports them as MISSING and says
   "stale/partial generation" — which is **true**, and is the gate working. CI, which regenerates

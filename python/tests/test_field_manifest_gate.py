@@ -237,7 +237,9 @@ def test_the_committed_manifest_declares_the_acdp_slots_it_deliberately_does_not
     None
 ):
     """These five landed on the contract and are declared WITHOUT being interpreted — the gate refused
-    them first and this is the decision that refusal forced. Wiring them is Phase 9.
+    them first and this is the decision that refusal forced. Phase 9 settled it rather than
+    reversing it: the fields are carried and never wired, because `verify/` does not compute
+    `context_digest`.
 
     The header must carry the reasoning, because a future reader finding five undeclared-looking lines
     needs the decision without archaeology — and must not 'helpfully' normalise either status

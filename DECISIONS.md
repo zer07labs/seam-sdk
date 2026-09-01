@@ -35,14 +35,39 @@ the phase ran, which is itself the finding worth recording first.
   coverage limit is declared rather than inferred.
 - **Verdict:** Confirm. **Status:** CONFIRMED.
 
-### Phase 8 converts rather than grandfathers — **CONFIRMED, and vindicated in-run**
+### Phase 8 converts rather than grandfathers — **CONFIRMED on the reason, NOT on the evidence first given**
 
-- The phase permitted either. Converting was chosen because Phase 9 refreshes that same vendored
-  file, so grandfathering would have carried a known-doomed anchor into the event that dooms it.
-- It was tested by events within the same session: Phase 9's CHANGELOG entry moved the "No yank"
-  citation for the twelfth time, while the converted citation did not move at all. A grandfathered
-  anchor would have needed a thirteenth repoint in that same commit.
-- **Verdict:** Confirm. **Status:** CONFIRMED.
+- **Both halves of the original write-up were wrong, and the final whole-feature verify caught them.**
+  The stated reason — "Phase 9 refreshes that same vendored file" — is counterfactual: the refresh
+  (`c7331b6`, PR #80) preceded Phase 8 by about two hours, and Phase 9's regeneration commit never
+  touched the file. The stated vindication — "the converted citation did not move while the
+  `CHANGELOG.md` one drifted" — is vacuous: it did not move because *nothing refreshed the file*, and
+  a grandfathered anchor would equally not have moved. Comparing against `CHANGELOG.md` compares a
+  different file with a different cause, one this rule explicitly does not reach.
+- **What survives is the durable reason**, which needs no named trigger: the copy is refreshed
+  whole-file on upstream's cadence, so the next refresh drifts any line anchor into it. That is
+  sufficient on its own and was always the real argument.
+- **The choice is not yet exercised.** The first upstream refresh after this is its actual test. A
+  confirmation should say what it rests on, and this one rests on reasoning rather than on an
+  observed event.
+- **Verdict:** Confirm the decision; retract the evidence offered for it. **Status:** CONFIRMED.
+
+### The three pre-existing UNCONFIRMED entries this pass was told to look at
+
+- **The plan directed it and the first draft of this pass ignored it** — caught by the final verify,
+  which is a second instance of this section's headline finding rather than a separate one.
+  `ASSUMPTIONS.md` carries three UNCONFIRMED entries from *earlier* plans, and the plan's Open
+  question 7 addressed one of them explicitly.
+- **`ASSUMPTIONS.md:177` — testing rather than only building `verify/` at its declared MSRV.**
+  Settleable in-repo but unrelated to anything this plan touched, and the plan already decided:
+  **not inherited.** Left UNCONFIRMED, owned by whoever next changes `verify/`'s job matrix.
+- **`ASSUMPTIONS.md:327`/`:352` — the runtime's caller-derived canonical bytes, and its JCS rendering
+  of integers ≥ `10**21`.** Both were filed as questions upstream and neither is answerable from this
+  repo. Both remain UNCONFIRMED, correctly: this plan changed nothing either depends on, and closing
+  them would mean inventing an answer about another service's behaviour.
+- **Decision.** All three stay UNCONFIRMED and stay tagged to their own plans. Recorded here so the
+  next pass finds a statement rather than a silence — an entry nobody mentions is indistinguishable
+  from an entry nobody read, which is the same defect this section opened with.
 
 ### Cloudsmith quarantine for the 0.7.39-0.7.43 band — **DEFERRED, and deliberately not settled here**
 
@@ -59,6 +84,13 @@ the phase ran, which is itself the finding worth recording first.
   arriving on them. The no-yank reasoning turns on harm to the working consumer, not on whether the
   act is reversible — so quarantine's reversibility does not answer the objection, it only softens
   the cleanup.
+- **Re-open trigger and owner**, which the first draft of this entry omitted — a deferral without
+  either is just a decision nobody made. **Trigger:** evidence that a consumer has newly *arrived*
+  on one of the five versions (a lockfile pinning one, or a bug report against one) — that is the
+  only harm documentation does not already address. **Owner:** the repo maintainer; this is a
+  publishing-policy call about other people's builds, not an implementation detail, and it wants a
+  human decision rather than an agent's default. **Standing default until then: no quarantine** —
+  matching the plan's own Open question 1.
 - **Verdict:** Defer, with the reversible option in force. **Status:** UNCONFIRMED — carried, not
   closed. Nothing in this plan depends on it.
 
@@ -112,9 +144,18 @@ the phase ran, which is itself the finding worth recording first.
   whole-file refresh is slack that no longer distinguishes a correct citation from a wrong one, and
   it would weaken every non-vendored anchor to buy tolerance for the one case that should not be
   line-anchored at all. Issue #73 rules it out for the same reason.
-- **The one existing anchor was converted, not grandfathered.** The plan permitted either. Converting
-  won because Phase 9's regeneration half refreshes that same vendored file again — grandfathering
-  would have left a known-doomed anchor in place across the exact event it was doomed by. The quoted
+- **The one existing anchor was converted, not grandfathered — and the reason first given for it was
+  wrong.** The plan permitted either. The justification written here, and repeated in the plan and
+  `ASSUMPTIONS.md`, was *"Phase 9's regeneration half refreshes that same vendored file again."* It
+  does not. `verify/docs/seam-event.v1.md` was last touched by `c7331b6` (18:26, PR #80 — Phase 9's
+  **spec** half), roughly two hours **before** this phase landed at 20:14; Phase 9's regeneration
+  commit `27dda87` does not touch it at all. The refresh being guarded against had already happened.
+
+  Recording that rather than quietly restating it, because asserting an unchecked justification is
+  the exact defect this entry is about, committed by the entry itself. The decision still stands on
+  the durable reason, which needs no specific event: the file is refreshed **whole-file on upstream's
+  cadence**, so the *next* refresh drifts any line anchor into it, and a rule that waits for a named
+  trigger is a rule that arrives after the drift it was meant to prevent. The quoted
   form is a **trade, not a superset**, and calling it "strictly stronger" would be the same
   comfortable overstatement this entry is otherwise about. Dropped: the line-position claim. Gained:
   the document must quote the sentence verbatim, so a refresh that silently reworded it fails here
@@ -136,10 +177,12 @@ the phase ran, which is itself the finding worth recording first.
   added to it, because repointing them without content-checking them would have fixed the instance
   and left the class. The adjacent case is recorded here rather than fixed: `COMPATIBILITY.md`'s "No yank"
   citation into `CHANGELOG.md` drifts because a changelog grows at the top, so *every* new entry
-  moves it. Measured across `git rev-list --all`, it has held **eleven distinct values since
+  moves it. Measured across `git rev-list --all`, it has held **twelve distinct values since
   2026-08-23**: `:227-231` → `:277-281` → `:317-321` → `:419-424` → `:466-471` → `:521-526` →
-  `:523-528` → `:538-543` → `:540-545` → `:563-568` → `:586-591`, the last six of them on 08-31
-  alone. (Two earlier drafts of this paragraph were wrong in two different ways — one omitted
+  `:523-528` → `:538-543` → `:540-545` → `:563-568` → `:586-591` → `:610-615`, the last seven of
+  them on 08-31 alone. The twelfth was added by Phase 9's own CHANGELOG entry, after this paragraph
+  was written — so the paragraph had to be updated by the very drift it describes, which is the
+  clearest statement of the problem available. (Two earlier drafts of this paragraph were wrong in two different ways — one omitted
   `:523-528` while still calling the chain five repoints, an enumeration disagreeing with its own
   count; the next said "twelve since 08-24", counting a *different* CHANGELOG citation that a
   last-match grep had swept in. Third time measured properly, by matching the citation rather than
@@ -308,6 +351,22 @@ destroy the bad artifacts, which is the narrower question answered above.
 
 ### The evidence, each checked rather than assumed
 
+- **Both edges of the band, with the run ids so a reader can re-check rather than take it on
+  trust.** This claim is asserted in several documents and until now named one run id behind one of
+  its data points, which is thinner than "proven" implies. The `ci` runs on each tagged commit,
+  failing or passing `test_the_declared_floor_is_at_least_the_gencode_in_the_generated_stubs`:
+
+  | tag | commit | `ci` run | result |
+  |---|---|---|---|
+  | `v0.7.38` | `3b15b4ac1` | `32410597866` | **green** — last good |
+  | `v0.7.39` | `8086a9842` | `32557539171` | **red** — first bad, the lower edge |
+  | `v0.7.43` | `ff0139a26` | `32682442846` | **red** — last bad, the upper edge |
+  | `v0.7.47` | `860db039a` | `32805064452` | **green** — the fix (`f68572f`, PR #51) |
+
+  0.7.40-0.7.42 are red the same way. The lower edge was originally written as *unprovable* — "the
+  stubs are gitignored, so per-tag gencode is not recoverable" — which was true of the working tree
+  and false of the project: every tagged commit has a CI run, and that test *is* this defect. The
+  hedge was deleted rather than softened because the evidence made it false.
 - **The precedent already covers worse.** `CHANGELOG.md:610-615` records no-yank for 0.7.13-0.7.19,
   which failed *harder*: 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed
   every `authorize()` with an actively misleading "admission ticket is not valid" when the ticket

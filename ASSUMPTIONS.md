@@ -400,19 +400,26 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Logged retroactively at reconcile time**, same miss as the entry above.
 - **Assumed:** that converting the one pre-existing `ANCHORED` citation into the vendored spec was
   better than grandfathering it with a `#73` comment. The phase permitted either explicitly.
-- **Chose:** convert. Phase 9's regeneration half refreshes that same vendored file, so
-  grandfathering would have carried a known-doomed anchor straight into the event that dooms it —
-  the ordering Phase 8 buys would have bought nothing.
+- **Chose:** convert — though the reason recorded at the time was **wrong**, and is corrected here
+  rather than restated. It read "Phase 9's regeneration half refreshes that same vendored file";
+  measured afterwards, the last refresh (`c7331b6`, PR #80) preceded Phase 8 by about two hours and
+  the regeneration commit never touched the file. The decision holds on the durable reason instead:
+  the copy is refreshed whole-file on upstream's cadence, so the *next* refresh drifts any line
+  anchor into it, whenever that is.
 - **Alternatives:** grandfather with a comment (cheaper, and leaves the drift to fire once more);
   convert every `ANCHORED` entry to needle-based (a larger change with its own risk, explicitly out
   of scope, and wrong for files this repo edits itself, where a drifting line number is real signal).
 - **Blast radius if wrong:** low. Converting drops the line-position assertion for one claim and
   replaces it with three line-number-free ones. If the trade proves wrong, `ANCHORED` still exists
   and re-adding an entry is a one-line change.
-- **Status:** CONFIRMED (2026-08-31), and the choice was vindicated within the same run: Phase 9's
-  CHANGELOG entry moved the "No yank" target for the twelfth time, and the *converted* citation did
-  not move at all. See `DECISIONS.md`, "Citations into vendored files are quoted, never
-  line-anchored".
+- **Status:** CONFIRMED (2026-08-31) — **on the durable reason, not on in-run evidence.** An earlier
+  version of this line claimed the choice was "vindicated within the same run" because the converted
+  citation did not move while the `CHANGELOG.md` one drifted. That is vacuous: the converted citation
+  did not move because nothing refreshed the vendored file, and a *grandfathered* anchor would
+  equally not have moved. The `CHANGELOG.md` comparison is a different file with a different cause,
+  which this very rule says it does not reach. **The choice is not yet exercised**; the first upstream
+  refresh after this will be the test. See `DECISIONS.md`, "Citations into vendored files are quoted,
+  never line-anchored".
 
 ## Cloudsmith quarantine is not wanted for the 0.7.39-0.7.43 band
 - **Plan:** `plans/post-adoption-hardening-and-acdp-readiness.md` (Phase 10, issue #52)
