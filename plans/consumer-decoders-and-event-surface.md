@@ -549,7 +549,12 @@ per-file `_wait`/spawn convention that will no longer exist.
 
 ### Phase 3 — `policy_enforcement_of` in Python
 
-**Status:** TODO
+**Status:** **DONE.** Implemented as designed. Two divergences from the text: criterion 6's baseline
+was stale (754 at planning time, 791 at the branch point — corrected below), and the absence list in
+the Approach borrowed the proto comment's four-verb parenthetical, which #526's matrix shows is not
+exhaustive. The red-first sequence the criteria ask for was run in full: the naive
+`return PolicyEnforcement(...)` form fails every absence assertion and passes every other criterion,
+which is the one-line inversion made visible.
 
 **Delivers:** `seam_sdk.policy_enforcement_of(resp) -> Optional[PolicyEnforcement]`, on a
 `DecisionResponse` **or** a `SessionStep`, returning `None` **iff** the field is absent and never a
@@ -633,8 +638,10 @@ publishes the matrix in its own body.
 4. A `DecisionResponse` and a `SessionStep` carrying byte-identical `policy_enforcement` decode to
    equal `PolicyEnforcement` values — one decoder, two message types.
 5. `from seam_sdk import PolicyEnforcement, policy_enforcement_of` works, and both are in `__all__`.
-6. `cd python && .venv/bin/pytest -q` green from the **754 passed / 17 skipped** baseline, skips
-   still 17. Report new test functions and new `PROGRESS.md` citations as two numbers.
+6. `cd python && .venv/bin/pytest -q` green from the branch-point baseline, skips still 17.
+   *(That baseline was written as 754 when this plan was drafted. Phase 2 shipped first and moved it
+   to **791 passed / 17 skipped** at `978d05d`; the criterion is against the branch point, not
+   against a number frozen at planning time.)* Report new test functions and new `PROGRESS.md` citations as two numbers.
 
 **Tests:** `python/tests/test_policy_enforcement.py`, modelled on
 `python/tests/test_collective_outcome.py` (which runs the `SessionStep` arm at `:208-262`). Every
@@ -652,7 +659,13 @@ states" #87 asks for. Add the `python/seam_sdk/_policy.py` row to `PROGRESS.md`'
 
 ### Phase 4 — `policyEnforcementOf` in TypeScript, and the citations it necessarily moves
 
-**Status:** TODO
+**Status:** DONE — K = 103 as finally committed (100 at the red-first measurement, then +1 and +2
+from two verification rounds); outside the 125-131 vacuous window at every intermediate value, and
+the `submitCommit` anchor failed red-first. Deviations: the `index.ts` dual-declaration comment was
+also fixed for `CollectiveOutcome` (the plan scoped that out) and is now enforced by
+`python/tests/test_shadowed_names_comment.py`; Open Question 6's prediction that the margin would
+shrink was right (53 → 31 → re-measured after round 2), though neither the plan's stated cause nor
+this plan's first correction of it was. See `PROGRESS.md` for both accounts.
 
 **Delivers:** the TS twin, keeping the two client layers symmetric on both consumer decoders.
 
@@ -678,7 +691,7 @@ distinction, and a consumer reading `resp.policyEnforcement?.enforced` gets `und
 
 **Placement is load-bearing, not stylistic.** `PROGRESS.md:66` cites `ts/src/client.ts:218` for
 `collectiveOutcomeOf` and `:69` cites `:676` for `submitCommit`, and **both are `ANCHORED` needles**
-(`python/tests/test_compatibility_citations_resolve.py:606-607`, `CITATION_SLACK = 3` at `:612`).
+(`python/tests/test_compatibility_citations_resolve.py:606-607`, `CITATION_SLACK = 3` at `:623`).
 Verified at `HEAD`: `export function collectiveOutcomeOf` is at `ts/src/client.ts:218`, the function
 ends at `:239`, and `  submitCommit(` occurs exactly once, at `:676`. Inserting after `:239` keeps
 `:218` correct. It will not keep `:676` correct: a documented decoder is far more than 3 lines. So:
@@ -1050,10 +1063,17 @@ but note it).
 ## Open questions
 
 1. **Should `PolicyEnforcement` be re-exported from `ts/src/index.ts`'s named type list?**
-   `CollectiveOutcome` is shadowed today and appears in neither the named export list (`:25-39`) nor
-   the shadowed-names comment (`:18-22`). Phase 4 adds `PolicyEnforcement` to the comment; whether
-   both should also be named exports is a public-surface call that should be made deliberately, not
-   inherited from the existing inconsistency. **Not fixed in this plan.**
+   **Updated after Phase 4 shipped, because this entry was written against a state that no longer
+   holds.** As drafted it said `CollectiveOutcome` appeared in neither the named export list nor the
+   comment; Phase 4 put both `CollectiveOutcome` and `PolicyEnforcement` into the comment
+   (`ts/src/index.ts:18-49`), so only the export half is still open. Neither DTO type is on the
+   named export lists (`:52-66` for types, `:70-87` for schemas), and Phase 4 did not need them
+   there — `ts/tests/policy_enforcement.test.ts` imports `PolicyEnforcementSchema` straight from the
+   generated module, exactly as `collective_outcome.test.ts` does for `CollectiveOutcomeSchema`.
+   Whether the two decoded DTO types should be promoted to named exports remains a public-surface
+   call to make deliberately. Note the direction of the hazard, which is the opposite of the
+   intuition: adding the *generated* name to the explicit list would make the generated type win the
+   root name and displace the hand-written DTO. **Still not fixed in this plan.**
 2. **Does the runtime intend to surface `freshly_sealed`?** seam-runtime#526 closes by noting that a
    client cannot tell whether *this* call performed the seal or re-reported one, and that the
    `policy_enforcement`/`collective_outcome` pair does not answer it in either direction. If it lands,
@@ -1076,13 +1096,27 @@ but note it).
    elsewhere entirely.
 
 6. **Should the `PROGRESS.md` → `ts/src/client.ts` slack margin be re-measured after Phase 4?**
-   `test_the_load_bearing_citations_still_point_at_the_right_thing`'s docstring
-   (`python/tests/test_compatibility_citations_resolve.py:644-647`) records the closest
-   needle-to-foreign-citation distance in `PROGRESS.md` as **53 lines** (needle 676, foreign citation
-   623). Phase 4's insertion moves the needle away from 623 and toward 804, shrinking that margin by
-   exactly the insertion size. The docstring is a hand-maintained measurement, not a computed one, so
-   nothing reddens when it goes stale. Re-measure it in Phase 4's commit; do not widen
-   `CITATION_SLACK` (issue #73 ruled that out).
+   **Answered, and the answer outgrew the question.** As drafted this asked for a re-measurement of a
+   docstring number recorded as 53 lines, and correctly observed that "the docstring is a
+   hand-maintained measurement, not a computed one, so nothing reddens when it goes stale." Phase 4
+   re-measured it twice and got it wrong both times — first claiming 53 had been wrong rather than
+   stale (it was correct for the state it described), then failing to notice that anchoring two more
+   needles had displaced `verify/tests/authenticity.rs`'s 16, not `publish.yml`'s 27. Three separate
+   hand-carried numbers in that docstring were found rotten, in the file whose job is catching rotten
+   numbers. So the margins are no longer hand-maintained:
+   `test_no_anchored_needle_is_satisfied_only_by_a_foreign_citation`
+   (`python/tests/test_compatibility_citations_resolve.py:626`) computes every needle's distance and
+   asserts the property the numbers were standing in for — that no needle is satisfied by more than
+   one distinct citation of its path. `CITATION_SLACK` was not widened (#73). The residual headroom
+   on `submitCommit` is 14 lines and is recorded in `PROGRESS.md` as a knowing trade, not as a
+   measurement to trust.
+
+   **Superseded by round 4.** That computed check asserts the wrong property — "more than one
+   citation satisfies" is not "a *foreign* citation satisfies", and masking leaves exactly one, so
+   the check was green on the very scenario this paragraph describes. It has been deleted and
+   replaced by claim binding (`CLAIM_LINES` +
+   `test_an_anchored_needle_is_satisfied_by_its_own_citation`), which scopes a needle's candidate
+   citations to the line making the claim. The line number cited above no longer names that test.
 
 ---
 

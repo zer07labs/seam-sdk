@@ -238,6 +238,119 @@ export function collectiveOutcomeOf(
   };
 }
 
+/** The runtime's statement about whether a policy gated this decision.
+ *
+ * Both fields are `readonly`, for the reason the Python twin is a frozen dataclass: this is the
+ * runtime's claim, and a caller should not edit it and pass it on as though it came from the wire.
+ * That buys strictly less here than it does there, and saying so is the point of writing it down —
+ * `readonly` is erased at compile time, so `(pe as { enforced: boolean }).enforced = true` succeeds
+ * at runtime where Python raises `FrozenInstanceError`. It stops the accident, not the determined.
+ *
+ * Deliberately two fields and no convenience booleans. `enforced` is already the boolean, and the
+ * unsafe-to-guess case is already expressed by {@link policyEnforcementOf} returning `undefined`
+ * rather than an instance. An `allowed`-style twin would be a second falsiness that can go the wrong
+ * way — the same argument {@link CollectiveOutcome} makes for having no `declined` counterpart.
+ *
+ * Declared on both sides: this name and the generated `pb.PolicyEnforcement` are different types,
+ * and at the package root this one is what you get. The wire message stays reachable as
+ * `pb.PolicyEnforcement`; see the dual-declaration note at the top of `index.ts` for why, and for
+ * the hazard that runs opposite to intuition. */
+export interface PolicyEnforcement {
+  /** true iff a real policy definition gated this commitment. */
+  readonly enforced: boolean;
+  /** `undefined` **iff the id is absent**, never `""`. `policy_id` has explicit presence of its own,
+   * so an explicitly-encoded empty string is a different answer from an unset one; collapsing them
+   * would reintroduce this helper's own bug one level down, inside the fix for it. It is always a
+   * present property, so `"policyId" in pe` is never how to tell — the value is, one way only. */
+  readonly policyId: string | undefined;
+}
+
+/** Decode `resp.policyEnforcement`. Accepts a `DecisionResponse` **or** a `SessionStep`.
+ *
+ * Returns `undefined` **iff the field is absent**, and an object otherwise — including when that
+ * object carries `enforced: false`. Three states, and the middle one is the one that gets lost:
+ *
+ * | state                      | `resp.policyEnforcement` | `…?.enforced` | this helper |
+ * | -------------------------- | ------------------------ | ------------- | ----------- |
+ * | absent                     | `undefined`              | `undefined`   | `undefined` |
+ * | present, `enforced: false` | an object                | `false`       | an object   |
+ * | present, `enforced: true`  | an object                | `true`        | an object   |
+ *
+ * **The hazard is not the same shape as the Python twin's, and which one it is matters.** In
+ * `seam_sdk._policy` the first two rows are *value-identical*: `resp.policy_enforcement` compares
+ * equal across them, and only `HasField` separates them. protobuf-es models presence natively, so in
+ * TypeScript those rows are already distinguishable by value. What collapses them is the read a
+ * caller actually writes — `undefined` and `false` are different values with the *same falsiness*:
+ *
+ *     if (!resp.policyEnforcement?.enforced) { … }   // WRONG: true for BOTH of the first two rows
+ *
+ * which reads "the runtime never told me" as "the runtime told me none was enforced" — the fail-open
+ * direction, reached by the idiomatic spelling rather than by a mistake. What this helper returns is
+ * the one shape whose falsiness cannot answer the unanswered question: absent is `undefined`, and
+ * every other state is a truthy object whose `.enforced` the caller must then actually read.
+ *
+ * **When the field is present at all — on both carriers, since this decoder takes both.** On a
+ * `DecisionResponse` it accompanies the immediate `RunDecision` response only; per the generated
+ * `PolicyEnforcement` message comment, `GetDecision`/`ReplayDecision` do **not** carry the field,
+ * so a fetched or replayed decision reads `undefined` regardless of what was enforced when it was
+ * sealed. On a `SessionStep`, **absent is the common case** — not an error, and not a missing
+ * feature: the field is populated on exactly three steps: the **commit-terminal** step; the **sealed-idempotent
+ * replay** (a resubmit against an already-sealed session, re-reporting a seal this call did not
+ * perform); and the **pending-commitment seal retry**. It is absent on every non-terminal step —
+ * open, propose, vote, ballot — on **both suspended shapes** (awaiting an approver, and the budget
+ * breach), and on the **expiry seal**.
+ *
+ * Two things in that list contradict the proto's own comment for this field (`seam.api.v1`,
+ * `SessionStep.policy_enforcement` field 3 — cited by field, not by line: the proto lives in another
+ * repository that nothing here tracks or gates). It is **not** "only on a step that resolves the
+ * session via commit": the sealed-idempotent replay resolves nothing and carries the field anyway.
+ * And **presence is not tied to `decisionId`**, whose terminal-only presence the proto comment
+ * offers as the analogy — the expiry seal is the counterexample, carrying a `decisionId` with no
+ * `policyEnforcement`, so a reader who follows the analogy infers the opposite of the truth.
+ *
+ * The three sites are enumerated rather than generalised, deliberately: every short general rule
+ * anyone has written for this field has been wrong, including both of the proto comment's. The
+ * enumeration and the matrix behind it are measured in **zer07labs/seam-runtime#526**, which is the
+ * citation this carries — `PROGRESS.md`'s clean-room constraint forbids reading that repository's
+ * Rust sources, and the issue publishes the matrix in its own body. It describes the runtime as
+ * measured at the time of writing, is not enforced by anything here, and is not a contract the SDK
+ * can check: read it as orientation for interpreting an `undefined`, never as a guarantee to branch
+ * on. This block and the Python module docstring are deliberately the same content in two places, so
+ * neither language is the authoritative copy of it.
+ *
+ * One decoder, two message types, on purpose: the hazard is a property of the **field** — explicit
+ * presence over a message whose absent form is falsy — not of the message carrying it. Field numbers
+ * differ (7 on `DecisionResponse`, 3 on `SessionStep`) and both have explicit presence, so the one
+ * `undefined` check covers both; a second implementation per carrier would be a second place for the
+ * same inversion to reappear.
+ *
+ * Never throws — for every input, not only the ones the union admits. Unlike
+ * {@link collectiveOutcomeOf} there is no enum here and no growth policy, so there is no
+ * unrecognized value to fail closed on; the only distinction to preserve is present-versus-absent.
+ * Worth stating directly rather than by comparison, because the languages genuinely differ here: the
+ * Python twin's `HasField` **raises** on a message type that has no such field, and its docstring
+ * qualifies "never raises" for exactly that reason. A TypeScript caller cannot reach that case — the
+ * union is a compile error. **A JavaScript caller can**, and this package ships `dist/*.js`: pass an
+ * `AuthorizeResponse`, a `TerminalResponse` or a `SessionStatusResponse` from plain JS and you get
+ * `undefined`, indistinguishable from a genuine absent field. So on a non-carrier the two languages
+ * disagree — Python surfaces the programming error, this reports "not answered" — and only the type
+ * system stands between a JS caller and that. */
+export function policyEnforcementOf(
+  resp: DecisionResponse | SessionStep,
+): PolicyEnforcement | undefined {
+  const enforcement = resp.policyEnforcement;
+  if (enforcement === undefined) return undefined;
+
+  // A fresh object, not `enforcement` itself: the generated message carries a `$typeName` brand, and
+  // handing it back would put the stub tree in this function's public contract. `policyId` passes
+  // straight through because protobuf-es already models its explicit presence as `string |
+  // undefined` — this is the line where the Python twin needs a `HasField` and this one does not.
+  return {
+    enforced: enforcement.enforced,
+    policyId: enforcement.policyId,
+  };
+}
+
 /** One advisory verdict. `transformedInput` is the guard-redacted canonical JSON, set iff
  * `verdict === "TRANSFORM"`. `authorizeId` correlates the advisory event — NOT a decisionId. */
 export interface AuthorizeResult {

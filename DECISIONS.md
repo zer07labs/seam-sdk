@@ -367,7 +367,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   stubs are gitignored, so per-tag gencode is not recoverable" — which was true of the working tree
   and false of the project: every tagged commit has a CI run, and that test *is* this defect. The
   hedge was deleted rather than softened because the evidence made it false.
-- **The precedent already covers worse.** `CHANGELOG.md:610-615` records no-yank for 0.7.13-0.7.19,
+- **The precedent already covers worse.** `CHANGELOG.md:638-643` records no-yank for 0.7.13-0.7.19,
   which failed *harder*: 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed
   every `authorize()` with an actively misleading "admission ticket is not valid" when the ticket
   was fine. This band breaks only consumers who cap `protobuf` below 7.36.0. Deleting the milder

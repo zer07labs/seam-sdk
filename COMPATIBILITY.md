@@ -99,7 +99,7 @@ mismatch cannot ship.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **Nothing was yanked.** For the first two bands that decision is recorded at
-`CHANGELOG.md:610-615` and is not being re-litigated: they fail loudly — an unimportable wheel, or a
+`CHANGELOG.md:638-643` and is not being re-litigated: they fail loudly — an unimportable wheel, or a
 clear auth error — and revoking installability under a floor already in wide use has a larger blast
 radius than a loud advisory.
 
@@ -413,7 +413,7 @@ so it cannot reach the taxonomy. Use `canonicalize_tool_input()`
 ### `canonical=` hands you the derivation, and the responsibility with it
 
 `authorize(canonical=…)` (`python/seam_sdk/client.py:291`, `python/seam_sdk/aio.py:221`; `opts.canonical`
-in TypeScript, `ts/src/client.ts:265`) is additive and keyword-only. The SDK does **not** verify the
+in TypeScript, `ts/src/client.ts:531`) is additive and keyword-only. The SDK does **not** verify the
 bytes — re-deriving to check would reinstate the second derivation the parameter exists to remove.
 So two things become possible that were not:
 
