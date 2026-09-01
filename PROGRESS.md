@@ -973,3 +973,80 @@ Seven of eight findings are fixed here; one is informational.
 
 Post-fix: python **600 passed**/17 skipped · scripts 81 · ruff clean · gate exit 0 against the
 BSR-shaped surface. No workflow sets any `SEAM_*` override (verifier checked independently).
+
+---
+
+# PROGRESS — `plans/consumer-decoders-and-event-surface.md`
+
+Checkpoint trail for the consumer-decoders / event-surface workstream. Appended rather than
+replacing the record above: the post-adoption and gate-blindness trails stay where they are.
+
+**Plan:** [`plans/consumer-decoders-and-event-surface.md`](plans/consumer-decoders-and-event-surface.md)
+— 5 phases across 3 issues:
+[#85](https://github.com/zer07labs/seam-sdk/issues/85),
+[#87](https://github.com/zer07labs/seam-sdk/issues/87),
+[#88](https://github.com/zer07labs/seam-sdk/issues/88).
+
+**Execution order = ranking:** 1 → 2 → 3 → 4 → 5. Phase 1 is a zero-diff issue comment. Phase 2
+(#85) is next because a red `integration` reddens `ci-ok` and blocks merge, so it is the only phase
+whose absence blocks a release. Phases 3-4 (#87 ask 2) close a fail-open decode gap a downstream repo
+works around today. Phase 5 (#88) closes a blindness gap on a contract nobody is currently changing.
+
+**PR strategy — 3 PRs, one per issue.** Chosen over one PR because the three share no file and no
+mechanism — `python/tests/` + `ci.yml`, then `python/seam_sdk/` + `ts/src/`, then
+`scripts/check-contract.sh` + `contract/` — and #85 must be mergeable without waiting on review of
+the other two while a release is blocked. Chosen over one-PR-per-phase because Phases 3 and 4 are the
+two halves of one decoder and must land together, and Phase 1 has no diff at all. The one place the
+three interact is this file, which every PR appends to: a conflict surface, not a coupling, and
+linear sequencing keeps it trivial.
+
+1. **Phase 1 + Phase 2** — #85. The issue comment rides along because it is zero-diff.
+2. **Phases 3 + 4** — #87 ask 2, both languages in one PR.
+3. **Phase 5** — #88.
+
+**Ground-truth corrections made while planning.** Recorded rather than smoothed over, because two of
+them change what the phases do:
+- `ts/src/client.ts:218` already carries `collectiveOutcomeOf` over a `DecisionResponse | SessionStep`
+  union. TypeScript is not a judgement call — it gets the twin.
+- The #85 failing set is the shared-8099 set **minus the first test**, not the whole set. Four tests
+  use the `server` fixture (`python/tests/test_integration.py:69`, `:93`, `:108`, `:306`); the three
+  that failed are the last three in collection order. This also refutes the issue's own "seamd
+  crashes on seal/authorize" hypothesis, since `test_full_round_trip` seals and passed.
+- Port 8115 is **also** shared, by `python/tests/test_integration.py:143` and `:226`, across three
+  tests. A third instance of the same defect that did not fire in the observed runs.
+- `python/tests/test_compatibility_citations_resolve.py:95-99` checks exactly three documents.
+  `plans/*.md` is not under citation resolution; this file is.
+- The `v0.7.71` publish run 33479578480 **skipped** `seam-verify → Cloudsmith`. The three jobs that
+  carry ask 1 succeeded.
+
+## Repo map — the files this plan touches
+
+| Path | Purpose / relevance |
+|---|---|
+| `python/seam_sdk/_collective.py:84` | `collective_outcome_of` — the shape Phase 3 mirrors: `HasField` gate at `:116`, frozen dataclass at `:52`, union signature at `:84-86`. |
+| `python/seam_sdk/_policy.py` | **Phase 3 creates.** `policy_enforcement_of(resp)` returning `None` iff absent. New module, not a `_collective.py` addition — that module's docstring is entirely about a growth policy this field does not have. |
+| `python/seam_sdk/__init__.py:10` | Where `_collective`'s exports are imported; Phase 3 adds `_policy`'s alongside, plus two `__all__` entries. |
+| `ts/src/client.ts:218` | `collectiveOutcomeOf` over the union. **Phase 4 inserts `policyEnforcementOf` immediately after it** so this citation survives; the `submitCommit` citation below cannot survive and is repointed in the same commit. |
+| `ts/src/index.ts:18` | The shadowed-generated-names comment. It opens with the word "Two" and lists three names; Phase 4 must update the count word as well as the list. |
+| `python/tests/test_collective_outcome.py:208` | The `SessionStep` arm — the model for `test_policy_enforcement.py`. |
+| `python/tests/test_integration.py:48` | `addr = "127.0.0.1:8099"`, hardcoded, four tests. `_wait` at `:26-34` proves only that *something* listens; `:66` tears down with a bare `terminate()`. **Phase 2's primary target.** |
+| `python/tests/test_integration.py:143` | `dual_plane`, 8115/8116 — collides with `governed_server` at `:226`. |
+| `python/tests/test_streamed_decode.py:259` | `dual_plane`, 8113/8114 hardcoded; `:276` bare `terminate()`. |
+| `python/tests/test_admin.py:175` | `_free_port()` — the ephemeral-port helper that already exists and that Phase 2 makes the single copy. Its docstring already says fixed ports collide. |
+| `python/tests/test_verify_attestation.py:122` | The second copy of `_free_port()`. |
+| `python/tests/live_server.py` | **Phase 2 creates.** One spawn/readiness/teardown/log-capture helper for all four live suites. |
+| `ts/tests/integration.test.ts:51` | "Distinct ports avoid cross-test collisions" — the TS suite reached this conclusion and applied it everywhere. It has never shown this flake. |
+| `.github/workflows/ci.yml:290` | The smoke step's `kill "$pid"`, immediately followed by `exit 0` — it never waits for the process it started. |
+| `.github/workflows/ci.yml:322-333` | The python live step (`:332` is the `pytest` line inside it). Phase 2 adds an `if: failure()` log dump + artifact upload **after `:333`**, and after the TypeScript step. |
+| `.github/workflows/ci.yml:627` | `ADVISORY: integration,spec-pin`. Advisory means *may skip*, not *may fail* — a red `integration` still reddens `ci-ok` (`:612`). |
+| `scripts/check-contract.sh:203` | `fields_python`; `:218` `fields_ts`. **Phase 5 parameterises both on stub path + package** — measured, they already yield 90/90 on the event stubs with zero one-sided entries. |
+| `scripts/check-contract.sh:240` | `manifest_fields` — its stripper claims every `#`-free line, which is why the event surface cannot share `contract/field-manifest.txt`. |
+| `scripts/check-contract.sh:472-476` | `--write-manifest` deletes `contract/expected-local-lag.txt` (the guard is `:472`, the `rm -f` is `:473`). The second reason the event surface needs its own file. |
+| `scripts/check-contract.sh:583` | The corrected comment #88 was filed from. **Phase 5 must rewrite it** or it becomes false. |
+| `contract/event-field-manifest.txt` | **Phase 5 creates.** 90 fields, 11 messages, zero enums, zero nested messages — all measured, not assumed. |
+| `python/tests/test_field_manifest_gate.py:54` | `_run()` — the scratch-copy-plus-env-override pattern Phase 5's tests mirror. Nothing may mutate the real gitignored stub trees. |
+| `python/tests/test_compatibility_citations_resolve.py:606` | The `ANCHORED` needle into `ts/src/client.ts`. With `CITATION_SLACK = 3` at `:612`, Phase 4's insertion breaks the `submitCommit` anchor at `:607` for any insertion of 4+ lines — except a 125-131-line window, where it drifts into the unrelated `:804` citation's slack and goes green for the wrong reason. |
+
+## Phase log
+
+*(Phases have not run. `/implement` appends a block per phase below.)*
