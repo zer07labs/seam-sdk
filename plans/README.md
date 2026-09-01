@@ -16,8 +16,10 @@ against a status table alone.
 
 ## Cross-repo asks
 
-[`cross-repo/`](cross-repo/) holds plans that target **other** repos — currently six asks against
-`seam-runtime` ([#418–#423](https://github.com/zer07labs/seam-runtime/issues/418)). They live here
+[`cross-repo/`](cross-repo/) holds plans that target **other** repos — currently seven asks against
+`seam-runtime` ([#418–#423](https://github.com/zer07labs/seam-runtime/issues/418) and
+[#525](https://github.com/zer07labs/seam-runtime/issues/525)) and one against `seam`
+([#26](https://github.com/zer07labs/seam/issues/26)). They live here
 because writing into a sibling repo needs a gate and reading one never does: the plan stays where it
 was written, and the target repo fetches it. Each is paired with a tracking issue there. See
 [`cross-repo/README.md`](cross-repo/README.md) for the index and what blocks what.

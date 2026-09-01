@@ -487,3 +487,70 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   refused; `ci-ok`'s `needs:` and `ADVISORY` unchanged; every factual claim in the entry
   independently re-derived, including the workspace-wide lockfile check over 23 lockfiles.
 - **Next:** PR 1 (Phases 6, 7, 10) — then the #48/#76 replies, which have waited for it.
+
+---
+
+### PR 1 shipped, and the spec block cleared · 2026-08-31
+
+- **[#79](https://github.com/zer07labs/seam-sdk/pull/79) merged** (Phases 1, 6, 7, 10) after
+  [#80](https://github.com/zer07labs/seam-sdk/pull/80) unblocked it.
+- **The `spec pin` red was not ours.** It was pre-existing on `main` — runs `33457207859`
+  (`fbfff431`) and `33428449877` (`fa32409f`) both failed with exactly `spec pin` + `ci-ok`; the
+  green runs on those SHAs are other workflows (Dependabot, release). The `python` failure on
+  `33458058107` was a transient BSR outage at `buf generate` ("the server hosted at that remote is
+  unavailable"), and the same job passed on `33458028677`; it cleared on re-run.
+- **Merging past it was available and was not taken.** `main` is governed by a ruleset, so
+  `gh pr merge` refused and offered `--admin`. Overriding a red gate is the precise failure this
+  plan's Phase 6 exists to stop, so the gate was fixed instead — even though the red predated the PR.
+
+### Phase 9 (spec half) — the vendored spec refreshed for ACDP P1a and P2 · 2026-08-31
+
+- **The block is gone, and it went quietly.** Phase 9 was written as BLOCKED on runtime work
+  "committed at `533f218` on an unpushed branch". That branch has since merged: `7c1d16d` (P1a
+  receipt slots, #520, 0.7.69) and `3b3d4ae` (P2 `retraction`, #523, 0.7.70) are on runtime `main`,
+  the spec is published, and the BSR serves `ContextBinding` tags 7–11 — verified by decoding the
+  module's `FileDescriptorSet` rather than inferred from the commit titles.
+- **Delivered:** `verify/docs/seam-event.v1.md` re-pinned `5d8c177` → `3b3d4ae` (+125/−28),
+  whole-file and byte-verbatim; `check_vendored_spec.py` passes integrity, reachability and currency
+  through **both** backends, including `--from gh`, the one CI uses.
+- **Checked rather than assumed:** every `§section` that `verify/src/verify.rs` and `wire.rs` cite by
+  name survived the refresh as a heading. `DECISION_SEALED` is not a heading — but it was not one at
+  the old pin either, so that loose reference is pre-existing, not a regression.
+- **Two citations repointed, one of them twice.** `DECISIONS.md` → the spec moved `:381-382` →
+  `:388-389`. `COMPATIBILITY.md` → `CHANGELOG.md` moved `:521-526` → `:538-543` on #80, and the
+  merge into #79 — which had independently moved it to `:523-528` — landed it at `:540-545`. Git
+  merged the changelog cleanly and left the citation pointing at neither branch's answer; only
+  re-deriving it from the merged file gets it right.
+- **The regeneration half is deliberately NOT done.** CI regenerates from the BSR on every run, so
+  #79 and #80 both went green with all five new fields already in the stubs and no gate noticing.
+  That is Phase 5's subject exactly; regenerating before the manifest exists would adopt the fields
+  silently and waste the tripwire.
+
+### Phase 2 — The two cross-repo asks, written and **filed** · 2026-08-31
+
+- **The "do not file" restriction was lifted mid-run** by the user. Both asks are now real issues:
+  [seam-runtime#525](https://github.com/zer07labs/seam-runtime/issues/525) and
+  [seam#26](https://github.com/zer07labs/seam/issues/26). No file outside `seam-sdk` was written —
+  `git -C ../seam-runtime status --short` and `git -C ../seam status --short` are unchanged.
+- **Ask A was re-scoped, not transcribed.** As drafted it asked the runtime to publish the encodings
+  and push the contract — all of which had already shipped. Filing it verbatim would have asked for
+  finished work. What is actually outstanding is three pieces of coordination: (1) the tracking issue
+  their own plan says "must be filed, not forgotten" (`plans/acdp-p1a-receipt-slots.md:290-291`,
+  repeated at `plans/acdp-p2-retraction.md:1009`) and which a search of all issue states shows was
+  never filed; (2) sequencing the `sdk-digest-parity` un-pin, since `crates/seam-client/examples/*`
+  are pinned all-`None` against **our** committed `conformance/vectors.json` and un-pinning turns a
+  *required* job in their repo red, fixable only from here; (3) a heads-up when the spec changes.
+- **Ask A's third point is evidenced, not hypothetical** — it fired during this run and cost the time
+  documented above.
+- **The plan's `COMPATIBILITY.md:203-262` anchor for Ask B was fine; my check of it was not.** I
+  read it off a branch based on `main` *before* #79 merged, saw commitment-digest text at that line,
+  and recorded the anchor as stale. At `20786dc` line 203 is exactly
+  `### Agent-framework co-installability` (the section runs `:203-264`). The plan was right.
+  Both asks cite the **heading** anyway — a file that moves should not be cited by a number, which is
+  Phase 8's whole point, and this is a clean demonstration of why: the error was not in the anchor,
+  it was in reading it against the wrong tree. The filed `seam#26` carries no line numbers at all,
+  so nothing published needed amending.
+- **Every runtime anchor was re-verified before filing**, against `f4e105f` / spec `3b3d4ae`:
+  `p1a:103-107`, `:290-291`, `:439-441`, `p2:1009`, runtime `ci.yml:186` (`buf push`), `:299`
+  (`sdk-digest-parity`), `sdk-digest-parity.sh:40,51,55`. Ask B's: `seam` `01-…:110`, `04-…:14`.
+- **Next:** Phases 3, 4, 5 → PR 2; Phase 8 → PR 3; then Phase 9's regeneration half.

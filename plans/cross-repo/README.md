@@ -30,7 +30,7 @@ a moved line as evidence the surrounding design may have moved too.
 
 ## The asks
 
-| Plan | Target | Headline | Issue | State (2026-08-24) |
+| Plan | Target | Headline | Issue | State (2026-08-31) |
 |---|---|---|---|---|
 | [`seam-runtime-wire-framing-handshake.md`](seam-runtime-wire-framing-handshake.md) | seam-runtime | Carry `wire_framing_version` in the release dispatch so the SDK can refuse a release it has not adapted to | [#418](https://github.com/zer07labs/seam-runtime/issues/418) | 🔴 **live** — the SDK half is landed with its latch deliberately **open** (warns, does not refuse) until this lands |
 | [`seam-runtime-verify-crate-rename.md`](seam-runtime-verify-crate-rename.md) | seam-runtime | Rename `crates/seam-verify` so two crates in one org stop sharing a package name | [#419](https://github.com/zer07labs/seam-runtime/issues/419) | 🟡 **hygiene** — downgraded from blocker; see the plan |
@@ -38,6 +38,8 @@ a moved line as evidence the surrounding design may have moved too.
 | [`seam-runtime-evidence-bundle-export.md`](seam-runtime-evidence-bundle-export.md) | seam-runtime | A bearer-scoped evidence bundle — an export, not a cross-tenant read grant | [#421](https://github.com/zer07labs/seam-runtime/issues/421) | 🔴 **live** |
 | [`seam-runtime-anchor-feed.md`](seam-runtime-anchor-feed.md) | seam-runtime | Publish a read-only anchor feed; without one no verifier can detect truncation | [#422](https://github.com/zer07labs/seam-runtime/issues/422) | 🔴 **live** — bounds what this SDK is allowed to claim |
 | [`seam-runtime-commitment-digest-spec.md`](seam-runtime-commitment-digest-spec.md) | seam-runtime | Write the spec for `seam-commitment-digest:v1` | [#423](https://github.com/zer07labs/seam-runtime/issues/423) | 🔴 **live** |
+| [`seam-runtime-acdp-p1a-spec-and-lockstep.md`](seam-runtime-acdp-p1a-spec-and-lockstep.md) | seam-runtime | File the ACDP downstream obligation their own plan says must not be forgotten, and sequence the `sdk-digest-parity` un-pin | [#525](https://github.com/zer07labs/seam-runtime/issues/525) | 🔴 **live** — coordination only; the contract half is already delivered and adopted (seam-sdk#80) |
+| [`seam-hub-sdk-install-caveat.md`](seam-hub-sdk-install-caveat.md) | seam | The hub quickstart says `pip install seam-sdk` with no co-installability caveat | [#26](https://github.com/zer07labs/seam/issues/26) | 🔴 **live** — proposed diff attached in full |
 
 ## What blocks what
 
