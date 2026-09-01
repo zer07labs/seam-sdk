@@ -434,7 +434,7 @@ Three independently sufficient causes of a 0.7.17-shaped incident, closed.
   One previously-green shape does turn red, and it is stated rather than glossed: a `DECISION_SEALED`
   declaring a `schema_version` above 3 while carrying **no** event `digest` at all used to fall
   through as a non-link — unverifiable, but green without `--strict` — because the digest-presence
-  check came first. The version refusal now runs before it (`verify/src/verify.rs:545`). This is the
+  check came first. The version refusal now runs before it (`verify/src/verify.rs:636-645`). This is the
   intended ordering: an unknown formula means the record cannot be checked *at all*, which is a
   refusal independent of whether there is a digest to compare, and "I cannot check this, so it
   passes" is the exact shape of a downgrade. No conforming producer emits it — the chain fields are

@@ -216,6 +216,13 @@ channel.unary_unary('/seam.api.v1.Seam/Authorize', _registered_method=True)
 server.add_registered_method_handlers('seam.api.v1.Seam', rpc_method_handlers)
 """
 
+# A convention in NEITHER `_MARKERS` entry — the shape a future grpc plugin roll takes, per
+# `test_grpcio_floor.py`'s own docstring: "the plugin's output convention changed once already".
+# Deliberately shares no substring with either known marker, so `_markers_present()` returns `[]`.
+_UNKNOWN_MARKER_GRPC_STUB = """\
+channel.unary_unary('/seam.api.v1.Seam/Authorize', _new_calling_convention_v9=True)
+"""
+
 _PYPROJECT_STUB = """\
 [project]
 name = "seam-sdk"
@@ -234,6 +241,7 @@ def _stub_repo(
     gencode: str,
     grpcio: str = "1.64",
     generated: bool = True,
+    grpc_stub: str = _GRPC_STUB,
 ) -> Path:
     """A miniature repo with the SAME layout the floor guards resolve against.
 
@@ -260,7 +268,7 @@ def _stub_repo(
         (gen / "seam_pb2.py").write_text(
             _GENCODE_STUB.format(major=major, minor=minor, patch=patch)
         )
-        (gen / "seam_pb2_grpc.py").write_text(_GRPC_STUB)
+        (gen / "seam_pb2_grpc.py").write_text(grpc_stub)
     (root / "python" / "pyproject.toml").write_text(
         _PYPROJECT_STUB.format(floor=floor, cap=major + 1, grpcio=grpcio)
     )
@@ -366,6 +374,30 @@ def test_a_grpcio_floor_below_the_emitted_convention_fails_the_publish_step(
     )
 
 
+def test_an_unrecognised_grpc_convention_fails_the_publish_step(tmp_path: Path) -> None:
+    """The hole `covers_every_convention` alone cannot see: a plugin roll that emits a THIRD
+    calling-convention marker, in neither `_MARKERS` entry, leaves `_markers_present()` empty.
+    `max()` over an empty sequence still raises — so this stub already made the OLD `-k` non-zero,
+    just via an uncaught `ValueError` inside the wrong test, not via a refusal that names the
+    problem. The second assertion below is what tells the two apart: it only holds once the `-k`
+    selects `test_the_emitted_stubs_use_a_convention_this_guard_recognises`, the test whose whole
+    job is to fire — with a message that says what happened — when no known marker matches."""
+    root = _stub_repo(
+        tmp_path,
+        floor="7.36.0",
+        gencode="7.36.0",
+        grpc_stub=_UNKNOWN_MARKER_GRPC_STUB,
+    )
+    p = _run_floor_step(root)
+    assert p.returncode != 0, (
+        f"an unrecognised grpc calling-convention marker must not publish:\n{p.stdout}{p.stderr}"
+    )
+    assert "none of the known calling-convention markers" in p.stdout + p.stderr, (
+        "failed, but not via the recognizer test's own message — the derivation's bare `max()` "
+        f"crash is not the same guard as a named refusal:\n{p.stdout}{p.stderr}"
+    )
+
+
 def test_stubs_in_the_wrong_place_fail_rather_than_skip_the_guard(tmp_path: Path) -> None:
     """The guard's own blind spot, asserted shut.
 
@@ -395,8 +427,8 @@ def test_stubs_in_the_wrong_place_fail_rather_than_skip_the_guard(tmp_path: Path
 
 
 def _floor_parse_snippet() -> str:
-    """Just the `FLOOR=...` derivation out of the build step — the part that can run without
-    a wheel, a venv, or a network."""
+    """Just the `FLOOR=...`/`GRPCIO_FLOOR=...` derivations out of the build step — the part that
+    can run without a wheel, a venv, or a network."""
     run = _step("python", "build (")["run"]
     return run[run.index("FLOOR=$(") : run.index("python -m venv /tmp/floorcheck")]
 
@@ -432,13 +464,44 @@ def test_an_unparseable_pyproject_refuses_to_publish(tmp_path: Path) -> None:
     assert "could not parse the declared protobuf floor" in p.stdout + p.stderr
 
 
+def test_no_grpcio_floor_declared_refuses_at_the_grpcio_branch(tmp_path: Path) -> None:
+    """Phase 2's own named edge case: 'No grpcio floor declared at all → must be a refusal, not a
+    skip.' `test_an_unparseable_pyproject_refuses_to_publish` above never actually exercises this —
+    its `dependencies = ["protobuf"]` has no version at all, so `FLOOR` (the PROTOBUF branch) is
+    already empty and the snippet `exit 1`s there, before `GRPCIO_FLOOR` is ever derived. The
+    grpcio-specific refusal has therefore never been driven by this suite, even though the
+    behaviour is correct when run directly (verified by hand: `GRPCIO_FLOOR=$(... ""` and the
+    `[ -z "$GRPCIO_FLOOR" ]` guard does fire).
+
+    This supplies a VALID protobuf floor — so the snippet gets PAST the first branch — and omits
+    grpcio entirely, so the second, previously-untested branch is the one that actually fires.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "seam-sdk"\nversion = "0.0.0"\n'
+        'dependencies = [\n  "protobuf>=7.36.0,<8",\n]\n'
+    )
+    p = _run_floor_parse(tmp_path)
+    assert p.returncode == 1, p.stdout + p.stderr
+    assert "could not parse the declared grpcio floor" in p.stdout + p.stderr, (
+        f"failed, but not at the grpcio branch — so this test would not notice that refusal being "
+        f"removed or short-circuited:\n{p.stdout}{p.stderr}"
+    )
+    # And prove it actually got PAST the protobuf branch, so this is not just a relabelled copy of
+    # test_an_unparseable_pyproject_refuses_to_publish above.
+    assert "could not parse the declared protobuf floor" not in p.stdout + p.stderr, (
+        f"the protobuf branch fired instead — the declared floor above did not parse:\n"
+        f"{p.stdout}{p.stderr}"
+    )
+
+
 def test_the_floor_pinned_install_has_no_unconstrained_fallback() -> None:
     """A `|| pip install dist/*.whl` rescue would recreate the exact blind spot: the
-    unconstrained resolution always satisfies the gencode, so it can only ever pass."""
+    unconstrained resolution always satisfies the gencode/convention, so it can only ever pass."""
     run = _step("python", "build (")["run"]
     tail = run[run.index("FLOOR=$(") :]
-    assert 'protobuf==$FLOOR" dist/*.whl' in tail, (
-        "the floor-pinned install is gone; the wheel's metadata is no longer checked"
+    assert 'protobuf==$FLOOR" "grpcio==$GRPCIO_FLOOR" dist/*.whl' in tail, (
+        "the floor-pinned install is gone, or grpcio is no longer pinned in the SAME install as "
+        "protobuf — the wheel's metadata is no longer checked end to end"
     )
     assert tail.count("/tmp/floorcheck/bin/python -m pip install") == 1, (
         "more than one install into the floor venv — a fallback resolution defeats the pin"
@@ -446,6 +509,18 @@ def test_the_floor_pinned_install_has_no_unconstrained_fallback() -> None:
     assert "from seam_sdk._gen.seam.api.v1 import seam_pb2" in tail, (
         "the floor venv must import seam_pb2 — that module's preamble is where protobuf's "
         "runtime-version check fires, and it is the entire assertion"
+    )
+    assert 'importlib.metadata.version("grpcio")' in tail, (
+        "the floor venv must read grpcio's installed version back from metadata — 'some grpcio' "
+        "installed is not the same assertion as 'grpcio AT the declared floor'"
+    )
+    assert "from seam_sdk._gen.seam.api.v1 import seam_pb2_grpc as rpc" in tail, (
+        "the floor venv must exercise the grpc stub module — a calling-convention mismatch "
+        "surfaces at stub construction or servicer registration, not at import"
+    )
+    assert "add_SeamAdmissionServicer_to_server" in tail and "SeamAdmissionStub(channel)" in tail, (
+        "the floor venv must both construct a client stub and register a server-side servicer — "
+        "the client and server calling conventions split across different grpcio versions"
     )
 
 

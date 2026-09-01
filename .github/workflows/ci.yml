@@ -396,17 +396,11 @@ jobs:
       # not have to accept.
       #
       # So this is a gate, not a comment. If a Seam crate ever appears in the tree, the claim has quietly
-      # stopped being true and the build says so.
+      # stopped being true and the build says so. The check itself lives in one script
+      # (`scripts/check-independence.sh`), also called from `publish.yml` — see that script's header for
+      # why it is a denylist rather than the allowlist this replaced.
       - name: the verifier must link NOTHING of Seam's
-        run: |
-          cd verify
-          TREE=$(cargo tree -e normal)
-          echo "$TREE"
-          if echo "$TREE" | grep -vE '^seam-verify ' | grep -qiE '\bseam-(store|types|traits|trust|kernel|crypto|api|client|guard|coord|context|bandit)'; then
-            echo "::error::seam-verify links a Seam crate. The independence claim is now false — that is the whole product."
-            exit 1
-          fi
-          echo "OK — zero Seam crates."
+        run: ./scripts/check-independence.sh
 
       - name: fmt
         run: cd verify && cargo fmt --check
@@ -583,6 +577,12 @@ jobs:
       # execute the credential resolution and pin the three filters that scope the deletion.
       - name: the yank tool would actually authenticate, and deletes nothing wider than it should
         run: python -m pytest scripts/test_yank_gate.py -q
+      # scripts/check-independence.sh is driven with synthetic `cargo tree` text here (stdin/file
+      # arg), not the real `cargo tree -e normal` — this lane installs no Rust toolchain on purpose
+      # (see the comment on the install list above), and the script's default invocation is what
+      # `ci.yml`'s `verify` job exercises against the real tree instead.
+      - name: the independence gate is a denylist that actually catches a Seam crate
+        run: python -m pytest scripts/test_independence_gate.py -q
       # Also runs inside the `python` job. Duplicated on purpose: there it proves the guard passes,
       # here it proves the guard needs nothing but a checkout — which is the actual claim
       # seam-adapters relies on (seam-sdk#54).

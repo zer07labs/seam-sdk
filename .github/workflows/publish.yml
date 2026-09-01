@@ -336,7 +336,21 @@ jobs:
       # `test_grpcio_floor.py` imports `grpc` at module scope. Its floor is derived from the CALLING
       # CONVENTIONS the grpc plugin emitted (`_registered_method=`, `add_registered_method_handlers`),
       # so a plugin roll can require a newer grpcio than the wheel declares — the same defect wearing
-      # a different dependency.
+      # a different dependency. That derivation is `max()` over a hardcoded two-entry `_MARKERS`
+      # list, which used to be selected here alone: a THIRD convention appearing alongside the first
+      # two would move the derivation not at all, so the floor would understate what the stubs
+      # actually need while this step stayed green. The recognizer test (`test_grpcio_floor.py:93`)
+      # exists for exactly that case — it fires when NONE of the known markers match — and the `-k`
+      # below now selects it alongside the derivation, so an unrecognised convention is a
+      # publish-time refusal rather than a `max()` with nothing left to measure.
+      #
+      # Recognising the convention is still only half the guard, the same way this file's protobuf
+      # checks were only half of the 0.7.43 fix on their own: the "build" step below installs the
+      # wheel with `grpcio==$GRPCIO_FLOOR` pinned alongside `protobuf==$FLOOR` and then constructs a
+      # client stub AND registers a servicer under that exact pin, because the client and server
+      # calling conventions split across grpcio 1.63 and 1.64 — a mismatch surfaces at stub
+      # construction or servicer registration, not at import, so nothing short of exercising both
+      # would have caught it.
       - name: re-derive the dependency floors from the JUST-generated stubs
         run: |
           # Explicit, NOT relying on the runner's default `bash -e {0}`. Without it the step's
@@ -356,7 +370,7 @@ jobs:
           python -m pytest python/tests/test_protobuf_floor.py -q \
             -k "declared_floor_is_at_least or caps_the_major"
           python -m pytest python/tests/test_grpcio_floor.py -q \
-            -k "covers_every_convention"
+            -k "covers_every_convention or guard_recognises"
       - name: build (bundles the transport via package-data) + upload
         working-directory: python
         env:
@@ -399,16 +413,17 @@ jobs:
           assert seam_sdk.Agent(bytes(32)).aid.startswith("aid:pubkey:ed25519:")
           print("wheel installs, imports, and derives — OK")
           PY
-          # ── The same wheel, at the MINIMUM protobuf it claims to support. ────────────────────────
-          # The check above installs unconstrained, so pip resolves the NEWEST protobuf — which by
-          # construction satisfies whatever gencode the wheel bundles. That is why it could never
-          # have caught 0.7.43, and why `registry-smoke` cannot either: both answer "does this work
-          # with the newest?", and the defect only appears at the floor.
+          # ── The same wheel, at the MINIMUM protobuf AND grpcio it claims to support. ─────────────
+          # The check above installs unconstrained, so pip resolves the NEWEST protobuf and grpcio —
+          # which by construction satisfy whatever gencode/convention the wheel bundles. That is why
+          # it could never have caught 0.7.43, and why `registry-smoke` cannot either: both answer
+          # "does this work with the newest?", and the defect only appears at the floor.
           #
           # This answers the question whose absence IS the 0.7.43 story: is the metadata TRUE? A
-          # consumer whose closure caps protobuf at our declared floor gets exactly this resolution,
-          # and it must import. Note the floor is parsed from the wheel's own pyproject rather than
-          # hardcoded — hardcoding would drift the moment the derived floor moves, which it does.
+          # consumer whose closure caps protobuf AND grpcio at our declared floors gets exactly this
+          # resolution, and it must not just import but actually WORK. Floors are parsed from the
+          # wheel's own pyproject rather than hardcoded — hardcoding would drift the moment either
+          # derived floor moves, which it does.
           cd "$GITHUB_WORKSPACE/python"
           FLOOR=$(grep -oE '"protobuf>=[0-9]+\.[0-9]+\.[0-9]+,<[0-9]+"' pyproject.toml \
                   | head -1 | sed -E 's/.*>=([0-9.]+),.*/\1/')
@@ -416,15 +431,29 @@ jobs:
             echo "::error::could not parse the declared protobuf floor from python/pyproject.toml — refusing to publish a wheel whose metadata cannot be checked."
             exit 1
           fi
-          echo "declared protobuf floor: $FLOOR — installing the wheel pinned there"
-          python -m venv /tmp/floorcheck
-          # No fallback to an unconstrained install if the pin is unavailable. A silent fallback
-          # would recreate exactly the blind spot this step exists to remove.
-          if ! /tmp/floorcheck/bin/python -m pip install --quiet "protobuf==$FLOOR" dist/*.whl; then
-            echo "::error::the wheel does not install with protobuf pinned at its own declared floor ($FLOOR). Either the floor is stale (re-derive it) or protobuf==$FLOOR is unavailable — do not publish metadata that is not true."
+          # grpcio's declared floor has no upper-bound cap (`"grpcio>=1.64"`, not the `>=X,<Y` shape
+          # protobuf carries), so it needs its own pattern — same PARSING SHAPE as FLOOR above (grep
+          # the declaration, sed out the number), not a second style of doing it.
+          GRPCIO_FLOOR=$(grep -oE '"grpcio>=[0-9]+\.[0-9]+(\.[0-9]+)?"' pyproject.toml \
+                  | head -1 | sed -E 's/.*>=([0-9.]+)"/\1/')
+          if [ -z "$GRPCIO_FLOOR" ]; then
+            echo "::error::could not parse the declared grpcio floor from python/pyproject.toml — refusing to publish a wheel whose metadata cannot be checked."
             exit 1
           fi
-          cd /tmp && /tmp/floorcheck/bin/python - <<'PY'
+          echo "declared protobuf floor: $FLOOR, grpcio floor: $GRPCIO_FLOOR — installing the wheel pinned at both"
+          python -m venv /tmp/floorcheck
+          # No fallback to an unconstrained install if either pin is unavailable. A silent fallback
+          # would recreate exactly the blind spot this step exists to remove — for grpcio
+          # specifically, resolving to newer-than-floor here would leave a consumer who genuinely
+          # DOES land on the floor to discover the AttributeError themselves, in their own process.
+          if ! /tmp/floorcheck/bin/python -m pip install --quiet "protobuf==$FLOOR" "grpcio==$GRPCIO_FLOOR" dist/*.whl; then
+            echo "::error::the wheel does not install with protobuf and grpcio pinned at their own declared floors (protobuf==$FLOOR, grpcio==$GRPCIO_FLOOR). Either a floor is stale (re-derive it) or one of the pinned versions has no wheel for this runner's Python — do not publish metadata that is not true."
+            exit 1
+          fi
+          cd /tmp && GRPCIO_FLOOR="$GRPCIO_FLOOR" /tmp/floorcheck/bin/python - <<'PY'
+          import importlib.metadata
+          import os
+
           import google.protobuf
           import seam_sdk
           # seam_pb2 is where the runtime-version check fires: protoc writes a
@@ -435,6 +464,48 @@ jobs:
           from seam_sdk import SeamClient, aio  # noqa: F401
           assert seam_sdk.Agent(bytes(32)).aid.startswith("aid:pubkey:ed25519:")
           print(f"wheel imports at its declared floor — protobuf {google.protobuf.__version__} — OK")
+
+          # "Some grpcio" is not the assertion. PEP 440 zero-pads a short release segment for
+          # comparison (`==1.64` only matches `1.64.0`), so the pin above is already exact — this
+          # reads the venv's own installed-distribution metadata back to PROVE it, the way a
+          # consumer's own resolver would be asked to, rather than trusting the pip exit code alone.
+          declared_grpcio = tuple(int(p) for p in os.environ["GRPCIO_FLOOR"].split("."))
+          installed_grpcio = importlib.metadata.version("grpcio")
+          got_grpcio = tuple(int(p) for p in installed_grpcio.split("."))[: len(declared_grpcio)]
+          assert got_grpcio == declared_grpcio, (
+              f"pip resolved grpcio {installed_grpcio}, not the declared floor "
+              f"{os.environ['GRPCIO_FLOOR']} — the venv is not provably AT the floor"
+          )
+          print(f"wheel installs with grpcio AT its declared floor — {installed_grpcio} — OK")
+
+          # Behavioural, not just present: the client and server calling conventions split across
+          # grpcio 1.63 and 1.64, and a mismatch surfaces at stub CONSTRUCTION and at SERVICER
+          # REGISTRATION, not at import (test_grpcio_floor.py:133,147) — an import-only check here
+          # would have passed the client half of this exact split and missed the server half
+          # entirely. A dead/local address only: this must never attempt a real connection.
+          import concurrent.futures as futures
+
+          import grpc
+
+          from seam_sdk._gen.seam.api.v1 import seam_pb2_grpc as rpc
+
+          channel = grpc.insecure_channel("127.0.0.1:1")
+          try:
+              rpc.SeamAdmissionStub(channel)
+              rpc.SeamAuthorizationStub(channel)
+          finally:
+              channel.close()
+
+          server = grpc.server(futures.ThreadPoolExecutor(max_workers=1))
+          try:
+              rpc.add_SeamAdmissionServicer_to_server(rpc.SeamAdmissionServicer(), server)
+              rpc.add_SeamAuthorizationServicer_to_server(rpc.SeamAuthorizationServicer(), server)
+          finally:
+              server.stop(None)
+          print(
+              "wheel constructs a client stub and registers a server at its declared grpcio "
+              f"floor — {installed_grpcio} — OK"
+          )
           PY
           cd "$GITHUB_WORKSPACE/python"
           twine upload dist/*
@@ -471,15 +542,12 @@ jobs:
       # beside it. Same assertion as ci.yml's `verify` job, repeated here on purpose: a publish that
       # skipped it could ship a verifier that links Seam's own crates, which inverts the only claim
       # the crate makes.
+      # The check itself lives in one script (`scripts/check-independence.sh`), also called from
+      # ci.yml's `verify` job, so the two copies cannot drift — see that script's header for why it
+      # is a denylist rather than the allowlist this replaced. Job `defaults.run.working-directory`
+      # is `verify` here, so the script is reached via `..`.
       - name: the verifier must link NOTHING of Seam's
-        run: |
-          TREE=$(cargo tree -e normal)
-          echo "$TREE"
-          if echo "$TREE" | grep -vE '^seam-verify ' | grep -qiE '\bseam-(store|types|traits|trust|kernel|crypto|api|client|guard|coord|context|bandit)'; then
-            echo "::error::seam-verify links a Seam crate. The independence claim is now false — that is the whole product."
-            exit 1
-          fi
-          echo "OK — zero Seam crates."
+        run: ../scripts/check-independence.sh
 
       # Re-verify the shipped fixture before publishing it. The crate's credibility rests on a third
       # party being able to check a real signature with it; shipping a fixture that no longer
