@@ -18,33 +18,37 @@ produced it.
   cited sentence shifts it, so the citation went stale on *every* refresh. Walking the history of
   `DECISIONS.md` against the history of the vendored copy gives the whole run:
 
-  | | PR | date | value |
-  |---|---|---|---|
-  | introduced | #63 | 2026-08-25 | `:271-272` |
-  | repoint 1 | #66 | 2026-08-25 | `:295-296` |
-  | repoint 2 | #71 | 2026-08-26 | `:332-333` |
-  | repoint 3 | #72 | 2026-08-27 | `:338-339` |
-  | repoint 4 | #74 | 2026-08-27 | `:381-382` |
-  | repoint 5 | #80 | 2026-08-31 | `:388-389` |
+  | PR | date | cited | needle really at | |
+  |---|---|---|---|---|
+  | #58 | 2026-08-24 | `:271-272` | 271 | introduced, correct |
+  | #63 | 2026-08-25 | `:271-272` | **276** | **merged stale — never repointed** |
+  | #66 | 2026-08-25 | `:295-296` | 295 | repoint 1 (silently absorbs #63's drift) |
+  | #71 | 2026-08-26 | `:332-333` | 332 | repoint 2 |
+  | #72 | 2026-08-27 | `:338-339` | 338 | repoint 3 |
+  | #74 | 2026-08-27 | `:381-382` | 381 | repoint 4 |
+  | #80 | 2026-08-31 | `:388-389` | 388 | repoint 5 |
 
-  Five repoints in six days, one per refresh, each a one-line bump carrying no information — and
-  each an opportunity to "resolve" the citation onto a plausible wrong line, which is the failure
-  the citation test exists to catch, not one it should be generating. **Issue #73 recorded two of
-  these and the test file's own comments said "three, in one session"; both undercounted**, because
-  the number was remembered rather than measured. That is worth writing down in a decision record
-  whose subject is claims that look checked. This is structural, not carelessness: a line number is
-  a claim about a file's *layout*, and a vendored copy has no stable layout by design. The rot rate
-  is set by upstream's commit cadence, which this repo does not control and cannot slow down.
+  **Six refreshes, five repoints.** The gap is the finding. #63 refreshed the vendored copy, moved
+  the sentence five lines, left the citation where it was — and merged, because `DECISIONS.md` did
+  not come under the citation test until #67. So a citation sat on `main` pointing at a plausible
+  wrong line, indistinguishable from a correct one to any reader. That is not the churn this entry
+  set out to describe; it is the failure the churn was a symptom of, and nobody had it until the
+  history was walked rather than recalled. **Issue #73 recorded two of these, the test file's own
+  comments said "three, in one session", and this entry's first draft said five-one-per-refresh —
+  three successive undercounts of the same evidence, in a record whose subject is claims that look
+  checked.** The rest is structural, not carelessness: a line number is a claim about a file's
+  *layout*, a vendored copy has no stable layout by design, and the rot rate is set by upstream's
+  commit cadence, which this repo does not control and cannot slow down.
 - **Decision.** No checked document may line-anchor into a vendored path. Enforced mechanically by
-  `VENDORED` in `python/tests/test_compatibility_citations_resolve.py:122`, over every document in
+  `VENDORED` in `python/tests/test_compatibility_citations_resolve.py:128`, over every document in
   `DOCS`, with a red-first test proving the guard fires on a line anchor and leaves both sanctioned
-  alternatives alone (`python/tests/test_compatibility_citations_resolve.py:196`).
+  alternatives alone (`python/tests/test_compatibility_citations_resolve.py:202`).
 - **What to do instead**, in preference order:
   1. **Cite the upstream file** with its `seam-runtime/` prefix. It is the actual source of the
      sentence, and `SIBLING_PREFIXES` already skips it when the sibling repo is not checked out. The
      line number still rots there, but it rots in the repo that owns the file and can see the edit.
   2. **Quote the sentence** and register it in `QUOTED`
-     (`python/tests/test_compatibility_citations_resolve.py:372`). The check asserts the needle is
+     (`python/tests/test_compatibility_citations_resolve.py:379`). The check asserts the needle is
      unique in the target, that the document quotes it verbatim, and that the document still
      attributes it to that path — no line number on either side.
 - **Widening `CITATION_SLACK` was considered and rejected.** Slack large enough to absorb a
@@ -67,21 +71,34 @@ produced it.
   **authored here** and have no upstream to compare against. A directory prefix would have forbidden
   line-anchoring into two files this repo edits itself — the exact case argued below as one that
   *should* stay line-anchored. The two lists of what-is-vendored are now asserted equal against that
-  registry (`python/tests/test_compatibility_citations_resolve.py:167`), on this repo's own stated
-  principle that a value stored twice must not be able to disagree with itself. It does **not** convert the eight remaining `ANCHORED` entries into
-  non-vendored files; those point into files this repo
-  edits itself, where a line number is a claim about our own layout and a drifting one is a real
-  signal. The adjacent case is recorded here rather than fixed: `COMPATIBILITY.md`'s "No yank"
+  registry (`python/tests/test_compatibility_citations_resolve.py:173`), on this repo's own stated
+  principle that a value stored twice must not be able to disagree with itself. It does **not**
+  convert the eight remaining `ANCHORED` entries into non-vendored files; those point into files
+  this repo edits itself, where a line number is a claim about our own layout and a drifting one is
+  a real signal. The adjacent case is recorded here rather than fixed: `COMPATIBILITY.md`'s "No yank"
   citation into `CHANGELOG.md` drifts because a changelog grows at the top, so *every* new entry
-  moves it. It has held **twelve distinct values since 2026-08-24**, six of them on 2026-08-31
-  alone: `:521-526` → `:523-528` → `:538-543` → `:540-545` → `:563-568` → `:586-591`. (An earlier
-  draft of this entry gave that chain with `:523-528` missing while still calling it five repoints —
-  an enumeration disagreeing with its own count, in a paragraph about citations that look checked.
-  Both halves are now read off `git log`.) Same zero-information churn as the vendored case, with a
+  moves it. Measured across `git rev-list --all`, it has held **eleven distinct values since
+  2026-08-23**: `:227-231` → `:277-281` → `:317-321` → `:419-424` → `:466-471` → `:521-526` →
+  `:523-528` → `:538-543` → `:540-545` → `:563-568` → `:586-591`, the last six of them on 08-31
+  alone. (Two earlier drafts of this paragraph were wrong in two different ways — one omitted
+  `:523-528` while still calling the chain five repoints, an enumeration disagreeing with its own
+  count; the next said "twelve since 08-24", counting a *different* CHANGELOG citation that a
+  last-match grep had swept in. Third time measured properly, by matching the citation rather than
+  taking the last one on the line.) Same zero-information churn as the vendored case, with a
   different cause — an append-only file rather than a refreshed one — and the same conversion would
   fix it. It is deliberately out of scope here: `CHANGELOG.md` is ours,
   the fix is a mechanism change to a check that is currently working, and #73 has not decided whether
   the rule should widen from "vendored" to "any file whose line numbers are structurally unstable".
+
+  A second open half, found while writing this entry: **a citation can opt out of being checked by
+  being written unusually.** `CITATION` needs a path and a plain `:N`, so `` `:878` `` (bare
+  shorthand continuing an earlier path) and
+  `` `seam-runtime/docs/specs/seam-event.v1.md:372,379,399` `` (a comma list) match nothing at all.
+  They are not skipped like a sibling path — they are never seen. Four such citations existed in
+  these two documents; the three bare ones had all rotted, silently, inside a document whose every
+  citation is supposedly verified. They are repointed above, but the class remains: the regex should
+  arguably *reject* a citation-shaped string it cannot parse rather than ignore it, so that writing
+  a reference unusually is a failure rather than an exemption. That is the second question on #73.
 
 
 ## 2026-08-31 — `plans/post-adoption-hardening-and-acdp-readiness.md` Phase 10 (issue #52): the 0.7.39-0.7.43 band is documented, not deleted
@@ -560,10 +577,27 @@ not as written.
 ### The v1 skip is a downgrade hole, closed structurally rather than documented
 - **Reviewer (Fable):** CONFIRM. Every load-bearing claim resolves. The guard keys on the four
   columns and never on the version alone (`verify/src/verify.rs:605-614`); a genuine v1 record falls
-  through to `continue` and is tested twice — `verify/tests/authenticity.rs:238` and `:878`, the
-  latter asserting skipped-not-recomputed. The per-column parametrization at `:843-875` exercises
-  each column with the other three removed, and the comment at `:841` records the decoy that forced
-  it. The spec sentence it rests on is quoted verbatim from `verify/docs/seam-event.v1.md`:
+  through to `continue` and is tested twice — `verify/tests/authenticity.rs:238`
+  (`a_v1_record_is_link_verified_but_not_recomputed`, whose skipped-not-recomputed assertion is at
+  `verify/tests/authenticity.rs:254-257`) and `verify/tests/authenticity.rs:944`
+  (`a_genuine_v1_record_is_still_skipped_not_refused`). The per-column parametrization at
+  `verify/tests/authenticity.rs:906-909` exercises each column with the other three removed, and the
+  comment immediately above it records the decoy that forced it: "a decoy that guarded only on tag
+  10 passed an earlier version of this test, leaving the three v3 columns unchecked with a green
+  suite."
+
+  **Correction, found while writing the entry above.** Three of those references were written as
+  bare `:N` shorthand — `` `:878` ``, `` `:843-875` ``, `` `:841` `` — continuing the full path in
+  the same sentence. `CITATION` requires a path, so a bare `:N` matches nothing: those three were
+  never resolved and never content-checked, in a document every citation of which is supposedly
+  verified. All three had rotted, by 5 to 66 lines. `:878` was cited for skipped-not-recomputed and
+  sat inside a different test entirely; `:843-875` was cited as the per-column parametrization and
+  is a comment block plus record construction. The substance was right and every pointer was wrong,
+  which is this entry's own subject arriving by a third route — not a stale anchor, not an unstable
+  file, but a citation *format* the checker silently declines to see. Repointed above with full
+  paths so they are checkable at all; the class is recorded on #73.
+
+  The spec sentence the decision rests on is quoted verbatim from `verify/docs/seam-event.v1.md`:
   `ciphertext_digest` "is absent (no wire bytes) only on `schema_version = 1` payloads." That
   quote is checked by content rather than by line number — see *Citations into vendored files are
   quoted, never line-anchored* in this file for why this one carries no `:N`.

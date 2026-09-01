@@ -96,18 +96,24 @@ SIBLING_PREFIXES = ("seam-adapters/", "seam-aegis/", "seam-runtime/")
 #: This is issue #73. `verify/docs/seam-event.v1.md` is a verbatim copy of seam-runtime's
 #: `docs/specs/seam-event.v1.md`; refreshing it replaces the whole body, so every line below an
 #: upstream insertion shifts. One `DECISIONS.md` citation into it was **repointed five times in six
-#: days**, once per refresh — measured, not recalled:
+#: days** — measured against git, not recalled, and re-measured after the first table here was wrong:
 #:
-#:     PR #63  2026-08-25  :271-272   (introduced)
-#:     PR #66  2026-08-25  :295-296
-#:     PR #71  2026-08-26  :332-333
-#:     PR #72  2026-08-27  :338-339
-#:     PR #74  2026-08-27  :381-382
-#:     PR #80  2026-08-31  :388-389
+#:     PR #58  2026-08-24  :271-272  introduced, correct (needle at 271)
+#:     PR #63  2026-08-25  :271-272  refresh moved the needle to 276 — MERGED STALE, not repointed
+#:     PR #66  2026-08-25  :295-296  repoint 1 (silently absorbs #63's drift)
+#:     PR #71  2026-08-26  :332-333  repoint 2
+#:     PR #72  2026-08-27  :338-339  repoint 3
+#:     PR #74  2026-08-27  :381-382  repoint 4
+#:     PR #80  2026-08-31  :388-389  repoint 5
 #:
-#: Issue #73 recorded two of those and this file's own comments long said "three, in one session";
-#: both undercounted, because nobody had walked the history. Every repoint carried zero information
-#: and each was an opportunity to "fix" the citation by pointing it at a plausible wrong line.
+#: Six refreshes, five repoints — NOT one repair per refresh. #63 shipped the citation five lines
+#: wrong and nothing objected, because `DECISIONS.md` did not come under this test until #67. That
+#: is the sharpest fact in the table and the one nobody had: not the churn, but a citation sitting
+#: on `main` pointing at a plausible wrong line, looking exactly as checked as a correct one.
+#:
+#: Issue #73 recorded two of these and this file's own comments long said "three, in one session".
+#: Every repoint carried zero information, and each was an opportunity to "fix" the citation by
+#: pointing it at another plausible wrong line.
 #: Widening `CITATION_SLACK` was considered and ruled out in #73: slack that survives a whole-file
 #: refresh is slack that no longer checks anything.
 #:
@@ -116,9 +122,9 @@ SIBLING_PREFIXES = ("seam-adapters/", "seam-aegis/", "seam-runtime/")
 #:
 #: * Cite the *upstream* file with its `seam-runtime/` prefix. It is the real source, and
 #:   `SIBLING_PREFIXES` already skips it when the sibling repo is not checked out.
-#: * Quote the sentence and let `QUOTED` (bottom of this file) check it by content. Strictly
-#:   stronger than a line anchor: it verifies the document and the file still say the same words,
-#:   which is what the citation was ever for.
+#: * Quote the sentence and let `QUOTED` (bottom of this file) check it by content. A trade rather
+#:   than an upgrade — see that table's own note — but the half it keeps is the half that survives a
+#:   refresh: the document and the file must still say the same words.
 VENDORED = ("verify/docs/seam-event.v1.md",)
 
 
@@ -178,7 +184,7 @@ def test_this_files_vendored_set_matches_the_real_vendored_registry() -> None:
     network-fetching script failed to import is a worse trade than one assertion.
     """
     src = (REPO / "scripts" / "check_vendored_spec.py").read_text(encoding="utf-8")
-    registry = set(re.findall(r'local="([^"]+)"', src))
+    registry = set(re.findall(r'^\s*local="([^"]+)"', src, re.MULTILINE))
     assert registry, (
         "Could not read the vendored registry out of scripts/check_vendored_spec.py — its "
         "`Vendored(local=...)` shape changed. Re-derive this check rather than deleting it; a "
@@ -250,11 +256,12 @@ def test_each_citation_resolves(citation: tuple[str, str, int, int]) -> None:
     )
 
 
-#: The claims whose citations MUST still point at the right content — the six that went stale once.
+#: The claims whose citations MUST still point at the right content — eight, of which six are the
+#: original COMPATIBILITY.md set that went stale the day it was written.
 #:
 #: Each entry is (cited path, a needle that must be UNIQUE in that file). **There is deliberately no
-#: line number here.** An earlier version of this table pinned one, and it had to be repointed four
-#: times in a single working session — every repoint an opportunity to "fix" the test by pointing it
+#: line number here.** An earlier version of this table pinned one, and it had to be repointed five
+#: times over six days — every repoint an opportunity to "fix" the test by pointing it
 #: at the wrong line, which is precisely the failure it exists to catch. The line number was also pure
 #: duplication: it is derivable from the needle, and a fact stored in two places is a fact that can
 #: disagree with itself.

@@ -548,23 +548,42 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   checked where the citation pointed. The trade is worth taking only because the dropped half is
   exactly the half a whole-file refresh makes unkeepable; against a file this repo edits itself,
   `ANCHORED` stays the right mechanism.
-- **Citation floors after the conversion:** COMPATIBILITY.md 27, DECISIONS.md 51, floor 10 each.
-  Acceptance 4 holds with wide margin.
+- **Citation floors after the conversion:** COMPATIBILITY.md 27, DECISIONS.md 55, floor 10 each.
+  Acceptance 4 holds with wide margin. (DECISIONS.md gained four: the registry-consistency test,
+  and the three rotted bare-shorthand references made visible — see below.)
 - **The adjacent case is recorded, not fixed.** COMPATIBILITY.md's "No yank" citation into
-  `CHANGELOG.md` has held **twelve distinct values since 2026-08-24**, six on 2026-08-31 alone
-  (`:521-526` → `:523-528` → `:538-543` → `:540-545` → `:563-568` → `:586-591`) — identical
-  zero-information churn, different cause: an append-only file rather than a refreshed one. My first
-  enumeration omitted `:523-528` while still calling it five repoints, i.e. an enumeration
-  disagreeing with its own count inside a phase about citations that look checked; both halves are
-  now read off `git log`. The plan scopes Phase 8 to vendored files and #73 has not decided whether
+  `CHANGELOG.md` has held **eleven distinct values since 2026-08-23**, the last six on 08-31 alone
+  — identical zero-information churn, different cause: an append-only file rather than a refreshed
+  one. It took three attempts to state that correctly: the first omitted `:523-528` while still
+  calling the chain five repoints; the second said "twelve since 08-24", having counted a
+  *different* CHANGELOG citation that a last-match grep swept in. Third measured properly, across
+  `git rev-list --all`, matching the citation rather than taking the last one on the line. The plan scopes Phase 8 to vendored files and #73 has not decided whether
   the rule should widen, so it stays the open half rather than being silently converted.
 
-- **Three counts in this phase were remembered rather than measured, and all three were wrong.**
-  The vendored citation was repointed **five** times across PRs #63→#66→#71→#72→#74→#80 over six
-  days, not "three times in one session" — a figure this repo's own test file had been repeating
-  since before this phase. `ANCHORED` has **eight** remaining entries, not nine. And the CHANGELOG
-  chain above. The lesson is the phase's own subject applied to itself: walk `git log`, do not
-  recall. The corrected history now lives in the `VENDORED` comment as a table.
+- **Every count in this phase was remembered rather than measured, and every one was wrong** —
+  including my corrections of them. Two verify rounds were needed to land the history:
+  - "Three times in one session" → **five repoints over six days**, and the introduction was PR
+    **#58**, not #63.
+  - "One repoint per refresh" → **six refreshes, five repoints**. The missing one is the finding:
+    **#63 refreshed the vendored copy, moved the sentence five lines, did not repoint the citation,
+    and merged** — `DECISIONS.md` did not come under the citation test until #67. A citation sat on
+    `main` pointing at a plausible wrong line, indistinguishable from a correct one. That is the
+    actual failure; the churn was only its symptom, and three successive drafts undercounted the
+    same evidence.
+  - `ANCHORED` has **eight** entries, not nine. The CHANGELOG chain, three attempts, above.
+
+  The lesson is the phase's subject applied to itself: walk `git log`, never recall. The measured
+  table now lives in the `VENDORED` comment, with the merged-stale row called out.
+
+- **A third route to "looks checked", found in the paragraph this phase rewrote.** `DECISIONS.md`
+  carried three bare-shorthand references — `` `:878` ``, `` `:843-875` ``, `` `:841` `` —
+  continuing a full path given earlier in the same sentence. `CITATION` requires a path, so a bare
+  `:N` matches nothing: they were never resolved and never content-checked. **All three had rotted,
+  by 5 to 66 lines** — `:878` was cited for an assertion that lives in a different test; `:843-875`
+  was cited as a per-column parametrization and is a comment block. The substance was right and
+  every pointer was wrong. Repointed with full paths (they are now checked, hence the count rising
+  to 55), and the class — a citation opting out of checking by being written unusually — recorded
+  on #73 alongside `COMPATIBILITY.md`'s comma-list form.
 
 - **`VENDORED` names a file, not the `verify/docs/` directory** — the first draft used the directory
   prefix, which would have forbidden line anchors into `audit-anchor.md` and
@@ -579,9 +598,9 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   quote, and verified by deleting DECISIONS.md's attribution line ("quoted verbatim from
   `verify/docs/seam-event.v1.md`") and watching it go red before restoring the file.
 
-- **Full python suite: 608 passed, 17 skipped** — 606 at first commit, plus the two cases the
-  verify gate's fixes added (the registry-consistency test, and one new citation). Run whole, never
-  a subset — the doc guards scan every `*.md` including this file.
+- **Full python suite: 611 passed, 17 skipped** — 606 at first commit; the two verify rounds added
+  a registry-consistency test and four newly-visible citations. Run whole, never a subset — the doc
+  guards scan every `*.md` including this file.
 
 ### Phase 2 — The two cross-repo asks, written and **filed** · 2026-08-31
 
