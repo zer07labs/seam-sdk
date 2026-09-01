@@ -18,11 +18,18 @@ audiences, and over one-PR-per-phase because several phases are too small to rev
    actively-firing hazard.
 2. **Phases 3, 4, 5** — the unwired field, closing #50, and the gate that missed it. One story;
    splitting the instance from the class would make each half look smaller than it is.
-3. **Phases 2, 8** — the (deliberately unfiled) cross-repo asks and the vendored-citation guard.
+3. **Phases 2, 8** — the cross-repo asks (drafted unfiled, filed once the restriction below was
+   lifted mid-run — see Phase 2's log entry) and the vendored-citation guard.
 
-**Scope restriction (user-set, 2026-08-31):** seam-sdk only. No writes and no issue actions in any
-sibling repo. Phase 2 writes its asks and leaves them **UNFILED** — recorded again in that phase's log
-entry so the gap stays visible.
+**Scope restriction (user-set, 2026-08-31):** seam-sdk only, at plan time. No writes and no issue
+actions in any sibling repo. Under this restriction, Phase 2 wrote its asks and would have left them
+**UNFILED** — recorded again in that phase's log entry so the gap would stay visible. **The
+restriction was lifted mid-run by the user**, and both asks were filed:
+[seam-runtime#525](https://github.com/zer07labs/seam-runtime/issues/525) and
+[seam#26](https://github.com/zer07labs/seam/issues/26) — see Phase 2's log entry below for the full
+filing record. This line is corrected, not deleted, because the disagreement already cost something
+real: the audit brief that produced `plans/gate-blindness-hardening.md` asserted the asks were left
+unfiled, reading it from this header rather than from Phase 2's log.
 
 **Hard constraint — clean-room, stated precisely.** This repo's digest implementations
 (`python/seam_sdk/crypto.py`, `ts/src/crypto.ts`, `verify/src/verify.rs`) are transcribed from the

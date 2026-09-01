@@ -464,7 +464,11 @@ check mirroring the `VENDORED` one so the two prefix rules cannot drift apart.
 
 ### Phase 7 — the record stops disagreeing with itself about what was filed
 
-**Status:** TODO
+**Status:** DONE. The constraint is kept as history — "under this restriction, Phase 2 wrote its asks
+and *would have* left them UNFILED" — followed by the lift and both issue links, so the log stays a
+history rather than a tidied result. The propagated cost is stated in the file itself: the audit brief
+that produced this plan asserted the asks were unfiled because it read this header instead of Phase
+2's log. Burying that would have made the record tidier and less true.
 
 **Delivers:** `PROGRESS.md`'s header agrees with its own Phase 2 log about whether the cross-repo
 asks were filed.
@@ -502,7 +506,24 @@ have caught it is a semantic-consistency check no reasonable test can express.
 
 ### Phase 8 — hygiene: two stored-twice disagreements, and two issues that are done
 
-**Status:** TODO
+**Status:** DONE — and this section's own acceptance criterion 2 was **vacuous**, which is worth more
+than the phase it belonged to.
+
+It read: "`git check-ignore CLAUDE.md` returns nothing." That is true whether or not the bug exists.
+Git exempts *tracked* files from indexed `check-ignore` by design — its own docs say so — so the
+command returns the passing result in both states. Proven directly: at the commit with
+`.gitignore:22` still present, plain `check-ignore` exits 1 with no output; `--no-index` exits 0 and
+prints `.gitignore:22:CLAUDE.md`. After the fix, `--no-index` exits 1.
+
+So a plan about guards that pass without seeing anything shipped an acceptance criterion that passes
+without seeing anything, and it survived my own plan-review pass. Criterion 2 below is corrected to
+the `--no-index` form. The lesson generalises past this file: an acceptance criterion needs the same
+red-first proof a test does — run it against the unfixed state and confirm it fails — and nothing in
+this plan's own review process did that.
+
+`.gitignore`'s `CLAUDE.md` entry was checked for other dependents before deletion (`find . -iname
+CLAUDE.md` → exactly one, the tracked root file), so the straight deletion was right and no narrower
+fix was needed.
 
 **Delivers:** a clean `git status` on a fresh checkout; `.gitignore` that agrees with the index;
 `#77` and `#78` closed with evidence; the event-field residual tracked as an issue instead of a
@@ -533,7 +554,8 @@ comment.
 
 **Acceptance criteria:**
 1. `git status --short` is empty on a clean checkout.
-2. `git check-ignore CLAUDE.md` returns nothing; `git check-ignore python/uv.lock` returns it.
+2. `git check-ignore --no-index CLAUDE.md` returns nothing (the plain form is vacuous on a
+   tracked file — see Status); `git check-ignore python/uv.lock` returns it.
 3. `#77` and `#78` are CLOSED, each with a comment naming the PR that satisfied it and, for `#77`,
    the corrected `key_status` vocabulary with its spec citation.
 4. An open issue in this repo describes the event-field surface residual and cites the corrected
