@@ -10,10 +10,13 @@ the public contract, never on the runtime internals.
 > in `zer07labs/seam` — separate internal-developer and partner guides over a shared base, plus how to
 > request access. This README stays focused on building, generating, and releasing the SDK itself.
 
-> ⚠️ **If you are pinned below 0.7.20, upgrade.** 0.7.13–0.7.15 published an unimportable wheel;
-> 0.7.16–0.7.19 import fine but fail every `authorize()` call against a current runtime
-> (`UNAUTHENTICATED: admission ticket is not valid` — the ticket is fine). Neither defect is visible
-> from the version number. Full detail and root cause: [`CHANGELOG.md`](CHANGELOG.md).
+> ⚠️ **If you are pinned below 0.7.20, upgrade — and if you are on 0.7.39–0.7.43, upgrade to
+> 0.7.47.** 0.7.13–0.7.15 published an unimportable wheel; 0.7.16–0.7.19 import fine but fail every
+> `authorize()` call against a current runtime (`UNAUTHENTICATED: admission ticket is not valid` —
+> the ticket is fine); 0.7.39–0.7.43 declare a `protobuf` floor below their own bundled gencode, so
+> `import seam_sdk` raises `VersionError` for anyone whose closure caps `protobuf` below 7.36.0.
+> None of the three is visible from the version number. Full detail and root cause:
+> [`CHANGELOG.md`](CHANGELOG.md) and [`COMPATIBILITY.md`](COMPATIBILITY.md) §3.
 
 > **Before you pin a version, read [`COMPATIBILITY.md`](COMPATIBILITY.md).** This SDK takes the
 > runtime's version and therefore **cannot express its own semver** — a breaking change here can ship

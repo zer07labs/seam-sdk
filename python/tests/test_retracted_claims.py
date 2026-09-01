@@ -173,12 +173,84 @@ def test_the_commitment_digest_exclusion_is_stated() -> None:
         "0.7.20",  # the floor
         "0.7.13",  # unimportable band
         "0.7.17",  # wire-broken band
+        "0.7.39",  # gencode/floor skew band — the lower edge, proven by the CI red/green boundary
     ],
 )
 def test_the_known_bad_bands_stay_documented(required: str) -> None:
-    """Nothing was yanked (CHANGELOG.md:64-67), so these versions remain installable and this
-    document is the only barrier. Dropping a band silently re-exposes it."""
+    """Nothing was yanked (CHANGELOG.md:523-528), so these versions remain installable and this
+    document is the only barrier. Dropping a band silently re-exposes it.
+
+    This is a WEAK check by construction — a version string can appear for unrelated reasons, so
+    passing here does not prove the band is documented, only that the number is mentioned
+    somewhere. The band itself is guarded by the test below, which exists because this one
+    demonstrably was not enough.
+    """
     assert required in COMPATIBILITY.read_text(encoding="utf-8"), (
         f"COMPATIBILITY.md no longer mentions {required}. Nothing was yanked, so these versions are "
         f"still installable from Cloudsmith and the document is the only mitigation."
+    )
+
+
+def test_the_gencode_skew_band_is_a_table_row_not_merely_a_mention() -> None:
+    """The §3 row for 0.7.39-0.7.43 must survive as a ROW, not as a passing reference.
+
+    Written after the parametrize above was caught being vacuous for this band: "0.7.43" already
+    appeared in COMPATIBILITY.md for unrelated reasons, so the row could be deleted outright and
+    the whole suite still passed — 557 green with the band gone. A guard that cannot fail for the
+    thing it guards is worse than no guard, because it is read as coverage.
+
+    It also pins the two facts a reader acts on, which a substring check cannot: the release that
+    fixes it, and the symptom that identifies it.
+    """
+    rows = [
+        line
+        for line in COMPATIBILITY.read_text(encoding="utf-8").splitlines()
+        if line.startswith("| **0.7.39 – 0.7.43**")
+    ]
+    assert len(rows) == 1, (
+        "COMPATIBILITY.md §3 no longer carries exactly one table row for the 0.7.39-0.7.43 "
+        f"gencode/floor skew band (found {len(rows)}). Five releases shipped that defect on red "
+        "CI and none was yanked, so this row is the only barrier between a consumer and a wheel "
+        "whose declared protobuf floor is lower than the gencode it bundles. If the band was "
+        "re-derived, update this test deliberately — do not delete it."
+    )
+    row = rows[0]
+    for needle, why in (
+        (
+            "0.7.47",
+            "the release that fixes it — without it the row tells a reader nothing to do",
+        ),
+        (
+            "VersionError",
+            "the symptom, which is how a consumer recognises they are hitting this",
+        ),
+    ):
+        assert needle in row, (
+            f"the 0.7.39-0.7.43 row no longer states {needle!r}: {why}"
+        )
+
+
+def test_the_skew_band_row_renders_inside_the_table() -> None:
+    """A blank line before the row would end the GFM table and render it as literal pipes.
+
+    That is not hypothetical: the row was first committed with exactly that defect and read fine
+    in the diff. Markdown tables are whitespace-terminated, so this is a one-character failure
+    that no prose review catches and no substring check notices.
+    """
+    lines = COMPATIBILITY.read_text(encoding="utf-8").splitlines()
+    # Not a bare `next(...)`: with the row absent that raises StopIteration carrying no message,
+    # and a guard whose failure explains nothing is half a guard.
+    idx = next(
+        (i for i, ln in enumerate(lines) if ln.startswith("| **0.7.39 – 0.7.43**")),
+        None,
+    )
+    assert idx is not None, (
+        "COMPATIBILITY.md §3 has no 0.7.39-0.7.43 row at all, so its rendering cannot be checked. "
+        "The sibling test above says why the row has to exist."
+    )
+    assert lines[idx - 1].startswith("|"), (
+        "the 0.7.39-0.7.43 row is not contiguous with the rows above it — the preceding line is "
+        f"{lines[idx - 1]!r}. A GFM table ends at the first non-table line, so this row would "
+        "render as literal pipe characters in a paragraph rather than as a row of the known-bad "
+        "table."
     )

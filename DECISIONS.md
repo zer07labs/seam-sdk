@@ -6,6 +6,242 @@ assumption, the independent recommender's analysis, the human verdict, and the r
 produced it.
 
 
+## 2026-08-31 — `plans/post-adoption-hardening-and-acdp-readiness.md` Phase 10 (issue #52): the 0.7.39-0.7.43 band is documented, not deleted
+
+### The decision
+
+**Do not yank 0.7.39 through 0.7.43. Document them.** `COMPATIBILITY.md:134` carries the row and
+`COMPATIBILITY.md:101-128` the disposition; this entry is the reasoning behind it, and exists
+because a decision that is only implied gets re-litigated by the next person to read the issue.
+
+`yank.yml` stays available and has been repaired (below) so that it would work if this is ever
+revisited. Nothing was deleted from any registry, and no workflow was dispatched to reach this
+conclusion.
+
+### The rule this follows
+
+**Delete when a defect corrupts silently or is a security hazard. Document when it fails loud.**
+
+The distinction is **corruption and security — not diagnosability.** A wheel that writes wrong
+bytes, or accepts a signature it should reject, gives nobody anything to notice: the damage is done
+before anyone knows to look, and the only remedy is to make the artifact unobtainable. A wheel that
+fails, even confusingly, leaves untouched the thing you would have had to undo. Deleting the second
+class buys no protection a document does not already provide, and costs the one thing deletion
+always costs — it breaks whoever was working.
+
+Diagnosability cannot be the line, and the precedent below is why: 0.7.16-0.7.19 failed with an
+actively misleading error, and was documented rather than deleted. It corrupted nothing. That this
+band is *also* self-diagnosing makes it an easier call, not a differently reasoned one.
+
+### Issue #52 recommended the opposite, and it deserves the argument, not silence
+
+#52 recommends yanking, on two grounds. Both are answered here rather than passed over.
+
+**"Unlike the 0.7.13-0.7.19 window, 0.7.43 is hours old and unlikely to be in anyone's lock yet, so
+the blast radius of yanking is much smaller than it was there. That was the stated reason not to
+yank before, and it does not apply here."** The last sentence is aimed squarely at the precedent
+this entry leads with, so it goes first: it is **right**. *"A floor already in wide use"* does not
+describe this band, and that limb is not relied on — `COMPATIBILITY.md:101-128` scopes it to the
+first two bands for exactly this reason. What the precedent bullet below turns on is **defect
+severity**, which the objection leaves untouched: the milder defect would be deleted while worse
+ones stay installable.
+
+On the blast radius itself: that was true when written and has since inverted. A week on,
+the absence of locks no longer means *nobody has it* — it means anyone who installed it resolved
+`protobuf` freely, got 7.36.0, and **is working right now**. Deleting turns a working install into
+a hard resolution failure at their next `pip install`. The fact that nothing pins the version is
+what makes deletion cheap for us and expensive for them.
+
+**"(1) alone leaves a wheel published whose metadata is untrue, which is a different and worse
+thing than a wheel that is honestly broken."** This is the stronger point and it is conceded in
+part: the metadata *is* untrue. What makes it survivable is that it is **self-detecting**.
+protobuf's generated preamble calls `ValidateProtobufRuntimeVersion`, which raises on the first
+`import seam_sdk`, naming both versions. The wheel cannot quietly do the wrong thing — the untrue
+metadata is caught by the very mechanism the metadata is about, at the earliest possible moment,
+before any call reaches a runtime. An honestly-broken wheel and a wheel whose lie fails closed on
+first use are closer together than the framing suggests.
+
+**And the action #52 sized no longer exists.** It weighed deleting *one* release, hours old. The
+measured band is **five** — 0.7.39 through 0.7.43 — because the lower edge turned out to be
+recoverable from CI history (see the divergence note below). Deleting five releases published over
+four days is a materially different act from deleting one, and the case for it was never made.
+
+Its third option — re-release with a corrected floor — is already satisfied: **0.7.47 shipped the
+fix**. The remedy #52 wanted is available to every consumer today. What remains is only whether to
+destroy the bad artifacts, which is the narrower question answered above.
+
+### The evidence, each checked rather than assumed
+
+- **The precedent already covers worse.** `CHANGELOG.md:523-528` records no-yank for 0.7.13-0.7.19,
+  which failed *harder*: 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed
+  every `authorize()` with an actively misleading "admission ticket is not valid" when the ticket
+  was fine. This band breaks only consumers who cap `protobuf` below 7.36.0. Deleting the milder
+  defect while documenting the worse ones inverts the precedent without saying so.
+- **No lockfile in the workspace pins it.** Checked 2026-08-31 across every `uv.lock`,
+  `package-lock.json` and requirements/constraints file in the sibling repos: no pin on any version
+  in the band. The only `seam-sdk` entry in `seam-adapters/uv.lock` is `0.7.9` via an editable path
+  source. The other workspace matches for "0.7.43" are prose in documents and tests, not
+  dependencies. (Read alongside the inversion above — this fact cuts toward *not* deleting.)
+- **Deletion would destroy a healthy artifact.** The defect is Python-only: v0.7.43's
+  `ts/package.json` depends on `@bufbuild/protobuf` at `^2.12.1`, a caret range, and protobuf-es
+  has no analogue of Python's gencode/runtime hard gate. But `yank.yml` deletes python **and** npm
+  together — the format filter is a fixed allowlist with no input to narrow it. Running it as
+  written would break registry lockstep between the two published languages for a defect only one
+  of them has.
+- **The harm is asymmetric.** A consumer with the band installed and `protobuf` unconstrained is
+  unaffected today. Documentation costs them nothing and warns the ones who are affected; deletion
+  costs the unaffected ones a broken build and gives the affected ones nothing they do not already
+  get from a `VersionError` naming the fix.
+
+### Rejected alternatives
+
+- **A dry-run probe first, to see whether the artifacts are still there.** It would answer a
+  question the recommendation does not turn on: present or absent, the reasoning above is
+  unchanged. It buys a workflow dispatch and no information.
+- **Python-only deletion.** `yank.yml` cannot express it — there is no format input, by design
+  (`.github/workflows/yank.yml:74`), and adding one widens what a destructive tool can do. That is
+  its own reviewed change, not a side effect of a decision record.
+- **Cloudsmith quarantine** — blocks download, retains the artifact, reversible. This is the
+  genuinely better middle path *if* blocking installs is ever wanted, and it is the one option
+  worth raising rather than settling unilaterally. Not taken now: it has the same cost to a working
+  consumer as deletion, without deletion's finality to justify it. Logged in `ASSUMPTIONS.md` as
+  the open question.
+
+### Divergence from the phase as planned
+
+The plan asked this entry to record the band as **"at least" 0.7.40-0.7.43**, with the reason the
+lower bound is unrecoverable: `_gen/` is gitignored, so no per-tag gencode survives. **That premise
+was wrong and the phase before this one corrected it.** The evidence is not in the tree but in CI:
+`v0.7.38` is green on the floor-vs-gencode test and `v0.7.39` is the first red, through 0.7.43,
+returning to green at 0.7.47. Both edges are proven, the band is five releases rather than four,
+and no hedge is recorded because none is warranted.
+
+That correction strengthens the no-yank case in one direction and weakens it in another, which is
+worth stating plainly: five artifacts is a larger footprint than four, but it also means #52's
+"one hours-old release" framing no longer describes the choice.
+
+### The `yank.yml` token fix, and why a latent bug in a safety tool matters
+
+`yank.yml` resolved its credential as `${CLOUDSMITH_API_KEY:-$CARGO_REGISTRIES_ZER07LABS_TOKEN}`,
+without stripping the `"Bearer "` prefix the org Cargo token carries — a strip `.github/workflows/publish.yml:371`
+has always done. The effect: Cloudsmith receives `X-Api-Key: Bearer …`, returns 401, and `curl -sf`
+under `set -euo pipefail` aborts before any DELETE.
+
+**It fails closed, which is exactly why it is worth fixing.** No wrong deletion was ever possible.
+What was not possible either was the tool working at all — including in dry run — unless the
+dedicated secret happened to be set. A safety tool that silently does not work is worse than one
+known to be broken: the defect is discovered during the incident, by the person who needed it.
+
+The fix resolves both sources with the prefix stripped (`.github/workflows/yank.yml:55-60`), written
+as an explicit `if` rather than `publish.yml`'s `&&` one-liner because this step runs under
+`set -euo pipefail`, where an AND-list's exit status is a rule most readers do not hold. Fail-closed
+is preserved, and precisely: a source that is *only* the prefix strips to empty and is skipped —
+refused outright when it is the sole credential (`.github/workflows/yank.yml:62`), and otherwise
+falling through to the other source. The inputs this refuses are a **superset** of what it refused
+before the fix, so no shape that previously refused can now proceed.
+
+The scoping was **not** touched. Exact version equality, the python+npm format allowlist, and the
+exact-name match that keeps the org's Cargo crates unreachable are all unchanged — and are now
+pinned by `scripts/test_yank_gate.py`, which executes the credential resolution rather than reading
+it and asserts the three filters. It runs in `workflow-guards` (`.github/workflows/ci.yml:585`),
+needs no credential, and was proved falsifiable three ways: restoring the original one-liner,
+widening the format filter, and flipping the dry-run default each turn it red.
+
+## 2026-08-31 — `plans/post-adoption-hardening-and-acdp-readiness.md` Phase 6 (issue #52): the publish path re-derives the floors it ships
+
+### The mechanism, and why a green `ci-green` could never have closed it
+
+`v0.7.43` declared `protobuf>=7.35.1,<8` in metadata while bundling gencode emitted by protoc
+7.36.0. protobuf's generated preamble calls `ValidateProtobufRuntimeVersion`, which raises when the
+*installed* runtime is older than the gencode — so the wheel's own stated minimum was a version at
+which it could not be imported. It shipped anyway — and, correcting this entry's own first
+telling, **CI was red when it did**: all three `ci` runs at `ff0139a` failed, on that exact
+floor test. Which mechanism this phase closes turns on that, so it is worth being exact.
+
+**There are two separate paths to shipping this defect, and `v0.7.43` took the first.**
+
+*Path one — publish past a red gate.* The floor test was failing and `publish.yml` never consulted
+the result. That is what happened, five times over four days: 0.7.39 through 0.7.43 each published
+while `ci` was red on it. `ci-green`, added in #51, closes this path.
+
+*Path two — a genuinely green CI, then a skew at publish time.* `ci.yml` runs
+`python/tests/test_protobuf_floor.py`, which derives the required floor **from the stubs generated
+in that run** and compares it to `python/pyproject.toml:50`. The publish job then regenerates the
+stubs from scratch — against buf's *unpinned* remote plugins (`buf.gen.yaml:29`) — and nothing
+re-checked the floor against **those** stubs. The two runs measure different artifacts, and only one
+of them is the artifact that ships. **No release is known to have taken this path, and until this
+phase nothing closed it** — which is why the phase exists.
+
+This is why Phase 6 could not be discharged by strengthening the CI gate, and why `ci-green` is
+necessary but **not sufficient**: it answers *did CI pass for this commit?*, which closes path one
+completely, while path two lives entirely in the gap between what CI measured and what publish
+built — where the honest answer to that question is *yes*. The headroom is currently **zero**: the declared floor and the emitted gencode
+are both `7.36.0`, so the very next remote-plugin roll between a CI run and a publish reproduces it.
+
+### Why a floor-pinned install, rather than pinning the buf plugins
+
+Pinning `buf.gen.yaml` to fixed plugin versions is the obvious alternative and it is the wrong
+trade. The floor is **derived** precisely because the codegen moves on its own schedule; pinning the
+plugins converts a self-correcting derivation into a number someone must remember to bump, and the
+failure mode of forgetting is silent — old gencode, indefinitely, with no signal. It also would not
+answer the question that matters. Both existing smokes install `protobuf` unconstrained, so they
+resolve the *newest* runtime, which by construction satisfies any gencode; neither could have caught
+`0.7.43`, and neither could catch its successor.
+
+So the publish job does two things instead. It re-runs the floor guards against the stubs it just
+generated (`.github/workflows/publish.yml:340`), and it installs the built wheel into a clean venv
+with `protobuf` pinned at the floor the wheel itself declares, then imports the generated module
+there (`.github/workflows/publish.yml:413`). The second is the one that asks *is this metadata
+true?* — it reproduces exactly the resolution a consumer gets when their dependency closure caps
+protobuf at our stated minimum. The floor is parsed out of the wheel's own `pyproject.toml` rather
+than hardcoded, and an unparseable pin **refuses to publish** rather than falling back to an
+unconstrained install; a silent fallback would restore the blind spot the step exists to remove.
+
+### Accepted trade-off: a failure here can half-publish, and that is the safer half
+
+The floor check runs inside the `python` job, after `python -m build` and before `twine upload`, and
+the `npm` job publishes independently. So a wheel that fails the floor check leaves npm published and
+PyPI not — a version live in one registry and absent from the other.
+
+The alternative was a shared validation job gating both uploads. It was rejected: the `python` job
+already builds, smokes, and uploads the *same* `dist/*.whl` in one step, so extracting validation
+would mean rebuilding the wheel in the gate — introducing a validated-vs-published skew of exactly
+the kind this phase exists to remove. Between the two failure modes, a half-published version is
+recoverable by a patch release and is visible immediately; a wheel whose declared floor is a lie is
+neither, and it fails in the consumer's process rather than ours. The half-publish is accepted
+deliberately, not overlooked.
+
+### The guards are executed, not read — which caught a defect in this very change
+
+`scripts/test_publish_gate.py` drives both new steps against stub trees rather than asserting on
+their text: a stub `pyproject.toml` whose floor trails a stub gencode constant must fail the real
+extracted step (`scripts/test_publish_gate.py:330`), and a matching floor must pass it, so the red
+case is red for the floor rather than for a broken harness. The same file drives the tag-ancestry
+guard against throwaway git repos (`scripts/test_publish_gate.py:510`).
+
+That was not ceremony. The first draft of the ancestry step ran `git fetch --no-tags --depth=0`,
+which git rejects outright — *"depth 0 is not a positive number"* — and would have failed every
+publish. It survived a read-through and died the first time it was executed, which is the same
+argument the `ci-green` tests in that file already make (`.github/workflows/ci.yml:573`).
+
+A third defect was subtler and is worth stating as a rule. `test_protobuf_floor.py` **skips** when
+the generated tree is absent, and pytest exits **0** when every selected test skips — only *zero
+collected* is exit 5. So a `make generate` that succeeded while writing `_gen` somewhere the package
+cannot import from would have left the re-derivation step green having measured nothing, which is
+the same "green because it never ran" shape the step exists to remove. Writing `_gen` unimportably
+is not a hypothetical failure here — it is what this job did when it ran raw `buf generate`. The
+step now asserts the file is present before invoking pytest, and a test drives that case red. **The
+rule: a guard that delegates to a suite which can skip must assert its own preconditions, because a
+skip and a pass are the same exit code.**
+
+### The tag-ancestry assertion, filed under the same phase
+
+`publish.yml` triggers on a tag push, and a tag can be created from any local commit. `ci-green` then
+resolves *that commit's* check runs, which a pushed branch happily has. Nothing asserted the tagged
+commit was ever on `main`. `version-check` now refuses a tag whose commit is not an ancestor of
+`origin/main` (`.github/workflows/publish.yml:176`), and its checkout takes full history because
+`merge-base --is-ancestor` cannot answer in a depth-1 clone.
+
 ## 2026-08-25 — `plans/authorize-single-canonicalization.md` (issue #60): one derivation, and the integer rule that is not a magnitude test
 
 ### Widen the integer arm rather than narrow the float arm

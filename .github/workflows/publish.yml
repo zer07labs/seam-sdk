@@ -153,7 +153,11 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 — the ancestry assertion below needs real history. A shallow clone has no
+      # merge base to test against and would fail every tag spuriously.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: assert vTAG == ts/package.json == python version
         run: |
           TAG="${GITHUB_REF_NAME#v}"
@@ -164,6 +168,23 @@ jobs:
             echo "::error::tag v$TAG does not match ts ($TS) / python ($PY) — bump the versions and re-tag."
             exit 1
           fi
+      # A tag is not branch-scoped, and `ci.yml` runs on EVERY branch push — so `ci-green` can
+      # legitimately resolve a green `ci-ok` for a commit that only ever lived on a feature branch.
+      # Nothing else in this workflow asserts the commit reached `main`: `version-check` compares the
+      # tag to in-tree strings, and `ci-green` reads check runs. Without this, tagging a green
+      # unmerged commit publishes it.
+      - name: assert the tagged commit is an ancestor of origin/main
+        run: |
+          set -euo pipefail
+          # NOT --depth=0 (git rejects it: "depth 0 is not a positive number"). The
+          # checkout above already sets fetch-depth: 0, so the clone is complete and a
+          # plain fetch is all origin/main needs to exist as a ref here.
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_SHA is not an ancestor of origin/main — refusing to publish a commit that never merged. Merge it first, then tag the merged commit."
+            exit 1
+          fi
+          echo "$GITHUB_SHA is on origin/main — OK"
 
   npm:
     name: npm → Cloudsmith
@@ -293,6 +314,49 @@ jobs:
           # three times over; this file did the other thing, and the guard below could not see
           # the difference because it only looked for the file, never imported it.
           make generate
+      # ── The 0.7.43 guard. ──────────────────────────────────────────────────────────────────────
+      # `ci.yml` derives the dependency floors from the stubs IT generated. This job just generated
+      # them AGAIN, minutes-to-hours later, against buf's *unpinned* remote plugins
+      # (`buf.gen.yaml:29,31,33` are bare `remote:` refs that track latest). Nothing between those
+      # two generations pins the gencode, so a plugin roll in the gap ships a wheel whose declared
+      # floor is lower than the gencode it bundles — and protobuf's runtime-version check rejects a
+      # runtime OLDER than the gencode that produced a file.
+      #
+      # That is not hypothetical: v0.7.43 shipped `protobuf>=7.35.1,<8` over 7.36.0 gencode. The
+      # `ci-green` job added in #51 closes the path THAT release took (a red CI at the tagged
+      # commit); it does not close this one, because CI was green and the skew happened afterwards.
+      # Today the floor and the gencode are EQUAL (`>=7.36.0` vs 7.36.0), so there is zero headroom:
+      # the very next plugin bump reproduces it.
+      #
+      # These two assertions are pure file reads (`test_protobuf_floor.py` imports only pathlib/re/
+      # pytest), so they need no install beyond pytest and cannot be skipped here — `_gen` was just
+      # written by the step above, and the tests only self-skip when it is absent.
+      #
+      # grpcio is mirrored for the same reason and needs `grpcio` installed, because
+      # `test_grpcio_floor.py` imports `grpc` at module scope. Its floor is derived from the CALLING
+      # CONVENTIONS the grpc plugin emitted (`_registered_method=`, `add_registered_method_handlers`),
+      # so a plugin roll can require a newer grpcio than the wheel declares — the same defect wearing
+      # a different dependency.
+      - name: re-derive the dependency floors from the JUST-generated stubs
+        run: |
+          # Explicit, NOT relying on the runner's default `bash -e {0}`. Without it the step's
+          # status is its LAST command's, so a red protobuf-floor test followed by a green
+          # grpcio one exits 0 and publishes the defect this step exists to catch. That is not
+          # hypothetical — it is what the first draft of this step did.
+          set -euo pipefail
+          # ASSERT the stubs are where the guards look, do not assume it. `test_protobuf_floor.py`
+          # SKIPS when `_gen/seam/api/v1/seam_pb2.py` is absent, and pytest exits 0 when every
+          # selected test skips — so a `make generate` that succeeds while writing the tree
+          # somewhere else leaves this step green having checked nothing. That is not an invented
+          # risk: writing `_gen` without rooting the imports is the exact defect this job shipped
+          # when it ran raw `buf generate`, and "green because it never ran" is the failure shape
+          # this whole step exists to remove.
+          test -f python/seam_sdk/_gen/seam/api/v1/seam_pb2.py || { echo "::error::the generated tree is not at python/seam_sdk/_gen — the floor guards would SKIP, and a skip exits 0. Refusing to publish a wheel whose dependency floors were never actually measured."; exit 1; }
+          python -m pip install --quiet pytest grpcio
+          python -m pytest python/tests/test_protobuf_floor.py -q \
+            -k "declared_floor_is_at_least or caps_the_major"
+          python -m pytest python/tests/test_grpcio_floor.py -q \
+            -k "covers_every_convention"
       - name: build (bundles the transport via package-data) + upload
         working-directory: python
         env:
@@ -334,6 +398,43 @@ jobs:
           # And a real key derivation, so the check exercises the package rather than its imports.
           assert seam_sdk.Agent(bytes(32)).aid.startswith("aid:pubkey:ed25519:")
           print("wheel installs, imports, and derives — OK")
+          PY
+          # ── The same wheel, at the MINIMUM protobuf it claims to support. ────────────────────────
+          # The check above installs unconstrained, so pip resolves the NEWEST protobuf — which by
+          # construction satisfies whatever gencode the wheel bundles. That is why it could never
+          # have caught 0.7.43, and why `registry-smoke` cannot either: both answer "does this work
+          # with the newest?", and the defect only appears at the floor.
+          #
+          # This answers the question whose absence IS the 0.7.43 story: is the metadata TRUE? A
+          # consumer whose closure caps protobuf at our declared floor gets exactly this resolution,
+          # and it must import. Note the floor is parsed from the wheel's own pyproject rather than
+          # hardcoded — hardcoding would drift the moment the derived floor moves, which it does.
+          cd "$GITHUB_WORKSPACE/python"
+          FLOOR=$(grep -oE '"protobuf>=[0-9]+\.[0-9]+\.[0-9]+,<[0-9]+"' pyproject.toml \
+                  | head -1 | sed -E 's/.*>=([0-9.]+),.*/\1/')
+          if [ -z "$FLOOR" ]; then
+            echo "::error::could not parse the declared protobuf floor from python/pyproject.toml — refusing to publish a wheel whose metadata cannot be checked."
+            exit 1
+          fi
+          echo "declared protobuf floor: $FLOOR — installing the wheel pinned there"
+          python -m venv /tmp/floorcheck
+          # No fallback to an unconstrained install if the pin is unavailable. A silent fallback
+          # would recreate exactly the blind spot this step exists to remove.
+          if ! /tmp/floorcheck/bin/python -m pip install --quiet "protobuf==$FLOOR" dist/*.whl; then
+            echo "::error::the wheel does not install with protobuf pinned at its own declared floor ($FLOOR). Either the floor is stale (re-derive it) or protobuf==$FLOOR is unavailable — do not publish metadata that is not true."
+            exit 1
+          fi
+          cd /tmp && /tmp/floorcheck/bin/python - <<'PY'
+          import google.protobuf
+          import seam_sdk
+          # seam_pb2 is where the runtime-version check fires: protoc writes a
+          # ValidateProtobufRuntimeVersion call into the generated module's preamble, and it raises
+          # if the INSTALLED runtime is older than the gencode. Importing it under the pinned floor
+          # is the whole assertion — 0.7.43 would have died on exactly this line.
+          from seam_sdk._gen.seam.api.v1 import seam_pb2  # noqa: F401
+          from seam_sdk import SeamClient, aio  # noqa: F401
+          assert seam_sdk.Agent(bytes(32)).aid.startswith("aid:pubkey:ed25519:")
+          print(f"wheel imports at its declared floor — protobuf {google.protobuf.__version__} — OK")
           PY
           cd "$GITHUB_WORKSPACE/python"
           twine upload dist/*

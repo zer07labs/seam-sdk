@@ -577,6 +577,12 @@ jobs:
       # thing keeping the checker's own logic honest.
       - name: the vendored-spec checker fails on every kind of drift
         run: python -m pytest scripts/test_vendored_spec_gate.py -q
+      # yank.yml deletes published artifacts and is only ever run during an incident, so a defect
+      # in it is discovered at the worst possible moment. It shipped with a token bug that made
+      # every invocation 401 — a CLOSED failure, and therefore an invisible one. These guards
+      # execute the credential resolution and pin the three filters that scope the deletion.
+      - name: the yank tool would actually authenticate, and deletes nothing wider than it should
+        run: python -m pytest scripts/test_yank_gate.py -q
       # Also runs inside the `python` job. Duplicated on purpose: there it proves the guard passes,
       # here it proves the guard needs nothing but a checkout — which is the actual claim
       # seam-adapters relies on (seam-sdk#54).

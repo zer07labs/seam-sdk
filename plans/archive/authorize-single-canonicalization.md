@@ -1,5 +1,23 @@
 # Close the double-canonicalization class in `Authorize` (issue #60)
 
+> **📦 ARCHIVED 2026-08-31 — DELIVERED, all five phases.** Issue
+> [#60](https://github.com/zer07labs/seam-sdk/issues/60) closed 2026-08-25. This plan was delivered
+> on 2026-08-25 but was never given a row in `plans/README.md` at all — neither active nor archived —
+> so it was invisible to anyone reading the index. Archived here while implementing
+> `plans/post-adoption-hardening-and-acdp-readiness.md` Phase 1.
+>
+> **Verified against this tree, not against the status table** (per `plans/README.md`'s archiving
+> rule): all five phases carry `Status: DONE` in this file, issue #60 is closed, and the delivered
+> surface is present — `CanonicalizationError` in `python/seam_sdk/errors.py` raised from
+> `python/seam_sdk/_authorize.py`, the `canonical=` parameter on the shared builder, and the
+> integer-JCS predicate with its own committed vectors at `conformance/authorize_jcs_int_extended.json`.
+> The suite covering it is green: `python/tests/test_authorize.py`,
+> `test_authorize_single_derivation.py`, `test_canonicalization_errors.py`,
+> `test_jcs_roundtrip_stability.py`.
+>
+> Its `../seam-runtime/crates/**` clean-room wording is preserved as-written for the same reason as
+> its sibling archive entry: historical record, not a maintained document.
+
 **Issue:** [zer07labs/seam-sdk#60](https://github.com/zer07labs/seam-sdk/issues/60)
 **Refs:** `zer07labs/seam-adapters#59`, `zer07labs/seam-adapters#61`
 
