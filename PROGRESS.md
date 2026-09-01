@@ -526,6 +526,85 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   That is Phase 5's subject exactly; regenerating before the manifest exists would adopt the fields
   silently and waste the tripwire.
 
+### Phase 8 — Vendored files are quoted, never line-anchored (issue #73) · 2026-08-31
+
+- **Converted, not grandfathered.** The plan allowed either and flagged that grandfathering leaves
+  Phase 9's refresh free to drift the anchor again. Since Phase 9's regeneration half is still ahead
+  and refreshes that exact file, converting is the only choice that actually makes the ordering mean
+  something.
+- **The guard fires on real content, not only on a fixture.** Before converting `DECISIONS.md`, the
+  suite went red on the live document —
+  `test_no_document_line_anchors_into_a_vendored_file[DECISIONS.md]` plus the new `QUOTED` check —
+  so acceptance 1 is demonstrated against the repo's own prose, not just a synthetic string. The
+  synthetic red-first test remains, with negative controls proving the rule leaves the two
+  sanctioned alternatives (a `seam-runtime/`-prefixed citation, a bare quoted path) alone. A rule
+  that rejected those too would leave vendored quotes with nowhere legal to go, which is how a
+  check gets deleted under deadline.
+- **Coverage is traded, not increased — the verify gate corrected me on this.** My first write-up
+  said "strictly more than the line anchor checked", which is false: the line-position claim is
+  genuinely dropped. `QUOTED` asserts the needle is unique in the target, that the document quotes
+  it verbatim, and that the attribution sits within two lines of the quote. The gain is that the
+  document's own words are now checked against the source — which `ANCHORED` never did, it only
+  checked where the citation pointed. The trade is worth taking only because the dropped half is
+  exactly the half a whole-file refresh makes unkeepable; against a file this repo edits itself,
+  `ANCHORED` stays the right mechanism.
+- **Citation floors after the conversion:** COMPATIBILITY.md 27, DECISIONS.md 55, floor 10 each.
+  Acceptance 4 holds with wide margin. (DECISIONS.md gained four: the registry-consistency test,
+  and the three rotted bare-shorthand references made visible — see below.)
+- **The adjacent case is recorded, not fixed.** COMPATIBILITY.md's "No yank" citation into
+  `CHANGELOG.md` has held **eleven distinct values since 2026-08-23**, the last six on 08-31 alone
+  — identical zero-information churn, different cause: an append-only file rather than a refreshed
+  one. It took three attempts to state that correctly: the first omitted `:523-528` while still
+  calling the chain five repoints; the second said "twelve since 08-24", having counted a
+  *different* CHANGELOG citation that a last-match grep swept in. Third measured properly, across
+  `git rev-list --all`, matching the citation rather than taking the last one on the line. The plan scopes Phase 8 to vendored files and #73 has not decided whether
+  the rule should widen, so it stays the open half rather than being silently converted.
+
+- **Every count in this phase was remembered rather than measured, and every one was wrong** —
+  including my corrections of them. Two verify rounds were needed to land the history:
+  - "Three times in one session" → **five repoints over six days**, and the introduction was PR
+    **#58**, not #63.
+  - "One repoint per refresh" → **six refreshes, five repoints**. The missing one is the finding:
+    **#63 refreshed the vendored copy, moved the sentence five lines, did not repoint the citation,
+    and merged** — `DECISIONS.md` did not come under the citation test until #67. A citation sat on
+    `main` pointing at a plausible wrong line, indistinguishable from a correct one. That is the
+    actual failure; the churn was only its symptom, and three successive drafts undercounted the
+    same evidence.
+  - `ANCHORED` had **eight** entries after the conversion, not nine. It now has **twelve**: the
+    four repaired references below were added to it.
+
+  The lesson is the phase's subject applied to itself: walk `git log`, never recall. The measured
+  table now lives in the `VENDORED` comment, with the merged-stale row called out.
+
+- **A third route to "looks checked", found in the paragraph this phase rewrote.** `DECISIONS.md`
+  carried three bare-shorthand references — `` `:878` ``, `` `:843-875` ``, `` `:841` `` —
+  continuing a full path given earlier in the same sentence. `CITATION` requires a path, so a bare
+  `:N` matches nothing: they were never resolved and never content-checked. **All three had rotted,
+  by 5 to 66 lines** — `:878` was cited for an assertion that lives in a different test; `:843-875`
+  was cited as a per-column parametrization and is a comment block. The substance was right and
+  every pointer was wrong. Repointed with full paths (they are now checked, hence the count rising
+  to 55) **and added to `ANCHORED`**, so the content is checked and not merely the range —
+  repointing alone would have repaired the instance and left the class. The class itself — a
+  citation opting out of checking by being written unusually — is recorded on #73 alongside
+  `COMPATIBILITY.md`'s comma-list form.
+
+- **`VENDORED` names a file, not the `verify/docs/` directory** — the first draft used the directory
+  prefix, which would have forbidden line anchors into `audit-anchor.md` and
+  `erasure-certificate.v1.md`, both **authored here** and deliberately excluded from
+  `scripts/check_vendored_spec.py`'s registry. That is the exact case the decision argues should
+  stay line-anchored. A new test asserts this file's set equals that registry, on the repo's own
+  stated principle that a value stored twice must not be able to disagree with itself.
+- **The attribution assertion was too weak on the first pass, and the commit that made the claim
+  is what weakened it.** `assert f"`{path}`" in doc_text` searched the whole document, and this
+  phase's own decision record added a second backticked mention of the same path — so deleting the
+  real attribution line left the test green with an orphaned quote. Now windowed to ±2 lines of the
+  quote, and verified by deleting DECISIONS.md's attribution line ("quoted verbatim from
+  `verify/docs/seam-event.v1.md`") and watching it go red before restoring the file.
+
+- **Full python suite: 615 passed, 17 skipped** — 606 at first commit; the two verify rounds added
+  a registry-consistency test, four newly-visible citations, and four new `ANCHORED` content checks. Run whole, never a subset — the doc
+  guards scan every `*.md` including this file.
+
 ### Phase 2 — The two cross-repo asks, written and **filed** · 2026-08-31
 
 - **The "do not file" restriction was lifted mid-run** by the user. Both asks are now real issues:

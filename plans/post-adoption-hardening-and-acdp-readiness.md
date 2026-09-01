@@ -403,7 +403,7 @@ Rejected: three separate PRs (churn on one heavily-guarded file); or deferring t
 
 ### Phase 8 — Issue #73: stop line-anchoring citations into vendored files
 
-**Status:** TODO
+**Status:** DONE — the one existing anchor was **converted**, not grandfathered (the phase permitted either). Converting won because Phase 9's regeneration half refreshes that same vendored file again, so grandfathering would have carried a known-doomed anchor straight into the event that dooms it. The converted claim is not merely un-checked: a new line-number-free `QUOTED` mechanism asserts the needle is unique in the target, that `DECISIONS.md` quotes it verbatim, and that the attribution sits within two lines of the quote. That is a **trade, not a superset** — the line-position claim is genuinely dropped, and what is gained is that the document's own words are now checked against the source, which `ANCHORED` never did. Worth taking only because the dropped half is the half that cannot be kept true against a whole-file refresh.
 
 **Delivers:** a recorded rule and a mechanical guard preventing `DECISIONS.md` citations from breaking every time the vendored spec is refreshed.
 
