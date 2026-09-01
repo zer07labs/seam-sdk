@@ -1,0 +1,170 @@
+# seam.event.v1 FIELD manifest — the SDK's declaration of the OUTBOX field surface it expects.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# `contract/field-manifest.txt` closed the "a new FIELD landed on seam.api.v1 and nobody noticed"
+# hole. It is scoped to `seam.api.v1` and was blind to the other contract this SDK generates from.
+# `seam.event.v1` is the outbox stream `seam-connectors` consume and the independent verifier in
+# `verify/` reads: a field added, removed or renamed there reaches every one of those consumers
+# THROUGH this SDK, and until this file existed it did so with every gate green. Issue #88.
+#
+# What was covering it before, and still is, narrowly: the four STREAM/EVENTS presence probes in
+# `scripts/check-contract.sh` assert `session_lifecycle`, `chain_head_attestation`,
+# `ciphertext_digest` and `AuditEntryEvent.actor` — four of the 90 fields below, chosen because the
+# SDK decodes them. They never fail on anything else being added, removed or renamed. They are kept
+# deliberately: they fire even when this manifest is absent or has just been rewritten, and they
+# assert what the SDK READS rather than what the contract CONTAINS. Two different questions.
+#
+# `scripts/check_vendored_spec.py` is a third and also-narrower thing: it catches drift in
+# `verify/docs/seam-event.v1.md` only when the runtime edits that markdown doc. A .proto change with
+# no spec-doc edit is invisible to it.
+#
+# Same two-directional, per-language shape as the api manifest:
+#
+#   * stub is MISSING a field listed here  -> a stale/partial generation, OR a field REMOVED from the
+#                                             contract. The second breaks every consumer holding it.
+#   * stub has a field NOT listed here     -> something landed on the outbox. DECIDE what carries it,
+#                                             then record the decision. That refusal is the point.
+#   * python and ts disagree with EACH OTHER -> generation skew, not a manifest decision. Reported
+#                                             distinctly, because `--write-manifest` would silently
+#                                             canonicalise whichever tree is ahead.
+#
+# WHY A SEPARATE FILE, NOT A PARTITION OF contract/field-manifest.txt
+# -------------------------------------------------------------------
+# Three reasons, all drawn from the code rather than from taste:
+#
+# 1. The existing strippers cannot carve out a third partition. `manifest_fields` is
+#    `grep -vE '^\s*(#|$)' | grep -v '#'` — a NEGATIVE filter, "everything that is not an enum line",
+#    not "everything that looks like an api field line". An event line such as
+#    `SeamEvent/session_lifecycle` carries no `#`, so it would land in the api field set and be
+#    reported MISSING from the api stubs. This is not fixable by choosing a cleverer delimiter: `%`,
+#    `@` and `!` are all free in a proto identifier and all of them still land in `manifest_fields`'
+#    set. Sharing the file means rewriting the api gate's filter for the event gate's benefit.
+# 2. `--write-manifest` deletes `contract/expected-local-lag.txt` whenever the api field manifest is
+#    rewritten. The api surface has a real recorded 228-vs-223 lag; this surface has none. One file
+#    would mean every event rewrite destroys the api lag recording, and every api rewrite invalidates
+#    an event manifest that never lagged.
+# 3. Issue #88 asks for it in these words, and it makes a failure report say which contract it is
+#    about. Sharing exit code 6 would make the two indistinguishable at the exit status.
+#
+# EXIT CODE 8, DISTINCT FROM 6, AND IT WINS
+# ------------------------------------------
+# A disagreement here exits 8, and it takes precedence when the api surface disagrees in the same run.
+# 6 is the code every local checkout produces on every run — the recorded pre-ACDP api lag — and it is
+# the code CI and `CLAUDE.md`'s Gotchas both say to read past after checking the NOTE. An event
+# regression exiting 6 would be a real failure hidden behind a message that says to ignore it. 8 means
+# "this is not the known lag".
+#
+# ZERO ENUMS AND ZERO NESTED MESSAGES — ASSERTED, NOT ASSUMED
+# ------------------------------------------------------------
+# `seam.event.v1` has no enums and no nested messages today, in both languages. This file therefore
+# has no enum partition, and the field extractors (shared with the api side, parameterised rather than
+# copied) skip a nested message's fields structurally.
+#
+# Both facts are load-bearing and both would fail SILENTLY and SYMMETRICALLY: a nested message's
+# fields vanish from Python and TypeScript at once, and an enum value has nothing on either side to be
+# compared against. An empty enum partition compared in both directions would pass — for the wrong
+# reason, and would keep passing after the contract grew an enum. So
+# `assert_event_surface_preconditions` refuses (exit 7) the moment either stops holding, and says to
+# extend the extractors deliberately before proceeding.
+#
+# WHICH SIDE `--write-manifest` WRITES FROM
+# -----------------------------------------
+# **Python**, exactly as the other two manifests do — one escape, one authoritative side. TypeScript
+# is the cross-check, never the source.
+#
+# SPELLING
+# --------
+# One line per field: `<Message>/<field_name>`, proto spelling (snake_case), sorted, no tags, no
+# types. A `map` field is ONE entry on its owner, never a key/value pair. 90 fields, 11 messages.
+#
+AuditEntryEvent/action
+AuditEntryEvent/actor
+AuditEntryEvent/reason
+AuditEntryEvent/subject
+AuthorizeEvaluated/agent_aid
+AuthorizeEvaluated/agent_id
+AuthorizeEvaluated/authorize_id
+AuthorizeEvaluated/client_request_id
+AuthorizeEvaluated/policy_version
+AuthorizeEvaluated/reason
+AuthorizeEvaluated/subject_digest
+AuthorizeEvaluated/tool_input_digest
+AuthorizeEvaluated/tool_name
+AuthorizeEvaluated/verdict
+BudgetBreach/cost_micros
+BudgetBreach/dimension
+BudgetBreach/limit
+BudgetBreach/messages
+BudgetBreach/severity
+BudgetBreach/tokens
+BudgetBreach/wall_ms
+ChainHeadAttestation/attested_at
+ChainHeadAttestation/attested_head
+ChainHeadAttestation/attested_len
+ChainHeadAttestation/digest_schema
+ChainHeadAttestation/issuer_aid
+ChainHeadAttestation/signature
+DecisionSealed/ciphertext_digest
+DecisionSealed/context_digest
+DecisionSealed/decision_id
+DecisionSealed/mode
+DecisionSealed/namespace
+DecisionSealed/outcome
+DecisionSealed/participation_digest
+DecisionSealed/policy_rules_digest
+DecisionSealed/policy_version
+DecisionSealed/schema_version
+DecisionSealed/sealed_at
+DecisionSealed/supersedes
+DecisionSealed/tenant
+ErasureCertificate/chain_head
+ErasureCertificate/erased
+ErasureCertificate/erased_at
+ErasureCertificate/held
+ErasureCertificate/issuer_aid
+ErasureCertificate/signature
+ErasureCertificate/subject
+LearningDecision/algorithm_arm
+LearningDecision/algorithm_id
+LearningDecision/candidate
+LearningDecision/dimension
+LearningDecision/experiment_id
+LearningDecision/features
+LearningDecision/policy_key
+LearningDecision/propensity
+LearningDecision/schema_id
+LearningOutcome/correct
+LearningOutcome/policy_key
+LearningOutcome/verified_by
+PolicyKey/context_class
+PolicyKey/mode
+PolicyKey/task_type
+PolicyKey/tenant
+SeamEvent/audit_entry
+SeamEvent/authorize_evaluated
+SeamEvent/budget_breach
+SeamEvent/chain_head_attestation
+SeamEvent/checksum
+SeamEvent/classification
+SeamEvent/cost_micros
+SeamEvent/decision_id
+SeamEvent/digest
+SeamEvent/erasure_certificate
+SeamEvent/event_id
+SeamEvent/kind
+SeamEvent/learning_decision
+SeamEvent/learning_outcome
+SeamEvent/namespace
+SeamEvent/occurred_at
+SeamEvent/payload
+SeamEvent/prev_checksum
+SeamEvent/schema_version
+SeamEvent/seq
+SeamEvent/session_id
+SeamEvent/session_lifecycle
+SeamEvent/tenant
+SessionLifecycle/mode
+SessionLifecycle/opened_at_millis
+SessionLifecycle/phase
+SessionLifecycle/policy_version

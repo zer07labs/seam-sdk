@@ -6,6 +6,108 @@ assumption, the independent recommender's analysis, the human verdict, and the r
 produced it.
 
 
+## 2026-09-01 — `/reconcile` over `plans/consumer-decoders-and-event-surface.md` (7 entries)
+
+All five phases are DONE. Phases 1-2 shipped in #90, Phases 3-4 in #93, Phase 5 in #94. Seven
+`ASSUMPTIONS.md` entries were open across this plan and the two before it: **two confirmed** — one on
+evidence this cycle produced, one on re-measuring the condition it named — **three reviewed and left
+unchanged** with the reasoning recorded, and **two deferred** to triggers that live outside this repo.
+Those three numbers are the count of the seven sub-sections below, and they are stated once here so
+they cannot disagree with the summary at the bottom, as an earlier draft of both did.
+
+### `seam.event.v1` gets its own manifest file, not a partition of the api one — CONFIRMED
+
+- **Recommender (Opus):** CONFIRM, and note that the decisive reason came back stronger than the
+  entry claimed. The argument was mechanical: `manifest_fields`' stripper is a NEGATIVE filter
+  ("everything that is not an enum line"), so no delimiter can carve out a third partition. Phase
+  5's verification round tested the consequence rather than the argument, and found that
+  `manifest_event_fields`' deliberately-absent second `grep -v '#'` makes the event side **strictly
+  safer**: a `#`-bearing field line is reported MISSING and exits 8, where the shared api stripper
+  would silently drop it. Measured, 90 against 91. A shared file would have inherited that drop.
+- **Verdict:** Confirm.
+- **Status:** CONFIRMED.
+
+### Testing (not just building) `verify/` at its declared MSRV — CONFIRMED
+
+- **Recommender (Opus):** CONFIRM on re-measurement, not on the original reasoning holding by
+  default. `verify/Cargo.toml`'s dev-dependencies are `sha2`, `base64` and `serde_json` — still a
+  strict subset of its normal dependencies — so the test profile resolves nothing a consumer does
+  not already compile and cannot raise the floor. The declared `rust-version` still derives from
+  normal dependencies only, and `verify/tests/msrv.rs` recomputes it from `cargo metadata` on every
+  run, so the divergence this entry guards against fails a test rather than waiting to be noticed.
+- **Verdict:** Confirm. One job, not two.
+- **Status:** CONFIRMED.
+
+### `plans/` stays outside the citation guard; `PROGRESS.md` does not — UNCHANGED
+
+- **Recommender (Opus):** Leave the line where it is. Phase 5's verification round found three stale
+  line references inside `PROGRESS.md` that the guard cannot see, which looks at first like evidence
+  the guard cuts in the wrong place. It is not: all three were **bare** `:NNN` refs carrying no
+  path, and the guard matches backticked `file:line`, so a pathless number is invisible in every
+  guarded document — `PROGRESS.md` included. That is a different gap in the same guard, orthogonal
+  to the `plans/` boundary, and one of the three had been wrong since the line it named moved.
+- **Verdict:** No change to the guard. Closed at the source instead — those refs now name what they
+  point at rather than where it sits, which is the form that cannot rot.
+- **Status:** UNCONFIRMED (reviewed, unchanged).
+
+### `contract/expected-local-lag.txt` is a window, not a permanent excuse — DEFERRED
+
+- **Recommender (Opus):** Too early to settle — `EXPECTED-FROM` is 2026-08-31 and the re-open
+  trigger is 60 days out. Worth recording that this cycle produced the first hard evidence for the
+  **social** failure mode the entry names rather than the technical one. The NOTE this file drives
+  ended "so this STILL exits 6 below" unconditionally, which is false whenever the event surface
+  also disagrees — and it survived a full phase plus four verification rounds precisely because that
+  block is the one every local run prints and nobody re-reads. The sentence is now conditional with
+  both branches pinned by tests, but the mechanism is the one to watch at day 60.
+- **Verdict:** Defer to the trigger. Not a blocker for `/ship`.
+- **Status:** UNCONFIRMED (deferred deliberately).
+
+### The enum manifest carries names only, not numeric tags — UNCHANGED
+
+- **Recommender (Opus):** No new evidence either way. The event surface added in Phase 5 carries
+  **zero enums** — asserted by `assert_event_surface_preconditions` rather than assumed — so it
+  produced no second case to test the name-only rule against. The trigger still sits in
+  `seam-runtime`'s `buf breaking` config.
+- **Verdict:** No change.
+- **Status:** UNCONFIRMED (reviewed, unchanged).
+
+### `PolicyEnforcement` and `CollectiveOutcome` stay off `ts/src/index.ts`'s named export list — UNCHANGED
+
+- **Recommender (Opus):** No change. Phase 4 shipped and merged without either type reaching the
+  named export list and without a consumer needing it; the count of decoders of this shape is still
+  two, not three. Nothing this cycle tested the assumption, which is the right outcome for one whose
+  evidence can only come from a consumer.
+- **Verdict:** No change. Widening a public surface later is additive; narrowing it is breaking.
+- **Status:** UNCONFIRMED (reviewed, unchanged).
+
+### `policy_enforcement_of`'s presence enumeration is orientation, not contract — DEFERRED
+
+- **Recommender (Opus):** Not answerable from this repo. The enumeration is a claim about runtime
+  behaviour and the only evidence that could settle it is seam-runtime#526's matrix, which is why
+  the docstring cites the issue rather than a line of code. The docstring already says the list
+  describes the runtime as measured rather than a guarantee to branch on, so the cost of being wrong
+  stays bounded to trust — which is what the entry records.
+- **Verdict:** Defer, open against seam-runtime#526.
+- **Status:** UNCONFIRMED (deferred deliberately).
+
+---
+
+**Summary of the seven:** **2 confirmed** · **3 reviewed and unchanged** · **2 deferred** to
+triggers outside this repo.
+
+Three further entries are open and are deliberately **not** counted among those seven, because none
+of them was settleable in this pass:
+
+- **The Cloudsmith quarantine question** for the 0.7.39-0.7.43 band. The plan's only genuine one-way
+  door in the harmful direction — quarantining breaks builds that work today and cannot be undone for
+  anyone whose CI ran in the interim — so it stays with the human.
+- **Whether the runtime validates caller-supplied canonical bytes**, and **how its JCS renders an
+  integer at or above `10**21`.** Both need the runtime's Rust, which this repo's clean-room
+  constraint does not read, so neither is answerable here by construction.
+
+No code work is outstanding before the next `/ship`.
+
+
 ## 2026-08-31 — `/reconcile` over `plans/post-adoption-hardening-and-acdp-readiness.md` (3 entries)
 
 All ten phases are DONE and merged (#79, #80, #81, #82, #83, #84). Three `ASSUMPTIONS.md` entries
@@ -220,7 +322,7 @@ the phase ran, which is itself the finding worth recording first.
   that matters.
 - **Decision.** Mirror the RPC manifest exactly one level down: a committed declaration
   (`contract/field-manifest.txt`), set-compared per language in both directions
-  (`scripts/check-contract.sh:383`), exiting 6 with the field named (`scripts/check-contract.sh:501`). `STREAM`/`EVENTS` stay as
+  (`scripts/check-contract.sh:753`), exiting 6 with the field named (`scripts/check-contract.sh:1123`). `STREAM`/`EVENTS` stay as
   they are — they gate *event* fields for a different reason (BSR publication lag) and are not what
   this replaces. Scope is `seam.api.v1` only; `seam.event.v1` is already covered by those probes and
   by the vendored-spec gate, and duplicating it would mean two gates failing for different reasons on
@@ -254,12 +356,12 @@ the phase ran, which is itself the finding worth recording first.
      emits no type for map entries, which is an accident of this contract rather than an exclusion.
      Pinned by `python/tests/test_field_manifest_gate.py:292`.
 - **The escape names its authoritative side.** `--write-manifest` writes **both** manifests from
-  **Python** (`scripts/check-contract.sh:262`), with TypeScript as the cross-check
-  (`scripts/check-contract.sh:210`) — one command to document, not two. If it wrote from a side that cannot see every field, it
+  **Python** (`scripts/check-contract.sh:567`), with TypeScript as the cross-check
+  (`scripts/check-contract.sh:539`) — one command to document, not two. If it wrote from a side that cannot see every field, it
   would produce failures the documented escape could never clear, which is exactly what `raise` does
   under a `__slots__` extractor.
 - **The refusal deliberately puts the escape second.** It says decide first, then run it
-  (`scripts/check-contract.sh:495`). A failure message that leads with the fix trains the reader to
+  (`scripts/check-contract.sh:1052`). A failure message that leads with the fix trains the reader to
   run the fix, which turns the gate back into the silent pass it replaced.
 - **What it does NOT check: names only, not tags or types.** A field retagged or retyped is
   wire-breaking and invisible here, exactly as the RPC manifest records names and not signatures.

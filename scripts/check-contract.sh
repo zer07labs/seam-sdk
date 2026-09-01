@@ -60,8 +60,16 @@
 #             5 RPC surface disagrees with contract/rpc-manifest.txt ·
 #             6 field or enum-value surface disagrees with contract/field-manifest.txt ·
 #             7 a structural precondition the extractors assume failed: a nested enum was found (see
-#               assert_no_nested_enums), or a nested message was found outside the known map-entry
-#               synthetics (see assert_known_nested_messages_only).
+#               assert_no_nested_enums), a nested message was found outside the known map-entry
+#               synthetics (see assert_known_nested_messages_only), or seam.event.v1 grew an enum or a
+#               nested message (see assert_event_surface_preconditions). Two contracts share this code
+#               on purpose — it names a FAILURE CLASS, not a contract, and the message says which
+#               surface fired ·
+#             8 the seam.event.v1 field surface disagrees with contract/event-field-manifest.txt.
+#               DISTINCT from 6, and it wins when both disagree at once: 6 is the code a local
+#               checkout produces every single run (the recorded pre-ACDP api lag) and that CI and
+#               CLAUDE.md's Gotchas both say to read past. An event regression exiting 6 would be
+#               hidden behind a message telling the reader to ignore it. 8 means "not the known lag".
 #
 # Run it AFTER `make generate` / `make generate-local` — it inspects the emitted stubs, it does not
 # generate them.
@@ -83,11 +91,19 @@ cd "$REPO_ROOT"
 # need a `make generate` (and a BSR login). Nothing in CI sets these.
 PY_GEN="${SEAM_PY_GEN:-python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi}"
 PY_GRPC="python/seam_sdk/_gen/seam/api/v1/seam_pb2_grpc.py"
-PY_EV="python/seam_sdk/_gen/seam/event/v1/seam_event_pb2.pyi"
+# PY_EV/TS_EV are overridable for the same reason PY_GEN/TS_GEN are, and it is not optional now that
+# they are read by a manifest gate rather than only by presence probes: a test that mutated the real
+# event tree could not restore it (`python/seam_sdk/_gen` and `ts/gen` are gitignored), and recovery
+# would need `make generate` and a BSR login.
+PY_EV="${SEAM_PY_EV:-python/seam_sdk/_gen/seam/event/v1/seam_event_pb2.pyi}"
 TS_GEN="${SEAM_TS_GEN:-ts/gen/seam/api/v1/seam_pb.ts}"
-TS_EV="ts/gen/seam/event/v1/seam_event_pb.ts"
+TS_EV="${SEAM_TS_EV:-ts/gen/seam/event/v1/seam_event_pb.ts}"
 MANIFEST="${SEAM_RPC_MANIFEST:-contract/rpc-manifest.txt}"
 FIELD_MANIFEST="${SEAM_FIELD_MANIFEST:-contract/field-manifest.txt}"
+# A SEPARATE file from FIELD_MANIFEST, not a partition of it — see contract/event-field-manifest.txt's
+# own header for the three reasons, the first of which is that `manifest_fields`' filter is NEGATIVE
+# ("everything that is not an enum line"), so no delimiter choice can carve out a third partition.
+EVENT_FIELD_MANIFEST="${SEAM_EVENT_FIELD_MANIFEST:-contract/event-field-manifest.txt}"
 # The recorded pre-ACDP local/BSR field lag — see the file's own header. Overridable for the same
 # reason PY_GEN/TS_GEN/FIELD_MANIFEST are: so tests can drive the real script against a SCRATCH copy
 # without ever touching (or deleting, via --write-manifest) the committed file.
@@ -147,6 +163,30 @@ probe_api() {
   return "$rc"
 }
 
+# A seam.event.v1 FIELD probe, message-scoped. `$1` = human label, `$2` = the `Message/field` line the
+# extractors must yield, `$3` = the proto tag. Defined here beside `probe_event` but used only by
+# probe 2; see that block for why a raw grep of the stub file is not sufficient. The extractors are
+# defined further down, which is fine — this is a function body, evaluated when probe 2 calls it.
+probe_event_field() {
+  local label="$1" want="$2" tag="$3"
+  local rc=0 field="${2#*/}"
+  if fields_python "$PY_EV" | grep -qxF "$want"; then
+    note "PRESENT $label [python]"
+  else
+    note "ABSENT  $label [python]"; rc=1
+  fi
+  # BOTH conditions on the TS side: the field is declared on that message, AND it still carries the
+  # tag this probe's label advertises. `grep -qxF` for the first (exact line, no regex), `grep -qE`
+  # for the second (the tag lives in protobuf-es's generated comment, not in the extracted set).
+  if fields_ts "$TS_EV" seam.event.v1 | grep -qxF "$want" \
+     && grep -qE "\\b${field} = ${tag};" "$TS_EV"; then
+    note "PRESENT $label [ts]"
+  else
+    note "ABSENT  $label [ts]"; rc=1
+  fi
+  return "$rc"
+}
+
 # Same, for the seam.event.v1 stubs (the event contract split out of api).
 probe_event() {
   local label="$1"; shift
@@ -200,6 +240,15 @@ manifest_rpcs() {
 # skipped structurally. Filtering on the name `*Entry` instead would drop `AuditEntry` — a REAL
 # top-level message — from BOTH sides: symmetric, so the gate would stay green while going blind, which
 # is precisely the failure this manifest exists to prevent.
+#
+# PARAMETERISED over the stub file, so `seam.event.v1` is extracted by THIS function rather than by a
+# second copy of it. A second pair of extractors would be a second place for the nesting and
+# keyword-name bugs recorded above to reappear, and only one of the two copies would get the fix.
+# $1 = the .pyi to read. There is deliberately no package argument: the CLASS HEADERS this awk keys on
+# are bare names, unqualified by package, so the file IS the package selector here. (Package-qualified
+# names do appear elsewhere in a `.pyi` — the cross-package imports at the top, and field types like
+# `_seam_event_pb2.ChainHeadAttestation` — but never on a line this extractor reads.) `fields_ts` needs
+# a package argument because protobuf-es qualifies every type it declares.
 fields_python() {
   awk '
     /^class [A-Za-z0-9_]+\(_message\.Message\):/ {
@@ -209,22 +258,28 @@ fields_python() {
         if (cls == "") next
         f=$1; sub(/_FIELD_NUMBER:$/,"",f); print cls "/" tolower(f)
     }
-  ' "$PY_GEN" | LC_ALL=C sort -u
+  ' "$1" | LC_ALL=C sort -u
 }
 
 # TS reads protobuf-es's `@generated from field: <type...> <name> = <tag>;` under the enclosing
 # `Message<"seam.api.v1.X">`. The name is the last token before `=`, which handles qualified and
 # generic types (`seam.api.v1.Foo bar = 3;`, `map<string, string> features = 9;`) without a type grammar.
+# $1 = the .ts to read, $2 = the proto package (`seam.api.v1` or `seam.event.v1`), passed as an awk
+# variable rather than interpolated into the program text, so a package name can never be spliced into
+# the shell's view of the awk program. It IS still concatenated into a dynamic regex inside awk — which
+# is exactly why `pkgre` escapes the dots first; without that, `seam.api.v1` would match `seamXapiYv1`.
+# A broken escape fails loudly (an empty extraction reports every field MISSING), never silently.
 fields_ts() {
-  awk '
+  awk -v pkg="$2" '
+    BEGIN { pkgre = pkg; gsub(/\./, "\\.", pkgre) }
     # A NESTED type name carries a dot (`seam.api.v1.Outer.Inner`). Match it explicitly and blank
     # `cls`, so its fields are skipped instead of being attributed to the previous top-level message.
     # Without this the TS side does not exclude nesting at all — it MISATTRIBUTES, which is worse.
-    /^export type [A-Za-z0-9_]+ = Message<"seam\.api\.v1\.[A-Za-z0-9_]+\.[A-Za-z0-9_.]+">/ {
+    $0 ~ ("^export type [A-Za-z0-9_]+ = Message<\"" pkgre "\\.[A-Za-z0-9_]+\\.[A-Za-z0-9_.]+\">") {
         cls=""; next
     }
-    /^export type [A-Za-z0-9_]+ = Message<"seam\.api\.v1\.[A-Za-z0-9_]+">/ {
-        m=$0; sub(/^.*Message<"seam\.api\.v1\./,"",m); sub(/">.*$/,"",m); cls=m; next
+    $0 ~ ("^export type [A-Za-z0-9_]+ = Message<\"" pkgre "\\.[A-Za-z0-9_]+\">") {
+        m=$0; sub("^.*Message<\"" pkgre "\\.","",m); sub(/">.*$/,"",m); cls=m; next
     }
     /@generated from field: / {
         if (cls == "") next
@@ -234,11 +289,18 @@ fields_ts() {
         n=split(line, parts, " ")
         print cls "/" tolower(parts[n])
     }
-  ' "$TS_GEN" | LC_ALL=C sort -u
+  ' "$1" | LC_ALL=C sort -u
 }
 
 manifest_fields() {
   grep -vE '^\s*(#|$)' "$FIELD_MANIFEST" | grep -v '#' | LC_ALL=C sort -u
+}
+
+# The event manifest holds ONLY field lines — `seam.event.v1` has no enums (asserted below, not
+# assumed), so there is no partition to separate and the second `grep -v '#'` that manifest_fields
+# needs is deliberately absent here. Stripping comments and blanks is the whole rule.
+manifest_event_fields() {
+  grep -vE '^\s*(#|$)' "$EVENT_FIELD_MANIFEST" | LC_ALL=C sort -u
 }
 
 # ── The recorded local/BSR field lag ────────────────────────────────────────────────────────────────
@@ -425,6 +487,48 @@ assert_no_nested_enums() {
   fi
 }
 
+# ── The event surface's structural preconditions ─────────────────────────────────────────────────────
+# `seam.event.v1` has ZERO enums and ZERO nested messages today, in both languages. The event field
+# gate below reuses fields_python/fields_ts, which skip a nested message's fields structurally, and it
+# has NO enum partition at all — so both facts are load-bearing, and both would fail SILENTLY and
+# SYMMETRICALLY if they stopped holding: a nested message's fields vanish from Python and TS at once,
+# and an enum value has nothing on either side to be compared against.
+#
+# The alternative — an empty event-enum partition compared in both directions — is worse, and is the
+# specific defect plans/gate-blindness-hardening.md exists about: an empty set compared against an
+# empty set passes for the wrong reason, and keeps passing after the contract grows an enum. Assert
+# the preconditions instead, and refuse the moment either stops holding.
+#
+# Exit 7, shared with the api-side asserts above, is deliberate and is NOT inconsistent with exit 8
+# being distinct from exit 6. Exit 7 names a FAILURE CLASS — "a structural precondition the extractors
+# assume failed" — which is the same class for either contract, and the message says which surface it
+# fired on. Exit 6 and 8 name a CONTRACT ("this manifest disagrees"), and two contracts sharing one of
+# those would make a real event drift indistinguishable from the recorded api lag that CI is told to
+# read past.
+assert_event_surface_preconditions() {
+  local py_enum py_nested ts_enum ts_nested
+  # Python: ANY enum at ANY indentation (the api side only guards NESTED enums; here even a top-level
+  # one is a precondition failure, because there is no event enum extractor to route it to).
+  py_enum="$(grep -nE '^[[:space:]]*class [A-Za-z0-9_]+\(int, metaclass=_enum_type_wrapper\.EnumTypeWrapper\):' "$PY_EV" 2>/dev/null || true)"
+  py_nested="$(grep -nE '^[[:space:]]+class [A-Za-z0-9_]+\(_message\.Message\):' "$PY_EV" 2>/dev/null || true)"
+  ts_enum="$(grep -nE '@generated from enum seam\.event\.v1\.' "$TS_EV" 2>/dev/null || true)"
+  ts_nested="$(grep -nE '^export type [A-Za-z0-9_]+ = Message<"seam\.event\.v1\.[A-Za-z0-9_]+\.[A-Za-z0-9_.]+">' "$TS_EV" 2>/dev/null || true)"
+  if [ -n "$py_enum" ] || [ -n "$py_nested" ] || [ -n "$ts_enum" ] || [ -n "$ts_nested" ]; then
+    err "a structural precondition of the EVENT field gate failed: seam.event.v1 is asserted to have"
+    err "ZERO enums and ZERO nested messages, and the stubs now have at least one."
+    if [ -n "$py_enum" ];    then err "  an ENUM in python ($PY_EV):";           echo "$py_enum" >&2;    fi
+    if [ -n "$py_nested" ];  then err "  a NESTED MESSAGE in python ($PY_EV):";  echo "$py_nested" >&2;  fi
+    if [ -n "$ts_enum" ];    then err "  an ENUM in ts ($TS_EV):";               echo "$ts_enum" >&2;    fi
+    if [ -n "$ts_nested" ];  then err "  a NESTED MESSAGE in ts ($TS_EV):";      echo "$ts_nested" >&2;  fi
+    err "This is not something to work around. A nested message's fields are dropped by"
+    err "fields_python/fields_ts from BOTH languages symmetrically, so the event gate would go green"
+    err "while going blind to them; an enum has no event-side extractor at all. Extend the extractors"
+    err "deliberately — with the concrete new shape in hand — and add an enum partition to"
+    err "$EVENT_FIELD_MANIFEST before removing this refusal."
+    exit 7
+  fi
+}
+
 if [ "${1:-}" = "--write-manifest" ]; then
   if [ ! -f "$PY_GRPC" ]; then
     err "cannot write the manifest: $PY_GRPC is absent. Run 'make generate' first."
@@ -446,6 +550,7 @@ if [ "${1:-}" = "--write-manifest" ]; then
   # top of this branch, an exit 7 here means neither manifest has been touched yet.
   assert_known_nested_messages_only
   assert_no_nested_enums
+  assert_event_surface_preconditions
 
   tmp="$(mktemp)"
   # Keep the existing header verbatim — it is the rationale, and regenerating must never silently
@@ -459,16 +564,34 @@ if [ "${1:-}" = "--write-manifest" ]; then
 
   ftmp="$(mktemp)"
   grep -E '^\s*(#|$)' "$FIELD_MANIFEST" > "$ftmp" 2>/dev/null || true
-  fields_python >> "$ftmp"
+  fields_python "$PY_GEN" >> "$ftmp"
   enums_python >> "$ftmp"
   mv "$ftmp" "$FIELD_MANIFEST"
   echo "wrote $FIELD_MANIFEST ($(manifest_fields | wc -l | tr -d ' ') fields, $(manifest_enums | wc -l | tr -d ' ') enum values) — REVIEW THE DIFF."
   echo "A line added here is a contract surface change one level below a verb: wire the field or enum"
   echo "value into the hand-written clients, or record in the PR why not, before committing."
 
+  # The event manifest is written by the SAME command and from the SAME authoritative side (Python) as
+  # the other two — one escape to document, one authoritative side, for the same reason stated above.
+  # It is a separate FILE but not a separate escape hatch: a second command would be a second thing to
+  # forget.
+  etmp="$(mktemp)"
+  grep -E '^\s*(#|$)' "$EVENT_FIELD_MANIFEST" > "$etmp" 2>/dev/null || true
+  fields_python "$PY_EV" >> "$etmp"
+  mv "$etmp" "$EVENT_FIELD_MANIFEST"
+  echo "wrote $EVENT_FIELD_MANIFEST ($(manifest_event_fields | wc -l | tr -d ' ') fields) — REVIEW THE DIFF."
+  echo "seam.event.v1 is the outbox contract seam-connectors and the verifier consume: a line added"
+  echo "here reaches every consumer through this SDK, so decide what carries it before committing."
+
   # The manifest just written is a NEW forward set — a recorded "expected to be missing exactly these
   # fields locally" from before this write may no longer even parse against it. Delete rather than
   # leave a stale recording that could downgrade a REAL new gap into a NOTE by coincidence.
+  #
+  # Scoped to the API write, deliberately: $EXPECTED_LOCAL_LAG records an *api* gap and nothing else.
+  # The event surface has no recorded lag (90/90/90, both languages agreeing with the manifest), and
+  # if it ever acquires one the answer is a second file scoped to it — never this one widened, since
+  # the two contracts have different owners and different publish cadences. Rewriting the event
+  # manifest must therefore not destroy the api recording as a side effect.
   if [ -f "$EXPECTED_LOCAL_LAG" ]; then
     rm -f "$EXPECTED_LOCAL_LAG"
     echo "removed $EXPECTED_LOCAL_LAG — the recorded local/BSR lag no longer matches the manifest just"
@@ -481,6 +604,7 @@ fi
 # needs the same guarantee before it trusts what fields_python/fields_ts/enums_python/enums_ts return.
 assert_known_nested_messages_only
 assert_no_nested_enums
+assert_event_surface_preconditions
 
 echo "== check-contract: probing the active generated stubs =="
 
@@ -522,16 +646,38 @@ done
 
 # ── Probe 2: the streamed-payload mirror fields (reported; hard under STREAM=1) ────────────────────────
 # All four must be present together (they land in one Phase-0 push); probe each so a partial mirror shows.
+#
+# Each probe is MESSAGE-SCOPED, and that is the property a raw grep of the stub file cannot have.
+# Two measured failures got it here:
+#
+#   1. A grep for the bare name is satisfied by a COMMENT about the field. `actor`'s pattern was
+#      `\bactor\b`, and `ts/gen`'s generated comment carries "Mirrors `AuditEntryPb.actor` (tag 4)."
+#      verbatim from the proto — renaming the TS declaration to `principal` still reported PRESENT.
+#   2. Anchoring to the declaration fixed that and left a bigger hole open: a file-wide grep does not
+#      know which MESSAGE declares the field. Moving `actor` from `AuditEntryEvent` to
+#      `ChainHeadAttestation` in both trees and re-recording the manifest left the whole gate green
+#      at exit 0, with `PRESENT AuditEntryEvent.actor (tag 4)` printed against an `AuditEntryEvent`
+#      that no longer declares it. The label named a message; nothing checked the message.
+#
+# So the presence half is decided by `fields_python`/`fields_ts` — the same class-scoped extractors the
+# manifest gate uses — asked for an exact `Message/field` line. Reusing them rather than writing a
+# third parser is the same argument the extractors' own header makes for being parameterised.
+#
+# The TAG is checked on the TS side only, and that asymmetry is real rather than an oversight: a
+# `.pyi` records no tag values anywhere, so Python is structurally tag-blind, and the manifest gate is
+# tag-blind too (it compares `Message/field`). protobuf-es's `@generated from field:` comment is the
+# only place either tree states a tag, which makes this the gate's ONLY tag check — on four fields, the
+# four a `StreamEvents` consumer decodes, where a silently renumbered tag is the failure that matters.
+# The leading `\b` is not decoration: without it `actor = 4;` matches inside `renamedactor = 4;`.
 stream_rc=0
 for spec in \
-  "SeamEvent.session_lifecycle (tag 21)|session_lifecycle|sessionLifecycle" \
-  "SeamEvent.chain_head_attestation (tag 22)|chain_head_attestation|chainHeadAttestation" \
-  "DecisionSealed.ciphertext_digest (tag 10)|ciphertext_digest|ciphertextDigest" \
-  "AuditEntryEvent.actor (tag 4)|\\bactor\\b" ; do
+  "SeamEvent.session_lifecycle (tag 21)|SeamEvent/session_lifecycle|21" \
+  "SeamEvent.chain_head_attestation (tag 22)|SeamEvent/chain_head_attestation|22" \
+  "DecisionSealed.ciphertext_digest (tag 10)|DecisionSealed/ciphertext_digest|10" \
+  "AuditEntryEvent.actor (tag 4)|AuditEntryEvent/actor|4" ; do
   label="${spec%%|*}"; rest="${spec#*|}"
-  # split the remaining |-separated patterns
-  IFS='|' read -r -a pats <<< "$rest"
-  probe_event "$label" "${pats[@]}" || stream_rc=1
+  want="${rest%%|*}"; tag="${rest#*|}"
+  probe_event_field "$label" "$want" "$tag" || stream_rc=1
 done
 
 # ── Probe 3: the ReportEventsConsumed RPC (reported; hard under EVENTS=1) ──────────────────────────────
@@ -580,18 +726,23 @@ fi
 # two unwired surfaces (`collective_outcome` regenerated in and sat unread), and it is what let the
 # five ACDP D3 slots arrive on ContextBinding with every gate green.
 #
-# Scoped to seam.api.v1 on purpose — and the honest state of seam.event.v1's coverage, not the
-# aspirational one it used to claim here. Measured: the STREAM/EVENTS probes above assert PRESENCE of
-# 4 named fields (session_lifecycle, chain_head_attestation, ciphertext_digest, AuditEntryEvent.actor)
-# out of ~90 total on the event stubs
-# (`grep -c FIELD_NUMBER python/seam_sdk/_gen/seam/event/v1/seam_event_pb2.pyi` -> 90); they never fail
-# on an ADDITIVE field elsewhere on seam.event.v1, removed or renamed. `scripts/check_vendored_spec.py`
-# (the "vendored-spec gate") only catches drift in `verify/docs/seam-event.v1.md` when the RUNTIME also
-# edits that markdown spec doc — a field added to (or removed from) the .proto with no matching
-# spec-doc edit is invisible to it too. So seam.event.v1 has NO field-surface manifest the way
-# seam.api.v1 has one here: the residual is real, not merely undocumented, and closing it needs its own
-# manifest (a different generated file, and on the runtime side a different owning surface) — not a
-# widening of this one.
+# Scoped to seam.api.v1 — and seam.event.v1 is now manifested too, in its own file, by the event probe
+# further down. This paragraph used to record that gap as an open one ("seam.event.v1 has NO
+# field-surface manifest ... closing it needs its own manifest"); issue #88 asked for exactly that and
+# it is `contract/event-field-manifest.txt`, compared per language in both directions and exiting 8.
+#
+# The four STREAM/EVENTS presence probes above are NOT made redundant by it and must not be deleted as
+# duplication. They differ in two ways that matter: they fire even when the event manifest is absent or
+# has just been rewritten by --write-manifest (the manifest gate reports "absent" there, the probes
+# still assert), and they name the four fields a consumer actually decodes
+# (session_lifecycle, chain_head_attestation, ciphertext_digest, AuditEntryEvent.actor) rather than the
+# surface as a whole — a narrower, load-bearing assertion about what the SDK reads, not about what the
+# contract contains.
+#
+# `scripts/check_vendored_spec.py` (the "vendored-spec gate") remains a third, different thing: it only
+# catches drift in `verify/docs/seam-event.v1.md` when the RUNTIME also edits that markdown spec doc, so
+# a field added to the .proto with no matching spec-doc edit is still invisible to it. The event
+# manifest is what catches that one.
 field_surface_rc=0
 field_surface_report=""
 if [ ! -f "$FIELD_MANIFEST" ]; then
@@ -602,8 +753,8 @@ else
   _fwant="$(manifest_fields)"
   for lang in python ts; do
     case "$lang" in
-      python) _fhave="$(fields_python)" ;;
-      ts)     _fhave="$(fields_ts)" ;;
+      python) _fhave="$(fields_python "$PY_GEN")" ;;
+      ts)     _fhave="$(fields_ts "$TS_GEN" seam.api.v1)" ;;
     esac
     _fmissing="$(comm -23 <(echo "$_fwant") <(echo "$_fhave"))"
     _fextra="$(comm -13 <(echo "$_fwant") <(echo "$_fhave"))"
@@ -680,6 +831,66 @@ else
     while IFS= read -r r; do [ -n "$r" ] && enum_surface_report+="    ts has it, python does not: $r"$'\n'; done <<< "$_eskew_ts"
   fi
 fi
+
+# ── Probe: the seam.event.v1 FIELD surface against contract/event-field-manifest.txt (HARD GATE) ─────
+# The third member of the same set as the FIELD and ENUM-VALUE probes above, and computed here for
+# exactly the reason they are: in ONE pass, with the report held, so the decision at the bottom sees
+# all three. Placement is the whole design and is not stylistic.
+#
+#   * After the field/enum exit — the event probe would never run on a local checkout at all. Every
+#     local tree disagrees on the api field surface (the recorded ACDP lag), so `exit 6` always fires;
+#     `make check-contract` would gate nothing on seam.event.v1, forever, while looking identical to a
+#     run that did.
+#   * Before them, exiting 8 on the spot — an event disagreement preempts the api report, and a run
+#     with both problems shows one.
+#   * Here, reported alongside them and decided once at the end — which is what :784-787 already
+#     argues for the enum probe: "a script that exited on the field report first would never show the
+#     enum one".
+#
+# Same shape as the two above: set comparison, per language, in BOTH directions, plus the direct
+# python-vs-ts comparison the enum probe uses, since a field one tree carries and the other does not
+# is a generation skew rather than a manifest decision and must not be reported as one.
+event_field_surface_rc=0
+event_field_surface_report=""
+if [ ! -f "$EVENT_FIELD_MANIFEST" ]; then
+  err "$EVENT_FIELD_MANIFEST is absent — the seam.event.v1 field surface has no declared expectation."
+  err "Create it with: scripts/check-contract.sh --write-manifest"
+  event_field_surface_rc=1
+else
+  _evwant="$(manifest_event_fields)"
+  _evpy="$(fields_python "$PY_EV")"
+  _evts="$(fields_ts "$TS_EV" seam.event.v1)"
+  for lang in python ts; do
+    case "$lang" in
+      python) _evhave="$_evpy" ;;
+      ts)     _evhave="$_evts" ;;
+    esac
+    _evmissing="$(comm -23 <(echo "$_evwant") <(echo "$_evhave"))"
+    _evextra="$(comm -13 <(echo "$_evwant") <(echo "$_evhave"))"
+    if [ -n "$_evmissing" ]; then
+      event_field_surface_rc=1
+      event_field_surface_report+="  MISSING from the $lang event stubs (stale/partial generation, or a REMOVED field):"$'\n'
+      while IFS= read -r r; do [ -n "$r" ] && event_field_surface_report+="    - $r"$'\n'; done <<< "$_evmissing"
+    fi
+    if [ -n "$_evextra" ]; then
+      event_field_surface_rc=1
+      event_field_surface_report+="  NOT IN THE MANIFEST, present in the $lang event stubs (a new field landed):"$'\n'
+      while IFS= read -r r; do [ -n "$r" ] && event_field_surface_report+="    + $r"$'\n'; done <<< "$_evextra"
+    fi
+    if [ -z "$_evmissing" ] && [ -z "$_evextra" ]; then
+      note "PRESENT all $(echo "$_evwant" | wc -l | tr -d ' ') declared seam.event.v1 fields [$lang]"
+    fi
+  done
+  _evskew_py="$(comm -23 <(echo "$_evpy") <(echo "$_evts"))"
+  _evskew_ts="$(comm -13 <(echo "$_evpy") <(echo "$_evts"))"
+  if [ -n "$_evskew_py" ] || [ -n "$_evskew_ts" ]; then
+    event_field_surface_rc=1
+    event_field_surface_report+="  GENERATION SKEW — the python and ts event stubs disagree with EACH OTHER, not just the manifest:"$'\n'
+    while IFS= read -r r; do [ -n "$r" ] && event_field_surface_report+="    python has it, ts does not: $r"$'\n'; done <<< "$_evskew_py"
+    while IFS= read -r r; do [ -n "$r" ] && event_field_surface_report+="    ts has it, python does not: $r"$'\n'; done <<< "$_evskew_ts"
+  fi
+fi
+
 
 echo
 if [ "$rpc_rc" -ne 0 ]; then
@@ -784,9 +995,18 @@ fi
 # FIELD and ENUM-VALUE surfaces share one exit code (6) and are reported TOGETHER, in one pass, before
 # either can exit: if both disagree at once, a script that exited on the field report first would never
 # show the enum one, and a re-run-after-fixing-only-the-first-thing-you-saw loop is exactly the kind of
-# blindness this gate exists to prevent one level up.
-if [ "$field_surface_rc" -ne 0 ] || [ "$enum_surface_rc" -ne 0 ]; then
+# blindness this gate exists to prevent one level up. The seam.event.v1 field surface joins that single
+# pass, reported here alongside them and decided once below.
+if [ "$field_surface_rc" -ne 0 ] || [ "$enum_surface_rc" -ne 0 ] || [ "$event_field_surface_rc" -ne 0 ]; then
   echo
+  # Print the event surface's CLEAN result here too, not only on the all-green path below. On every
+  # local checkout the api lag makes this block the exit route, so without this line a reader could
+  # not tell "the event probe ran and found nothing" from "the event probe never ran" — which is the
+  # exact failure a probe placed after the exit would produce, and it must not be indistinguishable.
+  if [ "$event_field_surface_rc" -eq 0 ]; then
+    echo "OK — the event field surface matches $EVENT_FIELD_MANIFEST in both languages."
+    echo
+  fi
   if [ "$field_surface_rc" -ne 0 ] && [ "$lag_match" -eq 1 ]; then
   _lag_date="$(expected_local_lag_date)"
   _lag_age="$(expected_local_lag_age_days "$_lag_date")"
@@ -795,9 +1015,22 @@ if [ "$field_surface_rc" -ne 0 ] || [ "$enum_surface_rc" -ne 0 ]; then
   while IFS= read -r r; do [ -n "$r" ] && echo "         - $r"; done <<< "$_lag_declared"
   echo "       This is the known local-checkout/BSR gap (stubs regenerate from a BSR module that has"
   echo "       not yet republished these), not a new regression. CI always regenerates fresh from the"
-  echo "       BSR and remains the sole authority on the contract itself, so this STILL exits 6 below —"
-  echo "       only the output is different. If a run ever names anything beyond exactly these fields,"
-  echo "       THAT is real drift, not this recorded lag. See CLAUDE.md's Gotchas."
+  echo "       BSR and remains the sole authority on the contract itself."
+  # What this run actually exits with, said out loud — and NOT unconditionally. This NOTE prints on
+  # every local checkout, so a fixed "this STILL exits 6" would be a false statement in precisely the
+  # case exit 8 was added for: the api lag matching (as it always does) while the EVENT surface has a
+  # real regression. Telling that reader the run ended in the code CLAUDE.md says to read past is the
+  # exact confusion 8 exists to prevent, printed by the gate itself.
+  if [ "$event_field_surface_rc" -eq 0 ]; then
+  echo "       The api field surface is the only thing that fired, so this STILL exits 6 below — only"
+  echo "       the output is different."
+  else
+  echo "       This run does NOT exit 6. The seam.event.v1 field surface ALSO disagrees, and that"
+  echo "       exits 8 — reported below, and it is NOT covered by this recorded lag. Read the event"
+  echo "       report; this NOTE accounts for the api half only."
+  fi
+  echo "       If a run ever names anything beyond exactly these fields, THAT is real drift, not this"
+  echo "       recorded lag. See CLAUDE.md's Gotchas."
   elif [ "$field_surface_rc" -ne 0 ]; then
   err "the generated FIELD surface disagrees with $FIELD_MANIFEST:"
   printf '%s' "$field_surface_report" >&2
@@ -854,7 +1087,41 @@ if [ "$field_surface_rc" -ne 0 ] || [ "$enum_surface_rc" -ne 0 ]; then
   err "so it would silently canonicalise whichever language is currently ahead."
   fi
   fi
+  if [ "$event_field_surface_rc" -ne 0 ]; then
+  err "the generated seam.event.v1 FIELD surface disagrees with $EVENT_FIELD_MANIFEST:"
+  printf '%s' "$event_field_surface_report" >&2
+  echo "" >&2
+  if [[ "$event_field_surface_report" == *"MISSING from the"* ]]; then
+  err "A field MISSING from the event stubs is either a stale generation — rerun 'make generate' (BSR)"
+  err "or 'make generate-local RUNTIME=../seam-runtime' — or a field REMOVED from seam.event.v1, which"
+  err "breaks every outbox consumer holding it and must be handled, never silently rewritten away."
+  echo "" >&2
+  fi
+  if [[ "$event_field_surface_report" == *"NOT IN THE MANIFEST"* ]]; then
+  err "A field NOT IN THE MANIFEST is a new one on the outbox contract. This is the refusal #88 asked"
+  err "for: seam.event.v1 reaches seam-connectors and the verifier through this SDK, and until now a"
+  err "field could land there with every gate green. Decide what carries it, then run:"
+  err "    scripts/check-contract.sh --write-manifest"
+  err "and commit the manifest diff alongside that decision."
+  echo "" >&2
+  fi
+  if [[ "$event_field_surface_report" == *"GENERATION SKEW"* ]]; then
+  err "A GENERATION SKEW on the event surface is python and ts disagreeing with EACH OTHER, not with"
+  err "the manifest. Both trees regenerate from the same contract in the same push, so one went stale."
+  err "--write-manifest cannot fix it: it writes from Python only, and would canonicalise whichever"
+  err "language happens to be ahead."
+  echo "" >&2
+  fi
+  fi
+  # Precedence, decided rather than inherited: an event disagreement exits 8 EVEN WHEN the api surface
+  # also disagrees. 6 is the code CI and CLAUDE.md's Gotchas already treat as "the known local lag,
+  # read the NOTE and move on" — so an event failure that exited 6 would be a real regression hidden
+  # behind a message telling the reader to ignore it. 8 means "something here is not the known lag".
+  if [ "$event_field_surface_rc" -ne 0 ]; then
+    exit 8
+  fi
   exit 6
 fi
 echo "OK — the field surface matches $FIELD_MANIFEST in both languages."
 echo "OK — the enum-value surface matches $FIELD_MANIFEST in both languages."
+echo "OK — the event field surface matches $EVENT_FIELD_MANIFEST in both languages."

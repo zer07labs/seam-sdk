@@ -84,7 +84,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `.github/workflows/publish.yml:316` | `make generate` **again at publish time**, against unpinned plugins — the open half of #52. `:390-401` pre-upload smoke installs protobuf *unconstrained*, so the skew is invisible to it; `registry-smoke` (`:519`) likewise. Measured at planning: `grep -rn protobuf .github/workflows/` yielded **one** hit, a prose comment — no workflow pinned protobuf anywhere, so nothing caught the skew. **Phase 6 closed that** (DONE 2026-08-31): the same grep now yields 17, and `.github/workflows/publish.yml:423` installs the built wheel with `protobuf==$FLOOR`. The declared floor and the emitted gencode are both **7.36.0** (`python/pyproject.toml:50`, `python/seam_sdk/_gen/seam/api/v1/seam_pb2.py`'s `Protobuf Python Version` header — cited by symbol, not by line, since it is a generated, gitignored file) — zero headroom, which is why this phase ran first. |
 | `.github/workflows/publish.yml:63-148` | `ci-green` — resolves every `ci-ok` conclusion for the tagged commit. Sound: `:107` still-running ⇒ `pending`, `:117-126` one-green-cannot-mask-one-red, `:143-148` timeout is a refusal. `:192`/`:285` gate both npm and python. **Must not regress.** |
 | `.github/workflows/publish.yml:150-188` | `version-check` — tag vs in-tree versions. It had **no branch-ancestry check** (`.github/workflows/ci.yml:19` runs on every branch push, so a tag at a green feature-branch commit published cleanly); **Phase 6 added one at `:176`**, which is inside this row's own range. Read the range as the job, not as evidence of the gap — it was widened in round 1 until it contained the very step it is cited for lacking. |
-| `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:476-489`. |
+| `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:578`. |
 | `python/tests/test_protobuf_floor.py:72,88` | The two pure-file-read assertions Phase 6 runs at publish time. `:29-31` reads only `_gen/seam/api/v1/seam_pb2.py`; `:47-51` **skips** when `_gen` is absent. `:88-99` forces `cap == gencode_major + 1` — this is why "widen the floor" is not a metadata edit. |
 | `python/tests/test_grpcio_floor.py:38` | Module-level `import grpc` — matters if Phase 6 runs it in the publish job. |
 | `.github/workflows/yank.yml` | `workflow_dispatch`, `dry_run` default `"true"`. A hard **DELETE** (`:91-92`), not a PyPI-style yank. Its token line did **not** strip the cargo token's `"Bearer "` prefix (`.github/workflows/publish.yml:383-385` does) — **Phase 10 fixed it** (DONE 2026-08-31) at `.github/workflows/yank.yml:55-60`, and left the version/format/name filters (`:73-76`) byte-unchanged. `scripts/test_yank_gate.py` now executes the resolution and pins those filters. |
@@ -155,7 +155,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   - *R2 GAPS (3):* the `:109`→`:141` fix reached `PROGRESS.md` but missed
     `plans/archive/record-digest-v3.md:12`; removing a duplicated execution-order block ate the
     blank line and merged two paragraphs; and the path repoint **over-replaced** four quoted
-    `DECISIONS.md` section titles, which are lookup keys that must match `DECISIONS.md:222`
+    `DECISIONS.md` section titles, which are lookup keys that must match `DECISIONS.md:770`
     verbatim, not paths.
   - *R3 PASS:* all three closed, both halves of the over-replacement checked (quoted titles reverted,
     `**Plan:**` paths still archive-pointed), no new breakage, 545/17 green.
@@ -1044,13 +1044,13 @@ them change what the phases do:
 | `.github/workflows/ci.yml` (cont.) | At `960cf81`: the smoke step's `kill "$pid"` (line 290), immediately followed by `exit 0` — it never waited for the process it started. Replaced by `reap()`. |
 | `.github/workflows/ci.yml:336-347` | The python live step (the `pytest` line is `.github/workflows/ci.yml:346`). Phase 2 added an `if: failure()` log dump + artifact upload at the **end of the job**, after the TypeScript step at `.github/workflows/ci.yml:348` — a step is evaluated at its own position, so anything placed earlier cannot see a TypeScript failure. |
 | `.github/workflows/ci.yml:704` | `ADVISORY: integration,spec-pin`. Advisory means *may skip*, not *may fail* — a red `integration` still reddens `ci-ok`, which lists it at `.github/workflows/ci.yml:689`. |
-| `scripts/check-contract.sh:203` | `fields_python`; `:218` `fields_ts`. **Phase 5 parameterises both on stub path + package** — measured, they already yield 90/90 on the event stubs with zero one-sided entries. |
-| `scripts/check-contract.sh:240` | `manifest_fields` — its stripper claims every `#`-free line, which is why the event surface cannot share `contract/field-manifest.txt`. |
-| `scripts/check-contract.sh:472-476` | `--write-manifest` deletes `contract/expected-local-lag.txt` (the guard is `:472`, the `rm -f` is `:473`). The second reason the event surface needs its own file. |
-| `scripts/check-contract.sh:583` | The corrected comment #88 was filed from. **Phase 5 must rewrite it** or it becomes false. |
+| `scripts/check-contract.sh:252` · `scripts/check-contract.sh:272` | `fields_python` and `fields_ts`. **Phase 5 parameterises both on stub path + package** — measured, they yield 90/90 on the event stubs with zero one-sided entries. Two full citations on one row, not `` `:248` `` as a bare number: a pathless line reference matches `CITATION` not at all, so it is invisible to every check in `test_compatibility_citations_resolve.py`. Both needles are in `ANCHORED` and bound to this row by `CLAIM_LINES`. |
+| `scripts/check-contract.sh:295` | `manifest_fields` — its stripper claims every `#`-free line, which is why the event surface cannot share `contract/field-manifest.txt`. |
+| `scripts/check-contract.sh:566-575` | `--write-manifest` deletes `contract/expected-local-lag.txt`; the cited block is the comment scoping that delete to the api write, and the `-f` guard and `rm -f` are the two lines immediately below it. The second reason the event surface needs its own file. Deliberately no bare `:NNN` for those two — a naked line number inside a row is invisible to `test_compatibility_citations_resolve.py` (it checks backticked `file:line`, and a bare `:473` has no path), so it rots unnoticed. This one had: it still said `:473` after the guard moved to `:571`. |
+| `scripts/check-contract.sh:729` | The comment #88 was filed from, which used to record the event surface as an OPEN gap. **Phase 5 rewrote it** — leaving it would have described a closed gap as open. |
 | `contract/event-field-manifest.txt` | **Phase 5 creates.** 90 fields, 11 messages, zero enums, zero nested messages — all measured, not assumed. |
-| `python/tests/test_field_manifest_gate.py:54` | `_run()` — the scratch-copy-plus-env-override pattern Phase 5's tests mirror. Nothing may mutate the real gitignored stub trees. |
-| `python/tests/test_compatibility_citations_resolve.py:607` | The `submitCommit` `ANCHORED` needle into `ts/src/client.ts` (`:606` is the `collectiveOutcomeOf` one; Phase 4 added two more at `:617-618`). The plan predicted the insertion would break the `submitCommit` anchor for any K of 4+ lines *except* a 125-131 window where it would go green against the unrelated `:804` citation. **Measured K = 101 at the time of that check, 103 as finally committed** — outside that window at every intermediate value, and the anchor failed red-first as required before `PROGRESS.md` was touched. |
+| `python/tests/test_field_manifest_gate.py:91` | `_run()` — the scratch-copy-plus-env-override pattern Phase 5's tests mirror. Nothing may mutate the real gitignored stub trees. |
+| `python/tests/test_compatibility_citations_resolve.py:625` | The `submitCommit` `ANCHORED` needle into `ts/src/client.ts`. Its siblings in the same list pin `collectiveOutcomeOf` (just above) and, from Phase 4, `submitEvaluation` and `submitObjection` — named rather than cited, for the reason the row above records: the bare `:606` and `:617-618` that used to sit here were both stale, and nothing could have told anyone. The plan predicted the insertion would break the `submitCommit` anchor for any K of 4+ lines *except* a 125-131 window where it would go green against the unrelated `:804` citation. **Measured K = 101 at the time of that check, 103 as finally committed** — outside that window at every intermediate value, and the anchor failed red-first as required before `PROGRESS.md` was touched. |
 
 ## Phase log
 
@@ -1826,3 +1826,296 @@ tests / 130 pass / 0 fail · `tsc` + `npm run build` clean · `ruff check` + `ru
 clean · `scripts/` 100 passed · contract gate exit 6, naming exactly the five recorded lag fields.
 The `enforced` mutation set re-run at 2 / 1 / 1 / 4 failures where it was 0 / 0 / 0 / 2. Missing
 generated tree re-measured: still six failing tests.
+
+### Phase 5 — the `seam.event.v1` field surface stops being unmanifested (#88) · **DONE**
+
+`contract/event-field-manifest.txt` declares all **90** `seam.event.v1` fields across **11** messages,
+compared per language in both directions plus python-against-ts directly, exiting **8**. The last
+contract surface this SDK generates from that nothing checked as a whole.
+
+**What was actually covering it before, measured rather than assumed.** Four presence probes
+(`session_lifecycle`, `chain_head_attestation`, `ciphertext_digest`, `AuditEntryEvent.actor`) out of
+ninety fields — the four the SDK decodes. They never fire on anything else added, removed or renamed.
+`scripts/check_vendored_spec.py` only catches drift in `verify/docs/seam-event.v1.md`, and only when
+the runtime also edits that markdown doc; a `.proto` change with no spec-doc edit is invisible to it.
+So the outbox contract `seam-connectors` consume and `verify/` reads could grow a field, reach every
+consumer through this SDK, and leave every gate green. Red-first, captured against `HEAD`'s script
+run from the repo root: **exit 6, the api NOTE, and zero lines mentioning the event field surface** —
+and no `SEAM_PY_EV`/`SEAM_TS_EV` override existed, so a mutated event tree could not even be shown to
+it without mutating the real gitignored stubs.
+
+**The extractors are parameterised, not duplicated.** `fields_python` takes the stub path;
+`fields_ts` takes the path and the proto package, passed as an awk variable rather than interpolated
+into the program text so a package can never be read as a regex. With only those two substitutions
+the existing extractors yield 90 and 90 with **zero** one-sided entries. A second pair would have
+been a second place for the nesting and keyword-name bugs those two already solved, and only one copy
+would ever get the fix. `fields_python` deliberately takes no package argument: a `.pyi` carries no
+package qualification anywhere, so the file *is* the selector — stated in its header, since the
+asymmetry otherwise reads as an oversight.
+
+**A separate file, and the reason is in the code rather than in taste.** `manifest_fields` is
+`grep -vE '^\s*(#|$)' | grep -v '#'` — a **negative** filter, "everything that is not an enum line".
+An event line carries no `#`, so it would land in the api field set and be reported MISSING from the
+api stubs. No delimiter fixes that: `%`, `@`, `!` are all free in a proto identifier and all still
+land in `manifest_fields`' set, so a third partition is unreachable whatever character it picks.
+Sharing the file means rewriting the api gate's filter for the event gate's benefit. Second reason:
+`--write-manifest` deletes `contract/expected-local-lag.txt` on every api field write, and the api
+surface has a real recorded lag while the event surface has none — one file means every event rewrite
+destroys the api recording. The delete is now explicitly scoped to the api write, with the reasoning
+next to it.
+
+**Placement is the whole design, and it is the one thing a single test cannot pin.** On every local
+checkout the api field surface disagrees (the recorded ACDP lag), so `exit 6` always fires. A probe
+after it never runs locally — `make check-contract` would gate nothing on `seam.event.v1`, forever,
+while looking exactly like a run that did. A probe that exits 8 on the spot preempts the api report.
+Correct is the third option: computed in the same single pass as `field_surface_rc`/`enum_surface_rc`,
+reported alongside them, decided once at the end — which is what the script already argues for the
+enum probe ("a script that exited on the field report first would never show the enum one").
+
+Both wrong placements were **built and measured**, not reasoned about. Exiting on the spot is caught
+by `test_both_surfaces_disagreeing_at_once_reports_both_and_exits_8` and only by it — the api report
+vanishes from the output. Reporting after the exit is caught by the three single-surface cases, which
+go exit 0 instead of 8; that variant leaves the both-surfaces test green, since the api failure
+carries the block. The test docstring says which case catches which, because a reader looking for one
+decisive test will not find one.
+
+**Precedence: 8 wins over 6, decided rather than inherited.** 6 is the code a local checkout produces
+on every single run and that CI and `CLAUDE.md`'s Gotchas both say to read past after checking the
+NOTE. An event regression exiting 6 would be a real failure wearing the code that means "ignore
+this". Exit **7** is shared with the api-side asserts, and that is not inconsistent with 8 being
+distinct from 6: 7 names a **failure class** — "a structural precondition the extractors assume
+failed" — which is the same class for either contract, while 6 and 8 name a **contract**.
+
+**Zero enums and zero nested messages are asserted, not assumed.** Both facts are load-bearing and
+both would fail silently *and symmetrically*: a nested message's fields are dropped from Python and
+TypeScript at once by the shared extractors, and an enum value has nothing on either side to compare
+against. An empty event-enum partition compared in both directions would pass for the wrong reason
+and keep passing after the contract grew an enum — the exact vacuity
+`plans/gate-blindness-hardening.md` exists about. `assert_event_surface_preconditions` refuses
+(exit 7) on any of the four shapes, and all four are proved red.
+
+**`--write-manifest` now writes three files, and that is a hazard the same commit had to close.**
+`python/tests/test_field_manifest_gate.py`'s `manifests` and `enum_manifests` fixtures call the real
+script with `--write-manifest`; without `SEAM_EVENT_FIELD_MANIFEST` in `_run()`, an ordinary `pytest`
+run would have rewritten the committed `contract/event-field-manifest.txt` as a side effect — verbatim
+the hazard that fixture's own docstring already names for the RPC manifest. Beyond the write: every
+`returncode == 0` assertion in that file would otherwise have depended on the committed event manifest
+agreeing with the ambient event stubs. That is true today, which is exactly what makes it dangerous —
+an api-gate test silently decided by an unrelated contract and by whichever checkout it runs in.
+Verified after the change: a full `pytest` run leaves `git diff contract/` empty.
+
+**The `:583` comment was rewritten, not amended.** It claimed the event gap "is real, not merely
+undocumented" and that closing it "needs its own manifest". Both sentences are now false, and a
+comment that describes a closed gap as open is worse than no comment. It now names
+`contract/event-field-manifest.txt`, and says explicitly why the four presence probes survive it
+rather than being duplication — they fire when the manifest is absent or just rewritten, and they
+assert what the SDK *reads* rather than what the contract *contains*.
+`test_the_presence_probes_still_refuse_what_the_manifest_gate_accepts` pins the behavioural half (one
+case per probe, each isolating that probe from the manifest) and
+`test_the_comment_that_stops_the_probes_being_deleted_is_still_there` pins the comment, so a later
+reader cannot delete them as redundant. *(This paragraph named
+`test_the_four_named_presence_probes_are_still_there` until 2026-09-01 — round 5 established that it
+could not fire and replaced it, and this sentence was left behind pointing at a test that no longer
+exists.)*
+
+**`Makefile`'s exit-code comment was already stale before this phase**, listing 0-4 when 5, 6 and 7
+had all shipped. Adding 8 to a list that stopped at 4 would have shipped a comment more wrong than
+the one it replaced, so all four were added together and the omission is recorded in the comment
+itself.
+
+**Also:** `plans/README.md`'s Active table gained a row for this plan, which had none — and one for
+`gate-blindness-hardening.md`, which had none either despite being the plan this repo's whole vacuity
+discipline comes from and which nearly every guard test added since cites.
+
+**Phase-5 verification:** python **864 passed / 17 skipped** (851 before; the new file holds **10
+test functions collecting 13 tests** — one is parametrized four ways, which is where 10 and 13
+diverge; an earlier draft of this line said "+11 test functions, one of them parametrized four ways",
+which cannot be both) · `contract/event-field-manifest.txt` 90 field lines, 11 messages, no
+field line carrying `#` · independently reproducible:
+`grep -c FIELD_NUMBER python/seam_sdk/_gen/seam/event/v1/seam_event_pb2.pyi` → 90 and
+`grep -c '@generated from field:' ts/gen/seam/event/v1/seam_event_pb.ts` → 90 ·
+`STREAM=1 EVENTS=1 ./scripts/check-contract.sh` on the real tree still exits **6**, still NOTEs
+exactly the five recorded `ContextBinding` lag fields, **and prints
+`OK — the event field surface matches contract/event-field-manifest.txt in both languages`** plus
+`PRESENT all 90 declared seam.event.v1 fields` for both languages — so "checked and clean" is
+distinguishable from "never ran", which is the failure mode the placement guards against ·
+`git diff contract/` empty after a full pytest run · `grep -n 'has NO field-surface manifest'
+scripts/check-contract.sh` no longer matches and `contract/event-field-manifest.txt` appears 5 times ·
+`ci-ok`'s `needs:` and `ADVISORY` untouched.
+
+### Round-5 verification (Phase 5) — twelve findings, all closed
+
+Same shape as rounds 1-4: the verifier confirmed all ten acceptance criteria MET, reproduced both
+placement claims exactly as written, and could not break the extractors (two independent oracles —
+Python descriptors and protobuf-es's decoded `fileDesc` — agree with `fields_python`/`fields_ts`
+set-for-set, 223/223 api and 90/90 event, zero one-sided entries). It then found twelve defects.
+
+**The one that mattered.** `test_the_four_named_presence_probes_are_still_there` could not fire. It
+grepped the whole script source for `session_lifecycle`, `chain_head_attestation`,
+`ciphertext_digest` and `AuditEntryEvent.actor` — and all four also appear in three *comments*,
+including one this very phase added. Proven by deleting the entire probe loop: the script still
+exited 6, printed zero probe lines, and the guard stayed green. The single test standing between "a
+later reader deletes these as duplication" and that actually happening was decided by something
+other than the property it names — the same shape as every previous round's headline finding.
+
+Replaced with a behavioural case that isolates the probes from the manifest instead of grepping for
+them: rename `SeamEvent.session_lifecycle` in **both** event trees, then `--write-manifest` so the
+manifest agrees exactly. The manifest gate now has nothing to say — asserted, by re-running with
+`STREAM=0` and requiring the clean-path line — so the only thing that can still catch it is the
+probe, and under `STREAM=1` it exits 2 naming the field in both languages. Re-measured against the
+probe-loop deletion: **red**.
+
+**The gate's own output was lying about its exit code.** The recorded-lag NOTE ended "so this STILL
+exits 6 below" unconditionally, on the `lag_match == 1` path — which is *every local checkout*. In
+the one scenario exit 8 was invented for (the api lag matching, as it always does, while the event
+surface has a real regression) the run exits 8 and that sentence tells the reader it ended in the
+code `CLAUDE.md`'s Gotchas say to read past. The confusion 8 exists to prevent, printed by the gate
+itself. No test in either gate file built a matched lag together with an event disagreement, which is
+why it survived. Now conditional on `event_field_surface_rc`, with both branches pinned: the clean
+branch by `test_field_manifest_gate.py`'s exact-match test (which already asserted the sentence), the
+firing branch by a new case that constructs the lag and mutates the event tree together.
+
+**A redirect that closed half of what its comment claimed.** `test_field_manifest_gate.py::_run`
+redirected the event *manifest* but not the event *stubs*, so the api gate's probe and its
+precondition assert still read the ambient trees — exactly the coupling the comment said had been
+removed. Measured: an ambient `SEAM_PY_EV` skew failed **10 of 35** tests in that file, including all
+four lag tests. Both halves are redirected now; re-measured under the same skew, **35 passed**.
+
+The remaining nine were smaller and are all closed: the plan's own required docstring update on the
+`returncode != 7` test (exit 7 now has two causes and a failure there does not say which); three bare
+`:NNN` refs in this file that the diff moved and nothing could check — a naked line number has no
+path, so `test_compatibility_citations_resolve.py` never sees it, and one had been stale since the
+guard moved from `:473` to `:571` — replaced with text that names what it points at rather than where
+it sits; a dead manifest copy in `_seed_event_tree` whose stated rationale no call path exercised;
+`Makefile`'s exit-code list still wrong on code **1** (the admin surface joined it in #36 and never
+reached the comment) in the same list whose whole point was being complete; a `_require_stubs()` on
+the anti-vacuity floor test, which reads only the committed manifest and so could skip on the one
+checkout least able to notice an empty manifest; the ambient `90` hard-coded into the clean-path
+assertion, now counted from the manifest that case itself wrote; two comments that overstated what
+they guaranteed (a `.pyi` *does* carry package qualification, just never on a line the extractor
+reads; passing the package as an awk variable stops shell splicing, not regex interpretation — the
+`gsub` is what does that); and this file's own "+11 test functions, one of them parametrized four
+ways", which cannot be both — it is 10 functions collecting 13.
+
+**Re-verified after the fixes:** python **864 passed / 17 skipped** · `scripts/` **100 passed** ·
+TS **130 pass / 0 fail**, `tsc` clean · `ruff` clean · `STREAM=1 EVENTS=1 ./scripts/check-contract.sh`
+still exits **6**, still NOTEs exactly the five recorded `ContextBinding` fields, and now says out
+loud that the api surface is the only thing that fired · `git diff contract/` empty after a full
+pytest run · both new tests measured red against the mutations they exist to catch.
+
+### Round-6 verification (whole feature) — seven findings, all closed
+
+The final gate over the cumulative diff, run after the reconcile record was written. It confirmed the
+round-5 fixes are sound — it could not make any of them vacuous, and it independently reproduced the
+`lag_match == 1` construction, both NOTE branches, and the completeness of the `SEAM_PY_EV`/
+`SEAM_TS_EV` redirect — and then found seven defects, five of them created by the round-5 commit
+itself.
+
+**The gate's corrected output still pointed at an uncorrected claim.** Round 5 made the script's NOTE
+conditional because "so this STILL exits 6 below" was false on the exit-8 path. `CLAUDE.md`'s Gotchas
+said the same thing unconditionally — and the NOTE's closing line is literally *"See CLAUDE.md's
+Gotchas."* So the exit-8 run printed "This run does NOT exit 6" and then sent the reader to a document
+asserting it always exits 6. Nothing guards that text; it is the unchecked-claim class this whole plan
+is about, one document further out than anyone was looking.
+
+**The commit that closed a stale-citation finding broke five citations of its own.** All five were
+exact at `0fc3ab7` and wrong at `d09e505`: it added 5 lines of comment to `scripts/check-contract.sh`
+and 22 to `python/tests/test_field_manifest_gate.py` above the cited constructs and repointed one row.
+`:226` landed on a comment, `:266` inside `fields_ts`'s awk body, `:69` on a blank line — and all
+three still *resolved*, because `ANCHORED` held no entry for either path. Repointed, and all five are
+now anchored with `CLAIM_LINES` bindings. Measured: reverting them to their stale values fails **8**
+tests where it previously failed none. The row that had argued a citation should "name what it points
+at rather than where it sits" was the row directly above them.
+
+**The replacement anti-vacuity guard pinned one probe of four.** Round 5's behavioural test mutated
+only `session_lifecycle`. Deleting the other three probes from the loop left the whole suite
+**byte-identical to baseline**. Now parametrized over all four; measured, deleting three reddens
+exactly those three cases and leaves `session_lifecycle` green.
+
+**And one of the four probes could be satisfied by a comment about the field.** `AuditEntryEvent.actor`
+matched on `\bactor\b`, and `ts/gen`'s generated comment carries *"Mirrors `AuditEntryPb.actor` (tag
+4)."* verbatim from the proto — so renaming the TS declaration to `principal` still reported PRESENT.
+Round 6 anchored all four probes to declarations; round 7 found that this narrowed the hole without
+closing it and replaced the mechanism outright — see below.
+
+Also closed: a paragraph here naming a test round 5 had deleted, thirty-five lines above the paragraph
+recording that it deleted it; the reconcile arithmetic in `DECISIONS.md`, which gave two different
+wrong partitions of its own seven sub-sections and counted an eighth entry that has no sub-section;
+and `Makefile:33`, which said "the RPC + Authorize probes are always hard gates" two lines above the
+exit-code list that round 5 had just corrected to include admin.
+
+**Re-verified after these fixes:** python **878 passed / 17 skipped** · `scripts/` **100 passed** ·
+TS **130 pass / 0 fail**, `tsc` clean · `ruff` clean · contract gate exits **6** with the five
+recorded fields and the positive event lines · `git diff contract/` empty after a full pytest run ·
+the event gate file is now **10 test functions collecting 16 tests**.
+
+### Round-7 verification — four findings, two of them created by round 6's own fixes
+
+Scoped to the round-6 commit, on the reasoning that six rounds running had found the defects there
+rather than in the phase. Two were.
+
+**The exit-code paragraph was wrong for the third consecutive time.** Round 5 removed "so this STILL
+exits 6" from the script because it was false on the exit-8 path; round 6 removed the matching claim
+from `CLAUDE.md`; and round 6's replacement — "the same run exits **8** if `seam.event.v1`'s field
+surface also disagrees" — is false too. A regression in one of the four streamed-payload mirror
+fields, which are the only `seam.event.v1` fields the SDK actually decodes, is refused earlier by
+`STREAM=1` with exit **2** and no NOTE printed at all. Measured, running exactly the command the
+Gotcha documents. Three rewrites of one sentence, each replacing a wrong unconditional claim with a
+different wrong unconditional claim, because nothing ever measured it.
+
+That is now guarded. `test_claude_mds_gotcha_names_the_exit_codes_this_gate_actually_produces`
+constructs all three runs — matched lag with a clean event surface (**6**), matched lag with an event
+disagreement (**8**), and a renamed mirror field (**2**) — and requires the paragraph to name every
+code it just measured. It locates the paragraph by the *command*, never by a code, so a paragraph that
+dropped one cannot escape by no longer being found. Measured red against deleting the exit-2 sentence.
+
+**Anchoring the probes to declarations left a bigger hole than the one it closed.** A file-wide grep
+does not know which *message* declares a field. Moving `actor` from `AuditEntryEvent` to
+`ChainHeadAttestation` in both trees and re-recording the manifest left the entire gate green at
+exit 0, printing `PRESENT AuditEntryEvent.actor (tag 4)` against an `AuditEntryEvent` that no longer
+declares it. The label named a message; nothing checked the message.
+
+The probes no longer grep the stub files at all. `probe_event_field` asks `fields_python`/`fields_ts`
+— the same class-scoped extractors the manifest gate uses — for an exact `Message/field` line, and
+checks the tag separately on the TS side. `test_a_field_moved_to_another_message_still_fires_its_probe`
+is the strongest form of this file's manifest-cannot-see-it case: the manifest is perfectly content,
+the field exists on *some* message in both languages, and only a probe that knows where it belongs
+can refuse. Measured red against the round-6 mechanism.
+
+**The tag claim was over-general** — `.pyi` files record no tag values anywhere, so the Python arm is
+structurally tag-blind and the manifest gate is too (it compares `Message/field`). The TS arm is the
+gate's only tag check, on four fields. The script's own comment scoped it correctly; this document
+did not, and now says which arm carries it.
+
+**And round 6 repeated its own finding one document over.** It shifted `DECISIONS.md` by +8 lines and
+repointed none of the citations *into* it: `PROGRESS.md:87` landed on the yank/no-yank decision
+instead of the buf-plugin one, and `:158` on a line of prose instead of the section heading it calls
+a "lookup key". Both still resolved. `DECISIONS.md` is the highest-drift citation target in the repo
+— every reconcile pass prepends to it — and it had no anchors at all. Both are repointed and both are
+now in `ANCHORED` + `CLAIM_LINES`.
+
+The mechanism then proved itself inside this same round: adding `probe_event_field` shifted
+`check-contract.sh` by 24 lines, and the five anchors added in round 6 failed **immediately**, naming
+each construct and its new line. That is the first time in seven rounds a citation drift was caught
+by a test rather than by a verifier reading the file.
+
+**Then the same sweep, run against round 7's own commit, found five more.** The technique is
+mechanical and worth recording, because seven rounds of verifiers reading files had not caught these:
+for every backticked `file:line` in a guarded document pointing into a file the commit changed, print
+the cited line's content at both revisions and flag any that differ. Five `DECISIONS.md` citations
+into `scripts/check-contract.sh` came back — the field-manifest decision record's whole set. Nothing
+on this branch broke them: at `origin/main`, `:383` was `awk '` and `:262` was
+`expected_local_lag_age_days() {`. They had been stale for a long time and had never been checked
+beyond "the line exists", which is the entire finding this plan keeps re-discovering in new places.
+The script has roughly doubled in length since they were written. All five repointed, all five now in
+`ANCHORED` + `CLAIM_LINES`; reverting them fails **10** tests.
+
+`DECISIONS.md` had **no** anchors at all before this round, and it is the highest-drift citation
+target in the repo — every `/reconcile` pass prepends a dated section to it, so every citation into it
+and every citation out of it moves on a schedule nothing was tracking.
+
+**Re-verified:** python **895 passed / 17 skipped** · `scripts/` **100 passed** · TS **130 pass /
+0 fail**, `tsc` clean · `ruff` clean · all eight probe/language pairs PRESENT on the real tree ·
+contract gate exits **6** with the five recorded fields and both positive event lines ·
+`git diff contract/` empty after a full pytest run.
+

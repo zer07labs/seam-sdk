@@ -27,12 +27,21 @@ deliberately links nothing of Seam's.
   `test_grpcio_floor.py` go red after a `make generate` that bumps gencode. Raise the floor; don't relax the test.
 - Python CI installs editable **and** builds the wheel to import it in a clean venv — an editable install
   cannot see a packaging defect. Don't trust a green suite alone before a release.
-- **`STREAM=1 EVENTS=1 make check-contract` exits 6 on every pre-ACDP local checkout** — local stubs
+- **`STREAM=1 EVENTS=1 make check-contract` exits **6** on every pre-ACDP local checkout** — local stubs
   lag the committed manifest by five `ContextBinding` fields (`content_hash`, `receipt_hash`,
   `key_status`, `resolved_status`, `retraction`) until a regeneration pulls a BSR module that carries
   them. The gate recognises exactly that case and downgrades its output to a NOTE naming
-  `contract/expected-local-lag.txt` — it still exits 6, since CI is the authority, not this checkout.
+  `contract/expected-local-lag.txt` — it still exits **6**, since CI is the authority, not this checkout.
   Anything the gate names beyond exactly those five fields is real drift, not this known lag.
+  **Read the exit code, not just this bullet.** Two other codes are reachable from the same command
+  and neither is the recorded lag. If `seam.event.v1`'s field surface disagrees with
+  `contract/event-field-manifest.txt`, the run exits **8** — 8 exists precisely so an event
+  regression cannot arrive wearing the code this bullet tells you to read past — and the NOTE then
+  says so instead of claiming 6. But if the disagreement is one of the **four streamed-payload mirror
+  fields** (`session_lifecycle`, `chain_head_attestation`, `ciphertext_digest`,
+  `AuditEntryEvent.actor`), `STREAM=1` refuses earlier with exit **2** and no NOTE is printed at all.
+  Those three codes — 6, 8, 2 — are pinned against the gate's real behaviour by
+  `python/tests/test_event_field_manifest_gate.py`, so this paragraph cannot drift from it silently.
 
 <!-- Shared cross-repo context (zer07labs/seam, cloned as a sibling). -->
 @../seam/CLAUDE.md
