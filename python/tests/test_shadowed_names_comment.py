@@ -25,11 +25,12 @@ The mechanism, stated correctly
 --------------------------------
 "Shadowed" was this file's original word for it and it was the wrong one, so it is not used here.
 ``index.ts`` never star-exports a generated module: ``export * as pb`` exports exactly one name
-(``pb``) and contributes none of the module's inner names to the root. Everything else from
-``ts/gen/`` reaches the root through explicit named lists. These types are ``pb.``-only because they
-are simply **not on those lists** — not because one export beat another, and not because of ordering.
-Had two star exports genuinely collided, ESM would have *excluded* the ambiguous name rather than
-resolving it to the first.
+(``pb``) and contributes none of the module's inner names to the root. Every generated name that
+*does* reach the root gets there through an explicit named list — a deliberately small subset (40 of
+the 167 the two modules declare, measured at the time of writing; the rest are ``pb.``/``ev.``-only
+and always were). These types are ``pb.``-only because they are simply **not on those lists** — not
+because one export beat another, and not because of ordering. Had two star exports genuinely
+collided, ESM would have *excluded* the ambiguous name rather than resolving it to the first.
 
 That matters for what a future editor might try: adding one of these names to the explicit
 ``export type { … }`` list would not surface it — it would make the **generated** type win the root
@@ -68,14 +69,18 @@ INDEX = SRC / "index.ts"
 #: A top-level `export <kind> <Name>`. Anchored at column 0 on purpose — a nested or indented
 #: declaration is not a module export and must not count toward either side.
 DECL = re.compile(
-    r"^export\s+(?:declare\s+)?(?:interface|type|class|const|function|enum)\s+([A-Za-z_$][\w$]*)"
+    r"^export\s+(?:declare\s+|abstract\s+|async\s+|default\s+)*"
+    r"(?:interface|type|class|const|function|enum)\s+([A-Za-z_$][\w$]*)"
 )
 
-#: One entry of the comment's list: a comment line whose first content is an indented `` `pb.Name` ``.
-#: Indentation is what separates a list entry from prose, and that separation is the whole fix for
-#: the blindness described in the module docstring — a prose sentence naming `pb.StepUsage` starts at
-#: `// ` with no indent and must not count.
-LIST_ENTRY = re.compile(r"^//\s{3,}`pb\.([A-Za-z_$][\w$]*)`")
+#: One entry of the comment's list: a comment line whose first content is an indented
+#: `` `pb.Name` `` or `` `ev.Name` ``. Indentation is what separates a list entry from prose, and that
+#: separation is the whole fix for the blindness described in the module docstring — a prose sentence
+#: naming `pb.StepUsage` starts at `// ` with no indent and must not count. **Both namespaces**,
+#: because `GEN` covers both generated modules and `index.ts` namespaces them differently (`pb` for
+#: `seam.api.v1`, `ev` for `seam.event.v1`); matching only `pb.` would make the one correct spelling
+#: of an event-module entry unsatisfiable.
+LIST_ENTRY = re.compile(r"^//\s{3,}`(pb|ev)\.([A-Za-z_$][\w$]*)`")
 
 #: The sentence that introduces the list. Its leading word is the count under test.
 INTRO = re.compile(r"^// (\w+) generated names are declared on BOTH sides", re.M)
@@ -142,9 +147,23 @@ def _comment() -> str:
     return "\n".join(out)
 
 
+def _listed_entries(text: str) -> set[tuple[str, str]]:
+    """``(namespace, name)`` for each LIST entry — never a name mentioned in the surrounding prose."""
+    return {
+        (m.group(1), m.group(2))
+        for line in text.splitlines()
+        if (m := LIST_ENTRY.match(line))
+    }
+
+
 def _listed(text: str) -> set[str]:
-    """The names the comment LISTS — entries only, never a name mentioned in its prose."""
-    return {m.group(1) for line in text.splitlines() if (m := LIST_ENTRY.match(line))}
+    """Just the names the comment lists, dropping the namespace."""
+    return {name for _ns, name in _listed_entries(text)}
+
+
+def _namespaces_of(name: str) -> set[str]:
+    """The namespace(s) a dual-declared name is actually reachable under, from the code."""
+    return {ns for ns, path in zip(("pb", "ev"), GEN) if name in _declared(path)}
 
 
 # ── Calibration: this file must be able to fail ──────────────────────────────────────────────────
@@ -244,3 +263,62 @@ def test_the_count_word_also_matches_the_list_it_introduces() -> None:
         f"index.ts says {m.group(1)!r} but its list has {len(_listed(_comment()))} entries: "
         f"{sorted(_listed(_comment()))}"
     )
+
+
+#: `export … { A, B } from "../gen/…"` — the explicit re-export lists. A dual-declared name appearing
+#: in one of these is the hazard the comment warns about, so it is asserted rather than described.
+GEN_REEXPORT = re.compile(
+    r"^export\s+(?:type\s+)?\{(.*?)\}\s*from\s*\"\.\./gen/", re.S | re.M
+)
+
+
+def _explicitly_reexported() -> set[str]:
+    src = INDEX.read_text(encoding="utf-8")
+    names: set[str] = set()
+    for block in GEN_REEXPORT.findall(src):
+        for raw in block.split(","):
+            token = raw.strip().split(" as ")[0].strip()
+            if token and not token.startswith("//"):
+                names.add(token)
+    return names
+
+
+def test_the_explicit_lists_do_not_contain_a_dual_declared_name() -> None:
+    """The hazard the comment names, asserted instead of merely described — because `tsc` is silent.
+
+    Adding one of these names to `export type { … }` does not "surface" the generated type alongside
+    the hand-written one: it makes the **generated** type win the root name and displaces the DTO,
+    with no error and no warning. Verified by doing it in a scratch tree — `tsc --noEmit` exits 0 and
+    the root `CollectiveOutcome` silently becomes the wire message. A consumer would find out where
+    the shapes differ, which is exactly the failure this whole comment exists to prevent.
+    """
+    collision = _explicitly_reexported() & _dual_declared()
+    assert not collision, (
+        f"ts/src/index.ts re-exports {sorted(collision)} from ../gen/, but the same name(s) are also "
+        f"declared by hand in ts/src/. The generated type now wins the root name and the hand-written "
+        f"one is unreachable — silently, since tsc does not flag it. Remove them from the explicit "
+        f"list; `pb.`/`ev.` is how the wire type stays reachable."
+    )
+
+
+def test_the_reexport_detector_sees_the_lists_it_is_scanning() -> None:
+    """The calibration for the check above: a regex that matched nothing would make it vacuous, and
+    an empty intersection is exactly what "no collision" looks like."""
+    reexported = _explicitly_reexported()
+    assert len(reexported) >= 20, (
+        f"only {len(reexported)} explicitly re-exported names found — GEN_REEXPORT has stopped "
+        f"matching, so the collision check above proves nothing"
+    )
+    # A name known to be on the list, so the parse is not merely returning noise.
+    assert "SessionStep" in reexported, sorted(reexported)[:10]
+
+
+def test_every_listed_entry_uses_the_namespace_its_module_is_bound_to() -> None:
+    """`seam_pb.ts` is namespaced `pb` and `seam_event_pb.ts` is `ev`; a right name under the wrong
+    prefix sends a reader to a symbol that does not exist."""
+    for ns, name in sorted(_listed_entries(_comment())):
+        actual = _namespaces_of(name)
+        assert ns in actual, (
+            f"index.ts lists `{ns}.{name}`, but {name} is declared in "
+            f"{sorted(actual) or 'neither generated module'} — `{ns}.{name}` does not resolve."
+        )

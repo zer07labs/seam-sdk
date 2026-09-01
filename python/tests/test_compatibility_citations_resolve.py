@@ -605,6 +605,17 @@ ANCHORED = [
     # them: "resolves" and "says what it claims" are different properties.
     ("PROGRESS.md", "ts/src/client.ts", "export function collectiveOutcomeOf"),
     ("PROGRESS.md", "ts/src/client.ts", "  submitCommit("),
+    # Added in Phase 4 of consumer-decoders-and-event-surface, because this pair had by then been
+    # wrong TWICE — once before that phase (cited `:601,637` while sitting at 623/659) and once
+    # inside the very commit whose message claimed it had shifted every citation below `:239`.
+    # Both times it was written as a comma-list, `` `ts/src/client.ts:723,759` ``, which matches
+    # CITATION *not at all* (the regex needs the closing backtick straight after the number), so it
+    # was invisible to every check here. It is now two ordinary citations, and anchoring them is what
+    # makes them checkable rather than merely countable: a citation that resolves but cannot be wrong
+    # is the vacuity this file exists against. See the margin note below — this narrowed the tightest
+    # margin in this table, deliberately, and that trade is recorded rather than absorbed.
+    ("PROGRESS.md", "ts/src/client.ts", "  submitEvaluation("),
+    ("PROGRESS.md", "ts/src/client.ts", "  submitObjection("),
 ]
 
 #: How far a citation may sit from the needle's true line and still count. A citation naming a block
@@ -641,28 +652,33 @@ def test_the_load_bearing_citations_still_point_at_the_right_thing(
     span between them; the span is wide, the danger zone is six lines wide. Revisit before adding
     a citation near `:199`, `:340`, `:367` or `:413`, not after.
 
-    `PROGRESS.md` duplicates a path too, and these numbers are taken from `_citations()` — the same
-    function the assertion below uses — rather than read off the document by hand. `ts/src/client.ts`
-    is cited **eight** times at **five** distinct lines: `:218` x3 and `:326` x2, plus `:746`, `:777`,
-    `:914`. Two are anchored here, and the closest needle-to-foreign-citation distances are **108**
-    (needle `collectiveOutcomeOf` at 218, nearest foreign citation `policyEnforcementOf` at 326) and
-    **31** (needle `  submitCommit(` at 777, nearest foreign the confidence mapping at 746). Both are
-    clear of `CITATION_SLACK` 3, so each needle is satisfied by exactly its own citation.
+    `PROGRESS.md` duplicates a path too, and these numbers come from `_citations()` — the same
+    function the assertion below uses — not from reading the document by hand. `ts/src/client.ts` is
+    cited **eleven** times at **eight** distinct lines: `:218` x3 and `:328` x2, plus `:521`, `:726`,
+    `:748`, `:762`, `:779`, `:916`. **Four** are anchored here, and the needle-to-nearest-foreign-citation
+    distances are 110 (`collectiveOutcomeOf` at 218), 22 (`  submitEvaluation(` at 726),
+    **14** (`  submitObjection(` at 762) and 17 (`  submitCommit(` at 779). All clear
+    `CITATION_SLACK` 3, so every needle is satisfied by exactly its own citation — but **14 is now
+    the tightest margin in this table**, displacing `publish.yml`'s 27, and it got that way on
+    purpose. Phase 4 split `` `ts/src/client.ts:723,759` `` — a comma-list, therefore matching
+    CITATION not at all and checked by nothing, and wrong twice running — into two ordinary
+    citations and anchored both. That trades margin for coverage knowingly: two positions that could
+    not be wrong-and-detected are now checked, and the cost is that the six-line danger zone around
+    `submitObjection` sits 14 lines from `submitCommit`'s citation rather than 31. Revisit before
+    inserting anything between `submitEvaluation` and `submitCommit`, not after.
 
-    **This paragraph previously recorded 53, and getting the correction right took two attempts.** It
-    was written before Phase 4 inserted `policyEnforcementOf`, and Open Question 6 of that phase's
-    plan predicted the insertion would shrink the margin. It did — 53 to 31 — but the first
-    correction claimed 53 had been *wrong all along*, on the grounds that the foreign citation `:623`
-    named the confidence mapping while the mapping really sat at 645. That misidentifies the metric.
-    The distance that governs foreign-citation masking, and the only one the assertion consults, is
-    from the needle to a citation **as written**, never to the true location of what it names — so 53
-    was correct for the state it described. The margin moved because the citation was *corrected*
-    (623 to 746, +123: +101 for the insertion and +22 for the correction) while the needle moved only
-    +101; the insertion by itself would have preserved 53 exactly. A hand-maintained margin measured
-    against an unverified citation is a real hazard, but it is not what happened here, and the two
-    are worth keeping apart. 31 is the second-tightest margin in this table after `publish.yml`'s 27,
-    and it narrows for real whenever something lands between the confidence mapping and
-    `submitCommit`.
+    **The 53 this paragraph used to record was not wrong, and correcting it took two attempts.** It
+    predated Phase 4, whose Open Question 6 predicted the insertion would shrink the margin. It did.
+    But the first correction claimed 53 had been *wrong all along*, reasoning that the foreign
+    citation `:623` named the confidence mapping while the mapping really sat at 645. That
+    misidentifies the metric: the distance that governs foreign-citation masking, and the only one
+    this assertion consults, is from the needle to a citation **as written**, never to the true
+    location of what it names. By that definition 53 was exactly right for the state it described.
+    The margin moved because the citation was *corrected* — 623 to 748, +125, of which +103 is the
+    insertion and +22 the correction — while the needle moved only +103; the insertion alone would
+    have left 779 - 726 = 53 untouched. A hand-maintained margin measured against an unverified
+    citation is a real hazard, and it is not what happened here. Keeping the two apart is why this
+    paragraph is long.
     """
     lines = (REPO / path).read_text(encoding="utf-8", errors="ignore").splitlines()
     hits = [i + 1 for i, line in enumerate(lines) if needle in line]

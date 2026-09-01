@@ -659,10 +659,13 @@ states" #87 asks for. Add the `python/seam_sdk/_policy.py` row to `PROGRESS.md`'
 
 ### Phase 4 — `policyEnforcementOf` in TypeScript, and the citations it necessarily moves
 
-**Status:** DONE — K measured at 100 (outside the 125-131 vacuous window); the `submitCommit` anchor
-failed red-first. Deviation: the `index.ts` shadowed-names comment was fixed for `CollectiveOutcome`
-too (the plan scoped that out) and is now enforced by `python/tests/test_shadowed_names_comment.py`;
-Open Question 6's 53-line margin turned out to be wrong rather than stale. See `PROGRESS.md`.
+**Status:** DONE — K = 103 as finally committed (100 at the red-first measurement, then +1 and +2
+from two verification rounds); outside the 125-131 vacuous window at every intermediate value, and
+the `submitCommit` anchor failed red-first. Deviations: the `index.ts` dual-declaration comment was
+also fixed for `CollectiveOutcome` (the plan scoped that out) and is now enforced by
+`python/tests/test_shadowed_names_comment.py`; Open Question 6's prediction that the margin would
+shrink was right (53 → 31 → re-measured after round 2), though neither the plan's stated cause nor
+this plan's first correction of it was. See `PROGRESS.md` for both accounts.
 
 **Delivers:** the TS twin, keeping the two client layers symmetric on both consumer decoders.
 
@@ -1063,8 +1066,8 @@ but note it).
    **Updated after Phase 4 shipped, because this entry was written against a state that no longer
    holds.** As drafted it said `CollectiveOutcome` appeared in neither the named export list nor the
    comment; Phase 4 put both `CollectiveOutcome` and `PolicyEnforcement` into the comment
-   (`ts/src/index.ts:18-47`), so only the export half is still open. Neither DTO type is on the
-   named export lists (`:50-64` for types, `:68-85` for schemas), and Phase 4 did not need them
+   (`ts/src/index.ts:18-49`), so only the export half is still open. Neither DTO type is on the
+   named export lists (`:52-66` for types, `:70-87` for schemas), and Phase 4 did not need them
    there — `ts/tests/policy_enforcement.test.ts` imports `PolicyEnforcementSchema` straight from the
    generated module, exactly as `collective_outcome.test.ts` does for `CollectiveOutcomeSchema`.
    Whether the two decoded DTO types should be promoted to named exports remains a public-surface

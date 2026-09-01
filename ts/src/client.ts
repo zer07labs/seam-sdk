@@ -251,8 +251,10 @@ export function collectiveOutcomeOf(
  * rather than an instance. An `allowed`-style twin would be a second falsiness that can go the wrong
  * way — the same argument {@link CollectiveOutcome} makes for having no `declined` counterpart.
  *
- * Shadows the generated `pb.PolicyEnforcement`, which stays reachable through the `pb` namespace;
- * see the shadowed-names note in `index.ts`. */
+ * Declared on both sides: this name and the generated `pb.PolicyEnforcement` are different types,
+ * and at the package root this one is what you get. The wire message stays reachable as
+ * `pb.PolicyEnforcement`; see the dual-declaration note at the top of `index.ts` for why, and for
+ * the hazard that runs opposite to intuition. */
 export interface PolicyEnforcement {
   /** true iff a real policy definition gated this commitment. */
   readonly enforced: boolean;

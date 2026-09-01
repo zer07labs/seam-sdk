@@ -32,8 +32,10 @@ export * from "./errors.js";
 // **Why they are `pb.`-only is worth stating precisely, because the obvious explanation is wrong.**
 // It is not that a star export beat another star export: this file never star-exports the generated
 // module. `export * as pb` exports exactly one name — `pb` — and contributes none of the module's
-// inner names at the root; everything else from `../gen/` is re-exported by the explicit lists
-// below. These five are simply not on those lists. Ordering has nothing to do with it, and had
+// inner names at the root. Every generated name that DOES reach the root gets there through an
+// explicit list below — a deliberately small subset, 40 of the 167 the two modules declare, with the
+// rest `pb.`/`ev.`-only and always so. These five are simply not on those lists, which is a
+// different thing from being displaced. Ordering has nothing to do with it, and had
 // there been two competing star exports, ESM would have EXCLUDED the ambiguous name rather than
 // resolving it to the first. **The causality runs the other way from the intuition:** adding one of
 // these five to the explicit `export type { … }` list would not "un-hide" it — it would make the
