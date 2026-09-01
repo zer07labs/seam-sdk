@@ -191,7 +191,14 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   compile — an MSRV that is *too high*, i.e. an unnecessarily narrow promise rather than a broken
   one. Reversible in one commit by splitting the job. The `verify-msrv` job comment records the
   condition and the correct response.
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (2026-09-01). Re-measured, not assumed: `verify/Cargo.toml`'s
+  `[dev-dependencies]` are `sha2`, `base64` and `serde_json` — a strict subset of
+  `[dependencies]` (`prost`, `sha2`, `ed25519-dalek`, `base64`, `serde`, `serde_json`), so the test
+  profile resolves nothing a consumer does not already compile and cannot raise the floor. The
+  declared `rust-version = "1.85"` still comes from normal deps only (`prost` / `base64ct` /
+  `zeroize`), and `verify/tests/msrv.rs` derives it from `cargo metadata` on every run, so the
+  divergence this entry guards against would fail a test rather than wait to be noticed. The
+  single-job choice stands. See DECISIONS.md.
 
 ## v3 validates every input; v2 deliberately still does not
 
@@ -467,7 +474,10 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Owner / re-open trigger:** whoever next adds or reviews `buf breaking` config for
   `seam.api.v1`'s enums (in `seam-runtime`) — if that gate is ever found not to cover a same-name
   renumber, this assumption needs revisiting before the next enum-touching regeneration lands.
-- **Status:** UNCONFIRMED.
+- **Status:** UNCONFIRMED (reviewed 2026-09-01, unchanged). No new evidence either way this cycle:
+  the event surface added in Phase 5 carries **zero enums** — asserted by
+  `assert_event_surface_preconditions`, not assumed — so it produced no second case to test the
+  name-only rule against. The trigger is unchanged and still sits in `seam-runtime`. See DECISIONS.md.
 
 ## `plans/` stays outside the citation guard; `PROGRESS.md` does not
 
@@ -493,7 +503,13 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Owner / re-open trigger:** whoever next finds a citation drift inside an OPEN (not archived) plan
   document causing a real misdirection during `/implement` — that would be evidence the open/archived
   line, not the `plans/`-vs-`PROGRESS.md` line, is where this guard should actually cut.
-- **Status:** UNCONFIRMED.
+- **Status:** UNCONFIRMED (reviewed 2026-09-01, unchanged). Phase 5's verification round found three
+  stale line references inside `PROGRESS.md` that the guard could not see — but they were **bare**
+  `:NNN` refs carrying no path, and `test_compatibility_citations_resolve.py` matches backticked
+  `file:line`, so a pathless number is invisible in *every* guarded document, `PROGRESS.md`
+  included. That is a different gap in the same guard, orthogonal to where the `plans/` line cuts,
+  and it does not move this assumption. It was closed at the source instead: those three refs now
+  name what they point at rather than where it sits. See DECISIONS.md.
 
 ## `contract/expected-local-lag.txt` is a window, not a permanent excuse
 
@@ -522,7 +538,14 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   60 days from `EXPECTED-FROM` (see the file's own header) — if `contract/expected-local-lag.txt` is
   still present and its five fields still match the local/BSR gap at that point, the split recorded
   here is not a window and this assumption needs to be revisited, per the plan's own Open Q3 text.
-- **Status:** UNCONFIRMED.
+- **Status:** UNCONFIRMED (reviewed 2026-09-01, deliberately deferred). `EXPECTED-FROM` is
+  2026-08-31, so the file is one day old and the 60-day trigger is nowhere near. Worth recording
+  that this cycle produced the first hard evidence for the **social** failure mode this entry names
+  rather than the technical one: the NOTE's own closing sentence claimed "so this STILL exits 6
+  below" unconditionally, which is false whenever the event surface also disagrees, and it survived
+  a full phase plus four verification rounds precisely because that block is the one every local run
+  prints and nobody re-reads. Fixed (the sentence is now conditional, with both branches pinned by
+  tests), but the mechanism it demonstrates is the one to watch at day 60. See DECISIONS.md.
 
 ## `seam.event.v1` gets its own manifest file, not a partition of the api one
 
@@ -548,7 +571,13 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   moment the "no enums" precondition is deliberately retired, and it is also the moment the
   one-file-with-two-partitions question is worth re-asking, since the event file would then need the
   same negative-filter problem solved anyway.
-- **Status:** UNCONFIRMED.
+- **Status:** CONFIRMED (2026-09-01). The decisive mechanical reason was independently re-derived
+  during Phase 5's verification round, and it came back **stronger** than this entry claimed:
+  `manifest_event_fields` deliberately omits the second `grep -v '#'` that `manifest_fields` needs,
+  and a `#`-bearing field line is therefore reported MISSING (exit 8) on the event side where the
+  api stripper would silently DROP it — measured, 90 against 91. The shared-file alternative would
+  have inherited that silent drop for the event surface. Exit 8's precedence over 6 was also
+  reproduced end-to-end, including against the real recorded lag. See DECISIONS.md.
 
 ## `PolicyEnforcement` and `CollectiveOutcome` stay off `ts/src/index.ts`'s named export list
 
@@ -570,7 +599,10 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Owner / re-open trigger:** whoever next has a consumer that genuinely cannot name the type — or
   the next time a third decoder of this shape lands, since three is when a pattern is worth exporting
   deliberately rather than case by case.
-- **Status:** UNCONFIRMED.
+- **Status:** UNCONFIRMED (reviewed 2026-09-01, unchanged). Phase 4 shipped and merged (#93) without
+  either type reaching the named export list and without a consumer needing it; the count of
+  decoders of this shape is still two, not three. Nothing this cycle tested the assumption, which is
+  the correct outcome for one whose evidence can only come from a consumer. See DECISIONS.md.
 
 ## `policy_enforcement_of`'s presence enumeration is orientation, not contract
 
@@ -592,5 +624,10 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Owner / re-open trigger:** seam-runtime#526. If `freshly_sealed` lands — a client currently
   cannot tell whether *this* call performed the seal or re-reported one — this docstring is the first
   thing that goes stale.
-- **Status:** UNCONFIRMED.
+- **Status:** UNCONFIRMED (reviewed 2026-09-01, deferred — not answerable here). The enumeration is a
+  claim about runtime behaviour, and the only evidence that could settle it is seam-runtime#526's
+  matrix, which is why the docstring cites the issue rather than a line of code. Nothing in this repo
+  can promote it, and the docstring already says the list is orientation rather than a guarantee to
+  branch on — so the cost of it being wrong stays bounded to trust, as the entry records. Stays open
+  against #526. See DECISIONS.md.
 
