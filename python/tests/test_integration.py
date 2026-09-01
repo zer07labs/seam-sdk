@@ -1,17 +1,21 @@
 """Live round-trip against a running Seam gRPC server — admit → decide → seal → read → verify.
 
 Env-gated so the unit/conformance suite stays server-free:
-  * ``SEAM_GRPC_ADDR``  — connect to an already-running server (e.g. ``127.0.0.1:8090``), or
-  * ``SEAM_GRPC_BIN``   — path to a ``seam-grpc`` binary the test spawns on a free port.
+  * ``SEAM_GRPC_ADDR``  — connect to an already-running server, or
+  * ``SEAM_GRPC_BIN``   — path to a ``seam-grpc`` binary the test spawns on an OS-allocated port.
 If neither is set, the test is skipped.
+
+Spawning goes through ``live_server.spawn_server`` — a fresh port per spawn, readiness that proves
+the port is ours, teardown that waits, and the child's output kept on disk. See that module's
+docstring for the #85 failure this replaced; do not reintroduce a fixed port or a bare
+``proc.terminate()`` here.
 """
 
 import os
-import socket
-import subprocess
-import time
 
 import pytest
+
+from live_server import spawn_server
 
 from seam_sdk import (
     Agent,
@@ -23,47 +27,14 @@ from seam_sdk import (
 )
 
 
-def _wait(port: int, timeout: float = 5.0):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            socket.create_connection(("127.0.0.1", port), 0.1).close()
-            return
-        except OSError:
-            time.sleep(0.05)
-    raise RuntimeError("server never came up")
-
-
 @pytest.fixture
-def server():
+def server(tmp_path):
     addr = os.environ.get("SEAM_GRPC_ADDR")
     if addr:
         yield addr
         return
-    binary = os.environ.get("SEAM_GRPC_BIN")
-    if not binary:
-        pytest.skip(
-            "set SEAM_GRPC_ADDR or SEAM_GRPC_BIN to run the live integration test"
-        )
-    addr = "127.0.0.1:8099"
-    proc = subprocess.Popen(
-        [binary],
-        # SEAM_DEV_INSECURE lets the dev binary boot with the public dev seed AND enrol the
-        # well-known demo tenant (the [42;32] agent this test admits as) — both required since
-        # the server refuses a public identity by default (runtime security hardening).
-        env={
-            **os.environ,
-            "SEAM_GRPC_LISTEN": addr,
-            "SEAM_DEV_INSECURE": "1",
-        },
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    try:
-        _wait(8099)
-        yield addr
-    finally:
-        proc.terminate()
+    with spawn_server(log_dir=tmp_path) as srv:
+        yield srv.data_addr
 
 
 def test_full_round_trip(server):
@@ -134,30 +105,14 @@ def test_features_do_not_affect_the_record(server):
 
 
 @pytest.fixture
-def dual_plane():
+def dual_plane(tmp_path):
     """Spawn seam-grpc with BOTH the data plane and the management plane (dev-open) — the budget-resume
-    loop needs both, since the R9 resume moved to the mgmt plane (rt-D). Yields (data_addr, mgmt_addr)."""
-    binary = os.environ.get("SEAM_GRPC_BIN")
-    if not binary:
-        pytest.skip("set SEAM_GRPC_BIN to run the live budget-resume loop")
-    data_port, mgmt_port = 8115, 8116
-    proc = subprocess.Popen(
-        [binary],
-        env={
-            **os.environ,
-            "SEAM_GRPC_LISTEN": f"127.0.0.1:{data_port}",
-            "SEAM_GRPC_MGMT_LISTEN": f"127.0.0.1:{mgmt_port}",
-            "SEAM_DEV_INSECURE": "1",
-        },
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    try:
-        _wait(data_port)
-        _wait(mgmt_port)
-        yield f"127.0.0.1:{data_port}", f"127.0.0.1:{mgmt_port}"
-    finally:
-        proc.terminate()
+    loop needs both, since the R9 resume moved to the mgmt plane (rt-D). Yields (data_addr, mgmt_addr).
+
+    Both ports come from one ``spawn_server(mgmt=True)`` call, so this fixture cannot drift back to a
+    fixed pair the way it held 8115/8116 before #85."""
+    with spawn_server(mgmt=True, log_dir=tmp_path) as srv:
+        yield srv.data_addr, srv.mgmt_addr
 
 
 def test_budget_suspend_resume_loop(dual_plane):
@@ -215,35 +170,22 @@ GOVERNED_SNAPSHOT = """{{"snapshot_id":"live","capability_registry":{{
 @pytest.fixture
 def governed_server(tmp_path):
     """Spawn seam-grpc with a governed capability registry for the demo agent."""
-    binary = os.environ.get("SEAM_GRPC_BIN")
-    if not binary:
-        pytest.skip("set SEAM_GRPC_BIN to run the live authorize round-trip")
     from operator_token import sign_snapshot
 
     snapshot = tmp_path / "registry_snapshot.json"
     snapshot.write_text(GOVERNED_SNAPSHOT.format(aid=Agent(bytes([42] * 32)).aid))
     pubkey, sig_path = sign_snapshot(str(snapshot))
-    addr = "127.0.0.1:8115"
-    proc = subprocess.Popen(
-        [binary],
-        env={
-            **os.environ,
-            "SEAM_GRPC_LISTEN": addr,
-            "SEAM_DEV_INSECURE": "1",
+    with spawn_server(
+        log_dir=tmp_path,
+        env_extra={
             # This snapshot carries `capability_registry`, which is trust-bearing — so it must be
             # signed or the runtime refuses to boot outright. See `operator_token.sign_snapshot`.
             "SEAM_REGISTRY_SNAPSHOT": str(snapshot),
             "SEAM_REGISTRY_SNAPSHOT_SIG": sig_path,
             "SEAM_SNAPSHOT_PUBKEY": pubkey,
         },
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    try:
-        _wait(8115)
-        yield addr
-    finally:
-        proc.terminate()
+    ) as srv:
+        yield srv.data_addr
 
 
 def test_authorize_live_allow_deny_transform_sync(governed_server):

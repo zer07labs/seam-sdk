@@ -8,13 +8,11 @@ SESSION_LIFECYCLE carries its payload and a streamed v2 DECISION_SEALED recomput
 from __future__ import annotations
 
 import json
-import os
 import pathlib
-import socket
-import subprocess
-import time
 
 import pytest
+
+from live_server import spawn_server
 
 from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as evpb
 from seam_sdk import KNOWN_KINDS, SeamClient, verify_streamed_record_digest  # noqa: E402
@@ -240,40 +238,11 @@ def test_streamed_v3_refuses_a_stripped_ciphertext_digest_as_false_not_a_raise()
 # ── Live: a streamed SESSION_LIFECYCLE carries its payload; a streamed v2 DECISION_SEALED recomputes ──
 
 
-def _wait(port: int, timeout: float = 8.0):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            socket.create_connection(("127.0.0.1", port), 0.1).close()
-            return
-        except OSError:
-            time.sleep(0.05)
-    raise RuntimeError(f"server never came up on {port}")
-
-
 @pytest.fixture
-def dual_plane():
-    binary = os.environ.get("SEAM_GRPC_BIN")
-    if not binary:
-        pytest.skip("set SEAM_GRPC_BIN to run the live streamed-decode test")
-    data_port, mgmt_port = 8113, 8114
-    proc = subprocess.Popen(
-        [binary],
-        env={
-            **os.environ,
-            "SEAM_GRPC_LISTEN": f"127.0.0.1:{data_port}",
-            "SEAM_GRPC_MGMT_LISTEN": f"127.0.0.1:{mgmt_port}",
-            "SEAM_DEV_INSECURE": "1",
-        },
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    try:
-        _wait(data_port)
-        _wait(mgmt_port)
-        yield f"127.0.0.1:{data_port}", f"127.0.0.1:{mgmt_port}"
-    finally:
-        proc.terminate()
+def dual_plane(tmp_path):
+    """Data + management planes on OS-allocated ports (was a fixed 8113/8114 pair before #85)."""
+    with spawn_server(mgmt=True, log_dir=tmp_path) as srv:
+        yield srv.data_addr, srv.mgmt_addr
 
 
 def test_streamed_events_carry_a14_payloads_live(dual_plane):

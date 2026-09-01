@@ -92,7 +92,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `python/tests/test_retracted_claims.py:170-184` | Parametrized presence check over `COMPATIBILITY.md`. **Phase 7 added `"0.7.39"`** — the *lower* edge, which is the one a reader is most likely to assume they are outside of — plus two real row guards (`python/tests/test_retracted_claims.py:194-256`), because this parametrize is a substring check and could not fail for a deleted row. `python/tests/test_retracted_claims.py:27-30` globs **every `*.md` in the repo including `plans/` and this file**; `python/tests/test_retracted_claims.py:39-48` are the qualifier markers that make a paragraph "discussing, not claiming". |
 | `python/tests/test_compatibility_citations_resolve.py` | Every backticked `file:line` in `COMPATIBILITY.md`/`DECISIONS.md` must resolve; `:61-64,:92` ≥10 each; `:76` sibling paths need a `seam-runtime/` prefix; `:141-172` `ANCHORED` needles must hit **exactly once** within `CITATION_SLACK` (`:176`). **Phase 8** adds the vendored-file rule. |
 | `verify/docs/seam-event.v1.md` | Byte-verbatim vendored spec, pinned in its header. **Phase 9** refreshes it whole-file. Source of #73's citation drift. |
-| `scripts/check_vendored_spec.py:22-38` | Integrity (`:24-26`) / reachability (`:28-32`) / **currency** (`:34-38`) — fails on staleness by explicit decision. This is what will announce runtime P1a Phase 6 by reddening `spec-pin` (`.github/workflows/ci.yml:517-543`) on every PR. |
+| `scripts/check_vendored_spec.py:22-38` | Integrity (`:24-26`) / reachability (`:28-32`) / **currency** (`:34-38`) — fails on staleness by explicit decision. This is what will announce runtime P1a Phase 6 by reddening `spec-pin` (`.github/workflows/ci.yml:588-589`) on every PR. |
 | `python/seam_sdk/crypto.py:606-610` | `record_digest_v3` takes `context_digest` as an **opaque 32-byte sub-digest**, deliberately not reimplemented. **This is why ACDP P1a costs the digest layer nothing** — verified: `context_digest` appears only as an input (`:599,643,677`, `python/seam_sdk/admin.py:141`), and no context-provenance formula exists in `python/`, `ts/` or `verify/`. `:386` `_frame` · `:390` `_opt` · `:584` `_opt_bytes` · `:394` `record_digest_v2`. |
 | `verify/src/verify.rs:668-674` | `schema_version` dispatch (2 ⇒ v2, 3 ⇒ v3, else refuse); `:636-644` ceiling refusal. P1a keeps `schema_version = 3`, so **no new arm**. |
 | `python/tests/test_errors_is_import_light.py:87-100` | `crypto.py` may import only `cryptography`; `errors.py` only `grpc`. seam-runtime's `sdk-digest-parity` gate loads `crypto.py` standalone. **No phase may add an import to either.** |
@@ -402,7 +402,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 - **Delivered:** a `DECISIONS.md` entry that makes the forward reference Phase 7 left dangling
   true; `yank.yml`'s credential resolution fixed (`.github/workflows/yank.yml:55-60`); and
   `scripts/test_yank_gate.py` (12 tests) wired into `workflow-guards`
-  (`.github/workflows/ci.yml:585`).
+  (`.github/workflows/ci.yml:655-656`).
 - **Nothing was dispatched and nothing was deleted.** The scoping filters — exact version equality,
   the python+npm allowlist, the exact-name match keeping the org's Cargo crates unreachable — are
   byte-unchanged, and are now pinned by tests so that widening one is deliberate and visible.
@@ -479,7 +479,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   one citation repoint printed `ok` and were never written, because the script wrote once at the
   end and a later match failed first. Re-applied with a write after *every* edit.
 - **Fourth: nine literal `'\"'\"'` shell-quoting artifacts had leaked into `DECISIONS.md`** from
-  the heredoc that wrote it. Repaired; the one remaining match in the repo (`.github/workflows/ci.yml:297`) is
+  the heredoc that wrote it. Repaired; the one remaining match in the repo (`.github/workflows/ci.yml:311`) is
   legitimate quoting inside a `run:` block.
 - **Substantive corrections from the gate, not just hygiene:**
   - *Fail-closed was overstated.* "A token that is only the prefix strips to empty and is refused"
@@ -973,3 +973,394 @@ Seven of eight findings are fixed here; one is informational.
 
 Post-fix: python **600 passed**/17 skipped · scripts 81 · ruff clean · gate exit 0 against the
 BSR-shaped surface. No workflow sets any `SEAM_*` override (verifier checked independently).
+
+---
+
+# PROGRESS — `plans/consumer-decoders-and-event-surface.md`
+
+Checkpoint trail for the consumer-decoders / event-surface workstream. Appended rather than
+replacing the record above: the post-adoption and gate-blindness trails stay where they are.
+
+**Plan:** [`plans/consumer-decoders-and-event-surface.md`](plans/consumer-decoders-and-event-surface.md)
+— 5 phases across 3 issues:
+[#85](https://github.com/zer07labs/seam-sdk/issues/85),
+[#87](https://github.com/zer07labs/seam-sdk/issues/87),
+[#88](https://github.com/zer07labs/seam-sdk/issues/88).
+
+**Execution order = ranking:** 1 → 2 → 3 → 4 → 5. Phase 1 is a zero-diff issue comment. Phase 2
+(#85) is next because a red `integration` reddens `ci-ok` and blocks merge, so it is the only phase
+whose absence blocks a release. Phases 3-4 (#87 ask 2) close a fail-open decode gap a downstream repo
+works around today. Phase 5 (#88) closes a blindness gap on a contract nobody is currently changing.
+
+**PR strategy — 3 PRs, one per issue.** Chosen over one PR because the three share no file and no
+mechanism — `python/tests/` + `ci.yml`, then `python/seam_sdk/` + `ts/src/`, then
+`scripts/check-contract.sh` + `contract/` — and #85 must be mergeable without waiting on review of
+the other two while a release is blocked. Chosen over one-PR-per-phase because Phases 3 and 4 are the
+two halves of one decoder and must land together, and Phase 1 has no diff at all. The one place the
+three interact is this file, which every PR appends to: a conflict surface, not a coupling, and
+linear sequencing keeps it trivial.
+
+1. **Phase 1 + Phase 2** — #85. The issue comment rides along because it is zero-diff.
+2. **Phases 3 + 4** — #87 ask 2, both languages in one PR.
+3. **Phase 5** — #88.
+
+**Ground-truth corrections made while planning.** Recorded rather than smoothed over, because two of
+them change what the phases do:
+- `ts/src/client.ts:218` already carries `collectiveOutcomeOf` over a `DecisionResponse | SessionStep`
+  union. TypeScript is not a judgement call — it gets the twin.
+- The #85 failing set is the shared-8099 set **minus the first test**, not the whole set. Four tests
+  use the `server` fixture (in `python/tests/test_integration.py` at `960cf81`, lines 69/93/108/306 —
+  quoted rather than line-anchored, per #73, since Phase 2 rewrote the file out from under them); the three
+  that failed are the last three in collection order. This also refutes the issue's own "seamd
+  crashes on seal/authorize" hypothesis, since `test_full_round_trip` seals and passed.
+- Port 8115 is **also** shared, by `data_port, mgmt_port = 8115, 8116` and `addr = "127.0.0.1:8115"`
+  (`960cf81`, lines 143 and 226 of `python/tests/test_integration.py`), across three tests. A third
+  instance of the same defect that did not fire in the observed runs.
+- `python/tests/test_compatibility_citations_resolve.py:95-99` checks exactly three documents.
+  `plans/*.md` is not under citation resolution; this file is.
+- The `v0.7.71` publish run 33479578480 **skipped** `seam-verify → Cloudsmith`. The three jobs that
+  carry ask 1 succeeded.
+
+## Repo map — the files this plan touches
+
+| Path | Purpose / relevance |
+|---|---|
+| `python/seam_sdk/_collective.py:84` | `collective_outcome_of` — the shape Phase 3 mirrors: `HasField` gate at `:116`, frozen dataclass at `:52`, union signature at `:84-86`. |
+| `python/seam_sdk/_policy.py` | **Phase 3 creates.** `policy_enforcement_of(resp)` returning `None` iff absent. New module, not a `_collective.py` addition — that module's docstring is entirely about a growth policy this field does not have. |
+| `python/seam_sdk/__init__.py:10` | Where `_collective`'s exports are imported; Phase 3 adds `_policy`'s alongside, plus two `__all__` entries. |
+| `ts/src/client.ts:218` | `collectiveOutcomeOf` over the union. **Phase 4 inserts `policyEnforcementOf` immediately after it** so this citation survives; the `submitCommit` citation below cannot survive and is repointed in the same commit. |
+| `ts/src/index.ts:18` | The shadowed-generated-names comment. It opens with the word "Two" and lists three names; Phase 4 must update the count word as well as the list. |
+| `python/tests/test_collective_outcome.py:208` | The `SessionStep` arm — the model for `test_policy_enforcement.py`. |
+| `python/tests/test_integration.py` | At `960cf81`: `addr = "127.0.0.1:8099"` (line 48), hardcoded, four tests; `_wait` (26-34) proved only that *something* listens; a bare `terminate()` (66). **Phase 2's primary target** — all three are gone, so this row quotes rather than line-anchors. |
+| `python/tests/test_integration.py` (cont.) | At `960cf81`: `dual_plane`, 8115/8116 (line 143) — collided with `governed_server` (216, addr at 226). |
+| `python/tests/test_streamed_decode.py` | At `960cf81`: `dual_plane`, 8113/8114 hardcoded (line 259); bare `terminate()` (276). |
+| `python/tests/test_admin.py` | At `960cf81`: `_free_port()` (line 175) — the ephemeral-port helper that already existed and that Phase 2 made the single copy. Its docstring already said fixed ports collide. |
+| `python/tests/test_verify_attestation.py` | At `960cf81`: the second, verbatim copy of `_free_port()` (line 122). |
+| `python/tests/live_server.py` | **Phase 2 creates.** One spawn/readiness/teardown/log-capture helper for all four live suites. |
+| `ts/tests/integration.test.ts:51` | "Distinct ports avoid cross-test collisions" — the TS suite reached this conclusion and applied it everywhere. It has never shown this flake. |
+| `.github/workflows/ci.yml` (cont.) | At `960cf81`: the smoke step's `kill "$pid"` (line 290), immediately followed by `exit 0` — it never waited for the process it started. Replaced by `reap()`. |
+| `.github/workflows/ci.yml:336-347` | The python live step (the `pytest` line is `.github/workflows/ci.yml:346`). Phase 2 added an `if: failure()` log dump + artifact upload at the **end of the job**, after the TypeScript step at `.github/workflows/ci.yml:348` — a step is evaluated at its own position, so anything placed earlier cannot see a TypeScript failure. |
+| `.github/workflows/ci.yml:704` | `ADVISORY: integration,spec-pin`. Advisory means *may skip*, not *may fail* — a red `integration` still reddens `ci-ok`, which lists it at `.github/workflows/ci.yml:689`. |
+| `scripts/check-contract.sh:203` | `fields_python`; `:218` `fields_ts`. **Phase 5 parameterises both on stub path + package** — measured, they already yield 90/90 on the event stubs with zero one-sided entries. |
+| `scripts/check-contract.sh:240` | `manifest_fields` — its stripper claims every `#`-free line, which is why the event surface cannot share `contract/field-manifest.txt`. |
+| `scripts/check-contract.sh:472-476` | `--write-manifest` deletes `contract/expected-local-lag.txt` (the guard is `:472`, the `rm -f` is `:473`). The second reason the event surface needs its own file. |
+| `scripts/check-contract.sh:583` | The corrected comment #88 was filed from. **Phase 5 must rewrite it** or it becomes false. |
+| `contract/event-field-manifest.txt` | **Phase 5 creates.** 90 fields, 11 messages, zero enums, zero nested messages — all measured, not assumed. |
+| `python/tests/test_field_manifest_gate.py:54` | `_run()` — the scratch-copy-plus-env-override pattern Phase 5's tests mirror. Nothing may mutate the real gitignored stub trees. |
+| `python/tests/test_compatibility_citations_resolve.py:606` | The `ANCHORED` needle into `ts/src/client.ts`. With `CITATION_SLACK = 3` at `:612`, Phase 4's insertion breaks the `submitCommit` anchor at `:607` for any insertion of 4+ lines — except a 125-131-line window, where it drifts into the unrelated `:804` citation's slack and goes green for the wrong reason. |
+
+## Phase log
+
+### Phase 1 — record the evidence on #87 and re-scope it to ask 2 · **DONE**
+
+Zero-diff. Commented on #87 with the measured evidence and left it **OPEN** for ask 2.
+
+- `v0.7.70` carried `collective_outcome_of(resp: "pb.DecisionResponse")` and
+  `collectiveOutcomeOf(resp: DecisionResponse)`; `v0.7.71` carries the union in **both** languages.
+  Verified with `git show v0.7.70:...` / `git show v0.7.71:...` rather than from the changelog.
+- Publish run 33479578480 succeeded on `python wheel → Cloudsmith`, `npm → Cloudsmith` and
+  `install from Cloudsmith and run the vectors`; `seam-verify → Cloudsmith` was **skipped**, recorded
+  explicitly rather than rounded up to "the run was green".
+- Divergence from the plan, found while writing the comment: **`v0.7.69` and `v0.7.70` are tagged but
+  were never published** — both publish runs failed at the `CI is green for this commit` gate because
+  `spec pin` was red on those commits. The gate behaved correctly. It means `v0.7.71` is the first
+  *installable* tag carrying the union, not merely the first tagged one, and the comment says so.
+- Issue state after: `OPEN`, 1 comment. No file in the repo changed by this phase.
+
+### Phase 2 — one live-server helper: ephemeral ports, waited teardown, captured logs · **DONE**
+
+`python/tests/live_server.py` now owns spawning, readiness, teardown and log capture for all four
+live suites. 9 teardown sites and 4 duplicate `_wait` copies collapsed to one.
+
+**Red-first evidence, captured before the fix existed:**
+
+- The defect itself, hermetically, against the real prior `_wait`:
+  `_wait returned in 0.002s against a port the spawned process never bound; spawned proc exit code: 0`.
+  A decoy listener stands in for a draining server; the "binary" exits before binding anything.
+- `ci.yml` at `HEAD`: `reap` 0 occurrences, `if: failure()` 0, `upload-artifact` 0. After: 1 / 2 / 1.
+- The structural guard, run at `HEAD`, named `test_admin.py` and `test_verify_attestation.py` as
+  still holding duplicate `_free_port` definitions.
+
+**Two plan corrections, both found by measuring rather than by review:**
+
+- **Criterion 1's grep was wrong in both directions** and is replaced by an AST check. The pattern
+  `:(80|81|82)[0-9][0-9]` can never return nothing — the citation guard holds `127.0.0.1:8099` and
+  `192.168.1.10:8080` as *test data* for the "an IP is not a citation" rule — and it missed three of
+  the four collision sites, which are written as bare integers (`data_port, mgmt_port = 8115, 8116`)
+  with no colon. A criterion written to prove the ports were gone would have gone green with half of
+  them still there.
+- **The teardown count was nine, not seven.** The same count-over-list defect the plan flags for
+  `ts/src/index.ts` one phase later, committed in the plan's own prose.
+
+**A third correction, found when the guard first ran:** the `terminate`/`DEVNULL`/`Popen` detectors
+were line-based and flagged the live suites' *module docstrings*, which deliberately say "do not
+reintroduce a bare `proc.terminate()` here". A guard that punishes its own explanation is a guard
+people delete. All detectors are AST-based, so they see attribute access and not prose.
+
+**Citation drift, caught by the suite:** editing `ci.yml` moved the `must link NOTHING` anchor past
+`CITATION_SLACK`, reddening the two `ANCHORED` cases. All four `ci.yml` citations in the two guarded
+docs were re-measured with `grep -n` and repointed. Two of them still *resolved* and so were never
+red, yet pointed at unrelated lines; resolving is not the same as being right, and
+`test_each_citation_resolves` only ever asserted the former.
+
+*Correction to an earlier version of this note,* which claimed those two had been fixed by
+re-measuring: they had not. They were the old numbers shifted by the commit's own line delta —
+mechanically translated, which is the very failure the sentence was written to disown. The
+independent verifier caught it.
+
+*And a correction to that correction.* This note used to quote the line numbers it had just
+repointed to. Two of the three commits after it edited `ci.yml` again, so those numbers went stale,
+and a third verifier found the note asserting a value that no longer matched any document. **Line
+numbers have been removed from this paragraph entirely** — a record of
+*what was done* does not need to restate the moving target, and restating it guarantees the record
+goes wrong. The citations themselves are re-measured once, last, against a frozen `ci.yml`; the
+resolved values are in the round-3 record below.
+
+#### Verification round — verdict **GAP**, six findings, all closed
+
+A fresh Opus verifier read the branch against the plan and #85. It confirmed the helper's four
+properties by driving them with fake binaries, confirmed adoption was complete (all 9 teardown sites
+and all 4 `_wait` copies gone), and confirmed the diff touches no shipped code. It then found six
+defects, four of them in the halves that were never exercised locally:
+
+- **G1 · the log dump could not reach the logs.** `find … -maxdepth 3` over `/tmp`, but every fixture
+  passes pytest's `tmp_path` — `/tmp/pytest-of-runner/pytest-N/<test>0/seam-grpc-N.log`, four levels
+  down. The `if: failure()` step would have run and printed nothing, which is the exact failure it
+  exists to prevent. Now `-maxdepth 6`, with deduplicated roots (`find /tmp /tmp` printed everything
+  twice) and an explicit `::warning::` when the glob matches nothing.
+- **G2 · a TypeScript live failure produced no dump and no artifact.** Both `if: failure()` steps sat
+  *before* `typescript live round-trip`; a step runs at its own position, so they were evaluated and
+  skipped before the TS step ever failed. Both moved to the end of the job — the only position that
+  covers both live lanes.
+- **G3 · idiomatic Python evaded every detector.** The verifier wrote a replacement fixture that
+  reintroduced all three #85 defects and passed all 19 guard tests: `from subprocess import Popen,
+  DEVNULL` (bare names, not attributes), `from os import kill`, `proc.send_signal()`, and ports
+  `9113/9114` outside the hardcoded `8000-8999` window. Detectors now match bare names and import
+  aliases as well as attributes, cover `send_signal`/`killpg`/`posix_spawn`, and resolve dotted paths
+  so `subprocess.run` is caught while `asyncio.run` — which `python/tests/test_integration.py:245` genuinely uses
+  — is not. Ports are caught by three independent rules, the load-bearing one being *assignment to a
+  port-named target from an int literal*, at any number. Deliberately **not** "any int in the
+  registered-port range": `test_integration.py` legitimately holds `BudgetLimits(tokens=5000)`, and a
+  guard that reddens on a token budget is a guard someone deletes. The verifier's whole evasion
+  fixture is now a test.
+- **G4 · two citations were mechanically translated, not re-measured** (above).
+- **G5 · a child that died *during* a test was silent.** `_stop` short-circuits on an already-dead
+  process, so the one path that most needs the server's log — "accepted the connection and then
+  dropped it", #85's actual symptom — was the one path that never printed it. Teardown now writes the
+  tail to stderr, and does not raise: the caller is usually already failing, and raising from a
+  `finally` would replace that real failure with this one.
+- **G6 · stale prose 30 lines from the edit**, still saying the suites send output to `/dev/null`.
+  Rewritten to say what the smoke step is actually for now.
+
+Two nits were taken as well: the dead `_ports` dataclass field is gone, and `free_ports(n)` now holds
+every socket open until all the numbers are taken — allocating one at a time and closing each first
+lets the kernel legitimately return the same number twice, which would put both planes on one port.
+Both new tests were proved red-first against a reverted copy.
+
+**Verification:** python **790 passed / 17 skipped** (from 754) · `scripts/` guards **100** ·
+`ruff check` + `ruff format --check` clean · contract gate **exit 6** with the expected NOTE ·
+independence gate **exit 0** · `ci-ok`'s `needs:` byte-identical to `HEAD` · the failure-dump step
+executed under `bash -e` against a synthetic `pytest-of-runner` tree in all three of its paths
+(TMPDIR unset, TMPDIR duplicating `/tmp`, no logs present).
+
+**Not proven, and deliberately not claimed.** None of this proves the CI symptom is gone; N green
+re-runs would not either. It proves the mechanism existed, is removed, that the realistic regression
+is caught, and that the next occurrence leaves a log instead of destroying it. It does **not** prove
+the shape cannot return: the guard is name- and AST-based, so a port computed by arithmetic or a
+spawn helper imported under a new name still gets through, and the guard's own docstring says so
+rather than implying a sandbox.
+
+#### Verification round 2 — verdict **GAP** again, and the headline finding was this record
+
+A second independent Opus verifier confirmed G2, G5, G6 and both nits sound, and confirmed G1's depth
+arithmetic by executing the step. It then found that **the fix for G4 had scoped itself to two of the
+three citation-enforced documents** — and the third is this file. `python/tests/test_compatibility_citations_resolve.py`
+lists `COMPATIBILITY.md`, `DECISIONS.md` **and** `PROGRESS.md`. Phase 2's own edits to `ci.yml` and to
+the four live suites invalidated **thirteen** citations here, four of them within sixty lines of the
+paragraph above congratulating itself on re-measuring. The correction note was true and useless at the
+same time.
+
+All thirteen are fixed, but not all in the same way, and the difference is the point:
+
+- **Nine described state Phase 2 deleted** — `addr = "127.0.0.1:8099"`, the two `_free_port()` copies,
+  the smoke step's bare `kill "$pid"`. A line anchor cannot point at a line that no longer exists, so
+  those rows now **quote the construct and name the commit** (`960cf81`) instead of line-anchoring it.
+  That is the convention Phase 8 established for vendored files under #73, applied to the same problem
+  one layer in: content that moves out from under a citation should not be cited by position.
+- **Four described current state** and were simply re-measured.
+
+The verifier also found the gate cannot see the worst class of these. `CITATION` at
+`python/tests/test_compatibility_citations_resolve.py:109` requires a path with an extension, so the
+bare companion form — `` `:306` `` following a full citation — is never extracted. There are **156** of
+those across `DECISIONS.md` and `PROGRESS.md`, entirely unchecked, and one of them pointed past the end
+of a 261-line file while the suite stayed green. Not fixed here: resolving a bare anchor needs its
+antecedent, and the sweep would surface far more than this PR's scope. Filed as **#91**, along with the
+**22 pre-existing citations** the verifier found that resolve while pointing at the wrong construct
+and the four that point at outright wrong targets.
+
+Five code findings, all closed:
+
+- **H1 · the new registry check passed when its own scanner was blinded.** Pointing its glob at
+  `*.NOPE` made it scan zero files and report success — the exact "asserts an absence, green when the
+  detector broke" shape, committed *in the test written to close a blindness hole*, one function below
+  a test whose entire purpose is pinning a denominator. It now asserts the denominator too.
+- **H2 · the check caught only suites that volunteered.** It matched three substrings, so a fixture
+  spawning its own server under a different env var was invisible. The verifier dropped exactly that
+  file in and all 21 tests passed. The check is now AST-based with two independent signals: importing
+  `live_server`, or spawning a process **and** opening a socket. The conjunction is load-bearing —
+  four real files here (`test_conformance.py`, `test_packaging.py`, `test_field_manifest_gate.py`,
+  `test_errors_is_import_light.py`) spawn subprocesses legitimately and none touches a socket.
+- **H3 · it reddened on prose.** Being a substring scan, a file whose only content was
+  `"""See live_server for the shared spawn helper."""` failed it — the "guard punishes its own
+  explanation" failure that AST detection was chosen to avoid, reintroduced two functions away from
+  the docstring saying so. Fixed by the same AST rewrite.
+- **H4 · the port rule handled `ast.Assign` only.** `DATA_PORT: int = 9113` and a dataclass field both
+  evaded — and `LiveServer` is itself a dataclass, so that is the idiom a copied fixture reaches for.
+  `PORTS = [9113, 9114]` evaded while the tuple spelling did not. Both forms now covered.
+- **H5 · the docstring exemption was a coincidence, not an exemption.** It rested on a
+  `len(value) < 60` cutoff; `test_streamed_decode.py`'s docstring names 8113/8114 and sat **27
+  characters** from reddening the build. Docstrings are now exempt by node identity, which also
+  un-blinds the string rule to a fixed port buried in a long argv literal.
+
+Three CI robustness holes, all closed: `find` had no `-type f` and `cat` no `|| true`, so one
+unreadable match aborted the whole dump under `bash -e` (reproduced); the dedup was exact-match only;
+and the artifact step's static glob could not follow `$TMPDIR` even though the dump step had just been
+taught to. Every found log is now **staged into one fixed directory** that the upload points at, so
+the artifact no longer depends on where pytest put `tmp_path`.
+
+**And a fourth vacuous criterion, in this plan.** Phase 2's acceptance criterion 1 demanded
+`grep -rnE '\b(80|81|82)[0-9][0-9]\b'` over the five live files return **nothing** — over files whose
+docstrings deliberately name the old ports so the history stays with the code. It could not go green
+without deleting the explanation. That is the third criterion in this plan satisfiable only by
+damaging what it measures, and the paragraph immediately below it in `plans/consumer-decoders-and-event-surface.md`
+is a warning box about the previous one. Rewritten: the AST guard is the gate, the grep is evidence a
+human reads.
+
+**Verification:** `scripts/` guards **100** · `ruff` clean · contract gate **exit 6** with the
+expected NOTE · independence gate **exit 0** · shipped code untouched · H1 and H2 both proved
+red-first on scratch copies · the hardened dump step executed under `bash -e` against a tree
+containing a *directory* named `seam-grpc-*.log`, which aborted the previous version. (The python
+count this paragraph used to quote was wrong by one and is superseded by the round-3 figure below;
+it is not restated here, for the same reason the line numbers above are not.)
+
+#### Verification round 3 — verdict **GAP**, and the finding that matters is the *pattern*
+
+A third verifier was asked one question above all: has this converged, or is each repair producing
+its own defects? The answer was flat, and the diagnosis is worth more than any individual finding:
+
+> *Each round fixes the demonstrated instance and calibrates only against the negative set.* A
+> reviewer exhibits input X; the fix is tuned until X is caught and the four known-innocent files
+> stay green; **nobody re-runs the new detector against the true positives already in the
+> repository.**
+
+That is a fifth instance of the through-line in `plans/gate-blindness-hardening.md` — a check whose
+result is decided by something other than the property it names — and it produced the round's
+headline finding:
+
+- **F1 · the registry check still caught only suites that volunteered.** Round 2 replaced three
+  substrings with "spawns **and** imports `socket`/`grpc`". **Three of the four suites in
+  `LIVE_SUITES` import neither.** The verifier took the real `test_integration.py`, removed its
+  `live_server` import, inlined a raw `Popen` with `DEVNULL` and fixed ports 9113/9114 — all three
+  #85 defects, in the shape of the file it was copied from — dropped it into `python/tests/`, and the
+  whole guard reported **23 passed**. One line of measurement against the registered suites would
+  have killed that signal before it shipped.
+
+  The discriminator is now `connect` — chosen by measuring **both** sets: present in all four
+  registered live suites, absent from all four files that spawn subprocesses for ordinary reasons. A
+  live suite is one that spawns a server *and then connects a client to it*; that is a definition,
+  not a correlation.
+
+  **The durable half of the fix is `test_the_detector_is_calibrated_against_real_live_suites`.** It
+  de-adopts each registered suite — tears out the helper import, puts a raw `Popen` back — and
+  asserts the detector catches all four. A future narrowing cannot pass without being checked against
+  the files it exists to protect. Proved by dropping the verifier's exact file in: the guard now goes
+  red.
+
+- **F2 · `mkdir -p "$stage"` was unguarded**, in the commit whose stated purpose was removing
+  `bash -e` aborts from this step. With `$stage` present as a regular file the step exited 1 before
+  printing a single log — and swallowed the `::warning::` that reports finding nothing. Guarded, and
+  re-executed against that exact state.
+
+- **F3 · round 2's own `ci.yml` edit re-broke two `DECISIONS.md` citations** that round 1 had
+  correctly fixed, by shifting `workflow-guards` twelve lines and repointing only the two citations it
+  happened to be looking at. `PROGRESS.md` already stated the right rule — *repoint once, last, with
+  the cited file frozen* — and the commit did not follow it. All fifteen `ci.yml` citations across the
+  three enforced documents have now been re-resolved in one pass against a frozen file, and each was
+  read against its citing sentence rather than merely checked for range.
+
+- **F4 · three false statements in this record**, including a python test count off by one and a
+  quoted line number that had gone stale. Fixed above by removing the numbers, not by updating them.
+  (A fourth round measured this claim too: of the values quoted, exactly one had actually gone stale —
+  the others were still current at the time. The correction was itself slightly overstated, which is
+  its own small instance of the thing being corrected.)
+
+Also closed: `_assigned_pairs` missed port-named **keyword arguments**, **function defaults** and
+**dict entries** — and the commit that added `AnnAssign` justified itself with "`LiveServer` is a
+dataclass, so that is the idiom a copied fixture reaches for", while *constructing* that dataclass and
+`field(default=...)` are both keyword arguments the same argument should have covered (F5).
+`import subprocess as sp; sp.run(...)` evaded, because `ast.Import` aliases were never resolved (F6).
+`live_server.py` was exempt from the **port** rule as well as the spawn rules, leaving a hardcoded
+port in the one file where it would put every suite back on a single socket (F7). And
+`test_the_helper_is_the_only_copy_of_free_port` was an unfloored substring scan — structurally
+identical to the test round 2 had just fixed, in a file round 2 edited (F8).
+
+Confirmed sound by this round and not touched: `_docstring_ids` is correct in both directions across
+all eight docstring positions and exempts nothing that is not a docstring; all ten "At `960cf81`"
+quote-plus-commit rows verify exactly against `git show`; the Phase 2 criterion-1 rewrite is real and
+not a fifth vacuity (the grep returns exactly the six docstring lines the plan names).
+
+**Verification:** `scripts/` guards **100** · `ruff` clean · contract gate **exit 6** with the
+expected NOTE · independence gate **exit 0** · shipped code untouched · F1 proved red-first by
+dropping a de-adopted `test_integration.py` into a scratch tests directory · F2 re-executed under
+`bash -e` against a blocked staging path · **fourteen** of the fifteen `ci.yml` citations re-resolved
+against the frozen file — see round 4 for the fifteenth.
+
+#### Verification round 4 — **GAP, but a different shape**, and the lane that broke every round is closed
+
+Round 3 said the rate was flat and the kind identical. Round 4 found that is no longer true, and the
+difference is the useful signal:
+
+- **The CI/shell lane is closed.** It produced a finding in all three prior rounds. The verifier
+  executed the dump step under `bash -e` against eight adversarial states — `$stage` as a regular
+  file, `$stage` unwritable, the root unwritable, an unreadable log, a *directory* named
+  `seam-grpc-*.log`, zero matches, sixty matches, the smoke log as a directory — and got **exit 0 in
+  all eight**, with the `::warning::` still printed in both no-match cases. `HEAD~1` exits **1** on the
+  first of those, so the round-3 fix is real and no unguarded command remains.
+- **The citation lane went 14/15 in outcome but the *claim* was still false.** `PROGRESS.md:405` cited
+  `ci.yml` line 588 for "`scripts/test_yank_gate.py` wired into `workflow-guards`" — written without
+  backticks here, because a *wrong* citation quoted inside a citation-enforced document is itself
+  extracted and checked, and would have to be made right to be discussed. That line is `spec-pin:` — a
+  different job's header. The value moved by roughly seventy lines and got the commit's own `+3`
+  delta instead: the mechanical translation the same commit says it stopped doing, on the one citation
+  of the eight that needed a real measurement. It resolves, so the gate stayed green. Now `655-656`.
+- **And one new same-kind defect, in the commit that names the pattern.** `_import_aliases`, added to
+  widen the detector, *narrowed* it: recording a mapping for unaliased imports made `import os.path`
+  resolve `os.system` to `os.path.system`, losing four of the five `SPAWN_DOTTED` spellings. It
+  survived because the red-first proof exercised **one** of the five — the proof was as narrow as the
+  bug. Fixed to alias-only, and the proof now walks every entry, each also through an alias, plus the
+  `import os.path` case directly. Reverting the one-line fix turns it red.
+
+Two claims corrected rather than defended. **The calibration test's guarantee was overstated**: the
+verifier swapped `CONNECT_NAMES` for a strictly worse discriminator and all 25 tests still passed,
+because `_deadopt` *injects* the tokens (`Popen`, `DEVNULL`, `9113`) that a narrowing might key on —
+the calibration corpus is generated by the guard it polices. It does catch the round-3 regression
+exactly, which nothing before it did, and that is now what it claims. Calibrating against the real
+pre-#85 fixtures would close the rest and cannot be done from git: CI checks out shallow, so `960cf81`
+is unfetchable there. **And `connect` is a name list, not a definition** — `connect_ex` plus a locally
+wrapped client evades it. The prose said "a definition, not a correlation"; it no longer does.
+
+Also taken: `"port" in name` was a substring test, so `support=2000`, `report=5000`, `transport=1500`
+and `{"reports": 4000}` all reddened — and round 3 had extended that test from assignments to every
+keyword argument, default and dict key in the guarded files. It matches whole words now (`portfolio`
+stays green). The `free_port` uniqueness scan missed `free_ports` — the plural the helper actually
+exports, and therefore the name a re-implementation would copy — while its own docstring enumerated
+three singular spellings.
+
+Left as **#92**, per the verifier's own recommendation that a fifth round has negative marginal
+return: the real-fixture calibration corpus, `connect_ex`, and the false-positive margin (eleven files
+here already call a `CONNECT_NAME` with zero spawns; the sets are disjoint today and that is the whole
+of the safety margin).
+
+**Verification:** python **790 passed / 17 skipped** · `scripts/` guards **100** · `ruff` clean ·
+contract gate **exit 6** with the expected NOTE · independence gate **exit 0** · shipped code
+untouched · both new fixes proved red-first by reverting them on scratch copies.

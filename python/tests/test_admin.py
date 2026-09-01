@@ -8,14 +8,13 @@ tenant. The live tests are env-gated exactly like `test_integration.py`:
   * skipped otherwise (a running server can't be assumed to have the mgmt plane bound).
 """
 
-import os
-import socket
-import subprocess
-import time
+import contextlib
 from concurrent import futures
 
 import grpc
 import pytest
+
+from live_server import spawn_server
 
 from seam_sdk import (
     Agent,
@@ -161,55 +160,33 @@ def test_erase_subject_confirmed_forwards_now_millis(recording_admin):
 # ── Live: erasure preview→confirm→erase + bearer auth (env-gated) ────────────────────────────────
 
 
-def _wait(port: int, timeout: float = 8.0):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            socket.create_connection(("127.0.0.1", port), 0.1).close()
-            return
-        except OSError:
-            time.sleep(0.05)
-    raise RuntimeError(f"server never came up on {port}")
+@contextlib.contextmanager
+def _spawn(log_dir, registry_snapshot: str | None = None):
+    """A live seam-grpc with BOTH planes bound, on OS-allocated ports.
 
-
-def _free_port() -> int:
-    """An OS-allocated ephemeral port — the spawned-binary counterpart of the in-process suites'
-    ``add_insecure_port("127.0.0.1:0")``. Fixed port numbers collide with whatever else is running
-    (another test worker, a leaked server) and fail with an unrelated-looking bind error."""
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def _spawn(data_port: int, mgmt_port: int, registry_snapshot: str | None = None):
+    Ports, readiness, teardown and log capture all belong to ``live_server.spawn_server`` — see its
+    docstring for the #85 failure that consolidated them. What stays here is only what is specific to
+    the management plane: the signed-snapshot env that CLOSES the plane.
+    """
     from operator_token import sign_snapshot
 
-    binary = os.environ.get("SEAM_GRPC_BIN")
-    if not binary:
-        pytest.skip("set SEAM_GRPC_BIN to run the live management-plane test")
-    env = {
-        **os.environ,
-        "SEAM_GRPC_LISTEN": f"127.0.0.1:{data_port}",
-        # The mgmt plane binds when this is set; SEAM_DEV_INSECURE lets it bind dev-open. Installing an
-        # `operator_keys` trust root via SEAM_REGISTRY_SNAPSHOT instead CLOSES the plane: every request must
-        # then carry a valid compact-JWS operator token (the shared SEAM_MGMT_TOKEN bearer was removed in
-        # seam-runtime #175). This path is live on both pre- and post-#175 runtimes.
-        "SEAM_GRPC_MGMT_LISTEN": f"127.0.0.1:{mgmt_port}",
-        "SEAM_DEV_INSECURE": "1",
-    }
+    env_extra: dict[str, str] = {}
     if registry_snapshot:
         # Signed, not merely handed over: a trust-bearing snapshot is refused unsigned, and the
         # runtime will not boot at all. See `sign_snapshot`.
         pubkey, sig_path = sign_snapshot(registry_snapshot)
-        env["SEAM_REGISTRY_SNAPSHOT"] = registry_snapshot
-        env["SEAM_REGISTRY_SNAPSHOT_SIG"] = sig_path
-        env["SEAM_SNAPSHOT_PUBKEY"] = pubkey
-    proc = subprocess.Popen(
-        [binary], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-    )
-    _wait(data_port)
-    _wait(mgmt_port)
-    return proc
+        env_extra = {
+            "SEAM_REGISTRY_SNAPSHOT": registry_snapshot,
+            "SEAM_REGISTRY_SNAPSHOT_SIG": sig_path,
+            "SEAM_SNAPSHOT_PUBKEY": pubkey,
+        }
+    # The mgmt plane binds because spawn_server(mgmt=True) sets SEAM_GRPC_MGMT_LISTEN, and
+    # SEAM_DEV_INSECURE lets it bind dev-open. Installing an `operator_keys` trust root via
+    # SEAM_REGISTRY_SNAPSHOT instead CLOSES the plane: every request must then carry a valid
+    # compact-JWS operator token (the shared SEAM_MGMT_TOKEN bearer was removed in seam-runtime
+    # #175). This path is live on both pre- and post-#175 runtimes.
+    with spawn_server(mgmt=True, log_dir=log_dir, env_extra=env_extra) as srv:
+        yield srv
 
 
 def _seal_one(data_addr: str) -> tuple[str, str]:
@@ -226,10 +203,9 @@ def _seal_one(data_addr: str) -> tuple[str, str]:
     return agent.aid, dec.decision_id
 
 
-def test_erasure_preview_confirm_erase():
-    data_port, mgmt_port = _free_port(), _free_port()
-    proc = _spawn(data_port, mgmt_port)
-    try:
+def test_erasure_preview_confirm_erase(tmp_path):
+    with _spawn(tmp_path) as srv:
+        data_port, mgmt_port = srv.data_port, srv.mgmt_port
         subject, decision_id = _seal_one(f"127.0.0.1:{data_port}")
         admin = SeamAdminClient.connect(
             f"127.0.0.1:{mgmt_port}"
@@ -261,23 +237,18 @@ def test_erasure_preview_confirm_erase():
         after = admin.preview_erasure(TENANT, subject)
         assert decision_id in after.already_erased
         assert decision_id not in after.would_erase
-    finally:
-        proc.terminate()
 
 
-def test_erase_subject_confirmed_convenience():
-    data_port, mgmt_port = _free_port(), _free_port()
-    proc = _spawn(data_port, mgmt_port)
-    try:
+def test_erase_subject_confirmed_convenience(tmp_path):
+    with _spawn(tmp_path) as srv:
+        data_port, mgmt_port = srv.data_port, srv.mgmt_port
         subject, decision_id = _seal_one(f"127.0.0.1:{data_port}")
         admin = SeamAdminClient.connect(f"127.0.0.1:{mgmt_port}")
         cert = admin.erase_subject_confirmed(TENANT, subject)
         assert decision_id in cert.erased
-    finally:
-        proc.terminate()
 
 
-def test_management_operator_token_auth():
+def test_management_operator_token_auth(tmp_path):
     """The management plane authenticates compact-JWS operator tokens against the installed `operator_keys`
     root (rt-D / CP-18d; the shared `SEAM_MGMT_TOKEN` bearer was removed in seam-runtime #175). A missing,
     malformed, or tampered token is refused; a valid one passes. Designed to hold against BOTH pre- and
@@ -291,10 +262,8 @@ def test_management_operator_token_auth():
         tamper_signature,
     )
 
-    data_port, mgmt_port = _free_port(), _free_port()
-    proc = _spawn(data_port, mgmt_port, registry_snapshot=REGISTRY_SNAPSHOT_PATH)
-    mgmt_addr = f"127.0.0.1:{mgmt_port}"
-    try:
+    with _spawn(tmp_path, registry_snapshot=REGISTRY_SNAPSHOT_PATH) as srv:
+        mgmt_addr = srv.mgmt_addr
         # preview_erasure requires the `erasure:preview` scope (non-destructive → no jti needed).
         token = mint_operator_token(["erasure:preview"])
         subject = (
@@ -322,16 +291,13 @@ def test_management_operator_token_auth():
         ok = SeamAdminClient.connect(mgmt_addr, token=token)
         preview = ok.preview_erasure(TENANT, subject)
         assert isinstance(list(preview.would_erase), list)
-    finally:
-        proc.terminate()
 
 
-def test_stream_events_drains_decision_sealed():
+def test_stream_events_drains_decision_sealed(tmp_path):
     """Sealing a decision emits a DECISION_SEALED event to the seam-event.v1 outbox; drain mode
     (follow=False) streams the current backlog and closes."""
-    data_port, mgmt_port = _free_port(), _free_port()
-    proc = _spawn(data_port, mgmt_port)
-    try:
+    with _spawn(tmp_path) as srv:
+        data_port, mgmt_port = srv.data_port, srv.mgmt_port
         _, decision_id = _seal_one(f"127.0.0.1:{data_port}")
         admin = SeamAdminClient.connect(f"127.0.0.1:{mgmt_port}")
 
@@ -341,5 +307,3 @@ def test_stream_events_drains_decision_sealed():
         assert sealed, f"kinds seen: {[e.kind for e in events]}"
         assert any(e.decision_id == decision_id for e in sealed)
         assert sealed[0].HasField("payload")
-    finally:
-        proc.terminate()
