@@ -164,7 +164,7 @@ this by trying.
 
 | Language | How you get it | Versioned? | Status |
 |---|---|---|---|
-| **Python** (`seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:367`) | Yes | **Published + supported** |
+| **Python** (`seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:381`) | Yes | **Published + supported** |
 | **TypeScript** (`@zer07labs/seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:199`, `ts/package.json:12`) | Yes | **Published + supported** |
 | **Go** | Module proxy, from the `go/vX.Y.Z` tag (`.github/workflows/release-on-runtime.yml:126`) | Tag only — no in-tree version | Resolvable, crypto shim only |
 | **Java** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |
@@ -195,9 +195,9 @@ gencode — though **not** through this gap: its CI was *red* on exactly that fl
 `ci-green` closes the path that release actually took. This gap is the one a *genuinely green*
 release could still have shipped through, and nothing closed it until Phase 6. Two steps close it now:
 the floor guards run again after the
-publish job's own generation (`.github/workflows/publish.yml:340`), and the built wheel is then
+publish job's own generation (`.github/workflows/publish.yml:354`), and the built wheel is then
 installed into a venv with `protobuf` pinned at the floor it declares and imported there
-(`.github/workflows/publish.yml:413`) — the only check that answers *is this metadata true?*, since
+(`.github/workflows/publish.yml:428`) — the only check that answers *is this metadata true?*, since
 every other smoke installs unconstrained and so satisfies any gencode by construction. Both are
 executed against stub trees by `scripts/test_publish_gate.py`, including the red case.
 

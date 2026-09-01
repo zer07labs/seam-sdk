@@ -418,7 +418,7 @@ worth stating plainly: five artifacts is a larger footprint than four, but it al
 ### The `yank.yml` token fix, and why a latent bug in a safety tool matters
 
 `yank.yml` resolved its credential as `${CLOUDSMITH_API_KEY:-$CARGO_REGISTRIES_ZER07LABS_TOKEN}`,
-without stripping the `"Bearer "` prefix the org Cargo token carries — a strip `.github/workflows/publish.yml:371`
+without stripping the `"Bearer "` prefix the org Cargo token carries — a strip `.github/workflows/publish.yml:385`
 has always done. The effect: Cloudsmith receives `X-Api-Key: Bearer …`, returns 401, and `curl -sf`
 under `set -euo pipefail` aborts before any DELETE.
 
@@ -484,9 +484,9 @@ resolve the *newest* runtime, which by construction satisfies any gencode; neith
 `0.7.43`, and neither could catch its successor.
 
 So the publish job does two things instead. It re-runs the floor guards against the stubs it just
-generated (`.github/workflows/publish.yml:340`), and it installs the built wheel into a clean venv
+generated (`.github/workflows/publish.yml:354`), and it installs the built wheel into a clean venv
 with `protobuf` pinned at the floor the wheel itself declares, then imports the generated module
-there (`.github/workflows/publish.yml:413`). The second is the one that asks *is this metadata
+there (`.github/workflows/publish.yml:428`). The second is the one that asks *is this metadata
 true?* — it reproduces exactly the resolution a consumer gets when their dependency closure caps
 protobuf at our stated minimum. The floor is parsed out of the wheel's own `pyproject.toml` rather
 than hardcoded, and an unparseable pin **refuses to publish** rather than falling back to an

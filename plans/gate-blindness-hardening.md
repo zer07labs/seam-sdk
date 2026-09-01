@@ -115,7 +115,24 @@ that `buf breaking` upstream does *not* cover additive enum values, which is why
 
 ### Phase 2 — the grpcio half of the #52 defect class
 
-**Status:** TODO
+**Status:** DONE — three divergences, all recorded rather than smoothed over:
+
+1. **`COMPATIBILITY.md` and `DECISIONS.md` were edited, and they are not in this phase's Files list.**
+   Rewriting the `publish.yml` comment block shifted line numbers and drifted six citations into it.
+   That is self-inflicted and had to be repaired in the same commit, not deferred.
+2. **That drift is live evidence for Phase 6, produced by accident here.** The guard caught the
+   `COMPATIBILITY.md` citation because it is ANCHORED. The three `DECISIONS.md` citations still
+   *resolved* — the lines existed — while pointing at the wrong content, and no check noticed. The
+   distinction between "this citation resolves" and "this citation says what it claims" is exactly
+   what Phase 6 is about, and it just failed in the direction Phase 6 predicts.
+3. **`test_the_floor_pinned_install_has_no_unconstrained_fallback` had to be updated, not merely
+   extended** — its literal-substring assertion necessarily breaks once grpcio is pinned in the same
+   install line. What it guards (single install, no unconstrained fallback) is preserved and widened
+   to cover grpcio.
+
+Also worth knowing for future work: `scripts/test_publish_gate.py` needs `pyyaml`, which
+`python/.venv` does not carry. CI builds a separate venv for it (`ci.yml`'s `workflow-guards` job);
+running it from `python/.venv` fails for reasons that have nothing to do with the code under test.
 
 **Delivers:** publish-time grpcio floor verification with the same two-part shape the protobuf half
 already has: a derivation that cannot be fooled by an unrecognised calling convention, and an
