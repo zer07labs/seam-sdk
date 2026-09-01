@@ -311,3 +311,95 @@ VoteRequest/session_id
 VoteRequest/usage
 VoteRequest/value
 VoteRequest/voter
+#
+# ENUM-VALUE MANIFEST — the same discipline, one level below a FIELD
+# --------------------------------------------------------------------
+# `buf breaking` in seam-runtime (`.github/workflows/ci.yml:168-176` there) treats an ADDITIVE enum
+# value as a compatible change and passes it BY DESIGN — proto3 enums are open by convention, so
+# nothing upstream refuses a new `COLLECTIVE_VERDICT_VETOED` landing on the wire. This SDK does not get
+# that convention for free: `python/seam_sdk/_collective.py:19` and `python/seam_sdk/errors.py:104` are
+# deliberately fail-closed and raise `UnknownCollectiveVerdictError` on any value they do not
+# recognise. So a legitimate, additive, buf-breaking-approved runtime change reaches this SDK's
+# consumers as a hard error on a real response — the exact "value stored twice, one copy stale"
+# failure the FIELD manifest above exists to catch, one layer down the same message.
+#
+# Declared here for the same three reasons the FIELD manifest is: it is a second, independently
+# derived copy of the surface (read from generated stubs, never from the .proto source, for the same
+# reason as the field extractors — the stubs are what this SDK actually compiles against, not what the
+# stubs merely claim to come from); it is checked in BOTH directions (a value the manifest expects and
+# the stubs lack is stale generation or a REMOVED value; a value the stubs carry and the manifest does
+# not is a new one nobody has decided about yet); and it is checked PER LANGUAGE, independently, so a
+# stale ts/gen beside a fresh python/_gen cannot vouch for it.
+#
+# SPELLING, AND WHY IT SHARES THIS FILE RATHER THAN A SECOND ONE
+# -----------------------------------------------------------------
+# `<Enum>#<VALUE>`. `#` cannot occur in a proto message name, field name, or enum/value name, so a
+# single flat manifest stays unambiguously partitioned between the FIELD lines above (`<Message>/
+# <field>`, never a `#`) and the ENUM lines below (always exactly one `#`), with no separator
+# collision. It also does not collide with this file's own comment convention: a comment is a line
+# whose FIRST non-whitespace character is `#` (`grep -vE '^\s*(#|$)'`, the filter both
+# `manifest_fields` and `manifest_enums` in scripts/check-contract.sh apply before doing anything
+# else) — an enum line like `AuthorizeVerdict#ALLOW` begins with a letter, so it survives that filter
+# exactly like a field line does, and the two `manifest_*` readers then split what remains by whether
+# `#` appears in it at all. Rejected: a separate `contract/enum-manifest.txt` — a second file is a
+# second thing to forget to update; this file is already the one declaration of "the surface this SDK
+# expects."
+#
+# WHERE THE VALUES COME FROM (READ THE GENERATED STUB, NEVER THE .proto)
+# ---------------------------------------------------------------------
+# Python: `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi`, the `<VALUE>: _ClassVar[<Enum>]` lines
+# under each `class <Enum>(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):`. TypeScript:
+# `ts/gen/seam/api/v1/seam_pb.ts`, the `@generated from enum value: <VALUE> = <n>;` doc comment — read
+# from the GENERATOR'S OWN record of the contract, not the TS identifier, because protobuf-es strips
+# the enum's common prefix from `AuthorizeVerdict`'s bare TS members (`ALLOW`, not
+# `AUTHORIZE_VERDICT_ALLOW`) and could reformat the identifier without the contract itself changing;
+# the doc comment cannot drift from the wire value the way the surrounding TypeScript syntax could.
+#
+# `UNSPECIFIED` ZERO VALUES ARE DECLARED, NOT FILTERED
+# --------------------------------------------------------
+# A runtime removing the zero value is exactly as real a breaking change as removing any other one —
+# more so here, since `AuthorizeVerdict`'s and `CollectiveVerdict`'s own doc comments make
+# `UNSPECIFIED` the mandatory fail-safe default a client MUST route to on anything it does not
+# recognise. Filtering it out would make the gate blind to the one value every OTHER value's
+# fail-closed behaviour depends on still meaning "unspecified."
+#
+# GENERATION SKEW IS REPORTED SEPARATELY FROM MANIFEST DRIFT
+# ----------------------------------------------------------
+# If Python's stubs carry a value TS's do not (or the reverse), that is NOT "the manifest is stale" —
+# both languages regenerate from the same contract in the same push, so a value present in one and
+# absent from the other means one tree's generation went stale while the other's did not.
+# `--write-manifest` writes only from Python (below), so this class of failure would otherwise
+# silently pass through the escape hatch as if it were an ordinary manifest update.
+# `scripts/check-contract.sh` reports it under its own "GENERATION SKEW" heading, distinct from
+# MISSING/NOT IN THE MANIFEST, so it is never mistaken for a decision to make.
+#
+# NO ENUM IS NESTED INSIDE A MESSAGE TODAY — GUARDED, NOT ASSUMED FOREVER
+# ----------------------------------------------------------------------
+# The extractors track "current enum" the same structural way the field extractors track "current
+# message" — a nested one would vanish from BOTH sides at once, symmetrically, and the gate would stay
+# green while going blind to it, the same trap the FIELD manifest's map-entry exclusion above warns
+# about. `scripts/check-contract.sh` asserts none exist and exits loud, not silently, the first time
+# one does.
+#
+# WHICH SIDE `--write-manifest` WRITES FROM
+# ------------------------------------------
+# Python, same as the FIELD section and the RPC manifest, appended to the SAME file after the field
+# lines. TypeScript is the cross-check, never the source, for the same reason as the field manifest.
+#
+# TO REGENERATE (after deciding, not before):
+#     scripts/check-contract.sh --write-manifest
+AuthorizeVerdict#ALLOW
+AuthorizeVerdict#AUTHORIZE_VERDICT_UNSPECIFIED
+AuthorizeVerdict#DENY
+AuthorizeVerdict#ESCALATE
+AuthorizeVerdict#TRANSFORM
+BallotChoice#BALLOT_CHOICE_ABSTAIN
+BallotChoice#BALLOT_CHOICE_APPROVE
+BallotChoice#BALLOT_CHOICE_REJECT
+BallotChoice#BALLOT_CHOICE_UNSPECIFIED
+CollectiveVerdict#COLLECTIVE_VERDICT_APPROVED
+CollectiveVerdict#COLLECTIVE_VERDICT_DECLINED
+CollectiveVerdict#COLLECTIVE_VERDICT_ESCALATED
+CollectiveVerdict#COLLECTIVE_VERDICT_NO_VOTES
+CollectiveVerdict#COLLECTIVE_VERDICT_SPLIT
+CollectiveVerdict#COLLECTIVE_VERDICT_UNSPECIFIED

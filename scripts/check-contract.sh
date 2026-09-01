@@ -57,7 +57,9 @@
 #
 # Exit codes: 0 OK · 1 RPC/Authorize/admin surface stale · 2 streamed-payload fields stale (STREAM=1) ·
 #             3 stubs not generated at all · 4 ReportEventsConsumed stale (EVENTS=1) ·
-#             5 RPC surface disagrees with contract/rpc-manifest.txt.
+#             5 RPC surface disagrees with contract/rpc-manifest.txt ·
+#             6 field or enum-value surface disagrees with contract/field-manifest.txt ·
+#             7 a nested enum was found (the extractors assume none exist — see assert_no_nested_enums).
 #
 # Run it AFTER `make generate` / `make generate-local` — it inspects the emitted stubs, it does not
 # generate them.
@@ -230,7 +232,81 @@ fields_ts() {
 }
 
 manifest_fields() {
-  grep -vE '^\s*(#|$)' "$FIELD_MANIFEST" | LC_ALL=C sort -u
+  grep -vE '^\s*(#|$)' "$FIELD_MANIFEST" | grep -v '#' | LC_ALL=C sort -u
+}
+
+# ── Enum-value extraction, one level below FIELD, same discipline ─────────────────────────────────────
+# Same design as fields_python/fields_ts: read each language's stubs INDEPENDENTLY, never derive one
+# from the other, spelling `<Enum>#<VALUE>` (see contract/field-manifest.txt's own header for why `#`
+# and why it shares that file rather than a second one).
+#
+# Python reads the `<VALUE>: _ClassVar[<Enum>]` lines under each
+# `class <Enum>(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):`. Tracking "current enum" the same
+# column-0-header way fields_python tracks "current message" — and with the same blind spot: an enum
+# NESTED inside a message would vanish silently. assert_no_nested_enums (below) turns that into a loud
+# failure instead of a trusted assumption.
+enums_python() {
+  awk '
+    /^class [A-Za-z0-9_]+\(int, metaclass=_enum_type_wrapper\.EnumTypeWrapper\):/ {
+        cls=$2; sub(/\(int,$/,"",cls); next
+    }
+    /^class / { cls=""; next }
+    /^    [A-Z0-9_]+: _ClassVar\[[A-Za-z0-9_]+\]/ {
+        if (cls == "") next
+        v=$1; sub(/:$/,"",v); print cls "#" v
+    }
+  ' "$PY_GEN" | LC_ALL=C sort -u
+}
+
+# TS reads protobuf-es's `@generated from enum value: <VALUE> = <n>;` doc comment, under the enclosing
+# `@generated from enum seam.api.v1.<Enum>` doc comment — the GENERATOR'S OWN record of the value name,
+# not the TS identifier: protobuf-es strips `AuthorizeVerdict`'s common prefix from its bare TS members
+# (`ALLOW`, not `AUTHORIZE_VERDICT_ALLOW`), so the identifier alone cannot be compared against Python's
+# unstripped `_ClassVar` names, and TS syntax could be reformatted without the contract changing under it.
+enums_ts() {
+  awk '
+    /@generated from enum seam\.api\.v1\.[A-Za-z0-9_]+$/ {
+        m=$0; sub(/^.*@generated from enum seam\.api\.v1\./,"",m); cls=m; next
+    }
+    /@generated from enum value: / {
+        if (cls == "") next
+        line=$0
+        sub(/^.*@generated from enum value: /,"",line)
+        sub(/ *= *[0-9]+;.*$/,"",line)
+        print cls "#" line
+    }
+  ' "$TS_GEN" | LC_ALL=C sort -u
+}
+
+manifest_enums() {
+  grep -vE '^\s*(#|$)' "$FIELD_MANIFEST" | grep '#' | LC_ALL=C sort -u
+}
+
+# ── Nested-enum guard ───────────────────────────────────────────────────────────────────────────────
+# No enum is nested inside a message today — only nested TYPES are the two FeaturesEntry map
+# synthetics, and those are messages, not enums. enums_python/enums_ts above assume that structurally
+# (column-0 class headers in Python, un-dotted `seam.api.v1.<Enum>` doc-comment anchors in TS) exactly
+# the way fields_python/fields_ts assume no real message is itself nested — and would fail the same
+# way: a nested enum would disappear from BOTH languages at once, symmetrically, so the gate would stay
+# green while going blind to it. Assert the assumption instead of trusting it forever.
+assert_no_nested_enums() {
+  local py_bad ts_bad
+  py_bad="$(grep -nE '^[[:space:]]+class [A-Za-z0-9_]+\(int, metaclass=_enum_type_wrapper\.EnumTypeWrapper\):' "$PY_GEN" 2>/dev/null || true)"
+  ts_bad="$(grep -nE '@generated from enum seam\.api\.v1\.[A-Za-z0-9_]+\.[A-Za-z0-9_.]+' "$TS_GEN" 2>/dev/null || true)"
+  if [ -n "$py_bad" ] || [ -n "$ts_bad" ]; then
+    err "a NESTED enum was found — enums_python/enums_ts assume none exist and would silently drop it"
+    err "from BOTH languages at once instead of comparing it:"
+    if [ -n "$py_bad" ]; then
+      err "  python ($PY_GEN):"
+      echo "$py_bad" >&2
+    fi
+    if [ -n "$ts_bad" ]; then
+      err "  ts ($TS_GEN):"
+      echo "$ts_bad" >&2
+    fi
+    err "extend enums_python/enums_ts in scripts/check-contract.sh to track nesting before proceeding."
+    exit 7
+  fi
 }
 
 if [ "${1:-}" = "--write-manifest" ]; then
@@ -257,15 +333,24 @@ if [ "${1:-}" = "--write-manifest" ]; then
     err "cannot write the field manifest: $PY_GEN is absent. Run 'make generate' first."
     exit 3
   fi
+  # Same authoritative side, same file, same rule as the FIELD lines just above: refuse to write a
+  # manifest the enum extractor cannot yet represent, rather than writing one silently missing a
+  # nested value.
+  assert_no_nested_enums
   ftmp="$(mktemp)"
   grep -E '^\s*(#|$)' "$FIELD_MANIFEST" > "$ftmp" 2>/dev/null || true
   fields_python >> "$ftmp"
+  enums_python >> "$ftmp"
   mv "$ftmp" "$FIELD_MANIFEST"
-  echo "wrote $FIELD_MANIFEST ($(manifest_fields | wc -l | tr -d ' ') fields) — REVIEW THE DIFF."
-  echo "A line added here is a contract surface change one level below a verb: wire the field into the"
-  echo "hand-written clients, or record in the PR why not, before committing."
+  echo "wrote $FIELD_MANIFEST ($(manifest_fields | wc -l | tr -d ' ') fields, $(manifest_enums | wc -l | tr -d ' ') enum values) — REVIEW THE DIFF."
+  echo "A line added here is a contract surface change one level below a verb: wire the field or enum"
+  echo "value into the hand-written clients, or record in the PR why not, before committing."
   exit 0
 fi
+
+# The probing path below (unlike --write-manifest, which checks this itself just before it writes)
+# needs the same guarantee before it trusts what enums_python/enums_ts return.
+assert_no_nested_enums
 
 echo "== check-contract: probing the active generated stubs =="
 
@@ -398,6 +483,57 @@ else
   done
 fi
 
+# ── Probe: the ENUM-VALUE surface against contract/field-manifest.txt (HARD GATE) ────────────────────
+# One level below the FIELD probe, for the same reason it exists one level below the RPC manifest:
+# `buf breaking` upstream treats an additive enum value as compatible and passes it BY DESIGN, and this
+# SDK does not get that leniency for free — `python/seam_sdk/_collective.py` and `errors.py` are
+# deliberately fail-closed and raise `UnknownCollectiveVerdictError` on any value they do not recognise.
+# Same spelling, same file (see its header), same two-directional-per-language shape as the FIELD probe
+# above — PLUS a third check the field probe does not need: Python and TS are compared with EACH OTHER
+# directly, not only against the manifest, because a value one language's stubs carry and the other's
+# do not is a GENERATION skew (one tree regenerated stale), never a manifest decision, and must never
+# be reported as if it were one.
+enum_surface_rc=0
+enum_surface_report=""
+if [ ! -f "$FIELD_MANIFEST" ]; then
+  err "$FIELD_MANIFEST is absent — the enum-value surface has no declared expectation to check against."
+  err "Create it with: scripts/check-contract.sh --write-manifest"
+  enum_surface_rc=1
+else
+  _ewant="$(manifest_enums)"
+  _epy="$(enums_python)"
+  _ets="$(enums_ts)"
+  for lang in python ts; do
+    case "$lang" in
+      python) _ehave="$_epy" ;;
+      ts)     _ehave="$_ets" ;;
+    esac
+    _emissing="$(comm -23 <(echo "$_ewant") <(echo "$_ehave"))"
+    _eextra="$(comm -13 <(echo "$_ewant") <(echo "$_ehave"))"
+    if [ -n "$_emissing" ]; then
+      enum_surface_rc=1
+      enum_surface_report+="  MISSING from the $lang stubs (stale/partial generation, or a REMOVED enum value):"$'\n'
+      while IFS= read -r r; do [ -n "$r" ] && enum_surface_report+="    - $r"$'\n'; done <<< "$_emissing"
+    fi
+    if [ -n "$_eextra" ]; then
+      enum_surface_rc=1
+      enum_surface_report+="  NOT IN THE MANIFEST, present in the $lang stubs (a new enum value landed):"$'\n'
+      while IFS= read -r r; do [ -n "$r" ] && enum_surface_report+="    + $r"$'\n'; done <<< "$_eextra"
+    fi
+    if [ -z "$_emissing" ] && [ -z "$_eextra" ]; then
+      note "PRESENT all $(echo "$_ewant" | wc -l | tr -d ' ') declared enum values [$lang]"
+    fi
+  done
+  _eskew_py="$(comm -23 <(echo "$_epy") <(echo "$_ets"))"
+  _eskew_ts="$(comm -13 <(echo "$_epy") <(echo "$_ets"))"
+  if [ -n "$_eskew_py" ] || [ -n "$_eskew_ts" ]; then
+    enum_surface_rc=1
+    enum_surface_report+="  GENERATION SKEW — the python and ts stubs disagree with EACH OTHER, not just the manifest:"$'\n'
+    while IFS= read -r r; do [ -n "$r" ] && enum_surface_report+="    python has it, ts does not: $r"$'\n'; done <<< "$_eskew_py"
+    while IFS= read -r r; do [ -n "$r" ] && enum_surface_report+="    ts has it, python does not: $r"$'\n'; done <<< "$_eskew_ts"
+  fi
+fi
+
 echo
 if [ "$rpc_rc" -ne 0 ]; then
   err "the active contract is STALE for Phase 2: VerifyPartyAttestation is not in the stubs."
@@ -477,8 +613,13 @@ if [ "$rpc_surface_rc" -ne 0 ]; then
 fi
 echo "OK — the RPC surface matches $MANIFEST in both languages."
 
-if [ "$field_surface_rc" -ne 0 ]; then
+# FIELD and ENUM-VALUE surfaces share one exit code (6) and are reported TOGETHER, in one pass, before
+# either can exit: if both disagree at once, a script that exited on the field report first would never
+# show the enum one, and a re-run-after-fixing-only-the-first-thing-you-saw loop is exactly the kind of
+# blindness this gate exists to prevent one level up.
+if [ "$field_surface_rc" -ne 0 ] || [ "$enum_surface_rc" -ne 0 ]; then
   echo
+  if [ "$field_surface_rc" -ne 0 ]; then
   err "the generated FIELD surface disagrees with $FIELD_MANIFEST:"
   printf '%s' "$field_surface_report" >&2
   echo "" >&2
@@ -497,7 +638,40 @@ if [ "$field_surface_rc" -ne 0 ]; then
   err "    scripts/check-contract.sh --write-manifest"
   err "and commit the manifest diff alongside that decision. Running the escape first turns a"
   err "deliberate refusal back into the silent pass this gate exists to remove."
+  echo "" >&2
+  fi
+  fi
+  if [ "$enum_surface_rc" -ne 0 ]; then
+  err "the generated ENUM-VALUE surface disagrees with $FIELD_MANIFEST:"
+  printf '%s' "$enum_surface_report" >&2
+  echo "" >&2
+  if [[ "$enum_surface_report" == *"MISSING from the"* ]]; then
+  err "An enum value MISSING from the stubs is either a stale generation — rerun 'make generate' (BSR)"
+  err "or 'make generate-local RUNTIME=../seam-runtime' — or a value REMOVED from the contract, which"
+  err "is a breaking change for any consumer holding that value and must be handled, never silently"
+  err "rewritten away."
+  echo "" >&2
+  fi
+  if [[ "$enum_surface_report" == *"NOT IN THE MANIFEST"* ]]; then
+  err "An enum value NOT IN THE MANIFEST is a new one on the contract, and this refusal is deliberate:"
+  err "it is the moment someone DECIDES whether the fail-closed consumers of this enum (e.g."
+  err "python/seam_sdk/_collective.py, errors.py) are updated to recognise it, before it can reach them"
+  err "as a hard 'unknown value' error. Decide first, then run:"
+  err "    scripts/check-contract.sh --write-manifest"
+  err "and commit the manifest diff alongside that decision. Running the escape first turns a"
+  err "deliberate refusal back into the silent pass this gate exists to remove."
+  echo "" >&2
+  fi
+  if [[ "$enum_surface_report" == *"GENERATION SKEW"* ]]; then
+  err "A GENERATION SKEW is neither of the above: it is not what the manifest expects, it is python and"
+  err "ts disagreeing with EACH OTHER. Both languages regenerate from the same contract in the same"
+  err "push, so this means one tree's generation went stale while the other's did not — rerun 'make"
+  err "generate' (BSR) or 'make generate-local RUNTIME=../seam-runtime' and check BOTH python/_gen and"
+  err "ts/gen landed the same contract. --write-manifest cannot fix this: it writes from Python only,"
+  err "so it would silently canonicalise whichever language is currently ahead."
+  fi
   fi
   exit 6
 fi
 echo "OK — the field surface matches $FIELD_MANIFEST in both languages."
+echo "OK — the enum-value surface matches $FIELD_MANIFEST in both languages."

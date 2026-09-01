@@ -45,7 +45,13 @@ def _require_stubs() -> None:
         )
 
 
-def _run(field_manifest: pathlib.Path, rpc_manifest: pathlib.Path, *args: str):
+def _run(
+    field_manifest: pathlib.Path,
+    rpc_manifest: pathlib.Path,
+    *args: str,
+    py_gen: pathlib.Path | None = None,
+    ts_gen: pathlib.Path | None = None,
+):
     env = {
         **os.environ,
         "SEAM_FIELD_MANIFEST": str(field_manifest),
@@ -53,6 +59,13 @@ def _run(field_manifest: pathlib.Path, rpc_manifest: pathlib.Path, *args: str):
         "STREAM": "1",
         "EVENTS": "1",
     }
+    # Only the enum-mutation tests need these — they drive the real script against SCRATCH COPIES of
+    # the stub trees (never the real gitignored ones; see the module docstring) so an enum value can
+    # be appended or deleted without touching anything `make generate` would be needed to restore.
+    if py_gen is not None:
+        env["SEAM_PY_GEN"] = str(py_gen)
+    if ts_gen is not None:
+        env["SEAM_TS_GEN"] = str(ts_gen)
     return subprocess.run(
         ["bash", str(SCRIPT), *args],
         cwd=REPO,
@@ -75,6 +88,89 @@ def manifests(tmp_path: pathlib.Path):
     assert r.returncode == 0, r.stderr
     assert fm.exists() and rm.exists()
     return fm, rm
+
+
+@pytest.fixture
+def scratch_stubs(tmp_path: pathlib.Path):
+    """The real stub trees, COPIED into tmp_path so an enum value can be appended to or deleted from
+    them. `python/seam_sdk/_gen` and `ts/gen` are gitignored — mutating the originals could not be
+    undone with git, and recovery would need `make generate` and a BSR login this suite must never
+    depend on. Only the two files the enum extractors read are copied; nothing else is touched."""
+    _require_stubs()
+    py = tmp_path / "seam_pb2.pyi"
+    ts = tmp_path / "seam_pb.ts"
+    py.write_text(PY_STUB.read_text())
+    ts.write_text(TS_STUB.read_text())
+    return py, ts
+
+
+@pytest.fixture
+def enum_manifests(scratch_stubs, tmp_path: pathlib.Path):
+    """Field+RPC manifest written FROM THE SCRATCH STUB COPIES (not the committed manifest), so the
+    baseline the enum-mutation tests start from matches exactly what those copies currently declare —
+    mutating a copy and comparing it against a manifest derived from a DIFFERENT source would just be
+    testing the pre-existing five-field ACDP lag, not the mutation."""
+    py, ts = scratch_stubs
+    fm, rm = tmp_path / "field-manifest.txt", tmp_path / "rpc-manifest.txt"
+    r = _run(fm, rm, "--write-manifest", py_gen=py, ts_gen=ts)
+    assert r.returncode == 0, r.stderr
+    return fm, rm, py, ts
+
+
+# The real BallotChoice tail, in both stub trees, used as a known-good anchor to append after or
+# delete outright — lifted verbatim from the generated files rather than hand-typed, so a mutation
+# test can never pass because the fixture text quietly drifted from what the generator actually emits.
+_PY_ABSTAIN_LINE = "    BALLOT_CHOICE_ABSTAIN: _ClassVar[BallotChoice]\n"
+_TS_ABSTAIN_BLOCK = (
+    "  /**\n"
+    "   * @generated from enum value: BALLOT_CHOICE_ABSTAIN = 3;\n"
+    "   */\n"
+    "  ABSTAIN = 3,\n"
+)
+
+
+def _py_add_enum_value(stub: pathlib.Path, enum: str, value: str) -> None:
+    text = stub.read_text()
+    assert _PY_ABSTAIN_LINE in text, (
+        "known anchor not found — the real .pyi shape changed"
+    )
+    stub.write_text(
+        text.replace(
+            _PY_ABSTAIN_LINE,
+            _PY_ABSTAIN_LINE + f"    {value}: _ClassVar[{enum}]\n",
+            1,
+        )
+    )
+
+
+def _py_delete_enum_value(stub: pathlib.Path) -> None:
+    text = stub.read_text()
+    assert _PY_ABSTAIN_LINE in text, (
+        "known anchor not found — the real .pyi shape changed"
+    )
+    stub.write_text(text.replace(_PY_ABSTAIN_LINE, "", 1))
+
+
+def _ts_add_enum_value(stub: pathlib.Path, value: str, ident: str, tag: int) -> None:
+    text = stub.read_text()
+    assert _TS_ABSTAIN_BLOCK in text, (
+        "known anchor not found — the real .ts shape changed"
+    )
+    new_block = (
+        "\n  /**\n"
+        f"   * @generated from enum value: {value} = {tag};\n"
+        "   */\n"
+        f"  {ident} = {tag},\n"
+    )
+    stub.write_text(text.replace(_TS_ABSTAIN_BLOCK, _TS_ABSTAIN_BLOCK + new_block, 1))
+
+
+def _ts_delete_enum_value(stub: pathlib.Path) -> None:
+    text = stub.read_text()
+    assert _TS_ABSTAIN_BLOCK in text, (
+        "known anchor not found — the real .ts shape changed"
+    )
+    stub.write_text(text.replace(_TS_ABSTAIN_BLOCK, "", 1))
 
 
 def _entries(p: pathlib.Path) -> list[str]:
@@ -116,7 +212,10 @@ def test_the_manifest_is_not_vacuous(manifests) -> None:
     assert len(entries) > 200, (
         f"only {len(entries)} fields — the extractor is broken, not the proto"
     )
-    assert all("/" in e for e in entries), "every entry is <Message>/<field>"
+    # The file now also carries the ENUM section (`<Enum>#<VALUE>`, no "/") — restrict this check to
+    # the FIELD lines specifically. `test_field_and_enum_lines_partition_cleanly` covers the split.
+    fields = [e for e in entries if "#" not in e]
+    assert all("/" in e for e in fields), "every FIELD entry is <Message>/<field>"
 
 
 @pytest.mark.parametrize(
@@ -221,7 +320,12 @@ def test_the_refusal_tells_the_reader_to_decide_before_running_the_escape(
     header = [
         ln for ln in fm.read_text().splitlines(True) if ln.lstrip().startswith("#")
     ]
-    fm.write_text("".join(header) + "\n".join(entries[:-1]) + "\n")
+    # Drop the LAST FIELD entry specifically (not just the last line in the file) — the file now ends
+    # with the ENUM section, and this test's scenario is the field one; dropping whatever happens to
+    # be last would silently start testing the enum refusal text instead.
+    fields = [e for e in entries if "#" not in e]
+    survivors = [e for e in entries if e != fields[-1]]
+    fm.write_text("".join(header) + "\n".join(survivors) + "\n")
 
     r = _run(fm, rm)
     combined = r.stdout + r.stderr
@@ -330,3 +434,177 @@ def _ts_extractor_src() -> str:
     start = next(i for i, ln in enumerate(src) if ln.startswith("fields_ts() {"))
     end = next(i for i in range(start, len(src)) if src[i].rstrip() == "}")
     return "".join(src[start : end + 1])
+
+
+# ── the enum-value surface, one level below FIELD ──────────────────────────────────────────────────
+#
+# `AuthorizeVerdict`/`CollectiveVerdict`/`BallotChoice` are exactly as blind a spot as a new FIELD:
+# `buf breaking` upstream passes an additive enum value by design, and `python/seam_sdk/_collective.py`
+# / `errors.py` are deliberately fail-closed and raise on any value they don't recognise. These tests
+# drive the REAL script, same as every field test above — a Python reimplementation of the comparison
+# would only prove two copies of the same logic agree with each other.
+
+
+def _enum_entries(p: pathlib.Path) -> list[str]:
+    return [e for e in _entries(p) if "#" in e]
+
+
+def test_enum_manifest_written_from_scratch_stubs_passes(enum_manifests) -> None:
+    """The baseline. If this fails, the Python and TS enum extractors disagree with each other and
+    every negative case below is testing noise."""
+    fm, rm, py, ts = enum_manifests
+    r = _run(fm, rm, py_gen=py, ts_gen=ts)
+    assert r.returncode == 0, f"stdout:\n{r.stdout}\nstderr:\n{r.stderr}"
+    assert "the enum-value surface matches" in r.stdout
+
+
+def test_field_and_enum_lines_partition_cleanly(manifests) -> None:
+    """The manifest is one flat file for both surfaces (`#` cannot occur in a message/field name, and
+    an enum line never begins with `#` so it survives the comment filter). Every line must land in
+    exactly one bucket."""
+    fm, _ = manifests
+    entries = _entries(fm)
+    fields = [e for e in entries if "#" not in e]
+    enums = [e for e in entries if "#" in e]
+    assert len(fields) + len(enums) == len(entries)
+    assert all("/" in e for e in fields)
+    assert all(e.count("#") == 1 for e in enums)
+
+
+def test_appending_an_enum_value_to_both_languages_reddens_the_gate_and_names_it(
+    enum_manifests,
+) -> None:
+    """Acceptance criterion 2: appending one enum value to BOTH scratch stub trees makes the gate
+    exit 6 and name `<Enum>#<VALUE>` for both languages."""
+    fm, rm, py, ts = enum_manifests
+    _py_add_enum_value(py, "BallotChoice", "BALLOT_CHOICE_VETOED")
+    _ts_add_enum_value(ts, "BALLOT_CHOICE_VETOED", "VETOED", 4)
+
+    r = _run(fm, rm, py_gen=py, ts_gen=ts)
+    assert r.returncode == 6, (
+        f"expected exit 6, got {r.returncode}\n{r.stdout}\n{r.stderr}"
+    )
+    combined = r.stdout + r.stderr
+    assert "BallotChoice#BALLOT_CHOICE_VETOED" in combined
+    assert "NOT IN THE MANIFEST" in combined
+    assert combined.count("BallotChoice#BALLOT_CHOICE_VETOED") >= 2, (
+        "named independently for each language — a stale ts/gen beside a fresh python/_gen must show"
+    )
+    assert "GENERATION SKEW" not in combined, (
+        "both languages agree with each other here — this is manifest drift, not generation skew"
+    )
+
+
+def test_deleting_an_enum_value_from_both_languages_reddens_the_gate_as_missing(
+    enum_manifests,
+) -> None:
+    """Acceptance criterion 3: deleting one enum value from both scratch trees makes the gate exit 6,
+    reporting it MISSING."""
+    fm, rm, py, ts = enum_manifests
+    _py_delete_enum_value(py)
+    _ts_delete_enum_value(ts)
+
+    r = _run(fm, rm, py_gen=py, ts_gen=ts)
+    assert r.returncode == 6, (
+        f"expected exit 6, got {r.returncode}\n{r.stdout}\n{r.stderr}"
+    )
+    combined = r.stdout + r.stderr
+    assert "BallotChoice#BALLOT_CHOICE_ABSTAIN" in combined
+    assert "MISSING from the" in combined
+    assert combined.count("BallotChoice#BALLOT_CHOICE_ABSTAIN") >= 2
+    assert "GENERATION SKEW" not in combined, (
+        "both languages still agree with each other — the value is just gone from both"
+    )
+
+
+def test_an_enum_value_added_to_only_one_language_is_reported_as_generation_skew(
+    enum_manifests,
+) -> None:
+    """Acceptance criterion 4: a value added to only ONE language's stubs is neither ordinary
+    'missing' nor ordinary 'not in the manifest' — python and ts disagree with EACH OTHER, which is a
+    stale/partial regeneration in one tree, never a manifest decision, and must be reported as its own
+    class of failure."""
+    fm, rm, py, ts = enum_manifests
+    _py_add_enum_value(py, "BallotChoice", "BALLOT_CHOICE_VETOED")
+    # ts is deliberately left untouched.
+
+    r = _run(fm, rm, py_gen=py, ts_gen=ts)
+    assert r.returncode == 6, (
+        f"expected exit 6, got {r.returncode}\n{r.stdout}\n{r.stderr}"
+    )
+    combined = r.stdout + r.stderr
+    assert "GENERATION SKEW" in combined
+    assert "BallotChoice#BALLOT_CHOICE_VETOED" in combined
+    assert "python has it, ts does not" in combined
+    assert "A GENERATION SKEW is neither of the above" in combined, (
+        "the explanation must distinguish this from an ordinary manifest-drift refusal"
+    )
+
+
+def test_nested_enum_in_python_stub_trips_the_guard(scratch_stubs, tmp_path) -> None:
+    """No enum is nested inside a message today. enums_python assumes that structurally (a column-0
+    class header); a nested one would otherwise vanish silently instead of being compared. This must
+    fail loud, not pass quietly, the moment the assumption stops holding."""
+    py, ts = scratch_stubs
+    py.write_text(
+        py.read_text()
+        + "\n    class NestedEnum(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):\n"
+    )
+    r = _run(
+        tmp_path / "field-manifest.txt",
+        tmp_path / "rpc-manifest.txt",
+        py_gen=py,
+        ts_gen=ts,
+    )
+    assert r.returncode == 7, (
+        f"expected exit 7, got {r.returncode}\n{r.stdout}\n{r.stderr}"
+    )
+    assert "NESTED enum" in (r.stdout + r.stderr)
+
+
+def test_nested_enum_in_ts_stub_trips_the_guard(scratch_stubs, tmp_path) -> None:
+    """Same guard, TS side: protobuf-es would name a nested enum `seam.api.v1.Outer.Inner` (the dot),
+    which enums_ts's top-level anchor cannot match — so, like the Python side, it would silently
+    vanish rather than fail."""
+    py, ts = scratch_stubs
+    ts.write_text(
+        ts.read_text() + "\n * @generated from enum seam.api.v1.Outer.Inner\n"
+    )
+    r = _run(
+        tmp_path / "field-manifest.txt",
+        tmp_path / "rpc-manifest.txt",
+        py_gen=py,
+        ts_gen=ts,
+    )
+    assert r.returncode == 7, (
+        f"expected exit 7, got {r.returncode}\n{r.stdout}\n{r.stderr}"
+    )
+    assert "NESTED enum" in (r.stdout + r.stderr)
+
+
+# ── the committed manifest's enum section, as shipped ──────────────────────────────────────────────
+
+
+def test_the_committed_manifest_enum_section_is_not_vacuous_and_covers_all_three_enums() -> (
+    None
+):
+    """The anti-vacuity floor: a future refactor that silently empties the enum section (or narrows it
+    to fewer than all three enums) must fail here, not slip through as a passing gate. Runs without
+    stubs on purpose, same as the field header test — a regression here must not be able to hide
+    behind an absent `make generate`."""
+    committed = REPO / "contract" / "field-manifest.txt"
+    entries = _enum_entries(committed)
+    assert len(entries) >= 15, (
+        f"only {len(entries)} enum values declared — the section emptied, or the extractor broke"
+    )
+    names = {e.split("#", 1)[0] for e in entries}
+    assert names == {"AuthorizeVerdict", "CollectiveVerdict", "BallotChoice"}, names
+    # UNSPECIFIED zero values are DECLARED, never filtered — removing the fail-safe default every
+    # OTHER value's fail-closed behaviour depends on is exactly as real a breaking change as removing
+    # any other value.
+    for zero in (
+        "AuthorizeVerdict#AUTHORIZE_VERDICT_UNSPECIFIED",
+        "BallotChoice#BALLOT_CHOICE_UNSPECIFIED",
+        "CollectiveVerdict#COLLECTIVE_VERDICT_UNSPECIFIED",
+    ):
+        assert zero in entries, zero
