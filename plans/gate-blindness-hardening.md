@@ -635,6 +635,35 @@ cannot rot as the sibling repo grows. Prefer that shape wherever a gate names th
    with a re-open trigger: if the file is still present and matching 60 days from now, the split is
    not a window.
 
+## Post-merge-gate record: the plan reproduced its own defect three times
+
+Worth stating plainly, because it is the plan's own subject turned on the plan:
+
+1. **A vacuous acceptance criterion** (Phase 8). `git check-ignore CLAUDE.md` returns nothing for any
+   *tracked* file by git's design, so the criterion read as passing before the fix existed.
+2. **Two vacuous tests** (Phase 5). The superset and subset tests — the only evidence that a real
+   field removal cannot hide behind the expected ACDP lag — pointed `SEAM_EXPECTED_LOCAL_LAG` at a
+   file the fixture never created, so the downgrade's first conjunct was false by construction and
+   they passed whatever the comparison did.
+3. **Six citations green for an environmental reason** (Phase 6). `../seam-runtime/…` did not match
+   the sibling-repo prefix tuple, so they resolved against this checkout — and passed only because
+   the sibling repos happen to sit beside it. Reproduced red in the runner's layout.
+
+And then, fixing (2) produced a fourth: the de-vacuumed tests became **environment-dependent in the
+opposite direction**, asserting `exit 6` on an ambient pre-ACDP tree and failing in CI, which
+regenerates to the post-ACDP surface first. Caught by CI on PR #89, not by any local run. The tests
+now *construct* the lag scenario from stripped scratch stubs, so they assert the same property in
+both environments.
+
+The common thread across all four: **the check's result was determined by something other than the
+property it names** — the file's tracked-ness, a fixture's omission, the machine's directory layout,
+the ambient stub state. That is the same defect the eight phases were written to remove, and it was
+found three times by adversarial verification and once by CI, never by a passing local suite.
+
+The operational lesson, which is cheap and was not being applied: **an acceptance criterion needs the
+same red-first proof a test does.** Run it against the unfixed state and confirm it fails. Nothing in
+this plan's own review process did that, which is why all three shipped past it.
+
 ## Plan review
 
 Drafted by Opus from a Fable adversarial audit (read-only, mutation-proofs in a scratch copy). Every
