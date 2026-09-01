@@ -313,7 +313,13 @@ two-minute comment and costs nothing.
 
 ### Phase 1 — Record the evidence on #87 and re-scope it to ask 2
 
-**Status:** TODO
+**Status:** **DONE** (2026-08-31). Zero-diff, as designed: commented on #87 with the measured
+evidence and left it OPEN for ask 2. One divergence from the text, found while writing the comment —
+`v0.7.69` and `v0.7.70` are tagged but were never *published* (both publish runs failed correctly at
+the `CI is green for this commit` gate, `spec pin` being red on those commits), so `v0.7.71` is the
+first **installable** tag carrying the union rather than merely the first tagged one. The comment
+says so. Full record in `PROGRESS.md`'s phase log. *(This field said TODO until 2026-09-01 — the
+plan's own status trail had drifted from `PROGRESS.md`, which recorded the phase DONE all along.)*
 
 **Delivers:** #87's ask 1 is closed out with citable evidence and the issue is re-scoped to ask 2, so
 the next reader is not re-deriving a released fact. **#87 stays OPEN.**
@@ -366,7 +372,13 @@ makes both harder to review and delays the record behind CI.
 
 ### Phase 2 — One live-server helper, ephemeral ports, waited teardown, captured logs
 
-**Status:** TODO
+**Status:** **DONE** (2026-08-31), shipped in #90. `python/tests/live_server.py` owns spawning,
+readiness, teardown and log capture for all four live suites; 9 teardown sites and 4 duplicate
+`_wait` copies collapsed to one. Two plan corrections found by measuring rather than by review:
+criterion 1's grep was wrong in both directions and is replaced by an AST check, and the red-first
+evidence was captured hermetically against the real prior `_wait` before the fix existed. Full record
+in `PROGRESS.md`'s phase log. *(This field said TODO until 2026-09-01 — same status-trail drift as
+Phase 1.)*
 
 **Delivers:** the mechanism behind #85 is removed, not mitigated. A single helper owns port
 allocation, readiness, teardown and log capture; all four Python live suites use it; and the shape
