@@ -549,9 +549,12 @@ per-file `_wait`/spawn convention that will no longer exist.
 
 ### Phase 3 — `policy_enforcement_of` in Python
 
-**Status:** **DONE** — implemented as planned, no divergence. The red-first sequence the criteria ask
-for was run in full: the naive `return PolicyEnforcement(...)` form fails the absence property from
-eight angles and passes every other criterion, which is the one-line inversion made visible.
+**Status:** **DONE.** Implemented as designed. Two divergences from the text: criterion 6's baseline
+was stale (754 at planning time, 791 at the branch point — corrected below), and the absence list in
+the Approach borrowed the proto comment's four-verb parenthetical, which #526's matrix shows is not
+exhaustive. The red-first sequence the criteria ask for was run in full: the naive
+`return PolicyEnforcement(...)` form fails every absence assertion and passes every other criterion,
+which is the one-line inversion made visible.
 
 **Delivers:** `seam_sdk.policy_enforcement_of(resp) -> Optional[PolicyEnforcement]`, on a
 `DecisionResponse` **or** a `SessionStep`, returning `None` **iff** the field is absent and never a
@@ -635,8 +638,10 @@ publishes the matrix in its own body.
 4. A `DecisionResponse` and a `SessionStep` carrying byte-identical `policy_enforcement` decode to
    equal `PolicyEnforcement` values — one decoder, two message types.
 5. `from seam_sdk import PolicyEnforcement, policy_enforcement_of` works, and both are in `__all__`.
-6. `cd python && .venv/bin/pytest -q` green from the **754 passed / 17 skipped** baseline, skips
-   still 17. Report new test functions and new `PROGRESS.md` citations as two numbers.
+6. `cd python && .venv/bin/pytest -q` green from the branch-point baseline, skips still 17.
+   *(That baseline was written as 754 when this plan was drafted. Phase 2 shipped first and moved it
+   to **791 passed / 17 skipped** at `978d05d`; the criterion is against the branch point, not
+   against a number frozen at planning time.)* Report new test functions and new `PROGRESS.md` citations as two numbers.
 
 **Tests:** `python/tests/test_policy_enforcement.py`, modelled on
 `python/tests/test_collective_outcome.py` (which runs the `SessionStep` arm at `:208-262`). Every

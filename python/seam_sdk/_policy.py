@@ -33,8 +33,10 @@ field is populated on exactly three steps:
   re-reports a seal that this call did not perform,
 * the **pending-commitment seal retry**.
 
-It is absent on every non-terminal step (open, propose, vote, ballot), and absent on the **expiry
-seal**.
+It is absent on every non-terminal step — open, propose, vote, ballot, and **both suspended shapes**
+(awaiting an approver, and the budget breach) — and absent on the **expiry seal**. The four-verb
+parenthetical is the proto comment's own list and is not exhaustive; #526's matrix measures the two
+suspended sites as absent too.
 
 Two things about that list are worth stating plainly, because both contradict what the proto's own
 comment for this field says (``seam.api.v1``, ``SessionStep.policy_enforcement`` field 3 — cited by
@@ -109,9 +111,15 @@ def policy_enforcement_of(
     carries it. A second implementation per carrier would be a second place for the same inversion to
     reappear.
 
-    Never raises. Unlike :func:`seam_sdk.collective_outcome_of` there is no enum here and no growth
-    policy, so there is no unrecognized value to fail closed on — the only distinction to preserve is
-    present-versus-absent, and ``None`` preserves it.
+    **Never raises on a message that carries the field** — and that qualification is load-bearing.
+    Unlike :func:`seam_sdk.collective_outcome_of` there is no enum here and no growth policy, so
+    there is no unrecognized *value* to fail closed on: the only distinction to preserve is
+    present-versus-absent, and ``None`` preserves it. But Python does not enforce the ``Union``
+    annotation, and ``HasField`` raises ``ValueError`` for a message type that has no
+    ``policy_enforcement`` field at all — ``AuthorizeResponse``, ``TerminalResponse``,
+    ``SessionStatusResponse``. That is a programming error surfacing as one, which is correct; it is
+    recorded here because an unqualified "never raises" would be exactly the kind of absolute claim
+    about this field that has been wrong every previous time someone wrote one.
     """
     if not resp.HasField("policy_enforcement"):
         return None

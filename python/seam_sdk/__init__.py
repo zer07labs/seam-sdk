@@ -80,6 +80,10 @@ __all__ = [
     # DecisionResponse or a SessionStep
     "CollectiveOutcome",
     "collective_outcome_of",
+    # Policy enforcement — presence-aware, NOT fail-closed and NOT C5: there is no enum here, and
+    # the only distinction being preserved is present-versus-absent. Filed separately on purpose;
+    # listing it under the line above would say the same false thing about it that folding it into
+    # `_collective.py` would have.
     "PolicyEnforcement",
     "policy_enforcement_of",
     "DEFAULT_TIMEOUT_S",

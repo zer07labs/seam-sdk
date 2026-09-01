@@ -1371,7 +1371,7 @@ untouched · both new fixes proved red-first by reverting them on scratch copies
 **What shipped.** `python/seam_sdk/_policy.py` — a frozen `PolicyEnforcement` and
 `policy_enforcement_of(resp)` over a `DecisionResponse` **or** a `SessionStep`, returning `None` iff
 the field is absent. Exported from `python/seam_sdk/__init__.py` in both the import block and
-`__all__`. `python/tests/test_policy_enforcement.py`: **12 test functions, 17 collected**.
+`__all__`. `python/tests/test_policy_enforcement.py`: **17 test functions, 21 collected**.
 
 **The hazard, measured rather than asserted.** Three states, two of them value-identical:
 
@@ -1390,10 +1390,16 @@ docstring that quietly went stale. Only `HasField` separates them, so
 no", which is the fail-open direction.
 
 **The red-first sequence was run, not skipped.** The plan asks for the naive form to be built and
-watched fail, and it was worth the two minutes: the version without the `HasField` gate fails
-**eight** assertions — every absence case, on both message types, across four session states and the
-expiry-seal shape — and passes all nine others, including the frozen-type and export checks. One
-line, one direction, eight ways to see it.
+watched fail, and it was worth the two minutes: the version without the `HasField` gate fails every
+absence assertion and passes every other criterion, including the frozen-type and export checks. One
+line, one direction.
+
+*An earlier version of this paragraph said "eight assertions … eight ways to see it".* A verifier
+pointed out that four of those eight were a single `is None` check parametrized over four session
+states — and `state` is a free-form string the decoder never reads, so `pb.SessionStep(state="Banana")`
+behaves identically. The count was arithmetically true and rhetorically inflated. Those four
+parameters are now one test that asserts the *irrelevance* directly, which is the true thing they were
+gesturing at.
 
 **Ground truth verified before writing anything**, against the descriptors rather than the proto text:
 `policy_enforcement` has presence on **both** carriers at **different field numbers** (7 on
@@ -1423,6 +1429,55 @@ have — folding it in would make that module's own documentation false, which i
 to prevent, one file over. No `errors.py` symbol: nothing to fail closed on, and
 `test_errors_is_import_light.py` makes any addition there a deliberate act.
 
-**Verification:** python **808 passed / 17 skipped** (from 791 at the branch point; skips unchanged) ·
-`ruff check` + `ruff format --check` clean · every message in the suite constructed in-test, so
-nothing depends on the ambient generated surface beyond the two message classes it instantiates.
+#### Verification round — verdict **GAP (minor)**, eleven findings, all closed
+
+Every acceptance criterion passed on independent re-run, every descriptor and #526 claim checked out,
+and **no mutation passed silently** — the verifier inverted the gate, dropped it, mapped absent
+`policy_id` to `""`, unfroze the dataclass, returned the raw `pb.PolicyEnforcement`, hardcoded
+`enforced=False`, and added a convenience property; all seven went red. The defects were in the prose
+and in what the suite did not pin.
+
+- **"Never raises." was false.** `policy_enforcement_of(pb.AuthorizeResponse())` raises
+  `ValueError: Protocol message AuthorizeResponse has no "policy_enforcement" field` — Python does not
+  enforce the `Union`. That is the right behaviour (a programming error surfacing as one) but it was
+  the single unqualified absolute in a module whose whole thesis is that unqualified absolutes about
+  this field have been wrong every time. Qualified, and now tested across all three carrier-less
+  message types.
+- **The new exports were filed under the wrong comment.** They landed beneath
+  `# Collective outcome (C5) — fail-closed decoding of collective_outcome` in `__all__`, which is
+  false about them on three counts. The commit argues at length that folding this into
+  `_collective.py` "would make that module's documentation false, which is the failure #88 exists to
+  prevent" — and then reproduced exactly that, one file over, in the export list. They have their own
+  comment now.
+- **The frozen-type test's exclusion set was entirely dead.** It filtered `dir()` against
+  `{"enforced", "policy_id", "count", "index"}`; `dir(PolicyEnforcement)` returns **no** public names
+  at all, because a frozen dataclass with no field defaults puts nothing on the class. `count`/`index`
+  are namedtuple artifacts. The assertion still had signal, but it read as though it enumerated the
+  type's real surface. Replaced with an empty-`dir()` assertion plus an explicit `dataclasses.fields`
+  check, and `pytest.raises(Exception)` narrowed to `FrozenInstanceError`.
+- **Nothing went through the wire.** Every message was built in-process, which the docstring framed as
+  a virtue — and the consequence was that the most realistic production shape had no test: a runtime
+  emitting `policy_enforcement { }`, an empty submessage (`1a00` on the wire), which must decode to an
+  *instance*, not `None`. Now pinned, along with the explicitly-empty `policy_id` round-trip and an
+  `isinstance` assertion (returning the raw generated type — the design the plan rejects — was
+  previously caught only incidentally, by two field assertions that happened to still pass; it now
+  fails five tests rather than two).
+- **Two tests were decorative.** The expiry-seal test asserted `expired.decision_id == "d-expired"`,
+  which tests the protobuf constructor, and its remaining assertion was indistinguishable from the
+  plain absence case. It now pins what it actually can — that the combination is representable and the
+  SDK has no `decision_id`-as-proxy shortcut — and says plainly that it cannot test the runtime claim,
+  which lives in another repository.
+- **The absence list borrowed the proto comment's own parenthetical.** "open, propose, vote, ballot"
+  is not exhaustive: #526's matrix measures **both suspended shapes** as absent too. Corrected — and
+  the suite had been parametrizing `"Suspended"`, a state the enumeration did not name.
+- **Three descriptor claims, one test.** `test_the_two_states_this_module_separates_are_value_identical`
+  was written precisely so a descriptor change goes red instead of leaving a docstring stale. The same
+  reasoning was not applied to the field numbers (7/3) or to `enforced` having no presence — the
+  latter being the stated reason another test "is not a tautology". All three are asserted now.
+- Also: the plan's criterion 6 quoted a **754** baseline frozen at planning time (the branch point is
+  791), the RST ruler in the test module's table was 26 chars against a 32-char header, and this file
+  had lost its trailing newline.
+
+**Verification:** python **812 passed / 17 skipped** (from 791 at the branch point; skips unchanged) ·
+`ruff check` + `ruff format --check` clean · all five mutations re-run against the hardened suite and
+caught more widely than before (drop-gate 8 → 9 failures, empty-`policy_id` 1 → 3, raw-`pb` 2 → 5).
