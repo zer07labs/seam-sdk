@@ -18,14 +18,12 @@ stale.
 from __future__ import annotations
 
 import json
-import os
 import pathlib
-import socket
-import subprocess
-import time
 from types import SimpleNamespace
 
 import pytest
+
+from live_server import spawn_server
 
 from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
 from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as ev
@@ -108,51 +106,12 @@ def test_wrapper_returns_false_never_raises():
 # ── Live: register (mgmt plane) → verify (data plane), env-gated ─────────────────────────────────────
 
 
-def _wait(port: int, timeout: float = 8.0):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            socket.create_connection(("127.0.0.1", port), 0.1).close()
-            return
-        except OSError:
-            time.sleep(0.05)
-    raise RuntimeError(f"server never came up on {port}")
-
-
-def _free_port() -> int:
-    """An OS-allocated ephemeral port — the spawned-binary counterpart of the in-process suites'
-    ``add_insecure_port("127.0.0.1:0")``. Fixed port numbers collide with whatever else is running
-    (another test worker, a leaked server) and fail with an unrelated-looking bind error."""
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 @pytest.fixture
-def dual_plane():
+def dual_plane(tmp_path):
     """Spawn seam-grpc with BOTH the data plane (VerifyPartyAttestation) and the management plane
     (RegisterParty) bound; yields (data_addr, mgmt_addr). Skips without SEAM_GRPC_BIN."""
-    binary = os.environ.get("SEAM_GRPC_BIN")
-    if not binary:
-        pytest.skip("set SEAM_GRPC_BIN to run the live attestation round-trip")
-    data_port, mgmt_port = _free_port(), _free_port()
-    proc = subprocess.Popen(
-        [binary],
-        env={
-            **os.environ,
-            "SEAM_GRPC_LISTEN": f"127.0.0.1:{data_port}",
-            "SEAM_GRPC_MGMT_LISTEN": f"127.0.0.1:{mgmt_port}",
-            "SEAM_DEV_INSECURE": "1",
-        },
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    try:
-        _wait(data_port)
-        _wait(mgmt_port)
-        yield f"127.0.0.1:{data_port}", f"127.0.0.1:{mgmt_port}"
-    finally:
-        proc.terminate()
+    with spawn_server(mgmt=True, log_dir=tmp_path) as srv:
+        yield srv.data_addr, srv.mgmt_addr
 
 
 def test_verify_party_attestation_trio_live(dual_plane):

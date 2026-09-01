@@ -284,10 +284,24 @@ jobs:
           SEAM_GRPC_LISTEN=127.0.0.1:8099 SEAM_DEV_INSECURE=1 \
             "$GITHUB_WORKSPACE/seam-grpc" > /tmp/seam-grpc.log 2>&1 &
           pid=$!
+          # Reap it, do not merely signal it. SIGTERM starts a graceful drain, so a bare `kill`
+          # followed by `exit 0` leaves this step's server still holding 8099 while later steps run.
+          # The suites no longer use a fixed port (see python/tests/live_server.py, #85), so this is
+          # now hygiene rather than a collision — but a step that abandons a process it started is
+          # wrong on its own terms, and it was indistinguishable from the real defect until it wasn't.
+          reap() {
+            kill "$1" 2>/dev/null || return 0
+            for _ in $(seq 1 40); do
+              kill -0 "$1" 2>/dev/null || return 0
+              sleep 0.25
+            done
+            kill -9 "$1" 2>/dev/null || true
+            wait "$1" 2>/dev/null || true
+          }
           for _ in $(seq 1 60); do
             if (exec 3<>/dev/tcp/127.0.0.1/8099) 2>/dev/null; then
               echo "seam-grpc is serving on 8099"
-              kill "$pid" 2>/dev/null || true
+              reap "$pid"
               exit 0
             fi
             kill -0 "$pid" 2>/dev/null || break   # it died; stop waiting on a corpse
@@ -331,6 +345,32 @@ jobs:
           # `schema_version == 2` assertion survived on the Python side and was caught on the TS one.
           pytest -q tests/test_integration.py tests/test_admin.py \
                     tests/test_streamed_decode.py tests/test_verify_attestation.py
+      # #85's explicit ask. The old fixtures sent the server's output to DEVNULL, so a failure that
+      # did not reproduce left NOTHING behind — and every re-run overwrote the smoke log too. The
+      # helper now writes one log per spawn; these two steps are what make those logs survive a run
+      # that goes red, so the next occurrence is diagnosed from evidence rather than re-theorised.
+      - name: the server's own output, when a live suite fails
+        if: failure()
+        run: |
+          set -uo pipefail
+          echo "::group::smoke-step log"
+          cat /tmp/seam-grpc.log 2>/dev/null || echo "(none)"
+          echo "::endgroup::"
+          for f in $(find "${TMPDIR:-/tmp}" /tmp -maxdepth 3 -name 'seam-grpc-*.log' 2>/dev/null | head -40); do
+            echo "::group::$f"
+            cat "$f"
+            echo "::endgroup::"
+          done
+      - name: keep the live-server logs as an artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-server-logs
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            /tmp/seam-grpc.log
+            /tmp/**/seam-grpc-*.log
       - name: typescript live round-trip
         working-directory: ts
         env:

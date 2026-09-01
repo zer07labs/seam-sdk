@@ -1049,4 +1049,61 @@ them change what the phases do:
 
 ## Phase log
 
-*(Phases have not run. `/implement` appends a block per phase below.)*
+### Phase 1 — record the evidence on #87 and re-scope it to ask 2 · **DONE**
+
+Zero-diff. Commented on #87 with the measured evidence and left it **OPEN** for ask 2.
+
+- `v0.7.70` carried `collective_outcome_of(resp: "pb.DecisionResponse")` and
+  `collectiveOutcomeOf(resp: DecisionResponse)`; `v0.7.71` carries the union in **both** languages.
+  Verified with `git show v0.7.70:...` / `git show v0.7.71:...` rather than from the changelog.
+- Publish run 33479578480 succeeded on `python wheel → Cloudsmith`, `npm → Cloudsmith` and
+  `install from Cloudsmith and run the vectors`; `seam-verify → Cloudsmith` was **skipped**, recorded
+  explicitly rather than rounded up to "the run was green".
+- Divergence from the plan, found while writing the comment: **`v0.7.69` and `v0.7.70` are tagged but
+  were never published** — both publish runs failed at the `CI is green for this commit` gate because
+  `spec pin` was red on those commits. The gate behaved correctly. It means `v0.7.71` is the first
+  *installable* tag carrying the union, not merely the first tagged one, and the comment says so.
+- Issue state after: `OPEN`, 1 comment. No file in the repo changed by this phase.
+
+### Phase 2 — one live-server helper: ephemeral ports, waited teardown, captured logs · **DONE**
+
+`python/tests/live_server.py` now owns spawning, readiness, teardown and log capture for all four
+live suites. 9 teardown sites and 4 duplicate `_wait` copies collapsed to one.
+
+**Red-first evidence, captured before the fix existed:**
+
+- The defect itself, hermetically, against the real prior `_wait`:
+  `_wait returned in 0.002s against a port the spawned process never bound; spawned proc exit code: 0`.
+  A decoy listener stands in for a draining server; the "binary" exits before binding anything.
+- `ci.yml` at `HEAD`: `reap` 0 occurrences, `if: failure()` 0, `upload-artifact` 0. After: 1 / 2 / 1.
+- The structural guard, run at `HEAD`, named `test_admin.py` and `test_verify_attestation.py` as
+  still holding duplicate `_free_port` definitions.
+
+**Two plan corrections, both found by measuring rather than by review:**
+
+- **Criterion 1's grep was wrong in both directions** and is replaced by an AST check. The pattern
+  `:(80|81|82)[0-9][0-9]` can never return nothing — the citation guard holds `127.0.0.1:8099` and
+  `192.168.1.10:8080` as *test data* for the "an IP is not a citation" rule — and it missed three of
+  the four collision sites, which are written as bare integers (`data_port, mgmt_port = 8115, 8116`)
+  with no colon. A criterion written to prove the ports were gone would have gone green with half of
+  them still there.
+- **The teardown count was nine, not seven.** The same count-over-list defect the plan flags for
+  `ts/src/index.ts` one phase later, committed in the plan's own prose.
+
+**A third correction, found when the guard first ran:** the `terminate`/`DEVNULL`/`Popen` detectors
+were line-based and flagged the live suites' *module docstrings*, which deliberately say "do not
+reintroduce a bare `proc.terminate()` here". A guard that punishes its own explanation is a guard
+people delete. All detectors are AST-based, so they see attribute access and not prose.
+
+**Citation drift, caught by the suite:** inserting 41 lines into `ci.yml` moved the `must link
+NOTHING` anchor past `CITATION_SLACK`, reddening the two `ANCHORED` cases. Four citations repointed by
+re-measuring with `grep -n` — including two in `DECISIONS.md` that still *resolved* and so were not
+red, but had come to point at unrelated lines. Resolving is not the same as being right.
+
+**Verification:** python **785 passed / 17 skipped** (from 754) · `scripts/` guards **100** ·
+`ruff check` + `ruff format --check` clean · contract gate **exit 6** with the expected NOTE ·
+independence gate **exit 0** · `ci-ok`'s `needs:` byte-identical to `HEAD`.
+
+**Not proven, and deliberately not claimed.** None of this proves the CI symptom is gone; N green
+re-runs would not either. It proves the mechanism existed, is removed, cannot return, and that the
+next occurrence leaves a log instead of destroying it.
