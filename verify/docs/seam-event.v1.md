@@ -1,4 +1,6 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 5d8c177 (refreshed 2026-08-27 for clause (f) — anchored verification, seam-runtime#386/#421 Wave 2 Phase 12). The runtime spec is the
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 3b3d4ae (refreshed 2026-08-31 for ACDP D3 receipt
+     provenance — the four `ContextBinding` receipt slots sealed into digest v3 (P1a, seam-runtime#520) — and for
+     P2 `retraction`, which is served on ResolveContext and never sealed (seam-runtime#523)). The runtime spec is the
      source of truth; refresh this copy whenever the spec changes — a stale copy here once shipped a real
      verifier bug (the AUTHORIZE_EVALUATED advisory omission), and it has been stale twice more since: it
      carried no §Record digest (v3) before an earlier refresh, and no §"Presence on the wire" before the
@@ -16,7 +18,12 @@
      src/verify.rs implements was on an unmerged runtime branch, so the copy sat ahead of `main` on
      purpose. That declaration is how the checker permits being ahead — an UNDECLARED off-main pin is
      refused. It is also self-terminating, and it terminated: the branch landed as #440 and was deleted,
-     the gate went red the same hour and said to re-pin here, which is what this line now is. -->
+     the gate went red the same hour and said to re-pin here, which is what this line now is.
+     The gate then did exactly that job a fourth time: ACDP P1a and P2 landed on runtime `main` and
+     `spec-pin` went red on every open pull request until this refresh. NOTE what this copy does and does
+     not claim: it documents the runtime's event stream, not this repository's verifier coverage.
+     src/verify.rs does not compute `context_digest` and does not read the four receipt slots — the spec
+     describing them here is correct and the verifier not implementing them is also correct. -->
 
 # `seam-event.v1` — event-stream wire spec (language-neutral)
 
@@ -568,9 +575,10 @@ context_digest = SHA256(
 `Phi` — never as ordinals. An ordinal silently renumbers the moment a variant is inserted into the
 middle of an enum, and three of the four implementations would not notice.
 
-**This PascalCase rule is scoped to these two fields and does not generalize.** It applies because both
-are *closed* Seam-owned enums with a fixed variant list. It must **not** be extended by analogy to the
-reserved slots below — see the payload note there.
+**This PascalCase rule is scoped to closed, Seam-owned enums and does not generalize.** It applies to
+these two fields, and to `key_status` below, because each has a fixed variant list. It must **not** be
+extended by analogy to `resolved_status`, which is an *open* ACDP enum with a lowercase wire form — see
+the payload table below.
 
 `lineage_id`, `derived_from`, and `version` live on a nested `provenance` struct in the runtime's type;
 the preimage **flattens them** into the order shown and adds no marker for the nesting. The nesting is
@@ -585,31 +593,127 @@ produced it.
 The order is also the *open-time* order: the kernel seals the view's frozen bindings and never re-reads,
 so a mid-session registration can never enter this preimage.
 
-**The last four fields are RESERVED and are `0x00` (absent) on every record this build seals.** They are
-where ACDP receipt provenance lands — retained `content_hash`, `receipt_hash`, `key_status`, and resolved
-lifecycle status. Reserving them now means adopting receipts later fills presence bytes rather than
-forcing a v4: a record sealed today and a record sealed after receipts land both recompute under this one
-formula. Without the reservation, `schema_version` would stay 3 while the encoding changed underneath it,
-and a verifier could not tell the two apart.
+**The last four fields carry ACDP receipt provenance.** They were reserved by B3 and are **filled as of
+ACDP P1a**: populated on a **remote** `acdp://` binding, absent (`0x00`) on a **local** `sha256:` one and
+on every record sealed before P1a. A local ref has no registry, no producer DID and no receipt, so absent
+is a true statement about that binding rather than a missing value.
 
-The reservation was confirmed against the ACDP implementation at the version this runtime pins, not
-inferred: a remote resolution yields exactly these four pieces of provenance, each a **scalar**, and a
-registry receipt is **0-or-1 per binding by schema** — not a chain. A per-hop receipt chain is the one
-shape that would have forced a counted list here, and it does not exist: derivation ancestry resolves
-each ancestor as its own binding with its own four slots.
+**`schema_version` stays 3, and that is asserted rather than assumed.** An absent slot is the same single
+`0x00` byte it was while the slots were pure reservations, so a record sealed before P1a and one sealed
+after recompute under this one formula. The proof is a golden whose pre-P1a entry is byte-identical
+across the change, sitting beside a new populated entry. Without the reservation, `schema_version` would
+have stayed 3 while the encoding changed underneath it, and a verifier could not have told the two apart.
 
-**The four payload encodings are D3's to pin, and one of them is a trap.** Filling these slots changes no
-grammar, but D3 must state, for each: the ASCII `sha256:<hex>` form for `content_hash`; *which* preimage
-`receipt_hash` covers (ACDP's own receipt signing-hash excludes the signature block, so "the receipt's
-hash" is ambiguous and two implementations will choose differently); the closed PascalCase strings for
-`key_status`; and — the trap — that `resolved_status` is an **open** enum whose canonical form is ACDP's
-*lowercase* wire string, taken verbatim, including values this spec cannot enumerate. Applying the
-PascalCase rule above to it by analogy would produce a cross-language mismatch.
+The reservation was confirmed against the ACDP implementation this runtime pins, not inferred: a remote
+resolution yields exactly these four pieces of provenance, each a **scalar**, and a registry receipt is
+**0-or-1 per binding by schema** — not a chain. A per-hop receipt chain is the one shape that would have
+forced a counted list here, and it does not exist: derivation ancestry resolves each ancestor as its own
+binding with its own four slots.
 
-Two semantics D3 must also fix, because they are what keep a mutable registry value safe to seal:
-`resolved_status` is the status **observed at resolution time** and is **never refreshed** — a future
-"status refresh" job would invalidate every sealed digest — and a sealed `retracted` should be
-impossible by ingress, so a verifier that sees one should raise an anomaly rather than accept it.
+**The four payload encodings, pinned. One of them is a trap.**
+
+| slot | encoding | source |
+|---|---|---|
+| `content_hash` | ASCII `sha256:<64-lowercase-hex>` | the **body**'s library-verified content hash |
+| `receipt_hash` | ASCII `sha256:<64-lowercase-hex>` | ACDP's **`RegistryReceipt::preimage_hash()`** |
+| `key_status` | **closed**, PascalCase | `CurrentlyAuthorized` · `HistoricallyAuthorized` · `HistoricallyAuthorizedPreCompromise` |
+| `resolved_status` | **open**, ACDP's **lowercase** wire string, verbatim | the registry lifecycle status |
+
+- `content_hash` comes from the **body**, not from the receipt. The body's hash is verified on every
+  remote resolve whereas a receipt is optional, so sourcing it from the receipt would leave this absent
+  against any registry that mints none — which is the whole v0.1.0 core-profile world.
+- `receipt_hash` is named as a **function**, not a concept, because "the receipt's hash" is genuinely
+  ambiguous: ACDP's receipt signing hash **excludes** the signature block, and two implementations will
+  otherwise choose differently. It is the signature-excluding preimage, pinned against the spec's own
+  `rcpt-001` golden vector.
+- **The trap:** `resolved_status` is an **open** enum, so the "enums encode as canonical PascalCase"
+  rule elsewhere in this document does **not** apply to it. Its canonical form is ACDP's lowercase wire
+  string taken verbatim, including values this spec cannot enumerate. PascalCasing it by analogy with
+  `key_status` produces a cross-language mismatch that is invisible until a second implementation
+  recomputes the digest.
+
+Two semantics that keep a mutable registry value safe to seal:
+
+- `resolved_status` is the status **observed at resolution time** and is **never refreshed**. A future
+  "status refresh" job would invalidate every sealed digest.
+- A sealed `retracted` should be impossible, so **a verifier that sees one should raise an anomaly
+  rather than accept it**. This is a **normative obligation on any verifier. It is not implemented,
+  and on the current wire it is not implementable** — stated plainly because the wording here
+  previously read as a claim about the shipped binary called `seam-verify`.
+  * Not implemented: neither `seam-verify` nor the seam-sdk public verifier inspects
+    `resolved_status`; both treat `context_digest` as opaque bytes.
+  * Not implementable by any EXTERNAL verifier, and that is by design rather than by omission.
+    `DecisionSealed` carries `bytes context_digest` and nothing else about context — no
+    `resolved_status` appears anywhere in `seam_event.proto`. The **archive bundle is in the same
+    position on purpose**: it carries the rolled-up `context_digest`, never the binding list, because
+    putting provenance into external cold storage would put GDPR-reachable material there
+    (`seam-types/src/archive.rs`, "Rolled up, never the lists"). `ReplayView` carries no provenance
+    either. So every externalized form of a decision has deliberately discarded the field this
+    anomaly is about.
+    
+    The check can therefore live in exactly one place today: a verifier with direct access to the
+    stored `DecisionRecord` — in-process `get_record`, or the database. Anything else needs a wire
+    change, and that wire change is in tension with the GDPR roll-up, so it is a design decision and
+    not a chore. **This paragraph has now been wrong twice** — first claiming the verifier "already
+    carries" the obligation, then naming replay and the archive bundle as able to. Check the carrier
+    before extending it a third time.
+
+  The obligation is unmet and currently unreachable, for **two independent reasons** — both must be
+  named, because a future reader who lifts one will otherwise assume the other never existed:
+  1. **The decision verbs refuse every `acdp://` ref outright** at ingress
+     (`crates/seamd/src/facade.rs`, `require_context_ref_shape`), so no remote binding reaches a seal
+     at all. This is the stronger guard, and it is the one actually load-bearing today.
+  2. **P2 added the retraction predicate** (ACDP-0013). It lives at the two DECISION paths — both
+     reach it through `facade::resolve_grounds_for_seal`, which fuses resolve → refuse → project so
+     the refusal is not a separable call an edit can drop — and NOT in the resolver. A decision
+     citing retracted grounds is refused before anything seals. It is deliberately NOT applied at the read-only `ResolveContext` facade, which
+     must keep answering: retraction MARKS rather than deletes (RFC-ACDP-0013 §8.1) and the body
+     still verifies. Because guard 1 stands, this predicate is currently **latent**; it exists so
+     that lifting guard 1 does not open a window in which retracted grounds seal permanently.
+
+  P1a records the status verbatim and adds no ingress refusal of its own; a second, P1a-local
+  implementation of the predicate would have had to be unified with this one.
+
+  **Whoever lifts guard 1 owes the verifier check**, not just the end-to-end refusal test. Both
+  guards above are **producer-side**, and a verifier's whole job is to be independent of the
+  producer — so "the producer will not emit one" is not a reason for a verifier not to check, it is
+  the reason a verifier exists.
+  
+  And such a record is not hypothetical: `seam-store`'s
+  `a_record_sealed_against_a_since_retracted_context_still_verifies_with_an_unchanged_digest`
+  constructs, seals and digests exactly one, deliberately — `context_provenance_digest` refuses
+  nothing, because a WORM record must not be re-judged by facts that arrived after it was sealed.
+  It is the cross-language golden for the populated-D3 case
+  (`scripts/v3-digest-reference.py`, `D3_POPULATED_CONTEXT`). So a corpus containing one verifies
+  clean today, and that is correct chain behaviour: the anomaly is a **semantic** verdict layered
+  above the hash chain, never a chain failure.
+
+### `retraction` — served only, never sealed
+
+`ResolveContext` also returns a per-binding `retraction` (proto tag 11 / HTTP `retraction`): Seam's
+own RFC-ACDP-0013 §7.2 assessment, in a lowercase-with-underscore vocabulary of exactly three values
+— `retracted` | `not_retracted` | `unknown`.
+
+**It is NOT in any digest**, and it is absent from the four-encodings table above on purpose: that
+table is the digest preimage, and a non-sealed field listed there is exactly the confusion this
+distinction exists to prevent. The assessment is a read-time observation; `resolved_status` (tag 10)
+is the sealed wire commitment. In Rust the separation is structural rather than conventional — the
+assessment lives on a sibling `ResolvedContext`, never on `ContextBinding`, so it cannot reach
+`context_provenance_digest`.
+
+`unknown` is **not** a failure and must not be read as `not_retracted`. A registry that does not
+implement `acdp-registry-lifecycle` omits its event history entirely (never as an empty array), so
+"nothing was retracted" and "this registry cannot tell you" are indistinguishable on the wire.
+
+Rationale and threat model: [`docs/design/acdp-retraction-not-erasure-decision.md`](../design/acdp-retraction-not-erasure-decision.md).
+
+**ACDP-0011 lineage-head receipts are deliberately NOT here (P1b, deferred).** `verified_head_receipt()`
+is populated only by ACDP's `fetch_current`, which this runtime does not call — reading it would add a
+`/current` round trip per remote context on the decision path, to answer "is this the head" about a
+record that seals *the version it was given*. Recorded as a decision rather than left as an unexplained
+absence: `head_receipt_stale()` is not consulted, and a `None` head receipt has three distinct causes
+(never fetched, none minted, or the lineage has no endorsable head) which must not be collapsed into
+"stale".
 
 **Named residuals, recorded so they are not rediscovered as bugs:** an ACDP lineage-head receipt (a
 serve-time freshness attestation, mutable by design), a transparency-log inclusion proof (re-derivable
