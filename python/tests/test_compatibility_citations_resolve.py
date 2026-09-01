@@ -668,6 +668,34 @@ ANCHORED = [
         "DECISIONS.md",
         "## 2026-08-24 — reconcile `plans/record-digest-v3.md`'s ASSUMPTIONS.md (4 entries)",
     ),
+    # `DECISIONS.md` -> `scripts/check-contract.sh`, the five citations in the field-manifest
+    # decision record. Found by sweeping every citation into a file the round-7 commit changed and
+    # diffing the cited line's content across it. All five were ALREADY stale at `origin/main` —
+    # `:383` was `awk '`, `:262` was `expected_local_lag_age_days() {` — so nothing on this branch
+    # broke them; they had simply never been checked beyond "the line exists". The script has roughly
+    # doubled in length since they were written, which is what makes an unanchored line number into
+    # this file a claim with a shelf life rather than a citation.
+    (
+        "DECISIONS.md",
+        "scripts/check-contract.sh",
+        '_fwant="$(manifest_fields)"',
+    ),
+    ("DECISIONS.md", "scripts/check-contract.sh", "  exit 6"),
+    (
+        "DECISIONS.md",
+        "scripts/check-contract.sh",
+        'fields_python "$PY_GEN" >> "$ftmp"',
+    ),
+    (
+        "DECISIONS.md",
+        "scripts/check-contract.sh",
+        "# against TS is deliberate and is the reason the Python extractor must not read",
+    ),
+    (
+        "DECISIONS.md",
+        "scripts/check-contract.sh",
+        'err "the moment someone DECIDES whether this SDK carries it. Decide first — wire it into the"',
+    ),
 ]
 
 #: How far a citation may sit from the needle's true line and still count. A citation naming a block
@@ -789,6 +817,33 @@ CLAIM_LINES = {
         "DECISIONS.md",
         "## 2026-08-24 — reconcile `plans/record-digest-v3.md`'s ASSUMPTIONS.md (4 entries)",
     ): "which are lookup keys that must match",
+    # DECISIONS.md -> check-contract.sh. Three claim lines carry two citations each; the binding
+    # still narrows, because `allc` is every check-contract.sh citation in the document.
+    (
+        "DECISIONS.md",
+        "scripts/check-contract.sh",
+        '_fwant="$(manifest_fields)"',
+    ): "set-compared per language in both directions",
+    (
+        "DECISIONS.md",
+        "scripts/check-contract.sh",
+        "  exit 6",
+    ): "set-compared per language in both directions",
+    (
+        "DECISIONS.md",
+        "scripts/check-contract.sh",
+        'fields_python "$PY_GEN" >> "$ftmp"',
+    ): "with TypeScript as the cross-check",
+    (
+        "DECISIONS.md",
+        "scripts/check-contract.sh",
+        "# against TS is deliberate and is the reason the Python extractor must not read",
+    ): "with TypeScript as the cross-check",
+    (
+        "DECISIONS.md",
+        "scripts/check-contract.sh",
+        'err "the moment someone DECIDES whether this SDK carries it. Decide first — wire it into the"',
+    ): "puts the escape second",
 }
 
 

@@ -322,7 +322,7 @@ the phase ran, which is itself the finding worth recording first.
   that matters.
 - **Decision.** Mirror the RPC manifest exactly one level down: a committed declaration
   (`contract/field-manifest.txt`), set-compared per language in both directions
-  (`scripts/check-contract.sh:383`), exiting 6 with the field named (`scripts/check-contract.sh:501`). `STREAM`/`EVENTS` stay as
+  (`scripts/check-contract.sh:753`), exiting 6 with the field named (`scripts/check-contract.sh:1123`). `STREAM`/`EVENTS` stay as
   they are — they gate *event* fields for a different reason (BSR publication lag) and are not what
   this replaces. Scope is `seam.api.v1` only; `seam.event.v1` is already covered by those probes and
   by the vendored-spec gate, and duplicating it would mean two gates failing for different reasons on
@@ -356,12 +356,12 @@ the phase ran, which is itself the finding worth recording first.
      emits no type for map entries, which is an accident of this contract rather than an exclusion.
      Pinned by `python/tests/test_field_manifest_gate.py:292`.
 - **The escape names its authoritative side.** `--write-manifest` writes **both** manifests from
-  **Python** (`scripts/check-contract.sh:262`), with TypeScript as the cross-check
-  (`scripts/check-contract.sh:210`) — one command to document, not two. If it wrote from a side that cannot see every field, it
+  **Python** (`scripts/check-contract.sh:567`), with TypeScript as the cross-check
+  (`scripts/check-contract.sh:539`) — one command to document, not two. If it wrote from a side that cannot see every field, it
   would produce failures the documented escape could never clear, which is exactly what `raise` does
   under a `__slots__` extractor.
 - **The refusal deliberately puts the escape second.** It says decide first, then run it
-  (`scripts/check-contract.sh:495`). A failure message that leads with the fix trains the reader to
+  (`scripts/check-contract.sh:1052`). A failure message that leads with the fix trains the reader to
   run the fix, which turns the gate back into the silent pass it replaced.
 - **What it does NOT check: names only, not tags or types.** A field retagged or retyped is
   wire-breaking and invisible here, exactly as the RPC manifest records names and not signatures.

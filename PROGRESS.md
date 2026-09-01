@@ -2099,7 +2099,22 @@ The mechanism then proved itself inside this same round: adding `probe_event_fie
 each construct and its new line. That is the first time in seven rounds a citation drift was caught
 by a test rather than by a verifier reading the file.
 
-**Re-verified:** python **884 passed / 17 skipped** · `scripts/` **100 passed** · TS **130 pass /
+**Then the same sweep, run against round 7's own commit, found five more.** The technique is
+mechanical and worth recording, because seven rounds of verifiers reading files had not caught these:
+for every backticked `file:line` in a guarded document pointing into a file the commit changed, print
+the cited line's content at both revisions and flag any that differ. Five `DECISIONS.md` citations
+into `scripts/check-contract.sh` came back — the field-manifest decision record's whole set. Nothing
+on this branch broke them: at `origin/main`, `:383` was `awk '` and `:262` was
+`expected_local_lag_age_days() {`. They had been stale for a long time and had never been checked
+beyond "the line exists", which is the entire finding this plan keeps re-discovering in new places.
+The script has roughly doubled in length since they were written. All five repointed, all five now in
+`ANCHORED` + `CLAIM_LINES`; reverting them fails **10** tests.
+
+`DECISIONS.md` had **no** anchors at all before this round, and it is the highest-drift citation
+target in the repo — every `/reconcile` pass prepends a dated section to it, so every citation into it
+and every citation out of it moves on a schedule nothing was tracking.
+
+**Re-verified:** python **895 passed / 17 skipped** · `scripts/` **100 passed** · TS **130 pass /
 0 fail**, `tsc` clean · `ruff` clean · all eight probe/language pairs PRESENT on the real tree ·
 contract gate exits **6** with the five recorded fields and both positive event lines ·
 `git diff contract/` empty after a full pytest run.
