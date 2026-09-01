@@ -4,13 +4,13 @@ Checkpoint trail and repo map for the post-adoption hardening / ACDP P1a readine
 `/implement` writes a block per phase; a resumed run reads this instead of re-scanning the repo.
 
 **Plan:** [`plans/post-adoption-hardening-and-acdp-readiness.md`](plans/post-adoption-hardening-and-acdp-readiness.md)
-— 10 phases (Phase 9 BLOCKED on `seam-runtime` ACDP P1a Phases 4 and 6).
+— 10 phases. (Phase 9 was BLOCKED on `seam-runtime` ACDP P1a Phases 4 and 6 when this plan was written; both merged 2026-08-31 and it is now DONE.)
 
 **Execution order ≠ numbering:** 1 → 6 → 7 → 10 → 3 → 4 → 5 → 2 → 8. **Phase 6 runs immediately after
 Phase 1** per its own Sequencing block: it depends on nothing and is the only phase guarding a hazard that
 fires on every release — and releases follow the runtime, five in the three days to 2026-08-31, with zero
 floor/gencode headroom. Phase 1 cannot yield to it because it syncs the checkout and establishes this file.
-Phase 9 is not attempted.
+Phase 9 was not attemptable when this was written; the upstream merges on 2026-08-31 unblocked it and it is DONE.
 
 **PR strategy — 3 PRs.** Chosen over one big PR because the phases have genuinely different review
 audiences, and over one-PR-per-phase because several phases are too small to review alone.
@@ -586,9 +586,25 @@ ERROR: a breaking change and must be handled, never silently rewritten away.
   moved `README.md:147` → `:155`. Both were caught by the anchored check and repointed with content
   verified, not merely resolved. Unplanned, and the best available argument for #73's open half: the
   vendored rule that shipped in Phase 8 does not reach `CHANGELOG.md`, and this is what that costs.
-- **Suites:** python 615 passed / 17 skipped · TypeScript 112 passed, 0 failed · Go ok ·
+- **Where the exit-0 half of AC3 actually comes from, precisely.** The "green at 228 = 228" run was
+  **PR #82's**, on a different branch. This branch's own CI proves it again on push, but until then
+  the exit-0 direction is inherited evidence, not this commit's — worth saying, because the exit-6
+  output above *is* this checkout's and the two should not be read as the same kind of proof.
+- **AC5's floor tests pass here but prove little here.** `python/seam_sdk/_gen/.../seam_pb2.py:14-16`
+  is gencode 7.36.0 and `python/pyproject.toml:50` declares `protobuf>=7.36.0,<8` — exact equality,
+  zero headroom, and against *pre-ACDP* stubs. The assertion that matters runs in CI, after
+  `make generate`. Recorded rather than reported as a local green.
+- **Suites:** python 616 passed / 17 skipped · TypeScript 112 passed, 0 failed · Go ok ·
   `verify` 87 passed · ruff clean · `tsc --noEmit` clean. **Java and Kotlin were not run here** — no
   JDK in this environment; CI covers them, and this is flagged rather than implied green.
+- **The verify gate caught the drift's second copy, which I had missed.** `DECISIONS.md` cites the
+  same "No yank" claim as COMPATIBILITY.md. This commit's CHANGELOG entry moved the target; I
+  repaired COMPATIBILITY.md's citation (the anchored one, which went red) and wrote a bullet about
+  catching it — while DECISIONS.md's copy sat **87 lines stale**, 24 of them added by this very
+  commit, passing because `ANCHORED` paired that needle with one document only. `ANCHORED`'s own
+  docstring records exactly this for the `ci.yml` needle: *"cited from BOTH documents and drifted in
+  both — repaired in COMPATIBILITY.md and left stale here."* The lesson had been written down and
+  not wired. Now repointed **and** anchored for both documents.
 
 ### Phase 8 — Vendored files are quoted, never line-anchored (issue #73) · 2026-08-31
 
@@ -696,7 +712,7 @@ ERROR: a breaking change and must be handled, never silently rewritten away.
 - **Every runtime anchor was re-verified before filing**, against `f4e105f` / spec `3b3d4ae`:
   `p1a:103-107`, `:290-291`, `:439-441`, `p2:1009`, runtime `ci.yml:186` (`buf push`), `:299`
   (`sdk-digest-parity`), `sdk-digest-parity.sh:40,51,55`. Ask B's: `seam` `01-…:110`, `04-…:14`.
-- **Next:** Phases 3, 4, 5 → PR 2; Phase 8 → PR 3; then Phase 9's regeneration half.
+- **Next:** all ten phases are DONE. Remaining: this phase's PR, the §4 finalization pass, and `/reconcile`.
 
 ### Phase 3 — `collective_outcome` readable off a `SessionStep` · 2026-08-31
 

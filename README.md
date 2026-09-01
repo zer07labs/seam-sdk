@@ -111,10 +111,12 @@ and probes the emitted stubs:
 > caller and them. What this SDK does *not* do is read them, and that is a decision rather than a
 > gap: `verify/` does not compute `context_digest`, so there is nothing here to check them against.
 >
-> Two of the five carry vocabularies that are **wire commitments, byte-identical to the digest
-> preimage**: `key_status` is a closed, PascalCase set; `resolved_status` is an open, lowercase one.
-> This SDK passes both through verbatim. Do not case-fold, normalise or map them — a re-spelling
-> silently breaks a third party's digest recomputation, and nothing in this repo would notice.
+> Two of the five carry vocabularies that are **wire commitments**: `key_status` is a closed,
+> PascalCase set; `resolved_status` is an open, lowercase one. Both are byte-identical to what
+> *enters* the `context_digest` preimage — the spec's own wording, and the reason the exact bytes
+> matter. This SDK passes both through verbatim. Do not case-fold, normalise or map them: a
+> re-spelling silently breaks a third party's digest recomputation, and nothing in this repo would
+> notice, because nothing in this repo recomputes that digest.
 >
 > **Additive:** `buf breaking` against the previously recorded probe
 > (`7a28eb9417894fe29e33390bf2eccfaf`, 2026-08-23) is clean under `FILE` — buf's strictest ruleset,

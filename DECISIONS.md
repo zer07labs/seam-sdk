@@ -179,7 +179,9 @@ produced it.
   `verify/src/verify.rs` does not read these slots. `key_status` is a closed PascalCase vocabulary and
   `resolved_status` an open lowercase one, both byte-identical to the digest preimage, so any SDK-side
   re-spelling silently breaks third-party recomputation. Declaring without interpreting is what stops
-  that happening by accident. Wiring them is Phase 9.
+  that happening by accident. **Phase 9 settled this rather than reversing it:** the fields are
+  carried and never wired, because `verify/` does not compute `context_digest` and a projection
+  would only add a second spelling of a wire commitment.
 - **Falsifiability.** Both directions are driven red in `python/tests/test_field_manifest_gate.py:158`
   and `python/tests/test_field_manifest_gate.py:183`, against temporary copies so no test can corrupt
   the gitignored stub trees.
@@ -249,7 +251,7 @@ destroy the bad artifacts, which is the narrower question answered above.
 
 ### The evidence, each checked rather than assumed
 
-- **The precedent already covers worse.** `CHANGELOG.md:523-528` records no-yank for 0.7.13-0.7.19,
+- **The precedent already covers worse.** `CHANGELOG.md:610-615` records no-yank for 0.7.13-0.7.19,
   which failed *harder*: 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed
   every `authorize()` with an actively misleading "admission ticket is not valid" when the ticket
   was fine. This band breaks only consumers who cap `protobuf` below 7.36.0. Deleting the milder
