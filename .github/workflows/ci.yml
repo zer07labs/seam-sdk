@@ -274,10 +274,10 @@ jobs:
           # it catches a missing library or a GLIBC symbol-version mismatch rather than mere presence.
           timeout 10s "$GITHUB_WORKSPACE/seam-grpc" --version 2>&1 | head -1 || true
           ldd "$GITHUB_WORKSPACE/seam-grpc"
-      # The suites spawn this binary with stdout and stderr sent to /dev/null, so when it fails to
-      # start they can only report `server never came up` — a message that describes the symptom and
-      # names nothing. Starting it ONCE here, with its output visible, is the difference between a
-      # diagnosable failure and a guess.
+      # The suites now capture the server's output per spawn (python/tests/live_server.py), so this
+      # step is no longer the only place a startup failure is visible. It stays because it fails
+      # FAST and unambiguously: if the binary itself cannot serve, this reddens before pip, npm and
+      # codegen have run, and it does so with the binary's own output rather than a test-suite error.
       - name: smoke — the binary must actually serve before the suites depend on it
         run: |
           set -uo pipefail
@@ -345,32 +345,6 @@ jobs:
           # `schema_version == 2` assertion survived on the Python side and was caught on the TS one.
           pytest -q tests/test_integration.py tests/test_admin.py \
                     tests/test_streamed_decode.py tests/test_verify_attestation.py
-      # #85's explicit ask. The old fixtures sent the server's output to DEVNULL, so a failure that
-      # did not reproduce left NOTHING behind — and every re-run overwrote the smoke log too. The
-      # helper now writes one log per spawn; these two steps are what make those logs survive a run
-      # that goes red, so the next occurrence is diagnosed from evidence rather than re-theorised.
-      - name: the server's own output, when a live suite fails
-        if: failure()
-        run: |
-          set -uo pipefail
-          echo "::group::smoke-step log"
-          cat /tmp/seam-grpc.log 2>/dev/null || echo "(none)"
-          echo "::endgroup::"
-          for f in $(find "${TMPDIR:-/tmp}" /tmp -maxdepth 3 -name 'seam-grpc-*.log' 2>/dev/null | head -40); do
-            echo "::group::$f"
-            cat "$f"
-            echo "::endgroup::"
-          done
-      - name: keep the live-server logs as an artifact
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: live-server-logs
-          if-no-files-found: ignore
-          retention-days: 14
-          path: |
-            /tmp/seam-grpc.log
-            /tmp/**/seam-grpc-*.log
       - name: typescript live round-trip
         working-directory: ts
         env:
@@ -378,6 +352,54 @@ jobs:
         run: |
           npm ci
           npm test
+      # #85's explicit ask. The old fixtures sent the server's output to DEVNULL, so a failure that
+      # did not reproduce left NOTHING behind — and every re-run overwrote the smoke log too. The
+      # helper now writes one log per spawn; these two steps are what make those logs survive a run
+      # that goes red, so the next occurrence is diagnosed from evidence rather than re-theorised.
+      #
+      # They are LAST in the job on purpose. A step runs at its own position and nowhere else, so an
+      # `if: failure()` dump placed above `typescript live round-trip` is evaluated — and skipped,
+      # nothing having failed yet — before that step ever runs, leaving the TS lane with no dump and
+      # no artifact. Last is the only position that covers both live lanes.
+      - name: the server's own output, when a live suite fails
+        if: failure()
+        run: |
+          set -uo pipefail
+          echo "::group::smoke-step log"
+          cat /tmp/seam-grpc.log 2>/dev/null || echo "(none)"
+          echo "::endgroup::"
+          # `find` must reach pytest's tmp_path, not just its root. Every fixture passes `tmp_path`,
+          # so a per-spawn log lands at /tmp/pytest-of-runner/pytest-N/<testname>0/seam-grpc-N.log —
+          # FOUR levels below /tmp. The `-maxdepth 3` this replaced stopped one short and printed
+          # nothing at all, which is precisely the failure this step exists to prevent.
+          # The roots are deduplicated because `find /tmp /tmp ...` reports every match twice.
+          roots="/tmp"
+          if [ -n "${TMPDIR:-}" ] && [ "${TMPDIR%/}" != "/tmp" ]; then
+            roots="$roots ${TMPDIR%/}"
+          fi
+          found=0
+          for f in $(find $roots -maxdepth 6 -name 'seam-grpc-*.log' 2>/dev/null | head -40); do
+            found=1
+            echo "::group::$f"
+            cat "$f"
+            echo "::endgroup::"
+          done
+          if [ "$found" = 0 ]; then
+            echo "::warning::no per-spawn seam-grpc log found under $roots — either no live fixture" \
+                 "ran, or live_server.py's log_dir no longer lands there"
+          fi
+      - name: keep the live-server logs as an artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-server-logs
+          # `warn`, not `ignore`: an empty upload is indistinguishable from a successful one, and a
+          # glob that silently stops matching is how this evidence would disappear again.
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            /tmp/seam-grpc.log
+            /tmp/**/seam-grpc-*.log
 
   # The Go/Java/Kotlin crypto shims are standalone (no generated transport) — they need no BUF_TOKEN and
   # run unconditionally, verifying byte-for-byte reproduction of conformance/vectors.json.

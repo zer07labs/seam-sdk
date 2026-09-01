@@ -1095,15 +1095,68 @@ were line-based and flagged the live suites' *module docstrings*, which delibera
 reintroduce a bare `proc.terminate()` here". A guard that punishes its own explanation is a guard
 people delete. All detectors are AST-based, so they see attribute access and not prose.
 
-**Citation drift, caught by the suite:** inserting 41 lines into `ci.yml` moved the `must link
-NOTHING` anchor past `CITATION_SLACK`, reddening the two `ANCHORED` cases. Four citations repointed by
-re-measuring with `grep -n` — including two in `DECISIONS.md` that still *resolved* and so were not
-red, but had come to point at unrelated lines. Resolving is not the same as being right.
+**Citation drift, caught by the suite:** editing `ci.yml` moved the `must link NOTHING` anchor past
+`CITATION_SLACK`, reddening the two `ANCHORED` cases. All four `ci.yml` citations in the two guarded
+docs were re-measured with `grep -n` and repointed — `464-465`, `629-630`, `640-641`. Two of them
+still *resolved* and so were never red, yet pointed at unrelated lines; resolving is not the same as
+being right, and `test_each_citation_resolves` only ever asserted the former.
 
-**Verification:** python **785 passed / 17 skipped** (from 754) · `scripts/` guards **100** ·
+*Correction to an earlier version of this note,* which claimed those two had been fixed by
+re-measuring: they had not. They were the old numbers shifted by the commit's own line delta —
+mechanically translated, which is the very failure the sentence was written to disown. The
+independent verifier caught it. They are re-measured now, and the two `436-443` citations that
+**were** right at the time have been re-measured again after this round's `ci.yml` edits.
+
+#### Verification round — verdict **GAP**, six findings, all closed
+
+A fresh Opus verifier read the branch against the plan and #85. It confirmed the helper's four
+properties by driving them with fake binaries, confirmed adoption was complete (all 9 teardown sites
+and all 4 `_wait` copies gone), and confirmed the diff touches no shipped code. It then found six
+defects, four of them in the halves that were never exercised locally:
+
+- **G1 · the log dump could not reach the logs.** `find … -maxdepth 3` over `/tmp`, but every fixture
+  passes pytest's `tmp_path` — `/tmp/pytest-of-runner/pytest-N/<test>0/seam-grpc-N.log`, four levels
+  down. The `if: failure()` step would have run and printed nothing, which is the exact failure it
+  exists to prevent. Now `-maxdepth 6`, with deduplicated roots (`find /tmp /tmp` printed everything
+  twice) and an explicit `::warning::` when the glob matches nothing.
+- **G2 · a TypeScript live failure produced no dump and no artifact.** Both `if: failure()` steps sat
+  *before* `typescript live round-trip`; a step runs at its own position, so they were evaluated and
+  skipped before the TS step ever failed. Both moved to the end of the job — the only position that
+  covers both live lanes.
+- **G3 · idiomatic Python evaded every detector.** The verifier wrote a replacement fixture that
+  reintroduced all three #85 defects and passed all 19 guard tests: `from subprocess import Popen,
+  DEVNULL` (bare names, not attributes), `from os import kill`, `proc.send_signal()`, and ports
+  `9113/9114` outside the hardcoded `8000-8999` window. Detectors now match bare names and import
+  aliases as well as attributes, cover `send_signal`/`killpg`/`posix_spawn`, and resolve dotted paths
+  so `subprocess.run` is caught while `asyncio.run` — which `python/tests/test_integration.py:245` genuinely uses
+  — is not. Ports are caught by three independent rules, the load-bearing one being *assignment to a
+  port-named target from an int literal*, at any number. Deliberately **not** "any int in the
+  registered-port range": `test_integration.py` legitimately holds `BudgetLimits(tokens=5000)`, and a
+  guard that reddens on a token budget is a guard someone deletes. The verifier's whole evasion
+  fixture is now a test.
+- **G4 · two citations were mechanically translated, not re-measured** (above).
+- **G5 · a child that died *during* a test was silent.** `_stop` short-circuits on an already-dead
+  process, so the one path that most needs the server's log — "accepted the connection and then
+  dropped it", #85's actual symptom — was the one path that never printed it. Teardown now writes the
+  tail to stderr, and does not raise: the caller is usually already failing, and raising from a
+  `finally` would replace that real failure with this one.
+- **G6 · stale prose 30 lines from the edit**, still saying the suites send output to `/dev/null`.
+  Rewritten to say what the smoke step is actually for now.
+
+Two nits were taken as well: the dead `_ports` dataclass field is gone, and `free_ports(n)` now holds
+every socket open until all the numbers are taken — allocating one at a time and closing each first
+lets the kernel legitimately return the same number twice, which would put both planes on one port.
+Both new tests were proved red-first against a reverted copy.
+
+**Verification:** python **789 passed / 17 skipped** (from 754) · `scripts/` guards **100** ·
 `ruff check` + `ruff format --check` clean · contract gate **exit 6** with the expected NOTE ·
-independence gate **exit 0** · `ci-ok`'s `needs:` byte-identical to `HEAD`.
+independence gate **exit 0** · `ci-ok`'s `needs:` byte-identical to `HEAD` · the failure-dump step
+executed under `bash -e` against a synthetic `pytest-of-runner` tree in all three of its paths
+(TMPDIR unset, TMPDIR duplicating `/tmp`, no logs present).
 
 **Not proven, and deliberately not claimed.** None of this proves the CI symptom is gone; N green
-re-runs would not either. It proves the mechanism existed, is removed, cannot return, and that the
-next occurrence leaves a log instead of destroying it.
+re-runs would not either. It proves the mechanism existed, is removed, that the realistic regression
+is caught, and that the next occurrence leaves a log instead of destroying it. It does **not** prove
+the shape cannot return: the guard is name- and AST-based, so a port computed by arithmetic or a
+spawn helper imported under a new name still gets through, and the guard's own docstring says so
+rather than implying a sandbox.

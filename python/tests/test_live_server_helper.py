@@ -27,6 +27,7 @@ from live_server import (
     ServerDidNotStart,
     _accepts,
     free_port,
+    free_ports,
     spawn_server,
 )
 
@@ -55,6 +56,22 @@ while True:
     time.sleep(0.05)
 """
 
+# A fake seam-grpc that binds, serves briefly, then dies — the "accepted the connection and then
+# dropped it" shape #85 actually observed, which happens *inside* the test body rather than at startup.
+_FAKE_DIES_MIDWAY = """
+import os, socket, sys, time
+
+addr = os.environ["SEAM_GRPC_LISTEN"]
+host, port = addr.rsplit(":", 1)
+s = socket.socket()
+s.bind((host, int(port)))
+s.listen(8)
+sys.stderr.write("fake seam-grpc serving, about to fall over\\n")
+sys.stderr.flush()
+time.sleep(0.4)
+raise SystemExit(9)
+"""
+
 # A fake seam-grpc that binds nothing and dies at once — the "it never came up" path.
 _FAKE_DEAD = """
 import sys
@@ -75,10 +92,13 @@ def _write_binary(tmp_path: Path, source: str, name: str) -> str:
 
 
 def _old_wait(port: int, timeout: float = 5.0) -> None:
-    """The readiness check exactly as the live suites carried it before this phase.
+    """The readiness check exactly as ``test_integration.py`` carried it before this phase.
 
-    Kept verbatim so the contrast in the tests below is a measurement against the real prior
-    behaviour rather than against a paraphrase of it.
+    Copied byte-for-byte from ``960cf81:python/tests/test_integration.py:26-34`` so the contrast in
+    the tests below is a measurement against the real prior behaviour rather than against a
+    paraphrase of it. The other three suites carried the same loop with a different timeout and
+    message — identical in behaviour, which is what is under test here, but this is one file's copy
+    rather than a single shared original.
     """
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -138,7 +158,7 @@ def test_readiness_refuses_a_port_the_spawned_process_never_bound(
     port = decoy.getsockname()[1]
     binary = _write_binary(tmp_path, _FAKE_SERVER, "fake-grpc")
     try:
-        monkeypatch.setattr("live_server.free_port", lambda: port)
+        monkeypatch.setattr("live_server.free_ports", lambda count: [port] * count)
         with pytest.raises(ServerDidNotStart) as ei:
             with spawn_server(binary=binary, log_dir=tmp_path):
                 pass
@@ -313,4 +333,56 @@ def test_every_spawn_here_passes_an_explicit_binary() -> None:
     )
     assert calls >= 5, (
         f"expected this module to exercise spawn_server repeatedly, found {calls}"
+    )
+
+
+def test_the_two_ports_are_held_open_together(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``free_ports(2)`` must bind both sockets before releasing either.
+
+    Allocating one at a time — bind, read the number, close, repeat — lets the kernel legitimately
+    return the same port twice, which would put both planes on one socket. Asserted by watching the
+    call order rather than by sampling, because sampling a rare event proves nothing when it passes.
+    """
+    events: list[str] = []
+    real_socket = socket.socket
+
+    class _Watched(socket.socket):  # type: ignore[misc]
+        def bind(self, *a, **k):
+            events.append("bind")
+            return real_socket.bind(self, *a, **k)
+
+        def close(self, *a, **k):
+            events.append("close")
+            return real_socket.close(self, *a, **k)
+
+    monkeypatch.setattr(socket, "socket", _Watched)
+    ports = free_ports(2)
+    assert len(set(ports)) == 2, f"free_ports(2) returned a duplicate: {ports}"
+    assert events[:2] == ["bind", "bind"], (
+        f"the second port was allocated only after the first socket closed: {events}"
+    )
+
+
+def test_a_child_that_dies_during_the_test_surfaces_its_log(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The #85 shape exactly: it served, the test used it, then it fell over.
+
+    ``_stop`` returns immediately for an already-dead process, so this is the one path where teardown
+    could stay silent — and it is the path where the server's own output matters most. Teardown must
+    print it rather than swallow it, and must not raise (which would replace whatever the test was
+    actually failing on).
+    """
+    binary = _write_binary(tmp_path, _FAKE_DIES_MIDWAY, "dying-grpc")
+    with spawn_server(binary=binary, log_dir=tmp_path) as srv:
+        assert _accepts(srv.data_port)
+        deadline = time.monotonic() + 5.0
+        while srv.proc.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert srv.proc.poll() == 9, "the fake fell over as intended"
+
+    err = capsys.readouterr().err
+    assert "exited with code 9 DURING the test" in err
+    assert "about to fall over" in err, (
+        "the child's own output is carried, not just the code"
     )

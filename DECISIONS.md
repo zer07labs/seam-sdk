@@ -438,7 +438,7 @@ before the fix, so no shape that previously refused can now proceed.
 The scoping was **not** touched. Exact version equality, the python+npm format allowlist, and the
 exact-name match that keeps the org's Cargo crates unreachable are all unchanged — and are now
 pinned by `scripts/test_yank_gate.py`, which executes the credential resolution rather than reading
-it and asserts the three filters. It runs in `workflow-guards` (`.github/workflows/ci.yml:625`),
+it and asserts the three filters. It runs in `workflow-guards` (`.github/workflows/ci.yml:640-641`),
 needs no credential, and was proved falsifiable three ways: restoring the original one-liner,
 widening the format filter, and flipping the dry-run default each turn it red.
 
@@ -517,7 +517,7 @@ guard against throwaway git repos (`scripts/test_publish_gate.py:510`).
 That was not ceremony. The first draft of the ancestry step ran `git fetch --no-tags --depth=0`,
 which git rejects outright — *"depth 0 is not a positive number"* — and would have failed every
 publish. It survived a read-through and died the first time it was executed, which is the same
-argument the `ci-green` tests in that file already make (`.github/workflows/ci.yml:613`).
+argument the `ci-green` tests in that file already make (`.github/workflows/ci.yml:629-630`).
 
 A third defect was subtler and is worth stating as a rule. `test_protobuf_floor.py` **skips** when
 the generated tree is absent, and pytest exits **0** when every selected test skips — only *zero
@@ -949,7 +949,8 @@ nothing is ever *published* there.
 private, so **an external auditor cannot install the verifier from it.** Their path is what it always
 was: clone this **public, Apache-2.0** repository and build. `verify/` is a standalone cargo
 workspace with zero Seam dependencies precisely so that works anywhere, and the claim is a **CI
-gate** (`.github/workflows/ci.yml:436-443` runs `cargo tree -e normal`), not a comment.
+gate** (`.github/workflows/ci.yml:464-465` runs `scripts/check-independence.sh`, which renders
+`cargo tree -e normal`), not a comment.
 
 So publishing is **distribution convenience for internal and partner consumers** — *not* a
 trust-anchoring improvement and *not* the thing that makes the verifier independently obtainable.

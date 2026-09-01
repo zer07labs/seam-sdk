@@ -34,13 +34,17 @@ because the fourth property below is what will settle it if #85 recurs.
 
 What this module guarantees
 ===========================
-* **A fresh OS-allocated port per spawn.** No fixed port numbers anywhere in the live suites.
+* **A fresh OS-allocated port per spawn.** No fixed port numbers anywhere in the live suites, and
+  when both planes are wanted their sockets are held open simultaneously, so the two numbers cannot
+  collide with each other.
 * **Readiness that proves the port is ours.** The port is asserted *unreachable* before the spawn, and
   the wait loop aborts the moment the child dies rather than timing out on a generic message.
 * **Teardown that waits, with escalation.** ``terminate()`` -> ``wait(timeout)`` -> ``kill()`` ->
   ``wait()``, so the socket is released before the next spawn.
 * **Server output kept, never discarded.** The old fixtures sent stdout and stderr to ``DEVNULL``,
-  which is why #85 says "every re-run destroys the only copy of the explanation".
+  which is why #85 says "every re-run destroys the only copy of the explanation". It goes to a file
+  rather than a pipe, so a chatty server cannot deadlock on a full pipe buffer — and if the child
+  dies *while a test is using it*, teardown prints that log instead of swallowing it.
 """
 
 from __future__ import annotations
@@ -49,8 +53,9 @@ import contextlib
 import os
 import socket
 import subprocess
+import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Mapping, Optional
 
@@ -71,19 +76,36 @@ STOP_TIMEOUT = 10.0
 _POLL = 0.05
 
 
-def free_port() -> int:
-    """An OS-allocated ephemeral port.
+def free_ports(count: int) -> list[int]:
+    """``count`` OS-allocated ephemeral ports, every socket held open until all the numbers are taken.
 
-    The single copy of what ``test_admin.py`` and ``test_verify_attestation.py`` each defined
-    separately. Note the residual TOCTOU window this accepts by design: the socket is bound, closed,
-    and the number handed to a subprocess, so in principle another process can take it in between.
-    That window is *far* smaller than a fixed port shared by four tests in the same file, and it is
-    the same trade the pre-existing ``_free_port()`` already made. If it ever actually bites, the fix
-    is to pass a pre-bound file descriptor to the child — not to widen a retry until it goes quiet.
+    Holding them simultaneously is the point. Binding one, closing it, then binding the next lets the
+    kernel legitimately hand back the same number twice — vanishingly rare, but nothing forbids it,
+    and a data plane and a management plane on one port is exactly the class of failure this module
+    exists to remove. With both sockets open at once a duplicate is impossible rather than unlikely.
+
+    Note the residual TOCTOU window this still accepts by design: the sockets are closed and the
+    numbers handed to a subprocess, so in principle another process can take one in between. That
+    window is *far* smaller than a fixed port shared by four tests in the same file, and it is the
+    same trade the pre-existing ``_free_port()`` already made. If it ever actually bites, the fix is
+    to pass pre-bound file descriptors to the child — not to widen a retry until it goes quiet.
     """
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
+    socks = [socket.socket() for _ in range(count)]
+    try:
+        ports = []
+        for sock in socks:
+            sock.bind(("127.0.0.1", 0))
+            ports.append(int(sock.getsockname()[1]))
+        return ports
+    finally:
+        for sock in socks:
+            sock.close()
+
+
+def free_port() -> int:
+    """One OS-allocated ephemeral port. The single copy of what ``test_admin.py`` and
+    ``test_verify_attestation.py`` each defined separately."""
+    return free_ports(1)[0]
 
 
 def _accepts(port: int, timeout: float = 0.1) -> bool:
@@ -104,7 +126,6 @@ class LiveServer:
     data_port: int
     log_path: Path
     mgmt_port: Optional[int] = None
-    _ports: tuple = field(default_factory=tuple, repr=False)
 
     @property
     def data_addr(self) -> str:
@@ -194,8 +215,9 @@ def spawn_server(
         if not binary:
             pytest.skip("set SEAM_GRPC_BIN to run the live server suites")
 
-    data_port = free_port()
-    mgmt_port = free_port() if mgmt else None
+    ports = free_ports(2 if mgmt else 1)
+    data_port = ports[0]
+    mgmt_port = ports[1] if mgmt else None
 
     # Assert the ports are OURS before spawning. If anything already accepts here — a leaked server
     # from a previous test, another worker, an unrelated process — fail loudly now, rather than
@@ -228,12 +250,26 @@ def spawn_server(
         proc = subprocess.Popen(
             [binary], env=env, stdout=sink, stderr=subprocess.STDOUT
         )
+        srv: Optional[LiveServer] = None
         try:
             _wait_ready(proc, data_port, log_path, ready_timeout)
             if mgmt_port is not None:
                 _wait_ready(proc, mgmt_port, log_path, ready_timeout)
-            yield LiveServer(
+            srv = LiveServer(
                 proc=proc, data_port=data_port, mgmt_port=mgmt_port, log_path=log_path
             )
+            yield srv
         finally:
+            # A child that died *during* the body is the #85 shape itself — "something accepted the
+            # connection and then dropped it". `_stop` short-circuits on an already-dead process, so
+            # without this the one case that most needs the server's own output is the one case that
+            # never prints it. Written to stderr rather than raised: the caller is usually already
+            # failing, and raising from a `finally` would replace that real failure with this one.
+            rc = proc.poll()
+            if rc is not None and srv is not None:
+                print(
+                    f"\n[live_server] seam-grpc exited with code {rc} DURING the test, on port "
+                    f"{data_port}. Its own output follows:\n{srv.tail()}",
+                    file=sys.stderr,
+                )
             _stop(proc, stop_timeout)

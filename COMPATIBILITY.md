@@ -266,7 +266,8 @@ the wire" and "no consumer impact" are different claims.
 ## 5. What "independently verifiable" does and does not cover
 
 The published verifier (`verify/`) links **zero** Seam crates, and that is a CI gate rather than a
-comment — `.github/workflows/ci.yml:436-443` runs `cargo tree -e normal` and fails on any `seam-*`. What it verifies:
+comment — `.github/workflows/ci.yml:464-465` runs `scripts/check-independence.sh`, which renders
+`cargo tree -e normal` and fails on any `seam-*`. What it verifies:
 
 **Covered:**
 
