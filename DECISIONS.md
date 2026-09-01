@@ -6,6 +6,63 @@ assumption, the independent recommender's analysis, the human verdict, and the r
 produced it.
 
 
+## 2026-08-31 — `/reconcile` over `plans/post-adoption-hardening-and-acdp-readiness.md` (3 entries)
+
+All ten phases are DONE and merged (#79, #80, #81, #82, #83, #84). Three `ASSUMPTIONS.md` entries
+carry this plan's tag. Two of them were **logged retroactively during this pass** rather than while
+the phase ran, which is itself the finding worth recording first.
+
+### `/implement` logged one of the three assumptions it was told to log
+
+- **What happened.** The plan's Open questions named two entries `/implement` should write as
+  `UNCONFIRMED` while implementing — the field-manifest spelling rule (Phase 5) and Phase 8's
+  grandfathering choice. Neither was written. Only the Phase 10 quarantine entry made it in, and
+  only because that phase's own text demanded it.
+- **Why it matters more than it looks.** `ASSUMPTIONS.md` is the *input* to this pass. An entry that
+  is never written is not reconciled, is not surfaced, and leaves no trace of having been skipped —
+  so the reconcile reports complete coverage of a list that was silently short. That is the same
+  shape as this plan's other findings: a check that passes because it never saw the thing.
+- **Decision.** Both entries are written now and marked as retroactive rather than back-dated. The
+  process gap is recorded here rather than quietly repaired, because the next run will have the same
+  gap unless someone reads this.
+
+### Field-manifest spelling: names only, `<Message>/<field_name>` — **CONFIRMED**
+
+- Held in practice across the whole phase: both extractors agreed at 223 on local stubs and 228 in
+  CI, zero diff in either direction, and the two keyword-named fields that break a `__slots__`
+  reading are declared and matched. The lowercasing is forced by protoc's `MYFIELD_FIELD_NUMBER`
+  emission, not chosen. The manifest header states what the spelling does *not* check, so the
+  coverage limit is declared rather than inferred.
+- **Verdict:** Confirm. **Status:** CONFIRMED.
+
+### Phase 8 converts rather than grandfathers — **CONFIRMED, and vindicated in-run**
+
+- The phase permitted either. Converting was chosen because Phase 9 refreshes that same vendored
+  file, so grandfathering would have carried a known-doomed anchor into the event that dooms it.
+- It was tested by events within the same session: Phase 9's CHANGELOG entry moved the "No yank"
+  citation for the twelfth time, while the converted citation did not move at all. A grandfathered
+  anchor would have needed a thirteenth repoint in that same commit.
+- **Verdict:** Confirm. **Status:** CONFIRMED.
+
+### Cloudsmith quarantine for the 0.7.39-0.7.43 band — **DEFERRED, and deliberately not settled here**
+
+- **Why this one does not get settled unilaterally.** Every other entry in this pass is reversible in
+  a commit. This one is not symmetric: choosing *not* to quarantine is fully reversible — the
+  versions stay installable and quarantine remains available, and `yank.yml` now actually
+  authenticates (Phase 10). Choosing *to* quarantine breaks builds that work today, and cannot be
+  undone for anyone whose CI ran in the interim.
+- **The current state is the safe one**, which is why this defers rather than blocks: the band is
+  documented in `COMPATIBILITY.md`, nothing is removed, and no consumer's install changes. Issue #52
+  recommended yanking; Phase 10 documented instead and recorded why.
+- **What an owner would actually be deciding:** whether a consumer who is *currently fine* on one of
+  those five versions should have their next install fail in order to stop a new consumer from
+  arriving on them. The no-yank reasoning turns on harm to the working consumer, not on whether the
+  act is reversible — so quarantine's reversibility does not answer the objection, it only softens
+  the cleanup.
+- **Verdict:** Defer, with the reversible option in force. **Status:** UNCONFIRMED — carried, not
+  closed. Nothing in this plan depends on it.
+
+
 ## 2026-08-31 — `plans/post-adoption-hardening-and-acdp-readiness.md` Phase 8 (issue #73): citations into vendored files are quoted, never line-anchored
 
 ### Citations into vendored files are quoted, never line-anchored

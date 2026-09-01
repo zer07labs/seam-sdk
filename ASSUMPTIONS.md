@@ -365,6 +365,55 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   be. Filed as a question upstream.
 - **Status:** UNCONFIRMED
 
+## The field manifest spells an entry `<Message>/<field_name>`, names only
+
+- **Plan:** `plans/post-adoption-hardening-and-acdp-readiness.md` (Phase 5)
+- **Logged retroactively at reconcile time.** The plan's Open questions named this as an entry
+  `/implement` should write while implementing the phase, and it did not. Recording the miss rather
+  than back-dating it: an assumptions log that only contains the assumptions someone remembered is
+  the same defect as a citation that only looks checked.
+- **Assumed:** that the manifest should declare **names**, not types, tag numbers, cardinality or
+  `optional`-ness — and that `<Message>/<field_name>` (message unqualified, field lowercased) is the
+  right spelling for both extractors to agree on.
+- **Chose:** names only. A tag number would be strictly more information, but the manifest is
+  extracted from two independently generated stub sets and the two languages do not agree on how to
+  render a type; names are the largest surface both can produce identically. The lowercasing is
+  forced rather than chosen: protoc emits `MYFIELD_FIELD_NUMBER` for a `myField` proto field, so the
+  Python side can only ever produce `myfield`, and the TS side must fold to match.
+- **Alternatives:** include tag numbers (catches a *renumbering*, which names miss — but no extractor
+  can read them from the `.pyi` without parsing the value, and a renumber is already a breaking
+  change `buf breaking` catches); include types (the two languages disagree on spelling, so it
+  would produce a permanently red gate the documented escape cannot clear).
+- **Blast radius if wrong:** low and reversible. The gate would miss a same-name field changing type
+  or tag — both of which `buf breaking` catches at the contract, which is where they originate. The
+  header states the limit explicitly under "WHAT THIS FILE DOES **NOT** CHECK", so a reader is not
+  left to infer coverage the file does not have. Changing the spelling is one extractor edit plus
+  `--write-manifest`.
+- **Status:** CONFIRMED (2026-08-31). Held in practice across the phase: both extractors agreed at
+  223 on local stubs and at 228 in CI with zero diff in either direction, and the two keyword-named
+  fields (`ResumeRequest/raise`, `AdminResumeRequest/raise`) — the case that breaks a `__slots__`
+  reading — are declared and matched under this spelling.
+
+## Phase 8 converts the vendored citation rather than grandfathering it
+
+- **Plan:** `plans/post-adoption-hardening-and-acdp-readiness.md` (Phase 8, issue #73)
+- **Logged retroactively at reconcile time**, same miss as the entry above.
+- **Assumed:** that converting the one pre-existing `ANCHORED` citation into the vendored spec was
+  better than grandfathering it with a `#73` comment. The phase permitted either explicitly.
+- **Chose:** convert. Phase 9's regeneration half refreshes that same vendored file, so
+  grandfathering would have carried a known-doomed anchor straight into the event that dooms it —
+  the ordering Phase 8 buys would have bought nothing.
+- **Alternatives:** grandfather with a comment (cheaper, and leaves the drift to fire once more);
+  convert every `ANCHORED` entry to needle-based (a larger change with its own risk, explicitly out
+  of scope, and wrong for files this repo edits itself, where a drifting line number is real signal).
+- **Blast radius if wrong:** low. Converting drops the line-position assertion for one claim and
+  replaces it with three line-number-free ones. If the trade proves wrong, `ANCHORED` still exists
+  and re-adding an entry is a one-line change.
+- **Status:** CONFIRMED (2026-08-31), and the choice was vindicated within the same run: Phase 9's
+  CHANGELOG entry moved the "No yank" target for the twelfth time, and the *converted* citation did
+  not move at all. See `DECISIONS.md`, "Citations into vendored files are quoted, never
+  line-anchored".
+
 ## Cloudsmith quarantine is not wanted for the 0.7.39-0.7.43 band
 - **Plan:** `plans/post-adoption-hardening-and-acdp-readiness.md` (Phase 10, issue #52)
 - **Assumed:** that nobody wants installs of the band *blocked* — only documented. Issue #52
