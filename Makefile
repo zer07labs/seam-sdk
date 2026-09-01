@@ -33,16 +33,17 @@ generate-local:
 # stub trees INDEPENDENTLY (one can be stale beside the other). The RPC + Authorize probes are always
 # hard gates; STREAM=1 additionally hard-gates the streamed-payload mirror fields and EVENTS=1 hard-gates
 # SeamEvents.ReportEventsConsumed — CI sets both, since the BSR module carries that surface. Exit codes:
-# 0 OK · 1 RPC/Authorize stale · 2 stream fields stale (STREAM=1) · 3 stubs not generated ·
-# 4 ReportEventsConsumed stale (EVENTS=1) · 5 RPC surface disagrees with contract/rpc-manifest.txt ·
-# 6 field or enum-value surface disagrees with contract/field-manifest.txt · 7 a structural
+# 0 OK · 1 RPC/Authorize/admin surface stale · 2 stream fields stale (STREAM=1) · 3 stubs not
+# generated · 4 ReportEventsConsumed stale (EVENTS=1) · 5 RPC surface disagrees with
+# contract/rpc-manifest.txt · 6 field or enum-value surface disagrees with contract/field-manifest.txt · 7 a structural
 # precondition the extractors assume failed (a nested enum or message, or an enum/nested message on
 # seam.event.v1) · 8 the seam.event.v1 field surface disagrees with contract/event-field-manifest.txt,
 # which is deliberately NOT 6 and wins when both disagree — 6 is the code a local checkout produces on
 # every run and is told to read past. (5-7 were already implemented and missing from this list before
 # 8 was added; adding 8 to a list that stopped at 4 would have shipped a comment more wrong than the
-# one it replaced.) Run AFTER a `generate` / `generate-local`; it inspects the emitted stubs, it does
-# not generate them.
+# one it replaced. Code 1 was wrong here too, and for the same reason: the admin surface was added to
+# it in #36 and never reached this list.) Run AFTER a `generate` / `generate-local`; it inspects the
+# emitted stubs, it does not generate them.
 check-contract:
 	./scripts/check-contract.sh
 

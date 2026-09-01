@@ -36,8 +36,19 @@ REPO = pathlib.Path(__file__).parents[2]
 SCRIPT = REPO / "scripts" / "check-contract.sh"
 PY_STUB = REPO / "python" / "seam_sdk" / "_gen" / "seam" / "api" / "v1" / "seam_pb2.pyi"
 TS_STUB = REPO / "ts" / "gen" / "seam" / "api" / "v1" / "seam_pb.ts"
-#: The committed seam.event.v1 manifest, read only to SEED scratch copies — never driven directly.
-EVENT_MANIFEST = REPO / "contract" / "event-field-manifest.txt"
+#: The seam.event.v1 stubs. This file tests the *api* gate and mutates nothing here — they are copied
+#: to scratch and redirected only so an api-gate assertion cannot be decided by the ambient event tree.
+PY_EV_STUB = (
+    REPO
+    / "python"
+    / "seam_sdk"
+    / "_gen"
+    / "seam"
+    / "event"
+    / "v1"
+    / "seam_event_pb2.pyi"
+)
+TS_EV_STUB = REPO / "ts" / "gen" / "seam" / "event" / "v1" / "seam_event_pb.ts"
 LAG_FILE = REPO / "contract" / "expected-local-lag.txt"
 
 
@@ -46,23 +57,34 @@ LAG_FILE = REPO / "contract" / "expected-local-lag.txt"
 # the script against stubs are skippable; the ones that read the COMMITTED manifest need no stubs and
 # must run everywhere, so a header regression cannot hide behind a missing `make generate`.
 def _require_stubs() -> None:
-    if not (PY_STUB.exists() and TS_STUB.exists()):
-        pytest.skip(
-            "generated stubs absent — run `make generate` "
-            "(this gate inspects stubs, it cannot invent them)"
-        )
+    # All four, not just the api pair: the script refuses (exit 3) if ANY of the five stub files it
+    # reads is missing, so a test driving it with only the api stubs present would fail on a missing
+    # event tree while claiming something about the api field surface.
+    for stub in (PY_STUB, TS_STUB, PY_EV_STUB, TS_EV_STUB):
+        if not stub.exists():
+            pytest.skip(
+                f"generated stubs absent ({stub}) — run `make generate` "
+                "(this gate inspects stubs, it cannot invent them)"
+            )
 
 
-def _seed_event_manifest(scratch_dir: pathlib.Path) -> pathlib.Path:
-    """A scratch copy of the committed event manifest, created once per scratch directory.
+def _seed_event_tree(scratch_dir: pathlib.Path) -> dict[str, pathlib.Path]:
+    """Scratch copies of the two seam.event.v1 stub files, created once per scratch directory.
 
-    A copy and not an empty file: the script reports an absent event manifest as a failure, so an
-    empty seed would turn every exit-0 assertion in this file into a red for a reason none of these
-    tests are about. A copy and not the original: `--write-manifest` writes it.
+    The manifest path is returned alongside them but deliberately NOT seeded with the committed
+    file's contents: every `_run` in this module is preceded by a `--write-manifest` that writes it
+    from these copies, so a seeded copy would be overwritten before anything read it. Leaving it
+    absent means a future caller that skips the write gets the script's own loud "manifest is absent"
+    refusal instead of a stale seed quietly standing in for one.
     """
-    dst = scratch_dir / "event-field-manifest.txt"
-    if not dst.exists():
-        dst.write_text(EVENT_MANIFEST.read_text(encoding="utf-8"), encoding="utf-8")
+    dst = {
+        "py_ev": scratch_dir / "seam_event_pb2.pyi",
+        "ts_ev": scratch_dir / "seam_event_pb.ts",
+        "event_manifest": scratch_dir / "event-field-manifest.txt",
+    }
+    for key, src in (("py_ev", PY_EV_STUB), ("ts_ev", TS_EV_STUB)):
+        if not dst[key].exists():
+            dst[key].write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
     return dst
 
 
@@ -74,27 +96,30 @@ def _run(
     ts_gen: pathlib.Path | None = None,
     lag_file: pathlib.Path | None | bool = None,
 ):
+    _ev = _seed_event_tree(field_manifest.parent)
     env = {
         **os.environ,
         "SEAM_FIELD_MANIFEST": str(field_manifest),
         "SEAM_RPC_MANIFEST": str(rpc_manifest),
         "STREAM": "1",
         "EVENTS": "1",
-        # The EVENT field manifest is redirected for the same two reasons the RPC one is, and both
-        # bite the moment the script grew an event gate:
+        # The EVENT manifest AND the two event stub files are all redirected to scratch, for the two
+        # reasons the RPC manifest is, both of which bite the moment the script grew an event gate:
         #
-        #  1. `--write-manifest` now writes THREE files. Without this, `manifests` and
-        #     `enum_manifests` would rewrite the repo's real `contract/event-field-manifest.txt` as a
-        #     side effect of running this suite — verbatim the hazard `manifests`' own docstring
+        #  1. `--write-manifest` now writes THREE files. Without the manifest redirect, `manifests`
+        #     and `enum_manifests` would rewrite the repo's real `contract/event-field-manifest.txt`
+        #     as a side effect of running this suite — verbatim the hazard `manifests`' own docstring
         #     already names for `contract/rpc-manifest.txt`.
-        #  2. Every `returncode == 0` assertion in this file would otherwise depend on the COMMITTED
-        #     event manifest agreeing with the ambient event stub trees. That is true today (90/90/90,
-        #     no lag) — which is exactly what makes it dangerous: an api-gate test would be silently
-        #     decided by an unrelated contract and by whichever checkout it happens to run in.
-        #
-        # Seeded from the committed file rather than left empty, since an absent manifest is itself a
-        # failure the script reports. See `_seed_event_manifest`.
-        "SEAM_EVENT_FIELD_MANIFEST": str(_seed_event_manifest(field_manifest.parent)),
+        #  2. Every `returncode == 0` assertion in this file would otherwise be decided in part by an
+        #     unrelated contract and by whichever checkout it runs in. Redirecting the manifest alone
+        #     does NOT close that: the event PROBE and `assert_event_surface_preconditions` read the
+        #     stub trees, not the manifest, so ambient event stubs carrying a skew (or a nested
+        #     message, which exits 7 before the api gate is reached) would redden api-gate tests for
+        #     a reason none of them are about. Both halves are redirected here; neither alone is
+        #     enough, and the stub copies are read-only for this module — nothing here mutates them.
+        "SEAM_EVENT_FIELD_MANIFEST": str(_ev["event_manifest"]),
+        "SEAM_PY_EV": str(_ev["py_ev"]),
+        "SEAM_TS_EV": str(_ev["ts_ev"]),
     }
     # Only the enum-mutation tests need these — they drive the real script against SCRATCH COPIES of
     # the stub trees (never the real gitignored ones; see the module docstring) so an enum value can
@@ -811,7 +836,14 @@ def test_the_real_tree_passes_the_nested_message_tripwire(manifests) -> None:
     """Acceptance criterion 4: on the real generated stubs, the only nested message types are the two
     known FeaturesEntry map-entry synthetics. The `manifests` fixture already proves this indirectly
     (--write-manifest calls assert_known_nested_messages_only before writing), but this drives the
-    probing path too and asserts the failure mode by name, not just by side effect."""
+    probing path too and asserts the failure mode by name, not just by side effect.
+
+    **Exit 7 now has two possible causes, and this test does not distinguish them.** The code names a
+    failure CLASS, not a contract: `assert_event_surface_preconditions` exits 7 as well, so a nested
+    message or an enum landing on `seam.event.v1` reddens this test with a message about the EVENT
+    surface. Read the output before assuming the api allowlist is what moved — the second assertion
+    below is the one that is api-specific, and it stays green in the event case.
+    """
     fm, rm = manifests
     r = _run(fm, rm)
     combined = r.stdout + r.stderr
@@ -1004,6 +1036,10 @@ def test_an_exact_match_of_the_known_lag_downgrades_to_a_note_naming_the_lag_fil
     combined = r.stdout + r.stderr
     assert "NOTE" in combined
     assert str(lag) in combined
+    # One of the NOTE's two exit-code branches. The sentence is conditional on the event surface
+    # being clean, as it is here; the other branch — a matched api lag WITH an event disagreement,
+    # where the run exits 8 and this sentence must NOT appear — is pinned by
+    # `test_event_field_manifest_gate.py::test_the_recorded_api_lag_note_does_not_claim_exit_6_when_the_event_surface_fired`.
     assert "STILL exits 6" in combined
     for field in _KNOWN_LAG_FIELDS:
         assert field in combined, field

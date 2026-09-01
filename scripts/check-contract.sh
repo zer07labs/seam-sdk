@@ -220,9 +220,11 @@ manifest_rpcs() {
 # PARAMETERISED over the stub file, so `seam.event.v1` is extracted by THIS function rather than by a
 # second copy of it. A second pair of extractors would be a second place for the nesting and
 # keyword-name bugs recorded above to reappear, and only one of the two copies would get the fix.
-# $1 = the .pyi to read. There is deliberately no package argument: a `.pyi` carries no package
-# qualification anywhere in it — the class headers are bare names — so the file IS the package
-# selector here. `fields_ts` needs one because protobuf-es qualifies every type.
+# $1 = the .pyi to read. There is deliberately no package argument: the CLASS HEADERS this awk keys on
+# are bare names, unqualified by package, so the file IS the package selector here. (Package-qualified
+# names do appear elsewhere in a `.pyi` — the cross-package imports at the top, and field types like
+# `_seam_event_pb2.ChainHeadAttestation` — but never on a line this extractor reads.) `fields_ts` needs
+# a package argument because protobuf-es qualifies every type it declares.
 fields_python() {
   awk '
     /^class [A-Za-z0-9_]+\(_message\.Message\):/ {
@@ -239,7 +241,10 @@ fields_python() {
 # `Message<"seam.api.v1.X">`. The name is the last token before `=`, which handles qualified and
 # generic types (`seam.api.v1.Foo bar = 3;`, `map<string, string> features = 9;`) without a type grammar.
 # $1 = the .ts to read, $2 = the proto package (`seam.api.v1` or `seam.event.v1`), passed as an awk
-# variable rather than interpolated into the program text so a package can never be read as regex.
+# variable rather than interpolated into the program text, so a package name can never be spliced into
+# the shell's view of the awk program. It IS still concatenated into a dynamic regex inside awk — which
+# is exactly why `pkgre` escapes the dots first; without that, `seam.api.v1` would match `seamXapiYv1`.
+# A broken escape fails loudly (an empty extraction reports every field MISSING), never silently.
 fields_ts() {
   awk -v pkg="$2" '
     BEGIN { pkgre = pkg; gsub(/\./, "\\.", pkgre) }
@@ -964,9 +969,22 @@ if [ "$field_surface_rc" -ne 0 ] || [ "$enum_surface_rc" -ne 0 ] || [ "$event_fi
   while IFS= read -r r; do [ -n "$r" ] && echo "         - $r"; done <<< "$_lag_declared"
   echo "       This is the known local-checkout/BSR gap (stubs regenerate from a BSR module that has"
   echo "       not yet republished these), not a new regression. CI always regenerates fresh from the"
-  echo "       BSR and remains the sole authority on the contract itself, so this STILL exits 6 below —"
-  echo "       only the output is different. If a run ever names anything beyond exactly these fields,"
-  echo "       THAT is real drift, not this recorded lag. See CLAUDE.md's Gotchas."
+  echo "       BSR and remains the sole authority on the contract itself."
+  # What this run actually exits with, said out loud — and NOT unconditionally. This NOTE prints on
+  # every local checkout, so a fixed "this STILL exits 6" would be a false statement in precisely the
+  # case exit 8 was added for: the api lag matching (as it always does) while the EVENT surface has a
+  # real regression. Telling that reader the run ended in the code CLAUDE.md says to read past is the
+  # exact confusion 8 exists to prevent, printed by the gate itself.
+  if [ "$event_field_surface_rc" -eq 0 ]; then
+  echo "       The api field surface is the only thing that fired, so this STILL exits 6 below — only"
+  echo "       the output is different."
+  else
+  echo "       This run does NOT exit 6. The seam.event.v1 field surface ALSO disagrees, and that"
+  echo "       exits 8 — reported below, and it is NOT covered by this recorded lag. Read the event"
+  echo "       report; this NOTE accounts for the api half only."
+  fi
+  echo "       If a run ever names anything beyond exactly these fields, THAT is real drift, not this"
+  echo "       recorded lag. See CLAUDE.md's Gotchas."
   elif [ "$field_surface_rc" -ne 0 ]; then
   err "the generated FIELD surface disagrees with $FIELD_MANIFEST:"
   printf '%s' "$field_surface_report" >&2

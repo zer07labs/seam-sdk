@@ -56,11 +56,18 @@ def _require_stubs() -> None:
             pytest.skip(f"generated stubs absent ({f}); run 'make generate' first")
 
 
-def _run(scratch: dict[str, pathlib.Path], *args: str) -> subprocess.CompletedProcess:
-    """Run the real script with every file it reads or writes redirected into a scratch directory."""
+def _run(
+    scratch: dict[str, pathlib.Path], *args: str, stream: str = "1"
+) -> subprocess.CompletedProcess:
+    """Run the real script with every file it reads or writes redirected into a scratch directory.
+
+    `stream="0"` drops the four presence probes back to report-only. Exactly one case needs it, and
+    needs it to separate two things every other run decides together — see
+    `test_the_presence_probes_still_refuse_what_the_manifest_gate_accepts`.
+    """
     env = {
         **os.environ,
-        "STREAM": "1",
+        "STREAM": stream,
         "EVENTS": "1",
         "SEAM_PY_EV": str(scratch["py_ev"]),
         "SEAM_TS_EV": str(scratch["ts_ev"]),
@@ -325,16 +332,28 @@ def test_the_clean_path_says_so_out_loud(scratch) -> None:
     r = _run(scratch)
     assert r.returncode == OK, f"{r.returncode}\n{r.stdout}\n{r.stderr}"
     assert "the event field surface matches" in r.stdout, r.stdout
-    assert "PRESENT all 90 declared seam.event.v1 fields [python]" in r.stdout, r.stdout
-    assert "PRESENT all 90 declared seam.event.v1 fields [ts]" in r.stdout, r.stdout
+    # Counted from the manifest this case itself wrote, not hard-coded. 90 is an ambient number — it
+    # is what this checkout happens to carry — so pinning it here would redden this case on a
+    # legitimate contract growth for a reason it is not about. What it asserts is that the positive
+    # line names the size of the surface actually compared.
+    n = len(_event_fields(scratch["event_manifest"]))
+    assert n > 0, "the scratch manifest is empty; this case would be asserting nothing"
+    for lang in ("python", "ts"):
+        assert f"PRESENT all {n} declared seam.event.v1 fields [{lang}]" in r.stdout, (
+            r.stdout
+        )
 
 
 def test_the_committed_manifest_is_not_empty_and_names_every_message() -> None:
     """The anti-vacuity floor. Every comparison in this file is a SET comparison, and a manifest
     emptied by a bad write would make all of them pass — the gate would be green precisely because it
     declares nothing. Asserted against the committed file, not a scratch copy, because it is the
-    committed file that CI compares against."""
-    _require_stubs()
+    committed file that CI compares against.
+
+    Deliberately NOT guarded by `_require_stubs()`: it reads only the committed manifest, so a tree
+    without generated stubs can still check it. Skipping here would let the one test that guarantees
+    the manifest is non-empty go quiet on exactly the checkout least able to notice.
+    """
     fields = _event_fields(COMMITTED)
     assert len(fields) == 90, f"expected 90 declared event fields, found {len(fields)}"
     messages = {line.split("/")[0] for line in fields}
@@ -357,21 +376,115 @@ def test_the_committed_manifest_is_not_empty_and_names_every_message() -> None:
     )
 
 
-def test_the_four_named_presence_probes_are_still_there() -> None:
-    """The manifest does not replace them, and a later reader must not delete them as duplication.
+def test_the_presence_probes_still_refuse_what_the_manifest_gate_accepts(
+    scratch,
+) -> None:
+    """The manifest does not replace the four presence probes — proven by a case only they catch.
 
-    They fire when the manifest is absent or has just been rewritten, and they name the four fields
-    the SDK actually DECODES rather than the surface as a whole. Two different assertions.
+    Grepping the script's source for the four field names cannot make this claim, and used to be
+    what this test did. Those names also appear in the header comment describing probe 2 and in the
+    comment above the field gate saying the probes must not be deleted, so the grep passed with the
+    entire probe loop removed: a guard that could not fire.
+
+    The mutation instead RENAMES `SeamEvent.session_lifecycle` in both event trees and then records
+    the rename with `--write-manifest`. The manifest gate is left with nothing to say — trees and
+    manifest agree exactly, and the second run below asserts it says so out loud. The probe is the
+    only thing that can still notice the field a `StreamEvents` consumer decodes is gone.
+    """
+    for key, pairs in (
+        (
+            "py_ev",
+            (
+                ("session_lifecycle", "renamed_lifecycle"),
+                ("SESSION_LIFECYCLE", "RENAMED_LIFECYCLE"),
+            ),
+        ),
+        (
+            "ts_ev",
+            (
+                ("session_lifecycle", "renamed_lifecycle"),
+                ("sessionLifecycle", "renamedLifecycle"),
+            ),
+        ),
+    ):
+        text = scratch[key].read_text(encoding="utf-8")
+        for before, after in pairs:
+            assert before in text, f"{key} no longer carries {before}"
+            text = text.replace(before, after)
+        scratch[key].write_text(text, encoding="utf-8")
+    assert _run(scratch, "--write-manifest").returncode == OK
+
+    hard = _run(scratch)
+    assert hard.returncode == 2, (
+        f"expected exit 2 — STREAM=1 hard-gates the presence probes. Got {hard.returncode}; if "
+        f"that is 0, the probes no longer refuse a field only they can see.\n"
+        f"{hard.stdout}\n{hard.stderr}"
+    )
+    out = hard.stdout + hard.stderr
+    for lang in ("python", "ts"):
+        assert f"ABSENT  SeamEvent.session_lifecycle (tag 21) [{lang}]" in out, out
+
+    # The other half, and what makes the first half mean anything: with the probes back to
+    # report-only the run is CLEAN. The manifest gate accepts this mutation.
+    soft = _run(scratch, stream="0")
+    assert soft.returncode == OK, f"{soft.returncode}\n{soft.stdout}\n{soft.stderr}"
+    assert "the event field surface matches" in soft.stdout, (
+        "the manifest gate was supposed to accept this rename; if it did not, the case above no "
+        "longer isolates the probes\n" + soft.stdout
+    )
+
+
+def test_the_comment_that_stops_the_probes_being_deleted_is_still_there() -> None:
+    """A source-level guard that is honest about being one.
+
+    It asserts on the EXPLANATION, never on the field names — those appear in three comments, so
+    grepping for them proves nothing about the probes. The behavioural claim belongs to the test
+    above; this only keeps the reasoning that stops the next reader deleting them as duplication.
     """
     src = SCRIPT.read_text(encoding="utf-8")
-    for field in (
-        "session_lifecycle",
-        "chain_head_attestation",
-        "ciphertext_digest",
-        "AuditEntryEvent.actor",
-    ):
-        assert f"{field}" in src, f"the {field} presence probe is gone"
-    assert "must not be deleted as" in src or "not made redundant" in src.lower(), (
+    assert "must not be deleted as" in src, (
         "the comment explaining why the probes survive the manifest is gone; without it the next "
         "reader deletes them as duplication"
     )
+
+
+def test_the_recorded_api_lag_note_does_not_claim_exit_6_when_the_event_surface_fired(
+    scratch,
+) -> None:
+    """The most likely real exit-8 scenario, and the one that most needs the prose to be right.
+
+    Every local checkout matches the recorded api lag, so this NOTE prints on essentially every real
+    run. It used to end "so this STILL exits 6 below" unconditionally — false exactly when the event
+    surface also disagrees, and it told that reader the run ended in the code CLAUDE.md's Gotchas
+    say to read past. That is the confusion exit 8 exists to prevent, printed by the gate itself.
+
+    Constructing `lag_match == 1` needs two fields the manifest declares and neither tree carries —
+    an identical MISSING set in both languages, no extras, enums clean — plus a lag file naming
+    exactly those two. No other case in either gate file builds a matched lag together with an event
+    disagreement, which is why the false sentence survived.
+    """
+    scratch["field_manifest"].write_text(
+        scratch["field_manifest"].read_text(encoding="utf-8")
+        + "ContextBinding/pretend_lag_one\nContextBinding/pretend_lag_two\n",
+        encoding="utf-8",
+    )
+    scratch["lag"].write_text(
+        "# EXPECTED-FROM: 2026-08-31 (synthetic; written by this test, never the committed file)\n"
+        "ContextBinding/pretend_lag_one\n"
+        "ContextBinding/pretend_lag_two\n",
+        encoding="utf-8",
+    )
+    _append_field_both(scratch)
+    r = _run(scratch)
+    out = r.stdout + r.stderr
+
+    assert "NOTE — the FIELD surface disagrees" in out, (
+        f"the lag was not matched, so this case is not exercising what it claims\n{out}"
+    )
+    assert r.returncode == EVENT_SURFACE_DISAGREES, f"{r.returncode}\n{out}"
+    assert "STILL exits 6" not in out, (
+        "the NOTE claims this run exits 6 while it exits 8 — the reader is being pointed past a "
+        f"real event regression by the gate's own output\n{out}"
+    )
+    assert "does NOT exit 6" in out, out
+    assert "ChainHeadAttestation/notary_receipt" in out, out
