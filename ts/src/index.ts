@@ -15,11 +15,25 @@ export * from "./errors.js";
 // and return — and construct the ones they must pass in, via protobuf-es `create(Schema)`, e.g.
 // `create(AnchorSchema, { … })` for `verifyPartyAnchor`.
 //
-// Two generated names are shadowed by longstanding hand-written exports and stay reachable through
-// the `pb` namespace instead: `pb.Commitment` (the message behind `verifyCommitment`; the root-level
-// `Commitment` is crypto.ts's snake_case commitment for local `verifyTct`) and `pb.BudgetLimits` /
-// `pb.StepUsage` (the wire messages behind the root-level DTO interfaces of the same names — the
-// clients accept the DTOs, so the wire types are rarely needed).
+// FIVE generated names are shadowed by hand-written exports of the same name and stay reachable
+// through the `pb` namespace instead. Counted one per NAME, not one per group: the previous wording
+// said "Two" while listing three, counting `pb.BudgetLimits` / `pb.StepUsage` as a single entry, and
+// a count that has to be decoded before it can be checked is a count that cannot go stale loudly.
+//
+//   `pb.Commitment`         — the message behind `verifyCommitment`; the root-level `Commitment` is
+//                             crypto.ts's snake_case commitment for local `verifyTct`.
+//   `pb.BudgetLimits`       — the wire messages behind the root-level DTO interfaces of the same
+//   `pb.StepUsage`            names. The clients accept the DTOs, so the wire types are rarely
+//                             needed.
+//   `pb.CollectiveOutcome`  — the wire message behind the DTO that `collectiveOutcomeOf` returns.
+//   `pb.PolicyEnforcement`  — the wire message behind the DTO that `policyEnforcementOf` returns.
+//
+// The last two differ from the first three in a way worth knowing before reaching for `pb.`: the
+// root-level `CollectiveOutcome` and `PolicyEnforcement` are DECODED forms, not parallel spellings
+// of the wire type. `CollectiveOutcome.verdict` is a narrowed string union where the wire type has
+// an open enum, and `PolicyEnforcement` is only ever reached through a decoder that returns
+// `undefined` for an absent field. Take the `pb.` type to build or inspect a raw message; take the
+// root-level one to read what a client handed you.
 
 // seam.api.v1 — types in public signatures.
 export type {

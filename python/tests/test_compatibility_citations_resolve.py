@@ -641,10 +641,24 @@ def test_the_load_bearing_citations_still_point_at_the_right_thing(
     span between them; the span is wide, the danger zone is six lines wide. Revisit before adding
     a citation near `:199`, `:340`, `:367` or `:413`, not after.
 
-    `PROGRESS.md` now duplicates a path too: `ts/src/client.ts` is cited four times (`:218`, `:623`,
-    `:676`, `:804`), two of them anchored here. The closest needle-to-foreign-citation distance is
-    53 lines (needle at 676, foreign citation at 623) — clear of `CITATION_SLACK` 3 with a wide
-    margin, unlike the two cases above.
+    `PROGRESS.md` duplicates a path too, and this paragraph has been re-measured — by script, against
+    the frozen file, not by adding a delta. `ts/src/client.ts` is cited **eight** times at **five**
+    distinct lines: `:218` x3 and `:325` x2, plus `:745`, `:776`, `:913`. Two are anchored here, and
+    the closest needle-to-foreign-citation distances are **107** (needle `collectiveOutcomeOf` at 218,
+    nearest foreign citation `policyEnforcementOf` at 325) and **31** (needle `  submitCommit(` at
+    776, nearest foreign the confidence mapping at 745). Both are clear of `CITATION_SLACK` 3, so each
+    needle is satisfied by exactly its own citation.
+
+    **The number this paragraph used to carry was wrong, not merely stale, and the distinction is the
+    point.** It recorded 53 lines (needle 676, foreign citation 623) and predicted that Phase 4's
+    insertion would shrink it. The insertion moved needle and citation together and changed nothing:
+    53 had been computed against `:623`, which was a *stale* citation — it named the confidence
+    presence mapping but pointed at `submitEvaluation(`, and the mapping was really at 645. The true
+    distance was already 676 - 645 = 31. A hand-maintained margin measured against a citation that is
+    itself unverified inherits that citation's error silently, which is why these are now taken from
+    the same `_citations()` this module uses rather than read off the document. 31 is the
+    second-tightest margin in this table after `publish.yml`'s 27, and it narrows for real whenever
+    something lands between the confidence mapping and `submitCommit`.
     """
     lines = (REPO / path).read_text(encoding="utf-8", errors="ignore").splitlines()
     hits = [i + 1 for i, line in enumerate(lines) if needle in line]

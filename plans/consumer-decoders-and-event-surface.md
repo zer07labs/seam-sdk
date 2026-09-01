@@ -659,7 +659,10 @@ states" #87 asks for. Add the `python/seam_sdk/_policy.py` row to `PROGRESS.md`'
 
 ### Phase 4 — `policyEnforcementOf` in TypeScript, and the citations it necessarily moves
 
-**Status:** TODO
+**Status:** DONE — K measured at 100 (outside the 125-131 vacuous window); the `submitCommit` anchor
+failed red-first. Deviation: the `index.ts` shadowed-names comment was fixed for `CollectiveOutcome`
+too (the plan scoped that out) and is now enforced by `python/tests/test_shadowed_names_comment.py`;
+Open Question 6's 53-line margin turned out to be wrong rather than stale. See `PROGRESS.md`.
 
 **Delivers:** the TS twin, keeping the two client layers symmetric on both consumer decoders.
 
