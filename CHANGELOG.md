@@ -218,6 +218,14 @@ than trusting a summary here.
   reaches the runtime. TypeScript's `bigint` path follows the same rule and the same rendering,
   pinned byte-for-byte against Python by `conformance/authorize_jcs_int_extended.json`.
 
+- **Declared `protobuf` floor raised `>=7.36.0` to `>=7.36.1`.** Nothing in this SDK moved: the
+  contract did not change and no regeneration was run here. buf's remote plugin began emitting
+  7.36.1 gencode, so CI — which always regenerates fresh — carried gencode one patch ahead of the
+  declared floor. That gap is a consumer-side hazard, not ours: a resolver free to install runtime
+  7.36.0 under 7.36.1 gencode raises `VersionError` at `import seam_sdk`, in the consumer's process.
+  The floor is derived from the emitted stubs by `python/tests/test_protobuf_floor.py`, which is what
+  caught it. If you pin `protobuf` yourself, this raises your minimum by one patch.
+
 ### Fixed
 
 - **`authorize` canonicalized its input twice on the `UNAUTHENTICATED` retry path** (seam-sdk#60).

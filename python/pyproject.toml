@@ -47,7 +47,15 @@ dependencies = [
     # surface (policy_enforcement / participant_verdicts / collective_outcome / the quorum verbs):
     # buf's remote plugin emitted 7.36.0 gencode. The guard below caught it, which is the whole
     # reason it derives the number instead of trusting one.
-    "protobuf>=7.36.0,<8",
+    #
+    # Raised 7.36.0 -> 7.36.1 on 2026-09-01 by NOTHING IN THIS REPO: the SDK's contract did not move
+    # and no regeneration was run here. buf's remote plugin simply began emitting 7.36.1, so CI —
+    # which always regenerates fresh — carried gencode one patch ahead of the floor while a local
+    # checkout (stubs still 7.36.0) stayed green. That asymmetry is the point: the floor governs what
+    # a CONSUMER's resolver may install, and a resolver free to pick runtime 7.36.0 under 7.36.1
+    # gencode raises VersionError at `import seam_sdk`, in their process. Raising the floor is the
+    # documented response (CLAUDE.md's Gotchas); relaxing the test is not, and never will be.
+    "protobuf>=7.36.1,<8",
     "cryptography>=42",
 ]
 
