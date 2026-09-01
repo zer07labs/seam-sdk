@@ -23,8 +23,9 @@ the only two hits are `01-…:13` and `README.md:4`, both naming `seam.api.v1` a
 file in `docs/sdk/` mentions the protobuf co-installability constraint at all.**
 
 `seam-sdk` documents that constraint in detail — `seam-sdk/COMPATIBILITY.md`, section
-**"Agent-framework co-installability"** (`:112-210` as of `seam-sdk` `20786dc`; cite the heading, not
-the line, since the file moves).
+**"Agent-framework co-installability"** (`COMPATIBILITY.md:203-264` as of `seam-sdk` `20786dc` —
+but cite the **heading**, not the line: this file moves, and the span above was measured wrong once
+already while writing this very ask, off a branch that predated a merge).
 
 ## The consequence, stated plainly
 

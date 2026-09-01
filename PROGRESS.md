@@ -542,10 +542,14 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   *required* job in their repo red, fixable only from here; (3) a heads-up when the spec changes.
 - **Ask A's third point is evidenced, not hypothetical** — it fired during this run and cost the time
   documented above.
-- **The plan's `COMPATIBILITY.md:203-262` anchor for Ask B was stale**; it now points at
-  commitment-digest text. The real section is **"Agent-framework co-installability"**. Both asks cite
-  it by heading, not line — a file that moves should not be cited by a number, which is Phase 8's
-  whole point applied early.
+- **The plan's `COMPATIBILITY.md:203-262` anchor for Ask B was fine; my check of it was not.** I
+  read it off a branch based on `main` *before* #79 merged, saw commitment-digest text at that line,
+  and recorded the anchor as stale. At `20786dc` line 203 is exactly
+  `### Agent-framework co-installability` (the section runs `:203-264`). The plan was right.
+  Both asks cite the **heading** anyway — a file that moves should not be cited by a number, which is
+  Phase 8's whole point, and this is a clean demonstration of why: the error was not in the anchor,
+  it was in reading it against the wrong tree. The filed `seam#26` carries no line numbers at all,
+  so nothing published needed amending.
 - **Every runtime anchor was re-verified before filing**, against `f4e105f` / spec `3b3d4ae`:
   `p1a:103-107`, `:290-291`, `:439-441`, `p2:1009`, runtime `ci.yml:186` (`buf push`), `:299`
   (`sdk-digest-parity`), `sdk-digest-parity.sh:40,51,55`. Ask B's: `seam` `01-…:110`, `04-…:14`.
