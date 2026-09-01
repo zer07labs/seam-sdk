@@ -297,6 +297,32 @@ ANCHORED = [
     # five times as the vendored spec was refreshed. It moved to QUOTED (bottom of this file)
     # under issue #73 — same needle, same uniqueness assertion, no line number to rot.
     ("DECISIONS.md", "CHANGELOG.md", "this SDK cannot express its own"),
+    # The four references in the v1-skip entry. They were written as bare `:N` shorthand continuing
+    # an earlier path, which `CITATION` cannot match — so nothing resolved them and nothing checked
+    # them, and all three of the bare ones had rotted by 5 to 66 lines before Phase 8 repointed
+    # them. Repointing alone would have fixed the instance and left the class: a full path earns
+    # them the range check, and these entries earn them the content check that would have caught
+    # the rot in the first place.
+    (
+        "DECISIONS.md",
+        "verify/tests/authenticity.rs",
+        "fn a_v1_record_is_link_verified_but_not_recomputed",
+    ),
+    (
+        "DECISIONS.md",
+        "verify/tests/authenticity.rs",
+        "the v1 record is skipped, not recomputed",
+    ),
+    (
+        "DECISIONS.md",
+        "verify/tests/authenticity.rs",
+        "Each column is tested ALONE, with the other three removed",
+    ),
+    (
+        "DECISIONS.md",
+        "verify/tests/authenticity.rs",
+        "fn a_genuine_v1_record_is_still_skipped_not_refused",
+    ),
 ]
 
 #: How far a citation may sit from the needle's true line and still count. A citation naming a block
@@ -317,8 +343,14 @@ def test_the_load_bearing_citations_still_point_at_the_right_thing(
     document's prose structure, which is materially more machinery than the risk earns. Documents do
     NOT mask each other: `cited` is scoped to `doc`, so `ci.yml` being correctly cited in
     COMPATIBILITY.md cannot cover for its being stale in DECISIONS.md — which is not hypothetical,
-    it is exactly the state this entry was added in. Today the duplicated paths within a single
-    document are `CHANGELOG.md` and `publish.yml` in COMPATIBILITY.md. That margin has NARROWED:
+    it is exactly the state this entry was added in. The duplicated paths within a single document
+    are `CHANGELOG.md` and `publish.yml` in COMPATIBILITY.md, and now `verify/tests/authenticity.rs`
+    in DECISIONS.md — cited four times (`:238`, `:254-257`, `:906-909`, `:944`) with four anchored
+    needles, one per citation. The closest needle-to-foreign-citation distance there is 16 lines
+    (needle at 256, citation at 238), which is the tightest margin in this table: still clear of
+    `CITATION_SLACK` 3, but it is now the case to check first when adding anything nearby. Each
+    needle is satisfied only by its own citation — verified by hand, because that is the property
+    the path-only matching cannot enforce. That margin has NARROWED:
     COMPATIBILITY.md now cites `publish.yml` four times (`:199`, `:340`, `:367`, `:413`), and the
     closest pair is 27 lines apart, not the 125+ this note originally recorded. 27 is still well
     clear of `CITATION_SLACK` 3, so every anchored entry is still satisfied by exactly its own

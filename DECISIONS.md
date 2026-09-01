@@ -48,7 +48,7 @@ produced it.
      sentence, and `SIBLING_PREFIXES` already skips it when the sibling repo is not checked out. The
      line number still rots there, but it rots in the repo that owns the file and can see the edit.
   2. **Quote the sentence** and register it in `QUOTED`
-     (`python/tests/test_compatibility_citations_resolve.py:379`). The check asserts the needle is
+     (`python/tests/test_compatibility_citations_resolve.py:411`). The check asserts the needle is
      unique in the target, that the document quotes it verbatim, and that the document still
      attributes it to that path — no line number on either side.
 - **Widening `CITATION_SLACK` was considered and rejected.** Slack large enough to absorb a
@@ -73,9 +73,11 @@ produced it.
   *should* stay line-anchored. The two lists of what-is-vendored are now asserted equal against that
   registry (`python/tests/test_compatibility_citations_resolve.py:173`), on this repo's own stated
   principle that a value stored twice must not be able to disagree with itself. It does **not**
-  convert the eight remaining `ANCHORED` entries into non-vendored files; those point into files
+  convert the eight pre-existing `ANCHORED` entries into non-vendored files; those point into files
   this repo edits itself, where a line number is a claim about our own layout and a drifting one is
-  a real signal. The adjacent case is recorded here rather than fixed: `COMPATIBILITY.md`'s "No yank"
+  a real signal. `ANCHORED` in fact *grew*, to twelve — the four references repaired below were
+  added to it, because repointing them without content-checking them would have fixed the instance
+  and left the class. The adjacent case is recorded here rather than fixed: `COMPATIBILITY.md`'s "No yank"
   citation into `CHANGELOG.md` drifts because a changelog grows at the top, so *every* new entry
   moves it. Measured across `git rev-list --all`, it has held **eleven distinct values since
   2026-08-23**: `:227-231` → `:277-281` → `:317-321` → `:419-424` → `:466-471` → `:521-526` →
@@ -595,7 +597,9 @@ not as written.
   is a comment block plus record construction. The substance was right and every pointer was wrong,
   which is this entry's own subject arriving by a third route — not a stale anchor, not an unstable
   file, but a citation *format* the checker silently declines to see. Repointed above with full
-  paths so they are checkable at all; the class is recorded on #73.
+  paths so they are checkable at all, and added to `ANCHORED` so the content is checked and not
+  merely the range — repointing alone would have repaired the instance and left the class. The class
+  itself is recorded on #73.
 
   The spec sentence the decision rests on is quoted verbatim from `verify/docs/seam-event.v1.md`:
   `ciphertext_digest` "is absent (no wire bytes) only on `schema_version = 1` payloads." That

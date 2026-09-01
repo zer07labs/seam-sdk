@@ -570,7 +570,8 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
     `main` pointing at a plausible wrong line, indistinguishable from a correct one. That is the
     actual failure; the churn was only its symptom, and three successive drafts undercounted the
     same evidence.
-  - `ANCHORED` has **eight** entries, not nine. The CHANGELOG chain, three attempts, above.
+  - `ANCHORED` had **eight** entries after the conversion, not nine. It now has **twelve**: the
+    four repaired references below were added to it.
 
   The lesson is the phase's subject applied to itself: walk `git log`, never recall. The measured
   table now lives in the `VENDORED` comment, with the merged-stale row called out.
@@ -582,8 +583,10 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   by 5 to 66 lines** — `:878` was cited for an assertion that lives in a different test; `:843-875`
   was cited as a per-column parametrization and is a comment block. The substance was right and
   every pointer was wrong. Repointed with full paths (they are now checked, hence the count rising
-  to 55), and the class — a citation opting out of checking by being written unusually — recorded
-  on #73 alongside `COMPATIBILITY.md`'s comma-list form.
+  to 55) **and added to `ANCHORED`**, so the content is checked and not merely the range —
+  repointing alone would have repaired the instance and left the class. The class itself — a
+  citation opting out of checking by being written unusually — is recorded on #73 alongside
+  `COMPATIBILITY.md`'s comma-list form.
 
 - **`VENDORED` names a file, not the `verify/docs/` directory** — the first draft used the directory
   prefix, which would have forbidden line anchors into `audit-anchor.md` and
@@ -598,8 +601,8 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   quote, and verified by deleting DECISIONS.md's attribution line ("quoted verbatim from
   `verify/docs/seam-event.v1.md`") and watching it go red before restoring the file.
 
-- **Full python suite: 611 passed, 17 skipped** — 606 at first commit; the two verify rounds added
-  a registry-consistency test and four newly-visible citations. Run whole, never a subset — the doc
+- **Full python suite: 615 passed, 17 skipped** — 606 at first commit; the two verify rounds added
+  a registry-consistency test, four newly-visible citations, and four new `ANCHORED` content checks. Run whole, never a subset — the doc
   guards scan every `*.md` including this file.
 
 ### Phase 2 — The two cross-repo asks, written and **filed** · 2026-08-31
