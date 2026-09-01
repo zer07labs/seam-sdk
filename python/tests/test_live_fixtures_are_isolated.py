@@ -83,16 +83,25 @@ def _source(name: str) -> str:
 
 
 def _import_aliases(tree: ast.AST) -> dict[str, str]:
-    """``{"sp": "subprocess"}`` for every ``import x as y``.
+    """``{"sp": "subprocess"}`` for every ``import x as y``. **Aliased imports only.**
 
     Without this, ``import subprocess as sp`` followed by ``sp.run([binary])`` resolves to ``sp.run``,
     which is in no banned set — an ordinary spelling, not a contrived evasion.
+
+    The ``asname`` guard is load-bearing, and its absence made this function *lose* hits. The first
+    version also recorded unaliased imports, so ``import os.path`` mapped ``os -> os.path`` and
+    ``os.system(...)`` resolved to ``os.path.system`` — matching nothing. A helper added to widen the
+    detector narrowed it instead, which is the same "calibrated against the motivating example, never
+    re-run against what already matched" mistake the calibration test below exists to stop. It went
+    unnoticed because the red-first proof exercised one of the five ``SPAWN_DOTTED`` entries; it now
+    exercises all of them.
     """
     out: dict[str, str] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                out[alias.asname or alias.name.split(".")[0]] = alias.name
+                if alias.asname:
+                    out[alias.asname] = alias.name
     return out
 
 
@@ -198,6 +207,22 @@ def _assigned_pairs(node: ast.AST):
     return list(zip(targets, values))
 
 
+def _names_a_port(name: str) -> bool:
+    """True for ``port``/``data_port``/``mgmtPort``, false for ``support``/``report``/``transport``.
+
+    A substring test reddens on the SDK's own vocabulary — ``report_*``, ``transport``, ``export`` are
+    everywhere — and rule (1b) below applies this to every keyword argument, function default and
+    dict key in the guarded files, so a substring would have made the guard noisy enough to delete.
+    """
+    # Split camelCase only where a lowercase letter meets an uppercase one, so ALL_CAPS survives:
+    # a blanket "before any uppercase" rule shatters DATA_PORT into single letters and the whole
+    # historical spelling stops matching. (It did, on the first attempt.)
+    words = re.split(
+        r"[^a-z0-9]+", re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name).lower()
+    )
+    return any(w in {"port", "ports"} for w in words)
+
+
 def _is_port_literal(node: ast.AST) -> bool:
     """An int constant big enough to be a real, bindable TCP port."""
     return (
@@ -249,7 +274,7 @@ def _port_offenders(src: str) -> list[str]:
         for tgt, val in _assigned_pairs(node):
             name = tgt.id if isinstance(tgt, ast.Name) else getattr(tgt, "attr", "")
             if (
-                "port" in name.lower()
+                _names_a_port(name)
                 and isinstance(val, ast.Constant)
                 and isinstance(val.value, int)
                 and not isinstance(val.value, bool)
@@ -262,14 +287,14 @@ def _port_offenders(src: str) -> list[str]:
         # dict entry (`CFG = {"data_port": 9113}`). The assignment form alone justified itself by
         # "a dataclass is the idiom a copied fixture reaches for" — but *constructing* that dataclass
         # and `field(default=...)` are both keyword arguments, so the justification argued for these.
-        if isinstance(node, ast.keyword) and node.arg and "port" in node.arg.lower():
+        if isinstance(node, ast.keyword) and node.arg and _names_a_port(node.arg):
             if _is_port_literal(node.value):
                 offenders.append(
                     f"line {node.value.lineno}: {node.arg}={node.value.value}"
                 )
         elif isinstance(node, ast.arguments):
             for arg, default in _defaults(node):
-                if "port" in arg.arg.lower() and _is_port_literal(default):
+                if _names_a_port(arg.arg) and _is_port_literal(default):
                     offenders.append(
                         f"line {default.lineno}: {arg.arg}={default.value}"
                     )
@@ -278,7 +303,7 @@ def _port_offenders(src: str) -> list[str]:
                 if (
                     isinstance(key, ast.Constant)
                     and isinstance(key.value, str)
-                    and "port" in key.value.lower()
+                    and _names_a_port(key.value)
                     and _is_port_literal(val)
                 ):
                     offenders.append(f"line {val.lineno}: {key.value!r}: {val.value}")
@@ -316,7 +341,8 @@ def _looks_like_a_live_suite(src: str) -> str:
     * it **spawns a process and then connects a client to it**. That conjunction is the definition of
       a live suite, and it is why ``test_conformance.py``, ``test_packaging.py``,
       ``test_field_manifest_gate.py`` and ``test_errors_is_import_light.py`` — which all legitimately
-      spawn subprocesses and read their output — are not flagged.
+      spawn subprocesses and read their output — are not flagged. Eleven other files here *connect*
+      without spawning; the conjunction excludes those too.
 
     **The previous version of this used ``socket``/``grpc`` imports as the second signal, and it was
     wrong.** Three of the four suites in ``LIVE_SUITES`` import neither. It was calibrated against the
@@ -527,6 +553,23 @@ def test_the_guard_would_actually_fire() -> None:
     )
     assert _name_hits("os.posix_spawn(b, [b], {})\n", SPAWN_NAMES), (
         "evaded before: posix_spawn"
+    )
+    # EVERY dotted entry, not just the one that motivated the set. Exercising a single entry is how
+    # `_import_aliases` was able to silently stop resolving four of the five: the proof was as narrow
+    # as the bug.
+    for dotted in sorted(SPAWN_DOTTED):
+        module, leaf = dotted.rsplit(".", 1)
+        assert _name_hits(
+            f"import {module}\n{dotted}(['x'])\n", SPAWN_NAMES, SPAWN_DOTTED
+        ), f"{dotted} is in SPAWN_DOTTED but the detector does not see it"
+        # ...and through an alias, which is what _import_aliases exists for.
+        assert _name_hits(
+            f"import {module} as _m\n_m.{leaf}(['x'])\n", SPAWN_NAMES, SPAWN_DOTTED
+        ), f"{dotted} evades when the module is imported under an alias"
+    # A dotted *submodule* import must not knock out the parent's own banned attributes. Recording a
+    # mapping for an unaliased import made `import os.path` resolve `os.system` to `os.path.system`.
+    assert _name_hits("import os.path\nos.system('x')\n", SPAWN_NAMES, SPAWN_DOTTED), (
+        "an unaliased dotted import must not blind the detector to the parent module"
     )
     # ...but the ordinary `.run` that test_integration.py actually uses must NOT fire.
     assert _name_hits("asyncio.run(scenario())\n", SPAWN_NAMES, SPAWN_DOTTED) == [], (

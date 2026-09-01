@@ -382,7 +382,7 @@ jobs:
           # independent of where pytest actually put its tmp_path, rather than silently uploading
           # nothing — the same "the glob quietly stopped matching" failure as the depth bug above.
           stage=/tmp/seam-live-logs
-          mkdir -p "$stage" 2>/dev/null || true   # `|| true`: see the note on `cat` below — this
+          mkdir -p "$stage" 2>/dev/null || true   # guarded, for the reason `cat` is — see below
           cp /tmp/seam-grpc.log "$stage/smoke.log" 2>/dev/null || true
           found=0
           # `-type f` and `|| true`: this step runs while things are already broken, so one

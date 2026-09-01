@@ -292,8 +292,10 @@ def test_the_helper_is_the_only_copy_of_free_port() -> None:
     Two corrections a third verification round called for, both of the shape this repo keeps
     shipping. The scan now asserts its own denominator — an absence assertion over a glob that has
     silently stopped matching reports success — and it parses rather than substring-matches, so it
-    sees a definition however it is spelled (``_free_port``, ``free_port``, ``_alloc_port``) and does
-    not see one named in prose.
+    sees a definition however it is spelled — singular or plural, ``free``/``alloc``/``pick``/
+    ``ephemeral`` alike — and does not see one named in prose. The plural matters: ``free_ports`` is
+    what ``live_server`` actually exports, so it is the name a re-implementation would copy, and the
+    first version of this rewrite missed it while its own docstring listed three singular spellings.
     """
     import ast
 
@@ -317,8 +319,8 @@ def test_the_helper_is_the_only_copy_of_free_port() -> None:
             node.name
             for node in ast.walk(tree)
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name.endswith("port")
-            and ("free" in node.name or "alloc" in node.name)
+            and node.name.rstrip("s").endswith("port")
+            and any(w in node.name for w in ("free", "alloc", "pick", "ephemeral"))
         ]
         if found:
             offenders[path.name] = found

@@ -402,7 +402,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 - **Delivered:** a `DECISIONS.md` entry that makes the forward reference Phase 7 left dangling
   true; `yank.yml`'s credential resolution fixed (`.github/workflows/yank.yml:55-60`); and
   `scripts/test_yank_gate.py` (12 tests) wired into `workflow-guards`
-  (`.github/workflows/ci.yml:588`).
+  (`.github/workflows/ci.yml:655-656`).
 - **Nothing was dispatched and nothing was deleted.** The scoping filters — exact version equality,
   the python+npm allowlist, the exact-name match keeping the org's Cargo crates unreachable — are
   byte-unchanged, and are now pinned by tests so that widening one is deliberate and visible.
@@ -1109,9 +1109,9 @@ mechanically translated, which is the very failure the sentence was written to d
 independent verifier caught it.
 
 *And a correction to that correction.* This note used to quote the line numbers it had just
-repointed to. Every subsequent commit on this branch edited `ci.yml` again, so those numbers went
-stale twice more, and a third verifier found the note asserting values that matched nothing in any
-document at any commit. **Line numbers have been removed from this paragraph entirely** — a record of
+repointed to. Two of the three commits after it edited `ci.yml` again, so those numbers went stale,
+and a third verifier found the note asserting a value that no longer matched any document. **Line
+numbers have been removed from this paragraph entirely** — a record of
 *what was done* does not need to restate the moving target, and restating it guarantees the record
 goes wrong. The citations themselves are re-measured once, last, against a frozen `ci.yml`; the
 resolved values are in the round-3 record below.
@@ -1288,9 +1288,11 @@ headline finding:
   three enforced documents have now been re-resolved in one pass against a frozen file, and each was
   read against its citing sentence rather than merely checked for range.
 
-- **F4 · three false statements in this record**, including a python test count off by one and two
-  quoted line numbers that matched nothing at any commit. Fixed above by removing the numbers, not by
-  updating them.
+- **F4 · three false statements in this record**, including a python test count off by one and a
+  quoted line number that had gone stale. Fixed above by removing the numbers, not by updating them.
+  (A fourth round measured this claim too: of the values quoted, exactly one had actually gone stale —
+  the others were still current at the time. The correction was itself slightly overstated, which is
+  its own small instance of the thing being corrected.)
 
 Also closed: `_assigned_pairs` missed port-named **keyword arguments**, **function defaults** and
 **dict entries** — and the commit that added `AnnAssign` justified itself with "`LiveServer` is a
@@ -1307,8 +1309,58 @@ all eight docstring positions and exempts nothing that is not a docstring; all t
 quote-plus-commit rows verify exactly against `git show`; the Phase 2 criterion-1 rewrite is real and
 not a fifth vacuity (the grep returns exactly the six docstring lines the plan names).
 
+**Verification:** `scripts/` guards **100** · `ruff` clean · contract gate **exit 6** with the
+expected NOTE · independence gate **exit 0** · shipped code untouched · F1 proved red-first by
+dropping a de-adopted `test_integration.py` into a scratch tests directory · F2 re-executed under
+`bash -e` against a blocked staging path · **fourteen** of the fifteen `ci.yml` citations re-resolved
+against the frozen file — see round 4 for the fifteenth.
+
+#### Verification round 4 — **GAP, but a different shape**, and the lane that broke every round is closed
+
+Round 3 said the rate was flat and the kind identical. Round 4 found that is no longer true, and the
+difference is the useful signal:
+
+- **The CI/shell lane is closed.** It produced a finding in all three prior rounds. The verifier
+  executed the dump step under `bash -e` against eight adversarial states — `$stage` as a regular
+  file, `$stage` unwritable, the root unwritable, an unreadable log, a *directory* named
+  `seam-grpc-*.log`, zero matches, sixty matches, the smoke log as a directory — and got **exit 0 in
+  all eight**, with the `::warning::` still printed in both no-match cases. `HEAD~1` exits **1** on the
+  first of those, so the round-3 fix is real and no unguarded command remains.
+- **The citation lane went 14/15 in outcome but the *claim* was still false.** `PROGRESS.md:405` cited
+  `ci.yml` line 588 for "`scripts/test_yank_gate.py` wired into `workflow-guards`" — written without
+  backticks here, because a *wrong* citation quoted inside a citation-enforced document is itself
+  extracted and checked, and would have to be made right to be discussed. That line is `spec-pin:` — a
+  different job's header. The value moved by roughly seventy lines and got the commit's own `+3`
+  delta instead: the mechanical translation the same commit says it stopped doing, on the one citation
+  of the eight that needed a real measurement. It resolves, so the gate stayed green. Now `655-656`.
+- **And one new same-kind defect, in the commit that names the pattern.** `_import_aliases`, added to
+  widen the detector, *narrowed* it: recording a mapping for unaliased imports made `import os.path`
+  resolve `os.system` to `os.path.system`, losing four of the five `SPAWN_DOTTED` spellings. It
+  survived because the red-first proof exercised **one** of the five — the proof was as narrow as the
+  bug. Fixed to alias-only, and the proof now walks every entry, each also through an alias, plus the
+  `import os.path` case directly. Reverting the one-line fix turns it red.
+
+Two claims corrected rather than defended. **The calibration test's guarantee was overstated**: the
+verifier swapped `CONNECT_NAMES` for a strictly worse discriminator and all 25 tests still passed,
+because `_deadopt` *injects* the tokens (`Popen`, `DEVNULL`, `9113`) that a narrowing might key on —
+the calibration corpus is generated by the guard it polices. It does catch the round-3 regression
+exactly, which nothing before it did, and that is now what it claims. Calibrating against the real
+pre-#85 fixtures would close the rest and cannot be done from git: CI checks out shallow, so `960cf81`
+is unfetchable there. **And `connect` is a name list, not a definition** — `connect_ex` plus a locally
+wrapped client evades it. The prose said "a definition, not a correlation"; it no longer does.
+
+Also taken: `"port" in name` was a substring test, so `support=2000`, `report=5000`, `transport=1500`
+and `{"reports": 4000}` all reddened — and round 3 had extended that test from assignments to every
+keyword argument, default and dict key in the guarded files. It matches whole words now (`portfolio`
+stays green). The `free_port` uniqueness scan missed `free_ports` — the plural the helper actually
+exports, and therefore the name a re-implementation would copy — while its own docstring enumerated
+three singular spellings.
+
+Left as follow-ups, per the verifier's own recommendation that a fifth round has negative marginal
+return: the real-fixture calibration corpus, `connect_ex`, and the false-positive margin (eleven files
+here already call a `CONNECT_NAME` with zero spawns; the sets are disjoint today and that is the whole
+of the safety margin).
+
 **Verification:** python **790 passed / 17 skipped** · `scripts/` guards **100** · `ruff` clean ·
 contract gate **exit 6** with the expected NOTE · independence gate **exit 0** · shipped code
-untouched · F1 proved red-first by dropping a de-adopted `test_integration.py` into a scratch tests
-directory · F2 re-executed under `bash -e` against a blocked staging path · all fifteen `ci.yml`
-citations re-resolved against the frozen file.
+untouched · both new fixes proved red-first by reverting them on scratch copies.
