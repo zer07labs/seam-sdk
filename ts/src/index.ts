@@ -15,10 +15,11 @@ export * from "./errors.js";
 // and return — and construct the ones they must pass in, via protobuf-es `create(Schema)`, e.g.
 // `create(AnchorSchema, { … })` for `verifyPartyAnchor`.
 //
-// FIVE generated names are shadowed by hand-written exports of the same name and stay reachable
-// through the `pb` namespace instead. Counted one per NAME, not one per group: the previous wording
-// said "Two" while listing three, counting `pb.BudgetLimits` / `pb.StepUsage` as a single entry, and
-// a count that has to be decoded before it can be checked is a count that cannot go stale loudly.
+// FIVE generated names are declared on BOTH sides — by a hand-written export here and by the
+// generated surface — and at this root the hand-written declaration is the one you get. The
+// generated type stays reachable as `pb.X`. Listed one entry per NAME, so the count can be checked
+// against the list without decoding a grouping; `python/tests/test_shadowed_names_comment.py`
+// computes the set from the code and reddens if this list or its count drifts from it.
 //
 //   `pb.Commitment`         — the message behind `verifyCommitment`; the root-level `Commitment` is
 //                             crypto.ts's snake_case commitment for local `verifyTct`.
@@ -27,6 +28,16 @@ export * from "./errors.js";
 //                             needed.
 //   `pb.CollectiveOutcome`  — the wire message behind the DTO that `collectiveOutcomeOf` returns.
 //   `pb.PolicyEnforcement`  — the wire message behind the DTO that `policyEnforcementOf` returns.
+//
+// **Why they are `pb.`-only is worth stating precisely, because the obvious explanation is wrong.**
+// It is not that a star export beat another star export: this file never star-exports the generated
+// module. `export * as pb` exports exactly one name — `pb` — and contributes none of the module's
+// inner names at the root; everything else from `../gen/` is re-exported by the explicit lists
+// below. These five are simply not on those lists. Ordering has nothing to do with it, and had
+// there been two competing star exports, ESM would have EXCLUDED the ambiguous name rather than
+// resolving it to the first. **The causality runs the other way from the intuition:** adding one of
+// these five to the explicit `export type { … }` list would not "un-hide" it — it would make the
+// GENERATED type win the root name and silently displace the hand-written one.
 //
 // The last two differ from the first three in a way worth knowing before reaching for `pb.`: the
 // root-level `CollectiveOutcome` and `PolicyEnforcement` are DECODED forms, not parallel spellings

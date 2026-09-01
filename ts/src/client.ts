@@ -237,6 +237,7 @@ export function collectiveOutcomeOf(
     statedValueContradictedTally: outcome.statedValueContradictedTally,
   };
 }
+
 /** The runtime's statement about whether a policy gated this decision.
  *
  * Both fields are `readonly`, for the reason the Python twin is a frozen dataclass: this is the

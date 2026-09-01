@@ -66,10 +66,10 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `ts/src/client.ts:218` | `collectiveOutcomeOf(resp: DecisionResponse | SessionStep)` — the TS twin. **Phase 3 DONE.** It needed a real union: protobuf-es brands messages, so passing a `SessionStep` is a *compile error* today (reproduced: `TS2345`, `$typeName` mismatch). `:146-151` `UnknownCollectiveVerdictError(rawValue, decisionId: string)` — **required** `string`, so `:229`'s `resp.decisionId` became `resp.decisionId ?? ""`; a verifier mutation removing that coalesce reddens a test, so it is load-bearing, not decoration. |
 | `ts/gen/seam/api/v1/seam_pb.ts` | Branded `SessionStep = Message<"seam.api.v1.SessionStep"> & {…}` — the reason Phase 3's TS half is a hard block, not a typing nicety. Also carries `collectiveOutcome?` on the same branded type. Cited by symbol, not by line: this is a generated, gitignored file, and a line number into it is correct only until the next `make generate`. |
 | `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi:289,297` | `SessionStep.collective_outcome` in the Python stubs — generated, never surfaced. |
-| `python/seam_sdk/client.py:541`, `ts/src/client.ts:776` | `submit_commit` / `submitCommit` return a `SessionStep` — the caller Phase 3 exists for. |
+| `python/seam_sdk/client.py:541`, `ts/src/client.ts:777` | `submit_commit` / `submitCommit` return a `SessionStep` — the caller Phase 3 exists for. |
 | `python/tests/test_collective_outcome.py`, `ts/tests/collective_outcome.test.ts` | `DecisionResponse` cases only. **Phase 3** adds the `SessionStep` cases (absent ⇒ none; `UNSPECIFIED` ⇒ raise; unknown ⇒ raise; non-commit step ⇒ none). Drive red first. |
 | `python/seam_sdk/client.py:473,514` · `aio.py:371,412` · `ts/src/client.ts:723,759` | `submit_evaluation` / `submit_objection` — **already delivered** by `c49d005`. Do not re-plan. |
-| `python/seam_sdk/client.py:506-507` · `python/seam_sdk/aio.py:404-405` · `ts/src/client.ts:745` | `confidence` presence mapping — `None` ⇒ field-absent, never `0.0`. Correct in both languages; pinned by `python/tests/test_evaluation_confidence.py:55,64,87,100` and `ts/tests/evaluation.test.ts:59,70,85,93`. |
+| `python/seam_sdk/client.py:506-507` · `python/seam_sdk/aio.py:404-405` · `ts/src/client.ts:746` | `confidence` presence mapping — `None` ⇒ field-absent, never `0.0`. Correct in both languages; pinned by `python/tests/test_evaluation_confidence.py:55,64,87,100` and `ts/tests/evaluation.test.ts:59,70,85,93`. |
 > **Read every row below as *as at plan time*, 2026-08-31, unless the row says otherwise.** Some
 > were updated mid-run and some were not, which is worse than either — an unstamped map invites a
 > reader to treat a stale row as current. The rows known to have moved since are corrected inline.
@@ -634,7 +634,7 @@ ERROR: a breaking change and must be handled, never silently rewritten away.
   `ContextBinding` field present — all eleven, `content_hash` / `receipt_hash` / `key_status` /
   `resolved_status` / `retraction` among them.
 - **No wrapper change was needed, exactly as the plan predicted** — verified rather than assumed:
-  `resolve_context` (`python/seam_sdk/client.py:718`) and `resolveContext` (`ts/src/client.ts:913`)
+  `resolve_context` (`python/seam_sdk/client.py:718`) and `resolveContext` (`ts/src/client.ts:914`)
   return the generated `ContextBinding` straight through, so the five fields reach callers with no
   SDK work. What both *did* carry was a docstring enumerating four of the eleven fields as if that
   were the set; both now say what they actually return, and both carry the vocabulary warning.
@@ -1029,7 +1029,7 @@ them change what the phases do:
 | `python/seam_sdk/_policy.py` | **Phase 3 created it.** `policy_enforcement_of(resp)` returning `None` iff absent. New module, not a `_collective.py` addition — that module's docstring is entirely about a growth policy this field does not have. |
 | `python/seam_sdk/__init__.py:10` | Where `_collective`'s exports are imported; Phase 3 adds `_policy`'s alongside, plus two `__all__` entries. |
 | `ts/src/client.ts:218` | `collectiveOutcomeOf` over the union. **Phase 4 inserted `policyEnforcementOf` immediately after it**, so this citation survived unchanged; the `submitCommit` citation did not, and was repointed by measurement in the same commit. |
-| `ts/src/client.ts:325` | **Phase 4 created it.** `policyEnforcementOf(resp)` returning `undefined` iff absent — 100 lines inserted after `collectiveOutcomeOf` ends at `:239`. |
+| `ts/src/client.ts:326` | **Phase 4 created it.** `policyEnforcementOf(resp)` returning `undefined` iff absent — 101 lines inserted after `collectiveOutcomeOf` ends at `:239`. |
 | `ts/src/index.ts:18` | The shadowed-generated-names comment. It opened with "Two" and listed three names; Phase 4 rewrote it to name all **five** actual shadows (`CollectiveOutcome` was already missing before this phase) and made the count one-per-name. `python/tests/test_shadowed_names_comment.py` now enforces both halves. |
 | `python/tests/test_collective_outcome.py:208` | The `SessionStep` arm — the model for `test_policy_enforcement.py`. |
 | `python/tests/test_integration.py` | At `960cf81`: `addr = "127.0.0.1:8099"` (line 48), hardcoded, four tests; `_wait` (26-34) proved only that *something* listens; a bare `terminate()` (66). **Phase 2's primary target** — all three are gone, so this row quotes rather than line-anchors. |
@@ -1048,7 +1048,7 @@ them change what the phases do:
 | `scripts/check-contract.sh:583` | The corrected comment #88 was filed from. **Phase 5 must rewrite it** or it becomes false. |
 | `contract/event-field-manifest.txt` | **Phase 5 creates.** 90 fields, 11 messages, zero enums, zero nested messages — all measured, not assumed. |
 | `python/tests/test_field_manifest_gate.py:54` | `_run()` — the scratch-copy-plus-env-override pattern Phase 5's tests mirror. Nothing may mutate the real gitignored stub trees. |
-| `python/tests/test_compatibility_citations_resolve.py:606` | The `ANCHORED` needle into `ts/src/client.ts`. The plan predicted the insertion would break the `submitCommit` anchor for any K of 4+ lines *except* a 125-131 window where it would go green against the unrelated `:804` citation. **Measured K = 100** — outside that window, and the anchor failed red-first as required before `PROGRESS.md` was touched. |
+| `python/tests/test_compatibility_citations_resolve.py:606` | The `ANCHORED` needle into `ts/src/client.ts`. The plan predicted the insertion would break the `submitCommit` anchor for any K of 4+ lines *except* a 125-131 window where it would go green against the unrelated `:804` citation. **Measured K = 101** — outside that window, and the anchor failed red-first as required before `PROGRESS.md` was touched. |
 
 ## Phase log
 
@@ -1485,10 +1485,12 @@ caught more widely than before (drop-gate 8 → 9 failures, empty-`policy_id` 1 
 
 ### Phase 4 — `policyEnforcementOf` in TypeScript, and the citations it moved · **DONE**
 
-`ts/src/client.ts:325`, inserted immediately after `collectiveOutcomeOf` ends at `:239`, so `:218`
-survived unchanged. **K = 100** — outside `CITATION_SLACK`'s vacuous band and outside the 125-131
-window the plan warned would go green against the unrelated `resolveContext` citation. The
-`submitCommit` anchor failed red-first, before `PROGRESS.md` was touched, naming the exact new line.
+`ts/src/client.ts:326`, inserted immediately after `collectiveOutcomeOf` ends at `:239`, so `:218`
+survived unchanged. **K = 101** — 100 lines at first commit, plus one blank line a verifier caught
+missing against the file's own convention (the only such gap in 986 lines). Outside
+`CITATION_SLACK`'s vacuous band and outside the 125-131 window the plan warned would go green against
+the unrelated `resolveContext` citation. The `submitCommit` anchor failed red-first, before
+`PROGRESS.md` was touched, naming the exact new line.
 
 **The TS hazard is not the Python one, and the docstring says which it is.** In `_policy.py` the first
 two states are *value-identical* — `resp.policy_enforcement` compares equal whether the field is
@@ -1508,38 +1510,70 @@ mapping was cited `:623`, which is `submitEvaluation(`, not the mapping. None of
 phase caused: `:601,637` matches the `CITATION` regex not at all (a comma list has no closing
 backtick after the number), and the other two are non-anchored, where the gate asserts only that the
 line exists. This is issue #91's blindness measured on live data rather than argued. Final, measured
-after the file was frozen: `collectiveOutcomeOf` `:218`, `policyEnforcementOf` `:325`, the confidence
-mapping `:745`, `submitCommit` `:776`, `resolveContext` `:913`. The bare companions on the
+after the file was frozen — then re-measured once more when the blank-line fix moved everything below
+`:239` by one: `collectiveOutcomeOf` `:218`, `policyEnforcementOf` `:326`, the confidence mapping
+`:746`, `submitCommit` `:777`, `resolveContext` `:914`. The bare companions on the
 `collectiveOutcomeOf` row moved too — `:144-146` → `:146-151` (the constructor, not the doc-comment
 tail) and `:207` → `:229`, the latter also stale at `HEAD`.
 
-**The recorded slack margin was not stale — it was wrong.** The plan's Open Question 6 predicted this
-insertion would shrink the closest needle-to-foreign-citation distance in `PROGRESS.md` from 53. It
-is now **31**, but not because 100 lines went in: 53 was computed against the stale `:623`, and the
-true pre-insertion distance was already 676 − 645 = 31. The insertion moved needle and citation
-together and changed nothing. The docstring at
-`python/tests/test_compatibility_citations_resolve.py:644` now carries the measured numbers and says
-which is which; `CITATION_SLACK` was not widened (#73).
+**The recorded slack margin did shrink, and this record's first account of why was wrong.** Open
+Question 6 predicted the insertion would shrink the closest needle-to-foreign-citation distance from
+53. It did: it is now **31**. The first version of this paragraph called 53 "wrong rather than stale"
+on the grounds that the confidence mapping really sat at 645, so the true distance had been 31 all
+along — and a verifier showed that misidentifies the metric. The quantity that governs
+foreign-citation masking, and the only one the assertion consults, is the distance from the needle to
+a citation **as written in the document**, never to the true location of whatever that citation
+names. By that definition 53 was correct for the pre-commit state. What shrank it is that the
+citation moved **+123** (623 → 746: +101 for the insertion and +22 for being corrected in the same
+edit — the mapping truly sat at 645) while the needle moved +101; the insertion alone would have preserved 53 exactly. So the
+prediction was right and the cause was neither the one the plan gave nor the one this record first
+gave. Recorded in full rather than quietly amended, because "a stale citation makes a hand-measured
+margin wrong" and "a corrected citation moves a margin" are different failures and only the second
+one happened. `CITATION_SLACK` was not widened (#73), and the docstring on
+`test_the_load_bearing_citations_still_point_at_the_right_thing` now derives both margins from the
+same `_citations()` the assertion itself uses, so the number cannot disagree with the check again.
 
-**`ts/src/index.ts:18` said "Two" and listed three; it actually had four shadows, and now has five.**
-`CollectiveOutcome` had been shadowed since Phase 3 of the previous plan and was never added — so the
-comment was already false before this phase made it more so. The plan scoped that out and said to
+**`ts/src/index.ts:18` said "Two" and listed three; four names were dual-declared, and five are now.**
+`CollectiveOutcome` had been in that state since Phase 3 of the previous plan and was never added, so
+the comment was already false before this phase made it more so. The plan scoped that out and said to
 record it; recording a known-false comment while editing the same five lines is the failure this
 whole plan is about, so it was fixed instead, and the deviation is logged here. The count is now
 one-per-**name**, not one-per-group: a count that must be decoded before it can be checked cannot go
-stale loudly. The comment also now distinguishes the two DTO shadows (`CollectiveOutcome`,
+stale loudly. The comment also distinguishes the two DTO entries (`CollectiveOutcome`,
 `PolicyEnforcement` — decoded forms, reached only through a decoder) from the three parallel-spelling
-ones, which is the thing a consumer reaching for `pb.` actually needs to know.
+ones, which is what a consumer reaching for `pb.` actually needs to know.
 
-**Beyond the plan: `python/tests/test_shadowed_names_comment.py` now enforces that comment.** The
-plan's criterion 6 asked for both halves to be *asserted by reading them*, which is a one-time check
-on a comment that had already rotted twice in the two ways such a comment can — a name going missing,
-and a count going stale. The guard computes the shadow set (names declared in both `ts/src/*.ts` and
-the generated `seam_pb.ts`) and checks the list and the count word against it, in both directions,
-with floors on both input sets so a regex that stops matching reddens rather than passing vacuously.
-Nine tests. Four mutations run: dropping `pb.PolicyEnforcement` from the list, FIVE → FOUR, listing a
-name that is not shadowed, and blinding the `DECL` regex — each caught, each by the test that names
-it (the blinded regex reddens four, including the calibration test).
+**The word "shadowed" was wrong and is gone.** The comment and the guard both claimed the root name
+resolved to the hand-written export because `export * from "./client.js"` came *before*
+`export * as pb`. That mechanism does not exist: `export * as pb` exports exactly one name — `pb` —
+and contributes none of the module's inner names at the root, so there is no contest and ordering is
+irrelevant; had two star exports genuinely collided, ESM would have **excluded** the ambiguous name
+rather than resolving it to the first. These five are `pb.`-only because they are simply not on the
+explicit named lists. The observable claim was right and the reason given for it was invented. Both
+sites now say "declared on both sides", and both record the hazard that runs opposite to intuition:
+adding one of these names to `export type { … }` would make the **generated** type win the root name
+and displace the hand-written DTO.
+
+**Beyond the plan: `python/tests/test_shadowed_names_comment.py` now enforces that comment** — and
+its first version passed on the exact defect it was written to catch. The plan's criterion 6 asked
+for both halves to be *asserted by reading them*, a one-time check on a comment that had already
+rotted twice in the two ways such a comment can. The guard computes the dual-declared set from the
+code (`ts/src/**/*.ts` against both `seam_pb.ts` and `seam_event_pb.ts`) and compares it to the list
+as a **set, in both directions**, with floors on both inputs so a regex that stops matching reddens
+rather than passing vacuously. Seven tests.
+
+The first version substring-searched the whole comment block for `` `pb.X` `` — and the block's own
+historical-rationale sentence contained `` `pb.BudgetLimits` `` and `` `pb.StepUsage` `` in prose. A
+verifier deleted their entire list entry, leaving **"FIVE" above a list of three**, and all nine
+tests passed. The sentence explaining the old bug is what blinded the new guard. List entries are now
+matched by indentation and prose cannot satisfy them, with
+`test_a_name_mentioned_only_in_prose_does_not_count_as_listed` pinning that distinction against a
+synthetic block, and the offending sentence moved out of the comment into this record where it
+belongs. Five mutations re-run against the fixed guard — delete a list entry, drop a name, FIVE →
+FOUR, list a non-dual-declared name, demote a name from list entry to prose — each caught by two
+tests. A missing generated tree now fails four tests instead of aborting collection (the
+`parametrize` that evaluated at import time is gone), verified by running the whole suite with `GEN`
+pointed at a nonexistent file: 4 failed, 819 passed.
 
 **Open Question 1 answered, narrowly: `PolicyEnforcement` was NOT promoted to a named export.**
 `ts/tests/policy_enforcement.test.ts` imports `PolicyEnforcementSchema` from the generated module
@@ -1548,9 +1582,31 @@ nothing in this phase needed it. `pb.PolicyEnforcementSchema` remains the consum
 shadowed-names comment now documents it. The broader public-surface question — whether the two DTO
 types should be named exports alongside the schemas — stays open and unchanged by this phase.
 
-**Verification:** `npm run typecheck` clean · `npm test` **136 tests, 126 pass, 10 skip, 0 fail**
-(from 120 pass at the branch point; the 10 skips are the live-server suite and are unchanged) ·
-python **821 passed / 17 skipped** (812 before this phase; +9 is the shadowed-names guard, skips
-unchanged). Four decoder mutations run against the TS suite — fail-open on absent, the
-`enforced === false` inversion, `policyId ?? ""`, and returning the generated message — caught by 5,
-4, 3 and 2 tests respectively; none passed silently.
+**Verification, re-measured after the gap fixes rather than carried forward.** `npm run typecheck`
+and `npm run build` clean · `npm test` **136 tests, 126 pass, 10 skip, 0 fail**. The branch point was
+**112 pass / 122 tests**, measured by checking out `978d05d` and running it, not inferred — the first
+draft of this line said 120 and was wrong; `ts/` is byte-identical between the branch point and this
+phase's parent, so the whole +14 is the new suite. Python **822 passed / 17 skipped**, decomposed
+against 812 at the Phase 3 commit: **+7** from the shadowed-names guard and **+3** from citations
+this phase added to the three enforced docs, which `test_each_citation_resolves` parametrizes over.
+Both halves counted, because the first draft of this line reported 821 with a `+9` that omitted the
+citation arm entirely — a number written before the prose that changed it, and never re-measured.
+Skips unchanged throughout. `ruff check` + `ruff format --check` clean · `scripts/` 100 passed ·
+contract gate exit 6 naming exactly the five recorded lag fields.
+
+Six decoder mutations run against the TS suite — fail-open on absent, the `enforced === false`
+inversion, `policyId ?? ""`, returning the generated message, hardcoding `enforced: true`, and
+inverting the presence test — caught by 5, 4, 3, 2, 2 and 13 tests. One further mutation,
+`if (!enforcement)`, passes silently and is an **equivalent mutant**: a protobuf-es message object is
+always truthy, so the two spellings cannot differ. Recorded rather than papered over — an equivalent
+mutant is not a gap, but calling it one, or quietly not mentioning it, is how a mutation score gets
+inflated.
+
+**A CHANGELOG entry was missing and nothing gates that.** Phases 3 and 4 shipped two new public
+functions and two new exported types in two languages with no `Unreleased` entry, while their direct
+sibling `collective_outcome_of` has a full one — and no later phase in this plan touches these APIs,
+so it would have shipped absent. Added for both languages. Writing it moved the `No yank` block 28
+lines down, which broke the `CHANGELOG.md` anchor cited from **both** COMPATIBILITY.md and
+DECISIONS.md; both were repointed by measurement in the same edit. That break is the gate working:
+unlike the four `ts/src/client.ts` citations this phase found already-wrong, this one was anchored,
+so it reddened the moment it drifted.

@@ -160,6 +160,34 @@ than trusting a summary here.
   policy forbids. The decoder never re-derives the verdict from `approve_count`/`reject_count`: the
   proto states those are observability and that a client-side tally is self-grading and
   unverifiable, which is the whole reason `verdict` is a field.
+- **`policy_enforcement_of` / `policyEnforcementOf`** — presence-aware decoding of
+  `policy_enforcement` on a `DecisionResponse` **or** a `SessionStep`, in Python and TypeScript
+  together (seam-sdk#87). An **absent** field returns `None`/`undefined`; a field that is present and
+  carries `enforced=false` returns an **instance**. Those are different answers, and every natural
+  reading of the generated surface collapses them:
+
+  ```python
+  if resp.policy_enforcement.enforced:            # WRONG — absent and present-false are
+      ...                                         # value-identical; only HasField separates them
+  ```
+  ```ts
+  if (!resp.policyEnforcement?.enforced) { … }    // WRONG — `undefined` and `false` are different
+                                                  // values with the same falsiness
+  ```
+
+  Both read "the runtime did not tell me whether a policy was enforced" as "the runtime told me none
+  was", which is the fail-open direction. `None`/`undefined` is the only shape with no truthiness
+  that can go the wrong way: the caller decides what "not answered" means for its own fail policy
+  instead of being handed a value that answers it wrongly. `policy_id`/`policyId` keeps the same
+  distinction one level down — absent is `None`/`undefined`, an explicitly-encoded empty string is
+  `""` — because collapsing those would reintroduce the same bug inside the fix for it.
+
+  Exported as `PolicyEnforcement` from both package roots. Nothing raises on a message that carries
+  the field: there is no enum here and no growth policy, so unlike `collective_outcome_of` there is
+  no unrecognized value to fail closed on — presence is the entire contract. On a `SessionStep`
+  absence is the **common** case, not a missing feature; the decoders' docstrings enumerate the three
+  steps that carry it and decline to generalise, because every short general rule written for this
+  field so far — including two in the proto's own comment — has been wrong.
 - **`contract/rpc-manifest.txt` + an RPC-completeness gate in `check-contract`.** The gate previously
   probed 15 named symbols, **none of them a `SeamCoordination` verb** — so a verb could land on the
   contract, regenerate into the stubs, and never be wired into the clients with CI green throughout.

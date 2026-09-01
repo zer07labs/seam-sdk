@@ -641,24 +641,28 @@ def test_the_load_bearing_citations_still_point_at_the_right_thing(
     span between them; the span is wide, the danger zone is six lines wide. Revisit before adding
     a citation near `:199`, `:340`, `:367` or `:413`, not after.
 
-    `PROGRESS.md` duplicates a path too, and this paragraph has been re-measured — by script, against
-    the frozen file, not by adding a delta. `ts/src/client.ts` is cited **eight** times at **five**
-    distinct lines: `:218` x3 and `:325` x2, plus `:745`, `:776`, `:913`. Two are anchored here, and
-    the closest needle-to-foreign-citation distances are **107** (needle `collectiveOutcomeOf` at 218,
-    nearest foreign citation `policyEnforcementOf` at 325) and **31** (needle `  submitCommit(` at
-    776, nearest foreign the confidence mapping at 745). Both are clear of `CITATION_SLACK` 3, so each
-    needle is satisfied by exactly its own citation.
+    `PROGRESS.md` duplicates a path too, and these numbers are taken from `_citations()` — the same
+    function the assertion below uses — rather than read off the document by hand. `ts/src/client.ts`
+    is cited **eight** times at **five** distinct lines: `:218` x3 and `:326` x2, plus `:746`, `:777`,
+    `:914`. Two are anchored here, and the closest needle-to-foreign-citation distances are **108**
+    (needle `collectiveOutcomeOf` at 218, nearest foreign citation `policyEnforcementOf` at 326) and
+    **31** (needle `  submitCommit(` at 777, nearest foreign the confidence mapping at 746). Both are
+    clear of `CITATION_SLACK` 3, so each needle is satisfied by exactly its own citation.
 
-    **The number this paragraph used to carry was wrong, not merely stale, and the distinction is the
-    point.** It recorded 53 lines (needle 676, foreign citation 623) and predicted that Phase 4's
-    insertion would shrink it. The insertion moved needle and citation together and changed nothing:
-    53 had been computed against `:623`, which was a *stale* citation — it named the confidence
-    presence mapping but pointed at `submitEvaluation(`, and the mapping was really at 645. The true
-    distance was already 676 - 645 = 31. A hand-maintained margin measured against a citation that is
-    itself unverified inherits that citation's error silently, which is why these are now taken from
-    the same `_citations()` this module uses rather than read off the document. 31 is the
-    second-tightest margin in this table after `publish.yml`'s 27, and it narrows for real whenever
-    something lands between the confidence mapping and `submitCommit`.
+    **This paragraph previously recorded 53, and getting the correction right took two attempts.** It
+    was written before Phase 4 inserted `policyEnforcementOf`, and Open Question 6 of that phase's
+    plan predicted the insertion would shrink the margin. It did — 53 to 31 — but the first
+    correction claimed 53 had been *wrong all along*, on the grounds that the foreign citation `:623`
+    named the confidence mapping while the mapping really sat at 645. That misidentifies the metric.
+    The distance that governs foreign-citation masking, and the only one the assertion consults, is
+    from the needle to a citation **as written**, never to the true location of what it names — so 53
+    was correct for the state it described. The margin moved because the citation was *corrected*
+    (623 to 746, +123: +101 for the insertion and +22 for the correction) while the needle moved only
+    +101; the insertion by itself would have preserved 53 exactly. A hand-maintained margin measured
+    against an unverified citation is a real hazard, but it is not what happened here, and the two
+    are worth keeping apart. 31 is the second-tightest margin in this table after `publish.yml`'s 27,
+    and it narrows for real whenever something lands between the confidence mapping and
+    `submitCommit`.
     """
     lines = (REPO / path).read_text(encoding="utf-8", errors="ignore").splitlines()
     hits = [i + 1 for i, line in enumerate(lines) if needle in line]

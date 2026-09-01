@@ -1060,10 +1060,17 @@ but note it).
 ## Open questions
 
 1. **Should `PolicyEnforcement` be re-exported from `ts/src/index.ts`'s named type list?**
-   `CollectiveOutcome` is shadowed today and appears in neither the named export list (`:25-39`) nor
-   the shadowed-names comment (`:18-22`). Phase 4 adds `PolicyEnforcement` to the comment; whether
-   both should also be named exports is a public-surface call that should be made deliberately, not
-   inherited from the existing inconsistency. **Not fixed in this plan.**
+   **Updated after Phase 4 shipped, because this entry was written against a state that no longer
+   holds.** As drafted it said `CollectiveOutcome` appeared in neither the named export list nor the
+   comment; Phase 4 put both `CollectiveOutcome` and `PolicyEnforcement` into the comment
+   (`ts/src/index.ts:18-47`), so only the export half is still open. Neither DTO type is on the
+   named export lists (`:50-64` for types, `:68-85` for schemas), and Phase 4 did not need them
+   there — `ts/tests/policy_enforcement.test.ts` imports `PolicyEnforcementSchema` straight from the
+   generated module, exactly as `collective_outcome.test.ts` does for `CollectiveOutcomeSchema`.
+   Whether the two decoded DTO types should be promoted to named exports remains a public-surface
+   call to make deliberately. Note the direction of the hazard, which is the opposite of the
+   intuition: adding the *generated* name to the explicit list would make the generated type win the
+   root name and displace the hand-written DTO. **Still not fixed in this plan.**
 2. **Does the runtime intend to surface `freshly_sealed`?** seam-runtime#526 closes by noting that a
    client cannot tell whether *this* call performed the seal or re-reported one, and that the
    `policy_enforcement`/`collective_outcome` pair does not answer it in either direction. If it lands,
