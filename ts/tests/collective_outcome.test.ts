@@ -22,6 +22,7 @@ import {
   CollectiveVerdict,
   CollectiveOutcomeSchema,
   DecisionResponseSchema,
+  SessionStepSchema,
 } from "../gen/seam/api/v1/seam_pb.js";
 import { collectiveOutcomeOf, UnknownCollectiveVerdictError } from "../src/client.js";
 
@@ -149,4 +150,81 @@ test("the verdict is never re-derived from the counters", () => {
     }),
   );
   assert.equal(outcome?.verdict, "DECLINED");
+});
+
+// ── the same decoder, over a SessionStep ─────────────────────────────────────────────────────────
+//
+// `submitCommit` returns a `SessionStep`, not a `DecisionResponse`. Before this, a TS caller had NO
+// safe path to the panel's verdict on a commit: protobuf-es v2 brands messages by `$typeName`, so
+// `collectiveOutcomeOf(step)` was a compile error (TS2345 — "Types of property '$typeName' are
+// incompatible"), and the only way through was reading the raw field, which is precisely the
+// fail-open this module exists to prevent. The signature is now a union of the two message types —
+// one decoder, because the hazard is a property of the FIELD, not of its container.
+
+function step(
+  outcome?: Partial<{ verdict: number } & Record<string, unknown>>,
+  fields: { state?: string; decisionId?: string } = {},
+) {
+  const s = create(SessionStepSchema, { state: fields.state ?? "sealed", ...fields });
+  if (outcome !== undefined) {
+    s.collectiveOutcome = create(CollectiveOutcomeSchema, outcome as never);
+  }
+  return s;
+}
+
+test("a SessionStep compiles as an argument at all — the gap this closes", () => {
+  // The assertion is the *compilation* of this file: before the union, this line was TS2345 and
+  // `npm run typecheck` failed. Kept as a real call so it cannot be deleted as dead code.
+  assert.equal(collectiveOutcomeOf(step(undefined, { state: "open" })), undefined);
+});
+
+test("an absent outcome on a SessionStep returns undefined, not a missing feature", () => {
+  // Absent is the COMMON case on a step: present only on the commit-terminal one.
+  assert.equal(collectiveOutcomeOf(step(undefined, { state: "open" })), undefined);
+});
+
+test("a non-commit-verb step behaves exactly like an absent field", () => {
+  for (const state of ["open", "proposed", "voted", "ballot"]) {
+    assert.equal(collectiveOutcomeOf(step(undefined, { state })), undefined, state);
+  }
+});
+
+test("UNSPECIFIED on a SessionStep throws rather than returning a value", () => {
+  assert.throws(
+    () => collectiveOutcomeOf(step({ verdict: CollectiveVerdict.UNSPECIFIED })),
+    UnknownCollectiveVerdictError,
+  );
+});
+
+test("an unknown verdict on a SessionStep throws — the growth-policy case", () => {
+  assert.throws(
+    () => collectiveOutcomeOf(step({ verdict: 9999 })),
+    (e: unknown) => e instanceof UnknownCollectiveVerdictError && e.rawValue === 9999,
+  );
+});
+
+test("a SessionStep with no decisionId still throws, carrying an empty id", () => {
+  // `decisionId` is required on DecisionResponse and `optional` on SessionStep, so the union narrows
+  // it to `string | undefined`. If that were widened into the error instead of coalesced, this would
+  // render "decision_id=undefined" instead of "<none>".
+  const s = create(SessionStepSchema, { state: "sealed" });
+  s.collectiveOutcome = create(CollectiveOutcomeSchema, { verdict: 9999 } as never);
+  assert.equal(s.decisionId, undefined);
+  assert.throws(
+    () => collectiveOutcomeOf(s),
+    (e: unknown) =>
+      e instanceof UnknownCollectiveVerdictError &&
+      e.decisionId === "" &&
+      e.message.includes("<none>"),
+  );
+});
+
+test("a SessionStep decodes a recognized verdict identically to a DecisionResponse", () => {
+  const fromStep = collectiveOutcomeOf(
+    step({ verdict: CollectiveVerdict.APPROVED, approveCount: 3 }),
+  );
+  const fromResp = collectiveOutcomeOf(
+    resp({ verdict: CollectiveVerdict.APPROVED, approveCount: 3 }),
+  );
+  assert.deepEqual(fromStep, fromResp);
 });

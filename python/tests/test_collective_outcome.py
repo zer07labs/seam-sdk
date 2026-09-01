@@ -188,3 +188,75 @@ def test_the_verdict_is_never_re_derived_from_the_counters() -> None:
     assert outcome is not None
     assert outcome.verdict == "DECLINED"
     assert outcome.approved is False
+
+
+# ── the same decoder, over a SessionStep ───────────────────────────────────────────────────────────
+#
+# `submit_commit` returns a `SessionStep`, not a `DecisionResponse`, so before this the only way a
+# caller could read the panel's verdict off a commit was to reach through the raw proto — which is
+# the fail-open the module docstring exists to prevent. Python *happened* to accept a SessionStep by
+# duck typing (`HasField` and `decision_id` both exist on it); TypeScript's branded types rejected
+# the identical call at compile time. These cases make the accident a contract.
+
+
+def _step(**outcome_kwargs) -> pb.SessionStep:
+    step = pb.SessionStep(state="sealed", decision_id="dec-1")
+    step.collective_outcome.CopyFrom(pb.CollectiveOutcome(**outcome_kwargs))
+    return step
+
+
+def test_a_session_step_without_an_outcome_returns_none() -> None:
+    """Absent is the COMMON case on a step, and it must not read as a missing feature. The field is
+    present only on the commit-terminal step; every open/propose/vote/ballot step omits it."""
+    step = pb.SessionStep(state="open", decision_id="")
+    assert not step.HasField("collective_outcome")
+    assert collective_outcome_of(step) is None
+
+
+def test_a_non_commit_verb_step_behaves_exactly_like_an_absent_field() -> None:
+    """A step from `submit_proposal`/`submit_vote` carries no outcome. It must be indistinguishable
+    from any other absent — no fabricated UNSPECIFIED, no exception."""
+    for state in ("open", "proposed", "voted", "ballot"):
+        step = pb.SessionStep(state=state)
+        assert collective_outcome_of(step) is None, state
+
+
+def test_unspecified_on_a_session_step_raises_rather_than_returning_a_value() -> None:
+    """The zero value is not a verdict here either. Same rule, same enforcement, one implementation."""
+    with pytest.raises(UnknownCollectiveVerdictError):
+        collective_outcome_of(_step(verdict=pb.COLLECTIVE_VERDICT_UNSPECIFIED))
+
+
+def test_an_unknown_verdict_on_a_session_step_raises() -> None:
+    """The growth-policy case: a value a future runtime adds must route to the caller's fail policy,
+    never to an implicit allow, no matter which message carried it."""
+    with pytest.raises(UnknownCollectiveVerdictError) as ei:
+        collective_outcome_of(_step(verdict=9999))
+    assert ei.value.raw_value == 9999
+
+
+def test_a_session_step_with_no_decision_id_still_reports_the_unknown_verdict() -> None:
+    """`decision_id` is `optional` on SessionStep and required on DecisionResponse. An absent one
+    must not turn a fail-closed raise into an AttributeError or a second failure mode — the error
+    still constructs, carrying an empty id."""
+    step = pb.SessionStep(state="sealed")
+    step.collective_outcome.CopyFrom(pb.CollectiveOutcome(verdict=9999))
+    assert not step.HasField("decision_id")
+    with pytest.raises(UnknownCollectiveVerdictError) as ei:
+        collective_outcome_of(step)
+    assert ei.value.decision_id == ""
+
+
+def test_a_session_step_decodes_a_recognized_verdict_identically_to_a_response() -> (
+    None
+):
+    """Same field, same decoder, same answer. If these ever diverge, there are two implementations
+    again — which is the thing this phase set out not to create."""
+    from_step = collective_outcome_of(
+        _step(verdict=pb.COLLECTIVE_VERDICT_APPROVED, approve_count=3)
+    )
+    from_resp = collective_outcome_of(
+        _resp(verdict=pb.COLLECTIVE_VERDICT_APPROVED, approve_count=3)
+    )
+    assert from_step == from_resp
+    assert from_step is not None and from_step.approved is True

@@ -143,7 +143,7 @@ Rejected alternative: waiting until runtime Phase 4 merges to raise Ask A. That 
 
 ### Phase 3 — Close the fail-open: `SessionStep.collective_outcome`
 
-**Status:** TODO
+**Status:** DONE (2026-08-31) — no divergence. The TS compile error was reproduced before the fix (`TS2345`, exactly as predicted) and the `resp.decisionId ?? ""` coalesce was required, also as predicted.
 
 **Delivers:** a safe, typed, tested read of the commit-terminal step's collective verdict in both Python and TypeScript.
 

@@ -554,3 +554,27 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   `p1a:103-107`, `:290-291`, `:439-441`, `p2:1009`, runtime `ci.yml:186` (`buf push`), `:299`
   (`sdk-digest-parity`), `sdk-digest-parity.sh:40,51,55`. Ask B's: `seam` `01-…:110`, `04-…:14`.
 - **Next:** Phases 3, 4, 5 → PR 2; Phase 8 → PR 3; then Phase 9's regeneration half.
+
+### Phase 3 — `collective_outcome` readable off a `SessionStep` · 2026-08-31
+
+- **The plan's premise was verified, not assumed.** A probe file calling `collectiveOutcomeOf(step)`
+  was compiled *before* any change and produced exactly the predicted
+  `TS2345: Argument of type 'SessionStep' is not assignable to parameter of type 'DecisionResponse'`.
+  The `resp.decisionId ?? ""` coalesce was also required exactly as predicted, because `decisionId`
+  is required on `DecisionResponse` and `optional` on `SessionStep`.
+- **Delivered:** a union signature in both languages — `Union["pb.DecisionResponse", "pb.SessionStep"]`
+  and `DecisionResponse | SessionStep` — one decoder, not a per-message twin. 6 new Python cases,
+  7 new TS cases.
+- **The new tests were proven non-vacuous by mutation, not by passing.** Python already accepted a
+  `SessionStep` by duck typing, so the new tests pass *without* the change and passing proves nothing.
+  Two mutations were run: (a) unknown verdict returns `"APPROVED"` instead of raising → 6 red,
+  including 2 of the new SessionStep cases; (b) the absent-field branch made unreachable → 4 red,
+  including 2 new ones. In TS the fail-open mutation reddened 6, three of them new. Restored and
+  re-verified green after each.
+- **A finding for Phase 8.** `COMPATIBILITY.md`'s citation into `CHANGELOG.md` ("No yank") was
+  repointed for the **third** time this session — `:521-526` → `:538-543` → `:540-545` → `:563-568`.
+  Every changelog entry moves it, so the citation is structurally fragile in the way Phase 8 is about,
+  even though the target is not a vendored file. Phase 8 should cover it.
+- **Gates:** python 574 passed/17 skipped · ts typecheck + build OK, 112 passed/0 failed ·
+  go ok · verify 9 suites ok · scripts 81 passed · `STREAM=1 EVENTS=1 check-contract` exit 0 ·
+  ruff clean.

@@ -488,6 +488,29 @@ Three independently sufficient causes of a 0.7.17-shaped incident, closed.
   against the shipped gate, and the 7 that pass under both are the fail-closed ones, which is what
   shows the wait did not soften anything.
 
+### Added — `collective_outcome` readable from a `SessionStep`, not just a `DecisionResponse`
+
+- **`collective_outcome_of()` / `collectiveOutcomeOf()` now accept a `SessionStep`.** `submit_commit`
+  returns a `SessionStep`, so until now a caller who wanted the panel's verdict off a commit had no
+  supported way to ask for it. In TypeScript there was no way at all: protobuf-es v2 brands messages
+  by `$typeName`, so the call was a compile error (`TS2345`), and the only route was reading
+  `step.collectiveOutcome.verdict` raw — which is exactly the fail-open the helper exists to prevent,
+  since `optional` presence plus a zero-valued `UNSPECIFIED` makes absent and unspecified
+  indistinguishable and makes `verdict !== DECLINED` allow on every value the SDK does not know.
+
+  The signature is a **union of the two message types, not a second function.** The hazard is a
+  property of the field, not of the message carrying it; a per-message twin would be a second place
+  for the inversion to reappear.
+
+  **No behaviour changed.** Absent still returns `None`/`undefined`, `UNSPECIFIED` still raises, and
+  an unrecognized value still raises. Python already accepted a `SessionStep` by accident — `HasField`
+  and `decision_id` both happen to exist on it — and that accident is now a declared contract with
+  tests behind it.
+
+  **Reading absent on a step:** the field is present *only* on the commit-terminal step, and absent on
+  every open/propose/vote/ballot step as well as on the sealed-idempotent replay and the
+  pending-commitment seal retry. `None`/`undefined` there means "not yet decided", never "unsupported".
+
 ### Changed — the vendored `seam-event.v1` spec, refreshed for ACDP P1a and P2
 
 - **`verify/docs/seam-event.v1.md` re-pinned `5d8c177` → `3b3d4ae`** (+125/-28). The runtime landed
