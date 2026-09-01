@@ -224,16 +224,35 @@ def test_write_manifest_is_idempotent(manifests) -> None:
 
 
 def test_the_manifest_is_not_vacuous(manifests) -> None:
-    """A zero-entry manifest would make every comparison below trivially true."""
+    """A zero-entry manifest would make every comparison below trivially true.
+
+    The file carries two surfaces sharing one flat line format — FIELD lines (`<Message>/<field>`)
+    and ENUM lines (`<Enum>#<VALUE>`, no `/`). The floor here used to be `len(entries) > 200` against
+    the COMBINED count, which was a real field-only floor of 200 back when the file held only fields
+    — but once the ENUM section was added (15 lines, per `test_field_and_enum_lines_partition_cleanly`
+    and the committed-manifest count below), that same `> 200` on the combined total silently became
+    a FIELD floor of ~185: the enum section's own entries were quietly propping up the number a reader
+    of "> 200" would assume was all fields. Each surface now gets its own floor, so gutting either one
+    independently is still caught — a manifest with 201 fields and 0 enums, or 0 fields and 201 enum
+    lines, must both still fail here.
+    """
     fm, _ = manifests
     entries = _entries(fm)
-    assert len(entries) > 200, (
-        f"only {len(entries)} fields — the extractor is broken, not the proto"
-    )
-    # The file now also carries the ENUM section (`<Enum>#<VALUE>`, no "/") — restrict this check to
-    # the FIELD lines specifically. `test_field_and_enum_lines_partition_cleanly` covers the split.
     fields = [e for e in entries if "#" not in e]
+    enums = [e for e in entries if "#" in e]
+    assert len(fields) > 200, (
+        f"only {len(fields)} FIELD entries — the extractor is broken, not the proto"
+    )
     assert all("/" in e for e in fields), "every FIELD entry is <Message>/<field>"
+    # Mirrors `test_the_committed_manifest_enum_section_is_not_vacuous_and_covers_all_three_enums`'s
+    # `>= 15` floor on the COMMITTED manifest — this one runs against whatever the `manifests` fixture
+    # wrote from the stubs actually present, which is why it is its own assertion rather than a shared
+    # constant: the two files are allowed to differ in field count (the known local/BSR lag), but not
+    # in how many enum values three fixed enums declare, since enum surfaces don't lag the same way.
+    assert len(enums) >= 15, (
+        f"only {len(enums)} ENUM entries — the enum section emptied, or the extractor broke, and "
+        f"the combined FIELD+ENUM floor above is no longer enough to catch it on its own"
+    )
 
 
 @pytest.mark.parametrize(
@@ -870,13 +889,22 @@ def test_a_superset_of_the_known_lag_stays_a_full_undowngraded_error(
     Built from the REAL committed manifest (not the `manifests` fixture's stub-derived one) so the
     baseline actually reproduces the real five-field gap; `manifests` here only supplies a scratch RPC
     manifest so `--write-manifest` never touches the committed one.
+
+    A scratch lag file declaring exactly the known five is written and passed via `lag_file=` —
+    without it, `_run`'s default `SEAM_EXPECTED_LOCAL_LAG` points at a scratch path the `manifests`
+    fixture never creates, so `check-contract.sh`'s `[ -f "$EXPECTED_LOCAL_LAG" ]` guard is false and
+    `lag_match` is 0 *by construction*: the superset/subset `!=` comparison this test exists to prove
+    would never even run, and the exit-6 assertion below would pass the same way on a script with
+    that comparison deleted entirely.
     """
     _, rm = manifests
     real_manifest_text = (REPO / "contract" / "field-manifest.txt").read_text()
     fm = rm.parent / "superset-field-manifest.txt"
     fm.write_text(real_manifest_text + "ContextBinding/a_field_that_does_not_exist\n")
+    lag = rm.parent / "superset-expected-local-lag.txt"
+    lag.write_text("\n".join(_KNOWN_LAG_FIELDS) + "\n")
 
-    r = _run(fm, rm)
+    r = _run(fm, rm, lag_file=lag)
     assert r.returncode == 6, (
         f"expected exit 6, got {r.returncode}\n{r.stdout}\n{r.stderr}"
     )
@@ -889,7 +917,12 @@ def test_a_superset_of_the_known_lag_stays_a_full_undowngraded_error(
 
 def test_a_subset_of_the_known_lag_stays_a_full_undowngraded_error(manifests) -> None:
     """Acceptance criterion 3: a scratch manifest missing only FOUR of the five recorded fields is
-    also not a match (subset != match) and must produce the full, un-downgraded exit 6."""
+    also not a match (subset != match) and must produce the full, un-downgraded exit 6.
+
+    Writes a scratch lag file declaring the known five, exactly like the superset test above and for
+    the same reason: without it `lag_match` is 0 by construction (no lag file ⇒ no comparison ever
+    runs), and this test would pass whether or not the subset/exact-match logic is correct.
+    """
     _, rm = manifests
     real_manifest_text = (REPO / "contract" / "field-manifest.txt").read_text()
     fm = rm.parent / "subset-field-manifest.txt"
@@ -901,8 +934,10 @@ def test_a_subset_of_the_known_lag_stays_a_full_undowngraded_error(manifests) ->
         )
         + "\n"
     )
+    lag = rm.parent / "subset-expected-local-lag.txt"
+    lag.write_text("\n".join(_KNOWN_LAG_FIELDS) + "\n")
 
-    r = _run(fm, rm)
+    r = _run(fm, rm, lag_file=lag)
     assert r.returncode == 6, (
         f"expected exit 6, got {r.returncode}\n{r.stdout}\n{r.stderr}"
     )

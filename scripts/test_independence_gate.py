@@ -22,6 +22,7 @@ Run: `python -m pytest scripts/test_independence_gate.py -q`
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -192,10 +193,54 @@ def _step(workflow_path: Path, job: str) -> dict:
     return next(s for s in steps if "verifier must link NOTHING" in str(s.get("name", "")))
 
 
+def _job(workflow_path: Path, job: str) -> dict:
+    wf = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    return wf["jobs"][job]
+
+
+def _resolved_script_path(workflow_path: Path, job: str) -> Path:
+    """The filesystem path GitHub Actions would actually execute for this job's
+    "the verifier must link NOTHING of Seam's" step, resolved the way the runner resolves it: a
+    step's `run` is a shell command executed with cwd = the step's own `working-directory` if set,
+    else the job's `defaults.run.working-directory` if set, else the workflow's checkout root.
+
+    `"check-independence.sh" in run` alone cannot catch a wrong RELATIVE depth — `ci.yml`'s `verify`
+    job has no working-directory default, so it must reach the script as `./scripts/...`, while
+    `publish.yml`'s `publish-verify` job sets `defaults.run.working-directory: verify`, so from
+    there it must reach it as `../scripts/...`. Swapping either script's leading `../`/`./` count
+    still contains the substring "check-independence.sh" and would still satisfy a bare substring
+    check, while dying "No such file or directory" on the actual runner. Resolving the path is the
+    only way to catch that class.
+    """
+    step = _step(workflow_path, job)
+    run = str(step.get("run", ""))
+    match = re.search(r"\S*check-independence\.sh", run)
+    assert match, f"{workflow_path.name}'s {job} job's run step no longer names the script: {run!r}"
+    token = match.group(0)
+
+    # Step-level `working-directory:` overrides the job's `defaults.run.working-directory`; absent
+    # both, the runner's cwd is the checkout root. Neither workflow currently sets a step-level
+    # override on this step, but a future edit could, so it is checked first, same as the runner
+    # would.
+    working_dir = step.get("working-directory") or _job(workflow_path, job).get(
+        "defaults", {}
+    ).get("run", {}).get("working-directory", "")
+
+    base = (REPO / working_dir) if working_dir else REPO
+    return (base / token).resolve()
+
+
 def test_ci_yml_invokes_the_script() -> None:
     step = _step(CI, "verify")
     assert "check-independence.sh" in str(step.get("run", "")), (
         f"ci.yml's verify job no longer calls scripts/check-independence.sh: {step}"
+    )
+    resolved = _resolved_script_path(CI, "verify")
+    assert resolved == SCRIPT.resolve() and resolved.exists(), (
+        f"ci.yml's verify job's run step resolves to {resolved}, not {SCRIPT.resolve()} — the "
+        f"relative path is wrong for this job's working directory (no `defaults.run.working-"
+        f"directory` here, so it must be reachable as `./scripts/check-independence.sh`) and would "
+        f"fail with 'No such file or directory' on the actual runner."
     )
 
 
@@ -203,6 +248,14 @@ def test_publish_yml_invokes_the_script() -> None:
     step = _step(PUBLISH, "publish-verify")
     assert "check-independence.sh" in str(step.get("run", "")), (
         f"publish.yml's publish-verify job no longer calls scripts/check-independence.sh: {step}"
+    )
+    resolved = _resolved_script_path(PUBLISH, "publish-verify")
+    assert resolved == SCRIPT.resolve() and resolved.exists(), (
+        f"publish.yml's publish-verify job's run step resolves to {resolved}, not "
+        f"{SCRIPT.resolve()} — that job's `defaults.run.working-directory` is `verify`, so the "
+        f"script must be reached as `../scripts/check-independence.sh`; a bare "
+        f"`./scripts/check-independence.sh` there would fail with 'No such file or directory' on "
+        f"the actual runner."
     )
 
 

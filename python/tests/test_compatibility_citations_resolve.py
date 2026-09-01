@@ -104,7 +104,7 @@ DOCS = {
 #: port, matched by accident. That failure is loud rather than silent, so it never hid anything, but
 #: it fails for a reason unrelated to citations and the only remedy was to reword the prose around
 #: it. Requiring a leading letter drops exactly that class: measured across COMPATIBILITY.md,
-#: DECISIONS.md, PROGRESS.md and CHANGELOG.md, it removes zero real citations (27/56/71/3, unchanged
+#: DECISIONS.md, PROGRESS.md and CHANGELOG.md, it removes zero real citations (27/57/81/3, unchanged
 #: in every file). No source file in this repo has a digit-initial extension.
 CITATION = re.compile(r"`([\w./-]+\.[A-Za-z]\w*):(\d+)(?:-(\d+))?`")
 
@@ -115,7 +115,32 @@ CITATION = re.compile(r"`([\w./-]+\.[A-Za-z]\w*):(\d+)(?:-(\d+))?`")
 #: merely untidy: `scripts/sdk-digest-parity.sh` and `crates/seam-store/src/lib.rs` both look local,
 #: so they would be asserted against THIS repo and fail — or worse, collide with a real local file
 #: of the same name and be checked against the wrong one entirely.
-SIBLING_PREFIXES = ("seam-adapters/", "seam-aegis/", "seam-runtime/")
+#:
+#: `seam/` (the shared cross-repo context repo) joined this tuple for the same reason: Phase 6 added
+#: `PROGRESS.md` citations into its docs. Each entry ends in `/`, so `startswith` cannot confuse
+#: `seam/` with `seam-runtime/`, `seam-adapters/` or `seam-aegis/` — the character right after
+#: `seam` differs (`/` vs `-`) — and this repo has no top-level directory literally named `seam`
+#: (`test_no_local_directory_shadows_a_sibling_prefix` below fails loudly, not silently, if one is
+#: ever added).
+SIBLING_PREFIXES = ("seam-adapters/", "seam-aegis/", "seam-runtime/", "seam/")
+
+
+def _sibling_relative_path(path: str) -> str:
+    """Strip a single leading `../`, so a citation written relative to the repo root
+    (`../seam-runtime/foo`) is recognised the same as one written bare (`seam-runtime/foo`).
+
+    Phase 6 wrote `PROGRESS.md`'s new sibling citations in the `../`-relative form — it reads
+    naturally next to the other `../seam-runtime/...` prose in that document — and
+    `SIBLING_PREFIXES` was never taught to strip it before matching. Six citations therefore fell
+    through to the local-file branch below and were asserted against `REPO / "../seam-runtime/..."`,
+    which resolves (by plain filesystem `..` traversal, not by this test's own logic) to the sibling
+    checkout *only when one happens to sit next to this repo* — true on a workspace checkout, false
+    on an isolated clone, where the same expression is simply absent and the assertion is a hard
+    failure instead of a skip. `removeprefix` rather than `lstrip("./")`: it strips exactly one
+    `../`, never accidentally eating a `..` that is actually part of a real (if odd) path.
+    """
+    return path.removeprefix("../")
+
 
 #: Paths vendored into this repo **byte-verbatim from upstream** — refreshed whole-file, by policy,
 #: whenever upstream moves. A line number into one of these is not a citation, it is a countdown.
@@ -385,32 +410,119 @@ def test_an_ip_and_port_is_not_mistaken_for_a_citation() -> None:
         )
 
 
+def _resolve_citation_target(
+    doc: str, path: str, start: int, *, repo: pathlib.Path
+) -> pathlib.Path | None:
+    """Resolve one citation's `path` to a concrete file under `repo`, or return `None` if it
+    names a sibling repo that is not checked out next to `repo` — the case the real test turns
+    into `pytest.skip`.
+
+    Factored out of `test_each_citation_resolves` so a regression test can drive the exact same
+    resolution logic against a `repo` with no sibling checkouts beside it, independent of whatever
+    happens to be checked out in the environment the suite is actually running in. That is the
+    difference between "this passed" and "this passed because a sibling repo happened to be
+    sitting there" — the failure mode this function exists to make impossible to reintroduce.
+
+    Raises `AssertionError` (not a return value) when the citation cannot be resolved at all,
+    matching what `test_each_citation_resolves` asserts today.
+    """
+    sibling_path = _sibling_relative_path(path)
+    if sibling_path.startswith(SIBLING_PREFIXES):
+        sibling = repo.parent / sibling_path
+        if not sibling.exists():
+            return None
+        return sibling
+
+    target = repo / path
+    assert target.exists(), (
+        f"{doc} cites `{path}:{start}`, but that file does not exist. Fix or delete the "
+        f"claim — COMPATIBILITY.md's rule, which this applies to every checked document, is "
+        f"that an unverifiable claim gets deleted. If the file lives in a sibling repo, the "
+        f"citation must carry its repo prefix ({'/, '.join(SIBLING_PREFIXES)}) or nothing can "
+        f"tell it apart from a broken local path."
+    )
+    return target
+
+
 @pytest.mark.parametrize(
     "citation", _all_citations(), ids=lambda c: f"{c[0]}~{c[1]}:{c[2]}"
 )
 def test_each_citation_resolves(citation: tuple[str, str, int, int]) -> None:
     doc, path, start, end = citation
 
-    if path.startswith(SIBLING_PREFIXES):
-        sibling = REPO.parent / path
-        if not sibling.exists():
-            pytest.skip(f"{path} is in a sibling repo not checked out here")
-        target = sibling
-    else:
-        target = REPO / path
-        assert target.exists(), (
-            f"{doc} cites `{path}:{start}`, but that file does not exist. Fix or delete the "
-            f"claim — COMPATIBILITY.md's rule, which this applies to every checked document, is "
-            f"that an unverifiable claim gets deleted. If the file lives in a sibling repo, the "
-            f"citation must carry its repo prefix ({'/, '.join(SIBLING_PREFIXES)}) or nothing can "
-            f"tell it apart from a broken local path."
-        )
+    target = _resolve_citation_target(doc, path, start, repo=REPO)
+    if target is None:
+        pytest.skip(f"{path} is in a sibling repo not checked out here")
 
     line_count = len(target.read_text(encoding="utf-8", errors="ignore").splitlines())
     assert end <= line_count, (
         f"{doc} cites `{path}:{start}-{end}`, but {path} has only {line_count} lines. "
         f"The citation is stale."
     )
+
+
+def test_no_local_directory_shadows_a_sibling_prefix() -> None:
+    """Guard the ambiguity `SIBLING_PREFIXES` cannot itself detect.
+
+    Every entry is matched with plain `str.startswith`, which is unambiguous only as long as this
+    repo never grows a top-level directory whose name collides with one of those prefixes (e.g. a
+    real local `seam/`). If that ever happens, citations into it would be silently routed to the
+    sibling-skip branch instead of being checked against the real local file — exactly the
+    collision `SIBLING_PREFIXES`'s own comment warns a *pattern*-based rule would risk, reintroduced
+    by hand. This test makes that collision loud instead of silent.
+    """
+    shadowing = [
+        prefix for prefix in SIBLING_PREFIXES if (REPO / prefix.rstrip("/")).is_dir()
+    ]
+    assert not shadowing, (
+        f"local director{'y' if len(shadowing) == 1 else 'ies'} {shadowing} now share a name with "
+        f"a SIBLING_PREFIXES entry — citations into {'it' if len(shadowing) == 1 else 'them'} would "
+        f"be silently treated as sibling-repo citations (skip-if-absent) instead of local ones "
+        f"(must-exist). Rename the directory, or rename the prefix and every citation that uses it."
+    )
+
+
+def test_sibling_citations_skip_cleanly_with_no_sibling_repos_checked_out(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Reproduces the actual CI failure: on a checkout with no sibling repos above it, a
+    sibling-repo citation must SKIP, never hard-fail — regardless of whether it names its prefix
+    bare (`seam-runtime/...`) or `../`-relative (`../seam-runtime/...`, the form Phase 6 used).
+
+    This is the regression test for the bug itself, not for `SIBLING_PREFIXES`'s contents: it
+    drives `_resolve_citation_target` — the real resolution function `test_each_citation_resolves`
+    uses — against a `repo` whose parent directory is guaranteed to hold no sibling checkouts,
+    which is exactly the shape of a fresh CI clone and exactly the shape this repo's own dev
+    workspace is NOT. Before the fix, the `../`-relative forms fell to the local-file branch and
+    raised `AssertionError` here instead of skipping.
+    """
+    repo = tmp_path / "only-repo"
+    repo.mkdir()
+    assert list(tmp_path.iterdir()) == [repo], (
+        "sanity: tmp_path must hold only `repo` itself"
+    )
+    for prefix in SIBLING_PREFIXES:
+        assert not (tmp_path / prefix.rstrip("/")).exists(), (
+            f"test fixture is broken: {prefix} unexpectedly exists next to the fake repo"
+        )
+
+    # Real citation shapes pulled from PROGRESS.md itself (see the six paths Finding 1 reported),
+    # covering both siblings in the tuple and both the bare and `../`-relative forms.
+    for path in (
+        "../seam-runtime/.github/workflows/ci.yml",
+        "../seam-runtime/plans/acdp-p1a-receipt-slots.md",
+        "../seam/docs/OPEN-TASKS.md",
+        "../seam/docs/sdk/01-base-concepts-and-quickstart.md",
+        "seam-runtime/.github/workflows/ci.yml",
+        "seam-adapters/pyproject.toml",
+        "seam-aegis/pyproject.toml",
+        "seam/docs/OPEN-TASKS.md",
+    ):
+        assert _resolve_citation_target("PROGRESS.md", path, 1, repo=repo) is None, (
+            f"`{path}` must resolve to None (skip) when no sibling repo is checked out next to "
+            f"the repo — anything else means this citation would hard-fail CI on a fresh clone, "
+            f"which is the exact bug this test exists to catch."
+        )
 
 
 #: The claims whose citations MUST still point at the right content — eight, of which six are the

@@ -384,8 +384,19 @@ they are mostly a *different* class than the one predicted:
   them.
 * **Two more generated-tree anchors** beyond the one this section named, both converted to symbol
   references.
-* **Nine basename-only citations** (`ci.yml:19`, `admin.py:141`, `aio.py:404-405`, …) that the regex
-  declines silently, so they were never checked. Repathed.
+* **Nine basename-only citations** (`ci.yml:19`, `admin.py:141`, `aio.py:404-405`, …), repathed to
+  carry a real directory. **Correction, made after `d968201` shipped:** that commit's message says
+  the regex "declines these silently... never resolved, never counted, never failed." That is
+  false — `CITATION`'s pattern is `[\w./-]+\.[A-Za-z]\w*`, and `.` is inside the character class, so
+  a bare basename like `ci.yml` matches it exactly as a path (group 1 = `"ci.yml"`) just as readily
+  as a directory-qualified one. Nothing declines it. Once `PROGRESS.md` entered `DOCS`, each of
+  these nine would have been asserted against `REPO / "ci.yml"` (no such top-level file) and failed
+  **LOUDLY** — a hard `AssertionError`, not a silent skip — which is *why* they had to be repathed
+  before `PROGRESS.md` could be added to `DOCS` at all: a loud failure on nine citations at once
+  would have been indistinguishable noise, not evidence of anything specific. `d968201`'s own commit
+  message carries the wrong wording; it is not being rewritten (history stays history), so this
+  correction lives here instead, precisely so the record does not silently disagree with itself —
+  which is this whole plan's subject.
 * One of those, `test_field_manifest_gate.py:240`, had **also** drifted 121 lines.
 * This section's own estimate of the `CHANGELOG.md` rot — "~44 lines off" — was wrong. It is ~90
   lines, and the target had moved to `:636-645`.
@@ -395,7 +406,7 @@ parses as a citation — `\w+` matches a purely numeric extension, so an IP and 
 `127.0.0.1`, line 8099" — and worked around it by rewording the prose. That closes the instance and
 leaves the class. The guard was making writers edit around it, which teaches them to edit around it.
 `CITATION` now requires the extension to begin with a letter. Measured before changing it: across all
-four documents that drops **zero** real citations (27 / 56 / 71 / 3, unchanged in every file), and no
+four documents that drops **zero** real citations (27 / 57 / 81 / 3, unchanged in every file), and no
 source file in this repo has a digit-initial extension. Narrowing a pattern is exactly how a guard
 goes blind, so a test pins that it narrows by this class only — asserting both that IP:port shapes are
 inert and that every real extension shape in the repo still parses.
@@ -450,7 +461,10 @@ anchor; do not widen the guard there.
 
 **Acceptance criteria:**
 1. `pytest python/tests/test_compatibility_citations_resolve.py` fails when a `PROGRESS.md` citation
-   is pointed one line past a moved target, and passes on the corrected file.
+   is pointed more than `CITATION_SLACK` lines past a moved target, and passes on the corrected file.
+   (Corrected post-hoc: the guard tolerates drift up to `CITATION_SLACK` — 3 lines as of this
+   writing — by design, per that constant's own comment; "one line past" understated the guard's
+   actual, intentional tolerance and would itself fail against the shipped test.)
 2. Any `` `ts/gen/...:N` ``, `` `python/seam_sdk/_gen/...:N` ``, or `` `gen/...:N` `` line anchor in a
    guarded doc is refused with a message naming the generated-tree rule.
 3. The three rotted anchors above resolve to the symbols they claim.
@@ -602,16 +616,24 @@ cannot rot as the sibling repo grows. Prefer that shape wherever a gate names th
 
 1. **Should the enum manifest carry numeric values as well as names?** Decided: no. The numeric value
    is what `buf breaking` protects upstream, and duplicating it here creates a second thing to update
-   on every regeneration for a case already covered. Recorded as a deliberate scope line in the
-   manifest header, and as an `UNCONFIRMED` assumption to revisit if an enum is ever renumbered.
+   on every regeneration for a case already covered. **Corrected post-hoc:** this was NOT recorded as
+   a scope line in the manifest header — `contract/field-manifest.txt` is generated from the stubs by
+   `--write-manifest` and is off-limits to hand-edit, and no such line was ever added there. What
+   actually carries the decision is an `UNCONFIRMED` `ASSUMPTIONS.md` entry ("The enum manifest
+   carries names only, not numeric tags"), added after the fact — revisit it if an enum is ever
+   renumbered without its name changing.
 2. **Should `plans/` come under the citation guard?** Decided: no. Historical plan records document
    what was true when written; forcing them to resolve against current code would either freeze the
    code or falsify the record. `PROGRESS.md` is different — it is read as current state by the next
-   run. Logged as an assumption so the distinction is explicit rather than incidental.
+   run. Logged as an `ASSUMPTIONS.md` entry ("`plans/` stays outside the citation guard;
+   `PROGRESS.md` does not"), added after the fact, so the distinction is explicit rather than
+   incidental.
 3. **Does `contract/expected-local-lag.txt` become a permanent excuse?** Open. Mitigated by the date
    stamp, the age print, and `--write-manifest` invalidation, but the honest answer is that it
-   depends on the ACDP regeneration window actually closing. Logged `UNCONFIRMED` with a re-open
-   trigger: if the file is still present and matching 60 days from now, the split is not a window.
+   depends on the ACDP regeneration window actually closing. Logged `UNCONFIRMED` in `ASSUMPTIONS.md`
+   ("`contract/expected-local-lag.txt` is a window, not a permanent excuse"), added after the fact,
+   with a re-open trigger: if the file is still present and matching 60 days from now, the split is
+   not a window.
 
 ## Plan review
 

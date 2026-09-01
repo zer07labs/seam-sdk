@@ -430,6 +430,23 @@ if [ "${1:-}" = "--write-manifest" ]; then
     err "cannot write the manifest: $PY_GRPC is absent. Run 'make generate' first."
     exit 3
   fi
+  # The field manifest is written by the SAME command, from the SAME authoritative side (Python), so
+  # there is exactly one escape to document and remember. Writing from Python and cross-checking
+  # against TS is deliberate and is the reason the Python extractor must not read `__slots__`: a
+  # TS-only field would otherwise produce a failure this escape could never clear, which is exactly
+  # what `raise` does under a __slots__-derived extractor.
+  if [ ! -f "$PY_GEN" ]; then
+    err "cannot write the field manifest: $PY_GEN is absent. Run 'make generate' first."
+    exit 3
+  fi
+  # Both asserts run BEFORE either manifest is written, not just before the field one. They used to
+  # sit between the RPC-manifest write and the field-manifest write, so a nested-message/nested-enum
+  # exit 7 left a HALF-APPLIED write: contract/rpc-manifest.txt already rewritten, field-manifest.txt
+  # not, with no way to tell from the tree alone that the run aborted partway through. Moved to the
+  # top of this branch, an exit 7 here means neither manifest has been touched yet.
+  assert_known_nested_messages_only
+  assert_no_nested_enums
+
   tmp="$(mktemp)"
   # Keep the existing header verbatim — it is the rationale, and regenerating must never silently
   # drop it. Only the RPC lines are rewritten.
@@ -440,20 +457,6 @@ if [ "${1:-}" = "--write-manifest" ]; then
   echo "A line added here is a contract surface change: wire the verb into the hand-written clients"
   echo "(python/seam_sdk/client.py + aio.py, ts/src/client.ts) or record why not, before committing."
 
-  # The field manifest is written by the SAME command, from the SAME authoritative side (Python), so
-  # there is exactly one escape to document and remember. Writing from Python and cross-checking
-  # against TS is deliberate and is the reason the Python extractor must not read `__slots__`: a
-  # TS-only field would otherwise produce a failure this escape could never clear, which is exactly
-  # what `raise` does under a __slots__-derived extractor.
-  if [ ! -f "$PY_GEN" ]; then
-    err "cannot write the field manifest: $PY_GEN is absent. Run 'make generate' first."
-    exit 3
-  fi
-  # Same authoritative side, same file, same rule as the FIELD lines just above: refuse to write a
-  # manifest the field or enum extractor cannot yet represent, rather than writing one silently
-  # missing a nested value.
-  assert_known_nested_messages_only
-  assert_no_nested_enums
   ftmp="$(mktemp)"
   grep -E '^\s*(#|$)' "$FIELD_MANIFEST" > "$ftmp" 2>/dev/null || true
   fields_python >> "$ftmp"

@@ -439,3 +439,87 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   and cannot be undone for anyone whose CI ran in the interim.
 - **Status:** UNCONFIRMED — this is the one option worth raising rather than settling unilaterally,
   per the phase's own Rejected-alternatives note.
+
+## The enum manifest carries names only, not numeric tags
+
+- **Plan:** `plans/gate-blindness-hardening.md`, Open Question 1
+- **Logged retroactively**, same miss `plans/post-adoption-hardening-and-acdp-readiness.md`'s Phase
+  8/10 entries above were: the plan's own Open Questions section said this was "recorded as a
+  deliberate scope line in the manifest header, and as an `UNCONFIRMED` assumption" — neither half
+  happened. `git diff b064e07..HEAD -- ASSUMPTIONS.md` was empty before this entry, and
+  `contract/field-manifest.txt`'s header has no such line (verified by reading it; not edited here —
+  this manifest is generated from the stubs by `--write-manifest` and is off-limits to hand-edit).
+  The plan's own Open Q1 wording is corrected in the same change that adds this entry.
+- **Assumed:** the enum section of `contract/field-manifest.txt` only needs to catch a VALUE being
+  added or removed — not a value keeping its name but changing its underlying protobuf tag.
+- **Chose:** `<Enum>#<VALUE>` (name only, no tag number). The tag is what `buf breaking` already
+  protects upstream at the proto source; duplicating it here would create a second copy that must be
+  kept in sync on every regeneration, for a case the BSR module's own breaking-change gate already
+  covers.
+- **Alternatives:** `<Enum>#<VALUE>=<tag>` — would also catch a value silently renumbered without
+  its name changing (a real gap this SDK cannot itself detect today), at the cost of a manifest line
+  that changes shape on every proto-side renumber, not just on an added/removed value.
+- **Blast radius if wrong:** low, but not zero — a renumbered enum value with the same name would
+  pass this SDK's own gate silently (the name-only comparison sees no change) and rely entirely on
+  `buf breaking` catching it upstream, before the SDK ever regenerates against it. If that upstream
+  gate is ever bypassed or misses this case, wire protocol values could shift underneath a client
+  that never noticed.
+- **Owner / re-open trigger:** whoever next adds or reviews `buf breaking` config for
+  `seam.api.v1`'s enums (in `seam-runtime`) — if that gate is ever found not to cover a same-name
+  renumber, this assumption needs revisiting before the next enum-touching regeneration lands.
+- **Status:** UNCONFIRMED.
+
+## `plans/` stays outside the citation guard; `PROGRESS.md` does not
+
+- **Plan:** `plans/gate-blindness-hardening.md`, Open Question 2
+- **Logged retroactively**, same miss as the entry above — the plan said this was "logged as an
+  assumption so the distinction is explicit rather than incidental," and it was not, until now.
+- **Assumed:** a historical plan document and a live, resumed-run-facing document need different
+  citation rules, even though both live under `plans/`-adjacent tooling and both carry `file:line`
+  citations.
+- **Chose:** `python/tests/test_compatibility_citations_resolve.py`'s `DOCS` covers
+  `COMPATIBILITY.md`, `DECISIONS.md` and `PROGRESS.md`, never anything under `plans/`. A plan
+  document records what was true when it was written; forcing its citations to keep resolving
+  against current code would either freeze the code those citations touch or falsify the historical
+  record by silently repointing it. `PROGRESS.md` is different in kind, not degree: it is what
+  `/implement` reads *instead of re-scanning the repo* on a resumed run, so a stale anchor there
+  misdirects the next run's actions rather than merely misleading a reader.
+- **Alternatives:** guard `plans/` too, exempting only closed/archived plans — rejected as needing a
+  closed/open distinction the tooling does not otherwise track, for a document class this repo
+  already treats as append-only history (`plans/archive/`).
+- **Blast radius if wrong:** low. If a still-open, actively-executing plan's citations are found to
+  rot in a way that matters (misdirecting execution the same way a stale `PROGRESS.md` anchor
+  would), the fix is adding one entry to `DOCS` — the guard's shape already supports it.
+- **Owner / re-open trigger:** whoever next finds a citation drift inside an OPEN (not archived) plan
+  document causing a real misdirection during `/implement` — that would be evidence the open/archived
+  line, not the `plans/`-vs-`PROGRESS.md` line, is where this guard should actually cut.
+- **Status:** UNCONFIRMED.
+
+## `contract/expected-local-lag.txt` is a window, not a permanent excuse
+
+- **Plan:** `plans/gate-blindness-hardening.md`, Open Question 3
+- **Logged retroactively**, same miss as the two entries above — the plan said this was "Logged
+  `UNCONFIRMED` with a re-open trigger," and until now the trigger existed only in the plan text,
+  nowhere this file's own reconcile process would surface it.
+- **Assumed:** the five-field gap between the committed field manifest and a freshly regenerated
+  local stub tree is temporary — it closes once the runtime's ACDP BSR module republishes the
+  `ContextBinding` receipt-slot and `retraction` fields — not a standing feature of local
+  development.
+- **Chose:** record the known gap in `contract/expected-local-lag.txt` (with an `EXPECTED-FROM` date
+  stamp and an age printed on every match) so `check-contract.sh` can downgrade the refusal to a
+  short NOTE for exactly this recorded set, while CI — which always regenerates fresh from the BSR —
+  stays the sole authority and still exits 6 regardless. `--write-manifest` deletes the file on
+  every rewrite, so a stale recorded lag cannot silently outlive the manifest state it described.
+- **Alternatives:** do not record the lag at all (every local `check-contract` run reads as a full,
+  undowngraded regression, training developers to stop reading the refusal text carefully); make the
+  downgrade permanent/unconditional for these five fields (would hide a REAL future regression that
+  happened to touch the same five field names).
+- **Blast radius if wrong:** low structurally (worst case is a NOTE where a plain pass would do), but
+  the honest failure mode is social, not technical: if the BSR republish never lands, the file
+  becomes permanent scenery nobody looks at twice, and the NOTE's "not a new regression" framing
+  stops being true without anyone deciding that on purpose.
+- **Owner / re-open trigger:** whoever is running `/implement` or reviewing this repo's contract gate
+  60 days from `EXPECTED-FROM` (see the file's own header) — if `contract/expected-local-lag.txt` is
+  still present and its five fields still match the local/BSR gap at that point, the split recorded
+  here is not a window and this assumption needs to be revisited, per the plan's own Open Q3 text.
+- **Status:** UNCONFIRMED.

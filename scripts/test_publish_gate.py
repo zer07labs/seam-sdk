@@ -464,6 +464,36 @@ def test_an_unparseable_pyproject_refuses_to_publish(tmp_path: Path) -> None:
     assert "could not parse the declared protobuf floor" in p.stdout + p.stderr
 
 
+def test_no_grpcio_floor_declared_refuses_at_the_grpcio_branch(tmp_path: Path) -> None:
+    """Phase 2's own named edge case: 'No grpcio floor declared at all → must be a refusal, not a
+    skip.' `test_an_unparseable_pyproject_refuses_to_publish` above never actually exercises this —
+    its `dependencies = ["protobuf"]` has no version at all, so `FLOOR` (the PROTOBUF branch) is
+    already empty and the snippet `exit 1`s there, before `GRPCIO_FLOOR` is ever derived. The
+    grpcio-specific refusal has therefore never been driven by this suite, even though the
+    behaviour is correct when run directly (verified by hand: `GRPCIO_FLOOR=$(... ""` and the
+    `[ -z "$GRPCIO_FLOOR" ]` guard does fire).
+
+    This supplies a VALID protobuf floor — so the snippet gets PAST the first branch — and omits
+    grpcio entirely, so the second, previously-untested branch is the one that actually fires.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "seam-sdk"\nversion = "0.0.0"\n'
+        'dependencies = [\n  "protobuf>=7.36.0,<8",\n]\n'
+    )
+    p = _run_floor_parse(tmp_path)
+    assert p.returncode == 1, p.stdout + p.stderr
+    assert "could not parse the declared grpcio floor" in p.stdout + p.stderr, (
+        f"failed, but not at the grpcio branch — so this test would not notice that refusal being "
+        f"removed or short-circuited:\n{p.stdout}{p.stderr}"
+    )
+    # And prove it actually got PAST the protobuf branch, so this is not just a relabelled copy of
+    # test_an_unparseable_pyproject_refuses_to_publish above.
+    assert "could not parse the declared protobuf floor" not in p.stdout + p.stderr, (
+        f"the protobuf branch fired instead — the declared floor above did not parse:\n"
+        f"{p.stdout}{p.stderr}"
+    )
+
+
 def test_the_floor_pinned_install_has_no_unconstrained_fallback() -> None:
     """A `|| pip install dist/*.whl` rescue would recreate the exact blind spot: the
     unconstrained resolution always satisfies the gencode/convention, so it can only ever pass."""
