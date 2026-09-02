@@ -1411,3 +1411,41 @@ def test_a_subject_cell_naming_two_files_binds_nothing() -> None:
         f"a two-file subject cell bound `:42` to {[b[1] for b in bound]}. Picking one of two "
         f"candidates is a guess, and a guess that resolves is indistinguishable from a check."
     )
+
+
+@pytest.mark.parametrize("doc", DOCS)
+def test_a_bare_citation_cannot_smuggle_a_line_anchor_into_a_protected_tree(
+    doc: str,
+) -> None:
+    """`_line_anchors_into_vendored` and `_line_anchors_into_generated` both scan for `CITATION`,
+    which needs a path — so binding the bare form (issue #91) opened a way around both of them.
+
+    A table row whose subject cell is the vendored spec, carrying bare `:NNN` companions, is a line
+    anchor into a whole-file-refreshed document by every argument issue #73 makes, while matching
+    neither rule's regex. Nothing in the repo does this today; this closes it before something does,
+    because the failure would look exactly like compliance.
+    """
+    protected = VENDORED + GENERATED
+    offenders = [
+        f"{doc}:{doc_line} binds `:{start}-{end}` to `{path}`"
+        for (_, path, start, end, doc_line) in _bind_bare_citations(doc)[0]
+        if path.startswith(protected)
+    ]
+    assert offenders == [], (
+        f"bare line references bound to a vendored or generated path: {offenders}. Vendored files "
+        f"are refreshed whole-file on another repo's cadence and generated trees do not exist in a "
+        f"fresh clone, so a line number into either is unmaintainable — which is the whole of issue "
+        f"#73. Quote the text instead (see QUOTED), or cite the file with no line number."
+    )
+
+
+def test_the_smuggling_check_would_actually_fire() -> None:
+    """The check above passes today because nothing offends. Prove it is not passing vacuously."""
+    row = f"| `{VENDORED[0]}` | the slots are filled at `:569-572`. |\n"
+    bound, _ = _bind_bare_citations_in(row)
+    assert [b[1] for b in bound] == [VENDORED[0]], (
+        "the evasion shape does not even bind, so the check above is guarding nothing"
+    )
+    assert bound[0][1].startswith(VENDORED + GENERATED), (
+        "the bound path is not recognised as protected, so the real check could not fire on it"
+    )
