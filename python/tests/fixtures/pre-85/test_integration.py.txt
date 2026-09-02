@@ -1,0 +1,126 @@
+# VENDORED TEST DATA — NOT A TEST, NOT IMPORTABLE. Extension is .txt on purpose.
+#
+# python/tests/test_integration.py as it stood at 960cf81, the commit before PR #90 removed the
+# mechanism behind issue #85. Trimmed by AST to the imports plus the functions that carry
+# the defects: a hardcoded port, a raw Popen, DEVNULL, and a terminate() nobody waits on.
+#
+# This exists so the detector in test_live_fixtures_are_isolated.py is calibrated against
+# a positive corpus IT DID NOT AUTHOR. _deadopt() injects the very tokens the detector
+# keys on, so it can only ever confirm the detector sees its own graft (issue #92 §1).
+# Nothing here was hand-written or adjusted: regenerate with `git show 960cf81:...`.
+
+import os
+import socket
+import subprocess
+import time
+
+import pytest
+
+from seam_sdk import (
+    Agent,
+    BudgetLimits,
+    IssuerMismatchError,
+    SeamAdminClient,
+    SeamClient,
+    StepUsage,
+)
+
+def _wait(port: int, timeout: float = 5.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            socket.create_connection(("127.0.0.1", port), 0.1).close()
+            return
+        except OSError:
+            time.sleep(0.05)
+    raise RuntimeError("server never came up")
+
+@pytest.fixture
+def server():
+    addr = os.environ.get("SEAM_GRPC_ADDR")
+    if addr:
+        yield addr
+        return
+    binary = os.environ.get("SEAM_GRPC_BIN")
+    if not binary:
+        pytest.skip(
+            "set SEAM_GRPC_ADDR or SEAM_GRPC_BIN to run the live integration test"
+        )
+    addr = "127.0.0.1:8099"
+    proc = subprocess.Popen(
+        [binary],
+        # SEAM_DEV_INSECURE lets the dev binary boot with the public dev seed AND enrol the
+        # well-known demo tenant (the [42;32] agent this test admits as) — both required since
+        # the server refuses a public identity by default (runtime security hardening).
+        env={
+            **os.environ,
+            "SEAM_GRPC_LISTEN": addr,
+            "SEAM_DEV_INSECURE": "1",
+        },
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        _wait(8099)
+        yield addr
+    finally:
+        proc.terminate()
+
+@pytest.fixture
+def dual_plane():
+    """Spawn seam-grpc with BOTH the data plane and the management plane (dev-open) — the budget-resume
+    loop needs both, since the R9 resume moved to the mgmt plane (rt-D). Yields (data_addr, mgmt_addr)."""
+    binary = os.environ.get("SEAM_GRPC_BIN")
+    if not binary:
+        pytest.skip("set SEAM_GRPC_BIN to run the live budget-resume loop")
+    data_port, mgmt_port = 8115, 8116
+    proc = subprocess.Popen(
+        [binary],
+        env={
+            **os.environ,
+            "SEAM_GRPC_LISTEN": f"127.0.0.1:{data_port}",
+            "SEAM_GRPC_MGMT_LISTEN": f"127.0.0.1:{mgmt_port}",
+            "SEAM_DEV_INSECURE": "1",
+        },
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        _wait(data_port)
+        _wait(mgmt_port)
+        yield f"127.0.0.1:{data_port}", f"127.0.0.1:{mgmt_port}"
+    finally:
+        proc.terminate()
+
+@pytest.fixture
+def governed_server(tmp_path):
+    """Spawn seam-grpc with a governed capability registry for the demo agent."""
+    binary = os.environ.get("SEAM_GRPC_BIN")
+    if not binary:
+        pytest.skip("set SEAM_GRPC_BIN to run the live authorize round-trip")
+    from operator_token import sign_snapshot
+
+    snapshot = tmp_path / "registry_snapshot.json"
+    snapshot.write_text(GOVERNED_SNAPSHOT.format(aid=Agent(bytes([42] * 32)).aid))
+    pubkey, sig_path = sign_snapshot(str(snapshot))
+    addr = "127.0.0.1:8115"
+    proc = subprocess.Popen(
+        [binary],
+        env={
+            **os.environ,
+            "SEAM_GRPC_LISTEN": addr,
+            "SEAM_DEV_INSECURE": "1",
+            # This snapshot carries `capability_registry`, which is trust-bearing — so it must be
+            # signed or the runtime refuses to boot outright. See `operator_token.sign_snapshot`.
+            "SEAM_REGISTRY_SNAPSHOT": str(snapshot),
+            "SEAM_REGISTRY_SNAPSHOT_SIG": sig_path,
+            "SEAM_SNAPSHOT_PUBKEY": pubkey,
+        },
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        _wait(8115)
+        yield addr
+    finally:
+        proc.terminate()

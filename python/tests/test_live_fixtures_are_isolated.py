@@ -329,7 +329,18 @@ def _port_offenders(src: str) -> list[str]:
 #: and it was chosen by measurement over BOTH sets rather than by intuition: it is present in all four
 #: registered live suites and absent from all four files here that spawn subprocesses for ordinary
 #: reasons (running the conformance CLI, building a wheel, importing in a clean interpreter).
-CONNECT_NAMES = {"connect", "create_connection", "insecure_channel", "secure_channel"}
+#:
+#: ``connect_ex`` is here because it was a verified false negative (issue #92 §2): it is the
+#: canonical NON-RAISING readiness probe, so a suite that polls with ``sock.connect_ex(...)`` and
+#: then reaches the server through a locally-named wrapper went undetected. That is not a contrived
+#: shape — it is what you write when you do not want an exception per failed poll.
+CONNECT_NAMES = {
+    "connect",
+    "connect_ex",
+    "create_connection",
+    "insecure_channel",
+    "secure_channel",
+}
 
 
 def _looks_like_a_live_suite(src: str) -> str:
@@ -367,7 +378,16 @@ def _looks_like_a_live_suite(src: str) -> str:
             imported.add(node.module.split(".")[0])
     if "live_server" in imported:
         return "imports live_server"
-    spawns = _name_hits(src, SPAWN_NAMES, SPAWN_DOTTED)
+    # NON-BLOCKING spawns only. ``subprocess.run``/``call``/``check_call``/``os.system`` all wait
+    # for the child to exit, so they cannot start a server you then connect to — the call would
+    # never return. Including them (issue #92 §3) left the guard resting on the accident that no
+    # file both used one and called a CONNECT_NAME: eleven files here connect without spawning, and
+    # any one of them adding `subprocess.run([sys.executable, "-c", ...])` — the idiom
+    # ``test_errors_is_import_light.py`` already uses — would have been reported as an unregistered
+    # live suite. They stay in ``SPAWN_DOTTED`` for ``test_no_live_suite_spawns_a_server_itself``,
+    # which asks a different question: not "is this a live suite" but "does a live suite spawn
+    # anything for itself".
+    spawns = _name_hits(src, SPAWN_NAMES)
     connects = _name_hits(src, CONNECT_NAMES)
     if spawns and connects:
         return f"spawns a process at {spawns} and connects to it at {connects}"
@@ -439,8 +459,15 @@ def test_no_unregistered_file_spawns_a_server() -> None:
         if reason:
             unregistered[path.name] = reason
     assert unregistered == {}, (
-        f"these files look like live suites but are not in LIVE_SUITES: {unregistered}. "
-        f"Add them, or this guard is silently blind to them."
+        f"these files look like live suites but are not in LIVE_SUITES: {unregistered}.\n"
+        f"Two different situations, and only one of them is fixed by editing LIVE_SUITES:\n"
+        f"  * it really does spawn a server and talk to it — then it must spawn through "
+        f"`live_server.spawn_server` FIRST, and only then be registered here. Registering a file "
+        f"that still spawns for itself just moves the failure to "
+        f"`test_no_live_suite_spawns_a_server_itself`.\n"
+        f"  * it spawns a subprocess for some unrelated reason and happens to call a name in "
+        f"CONNECT_NAMES ({sorted(CONNECT_NAMES)}) — then this is a false positive, and the fix is "
+        f"to narrow the discriminator here, NOT to register the file or add it to _EXEMPT."
     )
 
 
@@ -731,3 +758,143 @@ def test_the_registry_check_does_not_fire_on_innocent_files() -> None:
         assert _looks_like_a_live_suite((HERE / name).read_text()) == "", (
             f"{name} spawns subprocesses legitimately and must not be flagged"
         )
+
+
+#: The real pre-#85 fixtures, as they stood at ``960cf81``, vendored as inert ``.txt`` data.
+#: See the header inside each file. This is the positive corpus for the calibration below.
+PRE85 = HERE / "fixtures" / "pre-85"
+
+
+def test_the_vendored_corpus_is_present_and_untouched() -> None:
+    """Anti-vacuity floor for the calibration below, which is otherwise a loop over a glob.
+
+    An empty or renamed directory makes every assertion in it pass over nothing — the exact shape
+    ``test_no_unregistered_file_spawns_a_server`` already had to be fixed for once.
+    """
+    found = sorted(p.name for p in PRE85.glob("*.py.txt"))
+    assert found == [
+        "test_admin.py.txt",
+        "test_integration.py.txt",
+        "test_streamed_decode.py.txt",
+        "test_verify_attestation.py.txt",
+    ], f"the pre-85 corpus is {found}; it must be the four suites LIVE_SUITES names"
+
+    for path in PRE85.glob("*.py.txt"):
+        src = path.read_text(encoding="utf-8")
+        assert "VENDORED TEST DATA" in src, f"{path.name} lost its header"
+        assert "from live_server import" not in src, (
+            f"{path.name} imports the shared helper, so it is not a PRE-fix fixture at all — "
+            f"someone regenerated it from the wrong commit and the corpus now proves nothing"
+        )
+
+
+@pytest.mark.parametrize(
+    "name", sorted(p.name for p in (HERE / "fixtures" / "pre-85").glob("*.py.txt"))
+)
+def test_the_detector_fires_on_the_real_pre_85_fixtures(name: str) -> None:
+    """Calibration against a positive corpus the guard did not author (issue #92 §1).
+
+    ``test_the_detector_is_calibrated_against_real_live_suites`` uses ``_deadopt``, which INJECTS
+    ``subprocess.Popen``, ``subprocess.DEVNULL`` and ``DATA_PORT = 9113`` into the source it
+    produces — the very tokens the detector keys on. It therefore confirms the detector can see its
+    own graft, and nothing more: swapping ``CONNECT_NAMES`` for ``DISCARD_NAMES``, a strictly worse
+    discriminator, left that test green while the detector went blind to a raw live suite.
+
+    These four files were extracted from git at ``960cf81`` by AST and not edited. Every token below
+    is one the pre-fix fixtures really contained.
+    """
+    src = (PRE85 / name).read_text(encoding="utf-8")
+
+    reason = _looks_like_a_live_suite(src)
+    assert reason, (
+        f"{name} is a real live suite from before #85 and the detector does not recognise it. "
+        f"Whatever narrowing was just made to CONNECT_NAMES/SPAWN_NAMES is too aggressive: this "
+        f"corpus is the floor, and it is the one thing here that cannot be satisfied by adjusting "
+        f"the graft to match the detector."
+    )
+
+    assert _name_hits(src, DISCARD_NAMES), (
+        f"{name} should show the DEVNULL it really had"
+    )
+    assert _name_hits(src, SIGNAL_NAMES), (
+        f"{name} should show the unwaited terminate() it really had"
+    )
+
+
+def test_the_pre_85_corpus_still_carries_the_fixed_ports() -> None:
+    """The port detector needs a positive too, and only two of the four fixtures had a literal
+    port — the other two took theirs from the environment. Pinning WHICH two keeps this honest: a
+    blanket "some file has a port" would survive the detector going blind on the other one."""
+    with_ports = {
+        p.name for p in PRE85.glob("*.py.txt") if _port_offenders(p.read_text())
+    }
+    assert with_ports == {"test_integration.py.txt", "test_streamed_decode.py.txt"}, (
+        f"the pre-85 files carrying hardcoded ports are now {with_ports}. Those two are the ones "
+        f"that really used 8099/8115 and 8113/8114; if this set changed, either the corpus was "
+        f"regenerated from a different commit or _port_offenders stopped seeing a literal port."
+    )
+
+
+def test_the_connect_signal_cannot_be_swapped_for_the_discard_signal() -> None:
+    """``CONNECT_NAMES`` must be doing the discriminating, not riding along with ``DISCARD_NAMES``.
+
+    Issue #92 demonstrated the hole: replacing ``CONNECT_NAMES`` with ``DISCARD_NAMES`` in
+    ``_looks_like_a_live_suite`` — a strictly worse discriminator — left the whole file green,
+    because every positive available to the guard happened to contain a ``DEVNULL`` too. The
+    vendored pre-85 corpus does not fix that on its own: those fixtures really did discard output,
+    so they satisfy both signals equally.
+
+    What separates the two is a live suite that CAPTURES its server's output — which is not
+    hypothetical, it is what `live_server.py` does today, and what #85 asked for. Derived from the
+    real corpus by the single substitution that makes it, so the shape stays a real one.
+    """
+    real = (PRE85 / "test_integration.py.txt").read_text(encoding="utf-8")
+    captures = real.replace("subprocess.DEVNULL", "subprocess.PIPE")
+    assert "subprocess.DEVNULL" not in captures, (
+        "the corpus file no longer spells DEVNULL as `subprocess.DEVNULL`, so this substitution "
+        "silently did nothing and the probe below proves nothing"
+    )
+    assert not _name_hits(captures, DISCARD_NAMES), (
+        "the output-capturing variant still trips the discard detector, so it cannot separate the "
+        "two signals"
+    )
+
+    assert _looks_like_a_live_suite(captures), (
+        "a suite that spawns a server, connects to it, and CAPTURES its output is not recognised. "
+        "The connect signal is the one that must carry this — if this fails, the detector is keying "
+        "on DEVNULL, which is a property of the bug rather than a property of a live suite."
+    )
+
+
+def test_a_blocking_spawn_next_to_a_connect_is_not_a_live_suite() -> None:
+    """The false positive issue #92 §3 measured, and the twin that must still fire.
+
+    Eleven files in this directory call a ``CONNECT_NAME`` without spawning anything; four spawn
+    without connecting. The sets being disjoint was the entire safety margin, and it was one edit
+    from ending: any of those eleven adding ``subprocess.run([sys.executable, "-c", ...])`` — the
+    idiom ``test_errors_is_import_light.py`` already uses — would have been reported as an
+    unregistered live suite, with a failure message telling the author to register it, which would
+    then have failed a different test.
+
+    A blocking call cannot start a server you go on to talk to, so it is not evidence of one.
+    """
+    blocking = (
+        "import subprocess, sys, grpc\n"
+        "def test_imports_are_light():\n"
+        "    subprocess.run([sys.executable, '-c', 'import seam_sdk'], check=True)\n"
+        "    with grpc.insecure_channel('127.0.0.1:50051') as ch:\n"
+        "        pass\n"
+    )
+    assert not _looks_like_a_live_suite(blocking), (
+        "a file that runs a blocking subprocess and separately opens a channel is reported as a "
+        "live suite. That is the false positive this narrowing removes."
+    )
+
+    non_blocking = blocking.replace(
+        "subprocess.run([sys.executable, '-c', 'import seam_sdk'], check=True)",
+        "proc = subprocess.Popen([sys.executable, '-c', 'import seam_sdk'])",
+    )
+    assert _looks_like_a_live_suite(non_blocking), (
+        "narrowing to non-blocking spawns went too far: Popen + connect is exactly the live-suite "
+        "shape and must still be caught"
+    )
