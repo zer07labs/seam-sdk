@@ -150,7 +150,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   - *R1 GAPS (4):* the repo-map cell asserted a staleness this very commit had just fixed;
     the Approach's "add the delivery PR numbers" instruction was silently skipped;
     `ts/src/admin.ts:109` was cited as the streamed v3 arm when it is the version-ceiling refusal
-    (`:141` is the dispatch); and the archive move orphaned citations — two line-anchors plus seven
+    (`ts/src/admin.ts:141` is the dispatch); and the archive move orphaned citations — two line-anchors plus seven
     `**Plan:**` paths in `ASSUMPTIONS.md`, which no guard covers.
   - *R2 GAPS (3):* the `:109`→`:141` fix reached `PROGRESS.md` but missed
     `plans/archive/record-digest-v3.md:12`; removing a duplicated execution-order block ate the
@@ -191,9 +191,11 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 
 - **Commit:** see below · branch `feat/publish-integrity-and-tracking-state`
 - **Delivered:** the publish path now re-derives the dependency floors from the stubs *it* generated
-  (`.github/workflows/publish.yml:340`), installs the built wheel with `protobuf` pinned at the floor
-  the wheel itself declares and imports the generated module there (`:413`), and refuses a tag whose
-  commit is not an ancestor of `origin/main` (`:176`). All three are executed — not merely
+  (`.github/workflows/publish.yml:354`), installs the built wheel with `protobuf` pinned at the floor
+  the wheel itself declares and imports the generated module there
+  (`.github/workflows/publish.yml:411`), and refuses a tag whose
+  commit is not an ancestor of `origin/main` (`.github/workflows/publish.yml:176`). All three
+  are executed — not merely
   asserted — by `scripts/test_publish_gate.py`.
 - **The hazard was live, and this is the phase that was losing ground while it waited:** the declared
   floor (`python/pyproject.toml:50`, `protobuf>=7.36.0,<8`) and the emitted gencode are **equal**, so

@@ -1050,6 +1050,32 @@ QUOTED = [
         "verify/docs/seam-event.v1.md",
         "is absent (no wire bytes) only on",
     ),
+    # COMPATIBILITY.md §2's two sibling-repo rows. Both rotted while their citations stayed green,
+    # which is the whole argument for this mechanism over `ANCHORED`:
+    #
+    #   * the `seam-aegis` row quoted `seam-agent-core[sdk]>=0.1,<0.2` against a line that had long
+    #     since become `>=0.4,<0.5` — the LINE NUMBER never moved, so nothing could notice;
+    #   * the editable-source caveat cited `seam-adapters/pyproject.toml:32`, which is a comment
+    #     about the Makefile; the source it describes is at `:54`.
+    #
+    # A version constraint is exactly the wrong thing to line-anchor: it is a short string that
+    # changes VALUE in place, on another repo's release cadence, without moving. Quoting it is the
+    # only check that fails when it goes stale.
+    (
+        "COMPATIBILITY.md",
+        "seam-aegis/pyproject.toml",
+        "seam-agent-core[sdk]>=0.4,<0.5",
+    ),
+    (
+        "COMPATIBILITY.md",
+        "seam-adapters/core/pyproject.toml",
+        "seam-sdk>=0.7.20,<0.8",
+    ),
+    (
+        "COMPATIBILITY.md",
+        "seam-adapters/pyproject.toml",
+        '{ path = "../seam-sdk/python", editable = true }',
+    ),
 ]
 
 
@@ -1066,11 +1092,23 @@ def test_the_quoted_claims_still_match_their_source_word_for_word(
     doc: str, path: str, needle: str
 ) -> None:
     """The document quotes it, the file still says it, and no line number is involved either way."""
-    target = REPO / path
-    assert target.exists(), (
-        f"{doc} quotes {path}, but that file does not exist. Re-source the claim or delete it, "
-        f"per COMPATIBILITY.md's own rule."
-    )
+    # Sibling-aware, for the same reason `test_each_citation_resolves` is: a `QUOTED` entry whose
+    # source lives in another repo is the case that needs this mechanism MOST — a line anchor into a
+    # sibling cannot be re-checked from here at all, so the verbatim quote is the only handle there
+    # is. Resolving it as `REPO / path` instead would look for `seam-sdk/seam-aegis/pyproject.toml`,
+    # fail the `exists()` assertion, and make the entry unaddable — which is why the two stale
+    # sibling constraints in COMPATIBILITY.md §2 went unguarded until now.
+    sibling_path = _sibling_relative_path(path)
+    if sibling_path.startswith(SIBLING_PREFIXES):
+        target = REPO.parent / sibling_path
+        if not target.exists():
+            pytest.skip(f"{path} is in a sibling repo not checked out here")
+    else:
+        target = REPO / path
+        assert target.exists(), (
+            f"{doc} quotes {path}, but that file does not exist. Re-source the claim or delete "
+            f"it, per COMPATIBILITY.md's own rule."
+        )
 
     hits = [
         i + 1
@@ -1100,9 +1138,14 @@ def test_the_quoted_claims_still_match_their_source_word_for_word(
     # mention of the same path in its own decision record, so deleting the real attribution line
     # left the test green with an orphaned quote. An assertion that a later edit can satisfy by
     # accident is the "looks checked" failure this whole file exists to prevent.
+    # The attribution may carry a line suffix — `` `path:22` `` is how COMPATIBILITY.md's §2 table
+    # writes it, and that is still an attribution. Matching only the bare `` `path` `` form rejected
+    # all three §2 rows on their first run here, which would have been read as "these cannot be
+    # guarded" rather than "the matcher is too narrow". The suffix must be delimited (`:` or the
+    # closing backtick) so `a/b.py` cannot be satisfied by an unrelated `a/b.pyi`.
     window = 2
     attributed = any(
-        f"`{path}`" in line
+        f"`{path}`" in line or f"`{path}:" in line
         for q in quoted_at
         for line in doc_lines[max(0, q - window) : q + window + 1]
     )
@@ -1111,4 +1154,234 @@ def test_the_quoted_claims_still_match_their_source_word_for_word(
         f"within {window} lines of the quote. An unattributed quote cannot be re-verified by a "
         f"reader, which is the whole point of citing anything. Note this deliberately does NOT "
         f"accept a mention elsewhere in the document: the quote and its source must travel together."
+    )
+
+
+# ---------------------------------------------------------------------------
+# The bare `:NNN` companion form (issue #91, part 1)
+# ---------------------------------------------------------------------------
+#
+# `CITATION` above requires a path, so a citation written as a bare line number — the companion
+# form these documents use constantly, ``(`x.py:69`, `:93`, `:108`)`` — was invisible to every
+# check in this file. Measured when this was written: 27 in DECISIONS.md, 155 in PROGRESS.md, 2 in
+# CHANGELOG.md, 0 in COMPATIBILITY.md. None of them was checked by anything.
+#
+# The binding rule below is NOT the one the issue proposed ("the file named in the previous full
+# citation"). That rule was measured against this corpus and it is wrong twice over:
+#
+#   * **In a table row, the row's SUBJECT wins, not the nearest citation.** PROGRESS.md's repo-map
+#     row for `python/seam_sdk/crypto.py` names `python/seam_sdk/admin.py:141` mid-sentence and then
+#     continues `:386` `_frame` · `:390` `_opt` · `:584` `_opt_bytes` — all four of which are
+#     crypto.py. "Nearest preceding citation" binds them to admin.py, where `:584` is past EOF, and
+#     reports a stale citation that is not stale. Verified by reading the file: crypto.py:584 is
+#     `def _opt_bytes`, exactly what the row claims.
+#   * **Inheritance must not cross lines.** PROGRESS.md writes `` `p1a:103-107`, `:290-291` `` where
+#     `p1a` is a shorthand alias for a sibling-repo spec, not a path. A paragraph-scoped resolver
+#     walks past it to the previous line and binds those refs to whatever unrelated file it finds
+#     there — measured, it picked `COMPATIBILITY.md` and reported a false stale citation.
+#
+# So: same line only, and the row subject outranks an interior citation. A ref that binds to
+# nothing is NOT quietly dropped — it is counted, and the count is a ratchet (see below).
+
+#: `` `:12` `` or `` `:12-34` `` — a line reference with no path of its own.
+BARE_CITATION = re.compile(r"`:(\d+)(?:-(\d+))?`")
+
+#: A backticked path carrying a line suffix — the only prose antecedent accepted. Requiring the
+#: suffix is what keeps `` `seam.api.v1` `` (a proto package, which matches the path shape exactly)
+#: and `` `p1a` `` (an alias) from being mistaken for the subject of a following bare reference.
+_FULL_TOKEN = re.compile(r"`(\.{0,2}/?[\w./-]+\.[A-Za-z]\w*):[\d,\-]+`")
+
+#: A table row's subject: the first cell, containing ONLY a backticked path (bold markers and a
+#: line suffix allowed). Deliberately a full match rather than a search — a cell naming two files
+#: has no single subject, and guessing one is how a resolver starts reporting confident nonsense.
+_SUBJECT_CELL = re.compile(
+    r"^\s*\**\s*`(\.{0,2}/?[\w./-]+\.[A-Za-z]\w*)(?::[\d,\-]+)?`\s*\**\s*$"
+)
+
+
+def _bind_bare_citations_in(
+    text: str, doc: str = "<text>"
+) -> tuple[list[tuple[str, str, int, int, int]], int]:
+    """Bind every bare `:NNN` in `text` to a file, same-line only.
+
+    Pure — takes the document text rather than reading it — so the binding RULES can be driven
+    directly by the tests below against hand-written two-line documents. Testing the rule through
+    the real corpus only would mean the mutation tests could never construct the exact shapes the
+    rule exists to get right.
+
+    Returns `(bound, unbound_count)` where each bound entry is
+    `(doc, path, start, end, doc_line)`.
+    """
+    bound: list[tuple[str, str, int, int, int]] = []
+    unbound = 0
+    for doc_line, line in enumerate(text.splitlines(), 1):
+        subject = None
+        if line.lstrip().startswith("|"):
+            cells = line.split("|")
+            if len(cells) > 2:
+                cell = _SUBJECT_CELL.match(cells[1])
+                if cell:
+                    subject = cell.group(1)
+        for bare in BARE_CITATION.finditer(line):
+            path = subject
+            if path is None:
+                preceding = list(_FULL_TOKEN.finditer(line[: bare.start()]))
+                path = preceding[-1].group(1) if preceding else None
+            if path is None:
+                unbound += 1
+                continue
+            start = int(bare.group(1))
+            end = int(bare.group(2) or bare.group(1))
+            bound.append((doc, path, start, end, doc_line))
+    return bound, unbound
+
+
+def _bind_bare_citations(doc: str) -> tuple[list[tuple[str, str, int, int, int]], int]:
+    return _bind_bare_citations_in((REPO / doc).read_text(encoding="utf-8"), doc)
+
+
+def _all_bare_citations() -> list[tuple[str, str, int, int, int]]:
+    return [b for doc in DOCS for b in _bind_bare_citations(doc)[0]]
+
+
+@pytest.mark.parametrize(
+    "citation", _all_bare_citations(), ids=lambda c: f"{c[0]}~L{c[4]}~{c[1]}:{c[2]}"
+)
+def test_each_bound_bare_citation_resolves(
+    citation: tuple[str, str, int, int, int],
+) -> None:
+    """A bare `:NNN` that binds to a file is held to exactly the standard a full citation is."""
+    doc, path, start, end, doc_line = citation
+
+    target = _resolve_citation_target(doc, path, start, repo=REPO)
+    if target is None:
+        pytest.skip(f"{path} is in a sibling repo not checked out here")
+
+    line_count = len(target.read_text(encoding="utf-8", errors="ignore").splitlines())
+    assert end <= line_count, (
+        f"{doc}:{doc_line} carries the bare citation `:{start}-{end}`, which binds to `{path}` "
+        f"({'the subject of its table row' if start else ''}), but {path} has only {line_count} "
+        f"lines. The citation is stale. This is the class that was invisible until issue #91: the "
+        f"line number is real, the file is real, and nothing pointed one at the other."
+    )
+
+
+#: Bare references that bind to nothing on their own line, per document. **A ratchet: it may be
+#: lowered, never raised.** These are not a backlog of broken citations — they are overwhelmingly
+#: two legitimate kinds that must NOT be checked against HEAD:
+#:
+#:   * **historical records.** DECISIONS.md's repoint table is literally a column of the values a
+#:     citation held at each PR (`:271-272` → `:295-296` → `:332-333` → …). Asserting a record of
+#:     where a line USED to be against where it is now is not a check, it is a contradiction.
+#:   * **the notation quoted as data.** Both documents discuss this very failure — "it still said
+#:     `:473` after the guard moved to `:571`" — and those are mentions, not claims.
+#:
+#: The ceiling exists so the unchecked population cannot grow silently, which is the actual issue
+#: #91 complaint. If you add a bare reference and this fails, bind it: put a full `path:line`
+#: citation earlier on the SAME line, or put the path in the table row's subject cell. Raising the
+#: number instead is how 156 unchecked references accumulated in the first place.
+UNBOUND_BARE_CEILING = {
+    "COMPATIBILITY.md": 0,
+    "DECISIONS.md": 26,
+    "PROGRESS.md": 68,
+}
+
+
+@pytest.mark.parametrize(("doc", "ceiling"), UNBOUND_BARE_CEILING.items())
+def test_unbound_bare_citations_do_not_grow(doc: str, ceiling: int) -> None:
+    _, unbound = _bind_bare_citations(doc)
+    assert unbound <= ceiling, (
+        f"{doc} now has {unbound} bare `:NNN` references that bind to no file, up from {ceiling}. "
+        f"Bind the new one instead of raising this number: name the file in a full `path:line` "
+        f"citation earlier on the same line, or make it the subject cell of its table row."
+    )
+
+
+def test_the_ceiling_is_not_slack() -> None:
+    """A ceiling far above the real count would pass while permitting silent growth."""
+    for doc, ceiling in UNBOUND_BARE_CEILING.items():
+        _, unbound = _bind_bare_citations(doc)
+        assert unbound == ceiling, (
+            f"{doc} has {unbound} unbound bare references but the ratchet says {ceiling}. If you "
+            f"just BOUND some, lower the ceiling to {unbound} — that is the ratchet working. This "
+            f"check exists because a ceiling with headroom is a ceiling that permits exactly the "
+            f"drift it claims to stop."
+        )
+
+
+def test_the_corpus_actually_contains_bare_citations() -> None:
+    """Guard the guard: if `BARE_CITATION` stopped matching, every check above passes vacuously."""
+    total = sum(len(_bind_bare_citations(doc)[0]) for doc in DOCS)
+    assert total >= 50, (
+        f"only {total} bare citations bind across {list(DOCS)}. Either the documents were gutted "
+        f"or `BARE_CITATION`/`_FULL_TOKEN`/`_SUBJECT_CELL` stopped matching the real format — and "
+        f"in that case `test_each_bound_bare_citation_resolves` is parametrized to nothing and is "
+        f"asserting nothing at all."
+    )
+
+
+def test_a_bound_bare_citation_past_eof_is_caught(tmp_path: pathlib.Path) -> None:
+    """The mutation the whole mechanism exists to catch: a real file, a real-looking line number,
+    and nothing previously connecting the two."""
+    (tmp_path / "short.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
+
+    bound, unbound = _bind_bare_citations_in(
+        "the helper at `short.py:2` and its partner at `:99`\n"
+    )
+    assert unbound == 0
+    assert bound == [("<text>", "short.py", 99, 99, 1)], bound
+
+    doc, path, start, end, _ = bound[0]
+    target = _resolve_citation_target(doc, path, start, repo=tmp_path)
+    assert target is not None
+    line_count = len(target.read_text().splitlines())
+    assert end > line_count, (
+        "the past-EOF bare citation resolved as in-bounds, so the check this test guards would "
+        "have passed on a stale citation"
+    )
+
+
+def test_a_table_rows_subject_outranks_an_interior_citation() -> None:
+    """The measured failure of the rule issue #91 proposed. `:584` belongs to the row's subject
+    (`crypto.py`), not to the `admin.py` citation that happens to sit closer to it."""
+    row = (
+        "| `python/seam_sdk/crypto.py:606-610` | context_digest appears only as an input "
+        "(`python/seam_sdk/admin.py:141`), and `:584` is `_opt_bytes`. |\n"
+    )
+    bound, unbound = _bind_bare_citations_in(row)
+    assert unbound == 0
+    assert [b[1] for b in bound] == ["python/seam_sdk/crypto.py"], (
+        f"bare `:584` bound to {[b[1] for b in bound]}. Binding it to the nearer `admin.py` "
+        f"citation is the bug this rule exists to avoid: admin.py is 568 lines, so it would be "
+        f"reported as a stale citation when the claim is true of crypto.py, which has 724."
+    )
+
+
+def test_binding_never_crosses_a_line() -> None:
+    """The other measured failure: an alias with no extension (`p1a`) is not a path, so the refs
+    after it bind to nothing rather than reaching back to an unrelated file on the line above."""
+    text = (
+        "re-verified against `COMPATIBILITY.md:12`:\n"
+        "`p1a:103-107`, `:290-291`, `:439-441`\n"
+    )
+    bound, unbound = _bind_bare_citations_in(text)
+    assert bound == [], (
+        f"bare references on line 2 bound to {[b[1] for b in bound]} by reaching back to line 1. "
+        f"Cross-line inheritance manufactures false antecedents — measured against the real "
+        f"PROGRESS.md, it bound sibling-repo spec anchors to COMPATIBILITY.md and reported three "
+        f"stale citations that were not stale."
+    )
+    # Two, not three: `` `p1a:103-107` `` is not a bare reference at all — its colon follows text
+    # rather than a backtick — so only `:290-291` and `:439-441` are in play. Stated exactly
+    # because getting this count wrong is how a test ends up asserting the wrong shape passes.
+    assert unbound == 2
+
+
+def test_a_subject_cell_naming_two_files_binds_nothing() -> None:
+    """`_SUBJECT_CELL` is a full match on purpose: a cell with no single subject has no subject."""
+    row = "| `a/one.py` and `a/two.py` | see `:42` |\n"
+    bound, unbound = _bind_bare_citations_in(row)
+    assert bound == [] and unbound == 1, (
+        f"a two-file subject cell bound `:42` to {[b[1] for b in bound]}. Picking one of two "
+        f"candidates is a guess, and a guess that resolves is indistinguishable from a check."
     )
