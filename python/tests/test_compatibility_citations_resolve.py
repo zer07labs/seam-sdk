@@ -559,6 +559,22 @@ def test_sibling_citations_skip_cleanly_with_no_sibling_repos_checked_out(
 #: needs no maintenance when unrelated edits shift a file.
 ANCHORED = [
     ("COMPATIBILITY.md", "CHANGELOG.md", "No yank"),
+    # The `canonical=` keyword-only parameter, in both clients. Both citations had drifted into the
+    # `subjects` docstring PROSE — `client.py:291` and `aio.py:221` — while the parameter they name
+    # sits at `:257` / `:195`. The line resolved, the file was right, and the citation pointed at an
+    # unrelated paragraph: precisely the class `test_each_citation_resolves` cannot see. This is a
+    # contractual claim ("additive and keyword-only") about a security-relevant parameter, so it is
+    # anchored to the declaration itself rather than to a line number that has already moved once.
+    (
+        "COMPATIBILITY.md",
+        "python/seam_sdk/client.py",
+        "canonical: Optional[bytes] = None,",
+    ),
+    (
+        "COMPATIBILITY.md",
+        "python/seam_sdk/aio.py",
+        "canonical: Optional[bytes] = None,",
+    ),
     (
         "COMPATIBILITY.md",
         ".github/workflows/publish.yml",
@@ -714,6 +730,16 @@ CITATION_SLACK = 3
 CLAIM_LINES = {
     # COMPATIBILITY.md
     ("COMPATIBILITY.md", "CHANGELOG.md", "No yank"): "is not being re-litigated",
+    (
+        "COMPATIBILITY.md",
+        "python/seam_sdk/client.py",
+        "canonical: Optional[bytes] = None,",
+    ): "`authorize(canonical=…)`",
+    (
+        "COMPATIBILITY.md",
+        "python/seam_sdk/aio.py",
+        "canonical: Optional[bytes] = None,",
+    ): "`authorize(canonical=…)`",
     (
         "COMPATIBILITY.md",
         ".github/workflows/publish.yml",
