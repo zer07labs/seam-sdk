@@ -42,11 +42,11 @@ What to do instead, in descending order of usefulness:
 | Consumer | Constraint on `seam-sdk` | Verified at |
 |---|---|---|
 | `seam-adapters` (`seam-agent-core[sdk]`) | `seam-sdk>=0.7.20,<0.8` | `seam-adapters/core/pyproject.toml:22` |
-| `seam-aegis` | `seam-agent-core[sdk]>=0.1,<0.2` (reaches this SDK transitively) | `seam-aegis/pyproject.toml:28` |
+| `seam-aegis` | `seam-agent-core[sdk]>=0.4,<0.5` (reaches this SDK transitively) | `seam-aegis/pyproject.toml:28` |
 
 **One caveat on the first row, because the lockfile disagrees with the constraint and both are
 true.** `seam-adapters/uv.lock:3921` resolves `seam-sdk` **0.7.9** — below the declared floor — and
-that is not a violation: `seam-adapters/pyproject.toml:32` overrides the dependency with an
+that is not a violation: `seam-adapters/pyproject.toml:54` overrides the dependency with an
 unconditional editable path source (`{ path = "../seam-sdk/python", editable = true }`), so the lock
 records the sibling checkout rather than a resolved release. A reader comparing the two numbers
 should not conclude the floor is being ignored.
@@ -412,7 +412,7 @@ so it cannot reach the taxonomy. Use `canonicalize_tool_input()`
 
 ### `canonical=` hands you the derivation, and the responsibility with it
 
-`authorize(canonical=…)` (`python/seam_sdk/client.py:291`, `python/seam_sdk/aio.py:221`; `opts.canonical`
+`authorize(canonical=…)` (`python/seam_sdk/client.py:257`, `python/seam_sdk/aio.py:195`; `opts.canonical`
 in TypeScript, `ts/src/client.ts:531`) is additive and keyword-only. The SDK does **not** verify the
 bytes — re-deriving to check would reinstate the second derivation the parameter exists to remove.
 So two things become possible that were not:

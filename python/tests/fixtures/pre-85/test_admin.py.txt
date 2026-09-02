@@ -1,0 +1,185 @@
+# VENDORED TEST DATA — NOT A TEST, NOT IMPORTABLE. Extension is .txt on purpose.
+#
+# python/tests/test_admin.py as it stood at 960cf81, the commit before PR #90 removed the
+# mechanism behind issue #85. Trimmed by AST to the imports plus the functions that carry
+# the defects: a hardcoded port, a raw Popen, DEVNULL, and a terminate() nobody waits on.
+#
+# This exists so the detector in test_live_fixtures_are_isolated.py is calibrated against
+# a positive corpus IT DID NOT AUTHOR. _deadopt() injects the very tokens the detector
+# keys on, so it can only ever confirm the detector sees its own graft (issue #92 §1).
+# Nothing here was hand-written or adjusted: regenerate with `git show 960cf81:...`.
+
+import os
+import socket
+import subprocess
+import time
+from concurrent import futures
+
+import grpc
+import pytest
+
+from seam_sdk import (
+    Agent,
+    SeamAdminClient,
+    SeamClient,
+    SeamRpcError,
+    UnauthenticatedError,
+)
+from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
+from seam_sdk._gen.seam.api.v1 import seam_pb2_grpc as rpc
+from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as ev
+
+def _wait(port: int, timeout: float = 8.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            socket.create_connection(("127.0.0.1", port), 0.1).close()
+            return
+        except OSError:
+            time.sleep(0.05)
+    raise RuntimeError(f"server never came up on {port}")
+
+def _spawn(data_port: int, mgmt_port: int, registry_snapshot: str | None = None):
+    from operator_token import sign_snapshot
+
+    binary = os.environ.get("SEAM_GRPC_BIN")
+    if not binary:
+        pytest.skip("set SEAM_GRPC_BIN to run the live management-plane test")
+    env = {
+        **os.environ,
+        "SEAM_GRPC_LISTEN": f"127.0.0.1:{data_port}",
+        # The mgmt plane binds when this is set; SEAM_DEV_INSECURE lets it bind dev-open. Installing an
+        # `operator_keys` trust root via SEAM_REGISTRY_SNAPSHOT instead CLOSES the plane: every request must
+        # then carry a valid compact-JWS operator token (the shared SEAM_MGMT_TOKEN bearer was removed in
+        # seam-runtime #175). This path is live on both pre- and post-#175 runtimes.
+        "SEAM_GRPC_MGMT_LISTEN": f"127.0.0.1:{mgmt_port}",
+        "SEAM_DEV_INSECURE": "1",
+    }
+    if registry_snapshot:
+        # Signed, not merely handed over: a trust-bearing snapshot is refused unsigned, and the
+        # runtime will not boot at all. See `sign_snapshot`.
+        pubkey, sig_path = sign_snapshot(registry_snapshot)
+        env["SEAM_REGISTRY_SNAPSHOT"] = registry_snapshot
+        env["SEAM_REGISTRY_SNAPSHOT_SIG"] = sig_path
+        env["SEAM_SNAPSHOT_PUBKEY"] = pubkey
+    proc = subprocess.Popen(
+        [binary], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+    _wait(data_port)
+    _wait(mgmt_port)
+    return proc
+
+def test_erasure_preview_confirm_erase():
+    data_port, mgmt_port = _free_port(), _free_port()
+    proc = _spawn(data_port, mgmt_port)
+    try:
+        subject, decision_id = _seal_one(f"127.0.0.1:{data_port}")
+        admin = SeamAdminClient.connect(
+            f"127.0.0.1:{mgmt_port}"
+        )  # unauthenticated dev mgmt plane
+
+        # Preview is non-destructive and lists the sealed record under would_erase.
+        preview = admin.preview_erasure(TENANT, subject)
+        assert decision_id in preview.would_erase
+        assert decision_id not in preview.already_erased
+
+        # An empty tenant scope is refused (audit P0.1: erasure never crosses tenants). The error is a
+        # typed SeamRpcError — and, being non-breaking, still a grpc.RpcError.
+        with pytest.raises(SeamRpcError) as ei:
+            admin.erase_subject("", subject, len(preview.would_erase))
+        assert isinstance(ei.value, grpc.RpcError)
+
+        # The wrong confirm_count is refused (must equal the preview's would_erase count).
+        with pytest.raises(SeamRpcError):
+            admin.erase_subject(TENANT, subject, len(preview.would_erase) + 1)
+
+        # The right count returns a populated, signed certificate.
+        cert = admin.erase_subject(TENANT, subject, len(preview.would_erase))
+        assert cert.subject == subject
+        assert decision_id in cert.erased
+        assert cert.signature  # signed, chain-anchored
+        assert cert.issuer_aid
+
+        # A second preview now shows it already erased — no new destruction.
+        after = admin.preview_erasure(TENANT, subject)
+        assert decision_id in after.already_erased
+        assert decision_id not in after.would_erase
+    finally:
+        proc.terminate()
+
+def test_erase_subject_confirmed_convenience():
+    data_port, mgmt_port = _free_port(), _free_port()
+    proc = _spawn(data_port, mgmt_port)
+    try:
+        subject, decision_id = _seal_one(f"127.0.0.1:{data_port}")
+        admin = SeamAdminClient.connect(f"127.0.0.1:{mgmt_port}")
+        cert = admin.erase_subject_confirmed(TENANT, subject)
+        assert decision_id in cert.erased
+    finally:
+        proc.terminate()
+
+def test_management_operator_token_auth():
+    """The management plane authenticates compact-JWS operator tokens against the installed `operator_keys`
+    root (rt-D / CP-18d; the shared `SEAM_MGMT_TOKEN` bearer was removed in seam-runtime #175). A missing,
+    malformed, or tampered token is refused; a valid one passes. Designed to hold against BOTH pre- and
+    post-#175 runtimes — the operator-token path is already live, and an operator-keys-only plane closes the
+    old fallback."""
+    # Sibling module (pytest prepends the test dir to sys.path) — NOT `tests.operator_token`, which only
+    # resolves under `python -m pytest` (cwd on path), not the CI's bare `pytest`.
+    from operator_token import (
+        REGISTRY_SNAPSHOT_PATH,
+        mint_operator_token,
+        tamper_signature,
+    )
+
+    data_port, mgmt_port = _free_port(), _free_port()
+    proc = _spawn(data_port, mgmt_port, registry_snapshot=REGISTRY_SNAPSHOT_PATH)
+    mgmt_addr = f"127.0.0.1:{mgmt_port}"
+    try:
+        # preview_erasure requires the `erasure:preview` scope (non-destructive → no jti needed).
+        token = mint_operator_token(["erasure:preview"])
+        subject = (
+            "aid:pubkey:ed25519:zzz"  # any subject — this pins AUTH, not the erase flow
+        )
+
+        # No token → UNAUTHENTICATED, surfaced as the typed UnauthenticatedError (still exposing .code()).
+        anon = SeamAdminClient.connect(mgmt_addr)
+        with pytest.raises(UnauthenticatedError) as ei:
+            anon.preview_erasure(TENANT, subject)
+        assert ei.value.code() == grpc.StatusCode.UNAUTHENTICATED
+
+        # A non-JWS bearer → UNAUTHENTICATED (the operator-keys-only plane refuses the old shared-bearer shape).
+        wrong = SeamAdminClient.connect(mgmt_addr, token="nope")
+        with pytest.raises(UnauthenticatedError):
+            wrong.preview_erasure(TENANT, subject)
+
+        # A JWS-shaped token with a corrupted signature → UNAUTHENTICATED (a hard verification failure, never
+        # a downgrade to an accepted request).
+        tampered = SeamAdminClient.connect(mgmt_addr, token=tamper_signature(token))
+        with pytest.raises(UnauthenticatedError):
+            tampered.preview_erasure(TENANT, subject)
+
+        # A valid operator token → succeeds.
+        ok = SeamAdminClient.connect(mgmt_addr, token=token)
+        preview = ok.preview_erasure(TENANT, subject)
+        assert isinstance(list(preview.would_erase), list)
+    finally:
+        proc.terminate()
+
+def test_stream_events_drains_decision_sealed():
+    """Sealing a decision emits a DECISION_SEALED event to the seam-event.v1 outbox; drain mode
+    (follow=False) streams the current backlog and closes."""
+    data_port, mgmt_port = _free_port(), _free_port()
+    proc = _spawn(data_port, mgmt_port)
+    try:
+        _, decision_id = _seal_one(f"127.0.0.1:{data_port}")
+        admin = SeamAdminClient.connect(f"127.0.0.1:{mgmt_port}")
+
+        events = list(admin.stream_events(from_seq=0, follow=False))
+        assert events, "expected at least the DECISION_SEALED event"
+        sealed = [e for e in events if e.kind == "DECISION_SEALED"]
+        assert sealed, f"kinds seen: {[e.kind for e in events]}"
+        assert any(e.decision_id == decision_id for e in sealed)
+        assert sealed[0].HasField("payload")
+    finally:
+        proc.terminate()

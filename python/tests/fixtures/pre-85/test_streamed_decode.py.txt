@@ -1,0 +1,60 @@
+# VENDORED TEST DATA — NOT A TEST, NOT IMPORTABLE. Extension is .txt on purpose.
+#
+# python/tests/test_streamed_decode.py as it stood at 960cf81, the commit before PR #90 removed the
+# mechanism behind issue #85. Trimmed by AST to the imports plus the functions that carry
+# the defects: a hardcoded port, a raw Popen, DEVNULL, and a terminate() nobody waits on.
+#
+# This exists so the detector in test_live_fixtures_are_isolated.py is calibrated against
+# a positive corpus IT DID NOT AUTHOR. _deadopt() injects the very tokens the detector
+# keys on, so it can only ever confirm the detector sees its own graft (issue #92 §1).
+# Nothing here was hand-written or adjusted: regenerate with `git show 960cf81:...`.
+
+from __future__ import annotations
+
+import json
+import os
+import pathlib
+import socket
+import subprocess
+import time
+
+import pytest
+
+from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as evpb
+from seam_sdk import KNOWN_KINDS, SeamClient, verify_streamed_record_digest  # noqa: E402
+from seam_sdk.crypto import RecordDigestStripError  # noqa: E402
+from seam_sdk.admin import SeamAdminClient  # noqa: E402
+
+def _wait(port: int, timeout: float = 8.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            socket.create_connection(("127.0.0.1", port), 0.1).close()
+            return
+        except OSError:
+            time.sleep(0.05)
+    raise RuntimeError(f"server never came up on {port}")
+
+@pytest.fixture
+def dual_plane():
+    binary = os.environ.get("SEAM_GRPC_BIN")
+    if not binary:
+        pytest.skip("set SEAM_GRPC_BIN to run the live streamed-decode test")
+    data_port, mgmt_port = 8113, 8114
+    proc = subprocess.Popen(
+        [binary],
+        env={
+            **os.environ,
+            "SEAM_GRPC_LISTEN": f"127.0.0.1:{data_port}",
+            "SEAM_GRPC_MGMT_LISTEN": f"127.0.0.1:{mgmt_port}",
+            "SEAM_DEV_INSECURE": "1",
+        },
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        _wait(data_port)
+        _wait(mgmt_port)
+        yield f"127.0.0.1:{data_port}", f"127.0.0.1:{mgmt_port}"
+    finally:
+        proc.terminate()
