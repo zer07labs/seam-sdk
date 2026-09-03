@@ -631,3 +631,28 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   branch on — so the cost of it being wrong stays bounded to trust, as the entry records. Stays open
   against #526. See DECISIONS.md.
 
+
+## Appending a new workstream to `PROGRESS.md` rather than starting a fresh one
+
+- **Plan:** `plans/digest-correctness-and-gate-repair.md`, Phase 1 / Open question 6
+- **Assumed:** `PROGRESS.md` can carry a fourth workstream section appended at the bottom without a
+  reader mistaking the earlier three for current state.
+- **Chose:** append. A fresh `PROGRESS.md` was written first and turned **25 guard tests red** at
+  once: `python/tests/test_compatibility_citations_resolve.py` binds 25 anchored and quoted claims
+  plus a 30-citation floor to this document's *content*, and the document cites itself by line in
+  three places, at least two of which are live and accurate. Replacing it destroys the evidence those
+  assertions are made of. The appended section opens by saying so, so the next person meets the
+  constraint before they meet the temptation.
+- **Alternatives:** (a) a fresh `PROGRESS.md` with the old one moved to `progress/archive/` — clean
+  to read, but every anchored claim would need re-pointing at a path that is no longer the one the
+  guard scans, and the self-citations would have to be recomputed by hand. (b) Relax the guard to
+  span both files — widens the blast radius of the mechanism that has caught four real drifts this
+  workstream alone, to buy tidiness. (c) Lower the citation floor — removes the ratchet's whole point.
+- **Blast radius if wrong:** low and slow. The file grows monotonically (2123 → ~2310 lines this
+  phase) and eventually someone reads a stale workstream as current. It costs a confused reader, not
+  a bad publish. The failure mode of the alternative is a guard that no longer guards.
+- **Owner / re-open trigger:** the next workstream after this one. If a fifth section is needed, that
+  is the point to solve it properly rather than append a fourth time — likely by teaching the guard
+  to scan a directory rather than a file, so archiving stops costing 25 assertions.
+- **Status:** UNCONFIRMED. Deliberately not solved under run pressure — the question was found while
+  preparing this run's handoff and recorded rather than answered.
