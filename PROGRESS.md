@@ -84,7 +84,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `.github/workflows/publish.yml:316` | `make generate` **again at publish time**, against unpinned plugins — the open half of #52. `:390-401` pre-upload smoke installs protobuf *unconstrained*, so the skew is invisible to it; `registry-smoke` (`:519`) likewise. Measured at planning: `grep -rn protobuf .github/workflows/` yielded **one** hit, a prose comment — no workflow pinned protobuf anywhere, so nothing caught the skew. **Phase 6 closed that** (DONE 2026-08-31): the same grep now yields 17, and `.github/workflows/publish.yml:423` installs the built wheel with `protobuf==$FLOOR`. The declared floor and the emitted gencode are both **7.36.0** (`python/pyproject.toml:50`, `python/seam_sdk/_gen/seam/api/v1/seam_pb2.py`'s `Protobuf Python Version` header — cited by symbol, not by line, since it is a generated, gitignored file) — zero headroom, which is why this phase ran first. |
 | `.github/workflows/publish.yml:63-148` | `ci-green` — resolves every `ci-ok` conclusion for the tagged commit. Sound: `:107` still-running ⇒ `pending`, `:117-126` one-green-cannot-mask-one-red, `:143-148` timeout is a refusal. `:192`/`:285` gate both npm and python. **Must not regress.** |
 | `.github/workflows/publish.yml:150-188` | `version-check` — tag vs in-tree versions. It had **no branch-ancestry check** (`.github/workflows/ci.yml:19` runs on every branch push, so a tag at a green feature-branch commit published cleanly); **Phase 6 added one at `:176`**, which is inside this row's own range. Read the range as the job, not as evidence of the gap — it was widened in round 1 until it contained the very step it is cited for lacking. |
-| `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:631`. |
+| `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:747`. |
 | `python/tests/test_protobuf_floor.py:72,88` | The two pure-file-read assertions Phase 6 runs at publish time. `:29-31` reads only `_gen/seam/api/v1/seam_pb2.py`; `:47-51` **skips** when `_gen` is absent. `:88-99` forces `cap == gencode_major + 1` — this is why "widen the floor" is not a metadata edit. |
 | `python/tests/test_grpcio_floor.py:38` | Module-level `import grpc` — matters if Phase 6 runs it in the publish job. |
 | `.github/workflows/yank.yml` | `workflow_dispatch`, `dry_run` default `"true"`. A hard **DELETE** (`:91-92`), not a PyPI-style yank. Its token line did **not** strip the cargo token's `"Bearer "` prefix (`.github/workflows/publish.yml:383-385` does) — **Phase 10 fixed it** (DONE 2026-08-31) at `.github/workflows/yank.yml:55-60`, and left the version/format/name filters (`:73-76`) byte-unchanged. `scripts/test_yank_gate.py` now executes the resolution and pins those filters. |
@@ -101,7 +101,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `python/tests/test_workflows_generate_through_the_makefile.py:43,72` | No workflow may call `buf generate` directly; the `generate:` target must keep both `buf generate` and `root_gen.py` (without which the wheel is unimportable). |
 | `Makefile:24,29,57-58` | `generate` (BSR) · `generate-local RUNTIME=../seam-runtime` (reads `crates/seam-api/proto` via `buf`) · **`clean` `rm -rf`s all three stub trees — never run it; recovery needs a BSR login.** |
 | `plans/README.md:1-6` | Archive convention: delivered plans move to `plans/archive/` with a dated verification note, verified **against code, never a status table**. `:13` **carried** the stale `record-digest-v3` Active row (*"Phases 1–5 delivered … Phase 6 remains BLOCKED"*) and the index was **missing a row entirely** for `plans/authorize-single-canonicalization.md` — both corrected in Phase 1, which archived each plan against code. `:13` now holds this plan's own Active row. The cross-repo *table* lives in `plans/cross-repo/README.md`, not here — **Phase 2** edits that file. |
-| `CHANGELOG.md:3-7` | The SDK does not choose its own version; entries accumulate under `## Unreleased`. `:631-636` is the hedging style Phase 7 *was* to mirror — it did not, the band being provable, and the citation was removed as it sat within `CITATION_SLACK` of the `"No yank"` needle; `:638-643` the no-yank decision of record. Both re-measured in Phase 4, which pushed them 28 lines down and found them already stale by ~115 before that. **This advisory still names only 0.7.13-0.7.19** — see the Phase 7 checkpoint. |
+| `CHANGELOG.md:3-7` | The SDK does not choose its own version; entries accumulate under `## Unreleased`. `:631-634` is the hedging style Phase 7 *was* to mirror — it did not, the band being provable, and the citation was removed as it sat within `CITATION_SLACK` of the `"No yank"` needle; `:649-654` the no-yank decision of record. Both re-measured in Phase 4, which pushed them 28 lines down and found them already stale by ~115 before that; **re-measured again in Phase 1 of this workstream**, which had shifted them a further 3 and repointed the two sibling copies in `COMPATIBILITY.md`/`DECISIONS.md` while leaving this one — the same omission `PROGRESS.md:2092-2097` records, one file over. Neither citation is anchored, so nothing went red; that is the point. **This advisory still names only 0.7.13-0.7.19** — see the Phase 7 checkpoint. |
 
 ### Sibling repos (read-only — referenced, never written)
 
@@ -155,7 +155,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   - *R2 GAPS (3):* the `:109`→`:141` fix reached `PROGRESS.md` but missed
     `plans/archive/record-digest-v3.md:12`; removing a duplicated execution-order block ate the
     blank line and merged two paragraphs; and the path repoint **over-replaced** four quoted
-    `DECISIONS.md` section titles, which are lookup keys that must match `DECISIONS.md:823`
+    `DECISIONS.md` section titles, which are lookup keys that must match `DECISIONS.md:939`
     verbatim, not paths.
   - *R3 PASS:* all three closed, both halves of the over-replacement checked (quoted titles reverted,
     `**Plan:**` paths still archive-pointed), no new breakage, 545/17 green.
@@ -2121,3 +2121,199 @@ and every citation out of it moves on a schedule nothing was tracking.
 contract gate exits **6** with the five recorded fields and both positive event lines ·
 `git diff contract/` empty after a full pytest run.
 
+
+---
+---
+
+# PROGRESS — `plans/digest-correctness-and-gate-repair.md`
+
+**This section is APPENDED, not prepended, and the active workstream is therefore at the BOTTOM of
+this file.** That is deliberate and load-bearing, not an oversight. Everything above is the delivered
+`post-adoption-hardening-and-acdp-readiness` record, and it is retained rather than replaced for two
+measured reasons:
+
+1. `python/tests/test_compatibility_citations_resolve.py` binds **25 anchored and quoted claims** plus
+   a 30-citation floor to this document's content. Replacing the file turns 25 tests red at once, and
+   the only way to green is to delete guard entries — which is exactly how a guard decays. The
+   previous convention ("nothing here carries over"; the trail lives in git history) predates that
+   coverage and is no longer safe to follow unmodified.
+2. This document cites **itself** by line in three places, and at least two of those targets are live
+   and accurate today — the repo-map rows for the gitignored `_gen/` tree and for `buf.gen.yaml`'s
+   unpinned plugins. Inserting anything above them silently repoints all three at different content:
+   the citations would still *resolve*, so no test would fail, and they would simply be wrong. That is
+   the precise rot class this repo built the citation guard to catch.
+
+Appending shifts no line number and retires no guard entry. How `PROGRESS.md` should transition
+between workstreams *without* either gutting its coverage or growing without bound is a real design
+question, and it is recorded as an open question in the plan rather than settled here under handoff
+pressure.
+
+**Plan:** [`plans/digest-correctness-and-gate-repair.md`](plans/digest-correctness-and-gate-repair.md)
+— 8 phases, one of which (Phase 8) is BLOCKED and deliberately not attempted this cycle.
+
+## Baseline (measured 2026-09-03, before any phase)
+
+| Suite | Result |
+|---|---|
+| `cd python && .venv/bin/pytest -q` | **1016 passed, 17 skipped** |
+| `python -m pytest scripts -q` | **100 passed** |
+| `cd verify && cargo test` | ok |
+| `cd ts && npm run typecheck && npm test` | typecheck clean, **0 fail**, 10 skipped |
+| `cd go && go test ./...` | ok |
+| `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` | **exit 6**, NOTE naming exactly the five recorded lag fields |
+| version lockstep | `0.7.71` in both `python/pyproject.toml` and `ts/package.json`, matching the runtime tag |
+
+Anything red after Phase 1 is ours. The 17 python skips are 13 live-server (`SEAM_GRPC_BIN` unset),
+1 import-light cross-check, and **3 packaging tests** — the last three because this workstation's
+venv has no `pip` module. That is a correct skip here and is *not* the defect Phase 4 item 4
+addresses; do not cite it as the demonstration.
+
+## Execution order and PR strategy
+
+**Order:** 1 → 2 → 3 → 4 → 5 → 6 → 7. Phase 8 is BLOCKED and not attempted.
+
+Phase 1 goes first because it is the only item that is both live and load-bearing on every release:
+while the wire-framing latch reads `false`, the gate that exists to prevent a repeat of 0.7.17 cannot
+refuse. Phase 3 follows Phase 2 because both edit the same regions of `ts/src/crypto.ts` — a textual
+dependency, not a semantic one.
+
+**PR strategy — 3 PRs.** Chosen over one big PR because the three groups have genuinely different
+review audiences, and over one-PR-per-phase because several phases are too small to review alone.
+
+1. **Phases 1, 2, 3** — release integrity and cross-language digest correctness. Ships first: it
+   carries both the actively-degraded release gate and the four demonstrated divergences.
+2. **Phases 4, 5** — guards that cannot fire on the mutation they name, plus the unwatched
+   `seam.event.v1` verb surface. One story: gate blindness.
+3. **Phases 6, 7** — ACDP P3 readiness and issue/assumption hygiene.
+
+## Hard operating constraints (verified this session — carry into every phase)
+
+- **NEVER run `make clean`, `make generate`, or `make generate-local`.** They delete or replace the
+  three gitignored stub trees (`gen/`, `python/seam_sdk/_gen/`, `ts/gen/`), and recovery needs a
+  `buf registry login` this workstation does not have. The stubs are present and current.
+- **NEVER run `./scripts/check-contract.sh --write-manifest`** without redirecting every manifest
+  override — a bare run rewrites the committed manifests backwards and deletes
+  `contract/expected-local-lag.txt`.
+- **Never mutate the real stub trees.** Exercise the gates against scratch copies via
+  `SEAM_PY_GEN` / `SEAM_TS_GEN` / `SEAM_PY_EV` / `SEAM_TS_EV` / `SEAM_FIELD_MANIFEST` /
+  `SEAM_RPC_MANIFEST` / `SEAM_EVENT_FIELD_MANIFEST` / `SEAM_EXPECTED_LOCAL_LAG`. Phase 5 must add
+  `SEAM_PY_EV_GRPC`, which does not exist yet.
+- **Writes stay in seam-sdk.** Reading `../seam-runtime`, `../seam`, `../seam-adapters`,
+  `../seam-aegis` is unrestricted; writing to them is not. GitHub issue actions are limited to
+  `zer07labs/seam-sdk` (#96, #43, #44 in this plan).
+- **Clean-room:** `../seam-runtime/crates/**` **Rust** sources are never read. The `.proto` files
+  under `crates/seam-api/proto/**` are the published contract and *are* read, as are the runtime's
+  `docs/`, `plans/` and `scripts/`.
+- Doc-guard tests scan **every** `*.md` in the repo, including the plan and this file. `plans/` sits
+  outside the citation guard; **`PROGRESS.md` does not** — every backticked `file:line` here must
+  resolve. Run the full python suite after any doc edit, never a subset.
+- Any new CI job must be added to `ci-ok`'s `needs:` and must not go in `ADVISORY`.
+- `python/seam_sdk/crypto.py` and `python/seam_sdk/errors.py` may not grow an import.
+- No workflow may call `buf generate` directly.
+- **Never dispatch a workflow, publish anything, or touch any registry.**
+
+## Repo map
+
+**Hand-written client layers** — the only code the crypto phases touch:
+
+| Path | Purpose |
+|---|---|
+| `python/seam_sdk/crypto.py` | JCS canonicalization, TCT verification, record digests v2/v3, chain-head attestation. Import-light by contract. |
+| `python/seam_sdk/client.py` | Sync client. Carries the `resolve_context` pass-through docstring Phase 6 guards. |
+| `python/seam_sdk/aio.py` | Async twin of `client.py`, with its own copy of that docstring. |
+| `python/seam_sdk/admin.py` | Management-plane client; streamed digest recompute, refuses schema versions above 3. |
+| `python/seam_sdk/_authorize.py` | Single-derivation canonicalization for `Authorize`. |
+| `python/seam_sdk/_policy.py`, `_collective.py` | Presence-aware decoders (`policy_enforcement_of`, collective outcome). |
+| `python/seam_sdk/errors.py` | Typed error taxonomy. Import-light by contract. |
+| `ts/src/crypto.ts` | TS twin of `crypto.py`. Phases 2 and 3 both edit here. |
+| `ts/src/client.ts` | TS client; third copy of the pass-through docstring. |
+| `ts/src/admin.ts` | TS management plane. |
+| `go/crypto/`, `java/`, `kotlin/` | Crypto over generated stubs, **no hand-written RPC layer** — by design, not debt. Go holds the reference `exp` semantics Phase 3 adopts. |
+| `verify/src/` | Independent Rust decision verifier; links nothing of Seam's. No `ContextBinding` surface. |
+
+**Contract and gate machinery:**
+
+| Path | Purpose |
+|---|---|
+| `scripts/check-contract.sh` | The contract gate. Exit codes: 0 ok · 1 RPC/Authorize/admin stale · 2 stream fields · 3 stubs absent · 4 ReportEventsConsumed · 5 RPC manifest · 6 field/enum manifest · 7 structural precondition · 8 event field manifest. |
+| `contract/rpc-manifest.txt` | Verb surface — **`seam.api.v1` only**; the gap Phase 5 closes. |
+| `contract/field-manifest.txt` | Field surface, and the record of which fields are declared-not-interpreted. |
+| `contract/event-field-manifest.txt` | `seam.event.v1` field surface. |
+| `contract/expected-local-lag.txt` | The exact five-field local/BSR gap. Exact-match; a superset produces the full refusal. Phase 8's central subject. |
+| `contract/wire-framing.json` | The release handshake latch. Phase 1's subject. |
+| `.github/workflows/release-on-runtime.yml` | Consumes the latch; Phase 1 adds the stale-latch branch. |
+| `.github/workflows/ci.yml` | `ci-ok` is the single required check; `integration` and `spec-pin` are the only advisory jobs. |
+| `.github/workflows/yank.yml` | Exists since the last plan — `workflow_dispatch` only, `dry_run` defaults true. Relevant to #43. |
+| `Makefile` | `generate`, `generate-local`, `check-contract`, `clean`. Three of these are forbidden here. |
+
+**Guard tests Phase 4 repairs:**
+
+| Path | What it guards |
+|---|---|
+| `python/tests/test_retracted_claims.py` | No document claims the verifier detects truncation. Excused too easily today. |
+| `python/tests/test_workflows_generate_through_the_makefile.py` | No workflow calls `buf generate` directly. Misses two spellings. |
+| `python/tests/test_compatibility_citations_resolve.py` | Every citation resolves; no line-anchors into vendored or generated trees. The vendored rule misses the comma-list form. |
+| `python/tests/test_packaging.py` | Wheel packaging contract. Silently retires on a build failure. |
+| `python/tests/test_field_manifest_gate.py` | The field gate and the lag downgrade. Holds `_KNOWN_LAG_FIELDS`, which Phase 8 must edit atomically. |
+| `python/tests/test_event_field_manifest_gate.py` | The event field gate and CLAUDE.md's exit-code paragraph. Phase 5 extends it. |
+| `python/tests/test_live_fixtures_are_isolated.py` | Live-suite isolation. Audited and sound — leave alone. |
+
+**Tracked state:** `DECISIONS.md` (settled calls), `ASSUMPTIONS.md` (`UNCONFIRMED` entries, reviewed
+per cycle), `COMPATIBILITY.md` (the adapters × SDK matrix, heavily cited), `CHANGELOG.md`,
+`plans/README.md` (the plan index — this plan needs a row).
+
+## Phase log
+
+### Phase 1 — The release gate that cannot refuse · **DONE** 2026-09-03
+
+The latch is armed (`contract/wire-framing.json` `runtime_emits_version: true`) and the gate that had
+been unable to refuse anything since 2026-08-26 now refuses. `scripts/test_release_gate.py` went from
+4 tests to 19: the behavioural ones extract the gate's real script out of the workflow and run it
+against a synthetic contract file in a tmpdir, covering the whole truth table over
+(framing version present × latch × trigger type); four structural ones read the parsed workflow to pin
+the cells the script depends on but does not contain. Every assertion was mutation-verified.
+
+Three verification rounds, each finding real defects, the second and third finding defects *introduced
+by the previous round's fix* — a genuine cascade that converged:
+
+1. Flipping the latch **killed the manual release fallback**. `workflow_dispatch` carries no
+   `client_payload`, so every manual run hit the "a field that stopped being emitted is a REGRESSION"
+   branch — on the exact path an operator reaches for after the automatic dispatch already failed.
+2. The fix for (1) widened where `$DISPATCHED` could come from, which **broke the stale-latch branch's
+   premise**: "the dispatch proves the runtime emits the field" is false of a value typed into a form.
+   Scoped that branch to `repository_dispatch`.
+3. The new plumbing cells were **unguarded** — deleting the input declaration, the `||` fallback or
+   the `EVENT` env line left every behavioural test green, because the harness supplies those values
+   itself. Added structural assertions, plus one for the `repository_dispatch` trigger the stale-latch
+   branch is now scoped to.
+
+(Findings 2 and 3 were both raised by round 2; round 3 found no behavioural defect. Round 4 added a
+fifth guard of the same shape — the gate's refusal on an unreadable `contract/wire-framing.json` had
+come to rest entirely on `set -e`, which arming the latch is what made load-bearing.)
+
+Divergences from the plan as written are recorded inline in
+`plans/digest-correctness-and-gate-repair.md` (Phase 1 Status, amended edge cases, criteria 3/7/8) and
+the reasoning in `DECISIONS.md`. Also de-staled every document that described the pre-flip world:
+`COMPATIBILITY.md` (aegis floor `>=0.5,<0.6`), `CHANGELOG.md`, `README.md`, `plans/README.md`,
+`plans/cross-repo/`, and the `contract/wire-framing.json` comment — plus the citation repointing those
+edits forced, which is now a standing cost of editing any file this repo cites by line.
+
+Measured after: python **1018 passed / 17 skipped** · `pytest scripts -q` **116 passed** ·
+`STREAM=1 EVENTS=1 ./scripts/check-contract.sh` **exit 6** with the five-field NOTE ·
+`verify/` `cargo test` ok · `ruff check python && ruff format --check python` clean.
+
+The python count moved 1016 → 1018 rather than holding: the citation guard parameterizes over every
+citation it finds, so binding one bare back-reference to its file created a case.
+
+Both of this phase's late citation failures were **self-inflicted and caught by that guard**. Adding
+a six-line comment to the workflow pushed the Go-tag line six lines down, stranding the citation in
+`COMPATIBILITY.md` that pointed at it — now `.github/workflows/release-on-runtime.yml:186`. And a
+back-reference written bare bound to `CHANGELOG.md`, the subject of its table row, rather than to
+this file; the guard's ratchet then refused the bare form outright, which is the correct outcome —
+it wants the reference bound, not the ceiling raised. Ninth and tenth repointings this phase. The
+lesson is already recorded above and keeps re-earning itself: in this repo, editing any file that
+another file cites by line is a two-part change, and the second part is easy to forget precisely
+because nothing about the first part looks like it touched a citation.
+
+`scripts/` is not in CI's `ruff format` scope and was already unformatted at `HEAD`;
+`scripts/test_release_gate.py` itself is formatted.

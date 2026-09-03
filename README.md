@@ -169,7 +169,9 @@ runtime release fires a `repository_dispatch` here ([`release-on-runtime.yml`](.
 which bumps `ts/package.json` + `python/pyproject.toml` to match, commits, and tags `vX.Y.Z` — that tag
 triggers [`publish.yml`](.github/workflows/publish.yml) (transport regenerated from the BSR, both packages
 pushed to Cloudsmith). So you don't cut the SDK release by hand; releasing the runtime releases the SDK at
-the same version. A `workflow_dispatch` fallback (with an explicit version) exists if a dispatch is missed.
+the same version. A `workflow_dispatch` fallback exists if a dispatch is missed; it takes the version **and** the
+runtime's `wire_framing_version`, because the framing gate normally reads that from the dispatch
+payload, which a manual run has no equivalent of.
 Immutable per version — a re-cut needs a bump. The `version-lockstep` CI guard keeps py == ts.
 
 *Credentials.* `BUF_TOKEN` (read the contract from the BSR — already set) plus a Cloudsmith push token. The

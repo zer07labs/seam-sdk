@@ -370,12 +370,15 @@ Three independently sufficient causes of a 0.7.17-shaped incident, closed.
   one refuses to tag.
 
   `release-on-runtime.yml` compares the dispatch's `wire_framing_version` against the supported value
-  and refuses on mismatch, before any commit, tag or publish. It cannot be armed unilaterally —
-  until the runtime emits the field every dispatch would look like a mismatch and halt all releases —
-  so a committed `runtime_emits_version` latch tolerates absent for now, with a loud warning naming
-  [`seam-runtime#418`](https://github.com/zer07labs/seam-runtime/issues/418). Flipping that latch
-  once the runtime lands makes absent a refusal too, so a field that later stops being emitted is
-  caught as a regression rather than silently reopening the hole.
+  and refuses on mismatch, before any commit, tag or publish. It could not be armed unilaterally —
+  until the runtime emitted the field every dispatch would have looked like a mismatch and halted all
+  releases — so a committed `runtime_emits_version` latch tolerated absent, with a loud warning naming
+  [`seam-runtime#418`](https://github.com/zer07labs/seam-runtime/issues/418). **That landed on
+  2026-08-26 and the latch was flipped on 2026-09-03**, so an absent field is now a refusal too and a
+  field that later stops being emitted is caught as a regression rather than silently reopening the
+  hole. The week between those dates is why the gate now also refuses a dispatch that *carries* the
+  field while the latch still reads false: the payload is the only witness to the latch's staleness
+  that cannot go stale alongside it.
 
 ### Added — compatibility, and the caveats this repo is not entitled to drop (W6 + W7)
 

@@ -42,7 +42,7 @@ What to do instead, in descending order of usefulness:
 | Consumer | Constraint on `seam-sdk` | Verified at |
 |---|---|---|
 | `seam-adapters` (`seam-agent-core[sdk]`) | `seam-sdk>=0.7.20,<0.8` | `seam-adapters/core/pyproject.toml:22` |
-| `seam-aegis` | `seam-agent-core[sdk]>=0.4,<0.5` (reaches this SDK transitively) | `seam-aegis/pyproject.toml:28` |
+| `seam-aegis` | `seam-agent-core[sdk]>=0.5,<0.6` (reaches this SDK transitively) | `seam-aegis/pyproject.toml:28` |
 
 **One caveat on the first row, because the lockfile disagrees with the constraint and both are
 true.** `seam-adapters/uv.lock:3921` resolves `seam-sdk` **0.7.9** — below the declared floor — and
@@ -99,7 +99,7 @@ mismatch cannot ship.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **Nothing was yanked.** For the first two bands that decision is recorded at
-`CHANGELOG.md:638-643` and is not being re-litigated: they fail loudly — an unimportable wheel, or a
+`CHANGELOG.md:644-649` and is not being re-litigated: they fail loudly — an unimportable wheel, or a
 clear auth error — and revoking installability under a floor already in wide use has a larger blast
 radius than a loud advisory.
 
@@ -166,7 +166,7 @@ this by trying.
 |---|---|---|---|
 | **Python** (`seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:381`) | Yes | **Published + supported** |
 | **TypeScript** (`@zer07labs/seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:199`, `ts/package.json:12`) | Yes | **Published + supported** |
-| **Go** | Module proxy, from the `go/vX.Y.Z` tag (`.github/workflows/release-on-runtime.yml:126`) | Tag only — no in-tree version | Resolvable, crypto shim only |
+| **Go** | Module proxy, from the `go/vX.Y.Z` tag (`.github/workflows/release-on-runtime.yml:186`) | Tag only — no in-tree version | Resolvable, crypto shim only |
 | **Java** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |
 | **Kotlin** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |
 

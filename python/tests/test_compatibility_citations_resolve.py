@@ -1090,7 +1090,7 @@ QUOTED = [
     (
         "COMPATIBILITY.md",
         "seam-aegis/pyproject.toml",
-        "seam-agent-core[sdk]>=0.4,<0.5",
+        "seam-agent-core[sdk]>=0.5,<0.6",
     ),
     (
         "COMPATIBILITY.md",

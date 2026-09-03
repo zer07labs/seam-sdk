@@ -6,6 +6,122 @@ assumption, the independent recommender's analysis, the human verdict, and the r
 produced it.
 
 
+## 2026-09-03 — the wire-framing latch: a gate may not be watched by a field that goes stale with it
+
+`contract/wire-framing.json` carries `runtime_emits_version`, an adoption latch. While it is false,
+a release dispatch that carries **no** `wire_framing_version` is downgraded to a `::warning::` and
+the release tags anyway. That is correct only while the runtime genuinely does not emit the field.
+
+seam-runtime#418 landed the field and closed COMPLETED on **2026-08-26**. The latch stayed `false`
+until **2026-09-03**. For that week the one gate that *prevents* a 0.7.17 — rather than reporting
+one afterwards — could not refuse anything, and every release dispatch in the window carried
+`wire_framing_version: 2` while the file said the runtime had not adopted the handshake. The file's
+own comment names the required action ("Flip it to true in the PR that confirms the runtime emits
+the field"); nothing enforced it, and `scripts/test_release_gate.py` checked step ordering and file
+existence only.
+
+### The rejected design, recorded because it is the intuitive one
+
+The first draft of the guard asserted a consistency property *inside* `contract/wire-framing.json`:
+if `runtime_emits_version` is `false`, then the issue named in `runtime_adoption_issue` must still
+be open. It is hermetic, needs no network, and is worthless. Both fields are hand-maintained and
+they went stale **together** — on 2026-08-26 the latch became wrong and the recorded issue state
+became wrong in the same instant, and neither was touched for a week. The test would have been green
+throughout the exact failure it was named after. It converts "someone remembers to flip the latch"
+into "someone remembers to record the closure": the same reliance, moved one field sideways.
+
+This is the repo's own vacuity class — a check whose result is decided by something other than the
+property it names — and it is worth recording that it was reached by drafting, not by carelessness.
+A review round caught it.
+
+### What was done instead
+
+The check lives in the gate itself, keyed on the dispatch: **a payload that carries
+`wire_framing_version` while the latch reads `false` is refused.** The dispatch is proof the runtime
+emits the field, so the latch is provably stale at that moment — detected from live data that cannot
+itself go stale, at the only point where the truth is available, with nothing to keep updated by
+hand. Had it existed, it would have fired on the first release after 2026-08-26.
+
+The latch is now `true`, and `scripts/test_release_gate.py` executes the gate's real script against a
+synthetic contract file rather than pinning its text, so every *behavioural* branch is asserted by
+running it and reading the exit code — not by text-matching the YAML. The load-bearing assertions were
+demonstrated red against the pre-fix workflow before the fix landed.
+
+### Assertions that do read the YAML, and why that is not the same thing
+
+Executing the script proves what the script does. It cannot prove that the workflow still *hands it*
+what it needs, because the harness supplies those values itself. Deleting the `wire_framing_version`
+input declaration, or the `|| github.event.inputs.wire_framing_version` fallback that reads it, or the
+`EVENT: ${{ github.event_name }}` line the trigger-type branches key on, left every behavioural test
+green — each is a cell of plumbing outside the executed text, so the gate would have gone back to
+refusing every manual release with the whole suite still passing. Four structural assertions now read
+those cells out of the parsed workflow — the three above plus the `repository_dispatch` trigger the
+stale-latch branch is scoped to — each verified by deleting the cell and watching exactly one
+assertion fail. The distinction is deliberate: behaviour is asserted by execution, wiring by
+structure, and neither substitutes for the other. Found by this phase's second verification round.
+
+A fourth round found the fifth cell of that shape, and it is the one worth remembering: the gate's
+refusal when `contract/wire-framing.json` **cannot be read** rests entirely on `set -e` aborting the
+`python3` substitution. Drop the `-e` and `LATCHED` becomes the empty string, which is not `"true"`,
+so the gate takes the staged-adoption branch and tags a release having compared nothing at all. That
+cell was harmless until this phase: while the latch was false it warned and tagged anyway, so nothing
+turned on `-e`. Arming the gate is what made a shell option load-bearing — a reminder that hardening
+one path can silently promote an adjacent one into the trusted computing base. Pinned by behaviour
+(run the gate with no contract file, assert non-zero) rather than by grepping for `set -e`, since
+what matters is that it refuses, not which option makes it.
+
+### The cost of flipping the latch, which the first cut of this phase missed
+
+Arming the gate broke the recovery path. `workflow_dispatch` — the documented *"manual fallback: run
+it yourself with an explicit version if the dispatch is ever missed"* — has no `client_payload`, so
+the framing version is empty on every manual run. With the latch true and no special case, that lands
+on the "a field that stopped being emitted is a REGRESSION" branch: **every manual release refuses,
+unconditionally**, and the operator is sent to investigate the runtime when the real fix is a form
+field. It fires on the path reached precisely *because* the automatic dispatch already failed, and
+`test_release_gate.py`'s own header warns about this shape — "a gate that always refuses looks, from
+the outside, like a gate that is working".
+
+Fixed by giving `workflow_dispatch` an optional `wire_framing_version` input and diagnosing that case
+separately, before the latch checks, so the message asks for the input instead of blaming the runtime.
+The manual path still refuses a genuine mismatch, so it is not an escape hatch around the gate. Caught
+by this phase's verification round, not by the author.
+
+### A PR-time assertion that the latch is true was written, then dropped
+
+It asserted `runtime_emits_version is True` in the committed file. That is the design this entry's
+own rationale rejects one notch milder — it swaps "someone remembers to flip the latch" for "someone
+remembers to revisit this guard" — and the phase spec had already rejected asserting the latch
+unconditionally true, because it forecloses the staged-adoption mode the file documents. Dropped
+rather than justified. The consequence of not having it is that setting the latch back to false lands
+at release time instead of PR time, where it **blocks a release** rather than shipping a bad SDK:
+failing closed, in the direction that costs minutes rather than a bad publish.
+
+### Giving `$DISPATCHED` a second source broke the claim the branch rests on
+
+The manual-fallback fix above introduced its own defect, caught by the second verification round.
+Once `$DISPATCHED` could also come from a `workflow_dispatch` input, the stale-latch branch fired on
+manual runs too — and there its message is a false premise. "The dispatch IS the proof that the
+runtime emits the field" is true only when the *runtime* sent it; on a manual run the value came from
+a form field an operator typed, which proves nothing. Worse, the refusal instructs them to flip the
+latch, so following it during a legitimate staged-adoption window arms the gate on no evidence, and
+every automatic dispatch for the rest of that window then hits the REGRESSION branch.
+
+The branch is now scoped to `repository_dispatch`. A manual release during staged adoption falls
+through to the ordinary comparison, which is what it should have done.
+
+The lesson is narrow and worth keeping: widening a variable's provenance silently widens every
+condition that reads it. The branch's correctness never depended on the value, only on *who sent it*,
+and that distinction stopped being encoded the moment a second sender existed.
+
+**Status:** DECIDED. The staged-adoption window is preserved on both trigger paths — the branch keys
+on the presence of a *runtime-sent* field, not on a date, so the next framing that lands SDK-side
+first still works the way the file documents. One residual, accepted: a manual run's framing version
+is an operator assertion, so someone who simply types this SDK's own `supported` value bypasses the
+comparison. That is inherent to any manual fallback — the same trust already placed in the
+operator-supplied `version` — and the gate's purpose is to stop an *automatic* release from
+outrunning the shims, which it does.
+
+
 ## 2026-09-01 — issues #91 and #92: how a bare `:NNN` binds, and what a guard's corpus may not be
 
 Not a `/reconcile` pass — two standing issues closed directly, each of which forced one decision
@@ -522,7 +638,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   stubs are gitignored, so per-tag gencode is not recoverable" — which was true of the working tree
   and false of the project: every tagged commit has a CI run, and that test *is* this defect. The
   hedge was deleted rather than softened because the evidence made it false.
-- **The precedent already covers worse.** `CHANGELOG.md:638-643` records no-yank for 0.7.13-0.7.19,
+- **The precedent already covers worse.** `CHANGELOG.md:644-649` records no-yank for 0.7.13-0.7.19,
   which failed *harder*: 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed
   every `authorize()` with an actively misleading "admission ticket is not valid" when the ticket
   was fine. This band breaks only consumers who cap `protobuf` below 7.36.0. Deleting the milder

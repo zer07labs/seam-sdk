@@ -34,7 +34,9 @@ release it has not adapted to.
 
 ## Depends on
 
-Nothing in `seam-runtime`. The `seam-sdk` half is already landed and waiting.
+Nothing in `seam-runtime` — **and nothing is waiting any more**. The runtime landed the field and
+this issue closed COMPLETED on 2026-08-26; `seam-sdk` armed its half on 2026-09-03. Kept as the
+record of the ask and of what the SDK now relies on, not as an open request.
 
 ## Files (all in `seam-runtime`)
 
@@ -56,27 +58,40 @@ Nothing in `seam-runtime`. The `seam-sdk` half is already landed and waiting.
 
 - `contract/wire-framing.json` declares `supported: 2` plus the framing history.
 - `release-on-runtime.yml` compares the dispatched value against it and **refuses to tag** on a
-  mismatch, before the token is minted and before anything is stamped — so a refusal leaves no
-  commit, no tag, nothing published.
+  mismatch, before anything is stamped — so a refusal leaves no commit, no tag, nothing published.
+  *(This line used to say "before the token is minted" as well. That stopped being true on
+  2026-08-24: the step had to move to* after *checkout, because it reads `contract/wire-framing.json`
+  out of the repo — where it originally sat, it never once ran its comparison, it just crashed on a
+  missing file and failed every release closed. `scripts/test_release_gate.py` now pins the ordering.)*
 
-It cannot be armed unilaterally: until the runtime emits the field, every dispatch would look like a
-mismatch and halt all releases. So `wire-framing.json` carries a `runtime_emits_version` latch,
-currently `false` — absent is tolerated with a loud warning naming this issue. **Once this lands,
-flipping that latch makes absent a refusal too**, so a field that later stops being emitted is caught
-as the regression it would be rather than silently reopening the hole.
+It could not be armed unilaterally: until the runtime emitted the field, every dispatch would have
+looked like a mismatch and halted all releases. So `wire-framing.json` carries a
+`runtime_emits_version` latch, which tolerated absent with a loud warning naming this issue.
+
+**DELIVERED.** This landed and the issue closed COMPLETED on 2026-08-26; the SDK flipped the latch on
+2026-09-03, so an absent field is now a refusal too. The latch sat stale for that week because nothing
+watched it — so the gate additionally refuses a dispatch that *carries* the field while the latch reads
+false, which is the one signal that cannot go stale alongside the latch itself.
 
 ## Acceptance criteria
 
 1. A `seam-release` dispatch carries `wire_framing_version` in its `client_payload`.
 2. The value has a single source of truth in `seam-runtime`, not a literal duplicated per workflow.
-3. Comment on this issue when it lands, so `seam-sdk` can flip `runtime_emits_version` to `true` and
-   cite the confirmation.
+3. ~~Comment on this issue when it lands, so `seam-sdk` can flip `runtime_emits_version` to `true` and
+   cite the confirmation.~~ **Met** — closed COMPLETED 2026-08-26, latch flipped 2026-09-03.
 
 ## Tests
 
 - A release dry-run showing the field present in the payload.
-- On the `seam-sdk` side (already implemented): all four branches are exercised — absent+unlatched
-  warns and proceeds; matching proceeds; **mismatch refuses**; **absent+latched refuses**.
+- On the `seam-sdk` side (already implemented): the full truth table over
+  (framing version present × latch × trigger type) is exercised by executing the gate's real script —
+  absent+unlatched warns and proceeds; matching proceeds; **mismatch refuses**; **absent+latched
+  refuses**, with a distinct message on a manual run telling the operator to supply the input rather
+  than blaming the runtime; and **a dispatch carrying a framing version while the latch reads false
+  refuses as proof the latch is stale**. That last branch is scoped to `repository_dispatch`, since an
+  operator-typed value proves nothing about the runtime. *(This entry said "all four branches" until
+  2026-09-03; the stale-latch and manual-diagnosis branches are what the SDK added when it armed the
+  gate.)*
 
 ## Why this one first
 
