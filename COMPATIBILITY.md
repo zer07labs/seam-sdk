@@ -425,6 +425,98 @@ Neither is visible to the runtime unless the runtime validates canonicality itse
 cannot determine. Filed upstream. If you are not pre-computing the digest for your own records, keep
 passing `tool_input` and none of this applies to you.
 
+
+## 9. Record-digest input validation narrowed in both languages — no emitted byte moved
+
+Same reason §8 exists: this SDK cannot express its own semver, so a narrowing ships under whatever
+number the runtime computes. **Nothing here changes a digest.** Every input still accepted produces
+byte-identical output, `conformance/` is unmodified, and the KATs are untouched. What changed is
+which inputs the TypeScript SDK will digest at all — and it changed to match what Python and the
+`verify/` crate already did.
+
+The reason to care is that the old behaviour was not "permissive", it was **aliasing**: two distinct
+values reached one digest. Measured against the pre-fix build, `recordDigestV2({sealedAt: 5n})` and
+`recordDigestV2({sealedAt: 2n**64n + 5n})` both produced
+`b566fdea56b8487bc5ebc26d1d6585339e9ab2a3a499247bd7230e4f20f05d7f`. That is a digest failing at the
+only thing a digest does.
+
+The guard is `uintSlot` (`ts/src/crypto.ts:572`), which already governed the v3 record digest;
+`u64le`/`u32le` (`ts/src/crypto.ts:347`) now route through it, so v2 and the attestation framing get
+the rule that was always written for them. Python got the same treatment: `_uint_slot`
+(`python/seam_sdk/crypto.py:579`) was `_v3_uint`, and `record_digest_v2` now shares it. Every
+"before" below was measured against the pre-fix build, not inferred.
+
+**Read the `now` column as the record-digest arm.** In the chain-head **attestation** arm every one
+of these refusals is observed as `false` rather than as a thrown error, because
+`verifyChainHeadAttestation` wraps its whole body in `catch { return false }`
+(`ts/src/crypto.ts:730-735`). The distinction matters for the `true` row in particular, where the
+attestation arm shows no caller-visible change at all — `false` before, `false` after — even though
+what it is now refusing changed. See the note below the table.
+
+| input to a TS record digest / chain-head attestation | before | now | why |
+|---|---|---|---|
+| an integer slot outside `[0, 2^64)` / `[0, 2^32)` | **silently wrapped** | `RangeError` | `DataView.setBigUint64` applies ToBigUint64; `2^64+5` and `5` wrote identical bytes. `-1n` aliased onto `2^64-1`, and `2^64` onto `0` |
+| a `number` above 2^53 (e.g. `sealedAt: 2**60`) | accepted | `RangeError` | already inexact, so the value hashed is the nearest double, not the integer meant — Python's exact ints disagree. Pass a `bigint` |
+| a string or an array (`"5"`, proto3 JSON's int64) | coerced by `BigInt()` | `TypeError` | `BigInt("5")` is `5n` and `BigInt("")` is `0n`, so a coerced value **aliases** a legitimate caller's digest |
+| `true` | digested as `1` | `TypeError` | `BigInt(true)` is `1n`. Python accepted it too — `bool` subclasses `int`, so a range check alone passes — and `record_digest_v2` plus the attestation verifier were tightened to match. `record_digest_v3` already refused it |
+| a lone surrogate in an object **key** | accepted | `Error` | Python raised `UnicodeEncodeError` on the identical input; TS could digest an object no other implementation can represent |
+| a lone surrogate in a string **value** | `Error` | `Error` | unchanged — this position was always guarded, which is what made the key position easy to miss |
+| a correct surrogate **pair** in a key (`"😀"`) | accepted | accepted | valid Unicode; refusing it would break real callers to fix a bug they do not have |
+| `schemaVersion` as a `bigint` (`3n`) | `TypeError` | accepted | **the one widening here.** The old `u32le` took `number` and fed a bigint straight to `setUint32`, which throws. It now produces the same digest as `3`. No alias is created — it is the same integer — and the TS type still declares `schemaVersion?: number`, so this is only reachable from JavaScript |
+
+Two rows deserve to be read as decisions rather than bug fixes. The **`number`-above-2^53** row
+refuses a value that was never ambiguous *within* TypeScript, and the **`schemaVersion` bigint** row
+is a widening in a section otherwise about narrowing. Both are argued in `DECISIONS.md`; the rest
+close a genuine collision and need no defence beyond the collision.
+
+**Python is affected too, though never by the alias** — `struct.pack` raises rather than wrapping, so
+Python never had it. What Python had was three smaller defects in the same code:
+
+- `verify_chain_head_attestation` let that `struct.error` escape a function documented to return
+  `False` on any tamper, so an out-of-range length **crashed** a caller instead of being rejected. It
+  now returns `False` (`python/seam_sdk/crypto.py:770-805`).
+- `attested_len`, `attested_at` and `digest_schema` are now required to be `int`. Previously
+  `True` was digested as `1` (`bool` subclasses `int`) and `5.0` raised `struct.error` — a *third*
+  answer from a function that should only ever give two. Both now raise `TypeError`.
+- `record_digest_v2` shares that validator too, so `sealed_at=True` raises instead of digesting as
+  `1`, and an out-of-range `sealed_at` raises `ValueError` rather than `struct.error`. No in-range
+  digest moved: 20,000 randomized inputs compared against `HEAD`, 0 divergences.
+
+Two exception *types* changed without any verdict changing, which is worth stating because a caller
+may be catching them: a non-`str` `issuer_aid` raises `TypeError` where it used to raise
+`AttributeError`, and an out-of-range integer slot raises `ValueError` where `struct.pack` used to
+raise `struct.error`. Nothing in this repo catches either of the old ones. `attested_head` still
+accepts any byte sequence — `bytes`, `bytearray`, `memoryview`, `array.array`, a `ctypes` buffer —
+because it is validated through the same `_as_bytes` `record_digest_v3` uses rather than through a
+type list of its own.
+
+In **Python** a wrong *type* raises rather than returning `False`, deliberately: a `TypeError`
+reported as "did not verify" is a program error disguised as a security verdict.
+
+**TypeScript does not match that, and this release does not change it.**
+`verifyChainHeadAttestation`'s blanket `catch { return false }` (`ts/src/crypto.ts:730-735`) swallows
+every `TypeError` the new guard raises, so `attestedLen: "1000"`, `true`, `null` and `[1000]` all
+return `false` there rather than throwing. That is a live cross-language divergence about *how* a
+caller learns they made a mistake — not about which inputs are accepted, where the two now agree.
+Changing it is a behaviour change to a public API and is being decided separately rather than
+folded into a fix; until then, a TypeScript caller cannot distinguish "this attestation is invalid"
+from "you passed the wrong type".
+
+Two asymmetries are deliberate and are not divergences:
+
+- Python refuses `attested_len=5.0`; TypeScript accepts `sealedAt: 5.0`. JavaScript has no separate
+  float type — `5.0` **is** the integer `5` there, so there is no corresponding input to refuse. In
+  Python `5.0` is a distinct object and a caller who wrote it for a byte length has made a mistake.
+- Python's check is `isinstance(value, int)`, so a duck-typed integer (`numpy.int64`, `gmpy2.mpz`)
+  is now refused where it previously verified. That is the rule `record_digest_v3` has enforced
+  since it was written, and matching it was the point; `enum.IntEnum` and ordinary `int` subclasses
+  are unaffected. Nothing in this repo or its dependencies passes such a value.
+
+**What this costs you:** if you were passing `sealedAt` as a `number` above 2^53, you now get a
+`RangeError` where you previously got a digest. That digest was already wrong — it covered the
+nearest double — so any record it sealed disagreed with the runtime's. Convert at the boundary with
+`BigInt(...)`, where you can see it.
+
 ---
 
 ## Changing this document

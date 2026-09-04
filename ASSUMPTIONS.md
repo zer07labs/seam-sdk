@@ -656,3 +656,26 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   to scan a directory rather than a file, so archiving stops costing 25 assertions.
 - **Status:** UNCONFIRMED. Deliberately not solved under run pressure — the question was found while
   preparing this run's handoff and recorded rather than answered.
+
+## Refusing duck-typed integers (`numpy.int64`, `gmpy2.mpz`) in the Python digest slots
+
+- **Plan:** `plans/digest-correctness-and-gate-repair.md`, Phase 2 (found by verification, not planned)
+- **Assumed:** no caller passes a non-`int` integer type — one implementing `__index__` without
+  subclassing `int` — to `record_digest_v2`, `record_digest_v3` or `verify_chain_head_attestation`.
+- **Chose:** `isinstance(value, int)` in the shared `_uint_slot`, which refuses `numpy.int64` and
+  `gmpy2.mpz` where they previously produced a digest. This is the rule `record_digest_v3` has
+  enforced since it was written; the alternative would have made v2 and the attestation verifier
+  *more* permissive than v3, which is a new asymmetry in a phase about closing them.
+- **Alternatives:** accept anything with `__index__` (excluding `bool` explicitly, since
+  `True.__index__()` is `1`). Strictly more permissive and restores the pre-phase behaviour for
+  numeric-stack callers — but it would then need applying to v3 too, widening a validator that has
+  been narrow and uncontested for its whole life, to serve a caller nobody has reported.
+- **Blast radius if wrong:** a caller doing `record_digest_v2(sealed_at=np.int64(...))` gets a
+  `TypeError` where they previously got a correct digest. Loud, at the first record, with a message
+  naming the type — not a silent wrong answer. `enum.IntEnum` and ordinary `int` subclasses are
+  unaffected. Protobuf `uint64`/`uint32` fields return `type(v) is int` under both the `upb` and
+  pure-Python implementations, verified end-to-end, so the SDK's own decode path is clear.
+- **Owner / re-open trigger:** the first report of a `TypeError` from a numeric-stack caller. The
+  fix is one `hasattr(value, "__index__")` in `_uint_slot`, applied to all three framings at once.
+- **Status:** UNCONFIRMED. The assumption is about callers outside this repo, which nothing here can
+  settle; it is recorded so the trigger is recognisable rather than debugged from scratch.

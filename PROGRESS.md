@@ -50,7 +50,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 > checkpoint trail lives in git history (`git log -p -- PROGRESS.md`); nothing here carries over.
 >
 > **Done in Phase 1 (2026-08-31).** Delivery was verified against this tree — `record_digest_v3` at
-> `python/seam_sdk/crypto.py:589`, `ts/src/crypto.ts:608`, `verify/src/verify.rs:448`; the 6a/6b
+> `python/seam_sdk/crypto.py:614`, `ts/src/crypto.ts:639`, `verify/src/verify.rs:448`; the 6a/6b
 > streamed arms live at `python/seam_sdk/admin.py:129` and `ts/src/admin.ts:141`; KATs at
 > `conformance/vectors.json:70` — and the plan is now `plans/archive/record-digest-v3.md`.
 > `plans/authorize-single-canonicalization.md` turned out to be delivered too (issue #60, closed
@@ -84,7 +84,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `.github/workflows/publish.yml:316` | `make generate` **again at publish time**, against unpinned plugins — the open half of #52. `:390-401` pre-upload smoke installs protobuf *unconstrained*, so the skew is invisible to it; `registry-smoke` (`:519`) likewise. Measured at planning: `grep -rn protobuf .github/workflows/` yielded **one** hit, a prose comment — no workflow pinned protobuf anywhere, so nothing caught the skew. **Phase 6 closed that** (DONE 2026-08-31): the same grep now yields 17, and `.github/workflows/publish.yml:423` installs the built wheel with `protobuf==$FLOOR`. The declared floor and the emitted gencode are both **7.36.0** (`python/pyproject.toml:50`, `python/seam_sdk/_gen/seam/api/v1/seam_pb2.py`'s `Protobuf Python Version` header — cited by symbol, not by line, since it is a generated, gitignored file) — zero headroom, which is why this phase ran first. |
 | `.github/workflows/publish.yml:63-148` | `ci-green` — resolves every `ci-ok` conclusion for the tagged commit. Sound: `:107` still-running ⇒ `pending`, `:117-126` one-green-cannot-mask-one-red, `:143-148` timeout is a refusal. `:192`/`:285` gate both npm and python. **Must not regress.** |
 | `.github/workflows/publish.yml:150-188` | `version-check` — tag vs in-tree versions. It had **no branch-ancestry check** (`.github/workflows/ci.yml:19` runs on every branch push, so a tag at a green feature-branch commit published cleanly); **Phase 6 added one at `:176`**, which is inside this row's own range. Read the range as the job, not as evidence of the gap — it was widened in round 1 until it contained the very step it is cited for lacking. |
-| `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:747`. |
+| `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:827`. |
 | `python/tests/test_protobuf_floor.py:72,88` | The two pure-file-read assertions Phase 6 runs at publish time. `:29-31` reads only `_gen/seam/api/v1/seam_pb2.py`; `:47-51` **skips** when `_gen` is absent. `:88-99` forces `cap == gencode_major + 1` — this is why "widen the floor" is not a metadata edit. |
 | `python/tests/test_grpcio_floor.py:38` | Module-level `import grpc` — matters if Phase 6 runs it in the publish job. |
 | `.github/workflows/yank.yml` | `workflow_dispatch`, `dry_run` default `"true"`. A hard **DELETE** (`:91-92`), not a PyPI-style yank. Its token line did **not** strip the cargo token's `"Bearer "` prefix (`.github/workflows/publish.yml:383-385` does) — **Phase 10 fixed it** (DONE 2026-08-31) at `.github/workflows/yank.yml:55-60`, and left the version/format/name filters (`:73-76`) byte-unchanged. `scripts/test_yank_gate.py` now executes the resolution and pins those filters. |
@@ -93,7 +93,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `python/tests/test_compatibility_citations_resolve.py` | Every backticked `file:line` in `COMPATIBILITY.md`/`DECISIONS.md` must resolve; `:61-64,:92` ≥10 each; `:76` sibling paths need a `seam-runtime/` prefix; `:141-172` `ANCHORED` needles must hit **exactly once** within `CITATION_SLACK` (`:176`). **Phase 8** adds the vendored-file rule. |
 | `verify/docs/seam-event.v1.md` | Byte-verbatim vendored spec, pinned in its header. **Phase 9** refreshes it whole-file. Source of #73's citation drift. |
 | `scripts/check_vendored_spec.py:22-38` | Integrity (`:24-26`) / reachability (`:28-32`) / **currency** (`:34-38`) — fails on staleness by explicit decision. This is what will announce runtime P1a Phase 6 by reddening `spec-pin` (`.github/workflows/ci.yml:588-589`) on every PR. |
-| `python/seam_sdk/crypto.py:606-610` | `record_digest_v3` takes `context_digest` as an **opaque 32-byte sub-digest**, deliberately not reimplemented. **This is why ACDP P1a costs the digest layer nothing** — verified: `context_digest` appears only as an input (`:599,643,677`, `python/seam_sdk/admin.py:141`), and no context-provenance formula exists in `python/`, `ts/` or `verify/`. `:386` `_frame` · `:390` `_opt` · `:584` `_opt_bytes` · `:394` `record_digest_v2`. |
+| `python/seam_sdk/crypto.py:631-635` | `record_digest_v3` takes `context_digest` as an **opaque 32-byte sub-digest**, deliberately not reimplemented. **This is why ACDP P1a costs the digest layer nothing** — verified: `context_digest` appears only as an input (`:624,668,702`, `python/seam_sdk/admin.py:141`), and no context-provenance formula exists in `python/`, `ts/` or `verify/`. `:386` `_frame` · `:390` `_opt` · `:609` `_opt_bytes` · `:394` `record_digest_v2`. |
 | `verify/src/verify.rs:668-674` | `schema_version` dispatch (2 ⇒ v2, 3 ⇒ v3, else refuse); `:636-644` ceiling refusal. P1a keeps `schema_version = 3`, so **no new arm**. |
 | `python/tests/test_errors_is_import_light.py:87-100` | `crypto.py` may import only `cryptography`; `errors.py` only `grpc`. seam-runtime's `sdk-digest-parity` gate loads `crypto.py` standalone. **No phase may add an import to either.** |
 | `scripts/test_ci_gate.py:79,98,141` | `ci-ok`'s `needs:` must equal the full job set both ways; `ALLOWED_ADVISORY` (the literal is at `:52`, asserted by the test at `:98`) may hold only `{integration, spec-pin}`; `workflow-guards` must stay free of `BUF_TOKEN`/`buf-setup-action`/`make generate` (banned triple at `:191-195`). **Any new CI job must be added to `needs:`.** |
@@ -155,7 +155,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   - *R2 GAPS (3):* the `:109`→`:141` fix reached `PROGRESS.md` but missed
     `plans/archive/record-digest-v3.md:12`; removing a duplicated execution-order block ate the
     blank line and merged two paragraphs; and the path repoint **over-replaced** four quoted
-    `DECISIONS.md` section titles, which are lookup keys that must match `DECISIONS.md:939`
+    `DECISIONS.md` section titles, which are lookup keys that must match `DECISIONS.md:1019`
     verbatim, not paths.
   - *R3 PASS:* all three closed, both halves of the over-replacement checked (quoted titles reverted,
     `**Plan:**` paths still archive-pointed), no new breakage, 545/17 green.
@@ -167,7 +167,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   `python/pyproject.toml` and `ts/package.json` (version stamps) — no line number cited anywhere in
   the plan moved. Merge commit `68e92c2`; branch `feat/publish-integrity-and-tracking-state`.
 - **Delivery verified against code, not status tables** (the whole point of the phase):
-  `record_digest_v3` at `python/seam_sdk/crypto.py:589`, `ts/src/crypto.ts:608`,
+  `record_digest_v3` at `python/seam_sdk/crypto.py:614`, `ts/src/crypto.ts:639`,
   `verify/src/verify.rs:448`; streamed v3 arms at `python/seam_sdk/admin.py:129` (with `:107`
   refusing `schema_version > 3`) and `ts/src/admin.ts:141` (with `:109` the matching ceiling
   refusal); KATs at `conformance/vectors.json:70`;
@@ -1052,7 +1052,7 @@ them change what the phases do:
 | `scripts/check-contract.sh:729` | The comment #88 was filed from, which used to record the event surface as an OPEN gap. **Phase 5 rewrote it** — leaving it would have described a closed gap as open. |
 | `contract/event-field-manifest.txt` | **Phase 5 creates.** 90 fields, 11 messages, zero enums, zero nested messages — all measured, not assumed. |
 | `python/tests/test_field_manifest_gate.py:91` | `_run()` — the scratch-copy-plus-env-override pattern Phase 5's tests mirror. Nothing may mutate the real gitignored stub trees. |
-| `python/tests/test_compatibility_citations_resolve.py:625` | The `submitCommit` `ANCHORED` needle into `ts/src/client.ts`. Its siblings in the same list pin `collectiveOutcomeOf` (just above) and, from Phase 4, `submitEvaluation` and `submitObjection` — named rather than cited, for the reason the row above records: the bare `:606` and `:617-618` that used to sit here were both stale, and nothing could have told anyone. The plan predicted the insertion would break the `submitCommit` anchor for any K of 4+ lines *except* a 125-131 window where it would go green against the unrelated `:804` citation. **Measured K = 101 at the time of that check, 103 as finally committed** — outside that window at every intermediate value, and the anchor failed red-first as required before `PROGRESS.md` was touched. |
+| `python/tests/test_compatibility_citations_resolve.py:681` | The `submitCommit` `ANCHORED` needle into `ts/src/client.ts`. Its siblings in the same list pin `collectiveOutcomeOf` (just above) and, from Phase 4, `submitEvaluation` and `submitObjection` — named rather than cited, for the reason the row above records: the bare `:606` and `:617-618` that used to sit here were both stale, and nothing could have told anyone. The plan predicted the insertion would break the `submitCommit` anchor for any K of 4+ lines *except* a 125-131 window where it would go green against the unrelated `:804` citation. **Measured K = 101 at the time of that check, 103 as finally committed** — outside that window at every intermediate value, and the anchor failed red-first as required before `PROGRESS.md` was touched. |
 
 ## Phase log
 
@@ -2317,3 +2317,99 @@ because nothing about the first part looks like it touched a citation.
 
 `scripts/` is not in CI's `ruff format` scope and was already unformatted at `HEAD`;
 `scripts/test_release_gate.py` itself is formatted.
+
+### Phase 2 — Digests that alias · **DONE** 2026-09-03
+
+Four demonstrated defects closed, each measured byte-for-byte against the pre-fix build before any
+code moved. The headline: `recordDigestV2({sealedAt: 5n})` and `recordDigestV2({sealedAt: 2^64+5n})`
+produced the *same 32 bytes* — `b566fdea…05d7f` — because `DataView.setBigUint64` applies ToBigUint64
+and wraps in silence. `-1n` aliased onto `2^64-1`, `2^64` onto `0`, `"5"` onto `5n`, `true` onto `1n`.
+A digest that does that is failing at the only thing a digest is for.
+
+The rule was already written, argued, and correct — for v3 only, in a function called `v3Uint` whose
+reasoning is entirely about `DataView` and IEEE doubles, neither of which knows which framing it is
+serving. Renamed to `uintSlot`; `u64le`/`u32le` route through it. Also: lone surrogates are now
+refused in object **keys**, not just string values (Python always raised there, so TypeScript could
+digest an object no other implementation can represent), and Python's `verify_chain_head_attestation`
+returns `False` on an out-of-range slot instead of letting `struct.error` escape a function
+documented to return `False` on any tamper.
+
+**The verification round earned its place.** It ran a differential fuzz across both builds — 3000
+`recordDigestV2` samples, 0 divergences; 4000 `jcsCanonicalize` samples, 203 divergences, *all*
+classified as the intended key-surrogate narrowing — and then found six real gaps, one blocking:
+
+- **The TypeScript attestation test was vacuous.** It passed a zero signature and a placeholder AID
+  that `aidToPubkey` rejects, so the verifier's own `catch` returned `false` before the digest was
+  ever computed — the assertion held whatever `attestedLen` contained. Reverting the fix left all 148
+  tests green. Rewritten around the runtime's committed KAT, which is a signature this repo did not
+  produce; reverting the attestation framing alone now kills exactly one test, and reverting `u64le` kills four. In a phase whose subject is aliasing, this
+  was a test whose result was decided by something other than the property it named.
+- **The fix created a divergence while closing three** — `bool` and `float`, described above.
+- Two `ts/src/crypto.ts` citations went stale under this phase's own +31 lines. One of them
+  (`DECISIONS.md`) had been pointing at the *string* slot validator for a claim about a coerced
+  integer since before this phase; corrected to the function that actually holds the fix.
+- An undocumented widening, and two `COMPATIBILITY.md` claims that overstated their scope.
+
+**Round 2 found the fix half-applied**, and the shape of that finding is the useful part. Tightening
+`verify_chain_head_attestation` alone left `record_digest_v2(sealed_at=True)` still digesting as `1`
+— so the divergence survived in the sibling function, with a freshly-written `COMPATIBILITY.md` row
+asserting it closed. Both languages had *agreed* before the phase and would have disagreed after.
+
+The repair was not to add a third check but to stop having three: `v3Uint`→`uintSlot` and
+`_v3_uint`→`_uint_slot`, one validator per language, shared by v2, v3 and the attestation framing.
+The bug was never a missing check — it was a rule living in more places than one, which is also the
+honest account of why round 1's fix looked complete.
+
+Round 2 also found that the citation repairs were themselves unguarded: it reverted one to its stale
+value and the whole suite stayed green. Seven anchors added to
+`python/tests/test_compatibility_citations_resolve.py`, five of which needed `CLAIM_LINES` entries
+because their documents cite those paths several times over — without which a needle can be
+satisfied by a sibling citation the claim never named. All five mutation-verified.
+
+One divergence was **surfaced and deliberately not fixed**: `verifyChainHeadAttestation` swallows
+every `TypeError` in a blanket `catch { return false }`, where Python lets it propagate. That is a
+decision about a public API, not a defect, so it moved to Phase 3 — which exists for exactly that —
+rather than being settled inside a phase about aliasing.
+
+**Round 3 found the code correct** — all eleven code mutations died — and the gap entirely in the
+citation layer: this phase's insertions stranded roughly fifteen `file:line` citations across seven
+files, and only four had been repaired. Twice now, the half that was *anchored* noticed and the half
+that was not did not; in one sentence the TypeScript citation was repaired and the Python one beside
+it was left stale.
+
+All fifteen repaired, each verified by reading the cited line rather than by trusting the arithmetic,
+and the two that a round-3 mutation proved unguarded are now anchored — pointing `PROGRESS.md`'s
+`python/seam_sdk/crypto.py` citation at line 1 used to leave the suite green and now reddens two
+tests. The honest summary of three rounds: the citation discipline works exactly as far as the
+anchors reach, and every round has found the reach too short.
+
+Round 3 also found one real code defect. The guard checked each slot's type and range together, so
+`attested_len=2**64` alongside `attested_at="7"` returned `False` — reporting "did not verify" about
+a call that never had a chance to, while the guard's own comment claimed a wrong type always raises.
+True for every single-fault input, false for every double-fault one. Types for **every** argument
+are now checked before any range is, `_require_int` was split out so that rule still has exactly one
+definition, and the combination nobody writes a test for has four.
+
+**Round 4 found the round-3 fix had done it again**, and this time the irony is exact. The
+`attested_head` type check — added so a wrong type could not hide behind an out-of-range value — was
+written as `isinstance(attested_head, (bytes, bytearray, memoryview))`, which also narrowed the
+argument from *any* buffer-protocol object. `array.array("B", …)` and a `ctypes` buffer verified
+`True` before and raised after: a caller getting a correct verdict stopped getting one, to fix a bug
+they did not have. The module already owned that rule — `_as_bytes`, which `record_digest_v3` uses
+and whose docstring settles the `memoryview` itemsize trap — so `record_digest_v3` and
+`verify_chain_head_attestation` disagreed about what bytes are. **The fix for "a rule living in more
+than one place" introduced a rule living in more than one place.** Now routed through `_as_bytes`,
+pinned by a test, mutation-verified.
+
+Round 4 also showed the citation repairs were not finished: two I had repointed were still wrong,
+because my *own later edits in the same round* moved the targets after I measured them. The lesson
+is procedural and worth keeping: **measure citations last, after every other edit in the change**.
+A sweep of all 85 citations into branch-modified files now runs clean, and the anchors caught two of
+my own drifts in this round before any verifier did.
+
+Measured after: python **1069 passed / 17 skipped** · ts **148 tests, 138 pass, 0 fail, 10 skipped** ·
+`pytest scripts -q` **116 passed** · go ok · `verify/` all 9 targets ok · `ruff` clean ·
+`tsc --noEmit` clean · `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` **exit 6** ·
+`git status conformance/` **empty** — criterion 7 held: not one KAT or conformance vector moved,
+confirmed by three independent differentials against `HEAD` (20,000 · 40,000 · 4,000 randomized
+in-range `record_digest_v2` inputs, 0 divergences in each) rather than by file identity alone.

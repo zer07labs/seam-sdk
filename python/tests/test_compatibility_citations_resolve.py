@@ -590,6 +590,46 @@ ANCHORED = [
         ".github/workflows/release-on-runtime.yml",
         'git tag -a "go/v$VER"',
     ),
+    # Phase 2's integer-slot guards. These are anchored because their citations have now drifted
+    # TWICE inside one workstream: `ts/src/crypto.ts` grew 31 lines mid-phase and stranded two
+    # citations, one of which had additionally been pointing at the *string* slot validator for a
+    # claim about a coerced integer since before the phase began. Both repairs were then unguarded —
+    # a verification round reverted one to its stale value and the whole suite stayed green. A
+    # citation that has drifted twice and is defended by nothing will drift a third time.
+    (
+        "COMPATIBILITY.md",
+        "ts/src/crypto.ts",
+        "function uintSlot(name: string, value: number | bigint, bits: 32 | 64): bigint {",
+    ),
+    (
+        "COMPATIBILITY.md",
+        "ts/src/crypto.ts",
+        "function u64le(name: string, n: number | bigint)",
+    ),
+    (
+        "COMPATIBILITY.md",
+        "ts/src/crypto.ts",
+        "const digest = chainHeadAttestationDigest({ ...a, issuerAid });",
+    ),
+    (
+        "COMPATIBILITY.md",
+        "python/seam_sdk/crypto.py",
+        "def _uint_slot(name: str, value: int, bits: int) -> int:",
+    ),
+    ("COMPATIBILITY.md", "python/seam_sdk/crypto.py", "_uint_slot(name, value, bits)"),
+    ("DECISIONS.md", "ts/src/crypto.ts", "must be a number or bigint, not "),
+    ("PROGRESS.md", "ts/src/crypto.ts", "export function recordDigestV3(d: {"),
+    # `record_digest_v3` and `_opt_bytes`, cited from PROGRESS.md and DECISIONS.md respectively.
+    # A verification round mutated `PROGRESS.md`'s `python/seam_sdk/crypto.py` citation to line 1 and
+    # the whole suite stayed green — while the TS twin in the *same sentence* was anchored and did go
+    # red. That asymmetry is why these are here: the file had drifted 25 lines and only the guarded
+    # half of the claim noticed.
+    ("PROGRESS.md", "python/seam_sdk/crypto.py", "def record_digest_v3("),
+    (
+        "DECISIONS.md",
+        "python/seam_sdk/crypto.py",
+        "def _opt_bytes(b: bytes | None) -> bytes:",
+    ),
     ("COMPATIBILITY.md", "README.md", "crypto shims + conformance tests only"),
     ("COMPATIBILITY.md", ".github/workflows/ci.yml", "must link NOTHING"),
     # DECISIONS.md's own load-bearing three. The zero-Seam-crates gate is cited from BOTH
@@ -728,7 +768,43 @@ CITATION_SLACK = 3
 #: and that is fine: the candidate set is then both of that row's citations, which is still far
 #: narrower than every citation of the path in the document.
 CLAIM_LINES = {
+    ("PROGRESS.md", "python/seam_sdk/crypto.py", "def record_digest_v3("): (
+        "`verify/src/verify.rs:448`; the 6a/6b"
+    ),
+    (
+        "DECISIONS.md",
+        "python/seam_sdk/crypto.py",
+        "def _opt_bytes(b: bytes | None) -> bytes:",
+    ): "past-EOF",
     # COMPATIBILITY.md
+    # Phase 2's integer-slot guards. COMPATIBILITY.md cites `ts/src/crypto.ts` four times and
+    # `python/seam_sdk/crypto.py` three times, so without these the anchors could be satisfied by a
+    # sibling citation — the needle would be "found" against a line the claim never named.
+    (
+        "COMPATIBILITY.md",
+        "ts/src/crypto.ts",
+        "function uintSlot(name: string, value: number | bigint, bits: 32 | 64): bigint {",
+    ): "The guard is `uintSlot`",
+    (
+        "COMPATIBILITY.md",
+        "ts/src/crypto.ts",
+        "function u64le(name: string, n: number | bigint)",
+    ): "now route through it",
+    (
+        "COMPATIBILITY.md",
+        "ts/src/crypto.ts",
+        "const digest = chainHeadAttestationDigest({ ...a, issuerAid });",
+    ): "blanket `catch { return false }`",
+    (
+        "COMPATIBILITY.md",
+        "python/seam_sdk/crypto.py",
+        "def _uint_slot(name: str, value: int, bits: int) -> int:",
+    ): "was `_v3_uint`, and `record_digest_v2` now shares it",
+    (
+        "COMPATIBILITY.md",
+        "python/seam_sdk/crypto.py",
+        "_uint_slot(name, value, bits)",
+    ): "now returns `False`",
     ("COMPATIBILITY.md", "CHANGELOG.md", "No yank"): "is not being re-litigated",
     (
         "COMPATIBILITY.md",

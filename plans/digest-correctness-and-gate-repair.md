@@ -190,7 +190,28 @@ guard now binds the latch to its tracking issue rather than to a date.
 
 ### Phase 2 — Digests that alias: the u64 wrap and the unguarded surrogate key
 
-**Status:** TODO
+**Status:** DONE (2026-09-03). Three divergences from the plan, all found by the verification round:
+
+- **The plan's own Approach item 3 was not quite enough.** Range-validating `attested_len`/
+  `attested_at` closed the `struct.error` escape, but left `attested_len=True` digesting as `1`
+  (`bool` subclasses `int`, so the comparison simply passes) while TypeScript refused `true` — so
+  the fix **created** a cross-language divergence while closing three. And `5.0` passed the range
+  check and then raised `struct.error` anyway, leaving the function with four possible answers.
+  Closed by requiring `int` and excluding `bool` before the range check. Recorded in `DECISIONS.md`.
+- **`v3Uint` was renamed to `uintSlot`**, rather than v2 getting its own copy of the rule. Not in
+  the plan, but implied by it: the plan says to adopt v3's semantics, and two copies of a rule about
+  which inputs have a digest is a divergence waiting for someone to fix only one of them.
+- **One widening**, undocumented until the verifier found it: `schemaVersion: 3n` threw before and
+  is accepted now, because the old `u32le` took `number` and fed a bigint straight to `setUint32`.
+  Same integer, no alias; recorded in `COMPATIBILITY.md` §9 so the section is not purely a narrowing
+  that quietly widens one cell.
+
+A second verification round found the `bool` fix had been applied to only one of the two Python
+functions that needed it — `record_digest_v2` still digested `sealed_at=True` as `1` — so the same
+divergence survived in the sibling function while `COMPATIBILITY.md` asserted it closed. Both
+languages now share **one** integer-slot validator per language (`uintSlot` / `_uint_slot`, both
+renamed from their v3-only originals) across all three framings, which is the form that makes the
+class unrepeatable rather than merely fixed.
 
 **Delivers:** TS refuses out-of-range integers in the v2 and attestation framings, TS refuses lone
 surrogates in object keys, and Python's attestation verifier keeps the contract its docstring states.
@@ -272,7 +293,8 @@ all, in both the key and the value position.
 **Status:** TODO
 
 **Delivers:** one normative rule for `exp` decoding implemented in all languages, a decision on
-non-plain-object coercion in TS, and an `engines` declaration for the TS package.
+non-plain-object coercion in TS, a decision on whether `verifyChainHeadAttestation` swallows type
+errors, and an `engines` declaration for the TS package.
 
 **Depends on:** Phase 2 (same files; sequencing avoids a conflicting edit to `crypto.ts`).
 
@@ -298,6 +320,24 @@ as `1`, which every other language refuses.
 Rejected: adopting TS's float-precise behaviour, which would require changing four languages to match
 the one that has no written rationale, and would accept tokens the other four currently reject.
 
+**How a TypeScript caller learns they passed the wrong type.** Found during Phase 2's verification
+and deliberately not fixed there, because it is a decision rather than a defect.
+`verifyChainHeadAttestation` wraps its whole body in `catch { return false }`
+(`ts/src/crypto.ts:730-735`), so every `TypeError` the new `uintSlot` guard raises is swallowed:
+`attestedLen: "1000"`, `true`, `null` and `[1000]` all return `false`. Python's twin deliberately
+lets `TypeError` propagate, on the argument that a caller bug reported as "did not verify" is a
+program error disguised as a security verdict — so the two languages now disagree about *how* a
+caller is told, though not about *which* inputs are refused.
+
+Both positions are defensible: a boolean-returning verifier that never throws is easy to call
+correctly, and it is the shape `verifyDecision` already has for `IssuerMismatchError` (which it
+throws) versus an invalid TCT (which it returns `false` for) — so this repo has already decided,
+once, that some failures are exceptional and others are verdicts. Decide which this is, apply it,
+and record the consequence: narrowing the catch is a **behaviour change to a public API**, since a
+caller who today gets `false` would get a thrown `TypeError`. Rejected in advance: leaving it
+undecided and documenting the divergence, which is what `COMPATIBILITY.md` §9 does as a stopgap and
+should not remain.
+
 **Non-plain objects in TS JCS.** `Date`, `Map` and `Set` canonicalize to `{}`, aliasing onto a
 legitimate empty-object digest. The module's stated rule is that it "refuses any input it cannot
 faithfully represent, rather than coercing it", so the fix is to honour it: refuse objects whose
@@ -322,8 +362,12 @@ behaviour must not change. Boolean and `null` `exp` values must be refused in ev
 2. TS `jcsCanonicalize(new Map(...))` / `new Set(...)` / `new Date()` throws rather than returning
    the empty-object digest; a plain object and an `Object.create(null)` object both still work.
 3. `ts/package.json` has an `engines.node` range consistent with the versions CI tests.
-4. `DECISIONS.md` records both decisions with their rationale and, for the JCS change, the explicit
-   statement that it is a breaking change to a public API.
+4. `DECISIONS.md` records **all three** decisions with their rationale and, for the JCS change and
+   any narrowing of `verifyChainHeadAttestation`'s catch, the explicit statement that it is a
+   breaking change to a public API.
+4b. `verifyChainHeadAttestation`'s treatment of a wrong-typed argument is decided either way and
+   asserted by a test; `COMPATIBILITY.md` §9's stopgap paragraph describing the divergence is
+   replaced by a statement of the decision.
 5. Both decisions are logged to `ASSUMPTIONS.md` as `UNCONFIRMED` if any part rests on an
    unverified reading of the other languages' intent.
 

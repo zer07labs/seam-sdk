@@ -6,6 +6,86 @@ assumption, the independent recommender's analysis, the human verdict, and the r
 produced it.
 
 
+## 2026-09-03 — refusing a `number` above 2^53 in the v2 record digest: a narrowing, not a fix
+
+Three of the four TypeScript changes in this phase close a demonstrated **alias** — two distinct
+inputs reaching one digest — and need no justification beyond that. `recordDigestV2` with
+`sealedAt: 2n**64n + 5n` produced the same 32 bytes as `sealedAt: 5n`, byte-for-byte, because
+`DataView.setBigUint64` applies ToBigUint64 and wraps in silence. A digest that does that is not
+doing the one thing a digest is for.
+
+The fourth is different and is recorded here because it would otherwise pass as part of the same
+sweep. **A `number` above 2^53 is now refused in the v2 and chain-head-attestation framings**, where
+it was previously accepted. There is no collision *within* TypeScript: `2**60` is exactly
+representable as a double and hashes deterministically. Nothing was broken for a caller who only
+ever used TypeScript.
+
+It is refused anyway, because the value the caller *meant* and the value that gets hashed have
+already parted company by the time it reaches the digest. Above 2^53 a JS `number` is the nearest
+double, so `2**60 + 1` silently is `2**60`; Python's exact integers and the `verify/` crate's `u64`
+carry the value the caller wrote. A digest computed in TypeScript would disagree with the same
+record digested anywhere else — the cross-language divergence this whole phase exists to close, in
+the one arm where it does not present as a same-language collision. `bigint` is how TypeScript says
+an integer it means, and the error message says so.
+
+The rule was already written and already argued, for v3 only, in the function then called `v3Uint`.
+Its reasoning is entirely about `DataView` and IEEE doubles, neither of which knows which framing it
+is serving, so it always applied to v2 and the attestation preimage too. Renamed to `uintSlot` and
+routed `u64le`/`u32le` through it, rather than writing a second copy of the rule: two copies of a
+rule about which inputs have a digest is a divergence waiting for someone to fix only one of them,
+and a function named `v3Uint` that v2 depends on is a lie a reader has to discover for themselves.
+
+**Rejected: normalising or truncating out-of-range values.** That preserves the alias with extra
+steps. The entire point is that two different inputs must not reach one digest; mapping them onto a
+canonical representative is that failure, spelled deliberately.
+
+**Rejected: leaving v2 alone because "no in-range value changes by a single byte" covers it.** That
+sentence is true and it is about *bytes*. Acceptance and bytes are different things, and a phase
+that quietly narrows what it accepts under a heading about what it emits is how a breaking change
+ships as a patch. Hence this entry, `COMPATIBILITY.md` §9, and its own acceptance criterion.
+
+**What it costs:** a caller passing `sealedAt` as a `number` above 2^53 gets a `RangeError` where
+they previously got a digest. That digest was already wrong — it covered the nearest double, so any
+record it sealed disagreed with the runtime's — which makes this a narrowing that reveals a bug
+rather than one that creates work. Not reversible in the usual sense: widening back would re-admit
+values whose digests we know to be wrong.
+
+**Re-open trigger:** a caller who genuinely needs `number` above 2^53 and cannot use `bigint`.
+Nothing in this repo or its known consumers does; the shims are the only callers and they were
+written against `bigint`.
+
+### The same argument, applied back to Python, after verification found the asymmetry
+
+The first cut of this phase fixed Python by range comparison alone. A verification round pointed out
+that this left `verify_chain_head_attestation(attested_len=True)` digesting as `1` — because `bool`
+subclasses `int`, so `0 <= True < 1 << 64` is simply true — while TypeScript's `uintSlot` refused
+`true` outright. The phase had **created** a cross-language divergence in the course of closing
+three, and the draft of `COMPATIBILITY.md` §9 claimed TypeScript had "changed to match what Python
+already did", which was not true of that row.
+
+The same round found a second answer hiding in the same guard: `attested_len=5.0` passed the range
+comparison and then hit `struct.pack`, which raised `struct.error`. A verifier that can return
+`True`, return `False`, raise `TypeError` **or** raise `struct.error` has a contract no caller can
+be written against.
+
+Both closed by sharing `_uint_slot` — the validator `record_digest_v3` has used since it was
+written, formerly `_v3_uint` — instead of a bespoke comparison. Recorded rather than done silently,
+because it is a real narrowing of a public function: `True` used to reach a verdict (`False`, having
+been digested as `1`) and now raises; `5.0` used to raise `struct.error` and now raises `TypeError`.
+Nothing in this repo passed either — the only callers are the tests and the public export.
+
+A second verification round then found the same defect one function over: `record_digest_v2` still
+digested `sealed_at=True` as `1`. Both languages had agreed on that *before* this phase and would
+have disagreed *after* — the phase would have closed three cross-language divergences by opening a
+fourth, in the sibling function, with a `COMPATIBILITY.md` row asserting the opposite. Closed the
+same way, by sharing the one validator across all three framings rather than writing a third copy.
+That is the actual lesson of both rounds: the bug was never the missing check, it was the rule
+existing in more places than one.
+
+The asymmetry that remains is deliberate: Python refuses `5.0`, TypeScript accepts `sealedAt: 5.0`.
+JavaScript has no separate float type, so `5.0` **is** `5` and there is nothing to refuse. Closing
+that would mean inventing a distinction the language does not have.
+
 ## 2026-09-03 — the wire-framing latch: a gate may not be watched by a field that goes stale with it
 
 `contract/wire-framing.json` carries `runtime_emits_version`, an adoption latch. While it is false,
@@ -136,14 +216,14 @@ wrong answers rather than misses:
 - **In a table row the subject wins.** `PROGRESS.md`'s repo-map row for `python/seam_sdk/crypto.py`
   names `python/seam_sdk/admin.py:141` mid-sentence and then continues with four more bare
   references, all of which are crypto.py. Binding them to the nearer citation reports
-  `python/seam_sdk/crypto.py:584` as past-EOF — it is `_opt_bytes`, and the claim is true.
+  `python/seam_sdk/crypto.py:609` as past-EOF — it is `_opt_bytes`, and the claim is true.
 - **Inheritance must not cross a line.** `PROGRESS.md` writes `p1a:103-107` followed by bare
   companions, where `p1a` is a shorthand alias for a sibling-repo spec and not a path at all. A
   paragraph-scoped resolver walks past it and binds those references to whatever file the previous
   line happened to mention.
 
 So: same line only, subject cell first, and an alias with no extension binds nothing. The rule is in
-`python/tests/test_compatibility_citations_resolve.py:1228`, and both failure modes are pinned by
+`python/tests/test_compatibility_citations_resolve.py:1304`, and both failure modes are pinned by
 mutation tests rather than described in prose.
 
 **The 94 references that bind to nothing are not a backlog.** They are mostly two kinds that must
@@ -958,9 +1038,13 @@ not as written.
 - **Correction to the entry's blast-radius claim:** "every such digest was wrong, so no correct
   caller breaks" is too strong. A proto3-JSON int64-as-string (`sealedAt: "123"`) coerced
   *correctly* through `BigInt` under the old TS behavior and is now refused. The refusal is loud, at
-  the first record, and names the fix (`ts/src/crypto.ts:509-522`) — and accepting strings reopens
+  the first record, and names the fix (`ts/src/crypto.ts:573-585`) — and accepting strings reopens
   `BigInt("")→0n` and `BigInt([5])→5n`. The choice stands; the justification does not extend to
   "nothing that used to work stops working."
+  *(Citation corrected 2026-09-03. It named lines 509-522, which then held `v3Text` — the string slot
+  validator — for a claim about a coerced integer. Wrong function even when written, and Phase 2's
+  insertions then moved it onto an unrelated error message. It now names `uintSlot`, which is also
+  where the fix genuinely lives for v2 as of that phase, since `u64le`/`u32le` route through it.)*
 - **v2 freeze held:** `git diff main...HEAD` shows zero removed lines in `crypto.py` and a purely
   additive `vectors.json`.
 - **Verdict:** Confirm. **Status:** CONFIRMED.

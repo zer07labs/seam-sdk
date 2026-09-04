@@ -703,7 +703,7 @@ distinction, and a consumer reading `resp.policyEnforcement?.enforced` gets `und
 
 **Placement is load-bearing, not stylistic.** `PROGRESS.md:66` cites `ts/src/client.ts:218` for
 `collectiveOutcomeOf` and `:69` cites `:676` for `submitCommit`, and **both are `ANCHORED` needles**
-(`python/tests/test_compatibility_citations_resolve.py:606-607`, `CITATION_SLACK = 3` at `:623`).
+(`python/tests/test_compatibility_citations_resolve.py:680-681`, `CITATION_SLACK = 3` at `:759`).
 Verified at `HEAD`: `export function collectiveOutcomeOf` is at `ts/src/client.ts:218`, the function
 ends at `:239`, and `  submitCommit(` occurs exactly once, at `:676`. Inserting after `:239` keeps
 `:218` correct. It will not keep `:676` correct: a documented decoder is far more than 3 lines. So:
@@ -1119,7 +1119,9 @@ but note it).
    hand-carried numbers in that docstring were found rotten, in the file whose job is catching rotten
    numbers. So the margins are no longer hand-maintained:
    `test_no_anchored_needle_is_satisfied_only_by_a_foreign_citation`
-   (`python/tests/test_compatibility_citations_resolve.py:626`) computes every needle's distance and
+   (the needle-distance check that used to live in `python/tests/test_compatibility_citations_resolve.py`;
+   **deleted in `3740b4b`**, so this citation is left unpointed rather than aimed at a line that no
+   longer holds it) computed every needle's distance and
    asserts the property the numbers were standing in for — that no needle is satisfied by more than
    one distinct citation of its path. `CITATION_SLACK` was not widened (#73). The residual headroom
    on `submitCommit` is 14 lines and is recorded in `PROGRESS.md` as a knowing trade, not as a

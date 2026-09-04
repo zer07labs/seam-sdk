@@ -378,7 +378,7 @@ write-manifest invalidation.
 they are mostly a *different* class than the one predicted:
 
 * **Three citations RESOLVED while pointing at unrelated content.** `PROGRESS.md:80` cited
-  `DECISIONS.md:339-359` for "pinning buf.gen.yaml plugins is rejected"; that range is the #52
+  `DECISIONS.md:419-439` for "pinning buf.gen.yaml plugins is rejected"; that range is the #52
   wheel-band decision. Two more cited the `Bearer`-prefix strip at a line holding something else.
   Structural resolution cannot see this class at all — only `ANCHORED` can, and it covered none of
   them.

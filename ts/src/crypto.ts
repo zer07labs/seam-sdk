@@ -225,7 +225,26 @@ function jcsWrite(v: unknown): string {
     const o = v as Record<string, unknown>;
     // Default Array.prototype.sort() compares UTF-16 code units — exactly RFC 8785 §3.2.3.
     const keys = Object.keys(o).sort();
-    return "{" + keys.map((k) => JSON.stringify(k) + ":" + jcsWrite(o[k])).join(",") + "}";
+    return (
+      "{" +
+      keys
+        .map((k) => {
+          // The same refusal as the string case above, in the position it was missing from. A key is
+          // as much a part of the canonical bytes as a value: `{"\ud800": 1}` canonicalized here
+          // while Python raised `UnicodeEncodeError` on the identical input, so TS could digest an
+          // object no other implementation can represent — in a value whose entire purpose is to be
+          // identical everywhere. Checked before `JSON.stringify`, which emits the `\udXXX` escape
+          // quite happily.
+          if (hasLoneSurrogate(k))
+            throw new Error(
+              `lone surrogate in object key ${JSON.stringify(k)} cannot be canonicalized ` +
+                `(not valid Unicode)`,
+            );
+          return JSON.stringify(k) + ":" + jcsWrite(o[k]);
+        })
+        .join(",") +
+      "}"
+    );
   }
   throw new TypeError(`${typeof v} is not JSON-serializable`);
 }
@@ -321,14 +340,18 @@ function optLE(s: string | null | undefined): Uint8Array {
   return concat(new Uint8Array([1]), frameLE(enc.encode(s)));
 }
 
-function u64le(n: number | bigint): Uint8Array {
+// `name` is the caller's slot, so a refusal says which field was out of range rather than leaving the
+// caller to guess which of five integer slots in a preimage it was. See `uintSlot` for why the check
+// is here at all: without it `setBigUint64`/`setUint32` wrap silently, and two distinct inputs reach
+// one digest — the one thing a digest exists to prevent.
+function u64le(name: string, n: number | bigint): Uint8Array {
   const out = new Uint8Array(8);
-  new DataView(out.buffer).setBigUint64(0, BigInt(n), true);
+  new DataView(out.buffer).setBigUint64(0, uintSlot(name, n, 64), true);
   return out;
 }
-function u32le(n: number): Uint8Array {
+function u32le(name: string, n: number | bigint): Uint8Array {
   const out = new Uint8Array(4);
-  new DataView(out.buffer).setUint32(0, n, true);
+  new DataView(out.buffer).setUint32(0, Number(uintSlot(name, n, 32)), true);
   return out;
 }
 
@@ -354,12 +377,12 @@ export function recordDigestV2(d: {
     frameLE(enc.encode(d.tenant)),
     frameLE(enc.encode(d.namespace)),
     frameLE(d.ciphertextDigest),
-    frameLE(u64le(d.sealedAt)),
+    frameLE(u64le("sealedAt", d.sealedAt)),
     frameLE(enc.encode(d.outcome)),
     optLE(d.mode),
     optLE(d.policyVersion),
     optLE(d.supersedes),
-    frameLE(u32le(d.schemaVersion ?? 2)),
+    frameLE(u32le("schemaVersion", d.schemaVersion ?? 2)),
   );
   return sha256(pre);
 }
@@ -537,8 +560,16 @@ function v3Text(name: string, value: unknown, optional: boolean): string | null 
  * `setBigUint64`/`setUint32` apply ToBigUint64/ToUint32, so `2n ** 64n + 5n` writes the same eight
  * bytes as `5` — an alias, not an error. A `number` above 2^53 is refused outright: it is already
  * inexact, so the value hashed would be the nearest double rather than the integer the caller meant,
- * and Python (exact ints) would disagree. `bigint` is the way to express those. */
-function v3Uint(name: string, value: number | bigint, bits: 32 | 64): bigint {
+ * and Python (exact ints) would disagree. `bigint` is the way to express those.
+ *
+ * This was called `v3Uint` and guarded only the v3 record digest. Every one of those arguments is
+ * about `DataView` and IEEE doubles, neither of which knows which framing it is serving — so v2 and
+ * the chain-head attestation carried the identical aliases, demonstrated byte-for-byte, for as long
+ * as they have existed. `u64le`/`u32le` now route through here, which is what makes the reasoning
+ * apply where it always did. Renamed rather than duplicated: a rule with only one copy cannot drift
+ * between framings, and a name saying "v3" on the function v2 depends on is a lie a reader has to
+ * discover for themselves. */
+function uintSlot(name: string, value: number | bigint, bits: 32 | 64): bigint {
   if (typeof value !== "number" && typeof value !== "bigint") {
     // `BigInt()` coerces far more than it looks like it does: `BigInt("5")` is `5n`, `BigInt(true)` is
     // `1n`, `BigInt([5])` is `5n`, and `BigInt("")` is `0n`. Each yields a digest that ALIASES the one
@@ -643,8 +674,8 @@ export function recordDigestV3(d: {
   const mode = v3Text("mode", d.mode, true);
   const policyVersion = v3Text("policyVersion", d.policyVersion, true);
   const supersedes = v3Text("supersedes", d.supersedes, true);
-  const sealedAt = v3Uint("sealedAt", d.sealedAt, 64);
-  const schemaVersion = v3Uint("schemaVersion", d.schemaVersion ?? 3, 32);
+  const sealedAt = uintSlot("sealedAt", d.sealedAt, 64);
+  const schemaVersion = uintSlot("schemaVersion", d.schemaVersion ?? 3, 32);
 
   const pre = concat(
     frameLE(enc.encode("seam.audit.record-digest.v3")),
@@ -652,7 +683,7 @@ export function recordDigestV3(d: {
     frameLE(enc.encode(tenant)),
     frameLE(enc.encode(namespace)),
     frameLE(ciphertextDigest),
-    frameLE(u64le(sealedAt)),
+    frameLE(u64le("sealedAt", sealedAt)),
     frameLE(enc.encode(outcome)),
     optLE(mode),
     optLE(policyVersion),
@@ -660,7 +691,7 @@ export function recordDigestV3(d: {
     frameLE(contextDigest),
     frameLE(participationDigest),
     optBytesLE(policyRulesDigest),
-    frameLE(u32le(Number(schemaVersion))),
+    frameLE(u32le("schemaVersion", schemaVersion)),
   );
   return sha256(pre);
 }
@@ -674,10 +705,10 @@ function chainHeadAttestationDigest(a: {
 }): Uint8Array {
   const pre = concat(
     frameLE(enc.encode("seam.audit.chain-head-attestation.v1")),
-    frameLE(u64le(a.attestedLen)),
+    frameLE(u64le("attestedLen", a.attestedLen)),
     frameLE(a.attestedHead),
-    frameLE(u64le(a.attestedAt)),
-    frameLE(u32le(a.digestSchema)),
+    frameLE(u64le("attestedAt", a.attestedAt)),
+    frameLE(u32le("digestSchema", a.digestSchema)),
     frameLE(enc.encode(a.issuerAid)),
   );
   return sha256(pre);
