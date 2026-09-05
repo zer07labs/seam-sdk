@@ -2,11 +2,16 @@
 #
 # WHY THIS FILE EXISTS
 # ---------------------
-# `STREAM=1 EVENTS=1 make check-contract` exits 6 on EVERY local checkout generated before the BSR
-# republished ACDP P1a/P2: the committed `contract/field-manifest.txt` already declares five
-# `ContextBinding` fields the local stubs do not carry yet, because `make generate`/`make
-# generate-local` pull whatever the BSR (or a local runtime checkout) currently publishes, and that
-# has not caught up. That is EXPECTED, not a regression — but the gate's own refusal text
+# `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exits 6 on EVERY local checkout whose stubs predate
+# the current BSR module: the committed `contract/field-manifest.txt` declares seven `ContextBinding`
+# fields the local stubs do not carry, because `make generate`/`make generate-local` pull whatever
+# the BSR (or a local runtime checkout) published at the time they last ran, and this checkout's
+# stubs are older than that.
+#
+# NOTE THE CAUSE, because the first recording of this file got it wrong and taught the wrong lesson
+# for four days: the lag is NOT "the BSR has not caught up". The BSR is ahead. It republished ACDP
+# P1a/P2 and then P3 (tags 12-13, seam-runtime ac325d7 / #531). It is the LOCAL STUBS that are old.
+# A regeneration closes this file's gap entirely; nothing upstream has to happen first. That is EXPECTED, not a regression — but the gate's own refusal text
 # ("...or a field REMOVED from the contract, which is a breaking change") is the exact wording, exit
 # code, and direction a REAL removal produces. A gate that is red locally and green in CI trains
 # readers to stop looking at it, which is worse than the gate not existing.
@@ -18,12 +23,12 @@
 # the lag is real, and CI is the authority (it always regenerates fresh from the BSR) — exiting 0 here
 # would make a genuinely stale local tree look clean, which is strictly worse than the status quo.
 #
-# Any SUPERSET (these five plus another), SUBSET (fewer than these five), or other deviation is NOT a
+# Any SUPERSET (these seven plus another), SUBSET (fewer than these seven), or other deviation is NOT a
 # match and produces the FULL, un-downgraded refusal — this file is a precise recording, not a floor,
 # and it must never be edited to chase a gate that has started reporting something new.
 #
 # `--write-manifest` DELETES this file. After a manifest rewrite the recorded lag is meaningless — the
-# manifest's forward set just moved, so "expected to be missing exactly these five" may no longer even
+# manifest's forward set just moved, so "expected to be missing exactly these seven" may no longer even
 # parse against it. Re-record deliberately (bump EXPECTED-FROM below) if a new, real local/BSR gap is
 # expected after the next regeneration.
 #
@@ -31,9 +36,24 @@
 # permanent scenery: see `plans/gate-blindness-hardening.md`'s Open Questions for the re-open trigger
 # if it is still present and matching 60 days from EXPECTED-FROM.
 #
-# EXPECTED-FROM: 2026-08-31 (ACDP P1a/P2 adoption landed on the contract; PR #84 / commit 27dda87)
+# EXPECTED-FROM: 2026-09-04 (ACDP P3 adoption — tags 12-13, `revocation` / `revocation_trust_class`)
+#
+# RE-RECORD HISTORY — the cumulative age matters more than the line above, because bumping
+# EXPECTED-FROM resets the 60-day scenery trigger and would otherwise hide how long this file has
+# been standing in for a regeneration nobody can run here:
+#
+#   * 2026-08-31 — first recorded, five fields (ACDP P1a/P2; PR #84 / commit 27dda87).
+#   * 2026-09-04 — FIRST re-record, five -> seven (ACDP P3; seam-runtime ac325d7 / #531).
+#
+# THE NEXT RE-RECORD AFTER THIS ONE IS THE TRIGGER, not a routine update. Two recordings can be
+# read as a contract that moved twice; three is a workstation that cannot regenerate, and at that
+# point the better trade is a one-time `buf registry login` here and DELETING this file outright
+# rather than curating it further. Flag that to the operator then — and do not let it fire a cycle
+# early, which is why the history above is explicit rather than inferred from `git log`.
 ContextBinding/content_hash
 ContextBinding/key_status
 ContextBinding/receipt_hash
 ContextBinding/resolved_status
 ContextBinding/retraction
+ContextBinding/revocation
+ContextBinding/revocation_trust_class

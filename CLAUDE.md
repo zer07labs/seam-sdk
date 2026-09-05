@@ -33,11 +33,13 @@ deliberately links nothing of Seam's.
 - Python CI installs editable **and** builds the wheel to import it in a clean venv — an editable install
   cannot see a packaging defect. Don't trust a green suite alone before a release.
 - **`STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exits **6** on every pre-ACDP local checkout** — local stubs
-  lag the committed manifest by five `ContextBinding` fields (`content_hash`, `receipt_hash`,
-  `key_status`, `resolved_status`, `retraction`) until a regeneration pulls a BSR module that carries
-  them. The gate recognises exactly that case and downgrades its output to a NOTE naming
+  lag the committed manifest by seven `ContextBinding` fields (`content_hash`, `receipt_hash`,
+  `key_status`, `resolved_status`, `retraction`, and the ACDP P3 pair `revocation` /
+  `revocation_trust_class`) until a regeneration pulls a BSR module that carries them. Note the
+  direction: the BSR is AHEAD of this checkout, not behind it — a regeneration closes the gap, and
+  nothing upstream has to happen first. The gate recognises exactly that case and downgrades its output to a NOTE naming
   `contract/expected-local-lag.txt` — it still exits **6**, since CI is the authority, not this checkout.
-  Anything the gate names beyond exactly those five fields is real drift, not this known lag.
+  Anything the gate names beyond exactly those seven fields is real drift, not this known lag.
   **Read the exit code, not just this bullet** — which is why the command above is the script and
   not `make`. Several other codes are reachable from the same command — 5 (RPC-manifest drift),
   3 (stubs absent) and 1 among them — and none is the recorded lag.

@@ -722,8 +722,9 @@ class SeamClient:
 
         Returns the generated `ContextBinding` unchanged. Nothing is projected or renamed here, so
         every field the contract carries arrives — including the ACDP receipt slots (`content_hash`,
-        `receipt_hash`, `key_status`, `resolved_status`) and `retraction`, which this SDK passes
-        through without interpreting. `key_status` (closed, PascalCase) and `resolved_status` (open,
+        `receipt_hash`, `key_status`, `resolved_status`), `retraction`, and the P3 key-revocation
+        pair (`revocation`, `revocation_trust_class`), all of which this SDK passes through without
+        interpreting. `key_status` (closed, PascalCase) and `resolved_status` (open,
         lowercase) are byte-identical to what enters the `context_digest` preimage — do not
         case-fold, normalise or map them.
         """

@@ -730,9 +730,16 @@ credential and a human decision, and closing them to shrink the count would be d
 
 ---
 
-### Phase 8 — The ACDP P3 adoption, specified and BLOCKED
+### Phase 8 — The ACDP P3 adoption
 
-**Status:** BLOCKED — not attemptable this cycle.
+**Status:** DONE (2026-09-04), on explicit operator go-ahead. This phase was written as BLOCKED and
+specified in advance; both halves paid off. The blocker dissolved upstream (seam-runtime merged
+`ac325d7` / #531 and `buf push`ed it), and because the specification was already written the
+adoption needed no new design decisions — only execution. **One divergence, and it was the
+specification being incomplete rather than wrong:** the spec did not anticipate that the lag file's
+own header had become *false* (it blamed a BSR that "has not caught up"; the BSR is ahead and the
+local stubs are old), so the re-record also corrected the cause it teaches. Two guard defects
+surfaced while landing it and were fixed in the same commit — see `PROGRESS.md`.
 
 **Delivers:** the complete, reviewed specification of the adoption change, so that landing it once
 the BSR republishes is mechanical rather than a fresh design exercise.

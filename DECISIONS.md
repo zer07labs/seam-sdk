@@ -6,6 +6,83 @@ assumption, the independent recommender's analysis, the human verdict, and the r
 produced it.
 
 
+## 2026-09-04 — ACDP P3 adoption: W4.3 re-answered, and the lag file re-recorded rather than left lying
+
+Phase 8 was written as BLOCKED and specified in advance. Both halves of that turned out to matter:
+the blocker dissolved (seam-runtime merged `ac325d7`, #531, and `buf push`ed it), and because the
+specification was already written, the adoption needed no new design decisions — only execution.
+
+### W4.3: do tags 12-13 enter the record-digest preimage? **No.**
+
+W4.3's standing rule is that this must be **re-answered per regeneration and never inherited**, so
+the previous "no" for the P1a/P2 fields does not carry. Re-answered by its own method — *not* "is
+the field new?" but **"is it a sealed column?"** — and confirmed three independent ways:
+
+1. **`seam.event.v1` never mentions `revocation`.** `grep` over the event proto: zero hits. The
+   record digest is computed over `DECISION_SEALED`'s payload columns; a field absent from the
+   event wire cannot be one.
+2. **`verify/src/` does not mirror `ContextBinding` at all.** Zero hits across the crate. The
+   verifier mirrors the event wire (`SeamEventPb`, `DecisionSealedPb`, …), and `ContextBinding` is
+   not part of it.
+3. **The runtime's own spec says so in a heading** — `docs/specs/seam-event.v1.md` §"`revocation`
+   and `revocation_trust_class` — served only, never sealed", mirroring the wording it already used
+   for P2 `retraction`.
+
+Both fields are `seam.api.v1` **response** fields on `ResolveContext`. **Consequence:**
+`verify/src/wire.rs` needs no change, `conformance/vectors.json` is untouched, and W7 does not
+engage. Same structural answer as the P1a/P2 round, reached independently rather than assumed.
+
+### The lag file: re-recorded to seven, with the trigger armed rather than reset
+
+`contract/expected-local-lag.txt` is an **exact-match** recording — any superset, subset or other
+deviation produces the full, un-downgraded refusal, whose wording, exit code and direction are
+identical to a real field removal. Declaring tags 12-13 makes the local gap seven fields, so leaving
+the file at five would have made every local run print that refusal. Training readers to scroll past
+a refusal is the precise gate-blindness this file exists to prevent, so leaving it was not an option.
+
+Re-recorded to seven in the same commit as the manifest declaration, which the file's own header
+sanctions ("re-record deliberately… if a new, real local/BSR gap is expected after the next
+regeneration"). This is not the case its warning targets: the warning is about *reacting to
+unexplained new output*, whereas this gap was predicted in advance from a named upstream commit,
+dated, and written down before the gate ever reported it.
+
+**Two honesty riders travelled with it, both discharged:**
+
+- **Bumping `EXPECTED-FROM` resets the 60-day scenery trigger**, which would hide how long this file
+  has stood in for a regeneration nobody here can run. The file now carries an explicit
+  **RE-RECORD HISTORY** block (2026-08-31 first recording, 2026-09-04 first re-record) so cumulative
+  age survives the bump, and this entry carries the original date forward.
+- **Counted correctly.** `git log --follow` on the file shows a single commit — its creation — so
+  this is the **first** re-record and the **second** recording. The point at which the better trade
+  becomes a one-time `buf registry login` on the workstation and deleting the file outright is the
+  re-record *after* this one. The file says so in capitals, and deliberately does not fire it now.
+
+### One thing the specification did not anticipate, and it was a defect in the file itself
+
+The lag file's header explained the gap as "the BSR has not caught up". That was true when written
+and is now **backwards**: the BSR is ahead — it republished P1a/P2 and then P3 — and it is the local
+stubs that are old. The file was teaching a wrong cause on every local run, and the wrong cause
+points at the wrong fix (wait for upstream, rather than regenerate). Corrected in the same commit,
+with the correction called out in the file so the next reader knows the earlier framing was wrong
+rather than merely differently worded.
+
+### Not wired into the hand-written clients, and that is the recorded answer
+
+The field-surface gate's refusal text requires a decision *before* the manifest moves: wire the
+field into the hand-written clients, **or record why not**. Recording why not.
+
+`revocation` and `revocation_trust_class` are pass-through `ContextBinding` slots, and the clients'
+contract for that message is already pass-through — `resolve_context` returns the generated message
+so every field the contract carries arrives without a per-field accessor. That is what the three
+"ACDP receipt slots" docstrings promise, and Phase 6's guard enforces that they enumerate every
+slot. Adding named accessors for these two would make them the only `ContextBinding` fields with a
+bespoke surface, for no capability a caller does not already have.
+
+The docstrings are updated to name both new slots — required, not optional: Phase 6's tripwire
+derives its expected set from the manifest and goes red the moment the manifest declares a slot no
+docstring names. That is the guard working as designed, on the first real field it ever saw.
+---
+
 ## 2026-09-04 — promoting the enum-manifest assumption by executing `buf`, not by reading its config
 
 `contract/field-manifest.txt` spells enum entries `<Enum>#<VALUE>` — names only, no tag numbers. The

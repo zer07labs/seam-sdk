@@ -19,7 +19,7 @@ them with git, and recovery would need a `make generate` and a BSR login. Exactl
 The baseline manifest each test starts from is written by the script itself from the stubs actually
 present, so these tests do not depend on the checked-in manifest being in sync with a given
 developer's stub tree — which it deliberately is not: the committed manifest declares the contract's
-current surface, and a stub tree generated before ACDP P1a/P2 landed is legitimately five fields
+current surface, and a stub tree generated before ACDP P1a/P2/P3 landed is legitimately seven fields
 behind it.
 """
 
@@ -205,7 +205,7 @@ def enum_manifests(scratch_stubs, tmp_path: pathlib.Path):
     """Field+RPC manifest written FROM THE SCRATCH STUB COPIES (not the committed manifest), so the
     baseline the enum-mutation tests start from matches exactly what those copies currently declare —
     mutating a copy and comparing it against a manifest derived from a DIFFERENT source would just be
-    testing the pre-existing five-field ACDP lag, not the mutation."""
+    testing the pre-existing seven-field ACDP lag, not the mutation."""
     py, ts = scratch_stubs
     fm, rm = tmp_path / "field-manifest.txt", tmp_path / "rpc-manifest.txt"
     r = _run(fm, rm, "--write-manifest", py_gen=py, ts_gen=ts)
@@ -912,10 +912,10 @@ def _nested_messages_python_extractor_src() -> str:
 # ── the expected local lag — distinguishing the known gap from real drift ─────────────────────────
 #
 # `STREAM=1 EVENTS=1 make check-contract` exits 6 on every pre-ACDP local checkout: the committed
-# `contract/field-manifest.txt` already declares five `ContextBinding` fields the local stubs do not
+# `contract/field-manifest.txt` already declares seven `ContextBinding` fields the local stubs do not
 # carry until a regeneration pulls a BSR module that republishes them. The refusal text is the exact
 # wording, exit code, and direction a REAL removal produces, which trains a reader to stop looking —
-# `contract/expected-local-lag.txt` exists so the SDK can tell "the known five" from "the known five
+# `contract/expected-local-lag.txt` exists so the SDK can tell "the known seven" from "the known seven
 # plus one" by machine. The gate STILL exits 6 on an exact match (CI is the authority); only the
 # OUTPUT changes.
 #
@@ -924,18 +924,18 @@ def _nested_messages_python_extractor_src() -> str:
 # on this machine right now. That is exactly backwards from every other test in this file: it made
 # "does the downgrade logic work" depend on which machine ran it. CI's `make generate` (ci.yml)
 # regenerates the ambient tree to the FULL post-ACDP surface before pytest ever runs, so on CI the
-# five fields are simply not missing and there is no lag to downgrade — the superset/subset scratch
+# seven fields are simply not missing and there is no lag to downgrade — the superset/subset scratch
 # manifests then disagree with the stubs by only the ONE deliberately-planted phantom/removed field,
-# never by the known five, and the exact-match test's real-tree invocation exits 0. Locally, with a
+# never by the known seven, and the exact-match test's real-tree invocation exits 0. Locally, with a
 # fresh pre-ACDP checkout, all three pass — which is exactly the "passes locally, fails in CI" shape
 # a test is not allowed to have.
 #
-# `lag_stubs` below fixes this by CONSTRUCTING the missing-five-fields state instead of assuming it:
-# it copies the ambient stub trees (`scratch_stubs`) and then strips the five known ACDP
+# `lag_stubs` below fixes this by CONSTRUCTING the missing-seven-fields state instead of assuming it:
+# it copies the ambient stub trees (`scratch_stubs`) and then strips the seven known ACDP
 # `ContextBinding` fields from the copies if present. On a pre-ACDP machine that is a no-op (they are
 # already absent); on a post-ACDP one (CI, after `make generate`) it removes them. Either way the
-# scratch trees end up missing exactly the five known fields, so comparing them against the REAL
-# committed manifest (which always declares the five — see
+# scratch trees end up missing exactly the seven known fields, so comparing them against the REAL
+# committed manifest (which always declares the seven — see
 # `test_the_committed_manifest_declares_the_acdp_slots_it_deliberately_does_not_interpret`, itself
 # stub-independent) reproduces the known lag deterministically, on any machine.
 
@@ -945,13 +945,18 @@ _KNOWN_LAG_FIELDS = [
     "ContextBinding/receipt_hash",
     "ContextBinding/resolved_status",
     "ContextBinding/retraction",
+    # ACDP P3 (seam-runtime ac325d7 / #531). The two strip helpers and
+    # `_ACDP_LAG_FIELD_NAMES` all derive from this list, so adding an entry here is the whole
+    # change — which is the point of deriving them rather than restating the set three times.
+    "ContextBinding/revocation",
+    "ContextBinding/revocation_trust_class",
 ]
 
 _ACDP_LAG_FIELD_NAMES = tuple(f.split("/", 1)[1] for f in _KNOWN_LAG_FIELDS)
 
 
 def _py_strip_acdp_lag_fields(stub: pathlib.Path) -> None:
-    """Remove the five ACDP `ContextBinding` `*_FIELD_NUMBER` lines `fields_python` reads — a NO-OP
+    """Remove the seven ACDP `ContextBinding` `*_FIELD_NUMBER` lines `fields_python` reads — a NO-OP
     when the scratch copy already lacks them (a pre-ACDP ambient tree). Scoped to the `ContextBinding`
     class body only (from its header to the next column-0 `class `), the same discipline
     `fields_python` itself uses, so a real field of one of these names on some OTHER message could
@@ -980,7 +985,7 @@ def _py_strip_acdp_lag_fields(stub: pathlib.Path) -> None:
 
 def _ts_strip_acdp_lag_fields(stub: pathlib.Path) -> None:
     """Same idea, TS side: strips the `@generated from field: ... <name> = <tag>;` doc-comment lines
-    `fields_ts` reads for the five known fields, scoped to the `ContextBinding` `Message<...>` block
+    `fields_ts` reads for the seven known fields, scoped to the `ContextBinding` `Message<...>` block
     (its opening line to the next `};`). Matching on the free-form ` <name> = <tag>;` tail (not a
     fixed type) is deliberate for the same reason as the Python side — and mirrors `fields_ts`'s own
     extraction, which also reads only the last token before `=`, never the type."""
@@ -1003,9 +1008,9 @@ def _ts_strip_acdp_lag_fields(stub: pathlib.Path) -> None:
 
 @pytest.fixture
 def lag_stubs(scratch_stubs):
-    """`scratch_stubs`, further stripped of the five known ACDP `ContextBinding` fields. A no-op on a
+    """`scratch_stubs`, further stripped of the seven known ACDP `ContextBinding` fields. A no-op on a
     pre-ACDP ambient tree; removes them on a post-ACDP one. Either way, the returned copies are
-    missing exactly the five known fields — the CONSTRUCTED lag scenario the tests below drive the
+    missing exactly the seven known fields — the CONSTRUCTED lag scenario the tests below drive the
     real script against, reproducible on a fresh pre-ACDP checkout and on CI's freshly-regenerated
     post-ACDP tree alike, never merely observed on whatever happens to be checked out right now."""
     py, ts = scratch_stubs
@@ -1014,7 +1019,7 @@ def lag_stubs(scratch_stubs):
     return py, ts
 
 
-def test_the_committed_lag_file_declares_exactly_the_five_known_fields() -> None:
+def test_the_committed_lag_file_declares_exactly_the_seven_known_fields() -> None:
     """Anti-vacuity floor for the file itself, no stubs required — a regression here (an emptied or
     narrowed file) would make every downgrade test below pass vacuously."""
     assert LAG_FILE.exists(), f"{LAG_FILE} is missing"
@@ -1031,15 +1036,15 @@ def test_an_exact_match_of_the_known_lag_downgrades_to_a_note_naming_the_lag_fil
     """Acceptance criterion 1, CONSTRUCTED rather than observed on the ambient tree: this used to run
     the real script with NO overrides at all (the exact command CLAUDE.md's Gotchas documents) and
     rely on the checkout being pre-ACDP so the real committed manifest and the real ambient stubs
-    disagreed by exactly the known five. That is only true before a `make generate` — CI's `make
-    generate` step runs before pytest (ci.yml), so on CI the ambient tree already carries the five
+    disagreed by exactly the known seven. That is only true before a `make generate` — CI's `make
+    generate` step runs before pytest (ci.yml), so on CI the ambient tree already carries the seven
     fields, the real invocation exits 0, and the scenario this test names never occurs there at all.
 
-    Driving the real script against `lag_stubs` (the ambient stubs, with the five known fields
+    Driving the real script against `lag_stubs` (the ambient stubs, with the seven known fields
     stripped if present) instead reproduces the exact same disagreement deterministically on both a
     fresh pre-ACDP checkout and CI's post-ACDP one: the REAL committed manifest (which always declares
-    the five, independent of any stub tree) against stubs missing exactly those five is, by
-    construction, an EXACT match for a scratch lag file declaring the same five — the downgrade this
+    the seven, independent of any stub tree) against stubs missing exactly those seven is, by
+    construction, an EXACT match for a scratch lag file declaring the same seven — the downgrade this
     test exists to prove, restored to both environments instead of only the one that happens to be
     pre-ACDP.
     """
@@ -1073,21 +1078,21 @@ def test_an_exact_match_of_the_known_lag_downgrades_to_a_note_naming_the_lag_fil
 def test_a_superset_of_the_known_lag_stays_a_full_undowngraded_error(
     lag_stubs, manifests
 ) -> None:
-    """Acceptance criterion 2: a scratch manifest that expects the known five PLUS one more field the
+    """Acceptance criterion 2: a scratch manifest that expects the known seven PLUS one more field the
     stubs also lack is a SUPERSET of the recorded lag — not a match — and must produce the full,
     un-downgraded exit 6, not the NOTE.
 
     Built from the REAL committed manifest (not the `manifests` fixture's stub-derived one) so the
-    baseline actually reproduces the real five-field gap; `manifests` here only supplies a scratch RPC
+    baseline actually reproduces the real seven-field gap; `manifests` here only supplies a scratch RPC
     manifest so `--write-manifest` never touches the committed one. Driven against `lag_stubs`
-    (constructed missing-five, see the fixture) rather than the ambient tree directly, so this
+    (constructed missing-seven, see the fixture) rather than the ambient tree directly, so this
     reproduces a superset on any machine: previously it compared the manifest to the UNMODIFIED
-    ambient stubs, which only disagreed by the known five on a pre-ACDP checkout — on CI's post-ACDP
-    tree the five are present, so the only disagreement left is the one deliberately-planted phantom
+    ambient stubs, which only disagreed by the known seven on a pre-ACDP checkout — on CI's post-ACDP
+    tree the seven are present, so the only disagreement left is the one deliberately-planted phantom
     field, which is itself a single-field "superset" of the empty set and never exercises the
     superset-of-a-nonempty-lag comparison this test names.
 
-    A scratch lag file declaring exactly the known five is written and passed via `lag_file=` —
+    A scratch lag file declaring exactly the known seven is written and passed via `lag_file=` —
     without it, `_run`'s default `SEAM_EXPECTED_LOCAL_LAG` points at a scratch path the `manifests`
     fixture never creates, so `check-contract.sh`'s `[ -f "$EXPECTED_LOCAL_LAG" ]` guard is false and
     `lag_match` is 0 *by construction*: the superset/subset `!=` comparison this test exists to prove
@@ -1116,30 +1121,32 @@ def test_a_superset_of_the_known_lag_stays_a_full_undowngraded_error(
 def test_a_subset_of_the_known_lag_stays_a_full_undowngraded_error(
     lag_stubs, manifests
 ) -> None:
-    """Acceptance criterion 3: a scratch manifest missing only FOUR of the five recorded fields is
+    """Acceptance criterion 3: a scratch manifest missing only SIX of the seven recorded fields is
     also not a match (subset != match) and must produce the full, un-downgraded exit 6.
 
     Driven against `lag_stubs` for the same reason as the superset test above: the previous version
-    compared against the unmodified ambient tree, which only reproduces a four-vs-five subset gap
-    when that tree is pre-ACDP; on CI's post-ACDP tree the stubs already carry all five fields, so
-    dropping one from the MANIFEST would leave the stubs and manifest agreeing on all five (the
+    compared against the unmodified ambient tree, which only reproduces a six-vs-seven subset gap
+    when that tree is pre-ACDP; on CI's post-ACDP tree the stubs already carry all seven fields, so
+    dropping one from the MANIFEST would leave the stubs and manifest agreeing on all seven (the
     dropped one now correctly matches its absence... except it isn't absent from the stubs anymore),
     which is a different, ungoverned scenario, not the subset this test names.
 
-    Writes a scratch lag file declaring the known five, exactly like the superset test above and for
+    Writes a scratch lag file declaring the known seven, exactly like the superset test above and for
     the same reason: without it `lag_match` is 0 by construction (no lag file ⇒ no comparison ever
     runs), and this test would pass whether or not the subset/exact-match logic is correct.
     """
     py, ts = lag_stubs
     _, rm = manifests
     real_manifest_text = (REPO / "contract" / "field-manifest.txt").read_text()
+    # Named, not positional. This used to drop "ContextBinding/retraction" and then assert over
+    # `_KNOWN_LAG_FIELDS[:-1]` — which only lined up while `retraction` happened to sort last. ACDP
+    # P3 appended two entries after it and the assertion silently started checking the dropped field
+    # instead of the kept ones. Deriving the kept set from the dropped one cannot drift that way.
+    dropped = "ContextBinding/retraction"
+    assert dropped in _KNOWN_LAG_FIELDS, dropped
     fm = rm.parent / "subset-field-manifest.txt"
     fm.write_text(
-        "\n".join(
-            ln
-            for ln in real_manifest_text.splitlines()
-            if ln.strip() != "ContextBinding/retraction"
-        )
+        "\n".join(ln for ln in real_manifest_text.splitlines() if ln.strip() != dropped)
         + "\n"
     )
     lag = rm.parent / "subset-expected-local-lag.txt"
@@ -1151,7 +1158,7 @@ def test_a_subset_of_the_known_lag_stays_a_full_undowngraded_error(
     )
     combined = r.stdout + r.stderr
     assert "the generated FIELD surface disagrees with" in combined
-    for field in _KNOWN_LAG_FIELDS[:-1]:
+    for field in (f for f in _KNOWN_LAG_FIELDS if f != dropped):
         assert field in combined, field
 
 

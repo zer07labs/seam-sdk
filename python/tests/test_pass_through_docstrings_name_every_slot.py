@@ -17,6 +17,7 @@ own copy of the answer is self-calibrating and proves nothing. It reddens automa
 from __future__ import annotations
 
 import pathlib
+import re
 
 import pytest
 
@@ -66,10 +67,54 @@ def _camel(snake: str) -> str:
     return head + "".join(w.capitalize() for w in rest)
 
 
+def _enumeration(path: pathlib.Path) -> str:
+    """The one SENTENCE that makes the pass-through claim — the one carrying `MARKER`.
+
+    Scoped this tightly on purpose, after two successive weakenings were measured:
+
+    * The original read the WHOLE FILE, so any backticked mention anywhere satisfied it — a code
+      comment elsewhere in `client.py` naming a field would have proved the docstring admits it.
+    * Scoping to the enclosing docstring is still not enough: this docstring's *next* sentence
+      independently discusses `key_status` and `resolved_status`, so both could be deleted from the
+      enumeration and the guard would still find them. That mutation was run and passed 10/10.
+
+    The claim being guarded is "every field the contract carries arrives", made once, in one
+    sentence, with a list. That sentence is what has to stay true, so that sentence is what is read.
+    """
+    lines = path.read_text(encoding="utf-8").splitlines()
+    idx = next((i for i, ln in enumerate(lines) if MARKER in ln), None)
+    assert idx is not None, f"{path} no longer contains {MARKER!r}"
+    # The enclosing block: python `"""…"""` or TS `/** … */`. Walk out from the marker line.
+    start = next(
+        i for i in range(idx, -1, -1) if '"""' in lines[i] or "/**" in lines[i]
+    )
+    end = next(
+        (
+            i
+            for i in range(idx + 1, len(lines))
+            if '"""' in lines[i] or "*/" in lines[i]
+        ),
+        len(lines) - 1,
+    )
+    flat = " ".join(
+        ln.strip().lstrip("*").strip().strip('"') for ln in lines[start : end + 1]
+    )
+    # Sentence boundaries: a period followed by whitespace. The parenthesised asides in these
+    # docstrings ("(closed, PascalCase)") carry no periods, so this does not split inside one.
+    sentences = re.split(r"(?<=\.)\s+", flat)
+    hit = [s for s in sentences if MARKER in s]
+    assert len(hit) == 1, (
+        f"{path} has {len(hit)} sentences carrying {MARKER!r}; this guard reads exactly one. "
+        "If the claim was split across sentences, re-scope this helper deliberately."
+    )
+    return hit[0]
+
+
 def _docstring_names(path: pathlib.Path, field: str, spelling: str) -> bool:
-    """Is `field` named, in backticks, in this file? Backticks because prose mentions are not claims."""
+    """Is `field` named, in backticks, in the enumeration sentence? Backticks because a prose
+    mention is not a claim."""
     wanted = _camel(field) if spelling == "camel" else field
-    return f"`{wanted}`" in path.read_text(encoding="utf-8")
+    return f"`{wanted}`" in _enumeration(path)
 
 
 def test_the_base_six_are_exactly_the_pre_acdp_fields() -> None:
@@ -124,23 +169,33 @@ def test_every_pass_through_slot_is_named_in_the_docstring(
 # trips, and it is also what a broken one does — so the cases below construct the future the guard
 # exists for and check that it actually goes off.
 #
-# `ContextBinding/revocation` and `ContextBinding/revocation_trust_class` are not hypothetical: they
-# are ACDP P3 tags 12-13, already merged in seam-runtime and already on the BSR. The adoption is
-# tracked in this repo's #96. They are used here because they are the real next fields, so this test
-# is a rehearsal of the actual event rather than an invented one.
-
-_P3 = ("revocation", "revocation_trust_class")
+# This fixture used to inject `revocation` / `revocation_trust_class` — ACDP P3 tags 12-13 — because
+# they were the REAL next fields, making the test a rehearsal of a known-coming event rather than an
+# invented one. Phase 8 adopted them, so they are now declared in the committed manifest and
+# injecting them adds nothing: the tripwire would assert that adding two fields changes the expected
+# set, get an empty diff, and fail. The rehearsal succeeded and is over.
+#
+# So the probe is now SYNTHETIC, deliberately, and named to be unmistakable. There is no announced
+# P4 `ContextBinding` field to point at; inventing a plausible-looking one (`attestation_freshness`)
+# would read like a real contract field to the next person and is exactly the sort of thing that
+# gets copied into a manifest by accident. When a real next field IS announced, move this back to it
+# — a rehearsal against the real thing is worth more than one against a placeholder.
+#
+# The name must not collide with a real field, and `test_the_probe_slot_is_not_a_real_field` below
+# fails if it ever does.
+_PROBE = ("zz_probe_unadopted_slot",)
 
 
 @pytest.fixture
 def manifest_with_p3(tmp_path: pathlib.Path) -> pathlib.Path:
-    """A COPY of the committed manifest with tags 12-13 added. The real file is never touched."""
+    """A COPY of the committed manifest with the synthetic probe slot added. The real file is never
+    touched."""
     scratch = tmp_path / "field-manifest.txt"
     lines = MANIFEST.read_text(encoding="utf-8").splitlines(keepends=True)
     out, inserted = [], False
     for line in lines:
         if line.startswith("ContextBinding/") and not inserted:
-            out.extend(f"ContextBinding/{f}\n" for f in _P3)
+            out.extend(f"ContextBinding/{f}\n" for f in _PROBE)
             inserted = True
         out.append(line)
     assert inserted, (
@@ -156,8 +211,8 @@ def test_the_expected_set_grows_when_the_manifest_declares_a_new_slot(
     """The derivation, not the assertion — checked separately so a failure says which half broke."""
     before = _expected_pass_through(MANIFEST)
     after = _expected_pass_through(manifest_with_p3)
-    assert after - before == set(_P3), (
-        f"adding tags 12-13 to the manifest must add exactly those two to the expected set, got "
+    assert after - before == set(_PROBE), (
+        f"adding {sorted(_PROBE)} to the manifest must add exactly that to the expected set, got "
         f"{sorted(after - before)}"
     )
 
@@ -178,10 +233,10 @@ def test_a_new_slot_reddens_every_docstring_that_has_not_named_it(
         for f in _expected_pass_through(manifest_with_p3)
         if not _docstring_names(path, f, spelling)
     )
-    assert missing == sorted(_P3), (
-        f"{source} names {sorted(set(_P3) - set(missing))} of the new slots already, or reports "
-        f"the wrong set: {missing}. This test is the rehearsal for #96's adoption; if it does not "
-        "fire here it will not fire then."
+    assert missing == sorted(_PROBE), (
+        f"{source} names {sorted(set(_PROBE) - set(missing))} of the new slots already, or reports "
+        f"the wrong set: {missing}. This is the tripwire's own proof that it fires; it rehearsed "
+        "#96's adoption for real (Phase 8) and now runs against a synthetic probe slot."
     )
 
 
@@ -194,9 +249,10 @@ def test_widening_the_frozen_list_is_what_silences_the_tripwire() -> None:
     demonstrates the mechanism explicitly so nobody has to rediscover that the exclusion list is the
     soft spot.
     """
-    widened = set(FROZEN_BASE_SIX) | {"revocation"}
-    declared_with_p3 = _manifest_context_binding_fields(MANIFEST) | set(_P3)
-    assert "revocation" not in (declared_with_p3 - widened), (
+    probe = _PROBE[0]
+    widened = set(FROZEN_BASE_SIX) | {probe}
+    declared_with_probe = _manifest_context_binding_fields(MANIFEST) | set(_PROBE)
+    assert probe not in (declared_with_probe - widened), (
         "widening the frozen list removes the field from the expected set — which is precisely why "
         "test_the_base_six_are_exactly_the_pre_acdp_fields pins it by exact equality"
     )
@@ -240,4 +296,24 @@ def test_sources_covers_every_docstring_that_makes_this_claim() -> None:
     assert len(listed) >= 3, (
         f"only {len(listed)} source(s) checked; the Python pair and the TS client are three separate "
         "enumerations and all three must be covered"
+    )
+
+
+def test_the_probe_slot_is_not_a_real_field() -> None:
+    """The synthetic probe must stay synthetic.
+
+    `manifest_with_p3` proves the tripwire fires by adding a slot the docstrings do not name. If the
+    probe name ever became a REAL `ContextBinding` field, the fixture would add nothing, the
+    expected-set diff would be empty, and the three rehearsal tests would fail confusingly rather
+    than tell you why. That is exactly what happened to the previous probe: it named ACDP P3's
+    `revocation` pair, which was the right choice while they were coming and the wrong one the day
+    they landed.
+    """
+    declared = _manifest_context_binding_fields(MANIFEST)
+    collided = sorted(set(_PROBE) & declared)
+    assert not collided, (
+        f"the synthetic probe slot(s) {collided} are now REAL fields in "
+        "contract/field-manifest.txt. Pick a new probe name — or better, if a real unadopted "
+        "ContextBinding field now exists, point the probe at that instead: rehearsing against the "
+        "real next field is worth more than rehearsing against a placeholder."
     )

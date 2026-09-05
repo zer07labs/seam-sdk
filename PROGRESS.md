@@ -84,7 +84,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `.github/workflows/publish.yml:316` | `make generate` **again at publish time**, against unpinned plugins — the open half of #52. `:390-401` pre-upload smoke installs protobuf *unconstrained*, so the skew is invisible to it; `registry-smoke` (`:519`) likewise. Measured at planning: `grep -rn protobuf .github/workflows/` yielded **one** hit, a prose comment — no workflow pinned protobuf anywhere, so nothing caught the skew. **Phase 6 closed that** (DONE 2026-08-31): the same grep now yields 17, and `.github/workflows/publish.yml:423` installs the built wheel with `protobuf==$FLOOR`. The declared floor and the emitted gencode are both **7.36.0** (`python/pyproject.toml:50`, `python/seam_sdk/_gen/seam/api/v1/seam_pb2.py`'s `Protobuf Python Version` header — cited by symbol, not by line, since it is a generated, gitignored file) — zero headroom, which is why this phase ran first. |
 | `.github/workflows/publish.yml:63-148` | `ci-green` — resolves every `ci-ok` conclusion for the tagged commit. Sound: `:107` still-running ⇒ `pending`, `:117-126` one-green-cannot-mask-one-red, `:143-148` timeout is a refusal. `:192`/`:285` gate both npm and python. **Must not regress.** |
 | `.github/workflows/publish.yml:150-188` | `version-check` — tag vs in-tree versions. It had **no branch-ancestry check** (`.github/workflows/ci.yml:19` runs on every branch push, so a tag at a green feature-branch commit published cleanly); **Phase 6 added one at `:176`**, which is inside this row's own range. Read the range as the job, not as evidence of the gap — it was widened in round 1 until it contained the very step it is cited for lacking. |
-| `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:1055`. |
+| `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:1132`. |
 | `python/tests/test_protobuf_floor.py:72,88` | The two pure-file-read assertions Phase 6 runs at publish time. `:29-31` reads only `_gen/seam/api/v1/seam_pb2.py`; `:47-51` **skips** when `_gen` is absent. `:88-99` forces `cap == gencode_major + 1` — this is why "widen the floor" is not a metadata edit. |
 | `python/tests/test_grpcio_floor.py:38` | Module-level `import grpc` — matters if Phase 6 runs it in the publish job. |
 | `.github/workflows/yank.yml` | `workflow_dispatch`, `dry_run` default `"true"`. A hard **DELETE** (`:91-92`), not a PyPI-style yank. Its token line did **not** strip the cargo token's `"Bearer "` prefix (`.github/workflows/publish.yml:383-385` does) — **Phase 10 fixed it** (DONE 2026-08-31) at `.github/workflows/yank.yml:55-60`, and left the version/format/name filters (`:73-76`) byte-unchanged. `scripts/test_yank_gate.py` now executes the resolution and pins those filters. |
@@ -155,7 +155,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   - *R2 GAPS (3):* the `:109`→`:141` fix reached `PROGRESS.md` but missed
     `plans/archive/record-digest-v3.md:12`; removing a duplicated execution-order block ate the
     blank line and merged two paragraphs; and the path repoint **over-replaced** four quoted
-    `DECISIONS.md` section titles, which are lookup keys that must match `DECISIONS.md:1247`
+    `DECISIONS.md` section titles, which are lookup keys that must match `DECISIONS.md:1324`
     verbatim, not paths.
   - *R3 PASS:* all three closed, both halves of the over-replacement checked (quoted titles reverted,
     `**Plan:**` paths still archive-pointed), no new breakage, 545/17 green.
@@ -2984,3 +2984,58 @@ once tags 12-13 are declared.
 
 Measured after the round: python **1184 passed / 20 skipped** · `pytest scripts` **116** · `ruff`
 clean.
+
+### Phase 8 — the ACDP P3 adoption — DONE (was BLOCKED; unblocked by operator go-ahead)
+
+The phase specified in advance, executed. Because the spec existed, no design work happened here —
+which is the whole argument for writing a blocked phase down rather than deferring it.
+
+**W4.3 re-answered: `no`.** Its standing rule is re-answer per regeneration, never inherit, so the
+previous `no` did not carry. Confirmed three independent ways rather than by reasoning from shape:
+`seam.event.v1` never mentions `revocation` (zero grep hits — a field absent from the event wire
+cannot be a sealed column); `verify/src/` does not mirror `ContextBinding` at all; and the runtime's
+own spec heads the section "`revocation` and `revocation_trust_class` — served only, never sealed".
+`verify/src/wire.rs` unchanged, `conformance/` untouched, W7 does not engage.
+
+**The lag file re-recorded to seven, with the trigger armed rather than reset.** Leaving it at five
+would have made every local run print the full un-downgraded refusal — whose wording, exit code and
+direction are identical to a real field removal — which is the exact gate-blindness the file exists
+to prevent. It now carries an explicit RE-RECORD HISTORY block so bumping `EXPECTED-FROM` does not
+hide cumulative age, and states in capitals that the *next* re-record is the trigger to stop
+curating the file and get `buf registry login` on the workstation instead. Counted per the spec:
+this is the first re-record, second recording.
+
+**The spec did not anticipate that the file's own header had gone false.** It explained the lag as
+"the BSR has not caught up". The BSR is *ahead* — it republished P1a/P2 and then P3 — and the local
+stubs are simply old. That is not a wording nit: the wrong cause points at the wrong fix (wait for
+upstream, rather than regenerate). Corrected, with the correction called out in the file.
+
+**Not wired into the hand-written clients, and that is the recorded answer** the gate's refusal text
+demands. `ResolveContext` returns the binding unchanged, so both fields already reach callers; named
+accessors would make them the only `ContextBinding` fields with a bespoke surface. The three
+docstrings name them, which is not optional — Phase 6's tripwire derives its expected set from the
+manifest and goes red the moment a declared slot is unnamed.
+
+**Two guard defects surfaced while landing this, both fixed here:**
+
+1. **Phase 6's tripwire measured "file contains token", not "docstring names slot".** The
+   whole-feature verification round found it: `_docstring_names` read the entire file, so a
+   backticked mention in any unrelated comment satisfied it. Scoping to the enclosing docstring is
+   *still* not enough — this docstring's next sentence independently discusses `key_status` and
+   `resolved_status`, so both could be deleted from the enumeration and the guard would still find
+   them (measured: 10/10 green). It now reads the single sentence carrying the marker, which is
+   where the claim is actually made. Both mutations now fail.
+2. **The subset test was positionally coupled to the list it guards.** It dropped
+   `ContextBinding/retraction` and asserted over `_KNOWN_LAG_FIELDS[:-1]`, which lined up only while
+   `retraction` sorted last. P3 appended two entries after it, and the assertion silently began
+   checking the dropped field instead of the kept ones. Now derived from the dropped name.
+
+**The tripwire's own fixture had to move.** It injected `revocation`/`revocation_trust_class` as the
+hypothetical future slot precisely because they were the *real* next fields. Adopting them made the
+injection a no-op, so the rehearsal would have failed confusingly rather than informatively. It now
+uses a synthetic probe named to be unmistakable, plus `test_the_probe_slot_is_not_a_real_field`,
+which fails if the probe ever becomes real and says to re-point it at the next real unadopted field.
+
+Measured after: `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exit **6**, NOTE naming
+`contract/expected-local-lag.txt` with all seven fields · `scripts/check_vendored_spec.py
+--from local:../seam-runtime` **OK, verbatim and current** · python **1185 passed / 20 skipped**.

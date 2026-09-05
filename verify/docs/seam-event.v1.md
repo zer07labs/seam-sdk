@@ -1,6 +1,8 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 3b3d4ae (refreshed 2026-08-31 for ACDP D3 receipt
-     provenance — the four `ContextBinding` receipt slots sealed into digest v3 (P1a, seam-runtime#520) — and for
-     P2 `retraction`, which is served on ResolveContext and never sealed (seam-runtime#523)). The runtime spec is the
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ ac325d7 (refreshed 2026-09-04 for ACDP P3 key
+     revocation — `revocation` (tag 12) and `revocation_trust_class` (tag 13), seam-runtime#531 — which, like P2
+     `retraction` before them, are served on ResolveContext and NEVER sealed into the record digest. The previous
+     pin was @ 3b3d4ae (2026-08-31, ACDP D3 receipt provenance: the four `ContextBinding` receipt slots sealed
+     into digest v3 (P1a, seam-runtime#520), plus P2 `retraction` (seam-runtime#523)). The runtime spec is the
      source of truth; refresh this copy whenever the spec changes — a stale copy here once shipped a real
      verifier bug (the AUTHORIZE_EVALUATED advisory omission), and it has been stale twice more since: it
      carried no §Record digest (v3) before an earlier refresh, and no §"Presence on the wire" before the
@@ -619,6 +621,12 @@ binding with its own four slots.
 | `key_status` | **closed**, PascalCase | `CurrentlyAuthorized` · `HistoricallyAuthorized` · `HistoricallyAuthorizedPreCompromise` |
 | `resolved_status` | **open**, ACDP's **lowercase** wire string, verbatim | the registry lifecycle status |
 
+- `key_status`'s third value, `HistoricallyAuthorizedPreCompromise`, became **producible** with ACDP
+  P3 (RFC-ACDP-0014). Before P3 it was in the vocabulary and unreachable: the library's revocation
+  phase was inert for Seam, so nothing could ever move a binding onto it. A reader who inferred from
+  its absence in the field that it was reserved-for-future-use would now be wrong, and a consumer that
+  handles only the first two values will meet the third the moment a producer publishes a revocation
+  whose receipt-attested boundary post-dates the context (§7 step 2).
 - `content_hash` comes from the **body**, not from the receipt. The body's hash is verified on every
   remote resolve whereas a receipt is optional, so sourcing it from the receipt would leave this absent
   against any registry that mints none — which is the whole v0.1.0 core-profile world.
@@ -658,8 +666,8 @@ Two semantics that keep a mutable registry value safe to seal:
     carries" the obligation, then naming replay and the archive bundle as able to. Check the carrier
     before extending it a third time.
 
-  The obligation is unmet and currently unreachable, for **two independent reasons** — both must be
-  named, because a future reader who lifts one will otherwise assume the other never existed:
+  The obligation is unmet and currently unreachable, for **three independent reasons** — all must be
+  named, because a future reader who lifts one will otherwise assume the others never existed:
   1. **The decision verbs refuse every `acdp://` ref outright** at ingress
      (`crates/seamd/src/facade.rs`, `require_context_ref_shape`), so no remote binding reaches a seal
      at all. This is the stronger guard, and it is the one actually load-bearing today.
@@ -670,6 +678,14 @@ Two semantics that keep a mutable registry value safe to seal:
      must keep answering: retraction MARKS rather than deletes (RFC-ACDP-0013 §8.1) and the body
      still verifies. Because guard 1 stands, this predicate is currently **latent**; it exists so
      that lifting guard 1 does not open a window in which retracted grounds seal permanently.
+  3. **P3 added the key-revocation predicate** (ACDP-0014). Same place, same shape, same reason:
+     `facade::refuse_revoked_key` sits behind the same composite as guard 2, refuses grounds whose
+     producer signing key Seam could not CLEAR against the revocations it holds (`Revoked`,
+     `Unplaceable`, `KeyUnidentified` — deliberately not "signed by a revoked key", since under the
+     third of those Seam does not know the key was revoked), and is likewise **not** applied at the
+     read-only `ResolveContext` facade, which serves the verdict instead (RFC-ACDP-0014 §10: a §7
+     fail-closed is *"a verification verdict, not a wire condition"*). Latent for the same reason
+     guard 2 is.
 
   P1a records the status verbatim and adds no ingress refusal of its own; a second, P1a-local
   implementation of the predicate would have had to be unified with this one.
@@ -706,6 +722,54 @@ implement `acdp-registry-lifecycle` omits its event history entirely (never as a
 "nothing was retracted" and "this registry cannot tell you" are indistinguishable on the wire.
 
 Rationale and threat model: [`docs/design/acdp-retraction-not-erasure-decision.md`](../design/acdp-retraction-not-erasure-decision.md).
+
+### `revocation` and `revocation_trust_class` — served only, never sealed
+
+`ResolveContext` also returns a per-binding `revocation` (proto tag 12 / HTTP `revocation`) and
+`revocation_trust_class` (tag 13): Seam's own RFC-ACDP-0014 §7 assessment of the producer's **body
+signing key**, in a lowercase-with-underscore vocabulary of exactly six values —
+`not_revoked` | `pre_compromise` | `revoked` | `unplaceable` | `key_unidentified` | `unknown` —
+with a two-value trust class, `producer_signed` | `registry_attested` (§5 / §6), present only when a
+statement actually acted.
+
+**Neither is in any digest**, for the same reason and with the same structural guarantee as
+`retraction`: both live on a sibling `ResolvedContext`, never on `ContextBinding`, so neither can
+reach `context_provenance_digest`. What the revocation check *does* seal is `key_status` (tag 9),
+which it may move to `HistoricallyAuthorizedPreCompromise` — that is the sealed consequence; these
+two fields are the read-time explanation of it.
+
+⚠️ **`not_revoked` is a bounded claim and must be read as one.** It attests *"we asked this registry
+and it showed us nothing"* — never *"no revocation exists"*. RFC-ACDP-0014 §8 is explicit that an
+absence of search results is not evidence of absence, and a registry that suppresses discovery
+produces exactly this answer. A consumer treating `not_revoked` as a clean bill of health has
+converted a statement about one moment and one registry into a global one.
+
+`unknown` is a **different fact again** and must not be read as `not_revoked`: it means Seam did not
+get an answer at all — the check is off, or the lookup failed. `not_revoked` says we asked and were
+shown nothing; `unknown` says we do not know whether we asked successfully. Collapsing the two is a
+silent fail-open.
+
+⚠️ **Staleness alone is NOT a cause of `unknown`, and an implementation that treats it as one is
+wrong.** A negative answer older than the staleness bound triggers **one synchronous re-source**
+inside the call's existing budget; it yields `unknown` only if that re-source fails or runs out of
+budget. *Stale means re-ask, not degrade* — the alternative would leave nothing to repair the
+staleness, and the check would decay to permanently off. The staleness bound is a Seam parameter, not
+an RFC one: RFC-ACDP-0014 §11 says the window between compromise and consumer awareness *"is bounded
+by consumer polling policy, not by this RFC"*.
+
+⚠️ **A registry outage does not downgrade a known revocation.** `unknown` replaces only a
+`not_revoked` that could not be re-established; a **positive** already held — `revoked`,
+`pre_compromise`, `unplaceable` — is permanent and is still served when the lookup fails. §4 makes
+revocation permanent, so forgetting one because a registry is unreachable would be the fail-open in
+the other direction. An implementation that collapses *every* verdict to `unknown` on a failed lookup
+is not conformant with what this field means.
+
+Three of the six **refuse** at the two decision paths — `revoked`, `unplaceable`, `key_unidentified`
+— and none of them refuses here (§10: a §7 fail-closed is *"a verification verdict, not a wire
+condition"*). `key_unidentified` claims strictly less than the other two: it does not assert this key
+is revoked, only that Seam holds revocations it could not compare this signature against.
+
+Rationale and threat model: [`docs/design/acdp-key-revocation-decision.md`](../design/acdp-key-revocation-decision.md).
 
 **ACDP-0011 lineage-head receipts are deliberately NOT here (P1b, deferred).** `verified_head_receipt()`
 is populated only by ACDP's `fetch_current`, which this runtime does not call — reading it would add a
