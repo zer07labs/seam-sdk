@@ -84,7 +84,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `.github/workflows/publish.yml:316` | `make generate` **again at publish time**, against unpinned plugins — the open half of #52. `:390-401` pre-upload smoke installs protobuf *unconstrained*, so the skew is invisible to it; `registry-smoke` (`:519`) likewise. Measured at planning: `grep -rn protobuf .github/workflows/` yielded **one** hit, a prose comment — no workflow pinned protobuf anywhere, so nothing caught the skew. **Phase 6 closed that** (DONE 2026-08-31): the same grep now yields 17, and `.github/workflows/publish.yml:423` installs the built wheel with `protobuf==$FLOOR`. The declared floor and the emitted gencode are both **7.36.0** (`python/pyproject.toml:50`, `python/seam_sdk/_gen/seam/api/v1/seam_pb2.py`'s `Protobuf Python Version` header — cited by symbol, not by line, since it is a generated, gitignored file) — zero headroom, which is why this phase ran first. |
 | `.github/workflows/publish.yml:63-148` | `ci-green` — resolves every `ci-ok` conclusion for the tagged commit. Sound: `:107` still-running ⇒ `pending`, `:117-126` one-green-cannot-mask-one-red, `:143-148` timeout is a refusal. `:192`/`:285` gate both npm and python. **Must not regress.** |
 | `.github/workflows/publish.yml:150-188` | `version-check` — tag vs in-tree versions. It had **no branch-ancestry check** (`.github/workflows/ci.yml:19` runs on every branch push, so a tag at a green feature-branch commit published cleanly); **Phase 6 added one at `:176`**, which is inside this row's own range. Read the range as the job, not as evidence of the gap — it was widened in round 1 until it contained the very step it is cited for lacking. |
-| `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:982`. |
+| `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:1052`. |
 | `python/tests/test_protobuf_floor.py:72,88` | The two pure-file-read assertions Phase 6 runs at publish time. `:29-31` reads only `_gen/seam/api/v1/seam_pb2.py`; `:47-51` **skips** when `_gen` is absent. `:88-99` forces `cap == gencode_major + 1` — this is why "widen the floor" is not a metadata edit. |
 | `python/tests/test_grpcio_floor.py:38` | Module-level `import grpc` — matters if Phase 6 runs it in the publish job. |
 | `.github/workflows/yank.yml` | `workflow_dispatch`, `dry_run` default `"true"`. A hard **DELETE** (`:91-92`), not a PyPI-style yank. Its token line did **not** strip the cargo token's `"Bearer "` prefix (`.github/workflows/publish.yml:383-385` does) — **Phase 10 fixed it** (DONE 2026-08-31) at `.github/workflows/yank.yml:55-60`, and left the version/format/name filters (`:73-76`) byte-unchanged. `scripts/test_yank_gate.py` now executes the resolution and pins those filters. |
@@ -155,7 +155,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   - *R2 GAPS (3):* the `:109`→`:141` fix reached `PROGRESS.md` but missed
     `plans/archive/record-digest-v3.md:12`; removing a duplicated execution-order block ate the
     blank line and merged two paragraphs; and the path repoint **over-replaced** four quoted
-    `DECISIONS.md` section titles, which are lookup keys that must match `DECISIONS.md:1174`
+    `DECISIONS.md` section titles, which are lookup keys that must match `DECISIONS.md:1244`
     verbatim, not paths.
   - *R3 PASS:* all three closed, both halves of the over-replacement checked (quoted titles reverted,
     `**Plan:**` paths still archive-pointed), no new breakage, 545/17 green.
@@ -2852,3 +2852,71 @@ it, so #96 is now the blocker on every merge in this repo rather than a forward-
 Measured after: python **1178 passed / 20 skipped** · `ruff` clean · comment posted to #96, issue
 left OPEN.
 
+
+### Phase 7 — issue and assumption hygiene — DONE
+
+Four items. One of them turned out to be already done, which is the phase's main finding.
+
+**#43 needed no comment.** Everything the plan specifies for it — correcting the "no yank workflow
+exists" premise, noting that a `dry_run=true` dispatch lists matches without touching anything, and
+consolidating the 0.7.39–0.7.43 band so both Cloudsmith decisions get one answer — was already
+posted in comments dated 2026-08-24 and 2026-09-02. The plan was written without reading the thread.
+
+Restating settled evidence is the issue noise this phase's own Edge-cases section warns against, so
+instead the posted evidence was re-verified as still true, and the two things that could have
+invalidated it were checked:
+
+1. The 2026-08-24 comment's load-bearing claim is that `python/tests/test_retracted_claims.py` stops
+   the advisory eroding — which matters because the entire "documented, not yanked" disposition
+   rests on that guard, and **Phase 4 rewrote that file**. The version-band assertions survived
+   untouched (Phase 4 only replaced the capability-claim exemption predicate), and the guard is now
+   stronger than the comment describes: it additionally pins the 0.7.39–0.7.43 row's existence as a
+   table row, its `0.7.47` fix reference, and its contiguity with the rows above it.
+2. The band under discussion exists because releases went out on red CI, and `main` is red right
+   now — so the way this issue silently gets worse is a sixth band appearing while it waits. It
+   cannot: `.github/workflows/publish.yml` resolves every `ci-ok` check run for the release SHA
+   through the check-runs API and treats an absent conclusion as a refusal, so a red `main` blocks
+   publication rather than repeating the pattern.
+
+**#44 was materially wrong and got a correcting comment.** The thread's list of eight names to
+reserve was assembled from repo names plus judgement, and — the actual defect — **no comment stated
+its inclusion criterion**, which is why the same error survived two sweeps. Sweeping
+`[project] name =` across the workspace instead gives eleven branded distributions, every one 404 on
+PyPI as of 2026-09-04. Three of the posted eight build no Python distribution at all (`seam-verify`
+is a Rust crate; `seam-adapters` and `seam-connectors` are repo names), and five real ones were
+absent: `seam-claude-agent`, `seam-connector-sdk`, `seam-learning-batch`, `seam-learning-keys`,
+`seam-aegis`. The comment leads with the criterion so the next sweep is checkable rather than
+re-judged. The two generic names (`compliance-report`, `ingest-history-iceberg`, both 404) are put
+to the operator as a policy call rather than answered. crates.io re-checked and unchanged: all four
+still free, and `seam-verify` remains the irreversible one.
+
+**#48 and #40 untouched.** #48 is blocked upstream and nothing here moves it — re-verified
+2026-09-04 that `crewAIInc/crewAI#7103` is still OPEN and `crewai` 1.15.20 still pins
+`opentelemetry-exporter-otlp-proto-http~=1.42.0`; the weekly `framework-coinstall` probe already
+watches for the flip, so "still blocked" would be a notification carrying no information. #40 is a
+feature request outside this plan's subject entirely. Reasons recorded in the plan, per criterion 2.
+
+**The enum-manifest assumption was promoted — by running `buf`, not by citing its config.** The
+plan proposed promoting it on the strength of the runtime setting `breaking: use: [WIRE_JSON]`. That
+is the same "the check's name implies its coverage" inference this entire plan exists to delete, so
+`buf` 1.66.0 was executed against a scratch module pair. A renumber (name kept, tag 1 → 3) is
+refused twice — deleted name, deleted number. The case that actually decides it is a **swap**, where
+two values exchange tags so that no name and no number is deleted and a delete-keyed rule sees
+nothing; `ENUM_VALUE_SAME_NAME` refuses it. So the binding is protected in both directions.
+
+The promotion also **narrowed** the residual risk instead of erasing it. The entry bundled two
+failure modes — "if that upstream gate is ever bypassed **or misses this case**". The second is now
+measured false. The first survives and is sharper than the entry implied: that step carries
+`if: github.ref != 'refs/heads/main'`, so it compares PR heads only, and the very push that skips it
+is the push that publishes the BSR module this SDK generates from. It is a question about another
+repo's branch protection, not about `WIRE_JSON`, so it is recorded in `DECISIONS.md` rather than
+filed as a speculative issue against `seam-runtime`.
+
+**The backlog was reviewed, not just re-stamped.** Thirteen entries stay `UNCONFIRMED`, each with a
+2026-09-04 note saying what the review found. Two moved in substance without changing status: the
+`expected-local-lag` window has begun closing on its own (CI's regenerated stubs now carry a
+seven-field gap where the recorded lag names five, which is why `main` is red and this checkout is
+not), and the Cloudsmith entry gained the publish-gate evidence above.
+
+Measured after: python **1181 passed / 20 skipped** · `ruff` clean · one comment posted to #44;
+#43, #48, #40 and #96 all left as they were.

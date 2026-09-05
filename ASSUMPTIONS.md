@@ -354,7 +354,8 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   runs `buf generate ../seam-runtime` against exactly that path. An earlier wording of this line
   said `crates/**` was unreadable outright, which forbade the proto and contradicted the build.)
   Filed as a question upstream.
-- **Status:** UNCONFIRMED
+- **Status:** UNCONFIRMED (reviewed 2026-09-04, unchanged). A claim about runtime acceptance
+  behaviour that only the runtime can settle; nothing this cycle exercised it.
 
 ## The runtime's JCS renders an integer ≥ `10**21` the way ES6 does
 - **Plan:** `plans/archive/authorize-single-canonicalization.md` (Phase 3, issue #60)
@@ -370,7 +371,8 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Blast radius if wrong:** none today. Being wrong means only that the SDK is stricter than it
   needs to be for values essentially nobody sends. Widening later is additive; the reverse would not
   be. Filed as a question upstream.
-- **Status:** UNCONFIRMED
+- **Status:** UNCONFIRMED (reviewed 2026-09-04, unchanged). Deliberately not relied on; settling it
+  needs the runtime's JCS, not this repo's.
 
 ## The field manifest spells an entry `<Message>/<field_name>`, names only
 
@@ -444,8 +446,13 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   turns out to be wanted, quarantine is still available and `yank.yml` now actually authenticates.
   Being wrong the other way — quarantining when it was not wanted — breaks builds that work today
   and cannot be undone for anyone whose CI ran in the interim.
-- **Status:** UNCONFIRMED — this is the one option worth raising rather than settling unilaterally,
-  per the phase's own Rejected-alternatives note.
+- **Status:** UNCONFIRMED (reviewed 2026-09-04, unchanged) — this is the one option worth raising
+  rather than settling unilaterally, per the phase's own Rejected-alternatives note. Consolidated
+  onto issue #43 on 2026-09-02 so both known-bad bands get one answer instead of two; still awaiting
+  a human with a Cloudsmith credential. Re-verified this cycle that nothing can quietly create a
+  third band while the decision waits: `publish.yml` resolves every `ci-ok` check run for the
+  release SHA through the check-runs API and treats an absent conclusion as a refusal, so today's
+  red `main` blocks publication rather than repeating the 0.7.39-0.7.43 pattern.
 
 ## The enum manifest carries names only, not numeric tags
 
@@ -474,10 +481,25 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Owner / re-open trigger:** whoever next adds or reviews `buf breaking` config for
   `seam.api.v1`'s enums (in `seam-runtime`) — if that gate is ever found not to cover a same-name
   renumber, this assumption needs revisiting before the next enum-touching regeneration lands.
-- **Status:** UNCONFIRMED (reviewed 2026-09-01, unchanged). No new evidence either way this cycle:
-  the event surface added in Phase 5 carries **zero enums** — asserted by
-  `assert_event_surface_preconditions`, not assumed — so it produced no second case to test the
-  name-only rule against. The trigger is unchanged and still sits in `seam-runtime`. See DECISIONS.md.
+- **Status:** CONFIRMED (2026-09-04) — **on measured behaviour, not on the config's name.** The
+  re-open trigger ("whoever next reviews `buf breaking` config for `seam.api.v1`'s enums") came due
+  this cycle and was worked rather than deferred. `../seam-runtime/buf.yaml:23-25` sets
+  `breaking: use: [WIRE_JSON]`, and `../seam-runtime/.github/workflows/ci.yml:173-181` runs
+  `buf breaking --against` a materialised `main`. Reading that config is not evidence that it covers
+  the case, so both forms of the gap were executed against `buf` 1.66.0 rather than reasoned about:
+  - a **renumber** (name kept, tag 1 -> 3) is refused twice, for the deleted *name* and the deleted
+    *number*;
+  - a **swap** (`FOO_A`/`FOO_B` exchange tags, so no name and no number is deleted — the form that
+    defeats a delete-only rule) is refused as `Enum value "2" ... changed name from "FOO_B" to
+    "FOO_A"`.
+  So the name<->number binding is protected in both directions, and the entry's "if that upstream
+  gate ... misses this case" clause is now measured false rather than merely hoped against.
+  **The residual risk is narrower and worth stating precisely:** that step carries
+  `if: github.ref != 'refs/heads/main'`, so it compares PR heads only. A change reaching `main`
+  without a PR is never compared, and the same push publishes the BSR module this SDK generates
+  from. That is a bypass question about the runtime's branch protection, not a coverage question
+  about `WIRE_JSON` — a different risk from the one this entry logged, and out of this repo's
+  reach. See DECISIONS.md.
 
 ## `plans/` stays outside the citation guard; `PROGRESS.md` does not
 
@@ -503,7 +525,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Owner / re-open trigger:** whoever next finds a citation drift inside an OPEN (not archived) plan
   document causing a real misdirection during `/implement` — that would be evidence the open/archived
   line, not the `plans/`-vs-`PROGRESS.md` line, is where this guard should actually cut.
-- **Status:** UNCONFIRMED (reviewed 2026-09-01, unchanged). Phase 5's verification round found three
+- **Status:** UNCONFIRMED (reviewed 2026-09-04, unchanged). Phase 5's verification round found three
   stale line references inside `PROGRESS.md` that the guard could not see — but they were **bare**
   `:NNN` refs carrying no path, and `test_compatibility_citations_resolve.py` matches backticked
   `file:line`, so a pathless number is invisible in *every* guarded document, `PROGRESS.md`
@@ -538,9 +560,16 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   60 days from `EXPECTED-FROM` (see the file's own header) — if `contract/expected-local-lag.txt` is
   still present and its five fields still match the local/BSR gap at that point, the split recorded
   here is not a window and this assumption needs to be revisited, per the plan's own Open Q3 text.
-- **Status:** UNCONFIRMED (reviewed 2026-09-01, deliberately deferred). `EXPECTED-FROM` is
-  2026-08-31, so the file is one day old and the 60-day trigger is nowhere near. Worth recording
-  that this cycle produced the first hard evidence for the **social** failure mode this entry names
+- **Status:** UNCONFIRMED (reviewed 2026-09-04, and the window this entry names has started to
+  close on its own). `EXPECTED-FROM` is 2026-08-31, so the 60-day trigger is still far off — but the
+  *contents* are no longer merely stale, they are now actively wrong in CI: seam-runtime merged its
+  ACDP P3 key-revocation work and pushed the BSR, so a CI regeneration emits two `ContextBinding`
+  fields (tags 12-13) that the recorded lag does not list. The lag file describes a five-field gap;
+  CI now has a seven-field one. Local checkouts still see the recorded five, so this repo stays
+  green while `main` does not — which is exactly the divergence the entry warned the window would
+  produce. Resolving it needs the BSR regeneration credentials this workstation lacks, so the entry
+  stays open and the fix stays interlocked with Phase 8. Recorded rather than papered over.
+  This cycle also produced the first hard evidence for the **social** failure mode this entry names
   rather than the technical one: the NOTE's own closing sentence claimed "so this STILL exits 6
   below" unconditionally, which is false whenever the event surface also disagrees, and it survived
   a full phase plus four verification rounds precisely because that block is the one every local run
@@ -599,7 +628,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Owner / re-open trigger:** whoever next has a consumer that genuinely cannot name the type — or
   the next time a third decoder of this shape lands, since three is when a pattern is worth exporting
   deliberately rather than case by case.
-- **Status:** UNCONFIRMED (reviewed 2026-09-01, unchanged). Phase 4 shipped and merged (#93) without
+- **Status:** UNCONFIRMED (reviewed 2026-09-04, unchanged). Phase 4 shipped and merged (#93) without
   either type reaching the named export list and without a consumer needing it; the count of
   decoders of this shape is still two, not three. Nothing this cycle tested the assumption, which is
   the correct outcome for one whose evidence can only come from a consumer. See DECISIONS.md.
@@ -624,12 +653,11 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Owner / re-open trigger:** seam-runtime#526. If `freshly_sealed` lands — a client currently
   cannot tell whether *this* call performed the seal or re-reported one — this docstring is the first
   thing that goes stale.
-- **Status:** UNCONFIRMED (reviewed 2026-09-01, deferred — not answerable here). The enumeration is a
+- **Status:** UNCONFIRMED (reviewed 2026-09-04, deferred — not answerable here). The enumeration is a
   claim about runtime behaviour, and the only evidence that could settle it is seam-runtime#526's
   matrix, which is why the docstring cites the issue rather than a line of code. Nothing in this repo
   can promote it, and the docstring already says the list is orientation rather than a guarantee to
   branch on — so the cost of it being wrong stays bounded to trust, as the entry records. Stays open
-  against #526. See DECISIONS.md.
 
 
 ## Appending a new workstream to `PROGRESS.md` rather than starting a fresh one
@@ -654,8 +682,12 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Owner / re-open trigger:** the next workstream after this one. If a fifth section is needed, that
   is the point to solve it properly rather than append a fourth time — likely by teaching the guard
   to scan a directory rather than a file, so archiving stops costing 25 assertions.
-- **Status:** UNCONFIRMED. Deliberately not solved under run pressure — the question was found while
-  preparing this run's handoff and recorded rather than answered.
+- **Status:** UNCONFIRMED (reviewed 2026-09-04, unchanged — and now with evidence that the question
+  is real rather than theoretical). Deliberately not solved under run pressure. Phases 4-7 appended
+  to the same `PROGRESS.md` workstream and the citation guard held throughout, but only because
+  every phase re-measured its own citations after formatting; two citations in this run pointed at
+  the wrong target while still *resolving*, which a remap cannot detect and only anchoring caught.
+  That is the cost this entry predicted, paid once per phase, and it is still unamortised.
 
 ## Refusing duck-typed integers (`numpy.int64`, `gmpy2.mpz`) in the Python digest slots
 
@@ -677,8 +709,9 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   pure-Python implementations, verified end-to-end, so the SDK's own decode path is clear.
 - **Owner / re-open trigger:** the first report of a `TypeError` from a numeric-stack caller. The
   fix is one `hasattr(value, "__index__")` in `_uint_slot`, applied to all three framings at once.
-- **Status:** UNCONFIRMED. The assumption is about callers outside this repo, which nothing here can
-  settle; it is recorded so the trigger is recognisable rather than debugged from scratch.
+- **Status:** UNCONFIRMED (reviewed 2026-09-04, unchanged). The assumption is about callers outside
+  this repo, which nothing here can settle; it is recorded so the trigger is recognisable rather
+  than debugged from scratch. No such caller has surfaced.
 
 ## `toJSON` is not honoured by `jcsCanonicalize`
 
@@ -700,7 +733,9 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Owner / re-open trigger:** the first report of a caller whose request objects carry `toJSON`. If
   it is taken up, it must be taken up in Python too — as an explicit protocol, not a JS-only hook —
   or the divergence it creates is worse than the inconvenience it removes.
-- **Status:** UNCONFIRMED. About callers outside this repo, which nothing here can settle.
+- **Status:** UNCONFIRMED (reviewed 2026-09-04, unchanged). About callers outside this repo, which
+  nothing here can settle. No consumer has reported a `toJSON`-bearing value reaching
+  `jcsCanonicalize`.
 
 ## `engines.node` is `>=20` because that is what CI verifies, not because 20 is the true floor
 
@@ -718,7 +753,9 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   which is the direction that matters here.
 - **Owner / re-open trigger:** the first consumer who needs Node 18. The fix is a CI leg on 18 and
   then lowering the floor — in that order, never the reverse.
-- **Status:** UNCONFIRMED. Deliberately conservative; the floor is a claim about what was tested.
+- **Status:** UNCONFIRMED (reviewed 2026-09-04, unchanged). Deliberately conservative; the floor is
+  a claim about what was tested. No Node leg was added or removed this cycle, so the evidence behind
+  `>=20` is exactly what it was when the entry was written.
 
 ## Java and Kotlin implement the `exp` rule but do not yet read the shared vector
 
@@ -741,8 +778,9 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Owner / re-open trigger:** the next session with a JDK available, or the next change to either
   file's `exp` handling. The work is ~40 lines per language, mirroring
   `go/crypto/tct_exp_vector_test.go`.
-- **Status:** UNCONFIRMED. Not a design question — an unrun test, recorded as such rather than
-  written blind.
+- **Status:** UNCONFIRMED (reviewed 2026-09-04, unchanged). Not a design question — an unrun test,
+  recorded as such rather than written blind. Still unrun: the JVM legs need a JDK 17 this
+  workstation does not have, so the shared vector remains read by Python/TS/Go/Rust only.
 
 ## `contract/rpc-manifest.txt` covers one package, and Phase 5 shipped a tripwire rather than extending it
 
@@ -764,5 +802,8 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   event RPC pays for this deferral in the same PR.
 - **Owner / re-open trigger:** the first `seam.event.v1` service. The gate's own message states the
   decision and the two candidate shapes.
-- **Status:** UNCONFIRMED as a design choice — deliberately deferred, with the trigger wired to fire
-  loudly rather than left to be noticed.
+- **Status:** UNCONFIRMED as a design choice (reviewed 2026-09-04, unchanged) — deliberately
+  deferred, with the trigger wired to fire loudly rather than left to be noticed. The tripwire
+  shipped this cycle and has never fired: `seam.api.v1` is still the only package the RPC manifest
+  covers, and the event surface reached by `assert_event_surface_preconditions` declares services
+  but no manifest of its own. Nothing has yet asked for the second package that would settle it.

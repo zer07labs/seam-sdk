@@ -6,6 +6,76 @@ assumption, the independent recommender's analysis, the human verdict, and the r
 produced it.
 
 
+## 2026-09-04 — promoting the enum-manifest assumption by executing `buf`, not by reading its config
+
+`contract/field-manifest.txt` spells enum entries `<Enum>#<VALUE>` — names only, no tag numbers. The
+recorded justification was that the tag is already protected upstream by `buf breaking`, so
+duplicating it here would create a second copy to keep in sync. The assumption's re-open trigger was
+"whoever next adds or reviews `buf breaking` config for `seam.api.v1`'s enums", and that review came
+due this cycle.
+
+**The config says what the plan said it says.** `../seam-runtime/buf.yaml:23-25` sets
+`breaking: use: [WIRE_JSON]`, and `../seam-runtime/.github/workflows/ci.yml:173-181` runs
+`buf breaking --against` a materialised `main` branch.
+
+**That was not treated as sufficient.** "The config names a category that sounds like it covers
+this" is the same reasoning this repo keeps finding defects in — a check whose result is assumed
+from its name rather than observed. `buf` 1.66.0 is installed locally, so both forms of the gap were
+run against a scratch module pair instead:
+
+| mutation | what a delete-only rule would see | `buf breaking --against` (WIRE_JSON) |
+|---|---|---|
+| **renumber** — `FOO_A` keeps its name, tag `1` → `3` | number 1 deleted, number 3 added | **refused twice** — once for the deleted name, once for the deleted number |
+| **swap** — `FOO_A`/`FOO_B` exchange tags `1`/`2` | *nothing*: no name and no number is deleted | **refused** — `Enum value "2" ... changed name from "FOO_B" to "FOO_A"` |
+
+The swap is the case that matters. It is the only same-name renumber that survives a rule keyed on
+deletion, and it is caught by a different rule (`ENUM_VALUE_SAME_NAME`) that binds number → name.
+So `WIRE_JSON` protects the name↔number binding in **both** directions, and the assumption's
+"if that upstream gate ... misses this case" clause is measured false rather than hoped against.
+
+**Verdict: CONFIRM.** The name-only manifest spelling stays. Adding `=<tag>` would buy nothing the
+upstream gate does not already provide, at the cost of a manifest line that churns on every
+proto-side renumber.
+
+**One thing changed, and it is a narrowing rather than a confirmation.** The entry's blast-radius
+clause bundled two risks — "if that upstream gate is ever bypassed **or misses this case**". The
+second half is now settled. The first is not, and is more specific than the entry implied: the
+`buf breaking` step carries `if: github.ref != 'refs/heads/main'`, so it compares **PR heads only**,
+and the same push to `main` that skips it is the push that publishes the BSR module this SDK
+generates from. A change reaching `main` outside a PR is therefore never compared. That is a
+question about the runtime's branch protection, not about `WIRE_JSON`'s coverage, and it is out of
+this repo's reach — recorded here so the next reader inherits the narrowed risk rather than the
+original bundled one.
+
+**Not filed as an issue in `seam-runtime`.** It is a hypothesis about another repo's branch
+protection that this repo cannot observe, and filing "your gate might be bypassable" without
+evidence that it is would be noise. The record is here; if a same-name renumber ever does reach the
+BSR, this entry is where the explanation already sits.
+
+---
+
+## 2026-09-04 — the remaining `UNCONFIRMED` backlog, reviewed and re-dated
+
+Thirteen entries stay `UNCONFIRMED`. Each carries a one-line note dated 2026-09-04 saying what the
+review found, so "unchanged" is a finding rather than an omission. Two moved in substance without
+changing status:
+
+- **`contract/expected-local-lag.txt` is a window, not a permanent excuse** — the window has begun
+  closing on its own. seam-runtime merged its ACDP P3 key-revocation work and pushed the BSR, so a
+  CI regeneration now emits two `ContextBinding` fields the recorded lag does not list: the lag file
+  describes a five-field gap and CI has a seven-field one. Local checkouts still see five, so this
+  checkout stays green while `main` does not. Resolving it needs BSR regeneration credentials this
+  workstation lacks, which is the same blocker Phase 8 waits on.
+- **Cloudsmith quarantine for the 0.7.39-0.7.43 band** — consolidated onto issue #43 on 2026-09-02
+  so both known-bad bands get one answer. Re-verified that nothing can quietly create a third band
+  while the decision waits: `.github/workflows/publish.yml:69-143` resolves every `ci-ok` check run
+  for the release SHA through the check-runs API and treats an absent conclusion as a refusal, so
+  today's red `main` blocks publication rather than repeating the pattern that produced the band.
+
+The other eleven are unchanged for the reason each records: they need a runtime answer, a consumer,
+a credential, or a JDK this workstation does not have.
+
+---
 ## 2026-09-04 — adopting Go's `exp` rule as normative for all five SDKs
 
 Five SDKs verified a TCT and five decoded its `exp` claim differently. That is not a style

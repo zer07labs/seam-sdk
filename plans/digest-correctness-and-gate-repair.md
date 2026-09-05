@@ -614,7 +614,57 @@ a docstring, the test must fail loudly rather than offer a quiet opt-out.
 
 ### Phase 7 — Issue and assumption hygiene
 
-**Status:** TODO
+**Status:** DONE. One divergence from the plan, and it is the plan being stale rather than the work
+changing: **#43 needed no new comment.** Everything Phase 7 specifies for it — the yank-workflow
+premise correction, the `dry_run=true`-lists-and-touches-nothing note, and the consolidation with
+the 0.7.39–0.7.43 band — was already posted, across comments dated 2026-08-24 and 2026-09-02. The
+plan was written without checking the thread. Rather than restate it, the posted evidence was
+re-verified as still current and two things were checked that could have invalidated it:
+
+- The 2026-08-24 comment's load-bearing claim that `python/tests/test_retracted_claims.py` keeps the
+  advisory from eroding still holds — and holds *more* strongly than described, since that file now
+  also pins the 0.7.39–0.7.43 row's existence, its `0.7.47` fix reference, and its contiguity with
+  the rows above it. Phase 4 rewrote that file's exemption predicate without touching the version
+  assertions; this was verified rather than assumed, because the whole "documented, not yanked"
+  disposition rests on that guard.
+- The band the issue is deciding about was created by publishing on red CI, and `main` is red right
+  now — so the obvious way for this issue to get worse is a sixth band appearing while it waits.
+  It cannot: `publish.yml` resolves every `ci-ok` check run for the release SHA through the
+  check-runs API and treats an absent conclusion as a refusal. A red `main` blocks publication.
+
+A third comment repeating settled evidence would be exactly the issue noise this phase's own
+Edge-cases section warns against, so none was posted. Recorded here instead, per criterion 2's rule.
+
+**#44 was materially wrong and was corrected.** The thread's list of eight names to reserve was
+derived from repo names plus judgement, and no comment stated its inclusion criterion — which is why
+the error survived two sweeps. Sweeping `[project] name =` across the workspace gives **eleven**
+branded distributions, all 404 on PyPI today. Three of the posted eight (`seam-verify`, a Rust
+crate; `seam-adapters` and `seam-connectors`, repo names) build no Python distribution at all, and
+five real ones were missing (`seam-claude-agent`, `seam-connector-sdk`, `seam-learning-batch`,
+`seam-learning-keys`, `seam-aegis`). The comment leads with the criterion, not the list.
+
+**#48 and #40 untouched, with reasons recorded here rather than posted:**
+
+- **#48** is genuinely blocked upstream and nothing this repo does moves it. Re-verified 2026-09-04:
+  `crewAIInc/crewAI#7103` is still OPEN, and `crewai` 1.15.20 on PyPI still pins
+  `opentelemetry-exporter-otlp-proto-http~=1.42.0`. The weekly `framework-coinstall` probe already
+  watches for the flip, so a comment saying "still blocked" adds a notification and no information.
+- **#40** (an MCP server exposing the session lifecycle) is a feature request, not a defect. It is
+  outside this plan's subject entirely — nothing in Phases 1–8 touches it, and triaging someone
+  else's feature scope from inside a hardening run would be scope the user did not ask for.
+
+**The enum-manifest assumption was promoted, but not on the evidence the plan proposed.** The plan
+said to promote it by citing the runtime's `buf` config. Citing a config is the same "the check's
+name implies its coverage" reasoning this whole plan exists to remove, so `buf` 1.66.0 was run
+against a scratch module pair instead. Both forms were refused: a renumber (name kept, tag moved)
+and — the case that actually matters — a **swap**, where two values exchange tags so that no name
+and no number is deleted, and a delete-keyed rule would see nothing. The swap is caught by
+`ENUM_VALUE_SAME_NAME`. The blast-radius clause's "or misses this case" half is now measured false;
+its "if that upstream gate is ever bypassed" half survives and got *narrower*: the step carries
+`if: github.ref != 'refs/heads/main'`, so it compares PR heads only, and the push that skips it is
+the push that publishes the BSR module this SDK generates from. Recorded in DECISIONS.md; not filed
+against `seam-runtime`, since it is a hypothesis about another repo's branch protection that this
+repo cannot observe.
 
 **Delivers:** two open issues corrected with evidence, one assumption promoted, and the remaining
 open issues left honestly open.
