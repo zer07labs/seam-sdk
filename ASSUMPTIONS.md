@@ -679,3 +679,67 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   fix is one `hasattr(value, "__index__")` in `_uint_slot`, applied to all three framings at once.
 - **Status:** UNCONFIRMED. The assumption is about callers outside this repo, which nothing here can
   settle; it is recorded so the trigger is recognisable rather than debugged from scratch.
+
+## `toJSON` is not honoured by `jcsCanonicalize`
+
+- **Plan:** `plans/digest-correctness-and-gate-repair.md`, Phase 3
+- **Assumed:** no caller relies on `toJSON()` being called during canonicalization. An object
+  carrying one raises today (the walk reaches the function value and refuses it), and this phase's
+  plain-object guard does not change that — it was checked, not inherited by accident.
+- **Chose:** keep refusing. `JSON.stringify` would call `toJSON`, so this is a deliberate divergence
+  from the function JCS is usually explained in terms of. The reason is that honouring it makes the
+  canonical bytes depend on a method the digest cannot see: a `toJSON` that changed between releases
+  would silently change a signed digest, in TypeScript only, since Python has no equivalent hook.
+- **Alternatives:** call `toJSON()` before the type test, matching `JSON.stringify`. Friendlier for
+  callers with domain objects, and the natural expectation for anyone who has used `stringify`. It
+  loses the cross-language property that both SDKs agree on which inputs have a digest at all — the
+  property §9 and §10 of `COMPATIBILITY.md` exist to defend — so it was not taken to be convenient.
+- **Blast radius if wrong:** a caller with `toJSON` on a request object gets a `TypeError` instead of
+  a digest. Loud and at the first call, not a silent wrong answer. They convert explicitly at the
+  boundary, which is the same fix the `Date` case asks for.
+- **Owner / re-open trigger:** the first report of a caller whose request objects carry `toJSON`. If
+  it is taken up, it must be taken up in Python too — as an explicit protocol, not a JS-only hook —
+  or the divergence it creates is worse than the inconvenience it removes.
+- **Status:** UNCONFIRMED. About callers outside this repo, which nothing here can settle.
+
+## `engines.node` is `>=20` because that is what CI verifies, not because 20 is the true floor
+
+- **Plan:** `plans/digest-correctness-and-gate-repair.md`, Phase 3
+- **Assumed:** Node 20 is the oldest runtime this SDK should claim. It is the version all four
+  workflow jobs pin, so it is the oldest one anything has actually been proven on.
+- **Chose:** `">=20"`, with `python/tests/test_node_engines_floor.py` binding it to the CI pins so
+  the two cannot drift apart. The real floor is probably lower — nothing in `ts/src/` obviously needs
+  20 — but "probably lower" is not a number to publish in a manifest consumers install against.
+- **Alternatives:** derive the true floor by testing on 18 and 16 in CI. That is the correct answer
+  and it costs two more CI legs on every PR, for a runtime nobody has asked for. Declaring `>=18`
+  without a leg to prove it would be exactly the unverified-number defect this test exists to stop.
+- **Blast radius if wrong:** a consumer on Node 18 gets an `npm` engine warning (or an error under
+  `engine-strict`) for a runtime that might have worked. Visible at install time, not at verify time,
+  which is the direction that matters here.
+- **Owner / re-open trigger:** the first consumer who needs Node 18. The fix is a CI leg on 18 and
+  then lowering the floor — in that order, never the reverse.
+- **Status:** UNCONFIRMED. Deliberately conservative; the floor is a claim about what was tested.
+
+## Java and Kotlin implement the `exp` rule but do not yet read the shared vector
+
+- **Plan:** `plans/digest-correctness-and-gate-repair.md`, Phase 3
+- **Assumed:** `SeamCrypto.java` and `SeamCrypto.kt` genuinely implement the normative `exp` rule.
+  This is read from the source (`instanceof Number` + `longValue()`; `as? Number` + `toLong()`) and
+  is the reason Go's rule was adopted as the 3-of-5 majority — but it is **read, not measured.**
+- **Chose:** ship the vector with Go, Python and TypeScript consumers, and leave Java and Kotlin as
+  follow-up. This workstation has no JDK, so a consumer written for them could not be executed before
+  being committed. CI does run `./gradlew test`, so it would have been verified there — but writing
+  an unrunnable test and letting CI be its first execution is how a vacuous test lands, and this run
+  has already spent four verification rounds on exactly that failure mode.
+- **Alternatives:** write both consumers blind and let CI adjudicate. Faster, and probably fine —
+  they are short JSON-reading tests against implementations already believed correct. Rejected
+  because "probably fine, CI will tell us" is the reasoning that produced the placeholder-AID test in
+  Phase 2, which passed while asserting nothing.
+- **Blast radius if wrong:** if Java or Kotlin in fact diverges, the vector says three languages agree
+  and implies five. The claim is scoped in the vector's own header and in `COMPATIBILITY.md` §10 to
+  the three that read it, so the document does not overstate what is checked.
+- **Owner / re-open trigger:** the next session with a JDK available, or the next change to either
+  file's `exp` handling. The work is ~40 lines per language, mirroring
+  `go/crypto/tct_exp_vector_test.go`.
+- **Status:** UNCONFIRMED. Not a design question — an unrun test, recorded as such rather than
+  written blind.

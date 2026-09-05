@@ -139,7 +139,28 @@ def verify_tct(
         ):
             return False
         now = now_s if now_s is not None else int(time.time())
-        if now >= int(payload.get("exp", 0)):  # RFC 7519: reject at/after expiry
+        # ``exp`` must be a JSON NUMBER. ``int(payload.get("exp", 0))`` accepted a numeric STRING —
+        # ``int("10000000000")`` is a perfectly good integer — which Go's ``payload["exp"].(float64)``
+        # and Java's ``instanceof Number`` both refuse. And ``bool`` subclasses ``int``, so
+        # ``exp: true`` became ``1``: at any ``now`` below 1 the token VERIFIED. That is invisible at
+        # a realistic clock, which is why the shared vector pins ``now = 0``.
+        #
+        # The ``bool`` exclusion has to come first for the same reason it does in ``_uint_slot``:
+        # ``isinstance(True, int)`` is ``True``, so the type test alone lets it through.
+        exp = payload.get("exp")
+        if isinstance(exp, bool) or not isinstance(exp, (int, float)):
+            return False
+        # The normative rule is bounded to int64, because in Go it has to be: `int64(exp)` is
+        # implementation-defined when the value does not fit, and `exp: 1e300` verified on arm64
+        # (saturating to MaxInt64) while amd64 refused it. Python has no such hazard — `int()` is
+        # arbitrary precision — so this bound buys Python nothing on its own. It is here so that all
+        # five SDKs answer the same thing, which is the only reason any of this code is shaped the
+        # way it is. 2^63 is exactly representable as a float, so the comparison is exact.
+        if not (-(2**63) <= exp < 2**63):
+            return False
+        if now >= int(
+            exp
+        ):  # RFC 7519: reject at/after expiry, truncating to whole seconds
             return False
         want = "seam-commitment-digest:" + _seam_commitment_digest(commitment)
         return want in payload.get("grants", [])
@@ -795,6 +816,18 @@ def verify_chain_head_attestation(
         )
     if not isinstance(issuer_aid, str):
         raise TypeError(f"issuer_aid must be a str, not {type(issuer_aid).__name__}")
+    # ``signature`` belongs in this pass too, and its absence was a hole in the rule rather than an
+    # exemption from it. Every other argument answered a wrong TYPE with ``TypeError``; a wrong-typed
+    # signature fell through to the blanket ``except`` below and came back ``False`` — and the slip
+    # that produces it is the ordinary one, passing the hex STRING instead of the decoded bytes. A
+    # caller who does that is told the attestation did not verify, and goes looking for a compromised
+    # audit chain. A rule applied to five arguments out of six is a rule with a hole in the shape of
+    # the sixth.
+    if _as_bytes(signature) is None:
+        raise TypeError(
+            f"signature must be a byte sequence, not {type(signature).__name__} — hex and base64 "
+            "are str, not bytes; decode at the boundary, where the encoding is visible"
+        )
     for name, value, bits in slots:
         try:
             _uint_slot(name, value, bits)

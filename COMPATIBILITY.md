@@ -440,18 +440,20 @@ values reached one digest. Measured against the pre-fix build, `recordDigestV2({
 `b566fdea56b8487bc5ebc26d1d6585339e9ab2a3a499247bd7230e4f20f05d7f`. That is a digest failing at the
 only thing a digest does.
 
-The guard is `uintSlot` (`ts/src/crypto.ts:572`), which already governed the v3 record digest;
-`u64le`/`u32le` (`ts/src/crypto.ts:347`) now route through it, so v2 and the attestation framing get
+The guard is `uintSlot` (`ts/src/crypto.ts:760`), which already governed the v3 record digest;
+`u64le`/`u32le` (`ts/src/crypto.ts:450`) now route through it, so v2 and the attestation framing get
 the rule that was always written for them. Python got the same treatment: `_uint_slot`
-(`python/seam_sdk/crypto.py:579`) was `_v3_uint`, and `record_digest_v2` now shares it. Every
+(`python/seam_sdk/crypto.py:600`) was `_v3_uint`, and `record_digest_v2` now shares it. Every
 "before" below was measured against the pre-fix build, not inferred.
 
 **Read the `now` column as the record-digest arm.** In the chain-head **attestation** arm every one
-of these refusals is observed as `false` rather than as a thrown error, because
-`verifyChainHeadAttestation` wraps its whole body in `catch { return false }`
-(`ts/src/crypto.ts:730-735`). The distinction matters for the `true` row in particular, where the
-attestation arm shows no caller-visible change at all — `false` before, `false` after — even though
-what it is now refusing changed. See the note below the table.
+of these refusals was observed as `false` rather than as a thrown error, because
+`verifyChainHeadAttestation` wrapped its whole body in a catch that returned `false`
+(`const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid });`, `ts/src/crypto.ts:945`). The
+distinction mattered for the `true` row in particular, where the attestation arm showed no
+caller-visible change at all — `false` before, `false` after — even though what it was refusing had
+changed. **§10 closed that**: the type checks now run before the `try`, so a wrong type throws there
+too, and only genuinely untrusted input still reaches the catch.
 
 | input to a TS record digest / chain-head attestation | before | now | why |
 |---|---|---|---|
@@ -474,13 +476,17 @@ Python never had it. What Python had was three smaller defects in the same code:
 
 - `verify_chain_head_attestation` let that `struct.error` escape a function documented to return
   `False` on any tamper, so an out-of-range length **crashed** a caller instead of being rejected. It
-  now returns `False` (`python/seam_sdk/crypto.py:770-805`).
+  now returns `False` (`python/seam_sdk/crypto.py:783-830`).
 - `attested_len`, `attested_at` and `digest_schema` are now required to be `int`. Previously
   `True` was digested as `1` (`bool` subclasses `int`) and `5.0` raised `struct.error` — a *third*
   answer from a function that should only ever give two. Both now raise `TypeError`.
 - `record_digest_v2` shares that validator too, so `sealed_at=True` raises instead of digesting as
   `1`, and an out-of-range `sealed_at` raises `ValueError` rather than `struct.error`. No in-range
   digest moved: 20,000 randomized inputs compared against `HEAD`, 0 divergences.
+- **`signature` was the one argument left out of that type pass**, and §10 closed it: a wrong-typed
+  signature reached the blanket `except` and came back `False` — "this attestation did not verify" —
+  when the truth was "you passed a `str`". Passing the hex string instead of the decoded bytes is the
+  ordinary way to hit it. It now raises `TypeError`, like every other argument.
 
 Two exception *types* changed without any verdict changing, which is worth stating because a caller
 may be catching them: a non-`str` `issuer_aid` raises `TypeError` where it used to raise
@@ -493,14 +499,10 @@ type list of its own.
 In **Python** a wrong *type* raises rather than returning `False`, deliberately: a `TypeError`
 reported as "did not verify" is a program error disguised as a security verdict.
 
-**TypeScript does not match that, and this release does not change it.**
-`verifyChainHeadAttestation`'s blanket `catch { return false }` (`ts/src/crypto.ts:730-735`) swallows
-every `TypeError` the new guard raises, so `attestedLen: "1000"`, `true`, `null` and `[1000]` all
-return `false` there rather than throwing. That is a live cross-language divergence about *how* a
-caller learns they made a mistake — not about which inputs are accepted, where the two now agree.
-Changing it is a behaviour change to a public API and is being decided separately rather than
-folded into a fix; until then, a TypeScript caller cannot distinguish "this attestation is invalid"
-from "you passed the wrong type".
+**TypeScript now matches that.** It did not when §9 was first written — the divergence was recorded
+here as "being decided separately", and §10 is that decision. `verifyChainHeadAttestation` type-checks
+its arguments before the `try`, so a wrong type throws in both languages and every genuinely untrusted
+input still returns `false` in both.
 
 Two asymmetries are deliberate and are not divergences:
 
@@ -516,6 +518,213 @@ Two asymmetries are deliberate and are not divergences:
 `RangeError` where you previously got a digest. That digest was already wrong — it covered the
 nearest double — so any record it sealed disagreed with the runtime's. Convert at the boundary with
 `BigInt(...)`, where you can see it.
+
+---
+
+## 10. Five SDKs, five answers: `exp`, exotic objects, and a verifier that said `false` too often
+
+§9 narrowed what the *record digest* accepts. This section narrows three more places where the SDKs
+disagreed with each other about the same input — and in each case at least one of them was wrong in
+the direction that accepts something it should not. **No emitted byte moved anywhere in this
+section**: 40,000 randomized JCS inputs and 20,000 record digests were compared against `HEAD` in
+both languages, 0 divergences; the runtime KATs and everything in `conformance/` are untouched.
+
+### The TCT `exp` claim — Python and TypeScript now decode it the way Go, Java and Kotlin did
+
+`verify_tct` / `verifyTct` accepted capability tokens their peers rejected. Measured by running the
+pre-change implementations and the new ones over the same 16 signed tokens
+(`conformance/tct_exp_extended.json`):
+
+| `exp` in the token | Go · Java · Kotlin | Python (before) | TypeScript (before) | both, now |
+|---|---|---|---|---|
+| `2000000000` (integer, future) | valid | valid | valid | valid |
+| `N + 0.5`, at `now = N` | expired | expired | **valid** | expired |
+| `"10000000000"` (numeric string) | refused | **valid** | **valid** | refused |
+| `"1e10"` (exponent string) | refused | refused | **valid** | refused |
+| `true`, at `now = 0` | refused | **valid** | **valid** | refused |
+| `{...}` or `[2000000000]` | refused | refused | **valid** | refused |
+| `null`, absent, `0`, `-1` | refused | refused | refused | refused |
+
+Go's rule is now normative in all five: **`exp` must be a JSON number**, truncated toward zero to
+whole seconds, and the token is expired iff `now >= trunc(exp)`. Go was adopted rather than either of
+the two that changed because Java and Kotlin already implemented it — a standing 3-of-5 majority —
+and because it is the strictest, which is the safe direction for a token verifier.
+
+The `exp: true` row is the one to look at twice. `bool` subclasses `int` in Python and `true` coerces
+to `1` in JavaScript, so the token **verified** at any clock below one second. At a realistic
+timestamp it reads as long expired, which means a test written with a plausible `now` would have
+asserted agreement that was entirely accidental. Every type case in the shared vector pins `now = 0`
+for that reason.
+
+**What this costs you:** if you mint TCTs with a stringified `exp` — `{"exp": "1700000000"}` — Python
+and TypeScript stop accepting them. They were already being refused by Go, Java and Kotlin, so a
+token in that shape never verified across your whole fleet; it verified on two of five SDKs. Emit
+`exp` as a JSON number.
+
+### JCS refuses `Date`, `Map`, `Set` and every other non-plain object (TypeScript only)
+
+Python's `_jcs_write` is an allowlist and always was: `None`, `bool`, `str`, `int`, `float`, `list`,
+`tuple`, `dict`, and everything else raises `TypeError`. TypeScript tested `typeof v === "object"`,
+which is true of `Date`, `Map`, `Set`, `RegExp`, typed arrays, boxed primitives and every class
+instance, and walked all of them with `Object.keys` — emitting whatever own enumerable properties
+they happened to have, which is not what any of them mean. Measured against the pre-fix build:
+
+| input | before | now |
+|---|---|---|
+| `jcsCanonicalize(new Date(0))` | `{}` | `TypeError` |
+| `jcsCanonicalize(new Map([["a", 1]]))` | `{}` | `TypeError` |
+| `jcsCanonicalize(new Set([1, 2]))` | `{}` | `TypeError` |
+| `jcsCanonicalize(new Number(5))` | `{}` | `TypeError` |
+| `jcsCanonicalize(new Uint8Array([1, 2]))` | `{"0":1,"1":2}` | `TypeError` |
+| `jcsCanonicalize(new (class { x = 1 })())` | `{"x":1}` | `TypeError` |
+| a plain object, array, or `Object.create(null)` bag | unchanged | unchanged |
+
+**The last three rows did not collapse to `{}`** — they serialized indices or fields — so this is not
+uniformly "a meaningless digest removed". For `Date`, `Map`, `Set` and boxed numbers it is: the digest
+covered nothing. For a `Uint8Array`, a boxed string or a class instance with own data fields it
+canonicalized *faithfully*, and refusing it is a real narrowing of something that worked. It is
+refused anyway, because Python refuses every one of these and agreement about which inputs have a
+digest at all is the property §9 and §10 exist to buy.
+
+The `Date` row is §9's defect in a third location, and the most reachable one. `tool_input_digest` is
+what `call_sig` signs, so `{ deadline: new Date("2026-01-01") }` and
+`{ deadline: new Date("2030-01-01") }` had **the same signed digest** — every possible deadline
+aliased onto one. A `Date` in a request object is not an exotic input; it is what a TypeScript caller
+writes without thinking about it.
+
+The guard is a rule, not a denylist: an object is accepted iff its prototype is a root — `null`, or
+something whose own prototype is `null` (`function isPlainObject(v: object): boolean {`,
+`ts/src/crypto.ts:265`). An enumeration of
+`Date | Map | Set | ...` is only correct until the next exotic type. Testing the prototype chain's
+*depth* rather than `proto === Object.prototype` is also what keeps objects from other realms (`vm`
+contexts, iframes) working — they have their own `Object.prototype`, and an identity check would
+refuse an ordinary data bag.
+
+**What this costs you:** if you were passing a `Date`, a `Map` or a `Set` into `jcsCanonicalize`, you
+now get a `TypeError` where you previously got a digest. That digest did not cover the value — it
+covered `{}` — so it did not mean what you thought. Convert at the boundary:
+`date.toISOString()`, `Object.fromEntries(map)`, `[...set]`. The error names the type and the
+conversion.
+
+**This reaches you through `authorize()`, not only through the helper.** `ts/src/client.ts:401` calls
+`jcsCanonicalize(toolInput ?? {})` directly, so `authorize({ toolInput: { deadline: new Date() } })`
+now throws where it previously signed a digest over `{"deadline":{}}`. That is the case worth
+checking in your own code, because it is the one where the aliased digest was being *signed*.
+
+### `verifyChainHeadAttestation` stops answering `false` to questions it was never asked
+
+The divergence §9 recorded as "being decided separately". TypeScript wrapped the whole function in
+`try { ... } catch { return false }`, which delivered its "false on any tamper" contract by answering
+`false` to caller bugs too. Measured against the runtime's own KAT:
+
+| call | Python (before) | TypeScript (before) | both, now |
+|---|---|---|---|
+| `attestedLen: "1000"` / `true` / `null` | `TypeError` | `false` | raises |
+| `digestSchema: "2"` | `TypeError` | `false` | raises |
+| `attestedHead: "abab"` (hex string) | `TypeError` | `false` | raises |
+| `signature: "<hex>"` (hex string) | **`False`** | **`true` — it verified** | raises |
+| non-`str` `issuerAid` | `TypeError` | `false` | raises |
+| `attestedLen` outside `[0, 2^64)` | `False` | `false` | `false` |
+| tampered length, head, or signature | `False` | `false` | `false` |
+| malformed or wrong issuer AID | `False` | `false` | `false` |
+| `2^60` as a JS `number` | `False` | `false` | `false` |
+
+`false` is the wrong answer to a caller bug, and wrong in the expensive direction: it does not say
+"you called this wrong", it says "this attestation did not verify", and an operator handed that goes
+looking for a compromised audit chain.
+
+**The `signature` row is the exception, and it is a narrowing rather than a repair.** TypeScript did
+not answer `false` there — it answered `true`, correctly, because `@noble/curves` types its signature
+parameter as `Hex = Uint8Array | string` and decodes hex for you. So a JavaScript caller passing a
+hex-encoded signature had working verification, and now gets a `TypeError`. Python has never accepted
+it (`False`, its own hole in the type pass, now closed). The choice was between one language coercing
+a string the other refuses and both refusing; both refusing is what this whole section is for, but it
+costs something real and is listed under "What this costs you" below rather than counted as a fix.
+
+Raising cannot convert an attack into a crash, which is what makes it safe: attacker-controlled bytes
+decode, through protobuf, into correctly-*typed* values with hostile contents. A wrong type can only
+come from the code doing the calling. Everything genuinely untrusted still returns `false`, so
+`if (!verify(...)) reject()` keeps working.
+
+The last row is a deliberate placement rather than an oversight. `2^60` is a whole number and exactly
+representable — it is simply past the point where its *neighbours* are — and Python, with exact
+integers, digests it and answers `false`. TypeScript's safe-integer check therefore stays *inside*
+the catch, so it reaches the same `false`; hoisting it out with the type checks would have closed one
+divergence by opening another.
+
+**What this costs you:** two different things, worth separating.
+
+- A JavaScript caller (or a TypeScript one using a cast) who passes a wrong-typed argument now gets a
+  thrown `TypeError` where they previously got `false`. Every such `false` was a lie about which
+  artifact was broken, so nothing that worked stopped working.
+- **A hex-string `signature` is the one that did work.** `verifyChainHeadAttestation(aid, {…,
+  signature: "<64 bytes of hex>"})` verified correctly and now raises. If you decode the rest of the
+  attestation from JSON and were letting `@noble/curves` handle the signature's hex, decode it
+  yourself: `Buffer.from(sig, "hex")`. This is the only removal of working behaviour in §10.
+
+Pure TypeScript callers are unaffected by either — the compiler already rejected these calls.
+
+### `recordDigestV2` was the fourth copy of the rule, and it still aliased
+
+Found by verification, not planned. §9 routed the *integer* slots through one guard; the v2 record
+digest's **bytes** and **text** slots were never routed anywhere, and `recordDigestV3` had refused
+all of this since it was written. Measured against the pre-fix build:
+
+| input to `recordDigestV2` | before | now | Python (always) |
+|---|---|---|---|
+| `ciphertextDigest: "0".repeat(32)` | same digest as `new Uint8Array(32)` | `TypeError` | raises |
+| `ciphertextDigest: new Array(32).fill(0)` | same digest as `new Uint8Array(32)` | `TypeError` | raises |
+| `outcome: "\ud800"` | same digest as `outcome: "\ufffd"` | `TypeError` | raises |
+| `decisionId: 5` / `tenant: null` | digested `"5"` / `"null"` | `TypeError` | raises |
+| a `Buffer`, a `subarray`, a cross-realm `Uint8Array` | accepted | accepted | accepted |
+
+Both of the first two are **aliases**, from the same mechanism: `Uint8Array.prototype.set` coerces
+each element through `ToNumber`, so a non-numeric character becomes `NaN` becomes `0`. The surrogate
+row is the alias Phase 2 closed for JCS object *keys*, in the copy that was left behind —
+`TextEncoder` substitutes U+FFFD, so two distinct strings reached one digest.
+
+The guard is not new code: `v3Text` was renamed `textSlot` and `asBytes` was already there. The name
+was the only thing scoping them to v3, and the arguments in their docstrings never mentioned v3 —
+`TextEncoder` and `Uint8Array.set` do not know which framing they are serving. This is the same
+correction `v3Uint` → `uintSlot` received in §9, one function over.
+
+**What this costs you:** nothing that produced a correct digest. Every one of these inputs either
+aliased another input's digest or digested a `ToString` of something that was not text. 20,000
+randomized well-typed inputs compared against `HEAD`: 0 moved, 0 newly refused, 0 newly accepted.
+
+### The `exp` rule is bounded to int64, because in Go it had to be
+
+Also found by verification. Go's `int64(exp)` is **implementation-defined** when the value does not
+fit (Go spec, Conversions), so the rule §10 declared normative was not total. Measured: on arm64 the
+conversion saturates, `int64(1e300)` is `MaxInt64`, and `{"exp": 1e300}` **verifies**; on amd64
+`CVTTSD2SQ` yields `INT64_MIN` and the identical token is **refused**. A normative rule whose answer
+depends on the architecture of whoever is checking is not a rule — and it would have quietly made
+CI's own machine the arbiter.
+
+All five now bound `exp` to `[-2^63, 2^63)` explicitly and refuse outside it. `2^63` is exactly
+representable as a `float64`/double, so the comparison is exact in every language. Python and
+TypeScript gain nothing from the bound on their own — `int()` is arbitrary precision and `Math.trunc`
+is total — they carry it so that all five still agree. `conformance/tct_exp_extended.json` covers
+both sides (`beyond_int64`, `just_below_int64_max`); removing the bound from Go or Python reddens
+exactly the first of those.
+
+**What this costs you:** a TCT with `exp` beyond ~9.2×10^18 seconds is refused. That is roughly
+292 billion years; no real token is affected.
+
+### `ts/package.json` declares `engines.node: ">=20"`
+
+The package previously declared no `engines` at all, so `npm install` accepted it on any runtime
+while CI only ever built and tested it on Node 20. A consumer on Node 16 got no install-time warning
+and a failure later, inside a crypto library, at the moment it was asked to verify something.
+
+It is a floor and **not** a ceiling, deliberately. The report that Node ≥ 24 corrupts canonical JSON
+was investigated and refuted — it was a harness artifact, Python's `str.splitlines()` splitting one
+JSON-lines record in two because it treats U+2028/U+2029/U+0085 as line terminators. The TypeScript
+suite passes on current Node. `python/tests/test_node_engines_floor.py` holds the floor and the CI
+pins to one number and refuses an upper bound, so neither half can drift alone.
+
+**What this costs you:** nothing, unless you were installing on Node < 20, where this SDK was never
+tested.
 
 ---
 

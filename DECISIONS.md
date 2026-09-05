@@ -6,6 +6,161 @@ assumption, the independent recommender's analysis, the human verdict, and the r
 produced it.
 
 
+## 2026-09-04 — adopting Go's `exp` rule as normative for all five SDKs
+
+Five SDKs verified a TCT and five decoded its `exp` claim differently. That is not a style
+difference: a capability token that verifies on two of five implementations and is refused by three
+is a security boundary that depends on which language happens to be checking it. Something had to be
+declared normative, and the candidates were the three rules actually in the tree:
+
+| rule | implementations | accepts |
+|---|---|---|
+| `payload["exp"].(float64)` + `int64(exp)` | Go, Java, Kotlin | JSON numbers only, truncated toward zero |
+| `int(payload.get("exp", 0))` | Python | the above, plus numeric strings and `true` |
+| `now >= (payload.exp ?? 0)` | TypeScript | the above, plus `"1e10"`, fractions, objects, arrays |
+
+**Go's rule was adopted.** Three reasons, in the order they carried weight:
+
+1. **It was already the majority.** Java and Kotlin implement it independently (`instanceof Number`
+   + `longValue()`, `as? Number` + `toLong()`). Adopting it moved two SDKs; adopting either other
+   rule would have moved three, and would have loosened a verifier to do it.
+2. **It is the strictest.** For a token verifier, the safe direction is to refuse what you do not
+   understand. Both other rules reach their extra acceptances through *coercion* — `int("1e10")`,
+   `ToNumber(true)` — and a coercion in a verifier is a value nobody supplied being treated as one
+   that was.
+
+**The rule had to be BOUNDED to be total, which verification caught and the first draft missed.**
+Go's `int64(exp)` is implementation-defined when the value does not fit: measured, arm64 saturates
+and `{"exp": 1e300}` verifies, while amd64 yields `INT64_MIN` and refuses the identical token. "Adopt
+Go's rule" would therefore have meant different things on different machines, with CI's own
+architecture as the accidental arbiter — a normative rule that is not one. All five now refuse `exp`
+outside `[-2^63, 2^63)` explicitly. Python and TypeScript need no such bound alone; they carry Go's
+constraint so the five agree, which is the same trade this whole decision is made of.
+3. **It is the only one with a written rationale.** The type assertion that *is* the rule
+   (`exp, ok := payload["exp"].(float64)`, `go/crypto/crypto.go:194`) and the truncation semantics
+   below it (`go/crypto/crypto.go:198-203`) are both argued in comments at the code; the other two
+   rules were the shortest expression that worked in that language.
+
+The alternative considered and rejected was **union semantics** — accept anything any SDK accepts,
+so nothing that verifies today stops verifying. It is the compatible choice and it is the wrong one:
+it would have made `{"exp": {"seconds": 2000000000}}` a valid token in all five languages, because
+`0 >= NaN` is false in JavaScript and a guard whose false branch is the permissive one fails open on
+every input it cannot parse. Compatibility with a bug is not a property worth preserving in a
+verifier.
+
+**What made the decision checkable rather than declarative** is
+`conformance/tct_exp_extended.json` — 16 signed tokens, machine-emitted, whose expected verdicts are
+computed from the *rule* by `scripts/emit_tct_exp_vectors.py` rather than read out of any
+implementation. Go, Python and TypeScript each read it from their own test suite. A vector whose
+expectations are recorded from the code it checks cannot fail; it only writes down what the code
+already did.
+
+One case in it is worth naming because the first draft got it wrong. `exp: true` coerces to `1` in
+both Python and JavaScript, so the token **verified** at any clock below one second — and at a
+realistic timestamp it reads as long expired. A vector written with a plausible `now` would have
+asserted cross-language agreement that was entirely accidental, and would have stayed green through
+the exact bug it was named after. Every type case pins `now = 0`.
+
+Java and Kotlin do **not** yet read the vector. They already implement the rule — that is why it was
+adopted — but this workstation has no JDK, so a consumer written for them could not be run before
+being committed, and an unverified test is how a vacuous one lands. Tracked as follow-up rather than
+shipped blind.
+
+**Status:** DECIDED. Recorded here rather than in `ASSUMPTIONS.md` because it is settled, not
+pending: the rule is implemented in five languages and pinned by a vector in three.
+
+
+## 2026-09-04 — `jcsCanonicalize` refuses non-plain objects by a RULE, not a denylist
+
+`Date`, `Map`, `Set`, `RegExp`, typed arrays, boxed primitives and class instances all satisfy
+`typeof v === "object"`, so JCS walked them with `Object.keys` and emitted whatever own enumerable
+properties they happened to have. For `Date`, `Map`, `Set` and boxed numbers that is nothing, so they
+became `{}` — and `{ deadline: new Date(...) }` had the same `tool_input_digest` for every possible
+deadline, with `callSig` signing it.
+
+The other half needs stating, because the tidy version of that sentence is false: a `Uint8Array`
+canonicalized to `{"0":1,"1":2}`, a boxed string to `{"0":"x"}`, and a class instance to its own
+fields. Those did **not** lose their contents. Refusing them is a genuine narrowing of working
+behaviour, taken because Python refuses every one of them and the property being bought is that the
+two agree on what has a digest — not because those digests were meaningless.
+
+The obvious fix is a denylist — refuse `Date`, `Map`, `Set`, and so on. It was rejected. An
+enumeration is correct only until someone passes the exotic type it forgot, and the failure mode it
+leaves open is not "an error" but "silently digests an object with none of its contents". This repo
+has now found the same defect in three places (`u64le`'s wrap, the surrogate object key, this), and
+the shape has never varied: **a rule living in more than one place, with one of the copies
+incomplete.** A denylist is that shape by construction.
+
+The rule adopted instead: an object is canonicalizable iff its prototype is a **root** — `null`, or
+something whose own prototype is `null`. A plain `{}` and `Object.create(null)` qualify; everything
+with a constructor between it and `Object.prototype` does not. It mirrors Python's `isinstance(v,
+dict)`, which is a nominal check and has never had this bug.
+
+Testing the chain's **depth** rather than `proto === Object.prototype` is deliberate and
+load-bearing. An object from a `vm` context or another frame has its own `Object.prototype`, so an
+identity check would refuse a perfectly ordinary data bag; its prototype's prototype is still
+`null`. A test pins this specifically, and reverting to the identity check reddens exactly that test.
+
+Two behaviours were left as they are, and both are decisions rather than omissions:
+
+- **`toJSON` is not honoured.** An object carrying one currently raises, because the walk reaches the
+  function value. `JSON.stringify` would call it. Honouring it would mean the canonical bytes depend
+  on a method the digest cannot see, and Python has no equivalent — so a `toJSON` that changed would
+  silently change a signed digest in one language only. Refusing is the cross-language-safe answer.
+  Logged UNCONFIRMED in `ASSUMPTIONS.md`, since it rests on no caller relying on it.
+- **Symbol keys are still dropped silently.** `Object.keys` skips them, as `JSON.stringify` does, and
+  Python cannot express a symbol key at all. This one is genuinely a JSON-standard behaviour rather
+  than a hole in the guard, but it is worth writing down that it was looked at and not an oversight.
+
+**Status:** DECIDED.
+
+
+## 2026-09-04 — `verifyChainHeadAttestation` raises on a caller bug instead of returning `false`
+
+A verifier that throws is normally a bad verifier: a caller writing `if (!verify(...)) reject()`
+crashes where it should have rejected. That is why the blanket `catch { return false }` was there,
+and it is the strongest argument against this change.
+
+It loses to a sharper one. **`false` is not a neutral answer here — it is a specific claim**, and the
+claim is "this attestation did not verify". A caller who passed a string `attestedLen`, or the hex of
+an `attestedHead`, was told the audit chain was bad. An operator handed that goes looking for a
+compromise. Python's twin already documented this as "the one outcome worse than the crash", and had
+implemented it for five of its six arguments; `signature` was the hole.
+
+**`signature` is also the one place this is a narrowing rather than a repair**, and the first draft of
+this entry got it backwards — worth recording, because the error was the easy kind to make. TypeScript
+did not answer `false` to a hex-string signature: it answered `true`, correctly, because
+`@noble/curves` types the parameter as `Hex = Uint8Array | string` and decodes it. So a JavaScript
+caller passing hex had working verification and now gets a `TypeError`. Only Python's `False` there
+was a lie.
+
+Refusing it anyway is the deliberate call. The alternative is one language silently coercing a string
+the other refuses — the divergence this phase exists to close — and closing it toward the stricter
+side is the same choice made for `exp`. It is a real cost, disclosed as one in `COMPATIBILITY.md` §10
+under "What this costs you", not counted as a bug fixed.
+
+What makes raising safe is that **a wrong type cannot arrive from an attacker.** Attacker-controlled
+bytes decode, through protobuf, into correctly-typed values with hostile *contents*. So this never
+converts an attack into a crash; it converts a programming error into a visible programming error.
+Everything genuinely untrusted — out-of-range integers, a malformed AID, a wrong-length or forged
+signature, a tampered head — still returns `false`, in both languages, measured over 20,000
+randomized well-typed inputs against `HEAD` with 0 verdict changes.
+
+The boundary needed one non-obvious call. TypeScript's `uintSlot` refuses a `number` above 2^53
+because its *neighbours* are not representable — but `2 ** 60` itself is exact, and Python holds it
+as an ordinary integer, digests it, and answers `false`. Hoisting that check out with the type checks
+would have made TypeScript throw where Python returns `false`: **closing one divergence by opening
+another.** It stays inside the catch, so both reach the same `false`. The split is therefore not
+"type checks out, value checks in" but "could this have arrived over the wire?" — a string, a
+boolean, a `null` and a fractional number could not; a large integer could.
+
+Error *classes* still differ across the two languages for one input: a fractional `attestedLen`
+raises `RangeError` in TypeScript and `TypeError` in Python, because JavaScript has one number type
+and "not a whole number" is a fact about the value there. Both refuse, which is the property that
+matters. Identical exception classes across two languages is not a promise this SDK makes.
+
+**Status:** DECIDED.
+
 ## 2026-09-03 — refusing a `number` above 2^53 in the v2 record digest: a narrowing, not a fix
 
 Three of the four TypeScript changes in this phase close a demonstrated **alias** — two distinct
@@ -216,7 +371,7 @@ wrong answers rather than misses:
 - **In a table row the subject wins.** `PROGRESS.md`'s repo-map row for `python/seam_sdk/crypto.py`
   names `python/seam_sdk/admin.py:141` mid-sentence and then continues with four more bare
   references, all of which are crypto.py. Binding them to the nearer citation reports
-  `python/seam_sdk/crypto.py:609` as past-EOF — it is `_opt_bytes`, and the claim is true.
+  `python/seam_sdk/crypto.py:630` as past-EOF — it is `_opt_bytes`, and the claim is true.
 - **Inheritance must not cross a line.** `PROGRESS.md` writes `p1a:103-107` followed by bare
   companions, where `p1a` is a shorthand alias for a sibling-repo spec and not a path at all. A
   paragraph-scoped resolver walks past it and binds those references to whatever file the previous
@@ -1038,7 +1193,7 @@ not as written.
 - **Correction to the entry's blast-radius claim:** "every such digest was wrong, so no correct
   caller breaks" is too strong. A proto3-JSON int64-as-string (`sealedAt: "123"`) coerced
   *correctly* through `BigInt` under the old TS behavior and is now refused. The refusal is loud, at
-  the first record, and names the fix (`ts/src/crypto.ts:573-585`) — and accepting strings reopens
+  the first record, and names the fix (`ts/src/crypto.ts:725-730`) — and accepting strings reopens
   `BigInt("")→0n` and `BigInt([5])→5n`. The choice stands; the justification does not extend to
   "nothing that used to work stops working."
   *(Citation corrected 2026-09-03. It named lines 509-522, which then held `v3Text` — the string slot

@@ -50,7 +50,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 > checkpoint trail lives in git history (`git log -p -- PROGRESS.md`); nothing here carries over.
 >
 > **Done in Phase 1 (2026-08-31).** Delivery was verified against this tree — `record_digest_v3` at
-> `python/seam_sdk/crypto.py:614`, `ts/src/crypto.ts:639`, `verify/src/verify.rs:448`; the 6a/6b
+> `python/seam_sdk/crypto.py:635`, `ts/src/crypto.ts:814`, `verify/src/verify.rs:448`; the 6a/6b
 > streamed arms live at `python/seam_sdk/admin.py:129` and `ts/src/admin.ts:141`; KATs at
 > `conformance/vectors.json:70` — and the plan is now `plans/archive/record-digest-v3.md`.
 > `plans/authorize-single-canonicalization.md` turned out to be delivered too (issue #60, closed
@@ -84,7 +84,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `.github/workflows/publish.yml:316` | `make generate` **again at publish time**, against unpinned plugins — the open half of #52. `:390-401` pre-upload smoke installs protobuf *unconstrained*, so the skew is invisible to it; `registry-smoke` (`:519`) likewise. Measured at planning: `grep -rn protobuf .github/workflows/` yielded **one** hit, a prose comment — no workflow pinned protobuf anywhere, so nothing caught the skew. **Phase 6 closed that** (DONE 2026-08-31): the same grep now yields 17, and `.github/workflows/publish.yml:423` installs the built wheel with `protobuf==$FLOOR`. The declared floor and the emitted gencode are both **7.36.0** (`python/pyproject.toml:50`, `python/seam_sdk/_gen/seam/api/v1/seam_pb2.py`'s `Protobuf Python Version` header — cited by symbol, not by line, since it is a generated, gitignored file) — zero headroom, which is why this phase ran first. |
 | `.github/workflows/publish.yml:63-148` | `ci-green` — resolves every `ci-ok` conclusion for the tagged commit. Sound: `:107` still-running ⇒ `pending`, `:117-126` one-green-cannot-mask-one-red, `:143-148` timeout is a refusal. `:192`/`:285` gate both npm and python. **Must not regress.** |
 | `.github/workflows/publish.yml:150-188` | `version-check` — tag vs in-tree versions. It had **no branch-ancestry check** (`.github/workflows/ci.yml:19` runs on every branch push, so a tag at a green feature-branch commit published cleanly); **Phase 6 added one at `:176`**, which is inside this row's own range. Read the range as the job, not as evidence of the gap — it was widened in round 1 until it contained the very step it is cited for lacking. |
-| `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:827`. |
+| `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:982`. |
 | `python/tests/test_protobuf_floor.py:72,88` | The two pure-file-read assertions Phase 6 runs at publish time. `:29-31` reads only `_gen/seam/api/v1/seam_pb2.py`; `:47-51` **skips** when `_gen` is absent. `:88-99` forces `cap == gencode_major + 1` — this is why "widen the floor" is not a metadata edit. |
 | `python/tests/test_grpcio_floor.py:38` | Module-level `import grpc` — matters if Phase 6 runs it in the publish job. |
 | `.github/workflows/yank.yml` | `workflow_dispatch`, `dry_run` default `"true"`. A hard **DELETE** (`:91-92`), not a PyPI-style yank. Its token line did **not** strip the cargo token's `"Bearer "` prefix (`.github/workflows/publish.yml:383-385` does) — **Phase 10 fixed it** (DONE 2026-08-31) at `.github/workflows/yank.yml:55-60`, and left the version/format/name filters (`:73-76`) byte-unchanged. `scripts/test_yank_gate.py` now executes the resolution and pins those filters. |
@@ -155,7 +155,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   - *R2 GAPS (3):* the `:109`→`:141` fix reached `PROGRESS.md` but missed
     `plans/archive/record-digest-v3.md:12`; removing a duplicated execution-order block ate the
     blank line and merged two paragraphs; and the path repoint **over-replaced** four quoted
-    `DECISIONS.md` section titles, which are lookup keys that must match `DECISIONS.md:1019`
+    `DECISIONS.md` section titles, which are lookup keys that must match `DECISIONS.md:1174`
     verbatim, not paths.
   - *R3 PASS:* all three closed, both halves of the over-replacement checked (quoted titles reverted,
     `**Plan:**` paths still archive-pointed), no new breakage, 545/17 green.
@@ -167,7 +167,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   `python/pyproject.toml` and `ts/package.json` (version stamps) — no line number cited anywhere in
   the plan moved. Merge commit `68e92c2`; branch `feat/publish-integrity-and-tracking-state`.
 - **Delivery verified against code, not status tables** (the whole point of the phase):
-  `record_digest_v3` at `python/seam_sdk/crypto.py:614`, `ts/src/crypto.ts:639`,
+  `record_digest_v3` at `python/seam_sdk/crypto.py:635`, `ts/src/crypto.ts:814`,
   `verify/src/verify.rs:448`; streamed v3 arms at `python/seam_sdk/admin.py:129` (with `:107`
   refusing `schema_version > 3`) and `ts/src/admin.ts:141` (with `:109` the matching ceiling
   refusal); KATs at `conformance/vectors.json:70`;
@@ -2366,10 +2366,11 @@ value and the whole suite stayed green. Seven anchors added to
 because their documents cite those paths several times over — without which a needle can be
 satisfied by a sibling citation the claim never named. All five mutation-verified.
 
-One divergence was **surfaced and deliberately not fixed**: `verifyChainHeadAttestation` swallows
-every `TypeError` in a blanket `catch { return false }`, where Python lets it propagate. That is a
-decision about a public API, not a defect, so it moved to Phase 3 — which exists for exactly that —
-rather than being settled inside a phase about aliasing.
+One divergence was **surfaced and deliberately not fixed**: at the close of Phase 2,
+`verifyChainHeadAttestation` still swallowed every `TypeError` in a blanket `catch { return false }`,
+where Python let it propagate. That is a decision about a public API, not a defect, so it moved to
+Phase 3 — which exists for exactly that — rather than being settled inside a phase about aliasing.
+(Phase 3 settled it; the catch now sees only untrusted input.)
 
 **Round 3 found the code correct** — all eleven code mutations died — and the gap entirely in the
 citation layer: this phase's insertions stranded roughly fifteen `file:line` citations across seven
@@ -2413,3 +2414,126 @@ Measured after: python **1069 passed / 17 skipped** · ts **148 tests, 138 pass,
 `git status conformance/` **empty** — criterion 7 held: not one KAT or conformance vector moved,
 confirmed by three independent differentials against `HEAD` (20,000 · 40,000 · 4,000 randomized
 in-range `record_digest_v2` inputs, 0 divergences in each) rather than by file identity alone.
+
+### Phase 3 — divergences that need a decision, not just a fix — DONE
+
+Four items, and the shape of the phase was different from 1 and 2: none of these was a bug in one
+implementation. Each was **five implementations disagreeing about the same input**, where naming the
+right answer mattered more than writing the fix.
+
+**Item 1 — the TCT `exp` claim.** Confirmed the normative reference in three languages before
+touching anything: Go `payload["exp"].(float64)` + `int64(exp)`, Java `instanceof Number` +
+`longValue()`, Kotlin `as? Number` + `toLong()` — a genuine 3-of-5 majority with consistent
+truncate-toward-zero semantics, and the only one of the three rules in the tree with a written
+rationale at the code. Adopted; argued in `DECISIONS.md`.
+
+Then measured, rather than reasoned: a signed-TCT probe run against the pre-change and post-change
+implementations in **all three** runnable languages. TypeScript accepted six shapes Go refuses
+(fractional, numeric string, `"1e10"`, boolean, object, array); Python accepted two. All eight are
+capability tokens a verifier honoured that its peers rejected.
+
+**The acceptance criterion I wrote would have missed the sharpest one.** At `now = 1000`, `exp: true`
+looks correctly refused in both languages — `1000 >= 1` is expired. At `now = 0` it **verified**,
+because `bool` subclasses `int` in Python and `true` coerces to `1` in JavaScript. A vector written
+with a plausible timestamp would have asserted agreement that was entirely accidental and stayed
+green through the exact bug it was named after. Every type case in the shared vector pins `now = 0`.
+
+The vector is `conformance/tct_exp_extended.json` — 16 signed tokens, machine-emitted, following the
+SDK-owned precedent `conformance/authorize_jcs_int_extended.json` established. Its expected verdicts
+are computed from the **rule** by `scripts/emit_tct_exp_vectors.py`, never read out of an
+implementation; a vector recorded from the code it checks cannot fail. Go reads it too, even though
+Go is the reference — "Go is normative" is a claim about the vector, and an unchecked claim is how a
+reference drifts from the thing referencing it.
+
+One case in the first draft was vacuous and had to be repaired: `fractional_negative` at `now = 0`
+could not tell truncation from flooring, since both expire `-1.5`. It now runs at `now = -2`, the
+only clock between `trunc(-1.5) = -1` and `floor(-1.5) = -2`, and a Go mutation from `int64(exp)` to
+`int64(math.Floor(exp))` kills exactly that case and nothing else.
+
+**Item 2 — JCS and non-plain objects.** `typeof v === "object"` admitted `Date`, `Map`, `Set`,
+`RegExp`, typed arrays, boxed primitives and class instances, none of which keep state in own
+enumerable properties, so all of them canonicalized to `{}`. This is §9's aliasing defect in a third
+location and by far the most reachable: `{ deadline: new Date(...) }` had **one signed digest for
+every possible deadline**. Python has never had it — `_jcs_write` is an allowlist.
+
+Fixed with a rule rather than a denylist of `Date | Map | Set | …`, because an enumeration is correct
+only until the next exotic type, and this repo has now found the same defect three times with the
+shape never varying. An object is canonicalizable iff its prototype is a root. Testing the chain's
+*depth* rather than `proto === Object.prototype` also keeps cross-realm objects working; a mutation
+to the identity check reddens exactly the test that says so.
+
+One claim in the first write-up was too tidy and the verify gate caught it: "none of these keep state
+in own enumerable properties, so they emitted `{}`" is true of `Date`, `Map`, `Set` and boxed numbers,
+and false of the rest — a `Uint8Array` emitted `{"0":1,"1":2}`, a class instance emitted its fields.
+Those canonicalized faithfully, so refusing them is a real narrowing rather than a meaningless digest
+removed. Corrected in four places.
+
+**Item 3 — `verifyChainHeadAttestation`'s blanket catch**, routed here from Phase 2. Measured the
+whole surface across both languages first: 14 inputs, 7 diverging — six of them the same shape,
+Python raising on a caller bug where TypeScript returned `false`. The measurement also found a hole
+in **Python's** own rule that neither the plan nor Phase 2 had named: `signature` was the one
+argument never type checked.
+
+The seventh diverged the other way, and I wrote it up backwards before the verify gate caught it.
+TypeScript did not return `false` for a hex-string signature — it returned `true`, correctly, because
+`@noble/curves` types the parameter as `Hex = Uint8Array | string`. So refusing it is a **narrowing of
+working behaviour**, not a repair, and four documents said the opposite. Corrected, and disclosed as
+a cost in `COMPATIBILITY.md` §10 rather than counted as a fix. The lesson is narrow but sharp: I had
+measured Python's pre-state and inferred TypeScript's from the shape of the other six.
+
+The non-obvious call was where to draw the line. Hoisting TypeScript's safe-integer check out with
+the type checks would have made `2 ** 60` throw where Python — with exact integers — returns `false`:
+**closing one divergence by opening another.** It stays inside the catch. The split is not "types out,
+values in" but "could this have arrived over the wire?". Pinned by a test; hoisting the check reddens
+it.
+
+**Item 4 — `engines.node`.** Packaging hygiene, and the guard matters more than the field: a declared
+floor nobody checks is the same defect as no floor at all. `python/tests/test_node_engines_floor.py`
+binds `engines.node` to the workflows' `node-version` pins, refuses an upper bound (the Node ≥ 24
+report was refuted as a harness artifact — see `DECISIONS.md`), and fails if the pins are ever
+renamed out from under it rather than skipping its way to green.
+
+Nothing accepted moved. Four differentials against `HEAD`: 40,000 randomized JCS inputs (0 moved, 0
+newly refused), 20,000 `recordDigestV2`, 20,000 `record_digest_v2`, and 20,000 well-typed
+`verifyChainHeadAttestation` verdicts in each language — 0 divergences in every one. Eight mutations
+were run against the new guards and each killed exactly the intended test and nothing else; the
+strongest was running the whole new `exp` suite against the real pre-change build, where it reddened
+on precisely the six shapes TypeScript had accepted.
+
+Java and Kotlin do not read the shared vector: this workstation has no JDK, and writing a test whose
+first execution is CI is how a vacuous test lands — the failure mode this run has already spent four
+rounds on. Recorded in `ASSUMPTIONS.md` as follow-up rather than shipped blind.
+
+**The Phase 3 verify gate found one BLOCKING item, three moderate ones and a set of smaller ones**,
+and the blocking one was a claim rather than a bug. I had written that a hex-string `signature`
+returned `false` in TypeScript before this change. It returned `true` — `@noble/curves` types the
+parameter as `Hex = Uint8Array | string` and decodes it — so the change removes working behaviour,
+and four documents plus two source comments said the opposite. The refusal stands, because the
+alternative is one language coercing a string the other refuses; the write-up was wrong, not the
+code. What produced the error is worth naming: I measured Python's pre-state directly and inferred
+TypeScript's from the shape of the six inputs around it.
+
+Two of the moderate findings were the run's own recurring pattern, in the one function the brief
+pointed at. `recordDigestV2` never routed its **bytes** or **text** slots through any guard, so
+`ciphertextDigest: "0".repeat(32)` produced the same digest as `new Uint8Array(32)` (`Uint8Array.set`
+coerces through `ToNumber`, and a non-numeric character becomes `0`), and `outcome: "\ud800"` the same
+digest as `"�"`. `recordDigestV3` had refused all of it since it was written; the guards existed
+and were named `v3Text`, and the name was the only thing scoping them. Renamed to `textSlot` and
+routed — the identical correction `v3Uint` → `uintSlot` received in Phase 2, one function over. That
+is the fourth copy of this rule found in three phases.
+
+The third was that the rule I had just declared normative was not total: Go's `int64(exp)` is
+implementation-defined when the value does not fit, so `{"exp": 1e300}` **verifies** on arm64
+(saturating) and is **refused** on amd64 — making CI's own architecture the arbiter of a
+cross-language contract. All five now bound `exp` to `[-2^63, 2^63)`, with both sides of the bound in
+the vector; removing it from Go or Python reddens exactly the `beyond_int64` case.
+
+The gate also showed three vector cases asserting nothing — `boolean_false`, `null` and `absent` all
+ran at a clock where the coercing rule refuses them too. Moved to `now = -1`, where `?? 0` and
+`get("exp", 0)` both accept. The vector now catches **ten** of eighteen cases against the real
+pre-change TypeScript build, up from six, and five against Python, up from two.
+
+Measured after: python **1109 passed / 20 skipped** · ts **174 tests, 164 pass, 0 fail, 10 skipped** ·
+`pytest scripts -q` **116 passed** · go ok · `verify/` ok · `ruff`/`gofmt`/`clippy` clean ·
+`STREAM=1 EVENTS=1 ./scripts/check-contract.sh` **exit 6** with exactly the five recorded lag fields ·
+`git diff HEAD -- conformance/` **empty**. Nothing accepted moved, across six differentials.

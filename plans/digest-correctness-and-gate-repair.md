@@ -290,7 +290,13 @@ all, in both the key and the value position.
 
 ### Phase 3 — Divergences that need a decision, not just a fix
 
-**Status:** TODO
+**Status:** DONE. All four items landed as planned. Two divergences the plan did not name were found
+by measuring rather than reasoning and closed in the same phase: `exp: true` was ACCEPTED by Python
+and TypeScript at any clock below one second (invisible at a realistic `now`, so the shared vector
+pins `now = 0` on every type case), and `signature` was the one argument Python's own type pass had
+always skipped. Go's `exp` rule was adopted as normative; Java and Kotlin already implement it but do
+not yet read the shared vector, since this workstation has no JDK — recorded in `ASSUMPTIONS.md`
+rather than written blind.
 
 **Delivers:** one normative rule for `exp` decoding implemented in all languages, a decision on
 non-plain-object coercion in TS, a decision on whether `verifyChainHeadAttestation` swallows type

@@ -3,6 +3,9 @@
   "version": "0.7.71",
   "description": "TypeScript SDK for the Seam decision-boundary runtime — gRPC transport + stock-crypto client shim.",
   "license": "Apache-2.0",
+  "engines": {
+    "node": ">=20"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/zer07labs/seam-sdk.git",

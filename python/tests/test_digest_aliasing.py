@@ -21,11 +21,16 @@ nothing about a green suite tells you a blanket except has widened underneath it
 from __future__ import annotations
 
 import base64
+import collections
+import datetime
+import json
+import pathlib
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from seam_sdk import crypto
+from seam_sdk.crypto import jcs_canonicalize
 
 
 def _b64url(b: bytes) -> str:
@@ -307,3 +312,159 @@ def test_any_byte_sequence_is_still_accepted_for_attested_head() -> None:
     for value in ("nope", 5, None, [1, 2, 3]):
         with pytest.raises(TypeError):
             crypto.verify_chain_head_attestation(aid, 5, value, 0, 2, sig)
+
+
+# ── The other side of the JCS type rule ──────────────────────────────────────────────────────────
+# TypeScript's `typeof v === "object"` admitted `Date`, `Map`, `Set`, `RegExp`, typed arrays, boxed
+# primitives and class instances into `jcsCanonicalize`, all of which canonicalized to `{}` because
+# none of them carry state in own enumerable properties. Python never had that bug: `_jcs_write` is
+# an allowlist (`None`/`bool`/`str`/`int`/`float`/`list`/`tuple`/`dict`) and everything else raises.
+#
+# These tests exist anyway, and not as ceremony. The cross-language invariant this module claims is
+# that the implementations agree on WHICH INPUTS HAVE A DIGEST AT ALL, and an invariant asserted on
+# only one side is half an invariant: if Python were ever loosened to be helpful — a `default=str`,
+# a `dataclasses.asdict` fallback, an `isinstance(v, Mapping)` widening — TypeScript's guard would
+# still be green and the divergence would reopen from the language that was never the problem.
+
+
+def test_jcs_refuses_every_non_json_type_typescript_now_refuses() -> None:
+    """The Python-side analogue of each type TS silently emitted as ``{}``."""
+    import array
+    import decimal
+    import re
+
+    for label, value in [
+        ("datetime", datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)),
+        ("date", datetime.date(2026, 1, 1)),
+        ("set", {1, 2}),
+        ("frozenset", frozenset({1})),
+        ("bytes", b"ab"),
+        ("bytearray", bytearray(b"ab")),
+        ("memoryview", memoryview(b"ab")),
+        ("array", array.array("B", [1, 2])),
+        ("regex", re.compile("x")),
+        ("Decimal", decimal.Decimal("1.5")),
+        ("complex", 1 + 2j),
+        ("object", object()),
+        ("class instance", type("Thing", (), {"x": 1})()),
+    ]:
+        with pytest.raises(TypeError, match="not JSON-serializable"):
+            jcs_canonicalize(value)
+        with pytest.raises(TypeError, match="not JSON-serializable"):
+            jcs_canonicalize({"field": value})
+
+
+def test_the_alias_that_made_this_urgent_cannot_occur_in_python() -> None:
+    """Two different timestamps must never reach one digest — the TS failure, asserted from here."""
+    a = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+    b = datetime.datetime(2030, 1, 1, tzinfo=datetime.timezone.utc)
+    for value in (a, b):
+        with pytest.raises(TypeError):
+            jcs_canonicalize({"deadline": value})
+    # And the shape a caller must move to still digests, distinctly — the refusal is not a dead end.
+    assert jcs_canonicalize({"deadline": a.isoformat()}) != jcs_canonicalize(
+        {"deadline": b.isoformat()}
+    )
+
+
+def test_plain_json_data_still_canonicalizes_unchanged() -> None:
+    """The accepting side, pinned as hard as the refusing side.
+
+    A type guard that refuses ordinary data to fix a bug callers do not have is the worse defect.
+    """
+    assert jcs_canonicalize({"b": 1, "a": 2}) == b'{"a":2,"b":1}'
+    assert jcs_canonicalize([1, {"a": None}, "x"]) == b'[1,{"a":null},"x"]'
+    assert jcs_canonicalize((1, 2)) == b"[1,2]", (
+        "a tuple is a JSON array, as it always was"
+    )
+    assert jcs_canonicalize(collections.OrderedDict(b=1, a=2)) == b'{"a":2,"b":1}', (
+        "a dict SUBCLASS is still a dict; the allowlist is nominal, and narrowing it to exactly "
+        "`type(v) is dict` would break callers for no cross-language gain"
+    )
+
+
+# ── `signature` joins the type pass ──────────────────────────────────────────────────────────────
+# Every other argument answered a wrong TYPE with ``TypeError``. ``signature`` did not: it is only
+# touched by the Ed25519 verify inside the blanket ``except``, so a wrong-typed one came back
+# ``False`` — "this attestation did not verify" — when the truth was "you passed a str". The slip
+# that produces it is the ordinary one: handing over the hex STRING instead of the decoded bytes.
+#
+# TypeScript's twin had the whole of this problem rather than one sixth of it; see
+# ``ts/tests/digest_aliasing.test.ts``. What both now implement is one rule: a wrong TYPE is a caller
+# bug and raises, and everything an attacker or a corrupt record can actually produce still returns
+# ``False``. Raising cannot turn an attack into a crash — attacker-controlled bytes decode, through
+# protobuf, into correctly-typed values with hostile CONTENTS.
+
+
+#: The runtime's committed chain-head KAT — the same entry `test_conformance.py` and the TypeScript
+#: twin read, so a runtime regen updates one file and reddens every consumer rather than leaving a
+#: hand-copied signature here to go quietly stale.
+_KAT = json.loads(
+    (pathlib.Path(__file__).parents[2] / "conformance" / "vectors.json").read_text()
+)["chain_head_attestation"]
+_ATTESTATION_KAT = {
+    "issuer_aid": _KAT["issuer_aid"],
+    "attested_len": _KAT["inputs"]["attested_len"],
+    "attested_head": bytes.fromhex(_KAT["inputs"]["attested_head_hex"]),
+    "attested_at": _KAT["inputs"]["attested_at"],
+    "digest_schema": _KAT["inputs"]["digest_schema"],
+    "signature": bytes.fromhex(_KAT["signature_hex"]),
+}
+
+
+def test_a_wrong_typed_signature_raises_rather_than_reporting_a_failed_attestation() -> (
+    None
+):
+    v = _ATTESTATION_KAT
+    # The control. Without it, a verifier that raised unconditionally would satisfy everything below.
+    assert crypto.verify_chain_head_attestation(**v) is True
+
+    for label, bad in [
+        ("hex str", v["signature"].hex()),
+        ("int", 5),
+        ("None", None),
+        ("list of ints", list(v["signature"])),
+    ]:
+        with pytest.raises(TypeError, match="signature must be a byte sequence"):
+            crypto.verify_chain_head_attestation(**{**v, "signature": bad})
+
+    # Any byte SEQUENCE is still accepted, through the module's one definition of that — the same
+    # `_as_bytes` `attested_head` and `record_digest_v3` use. Narrowing to `bytes` alone here would
+    # reintroduce, one argument over, the exact defect the `attested_head` check was fixed for.
+    assert (
+        crypto.verify_chain_head_attestation(
+            **{**v, "signature": bytearray(v["signature"])}
+        )
+        is True
+    )
+    assert (
+        crypto.verify_chain_head_attestation(
+            **{**v, "signature": memoryview(v["signature"])}
+        )
+        is True
+    )
+
+
+def test_untrusted_input_still_returns_false_and_never_raises() -> None:
+    """The half that makes promoting caller bugs to exceptions safe to ship.
+
+    A caller writing ``if not verify(...): reject()`` must keep working against everything an
+    attacker can actually send. Only genuine caller bugs became exceptions.
+    """
+    v = _ATTESTATION_KAT
+    for label, over in [
+        ("out-of-range attested_len", {"attested_len": (1 << 64) + 5}),
+        ("out-of-range attested_at", {"attested_at": 1 << 64}),
+        ("out-of-range digest_schema", {"digest_schema": 1 << 32}),
+        ("tampered attested_len", {"attested_len": v["attested_len"] + 1}),
+        ("tampered head", {"attested_head": bytes(32)}),
+        ("wrong-length signature", {"signature": bytes(10)}),
+        ("forged signature", {"signature": bytes(64)}),
+        ("malformed issuer AID", {"issuer_aid": "nope"}),
+        ("wrong issuer AID", {"issuer_aid": v["issuer_aid"][:-1] + "x"}),
+        # 2^60 is an ordinary exact integer in Python. TypeScript refuses it as a *number* because
+        # its neighbours are not representable, but reaches this same `False` — the refusal happens
+        # inside its catch, on purpose. See the TS twin for why that placement is load-bearing.
+        ("2^60 attested_len", {"attested_len": 2**60}),
+    ]:
+        assert crypto.verify_chain_head_attestation(**{**v, **over}) is False, label

@@ -559,6 +559,25 @@ def test_sibling_citations_skip_cleanly_with_no_sibling_repos_checked_out(
 #: needs no maintenance when unrelated edits shift a file.
 ANCHORED = [
     ("COMPATIBILITY.md", "CHANGELOG.md", "No yank"),
+    # ── §10 / the 2026-09-04 DECISIONS entries ───────────────────────────────────────────────────
+    # Both of these were written WRONG on the first pass and the guard did not notice, because a bare
+    # line number resolves whatever it lands on: `ts/src/crypto.ts:270` pointed into an error
+    # message's hint table and `go/crypto/crypto.go:193-198` straddled the wrong end of the rule.
+    # That is the entire argument for anchoring rather than trusting a number, made twice in one
+    # change, so these are anchored to the declarations themselves.
+    (
+        "COMPATIBILITY.md",
+        "ts/src/crypto.ts",
+        "function isPlainObject(v: object): boolean {",
+    ),
+    ("DECISIONS.md", "go/crypto/crypto.go", 'exp, ok := payload["exp"].(float64)'),
+    # `authorize()` is where the aliased digest was actually SIGNED, so this is the citation that
+    # carries §10's weight — the exported helper is only how a caller reaches the same code on purpose.
+    (
+        "COMPATIBILITY.md",
+        "ts/src/client.ts",
+        "return jcsCanonicalize(toolInput ?? {});",
+    ),
     # The `canonical=` keyword-only parameter, in both clients. Both citations had drifted into the
     # `subjects` docstring PROSE — `client.py:291` and `aio.py:221` — while the parameter they name
     # sits at `:257` / `:195`. The line resolved, the file was right, and the citation pointed at an
@@ -609,7 +628,7 @@ ANCHORED = [
     (
         "COMPATIBILITY.md",
         "ts/src/crypto.ts",
-        "const digest = chainHeadAttestationDigest({ ...a, issuerAid });",
+        "const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid });",
     ),
     (
         "COMPATIBILITY.md",
@@ -768,6 +787,21 @@ CITATION_SLACK = 3
 #: and that is fine: the candidate set is then both of that row's citations, which is still far
 #: narrower than every citation of the path in the document.
 CLAIM_LINES = {
+    (
+        "COMPATIBILITY.md",
+        "ts/src/client.ts",
+        "return jcsCanonicalize(toolInput ?? {});",
+    ): "calls",
+    (
+        "COMPATIBILITY.md",
+        "ts/src/crypto.ts",
+        "function isPlainObject(v: object): boolean {",
+    ): "An enumeration of",
+    (
+        "DECISIONS.md",
+        "go/crypto/crypto.go",
+        'exp, ok := payload["exp"].(float64)',
+    ): "It is the only one with a written rationale",
     ("PROGRESS.md", "python/seam_sdk/crypto.py", "def record_digest_v3("): (
         "`verify/src/verify.rs:448`; the 6a/6b"
     ),
@@ -793,8 +827,11 @@ CLAIM_LINES = {
     (
         "COMPATIBILITY.md",
         "ts/src/crypto.ts",
-        "const digest = chainHeadAttestationDigest({ ...a, issuerAid });",
-    ): "blanket `catch { return false }`",
+        "const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid });",
+        # Was "blanket `catch { return false }`" until §10 stopped that being true: the type checks
+        # now run before the `try`. Re-anchored to the corrected sentence rather than to the code,
+        # because what this pins is WHICH CLAIM carries the citation, and the claim is now historical.
+    ): "wrapped its whole body in a catch that returned",
     (
         "COMPATIBILITY.md",
         "python/seam_sdk/crypto.py",

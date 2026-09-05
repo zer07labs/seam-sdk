@@ -1,0 +1,198 @@
+{
+  "$comment": [
+    "seam-sdk's cross-language TCT `exp` decoding vector. SDK-OWNED, machine-emitted",
+    "by scripts/emit_tct_exp_vectors.py -- no signature here was typed by hand.",
+    "conformance/vectors.json is the byte-identity contract with seam-runtime and is",
+    "not edited from this repo; this file covers a claim that fixture does not.",
+    "",
+    "RULE (Go's, normative -- see DECISIONS.md): `exp` MUST be a JSON number. String,",
+    "boolean, null, absent, object and array all refuse the token. The number is",
+    "TRUNCATED TOWARD ZERO to whole seconds, then expired iff `now_s >= trunc(exp)`.",
+    "",
+    "CONTRACT: an implementation MUST return `expect` for every case, using `now_s` as",
+    "its clock. The signature is valid and the grant matches in EVERY case, so a",
+    "`false` is always the `exp` rule and never anything else.",
+    "",
+    "Note the `now_s` values. Every type case pins `now_s = 0` on purpose: `exp: true`",
+    "coerces to 1 in Python and JS, so at a realistic clock it reads as expired and a",
+    "vector written that way would assert agreement that was accidental. At 0 a wrongly",
+    "typed truthy `exp` is ACCEPTED unless the type rule is real."
+  ],
+  "issuer_aid": "aid:pubkey:ed25519:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg",
+  "commitment": {
+    "id": "c-exp-vector",
+    "action": "transfer",
+    "authority": "treasury",
+    "supersedes": null,
+    "auth_method": "pinned-key",
+    "trust_basis": "attested"
+  },
+  "cases": [
+    {
+      "name": "integer_future",
+      "why": "the ordinary valid token. A CONTROL: if the commitment framing or the signature ever drifted, every refusal below would start passing for the wrong reason, and this case is what goes red first",
+      "exp": 2000000000,
+      "exp_absent": false,
+      "now_s": 1000,
+      "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJpc3MiOiJhaWQ6cHVia2V5OmVkMjU1MTk6X1Jja09GcWd4MXRrLTNqTllDLWgyWkg5Nl9kckU4V08xd0xxeURYcDloZyIsInN1YiI6ImFpZDpwdWJrZXk6ZWQyNTUxOTpfUmNrT0ZxZ3gxdGstM2pOWUMtaDJaSDk2X2RyRThXTzF3THF5RFhwOWhnIiwiYXVkIjoiYWlkOnB1YmtleTplZDI1NTE5Ol9SY2tPRnFneDF0ay0zak5ZQy1oMlpIOTZfZHJFOFdPMXdMcXlEWHA5aGciLCJncmFudHMiOlsic2VhbS1jb21taXRtZW50LWRpZ2VzdDo3NGZmMjc4MWUxZjkyMjJmYjI2MDk5ZWE1YTkwMzU3ZmQ1YzQ5ZGRhMzE2YTJmODlmZjBkZTcyZWE4M2I4YWFhIl0sImV4cCI6MjAwMDAwMDAwMH0.9--8Pyc3w-rKIY1oJ3JWp9HyuoU4bYOLhkS5QAb4WURp_mPdM4uWaV2QM5A5wsqMEhvdWtjZyT4clVMVMhWnDg",
+      "expect": true
+    },
+    {
+      "name": "integer_past",
+      "why": "an ordinary expired token",
+      "exp": 500,
+      "exp_absent": false,
+      "now_s": 1000,
+      "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJpc3MiOiJhaWQ6cHVia2V5OmVkMjU1MTk6X1Jja09GcWd4MXRrLTNqTllDLWgyWkg5Nl9kckU4V08xd0xxeURYcDloZyIsInN1YiI6ImFpZDpwdWJrZXk6ZWQyNTUxOTpfUmNrT0ZxZ3gxdGstM2pOWUMtaDJaSDk2X2RyRThXTzF3THF5RFhwOWhnIiwiYXVkIjoiYWlkOnB1YmtleTplZDI1NTE5Ol9SY2tPRnFneDF0ay0zak5ZQy1oMlpIOTZfZHJFOFdPMXdMcXlEWHA5aGciLCJncmFudHMiOlsic2VhbS1jb21taXRtZW50LWRpZ2VzdDo3NGZmMjc4MWUxZjkyMjJmYjI2MDk5ZWE1YTkwMzU3ZmQ1YzQ5ZGRhMzE2YTJmODlmZjBkZTcyZWE4M2I4YWFhIl0sImV4cCI6NTAwfQ.z6cFHl-9jzjsCPzON4gPl_eWQ-TLluRqjDdGOqRRKMnFXYKyOoR3i2DYMNBqpnqtKEfehBVbRcGLKFfuGy3nDw",
+      "expect": false
+    },
+    {
+      "name": "integer_exactly_now",
+      "why": "RFC 7519 rejects AT expiry, not only after",
+      "exp": 1000,
+      "exp_absent": false,
+      "now_s": 1000,
+      "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJpc3MiOiJhaWQ6cHVia2V5OmVkMjU1MTk6X1Jja09GcWd4MXRrLTNqTllDLWgyWkg5Nl9kckU4V08xd0xxeURYcDloZyIsInN1YiI6ImFpZDpwdWJrZXk6ZWQyNTUxOTpfUmNrT0ZxZ3gxdGstM2pOWUMtaDJaSDk2X2RyRThXTzF3THF5RFhwOWhnIiwiYXVkIjoiYWlkOnB1YmtleTplZDI1NTE5Ol9SY2tPRnFneDF0ay0zak5ZQy1oMlpIOTZfZHJFOFdPMXdMcXlEWHA5aGciLCJncmFudHMiOlsic2VhbS1jb21taXRtZW50LWRpZ2VzdDo3NGZmMjc4MWUxZjkyMjJmYjI2MDk5ZWE1YTkwMzU3ZmQ1YzQ5ZGRhMzE2YTJmODlmZjBkZTcyZWE4M2I4YWFhIl0sImV4cCI6MTAwMH0.3qo_NFGAdVgPrMbD9t-iB8AAoQkkBpSxb49t_dcjphh7-sO6vr-cIKGAOa7BWXTUdrj9nJfJx0fMBRYYlQWBBA",
+      "expect": false
+    },
+    {
+      "name": "fractional_half_second_past_now",
+      "why": "truncation, the whole point: trunc(1000.5) is 1000, so `now >= 1000` is already expired. A float-precise compare accepts it and drifts from every other shim",
+      "exp": 1000.5,
+      "exp_absent": false,
+      "now_s": 1000,
+      "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJpc3MiOiJhaWQ6cHVia2V5OmVkMjU1MTk6X1Jja09GcWd4MXRrLTNqTllDLWgyWkg5Nl9kckU4V08xd0xxeURYcDloZyIsInN1YiI6ImFpZDpwdWJrZXk6ZWQyNTUxOTpfUmNrT0ZxZ3gxdGstM2pOWUMtaDJaSDk2X2RyRThXTzF3THF5RFhwOWhnIiwiYXVkIjoiYWlkOnB1YmtleTplZDI1NTE5Ol9SY2tPRnFneDF0ay0zak5ZQy1oMlpIOTZfZHJFOFdPMXdMcXlEWHA5aGciLCJncmFudHMiOlsic2VhbS1jb21taXRtZW50LWRpZ2VzdDo3NGZmMjc4MWUxZjkyMjJmYjI2MDk5ZWE1YTkwMzU3ZmQ1YzQ5ZGRhMzE2YTJmODlmZjBkZTcyZWE4M2I4YWFhIl0sImV4cCI6MTAwMC41fQ.6l-3GsocWSnVtBEpnk3wGmijX4Zk2RC3kFPxK_kYL7yAV5LQRrRs2t7HRQW8VBKWOYJ_CNZCOlEWcxdKrS74Cw",
+      "expect": false
+    },
+    {
+      "name": "fractional_negative_truncates_toward_zero",
+      "why": "truncation must be toward ZERO, not floor -- and the CLOCK is what makes that checkable. trunc(-1.5) is -1 and floor(-1.5) is -2, so only a `now` BETWEEN them tells the two apart: at now = -2, truncation leaves the token valid and flooring expires it. At now = 0 both expire it and the case asserts nothing, which is what the first draft of this vector did",
+      "exp": -1.5,
+      "exp_absent": false,
+      "now_s": -2,
+      "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJpc3MiOiJhaWQ6cHVia2V5OmVkMjU1MTk6X1Jja09GcWd4MXRrLTNqTllDLWgyWkg5Nl9kckU4V08xd0xxeURYcDloZyIsInN1YiI6ImFpZDpwdWJrZXk6ZWQyNTUxOTpfUmNrT0ZxZ3gxdGstM2pOWUMtaDJaSDk2X2RyRThXTzF3THF5RFhwOWhnIiwiYXVkIjoiYWlkOnB1YmtleTplZDI1NTE5Ol9SY2tPRnFneDF0ay0zak5ZQy1oMlpIOTZfZHJFOFdPMXdMcXlEWHA5aGciLCJncmFudHMiOlsic2VhbS1jb21taXRtZW50LWRpZ2VzdDo3NGZmMjc4MWUxZjkyMjJmYjI2MDk5ZWE1YTkwMzU3ZmQ1YzQ5ZGRhMzE2YTJmODlmZjBkZTcyZWE4M2I4YWFhIl0sImV4cCI6LTEuNX0.ijvE1ZWZDEjHwFaB9nbj-r_DTO7skYCnA2h4U7v5tOCQRNhZdCk00kfYETj1nUJi0TmeY8zMlg7UppmbjrlWDA",
+      "expect": true
+    },
+    {
+      "name": "numeric_string_integer_form",
+      "why": "a string that Python's int() and JS's relational coercion both accept as a number, and that Go and Java refuse on type. The divergence two languages shared",
+      "exp": "10000000000",
+      "exp_absent": false,
+      "now_s": 0,
+      "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJpc3MiOiJhaWQ6cHVia2V5OmVkMjU1MTk6X1Jja09GcWd4MXRrLTNqTllDLWgyWkg5Nl9kckU4V08xd0xxeURYcDloZyIsInN1YiI6ImFpZDpwdWJrZXk6ZWQyNTUxOTpfUmNrT0ZxZ3gxdGstM2pOWUMtaDJaSDk2X2RyRThXTzF3THF5RFhwOWhnIiwiYXVkIjoiYWlkOnB1YmtleTplZDI1NTE5Ol9SY2tPRnFneDF0ay0zak5ZQy1oMlpIOTZfZHJFOFdPMXdMcXlEWHA5aGciLCJncmFudHMiOlsic2VhbS1jb21taXRtZW50LWRpZ2VzdDo3NGZmMjc4MWUxZjkyMjJmYjI2MDk5ZWE1YTkwMzU3ZmQ1YzQ5ZGRhMzE2YTJmODlmZjBkZTcyZWE4M2I4YWFhIl0sImV4cCI6IjEwMDAwMDAwMDAwIn0.evB9d1JLr11LTX3PAJief1w7Z5gzX2EJgZl1OY9uv6nXt5e8ZP1DpWkY-9zgX6zFHttoHb1jeV5DCCeyDXNNDw",
+      "expect": false
+    },
+    {
+      "name": "numeric_string_exponent_form",
+      "why": "the same trap one step along: JS coerces it, Python's int() raises. TS accepted, Python refused, for different reasons \u2014 neither of them the rule",
+      "exp": "1e10",
+      "exp_absent": false,
+      "now_s": 0,
+      "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJpc3MiOiJhaWQ6cHVia2V5OmVkMjU1MTk6X1Jja09GcWd4MXRrLTNqTllDLWgyWkg5Nl9kckU4V08xd0xxeURYcDloZyIsInN1YiI6ImFpZDpwdWJrZXk6ZWQyNTUxOTpfUmNrT0ZxZ3gxdGstM2pOWUMtaDJaSDk2X2RyRThXTzF3THF5RFhwOWhnIiwiYXVkIjoiYWlkOnB1YmtleTplZDI1NTE5Ol9SY2tPRnFneDF0ay0zak5ZQy1oMlpIOTZfZHJFOFdPMXdMcXlEWHA5aGciLCJncmFudHMiOlsic2VhbS1jb21taXRtZW50LWRpZ2VzdDo3NGZmMjc4MWUxZjkyMjJmYjI2MDk5ZWE1YTkwMzU3ZmQ1YzQ5ZGRhMzE2YTJmODlmZjBkZTcyZWE4M2I4YWFhIl0sImV4cCI6IjFlMTAifQ.kiZeuToPA_Y1G6_Rsb5UJGZU080hDD9fFzLa2hG9zHsMZC4Xn26oWBt2g4D4jVvAAZqzEcRYaOqifAh1NJyYCA",
+      "expect": false
+    },
+    {
+      "name": "boolean_true",
+      "why": "the case a realistic clock hides. `true` coerces to 1 in both Python (bool subclasses int) and JS, so at now = 0 the token VERIFIED. now = 1000 would have made this pass vacuously",
+      "exp": true,
+      "exp_absent": false,
+      "now_s": 0,
+      "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJpc3MiOiJhaWQ6cHVia2V5OmVkMjU1MTk6X1Jja09GcWd4MXRrLTNqTllDLWgyWkg5Nl9kckU4V08xd0xxeURYcDloZyIsInN1YiI6ImFpZDpwdWJrZXk6ZWQyNTUxOTpfUmNrT0ZxZ3gxdGstM2pOWUMtaDJaSDk2X2RyRThXTzF3THF5RFhwOWhnIiwiYXVkIjoiYWlkOnB1YmtleTplZDI1NTE5Ol9SY2tPRnFneDF0ay0zak5ZQy1oMlpIOTZfZHJFOFdPMXdMcXlEWHA5aGciLCJncmFudHMiOlsic2VhbS1jb21taXRtZW50LWRpZ2VzdDo3NGZmMjc4MWUxZjkyMjJmYjI2MDk5ZWE1YTkwMzU3ZmQ1YzQ5ZGRhMzE2YTJmODlmZjBkZTcyZWE4M2I4YWFhIl0sImV4cCI6dHJ1ZX0.tqgZVQfhP74ACCRzAjnUiijxPs_oXsiHLY5rHn2XzW5FhjVGv9SHIrmbKjnPcsQxaVi90TGaeAG77RP-uJmcAw",
+      "expect": false
+    },
+    {
+      "name": "boolean_false",
+      "why": "the falsy twin -- and the CLOCK is what gives it teeth. At now = 0 the coercing rule refuses it too (`0 >= false` is `0 >= 0`, expired) and the case asserts nothing; the first draft ran it there and claimed it blocked a 'reject truthy non-numbers' fix, which it did not. At now = -1 the coercion ACCEPTS it and only a real type rule refuses it",
+      "exp": false,
+      "exp_absent": false,
+      "now_s": -1,
+      "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJpc3MiOiJhaWQ6cHVia2V5OmVkMjU1MTk6X1Jja09GcWd4MXRrLTNqTllDLWgyWkg5Nl9kckU4V08xd0xxeURYcDloZyIsInN1YiI6ImFpZDpwdWJrZXk6ZWQyNTUxOTpfUmNrT0ZxZ3gxdGstM2pOWUMtaDJaSDk2X2RyRThXTzF3THF5RFhwOWhnIiwiYXVkIjoiYWlkOnB1YmtleTplZDI1NTE5Ol9SY2tPRnFneDF0ay0zak5ZQy1oMlpIOTZfZHJFOFdPMXdMcXlEWHA5aGciLCJncmFudHMiOlsic2VhbS1jb21taXRtZW50LWRpZ2VzdDo3NGZmMjc4MWUxZjkyMjJmYjI2MDk5ZWE1YTkwMzU3ZmQ1YzQ5ZGRhMzE2YTJmODlmZjBkZTcyZWE4M2I4YWFhIl0sImV4cCI6ZmFsc2V9.7g1vtuwlQkKAcb6LyYCbITgnxugF3YgW3tdBCIVCg7fxmfP3GXz4OfqCNPR09XGqrPzqKXcvUTMATR0al9olDw",
+      "expect": false
+    },
+    {
+      "name": "null",
+      "why": "an explicit null must refuse, and must not be confused with absent. At now = -1 for the same reason as boolean_false: both old rules defaulted a missing or null exp to 0 (`payload.exp ?? 0`, `payload.get('exp', 0)`), so at any negative clock they ACCEPTED it",
+      "exp": null,
+      "exp_absent": false,
+      "now_s": -1,
+      "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJpc3MiOiJhaWQ6cHVia2V5OmVkMjU1MTk6X1Jja09GcWd4MXRrLTNqTllDLWgyWkg5Nl9kckU4V08xd0xxeURYcDloZyIsInN1YiI6ImFpZDpwdWJrZXk6ZWQyNTUxOTpfUmNrT0ZxZ3gxdGstM2pOWUMtaDJaSDk2X2RyRThXTzF3THF5RFhwOWhnIiwiYXVkIjoiYWlkOnB1YmtleTplZDI1NTE5Ol9SY2tPRnFneDF0ay0zak5ZQy1oMlpIOTZfZHJFOFdPMXdMcXlEWHA5aGciLCJncmFudHMiOlsic2VhbS1jb21taXRtZW50LWRpZ2VzdDo3NGZmMjc4MWUxZjkyMjJmYjI2MDk5ZWE1YTkwMzU3ZmQ1YzQ5ZGRhMzE2YTJmODlmZjBkZTcyZWE4M2I4YWFhIl0sImV4cCI6bnVsbH0.kKEO9uP_GQF5CnO4Jj4ogNBSimN7MNsbOIZ-l4qIUBGGe4DT6YfVwFV3UeBO4vj4Kf-VjWbxOU1eSNmLz-5VCg",
+      "expect": false
+    },
+    {
+      "name": "absent",
+      "why": "no exp claim at all; refused, and distinct from null. Same clock, same reason -- and this is the case that kills a rule reading 'refuse truthy non-numbers', which absent is not",
+      "exp": null,
+      "exp_absent": true,
+      "now_s": -1,
+      "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJpc3MiOiJhaWQ6cHVia2V5OmVkMjU1MTk6X1Jja09GcWd4MXRrLTNqTllDLWgyWkg5Nl9kckU4V08xd0xxeURYcDloZyIsInN1YiI6ImFpZDpwdWJrZXk6ZWQyNTUxOTpfUmNrT0ZxZ3gxdGstM2pOWUMtaDJaSDk2X2RyRThXTzF3THF5RFhwOWhnIiwiYXVkIjoiYWlkOnB1YmtleTplZDI1NTE5Ol9SY2tPRnFneDF0ay0zak5ZQy1oMlpIOTZfZHJFOFdPMXdMcXlEWHA5aGciLCJncmFudHMiOlsic2VhbS1jb21taXRtZW50LWRpZ2VzdDo3NGZmMjc4MWUxZjkyMjJmYjI2MDk5ZWE1YTkwMzU3ZmQ1YzQ5ZGRhMzE2YTJmODlmZjBkZTcyZWE4M2I4YWFhIl19.bKLIDn0rQg-BqhrYIFcfWfgqvUlK2Bg0idR-S053_K1Fl7CUeWSrBmVg61DtC962Rw1jj6VdD78yBI4dlWZPCQ",
+      "expect": false
+    },
+    {
+      "name": "zero",
+      "why": "`now >= 0` at now = 0 is expired \u2014 the boundary from the other side",
+      "exp": 0,
+      "exp_absent": false,
+      "now_s": 0,
+      "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJpc3MiOiJhaWQ6cHVia2V5OmVkMjU1MTk6X1Jja09GcWd4MXRrLTNqTllDLWgyWkg5Nl9kckU4V08xd0xxeURYcDloZyIsInN1YiI6ImFpZDpwdWJrZXk6ZWQyNTUxOTpfUmNrT0ZxZ3gxdGstM2pOWUMtaDJaSDk2X2RyRThXTzF3THF5RFhwOWhnIiwiYXVkIjoiYWlkOnB1YmtleTplZDI1NTE5Ol9SY2tPRnFneDF0ay0zak5ZQy1oMlpIOTZfZHJFOFdPMXdMcXlEWHA5aGciLCJncmFudHMiOlsic2VhbS1jb21taXRtZW50LWRpZ2VzdDo3NGZmMjc4MWUxZjkyMjJmYjI2MDk5ZWE1YTkwMzU3ZmQ1YzQ5ZGRhMzE2YTJmODlmZjBkZTcyZWE4M2I4YWFhIl0sImV4cCI6MH0.o3VbnMglaTB5DQlsE6d08NeZGiFqebWpJ3VAkMbU52KYgxXbmdgML7XPkltR5QtlNIbQAgLN623RS71z3NDvDA",
+      "expect": false
+    },
+    {
+      "name": "negative",
+      "why": "a negative expiry is in the past at any non-negative clock",
+      "exp": -1,
+      "exp_absent": false,
+      "now_s": 0,
+      "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJpc3MiOiJhaWQ6cHVia2V5OmVkMjU1MTk6X1Jja09GcWd4MXRrLTNqTllDLWgyWkg5Nl9kckU4V08xd0xxeURYcDloZyIsInN1YiI6ImFpZDpwdWJrZXk6ZWQyNTUxOTpfUmNrT0ZxZ3gxdGstM2pOWUMtaDJaSDk2X2RyRThXTzF3THF5RFhwOWhnIiwiYXVkIjoiYWlkOnB1YmtleTplZDI1NTE5Ol9SY2tPRnFneDF0ay0zak5ZQy1oMlpIOTZfZHJFOFdPMXdMcXlEWHA5aGciLCJncmFudHMiOlsic2VhbS1jb21taXRtZW50LWRpZ2VzdDo3NGZmMjc4MWUxZjkyMjJmYjI2MDk5ZWE1YTkwMzU3ZmQ1YzQ5ZGRhMzE2YTJmODlmZjBkZTcyZWE4M2I4YWFhIl0sImV4cCI6LTF9.uV6MS0wzEcvQiMP2VxNA4g8EsKThW23k2xE01eX-SGNslo5f0NZPdj_fkS6k6Bi00zQskWRcp2qlD3jRfz8ZBw",
+      "expect": false
+    },
+    {
+      "name": "float_integral",
+      "why": "a float that IS an integer must behave as that integer",
+      "exp": 2000000000.0,
+      "exp_absent": false,
+      "now_s": 1000,
+      "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJpc3MiOiJhaWQ6cHVia2V5OmVkMjU1MTk6X1Jja09GcWd4MXRrLTNqTllDLWgyWkg5Nl9kckU4V08xd0xxeURYcDloZyIsInN1YiI6ImFpZDpwdWJrZXk6ZWQyNTUxOTpfUmNrT0ZxZ3gxdGstM2pOWUMtaDJaSDk2X2RyRThXTzF3THF5RFhwOWhnIiwiYXVkIjoiYWlkOnB1YmtleTplZDI1NTE5Ol9SY2tPRnFneDF0ay0zak5ZQy1oMlpIOTZfZHJFOFdPMXdMcXlEWHA5aGciLCJncmFudHMiOlsic2VhbS1jb21taXRtZW50LWRpZ2VzdDo3NGZmMjc4MWUxZjkyMjJmYjI2MDk5ZWE1YTkwMzU3ZmQ1YzQ5ZGRhMzE2YTJmODlmZjBkZTcyZWE4M2I4YWFhIl0sImV4cCI6MjAwMDAwMDAwMC4wfQ.BlIJmufFp425n97EbwiX4Yvrd3s41uwHMSPJ08M0o7acRYK6gFsHZX7Mhe1nyB8loBrmtyAbP4_JA9mEH_5GDw",
+      "expect": true
+    },
+    {
+      "name": "beyond_int64",
+      "why": "the rule must be TOTAL, and Go's `int64(exp)` is not: the spec leaves the conversion implementation-defined when the value does not fit. Measured, arm64 saturates to MaxInt64 and VERIFIES this token; amd64's CVTTSD2SQ yields INT64_MIN and refuses it. A normative rule whose answer depends on the checker's architecture is not a rule, so all five bound `exp` to int64 explicitly",
+      "exp": 1e+300,
+      "exp_absent": false,
+      "now_s": 0,
+      "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJpc3MiOiJhaWQ6cHVia2V5OmVkMjU1MTk6X1Jja09GcWd4MXRrLTNqTllDLWgyWkg5Nl9kckU4V08xd0xxeURYcDloZyIsInN1YiI6ImFpZDpwdWJrZXk6ZWQyNTUxOTpfUmNrT0ZxZ3gxdGstM2pOWUMtaDJaSDk2X2RyRThXTzF3THF5RFhwOWhnIiwiYXVkIjoiYWlkOnB1YmtleTplZDI1NTE5Ol9SY2tPRnFneDF0ay0zak5ZQy1oMlpIOTZfZHJFOFdPMXdMcXlEWHA5aGciLCJncmFudHMiOlsic2VhbS1jb21taXRtZW50LWRpZ2VzdDo3NGZmMjc4MWUxZjkyMjJmYjI2MDk5ZWE1YTkwMzU3ZmQ1YzQ5ZGRhMzE2YTJmODlmZjBkZTcyZWE4M2I4YWFhIl0sImV4cCI6MWUrMzAwfQ.ue4pPm8q7-rLfP209d2vq9cpLqnFJUJKc-QD2ySEKEnTd8AGxZ0t2fS1aktp7ZoI0Zog9chToFAZdZmSzK_lCw",
+      "expect": false
+    },
+    {
+      "name": "just_below_int64_max",
+      "why": "the accepting side of that bound, so it is a bound and not a blanket refusal of large exp",
+      "exp": 9.2e+18,
+      "exp_absent": false,
+      "now_s": 0,
+      "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJpc3MiOiJhaWQ6cHVia2V5OmVkMjU1MTk6X1Jja09GcWd4MXRrLTNqTllDLWgyWkg5Nl9kckU4V08xd0xxeURYcDloZyIsInN1YiI6ImFpZDpwdWJrZXk6ZWQyNTUxOTpfUmNrT0ZxZ3gxdGstM2pOWUMtaDJaSDk2X2RyRThXTzF3THF5RFhwOWhnIiwiYXVkIjoiYWlkOnB1YmtleTplZDI1NTE5Ol9SY2tPRnFneDF0ay0zak5ZQy1oMlpIOTZfZHJFOFdPMXdMcXlEWHA5aGciLCJncmFudHMiOlsic2VhbS1jb21taXRtZW50LWRpZ2VzdDo3NGZmMjc4MWUxZjkyMjJmYjI2MDk5ZWE1YTkwMzU3ZmQ1YzQ5ZGRhMzE2YTJmODlmZjBkZTcyZWE4M2I4YWFhIl0sImV4cCI6OS4yZSsxOH0.ZYJM-1wAgpm-Kh_TMG1-qH7QlUO10yTEgQsC0zr-VBHnbtZj8jd3Ftblj0m2LzrCqFGXZ5MZZFK-96c_7XddAA",
+      "expect": true
+    },
+    {
+      "name": "object",
+      "why": "a structured exp refuses; nothing reaches into it",
+      "exp": {
+        "seconds": 2000000000
+      },
+      "exp_absent": false,
+      "now_s": 0,
+      "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJpc3MiOiJhaWQ6cHVia2V5OmVkMjU1MTk6X1Jja09GcWd4MXRrLTNqTllDLWgyWkg5Nl9kckU4V08xd0xxeURYcDloZyIsInN1YiI6ImFpZDpwdWJrZXk6ZWQyNTUxOTpfUmNrT0ZxZ3gxdGstM2pOWUMtaDJaSDk2X2RyRThXTzF3THF5RFhwOWhnIiwiYXVkIjoiYWlkOnB1YmtleTplZDI1NTE5Ol9SY2tPRnFneDF0ay0zak5ZQy1oMlpIOTZfZHJFOFdPMXdMcXlEWHA5aGciLCJncmFudHMiOlsic2VhbS1jb21taXRtZW50LWRpZ2VzdDo3NGZmMjc4MWUxZjkyMjJmYjI2MDk5ZWE1YTkwMzU3ZmQ1YzQ5ZGRhMzE2YTJmODlmZjBkZTcyZWE4M2I4YWFhIl0sImV4cCI6eyJzZWNvbmRzIjoyMDAwMDAwMDAwfX0.RB40J7fljgwipeZwdzg_6emCtpLB3olTC7vUEB125sgdNU9XGTgUDnjMQuUjZ1MisGPo6dSyCFE7y4u79U1yDw",
+      "expect": false
+    },
+    {
+      "name": "array",
+      "why": "JS's BigInt/Number coercion unwraps a 1-element array; the rule does not",
+      "exp": [
+        2000000000
+      ],
+      "exp_absent": false,
+      "now_s": 0,
+      "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJpc3MiOiJhaWQ6cHVia2V5OmVkMjU1MTk6X1Jja09GcWd4MXRrLTNqTllDLWgyWkg5Nl9kckU4V08xd0xxeURYcDloZyIsInN1YiI6ImFpZDpwdWJrZXk6ZWQyNTUxOTpfUmNrT0ZxZ3gxdGstM2pOWUMtaDJaSDk2X2RyRThXTzF3THF5RFhwOWhnIiwiYXVkIjoiYWlkOnB1YmtleTplZDI1NTE5Ol9SY2tPRnFneDF0ay0zak5ZQy1oMlpIOTZfZHJFOFdPMXdMcXlEWHA5aGciLCJncmFudHMiOlsic2VhbS1jb21taXRtZW50LWRpZ2VzdDo3NGZmMjc4MWUxZjkyMjJmYjI2MDk5ZWE1YTkwMzU3ZmQ1YzQ5ZGRhMzE2YTJmODlmZjBkZTcyZWE4M2I4YWFhIl0sImV4cCI6WzIwMDAwMDAwMDBdfQ.Z2-Md3JXKDeROUGY7V08BUiSHpAHPpXTfv1Q0mL5kz5qQN1lHV1Pufexc9Tl67QLP0Y5IHgfogXjBCddT3j5Dw",
+      "expect": false
+    }
+  ]
+}

@@ -26,6 +26,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import { runInNewContext } from "node:vm";
 
 import { jcsCanonicalize, recordDigestV2, verifyChainHeadAttestation } from "../src/crypto.js";
 
@@ -190,4 +191,163 @@ test("verifyChainHeadAttestation: an out-of-range length is not accepted as its 
     schema = "threw";
   }
   assert.notEqual(schema, true, "digestSchema + 2^32 verified as though it were the signed value");
+});
+
+test("jcsCanonicalize: an exotic object is refused, not silently emitted as {}", () => {
+  // The third place the aliasing rule lived. `typeof v === "object"` is true of `Date`, `Map`,
+  // `Set`, `RegExp`, typed arrays, boxed primitives and every class instance, and JCS walked them
+  // all with `Object.keys` — emitting whatever their own enumerable properties happened to be,
+  // which is not what any of them mean. Measured, before this change:
+  //
+  //     jcsCanonicalize(new Date(0))             -> {}
+  //     jcsCanonicalize(new Map([["a", 1]]))     -> {}
+  //     jcsCanonicalize(new Set([1, 2]))         -> {}
+  //     jcsCanonicalize(new Number(5))           -> {}
+  //     jcsCanonicalize(new Uint8Array([1, 2]))  -> {"0":1,"1":2}
+  //     jcsCanonicalize(new String("x"))         -> {"0":"x"}
+  //     jcsCanonicalize(new (class { x = 1 })()) -> {"x":1}
+  //
+  // The last three did NOT collapse to `{}` — they serialized indices or fields — so "these carry
+  // no state in own enumerable properties" is a generalization these very measurements refute, and
+  // a class instance is a real narrowing rather than a meaningless digest removed. Refused anyway:
+  // Python raises `TypeError: … is not JSON-serializable` on every corresponding input, and
+  // agreement about which inputs have a digest at all is the property being bought.
+  for (const [label, value] of [
+    ["Date", new Date(0)],
+    ["Map", new Map([["a", 1]])],
+    ["Set", new Set([1, 2])],
+    ["RegExp", /x/],
+    ["Uint8Array", new Uint8Array([1, 2])],
+    ["boxed Number", new Number(5)],
+    ["boxed String", new String("x")],
+    ["class instance", new (class Thing { x = 1 })()],
+  ] as const) {
+    assert.throws(() => jcsCanonicalize(value), TypeError, `${label} still canonicalizes`);
+    assert.throws(() => jcsCanonicalize({ field: value }), TypeError, `${label} nested still canonicalizes`);
+  }
+});
+
+test("jcsCanonicalize: the alias that made this urgent — two different Dates, one digest", () => {
+  // Not "an exotic type is refused" but the consequence: `{ deadline: <date> }` had the SAME
+  // tool_input_digest for every possible date, and `callSig` signed it. This is the assertion that
+  // would have caught the bug; the one above only describes it.
+  const a = { deadline: new Date("2026-01-01T00:00:00Z") };
+  const b = { deadline: new Date("2030-01-01T00:00:00Z") };
+  assert.throws(() => jcsCanonicalize(a), TypeError);
+  assert.throws(() => jcsCanonicalize(b), TypeError);
+
+  // And the shape a caller must move to still digests, distinctly.
+  const iso = (o: { deadline: Date }) => ({ deadline: o.deadline.toISOString() });
+  assert.notEqual(hex(jcsCanonicalize(iso(a))), hex(jcsCanonicalize(iso(b))));
+});
+
+test("jcsCanonicalize: plain data — including cross-realm and null-prototype — still canonicalizes", () => {
+  // The guard must refuse exotic objects only. Refusing an ordinary data bag to fix a bug callers
+  // do not have would be the worse defect, so the accepting side is pinned as hard as the refusing.
+  assert.equal(hex(jcsCanonicalize({ b: 1, a: 2 })), "7b2261223a322c2262223a317d");
+  assert.equal(hex(jcsCanonicalize(Object.assign(Object.create(null), { a: 1 }))), hex(jcsCanonicalize({ a: 1 })));
+  assert.equal(hex(jcsCanonicalize([1, { a: null }, "x"])), hex(jcsCanonicalize([1, { a: null }, "x"])));
+
+  // A `vm` realm has its own `Object.prototype`, so an identity check against ours would refuse a
+  // perfectly ordinary object. The guard tests the prototype chain's DEPTH instead, which is why
+  // this passes — and this test is why that choice cannot be quietly simplified away.
+  const foreign = runInNewContext("({ a: 1, b: [2, 3] })") as Record<string, unknown>;
+  assert.notEqual(Object.getPrototypeOf(foreign), Object.prototype, "vm realm should differ; test is stale if not");
+  assert.equal(hex(jcsCanonicalize(foreign)), hex(jcsCanonicalize({ a: 1, b: [2, 3] })));
+});
+
+// ── The verifier's blanket catch: `false` was the wrong answer to a caller bug ────────────────────
+// `verifyChainHeadAttestation` wrapped everything in `try { ... } catch { return false }`, which
+// delivered its documented "false on any tamper" contract by answering `false` to questions it was
+// never asked. Measured against the runtime's own KAT, before this change — every one of these
+// returned `false`, while Python raised `TypeError` on the identical input:
+//
+//     attestedLen: "1000"     attestedLen: true     attestedLen: null
+//     digestSchema: "2"       attestedHead: "abab"  issuerAid: 5
+//
+// `false` does not say "you called this wrong". It says "this attestation did not verify" — and an
+// operator handed that goes looking for a compromised audit chain.
+//
+// `signature` is NOT in that list, and the first draft of this comment wrongly put it there. Measured
+// against `git show HEAD~:ts/src/crypto.ts`, `signature: "<64 bytes of hex>"` returned **true** — it
+// verified, correctly — because `@noble/curves` types the parameter as `Hex = Uint8Array | string`.
+// Refusing it now is a NARROWING of working behaviour, taken because Python has never accepted it
+// and the point of this phase is that the two agree on what is accepted. Worth stating precisely:
+// a claim that a fix removes only broken behaviour is exactly the kind that goes unchecked.
+//
+// Raising cannot convert an attack into a crash, which is what makes this safe. Attacker-controlled
+// bytes decode through protobuf into correctly-TYPED values with hostile contents; a wrong type can
+// only come from the code doing the calling.
+
+const ATT = {
+  attestedLen: BigInt(vectors.chain_head_attestation.inputs.attested_len),
+  attestedHead: Buffer.from(vectors.chain_head_attestation.inputs.attested_head_hex, "hex"),
+  attestedAt: BigInt(vectors.chain_head_attestation.inputs.attested_at),
+  digestSchema: vectors.chain_head_attestation.inputs.digest_schema,
+  signature: Buffer.from(vectors.chain_head_attestation.signature_hex, "hex"),
+};
+const AID = vectors.chain_head_attestation.issuer_aid;
+
+test("verifyChainHeadAttestation: a wrong-typed argument throws instead of reporting `false`", () => {
+  // The control first. Without it every assertion below passes against a verifier that throws
+  // unconditionally, which would be a worse bug than the one being fixed.
+  assert.equal(verifyChainHeadAttestation(AID, ATT), true, "the runtime's KAT must still verify");
+
+  for (const [label, over] of [
+    ["attestedLen string", { attestedLen: "1000" }],
+    ["attestedLen boolean", { attestedLen: true }],
+    ["attestedLen null", { attestedLen: null }],
+    ["attestedAt string", { attestedAt: "1700000000000" }],
+    ["digestSchema string", { digestSchema: "2" }],
+    ["attestedHead string", { attestedHead: "abab" }],
+    ["attestedHead number", { attestedHead: 5 }],
+    ["attestedHead plain array", { attestedHead: [1, 2, 3] }],
+  ] as const) {
+    assert.throws(
+      () => verifyChainHeadAttestation(AID, { ...ATT, ...over } as never),
+      TypeError,
+      `${label} still comes back as "the attestation did not verify"`,
+    );
+  }
+  assert.throws(() => verifyChainHeadAttestation(5 as never, ATT), TypeError, "non-string issuerAid");
+  assert.throws(() => verifyChainHeadAttestation(AID, null as never), TypeError, "null attestation");
+
+  // The narrowing, asserted as a narrowing. This input VERIFIED before — `@noble/curves` accepts a
+  // hex string — so the test says so rather than filing it with the caller bugs above.
+  assert.throws(
+    () => verifyChainHeadAttestation(AID, { ...ATT, signature: vectors.chain_head_attestation.signature_hex } as never),
+    TypeError,
+    "a hex-string signature used to verify; it must now be refused, not silently accepted",
+  );
+
+  // A fractional length could not have arrived over the wire either — protobuf decodes uint64 to a
+  // whole number — so it is a caller bug too, and throws. (`RangeError` rather than `TypeError`:
+  // JavaScript has one number type, so "not a whole number" is a fact about the value. Python, which
+  // distinguishes `float` from `int`, raises `TypeError` on its own equivalent. Both REFUSE, which is
+  // the property that matters; identical exception classes across two languages is not one.)
+  assert.throws(() => verifyChainHeadAttestation(AID, { ...ATT, attestedLen: 1.5 }), RangeError);
+});
+
+test("verifyChainHeadAttestation: genuinely untrusted input still answers `false`, never throws", () => {
+  // The other half, and the half that makes the change safe to ship. Everything an attacker or a
+  // corrupt record can actually produce must still return `false`, because a caller writing
+  // `if (!verify(...)) reject()` has to keep working. Only caller bugs were promoted to throws.
+  for (const [label, run] of [
+    ["out-of-range attestedLen", () => verifyChainHeadAttestation(AID, { ...ATT, attestedLen: (1n << 64n) + 5n })],
+    ["out-of-range attestedAt", () => verifyChainHeadAttestation(AID, { ...ATT, attestedAt: 1n << 64n })],
+    ["out-of-range digestSchema", () => verifyChainHeadAttestation(AID, { ...ATT, digestSchema: 2 ** 32 })],
+    ["tampered attestedLen", () => verifyChainHeadAttestation(AID, { ...ATT, attestedLen: 1001n })],
+    ["tampered head", () => verifyChainHeadAttestation(AID, { ...ATT, attestedHead: new Uint8Array(32) })],
+    ["wrong-length signature", () => verifyChainHeadAttestation(AID, { ...ATT, signature: new Uint8Array(10) })],
+    ["forged signature", () => verifyChainHeadAttestation(AID, { ...ATT, signature: new Uint8Array(64) })],
+    ["malformed issuer AID", () => verifyChainHeadAttestation("nope", ATT)],
+    ["wrong issuer AID", () => verifyChainHeadAttestation(vectors.chain_head_attestation.issuer_aid.slice(0, -1) + "x", ATT)],
+    // 2^60 is a whole number, and exactly representable — it is simply past where its NEIGHBOURS
+    // are. Python holds it as an exact integer, digests it, and answers `false`. TypeScript must
+    // reach the same `false`, which is why the safe-integer check stays INSIDE the catch: hoisting
+    // it out with the type checks would close one divergence by opening another.
+    ["2^60 as a number", () => verifyChainHeadAttestation(AID, { ...ATT, attestedLen: 2 ** 60 })],
+  ] as const) {
+    assert.equal(run(), false, `${label} must be refused, not thrown`);
+  }
 });
