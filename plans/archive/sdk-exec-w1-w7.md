@@ -700,7 +700,7 @@ Two notes the source plan could not have had:
   day the v3 block exists. Point at it rather than restating it.
 - The gate resolves the Python function **by exact name** (`getattr(crypto, name)`), so
   `python/seam_sdk/crypto.py` must expose `record_digest_v3` under precisely that name. TS
-  (`recordDigestV2`, `ts/src/crypto.ts:299`) and Rust (`record_digest_v2`, `verify/src/verify.rs:273`)
+  (`recordDigestV2`, `ts/src/crypto.ts:362`) and Rust (`record_digest_v2`, `verify/src/verify.rs:273`)
   are **not** checked by it — their parity is only asserted by this repo's own suites. That
   asymmetry is worth writing down; it is where drift would hide.
 

@@ -187,10 +187,35 @@ def _sibling_relative_path(path: str) -> str:
 VENDORED = ("verify/docs/seam-event.v1.md",)
 
 
+#: `` `path/to/generated.pyi:106,163` `` — a comma-list. It line-anchors into a generated tree just as
+#: hard as an ordinary citation, and `CITATION` matches it not at all (the regex needs the closing
+#: backtick straight after the number). Three such citations sat in `PROGRESS.md` while the rule
+#: forbidding them was stated in the table one row above; the ban was enforced only against the
+#: spelling that happened to be checkable. Scanned separately rather than by widening `CITATION`,
+#: which would change what every other test in this file counts.
+COMMA_LIST_CITATION = re.compile(
+    r"`([\w./-]+\.[A-Za-z]\w*):(\d+(?:-\d+)?(?:,\d+(?:-\d+)?)+)`"
+)
+
+
 def _line_anchors_into_vendored(text: str) -> list[str]:
-    """Every line-anchored citation in `text` that names a vendored path. Empty is the good case."""
+    """Every line-anchored citation in `text` that names a vendored path. Empty is the good case.
+
+    Both spellings, for the reason its `GENERATED` sibling gives: the rule is about line-anchoring
+    into a tree that is refreshed whole, and a comma separating two line numbers does not make them
+    less line numbers.
+
+    `COMMA_LIST_CITATION` was added for exactly that reason — and only the generated rule was taught
+    it. So `` `verify/docs/seam-event.v1.md:100,200` `` line-anchored into the vendored spec
+    invisibly, which is issue #73's own class re-opened in the sibling rule, by the change that
+    closed it. Verified before this fix: the comma spelling was caught for `GENERATED` and slipped
+    past here.
+    """
     return [
-        m.group(0) for m in CITATION.finditer(text) if m.group(1).startswith(VENDORED)
+        m.group(0)
+        for pattern in (CITATION, COMMA_LIST_CITATION)
+        for m in pattern.finditer(text)
+        if m.group(1).startswith(VENDORED)
     ]
 
 
@@ -214,17 +239,6 @@ def _line_anchors_into_vendored(text: str) -> list[str]:
 #: stub trees" is asserted. `ts/dist` is excluded there on purpose: it is a TS *build* artifact
 #: `make clean` also removes, not a generated-stub tree, and no citation is ever pointed into it.
 GENERATED = ("ts/gen/", "python/seam_sdk/_gen/", "gen/")
-
-
-#: `` `path/to/generated.pyi:106,163` `` — a comma-list. It line-anchors into a generated tree just as
-#: hard as an ordinary citation, and `CITATION` matches it not at all (the regex needs the closing
-#: backtick straight after the number). Three such citations sat in `PROGRESS.md` while the rule
-#: forbidding them was stated in the table one row above; the ban was enforced only against the
-#: spelling that happened to be checkable. Scanned separately rather than by widening `CITATION`,
-#: which would change what every other test in this file counts.
-COMMA_LIST_CITATION = re.compile(
-    r"`([\w./-]+\.[A-Za-z]\w*):(\d+(?:-\d+)?(?:,\d+(?:-\d+)?)+)`"
-)
 
 
 def _line_anchors_into_generated(text: str) -> list[str]:
@@ -559,6 +573,35 @@ def test_sibling_citations_skip_cleanly_with_no_sibling_repos_checked_out(
 #: needs no maintenance when unrelated edits shift a file.
 ANCHORED = [
     ("COMPATIBILITY.md", "CHANGELOG.md", "No yank"),
+    # The `--write-manifest` delete-scoping comment. Anchored because this citation was WRONG for two
+    # rounds and no check could tell: it pointed at the FIELD-manifest write, and each time the file
+    # moved the number was faithfully remapped — which preserves a wrong target rather than finding
+    # it. A remap keeps a citation pointing where it already pointed; only an anchor checks that
+    # where it points is where it claims.
+    (
+        "PROGRESS.md",
+        "scripts/check-contract.sh",
+        "# Scoped to the API write, deliberately",
+    ),
+    # ── §10 / the 2026-09-04 DECISIONS entries ───────────────────────────────────────────────────
+    # Both of these were written WRONG on the first pass and the guard did not notice, because a bare
+    # line number resolves whatever it lands on: `ts/src/crypto.ts:270` pointed into an error
+    # message's hint table and `go/crypto/crypto.go:193-198` straddled the wrong end of the rule.
+    # That is the entire argument for anchoring rather than trusting a number, made twice in one
+    # change, so these are anchored to the declarations themselves.
+    (
+        "COMPATIBILITY.md",
+        "ts/src/crypto.ts",
+        "function isPlainObject(v: object): boolean {",
+    ),
+    ("DECISIONS.md", "go/crypto/crypto.go", 'exp, ok := payload["exp"].(float64)'),
+    # `authorize()` is where the aliased digest was actually SIGNED, so this is the citation that
+    # carries §10's weight — the exported helper is only how a caller reaches the same code on purpose.
+    (
+        "COMPATIBILITY.md",
+        "ts/src/client.ts",
+        "return jcsCanonicalize(toolInput ?? {});",
+    ),
     # The `canonical=` keyword-only parameter, in both clients. Both citations had drifted into the
     # `subjects` docstring PROSE — `client.py:291` and `aio.py:221` — while the parameter they name
     # sits at `:257` / `:195`. The line resolved, the file was right, and the citation pointed at an
@@ -589,6 +632,46 @@ ANCHORED = [
         "COMPATIBILITY.md",
         ".github/workflows/release-on-runtime.yml",
         'git tag -a "go/v$VER"',
+    ),
+    # Phase 2's integer-slot guards. These are anchored because their citations have now drifted
+    # TWICE inside one workstream: `ts/src/crypto.ts` grew 31 lines mid-phase and stranded two
+    # citations, one of which had additionally been pointing at the *string* slot validator for a
+    # claim about a coerced integer since before the phase began. Both repairs were then unguarded —
+    # a verification round reverted one to its stale value and the whole suite stayed green. A
+    # citation that has drifted twice and is defended by nothing will drift a third time.
+    (
+        "COMPATIBILITY.md",
+        "ts/src/crypto.ts",
+        "function uintSlot(name: string, value: number | bigint, bits: 32 | 64): bigint {",
+    ),
+    (
+        "COMPATIBILITY.md",
+        "ts/src/crypto.ts",
+        "function u64le(name: string, n: number | bigint)",
+    ),
+    (
+        "COMPATIBILITY.md",
+        "ts/src/crypto.ts",
+        "const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid });",
+    ),
+    (
+        "COMPATIBILITY.md",
+        "python/seam_sdk/crypto.py",
+        "def _uint_slot(name: str, value: int, bits: int) -> int:",
+    ),
+    ("COMPATIBILITY.md", "python/seam_sdk/crypto.py", "_uint_slot(name, value, bits)"),
+    ("DECISIONS.md", "ts/src/crypto.ts", "must be a number or bigint, not "),
+    ("PROGRESS.md", "ts/src/crypto.ts", "export function recordDigestV3(d: {"),
+    # `record_digest_v3` and `_opt_bytes`, cited from PROGRESS.md and DECISIONS.md respectively.
+    # A verification round mutated `PROGRESS.md`'s `python/seam_sdk/crypto.py` citation to line 1 and
+    # the whole suite stayed green — while the TS twin in the *same sentence* was anchored and did go
+    # red. That asymmetry is why these are here: the file had drifted 25 lines and only the guarded
+    # half of the claim noticed.
+    ("PROGRESS.md", "python/seam_sdk/crypto.py", "def record_digest_v3("),
+    (
+        "DECISIONS.md",
+        "python/seam_sdk/crypto.py",
+        "def _opt_bytes(b: bytes | None) -> bytes:",
     ),
     ("COMPATIBILITY.md", "README.md", "crypto shims + conformance tests only"),
     ("COMPATIBILITY.md", ".github/workflows/ci.yml", "must link NOTHING"),
@@ -728,7 +811,61 @@ CITATION_SLACK = 3
 #: and that is fine: the candidate set is then both of that row's citations, which is still far
 #: narrower than every citation of the path in the document.
 CLAIM_LINES = {
+    (
+        "COMPATIBILITY.md",
+        "ts/src/client.ts",
+        "return jcsCanonicalize(toolInput ?? {});",
+    ): "calls",
+    (
+        "COMPATIBILITY.md",
+        "ts/src/crypto.ts",
+        "function isPlainObject(v: object): boolean {",
+    ): "An enumeration of",
+    (
+        "DECISIONS.md",
+        "go/crypto/crypto.go",
+        'exp, ok := payload["exp"].(float64)',
+    ): "It is the only one with a written rationale",
+    ("PROGRESS.md", "python/seam_sdk/crypto.py", "def record_digest_v3("): (
+        "`verify/src/verify.rs:448`; the 6a/6b"
+    ),
+    (
+        "DECISIONS.md",
+        "python/seam_sdk/crypto.py",
+        "def _opt_bytes(b: bytes | None) -> bytes:",
+    ): "past-EOF",
     # COMPATIBILITY.md
+    # Phase 2's integer-slot guards. COMPATIBILITY.md cites `ts/src/crypto.ts` four times and
+    # `python/seam_sdk/crypto.py` three times, so without these the anchors could be satisfied by a
+    # sibling citation — the needle would be "found" against a line the claim never named.
+    (
+        "COMPATIBILITY.md",
+        "ts/src/crypto.ts",
+        "function uintSlot(name: string, value: number | bigint, bits: 32 | 64): bigint {",
+    ): "The guard is `uintSlot`",
+    (
+        "COMPATIBILITY.md",
+        "ts/src/crypto.ts",
+        "function u64le(name: string, n: number | bigint)",
+    ): "now route through it",
+    (
+        "COMPATIBILITY.md",
+        "ts/src/crypto.ts",
+        "const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid });",
+        # Was "blanket `catch { return false }`" until §10 stopped that being true: the type checks
+        # now run before the `try`. Re-anchored to the corrected sentence rather than to the code,
+        # because what this pins is WHICH CLAIM carries the citation, and the claim is now historical.
+    ): "wrapped its whole body in a catch that returned",
+    (
+        "COMPATIBILITY.md",
+        "python/seam_sdk/crypto.py",
+        "def _uint_slot(name: str, value: int, bits: int) -> int:",
+    ): "was `_v3_uint`, and `record_digest_v2` now shares it",
+    (
+        "COMPATIBILITY.md",
+        "python/seam_sdk/crypto.py",
+        "_uint_slot(name, value, bits)",
+    ): "now returns `False`",
     ("COMPATIBILITY.md", "CHANGELOG.md", "No yank"): "is not being re-litigated",
     (
         "COMPATIBILITY.md",
@@ -811,12 +948,17 @@ CLAIM_LINES = {
         "PROGRESS.md",
         "scripts/check-contract.sh",
         "fields_python() {",
-    ): "**Phase 5 parameterises both on stub path + package**",
+    ): "**Phase 5 did NOT touch them**",
     (
         "PROGRESS.md",
         "scripts/check-contract.sh",
         "fields_ts() {",
-    ): "**Phase 5 parameterises both on stub path + package**",
+    ): "**Phase 5 did NOT touch them**",
+    (
+        "PROGRESS.md",
+        "scripts/check-contract.sh",
+        "# Scoped to the API write, deliberately",
+    ): "**Re-targeted:** it pointed at the FIELD-manifest write for two rounds",
     (
         "PROGRESS.md",
         "scripts/check-contract.sh",
@@ -982,11 +1124,22 @@ def test_the_claim_line_map_covers_every_needle_that_needs_it() -> None:
 
 
 def test_the_anchored_table_is_not_empty() -> None:
-    """A floor with a real margin: 17 entries at the time of writing. The check this replaced
+    """A floor that actually binds. The docstring said "17 entries at the time of writing" while
+    the list had grown to 44 and the floor stayed at 12 — so 32 anchors were retirable with the
+    suite green, which the whole-feature verification round demonstrated by deleting one entry plus
+    its CLAIM_LINES binding and repointing the citation it protected. A floor set once and left
+    behind the thing it floors is not a floor.
+
+    Pinned to a committed count instead, so growth is recorded and shrinkage has to be deliberate.
+    The check this replaced
     asserted only `report` was non-empty, a floor of one against seventeen — the weakest calibration
     in a file whose stated discipline is a third."""
-    assert len(ANCHORED) >= 12, (
-        f"ANCHORED has shrunk to {len(ANCHORED)}; entries are being deleted"
+    # Raise this when anchors are added. Lowering it is the loud, reviewable edit that deleting an
+    # anchor is supposed to require — which is the entire purpose of the number.
+    _COMMITTED_ANCHOR_COUNT = 44
+    assert len(ANCHORED) >= _COMMITTED_ANCHOR_COUNT, (
+        f"ANCHORED has shrunk to {len(ANCHORED)}, below the committed {_COMMITTED_ANCHOR_COUNT}; "
+        "entries are being deleted"
     )
 
 
@@ -1090,7 +1243,7 @@ QUOTED = [
     (
         "COMPATIBILITY.md",
         "seam-aegis/pyproject.toml",
-        "seam-agent-core[sdk]>=0.4,<0.5",
+        "seam-agent-core[sdk]>=0.5,<0.6",
     ),
     (
         "COMPATIBILITY.md",
@@ -1449,3 +1602,52 @@ def test_the_smuggling_check_would_actually_fire() -> None:
     assert bound[0][1].startswith(VENDORED + GENERATED), (
         "the bound path is not recognised as protected, so the real check could not fire on it"
     )
+
+
+# ── The two line-anchor rules must stay the same rule ────────────────────────────────────────────
+# `_line_anchors_into_vendored` and `_line_anchors_into_generated` enforce one idea against two sets
+# of paths: do not line-anchor into a tree that is replaced wholesale. They were written separately,
+# and when `COMMA_LIST_CITATION` was added — precisely because "a comma separating two line numbers
+# does not make them less line numbers" — only the generated one was taught it. Measured before the
+# fix: `verify/docs/seam-event.v1.md:100,200` was caught for GENERATED and slipped past for VENDORED.
+#
+# That is issue #73's own class, reopened in the sibling rule by the change that closed it. These
+# tests exist so the next spelling added to one rule cannot be forgotten in the other.
+
+_ANCHOR_SPELLINGS = [
+    ("single line", "{path}:100"),
+    ("a range", "{path}:100-110"),
+    ("a comma list", "{path}:100,200"),
+    ("a range inside a comma list", "{path}:100-110,200"),
+]
+
+
+@pytest.mark.parametrize(
+    "label,template", _ANCHOR_SPELLINGS, ids=[s[0] for s in _ANCHOR_SPELLINGS]
+)
+def test_both_line_anchor_rules_catch_every_spelling(label: str, template: str) -> None:
+    for name, prefixes, detector in (
+        ("VENDORED", VENDORED, _line_anchors_into_vendored),
+        ("GENERATED", GENERATED, _line_anchors_into_generated),
+    ):
+        # A real path under each prefix, so the test exercises the prefix match too.
+        sample = prefixes[0]
+        if sample.endswith("/"):
+            sample += "seam/api/v1/seam_pb.ts"
+        text = "see `" + template.format(path=sample) + "`"
+        assert detector(text), (
+            f"_line_anchors_into_{name.lower()} misses {label} ({text}). The two rules enforce one "
+            "idea; teaching a spelling to one and not the other is how this defect got here."
+        )
+
+
+def test_a_citation_outside_those_trees_is_not_swept_up() -> None:
+    """The accepting side: these rules must only fire on the trees they name.
+
+    Without this, 'make both rules catch everything' has a trivially passing implementation — return
+    every citation — which would forbid every line number in the repo.
+    """
+    for template in (t for _, t in _ANCHOR_SPELLINGS):
+        text = "see `" + template.format(path="python/seam_sdk/crypto.py") + "`"
+        assert not _line_anchors_into_vendored(text), text
+        assert not _line_anchors_into_generated(text), text

@@ -354,7 +354,11 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   runs `buf generate ../seam-runtime` against exactly that path. An earlier wording of this line
   said `crates/**` was unreadable outright, which forbade the proto and contradicted the build.)
   Filed as a question upstream.
-- **Status:** UNCONFIRMED
+- **Owner / re-open trigger:** whoever next changes `AuthorizeRequest` handling in `seam-runtime`,
+  or the first consumer to report an `authorize(canonical=…)` call refused for a reason other than
+  policy. Added 2026-09-04 — this entry had no trigger, which is how an assumption becomes scenery.
+- **Status:** UNCONFIRMED (reviewed 2026-09-04, unchanged). A claim about runtime acceptance
+  behaviour that only the runtime can settle; nothing this cycle exercised it.
 
 ## The runtime's JCS renders an integer ≥ `10**21` the way ES6 does
 - **Plan:** `plans/archive/authorize-single-canonicalization.md` (Phase 3, issue #60)
@@ -370,7 +374,11 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Blast radius if wrong:** none today. Being wrong means only that the SDK is stricter than it
   needs to be for values essentially nobody sends. Widening later is additive; the reverse would not
   be. Filed as a question upstream.
-- **Status:** UNCONFIRMED
+- **Owner / re-open trigger:** the first caller to canonicalize a tool input containing an integer
+  at or above `10**21`. Until one exists this cannot be settled and does not need to be. Added
+  2026-09-04 — this entry had no trigger.
+- **Status:** UNCONFIRMED (reviewed 2026-09-04, unchanged). Deliberately not relied on; settling it
+  needs the runtime's JCS, not this repo's.
 
 ## The field manifest spells an entry `<Message>/<field_name>`, names only
 
@@ -444,8 +452,15 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   turns out to be wanted, quarantine is still available and `yank.yml` now actually authenticates.
   Being wrong the other way — quarantining when it was not wanted — breaks builds that work today
   and cannot be undone for anyone whose CI ran in the interim.
-- **Status:** UNCONFIRMED — this is the one option worth raising rather than settling unilaterally,
-  per the phase's own Rejected-alternatives note.
+- **Owner / re-open trigger:** whoever holds a Cloudsmith credential, on issue #43, where both
+  known-bad bands are consolidated for one decision. Added 2026-09-04 — this entry had no trigger.
+- **Status:** UNCONFIRMED (reviewed 2026-09-04, unchanged) — this is the one option worth raising
+  rather than settling unilaterally, per the phase's own Rejected-alternatives note. Consolidated
+  onto issue #43 on 2026-09-02 so both known-bad bands get one answer instead of two; still awaiting
+  a human with a Cloudsmith credential. Re-verified this cycle that nothing can quietly create a
+  third band while the decision waits: `publish.yml` resolves every `ci-ok` check run for the
+  release SHA through the check-runs API and treats an absent conclusion as a refusal, so today's
+  red `main` blocks publication rather than repeating the 0.7.39-0.7.43 pattern.
 
 ## The enum manifest carries names only, not numeric tags
 
@@ -474,10 +489,25 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Owner / re-open trigger:** whoever next adds or reviews `buf breaking` config for
   `seam.api.v1`'s enums (in `seam-runtime`) — if that gate is ever found not to cover a same-name
   renumber, this assumption needs revisiting before the next enum-touching regeneration lands.
-- **Status:** UNCONFIRMED (reviewed 2026-09-01, unchanged). No new evidence either way this cycle:
-  the event surface added in Phase 5 carries **zero enums** — asserted by
-  `assert_event_surface_preconditions`, not assumed — so it produced no second case to test the
-  name-only rule against. The trigger is unchanged and still sits in `seam-runtime`. See DECISIONS.md.
+- **Status:** CONFIRMED (2026-09-04) — **on measured behaviour, not on the config's name.** The
+  re-open trigger ("whoever next reviews `buf breaking` config for `seam.api.v1`'s enums") came due
+  this cycle and was worked rather than deferred. `../seam-runtime/buf.yaml:23-25` sets
+  `breaking: use: [WIRE_JSON]`, and `../seam-runtime/.github/workflows/ci.yml:173-181` runs
+  `buf breaking --against` a materialised `main`. Reading that config is not evidence that it covers
+  the case, so both forms of the gap were executed against `buf` 1.66.0 rather than reasoned about:
+  - a **renumber** (name kept, tag 1 -> 3) is refused twice, for the deleted *name* and the deleted
+    *number*;
+  - a **swap** (`FOO_A`/`FOO_B` exchange tags, so no name and no number is deleted — the form that
+    defeats a delete-only rule) is refused as `Enum value "2" ... changed name from "FOO_B" to
+    "FOO_A"`.
+  So the name<->number binding is protected in both directions, and the entry's "if that upstream
+  gate ... misses this case" clause is now measured false rather than merely hoped against.
+  **The residual risk is narrower and worth stating precisely:** that step carries
+  `if: github.ref != 'refs/heads/main'`, so it compares PR heads only. A change reaching `main`
+  without a PR is never compared, and the same push publishes the BSR module this SDK generates
+  from. That is a bypass question about the runtime's branch protection, not a coverage question
+  about `WIRE_JSON` — a different risk from the one this entry logged, and out of this repo's
+  reach. See DECISIONS.md.
 
 ## `plans/` stays outside the citation guard; `PROGRESS.md` does not
 
@@ -503,7 +533,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Owner / re-open trigger:** whoever next finds a citation drift inside an OPEN (not archived) plan
   document causing a real misdirection during `/implement` — that would be evidence the open/archived
   line, not the `plans/`-vs-`PROGRESS.md` line, is where this guard should actually cut.
-- **Status:** UNCONFIRMED (reviewed 2026-09-01, unchanged). Phase 5's verification round found three
+- **Status:** UNCONFIRMED (reviewed 2026-09-04, unchanged). Phase 5's verification round found three
   stale line references inside `PROGRESS.md` that the guard could not see — but they were **bare**
   `:NNN` refs carrying no path, and `test_compatibility_citations_resolve.py` matches backticked
   `file:line`, so a pathless number is invisible in *every* guarded document, `PROGRESS.md`
@@ -538,9 +568,21 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   60 days from `EXPECTED-FROM` (see the file's own header) — if `contract/expected-local-lag.txt` is
   still present and its five fields still match the local/BSR gap at that point, the split recorded
   here is not a window and this assumption needs to be revisited, per the plan's own Open Q3 text.
-- **Status:** UNCONFIRMED (reviewed 2026-09-01, deliberately deferred). `EXPECTED-FROM` is
-  2026-08-31, so the file is one day old and the 60-day trigger is nowhere near. Worth recording
-  that this cycle produced the first hard evidence for the **social** failure mode this entry names
+- **Status:** UNCONFIRMED (reviewed 2026-09-04, and the window this entry names has started to
+  close on its own). `EXPECTED-FROM` is 2026-08-31, so the 60-day trigger is still far off — but the
+  *contents* are no longer merely stale, they are now actively wrong in CI: seam-runtime merged its
+  ACDP P3 key-revocation work and pushed the BSR, so a CI regeneration emits two `ContextBinding`
+  fields (tags 12-13) the manifest does not declare. Note the direction, because an earlier
+  wording here had it backwards: CI fails on the gate's NOT-IN-THE-MANIFEST branch — a two-field
+  **surplus** — and never consults this file at all. Seven is the local-stub-vs-BSR delta, and it
+  becomes a recorded *gap* only once tags 12-13 are declared. Local checkouts still show exactly
+  the recorded five, so this repo stays green while `main` does not — and the file's own NOTE now
+  teaches a **wrong cause** on every local run: it explains the lag as "a BSR module that has not
+  yet republished these", when the BSR has republished and gone two fields further. The local
+  stubs are simply old. Re-recording it is Phase 8's, not a hand-edit here — which is exactly the divergence the entry warned the window would
+  produce. Resolving it needs the BSR regeneration credentials this workstation lacks, so the entry
+  stays open and the fix stays interlocked with Phase 8. Recorded rather than papered over.
+  This cycle also produced the first hard evidence for the **social** failure mode this entry names
   rather than the technical one: the NOTE's own closing sentence claimed "so this STILL exits 6
   below" unconditionally, which is false whenever the event surface also disagrees, and it survived
   a full phase plus four verification rounds precisely because that block is the one every local run
@@ -599,7 +641,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Owner / re-open trigger:** whoever next has a consumer that genuinely cannot name the type — or
   the next time a third decoder of this shape lands, since three is when a pattern is worth exporting
   deliberately rather than case by case.
-- **Status:** UNCONFIRMED (reviewed 2026-09-01, unchanged). Phase 4 shipped and merged (#93) without
+- **Status:** UNCONFIRMED (reviewed 2026-09-04, unchanged). Phase 4 shipped and merged (#93) without
   either type reaching the named export list and without a consumer needing it; the count of
   decoders of this shape is still two, not three. Nothing this cycle tested the assumption, which is
   the correct outcome for one whose evidence can only come from a consumer. See DECISIONS.md.
@@ -624,10 +666,159 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Owner / re-open trigger:** seam-runtime#526. If `freshly_sealed` lands — a client currently
   cannot tell whether *this* call performed the seal or re-reported one — this docstring is the first
   thing that goes stale.
-- **Status:** UNCONFIRMED (reviewed 2026-09-01, deferred — not answerable here). The enumeration is a
+- **Status:** UNCONFIRMED (reviewed 2026-09-04, deferred — not answerable here). The enumeration is a
   claim about runtime behaviour, and the only evidence that could settle it is seam-runtime#526's
   matrix, which is why the docstring cites the issue rather than a line of code. Nothing in this repo
   can promote it, and the docstring already says the list is orientation rather than a guarantee to
   branch on — so the cost of it being wrong stays bounded to trust, as the entry records. Stays open
   against #526. See DECISIONS.md.
 
+
+## Appending a new workstream to `PROGRESS.md` rather than starting a fresh one
+
+- **Plan:** `plans/digest-correctness-and-gate-repair.md`, Phase 1 / Open question 6
+- **Assumed:** `PROGRESS.md` can carry a fourth workstream section appended at the bottom without a
+  reader mistaking the earlier three for current state.
+- **Chose:** append. A fresh `PROGRESS.md` was written first and turned **25 guard tests red** at
+  once: `python/tests/test_compatibility_citations_resolve.py` binds 44 anchored claims and 39
+  quoted line-bindings
+  plus a 30-citation floor to this document's *content*, and the document cites itself by line in
+  three places, at least two of which are live and accurate. Replacing it destroys the evidence those
+  assertions are made of. The appended section opens by saying so, so the next person meets the
+  constraint before they meet the temptation.
+- **Alternatives:** (a) a fresh `PROGRESS.md` with the old one moved to `progress/archive/` — clean
+  to read, but every anchored claim would need re-pointing at a path that is no longer the one the
+  guard scans, and the self-citations would have to be recomputed by hand. (b) Relax the guard to
+  span both files — widens the blast radius of the mechanism that has caught four real drifts this
+  workstream alone, to buy tidiness. (c) Lower the citation floor — removes the ratchet's whole point.
+- **Blast radius if wrong:** low and slow. The file grows monotonically (2123 → ~2310 lines this
+  phase) and eventually someone reads a stale workstream as current. It costs a confused reader, not
+  a bad publish. The failure mode of the alternative is a guard that no longer guards.
+- **Owner / re-open trigger:** the next workstream after this one. If a fifth section is needed, that
+  is the point to solve it properly rather than append a fourth time — likely by teaching the guard
+  to scan a directory rather than a file, so archiving stops costing 25 assertions.
+- **Status:** UNCONFIRMED (reviewed 2026-09-04, unchanged — and now with evidence that the question
+  is real rather than theoretical). Deliberately not solved under run pressure. Phases 4-7 appended
+  to the same `PROGRESS.md` workstream and the citation guard held throughout, but only because
+  every phase re-measured its own citations after formatting; two citations in this run pointed at
+  the wrong target while still *resolving*, which a remap cannot detect and only anchoring caught.
+  That is the cost this entry predicted, paid once per phase, and it is still unamortised.
+
+## Refusing duck-typed integers (`numpy.int64`, `gmpy2.mpz`) in the Python digest slots
+
+- **Plan:** `plans/digest-correctness-and-gate-repair.md`, Phase 2 (found by verification, not planned)
+- **Assumed:** no caller passes a non-`int` integer type — one implementing `__index__` without
+  subclassing `int` — to `record_digest_v2`, `record_digest_v3` or `verify_chain_head_attestation`.
+- **Chose:** `isinstance(value, int)` in the shared `_uint_slot`, which refuses `numpy.int64` and
+  `gmpy2.mpz` where they previously produced a digest. This is the rule `record_digest_v3` has
+  enforced since it was written; the alternative would have made v2 and the attestation verifier
+  *more* permissive than v3, which is a new asymmetry in a phase about closing them.
+- **Alternatives:** accept anything with `__index__` (excluding `bool` explicitly, since
+  `True.__index__()` is `1`). Strictly more permissive and restores the pre-phase behaviour for
+  numeric-stack callers — but it would then need applying to v3 too, widening a validator that has
+  been narrow and uncontested for its whole life, to serve a caller nobody has reported.
+- **Blast radius if wrong:** a caller doing `record_digest_v2(sealed_at=np.int64(...))` gets a
+  `TypeError` where they previously got a correct digest. Loud, at the first record, with a message
+  naming the type — not a silent wrong answer. `enum.IntEnum` and ordinary `int` subclasses are
+  unaffected. Protobuf `uint64`/`uint32` fields return `type(v) is int` under both the `upb` and
+  pure-Python implementations, verified end-to-end, so the SDK's own decode path is clear.
+- **Owner / re-open trigger:** the first report of a `TypeError` from a numeric-stack caller. The
+  fix is one `hasattr(value, "__index__")` in `_uint_slot`, applied to all three framings at once.
+- **Status:** UNCONFIRMED (reviewed 2026-09-04, unchanged). The assumption is about callers outside
+  this repo, which nothing here can settle; it is recorded so the trigger is recognisable rather
+  than debugged from scratch. No such caller has surfaced.
+
+## `toJSON` is not honoured by `jcsCanonicalize`
+
+- **Plan:** `plans/digest-correctness-and-gate-repair.md`, Phase 3
+- **Assumed:** no caller relies on `toJSON()` being called during canonicalization. An object
+  carrying one raises today (the walk reaches the function value and refuses it), and this phase's
+  plain-object guard does not change that — it was checked, not inherited by accident.
+- **Chose:** keep refusing. `JSON.stringify` would call `toJSON`, so this is a deliberate divergence
+  from the function JCS is usually explained in terms of. The reason is that honouring it makes the
+  canonical bytes depend on a method the digest cannot see: a `toJSON` that changed between releases
+  would silently change a signed digest, in TypeScript only, since Python has no equivalent hook.
+- **Alternatives:** call `toJSON()` before the type test, matching `JSON.stringify`. Friendlier for
+  callers with domain objects, and the natural expectation for anyone who has used `stringify`. It
+  loses the cross-language property that both SDKs agree on which inputs have a digest at all — the
+  property §9 and §10 of `COMPATIBILITY.md` exist to defend — so it was not taken to be convenient.
+- **Blast radius if wrong:** a caller with `toJSON` on a request object gets a `TypeError` instead of
+  a digest. Loud and at the first call, not a silent wrong answer. They convert explicitly at the
+  boundary, which is the same fix the `Date` case asks for.
+- **Owner / re-open trigger:** the first report of a caller whose request objects carry `toJSON`. If
+  it is taken up, it must be taken up in Python too — as an explicit protocol, not a JS-only hook —
+  or the divergence it creates is worse than the inconvenience it removes.
+- **Status:** UNCONFIRMED (reviewed 2026-09-04, unchanged). About callers outside this repo, which
+  nothing here can settle. No consumer has reported a `toJSON`-bearing value reaching
+  `jcsCanonicalize`.
+
+## `engines.node` is `>=20` because that is what CI verifies, not because 20 is the true floor
+
+- **Plan:** `plans/digest-correctness-and-gate-repair.md`, Phase 3
+- **Assumed:** Node 20 is the oldest runtime this SDK should claim. It is the version all four
+  workflow jobs pin, so it is the oldest one anything has actually been proven on.
+- **Chose:** `">=20"`, with `python/tests/test_node_engines_floor.py` binding it to the CI pins so
+  the two cannot drift apart. The real floor is probably lower — nothing in `ts/src/` obviously needs
+  20 — but "probably lower" is not a number to publish in a manifest consumers install against.
+- **Alternatives:** derive the true floor by testing on 18 and 16 in CI. That is the correct answer
+  and it costs two more CI legs on every PR, for a runtime nobody has asked for. Declaring `>=18`
+  without a leg to prove it would be exactly the unverified-number defect this test exists to stop.
+- **Blast radius if wrong:** a consumer on Node 18 gets an `npm` engine warning (or an error under
+  `engine-strict`) for a runtime that might have worked. Visible at install time, not at verify time,
+  which is the direction that matters here.
+- **Owner / re-open trigger:** the first consumer who needs Node 18. The fix is a CI leg on 18 and
+  then lowering the floor — in that order, never the reverse.
+- **Status:** UNCONFIRMED (reviewed 2026-09-04, unchanged). Deliberately conservative; the floor is
+  a claim about what was tested. No Node leg was added or removed this cycle, so the evidence behind
+  `>=20` is exactly what it was when the entry was written.
+
+## Java and Kotlin implement the `exp` rule but do not yet read the shared vector
+
+- **Plan:** `plans/digest-correctness-and-gate-repair.md`, Phase 3
+- **Assumed:** `SeamCrypto.java` and `SeamCrypto.kt` genuinely implement the normative `exp` rule.
+  This is read from the source (`instanceof Number` + `longValue()`; `as? Number` + `toLong()`) and
+  is the reason Go's rule was adopted as the 3-of-5 majority — but it is **read, not measured.**
+- **Chose:** ship the vector with Go, Python and TypeScript consumers, and leave Java and Kotlin as
+  follow-up. This workstation has no JDK, so a consumer written for them could not be executed before
+  being committed. CI does run `./gradlew test`, so it would have been verified there — but writing
+  an unrunnable test and letting CI be its first execution is how a vacuous test lands, and this run
+  has already spent four verification rounds on exactly that failure mode.
+- **Alternatives:** write both consumers blind and let CI adjudicate. Faster, and probably fine —
+  they are short JSON-reading tests against implementations already believed correct. Rejected
+  because "probably fine, CI will tell us" is the reasoning that produced the placeholder-AID test in
+  Phase 2, which passed while asserting nothing.
+- **Blast radius if wrong:** if Java or Kotlin in fact diverges, the vector says three languages agree
+  and implies five. The claim is scoped in the vector's own header and in `COMPATIBILITY.md` §10 to
+  the three that read it, so the document does not overstate what is checked.
+- **Owner / re-open trigger:** the next session with a JDK available, or the next change to either
+  file's `exp` handling. The work is ~40 lines per language, mirroring
+  `go/crypto/tct_exp_vector_test.go`.
+- **Status:** UNCONFIRMED (reviewed 2026-09-04, unchanged). Not a design question — an unrun test,
+  recorded as such rather than written blind. Still unrun: the JVM legs need a JDK 17 this
+  workstation does not have, so the shared vector remains read by Python/TS/Go/Rust only.
+
+## `contract/rpc-manifest.txt` covers one package, and Phase 5 shipped a tripwire rather than extending it
+
+- **Assumed:** `seam.event.v1` declares zero services today. This is **measured**, not assumed —
+  `python/seam_sdk/_gen/seam/event/v1/seam_event_pb2_grpc.py` is a 159-byte scaffold with no service
+  block, and a test asserts it against the real committed stub rather than the fixture's copy.
+- **Chose:** refuse a non-empty event verb surface with exit 7 (structural precondition), instead of
+  extending `contract/rpc-manifest.txt` to a second package. The manifest's entries are bare
+  `Service/Method` names with no package qualifier, so covering two packages needs a format decision:
+  package-qualify every line in one file, or add a second file. Both are defensible and the choice
+  changes `--write-manifest`, `manifest_rpcs`, and every existing line.
+- **Alternatives:** pick a format now and extend the manifest. Rejected because the manifest would
+  have zero event entries, so the format would be chosen against an empty set and discovered wrong by
+  the first real verb — and because a tripwire converts "a verb arrived unnoticed" from silent to
+  loud, which is the whole failure mode, without committing to a shape.
+- **Blast radius if wrong:** if a verb lands on `seam.event.v1`, CI goes red with exit 7 and a message
+  naming the verb and the decision to make. That is the intended behaviour, not a defect — but it
+  *will* block the branch that lands it until the format decision is made, so whoever lands the first
+  event RPC pays for this deferral in the same PR.
+- **Owner / re-open trigger:** the first `seam.event.v1` service. The gate's own message states the
+  decision and the two candidate shapes.
+- **Status:** UNCONFIRMED as a design choice (reviewed 2026-09-04, unchanged) — deliberately
+  deferred, with the trigger wired to fire loudly rather than left to be noticed. The tripwire
+  shipped this cycle and has never fired: `seam.api.v1` is still the only package the RPC manifest
+  covers, and the event surface reached by `assert_event_surface_preconditions` declares **no**
+  services and has no manifest of its own. Nothing has yet asked for the second package that would settle it.

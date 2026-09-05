@@ -30,9 +30,9 @@ a moved line as evidence the surrounding design may have moved too.
 
 ## The asks
 
-| Plan | Target | Headline | Issue | State (2026-08-31) |
+| Plan | Target | Headline | Issue | State (2026-09-03) |
 |---|---|---|---|---|
-| [`seam-runtime-wire-framing-handshake.md`](seam-runtime-wire-framing-handshake.md) | seam-runtime | Carry `wire_framing_version` in the release dispatch so the SDK can refuse a release it has not adapted to | [#418](https://github.com/zer07labs/seam-runtime/issues/418) | 🔴 **live** — the SDK half is landed with its latch deliberately **open** (warns, does not refuse) until this lands |
+| [`seam-runtime-wire-framing-handshake.md`](seam-runtime-wire-framing-handshake.md) | seam-runtime | Carry `wire_framing_version` in the release dispatch so the SDK can refuse a release it has not adapted to | [#418](https://github.com/zer07labs/seam-runtime/issues/418) | ✅ **done** — landed and CLOSED COMPLETED 2026-08-26; the SDK flipped `runtime_emits_version` to true on 2026-09-03. The latch sat stale for that week, so the gate now also refuses a dispatch that carries the field while the latch reads false. |
 | [`seam-runtime-verify-crate-rename.md`](seam-runtime-verify-crate-rename.md) | seam-runtime | Rename `crates/seam-verify` so two crates in one org stop sharing a package name | [#419](https://github.com/zer07labs/seam-runtime/issues/419) | 🟡 **hygiene** — downgraded from blocker; see the plan |
 | [`seam-runtime-data-plane-bind-guard.md`](seam-runtime-data-plane-bind-guard.md) | seam-runtime | Give the data plane a `validate_mgmt_bind` equivalent | [#420](https://github.com/zer07labs/seam-runtime/issues/420) | 🔴 **live** |
 | [`seam-runtime-evidence-bundle-export.md`](seam-runtime-evidence-bundle-export.md) | seam-runtime | A bearer-scoped evidence bundle — an export, not a cross-tenant read grant | [#421](https://github.com/zer07labs/seam-runtime/issues/421) | 🔴 **live** |
@@ -44,8 +44,8 @@ a moved line as evidence the surrounding design may have moved too.
 ## What blocks what
 
 ```
-#418 (wire_framing_version)  ──►  seam-sdk flips runtime_emits_version to true
-                                  (contract/wire-framing.json — until then the gate warns, not refuses)
+#418 (wire_framing_version)  ──►  seam-sdk flips runtime_emits_version to true   [DONE 2026-09-03]
+                                  (contract/wire-framing.json — the gate now refuses, not warns)
 
 #422 (anchor feed)           ──►  seam-sdk may claim truncation detection
                                   (guarded today by python/tests/test_retracted_claims.py)

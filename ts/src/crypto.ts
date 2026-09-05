@@ -151,7 +151,29 @@ export function verifyTct(
     if (!(payload.iss === payload.sub && payload.sub === payload.aud && payload.aud === issuerAid))
       return false;
     const now = nowS ?? Math.floor(Date.now() / 1000);
-    if (now >= (payload.exp ?? 0)) return false; // RFC 7519: reject at/after expiry
+    // `exp` must be a JSON NUMBER, and is truncated to whole seconds before the comparison. Both
+    // halves are load-bearing, and neither was true here before:
+    //
+    //   * `now >= payload.exp` let JS coerce. A string `exp` compares by numeric coercion, so
+    //     `"1e10"` and `"10000000000"` were both ACCEPTED — Go's `payload["exp"].(float64)` and
+    //     Java's `instanceof Number` refuse a string outright. Worse, `true` coerces to `1`: at any
+    //     `now` below 1 the token VERIFIED. That last one is invisible at a realistic clock, which
+    //     is why the shared vector pins `now = 0`.
+    //   * the comparison was float-precise, so `exp = N + 0.5` was still valid at `now = N` while
+    //     every other shim had already expired it. Go's comment calls this out by name: a
+    //     float-precise compare "would accept it and drift from the shims".
+    //
+    // Go's rule is normative because Java and Kotlin already implement it, making it the 3-of-5
+    // majority; it is the only one with a written rationale; and it is the strictest, which is the
+    // safe direction for a token verifier. See DECISIONS.md.
+    if (typeof payload.exp !== "number" || !Number.isFinite(payload.exp)) return false;
+    // Bounded to int64 because the normative rule is: Go's `int64(exp)` is implementation-defined
+    // when the value does not fit, and `exp: 1e300` verified on arm64 (saturating to MaxInt64) while
+    // amd64 refused the identical token. JavaScript has no such hazard — `Math.trunc` is total — so
+    // this bound buys TypeScript nothing alone. It is here so all five SDKs answer the same thing.
+    // 2^63 is exactly representable as a double, so the comparison is exact.
+    if (payload.exp >= 9223372036854775808 || payload.exp < -9223372036854775808) return false;
+    if (now >= Math.trunc(payload.exp)) return false; // RFC 7519: reject at/after expiry
     return (payload.grants ?? []).includes("seam-commitment-digest:" + seamCommitmentDigest(commitment));
   } catch {
     return false;
@@ -202,6 +224,86 @@ function jcsBigInt(v: bigint): string {
   return rendered;
 }
 
+/** Is this a plain data object — the thing Python's `isinstance(v, dict)` accepts and nothing else?
+ *
+ * `typeof v === "object"` is true of `Date`, `Map`, `Set`, `RegExp`, typed arrays, boxed primitives
+ * and every class instance, and JCS walked all of them with `Object.keys`. What came out was
+ * whatever their own enumerable properties happened to be, which is not what any of them mean —
+ * measured, before this guard:
+ *
+ *     jcsCanonicalize(new Date(0))            -> {}
+ *     jcsCanonicalize(new Map([["a", 1]]))    -> {}
+ *     jcsCanonicalize(new Set([1, 2]))        -> {}
+ *     jcsCanonicalize(new Number(5))          -> {}
+ *     jcsCanonicalize(new Uint8Array([1, 2])) -> {"0":1,"1":2}
+ *     jcsCanonicalize(new String("x"))        -> {"0":"x"}
+ *     jcsCanonicalize(new (class { x = 1 })()) -> {"x":1}
+ *
+ * The last three matter for being different: they did NOT collapse to `{}`, they serialized their
+ * indices or their fields. So "none of these keep state in own enumerable properties" is a
+ * generalization the examples themselves refute, and refusing a class instance is a real narrowing
+ * of something that worked — not the removal of a meaningless digest. It is refused anyway, because
+ * Python refuses the same input and agreement about what has a digest is the property being bought.
+ *
+ * Which means `{ deadline: new Date("2026-01-01") }` and `{ deadline: new Date("2030-01-01") }` had
+ * the SAME `tool_input_digest`, and `call_sig` signed it. That is digest aliasing on an input a
+ * TypeScript caller produces without thinking about it — a `Date` in a request object — and it is
+ * the same defect class as the u64 wrap and the surrogate key, in the third place the rule lives.
+ * Python raises `TypeError: datetime is not JSON-serializable` on the identical input.
+ *
+ * The test is deliberately a RULE and not a denylist of `Date | Map | Set | ...`: an enumeration is
+ * only ever correct until someone passes the exotic type it forgot, and "silently digests an object
+ * with none of its contents" is not a failure mode worth leaving one more hole in. An object
+ * qualifies iff its prototype is a ROOT — `null`, or something whose own prototype is `null`. A
+ * plain `{}` and `Object.create(null)` pass; `Date`, `Map`, `Set`, `Uint8Array`, `new Number(5)` and
+ * class instances all sit one link further down the chain and do not.
+ *
+ * Testing the chain's DEPTH rather than `proto === Object.prototype` is what keeps this correct
+ * across realms: an object from a `vm` context or another frame has a different `Object.prototype`,
+ * and an identity check would refuse a perfectly ordinary data bag. Its prototype's prototype is
+ * still `null`. */
+function isPlainObject(v: object): boolean {
+  const proto: unknown = Object.getPrototypeOf(v);
+  return proto === null || Object.getPrototypeOf(proto as object) === null;
+}
+
+/** Name the type that was refused and the one-liner that converts it — an error reading only "not
+ * serializable" leaves the caller hunting for which field of a nested request object was the
+ * problem, which is the whole reason they reached for a digest library instead of writing one. */
+function notPlainObjectMessage(v: object): string {
+  const tag = Object.prototype.toString.call(v).slice(8, -1);
+  // `||`, not `??`: an anonymous class (`new (class { x = 1 })()`) has `constructor.name === ""` —
+  // present, and useless. That produced a message opening " is not JSON-serializable".
+  const ctor = (v.constructor as { name?: string } | undefined)?.name || "";
+  // A class instance's tag IS "Object", so the tag alone would render the self-contradicting
+  // "Object is not JSON-serializable: JCS canonicalizes plain objects". Name what it actually is.
+  const [what, fix] =
+    tag === "Object"
+      ? [
+          // `Object.create({ a: 1 })` has a non-root prototype and a `constructor` of `Object`, so
+          // naming the constructor produced "an instance of Object is not JSON-serializable: JCS
+          // canonicalizes plain objects" — the self-contradiction this branch exists to avoid,
+          // one prototype link further out than the case it was written for.
+          ctor && ctor !== "Object" ? `an instance of ${ctor}` : "an object with a non-root prototype",
+          "spread it: `{ ...value }`",
+        ]
+      : [
+          `a ${ctor || tag}`,
+          {
+            Date: "pass `date.toISOString()`",
+            Map: "pass `Object.fromEntries(map)`",
+            Set: "pass `[...set]`",
+            RegExp: "pass `regexp.source`",
+          }[tag] ?? "convert it to plain JSON data first",
+        ];
+  return (
+    `${what} is not JSON-serializable: JCS canonicalizes plain objects, arrays, strings, numbers, ` +
+    `booleans and null, and nothing else. Canonicalizing this would emit only its own enumerable ` +
+    `properties — for most such types, none at all — so the digest would not bind its contents. ` +
+    `To digest it, ${fix}.`
+  );
+}
+
 function jcsWrite(v: unknown): string {
   if (v === null) return "null";
   switch (typeof v) {
@@ -222,10 +324,30 @@ function jcsWrite(v: unknown): string {
   }
   if (Array.isArray(v)) return "[" + v.map(jcsWrite).join(",") + "]";
   if (typeof v === "object") {
+    if (!isPlainObject(v)) throw new TypeError(notPlainObjectMessage(v));
     const o = v as Record<string, unknown>;
     // Default Array.prototype.sort() compares UTF-16 code units — exactly RFC 8785 §3.2.3.
     const keys = Object.keys(o).sort();
-    return "{" + keys.map((k) => JSON.stringify(k) + ":" + jcsWrite(o[k])).join(",") + "}";
+    return (
+      "{" +
+      keys
+        .map((k) => {
+          // The same refusal as the string case above, in the position it was missing from. A key is
+          // as much a part of the canonical bytes as a value: `{"\ud800": 1}` canonicalized here
+          // while Python raised `UnicodeEncodeError` on the identical input, so TS could digest an
+          // object no other implementation can represent — in a value whose entire purpose is to be
+          // identical everywhere. Checked before `JSON.stringify`, which emits the `\udXXX` escape
+          // quite happily.
+          if (hasLoneSurrogate(k))
+            throw new Error(
+              `lone surrogate in object key ${JSON.stringify(k)} cannot be canonicalized ` +
+                `(not valid Unicode)`,
+            );
+          return JSON.stringify(k) + ":" + jcsWrite(o[k]);
+        })
+        .join(",") +
+      "}"
+    );
   }
   throw new TypeError(`${typeof v} is not JSON-serializable`);
 }
@@ -321,14 +443,18 @@ function optLE(s: string | null | undefined): Uint8Array {
   return concat(new Uint8Array([1]), frameLE(enc.encode(s)));
 }
 
-function u64le(n: number | bigint): Uint8Array {
+// `name` is the caller's slot, so a refusal says which field was out of range rather than leaving the
+// caller to guess which of five integer slots in a preimage it was. See `uintSlot` for why the check
+// is here at all: without it `setBigUint64`/`setUint32` wrap silently, and two distinct inputs reach
+// one digest — the one thing a digest exists to prevent.
+function u64le(name: string, n: number | bigint): Uint8Array {
   const out = new Uint8Array(8);
-  new DataView(out.buffer).setBigUint64(0, BigInt(n), true);
+  new DataView(out.buffer).setBigUint64(0, uintSlot(name, n, 64), true);
   return out;
 }
-function u32le(n: number): Uint8Array {
+function u32le(name: string, n: number | bigint): Uint8Array {
   const out = new Uint8Array(4);
-  new DataView(out.buffer).setUint32(0, n, true);
+  new DataView(out.buffer).setUint32(0, Number(uintSlot(name, n, 32)), true);
   return out;
 }
 
@@ -348,18 +474,30 @@ export function recordDigestV2(d: {
   supersedes: string | null;
   schemaVersion?: number;
 }): Uint8Array {
+  // Every slot below goes through the SAME guard v3 uses. It did not before, and the gap was not
+  // theoretical: `ciphertextDigest: "0".repeat(32)` and `new Array(32).fill(0)` each produced the
+  // identical digest to `new Uint8Array(32)`, because `Uint8Array.prototype.set` coerces every
+  // element through ToNumber and a non-numeric character becomes `NaN` becomes `0`. Two distinct
+  // inputs, one digest, in the v2 framing — while v3 refused all three and Python raised on them.
+  const ciphertextDigest = asBytes(d.ciphertextDigest);
+  if (ciphertextDigest === null) {
+    throw new TypeError(
+      `ciphertextDigest must be bytes, not a ${typeof d.ciphertextDigest} — refused rather than ` +
+        `coerced to zero bytes, which would ALIAS a legitimate caller's digest`,
+    );
+  }
   const pre = concat(
     frameLE(enc.encode("seam.audit.record-digest.v2")),
-    frameLE(enc.encode(d.decisionId)),
-    frameLE(enc.encode(d.tenant)),
-    frameLE(enc.encode(d.namespace)),
-    frameLE(d.ciphertextDigest),
-    frameLE(u64le(d.sealedAt)),
-    frameLE(enc.encode(d.outcome)),
-    optLE(d.mode),
-    optLE(d.policyVersion),
-    optLE(d.supersedes),
-    frameLE(u32le(d.schemaVersion ?? 2)),
+    frameLE(enc.encode(textSlot("decisionId", d.decisionId, false)!)),
+    frameLE(enc.encode(textSlot("tenant", d.tenant, false)!)),
+    frameLE(enc.encode(textSlot("namespace", d.namespace, false)!)),
+    frameLE(ciphertextDigest),
+    frameLE(u64le("sealedAt", d.sealedAt)),
+    frameLE(enc.encode(textSlot("outcome", d.outcome, false)!)),
+    optLE(textSlot("mode", d.mode, true)),
+    optLE(textSlot("policyVersion", d.policyVersion, true)),
+    optLE(textSlot("supersedes", d.supersedes, true)),
+    frameLE(u32le("schemaVersion", d.schemaVersion ?? 2)),
   );
   return sha256(pre);
 }
@@ -512,8 +650,20 @@ function v3SubDigest(
  * Seam implementation can reproduce: encode a non-string (`undefined` → `"undefined"`, `null` →
  * `"null"`, `5` → `"5"`), and substitute U+FFFD for an unpaired surrogate. Python raises on both
  * (`AttributeError`, `UnicodeEncodeError`); Rust cannot represent either. Refusing here is what
- * keeps the three implementations agreeing on which inputs have a digest at all. */
-function v3Text(name: string, value: unknown, optional: boolean): string | null {
+ * keeps the three implementations agreeing on which inputs have a digest at all.
+ *
+ * Was `v3Text`, and guarded only the v3 record digest — so `recordDigestV2` had every one of these
+ * holes for as long as it has existed. Measured before this change, on the v2 preimage:
+ *
+ *     recordDigestV2({… outcome: "\ud800"})  and  recordDigestV2({… outcome: "\ufffd"})
+ *       both -> b0bd8fdf…965a56bd        (TextEncoder substitutes U+FFFD: an ALIAS)
+ *     recordDigestV2({… decisionId: 5})    -> digested the text "5"
+ *     recordDigestV2({… tenant: null})     -> digested the text "null"
+ *
+ * The argument in this docstring never mentioned v3 — `TextEncoder` does not know which framing it
+ * is serving — so the name was the only thing scoping it. Renamed rather than copied, for the same
+ * reason `v3Uint` became `uintSlot`: a rule with one copy cannot drift between framings. */
+function textSlot(name: string, value: unknown, optional: boolean): string | null {
   if (optional && (value === null || value === undefined)) return null;
   if (typeof value !== "string") {
     throw new TypeError(
@@ -537,8 +687,34 @@ function v3Text(name: string, value: unknown, optional: boolean): string | null 
  * `setBigUint64`/`setUint32` apply ToBigUint64/ToUint32, so `2n ** 64n + 5n` writes the same eight
  * bytes as `5` — an alias, not an error. A `number` above 2^53 is refused outright: it is already
  * inexact, so the value hashed would be the nearest double rather than the integer the caller meant,
- * and Python (exact ints) would disagree. `bigint` is the way to express those. */
-function v3Uint(name: string, value: number | bigint, bits: 32 | 64): bigint {
+ * and Python (exact ints) would disagree. `bigint` is the way to express those.
+ *
+ * This was called `v3Uint` and guarded only the v3 record digest. Every one of those arguments is
+ * about `DataView` and IEEE doubles, neither of which knows which framing it is serving — so v2 and
+ * the chain-head attestation carried the identical aliases, demonstrated byte-for-byte, for as long
+ * as they have existed. `u64le`/`u32le` now route through here, which is what makes the reasoning
+ * apply where it always did. Renamed rather than duplicated: a rule with only one copy cannot drift
+ * between framings, and a name saying "v3" on the function v2 depends on is a lie a reader has to
+ * discover for themselves. */
+/** The checks on a uint-slot argument that indict the CALLER rather than the value — split out of
+ * {@link uintSlot} so `verifyChainHeadAttestation` can ask for them without the rest.
+ *
+ * The line is drawn at "could this have arrived over the wire?". A string, a boolean, a `null` or a
+ * fractional number could not: protobuf decodes a `uint64` into a number or a bigint, always whole.
+ * So each of those means the call was built wrong, and each must escape the verifier's blanket catch
+ * instead of being reported as a failed attestation.
+ *
+ * `Number.isSafeInteger` is deliberately NOT here, and the boundary is worth being exact about.
+ * `2 ** 60` is a whole number a caller could plausibly hold — it is exactly representable, it is
+ * simply past the point where its NEIGHBOURS are — and Python, with exact integers, digests it
+ * happily and answers `false` when the signature does not match. Hoisting that check would make
+ * TypeScript throw where Python returns `false`: closing one divergence by opening another. It stays
+ * inside {@link uintSlot}, where the verifier's catch turns it into the same `false` Python gives.
+ *
+ * Split rather than copied. Two functions each asserting what a uint slot may hold would be this
+ * change's own subject one level up: a rule living in more than one place drifts, and the copies
+ * stop agreeing about what a valid input is. */
+function requireUintArgument(name: string, value: number | bigint): void {
   if (typeof value !== "number" && typeof value !== "bigint") {
     // `BigInt()` coerces far more than it looks like it does: `BigInt("5")` is `5n`, `BigInt(true)` is
     // `1n`, `BigInt([5])` is `5n`, and `BigInt("")` is `0n`. Each yields a digest that ALIASES the one
@@ -552,8 +728,38 @@ function v3Uint(name: string, value: number | bigint, bits: 32 | 64): bigint {
         `become a digest.`,
     );
   }
+  if (typeof value === "number" && !Number.isInteger(value)) {
+    throw new RangeError(`${name} must be an integer, got ${value}`);
+  }
+}
+
+/** The normalized bytes, or a `TypeError` naming what arrived instead.
+ *
+ * Through {@link asBytes}, which is this module's one definition of "is this a byte sequence" and
+ * what `recordDigestV3` uses. The first cut wrote `value instanceof Uint8Array` — in the same change
+ * whose `isPlainObject` docstring argues at length that realm-fragile identity checks are the wrong
+ * instrument. It was: `vm.runInNewContext("new Uint8Array(32)")` verified before and raised after,
+ * because a cross-realm `Uint8Array` is not `instanceof` ours. `asBytes` tests the buffer-protocol
+ * shape instead, so a `Buffer`, a subclass, a view with a byte offset and a foreign-realm array all
+ * pass, while a plain `number[]` (a `length` and indexes, no buffer) does not.
+ *
+ * Returns the normalization rather than just validating, so the digest is taken over the same bytes
+ * that were checked — the shape Python settled on for the same reason. */
+function requireBytes(name: string, value: Uint8Array): Uint8Array {
+  const bytes = asBytes(value);
+  if (bytes === null) {
+    const got = value === null ? "null" : typeof value;
+    throw new TypeError(
+      `${name} must be a byte sequence, not ${got} — refused rather than coerced. Hex and base64 ` +
+        `are strings, not bytes: decode at the boundary, where the encoding is visible.`,
+    );
+  }
+  return bytes;
+}
+
+function uintSlot(name: string, value: number | bigint, bits: 32 | 64): bigint {
+  requireUintArgument(name, value);
   if (typeof value === "number") {
-    if (!Number.isInteger(value)) throw new RangeError(`${name} must be an integer, got ${value}`);
     if (!Number.isSafeInteger(value)) {
       throw new RangeError(
         `${name} exceeds 2^53 as a number and can no longer round-trip as an IEEE double — pass a ` +
@@ -636,15 +842,15 @@ export function recordDigestV3(d: {
         `rather than coerced to zero bytes`,
     );
   }
-  const decisionId = v3Text("decisionId", d.decisionId, false)!;
-  const tenant = v3Text("tenant", d.tenant, false)!;
-  const namespace = v3Text("namespace", d.namespace, false)!;
-  const outcome = v3Text("outcome", d.outcome, false)!;
-  const mode = v3Text("mode", d.mode, true);
-  const policyVersion = v3Text("policyVersion", d.policyVersion, true);
-  const supersedes = v3Text("supersedes", d.supersedes, true);
-  const sealedAt = v3Uint("sealedAt", d.sealedAt, 64);
-  const schemaVersion = v3Uint("schemaVersion", d.schemaVersion ?? 3, 32);
+  const decisionId = textSlot("decisionId", d.decisionId, false)!;
+  const tenant = textSlot("tenant", d.tenant, false)!;
+  const namespace = textSlot("namespace", d.namespace, false)!;
+  const outcome = textSlot("outcome", d.outcome, false)!;
+  const mode = textSlot("mode", d.mode, true);
+  const policyVersion = textSlot("policyVersion", d.policyVersion, true);
+  const supersedes = textSlot("supersedes", d.supersedes, true);
+  const sealedAt = uintSlot("sealedAt", d.sealedAt, 64);
+  const schemaVersion = uintSlot("schemaVersion", d.schemaVersion ?? 3, 32);
 
   const pre = concat(
     frameLE(enc.encode("seam.audit.record-digest.v3")),
@@ -652,7 +858,7 @@ export function recordDigestV3(d: {
     frameLE(enc.encode(tenant)),
     frameLE(enc.encode(namespace)),
     frameLE(ciphertextDigest),
-    frameLE(u64le(sealedAt)),
+    frameLE(u64le("sealedAt", sealedAt)),
     frameLE(enc.encode(outcome)),
     optLE(mode),
     optLE(policyVersion),
@@ -660,7 +866,7 @@ export function recordDigestV3(d: {
     frameLE(contextDigest),
     frameLE(participationDigest),
     optBytesLE(policyRulesDigest),
-    frameLE(u32le(Number(schemaVersion))),
+    frameLE(u32le("schemaVersion", schemaVersion)),
   );
   return sha256(pre);
 }
@@ -674,10 +880,10 @@ function chainHeadAttestationDigest(a: {
 }): Uint8Array {
   const pre = concat(
     frameLE(enc.encode("seam.audit.chain-head-attestation.v1")),
-    frameLE(u64le(a.attestedLen)),
+    frameLE(u64le("attestedLen", a.attestedLen)),
     frameLE(a.attestedHead),
-    frameLE(u64le(a.attestedAt)),
-    frameLE(u32le(a.digestSchema)),
+    frameLE(u64le("attestedAt", a.attestedAt)),
+    frameLE(u32le("digestSchema", a.digestSchema)),
     frameLE(enc.encode(a.issuerAid)),
   );
   return sha256(pre);
@@ -696,9 +902,48 @@ export function verifyChainHeadAttestation(
     signature: Uint8Array;
   },
 ): boolean {
+  // TYPES first, OUTSIDE the try — the same rule, and for the same reason, as Python's twin.
+  //
+  // This function's contract is "false on any tamper", and a blanket catch delivered it by
+  // answering `false` to everything, including questions it was never asked. Measured against the
+  // runtime's own KAT, before this block: a string `attestedLen`, a boolean one, a `null` one, a
+  // string `digestSchema`, a string `attestedHead` and a non-string `issuerAid` all returned
+  // `false` — while Python raised `TypeError` on every one of them.
+  //
+  // `false` is the wrong answer to a caller bug, and wrong in the expensive direction: it does not
+  // say "you called this wrong", it says "this attestation did not verify". An operator handed that
+  // goes looking for a compromised audit chain.
+  //
+  // `signature` is the deliberate exception, and it is a NARROWING rather than a repair. A hex
+  // string worked here: `@noble/curves` types its signature parameter as `Hex = Uint8Array | string`
+  // and decodes it, so `signature: "<64 bytes of hex>"` VERIFIED correctly before this block, and
+  // now throws. Python has never accepted it. The choice is between one language coercing a string
+  // that the other refuses, and both refusing — and the whole argument of this phase is that the
+  // SDKs must agree on which inputs are accepted, so both refuse. Recorded in COMPATIBILITY.md §10
+  // as a removal of working behaviour, because that is what it is.
+  //
+  // A wrong type cannot arrive from an attacker: attacker-controlled bytes decode, through protobuf,
+  // into correctly-typed values with hostile CONTENTS. So raising here never converts an attack into
+  // a crash. It converts a programming error into a visible programming error, and leaves every
+  // genuinely untrusted input — out-of-range integers, a malformed AID, a wrong-length or forged
+  // signature — answering `false` exactly as before.
+  if (typeof issuerAid !== "string") {
+    throw new TypeError(`issuerAid must be a string, not ${issuerAid === null ? "null" : typeof issuerAid}`);
+  }
+  // Checked before the property reads below, so a missing attestation is a named refusal rather than
+  // `Cannot read properties of null (reading 'attestedLen')` — which is a caller bug reported as an
+  // internal one, the same complaint this whole guard exists to answer.
+  if (a === null || typeof a !== "object") {
+    throw new TypeError(`the attestation must be an object, not ${a === null ? "null" : typeof a}`);
+  }
+  requireUintArgument("attestedLen", a.attestedLen);
+  requireUintArgument("attestedAt", a.attestedAt);
+  requireUintArgument("digestSchema", a.digestSchema);
+  const attestedHead = requireBytes("attestedHead", a.attestedHead);
+  const signature = requireBytes("signature", a.signature);
   try {
-    const digest = chainHeadAttestationDigest({ ...a, issuerAid });
-    return ed25519.verify(a.signature, digest, aidToPubkey(issuerAid), { zip215: false });
+    const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid });
+    return ed25519.verify(signature, digest, aidToPubkey(issuerAid), { zip215: false });
   } catch {
     return false;
   }

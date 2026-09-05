@@ -6,6 +6,520 @@ assumption, the independent recommender's analysis, the human verdict, and the r
 produced it.
 
 
+## 2026-09-04 — ACDP P3 adoption: W4.3 re-answered, and the lag file re-recorded rather than left lying
+
+Phase 8 was written as BLOCKED and specified in advance. Both halves of that turned out to matter:
+the blocker dissolved (seam-runtime merged `ac325d7`, #531, and `buf push`ed it), and because the
+specification was already written, the adoption needed no new design decisions — only execution.
+
+### W4.3: do tags 12-13 enter the record-digest preimage? **No.**
+
+W4.3's standing rule is that this must be **re-answered per regeneration and never inherited**, so
+the previous "no" for the P1a/P2 fields does not carry. Re-answered by its own method — *not* "is
+the field new?" but **"is it a sealed column?"** — and confirmed three independent ways:
+
+1. **`seam.event.v1` never mentions `revocation`.** `grep` over the event proto: zero hits. The
+   record digest is computed over `DECISION_SEALED`'s payload columns; a field absent from the
+   event wire cannot be one.
+2. **`verify/src/` does not mirror `ContextBinding` at all.** Zero hits across the crate. The
+   verifier mirrors the event wire (`SeamEventPb`, `DecisionSealedPb`, …), and `ContextBinding` is
+   not part of it.
+3. **The runtime's own spec says so in a heading** — `docs/specs/seam-event.v1.md` §"`revocation`
+   and `revocation_trust_class` — served only, never sealed", mirroring the wording it already used
+   for P2 `retraction`.
+
+Both fields are `seam.api.v1` **response** fields on `ResolveContext`. **Consequence:**
+`verify/src/wire.rs` needs no change, `conformance/vectors.json` is untouched, and W7 does not
+engage. Same structural answer as the P1a/P2 round, reached independently rather than assumed.
+
+### The lag file: re-recorded to seven, with the trigger armed rather than reset
+
+`contract/expected-local-lag.txt` is an **exact-match** recording — any superset, subset or other
+deviation produces the full, un-downgraded refusal, whose wording, exit code and direction are
+identical to a real field removal. Declaring tags 12-13 makes the local gap seven fields, so leaving
+the file at five would have made every local run print that refusal. Training readers to scroll past
+a refusal is the precise gate-blindness this file exists to prevent, so leaving it was not an option.
+
+Re-recorded to seven in the same commit as the manifest declaration, which the file's own header
+sanctions ("re-record deliberately… if a new, real local/BSR gap is expected after the next
+regeneration"). This is not the case its warning targets: the warning is about *reacting to
+unexplained new output*, whereas this gap was predicted in advance from a named upstream commit,
+dated, and written down before the gate ever reported it.
+
+**Two honesty riders travelled with it, both discharged:**
+
+- **Bumping `EXPECTED-FROM` resets the 60-day scenery trigger**, which would hide how long this file
+  has stood in for a regeneration nobody here can run. The file now carries an explicit
+  **RE-RECORD HISTORY** block (2026-08-31 first recording, 2026-09-04 first re-record) so cumulative
+  age survives the bump, and this entry carries the original date forward.
+- **Counted correctly.** `git log --follow` on the file shows a single commit — its creation — so
+  this is the **first** re-record and the **second** recording. The point at which the better trade
+  becomes a one-time `buf registry login` on the workstation and deleting the file outright is the
+  re-record *after* this one. The file says so in capitals, and deliberately does not fire it now.
+
+### One thing the specification did not anticipate, and it was a defect in the file itself
+
+The lag file's header explained the gap as "the BSR has not caught up". That was true when written
+and is now **backwards**: the BSR is ahead — it republished P1a/P2 and then P3 — and it is the local
+stubs that are old. The file was teaching a wrong cause on every local run, and the wrong cause
+points at the wrong fix (wait for upstream, rather than regenerate). Corrected in the same commit,
+with the correction called out in the file so the next reader knows the earlier framing was wrong
+rather than merely differently worded.
+
+### Not wired into the hand-written clients, and that is the recorded answer
+
+The field-surface gate's refusal text requires a decision *before* the manifest moves: wire the
+field into the hand-written clients, **or record why not**. Recording why not.
+
+`revocation` and `revocation_trust_class` are pass-through `ContextBinding` slots, and the clients'
+contract for that message is already pass-through — `resolve_context` returns the generated message
+so every field the contract carries arrives without a per-field accessor. That is what the three
+"ACDP receipt slots" docstrings promise, and Phase 6's guard enforces that they enumerate every
+slot. Adding named accessors for these two would make them the only `ContextBinding` fields with a
+bespoke surface, for no capability a caller does not already have.
+
+The docstrings are updated to name both new slots — required, not optional: Phase 6's tripwire
+derives its expected set from the manifest and goes red the moment the manifest declares a slot no
+docstring names. That is the guard working as designed, on the first real field it ever saw.
+---
+
+## 2026-09-04 — promoting the enum-manifest assumption by executing `buf`, not by reading its config
+
+`contract/field-manifest.txt` spells enum entries `<Enum>#<VALUE>` — names only, no tag numbers. The
+recorded justification was that the tag is already protected upstream by `buf breaking`, so
+duplicating it here would create a second copy to keep in sync. The assumption's re-open trigger was
+"whoever next adds or reviews `buf breaking` config for `seam.api.v1`'s enums", and that review came
+due this cycle.
+
+**The config says what the plan said it says.** `../seam-runtime/buf.yaml:23-25` sets
+`breaking: use: [WIRE_JSON]`, and `../seam-runtime/.github/workflows/ci.yml:173-181` runs
+`buf breaking --against` a materialised `main` branch.
+
+**That was not treated as sufficient.** "The config names a category that sounds like it covers
+this" is the same reasoning this repo keeps finding defects in — a check whose result is assumed
+from its name rather than observed. `buf` 1.66.0 is installed locally, so both forms of the gap were
+run against a scratch module pair instead:
+
+| mutation | what a delete-only rule would see | `buf breaking --against` (WIRE_JSON) |
+|---|---|---|
+| **renumber** — `FOO_A` keeps its name, tag `1` → `3` | number 1 deleted, number 3 added | **refused twice** — once for the deleted name, once for the deleted number |
+| **swap** — `FOO_A`/`FOO_B` exchange tags `1`/`2` | *nothing*: no name and no number is deleted | **refused** — `Enum value "2" ... changed name from "FOO_B" to "FOO_A"` |
+
+The swap is the case that matters. It is the only same-name renumber that survives a rule keyed on
+deletion, and it is caught by a different rule (`ENUM_VALUE_SAME_NAME`) that binds number → name.
+So `WIRE_JSON` protects the name↔number binding in **both** directions, and the assumption's
+"if that upstream gate ... misses this case" clause is measured false rather than hoped against.
+
+**Verdict: CONFIRM.** The name-only manifest spelling stays. Adding `=<tag>` would buy nothing the
+upstream gate does not already provide, at the cost of a manifest line that churns on every
+proto-side renumber.
+
+**One thing changed, and it is a narrowing rather than a confirmation.** The entry's blast-radius
+clause bundled two risks — "if that upstream gate is ever bypassed **or misses this case**". The
+second half is now settled. The first is not, and is more specific than the entry implied: the
+`buf breaking` step carries `if: github.ref != 'refs/heads/main'`, so it compares **PR heads only**,
+and the same push to `main` that skips it is the push that publishes the BSR module this SDK
+generates from. A change reaching `main` outside a PR is therefore never compared. That is a
+question about the runtime's branch protection, not about `WIRE_JSON`'s coverage, and it is out of
+this repo's reach — recorded here so the next reader inherits the narrowed risk rather than the
+original bundled one.
+
+**Not filed as an issue in `seam-runtime`.** It is a hypothesis about another repo's branch
+protection that this repo cannot observe, and filing "your gate might be bypassable" without
+evidence that it is would be noise. The record is here; if a same-name renumber ever does reach the
+BSR, this entry is where the explanation already sits.
+
+---
+
+## 2026-09-04 — the remaining `UNCONFIRMED` backlog, reviewed and re-dated
+
+Thirteen entries stay `UNCONFIRMED`. Each carries a one-line note dated 2026-09-04 saying what the
+review found, so "unchanged" is a finding rather than an omission. Two moved in substance without
+changing status:
+
+- **`contract/expected-local-lag.txt` is a window, not a permanent excuse** — the window has begun
+  closing on its own. seam-runtime merged its ACDP P3 key-revocation work and pushed the BSR, so a
+  CI regeneration now emits two `ContextBinding` fields the manifest does not declare, so `main`
+  fails on the gate's NOT-IN-THE-MANIFEST branch — a two-field **surplus**, which never consults
+  the lag file at all. (Seven is the local-stub-vs-BSR delta; it becomes a recorded *gap* only
+  once tags 12-13 are declared. An earlier wording here stated the direction backwards.) Local
+  checkouts still show exactly the recorded five, so this checkout stays green while `main` does
+  not. Resolving it needs BSR regeneration credentials this
+  workstation lacks, which is the same blocker Phase 8 waits on.
+- **Cloudsmith quarantine for the 0.7.39-0.7.43 band** — consolidated onto issue #43 on 2026-09-02
+  so both known-bad bands get one answer. Re-verified that nothing can quietly create a third band
+  while the decision waits: `.github/workflows/publish.yml:69-148` resolves every `ci-ok` check run
+  for the release SHA through the check-runs API and treats an absent conclusion as a refusal, so
+  today's red `main` blocks publication rather than repeating the pattern that produced the band.
+
+The other eleven are unchanged for the reason each records: they need a runtime answer, a consumer,
+a credential, or a JDK this workstation does not have.
+
+---
+## 2026-09-04 — adopting Go's `exp` rule as normative for all five SDKs
+
+Five SDKs verified a TCT and five decoded its `exp` claim differently. That is not a style
+difference: a capability token that verifies on two of five implementations and is refused by three
+is a security boundary that depends on which language happens to be checking it. Something had to be
+declared normative, and the candidates were the three rules actually in the tree:
+
+| rule | implementations | accepts |
+|---|---|---|
+| `payload["exp"].(float64)` + `int64(exp)` | Go, Java, Kotlin | JSON numbers only, truncated toward zero |
+| `int(payload.get("exp", 0))` | Python | the above, plus numeric strings and `true` |
+| `now >= (payload.exp ?? 0)` | TypeScript | the above, plus `"1e10"`, fractions, objects, arrays |
+
+**Go's rule was adopted.** Three reasons, in the order they carried weight:
+
+1. **It was already the majority.** Java and Kotlin implement it independently (`instanceof Number`
+   + `longValue()`, `as? Number` + `toLong()`). Adopting it moved two SDKs; adopting either other
+   rule would have moved three, and would have loosened a verifier to do it.
+2. **It is the strictest.** For a token verifier, the safe direction is to refuse what you do not
+   understand. Both other rules reach their extra acceptances through *coercion* — `int("1e10")`,
+   `ToNumber(true)` — and a coercion in a verifier is a value nobody supplied being treated as one
+   that was.
+
+**The rule had to be BOUNDED to be total, which verification caught and the first draft missed.**
+Go's `int64(exp)` is implementation-defined when the value does not fit: measured, arm64 saturates
+and `{"exp": 1e300}` verifies, while amd64 yields `INT64_MIN` and refuses the identical token. "Adopt
+Go's rule" would therefore have meant different things on different machines, with CI's own
+architecture as the accidental arbiter — a normative rule that is not one. All five now refuse `exp`
+outside `[-2^63, 2^63)` explicitly. Python and TypeScript need no such bound alone; they carry Go's
+constraint so the five agree, which is the same trade this whole decision is made of.
+3. **It is the only one with a written rationale.** The type assertion that *is* the rule
+   (`exp, ok := payload["exp"].(float64)`, `go/crypto/crypto.go:194`) and the truncation semantics
+   below it (`go/crypto/crypto.go:198-203`) are both argued in comments at the code; the other two
+   rules were the shortest expression that worked in that language.
+
+The alternative considered and rejected was **union semantics** — accept anything any SDK accepts,
+so nothing that verifies today stops verifying. It is the compatible choice and it is the wrong one:
+it would have made `{"exp": {"seconds": 2000000000}}` a valid token in all five languages, because
+`0 >= NaN` is false in JavaScript and a guard whose false branch is the permissive one fails open on
+every input it cannot parse. Compatibility with a bug is not a property worth preserving in a
+verifier.
+
+**What made the decision checkable rather than declarative** is
+`conformance/tct_exp_extended.json` — 18 signed tokens, machine-emitted, whose expected verdicts are
+computed from the *rule* by `scripts/emit_tct_exp_vectors.py` rather than read out of any
+implementation. Go, Python and TypeScript each read it from their own test suite. A vector whose
+expectations are recorded from the code it checks cannot fail; it only writes down what the code
+already did.
+
+One case in it is worth naming because the first draft got it wrong. `exp: true` coerces to `1` in
+both Python and JavaScript, so the token **verified** at any clock below one second — and at a
+realistic timestamp it reads as long expired. A vector written with a plausible `now` would have
+asserted cross-language agreement that was entirely accidental, and would have stayed green through
+the exact bug it was named after. Most type cases pin `now = 0`; the three that do not —
+`boolean_false`, `null` and `absent` — pin `now_s: -1` deliberately, because at `now = 0` the
+coercing rule refuses them too and the case would assert nothing. Each says so in its own `why`.
+
+Java and Kotlin do **not** yet read the vector. They already implement the rule — that is why it was
+adopted — but this workstation has no JDK, so a consumer written for them could not be run before
+being committed, and an unverified test is how a vacuous one lands. Tracked as follow-up rather than
+shipped blind.
+
+**Status:** DECIDED. Recorded here rather than in `ASSUMPTIONS.md` because it is settled, not
+pending: the rule is implemented in five languages and pinned by a vector in three.
+
+
+## 2026-09-04 — `jcsCanonicalize` refuses non-plain objects by a RULE, not a denylist
+
+
+**This is a breaking change to a public API.** Stated in those words because the phase's own
+acceptance criterion requires them, and because the SDK does not choose its own version — it ships
+under whatever number the runtime's history computes, so a consumer who reads only the version has
+no way to know. `Map`, `Set`, `Date` and class instances previously canonicalized to `{}` and now
+raise; a caller relying on that silent empty digest will break at the call, which is the point.
+`Date`, `Map`, `Set`, `RegExp`, typed arrays, boxed primitives and class instances all satisfy
+`typeof v === "object"`, so JCS walked them with `Object.keys` and emitted whatever own enumerable
+properties they happened to have. For `Date`, `Map`, `Set` and boxed numbers that is nothing, so they
+became `{}` — and `{ deadline: new Date(...) }` had the same `tool_input_digest` for every possible
+deadline, with `callSig` signing it.
+
+The other half needs stating, because the tidy version of that sentence is false: a `Uint8Array`
+canonicalized to `{"0":1,"1":2}`, a boxed string to `{"0":"x"}`, and a class instance to its own
+fields. Those did **not** lose their contents. Refusing them is a genuine narrowing of working
+behaviour, taken because Python refuses every one of them and the property being bought is that the
+two agree on what has a digest — not because those digests were meaningless.
+
+The obvious fix is a denylist — refuse `Date`, `Map`, `Set`, and so on. It was rejected. An
+enumeration is correct only until someone passes the exotic type it forgot, and the failure mode it
+leaves open is not "an error" but "silently digests an object with none of its contents". This repo
+has now found the same defect in three places (`u64le`'s wrap, the surrogate object key, this), and
+the shape has never varied: **a rule living in more than one place, with one of the copies
+incomplete.** A denylist is that shape by construction.
+
+The rule adopted instead: an object is canonicalizable iff its prototype is a **root** — `null`, or
+something whose own prototype is `null`. A plain `{}` and `Object.create(null)` qualify; everything
+with a constructor between it and `Object.prototype` does not. It mirrors Python's `isinstance(v,
+dict)`, which is a nominal check and has never had this bug.
+
+Testing the chain's **depth** rather than `proto === Object.prototype` is deliberate and
+load-bearing. An object from a `vm` context or another frame has its own `Object.prototype`, so an
+identity check would refuse a perfectly ordinary data bag; its prototype's prototype is still
+`null`. A test pins this specifically, and reverting to the identity check reddens exactly that test.
+
+Two behaviours were left as they are, and both are decisions rather than omissions:
+
+- **`toJSON` is not honoured.** An object carrying one currently raises, because the walk reaches the
+  function value. `JSON.stringify` would call it. Honouring it would mean the canonical bytes depend
+  on a method the digest cannot see, and Python has no equivalent — so a `toJSON` that changed would
+  silently change a signed digest in one language only. Refusing is the cross-language-safe answer.
+  Logged UNCONFIRMED in `ASSUMPTIONS.md`, since it rests on no caller relying on it.
+- **Symbol keys are still dropped silently.** `Object.keys` skips them, as `JSON.stringify` does, and
+  Python cannot express a symbol key at all. This one is genuinely a JSON-standard behaviour rather
+  than a hole in the guard, but it is worth writing down that it was looked at and not an oversight.
+
+**Status:** DECIDED.
+
+
+## 2026-09-04 — `verifyChainHeadAttestation` raises on a caller bug instead of returning `false`
+
+
+**This is a breaking change to a public API.** Same wording, same reason as the entry above: a
+wrong-typed `attested_head` that previously returned a clean `False` now raises, so a caller that
+treated `False` as "did not verify" now sees an exception instead. That is the correction — the two
+were never the same answer — but it is a break, and it ships under a number that cannot say so.
+A verifier that throws is normally a bad verifier: a caller writing `if (!verify(...)) reject()`
+crashes where it should have rejected. That is why the blanket `catch { return false }` was there,
+and it is the strongest argument against this change.
+
+It loses to a sharper one. **`false` is not a neutral answer here — it is a specific claim**, and the
+claim is "this attestation did not verify". A caller who passed a string `attestedLen`, or the hex of
+an `attestedHead`, was told the audit chain was bad. An operator handed that goes looking for a
+compromise. Python's twin already documented this as "the one outcome worse than the crash", and had
+implemented it for five of its six arguments; `signature` was the hole.
+
+**`signature` is also the one place this is a narrowing rather than a repair**, and the first draft of
+this entry got it backwards — worth recording, because the error was the easy kind to make. TypeScript
+did not answer `false` to a hex-string signature: it answered `true`, correctly, because
+`@noble/curves` types the parameter as `Hex = Uint8Array | string` and decodes it. So a JavaScript
+caller passing hex had working verification and now gets a `TypeError`. Only Python's `False` there
+was a lie.
+
+Refusing it anyway is the deliberate call. The alternative is one language silently coercing a string
+the other refuses — the divergence this phase exists to close — and closing it toward the stricter
+side is the same choice made for `exp`. It is a real cost, disclosed as one in `COMPATIBILITY.md` §10
+under "What this costs you", not counted as a bug fixed.
+
+What makes raising safe is that **a wrong type cannot arrive from an attacker.** Attacker-controlled
+bytes decode, through protobuf, into correctly-typed values with hostile *contents*. So this never
+converts an attack into a crash; it converts a programming error into a visible programming error.
+Everything genuinely untrusted — out-of-range integers, a malformed AID, a wrong-length or forged
+signature, a tampered head — still returns `false`, in both languages, measured over 20,000
+randomized well-typed inputs against `HEAD` with 0 verdict changes.
+
+The boundary needed one non-obvious call. TypeScript's `uintSlot` refuses a `number` above 2^53
+because its *neighbours* are not representable — but `2 ** 60` itself is exact, and Python holds it
+as an ordinary integer, digests it, and answers `false`. Hoisting that check out with the type checks
+would have made TypeScript throw where Python returns `false`: **closing one divergence by opening
+another.** It stays inside the catch, so both reach the same `false`. The split is therefore not
+"type checks out, value checks in" but "could this have arrived over the wire?" — a string, a
+boolean, a `null` and a fractional number could not; a large integer could.
+
+Error *classes* still differ across the two languages for one input: a fractional `attestedLen`
+raises `RangeError` in TypeScript and `TypeError` in Python, because JavaScript has one number type
+and "not a whole number" is a fact about the value there. Both refuse, which is the property that
+matters. Identical exception classes across two languages is not a promise this SDK makes.
+
+**Status:** DECIDED.
+
+## 2026-09-03 — refusing a `number` above 2^53 in the v2 record digest: a narrowing, not a fix
+
+Three of the four TypeScript changes in this phase close a demonstrated **alias** — two distinct
+inputs reaching one digest — and need no justification beyond that. `recordDigestV2` with
+`sealedAt: 2n**64n + 5n` produced the same 32 bytes as `sealedAt: 5n`, byte-for-byte, because
+`DataView.setBigUint64` applies ToBigUint64 and wraps in silence. A digest that does that is not
+doing the one thing a digest is for.
+
+The fourth is different and is recorded here because it would otherwise pass as part of the same
+sweep. **A `number` above 2^53 is now refused in the v2 and chain-head-attestation framings**, where
+it was previously accepted. There is no collision *within* TypeScript: `2**60` is exactly
+representable as a double and hashes deterministically. Nothing was broken for a caller who only
+ever used TypeScript.
+
+It is refused anyway, because the value the caller *meant* and the value that gets hashed have
+already parted company by the time it reaches the digest. Above 2^53 a JS `number` is the nearest
+double, so `2**60 + 1` silently is `2**60`; Python's exact integers and the `verify/` crate's `u64`
+carry the value the caller wrote. A digest computed in TypeScript would disagree with the same
+record digested anywhere else — the cross-language divergence this whole phase exists to close, in
+the one arm where it does not present as a same-language collision. `bigint` is how TypeScript says
+an integer it means, and the error message says so.
+
+The rule was already written and already argued, for v3 only, in the function then called `v3Uint`.
+Its reasoning is entirely about `DataView` and IEEE doubles, neither of which knows which framing it
+is serving, so it always applied to v2 and the attestation preimage too. Renamed to `uintSlot` and
+routed `u64le`/`u32le` through it, rather than writing a second copy of the rule: two copies of a
+rule about which inputs have a digest is a divergence waiting for someone to fix only one of them,
+and a function named `v3Uint` that v2 depends on is a lie a reader has to discover for themselves.
+
+**Rejected: normalising or truncating out-of-range values.** That preserves the alias with extra
+steps. The entire point is that two different inputs must not reach one digest; mapping them onto a
+canonical representative is that failure, spelled deliberately.
+
+**Rejected: leaving v2 alone because "no in-range value changes by a single byte" covers it.** That
+sentence is true and it is about *bytes*. Acceptance and bytes are different things, and a phase
+that quietly narrows what it accepts under a heading about what it emits is how a breaking change
+ships as a patch. Hence this entry, `COMPATIBILITY.md` §9, and its own acceptance criterion.
+
+**What it costs:** a caller passing `sealedAt` as a `number` above 2^53 gets a `RangeError` where
+they previously got a digest. That digest was already wrong — it covered the nearest double, so any
+record it sealed disagreed with the runtime's — which makes this a narrowing that reveals a bug
+rather than one that creates work. Not reversible in the usual sense: widening back would re-admit
+values whose digests we know to be wrong.
+
+**Re-open trigger:** a caller who genuinely needs `number` above 2^53 and cannot use `bigint`.
+Nothing in this repo or its known consumers does; the shims are the only callers and they were
+written against `bigint`.
+
+### The same argument, applied back to Python, after verification found the asymmetry
+
+The first cut of this phase fixed Python by range comparison alone. A verification round pointed out
+that this left `verify_chain_head_attestation(attested_len=True)` digesting as `1` — because `bool`
+subclasses `int`, so `0 <= True < 1 << 64` is simply true — while TypeScript's `uintSlot` refused
+`true` outright. The phase had **created** a cross-language divergence in the course of closing
+three, and the draft of `COMPATIBILITY.md` §9 claimed TypeScript had "changed to match what Python
+already did", which was not true of that row.
+
+The same round found a second answer hiding in the same guard: `attested_len=5.0` passed the range
+comparison and then hit `struct.pack`, which raised `struct.error`. A verifier that can return
+`True`, return `False`, raise `TypeError` **or** raise `struct.error` has a contract no caller can
+be written against.
+
+Both closed by sharing `_uint_slot` — the validator `record_digest_v3` has used since it was
+written, formerly `_v3_uint` — instead of a bespoke comparison. Recorded rather than done silently,
+because it is a real narrowing of a public function: `True` used to reach a verdict (`False`, having
+been digested as `1`) and now raises; `5.0` used to raise `struct.error` and now raises `TypeError`.
+Nothing in this repo passed either — the only callers are the tests and the public export.
+
+A second verification round then found the same defect one function over: `record_digest_v2` still
+digested `sealed_at=True` as `1`. Both languages had agreed on that *before* this phase and would
+have disagreed *after* — the phase would have closed three cross-language divergences by opening a
+fourth, in the sibling function, with a `COMPATIBILITY.md` row asserting the opposite. Closed the
+same way, by sharing the one validator across all three framings rather than writing a third copy.
+That is the actual lesson of both rounds: the bug was never the missing check, it was the rule
+existing in more places than one.
+
+The asymmetry that remains is deliberate: Python refuses `5.0`, TypeScript accepts `sealedAt: 5.0`.
+JavaScript has no separate float type, so `5.0` **is** `5` and there is nothing to refuse. Closing
+that would mean inventing a distinction the language does not have.
+
+## 2026-09-03 — the wire-framing latch: a gate may not be watched by a field that goes stale with it
+
+`contract/wire-framing.json` carries `runtime_emits_version`, an adoption latch. While it is false,
+a release dispatch that carries **no** `wire_framing_version` is downgraded to a `::warning::` and
+the release tags anyway. That is correct only while the runtime genuinely does not emit the field.
+
+seam-runtime#418 landed the field and closed COMPLETED on **2026-08-26**. The latch stayed `false`
+until **2026-09-03**. For that week the one gate that *prevents* a 0.7.17 — rather than reporting
+one afterwards — could not refuse anything, and every release dispatch in the window carried
+`wire_framing_version: 2` while the file said the runtime had not adopted the handshake. The file's
+own comment names the required action ("Flip it to true in the PR that confirms the runtime emits
+the field"); nothing enforced it, and `scripts/test_release_gate.py` checked step ordering and file
+existence only.
+
+### The rejected design, recorded because it is the intuitive one
+
+The first draft of the guard asserted a consistency property *inside* `contract/wire-framing.json`:
+if `runtime_emits_version` is `false`, then the issue named in `runtime_adoption_issue` must still
+be open. It is hermetic, needs no network, and is worthless. Both fields are hand-maintained and
+they went stale **together** — on 2026-08-26 the latch became wrong and the recorded issue state
+became wrong in the same instant, and neither was touched for a week. The test would have been green
+throughout the exact failure it was named after. It converts "someone remembers to flip the latch"
+into "someone remembers to record the closure": the same reliance, moved one field sideways.
+
+This is the repo's own vacuity class — a check whose result is decided by something other than the
+property it names — and it is worth recording that it was reached by drafting, not by carelessness.
+A review round caught it.
+
+### What was done instead
+
+The check lives in the gate itself, keyed on the dispatch: **a payload that carries
+`wire_framing_version` while the latch reads `false` is refused.** The dispatch is proof the runtime
+emits the field, so the latch is provably stale at that moment — detected from live data that cannot
+itself go stale, at the only point where the truth is available, with nothing to keep updated by
+hand. Had it existed, it would have fired on the first release after 2026-08-26.
+
+The latch is now `true`, and `scripts/test_release_gate.py` executes the gate's real script against a
+synthetic contract file rather than pinning its text, so every *behavioural* branch is asserted by
+running it and reading the exit code — not by text-matching the YAML. The load-bearing assertions were
+demonstrated red against the pre-fix workflow before the fix landed.
+
+### Assertions that do read the YAML, and why that is not the same thing
+
+Executing the script proves what the script does. It cannot prove that the workflow still *hands it*
+what it needs, because the harness supplies those values itself. Deleting the `wire_framing_version`
+input declaration, or the `|| github.event.inputs.wire_framing_version` fallback that reads it, or the
+`EVENT: ${{ github.event_name }}` line the trigger-type branches key on, left every behavioural test
+green — each is a cell of plumbing outside the executed text, so the gate would have gone back to
+refusing every manual release with the whole suite still passing. Four structural assertions now read
+those cells out of the parsed workflow — the three above plus the `repository_dispatch` trigger the
+stale-latch branch is scoped to — each verified by deleting the cell and watching exactly one
+assertion fail. The distinction is deliberate: behaviour is asserted by execution, wiring by
+structure, and neither substitutes for the other. Found by this phase's second verification round.
+
+A fourth round found the fifth cell of that shape, and it is the one worth remembering: the gate's
+refusal when `contract/wire-framing.json` **cannot be read** rests entirely on `set -e` aborting the
+`python3` substitution. Drop the `-e` and `LATCHED` becomes the empty string, which is not `"true"`,
+so the gate takes the staged-adoption branch and tags a release having compared nothing at all. That
+cell was harmless until this phase: while the latch was false it warned and tagged anyway, so nothing
+turned on `-e`. Arming the gate is what made a shell option load-bearing — a reminder that hardening
+one path can silently promote an adjacent one into the trusted computing base. Pinned by behaviour
+(run the gate with no contract file, assert non-zero) rather than by grepping for `set -e`, since
+what matters is that it refuses, not which option makes it.
+
+### The cost of flipping the latch, which the first cut of this phase missed
+
+Arming the gate broke the recovery path. `workflow_dispatch` — the documented *"manual fallback: run
+it yourself with an explicit version if the dispatch is ever missed"* — has no `client_payload`, so
+the framing version is empty on every manual run. With the latch true and no special case, that lands
+on the "a field that stopped being emitted is a REGRESSION" branch: **every manual release refuses,
+unconditionally**, and the operator is sent to investigate the runtime when the real fix is a form
+field. It fires on the path reached precisely *because* the automatic dispatch already failed, and
+`test_release_gate.py`'s own header warns about this shape — "a gate that always refuses looks, from
+the outside, like a gate that is working".
+
+Fixed by giving `workflow_dispatch` an optional `wire_framing_version` input and diagnosing that case
+separately, before the latch checks, so the message asks for the input instead of blaming the runtime.
+The manual path still refuses a genuine mismatch, so it is not an escape hatch around the gate. Caught
+by this phase's verification round, not by the author.
+
+### A PR-time assertion that the latch is true was written, then dropped
+
+It asserted `runtime_emits_version is True` in the committed file. That is the design this entry's
+own rationale rejects one notch milder — it swaps "someone remembers to flip the latch" for "someone
+remembers to revisit this guard" — and the phase spec had already rejected asserting the latch
+unconditionally true, because it forecloses the staged-adoption mode the file documents. Dropped
+rather than justified. The consequence of not having it is that setting the latch back to false lands
+at release time instead of PR time, where it **blocks a release** rather than shipping a bad SDK:
+failing closed, in the direction that costs minutes rather than a bad publish.
+
+### Giving `$DISPATCHED` a second source broke the claim the branch rests on
+
+The manual-fallback fix above introduced its own defect, caught by the second verification round.
+Once `$DISPATCHED` could also come from a `workflow_dispatch` input, the stale-latch branch fired on
+manual runs too — and there its message is a false premise. "The dispatch IS the proof that the
+runtime emits the field" is true only when the *runtime* sent it; on a manual run the value came from
+a form field an operator typed, which proves nothing. Worse, the refusal instructs them to flip the
+latch, so following it during a legitimate staged-adoption window arms the gate on no evidence, and
+every automatic dispatch for the rest of that window then hits the REGRESSION branch.
+
+The branch is now scoped to `repository_dispatch`. A manual release during staged adoption falls
+through to the ordinary comparison, which is what it should have done.
+
+The lesson is narrow and worth keeping: widening a variable's provenance silently widens every
+condition that reads it. The branch's correctness never depended on the value, only on *who sent it*,
+and that distinction stopped being encoded the moment a second sender existed.
+
+**Status:** DECIDED. The staged-adoption window is preserved on both trigger paths — the branch keys
+on the presence of a *runtime-sent* field, not on a date, so the next framing that lands SDK-side
+first still works the way the file documents. One residual, accepted: a manual run's framing version
+is an operator assertion, so someone who simply types this SDK's own `supported` value bypasses the
+comparison. That is inherent to any manual fallback — the same trust already placed in the
+operator-supplied `version` — and the gate's purpose is to stop an *automatic* release from
+outrunning the shims, which it does.
+
+
 ## 2026-09-01 — issues #91 and #92: how a bare `:NNN` binds, and what a guard's corpus may not be
 
 Not a `/reconcile` pass — two standing issues closed directly, each of which forced one decision
@@ -20,14 +534,14 @@ wrong answers rather than misses:
 - **In a table row the subject wins.** `PROGRESS.md`'s repo-map row for `python/seam_sdk/crypto.py`
   names `python/seam_sdk/admin.py:141` mid-sentence and then continues with four more bare
   references, all of which are crypto.py. Binding them to the nearer citation reports
-  `python/seam_sdk/crypto.py:584` as past-EOF — it is `_opt_bytes`, and the claim is true.
+  `python/seam_sdk/crypto.py:630` as past-EOF — it is `_opt_bytes`, and the claim is true.
 - **Inheritance must not cross a line.** `PROGRESS.md` writes `p1a:103-107` followed by bare
   companions, where `p1a` is a shorthand alias for a sibling-repo spec and not a path at all. A
   paragraph-scoped resolver walks past it and binds those references to whatever file the previous
   line happened to mention.
 
 So: same line only, subject cell first, and an alias with no extension binds nothing. The rule is in
-`python/tests/test_compatibility_citations_resolve.py:1228`, and both failure modes are pinned by
+`python/tests/test_compatibility_citations_resolve.py:1304`, and both failure modes are pinned by
 mutation tests rather than described in prose.
 
 **The 94 references that bind to nothing are not a backlog.** They are mostly two kinds that must
@@ -375,7 +889,7 @@ the phase ran, which is itself the finding worth recording first.
   that matters.
 - **Decision.** Mirror the RPC manifest exactly one level down: a committed declaration
   (`contract/field-manifest.txt`), set-compared per language in both directions
-  (`scripts/check-contract.sh:753`), exiting 6 with the field named (`scripts/check-contract.sh:1123`). `STREAM`/`EVENTS` stay as
+  (`scripts/check-contract.sh:830`), exiting 6 with the field named (`scripts/check-contract.sh:1200`). `STREAM`/`EVENTS` stay as
   they are — they gate *event* fields for a different reason (BSR publication lag) and are not what
   this replaces. Scope is `seam.api.v1` only; `seam.event.v1` is already covered by those probes and
   by the vendored-spec gate, and duplicating it would mean two gates failing for different reasons on
@@ -409,12 +923,12 @@ the phase ran, which is itself the finding worth recording first.
      emits no type for map entries, which is an accident of this contract rather than an exclusion.
      Pinned by `python/tests/test_field_manifest_gate.py:292`.
 - **The escape names its authoritative side.** `--write-manifest` writes **both** manifests from
-  **Python** (`scripts/check-contract.sh:567`), with TypeScript as the cross-check
-  (`scripts/check-contract.sh:539`) — one command to document, not two. If it wrote from a side that cannot see every field, it
+  **Python** (`scripts/check-contract.sh:644`), with TypeScript as the cross-check
+  (`scripts/check-contract.sh:616`) — one command to document, not two. If it wrote from a side that cannot see every field, it
   would produce failures the documented escape could never clear, which is exactly what `raise` does
   under a `__slots__` extractor.
 - **The refusal deliberately puts the escape second.** It says decide first, then run it
-  (`scripts/check-contract.sh:1052`). A failure message that leads with the fix trains the reader to
+  (`scripts/check-contract.sh:1129`). A failure message that leads with the fix trains the reader to
   run the fix, which turns the gate back into the silent pass it replaced.
 - **What it does NOT check: names only, not tags or types.** A field retagged or retyped is
   wire-breaking and invisible here, exactly as the RPC manifest records names and not signatures.
@@ -522,7 +1036,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   stubs are gitignored, so per-tag gencode is not recoverable" — which was true of the working tree
   and false of the project: every tagged commit has a CI run, and that test *is* this defect. The
   hedge was deleted rather than softened because the evidence made it false.
-- **The precedent already covers worse.** `CHANGELOG.md:638-643` records no-yank for 0.7.13-0.7.19,
+- **The precedent already covers worse.** `CHANGELOG.md:682-687` records no-yank for 0.7.13-0.7.19,
   which failed *harder*: 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed
   every `authorize()` with an actively misleading "admission ticket is not valid" when the ticket
   was fine. This band breaks only consumers who cap `protobuf` below 7.36.0. Deleting the milder
@@ -842,9 +1356,13 @@ not as written.
 - **Correction to the entry's blast-radius claim:** "every such digest was wrong, so no correct
   caller breaks" is too strong. A proto3-JSON int64-as-string (`sealedAt: "123"`) coerced
   *correctly* through `BigInt` under the old TS behavior and is now refused. The refusal is loud, at
-  the first record, and names the fix (`ts/src/crypto.ts:509-522`) — and accepting strings reopens
+  the first record, and names the fix (`ts/src/crypto.ts:725-730`) — and accepting strings reopens
   `BigInt("")→0n` and `BigInt([5])→5n`. The choice stands; the justification does not extend to
   "nothing that used to work stops working."
+  *(Citation corrected 2026-09-03. It named lines 509-522, which then held `v3Text` — the string slot
+  validator — for a claim about a coerced integer. Wrong function even when written, and Phase 2's
+  insertions then moved it onto an unrelated error message. It now names `uintSlot`, which is also
+  where the fix genuinely lives for v2 as of that phase, since `u64le`/`u32le` route through it.)*
 - **v2 freeze held:** `git diff main...HEAD` shows zero removed lines in `crypto.py` and a purely
   additive `vectors.json`.
 - **Verdict:** Confirm. **Status:** CONFIRMED.
@@ -1104,7 +1622,7 @@ nothing is ever *published* there.
 private, so **an external auditor cannot install the verifier from it.** Their path is what it always
 was: clone this **public, Apache-2.0** repository and build. `verify/` is a standalone cargo
 workspace with zero Seam dependencies precisely so that works anywhere, and the claim is a **CI
-gate** (`.github/workflows/ci.yml:479-480` runs `scripts/check-independence.sh`, which renders
+gate** (`.github/workflows/ci.yml:488-489` runs `scripts/check-independence.sh`, which renders
 `cargo tree -e normal`), not a comment.
 
 So publishing is **distribution convenience for internal and partner consumers** — *not* a

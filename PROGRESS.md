@@ -50,7 +50,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 > checkpoint trail lives in git history (`git log -p -- PROGRESS.md`); nothing here carries over.
 >
 > **Done in Phase 1 (2026-08-31).** Delivery was verified against this tree — `record_digest_v3` at
-> `python/seam_sdk/crypto.py:589`, `ts/src/crypto.ts:608`, `verify/src/verify.rs:448`; the 6a/6b
+> `python/seam_sdk/crypto.py:635`, `ts/src/crypto.ts:814`, `verify/src/verify.rs:448`; the 6a/6b
 > streamed arms live at `python/seam_sdk/admin.py:129` and `ts/src/admin.ts:141`; KATs at
 > `conformance/vectors.json:70` — and the plan is now `plans/archive/record-digest-v3.md`.
 > `plans/authorize-single-canonicalization.md` turned out to be delivered too (issue #60, closed
@@ -84,7 +84,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `.github/workflows/publish.yml:316` | `make generate` **again at publish time**, against unpinned plugins — the open half of #52. `:390-401` pre-upload smoke installs protobuf *unconstrained*, so the skew is invisible to it; `registry-smoke` (`:519`) likewise. Measured at planning: `grep -rn protobuf .github/workflows/` yielded **one** hit, a prose comment — no workflow pinned protobuf anywhere, so nothing caught the skew. **Phase 6 closed that** (DONE 2026-08-31): the same grep now yields 17, and `.github/workflows/publish.yml:423` installs the built wheel with `protobuf==$FLOOR`. The declared floor and the emitted gencode are both **7.36.0** (`python/pyproject.toml:50`, `python/seam_sdk/_gen/seam/api/v1/seam_pb2.py`'s `Protobuf Python Version` header — cited by symbol, not by line, since it is a generated, gitignored file) — zero headroom, which is why this phase ran first. |
 | `.github/workflows/publish.yml:63-148` | `ci-green` — resolves every `ci-ok` conclusion for the tagged commit. Sound: `:107` still-running ⇒ `pending`, `:117-126` one-green-cannot-mask-one-red, `:143-148` timeout is a refusal. `:192`/`:285` gate both npm and python. **Must not regress.** |
 | `.github/workflows/publish.yml:150-188` | `version-check` — tag vs in-tree versions. It had **no branch-ancestry check** (`.github/workflows/ci.yml:19` runs on every branch push, so a tag at a green feature-branch commit published cleanly); **Phase 6 added one at `:176`**, which is inside this row's own range. Read the range as the job, not as evidence of the gap — it was widened in round 1 until it contained the very step it is cited for lacking. |
-| `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:631`. |
+| `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:1145`. |
 | `python/tests/test_protobuf_floor.py:72,88` | The two pure-file-read assertions Phase 6 runs at publish time. `:29-31` reads only `_gen/seam/api/v1/seam_pb2.py`; `:47-51` **skips** when `_gen` is absent. `:88-99` forces `cap == gencode_major + 1` — this is why "widen the floor" is not a metadata edit. |
 | `python/tests/test_grpcio_floor.py:38` | Module-level `import grpc` — matters if Phase 6 runs it in the publish job. |
 | `.github/workflows/yank.yml` | `workflow_dispatch`, `dry_run` default `"true"`. A hard **DELETE** (`:91-92`), not a PyPI-style yank. Its token line did **not** strip the cargo token's `"Bearer "` prefix (`.github/workflows/publish.yml:383-385` does) — **Phase 10 fixed it** (DONE 2026-08-31) at `.github/workflows/yank.yml:55-60`, and left the version/format/name filters (`:73-76`) byte-unchanged. `scripts/test_yank_gate.py` now executes the resolution and pins those filters. |
@@ -93,7 +93,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `python/tests/test_compatibility_citations_resolve.py` | Every backticked `file:line` in `COMPATIBILITY.md`/`DECISIONS.md` must resolve; `:61-64,:92` ≥10 each; `:76` sibling paths need a `seam-runtime/` prefix; `:141-172` `ANCHORED` needles must hit **exactly once** within `CITATION_SLACK` (`:176`). **Phase 8** adds the vendored-file rule. |
 | `verify/docs/seam-event.v1.md` | Byte-verbatim vendored spec, pinned in its header. **Phase 9** refreshes it whole-file. Source of #73's citation drift. |
 | `scripts/check_vendored_spec.py:22-38` | Integrity (`:24-26`) / reachability (`:28-32`) / **currency** (`:34-38`) — fails on staleness by explicit decision. This is what will announce runtime P1a Phase 6 by reddening `spec-pin` (`.github/workflows/ci.yml:588-589`) on every PR. |
-| `python/seam_sdk/crypto.py:606-610` | `record_digest_v3` takes `context_digest` as an **opaque 32-byte sub-digest**, deliberately not reimplemented. **This is why ACDP P1a costs the digest layer nothing** — verified: `context_digest` appears only as an input (`:599,643,677`, `python/seam_sdk/admin.py:141`), and no context-provenance formula exists in `python/`, `ts/` or `verify/`. `:386` `_frame` · `:390` `_opt` · `:584` `_opt_bytes` · `:394` `record_digest_v2`. |
+| `python/seam_sdk/crypto.py:631-635` | `record_digest_v3` takes `context_digest` as an **opaque 32-byte sub-digest**, deliberately not reimplemented. **This is why ACDP P1a costs the digest layer nothing** — verified: `context_digest` appears only as an input (`:624,668,702`, `python/seam_sdk/admin.py:141`), and no context-provenance formula exists in `python/`, `ts/` or `verify/`. `:386` `_frame` · `:390` `_opt` · `:609` `_opt_bytes` · `:394` `record_digest_v2`. |
 | `verify/src/verify.rs:668-674` | `schema_version` dispatch (2 ⇒ v2, 3 ⇒ v3, else refuse); `:636-644` ceiling refusal. P1a keeps `schema_version = 3`, so **no new arm**. |
 | `python/tests/test_errors_is_import_light.py:87-100` | `crypto.py` may import only `cryptography`; `errors.py` only `grpc`. seam-runtime's `sdk-digest-parity` gate loads `crypto.py` standalone. **No phase may add an import to either.** |
 | `scripts/test_ci_gate.py:79,98,141` | `ci-ok`'s `needs:` must equal the full job set both ways; `ALLOWED_ADVISORY` (the literal is at `:52`, asserted by the test at `:98`) may hold only `{integration, spec-pin}`; `workflow-guards` must stay free of `BUF_TOKEN`/`buf-setup-action`/`make generate` (banned triple at `:191-195`). **Any new CI job must be added to `needs:`.** |
@@ -101,7 +101,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `python/tests/test_workflows_generate_through_the_makefile.py:43,72` | No workflow may call `buf generate` directly; the `generate:` target must keep both `buf generate` and `root_gen.py` (without which the wheel is unimportable). |
 | `Makefile:24,29,57-58` | `generate` (BSR) · `generate-local RUNTIME=../seam-runtime` (reads `crates/seam-api/proto` via `buf`) · **`clean` `rm -rf`s all three stub trees — never run it; recovery needs a BSR login.** |
 | `plans/README.md:1-6` | Archive convention: delivered plans move to `plans/archive/` with a dated verification note, verified **against code, never a status table**. `:13` **carried** the stale `record-digest-v3` Active row (*"Phases 1–5 delivered … Phase 6 remains BLOCKED"*) and the index was **missing a row entirely** for `plans/authorize-single-canonicalization.md` — both corrected in Phase 1, which archived each plan against code. `:13` now holds this plan's own Active row. The cross-repo *table* lives in `plans/cross-repo/README.md`, not here — **Phase 2** edits that file. |
-| `CHANGELOG.md:3-7` | The SDK does not choose its own version; entries accumulate under `## Unreleased`. `:631-636` is the hedging style Phase 7 *was* to mirror — it did not, the band being provable, and the citation was removed as it sat within `CITATION_SLACK` of the `"No yank"` needle; `:638-643` the no-yank decision of record. Both re-measured in Phase 4, which pushed them 28 lines down and found them already stale by ~115 before that. **This advisory still names only 0.7.13-0.7.19** — see the Phase 7 checkpoint. |
+| `CHANGELOG.md:3-7` | The SDK does not choose its own version; entries accumulate under `## Unreleased`. `:631-634` is the hedging style Phase 7 *was* to mirror — it did not, the band being provable, and the citation was removed as it sat within `CITATION_SLACK` of the `"No yank"` needle; `:649-654` the no-yank decision of record. Both re-measured in Phase 4, which pushed them 28 lines down and found them already stale by ~115 before that; **re-measured again in Phase 1 of this workstream**, which had shifted them a further 3 and repointed the two sibling copies in `COMPATIBILITY.md`/`DECISIONS.md` while leaving this one — the same omission `PROGRESS.md:2092-2097` records, one file over. Neither citation is anchored, so nothing went red; that is the point. **This advisory still names only 0.7.13-0.7.19** — see the Phase 7 checkpoint. |
 
 ### Sibling repos (read-only — referenced, never written)
 
@@ -155,7 +155,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   - *R2 GAPS (3):* the `:109`→`:141` fix reached `PROGRESS.md` but missed
     `plans/archive/record-digest-v3.md:12`; removing a duplicated execution-order block ate the
     blank line and merged two paragraphs; and the path repoint **over-replaced** four quoted
-    `DECISIONS.md` section titles, which are lookup keys that must match `DECISIONS.md:823`
+    `DECISIONS.md` section titles, which are lookup keys that must match `DECISIONS.md:1337`
     verbatim, not paths.
   - *R3 PASS:* all three closed, both halves of the over-replacement checked (quoted titles reverted,
     `**Plan:**` paths still archive-pointed), no new breakage, 545/17 green.
@@ -167,7 +167,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   `python/pyproject.toml` and `ts/package.json` (version stamps) — no line number cited anywhere in
   the plan moved. Merge commit `68e92c2`; branch `feat/publish-integrity-and-tracking-state`.
 - **Delivery verified against code, not status tables** (the whole point of the phase):
-  `record_digest_v3` at `python/seam_sdk/crypto.py:589`, `ts/src/crypto.ts:608`,
+  `record_digest_v3` at `python/seam_sdk/crypto.py:635`, `ts/src/crypto.ts:814`,
   `verify/src/verify.rs:448`; streamed v3 arms at `python/seam_sdk/admin.py:129` (with `:107`
   refusing `schema_version > 3`) and `ts/src/admin.ts:141` (with `:109` the matching ceiling
   refusal); KATs at `conformance/vectors.json:70`;
@@ -1046,13 +1046,13 @@ them change what the phases do:
 | `.github/workflows/ci.yml` (cont.) | At `960cf81`: the smoke step's `kill "$pid"` (line 290), immediately followed by `exit 0` — it never waited for the process it started. Replaced by `reap()`. |
 | `.github/workflows/ci.yml:336-347` | The python live step (the `pytest` line is `.github/workflows/ci.yml:346`). Phase 2 added an `if: failure()` log dump + artifact upload at the **end of the job**, after the TypeScript step at `.github/workflows/ci.yml:348` — a step is evaluated at its own position, so anything placed earlier cannot see a TypeScript failure. |
 | `.github/workflows/ci.yml:704` | `ADVISORY: integration,spec-pin`. Advisory means *may skip*, not *may fail* — a red `integration` still reddens `ci-ok`, which lists it at `.github/workflows/ci.yml:689`. |
-| `scripts/check-contract.sh:252` · `scripts/check-contract.sh:272` | `fields_python` and `fields_ts`. **Phase 5 parameterises both on stub path + package** — measured, they yield 90/90 on the event stubs with zero one-sided entries. Two full citations on one row, not `` `:248` `` as a bare number: a pathless line reference matches `CITATION` not at all, so it is invisible to every check in `test_compatibility_citations_resolve.py`. Both needles are in `ANCHORED` and bound to this row by `CLAIM_LINES`. |
-| `scripts/check-contract.sh:295` | `manifest_fields` — its stripper claims every `#`-free line, which is why the event surface cannot share `contract/field-manifest.txt`. |
-| `scripts/check-contract.sh:566-575` | `--write-manifest` deletes `contract/expected-local-lag.txt`; the cited block is the comment scoping that delete to the api write, and the `-f` guard and `rm -f` are the two lines immediately below it. The second reason the event surface needs its own file. Deliberately no bare `:NNN` for those two — a naked line number inside a row is invisible to `test_compatibility_citations_resolve.py` (it checks backticked `file:line`, and a bare `:473` has no path), so it rots unnoticed. This one had: it still said `:473` after the guard moved to `:571`. |
-| `scripts/check-contract.sh:729` | The comment #88 was filed from, which used to record the event surface as an OPEN gap. **Phase 5 rewrote it** — leaving it would have described a closed gap as open. |
+| `scripts/check-contract.sh:274` · `scripts/check-contract.sh:294` | `fields_python` and `fields_ts`. Already parameterised on stub path (and package, for TS) when #88 landed — measured, they yield 90/90 on the event stubs with zero one-sided entries. **Phase 5 did NOT touch them**: the gap it closed is one level up, at the VERB surface, so it parameterised `rpcs_python`/`rpcs_ts` instead. This row said Phase 5 would do it; that was a planning-time guess about the wrong pair. Two full citations on one row, not `` `:248` `` as a bare number: a pathless line reference matches `CITATION` not at all, so it is invisible to every check in `test_compatibility_citations_resolve.py`. Both needles are in `ANCHORED` and bound to this row by `CLAIM_LINES`. |
+| `scripts/check-contract.sh:317` | `manifest_fields` — its stripper claims every `#`-free line, which is why the event surface cannot share `contract/field-manifest.txt`. |
+| `scripts/check-contract.sh:663-672` | `--write-manifest` deletes `contract/expected-local-lag.txt`; the cited block is the comment scoping that delete to the api write (`# Scoped to the API write, deliberately`), and the `-f` guard and `rm -f` are the two lines immediately below it. **Re-targeted:** it pointed at the FIELD-manifest write for two rounds — the number was faithfully remapped each time the file moved, which preserved a wrong target rather than fixing it. A remap can only keep a citation pointing where it already pointed; it is now ANCHORED so the content, not just the line, is checked. The second reason the event surface needs its own file. Deliberately no bare `:NNN` for those two — a naked line number inside a row is invisible to `test_compatibility_citations_resolve.py` (it checks backticked `file:line`, and a bare `:473` has no path), so it rots unnoticed. This one had: it still said `:473` after the guard moved to `:571`. |
+| `scripts/check-contract.sh:806` | The comment #88 was filed from. It already records the field-surface gap as closed (#88 rewrote it when `contract/event-field-manifest.txt` landed), so **Phase 5 left it alone** — the planning-time note here claimed Phase 5 would rewrite it, and rewriting a comment that was already correct would have been churn. |
 | `contract/event-field-manifest.txt` | **Phase 5 creates.** 90 fields, 11 messages, zero enums, zero nested messages — all measured, not assumed. |
-| `python/tests/test_field_manifest_gate.py:91` | `_run()` — the scratch-copy-plus-env-override pattern Phase 5's tests mirror. Nothing may mutate the real gitignored stub trees. |
-| `python/tests/test_compatibility_citations_resolve.py:625` | The `submitCommit` `ANCHORED` needle into `ts/src/client.ts`. Its siblings in the same list pin `collectiveOutcomeOf` (just above) and, from Phase 4, `submitEvaluation` and `submitObjection` — named rather than cited, for the reason the row above records: the bare `:606` and `:617-618` that used to sit here were both stale, and nothing could have told anyone. The plan predicted the insertion would break the `submitCommit` anchor for any K of 4+ lines *except* a 125-131 window where it would go green against the unrelated `:804` citation. **Measured K = 101 at the time of that check, 103 as finally committed** — outside that window at every intermediate value, and the anchor failed red-first as required before `PROGRESS.md` was touched. |
+| `python/tests/test_field_manifest_gate.py:112` | `_run()` — the scratch-copy-plus-env-override pattern Phase 5's tests mirror. Nothing may mutate the real gitignored stub trees. |
+| `python/tests/test_compatibility_citations_resolve.py:681` | The `submitCommit` `ANCHORED` needle into `ts/src/client.ts`. Its siblings in the same list pin `collectiveOutcomeOf` (just above) and, from Phase 4, `submitEvaluation` and `submitObjection` — named rather than cited, for the reason the row above records: the bare `:606` and `:617-618` that used to sit here were both stale, and nothing could have told anyone. The plan predicted the insertion would break the `submitCommit` anchor for any K of 4+ lines *except* a 125-131 window where it would go green against the unrelated `:804` citation. **Measured K = 101 at the time of that check, 103 as finally committed** — outside that window at every intermediate value, and the anchor failed red-first as required before `PROGRESS.md` was touched. |
 
 ## Phase log
 
@@ -2121,3 +2121,923 @@ and every citation out of it moves on a schedule nothing was tracking.
 contract gate exits **6** with the five recorded fields and both positive event lines ·
 `git diff contract/` empty after a full pytest run.
 
+
+---
+---
+
+# PROGRESS — `plans/digest-correctness-and-gate-repair.md`
+
+**This section is APPENDED, not prepended, and the active workstream is therefore at the BOTTOM of
+this file.** That is deliberate and load-bearing, not an oversight. Everything above is the delivered
+`post-adoption-hardening-and-acdp-readiness` record, and it is retained rather than replaced for two
+measured reasons:
+
+1. `python/tests/test_compatibility_citations_resolve.py` binds **44 anchored claims and 39 quoted line-bindings** plus
+   a 30-citation floor to this document's content. Replacing the file turns 25 tests red at once, and
+   the only way to green is to delete guard entries — which is exactly how a guard decays. The
+   previous convention ("nothing here carries over"; the trail lives in git history) predates that
+   coverage and is no longer safe to follow unmodified.
+2. This document cites **itself** by line in three places, and at least two of those targets are live
+   and accurate today — the repo-map rows for the gitignored `_gen/` tree and for `buf.gen.yaml`'s
+   unpinned plugins. Inserting anything above them silently repoints all three at different content:
+   the citations would still *resolve*, so no test would fail, and they would simply be wrong. That is
+   the precise rot class this repo built the citation guard to catch.
+
+Appending shifts no line number and retires no guard entry. How `PROGRESS.md` should transition
+between workstreams *without* either gutting its coverage or growing without bound is a real design
+question, and it is recorded as an open question in the plan rather than settled here under handoff
+pressure.
+
+**Plan:** [`plans/digest-correctness-and-gate-repair.md`](plans/digest-correctness-and-gate-repair.md)
+— 8 phases, one of which (Phase 8) is BLOCKED and deliberately not attempted this cycle.
+
+## Baseline (measured 2026-09-03, before any phase)
+
+| Suite | Result |
+|---|---|
+| `cd python && .venv/bin/pytest -q` | **1016 passed, 17 skipped** |
+| `python -m pytest scripts -q` | **100 passed** |
+| `cd verify && cargo test` | ok |
+| `cd ts && npm run typecheck && npm test` | typecheck clean, **0 fail**, 10 skipped |
+| `cd go && go test ./...` | ok |
+| `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` | **exit 6**, NOTE naming exactly the five recorded lag fields |
+| version lockstep | `0.7.71` in both `python/pyproject.toml` and `ts/package.json`, matching the runtime tag |
+
+Anything red after Phase 1 is ours. The 17 python skips are 13 live-server (`SEAM_GRPC_BIN` unset),
+1 import-light cross-check, and **3 packaging tests** — the last three because this workstation's
+venv has no `pip` module. That is a correct skip here and is *not* the defect Phase 4 item 4
+addresses; do not cite it as the demonstration.
+
+## Execution order and PR strategy
+
+**Order:** 1 → 2 → 3 → 4 → 5 → 6 → 7. Phase 8 is BLOCKED and not attempted.
+
+Phase 1 goes first because it is the only item that is both live and load-bearing on every release:
+while the wire-framing latch reads `false`, the gate that exists to prevent a repeat of 0.7.17 cannot
+refuse. Phase 3 follows Phase 2 because both edit the same regions of `ts/src/crypto.ts` — a textual
+dependency, not a semantic one.
+
+**PR strategy — 3 PRs.** Chosen over one big PR because the three groups have genuinely different
+review audiences, and over one-PR-per-phase because several phases are too small to review alone.
+
+1. **Phases 1, 2, 3** — release integrity and cross-language digest correctness. Ships first: it
+   carries both the actively-degraded release gate and the four demonstrated divergences.
+2. **Phases 4, 5** — guards that cannot fire on the mutation they name, plus the unwatched
+   `seam.event.v1` verb surface. One story: gate blindness.
+3. **Phases 6, 7** — ACDP P3 readiness and issue/assumption hygiene.
+
+## Hard operating constraints (verified this session — carry into every phase)
+
+- **NEVER run `make clean`, `make generate`, or `make generate-local`.** They delete or replace the
+  three gitignored stub trees (`gen/`, `python/seam_sdk/_gen/`, `ts/gen/`), and recovery needs a
+  `buf registry login` this workstation does not have. The stubs are present and current.
+- **NEVER run `./scripts/check-contract.sh --write-manifest`** without redirecting every manifest
+  override — a bare run rewrites the committed manifests backwards and deletes
+  `contract/expected-local-lag.txt`.
+- **Never mutate the real stub trees.** Exercise the gates against scratch copies via
+  `SEAM_PY_GEN` / `SEAM_TS_GEN` / `SEAM_PY_EV` / `SEAM_TS_EV` / `SEAM_FIELD_MANIFEST` /
+  `SEAM_RPC_MANIFEST` / `SEAM_EVENT_FIELD_MANIFEST` / `SEAM_EXPECTED_LOCAL_LAG`. Phase 5 must add
+  `SEAM_PY_EV_GRPC`, which does not exist yet.
+- **Writes stay in seam-sdk.** Reading `../seam-runtime`, `../seam`, `../seam-adapters`,
+  `../seam-aegis` is unrestricted; writing to them is not. GitHub issue actions are limited to
+  `zer07labs/seam-sdk` (#96, #43, #44 in this plan).
+- **Clean-room:** `../seam-runtime/crates/**` **Rust** sources are never read. The `.proto` files
+  under `crates/seam-api/proto/**` are the published contract and *are* read, as are the runtime's
+  `docs/`, `plans/` and `scripts/`.
+- Doc-guard tests scan **every** `*.md` in the repo, including the plan and this file. `plans/` sits
+  outside the citation guard; **`PROGRESS.md` does not** — every backticked `file:line` here must
+  resolve. Run the full python suite after any doc edit, never a subset.
+- Any new CI job must be added to `ci-ok`'s `needs:` and must not go in `ADVISORY`.
+- `python/seam_sdk/crypto.py` and `python/seam_sdk/errors.py` may not grow an import.
+- No workflow may call `buf generate` directly.
+- **Never dispatch a workflow, publish anything, or touch any registry.**
+
+## Repo map
+
+**Hand-written client layers** — the only code the crypto phases touch:
+
+| Path | Purpose |
+|---|---|
+| `python/seam_sdk/crypto.py` | JCS canonicalization, TCT verification, record digests v2/v3, chain-head attestation. Import-light by contract. |
+| `python/seam_sdk/client.py` | Sync client. Carries the `resolve_context` pass-through docstring Phase 6 guards. |
+| `python/seam_sdk/aio.py` | Async twin of `client.py`, with its own copy of that docstring. |
+| `python/seam_sdk/admin.py` | Management-plane client; streamed digest recompute, refuses schema versions above 3. |
+| `python/seam_sdk/_authorize.py` | Single-derivation canonicalization for `Authorize`. |
+| `python/seam_sdk/_policy.py`, `_collective.py` | Presence-aware decoders (`policy_enforcement_of`, collective outcome). |
+| `python/seam_sdk/errors.py` | Typed error taxonomy. Import-light by contract. |
+| `ts/src/crypto.ts` | TS twin of `crypto.py`. Phases 2 and 3 both edit here. |
+| `ts/src/client.ts` | TS client; third copy of the pass-through docstring. |
+| `ts/src/admin.ts` | TS management plane. |
+| `go/crypto/`, `java/`, `kotlin/` | Crypto over generated stubs, **no hand-written RPC layer** — by design, not debt. Go holds the reference `exp` semantics Phase 3 adopts. |
+| `verify/src/` | Independent Rust decision verifier; links nothing of Seam's. No `ContextBinding` surface. |
+
+**Contract and gate machinery:**
+
+| Path | Purpose |
+|---|---|
+| `scripts/check-contract.sh` | The contract gate. Exit codes: 0 ok · 1 RPC/Authorize/admin stale · 2 stream fields · 3 stubs absent · 4 ReportEventsConsumed · 5 RPC manifest · 6 field/enum manifest · 7 structural precondition · 8 event field manifest. |
+| `contract/rpc-manifest.txt` | Verb surface — **`seam.api.v1` only**; the gap Phase 5 closes. |
+| `contract/field-manifest.txt` | Field surface, and the record of which fields are declared-not-interpreted. |
+| `contract/event-field-manifest.txt` | `seam.event.v1` field surface. |
+| `contract/expected-local-lag.txt` | The exact five-field local/BSR gap. Exact-match; a superset produces the full refusal. Phase 8's central subject. |
+| `contract/wire-framing.json` | The release handshake latch. Phase 1's subject. |
+| `.github/workflows/release-on-runtime.yml` | Consumes the latch; Phase 1 adds the stale-latch branch. |
+| `.github/workflows/ci.yml` | `ci-ok` is the single required check; `integration` and `spec-pin` are the only advisory jobs. |
+| `.github/workflows/yank.yml` | Exists since the last plan — `workflow_dispatch` only, `dry_run` defaults true. Relevant to #43. |
+| `Makefile` | `generate`, `generate-local`, `check-contract`, `clean`. Three of these are forbidden here. |
+
+**Guard tests Phase 4 repairs:**
+
+| Path | What it guards |
+|---|---|
+| `python/tests/test_retracted_claims.py` | No document claims the verifier detects truncation. Excused too easily today. |
+| `python/tests/test_workflows_generate_through_the_makefile.py` | No workflow calls `buf generate` directly. Misses two spellings. |
+| `python/tests/test_compatibility_citations_resolve.py` | Every citation resolves; no line-anchors into vendored or generated trees. The vendored rule misses the comma-list form. |
+| `python/tests/test_packaging.py` | Wheel packaging contract. Silently retires on a build failure. |
+| `python/tests/test_field_manifest_gate.py` | The field gate and the lag downgrade. Holds `_KNOWN_LAG_FIELDS`, which Phase 8 must edit atomically. |
+| `python/tests/test_event_field_manifest_gate.py` | The event field gate and CLAUDE.md's exit-code paragraph. Phase 5 extends it. |
+| `python/tests/test_live_fixtures_are_isolated.py` | Live-suite isolation. Audited and sound — leave alone. |
+
+**Tracked state:** `DECISIONS.md` (settled calls), `ASSUMPTIONS.md` (`UNCONFIRMED` entries, reviewed
+per cycle), `COMPATIBILITY.md` (the adapters × SDK matrix, heavily cited), `CHANGELOG.md`,
+`plans/README.md` (the plan index — this plan needs a row).
+
+## Phase log
+
+### Phase 1 — The release gate that cannot refuse · **DONE** 2026-09-03
+
+The latch is armed (`contract/wire-framing.json` `runtime_emits_version: true`) and the gate that had
+been unable to refuse anything since 2026-08-26 now refuses. `scripts/test_release_gate.py` went from
+4 tests to 19: the behavioural ones extract the gate's real script out of the workflow and run it
+against a synthetic contract file in a tmpdir, covering the whole truth table over
+(framing version present × latch × trigger type); four structural ones read the parsed workflow to pin
+the cells the script depends on but does not contain. Every assertion was mutation-verified.
+
+Three verification rounds, each finding real defects, the second and third finding defects *introduced
+by the previous round's fix* — a genuine cascade that converged:
+
+1. Flipping the latch **killed the manual release fallback**. `workflow_dispatch` carries no
+   `client_payload`, so every manual run hit the "a field that stopped being emitted is a REGRESSION"
+   branch — on the exact path an operator reaches for after the automatic dispatch already failed.
+2. The fix for (1) widened where `$DISPATCHED` could come from, which **broke the stale-latch branch's
+   premise**: "the dispatch proves the runtime emits the field" is false of a value typed into a form.
+   Scoped that branch to `repository_dispatch`.
+3. The new plumbing cells were **unguarded** — deleting the input declaration, the `||` fallback or
+   the `EVENT` env line left every behavioural test green, because the harness supplies those values
+   itself. Added structural assertions, plus one for the `repository_dispatch` trigger the stale-latch
+   branch is now scoped to.
+
+(Findings 2 and 3 were both raised by round 2; round 3 found no behavioural defect. Round 4 added a
+fifth guard of the same shape — the gate's refusal on an unreadable `contract/wire-framing.json` had
+come to rest entirely on `set -e`, which arming the latch is what made load-bearing.)
+
+Divergences from the plan as written are recorded inline in
+`plans/digest-correctness-and-gate-repair.md` (Phase 1 Status, amended edge cases, criteria 3/7/8) and
+the reasoning in `DECISIONS.md`. Also de-staled every document that described the pre-flip world:
+`COMPATIBILITY.md` (aegis floor `>=0.5,<0.6`), `CHANGELOG.md`, `README.md`, `plans/README.md`,
+`plans/cross-repo/`, and the `contract/wire-framing.json` comment — plus the citation repointing those
+edits forced, which is now a standing cost of editing any file this repo cites by line.
+
+Measured after: python **1018 passed / 17 skipped** · `pytest scripts -q` **116 passed** ·
+`STREAM=1 EVENTS=1 ./scripts/check-contract.sh` **exit 6** with the five-field NOTE ·
+`verify/` `cargo test` ok · `ruff check python && ruff format --check python` clean.
+
+The python count moved 1016 → 1018 rather than holding: the citation guard parameterizes over every
+citation it finds, so binding one bare back-reference to its file created a case.
+
+Both of this phase's late citation failures were **self-inflicted and caught by that guard**. Adding
+a six-line comment to the workflow pushed the Go-tag line six lines down, stranding the citation in
+`COMPATIBILITY.md` that pointed at it — now `.github/workflows/release-on-runtime.yml:186`. And a
+back-reference written bare bound to `CHANGELOG.md`, the subject of its table row, rather than to
+this file; the guard's ratchet then refused the bare form outright, which is the correct outcome —
+it wants the reference bound, not the ceiling raised. Ninth and tenth repointings this phase. The
+lesson is already recorded above and keeps re-earning itself: in this repo, editing any file that
+another file cites by line is a two-part change, and the second part is easy to forget precisely
+because nothing about the first part looks like it touched a citation.
+
+`scripts/` is not in CI's `ruff format` scope and was already unformatted at `HEAD`;
+`scripts/test_release_gate.py` itself is formatted.
+
+### Phase 2 — Digests that alias · **DONE** 2026-09-03
+
+Four demonstrated defects closed, each measured byte-for-byte against the pre-fix build before any
+code moved. The headline: `recordDigestV2({sealedAt: 5n})` and `recordDigestV2({sealedAt: 2^64+5n})`
+produced the *same 32 bytes* — `b566fdea…05d7f` — because `DataView.setBigUint64` applies ToBigUint64
+and wraps in silence. `-1n` aliased onto `2^64-1`, `2^64` onto `0`, `"5"` onto `5n`, `true` onto `1n`.
+A digest that does that is failing at the only thing a digest is for.
+
+The rule was already written, argued, and correct — for v3 only, in a function called `v3Uint` whose
+reasoning is entirely about `DataView` and IEEE doubles, neither of which knows which framing it is
+serving. Renamed to `uintSlot`; `u64le`/`u32le` route through it. Also: lone surrogates are now
+refused in object **keys**, not just string values (Python always raised there, so TypeScript could
+digest an object no other implementation can represent), and Python's `verify_chain_head_attestation`
+returns `False` on an out-of-range slot instead of letting `struct.error` escape a function
+documented to return `False` on any tamper.
+
+**The verification round earned its place.** It ran a differential fuzz across both builds — 3000
+`recordDigestV2` samples, 0 divergences; 4000 `jcsCanonicalize` samples, 203 divergences, *all*
+classified as the intended key-surrogate narrowing — and then found six real gaps, one blocking:
+
+- **The TypeScript attestation test was vacuous.** It passed a zero signature and a placeholder AID
+  that `aidToPubkey` rejects, so the verifier's own `catch` returned `false` before the digest was
+  ever computed — the assertion held whatever `attestedLen` contained. Reverting the fix left all 148
+  tests green. Rewritten around the runtime's committed KAT, which is a signature this repo did not
+  produce; reverting the attestation framing alone now kills exactly one test, and reverting `u64le` kills four. In a phase whose subject is aliasing, this
+  was a test whose result was decided by something other than the property it named.
+- **The fix created a divergence while closing three** — `bool` and `float`, described above.
+- Two `ts/src/crypto.ts` citations went stale under this phase's own +31 lines. One of them
+  (`DECISIONS.md`) had been pointing at the *string* slot validator for a claim about a coerced
+  integer since before this phase; corrected to the function that actually holds the fix.
+- An undocumented widening, and two `COMPATIBILITY.md` claims that overstated their scope.
+
+**Round 2 found the fix half-applied**, and the shape of that finding is the useful part. Tightening
+`verify_chain_head_attestation` alone left `record_digest_v2(sealed_at=True)` still digesting as `1`
+— so the divergence survived in the sibling function, with a freshly-written `COMPATIBILITY.md` row
+asserting it closed. Both languages had *agreed* before the phase and would have disagreed after.
+
+The repair was not to add a third check but to stop having three: `v3Uint`→`uintSlot` and
+`_v3_uint`→`_uint_slot`, one validator per language, shared by v2, v3 and the attestation framing.
+The bug was never a missing check — it was a rule living in more places than one, which is also the
+honest account of why round 1's fix looked complete.
+
+Round 2 also found that the citation repairs were themselves unguarded: it reverted one to its stale
+value and the whole suite stayed green. Seven anchors added to
+`python/tests/test_compatibility_citations_resolve.py`, five of which needed `CLAIM_LINES` entries
+because their documents cite those paths several times over — without which a needle can be
+satisfied by a sibling citation the claim never named. All five mutation-verified.
+
+One divergence was **surfaced and deliberately not fixed**: at the close of Phase 2,
+`verifyChainHeadAttestation` still swallowed every `TypeError` in a blanket `catch { return false }`,
+where Python let it propagate. That is a decision about a public API, not a defect, so it moved to
+Phase 3 — which exists for exactly that — rather than being settled inside a phase about aliasing.
+(Phase 3 settled it; the catch now sees only untrusted input.)
+
+**Round 3 found the code correct** — all eleven code mutations died — and the gap entirely in the
+citation layer: this phase's insertions stranded roughly fifteen `file:line` citations across seven
+files, and only four had been repaired. Twice now, the half that was *anchored* noticed and the half
+that was not did not; in one sentence the TypeScript citation was repaired and the Python one beside
+it was left stale.
+
+All fifteen repaired, each verified by reading the cited line rather than by trusting the arithmetic,
+and the two that a round-3 mutation proved unguarded are now anchored — pointing `PROGRESS.md`'s
+`python/seam_sdk/crypto.py` citation at line 1 used to leave the suite green and now reddens two
+tests. The honest summary of three rounds: the citation discipline works exactly as far as the
+anchors reach, and every round has found the reach too short.
+
+Round 3 also found one real code defect. The guard checked each slot's type and range together, so
+`attested_len=2**64` alongside `attested_at="7"` returned `False` — reporting "did not verify" about
+a call that never had a chance to, while the guard's own comment claimed a wrong type always raises.
+True for every single-fault input, false for every double-fault one. Types for **every** argument
+are now checked before any range is, `_require_int` was split out so that rule still has exactly one
+definition, and the combination nobody writes a test for has four.
+
+**Round 4 found the round-3 fix had done it again**, and this time the irony is exact. The
+`attested_head` type check — added so a wrong type could not hide behind an out-of-range value — was
+written as `isinstance(attested_head, (bytes, bytearray, memoryview))`, which also narrowed the
+argument from *any* buffer-protocol object. `array.array("B", …)` and a `ctypes` buffer verified
+`True` before and raised after: a caller getting a correct verdict stopped getting one, to fix a bug
+they did not have. The module already owned that rule — `_as_bytes`, which `record_digest_v3` uses
+and whose docstring settles the `memoryview` itemsize trap — so `record_digest_v3` and
+`verify_chain_head_attestation` disagreed about what bytes are. **The fix for "a rule living in more
+than one place" introduced a rule living in more than one place.** Now routed through `_as_bytes`,
+pinned by a test, mutation-verified.
+
+Round 4 also showed the citation repairs were not finished: two I had repointed were still wrong,
+because my *own later edits in the same round* moved the targets after I measured them. The lesson
+is procedural and worth keeping: **measure citations last, after every other edit in the change**.
+A sweep of all 85 citations into branch-modified files now runs clean, and the anchors caught two of
+my own drifts in this round before any verifier did.
+
+Measured after: python **1069 passed / 17 skipped** · ts **148 tests, 138 pass, 0 fail, 10 skipped** ·
+`pytest scripts -q` **116 passed** · go ok · `verify/` all 9 targets ok · `ruff` clean ·
+`tsc --noEmit` clean · `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` **exit 6** ·
+`git status conformance/` **empty** — criterion 7 held: not one KAT or conformance vector moved,
+confirmed by three independent differentials against `HEAD` (20,000 · 40,000 · 4,000 randomized
+in-range `record_digest_v2` inputs, 0 divergences in each) rather than by file identity alone.
+
+### Phase 3 — divergences that need a decision, not just a fix — DONE
+
+Four items, and the shape of the phase was different from 1 and 2: none of these was a bug in one
+implementation. Each was **five implementations disagreeing about the same input**, where naming the
+right answer mattered more than writing the fix.
+
+**Item 1 — the TCT `exp` claim.** Confirmed the normative reference in three languages before
+touching anything: Go `payload["exp"].(float64)` + `int64(exp)`, Java `instanceof Number` +
+`longValue()`, Kotlin `as? Number` + `toLong()` — a genuine 3-of-5 majority with consistent
+truncate-toward-zero semantics, and the only one of the three rules in the tree with a written
+rationale at the code. Adopted; argued in `DECISIONS.md`.
+
+Then measured, rather than reasoned: a signed-TCT probe run against the pre-change and post-change
+implementations in **all three** runnable languages. TypeScript accepted six shapes Go refuses
+(fractional, numeric string, `"1e10"`, boolean, object, array); Python accepted two. All eight are
+capability tokens a verifier honoured that its peers rejected.
+
+**The acceptance criterion I wrote would have missed the sharpest one.** At `now = 1000`, `exp: true`
+looks correctly refused in both languages — `1000 >= 1` is expired. At `now = 0` it **verified**,
+because `bool` subclasses `int` in Python and `true` coerces to `1` in JavaScript. A vector written
+with a plausible timestamp would have asserted agreement that was entirely accidental and stayed
+green through the exact bug it was named after. Most type cases in the shared vector pin
+`now = 0`; `boolean_false`, `null` and `absent` pin `now_s: -1`, and one truncation case pins `-2`.
+
+The vector is `conformance/tct_exp_extended.json` — 18 signed tokens, machine-emitted, following the
+SDK-owned precedent `conformance/authorize_jcs_int_extended.json` established. Its expected verdicts
+are computed from the **rule** by `scripts/emit_tct_exp_vectors.py`, never read out of an
+implementation; a vector recorded from the code it checks cannot fail. Go reads it too, even though
+Go is the reference — "Go is normative" is a claim about the vector, and an unchecked claim is how a
+reference drifts from the thing referencing it.
+
+One case in the first draft was vacuous and had to be repaired: `fractional_negative` at `now = 0`
+could not tell truncation from flooring, since both expire `-1.5`. It now runs at `now = -2`, the
+only clock between `trunc(-1.5) = -1` and `floor(-1.5) = -2`, and a Go mutation from `int64(exp)` to
+`int64(math.Floor(exp))` kills exactly that case and nothing else.
+
+**Item 2 — JCS and non-plain objects.** `typeof v === "object"` admitted `Date`, `Map`, `Set`,
+`RegExp`, typed arrays, boxed primitives and class instances, none of which keep state in own
+enumerable properties, so all of them canonicalized to `{}`. This is §9's aliasing defect in a third
+location and by far the most reachable: `{ deadline: new Date(...) }` had **one signed digest for
+every possible deadline**. Python has never had it — `_jcs_write` is an allowlist.
+
+Fixed with a rule rather than a denylist of `Date | Map | Set | …`, because an enumeration is correct
+only until the next exotic type, and this repo has now found the same defect three times with the
+shape never varying. An object is canonicalizable iff its prototype is a root. Testing the chain's
+*depth* rather than `proto === Object.prototype` also keeps cross-realm objects working; a mutation
+to the identity check reddens exactly the test that says so.
+
+One claim in the first write-up was too tidy and the verify gate caught it: "none of these keep state
+in own enumerable properties, so they emitted `{}`" is true of `Date`, `Map`, `Set` and boxed numbers,
+and false of the rest — a `Uint8Array` emitted `{"0":1,"1":2}`, a class instance emitted its fields.
+Those canonicalized faithfully, so refusing them is a real narrowing rather than a meaningless digest
+removed. Corrected in four places.
+
+**Item 3 — `verifyChainHeadAttestation`'s blanket catch**, routed here from Phase 2. Measured the
+whole surface across both languages first: 14 inputs, 7 diverging — six of them the same shape,
+Python raising on a caller bug where TypeScript returned `false`. The measurement also found a hole
+in **Python's** own rule that neither the plan nor Phase 2 had named: `signature` was the one
+argument never type checked.
+
+The seventh diverged the other way, and I wrote it up backwards before the verify gate caught it.
+TypeScript did not return `false` for a hex-string signature — it returned `true`, correctly, because
+`@noble/curves` types the parameter as `Hex = Uint8Array | string`. So refusing it is a **narrowing of
+working behaviour**, not a repair, and four documents said the opposite. Corrected, and disclosed as
+a cost in `COMPATIBILITY.md` §10 rather than counted as a fix. The lesson is narrow but sharp: I had
+measured Python's pre-state and inferred TypeScript's from the shape of the other six.
+
+The non-obvious call was where to draw the line. Hoisting TypeScript's safe-integer check out with
+the type checks would have made `2 ** 60` throw where Python — with exact integers — returns `false`:
+**closing one divergence by opening another.** It stays inside the catch. The split is not "types out,
+values in" but "could this have arrived over the wire?". Pinned by a test; hoisting the check reddens
+it.
+
+**Item 4 — `engines.node`.** Packaging hygiene, and the guard matters more than the field: a declared
+floor nobody checks is the same defect as no floor at all. `python/tests/test_node_engines_floor.py`
+binds `engines.node` to the workflows' `node-version` pins, refuses an upper bound (the Node ≥ 24
+report was refuted as a harness artifact — see `DECISIONS.md`), and fails if the pins are ever
+renamed out from under it rather than skipping its way to green.
+
+Nothing accepted moved. Four differentials against `HEAD`: 40,000 randomized JCS inputs (0 moved, 0
+newly refused), 20,000 `recordDigestV2`, 20,000 `record_digest_v2`, and 20,000 well-typed
+`verifyChainHeadAttestation` verdicts in each language — 0 divergences in every one. Eight mutations
+were run against the new guards and each killed exactly the intended test and nothing else; the
+strongest was running the whole new `exp` suite against the real pre-change build, where it reddened
+on precisely the six shapes TypeScript had accepted.
+
+Java and Kotlin do not read the shared vector: this workstation has no JDK, and writing a test whose
+first execution is CI is how a vacuous test lands — the failure mode this run has already spent four
+rounds on. Recorded in `ASSUMPTIONS.md` as follow-up rather than shipped blind.
+
+**The Phase 3 verify gate found one BLOCKING item, three moderate ones and a set of smaller ones**,
+and the blocking one was a claim rather than a bug. I had written that a hex-string `signature`
+returned `false` in TypeScript before this change. It returned `true` — `@noble/curves` types the
+parameter as `Hex = Uint8Array | string` and decodes it — so the change removes working behaviour,
+and four documents plus two source comments said the opposite. The refusal stands, because the
+alternative is one language coercing a string the other refuses; the write-up was wrong, not the
+code. What produced the error is worth naming: I measured Python's pre-state directly and inferred
+TypeScript's from the shape of the six inputs around it.
+
+Two of the moderate findings were the run's own recurring pattern, in the one function the brief
+pointed at. `recordDigestV2` never routed its **bytes** or **text** slots through any guard, so
+`ciphertextDigest: "0".repeat(32)` produced the same digest as `new Uint8Array(32)` (`Uint8Array.set`
+coerces through `ToNumber`, and a non-numeric character becomes `0`), and `outcome: "\ud800"` the same
+digest as `"�"`. `recordDigestV3` had refused all of it since it was written; the guards existed
+and were named `v3Text`, and the name was the only thing scoping them. Renamed to `textSlot` and
+routed — the identical correction `v3Uint` → `uintSlot` received in Phase 2, one function over. That
+is the fourth copy of this rule found in three phases.
+
+The third was that the rule I had just declared normative was not total: Go's `int64(exp)` is
+implementation-defined when the value does not fit, so `{"exp": 1e300}` **verifies** on arm64
+(saturating) and is **refused** on amd64 — making CI's own architecture the arbiter of a
+cross-language contract. All five now bound `exp` to `[-2^63, 2^63)`, with both sides of the bound in
+the vector; removing it from Go or Python reddens exactly the `beyond_int64` case.
+
+The gate also showed three vector cases asserting nothing — `boolean_false`, `null` and `absent` all
+ran at a clock where the coercing rule refuses them too. Moved to `now = -1`, where `?? 0` and
+`get("exp", 0)` both accept. The vector now catches **ten** of eighteen cases against the real
+pre-change TypeScript build, up from six, and five against Python, up from two.
+
+Measured after: python **1109 passed / 20 skipped** · ts **174 tests, 164 pass, 0 fail, 10 skipped** ·
+`pytest scripts -q` **116 passed** · go ok · `verify/` ok · `ruff`/`gofmt`/`clippy` clean ·
+`STREAM=1 EVENTS=1 ./scripts/check-contract.sh` **exit 6** with exactly the five recorded lag fields ·
+`git diff HEAD -- conformance/` **empty**. Nothing accepted moved, across six differentials.
+
+### Phase 4 — guards that fire on the mutation they name — DONE
+
+Four guards that missed their own subject. Each was demonstrated **green against the mutation first**,
+then red after the repair — the order matters, because a guard you only ever see pass is
+indistinguishable from a guard that cannot fail.
+
+**1. The truncation-claim guard matched negations as substrings.** `"not" in "notarised"` is true,
+and so is `"not" in "Note"` and `"not" in "nothing"`. The published verifier cannot detect
+truncation and a document here must not claim that it does — yet all four of these sentences were measured
+being accepted into a repo document by the guard whose entire job is to refuse them: one about a
+notarised feed detecting truncation for every chain, one opening with `Note:` and claiming seam-sdk
+detects truncation end to end, one qualifying the detection with `until you disable it`, and one
+introduced by `The claim is simple:`. Not one of the four is true, and the guard took all four.
+
+`"until"` was never a negation; it read as one only because a real denial always sits beside it,
+carrying its own `cannot`. And `"the claim"` was in the *exemption* list — a guard whose exemptions
+include the words its subject is most likely to be written with is not a guard. Now word-bounded,
+with both markers dropped, and a permanent calibration of ten forbidden spellings plus six
+legitimate denials. Each element of the fix has at least one test that dies when it is reverted —
+measured after the verification round below, which changed both the mechanism and the counts:
+
+    substring matching in `_is_exempt`     -> 1 failed  [substring 'not' inside 'notarised']
+    `until` restored to NEGATION_WORDS     -> 1 failed
+    `the claim` restored to DISCUSSING     -> 1 failed
+    clause scope reverted to paragraph     -> 3 failed  [next sentence / semicolon / colon]
+
+The first number was **three** before clause-scoping landed; splitting on `:` now separates
+`Note:` and `The claim is simple:` from the claim that follows them, so those two cases no longer
+depend on word-boundary matching to be caught. A count recorded once and never re-measured is the
+kind of claim this file exists to avoid, so it is re-measured here rather than carried forward.
+
+**2. The `buf generate` guard only saw commands that opened a line.** `RAW_BUF_GENERATE` was anchored
+with `^\s*`, so `- run: buf generate ...` — the ordinary compact spelling, and how most single-command
+steps in this repo are written — slipped past, as did `make lint && buf generate ...`. This is the
+guard whose docstring records that **every wheel this repo ever published could not be imported**.
+Rewritten to parse the workflow, walk every `run:` value wherever it nests, and split on the
+separators a shell actually uses. Eight spellings now caught (the fourth, `echo x | buf generate`, was
+found by writing the scan properly rather than by the plan); a prose `#` comment about the rule still
+passes, and the parser drops YAML comments before the scan sees them, which is stronger than the
+whole-line filter it replaces.
+
+**3. `_line_anchors_into_vendored` never learned the comma-list spelling its sibling had.**
+`COMMA_LIST_CITATION` was added precisely because "a comma separating two line numbers does not make
+them less line numbers" — and only `_line_anchors_into_generated` was taught it. So
+a comma-list anchor into `verify/docs/seam-event.v1.md` — two line numbers separated by a
+comma, in the ordinary citation syntax — passed invisibly into a whole-file-refreshed spec:
+**issue #73's own class, reopened in the sibling rule by the change that closed it.** Both
+rules now iterate both patterns, and a parametrized mirror test asserts every spelling against *both*
+— with an accepting-side case, so "make both catch everything" cannot be satisfied by returning
+every citation.
+
+**4. A failed wheel build retired the packaging guards into skips.** The `except` caught
+`CalledProcessError` — a build that RAN AND FAILED — in the same breath as `FileNotFoundError`, which
+was taken to mean no pip exists. Opposite situations, one handler. A packaging defect therefore disabled the only
+three checks for it (no global `seam` leak, `py.typed` ships, rooted `__init__.py` chain) and pytest
+exited 0. CI's separate wheel-import step does not close the gap: it checks one of the three.
+
+Added `SEAM_REQUIRE_WHEEL_BUILD=1` to CI's python job — `ci-ok`'s "a skipped required job is a
+failure" rule applied one level down, where the runner can always build and a skip has no legitimate
+cause. **Every route to "no wheel" now fails under that flag**; that is the load-bearing property,
+and the wording is the only thing that varies between them.
+
+The first repair split the two causes *by exception type*, and running it here proved that wrong.
+`python -m pip` on an interpreter without pip raises no `FileNotFoundError`: the interpreter exists,
+so it runs and exits 1 with "No module named pip" — landing in the failed-BUILD branch and reporting
+a packaging defect that does not exist. Presence is a question only a `--version` probe answers. The
+two tests missed it because both forced the `pip3` branch, where an absent executable really does
+raise; they exercised the path where the discriminator happens to work.
+
+Probing instead of inferring then exposed a **third** class, and it is the one this workstation is
+actually in. `/usr/bin/pip3` is Python 3.9, below this package's `requires-python = ">=3.10"`, so its
+setuptools cannot read the PEP 621 metadata, falls back to a legacy build, writes
+`UNKNOWN-0.0.0-py3-none-any.whl`, and **exits 0**. Not absent, not failed — a builder that cannot
+name the package it just built. Both earlier versions called it "no pip available", so the
+handoff-brief line that three skips here mean "this venv genuinely has no pip module" was itself the
+wrong diagnosis, believed because the code said it. Three classes now, three messages, one flag.
+
+Three things worth recording from the doing. The `buf generate` scan found a spelling the plan had
+not listed, which only became visible once the check was written per-command instead of per-line. The
+new packaging tests **passed vacuously on first run**: `pytest.raises(Exception)` catches neither
+`Skipped` nor `Failed`, because both derive from `BaseException` — so the assertion inside the block
+never executed. And a later assertion that the message *names what the builder produced* was
+satisfied by the same string appearing as a constant in the message's own explanatory prose: dropping
+the measured evidence left the test green. It was caught by mutating the message and watching nothing
+die, which is the only way an assertion satisfied by a constant ever surfaces. Three instances of
+this run's recurring failure, all three inside tests written to fix instances of it.
+
+#### Verification round
+
+A fresh-Opus gate returned **REVISE** with two BLOCKING items, three MODERATE, six MINOR and five
+NITs. Every one was reproduced by measurement before being acted on. Two are worth reading, because
+both are this phase's own subject turned back on it.
+
+**The suite could not have run in CI at all.** `test_workflows_generate_through_the_makefile.py`
+does `import yaml`, and PyYAML is not a dependency of anything: `pyproject.toml`'s `dev` extra held
+only `pytest` and `ruff`, and `.github/workflows/ci.yml:124` installs exactly that extra and nothing
+else. It passed here because someone had installed PyYAML into this venv by hand, with no dependent.
+An undeclared import is not one failing test — it is a **collection error**, which aborts the whole
+run:
+
+    $ .venv/bin/python <blocks 'yaml' via sys.meta_path> -q
+    ERROR tests/test_workflows_generate_through_the_makefile.py
+    !!!!!! Interrupted: 1 error during collection !!!!!!
+
+The repo already held the evidence twice over — `.github/workflows/ci.yml:642` installs `pyyaml` for the
+sibling `workflow-guards` job, and `test_node_engines_floor.py` hand-parses YAML with a regex rather
+than import it — and a green local suite still said everything was fine. Declaring `pyyaml` fixes
+the instance; `test_test_dependencies_are_declared.py` fixes the class, by parsing every test
+module's imports with `ast`, resolving each to a distribution, and requiring it be declared. It
+would have caught this one, and it cannot go stale the way a pyyaml-shaped guard would.
+
+**The guard with the most history behind it had no calibration.** None of the five real workflows
+contains `buf generate` — that is the point of the guard — so the parametrized test asserts an empty
+list every time, and asserted one just as happily when the pattern could only see a command that
+opened a line. Blinding the walker to `return []` left the file green:
+
+    $ pytest -q tests/test_workflows_generate_through_the_makefile.py     # _run_steps -> []
+    14 passed
+
+Eight synthetic spellings and four must-not-fire prose cases now run through the same
+`_run_steps`/`_commands`/`BUF_GENERATE` the real test uses, plus an anti-vacuity check that the
+walker reaches >50 commands across the real workflows. That mutation now takes 9 tests with it.
+
+The other repairs, each measured:
+
+* **The truncation calibration exercised a copy of the predicate.** `_guard_accepts` reimplemented
+  the rule, sharing only the word tuples, so reverting the *real* guard killed nothing (`23 passed`)
+  while reverting both killed three. Phase 3's named class — a rule in two places — recreated inside
+  Phase 4's fix for it. There is now one `_is_exempt`, called by the guard and by the calibration.
+* **A negation anywhere in a paragraph excused a claim anywhere in it.** `The verifier detects
+  truncation. No further work is required.` passed. Negation is now clause-scoped while the explicit
+  meta-markers stay paragraph-scoped, which is what keeps `RETRACTED: …` writable. The first run of
+  the stricter rule immediately caught a real paragraph — this file's own Phase 4 write-up — which is
+  the guard behaving correctly on meta-discussion; it now carries the marker that says so. A
+  same-clause negation (`detects truncation, no exceptions`) still passes, and that limit is written
+  into the predicate's docstring rather than left to be rediscovered.
+* **Two of the three no-wheel classes were pinned under the flag; the third was not.** Deleting the
+  absent branch's `pytest.fail` killed nothing. It has a with-flag twin now, as the other two did.
+* **`assert "no pip available" in message` was satisfied by the branch's own prose** — the same
+  constant-satisfied assertion already confessed above, surviving one branch over. It now asserts the
+  measured candidate list. Branch order (a real failure outranks a builder that built nothing) is
+  pinned too; swapping the branches previously killed nothing.
+* **The `UNKNOWN-0.0.0` diagnosis named the wrong cause.** It blamed `requires-python`; measured, the
+  operative cause is setuptools **58.0.4**, which predates PEP 621 support (added in 61) and so
+  ignores the `[project]` table entirely. The old interpreter is why the old setuptools is there, but
+  writing the correlation as the mechanism would send a reader to the wrong fix. Corrected in five
+  places.
+* **`--no-build-isolation` needs an importable backend**, and under the new flag a missing one would
+  have reported as a packaging defect. The build-failure message now says when setuptools is absent
+  and that it is an environment fault. Found by reading the CI install steps, not by the gate.
+
+One finding was accepted rather than fixed: the shell split is quoting-unaware, so a quoted `;` or
+`|` immediately before the phrase can false-positive. A false positive here is a loud one-line fix in
+a workflow; the false negative it replaced shipped unimportable wheels. The trade is recorded, not
+closed. `BUF_GENERATE`'s anchor also turned out to be redundant with `_commands`' stripping — that
+coupling is now asserted, so the simple anchor stays justified rather than lucky.
+
+Measured after: python **1154 passed / 20 skipped** · ts **174 tests, 164 pass, 0 fail** ·
+`pytest scripts -q` **116 passed** · go ok · `verify/` cargo test + clippy + fmt clean · `ruff` clean ·
+`STREAM=1 EVENTS=1 ./scripts/check-contract.sh` **exit 6** · `ci-ok`'s `needs:` unchanged at 12 jobs,
+no new job added.
+
+### Phase 5 — the verb surface nobody watches — DONE
+
+`scripts/check-contract.sh` says the rpc manifest declares "the whole verb surface" — the phrase is
+the script's, not the manifest's, whose header scopes itself to `seam.api.v1`. Both extractors were pinned to
+`seam.api.v1` and read only the api stubs, so an RPC landing in `seam.event.v1` was invisible **in
+both languages at once** — no probe named it, no manifest covered it, and every gate stayed green. It
+is the same shape as the field-level gap #88 closed, one level up.
+
+**The fix removes a copy rather than adding a check.** The obvious implementation is a second pair of
+greps for the event package, and that is the defect this repo keeps finding: not a missing check, but
+a rule living in two places with one copy incomplete. So `rpcs_python`/`rpcs_ts` are now one-line
+wrappers over `rpcs_python_in`/`rpcs_ts_in`, parameterised by package and file, and the event probe
+calls the *same* functions with a different package. Verified byte-identical on the api side before
+anything was added — 42 verbs from each language, `diff` clean against the pre-change extractors — so
+the parameterisation provably changed nothing it was not meant to.
+
+A tripwire, not a second manifest. `seam.event.v1` declaring zero services is a real current
+invariant, and extending `rpc-manifest.txt` to a second package needs a format decision — one file
+with package-qualified names, or two — that belongs to the change which actually lands a verb, with
+the shape in hand. That is recorded in Open questions, not guessed at here.
+
+`SEAM_PY_EV_GRPC` is new and had to be: RPCs live in `_pb2_grpc.py`, and a `.pyi` message stub
+carries fields and no verbs at all, so no override of `SEAM_PY_EV` could ever reach a service. The TS
+half needed nothing new — services annotate into the same `_pb.ts` that `SEAM_TS_EV` already points
+at. Every test drives the real script against scratch copies; the gitignored trees are never touched.
+
+**Precedence was measured, not assumed.** A grafted verb outranks the exit-2 mirror-field refusal.
+That looked like something Phase 5 introduced, so it was checked against the *committed* script: an
+event enum already outranked exit 2 in exactly the same way. 7 preempting 2 is pre-existing and
+correct — a failed precondition means the surface being compared is not one the gate knows how to
+read. So `CLAUDE.md`'s Gotchas paragraph was not just incomplete about the new verb clause; it named
+6, 8 and 2 as the reachable codes while **7 was reachable all along**. It now names all four, and the
+test that pins it measures a 7 rather than grepping for the digit.
+
+Two planning-time notes in the repo map above turned out to be wrong and are corrected in place: the
+field extractors were already parameterised when #88 landed (Phase 5 parameterised the *verb* pair
+instead), and the comment #88 was filed from already recorded its gap as closed, so Phase 5 correctly
+left it alone. Both said "Phase 5 will…" about work that was either already done or aimed at the
+wrong pair.
+
+Mutations, each run against the real gate: making the probe inert kills 3 tests; blinding only its TS
+half kills 2; dropping exit 7 from `CLAUDE.md` kills 1. The negative control — an unmodified event
+surface exits 0 — is what stops "always exit 7" from satisfying the first two, and a separate test
+asserts the invariant against the **real** committed stub rather than the fixture's copy, since every
+graft test would still pass on a faithful copy of a broken invariant.
+
+Citations into `scripts/check-contract.sh` were re-measured after the edits, not before: ten of them
+across `DECISIONS.md` and `PROGRESS.md` had drifted past the guard's ±3-line slack, and were remapped
+by diffing the file against `HEAD` rather than by applying a guessed offset.
+
+#### Verification round
+
+REVISE, with two MODERATE items. Both were the phase's own subject aimed back at it.
+
+**The probe watched two filenames, and a package is not a file.** buf's ordinary layout puts a
+service in its own `.proto`, so codegen emits `seam_event_service_pb2_grpc.py` *beside* the message
+stub — and a verb landing there exited **0** with every gate green. The headline claim ("a service
+landing on `seam.event.v1` can no longer arrive with every gate green") was therefore false as
+written. Now globbed over the package directory, and the fixtures give the two globbed paths their
+own directories so the scratch layout matches the real gen tree instead of a flat pile.
+
+**The refusal said "ZERO services" while measuring only RPCs.** A service with no methods emits no
+`'/pkg.Svc/Method'` literal in either language, so it passed — a check named for something other
+than what it measured. Both generators do emit the service *name*; both are matched now, and a
+zero-method service is refused in each language independently.
+
+**And the "one rule, not two" test was itself vacuous.** It matched shell source text, so it stayed
+green while the probe was mutated to `if false; then`, and went red on a byte-identical reformat —
+wrong in both directions at once. It is now whitespace-tolerant and its docstring says plainly that
+it is a STRUCTURAL check which proves nothing about behaviour; the graft tests are what do that.
+This also corrects a number above: "blinding only its TS half kills 2" counted that test dying
+because source text moved. The behavioural kill count for a TS-blinded probe is **1**.
+
+Smaller repairs: the extractors now take a RAW package and escape it internally, matching
+`fields_ts`'s existing convention some sixty lines away — a pre-escaped argument put the requirement in a
+comment where a future caller's over-match would be silent. Verified again after that change that
+the api side is byte-identical (42 verbs per language) and that `seamXapiYv1` still does not match.
+`SEAM_PY_EV_GRPC` was threaded into the sibling `test_field_manifest_gate.py`, whose ~200 runs were
+otherwise reading the real gen tree through the new probe; both fixtures now redirect all nine
+`SEAM_*` variables the script reads. `CLAUDE.md`'s "three other codes" was still an undercount — 5
+and 3 are reachable from the same command, measured — and now says so.
+
+One citation deserves its own note. `scripts/check-contract.sh:612-621` pointed at the FIELD-manifest
+write, not at the `expected-local-lag` delete-scoping comment it described, and had done for two
+rounds: **each remap faithfully carried the wrong target forward.** A remap can only keep a citation
+pointing where it already pointed. It is re-targeted and ANCHORED now, so mis-pointing it kills two
+tests instead of nothing.
+
+**An operational mistake worth recording.** A measurement run rewrote `contract/field-manifest.txt`
+and deleted `contract/expected-local-lag.txt` — the exact thing this run's constraints forbid. Cause:
+this shell is **zsh**, which does not word-split unquoted parameter expansions, so
+`env $VARS ./script` passed the whole assignment string as ONE argument; the first variable swallowed
+the rest and every other override silently fell back to its real default. Every earlier run was safe
+only because it used inline `VAR=x ./script` prefixes. Both files were git-tracked and restored
+byte-identical, and two manifests that had also been rewritten were confirmed identical and had their
+modes repaired from 600 back to 644. Redirected runs now go through an explicit env dict that asserts
+the redirect took effect *before* any write. The lesson is not "be careful": it is that a redirect
+which silently degrades to the real path is indistinguishable from one that worked, so it has to be
+proven, not assumed.
+
+Measured after: python **1167 passed / 20 skipped** · `pytest scripts -q` **116 passed** ·
+`STREAM=1 EVENTS=1 ./scripts/check-contract.sh` **exit 6** with the recorded five-field lag NOTE ·
+bare and `STREAM=1`-only runs both still exit 6 · ts **164 pass / 0 fail** · go ok · `verify/` clean ·
+`contract/` byte-identical to HEAD.
+
+### Phase 6 — ACDP P3: the guard that makes the adoption impossible to half-do — DONE
+
+Three files enumerate the ACDP pass-through slots — `python/seam_sdk/client.py`,
+`python/seam_sdk/aio.py`, `ts/src/client.ts` — and nothing checked them. When tags 7-10 were adopted
+both Python docstrings "enumerated four of the eleven as if that were the set", and that was caught
+**by hand**. A guard added after the mistake documents the mistake; this one lands in the phase
+*before* the adoption that will need it.
+
+The expected set is DERIVED from `contract/field-manifest.txt` — `ContextBinding/*` minus the frozen
+base six — never hardcoded. A test carrying its own copy of the answer is self-calibrating and proves
+nothing.
+
+**The tripwire had the classic shrink-the-inputs hole, and the mutation round found it.** Four
+mutations kill it: widening `FROZEN_BASE_SIX` with a real slot (1), making the docstring check always
+say "named" (3), dropping the camelCase mapping so the TS half stops matching (2), and deleting a
+source (1). That last one initially killed **nothing** — every test was parametrized over `SOURCES`,
+so removing `ts/src/client.ts` just ran fewer cases and the file stayed green. A guard that checks
+less passes. `SOURCES` is now derived-and-checked: the tree is searched for the phrase every
+pass-through docstring uses, and the list must equal what is found — which also catches a *fourth*
+client layer appearing, the realistic way this goes stale.
+
+Criterion 3's honesty is preserved rather than papered over: `FROZEN_BASE_SIX` is hardcoded, so
+widening *it* silences the guard as effectively as updating the docstrings would satisfy it. Nothing
+makes a hardcoded list mutation-proof. The exact-equality pin buys that the silencing edit is loud
+and reviewable, and there is now a test demonstrating that mechanism explicitly so the soft spot does
+not have to be rediscovered.
+
+The mutation fixture uses `ContextBinding/revocation` and `revocation_trust_class` — ACDP P3 tags
+12-13 — because they are the **real** next fields, not invented ones. That makes the test a rehearsal
+of the actual event.
+
+**The #96 comment corrected four definitions**, each verified verbatim against the proto rather than
+against the plan's summary of it: `unplaceable` has two producers and the second fires *even with* a
+valid pre-boundary receipt; `unknown` explicitly is **not** "staler than the bound" (a stale negative
+triggers a re-source, and only a failed re-source yields `unknown`); `not_revoked` is scoped to ONE
+authority, not "registries"; and `key_unidentified` is keyed on the **key fingerprint**, so an
+unidentifiable key cannot be cleared against ANY held producer-signed revocation. The proto adds a
+fifth nuance the plan did not name and the comment carries it: registry-attested revocations remain
+scoped by §6 to the serving or receipting registry, so the scope differs by trust class.
+
+The comment also answers the spec question with a measurement instead of a forecast — the vendored
+`verify/docs/seam-event.v1.md` is **93 lines** behind the runtime's copy *today* — and records that
+the regeneration #96 asks for is no longer pending: the runtime merged `ac325d7` (#531) and pushed
+it, so #96 is now the blocker on every merge in this repo rather than a forward-looking task.
+
+Measured after: python **1178 passed / 20 skipped** · `ruff` clean · comment posted to #96, issue
+left OPEN.
+
+
+### Phase 7 — issue and assumption hygiene — DONE
+
+Four items. One of them turned out to be already done, which is the phase's main finding.
+
+**#43 needed no comment.** Everything the plan specifies for it — correcting the "no yank workflow
+exists" premise, noting that a `dry_run=true` dispatch lists matches without touching anything, and
+consolidating the 0.7.39–0.7.43 band so both Cloudsmith decisions get one answer — was already
+posted in comments dated 2026-08-24 and 2026-09-02. The plan was written without reading the thread.
+
+Restating settled evidence is the issue noise this phase's own Edge-cases section warns against, so
+instead the posted evidence was re-verified as still true, and the two things that could have
+invalidated it were checked:
+
+1. The 2026-08-24 comment's load-bearing claim is that `python/tests/test_retracted_claims.py` stops
+   the advisory eroding — which matters because the entire "documented, not yanked" disposition
+   rests on that guard, and **Phase 4 rewrote that file**. The first check confirmed the version
+   assertions survived untouched, and that was the wrong check. The verification round mutation-
+   tested the guard and found it **vacuous for two of the three things the comment names**: with
+   the `| **0.7.16 – 0.7.19**` row deleted, or the `**Floor: 0.7.20.**` line deleted, the suite
+   stayed green. `"0.7.17"` never appears in the §3 table (the row reads `0.7.16 – 0.7.19`) and
+   matched only unrelated prose at `COMPATIBILITY.md:179`; `"0.7.20"` occurs five times elsewhere.
+   Asserting that assertions exist is not asserting that they fire — the exact substitution this
+   plan exists to delete, committed while checking a claim about a guard.
+
+   Fixed by removing the copy rather than adding two more tests: the strong row check was
+   special-cased to 0.7.39–0.7.43 while a weak substring parametrize nominally covered the rest, so
+   the rule lived in two places with one copy incomplete. It is now one `KNOWN_BAD_BANDS` list the
+   row test, the contiguity test and the per-band symptom needles all derive from, plus a
+   whole-line pin on the floor. Six mutations demonstrated: deleting any of the three rows fails 2
+   tests, deleting the floor line fails 1, stripping `UNAUTHENTICATED` from its row fails 1, and a
+   blank line before a row fails 1. Before this change, two of those six passed.
+2. The band under discussion exists because releases went out on red CI, and `main` is red right
+   now — so the way this issue silently gets worse is a sixth band appearing while it waits. It
+   cannot: `.github/workflows/publish.yml` resolves every `ci-ok` check run for the release SHA
+   through the check-runs API and treats an absent conclusion as a refusal, so a red `main` blocks
+   publication rather than repeating the pattern.
+
+**#44 was materially wrong and got a correcting comment.** The thread's list of eight names to
+reserve was assembled from repo names plus judgement, and — the actual defect — **no comment stated
+its inclusion criterion**, which is why the same error survived two sweeps. Sweeping
+`[project] name =` across the workspace instead gives eleven branded distributions, every one 404 on
+PyPI as of 2026-09-04. Two of the posted eight build no Python distribution at all (`seam-verify`
+is a Rust crate; `seam-adapters` is a repo name whose root `pyproject.toml` has no `[project]`
+table at all), and five real ones were
+absent: `seam-claude-agent`, `seam-connector-sdk`, `seam-learning-batch`, `seam-learning-keys`,
+`seam-aegis`. The comment leads with the criterion so the next sweep is checkable rather than
+re-judged. The two generic names (`compliance-report`, `ingest-history-iceberg`, both 404) are put
+to the operator as a policy call rather than answered. crates.io re-checked and unchanged: all four
+still free, and `seam-verify` remains the irreversible one.
+
+**#48 and #40 untouched.** #48 is blocked upstream and nothing here moves it — re-verified
+2026-09-04 that `crewAIInc/crewAI#7103` is still OPEN and `crewai` 1.15.20 still pins
+`opentelemetry-exporter-otlp-proto-http~=1.42.0`; the weekly `framework-coinstall` probe already
+watches for the flip, so "still blocked" would be a notification carrying no information. #40 is a
+feature request outside this plan's subject entirely. Reasons recorded in the plan, per criterion 2.
+
+**The enum-manifest assumption was promoted — by running `buf`, not by citing its config.** The
+plan proposed promoting it on the strength of the runtime setting `breaking: use: [WIRE_JSON]`. That
+is the same "the check's name implies its coverage" inference this entire plan exists to delete, so
+`buf` 1.66.0 was executed against a scratch module pair. A renumber (name kept, tag 1 → 3) is
+refused twice — deleted name, deleted number. The case that actually decides it is a **swap**, where
+two values exchange tags so that no name and no number is deleted and a delete-keyed rule sees
+nothing; `ENUM_VALUE_SAME_NAME` refuses it. So the binding is protected in both directions.
+
+The promotion also **narrowed** the residual risk instead of erasing it. The entry bundled two
+failure modes — "if that upstream gate is ever bypassed **or misses this case**". The second is now
+measured false. The first survives and is sharper than the entry implied: that step carries
+`if: github.ref != 'refs/heads/main'`, so it compares PR heads only, and the very push that skips it
+is the push that publishes the BSR module this SDK generates from. It is a question about another
+repo's branch protection, not about `WIRE_JSON`, so it is recorded in `DECISIONS.md` rather than
+filed as a speculative issue against `seam-runtime`.
+
+**The backlog was reviewed, not just re-stamped.** Thirteen entries stay `UNCONFIRMED`, each with a
+2026-09-04 note saying what the review found. Two moved in substance without changing status: the
+`expected-local-lag` window has begun closing on its own (CI's regenerated stubs carry two
+`ContextBinding` fields the manifest does not declare, so `main` fails on the gate's
+NOT-IN-THE-MANIFEST branch — a *surplus*, which never consults the lag file; seven is the
+local-stub-vs-BSR delta and becomes a recorded gap only once tags 12-13 are declared), and the Cloudsmith entry gained the publish-gate evidence above.
+
+Measured after: python **1181 passed / 20 skipped** · `ruff` clean · one comment posted to #44;
+#43, #48, #40 and #96 all left as they were.
+
+#### Round-8 verification (Phase 7) — six findings, all closed
+
+The gate returned GAPS. Two findings were errors inside the phase's own verification work, which is
+the useful kind to catch.
+
+1. **The #43 re-verification was itself wrong (HIGH).** Covered above — the guard was vacuous for
+   two of the three things the comment claims it protects, and this phase confirmed the claim by
+   reading assertions rather than firing them. Fixed by parametrizing the row guard over all three
+   bands and pinning the floor as a whole line; six mutations demonstrated, two of which passed
+   before. A correction was posted to #43, carrying the one beat the thread never had: verifying
+   0.7.7's presence needs **no local credential**, because a `dry_run=true` dispatch runs in Actions
+   against the repo secret.
+2. **A factual error already posted to GitHub (MEDIUM).** The #44 comment said "three of the eight"
+   build no Python distribution and named `seam-connectors` among them — but `seam-connectors` was
+   never one of the eight; it appeared only in the availability table, exactly like `zer07labs`,
+   which the same comment correctly excludes on that ground. Only **two** qualify. The comment's own
+   arithmetic already proved it (8−2=6 covered, 11−6=5 missing, both stated correctly). Corrected on
+   the issue and in all in-repo copies. The central eleven/two derivation was independently
+   re-derived by the gate and is correct.
+3. **An entry contradicting its own measured premise (MEDIUM).** The rpc-manifest entry said the
+   event surface "declares services but no manifest of its own" — `seam.event.v1` declares **zero**
+   services, asserted 20 lines earlier in the same entry and enforced by exit 7. It also contradicted
+   its own next clause, since a declared service is exactly what makes that tripwire fire.
+4. **Phase 8's blocking premise left standing in the plan (MEDIUM).** The plan asserted in two places
+   that `feat/acdp-p3-key-revocation` is "not pushed to origin at all". It merged as `ac325d7`
+   (#531). The phase recorded the discovery in `ASSUMPTIONS.md` and `DECISIONS.md` and left the plan
+   asserting the opposite. Both sites now state the real, narrower blocker; the phase stays BLOCKED.
+5. **A gap stated in the wrong direction, in three documents (LOW/MED).** "CI now has a seven-field
+   gap" — CI actually reports a two-field *surplus* and never consults the lag file; seven is the
+   local-stub-vs-BSR delta, which becomes a gap only once tags 12-13 are declared.
+6. **A truncated sentence and a lost `See DECISIONS.md` pointer** at the `policy_enforcement_of`
+   entry — a diff accident. Restored.
+
+**Beyond the criteria, one finding was acted on.** `STREAM=1 EVENTS=1 make check-contract` — the
+invocation `CLAUDE.md` prescribed — returns **2** where the script returns **6**, because GNU make
+replaces a failed recipe's status with its own. 2 is not a neutral failure code here: it is the
+`STREAM=1` mirror-field refusal. So the documented command reported every distinct outcome wearing a
+code that means something else, in the same file whose Gotchas paragraph spends most of its length
+telling the reader to tell those codes apart. Measured both ways on the same tree. `CLAUDE.md` now
+prescribes the script, and `test_claude_md_prescribes_the_script_not_make_for_the_contract_gate`
+pins it so the convenient spelling cannot drift back.
+
+Two further findings were recorded rather than fixed, both Phase 8's: `expected-local-lag.txt`'s
+NOTE now teaches a wrong *cause* (it blames a BSR that has not republished; the BSR has republished
+and gone two fields further — the local stubs are simply old), and the file itself needs re-recording
+once tags 12-13 are declared.
+
+Measured after the round: python **1184 passed / 20 skipped** · `pytest scripts` **116** · `ruff`
+clean.
+
+### Phase 8 — the ACDP P3 adoption — DONE (was BLOCKED; unblocked by operator go-ahead)
+
+The phase specified in advance, executed. Because the spec existed, no design work happened here —
+which is the whole argument for writing a blocked phase down rather than deferring it.
+
+**W4.3 re-answered: `no`.** Its standing rule is re-answer per regeneration, never inherit, so the
+previous `no` did not carry. Confirmed three independent ways rather than by reasoning from shape:
+`seam.event.v1` never mentions `revocation` (zero grep hits — a field absent from the event wire
+cannot be a sealed column); `verify/src/` does not mirror `ContextBinding` at all; and the runtime's
+own spec heads the section "`revocation` and `revocation_trust_class` — served only, never sealed".
+`verify/src/wire.rs` unchanged, `conformance/` untouched, W7 does not engage.
+
+**The lag file re-recorded to seven, with the trigger armed rather than reset.** Leaving it at five
+would have made every local run print the full un-downgraded refusal — whose wording, exit code and
+direction are identical to a real field removal — which is the exact gate-blindness the file exists
+to prevent. It now carries an explicit RE-RECORD HISTORY block so bumping `EXPECTED-FROM` does not
+hide cumulative age, and states in capitals that the *next* re-record is the trigger to stop
+curating the file and get `buf registry login` on the workstation instead. Counted per the spec:
+this is the first re-record, second recording.
+
+**The spec did not anticipate that the file's own header had gone false.** It explained the lag as
+"the BSR has not caught up". The BSR is *ahead* — it republished P1a/P2 and then P3 — and the local
+stubs are simply old. That is not a wording nit: the wrong cause points at the wrong fix (wait for
+upstream, rather than regenerate). Corrected, with the correction called out in the file.
+
+**Not wired into the hand-written clients, and that is the recorded answer** the gate's refusal text
+demands. `ResolveContext` returns the binding unchanged, so both fields already reach callers; named
+accessors would make them the only `ContextBinding` fields with a bespoke surface. The three
+docstrings name them, which is not optional — Phase 6's tripwire derives its expected set from the
+manifest and goes red the moment a declared slot is unnamed.
+
+**Two guard defects surfaced while landing this, both fixed here:**
+
+1. **Phase 6's tripwire measured "file contains token", not "docstring names slot".** The
+   whole-feature verification round found it: `_docstring_names` read the entire file, so a
+   backticked mention in any unrelated comment satisfied it. Scoping to the enclosing docstring is
+   *still* not enough — this docstring's next sentence independently discusses `key_status` and
+   `resolved_status`, so both could be deleted from the enumeration and the guard would still find
+   them (measured: 10/10 green). It now reads the single sentence carrying the marker, which is
+   where the claim is actually made. Both mutations now fail.
+2. **The subset test was positionally coupled to the list it guards.** It dropped
+   `ContextBinding/retraction` and asserted over `_KNOWN_LAG_FIELDS[:-1]`, which lined up only while
+   `retraction` sorted last. P3 appended two entries after it, and the assertion silently began
+   checking the dropped field instead of the kept ones. Now derived from the dropped name.
+
+**The tripwire's own fixture had to move.** It injected `revocation`/`revocation_trust_class` as the
+hypothetical future slot precisely because they were the *real* next fields. Adopting them made the
+injection a no-op, so the rehearsal would have failed confusingly rather than informatively. It now
+uses a synthetic probe named to be unmistakable, plus `test_the_probe_slot_is_not_a_real_field`,
+which fails if the probe ever becomes real and says to re-point it at the next real unadopted field.
+
+Measured after: `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exit **6**, NOTE naming
+`contract/expected-local-lag.txt` with all seven fields · `scripts/check_vendored_spec.py
+--from local:../seam-runtime` **OK, verbatim and current** · python **1185 passed / 20 skipped**.

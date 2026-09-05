@@ -162,6 +162,8 @@ ContextBinding/lineage_id
 ContextBinding/receipt_hash
 ContextBinding/resolved_status
 ContextBinding/retraction
+ContextBinding/revocation
+ContextBinding/revocation_trust_class
 ContextBinding/version
 ContextInput/content
 ContextInput/derived_from

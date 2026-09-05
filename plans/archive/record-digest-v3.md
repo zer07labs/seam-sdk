@@ -6,8 +6,8 @@
 > premise was that this plan's tracking state had gone stale in two places.
 >
 > **Verified against this tree, not against the status table** (per `plans/README.md`'s archiving
-> rule): `record_digest_v3` exists in all three languages — `python/seam_sdk/crypto.py:589`,
-> `ts/src/crypto.ts:608`, `verify/src/verify.rs:448`. The Phase 6a/6b streamed arms are live and
+> rule): `record_digest_v3` exists in all three languages — `python/seam_sdk/crypto.py:614`,
+> `ts/src/crypto.ts:639`, `verify/src/verify.rs:448`. The Phase 6a/6b streamed arms are live and
 > version-bounded in both helpers: `python/seam_sdk/admin.py:129` takes the v3 branch and `:107`
 > refuses `schema_version > 3`; `ts/src/admin.ts:141` mirrors the branch and `:109` the refusal.
 > The committed KATs are at

@@ -139,7 +139,28 @@ def verify_tct(
         ):
             return False
         now = now_s if now_s is not None else int(time.time())
-        if now >= int(payload.get("exp", 0)):  # RFC 7519: reject at/after expiry
+        # ``exp`` must be a JSON NUMBER. ``int(payload.get("exp", 0))`` accepted a numeric STRING —
+        # ``int("10000000000")`` is a perfectly good integer — which Go's ``payload["exp"].(float64)``
+        # and Java's ``instanceof Number`` both refuse. And ``bool`` subclasses ``int``, so
+        # ``exp: true`` became ``1``: at any ``now`` below 1 the token VERIFIED. That is invisible at
+        # a realistic clock, which is why the shared vector pins ``now = 0``.
+        #
+        # The ``bool`` exclusion has to come first for the same reason it does in ``_uint_slot``:
+        # ``isinstance(True, int)`` is ``True``, so the type test alone lets it through.
+        exp = payload.get("exp")
+        if isinstance(exp, bool) or not isinstance(exp, (int, float)):
+            return False
+        # The normative rule is bounded to int64, because in Go it has to be: `int64(exp)` is
+        # implementation-defined when the value does not fit, and `exp: 1e300` verified on arm64
+        # (saturating to MaxInt64) while amd64 refused it. Python has no such hazard — `int()` is
+        # arbitrary precision — so this bound buys Python nothing on its own. It is here so that all
+        # five SDKs answer the same thing, which is the only reason any of this code is shaped the
+        # way it is. 2^63 is exactly representable as a float, so the comparison is exact.
+        if not (-(2**63) <= exp < 2**63):
+            return False
+        if now >= int(
+            exp
+        ):  # RFC 7519: reject at/after expiry, truncating to whole seconds
             return False
         want = "seam-commitment-digest:" + _seam_commitment_digest(commitment)
         return want in payload.get("grants", [])
@@ -408,6 +429,13 @@ def record_digest_v2(
     ``digest`` (tag 19) to catch a payload rewrite. Preimage order is NOT wire-tag order: ``outcome``
     precedes the optional ``mode``/``policy_version``/``supersedes``; the ``opt`` presence byte is raw, so
     ``None`` and ``""`` are distinct."""
+    # v3 has validated its integer slots since it was written; v2 never did, and ``struct.pack``
+    # covered for it on everything except ``bool`` — which subclasses ``int``, so ``sealed_at=True``
+    # digested as ``1``. Harmless while TypeScript did the same; a cross-language divergence in a
+    # signed value the moment TypeScript's ``uintSlot`` started refusing ``true``. Same rule, one
+    # function, three framings.
+    sealed_at = _uint_slot("sealed_at", sealed_at, 64)
+    schema_version = _uint_slot("schema_version", schema_version, 32)
     pre = (
         _frame(b"seam.audit.record-digest.v2")
         + _frame(decision_id.encode())
@@ -569,16 +597,34 @@ def _v3_text(name: str, value: object, optional: bool) -> str | None:
     return value
 
 
-def _v3_uint(name: str, value: int, bits: int) -> int:
+def _uint_slot(name: str, value: int, bits: int) -> int:
     """A fixed-width unsigned integer slot, range-checked before ``struct.pack`` refuses it less
-    legibly. Python raises here either way; the TypeScript twin does NOT — ``DataView`` applies
-    ToBigUint64/ToUint32 and wraps silently, so ``2**64 + 5`` writes the same bytes as ``5``. Checking
-    in both keeps the two implementations agreeing on which inputs have a digest at all."""
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError(f"{name} must be an int, not {type(value).__name__}")
+    legibly. Python raises here either way; the TypeScript twin did NOT — ``DataView`` applies
+    ToBigUint64/ToUint32 and wraps silently, so ``2**64 + 5`` wrote the same bytes as ``5``. Checking
+    in both keeps the two implementations agreeing on which inputs have a digest at all.
+
+    This was ``_v3_uint`` and guarded only ``record_digest_v3``. The ``bool`` exclusion is why it had
+    to be shared: ``bool`` subclasses ``int``, so ``0 <= True < 1 << 64`` is simply true and a range
+    comparison alone digests ``sealed_at=True`` as ``1``. v3 refused that from the start; v2 and the
+    chain-head attestation did not, and once TypeScript's ``uintSlot`` began refusing ``true`` the two
+    languages disagreed about a signed value. Renamed and shared rather than copied: three copies of a
+    rule about which inputs have a digest is a divergence waiting for someone to fix only two."""
+    _require_int(name, value)
     if not 0 <= value < (1 << bits):
         raise ValueError(f"{name} is {value}, outside [0, 2^{bits})")
     return value
+
+
+def _require_int(name: str, value: object) -> None:
+    """The TYPE half of :func:`_uint_slot`, split out so it has one definition and two callers.
+
+    ``verify_chain_head_attestation`` needs to apply this to every slot *before* range-checking any
+    of them: it answers a range failure with ``False`` and a type failure by raising, so checking
+    slot-by-slot lets a tampered value in an early slot short-circuit past a caller bug in a later
+    one. Inlining a second copy here is what this phase spent two verification rounds learning not
+    to do — the bug was never a missing check, it was a rule living in more than one place."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be an int, not {type(value).__name__}")
 
 
 def _opt_bytes(b: bytes | None) -> bytes:
@@ -660,8 +706,8 @@ def record_digest_v3(
     mode = _v3_text("mode", mode, True)
     policy_version = _v3_text("policy_version", policy_version, True)
     supersedes = _v3_text("supersedes", supersedes, True)
-    sealed_at = _v3_uint("sealed_at", sealed_at, 64)
-    schema_version = _v3_uint("schema_version", schema_version, 32)
+    sealed_at = _uint_slot("sealed_at", sealed_at, 64)
+    schema_version = _uint_slot("schema_version", schema_version, 32)
 
     pre = (
         _frame(b"seam.audit.record-digest.v3")
@@ -712,8 +758,86 @@ def verify_chain_head_attestation(
     """Verify a chain-head attestation's Ed25519 signature against the PINNED issuer AID (A14). Returns
     ``True`` iff the signature checks out over the recomputed digest; ``False`` on any tamper. The key comes
     from ``issuer_aid`` (which the caller pinned out of band), never from the attestation itself."""
+    # An out-of-range integer is tampered input, not a caller bug, and this function's whole contract
+    # is that tampered input returns ``False``. ``struct.pack`` raises ``struct.error`` on it, and the
+    # recompute below sits OUTSIDE the try, so that error escaped a function documented to return
+    # ``False`` on any tamper — a caller who wrote ``if not verify(...)`` got an exception instead of a
+    # rejection, which is the difference between refusing an attestation and crashing on one.
+    #
+    # Checked here rather than by moving the recompute inside the try: that block ends in a blanket
+    # ``except Exception: return False``, which would also swallow the ``TypeError`` a genuinely wrong
+    # TYPE raises — turning a caller bug into a silent "unverified", the one outcome worse than the
+    # crash. Comparison is the right instrument for exactly that reason: ``0 <= "5"`` still raises.
+    #
+    # (TypeScript's twin had the harsher version of this — ``DataView`` wrapped silently instead of
+    # raising, so ``2**64 + 5`` and ``5`` reached one digest. Python's ``struct`` never aliased; only
+    # the error's escape route was wrong. Same phase, different defect, and worth not conflating.)
+    # Type first, then range, and the two are answered differently on purpose. A wrong TYPE is a
+    # caller bug and raises; an out-of-RANGE integer is tampered input and returns ``False``.
+    #
+    # ``bool`` is excluded because it subclasses ``int``: ``0 <= True < 1 << 64`` is true, so a
+    # comparison alone would digest ``attested_len=True`` as ``1`` — which TypeScript's ``uintSlot``
+    # refuses outright, making it a cross-language divergence of exactly the kind this phase exists
+    # to close. ``float`` is excluded for the same reason one slot along: ``5.0`` passed the range
+    # comparison and then hit ``struct.pack``, which raised ``struct.error`` — a third answer, in a
+    # function that should only ever give two.
+    #
+    # TYPES for every slot first, THEN ranges — not slot-by-slot. Interleaving them lets a tampered
+    # value in an early slot short-circuit past a caller bug in a later one: with
+    # ``attested_len=2**64`` and ``attested_at="7"`` this returned ``False``, reporting "did not
+    # verify" about a call that never had a chance to. Tampered input would be masking exactly the
+    # caller error this guard exists to surface, and only when both are present at once — the
+    # combination nobody writes a test for.
+    slots = (
+        ("attested_len", attested_len, 64),
+        ("attested_at", attested_at, 64),
+        ("digest_schema", digest_schema, 32),
+    )
+    for name, value, _bits in slots:
+        _require_int(name, value)
+    # The two non-integer arguments belong in the same pass, for the same reason. Without them
+    # ``attested_len=2**64`` with a str ``attested_head`` still returned ``False`` — the range check
+    # answered first and the ``TypeError`` that ``_frame`` would have raised never happened. "Types
+    # first" has to mean every type, or it is just a different interleaving.
+    #
+    # Through `_as_bytes`, NOT a bare isinstance. The first cut of this check wrote
+    # `isinstance(attested_head, (bytes, bytearray, memoryview))`, which narrowed the argument from
+    # any buffer-protocol object to those three: `array.array("B", ...)` verified `True` before and
+    # raised after. `_as_bytes` is this module's one definition of "is this a byte sequence", it is
+    # what `record_digest_v3` uses, and it also settles the `memoryview` itemsize trap its own
+    # docstring describes — so a bare isinstance here would have left `record_digest_v3` and this
+    # function disagreeing about what bytes are. Writing a second copy of a rule the module already
+    # owns is the exact mistake this phase spent three verification rounds learning not to make, and
+    # it was made again, here, in the fix for it.
+    head = _as_bytes(attested_head)
+    if head is None:
+        raise TypeError(
+            f"attested_head must be a byte sequence, not {type(attested_head).__name__}"
+        )
+    if not isinstance(issuer_aid, str):
+        raise TypeError(f"issuer_aid must be a str, not {type(issuer_aid).__name__}")
+    # ``signature`` belongs in this pass too, and its absence was a hole in the rule rather than an
+    # exemption from it. Every other argument answered a wrong TYPE with ``TypeError``; a wrong-typed
+    # signature fell through to the blanket ``except`` below and came back ``False`` — and the slip
+    # that produces it is the ordinary one, passing the hex STRING instead of the decoded bytes. A
+    # caller who does that is told the attestation did not verify, and goes looking for a compromised
+    # audit chain. A rule applied to five arguments out of six is a rule with a hole in the shape of
+    # the sixth.
+    if _as_bytes(signature) is None:
+        raise TypeError(
+            f"signature must be a byte sequence, not {type(signature).__name__} — hex and base64 "
+            "are str, not bytes; decode at the boundary, where the encoding is visible"
+        )
+    for name, value, bits in slots:
+        try:
+            _uint_slot(name, value, bits)
+        except ValueError:
+            # Out of RANGE is tampered input, and this function's contract is that tampered input
+            # returns ``False``. The ``TypeError`` `_uint_slot` raises for a wrong TYPE is left to
+            # propagate on purpose — see above.
+            return False
     digest = _chain_head_attestation_digest(
-        attested_len, attested_head, attested_at, digest_schema, issuer_aid
+        attested_len, head, attested_at, digest_schema, issuer_aid
     )
     try:
         Ed25519PublicKey.from_public_bytes(_aid_to_pubkey(issuer_aid)).verify(

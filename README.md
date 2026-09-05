@@ -73,7 +73,8 @@ user-gated** step this repo never performs. Rule of thumb: **`generate-local` fo
 (BSR) for release**. When a contract change has landed in the runtime but not yet been pushed to the BSR,
 only `generate-local` sees it.
 
-**`make check-contract`** turns "what surface does the active contract expose?" into a verifiable fact
+**`STREAM=1 EVENTS=1 ./scripts/check-contract.sh`** turns "what surface does the active contract
+expose?" into a verifiable fact
 (the SDK's analogue of the runtime's published-surface gate). It runs after a `generate`/`generate-local`
 and probes the emitted stubs:
 - **`SeamTrust.VerifyPartyAttestation`** (the A4 RPC the attestation client calls) — a **hard gate**;
@@ -169,7 +170,9 @@ runtime release fires a `repository_dispatch` here ([`release-on-runtime.yml`](.
 which bumps `ts/package.json` + `python/pyproject.toml` to match, commits, and tags `vX.Y.Z` — that tag
 triggers [`publish.yml`](.github/workflows/publish.yml) (transport regenerated from the BSR, both packages
 pushed to Cloudsmith). So you don't cut the SDK release by hand; releasing the runtime releases the SDK at
-the same version. A `workflow_dispatch` fallback (with an explicit version) exists if a dispatch is missed.
+the same version. A `workflow_dispatch` fallback exists if a dispatch is missed; it takes the version **and** the
+runtime's `wire_framing_version`, because the framing gate normally reads that from the dispatch
+payload, which a manual run has no equivalent of.
 Immutable per version — a re-cut needs a bump. The `version-lockstep` CI guard keeps py == ts.
 
 *Credentials.* `BUF_TOKEN` (read the contract from the BSR — already set) plus a Cloudsmith push token. The

@@ -62,7 +62,10 @@ dependencies = [
 [project.optional-dependencies]
 # ruff is pinned (its formatter output is version-sensitive) so `ruff format --check` agrees across CI and
 # local runs.
-dev = ["pytest>=7", "ruff==0.15.20"]
+# pyyaml: `tests/test_workflows_generate_through_the_makefile.py` parses the workflows rather than
+# grepping them. It is a REAL test dependency — CI installs only this extra, and an undeclared
+# import there is a collection error, which aborts the whole run rather than failing one test.
+dev = ["pytest>=7", "ruff==0.15.20", "pyyaml>=6"]
 
 [tool.ruff]
 target-version = "py310"

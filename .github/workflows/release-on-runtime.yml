@@ -14,11 +14,21 @@ on:
   repository_dispatch:
     types: [seam-release]
   # Manual fallback: run it yourself with an explicit version if the dispatch is ever missed.
+  #
+  # `wire_framing_version` is here because the framing gate below reads it out of the repository
+  # dispatch payload, which does not exist on this path. Without it, flipping `runtime_emits_version`
+  # to true (2026-09-03) would make EVERY manual run refuse with "a field that stopped being emitted
+  # is a REGRESSION" — killing the recovery path at precisely the moment it is needed, since a manual
+  # run is what you reach for after the automatic dispatch already failed. The operator supplies the
+  # same value the runtime would have sent.
   workflow_dispatch:
     inputs:
       version:
         description: "Version to release (e.g. 0.4.1), must match the runtime's"
         required: true
+      wire_framing_version:
+        description: "The runtime release's wire framing version (see contract/wire-framing.json 'supported')"
+        required: false
 
 permissions:
   contents: write
@@ -61,15 +71,35 @@ jobs:
       # ran its comparison; it just crashed on a missing file and failed every release closed.
       # scripts/test_release_gate.py asserts this ordering so the next reorder cannot
       # silently reintroduce it.
+      # NOTE on the `||` below: GitHub expressions make it truthiness-based, not null-coalescing, so a
+      # dispatched framing version of 0 (or "" or false) would fall through to the manual input —
+      # null on a repository_dispatch — and the gate would read the field as ABSENT rather than 0.
+      # Inert today: framings are 1-based (see contract/wire-framing.json's `history`), so 0 is not a
+      # value the runtime can send. Recorded because the day framing 0 becomes meaningful, this reads
+      # as a missing field and takes the REGRESSION branch instead of comparing.
       - name: The runtime's wire framing must be one this SDK implements
         env:
-          DISPATCHED: ${{ github.event.client_payload.wire_framing_version }}
+          DISPATCHED: ${{ github.event.client_payload.wire_framing_version || github.event.inputs.wire_framing_version }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
           SUPPORTED="$(python3 -c "import json;print(json.load(open('contract/wire-framing.json'))['supported'])")"
           LATCHED="$(python3 -c "import json;print(str(json.load(open('contract/wire-framing.json'))['runtime_emits_version']).lower())")"
 
           if [ -z "$DISPATCHED" ]; then
+            # A MANUAL run has no client_payload, so an absent framing version here means "the operator
+            # did not fill the input" — not "the runtime stopped emitting the field". Those need
+            # different messages: the regression text below would send someone to investigate the
+            # runtime when the fix is one form field. Ordered before the latch checks so the
+            # actionable message wins; the staged-adoption warning still applies to both paths.
+            if [ "$LATCHED" = "true" ] && [ "$EVENT" = "workflow_dispatch" ]; then
+              echo "::error::This is a MANUAL release run and no wire_framing_version input was given."
+              echo "::error::The framing gate reads that value from the repository-dispatch payload,"
+              echo "::error::which does not exist on a manual run — so it has to come from you."
+              echo "::error::Re-run this workflow and set 'wire_framing_version' to the framing the"
+              echo "::error::runtime release you are matching carries. This SDK implements v$SUPPORTED."
+              exit 1
+            fi
             if [ "$LATCHED" = "true" ]; then
               echo "::error::The release dispatch carried no wire_framing_version, but"
               echo "::error::contract/wire-framing.json has runtime_emits_version=true — meaning the runtime"
@@ -82,6 +112,36 @@ jobs:
             echo "::warning::adopted the handshake yet. Until it does, this gate cannot protect a release."
             echo "::warning::Tracking: $(python3 -c "import json;print(json.load(open('contract/wire-framing.json'))['runtime_adoption_issue'])")"
             exit 0
+          fi
+
+          # The dispatch carried the field. That is PROOF the runtime emits it, so a latch still
+          # reading false is provably stale — and a stale latch is not cosmetic: while it is false,
+          # the absent-field branch above downgrades to a warning and tags anyway, so the one gate
+          # that prevents a 0.7.17 is not protecting the release. Detected here from live data,
+          # at the only moment the truth is available, with nothing to keep up to date by hand.
+          #
+          # This is deliberately NOT a test comparing two fields of wire-framing.json against each
+          # other. That was the first design and it is circular: when the runtime adopted the
+          # handshake on 2026-08-26 the latch and its recorded tracking-issue state went stale
+          # TOGETHER, so such a test would have stayed green through the exact week-long staleness
+          # it was named after. Only the dispatch knows.
+          #
+          # SCOPED TO repository_dispatch ON PURPOSE. The whole claim is "the payload is proof the
+          # RUNTIME emits the field" — true only when the runtime sent it. On a manual run the value
+          # came from a form field an operator typed, which proves nothing about the runtime, so
+          # firing here would tell them to flip the latch on no evidence; every automatic dispatch
+          # for the rest of a legitimate staged-adoption window would then hit the REGRESSION branch
+          # above. During staged adoption a manual release with an operator-asserted framing version
+          # simply falls through to the comparison below, which is what it should do.
+          if [ "$LATCHED" != "true" ] && [ "$EVENT" = "repository_dispatch" ]; then
+            echo "::error::The release dispatch carried wire_framing_version=$DISPATCHED, but"
+            echo "::error::contract/wire-framing.json still has runtime_emits_version=false."
+            echo "::error::The dispatch IS the proof that the runtime emits the field, so the latch is"
+            echo "::error::STALE. While it is false, a dispatch that carries NO framing version is"
+            echo "::error::downgraded to a warning and tagged anyway — this gate cannot protect a"
+            echo "::error::release until the latch is flipped. Set runtime_emits_version to true in"
+            echo "::error::contract/wire-framing.json, then re-run. Refusing to tag."
+            exit 1
           fi
 
           echo "runtime wire framing: $DISPATCHED   SDK supports: $SUPPORTED"

@@ -185,13 +185,29 @@ func VerifyTCT(issuerAID, tctJWS string, c Commitment, nowS int64) bool {
 	if !(iss == sub && sub == aud && aud == issuerAID) {
 		return false
 	}
+	// This type assertion is the NORMATIVE `exp` rule for all five SDKs — `exp` must be a JSON
+	// number, so a string, a bool, null, absent, an object or an array all refuse the token. It was
+	// adopted (rather than Python's or TypeScript's looser reading) because Java and Kotlin already
+	// matched it, making it the standing 3-of-5 majority, and because it is the strictest of the
+	// three shapes that were in the tree — the safe direction for a token verifier. Python and
+	// TypeScript were brought here; conformance/tct_exp_extended.json is what holds them here.
 	exp, ok := payload["exp"].(float64)
 	if !ok {
 		return false
 	}
-	// Reject at/after expiry (RFC 7519), TRUNCATING exp to whole seconds first — exactly the reference
-	// semantics (Python does `int(payload.get("exp", 0))`, Java/Kotlin `(long)`): for exp = N + 0.5,
-	// nowS = N is already expired. A float-precise compare would accept it and drift from the shims.
+	// The rule has to be TOTAL, and `int64(exp)` is not: the Go spec leaves the conversion
+	// implementation-defined when the value does not fit. Measured, this arm64 build saturates
+	// (`int64(1e300)` is `MaxInt64`, so the token verifies); amd64's CVTTSD2SQ yields INT64_MIN, so
+	// the same token is REFUSED there. A normative rule whose answer depends on the architecture of
+	// whoever is checking is not a rule, and it would have made CI's own machine the arbiter.
+	// Bounded explicitly instead — 2^63 is exactly representable as a float64, so this comparison is
+	// itself exact — and Python and TypeScript carry the same bound so all five still agree.
+	if exp >= 9223372036854775808.0 || exp < -9223372036854775808.0 {
+		return false
+	}
+	// Reject at/after expiry (RFC 7519), TRUNCATING toward zero to whole seconds first: for
+	// exp = N + 0.5, nowS = N is already expired. A float-precise compare would accept it and drift
+	// from the shims; flooring would differ from all four of them on a negative exp.
 	if nowS >= int64(exp) {
 		return false
 	}

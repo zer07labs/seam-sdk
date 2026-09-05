@@ -18,6 +18,7 @@ Two properties are checked, and the second matters more than the first:
 from __future__ import annotations
 
 import pathlib
+import re
 
 import pytest
 
@@ -37,15 +38,108 @@ def _docs() -> list[pathlib.Path]:
 #: negation landed on the previous line. That false positive is not hypothetical — it is what this
 #: guard did on its first run, against the very plan that forbids the claim.
 DISCUSSING_NOT_CLAIMING = (
-    "retraction",
-    "retracted",
+    # "retraction" and "retracted" USED to be here, bare and substring-matched. Two bugs at once,
+    # both found by the whole-feature verification round:
+    #
+    #   * `retraction` became live ACDP contract vocabulary (P2, tag 11) and now appears in README,
+    #     CHANGELOG, CLAUDE.md, COMPATIBILITY and ASSUMPTIONS — so any paragraph mentioning the
+    #     FIELD exempted itself. Measured: appending "The published verifier detects truncation for
+    #     chains of any length." to README's `retraction` paragraph passed 27/27.
+    #   * `plans/cross-repo/README.md` was exempt because it names this very file —
+    #     "test_retracted_claims.py" contains "retracted". The guard was excused by its own filename.
+    #
+    # Replaced with markers that carry the discussing-not-claiming sense and cannot be a field name.
+    "retracted:",
+    "retracted a",
+    "retracted-claims",
+    "may claim",
+    # "the guard also fails if any document *claims* truncation detection" — CHANGELOG describing
+    # THIS FILE. Meta by construction: a sentence about what makes the guard fire cannot also be the
+    # capability claim it fires on.
+    "if any document",
     "do not claim",
     "must not claim",
     "previously read",
     "is stale",
     "was wrong",
-    "the claim",
 )
+
+#: Word-bounded, for the reason `NEGATION_WORDS` already is — a marker matched as a substring is
+#: matched by every longer word containing it. `\b` is applied only where the marker's own edge is
+#: alphanumeric, so "retracted:" keeps its colon and still anchors on the left.
+_DISCUSS_RE = re.compile(
+    "|".join(
+        ("\\b" if m[0].isalnum() else "")
+        + re.escape(m)
+        + ("\\b" if m[-1].isalnum() else "")
+        for m in DISCUSSING_NOT_CLAIMING
+    )
+)
+
+#: Words that make a mention of truncation detection a DENIAL of the capability rather than an
+#: assertion of it. Matched on WORD BOUNDARIES, which is the whole point and was the whole bug.
+#:
+#: These were substrings. Measured, before this change, every one of these sentences was accepted
+#: into a repo document by the guard whose entire job is to refuse it:
+#:
+#:     "The notarised feed detects truncation for every chain."     -- "notarised" contains "not"
+#:     "Note: seam-sdk detects truncation end to end."              -- "Note" contains "not"
+#:     "The verifier detects truncation until you disable it."      -- "until" was a negation marker
+#:     "The claim is simple: the verifier detects truncation."      -- "the claim" was an excuse
+#:
+#: The first two are the substring bug in its purest form: `"not" in "notarised"`. "nothing" and
+#: "annotation" do it too, and all three are words a technical document reaches for constantly.
+#:
+#: `"until"` is gone rather than word-bounded. It was never a negation — "until seam-runtime#422
+#: lands" reads as one only because a real denial sits beside it, and that denial always carries
+#: `cannot` or `not` of its own. As a marker it excused any sentence with an ordinary temporal
+#: clause in it.
+#:
+#: `"the claim"` is gone from DISCUSSING_NOT_CLAIMING for the sharper version of the same fault: it
+#: excused a sentence that MAKES the claim while using the phrase. A guard whose exemption list
+#: contains the words its subject is most likely to be written with is not a guard.
+NEGATION_WORDS = ("not", "cannot", "no", "never", "none", "nor")
+
+#: The three spellings of the capability. Hoisted so the guard and its calibration cannot drift.
+CAPABILITY_PHRASES = ("detects truncation", "detect truncation", "truncation detection")
+
+#: Clause boundaries. NOT newlines — `does not\ndetect truncation` is one clause wrapped by a
+#: formatter, and splitting on the wrap would refuse the denial this repo is required to carry.
+_CLAUSE_SPLIT = re.compile(r"[.;:!?]+")
+
+
+def _is_exempt(text: str) -> bool:
+    """True when this block may mention the capability. THE predicate — there is only one.
+
+    It used to exist twice: once inline in the guard and once in the calibration helper, sharing
+    only the word tuples. Reverting the guard alone then killed nothing, so the calibration proved
+    a copy rather than the thing that runs. That is this repo's named failure class, and Phase 4
+    reproduced it inside the fix for Phase 4.
+
+    Two scopes, deliberately different:
+
+    * `DISCUSSING_NOT_CLAIMING` is **paragraph**-scoped. These are explicit meta-discussion markers,
+      and `RETRACTED: an earlier note said seam-sdk detects truncation.` puts the marker in a
+      different clause from the claim by construction.
+    * A negation is **clause**-scoped. Paragraph scope let a denial anywhere excuse a claim
+      anywhere, so `The verifier detects truncation. No further work is required.` passed — the
+      `no` of an unrelated sentence vouching for the sentence beside it.
+
+    Known and deliberate limitation: a negation inside the claim's OWN clause always exempts it, so
+    `detects truncation, no exceptions` and `detects truncation whether or not X` still pass.
+    Deciding whether a same-clause negation attaches to the claim is a parsing problem this guard
+    does not attempt; it is recorded here rather than left for someone to rediscover.
+    """
+    low = text.lower()
+    if _DISCUSS_RE.search(low):
+        return True
+    claims = [
+        c for c in _CLAUSE_SPLIT.split(low) if any(p in c for p in CAPABILITY_PHRASES)
+    ]
+    if not claims:
+        return True
+    negation = re.compile(rf"\b(?:{'|'.join(NEGATION_WORDS)})\b")
+    return all(negation.search(c) is not None for c in claims)
 
 
 def _paragraphs(path: pathlib.Path) -> list[tuple[int, str]]:
@@ -98,6 +192,7 @@ def test_the_stale_adapters_pin_claim_does_not_return() -> None:
 # ── 2. Caveats this repo is not entitled to drop ──────────────────────────────────────────────────
 
 COMPATIBILITY = REPO / "COMPATIBILITY.md"
+CHANGELOG = REPO / "CHANGELOG.md"
 
 
 def test_the_truncation_caveat_is_present_and_unhedged() -> None:
@@ -130,22 +225,13 @@ def test_no_document_claims_the_verifier_detects_truncation() -> None:
     for doc in _docs():
         for start, block in _paragraphs(doc):
             low = block.lower()
-            if not any(
-                c in low
-                for c in (
-                    "detects truncation",
-                    "detect truncation",
-                    "truncation detection",
-                )
-            ):
+            if not any(c in low for c in CAPABILITY_PHRASES):
                 continue
             # A negated or prohibitive mention is the correct thing to have — indeed it is what this
-            # repo is required to carry until seam-runtime#422 lands.
-            negated = any(
-                neg in low
-                for neg in ("not", "cannot", "no ", "until", "never", "does not")
-            )
-            if negated or any(m in low for m in DISCUSSING_NOT_CLAIMING):
+            # repo is required to carry while there is no published anchor feed (seam-runtime#422).
+            # The predicate lives in ONE place (`_is_exempt`) so the calibration below exercises
+            # what actually runs here, not a second copy of it.
+            if _is_exempt(block):
                 continue
             offenders.append(f"{doc.relative_to(REPO)}:{start}: {block.strip()[:160]}")
 
@@ -167,90 +253,306 @@ def test_the_commitment_digest_exclusion_is_stated() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    "required",
-    [
-        "0.7.20",  # the floor
-        "0.7.13",  # unimportable band
-        "0.7.17",  # wire-broken band
-        "0.7.39",  # gencode/floor skew band — the lower edge, proven by the CI red/green boundary
-    ],
-)
-def test_the_known_bad_bands_stay_documented(required: str) -> None:
-    """Nothing was yanked (see CHANGELOG.md's "No yank" entry), so these versions remain installable
-    document is the only barrier. Dropping a band silently re-exposes it.
+#: The §3 known-bad bands, each as (row prefix, the facts a reader acts on).
+#:
+#: One list, three bands. The previous shape was a weak substring parametrize over four version
+#: strings PLUS a strong row test special-cased to one band — the same rule in two places with one
+#: copy incomplete, which is this repo's recurring defect and was live here: a verification round
+#: mutation-tested the guard and found that deleting the `0.7.16 – 0.7.19` row, or the
+#: `**Floor: 0.7.20.**` line, left the whole suite green. `"0.7.17"` never appears in the table at
+#: all (the row is spelled `0.7.16 – 0.7.19`) and matched only unrelated prose; `"0.7.20"` appears
+#: five times elsewhere. So two of the three bands the substring check named were unguarded while
+#: reading as covered.
+#:
+#: The needles are per-band because the rows genuinely differ: only the skew band names a fixing
+#: release. Each needle is the thing a consumer uses to recognise they are hitting the band.
+#: The §3 rows as they actually stand, discovered from the document rather than listed here.
+#:
+#: `KNOWN_BAD_BANDS` below is hardcoded, and a hardcoded list of things-to-check is silenced by
+#: DELETING an entry, not by breaking one — the defect Phase 6 removed from `SOURCES` one phase
+#: earlier without the remedy being carried across. Measured by the whole-feature round: deleting
+#: the `0.7.16 – 0.7.19` tuple AND its COMPATIBILITY row left the suite green at 1182, taking the
+#: consumer's only barrier against the wire-broken band with it.
+#:
+#: So the rows are DISCOVERED and the two sets pinned equal. Deleting a row changes what is
+#: discovered; deleting a tuple changes the keys; either way the equality test below fails.
+_ROW_RE = re.compile(r"^\| \*\*(0\.7\.\d+ – 0\.7\.\d+)\*\*")
+#: CHANGELOG's advisory table spells the same bands without bold and without spaces around the dash.
+_CHANGELOG_ROW_RE = re.compile(r"^\| (0\.7\.\d+–0\.7\.\d+) \|")
 
-    This is a WEAK check by construction — a version string can appear for unrelated reasons, so
-    passing here does not prove the band is documented, only that the number is mentioned
-    somewhere. The band itself is guarded by the test below, which exists because this one
-    demonstrably was not enough.
+#: Every known-bad band this repo has ever published. This list may GROW and may never SHRINK: a
+#: release that was broken stays broken, and nothing was yanked, so each of these remains installable
+#: from Cloudsmith forever. That is what makes a frozen floor the right shape here rather than a
+#: symmetric equality — see the test below for why equality alone was not enough.
+_HISTORICAL_BANDS = frozenset({"0.7.13 – 0.7.15", "0.7.16 – 0.7.19", "0.7.39 – 0.7.43"})
+
+
+def _norm(band: str) -> str:
+    return band.replace(" ", "")
+
+
+def _rows_in_compatibility() -> set[str]:
+    return {
+        m.group(1)
+        for m in (
+            _ROW_RE.match(line)
+            for line in COMPATIBILITY.read_text(encoding="utf-8").splitlines()
+        )
+        if m
+    }
+
+
+def _rows_in_changelog() -> set[str]:
+    return {
+        m.group(1)
+        for m in (
+            _CHANGELOG_ROW_RE.match(line)
+            for line in CHANGELOG.read_text(encoding="utf-8").splitlines()
+        )
+        if m
+    }
+
+
+KNOWN_BAD_BANDS = (
+    (
+        "| **0.7.13 – 0.7.15**",
+        (("ModuleNotFoundError", "the symptom — how a consumer recognises this band"),),
+    ),
+    (
+        "| **0.7.16 – 0.7.19**",
+        (("UNAUTHENTICATED", "the symptom — the error a consumer actually sees"),),
+    ),
+    (
+        "| **0.7.39 – 0.7.43**",
+        (
+            (
+                "0.7.47",
+                "the release that fixes it — without it the row tells a reader nothing to do",
+            ),
+            (
+                "VersionError",
+                "the symptom, which is how a consumer recognises they are hitting this",
+            ),
+        ),
+    ),
+)
+
+
+def test_the_guarded_bands_are_exactly_the_documented_bands() -> None:
+    """Anti-shrink pin: the hardcoded list and the document must name the same bands.
+
+    Without this, `KNOWN_BAD_BANDS` is silenced by deletion — remove a tuple and its row together
+    and every remaining test simply runs over less, which is what passing looks like. This is the
+    only test here that can fail for a band no longer mentioned anywhere.
     """
-    assert required in COMPATIBILITY.read_text(encoding="utf-8"), (
-        f"COMPATIBILITY.md no longer mentions {required}. Nothing was yanked, so these versions are "
-        f"still installable from Cloudsmith and the document is the only mitigation."
+    documented = _rows_in_compatibility()
+    guarded = {p.removeprefix("| **").removesuffix("**") for p, _ in KNOWN_BAD_BANDS}
+    assert guarded == documented, (
+        f"COMPATIBILITY.md §3 documents {sorted(documented)} but this file guards "
+        f"{sorted(guarded)}. A band in the document and not the list is unguarded; a band in the "
+        "list and not the document has lost the row that was its only barrier."
+    )
+
+    # Equality ALONE is not enough, and this is the correction to a first attempt at this test.
+    # Deleting a tuple and its row together shrinks both sides at once, so the equality still holds
+    # — which is exactly the mutation the verification round ran, and it stayed green (1184).
+    # A band is a permanent historical fact: nothing was yanked, so every one of these is still
+    # installable from Cloudsmith. The set may grow; it can never legitimately shrink.
+    assert _HISTORICAL_BANDS <= documented, (
+        f"COMPATIBILITY.md §3 has lost {sorted(_HISTORICAL_BANDS - documented)}. Those releases are "
+        "still installable — nothing was yanked — so removing the row removes the only warning a "
+        "consumer gets. These bands are history and do not expire."
+    )
+    # Third copy, in a different document, so silencing this needs three coordinated edits rather
+    # than two. CHANGELOG's advisory table is the other place a consumer is told.
+    changelog = {_norm(b) for b in _rows_in_changelog()}
+    assert {_norm(b) for b in _HISTORICAL_BANDS} <= changelog, (
+        f"CHANGELOG.md's advisory table has lost "
+        f"{sorted({_norm(b) for b in _HISTORICAL_BANDS} - changelog)}."
     )
 
 
-def test_the_gencode_skew_band_is_a_table_row_not_merely_a_mention() -> None:
-    """The §3 row for 0.7.39-0.7.43 must survive as a ROW, not as a passing reference.
+@pytest.mark.parametrize(
+    "prefix,needles", KNOWN_BAD_BANDS, ids=lambda v: v if isinstance(v, str) else ""
+)
+def test_each_known_bad_band_is_a_table_row_not_merely_a_mention(
+    prefix: str, needles: tuple[tuple[str, str], ...]
+) -> None:
+    """Every §3 band must survive as a ROW, and carry the facts a reader acts on.
 
-    Written after the parametrize above was caught being vacuous for this band: "0.7.43" already
-    appeared in COMPATIBILITY.md for unrelated reasons, so the row could be deleted outright and
-    the whole suite still passed — 557 green with the band gone. A guard that cannot fail for the
-    thing it guards is worse than no guard, because it is read as coverage.
-
-    It also pins the two facts a reader acts on, which a substring check cannot: the release that
-    fixes it, and the symptom that identifies it.
+    Nothing was yanked (see CHANGELOG.md's "No yank" entry), so these versions remain installable
+    from Cloudsmith and this document is the only barrier. A substring check cannot enforce that:
+    a version number appears for unrelated reasons, so the row can be deleted outright with the
+    suite green. That was measured, twice — first for 0.7.39-0.7.43 (557 green with the row gone),
+    then for 0.7.16-0.7.19 and the 0.7.20 floor, which is why this test is now parametrized over
+    every band instead of guarding one and trusting a substring for the others.
     """
     rows = [
         line
         for line in COMPATIBILITY.read_text(encoding="utf-8").splitlines()
-        if line.startswith("| **0.7.39 – 0.7.43**")
+        if line.startswith(prefix)
     ]
     assert len(rows) == 1, (
-        "COMPATIBILITY.md §3 no longer carries exactly one table row for the 0.7.39-0.7.43 "
-        f"gencode/floor skew band (found {len(rows)}). Five releases shipped that defect on red "
-        "CI and none was yanked, so this row is the only barrier between a consumer and a wheel "
-        "whose declared protobuf floor is lower than the gencode it bundles. If the band was "
-        "re-derived, update this test deliberately — do not delete it."
+        f"COMPATIBILITY.md §3 no longer carries exactly one table row starting {prefix!r} "
+        f"(found {len(rows)}). None of these versions was yanked, so this row is the only barrier "
+        "between a consumer and a broken wheel. If the band was re-derived, update this test "
+        "deliberately — do not delete it."
     )
-    row = rows[0]
-    for needle, why in (
-        (
-            "0.7.47",
-            "the release that fixes it — without it the row tells a reader nothing to do",
-        ),
-        (
-            "VersionError",
-            "the symptom, which is how a consumer recognises they are hitting this",
-        ),
-    ):
-        assert needle in row, (
-            f"the 0.7.39-0.7.43 row no longer states {needle!r}: {why}"
+    for needle, why in needles:
+        assert needle in rows[0], (
+            f"the {prefix!r} row no longer states {needle!r}: {why}"
         )
 
 
-def test_the_skew_band_row_renders_inside_the_table() -> None:
-    """A blank line before the row would end the GFM table and render it as literal pipes.
+@pytest.mark.parametrize("prefix", [p for p, _ in KNOWN_BAD_BANDS])
+def test_each_known_bad_row_renders_inside_the_table(prefix: str) -> None:
+    """A blank line before a row would end the GFM table and render it as literal pipes.
 
-    That is not hypothetical: the row was first committed with exactly that defect and read fine
-    in the diff. Markdown tables are whitespace-terminated, so this is a one-character failure
-    that no prose review catches and no substring check notices.
+    That is not hypothetical: the skew-band row was first committed with exactly that defect and
+    read fine in the diff. Markdown tables are whitespace-terminated, so this is a one-character
+    failure that no prose review catches and no substring check notices.
     """
     lines = COMPATIBILITY.read_text(encoding="utf-8").splitlines()
     # Not a bare `next(...)`: with the row absent that raises StopIteration carrying no message,
     # and a guard whose failure explains nothing is half a guard.
-    idx = next(
-        (i for i, ln in enumerate(lines) if ln.startswith("| **0.7.39 – 0.7.43**")),
-        None,
-    )
+    idx = next((i for i, ln in enumerate(lines) if ln.startswith(prefix)), None)
     assert idx is not None, (
-        "COMPATIBILITY.md §3 has no 0.7.39-0.7.43 row at all, so its rendering cannot be checked. "
-        "The sibling test above says why the row has to exist."
+        f"COMPATIBILITY.md §3 has no row starting {prefix!r} at all, so its rendering cannot be "
+        "checked. The sibling test above says why the row has to exist."
     )
     assert lines[idx - 1].startswith("|"), (
-        "the 0.7.39-0.7.43 row is not contiguous with the rows above it — the preceding line is "
+        f"the {prefix!r} row is not contiguous with the rows above it — the preceding line is "
         f"{lines[idx - 1]!r}. A GFM table ends at the first non-table line, so this row would "
         "render as literal pipe characters in a paragraph rather than as a row of the known-bad "
         "table."
+    )
+
+
+def test_the_floor_is_stated_as_its_own_line() -> None:
+    """`Floor: 0.7.20` is the one instruction a reader can act on without reading the table.
+
+    Guarded as a whole LINE because the substring `0.7.20` occurs five times elsewhere in this
+    document — so the sentence that makes it the floor was deletable with every test green, which
+    a verification round demonstrated. The floor is what `seam-adapters` pins against; losing the
+    statement loses the reason the pin is what it is.
+    """
+    lines = COMPATIBILITY.read_text(encoding="utf-8").splitlines()
+    assert any(ln.startswith("**Floor: 0.7.20.**") for ln in lines), (
+        "COMPATIBILITY.md §3 no longer states `**Floor: 0.7.20.**` as its own line. 0.7.20 is the "
+        "first release that is both importable and wire-correct; if the floor genuinely moved, "
+        "change it here deliberately rather than deleting the statement."
+    )
+
+
+# ── Calibration: does the guard catch the thing it is named after? ───────────────────────────────
+# The module had no such test, and that is exactly how it came to miss four ordinary spellings of
+# the claim it exists to forbid. Every guard in this repo is one refactor away from being excused by
+# its own exemption list; the only defence is a case that FAILS if the guard stops working.
+#
+# These run the real guard against synthetic documents rather than against the repo, so they neither
+# depend on what the repo currently says nor go stale when it changes.
+
+_CLAIMS_THAT_MUST_BE_CAUGHT = [
+    # (label, paragraph) — each was ACCEPTED before the word-boundary fix.
+    (
+        "substring 'not' inside 'notarised'",
+        "The notarised feed detects truncation for every chain.",
+    ),
+    ("substring 'not' inside 'Note'", "Note: seam-sdk detects truncation end to end."),
+    (
+        "substring 'not' inside 'nothing'",
+        "Nothing else matters: the verifier detects truncation.",
+    ),
+    (
+        "'until' was treated as a negation",
+        "The verifier detects truncation until you disable it.",
+    ),
+    (
+        "'the claim' was an exemption",
+        "The claim is simple: the published verifier detects truncation.",
+    ),
+    ("plain assertion", "seam-sdk detects truncation."),
+    ("the noun form", "Truncation detection is implemented by the published verifier."),
+]
+
+_DENIALS_THAT_MUST_BE_ALLOWED = [
+    ("the required denial", "The published verifier cannot detect truncation."),
+    (
+        "'no' as a word",
+        "There is no anchor feed, so truncation detection is unavailable.",
+    ),
+    ("'does not'", "verify/ does not perform truncation detection."),
+    ("'never'", "The verifier never claimed truncation detection."),
+    (
+        "a negation a line away from the claim",
+        "The published verifier does not\ndetect truncation, and cannot until an anchor feed exists.",
+    ),
+    (
+        "an explicit retraction",
+        "RETRACTED: an earlier note said seam-sdk detects truncation.",
+    ),
+]
+
+#: Found by the Phase 4 verification gate, which asked the question the four known cases did not:
+#: what does a negation somewhere ELSE in the paragraph excuse? Under paragraph scope, everything.
+#: Each of these has a real denial in one clause and an undenied claim in another, and each passed.
+_CLAIMS_IN_A_CLAUSE_THE_DENIAL_DOES_NOT_COVER = [
+    (
+        "a denial in the next sentence",
+        "The verifier detects truncation. No further work is required.",
+    ),
+    (
+        "a denial after a semicolon",
+        "The published verifier detects truncation for chains of any length; there is no caveat.",
+    ),
+    (
+        "a denial after a colon",
+        "Truncation detection is complete: none of the known gaps remain.",
+    ),
+]
+
+_CLAIMS_THAT_MUST_BE_CAUGHT += _CLAIMS_IN_A_CLAUSE_THE_DENIAL_DOES_NOT_COVER
+
+
+def _guard_accepts(paragraph: str) -> bool:
+    """Run THE predicate over one synthetic paragraph. True = the guard let it through.
+
+    Calls `_is_exempt` — the same function the guard itself calls. It must never grow a local copy
+    of the logic: a calibration that exercises its own reimplementation stays green through exactly
+    the narrowing it was written to prevent, which is what happened here once already.
+    """
+    low = paragraph.lower()
+    if not any(c in low for c in CAPABILITY_PHRASES):
+        raise AssertionError(
+            f"test bug: {paragraph!r} does not mention the capability at all"
+        )
+    return _is_exempt(paragraph)
+
+
+@pytest.mark.parametrize(
+    "label,paragraph",
+    _CLAIMS_THAT_MUST_BE_CAUGHT,
+    ids=[c[0] for c in _CLAIMS_THAT_MUST_BE_CAUGHT],
+)
+def test_the_guard_catches_each_spelling_of_the_forbidden_claim(
+    label: str, paragraph: str
+) -> None:
+    assert not _guard_accepts(paragraph), (
+        f"the guard would accept a document claiming truncation detection ({label}):\n  {paragraph}\n"
+        "This is the exact class the guard exists for. Do not widen the exemption list to make a "
+        "real document pass — reword the document."
+    )
+
+
+@pytest.mark.parametrize(
+    "label,paragraph",
+    _DENIALS_THAT_MUST_BE_ALLOWED,
+    ids=[d[0] for d in _DENIALS_THAT_MUST_BE_ALLOWED],
+)
+def test_the_guard_still_allows_a_genuine_denial(label: str, paragraph: str) -> None:
+    # The accepting side matters as much: this repo is REQUIRED to carry the denial while there is
+    # no published anchor feed, so a guard that refused it would forbid the correct document.
+    assert _guard_accepts(paragraph), (
+        f"the guard would reject a legitimate denial ({label}):\n  {paragraph}\n"
+        "Tightening the negation words must not make the required caveat unwritable."
     )
