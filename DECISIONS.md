@@ -1090,11 +1090,19 @@ destroy the bad artifacts, which is the narrower question answered above.
   stubs are gitignored, so per-tag gencode is not recoverable" — which was true of the working tree
   and false of the project: every tagged commit has a CI run, and that test *is* this defect. The
   hedge was deleted rather than softened because the evidence made it false.
-- **The precedent already covers worse.** `CHANGELOG.md:682-687` records no-yank for 0.7.13-0.7.19,
-  which failed *harder*: 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed
-  every `authorize()` with an actively misleading "admission ticket is not valid" when the ticket
-  was fine. This band breaks only consumers who cap `protobuf` below 7.36.0. Deleting the milder
-  defect while documenting the worse ones inverts the precedent without saying so.
+- **The precedent that covered worse has since been reversed.** This bullet is amended rather than
+  deleted, because the reversal removes its *support* without touching its *conclusion*. As
+  originally written it argued: `CHANGELOG.md:684-701` records no-yank for 0.7.13-0.7.19, which
+  failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
+  `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
+  fine — so deleting the milder defect while documenting the worse ones would invert the precedent
+  without saying so. On **2026-09-05** that harder-failing band was deleted (#43), so the asymmetry
+  it relied on no longer exists and this argument now supports nothing either way. **The
+  disposition for 0.7.39-0.7.43 is unchanged**, and now rests solely on the reasons beside it: the
+  defect is conditional (it bites only where something caps `protobuf` below 7.36.0), it is
+  self-detecting at first import, and a consumer who resolved `protobuf` freely is working today.
+  Whether that remains the right call once the harder band is gone is genuinely reopened rather
+  than settled — tracked in `ASSUMPTIONS.md`, not decided here.
 - **No lockfile in the workspace pins it.** Checked 2026-08-31 across every `uv.lock`,
   `package-lock.json` and requirements/constraints file in the sibling repos: no pin on any version
   in the band. The only `seam-sdk` entry in `seam-adapters/uv.lock` is `0.7.9` via an editable path

@@ -662,9 +662,11 @@ under those version numbers.)_
 ## ⚠️ Advisory: 0.7.13–0.7.19 do not work against a current runtime; 0.7.39–0.7.43 may not import
 
 **If you have anything pinned below 0.7.20, upgrade — and if you are on 0.7.39–0.7.43, upgrade to
-0.7.47.** These versions remain installable from Cloudsmith — this advisory, not a yank, is the
-mitigation (see below) — but they fail in three different ways, and a matching version number does
-**not** imply a matching wire contract:
+0.7.47.** 0.7.13–0.7.19 were **deleted from Cloudsmith on 2026-09-05** ([#43](https://github.com/zer07labs/seam-sdk/issues/43)),
+so a pin inside that band now fails to resolve instead of installing something broken. 0.7.39–0.7.43
+remain installable, and for that band this advisory, not a yank, is still the mitigation (see below).
+All three fail in different ways, and a matching version number does **not** imply a matching wire
+contract:
 
 | Range | Symptom | Root cause | Fixed by |
 |---|---|---|---|
@@ -679,12 +681,24 @@ published" per #28) the import breakage may reach back further than 0.7.13 — t
 the versions this repo's own history can attribute with confidence. **0.7.20 is the first release
 that is both importable and wire-correct.**
 
-No yank: the existing `yank.yml` workflow (dry-run default) was not run for this window: the
-versions install and produce a "reasonable anti-oracle" auth error rather than corrupting data or
-executing anything unsafe, and revoking installability under a floor already in wide use (adapters,
-aegis) is a bigger blast radius than a loud advisory. If that call needs revisiting, `yank.yml` is
-ready. Downstream: `seam-adapters` and `seam-aegis` should pin `seam-sdk>=0.7.20` rather than the
-current `>=0.7,<0.8`, which admits the whole broken range.
+No yank — **reversed 2026-09-05; 0.7.13–0.7.19 is now deleted** (#43). The original call is
+recorded here rather than overwritten, because a later decision cites it as precedent. It read:
+`yank.yml` (dry-run default) was not run for this window, because the versions install and produce a
+"reasonable anti-oracle" auth error rather than corrupting data or executing anything unsafe, and
+revoking installability under a floor already in wide use (adapters, aegis) is a bigger blast radius
+than a loud advisory — closing with "if that call needs revisiting, `yank.yml` is ready."
+
+It was revisited. #43 asked whether an advisory alone is the right mitigation for releases that are
+*unconditionally* broken, and the answer was no: 21 packages (2 python + 1 npm for each of 0.7.13
+through 0.7.19) were deleted from `zer07labs/internal`, verified absent afterwards. The blast-radius
+argument turned out to be the weaker half — nothing that worked stopped working, because no version
+in this band worked. A pin inside it now fails to resolve, which is the louder failure and the one
+this repo prefers on principle. **0.7.39–0.7.43 was NOT deleted** and its own entry below still
+stands on its own reasoning, which is no longer a precedent argument. Downstream: this entry used
+to ask `seam-adapters` and `seam-aegis` to pin `seam-sdk>=0.7.20` rather than `>=0.7,<0.8`, which
+admitted the whole broken range. **Both have since done so** — verified 2026-09-05:
+`seam-adapters/core/pyproject.toml:22` declares `seam-sdk>=0.7.20,<0.8`, and `seam-aegis` reaches
+this SDK transitively through it. Nothing downstream is left pointing into the deleted band.
 
 ## 0.7.21 — 2026-08-09
 

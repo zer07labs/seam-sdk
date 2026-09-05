@@ -42,7 +42,7 @@ What to do instead, in descending order of usefulness:
 | Consumer | Constraint on `seam-sdk` | Verified at |
 |---|---|---|
 | `seam-adapters` (`seam-agent-core[sdk]`) | `seam-sdk>=0.7.20,<0.8` | `seam-adapters/core/pyproject.toml:22` |
-| `seam-aegis` | `seam-agent-core[sdk]>=0.5,<0.6` (reaches this SDK transitively) | `seam-aegis/pyproject.toml:28` |
+| `seam-aegis` | `seam-agent-core[sdk]>=0.6,<0.7` (reaches this SDK transitively) | `seam-aegis/pyproject.toml:28` |
 
 **One caveat on the first row, because the lockfile disagrees with the constraint and both are
 true.** `seam-adapters/uv.lock:3921` resolves `seam-sdk` **0.7.9** — below the declared floor — and
@@ -98,10 +98,14 @@ mismatch cannot ship.
 
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
-**Nothing was yanked.** For the first two bands that decision is recorded at
-`CHANGELOG.md:682-687` and is not being re-litigated: they fail loudly — an unimportable wheel, or a
-clear auth error — and revoking installability under a floor already in wide use has a larger blast
-radius than a loud advisory.
+**The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:684-701`) was re-litigated and reversed by
+[#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
+distinction the original call did not draw: those two bands are *unconditionally* broken — an
+unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
+protecting nothing that worked. All 21 packages were deleted from `zer07labs/internal`, and a pin
+inside 0.7.13–0.7.19 now fails to resolve. The rows below stay as the historical record of what
+those versions did, which is no longer something a consumer can discover by installing one.
 
 **The third band is a different argument, and [#52](https://github.com/zer07labs/seam-sdk/issues/52) argued the other way — so state its case
 before answering it.** That issue recommends **yanking**, on two grounds: that 0.7.43 was then
@@ -124,8 +128,9 @@ is working *today*, and deletion turns that into a hard resolution failure for n
 action #52 sized no longer exists: it weighed deleting one hours-old release, where the measured
 band is **five**. `DECISIONS.md` records the disposition and its reasoning.
 
-The consequence either way is that **these versions remain installable**, so this table is the
-mitigation.
+The consequence is that **0.7.39–0.7.43 remains installable** — so for that band this table is
+still the mitigation, and the argument above is the reason. The first two bands are gone from the
+registry (above), so for those the table is a record rather than a barrier.
 
 | Range | Symptom | Root cause |
 |---|---|---|
@@ -170,7 +175,7 @@ this by trying.
 | **Java** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |
 | **Kotlin** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |
 
-**Go, Java and Kotlin are crypto shims, not clients** (`README.md:155`). They carry no generated
+**Go, Java and Kotlin are crypto shims, not clients** (`README.md:160`). They carry no generated
 transport and no verb methods — they implement AID derivation, the pinned-key presentation, TCT
 verification and the commitment digest, and nothing else. If you need to *call* Seam, that is Python
 or TypeScript.

@@ -866,7 +866,11 @@ CLAIM_LINES = {
         "python/seam_sdk/crypto.py",
         "_uint_slot(name, value, bits)",
     ): "now returns `False`",
-    ("COMPATIBILITY.md", "CHANGELOG.md", "No yank"): "is not being re-litigated",
+    # Was "is not being re-litigated" until #43 re-litigated it: 0.7.13-0.7.19 was deleted on
+    # 2026-09-05 and CHANGELOG's entry now records the reversal. Re-anchored to the sentence that
+    # states it, because what this pins is WHICH CLAIM carries the citation — and that claim is now
+    # the reversal rather than the original refusal.
+    ("COMPATIBILITY.md", "CHANGELOG.md", "No yank"): "was re-litigated and reversed by",
     (
         "COMPATIBILITY.md",
         "python/seam_sdk/client.py",
@@ -898,7 +902,10 @@ CLAIM_LINES = {
         "CHANGELOG.md",
         "this SDK cannot express its own",
     ): "whatever number the runtime's history computes",
-    ("DECISIONS.md", "CHANGELOG.md", "No yank"): "The precedent already covers worse",
+    # Same reversal, from the other citing document. DECISIONS.md's bullet was amended rather than
+    # deleted (the reversal removed its support, not its conclusion), so the citation now sits on
+    # the line quoting what the argument originally said.
+    ("DECISIONS.md", "CHANGELOG.md", "No yank"): "records no-yank for 0.7.13-0.7.19",
     (
         "DECISIONS.md",
         "verify/tests/authenticity.rs",
@@ -1243,7 +1250,11 @@ QUOTED = [
     (
         "COMPATIBILITY.md",
         "seam-aegis/pyproject.toml",
-        "seam-agent-core[sdk]>=0.5,<0.6",
+        # Bumped 0.5 -> 0.6 on 2026-09-05 by seam-aegis 7771f28. Caught by this quote and by
+        # nothing else — and only on a workstation with the sibling cloned: in CI `../seam-aegis`
+        # does not exist, so the check `pytest.skip`s and the stale claim rides through green. The
+        # quote is doing its job; the coverage gap is that its job is only done locally.
+        "seam-agent-core[sdk]>=0.6,<0.7",
     ),
     (
         "COMPATIBILITY.md",
