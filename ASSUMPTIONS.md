@@ -427,7 +427,12 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Blast radius if wrong:** low. Converting drops the line-position assertion for one claim and
   replaces it with three line-number-free ones. If the trade proves wrong, `ANCHORED` still exists
   and re-adding an entry is a one-line change.
-- **Status:** CONFIRMED (2026-08-31) — **on the durable reason, not on in-run evidence.** An earlier
+- **Status:** CONFIRMED (2026-08-31; evidence upgraded 2026-09-05 — the prediction was TESTED and
+  held). Phase 8 refreshed the vendored spec whole-file to `ac325d7`: 69 insertions, 5 deletions,
+  so every line number below the first insertion moved. Nothing broke, because the citation had
+  been converted rather than grandfathered — the exact case the two alternatives differ on. The
+  original wording is kept below because how a status was reached matters as much as the status.
+  Recorded as **on the durable reason, not on in-run evidence**: An earlier
   version of this line claimed the choice was "vindicated within the same run" because the converted
   citation did not move while the `CHANGELOG.md` one drifted. That is vacuous: the converted citation
   did not move because nothing refreshed the vendored file, and a *grandfathered* anchor would
