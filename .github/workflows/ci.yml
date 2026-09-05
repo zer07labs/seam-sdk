@@ -127,8 +127,17 @@ jobs:
           ruff check python
           ruff format --check python
       # Unit + cross-language conformance vectors. The live integration test self-skips (no SEAM_GRPC_BIN).
+      #
+      # SEAM_REQUIRE_WHEEL_BUILD=1 turns test_packaging.py's "could not build the wheel" SKIP into a
+      # failure. Those three tests are the only check that the wheel ships no global `seam` package,
+      # ships `py.typed`, and has a rooted `__init__.py` chain — and their skip condition used to
+      # swallow a wheel build that RAN AND FAILED, so a packaging defect retired its own guards and
+      # pytest still exited 0. This is `ci-ok`'s "a skipped required job is a failure" rule, applied
+      # one level down, where the runner always has pip and a skip has no legitimate cause.
       - name: pytest
         working-directory: python
+        env:
+          SEAM_REQUIRE_WHEEL_BUILD: "1"
         run: pytest -q
       # BUILD THE WHEEL AND IMPORT IT, exactly as publish.yml does. Everything above this line
       # runs against an EDITABLE install of the source tree, which cannot see a packaging defect:

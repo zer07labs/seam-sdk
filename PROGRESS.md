@@ -2537,3 +2537,165 @@ Measured after: python **1109 passed / 20 skipped** · ts **174 tests, 164 pass,
 `pytest scripts -q` **116 passed** · go ok · `verify/` ok · `ruff`/`gofmt`/`clippy` clean ·
 `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` **exit 6** with exactly the five recorded lag fields ·
 `git diff HEAD -- conformance/` **empty**. Nothing accepted moved, across six differentials.
+
+### Phase 4 — guards that fire on the mutation they name — DONE
+
+Four guards that missed their own subject. Each was demonstrated **green against the mutation first**,
+then red after the repair — the order matters, because a guard you only ever see pass is
+indistinguishable from a guard that cannot fail.
+
+**1. The truncation-claim guard matched negations as substrings.** `"not" in "notarised"` is true,
+and so is `"not" in "Note"` and `"not" in "nothing"`. The published verifier cannot detect
+truncation and a document here must not claim that it does — yet all four of these sentences were measured
+being accepted into a repo document by the guard whose entire job is to refuse them: one about a
+notarised feed detecting truncation for every chain, one opening with `Note:` and claiming seam-sdk
+detects truncation end to end, one qualifying the detection with `until you disable it`, and one
+introduced by `The claim is simple:`. Not one of the four is true, and the guard took all four.
+
+`"until"` was never a negation; it read as one only because a real denial always sits beside it,
+carrying its own `cannot`. And `"the claim"` was in the *exemption* list — a guard whose exemptions
+include the words its subject is most likely to be written with is not a guard. Now word-bounded,
+with both markers dropped, and a permanent calibration of ten forbidden spellings plus six
+legitimate denials. Each element of the fix has at least one test that dies when it is reverted —
+measured after the verification round below, which changed both the mechanism and the counts:
+
+    substring matching in `_is_exempt`     -> 1 failed  [substring 'not' inside 'notarised']
+    `until` restored to NEGATION_WORDS     -> 1 failed
+    `the claim` restored to DISCUSSING     -> 1 failed
+    clause scope reverted to paragraph     -> 3 failed  [next sentence / semicolon / colon]
+
+The first number was **three** before clause-scoping landed; splitting on `:` now separates
+`Note:` and `The claim is simple:` from the claim that follows them, so those two cases no longer
+depend on word-boundary matching to be caught. A count recorded once and never re-measured is the
+kind of claim this file exists to avoid, so it is re-measured here rather than carried forward.
+
+**2. The `buf generate` guard only saw commands that opened a line.** `RAW_BUF_GENERATE` was anchored
+with `^\s*`, so `- run: buf generate ...` — the ordinary compact spelling, and how most single-command
+steps in this repo are written — slipped past, as did `make lint && buf generate ...`. This is the
+guard whose docstring records that **every wheel this repo ever published could not be imported**.
+Rewritten to parse the workflow, walk every `run:` value wherever it nests, and split on the
+separators a shell actually uses. Five spellings now caught (the fourth, `echo x | buf generate`, was
+found by writing the scan properly rather than by the plan); a prose `#` comment about the rule still
+passes, and the parser drops YAML comments before the scan sees them, which is stronger than the
+whole-line filter it replaces.
+
+**3. `_line_anchors_into_vendored` never learned the comma-list spelling its sibling had.**
+`COMMA_LIST_CITATION` was added precisely because "a comma separating two line numbers does not make
+them less line numbers" — and only `_line_anchors_into_generated` was taught it. So
+a comma-list anchor into `verify/docs/seam-event.v1.md` — two line numbers separated by a
+comma, in the ordinary citation syntax — passed invisibly into a whole-file-refreshed spec:
+**issue #73's own class, reopened in the sibling rule by the change that closed it.** Both
+rules now iterate both patterns, and a parametrized mirror test asserts every spelling against *both*
+— with an accepting-side case, so "make both catch everything" cannot be satisfied by returning
+every citation.
+
+**4. A failed wheel build retired the packaging guards into skips.** The `except` caught
+`CalledProcessError` — a build that RAN AND FAILED — in the same breath as `FileNotFoundError`, which
+was taken to mean no pip exists. Opposite situations, one handler. A packaging defect therefore disabled the only
+three checks for it (no global `seam` leak, `py.typed` ships, rooted `__init__.py` chain) and pytest
+exited 0. CI's separate wheel-import step does not close the gap: it checks one of the three.
+
+Added `SEAM_REQUIRE_WHEEL_BUILD=1` to CI's python job — `ci-ok`'s "a skipped required job is a
+failure" rule applied one level down, where the runner can always build and a skip has no legitimate
+cause. **Every route to "no wheel" now fails under that flag**; that is the load-bearing property,
+and the wording is the only thing that varies between them.
+
+The first repair split the two causes *by exception type*, and running it here proved that wrong.
+`python -m pip` on an interpreter without pip raises no `FileNotFoundError`: the interpreter exists,
+so it runs and exits 1 with "No module named pip" — landing in the failed-BUILD branch and reporting
+a packaging defect that does not exist. Presence is a question only a `--version` probe answers. The
+two tests missed it because both forced the `pip3` branch, where an absent executable really does
+raise; they exercised the path where the discriminator happens to work.
+
+Probing instead of inferring then exposed a **third** class, and it is the one this workstation is
+actually in. `/usr/bin/pip3` is Python 3.9, below this package's `requires-python = ">=3.10"`, so its
+setuptools cannot read the PEP 621 metadata, falls back to a legacy build, writes
+`UNKNOWN-0.0.0-py3-none-any.whl`, and **exits 0**. Not absent, not failed — a builder that cannot
+name the package it just built. Both earlier versions called it "no pip available", so the
+handoff-brief line that three skips here mean "this venv genuinely has no pip module" was itself the
+wrong diagnosis, believed because the code said it. Three classes now, three messages, one flag.
+
+Three things worth recording from the doing. The `buf generate` scan found a spelling the plan had
+not listed, which only became visible once the check was written per-command instead of per-line. The
+new packaging tests **passed vacuously on first run**: `pytest.raises(Exception)` catches neither
+`Skipped` nor `Failed`, because both derive from `BaseException` — so the assertion inside the block
+never executed. And a later assertion that the message *names what the builder produced* was
+satisfied by the same string appearing as a constant in the message's own explanatory prose: dropping
+the measured evidence left the test green. It was caught by mutating the message and watching nothing
+die, which is the only way an assertion satisfied by a constant ever surfaces. Three instances of
+this run's recurring failure, all three inside tests written to fix instances of it.
+
+#### Verification round
+
+A fresh-Opus gate returned **REVISE** with two BLOCKING items, three MODERATE, six MINOR and five
+NITs. Every one was reproduced by measurement before being acted on. Two are worth reading, because
+both are this phase's own subject turned back on it.
+
+**The suite could not have run in CI at all.** `test_workflows_generate_through_the_makefile.py`
+does `import yaml`, and PyYAML is not a dependency of anything: `pyproject.toml`'s `dev` extra held
+only `pytest` and `ruff`, and `.github/workflows/ci.yml:124` installs exactly that extra and nothing
+else. It passed here because someone had installed PyYAML into this venv by hand, with no dependent.
+An undeclared import is not one failing test — it is a **collection error**, which aborts the whole
+run:
+
+    $ .venv/bin/python <blocks 'yaml' via sys.meta_path> -q
+    ERROR tests/test_workflows_generate_through_the_makefile.py
+    !!!!!! Interrupted: 1 error during collection !!!!!!
+
+The repo already held the evidence twice over — `.github/workflows/ci.yml:642` installs `pyyaml` for the
+sibling `workflow-guards` job, and `test_node_engines_floor.py` hand-parses YAML with a regex rather
+than import it — and a green local suite still said everything was fine. Declaring `pyyaml` fixes
+the instance; `test_test_dependencies_are_declared.py` fixes the class, by parsing every test
+module's imports with `ast`, resolving each to a distribution, and requiring it be declared. It
+would have caught this one, and it cannot go stale the way a pyyaml-shaped guard would.
+
+**The guard with the most history behind it had no calibration.** None of the five real workflows
+contains `buf generate` — that is the point of the guard — so the parametrized test asserts an empty
+list every time, and asserted one just as happily when the pattern could only see a command that
+opened a line. Blinding the walker to `return []` left the file green:
+
+    $ pytest -q tests/test_workflows_generate_through_the_makefile.py     # _run_steps -> []
+    14 passed
+
+Eight synthetic spellings and four must-not-fire prose cases now run through the same
+`_run_steps`/`_commands`/`BUF_GENERATE` the real test uses, plus an anti-vacuity check that the
+walker reaches >50 commands across the real workflows. That mutation now takes 9 tests with it.
+
+The other repairs, each measured:
+
+* **The truncation calibration exercised a copy of the predicate.** `_guard_accepts` reimplemented
+  the rule, sharing only the word tuples, so reverting the *real* guard killed nothing (`23 passed`)
+  while reverting both killed three. Phase 3's named class — a rule in two places — recreated inside
+  Phase 4's fix for it. There is now one `_is_exempt`, called by the guard and by the calibration.
+* **A negation anywhere in a paragraph excused a claim anywhere in it.** `The verifier detects
+  truncation. No further work is required.` passed. Negation is now clause-scoped while the explicit
+  meta-markers stay paragraph-scoped, which is what keeps `RETRACTED: …` writable. The first run of
+  the stricter rule immediately caught a real paragraph — this file's own Phase 4 write-up — which is
+  the guard behaving correctly on meta-discussion; it now carries the marker that says so. A
+  same-clause negation (`detects truncation, no exceptions`) still passes, and that limit is written
+  into the predicate's docstring rather than left to be rediscovered.
+* **Two of the three no-wheel classes were pinned under the flag; the third was not.** Deleting the
+  absent branch's `pytest.fail` killed nothing. It has a with-flag twin now, as the other two did.
+* **`assert "no pip available" in message` was satisfied by the branch's own prose** — the same
+  constant-satisfied assertion already confessed above, surviving one branch over. It now asserts the
+  measured candidate list. Branch order (a real failure outranks a builder that built nothing) is
+  pinned too; swapping the branches previously killed nothing.
+* **The `UNKNOWN-0.0.0` diagnosis named the wrong cause.** It blamed `requires-python`; measured, the
+  operative cause is setuptools **58.0.4**, which predates PEP 621 support (added in 61) and so
+  ignores the `[project]` table entirely. The old interpreter is why the old setuptools is there, but
+  writing the correlation as the mechanism would send a reader to the wrong fix. Corrected in five
+  places.
+* **`--no-build-isolation` needs an importable backend**, and under the new flag a missing one would
+  have reported as a packaging defect. The build-failure message now says when setuptools is absent
+  and that it is an environment fault. Found by reading the CI install steps, not by the gate.
+
+One finding was accepted rather than fixed: the shell split is quoting-unaware, so a quoted `;` or
+`|` immediately before the phrase can false-positive. A false positive here is a loud one-line fix in
+a workflow; the false negative it replaced shipped unimportable wheels. The trade is recorded, not
+closed. `BUF_GENERATE`'s anchor also turned out to be redundant with `_commands`' stripping — that
+coupling is now asserted, so the simple anchor stays justified rather than lucky.
+
+Measured after: python **1154 passed / 20 skipped** · ts **174 tests, 164 pass, 0 fail** ·
+`pytest scripts -q` **116 passed** · go ok · `verify/` cargo test + clippy + fmt clean · `ruff` clean ·
+`STREAM=1 EVENTS=1 ./scripts/check-contract.sh` **exit 6** · `ci-ok`'s `needs:` unchanged at 12 jobs,
+no new job added.

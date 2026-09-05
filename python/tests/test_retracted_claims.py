@@ -18,6 +18,7 @@ Two properties are checked, and the second matters more than the first:
 from __future__ import annotations
 
 import pathlib
+import re
 
 import pytest
 
@@ -44,8 +45,72 @@ DISCUSSING_NOT_CLAIMING = (
     "previously read",
     "is stale",
     "was wrong",
-    "the claim",
 )
+
+#: Words that make a mention of truncation detection a DENIAL of the capability rather than an
+#: assertion of it. Matched on WORD BOUNDARIES, which is the whole point and was the whole bug.
+#:
+#: These were substrings. Measured, before this change, every one of these sentences was accepted
+#: into a repo document by the guard whose entire job is to refuse it:
+#:
+#:     "The notarised feed detects truncation for every chain."     -- "notarised" contains "not"
+#:     "Note: seam-sdk detects truncation end to end."              -- "Note" contains "not"
+#:     "The verifier detects truncation until you disable it."      -- "until" was a negation marker
+#:     "The claim is simple: the verifier detects truncation."      -- "the claim" was an excuse
+#:
+#: The first two are the substring bug in its purest form: `"not" in "notarised"`. "nothing" and
+#: "annotation" do it too, and all three are words a technical document reaches for constantly.
+#:
+#: `"until"` is gone rather than word-bounded. It was never a negation — "until seam-runtime#422
+#: lands" reads as one only because a real denial sits beside it, and that denial always carries
+#: `cannot` or `not` of its own. As a marker it excused any sentence with an ordinary temporal
+#: clause in it.
+#:
+#: `"the claim"` is gone from DISCUSSING_NOT_CLAIMING for the sharper version of the same fault: it
+#: excused a sentence that MAKES the claim while using the phrase. A guard whose exemption list
+#: contains the words its subject is most likely to be written with is not a guard.
+NEGATION_WORDS = ("not", "cannot", "no", "never", "none", "nor")
+
+#: The three spellings of the capability. Hoisted so the guard and its calibration cannot drift.
+CAPABILITY_PHRASES = ("detects truncation", "detect truncation", "truncation detection")
+
+#: Clause boundaries. NOT newlines — `does not\ndetect truncation` is one clause wrapped by a
+#: formatter, and splitting on the wrap would refuse the denial this repo is required to carry.
+_CLAUSE_SPLIT = re.compile(r"[.;:!?]+")
+
+
+def _is_exempt(text: str) -> bool:
+    """True when this block may mention the capability. THE predicate — there is only one.
+
+    It used to exist twice: once inline in the guard and once in the calibration helper, sharing
+    only the word tuples. Reverting the guard alone then killed nothing, so the calibration proved
+    a copy rather than the thing that runs. That is this repo's named failure class, and Phase 4
+    reproduced it inside the fix for Phase 4.
+
+    Two scopes, deliberately different:
+
+    * `DISCUSSING_NOT_CLAIMING` is **paragraph**-scoped. These are explicit meta-discussion markers,
+      and `RETRACTED: an earlier note said seam-sdk detects truncation.` puts the marker in a
+      different clause from the claim by construction.
+    * A negation is **clause**-scoped. Paragraph scope let a denial anywhere excuse a claim
+      anywhere, so `The verifier detects truncation. No further work is required.` passed — the
+      `no` of an unrelated sentence vouching for the sentence beside it.
+
+    Known and deliberate limitation: a negation inside the claim's OWN clause always exempts it, so
+    `detects truncation, no exceptions` and `detects truncation whether or not X` still pass.
+    Deciding whether a same-clause negation attaches to the claim is a parsing problem this guard
+    does not attempt; it is recorded here rather than left for someone to rediscover.
+    """
+    low = text.lower()
+    if any(m in low for m in DISCUSSING_NOT_CLAIMING):
+        return True
+    claims = [
+        c for c in _CLAUSE_SPLIT.split(low) if any(p in c for p in CAPABILITY_PHRASES)
+    ]
+    if not claims:
+        return True
+    negation = re.compile(rf"\b(?:{'|'.join(NEGATION_WORDS)})\b")
+    return all(negation.search(c) is not None for c in claims)
 
 
 def _paragraphs(path: pathlib.Path) -> list[tuple[int, str]]:
@@ -130,22 +195,13 @@ def test_no_document_claims_the_verifier_detects_truncation() -> None:
     for doc in _docs():
         for start, block in _paragraphs(doc):
             low = block.lower()
-            if not any(
-                c in low
-                for c in (
-                    "detects truncation",
-                    "detect truncation",
-                    "truncation detection",
-                )
-            ):
+            if not any(c in low for c in CAPABILITY_PHRASES):
                 continue
             # A negated or prohibitive mention is the correct thing to have — indeed it is what this
-            # repo is required to carry until seam-runtime#422 lands.
-            negated = any(
-                neg in low
-                for neg in ("not", "cannot", "no ", "until", "never", "does not")
-            )
-            if negated or any(m in low for m in DISCUSSING_NOT_CLAIMING):
+            # repo is required to carry while there is no published anchor feed (seam-runtime#422).
+            # The predicate lives in ONE place (`_is_exempt`) so the calibration below exercises
+            # what actually runs here, not a second copy of it.
+            if _is_exempt(block):
                 continue
             offenders.append(f"{doc.relative_to(REPO)}:{start}: {block.strip()[:160]}")
 
@@ -253,4 +309,118 @@ def test_the_skew_band_row_renders_inside_the_table() -> None:
         f"{lines[idx - 1]!r}. A GFM table ends at the first non-table line, so this row would "
         "render as literal pipe characters in a paragraph rather than as a row of the known-bad "
         "table."
+    )
+
+
+# ── Calibration: does the guard catch the thing it is named after? ───────────────────────────────
+# The module had no such test, and that is exactly how it came to miss four ordinary spellings of
+# the claim it exists to forbid. Every guard in this repo is one refactor away from being excused by
+# its own exemption list; the only defence is a case that FAILS if the guard stops working.
+#
+# These run the real guard against synthetic documents rather than against the repo, so they neither
+# depend on what the repo currently says nor go stale when it changes.
+
+_CLAIMS_THAT_MUST_BE_CAUGHT = [
+    # (label, paragraph) — each was ACCEPTED before the word-boundary fix.
+    (
+        "substring 'not' inside 'notarised'",
+        "The notarised feed detects truncation for every chain.",
+    ),
+    ("substring 'not' inside 'Note'", "Note: seam-sdk detects truncation end to end."),
+    (
+        "substring 'not' inside 'nothing'",
+        "Nothing else matters: the verifier detects truncation.",
+    ),
+    (
+        "'until' was treated as a negation",
+        "The verifier detects truncation until you disable it.",
+    ),
+    (
+        "'the claim' was an exemption",
+        "The claim is simple: the published verifier detects truncation.",
+    ),
+    ("plain assertion", "seam-sdk detects truncation."),
+    ("the noun form", "Truncation detection is implemented by the published verifier."),
+]
+
+_DENIALS_THAT_MUST_BE_ALLOWED = [
+    ("the required denial", "The published verifier cannot detect truncation."),
+    (
+        "'no' as a word",
+        "There is no anchor feed, so truncation detection is unavailable.",
+    ),
+    ("'does not'", "verify/ does not perform truncation detection."),
+    ("'never'", "The verifier never claimed truncation detection."),
+    (
+        "a negation a line away from the claim",
+        "The published verifier does not\ndetect truncation, and cannot until an anchor feed exists.",
+    ),
+    (
+        "an explicit retraction",
+        "RETRACTED: an earlier note said seam-sdk detects truncation.",
+    ),
+]
+
+#: Found by the Phase 4 verification gate, which asked the question the four known cases did not:
+#: what does a negation somewhere ELSE in the paragraph excuse? Under paragraph scope, everything.
+#: Each of these has a real denial in one clause and an undenied claim in another, and each passed.
+_CLAIMS_IN_A_CLAUSE_THE_DENIAL_DOES_NOT_COVER = [
+    (
+        "a denial in the next sentence",
+        "The verifier detects truncation. No further work is required.",
+    ),
+    (
+        "a denial after a semicolon",
+        "The published verifier detects truncation for chains of any length; there is no caveat.",
+    ),
+    (
+        "a denial after a colon",
+        "Truncation detection is complete: none of the known gaps remain.",
+    ),
+]
+
+_CLAIMS_THAT_MUST_BE_CAUGHT += _CLAIMS_IN_A_CLAUSE_THE_DENIAL_DOES_NOT_COVER
+
+
+def _guard_accepts(paragraph: str) -> bool:
+    """Run THE predicate over one synthetic paragraph. True = the guard let it through.
+
+    Calls `_is_exempt` — the same function the guard itself calls. It must never grow a local copy
+    of the logic: a calibration that exercises its own reimplementation stays green through exactly
+    the narrowing it was written to prevent, which is what happened here once already.
+    """
+    low = paragraph.lower()
+    if not any(c in low for c in CAPABILITY_PHRASES):
+        raise AssertionError(
+            f"test bug: {paragraph!r} does not mention the capability at all"
+        )
+    return _is_exempt(paragraph)
+
+
+@pytest.mark.parametrize(
+    "label,paragraph",
+    _CLAIMS_THAT_MUST_BE_CAUGHT,
+    ids=[c[0] for c in _CLAIMS_THAT_MUST_BE_CAUGHT],
+)
+def test_the_guard_catches_each_spelling_of_the_forbidden_claim(
+    label: str, paragraph: str
+) -> None:
+    assert not _guard_accepts(paragraph), (
+        f"the guard would accept a document claiming truncation detection ({label}):\n  {paragraph}\n"
+        "This is the exact class the guard exists for. Do not widen the exemption list to make a "
+        "real document pass — reword the document."
+    )
+
+
+@pytest.mark.parametrize(
+    "label,paragraph",
+    _DENIALS_THAT_MUST_BE_ALLOWED,
+    ids=[d[0] for d in _DENIALS_THAT_MUST_BE_ALLOWED],
+)
+def test_the_guard_still_allows_a_genuine_denial(label: str, paragraph: str) -> None:
+    # The accepting side matters as much: this repo is REQUIRED to carry the denial while there is
+    # no published anchor feed, so a guard that refused it would forbid the correct document.
+    assert _guard_accepts(paragraph), (
+        f"the guard would reject a legitimate denial ({label}):\n  {paragraph}\n"
+        "Tightening the negation words must not make the required caveat unwritable."
     )

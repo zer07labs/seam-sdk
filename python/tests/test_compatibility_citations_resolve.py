@@ -187,10 +187,35 @@ def _sibling_relative_path(path: str) -> str:
 VENDORED = ("verify/docs/seam-event.v1.md",)
 
 
+#: `` `path/to/generated.pyi:106,163` `` — a comma-list. It line-anchors into a generated tree just as
+#: hard as an ordinary citation, and `CITATION` matches it not at all (the regex needs the closing
+#: backtick straight after the number). Three such citations sat in `PROGRESS.md` while the rule
+#: forbidding them was stated in the table one row above; the ban was enforced only against the
+#: spelling that happened to be checkable. Scanned separately rather than by widening `CITATION`,
+#: which would change what every other test in this file counts.
+COMMA_LIST_CITATION = re.compile(
+    r"`([\w./-]+\.[A-Za-z]\w*):(\d+(?:-\d+)?(?:,\d+(?:-\d+)?)+)`"
+)
+
+
 def _line_anchors_into_vendored(text: str) -> list[str]:
-    """Every line-anchored citation in `text` that names a vendored path. Empty is the good case."""
+    """Every line-anchored citation in `text` that names a vendored path. Empty is the good case.
+
+    Both spellings, for the reason its `GENERATED` sibling gives: the rule is about line-anchoring
+    into a tree that is refreshed whole, and a comma separating two line numbers does not make them
+    less line numbers.
+
+    `COMMA_LIST_CITATION` was added for exactly that reason — and only the generated rule was taught
+    it. So `` `verify/docs/seam-event.v1.md:100,200` `` line-anchored into the vendored spec
+    invisibly, which is issue #73's own class re-opened in the sibling rule, by the change that
+    closed it. Verified before this fix: the comma spelling was caught for `GENERATED` and slipped
+    past here.
+    """
     return [
-        m.group(0) for m in CITATION.finditer(text) if m.group(1).startswith(VENDORED)
+        m.group(0)
+        for pattern in (CITATION, COMMA_LIST_CITATION)
+        for m in pattern.finditer(text)
+        if m.group(1).startswith(VENDORED)
     ]
 
 
@@ -214,17 +239,6 @@ def _line_anchors_into_vendored(text: str) -> list[str]:
 #: stub trees" is asserted. `ts/dist` is excluded there on purpose: it is a TS *build* artifact
 #: `make clean` also removes, not a generated-stub tree, and no citation is ever pointed into it.
 GENERATED = ("ts/gen/", "python/seam_sdk/_gen/", "gen/")
-
-
-#: `` `path/to/generated.pyi:106,163` `` — a comma-list. It line-anchors into a generated tree just as
-#: hard as an ordinary citation, and `CITATION` matches it not at all (the regex needs the closing
-#: backtick straight after the number). Three such citations sat in `PROGRESS.md` while the rule
-#: forbidding them was stated in the table one row above; the ban was enforced only against the
-#: spelling that happened to be checkable. Scanned separately rather than by widening `CITATION`,
-#: which would change what every other test in this file counts.
-COMMA_LIST_CITATION = re.compile(
-    r"`([\w./-]+\.[A-Za-z]\w*):(\d+(?:-\d+)?(?:,\d+(?:-\d+)?)+)`"
-)
 
 
 def _line_anchors_into_generated(text: str) -> list[str]:
@@ -1562,3 +1576,52 @@ def test_the_smuggling_check_would_actually_fire() -> None:
     assert bound[0][1].startswith(VENDORED + GENERATED), (
         "the bound path is not recognised as protected, so the real check could not fire on it"
     )
+
+
+# ── The two line-anchor rules must stay the same rule ────────────────────────────────────────────
+# `_line_anchors_into_vendored` and `_line_anchors_into_generated` enforce one idea against two sets
+# of paths: do not line-anchor into a tree that is replaced wholesale. They were written separately,
+# and when `COMMA_LIST_CITATION` was added — precisely because "a comma separating two line numbers
+# does not make them less line numbers" — only the generated one was taught it. Measured before the
+# fix: `verify/docs/seam-event.v1.md:100,200` was caught for GENERATED and slipped past for VENDORED.
+#
+# That is issue #73's own class, reopened in the sibling rule by the change that closed it. These
+# tests exist so the next spelling added to one rule cannot be forgotten in the other.
+
+_ANCHOR_SPELLINGS = [
+    ("single line", "{path}:100"),
+    ("a range", "{path}:100-110"),
+    ("a comma list", "{path}:100,200"),
+    ("a range inside a comma list", "{path}:100-110,200"),
+]
+
+
+@pytest.mark.parametrize(
+    "label,template", _ANCHOR_SPELLINGS, ids=[s[0] for s in _ANCHOR_SPELLINGS]
+)
+def test_both_line_anchor_rules_catch_every_spelling(label: str, template: str) -> None:
+    for name, prefixes, detector in (
+        ("VENDORED", VENDORED, _line_anchors_into_vendored),
+        ("GENERATED", GENERATED, _line_anchors_into_generated),
+    ):
+        # A real path under each prefix, so the test exercises the prefix match too.
+        sample = prefixes[0]
+        if sample.endswith("/"):
+            sample += "seam/api/v1/seam_pb.ts"
+        text = "see `" + template.format(path=sample) + "`"
+        assert detector(text), (
+            f"_line_anchors_into_{name.lower()} misses {label} ({text}). The two rules enforce one "
+            "idea; teaching a spelling to one and not the other is how this defect got here."
+        )
+
+
+def test_a_citation_outside_those_trees_is_not_swept_up() -> None:
+    """The accepting side: these rules must only fire on the trees they name.
+
+    Without this, 'make both rules catch everything' has a trivially passing implementation — return
+    every citation — which would forbid every line number in the repo.
+    """
+    for template in (t for _, t in _ANCHOR_SPELLINGS):
+        text = "see `" + template.format(path="python/seam_sdk/crypto.py") + "`"
+        assert not _line_anchors_into_vendored(text), text
+        assert not _line_anchors_into_generated(text), text

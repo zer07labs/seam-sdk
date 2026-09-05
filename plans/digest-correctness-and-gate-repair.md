@@ -386,7 +386,27 @@ tests plus the shared vector); TS tests for each refused object type and each st
 
 ### Phase 4 — Guards that fire on the mutation they name
 
-**Status:** TODO
+**Status:** DONE. All four repairs landed, each demonstrated green-before / red-after against the
+mutation it names. Four things beyond the plan. (a) The `buf generate` scan found a fourth missed
+spelling (`echo x | buf generate`) once it was written per-command rather than per-line. (b)
+`test_packaging.py`'s new tests initially passed vacuously because `pytest.raises(Exception)` cannot
+catch `Skipped`/`Failed` — both derive from `BaseException`. (c) Item 4's first repair split the two
+causes by exception TYPE, which is not the discriminator: `python -m pip` without pip exits 1 rather
+than raising `FileNotFoundError`, so a missing tool was reported as a package defect; both tests
+missed it by forcing the `pip3` branch, where an absent executable really does raise. Replaced with a
+`--version` presence probe. (d) That probe exposed a third class the plan did not have — a builder
+that exits 0 and emits no `seam_sdk-*.whl` (this workstation's `/usr/bin/pip3` carries setuptools
+58.0.4, which predates PEP 621 support, so it builds `UNKNOWN-0.0.0` and reports success). Three
+classes, three messages, all three failing under `SEAM_REQUIRE_WHEEL_BUILD=1`. All four caught
+locally, before the gate.
+
+The verification round returned REVISE and found two more, both the phase's own subject: (e) the
+suite could not have run in CI at all — `import yaml` was undeclared, and an undeclared import is a
+collection error that aborts the whole run; and (f) the `buf generate` guard, the one with the most
+history behind it, had no calibration, so blinding its walker left the file green. Both fixed, plus
+a new `test_test_dependencies_are_declared.py` that closes (e)'s whole class rather than its
+instance. Six further findings closed; one accepted and recorded (the shell split is
+quoting-unaware). See PROGRESS.md's "Verification round" for the measurements.
 
 **Delivers:** four guards that currently miss their own subject now catch it, each proven red-first.
 
@@ -394,7 +414,10 @@ tests plus the shared vector); TS tests for each refused object type and each st
 
 **Files:** `python/tests/test_retracted_claims.py`,
 `python/tests/test_workflows_generate_through_the_makefile.py`,
-`python/tests/test_compatibility_citations_resolve.py`, `python/tests/test_packaging.py`.
+`python/tests/test_compatibility_citations_resolve.py`, `python/tests/test_packaging.py`,
+`.github/workflows/ci.yml` (the `SEAM_REQUIRE_WHEEL_BUILD` env, per criterion 6 — omitted from this
+list when the plan was written), and, added by the verification round,
+`python/tests/test_test_dependencies_are_declared.py` + `python/pyproject.toml`.
 
 **Approach.** Four narrow repairs, each demonstrated as currently-missed:
 
