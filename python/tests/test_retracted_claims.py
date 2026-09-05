@@ -192,6 +192,7 @@ def test_the_stale_adapters_pin_claim_does_not_return() -> None:
 # ── 2. Caveats this repo is not entitled to drop ──────────────────────────────────────────────────
 
 COMPATIBILITY = REPO / "COMPATIBILITY.md"
+CHANGELOG = REPO / "CHANGELOG.md"
 
 
 def test_the_truncation_caveat_is_present_and_unhedged() -> None:
@@ -276,6 +277,18 @@ def test_the_commitment_digest_exclusion_is_stated() -> None:
 #: So the rows are DISCOVERED and the two sets pinned equal. Deleting a row changes what is
 #: discovered; deleting a tuple changes the keys; either way the equality test below fails.
 _ROW_RE = re.compile(r"^\| \*\*(0\.7\.\d+ – 0\.7\.\d+)\*\*")
+#: CHANGELOG's advisory table spells the same bands without bold and without spaces around the dash.
+_CHANGELOG_ROW_RE = re.compile(r"^\| (0\.7\.\d+–0\.7\.\d+) \|")
+
+#: Every known-bad band this repo has ever published. This list may GROW and may never SHRINK: a
+#: release that was broken stays broken, and nothing was yanked, so each of these remains installable
+#: from Cloudsmith forever. That is what makes a frozen floor the right shape here rather than a
+#: symmetric equality — see the test below for why equality alone was not enough.
+_HISTORICAL_BANDS = frozenset({"0.7.13 – 0.7.15", "0.7.16 – 0.7.19", "0.7.39 – 0.7.43"})
+
+
+def _norm(band: str) -> str:
+    return band.replace(" ", "")
 
 
 def _rows_in_compatibility() -> set[str]:
@@ -284,6 +297,17 @@ def _rows_in_compatibility() -> set[str]:
         for m in (
             _ROW_RE.match(line)
             for line in COMPATIBILITY.read_text(encoding="utf-8").splitlines()
+        )
+        if m
+    }
+
+
+def _rows_in_changelog() -> set[str]:
+    return {
+        m.group(1)
+        for m in (
+            _CHANGELOG_ROW_RE.match(line)
+            for line in CHANGELOG.read_text(encoding="utf-8").splitlines()
         )
         if m
     }
@@ -326,8 +350,25 @@ def test_the_guarded_bands_are_exactly_the_documented_bands() -> None:
     assert guarded == documented, (
         f"COMPATIBILITY.md §3 documents {sorted(documented)} but this file guards "
         f"{sorted(guarded)}. A band in the document and not the list is unguarded; a band in the "
-        "list and not the document has lost the row that was its only barrier. Nothing was yanked, "
-        "so if a band genuinely stopped being known-bad, delete it from BOTH deliberately."
+        "list and not the document has lost the row that was its only barrier."
+    )
+
+    # Equality ALONE is not enough, and this is the correction to a first attempt at this test.
+    # Deleting a tuple and its row together shrinks both sides at once, so the equality still holds
+    # — which is exactly the mutation the verification round ran, and it stayed green (1184).
+    # A band is a permanent historical fact: nothing was yanked, so every one of these is still
+    # installable from Cloudsmith. The set may grow; it can never legitimately shrink.
+    assert _HISTORICAL_BANDS <= documented, (
+        f"COMPATIBILITY.md §3 has lost {sorted(_HISTORICAL_BANDS - documented)}. Those releases are "
+        "still installable — nothing was yanked — so removing the row removes the only warning a "
+        "consumer gets. These bands are history and do not expire."
+    )
+    # Third copy, in a different document, so silencing this needs three coordinated edits rather
+    # than two. CHANGELOG's advisory table is the other place a consumer is told.
+    changelog = {_norm(b) for b in _rows_in_changelog()}
+    assert {_norm(b) for b in _HISTORICAL_BANDS} <= changelog, (
+        f"CHANGELOG.md's advisory table has lost "
+        f"{sorted({_norm(b) for b in _HISTORICAL_BANDS} - changelog)}."
     )
 
 
