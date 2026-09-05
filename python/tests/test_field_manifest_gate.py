@@ -49,6 +49,19 @@ PY_EV_STUB = (
     / "seam_event_pb2.pyi"
 )
 TS_EV_STUB = REPO / "ts" / "gen" / "seam" / "event" / "v1" / "seam_event_pb.ts"
+#: The event grpc stub, read by the script's verb probe. Redirected here for the same reason as
+#: every other path: without it, ~200 runs in this module would read the REAL gen tree through
+#: that probe and couple this file's exit codes to the ambient checkout.
+PY_EV_GRPC_STUB = (
+    REPO
+    / "python"
+    / "seam_sdk"
+    / "_gen"
+    / "seam"
+    / "event"
+    / "v1"
+    / "seam_event_pb2_grpc.py"
+)
 LAG_FILE = REPO / "contract" / "expected-local-lag.txt"
 
 
@@ -79,10 +92,18 @@ def _seed_event_tree(scratch_dir: pathlib.Path) -> dict[str, pathlib.Path]:
     """
     dst = {
         "py_ev": scratch_dir / "seam_event_pb2.pyi",
-        "ts_ev": scratch_dir / "seam_event_pb.ts",
+        # Own directories: the verb probe globs the package DIRECTORY, so a flat scratch dir would
+        # pull this module's other copies into the event package's glob.
+        "ts_ev": scratch_dir / "tsevent" / "seam_event_pb.ts",
+        "py_ev_grpc": scratch_dir / "pyevent" / "seam_event_pb2_grpc.py",
         "event_manifest": scratch_dir / "event-field-manifest.txt",
     }
-    for key, src in (("py_ev", PY_EV_STUB), ("ts_ev", TS_EV_STUB)):
+    for key, src in (
+        ("py_ev", PY_EV_STUB),
+        ("ts_ev", TS_EV_STUB),
+        ("py_ev_grpc", PY_EV_GRPC_STUB),
+    ):
+        dst[key].parent.mkdir(parents=True, exist_ok=True)
         if not dst[key].exists():
             dst[key].write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
     return dst
@@ -119,6 +140,7 @@ def _run(
         #     enough, and the stub copies are read-only for this module — nothing here mutates them.
         "SEAM_EVENT_FIELD_MANIFEST": str(_ev["event_manifest"]),
         "SEAM_PY_EV": str(_ev["py_ev"]),
+        "SEAM_PY_EV_GRPC": str(_ev["py_ev_grpc"]),
         "SEAM_TS_EV": str(_ev["ts_ev"]),
     }
     # Only the enum-mutation tests need these — they drive the real script against SCRATCH COPIES of

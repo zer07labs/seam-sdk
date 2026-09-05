@@ -479,7 +479,24 @@ class.
 
 ### Phase 5 — The verb surface nobody watches
 
-**Status:** TODO
+**Status:** DONE. One divergence from the plan, in the direction the plan's own reasoning points:
+rather than write a service-detection probe beside the existing verb extractors, the extractors were
+parameterised by package so the event probe calls THE rule instead of a copy of it — the api side
+verified byte-identical (42 verbs per language) before anything was added. Two findings beyond the
+plan: exit 7 already preempted exit 2 before this phase (via the enum precondition), so `CLAUDE.md`
+was documenting three reachable codes when there were four; and two planning-time notes in
+PROGRESS.md's repo map claimed Phase 5 would parameterise the FIELD extractors, which were already
+parameterised — corrected in place.
+
+The verification round returned REVISE and found the Delivers line was false as written: the probe
+watched two FILENAMES, so a verb arriving in a second `.proto` of the same package — buf's ordinary
+layout, and the most likely way one would actually arrive — still exited 0. Now globbed over the
+package directory. It also measured only RPCs while the refusal said "zero services", so a
+zero-method service passed; service declarations are matched now in both languages. The "one rule,
+not two" test was itself vacuous (green on a fully blinded probe, red on a byte-identical reformat)
+and is now whitespace-tolerant and honestly scoped as structural-only. Six smaller items closed. One
+operational incident is recorded in PROGRESS.md: a measurement run rewrote two committed manifests
+because zsh does not word-split `env $VARS cmd`; both were restored byte-identical.
 
 **Delivers:** a service landing on `seam.event.v1` can no longer arrive with every gate green.
 

@@ -9,8 +9,10 @@ could land on the outbox contract and reach every consumer through this SDK with
 Mirrors `test_field_manifest_gate.py` down to the `_run`/manifests fixture shape, and for the same
 non-negotiable reason: **every case drives the REAL script against SCRATCH COPIES of the stubs.**
 `python/seam_sdk/_gen` and `ts/gen` are gitignored, so a test that corrupted them could not restore
-them with git and recovery would need `make generate` plus a BSR login. `SEAM_PY_EV`, `SEAM_TS_EV`
-and `SEAM_EVENT_FIELD_MANIFEST` exist for that, and nothing in CI sets them.
+them with git and recovery would need `make generate` plus a BSR login. `SEAM_PY_EV`,
+`SEAM_PY_EV_GRPC`, `SEAM_TS_EV` and `SEAM_EVENT_FIELD_MANIFEST` exist for that, and nothing in CI
+sets them. `_run` redirects every `SEAM_*` the script reads — all nine — so no case can reach a
+real tree even by omission.
 
 The second discipline is that no case asserts against the ambient checkout. Every manifest is written
 from the scratch copies the case itself constructed, so a baseline is what this test built, never what
@@ -22,6 +24,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import re
 import subprocess
 
 import pytest
@@ -39,6 +42,18 @@ PY_EV = (
     / "seam_event_pb2.pyi"
 )
 TS_EV = REPO / "ts" / "gen" / "seam" / "event" / "v1" / "seam_event_pb.ts"
+#: The event package's grpc stub — where RPCs live. A `.pyi` message stub carries fields and no
+#: verbs at all, so no override of PY_EV could ever reach a service; the verb probe needs its own.
+PY_EV_GRPC = (
+    REPO
+    / "python"
+    / "seam_sdk"
+    / "_gen"
+    / "seam"
+    / "event"
+    / "v1"
+    / "seam_event_pb2_grpc.py"
+)
 PY_API = REPO / "python" / "seam_sdk" / "_gen" / "seam" / "api" / "v1" / "seam_pb2.pyi"
 TS_API = REPO / "ts" / "gen" / "seam" / "api" / "v1" / "seam_pb.ts"
 COMMITTED = REPO / "contract" / "event-field-manifest.txt"
@@ -52,7 +67,7 @@ PRECONDITION_FAILED = 7
 
 
 def _require_stubs() -> None:
-    for f in (PY_EV, TS_EV, PY_API, TS_API):
+    for f in (PY_EV, PY_EV_GRPC, TS_EV, PY_API, TS_API):
         if not f.exists():
             pytest.skip(f"generated stubs absent ({f}); run 'make generate' first")
 
@@ -71,6 +86,7 @@ def _run(
         "STREAM": stream,
         "EVENTS": "1",
         "SEAM_PY_EV": str(scratch["py_ev"]),
+        "SEAM_PY_EV_GRPC": str(scratch["py_ev_grpc"]),
         "SEAM_TS_EV": str(scratch["ts_ev"]),
         "SEAM_PY_GEN": str(scratch["py_api"]),
         "SEAM_TS_GEN": str(scratch["ts_api"]),
@@ -100,7 +116,13 @@ def scratch(tmp_path: pathlib.Path):
     _require_stubs()
     s = {
         "py_ev": tmp_path / "seam_event_pb2.pyi",
-        "ts_ev": tmp_path / "seam_event_pb.ts",
+        # The two globbed paths get their OWN directories, mirroring the real gen tree
+        # (`python/seam_sdk/_gen/seam/event/v1/`, `ts/gen/seam/event/v1/`). The probe globs the
+        # package directory rather than one filename — a package is not a file — so a flat scratch
+        # dir would put the API stubs inside the event package's glob and make the fixture describe
+        # a layout that does not exist.
+        "py_ev_grpc": tmp_path / "pyevent" / "seam_event_pb2_grpc.py",
+        "ts_ev": tmp_path / "tsevent" / "seam_event_pb.ts",
         "py_api": tmp_path / "seam_pb2.pyi",
         "ts_api": tmp_path / "seam_pb.ts",
         "event_manifest": tmp_path / "event-field-manifest.txt",
@@ -110,10 +132,12 @@ def scratch(tmp_path: pathlib.Path):
     }
     for key, src in (
         ("py_ev", PY_EV),
+        ("py_ev_grpc", PY_EV_GRPC),
         ("ts_ev", TS_EV),
         ("py_api", PY_API),
         ("ts_api", TS_API),
     ):
+        s[key].parent.mkdir(parents=True, exist_ok=True)
         s[key].write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
     r = _run(s, "--write-manifest")
     assert r.returncode == OK, r.stderr
@@ -542,7 +566,7 @@ def test_claude_mds_gotcha_names_the_exit_codes_this_gate_actually_produces(
     Nothing guarded the paragraph either time; the script's own NOTE ends "See CLAUDE.md's Gotchas",
     so a reader was being sent from corrected output to an uncorrected claim.
 
-    So all three codes are measured here and required to appear in that paragraph. This is not a
+    So all four codes are measured here and required to appear in that paragraph. This is not a
     grep for plausible-looking numbers: each is produced by a run this test constructs, and the
     paragraph must name every one of them.
     """
@@ -602,7 +626,20 @@ def test_claude_mds_gotcha_names_the_exit_codes_this_gate_actually_produces(
         + two.stdout
     )
 
-    for code in ("6", "8", "2"):
+    # 7 — a structural precondition, which preempts even the exit-2 mirror check above. Measured
+    # rather than assumed: the same run that produced 2 a moment ago produces 7 once a verb is
+    # grafted in, because a precondition failure means the surface is not one the gate can read.
+    scratch["py_ev_grpc"].write_text(
+        scratch["py_ev_grpc"].read_text(encoding="utf-8") + _PY_RPC_GRAFT,
+        encoding="utf-8",
+    )
+    seven = _run(scratch)
+    assert seven.returncode == PRECONDITION_FAILED, (
+        "a service in seam.event.v1 must outrank the mirror-field refusal still in place from the "
+        f"exit-2 case above:\n{seven.returncode}\n{seven.stdout}\n{seven.stderr}"
+    )
+
+    for code in ("6", "8", "2", "7"):
         assert f"**{code}**" in para, (
             f"CLAUDE.md's Gotchas paragraph does not name exit {code}, which this test just "
             f"measured the documented command producing:\n{para}"
@@ -663,3 +700,207 @@ def test_the_recorded_api_lag_note_does_not_claim_exit_6_when_the_event_surface_
     )
     assert "does NOT exit 6" in out, out
     assert "ChainHeadAttestation/notary_receipt" in out, out
+
+
+# ── The VERB surface, one level up from the fields ───────────────────────────────────────────────
+# `contract/rpc-manifest.txt` says it declares "the whole verb surface". Both extractors were pinned
+# to `seam.api.v1` and read only the api stubs, so an RPC landing in `seam.event.v1` was invisible in
+# BOTH languages at once — no probe named it, no manifest covered it, and every gate stayed green.
+# That is the same shape as the field-level gap #88 closed, one level up.
+#
+# The gate now refuses a non-empty event verb surface with exit 7 (structural precondition). These
+# tests drive the REAL script against scratch copies, never the gitignored originals.
+
+#: A python RPC as the generated grpc stub actually spells it — the registered-method call carrying
+#: the fully-qualified path. This is the string the extractor greps for, not an approximation of it.
+_PY_RPC_GRAFT = (
+    "\n    self.Foo = channel.unary_unary('/seam.event.v1.SeamEvents/Foo')\n"
+)
+
+#: The TS equivalent: connect-es annotates each verb with its fully-qualified name in a comment.
+_TS_RPC_GRAFT = "\n// @generated from rpc seam.event.v1.SeamEvents.Foo\n"
+
+
+def test_an_rpc_grafted_into_the_python_event_stub_fails_the_precondition(
+    scratch,
+) -> None:
+    """One language alone must be enough. A probe that needed BOTH is the blindness, not the fix."""
+    scratch["py_ev_grpc"].write_text(
+        scratch["py_ev_grpc"].read_text(encoding="utf-8") + _PY_RPC_GRAFT,
+        encoding="utf-8",
+    )
+    r = _run(scratch)
+    assert r.returncode == PRECONDITION_FAILED, (
+        f"expected exit {PRECONDITION_FAILED} for a service in seam.event.v1, got "
+        f"{r.returncode}\n{r.stderr}"
+    )
+    assert "SeamEvents/Foo" in r.stderr, (
+        f"the refusal must NAME the verb it found, or it cannot be acted on:\n{r.stderr}"
+    )
+    assert "python" in r.stderr, (
+        f"the refusal must say which language carried it:\n{r.stderr}"
+    )
+
+
+def test_an_rpc_grafted_into_the_ts_event_stub_fails_the_precondition(scratch) -> None:
+    """Independently of Python — the TS half needs no new override, `SEAM_TS_EV` already reaches it."""
+    scratch["ts_ev"].write_text(
+        scratch["ts_ev"].read_text(encoding="utf-8") + _TS_RPC_GRAFT, encoding="utf-8"
+    )
+    r = _run(scratch)
+    assert r.returncode == PRECONDITION_FAILED, (
+        f"expected exit {PRECONDITION_FAILED}, got {r.returncode}\n{r.stderr}"
+    )
+    assert "SeamEvents/Foo" in r.stderr, r.stderr
+    assert " ts " in r.stderr or "(ts" in r.stderr or "in ts" in r.stderr, (
+        f"the refusal must say which language carried it:\n{r.stderr}"
+    )
+
+
+def test_the_unmodified_event_surface_declares_no_verbs(scratch) -> None:
+    """The negative control. Without it, "always exit 7" would satisfy both tests above.
+
+    This is also the live assertion that the invariant the tripwire defends is TRUE today: the
+    committed event grpc stub is a scaffold with no service in it.
+    """
+    r = _run(scratch)
+    assert r.returncode == OK, (
+        "the unmodified event surface must be clean — if this fails, seam.event.v1 has grown a "
+        f"service and the tripwire is reporting a real change:\n{r.stderr}"
+    )
+    assert "ZERO services" not in r.stderr, r.stderr
+
+
+def test_the_real_generated_stub_has_no_service_in_it() -> None:
+    """The invariant, asserted against the REAL tree rather than a copy.
+
+    "Generated", not "committed": `python/seam_sdk/_gen/` is gitignored (`.gitignore:18`). Calling it
+    committed would contradict this repo's first Gotcha in a test whose whole job is to be precise
+    about what the tree actually contains.
+
+    The scratch fixture copies the stub, so every test above would still pass if the committed file
+    grew a service — they would just be testing a faithful copy of a broken invariant.
+    """
+    _require_stubs()
+    text = PY_EV_GRPC.read_text(encoding="utf-8")
+    assert "seam.event.v1." not in text, (
+        "the generated seam.event.v1 grpc stub declares a service. That is not a test failure — it "
+        "is the contract change this tripwire exists to announce. See the gate's own message."
+    )
+
+
+def test_the_verb_probe_uses_the_same_extractor_as_the_api_surface() -> None:
+    """STRUCTURAL only: the verb rule is defined once and called twice, not copied.
+
+    Read what this does and does not do. It inspects the SHELL SOURCE, so it is green on a gate that
+    detects nothing and would go red on a purely cosmetic reformat. It is therefore **not** a guard
+    on the probe's behaviour, and must never be counted as one — the graft tests above are what
+    prove the gate works. The verification round caught exactly that overclaim here: this test
+    passed while the probe was mutated to `if false; then`.
+
+    It is still worth keeping, because "the rule lives in one place" is a property no behavioural
+    test can observe — two copies that agree today behave identically until one is edited. Matched
+    with whitespace-tolerant patterns so a reformat does not fail it; only re-inlining a
+    package-specific grep does.
+    """
+    script = (REPO / "scripts" / "check-contract.sh").read_text(encoding="utf-8")
+    for label, pattern in (
+        (
+            "the event probe calls the shared python extractor",
+            r"rpcs_python_in\s+'seam\.event\.v1'",
+        ),
+        (
+            "the event probe calls the shared ts extractor",
+            r"rpcs_ts_in\s+'seam\.event\.v1'",
+        ),
+        (
+            "the api python extractor is a wrapper over the shared rule",
+            r"rpcs_python\(\)\s*\{\s*rpcs_python_in\s+'seam\.api\.v1'",
+        ),
+        (
+            "the api ts extractor is a wrapper over the shared rule",
+            r"rpcs_ts\(\)\s*\{\s*rpcs_ts_in\s+'seam\.api\.v1'",
+        ),
+    ):
+        assert re.search(pattern, script), (
+            f"{label}: no longer true. The verb-extraction rule has been copied rather than "
+            "called, which is the defect this repo keeps finding — two copies agree until one is "
+            "edited, and then only one of them is fixed."
+        )
+
+
+#: A service registration as grpc-python actually emits it: the name quoted and UNSLASHED, distinct
+#: from the RPC form `'/pkg.Svc/Method'`. A service with zero methods emits this and no RPC literal.
+_PY_SERVICE_GRAFT = (
+    "\n    generic_handler = grpc.method_handlers_generic_handler(\n"
+    "            'seam.event.v1.SeamEventRelay', {})\n"
+)
+
+#: The protobuf-es equivalent.
+_TS_SERVICE_GRAFT = (
+    "\n/**\n * @generated from service seam.event.v1.SeamEventRelay\n */\n"
+)
+
+
+def test_a_verb_in_a_second_file_of_the_same_package_is_caught(scratch) -> None:
+    """A package is not a file, and the first version of this probe assumed it was.
+
+    buf's ordinary layout puts a service in its own `.proto` — `seam/event/v1/seam_event_service.proto`
+    — and codegen emits `seam_event_service_pb2_grpc.py` beside the message stub. Probing two
+    hardcoded filenames therefore missed the most likely way a verb would actually arrive. Measured
+    before the fix: exit 0, every gate green. Found by the verification round, not by the plan.
+    """
+    (scratch["py_ev_grpc"].parent / "seam_event_service_pb2_grpc.py").write_text(
+        _PY_RPC_GRAFT, encoding="utf-8"
+    )
+    r = _run(scratch)
+    assert r.returncode == PRECONDITION_FAILED, (
+        f"a verb in a second file of seam.event.v1 must still be refused, got {r.returncode}\n"
+        f"{r.stderr}"
+    )
+    assert "SeamEvents/Foo" in r.stderr, r.stderr
+
+
+def test_a_verb_in_a_second_ts_file_of_the_same_package_is_caught(scratch) -> None:
+    """The TS half of the same gap, independently."""
+    (scratch["ts_ev"].parent / "seam_event_service_pb.ts").write_text(
+        _TS_RPC_GRAFT, encoding="utf-8"
+    )
+    r = _run(scratch)
+    assert r.returncode == PRECONDITION_FAILED, (
+        f"expected {PRECONDITION_FAILED}, got {r.returncode}\n{r.stderr}"
+    )
+    assert "SeamEvents/Foo" in r.stderr, r.stderr
+
+
+@pytest.mark.parametrize(
+    "key,graft,language",
+    [
+        ("py_ev_grpc", _PY_SERVICE_GRAFT, "python"),
+        ("ts_ev", _TS_SERVICE_GRAFT, "ts"),
+    ],
+    ids=["python", "ts"],
+)
+def test_a_service_with_no_methods_is_caught(
+    scratch, key: str, graft: str, language: str
+) -> None:
+    """The refusal says "ZERO services"; it must therefore measure services, not only verbs.
+
+    A service declaring no methods emits no `'/pkg.Svc/Method'` literal in either language, so the
+    RPC-only probe let one through while its own message claimed otherwise — a check named for
+    something other than what it measured, which is this repo's whole subject. Both generators do
+    emit the service NAME, and that is what is matched now.
+    """
+    scratch[key].write_text(
+        scratch[key].read_text(encoding="utf-8") + graft, encoding="utf-8"
+    )
+    r = _run(scratch)
+    assert r.returncode == PRECONDITION_FAILED, (
+        f"a zero-method service in seam.event.v1 must be refused, got {r.returncode}\n{r.stderr}"
+    )
+    assert "SeamEventRelay" in r.stderr, (
+        f"the refusal must name the service it found:\n{r.stderr}"
+    )
+    assert f"a SERVICE in {language}" in r.stderr, (
+        f"the refusal must say it found a SERVICE (not an RPC) and in which language:\n{r.stderr}"
+    )

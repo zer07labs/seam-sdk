@@ -573,6 +573,16 @@ def test_sibling_citations_skip_cleanly_with_no_sibling_repos_checked_out(
 #: needs no maintenance when unrelated edits shift a file.
 ANCHORED = [
     ("COMPATIBILITY.md", "CHANGELOG.md", "No yank"),
+    # The `--write-manifest` delete-scoping comment. Anchored because this citation was WRONG for two
+    # rounds and no check could tell: it pointed at the FIELD-manifest write, and each time the file
+    # moved the number was faithfully remapped — which preserves a wrong target rather than finding
+    # it. A remap keeps a citation pointing where it already pointed; only an anchor checks that
+    # where it points is where it claims.
+    (
+        "PROGRESS.md",
+        "scripts/check-contract.sh",
+        "# Scoped to the API write, deliberately",
+    ),
     # ── §10 / the 2026-09-04 DECISIONS entries ───────────────────────────────────────────────────
     # Both of these were written WRONG on the first pass and the guard did not notice, because a bare
     # line number resolves whatever it lands on: `ts/src/crypto.ts:270` pointed into an error
@@ -938,12 +948,17 @@ CLAIM_LINES = {
         "PROGRESS.md",
         "scripts/check-contract.sh",
         "fields_python() {",
-    ): "**Phase 5 parameterises both on stub path + package**",
+    ): "**Phase 5 did NOT touch them**",
     (
         "PROGRESS.md",
         "scripts/check-contract.sh",
         "fields_ts() {",
-    ): "**Phase 5 parameterises both on stub path + package**",
+    ): "**Phase 5 did NOT touch them**",
+    (
+        "PROGRESS.md",
+        "scripts/check-contract.sh",
+        "# Scoped to the API write, deliberately",
+    ): "**Re-targeted:** it pointed at the FIELD-manifest write for two rounds",
     (
         "PROGRESS.md",
         "scripts/check-contract.sh",

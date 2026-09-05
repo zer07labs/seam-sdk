@@ -33,14 +33,24 @@ deliberately links nothing of Seam's.
   them. The gate recognises exactly that case and downgrades its output to a NOTE naming
   `contract/expected-local-lag.txt` — it still exits **6**, since CI is the authority, not this checkout.
   Anything the gate names beyond exactly those five fields is real drift, not this known lag.
-  **Read the exit code, not just this bullet.** Two other codes are reachable from the same command
-  and neither is the recorded lag. If `seam.event.v1`'s field surface disagrees with
+  **Read the exit code, not just this bullet.** Several other codes are reachable from the same
+  command — 5 (RPC-manifest drift), 3 (stubs absent) and 1 among them — and none is the recorded lag.
+  Three matter here. If `seam.event.v1`'s field surface disagrees with
   `contract/event-field-manifest.txt`, the run exits **8** — 8 exists precisely so an event
   regression cannot arrive wearing the code this bullet tells you to read past — and the NOTE then
   says so instead of claiming 6. But if the disagreement is one of the **four streamed-payload mirror
   fields** (`session_lifecycle`, `chain_head_attestation`, `ciphertext_digest`,
   `AuditEntryEvent.actor`), `STREAM=1` refuses earlier with exit **2** and no NOTE is printed at all.
-  Those three codes — 6, 8, 2 — are pinned against the gate's real behaviour by
+  Earlier still — ahead of all three — is exit **7**, a structural precondition of the event gate:
+  `seam.event.v1` is asserted to have zero enums, zero nested messages, and **zero services**. The
+  verb clause is the newest: `contract/rpc-manifest.txt` covers `seam.api.v1` only, so a service
+  landing in the event package would be declared nowhere and named by no probe in either language,
+  and would ship unwired with every gate green. It is probed over the package **directory**, not two
+  filenames — a service usually arrives in its own `.proto`, hence its own generated file — and it
+  matches service declarations as well as RPCs, since a service with no methods emits no RPC literal
+  at all. 7 preempting 2 is not new — the enum clause always did — and it is the right order, because
+  a failed precondition means the surface being compared is not the surface the gate knows how to
+  read. Those four codes — 6, 8, 2, 7 — are pinned against the gate's real behaviour by
   `python/tests/test_event_field_manifest_gate.py`, so this paragraph cannot drift from it silently.
 
 <!-- Shared cross-repo context (zer07labs/seam, cloned as a sibling). -->

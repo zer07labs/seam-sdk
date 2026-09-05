@@ -96,6 +96,13 @@ PY_GRPC="python/seam_sdk/_gen/seam/api/v1/seam_pb2_grpc.py"
 # event tree could not restore it (`python/seam_sdk/_gen` and `ts/gen` are gitignored), and recovery
 # would need `make generate` and a BSR login.
 PY_EV="${SEAM_PY_EV:-python/seam_sdk/_gen/seam/event/v1/seam_event_pb2.pyi}"
+# The event package's grpc stub. Read by the VERB probe below, and overridable for the same reason
+# every other path here is: a test must be able to graft a service into a COPY. It needs its own
+# variable rather than reusing SEAM_PY_EV because RPCs do not appear in a `.pyi` message stub at all
+# — the `.pyi` carries fields, the `_grpc.py` carries verbs — so no override of PY_EV could reach
+# them. Today this file is a 159-byte scaffold with no services in it, which is the invariant the
+# probe exists to defend.
+PY_EV_GRPC="${SEAM_PY_EV_GRPC:-python/seam_sdk/_gen/seam/event/v1/seam_event_pb2_grpc.py}"
 TS_GEN="${SEAM_TS_GEN:-ts/gen/seam/api/v1/seam_pb.ts}"
 TS_EV="${SEAM_TS_EV:-ts/gen/seam/event/v1/seam_event_pb.ts}"
 MANIFEST="${SEAM_RPC_MANIFEST:-contract/rpc-manifest.txt}"
@@ -115,7 +122,7 @@ note() { echo "  $*"; }
 # A stub file must exist before we can probe it — a missing file is "you didn't generate", not "absent
 # symbol"; those are different failures and conflating them would hide a forgotten `make generate`.
 missing=0
-for f in "$PY_GEN" "$PY_GRPC" "$PY_EV" "$TS_GEN" "$TS_EV"; do
+for f in "$PY_GEN" "$PY_GRPC" "$PY_EV" "$PY_EV_GRPC" "$TS_GEN" "$TS_EV"; do
   if [ ! -f "$f" ]; then
     err "generated stub not found: $f"
     missing=1
@@ -209,15 +216,30 @@ probe_event() {
 # Reading them independently is what makes a stale ts/gen beside a fresh python/_gen visible; deriving
 # one from the other would let either vouch for the other, which is exactly what this script refuses to
 # do everywhere else.
-rpcs_python() {
-  grep -oE "'/seam\.api\.v1\.[A-Za-z0-9_]+/[A-Za-z0-9_]+'" "$PY_GRPC" \
-    | tr -d "'" | sed 's|^/seam\.api\.v1\.||' | sort -u
+# Parameterised by PACKAGE so there is exactly ONE verb-extraction rule per language. The event
+# surface is probed with the same functions and a different package (see assert_event_verb_surface),
+# rather than a second pair of greps that could drift from these — which is the failure this repo
+# keeps finding: not a missing check, but a rule living in two places with one copy incomplete.
+# $1 is a RAW package (`seam.api.v1`), $2 the file to read. Escaped INSIDE, matching `fields_ts`
+# below, which already takes a raw package and escapes it for the documented reason: unescaped,
+# `seam.api.v1` is an ERE whose dots match any character, so it would also match `seamXapiYv1`.
+# Taking a pre-escaped argument instead would state that requirement only in a comment and make a
+# future caller's over-match SILENT — one convention per file, enforced by the code rather than read.
+rpcs_python_in() {
+  local pkg="${1//./\\.}"
+  grep -oE "'/$pkg\.[A-Za-z0-9_]+/[A-Za-z0-9_]+'" "$2" \
+    | tr -d "'" | sed "s|^/$pkg\.||" | LC_ALL=C sort -u
 }
 
-rpcs_ts() {
-  grep -oE '@generated from rpc seam\.api\.v1\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+' "$TS_GEN" \
-    | sed 's|^@generated from rpc seam\.api\.v1\.||' | tr '.' '/' | sort -u
+rpcs_ts_in() {
+  local pkg="${1//./\\.}"
+  grep -oE "@generated from rpc $pkg\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+" "$2" \
+    | sed "s|^@generated from rpc $pkg\.||" | tr '.' '/' | LC_ALL=C sort -u
 }
+
+rpcs_python() { rpcs_python_in 'seam.api.v1' "$PY_GRPC"; }
+
+rpcs_ts() { rpcs_ts_in 'seam.api.v1' "$TS_GEN"; }
 
 # The manifest, minus comments and blank lines.
 manifest_rpcs() {
@@ -525,6 +547,61 @@ assert_event_surface_preconditions() {
     err "while going blind to them; an enum has no event-side extractor at all. Extend the extractors"
     err "deliberately — with the concrete new shape in hand — and add an enum partition to"
     err "$EVENT_FIELD_MANIFEST before removing this refusal."
+    exit 7
+  fi
+
+  # ── The VERB surface, one level up from the fields above ──────────────────────────────────────
+  # `contract/rpc-manifest.txt` claims to declare "the whole verb surface", but both extractors are
+  # pinned to seam.api.v1 and read only the api stubs. So an RPC landing in seam.event.v1 is
+  # invisible in BOTH languages at once — the same shape as the field-level gap #88 closed, one
+  # level up, and this repo's own named failure class.
+  #
+  # A tripwire rather than a second manifest: seam.event.v1 declaring zero services is a real
+  # current invariant (the python grpc stub is a scaffold with no service in it), and the failure
+  # mode to remove is "a verb arrived and nobody noticed". Extending rpc-manifest.txt to a second
+  # package needs a format decision — one file with package-qualified names, or two files — and
+  # that decision belongs to the change that actually lands a verb, with the shape in hand.
+  #
+  # Probed with rpcs_python_in/rpcs_ts_in — THE verb extractors, not a copy of them. Each language
+  # is read independently, because a one-language probe is exactly the blindness being removed.
+  # Probed over the whole PACKAGE DIRECTORY, not two hardcoded filenames. A package is not a file:
+  # buf's ordinary layout puts a service in its own `.proto` (`seam/event/v1/seam_event_service.proto`),
+  # and codegen would emit `seam_event_service_pb2_grpc.py` / `seam_event_service_pb.ts` BESIDE the
+  # ones named above. Measured before this glob existed: a verb in such a file exited 0 with every
+  # gate green — the exact blindness this probe is named after, one directory entry over.
+  local py_dir ts_dir py_verbs ts_verbs py_svc ts_svc
+  py_dir="$(dirname "$PY_EV_GRPC")"
+  ts_dir="$(dirname "$TS_EV")"
+  py_verbs="$(for f in "$py_dir"/*_pb2_grpc.py; do
+    [ -f "$f" ] && rpcs_python_in 'seam.event.v1' "$f"
+  done | LC_ALL=C sort -u)"
+  ts_verbs="$(for f in "$ts_dir"/*_pb.ts; do
+    [ -f "$f" ] && rpcs_ts_in 'seam.event.v1' "$f"
+  done | LC_ALL=C sort -u)"
+
+  # Verbs are not the whole claim. A service with ZERO methods emits no `'/pkg.Svc/Method'` literal
+  # in either language, so an RPC-only probe would let one through while the refusal says "ZERO
+  # services" — a message describing something other than what it measures. The service NAME is what
+  # each generator emits regardless: python registers it quoted and unslashed
+  # (`'seam.event.v1.Svc'`, via method_handlers_generic_handler / add_registered_method_handlers),
+  # protobuf-es annotates it. Both are matched here so the refusal means what it says.
+  py_svc="$(grep -hoE "'seam\.event\.v1\.[A-Za-z0-9_]+'" "$py_dir"/*_pb2_grpc.py 2>/dev/null \
+    | tr -d "'" | sed 's|^seam\.event\.v1\.||' | LC_ALL=C sort -u)"
+  ts_svc="$(grep -hoE '@generated from service seam\.event\.v1\.[A-Za-z0-9_]+' "$ts_dir"/*_pb.ts 2>/dev/null \
+    | sed 's|^@generated from service seam\.event\.v1\.||' | LC_ALL=C sort -u)"
+
+  if [ -n "$py_verbs" ] || [ -n "$ts_verbs" ] || [ -n "$py_svc" ] || [ -n "$ts_svc" ]; then
+    err "a structural precondition of the EVENT gate failed: seam.event.v1 is asserted to declare"
+    err "ZERO services, and the generated stubs now declare at least one."
+    if [ -n "$py_svc" ];   then err "  a SERVICE in python ($py_dir):"; echo "$py_svc"   | sed 's|^|    |' >&2; fi
+    if [ -n "$py_verbs" ]; then err "  RPCs in python ($py_dir):";      echo "$py_verbs" | sed 's|^|    |' >&2; fi
+    if [ -n "$ts_svc" ];   then err "  a SERVICE in ts ($ts_dir):";     echo "$ts_svc"   | sed 's|^|    |' >&2; fi
+    if [ -n "$ts_verbs" ]; then err "  RPCs in ts ($ts_dir):";          echo "$ts_verbs" | sed 's|^|    |' >&2; fi
+    err "This is not something to work around. contract/rpc-manifest.txt covers seam.api.v1 ONLY, so"
+    err "these are declared nowhere and no language-level probe would see them: they would ship"
+    err "unwired and every gate would stay green. Decide how the manifest carries a second package —"
+    err "package-qualified names in one file, or a second file — wire the verbs into the hand-written"
+    err "clients or record why not, and only then remove this refusal."
     exit 7
   fi
 }

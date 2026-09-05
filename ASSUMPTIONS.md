@@ -743,3 +743,26 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   `go/crypto/tct_exp_vector_test.go`.
 - **Status:** UNCONFIRMED. Not a design question — an unrun test, recorded as such rather than
   written blind.
+
+## `contract/rpc-manifest.txt` covers one package, and Phase 5 shipped a tripwire rather than extending it
+
+- **Assumed:** `seam.event.v1` declares zero services today. This is **measured**, not assumed —
+  `python/seam_sdk/_gen/seam/event/v1/seam_event_pb2_grpc.py` is a 159-byte scaffold with no service
+  block, and a test asserts it against the real committed stub rather than the fixture's copy.
+- **Chose:** refuse a non-empty event verb surface with exit 7 (structural precondition), instead of
+  extending `contract/rpc-manifest.txt` to a second package. The manifest's entries are bare
+  `Service/Method` names with no package qualifier, so covering two packages needs a format decision:
+  package-qualify every line in one file, or add a second file. Both are defensible and the choice
+  changes `--write-manifest`, `manifest_rpcs`, and every existing line.
+- **Alternatives:** pick a format now and extend the manifest. Rejected because the manifest would
+  have zero event entries, so the format would be chosen against an empty set and discovered wrong by
+  the first real verb — and because a tripwire converts "a verb arrived unnoticed" from silent to
+  loud, which is the whole failure mode, without committing to a shape.
+- **Blast radius if wrong:** if a verb lands on `seam.event.v1`, CI goes red with exit 7 and a message
+  naming the verb and the decision to make. That is the intended behaviour, not a defect — but it
+  *will* block the branch that lands it until the format decision is made, so whoever lands the first
+  event RPC pays for this deferral in the same PR.
+- **Owner / re-open trigger:** the first `seam.event.v1` service. The gate's own message states the
+  decision and the two candidate shapes.
+- **Status:** UNCONFIRMED as a design choice — deliberately deferred, with the trigger wired to fire
+  loudly rather than left to be noticed.

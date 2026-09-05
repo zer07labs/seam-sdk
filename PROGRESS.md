@@ -1046,12 +1046,12 @@ them change what the phases do:
 | `.github/workflows/ci.yml` (cont.) | At `960cf81`: the smoke step's `kill "$pid"` (line 290), immediately followed by `exit 0` — it never waited for the process it started. Replaced by `reap()`. |
 | `.github/workflows/ci.yml:336-347` | The python live step (the `pytest` line is `.github/workflows/ci.yml:346`). Phase 2 added an `if: failure()` log dump + artifact upload at the **end of the job**, after the TypeScript step at `.github/workflows/ci.yml:348` — a step is evaluated at its own position, so anything placed earlier cannot see a TypeScript failure. |
 | `.github/workflows/ci.yml:704` | `ADVISORY: integration,spec-pin`. Advisory means *may skip*, not *may fail* — a red `integration` still reddens `ci-ok`, which lists it at `.github/workflows/ci.yml:689`. |
-| `scripts/check-contract.sh:252` · `scripts/check-contract.sh:272` | `fields_python` and `fields_ts`. **Phase 5 parameterises both on stub path + package** — measured, they yield 90/90 on the event stubs with zero one-sided entries. Two full citations on one row, not `` `:248` `` as a bare number: a pathless line reference matches `CITATION` not at all, so it is invisible to every check in `test_compatibility_citations_resolve.py`. Both needles are in `ANCHORED` and bound to this row by `CLAIM_LINES`. |
-| `scripts/check-contract.sh:295` | `manifest_fields` — its stripper claims every `#`-free line, which is why the event surface cannot share `contract/field-manifest.txt`. |
-| `scripts/check-contract.sh:566-575` | `--write-manifest` deletes `contract/expected-local-lag.txt`; the cited block is the comment scoping that delete to the api write, and the `-f` guard and `rm -f` are the two lines immediately below it. The second reason the event surface needs its own file. Deliberately no bare `:NNN` for those two — a naked line number inside a row is invisible to `test_compatibility_citations_resolve.py` (it checks backticked `file:line`, and a bare `:473` has no path), so it rots unnoticed. This one had: it still said `:473` after the guard moved to `:571`. |
-| `scripts/check-contract.sh:729` | The comment #88 was filed from, which used to record the event surface as an OPEN gap. **Phase 5 rewrote it** — leaving it would have described a closed gap as open. |
+| `scripts/check-contract.sh:274` · `scripts/check-contract.sh:294` | `fields_python` and `fields_ts`. Already parameterised on stub path (and package, for TS) when #88 landed — measured, they yield 90/90 on the event stubs with zero one-sided entries. **Phase 5 did NOT touch them**: the gap it closed is one level up, at the VERB surface, so it parameterised `rpcs_python`/`rpcs_ts` instead. This row said Phase 5 would do it; that was a planning-time guess about the wrong pair. Two full citations on one row, not `` `:248` `` as a bare number: a pathless line reference matches `CITATION` not at all, so it is invisible to every check in `test_compatibility_citations_resolve.py`. Both needles are in `ANCHORED` and bound to this row by `CLAIM_LINES`. |
+| `scripts/check-contract.sh:317` | `manifest_fields` — its stripper claims every `#`-free line, which is why the event surface cannot share `contract/field-manifest.txt`. |
+| `scripts/check-contract.sh:663-672` | `--write-manifest` deletes `contract/expected-local-lag.txt`; the cited block is the comment scoping that delete to the api write (`# Scoped to the API write, deliberately`), and the `-f` guard and `rm -f` are the two lines immediately below it. **Re-targeted:** it pointed at the FIELD-manifest write for two rounds — the number was faithfully remapped each time the file moved, which preserved a wrong target rather than fixing it. A remap can only keep a citation pointing where it already pointed; it is now ANCHORED so the content, not just the line, is checked. The second reason the event surface needs its own file. Deliberately no bare `:NNN` for those two — a naked line number inside a row is invisible to `test_compatibility_citations_resolve.py` (it checks backticked `file:line`, and a bare `:473` has no path), so it rots unnoticed. This one had: it still said `:473` after the guard moved to `:571`. |
+| `scripts/check-contract.sh:806` | The comment #88 was filed from. It already records the field-surface gap as closed (#88 rewrote it when `contract/event-field-manifest.txt` landed), so **Phase 5 left it alone** — the planning-time note here claimed Phase 5 would rewrite it, and rewriting a comment that was already correct would have been churn. |
 | `contract/event-field-manifest.txt` | **Phase 5 creates.** 90 fields, 11 messages, zero enums, zero nested messages — all measured, not assumed. |
-| `python/tests/test_field_manifest_gate.py:91` | `_run()` — the scratch-copy-plus-env-override pattern Phase 5's tests mirror. Nothing may mutate the real gitignored stub trees. |
+| `python/tests/test_field_manifest_gate.py:112` | `_run()` — the scratch-copy-plus-env-override pattern Phase 5's tests mirror. Nothing may mutate the real gitignored stub trees. |
 | `python/tests/test_compatibility_citations_resolve.py:681` | The `submitCommit` `ANCHORED` needle into `ts/src/client.ts`. Its siblings in the same list pin `collectiveOutcomeOf` (just above) and, from Phase 4, `submitEvaluation` and `submitObjection` — named rather than cited, for the reason the row above records: the bare `:606` and `:617-618` that used to sit here were both stale, and nothing could have told anyone. The plan predicted the insertion would break the `submitCommit` anchor for any K of 4+ lines *except* a 125-131 window where it would go green against the unrelated `:804` citation. **Measured K = 101 at the time of that check, 103 as finally committed** — outside that window at every intermediate value, and the anchor failed red-first as required before `PROGRESS.md` was touched. |
 
 ## Phase log
@@ -2699,3 +2699,108 @@ Measured after: python **1154 passed / 20 skipped** · ts **174 tests, 164 pass,
 `pytest scripts -q` **116 passed** · go ok · `verify/` cargo test + clippy + fmt clean · `ruff` clean ·
 `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` **exit 6** · `ci-ok`'s `needs:` unchanged at 12 jobs,
 no new job added.
+
+### Phase 5 — the verb surface nobody watches — DONE
+
+`contract/rpc-manifest.txt` says it declares "the whole verb surface". Both extractors were pinned to
+`seam.api.v1` and read only the api stubs, so an RPC landing in `seam.event.v1` was invisible **in
+both languages at once** — no probe named it, no manifest covered it, and every gate stayed green. It
+is the same shape as the field-level gap #88 closed, one level up.
+
+**The fix removes a copy rather than adding a check.** The obvious implementation is a second pair of
+greps for the event package, and that is the defect this repo keeps finding: not a missing check, but
+a rule living in two places with one copy incomplete. So `rpcs_python`/`rpcs_ts` are now one-line
+wrappers over `rpcs_python_in`/`rpcs_ts_in`, parameterised by package and file, and the event probe
+calls the *same* functions with a different package. Verified byte-identical on the api side before
+anything was added — 42 verbs from each language, `diff` clean against the pre-change extractors — so
+the parameterisation provably changed nothing it was not meant to.
+
+A tripwire, not a second manifest. `seam.event.v1` declaring zero services is a real current
+invariant, and extending `rpc-manifest.txt` to a second package needs a format decision — one file
+with package-qualified names, or two — that belongs to the change which actually lands a verb, with
+the shape in hand. That is recorded in Open questions, not guessed at here.
+
+`SEAM_PY_EV_GRPC` is new and had to be: RPCs live in `_pb2_grpc.py`, and a `.pyi` message stub
+carries fields and no verbs at all, so no override of `SEAM_PY_EV` could ever reach a service. The TS
+half needed nothing new — services annotate into the same `_pb.ts` that `SEAM_TS_EV` already points
+at. Every test drives the real script against scratch copies; the gitignored trees are never touched.
+
+**Precedence was measured, not assumed.** A grafted verb outranks the exit-2 mirror-field refusal.
+That looked like something Phase 5 introduced, so it was checked against the *committed* script: an
+event enum already outranked exit 2 in exactly the same way. 7 preempting 2 is pre-existing and
+correct — a failed precondition means the surface being compared is not one the gate knows how to
+read. So `CLAUDE.md`'s Gotchas paragraph was not just incomplete about the new verb clause; it named
+6, 8 and 2 as the reachable codes while **7 was reachable all along**. It now names all four, and the
+test that pins it measures a 7 rather than grepping for the digit.
+
+Two planning-time notes in the repo map above turned out to be wrong and are corrected in place: the
+field extractors were already parameterised when #88 landed (Phase 5 parameterised the *verb* pair
+instead), and the comment #88 was filed from already recorded its gap as closed, so Phase 5 correctly
+left it alone. Both said "Phase 5 will…" about work that was either already done or aimed at the
+wrong pair.
+
+Mutations, each run against the real gate: making the probe inert kills 3 tests; blinding only its TS
+half kills 2; dropping exit 7 from `CLAUDE.md` kills 1. The negative control — an unmodified event
+surface exits 0 — is what stops "always exit 7" from satisfying the first two, and a separate test
+asserts the invariant against the **real** committed stub rather than the fixture's copy, since every
+graft test would still pass on a faithful copy of a broken invariant.
+
+Citations into `scripts/check-contract.sh` were re-measured after the edits, not before: ten of them
+across `DECISIONS.md` and `PROGRESS.md` had drifted past the guard's ±3-line slack, and were remapped
+by diffing the file against `HEAD` rather than by applying a guessed offset.
+
+#### Verification round
+
+REVISE, with two MODERATE items. Both were the phase's own subject aimed back at it.
+
+**The probe watched two filenames, and a package is not a file.** buf's ordinary layout puts a
+service in its own `.proto`, so codegen emits `seam_event_service_pb2_grpc.py` *beside* the message
+stub — and a verb landing there exited **0** with every gate green. The headline claim ("a service
+landing on `seam.event.v1` can no longer arrive with every gate green") was therefore false as
+written. Now globbed over the package directory, and the fixtures give the two globbed paths their
+own directories so the scratch layout matches the real gen tree instead of a flat pile.
+
+**The refusal said "ZERO services" while measuring only RPCs.** A service with no methods emits no
+`'/pkg.Svc/Method'` literal in either language, so it passed — a check named for something other
+than what it measured. Both generators do emit the service *name*; both are matched now, and a
+zero-method service is refused in each language independently.
+
+**And the "one rule, not two" test was itself vacuous.** It matched shell source text, so it stayed
+green while the probe was mutated to `if false; then`, and went red on a byte-identical reformat —
+wrong in both directions at once. It is now whitespace-tolerant and its docstring says plainly that
+it is a STRUCTURAL check which proves nothing about behaviour; the graft tests are what do that.
+This also corrects a number above: "blinding only its TS half kills 2" counted that test dying
+because source text moved. The behavioural kill count for a TS-blinded probe is **1**.
+
+Smaller repairs: the extractors now take a RAW package and escape it internally, matching
+`fields_ts`'s existing convention twenty lines away — a pre-escaped argument put the requirement in a
+comment where a future caller's over-match would be silent. Verified again after that change that
+the api side is byte-identical (42 verbs per language) and that `seamXapiYv1` still does not match.
+`SEAM_PY_EV_GRPC` was threaded into the sibling `test_field_manifest_gate.py`, whose ~200 runs were
+otherwise reading the real gen tree through the new probe; both fixtures now redirect all nine
+`SEAM_*` variables the script reads. `CLAUDE.md`'s "three other codes" was still an undercount — 5
+and 3 are reachable from the same command, measured — and now says so.
+
+One citation deserves its own note. `scripts/check-contract.sh:612-621` pointed at the FIELD-manifest
+write, not at the `expected-local-lag` delete-scoping comment it described, and had done for two
+rounds: **each remap faithfully carried the wrong target forward.** A remap can only keep a citation
+pointing where it already pointed. It is re-targeted and ANCHORED now, so mis-pointing it kills two
+tests instead of nothing.
+
+**An operational mistake worth recording.** A measurement run rewrote `contract/field-manifest.txt`
+and deleted `contract/expected-local-lag.txt` — the exact thing this run's constraints forbid. Cause:
+this shell is **zsh**, which does not word-split unquoted parameter expansions, so
+`env $VARS ./script` passed the whole assignment string as ONE argument; the first variable swallowed
+the rest and every other override silently fell back to its real default. Every earlier run was safe
+only because it used inline `VAR=x ./script` prefixes. Both files were git-tracked and restored
+byte-identical, and two manifests that had also been rewritten were confirmed identical and had their
+modes repaired from 600 back to 644. Redirected runs now go through an explicit env dict that asserts
+the redirect took effect *before* any write. The lesson is not "be careful": it is that a redirect
+which silently degrades to the real path is indistinguishable from one that worked, so it has to be
+proven, not assumed.
+
+Measured after: python **1167 passed / 20 skipped** · `pytest scripts -q` **116 passed** ·
+`STREAM=1 EVENTS=1 ./scripts/check-contract.sh` **exit 6** with the recorded five-field lag NOTE ·
+bare and `STREAM=1`-only runs both still exit 6 · ts **164 pass / 0 fail** · go ok · `verify/` clean ·
+`contract/` byte-identical to HEAD.
+
