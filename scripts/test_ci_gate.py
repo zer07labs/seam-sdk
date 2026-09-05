@@ -20,6 +20,7 @@ Run: `python -m pytest scripts/test_ci_gate.py -q`
 
 from __future__ import annotations
 
+import ast
 import subprocess
 import sys
 from pathlib import Path
@@ -297,4 +298,105 @@ def test_every_scripts_test_file_runs_in_ci() -> None:
         f"scripts/ holds {sorted(on_disk)} but ci.yml's `{LANE}` job runs {sorted(run_in_ci)}. "
         f"Unrun: {sorted(on_disk - run_in_ci)}. Stale: {sorted(run_in_ci - on_disk)}. A test file "
         "that never runs in CI is not a gate — add a step for it, or delete it."
+    )
+
+
+#: The job that spawns a real `seam-grpc` and runs the suites that need one.
+INTEGRATION = "integration"
+
+#: Where the live-suite roster lives. `python/tests/test_live_fixtures_are_isolated.py` already
+#: keeps this tuple COMPLETE — `test_no_unregistered_file_spawns_a_server` scans the directory and
+#: fails on any unregistered file that spawns a server, with its own anti-vacuity floor. So the set
+#: is trustworthy; what nothing checked is whether CI actually RUNS it.
+LIVE_ROSTER = (
+    Path(__file__).resolve().parents[1]
+    / "python"
+    / "tests"
+    / "test_live_fixtures_are_isolated.py"
+)
+
+
+def _registered_live_suites() -> set[str]:
+    """`LIVE_SUITES`, parsed out of the roster module rather than imported.
+
+    Parsed for the same reason the floor tests are: importing it would execute a pytest module from
+    a different directory, drag in its fixtures, and make this credential-free lane depend on the
+    python package being installed. `ast.literal_eval` on the tuple is exact and needs nothing.
+    """
+    tree = ast.parse(LIVE_ROSTER.read_text(encoding="utf-8"), filename=str(LIVE_ROSTER))
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "LIVE_SUITES" for t in node.targets
+        ):
+            return set(ast.literal_eval(node.value))
+    raise AssertionError(
+        f"{LIVE_ROSTER.name} no longer defines LIVE_SUITES at module level. That tuple is the "
+        "roster this test joins to ci.yml; if it moved, this guard is now checking nothing and "
+        "must be repointed rather than deleted."
+    )
+
+
+def _live_suites_ci_runs() -> set[str]:
+    """The test files named by the integration job's pytest step(s).
+
+    Scoped to steps that actually set `SEAM_GRPC_BIN`, because that env var is what turns the
+    helper's `pytest.skip` into a real run. A step without it would name the files and still skip
+    every one of them — which is the failure being guarded, so it must not count as coverage.
+    """
+    job = yaml.safe_load(CI.read_text())["jobs"][INTEGRATION]
+    found: set[str] = set()
+    for step in job["steps"]:
+        if "SEAM_GRPC_BIN" not in (step.get("env") or {}):
+            continue
+        for token in (step.get("run") or "").split():
+            if token.startswith("tests/") and token.endswith(".py"):
+                found.add(token.rsplit("/", 1)[-1])
+    return found
+
+
+def test_ci_runs_every_registered_live_suite() -> None:
+    """The roster and the CI invocation must be the same set.
+
+    This list has ALREADY been wrong once, and the comment above it in `ci.yml` records what that
+    cost: it ran two of four, so `test_streamed_decode.py` and `test_verify_attestation.py`
+    self-skipped in CI forever while `npm test` ran their TypeScript twins in full. A stale
+    `schema_version == 2` assertion survived on the Python side because of it, and was caught only
+    because the TS twin happened to disagree. It was then fixed by hand, with nothing added to stop
+    a recurrence.
+
+    A grep for `SEAM_GRPC_BIN` would NOT have caught that: `test_streamed_decode.py` never mentions
+    the variable. It gates transitively, by calling `live_server.spawn_server` without a `binary=`
+    override. Joining to the roster rather than to a text search is what makes this guard see the
+    exact file the original bug hid.
+
+    Set equality, not containment, for the reason its sibling `test_every_scripts_test_file_runs_in_ci`
+    gives: containment catches only the new-file direction, and a step still naming a deleted file
+    is the other half of the same disagreement.
+    """
+    registered = _registered_live_suites()
+    in_ci = _live_suites_ci_runs()
+    assert registered == in_ci, (
+        f"the live-suite roster and ci.yml's `{INTEGRATION}` job disagree.\n"
+        f"  registered in LIVE_SUITES: {sorted(registered)}\n"
+        f"  run by CI with SEAM_GRPC_BIN: {sorted(in_ci)}\n"
+        f"  NEVER RUN in CI (self-skip forever): {sorted(registered - in_ci)}\n"
+        f"  named by CI but not registered: {sorted(in_ci - registered)}\n"
+        "A live suite CI does not name is not a gate — it reports pass having spawned nothing."
+    )
+
+
+def test_the_live_suite_join_is_not_vacuous() -> None:
+    """Both sides of the equality must be non-empty.
+
+    If the roster parse or the step scan silently returned nothing, the equality above would hold
+    as `set() == set()` and this guard would pass while asserting nothing — the exact shape it was
+    written to close, one level up. The roster module pins its own count at four; this pins that
+    the join actually found files on the CI side too.
+    """
+    registered = _registered_live_suites()
+    in_ci = _live_suites_ci_runs()
+    assert registered, "parsed LIVE_SUITES as empty — the roster parse is broken"
+    assert in_ci, (
+        "found no live-suite files in any integration step that sets SEAM_GRPC_BIN — either the "
+        "job was restructured or the env var moved, and this guard can no longer see coverage"
     )
