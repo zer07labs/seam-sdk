@@ -3,7 +3,7 @@
 // TypeScript was the loosest of the five SDKs here, and by some distance. `now >= (payload.exp ?? 0)`
 // hands `exp` straight to JavaScript's relational operator, which coerces almost anything to a
 // number rather than refusing it. Measured by running the pre-change build and this one over the
-// same 16 signed tokens, TS ACCEPTED six shapes Go refuses:
+// same 18 signed tokens, TS ACCEPTED six shapes Go refuses:
 //
 //   exp = "10000000000"   ->  ToNumber("10000000000")  ->  10000000000   accepted
 //   exp = "1e10"          ->  ToNumber("1e10")         ->  10000000000   accepted

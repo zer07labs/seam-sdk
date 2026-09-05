@@ -84,7 +84,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `.github/workflows/publish.yml:316` | `make generate` **again at publish time**, against unpinned plugins — the open half of #52. `:390-401` pre-upload smoke installs protobuf *unconstrained*, so the skew is invisible to it; `registry-smoke` (`:519`) likewise. Measured at planning: `grep -rn protobuf .github/workflows/` yielded **one** hit, a prose comment — no workflow pinned protobuf anywhere, so nothing caught the skew. **Phase 6 closed that** (DONE 2026-08-31): the same grep now yields 17, and `.github/workflows/publish.yml:423` installs the built wheel with `protobuf==$FLOOR`. The declared floor and the emitted gencode are both **7.36.0** (`python/pyproject.toml:50`, `python/seam_sdk/_gen/seam/api/v1/seam_pb2.py`'s `Protobuf Python Version` header — cited by symbol, not by line, since it is a generated, gitignored file) — zero headroom, which is why this phase ran first. |
 | `.github/workflows/publish.yml:63-148` | `ci-green` — resolves every `ci-ok` conclusion for the tagged commit. Sound: `:107` still-running ⇒ `pending`, `:117-126` one-green-cannot-mask-one-red, `:143-148` timeout is a refusal. `:192`/`:285` gate both npm and python. **Must not regress.** |
 | `.github/workflows/publish.yml:150-188` | `version-check` — tag vs in-tree versions. It had **no branch-ancestry check** (`.github/workflows/ci.yml:19` runs on every branch push, so a tag at a green feature-branch commit published cleanly); **Phase 6 added one at `:176`**, which is inside this row's own range. Read the range as the job, not as evidence of the gap — it was widened in round 1 until it contained the very step it is cited for lacking. |
-| `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:1132`. |
+| `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:1145`. |
 | `python/tests/test_protobuf_floor.py:72,88` | The two pure-file-read assertions Phase 6 runs at publish time. `:29-31` reads only `_gen/seam/api/v1/seam_pb2.py`; `:47-51` **skips** when `_gen` is absent. `:88-99` forces `cap == gencode_major + 1` — this is why "widen the floor" is not a metadata edit. |
 | `python/tests/test_grpcio_floor.py:38` | Module-level `import grpc` — matters if Phase 6 runs it in the publish job. |
 | `.github/workflows/yank.yml` | `workflow_dispatch`, `dry_run` default `"true"`. A hard **DELETE** (`:91-92`), not a PyPI-style yank. Its token line did **not** strip the cargo token's `"Bearer "` prefix (`.github/workflows/publish.yml:383-385` does) — **Phase 10 fixed it** (DONE 2026-08-31) at `.github/workflows/yank.yml:55-60`, and left the version/format/name filters (`:73-76`) byte-unchanged. `scripts/test_yank_gate.py` now executes the resolution and pins those filters. |
@@ -155,7 +155,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   - *R2 GAPS (3):* the `:109`→`:141` fix reached `PROGRESS.md` but missed
     `plans/archive/record-digest-v3.md:12`; removing a duplicated execution-order block ate the
     blank line and merged two paragraphs; and the path repoint **over-replaced** four quoted
-    `DECISIONS.md` section titles, which are lookup keys that must match `DECISIONS.md:1324`
+    `DECISIONS.md` section titles, which are lookup keys that must match `DECISIONS.md:1337`
     verbatim, not paths.
   - *R3 PASS:* all three closed, both halves of the over-replacement checked (quoted titles reverted,
     `**Plan:**` paths still archive-pointed), no new breakage, 545/17 green.
@@ -2132,7 +2132,7 @@ this file.** That is deliberate and load-bearing, not an oversight. Everything a
 `post-adoption-hardening-and-acdp-readiness` record, and it is retained rather than replaced for two
 measured reasons:
 
-1. `python/tests/test_compatibility_citations_resolve.py` binds **25 anchored and quoted claims** plus
+1. `python/tests/test_compatibility_citations_resolve.py` binds **44 anchored claims and 39 quoted line-bindings** plus
    a 30-citation floor to this document's content. Replacing the file turns 25 tests red at once, and
    the only way to green is to delete guard entries — which is exactly how a guard decays. The
    previous convention ("nothing here carries over"; the trail lives in git history) predates that
@@ -2436,9 +2436,10 @@ capability tokens a verifier honoured that its peers rejected.
 looks correctly refused in both languages — `1000 >= 1` is expired. At `now = 0` it **verified**,
 because `bool` subclasses `int` in Python and `true` coerces to `1` in JavaScript. A vector written
 with a plausible timestamp would have asserted agreement that was entirely accidental and stayed
-green through the exact bug it was named after. Every type case in the shared vector pins `now = 0`.
+green through the exact bug it was named after. Most type cases in the shared vector pin
+`now = 0`; `boolean_false`, `null` and `absent` pin `now_s: -1`, and one truncation case pins `-2`.
 
-The vector is `conformance/tct_exp_extended.json` — 16 signed tokens, machine-emitted, following the
+The vector is `conformance/tct_exp_extended.json` — 18 signed tokens, machine-emitted, following the
 SDK-owned precedent `conformance/authorize_jcs_int_extended.json` established. Its expected verdicts
 are computed from the **rule** by `scripts/emit_tct_exp_vectors.py`, never read out of an
 implementation; a vector recorded from the code it checks cannot fail. Go reads it too, even though
@@ -2574,7 +2575,7 @@ with `^\s*`, so `- run: buf generate ...` — the ordinary compact spelling, and
 steps in this repo are written — slipped past, as did `make lint && buf generate ...`. This is the
 guard whose docstring records that **every wheel this repo ever published could not be imported**.
 Rewritten to parse the workflow, walk every `run:` value wherever it nests, and split on the
-separators a shell actually uses. Five spellings now caught (the fourth, `echo x | buf generate`, was
+separators a shell actually uses. Eight spellings now caught (the fourth, `echo x | buf generate`, was
 found by writing the scan properly rather than by the plan); a prose `#` comment about the rule still
 passes, and the parser drops YAML comments before the scan sees them, which is stronger than the
 whole-line filter it replaces.
@@ -2702,7 +2703,8 @@ no new job added.
 
 ### Phase 5 — the verb surface nobody watches — DONE
 
-`contract/rpc-manifest.txt` says it declares "the whole verb surface". Both extractors were pinned to
+`scripts/check-contract.sh` says the rpc manifest declares "the whole verb surface" — the phrase is
+the script's, not the manifest's, whose header scopes itself to `seam.api.v1`. Both extractors were pinned to
 `seam.api.v1` and read only the api stubs, so an RPC landing in `seam.event.v1` was invisible **in
 both languages at once** — no probe named it, no manifest covered it, and every gate stayed green. It
 is the same shape as the field-level gap #88 closed, one level up.
@@ -2773,7 +2775,7 @@ This also corrects a number above: "blinding only its TS half kills 2" counted t
 because source text moved. The behavioural kill count for a TS-blinded probe is **1**.
 
 Smaller repairs: the extractors now take a RAW package and escape it internally, matching
-`fields_ts`'s existing convention twenty lines away — a pre-escaped argument put the requirement in a
+`fields_ts`'s existing convention some sixty lines away — a pre-escaped argument put the requirement in a
 comment where a future caller's over-match would be silent. Verified again after that change that
 the api side is byte-identical (42 verbs per language) and that `seamXapiYv1` still does not match.
 `SEAM_PY_EV_GRPC` was threaded into the sibling `test_field_manifest_gate.py`, whose ~200 runs were

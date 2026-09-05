@@ -911,7 +911,8 @@ def _nested_messages_python_extractor_src() -> str:
 
 # ── the expected local lag — distinguishing the known gap from real drift ─────────────────────────
 #
-# `STREAM=1 EVENTS=1 make check-contract` exits 6 on every pre-ACDP local checkout: the committed
+# `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exits 6 on every pre-ACDP local checkout (via the
+# script, not `make`, which collapses every code to its own 2): the committed
 # `contract/field-manifest.txt` already declares seven `ContextBinding` fields the local stubs do not
 # carry until a regeneration pulls a BSR module that republishes them. The refusal text is the exact
 # wording, exit code, and direction a REAL removal produces, which trains a reader to stop looking —

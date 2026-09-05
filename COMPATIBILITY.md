@@ -99,7 +99,7 @@ mismatch cannot ship.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **Nothing was yanked.** For the first two bands that decision is recorded at
-`CHANGELOG.md:644-649` and is not being re-litigated: they fail loudly — an unimportable wheel, or a
+`CHANGELOG.md:682-687` and is not being re-litigated: they fail loudly — an unimportable wheel, or a
 clear auth error — and revoking installability under a floor already in wide use has a larger blast
 radius than a loud advisory.
 
@@ -430,7 +430,8 @@ passing `tool_input` and none of this applies to you.
 
 Same reason §8 exists: this SDK cannot express its own semver, so a narrowing ships under whatever
 number the runtime computes. **Nothing here changes a digest.** Every input still accepted produces
-byte-identical output, `conformance/` is unmodified, and the KATs are untouched. What changed is
+byte-identical output, no existing `conformance/` vector was modified, and the KATs are untouched
+(`tct_exp_extended.json` was added). What changed is
 which inputs the TypeScript SDK will digest at all — and it changed to match what Python and the
 `verify/` crate already did.
 
@@ -527,7 +528,9 @@ nearest double — so any record it sealed disagreed with the runtime's. Convert
 disagreed with each other about the same input — and in each case at least one of them was wrong in
 the direction that accepts something it should not. **No emitted byte moved anywhere in this
 section**: 40,000 randomized JCS inputs and 20,000 record digests were compared against `HEAD` in
-both languages, 0 divergences; the runtime KATs and everything in `conformance/` are untouched.
+both languages, 0 divergences; the runtime KATs are untouched and no existing vector moved.
+(`conformance/` itself is not unchanged — this work ADDED `tct_exp_extended.json`. The claim that
+matters is that nothing already there was edited.)
 
 ### The TCT `exp` claim — Python and TypeScript now decode it the way Go, Java and Kotlin did
 
@@ -553,7 +556,9 @@ and because it is the strictest, which is the safe direction for a token verifie
 The `exp: true` row is the one to look at twice. `bool` subclasses `int` in Python and `true` coerces
 to `1` in JavaScript, so the token **verified** at any clock below one second. At a realistic
 timestamp it reads as long expired, which means a test written with a plausible `now` would have
-asserted agreement that was entirely accidental. Every type case in the shared vector pins `now = 0`
+asserted agreement that was entirely accidental. Most type cases in the shared vector pin
+`now = 0` — but not all: `boolean_false`, `null` and `absent` pin `now_s: -1`, and one truncation
+case pins `-2`, each because a clock of `0` would make the case assert nothing
 for that reason.
 
 **What this costs you:** if you mint TCTs with a stringified `exp` — `{"exp": "1700000000"}` — Python

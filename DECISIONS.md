@@ -199,7 +199,7 @@ every input it cannot parse. Compatibility with a bug is not a property worth pr
 verifier.
 
 **What made the decision checkable rather than declarative** is
-`conformance/tct_exp_extended.json` — 16 signed tokens, machine-emitted, whose expected verdicts are
+`conformance/tct_exp_extended.json` — 18 signed tokens, machine-emitted, whose expected verdicts are
 computed from the *rule* by `scripts/emit_tct_exp_vectors.py` rather than read out of any
 implementation. Go, Python and TypeScript each read it from their own test suite. A vector whose
 expectations are recorded from the code it checks cannot fail; it only writes down what the code
@@ -209,7 +209,9 @@ One case in it is worth naming because the first draft got it wrong. `exp: true`
 both Python and JavaScript, so the token **verified** at any clock below one second — and at a
 realistic timestamp it reads as long expired. A vector written with a plausible `now` would have
 asserted cross-language agreement that was entirely accidental, and would have stayed green through
-the exact bug it was named after. Every type case pins `now = 0`.
+the exact bug it was named after. Most type cases pin `now = 0`; the three that do not —
+`boolean_false`, `null` and `absent` — pin `now_s: -1` deliberately, because at `now = 0` the
+coercing rule refuses them too and the case would assert nothing. Each says so in its own `why`.
 
 Java and Kotlin do **not** yet read the vector. They already implement the rule — that is why it was
 adopted — but this workstation has no JDK, so a consumer written for them could not be run before
@@ -222,6 +224,12 @@ pending: the rule is implemented in five languages and pinned by a vector in thr
 
 ## 2026-09-04 — `jcsCanonicalize` refuses non-plain objects by a RULE, not a denylist
 
+
+**This is a breaking change to a public API.** Stated in those words because the phase's own
+acceptance criterion requires them, and because the SDK does not choose its own version — it ships
+under whatever number the runtime's history computes, so a consumer who reads only the version has
+no way to know. `Map`, `Set`, `Date` and class instances previously canonicalized to `{}` and now
+raise; a caller relying on that silent empty digest will break at the call, which is the point.
 `Date`, `Map`, `Set`, `RegExp`, typed arrays, boxed primitives and class instances all satisfy
 `typeof v === "object"`, so JCS walked them with `Object.keys` and emitted whatever own enumerable
 properties they happened to have. For `Date`, `Map`, `Set` and boxed numbers that is nothing, so they
@@ -267,6 +275,11 @@ Two behaviours were left as they are, and both are decisions rather than omissio
 
 ## 2026-09-04 — `verifyChainHeadAttestation` raises on a caller bug instead of returning `false`
 
+
+**This is a breaking change to a public API.** Same wording, same reason as the entry above: a
+wrong-typed `attested_head` that previously returned a clean `False` now raises, so a caller that
+treated `False` as "did not verify" now sees an exception instead. That is the correction — the two
+were never the same answer — but it is a break, and it ships under a number that cannot say so.
 A verifier that throws is normally a bad verifier: a caller writing `if (!verify(...)) reject()`
 crashes where it should have rejected. That is why the blanket `catch { return false }` was there,
 and it is the strongest argument against this change.
@@ -1023,7 +1036,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   stubs are gitignored, so per-tag gencode is not recoverable" — which was true of the working tree
   and false of the project: every tagged commit has a CI run, and that test *is* this defect. The
   hedge was deleted rather than softened because the evidence made it false.
-- **The precedent already covers worse.** `CHANGELOG.md:644-649` records no-yank for 0.7.13-0.7.19,
+- **The precedent already covers worse.** `CHANGELOG.md:682-687` records no-yank for 0.7.13-0.7.19,
   which failed *harder*: 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed
   every `authorize()` with an actively misleading "admission ticket is not valid" when the ticket
   was fine. This band breaks only consumers who cap `protobuf` below 7.36.0. Deleting the milder

@@ -3,6 +3,7 @@
 ## Context
 
 `seam-sdk` is in good shape: 1016 python tests pass, `scripts/` 100, `verify/` clean, ts and go green,
+*(baseline as written, 2026-09-03; the plan closed at 1186 / 118 — see PROGRESS.md)*,
 version lockstep holds at 0.7.71 against the runtime's own tag, and the contract gate exits 6 with
 exactly the five recorded lag fields and nothing else. Five hardening passes have already run over
 this repo, and the last three were all aimed at one failure class the repo named for itself: a check
@@ -17,7 +18,9 @@ exists to stop a bad release is currently unable to refuse one**.
 
 Four things are worth stating plainly before the phases, because each one changes what this plan does.
 
-**1. The release handshake is latched open.** `contract/wire-framing.json` still carries
+**1. The release handshake is latched open.** *(As written, 2026-09-03. Phase 1 closed this — the
+latch is now `true`. Kept in the past tense rather than rewritten, because the Context section is
+what the plan was written against.)* `contract/wire-framing.json` carried
 `"runtime_emits_version": false`. Its own comment says to flip it "in the PR that confirms the runtime
 emits the field", and the runtime confirmed it: `seam-runtime#418` closed COMPLETED on 2026-08-26, and
 every release dispatch since has carried `wire_framing_version` (the 2026-09-01 release logged
@@ -63,7 +66,8 @@ carrying U+2029 splits into `'{"k":"'` and `'"}'`, and every later record's inde
 a pair appears to "vanish". Of those four characters only U+2028, U+2029 and U+0085 are reachable in
 canonical output; U+001C is a control character, which `JSON.stringify` escapes rather than emitting raw. The
 corruption was in the differential's own transport. **No `engines` pin, no upstream bug report, and no CI leg on Node 24/26 is planned on that
-basis.** The one genuine residue is unrelated and minor: `ts/package.json` declares no `engines` field
+basis.** *(Corrected in Phase 7: Phase 3 added it — `ts/package.json` now declares
+`"node": ">=20"`.)* The one genuine residue is unrelated and minor: `ts/package.json` declared no `engines` field
 at all, which is worth fixing as packaging hygiene and is scoped as such in Phase 3.
 
 **4. ACDP P3 (issue #96) is readiness work only, and cannot be adopted this cycle.** *(Corrected in
@@ -299,7 +303,7 @@ all, in both the key and the value position.
 **Status:** DONE. All four items landed as planned. Two divergences the plan did not name were found
 by measuring rather than reasoning and closed in the same phase: `exp: true` was ACCEPTED by Python
 and TypeScript at any clock below one second (invisible at a realistic `now`, so the shared vector
-pins `now = 0` on every type case), and `signature` was the one argument Python's own type pass had
+pins `now = 0` on most type cases — not all; see the vector's own `why` fields), and `signature` was the one argument Python's own type pass had
 always skipped. Go's `exp` rule was adopted as normative; Java and Kotlin already implement it but do
 not yet read the shared vector, since this workstation has no JDK — recorded in `ASSUMPTIONS.md`
 rather than written blind.

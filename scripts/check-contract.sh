@@ -61,8 +61,11 @@
 #             6 field or enum-value surface disagrees with contract/field-manifest.txt ·
 #             7 a structural precondition the extractors assume failed: a nested enum was found (see
 #               assert_no_nested_enums), a nested message was found outside the known map-entry
-#               synthetics (see assert_known_nested_messages_only), or seam.event.v1 grew an enum or a
-#               nested message (see assert_event_surface_preconditions). Two contracts share this code
+#               synthetics (see assert_known_nested_messages_only), or seam.event.v1 grew an enum, a
+#               nested message, or a SERVICE (see assert_event_surface_preconditions). The service
+#               clause is the newest: contract/rpc-manifest.txt covers seam.api.v1 only, so a service
+#               landing in the event package would be declared nowhere and named by no probe, and
+#               would ship unwired with every gate green. Two contracts share this code
 #               on purpose — it names a FAILURE CLASS, not a contract, and the message says which
 #               surface fired ·
 #             8 the seam.event.v1 field surface disagrees with contract/event-field-manifest.txt.

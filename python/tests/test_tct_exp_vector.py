@@ -2,7 +2,7 @@
 
 Five SDKs verified a TCT and five decoded its `exp` claim differently. Measured by running the
 pre-change `verify_tct`/`verifyTct` and this tree's side by side over the same signed tokens — the
-16 in the vector — rather than by reading the three implementations and reasoning about them:
+18 in the vector — rather than by reading the three implementations and reasoning about them:
 
     case                          Go/Java/Kotlin   Python     TypeScript
     exp = "10000000000"           refused          ACCEPTED   ACCEPTED

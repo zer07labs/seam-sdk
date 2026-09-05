@@ -73,7 +73,8 @@ user-gated** step this repo never performs. Rule of thumb: **`generate-local` fo
 (BSR) for release**. When a contract change has landed in the runtime but not yet been pushed to the BSR,
 only `generate-local` sees it.
 
-**`make check-contract`** turns "what surface does the active contract expose?" into a verifiable fact
+**`STREAM=1 EVENTS=1 ./scripts/check-contract.sh`** turns "what surface does the active contract
+expose?" into a verifiable fact
 (the SDK's analogue of the runtime's published-surface gate). It runs after a `generate`/`generate-local`
 and probes the emitted stubs:
 - **`SeamTrust.VerifyPartyAttestation`** (the A4 RPC the attestation client calls) — a **hard gate**;

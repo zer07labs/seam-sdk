@@ -705,7 +705,8 @@ def test_the_recorded_api_lag_note_does_not_claim_exit_6_when_the_event_surface_
 
 
 # ── The VERB surface, one level up from the fields ───────────────────────────────────────────────
-# `contract/rpc-manifest.txt` says it declares "the whole verb surface". Both extractors were pinned
+# `scripts/check-contract.sh` says the rpc manifest declares "the whole verb surface" (the phrase
+# is the script's, at its own line 44 — the manifest's header scopes itself to `seam.api.v1`). Both extractors were pinned
 # to `seam.api.v1` and read only the api stubs, so an RPC landing in `seam.event.v1` was invisible in
 # BOTH languages at once — no probe named it, no manifest covered it, and every gate stayed green.
 # That is the same shape as the field-level gap #88 closed, one level up.

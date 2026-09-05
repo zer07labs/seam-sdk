@@ -354,6 +354,9 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   runs `buf generate ../seam-runtime` against exactly that path. An earlier wording of this line
   said `crates/**` was unreadable outright, which forbade the proto and contradicted the build.)
   Filed as a question upstream.
+- **Owner / re-open trigger:** whoever next changes `AuthorizeRequest` handling in `seam-runtime`,
+  or the first consumer to report an `authorize(canonical=…)` call refused for a reason other than
+  policy. Added 2026-09-04 — this entry had no trigger, which is how an assumption becomes scenery.
 - **Status:** UNCONFIRMED (reviewed 2026-09-04, unchanged). A claim about runtime acceptance
   behaviour that only the runtime can settle; nothing this cycle exercised it.
 
@@ -371,6 +374,9 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Blast radius if wrong:** none today. Being wrong means only that the SDK is stricter than it
   needs to be for values essentially nobody sends. Widening later is additive; the reverse would not
   be. Filed as a question upstream.
+- **Owner / re-open trigger:** the first caller to canonicalize a tool input containing an integer
+  at or above `10**21`. Until one exists this cannot be settled and does not need to be. Added
+  2026-09-04 — this entry had no trigger.
 - **Status:** UNCONFIRMED (reviewed 2026-09-04, unchanged). Deliberately not relied on; settling it
   needs the runtime's JCS, not this repo's.
 
@@ -446,6 +452,8 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   turns out to be wanted, quarantine is still available and `yank.yml` now actually authenticates.
   Being wrong the other way — quarantining when it was not wanted — breaks builds that work today
   and cannot be undone for anyone whose CI ran in the interim.
+- **Owner / re-open trigger:** whoever holds a Cloudsmith credential, on issue #43, where both
+  known-bad bands are consolidated for one decision. Added 2026-09-04 — this entry had no trigger.
 - **Status:** UNCONFIRMED (reviewed 2026-09-04, unchanged) — this is the one option worth raising
   rather than settling unilaterally, per the phase's own Rejected-alternatives note. Consolidated
   onto issue #43 on 2026-09-02 so both known-bad bands get one answer instead of two; still awaiting
@@ -672,7 +680,8 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Assumed:** `PROGRESS.md` can carry a fourth workstream section appended at the bottom without a
   reader mistaking the earlier three for current state.
 - **Chose:** append. A fresh `PROGRESS.md` was written first and turned **25 guard tests red** at
-  once: `python/tests/test_compatibility_citations_resolve.py` binds 25 anchored and quoted claims
+  once: `python/tests/test_compatibility_citations_resolve.py` binds 44 anchored claims and 39
+  quoted line-bindings
   plus a 30-citation floor to this document's *content*, and the document cites itself by line in
   three places, at least two of which are live and accurate. Replacing it destroys the evidence those
   assertions are made of. The appended section opens by saying so, so the next person meets the

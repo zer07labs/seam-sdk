@@ -202,6 +202,39 @@ than trusting a summary here.
   the wire; only the hand-written wrappers omitted it, unlike `enforce_retention`, which already
   exposed the identical field (#39).
 
+### Changed — four narrowings in the crypto layer, all caller-visible, all breaking
+
+**These are breaking changes to a public API**, called out here rather than left to be discovered,
+per the note at the top of this file: the SDK does not choose its own version number, so these will
+ship under whatever the runtime's history computes. Every one is a *narrowing* — an input that
+previously produced a digest or a verdict is now refused. That direction is deliberate and is the
+only safe one for a verifier: widening what is accepted can never be undone without breaking
+callers who came to rely on it, whereas narrowing surfaces immediately and loudly.
+
+- **`jcsCanonicalize` (TS) now refuses non-plain objects.** `Map`, `Set`, `Date` and class
+  instances previously canonicalized to `{}` — silently, because JSON's own view of them is empty.
+  A caller passing a `Map` of tool arguments got a digest over nothing, which verified against
+  itself and against nobody else. Refused by a **rule** (the prototype must be `Object.prototype`
+  or null) rather than a denylist, so the next exotic type is refused too.
+
+- **`verifyChainHeadAttestation` (Python) now raises on a caller bug instead of returning `false`.**
+  A wrong-typed `attested_head` — a hex *string* where bytes were required — previously returned a
+  clean `False`, which reads as "the attestation did not verify" rather than "you passed the wrong
+  thing". A caller acting on that refused a valid chain head. Range validation on `attested_len` /
+  `attested_at` is explicit, and `struct.error` is caught specifically, so genuine type errors keep
+  propagating rather than being swallowed by the blanket handler below them.
+
+- **The `exp` claim on a capability token is now decoded by one rule in all five SDKs.** Go's rule
+  — JSON numbers only, truncated toward zero — is normative; Python and TypeScript were looser and
+  are now narrowed to match. **Tokens that previously verified in Python or TypeScript and nowhere
+  else are now refused**: numeric strings (`"1e10"`), booleans, fractions, and in TS objects and
+  arrays. Python's check excludes `bool` explicitly, since `bool` subclasses `int` and `exp: true`
+  would otherwise be read as `1`. See `conformance/tct_exp_extended.json`.
+
+- **Two digest inputs that could alias now cannot.** A `u64` length that wrapped, and an unguarded
+  surrogate key, both admitted two distinct inputs to one digest. Refused.
+
+
 ### Changed
 
 - **`jcs_canonicalize` accepts more integers, and the rule is no longer a magnitude test.** It
