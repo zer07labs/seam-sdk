@@ -743,3 +743,90 @@ jobs:
           );
           console.log("published @zer07labs/seam-sdk reproduces the conformance vectors — OK");
           JS
+
+  # ── A refused release told nobody ──────────────────────────────────────────────────────────────
+  # Every job above this one is a gate, and all of them work. v0.7.69, v0.7.70 and v0.7.72 were each
+  # refused correctly — and each refusal was discovered days later, by hand, because a failed
+  # workflow run is a red dot on a page nobody opens. The registry sat five days behind the source
+  # with the tag, the wheel version and the runtime all claiming 0.7.72 existed.
+  #
+  # So this job exists to make a refusal ARRIVE somewhere. It is not another gate: it cannot block
+  # anything, it has no opinion on whether refusing was right, and it must never turn a red release
+  # green. It reports.
+  #
+  # `if: always()` is the whole point. The default is "run only if `needs` succeeded", which would
+  # make the notifier silent in exactly the case it was written for — the shape of bug this
+  # workstream keeps finding.
+  #
+  # NOTE the blind spot this job structurally cannot cover: it is a job INSIDE publish.yml, so it
+  # reports a publish that ran and failed. A publish that never ran at all — no tag pushed, trigger
+  # misconfigured, workflow file broken — fails silently exactly as before, because nothing
+  # executes. That case needs a check that runs on its own schedule and compares the registry to
+  # the source; it is deliberately NOT solved here (see the issue this job cites).
+  release-outcome:
+    name: report a release that did not publish
+    if: always() && github.event_name == 'push'
+    needs: [ci-green, version-check, npm, python, registry-smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: open or update the release-failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_GREEN: ${{ needs.ci-green.result }}
+          VERSION_CHECK: ${{ needs.version-check.result }}
+          NPM: ${{ needs.npm.result }}
+          PYTHON: ${{ needs.python.result }}
+          SMOKE: ${{ needs.registry-smoke.result }}
+        run: |
+          set -euo pipefail
+
+          TAG="${GITHUB_REF_NAME}"
+          TITLE="Release ${TAG} did not publish"
+
+          # `registry-smoke` is the ONLY job whose success proves the release landed: it installs the
+          # published artifact back OUT of Cloudsmith and runs the conformance vectors against it.
+          # Reading anything weaker — "npm and python both succeeded" — cannot tell a finished
+          # release from one that uploaded and never became installable, which is a failure this
+          # repo has already seen and which registry-smoke was added to catch.
+          if [ "$SMOKE" = "success" ]; then
+            echo "$TAG published and verified — nothing to report"
+            exit 0
+          fi
+
+          BODY="$(mktemp)"
+          {
+            printf '`%s` was tagged, but the release did not complete.\n\n' "$TAG"
+            printf '| job | result |\n|---|---|\n'
+            printf '| ci-green | %s |\n' "$CI_GREEN"
+            printf '| version-check | %s |\n' "$VERSION_CHECK"
+            printf '| npm | %s |\n' "$NPM"
+            printf '| python | %s |\n' "$PYTHON"
+            printf '| registry-smoke | %s |\n' "$SMOKE"
+            printf '\n%s/%s/actions/runs/%s\n' \
+              "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+            printf '\nThe registry still serves the previous version, so nothing downstream breaks.\n'
+            printf 'What breaks is the assumption that a tag means a release: the tag, the in-tree\n'
+            printf 'version and the registry now disagree, and they stay that way until someone acts.\n'
+            printf '\nA refusal here is usually CORRECT — the gates above caught something. Decide\n'
+            printf 'whether to fix forward and re-tag, or to leave the version permanently unpublished.\n'
+          } > "$BODY"
+
+          # One issue per tag: a re-run of a failing release comments rather than opening a second.
+          # gh output goes to a file rather than through a pipe — `set -o pipefail` plus a reader
+          # that exits early turns a SIGPIPE into a spurious job failure.
+          LISTING="$(mktemp)"
+          gh issue list --state open --limit 100 --json number,title \
+            --jq '.[] | "\(.number)\t\(.title)"' > "$LISTING"
+          EXISTING="$(awk -F'\t' -v t="$TITLE" '$2 == t { print $1; exit }' "$LISTING")"
+
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body-file "$BODY"
+            echo "release failure reported on existing #$EXISTING"
+          else
+            gh issue create --title "$TITLE" --body-file "$BODY"
+            echo "release failure reported as a new issue"
+          fi

@@ -652,6 +652,12 @@ jobs:
       # transient absence" and "still refuses a settled red" are both proven, not just read.
       - name: the publish CI gate waits without going soft
         run: python -m pytest scripts/test_publish_gate.py -q
+      # Every gate in publish.yml worked; all three refused releases were still found by hand days
+      # later, because a failed run notifies nobody. `release-outcome` is the reporter that closes
+      # that, and a reporter that has gone quiet is indistinguishable from one with nothing to
+      # report — so its silence-on-success and speech-on-failure are both executed here, not read.
+      - name: a refused release actually reports itself
+        run: python -m pytest scripts/test_release_notice_gate.py -q
       # The spec-pin CHECKER, exercised here against throwaway git repos — no token, no network.
       # spec-pin itself skips without the seam-deps-bot App secrets, so on a fork PR this lane is the only
       # thing keeping the checker's own logic honest.
