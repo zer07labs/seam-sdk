@@ -244,3 +244,57 @@ def test_gate_script_executes_correctly(
 
 if __name__ == "__main__":  # pragma: no cover
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+def test_the_pytest_step_sets_seam_require_wheel_build() -> None:
+    """Phase 4's whole packaging repair rests on this one workflow cell, and nothing asserted it.
+
+    `test_packaging.py` classifies three distinct outcomes — no builder present, the builder ran and
+    failed, the builder exited 0 without producing a `seam_sdk-*.whl` — and locally the first is a
+    legitimate SKIP. `SEAM_REQUIRE_WHEEL_BUILD=1` is what turns all three into failures on CI, where
+    a skip has no legitimate cause. Delete the env cell and the packaging tests silently go back to
+    skipping: measured by the whole-feature verification round, python stayed at 1184 passed and
+    `scripts` at 116.
+
+    This is the shape Phase 1 found and closed for the release workflow — unguarded plumbing cells
+    that decide whether a gate is a gate — landing one file over without the structural assertion.
+    """
+    steps = yaml.safe_load(CI.read_text())["jobs"]["python"]["steps"]
+    pytest_steps = [s for s in steps if s.get("name") == "pytest"]
+    assert len(pytest_steps) == 1, (
+        f"expected exactly one step named 'pytest' in ci.yml's `python` job, found "
+        f"{len(pytest_steps)}. If it was renamed or split, re-point this assertion."
+    )
+    env = pytest_steps[0].get("env") or {}
+    assert str(env.get("SEAM_REQUIRE_WHEEL_BUILD")) == "1", (
+        "ci.yml's `python` -> pytest step no longer sets SEAM_REQUIRE_WHEEL_BUILD: \"1\". Without "
+        "it every packaging failure mode degrades to a SKIP on CI, and a skipped packaging test is "
+        "indistinguishable from a passing one in the summary — which is how a broken wheel ships."
+    )
+
+
+def test_every_scripts_test_file_runs_in_ci() -> None:
+    """The `workflow-guards` job names its test files one by one, so a new one never runs.
+
+    Six `python -m pytest scripts/test_*.py` steps, each a hardcoded filename. The list happens to
+    be complete today, which is exactly the state in which nobody notices it is a list: adding
+    `scripts/test_whatever.py` gets it collected locally and never on CI, so it can sit red — or
+    absent — indefinitely. `python/tests/` is guarded by a directory-scoped run; `scripts/` is not.
+
+    Asserting the set rather than switching the workflow to `pytest scripts/` on purpose: the
+    per-file steps give a named check per gate in the PR's check list, which is worth keeping. What
+    was missing is anything that fails when the list and the directory disagree.
+    """
+    on_disk = {p.name for p in (CI.parents[2] / "scripts").glob("test_*.py")}
+    steps = yaml.safe_load(CI.read_text())["jobs"][LANE]["steps"]
+    run_in_ci = {
+        token.split("/")[-1]
+        for step in steps
+        for token in (step.get("run") or "").split()
+        if token.startswith("scripts/test_") and token.endswith(".py")
+    }
+    assert on_disk == run_in_ci, (
+        f"scripts/ holds {sorted(on_disk)} but ci.yml's `{LANE}` job runs {sorted(run_in_ci)}. "
+        f"Unrun: {sorted(on_disk - run_in_ci)}. Stale: {sorted(run_in_ci - on_disk)}. A test file "
+        "that never runs in CI is not a gate — add a step for it, or delete it."
+    )

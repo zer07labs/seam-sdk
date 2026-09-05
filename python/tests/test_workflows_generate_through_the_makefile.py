@@ -35,7 +35,14 @@ import pytest
 import yaml
 
 WORKFLOWS = sorted(
-    (Path(__file__).resolve().parents[2] / ".github" / "workflows").glob("*.yml")
+    # `.yaml` too: GitHub Actions treats both suffixes identically, so globbing one leaves a
+    # blind spot a single character wide — demonstrated with a `.yaml` file carrying a bare
+    # `buf generate`, which passed every guard here.
+    p
+    for suffix in ("*.yml", "*.yaml")
+    for p in (Path(__file__).resolve().parents[2] / ".github" / "workflows").glob(
+        suffix
+    )
 )
 
 # `buf generate` as a command, not as prose. A comment saying "NOT raw `buf generate`" is the right

@@ -27,7 +27,14 @@ import pytest
 
 ROOT = Path(__file__).parents[2]
 PACKAGE_JSON = ROOT / "ts" / "package.json"
-WORKFLOWS = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
+# Both suffixes: GitHub Actions runs `.yaml` exactly as it runs `.yml`, so a guard that globs
+# only one has a blind spot a single character wide. Measured — a `.yaml` workflow carrying a bare
+# `buf generate` passed every workflow guard in this repo.
+WORKFLOWS = sorted(
+    p
+    for suffix in ("*.yml", "*.yaml")
+    for p in (ROOT / ".github" / "workflows").glob(suffix)
+)
 
 
 def _floor() -> int:

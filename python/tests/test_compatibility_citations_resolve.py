@@ -1124,11 +1124,22 @@ def test_the_claim_line_map_covers_every_needle_that_needs_it() -> None:
 
 
 def test_the_anchored_table_is_not_empty() -> None:
-    """A floor with a real margin: 17 entries at the time of writing. The check this replaced
+    """A floor that actually binds. The docstring said "17 entries at the time of writing" while
+    the list had grown to 44 and the floor stayed at 12 — so 32 anchors were retirable with the
+    suite green, which the whole-feature verification round demonstrated by deleting one entry plus
+    its CLAIM_LINES binding and repointing the citation it protected. A floor set once and left
+    behind the thing it floors is not a floor.
+
+    Pinned to a committed count instead, so growth is recorded and shrinkage has to be deliberate.
+    The check this replaced
     asserted only `report` was non-empty, a floor of one against seventeen — the weakest calibration
     in a file whose stated discipline is a third."""
-    assert len(ANCHORED) >= 12, (
-        f"ANCHORED has shrunk to {len(ANCHORED)}; entries are being deleted"
+    # Raise this when anchors are added. Lowering it is the loud, reviewable edit that deleting an
+    # anchor is supposed to require — which is the entire purpose of the number.
+    _COMMITTED_ANCHOR_COUNT = 44
+    assert len(ANCHORED) >= _COMMITTED_ANCHOR_COUNT, (
+        f"ANCHORED has shrunk to {len(ANCHORED)}, below the committed {_COMMITTED_ANCHOR_COUNT}; "
+        "entries are being deleted"
     )
 
 

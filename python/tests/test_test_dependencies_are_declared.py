@@ -45,17 +45,63 @@ def _normalize(name: str) -> str:
 
 
 def _declared() -> set[str]:
-    """Every distribution named in `[project].dependencies` or any optional-dependency group."""
+    """Every distribution CI actually installs: `[project].dependencies` plus the `dev` extra.
+
+    Scoped to those two on purpose. The previous pattern was `(?:dependencies|dev|[a-z0-9_-]+)`,
+    whose third branch matches every list-valued key in the file — so `packages.find`'s `include`,
+    `package-data`, and `build-system.requires` all counted as declarations. Two consequences, the
+    second serious:
+
+      * it returned junk names (`-`, `-gen`, `py-typed`, `seam-sdk*`, `typing`);
+      * moving `pyyaml` out of `dev` into an extra CI does NOT install left all three tests green,
+        including `test_pyyaml_specifically_is_declared`, whose whole subject is that failure.
+
+    CI runs `pip install -e "./python[dev]"`. Anything outside those two lists is not installed, so
+    counting it as declared is counting a dependency that will not be there.
+    """
     text = PYPROJECT.read_text(encoding="utf-8")
     names: set[str] = set()
-    for block in re.findall(
-        r"^(?:dependencies|dev|[a-z0-9_-]+)\s*=\s*\[(.*?)\]", text, re.S | re.M
-    ):
+    blocks = re.findall(r"^(?:dependencies|dev)\s*=\s*\[(.*?)\]", text, re.S | re.M)
+    assert len(blocks) == 2, (
+        f"expected exactly two dependency lists in {PYPROJECT} — [project].dependencies and the "
+        f"dev extra — found {len(blocks)}. If a third was added, decide whether CI installs it "
+        "before widening this."
+    )
+    for block in blocks:
         for req in re.findall(r'"([^"]+)"', block):
             head = re.split(r"[<>=!~;\[\s]", req, 1)[0]
             if head:
                 names.add(_normalize(head))
     return names
+
+
+def _optional_import_nodes(tree: ast.Module) -> set[ast.stmt]:
+    """Import statements guarded by `try: … except ImportError:` — the optional-dependency idiom.
+
+    Only the `try` BODY counts, and only when a handler names ImportError or ModuleNotFoundError. A
+    bare `except:` or an unrelated handler does not make an import optional, and an import in the
+    `except`/`else`/`finally` branch is not guarded by the try at all.
+    """
+    optional: set[ast.stmt] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try):
+            continue
+        catches_import_error = any(
+            any(
+                isinstance(n, ast.Name)
+                and n.id in {"ImportError", "ModuleNotFoundError"}
+                for n in ast.walk(h.type)
+            )
+            for h in node.handlers
+            if h.type is not None
+        )
+        if not catches_import_error:
+            continue
+        for stmt in node.body:
+            for inner in ast.walk(stmt):
+                if isinstance(inner, (ast.Import, ast.ImportFrom)):
+                    optional.add(inner)
+    return optional
 
 
 def _imported_top_level_modules() -> dict[str, set[str]]:
@@ -67,7 +113,14 @@ def _imported_top_level_modules() -> dict[str, set[str]]:
     found: dict[str, set[str]] = {}
     for path in sorted(TESTS.glob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        guarded = _optional_import_nodes(tree)
         for node in ast.walk(tree):
+            if node in guarded:
+                # An import inside `try: … except ImportError:` is a PROBE, not a requirement — the
+                # code has already written what to do when it is absent. `test_packaging.py` does
+                # exactly this to tell an environment fault (no setuptools) from a packaging defect,
+                # and demanding it be declared would break the very case it exists to report.
+                continue
             if isinstance(node, ast.Import):
                 mods = [a.name for a in node.names]
             elif isinstance(node, ast.ImportFrom):

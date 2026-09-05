@@ -38,13 +38,42 @@ def _docs() -> list[pathlib.Path]:
 #: negation landed on the previous line. That false positive is not hypothetical — it is what this
 #: guard did on its first run, against the very plan that forbids the claim.
 DISCUSSING_NOT_CLAIMING = (
-    "retraction",
-    "retracted",
+    # "retraction" and "retracted" USED to be here, bare and substring-matched. Two bugs at once,
+    # both found by the whole-feature verification round:
+    #
+    #   * `retraction` became live ACDP contract vocabulary (P2, tag 11) and now appears in README,
+    #     CHANGELOG, CLAUDE.md, COMPATIBILITY and ASSUMPTIONS — so any paragraph mentioning the
+    #     FIELD exempted itself. Measured: appending "The published verifier detects truncation for
+    #     chains of any length." to README's `retraction` paragraph passed 27/27.
+    #   * `plans/cross-repo/README.md` was exempt because it names this very file —
+    #     "test_retracted_claims.py" contains "retracted". The guard was excused by its own filename.
+    #
+    # Replaced with markers that carry the discussing-not-claiming sense and cannot be a field name.
+    "retracted:",
+    "retracted a",
+    "retracted-claims",
+    "may claim",
+    # "the guard also fails if any document *claims* truncation detection" — CHANGELOG describing
+    # THIS FILE. Meta by construction: a sentence about what makes the guard fire cannot also be the
+    # capability claim it fires on.
+    "if any document",
     "do not claim",
     "must not claim",
     "previously read",
     "is stale",
     "was wrong",
+)
+
+#: Word-bounded, for the reason `NEGATION_WORDS` already is — a marker matched as a substring is
+#: matched by every longer word containing it. `\b` is applied only where the marker's own edge is
+#: alphanumeric, so "retracted:" keeps its colon and still anchors on the left.
+_DISCUSS_RE = re.compile(
+    "|".join(
+        ("\\b" if m[0].isalnum() else "")
+        + re.escape(m)
+        + ("\\b" if m[-1].isalnum() else "")
+        for m in DISCUSSING_NOT_CLAIMING
+    )
 )
 
 #: Words that make a mention of truncation detection a DENIAL of the capability rather than an
@@ -102,7 +131,7 @@ def _is_exempt(text: str) -> bool:
     does not attempt; it is recorded here rather than left for someone to rediscover.
     """
     low = text.lower()
-    if any(m in low for m in DISCUSSING_NOT_CLAIMING):
+    if _DISCUSS_RE.search(low):
         return True
     claims = [
         c for c in _CLAUSE_SPLIT.split(low) if any(p in c for p in CAPABILITY_PHRASES)
@@ -236,6 +265,30 @@ def test_the_commitment_digest_exclusion_is_stated() -> None:
 #:
 #: The needles are per-band because the rows genuinely differ: only the skew band names a fixing
 #: release. Each needle is the thing a consumer uses to recognise they are hitting the band.
+#: The §3 rows as they actually stand, discovered from the document rather than listed here.
+#:
+#: `KNOWN_BAD_BANDS` below is hardcoded, and a hardcoded list of things-to-check is silenced by
+#: DELETING an entry, not by breaking one — the defect Phase 6 removed from `SOURCES` one phase
+#: earlier without the remedy being carried across. Measured by the whole-feature round: deleting
+#: the `0.7.16 – 0.7.19` tuple AND its COMPATIBILITY row left the suite green at 1182, taking the
+#: consumer's only barrier against the wire-broken band with it.
+#:
+#: So the rows are DISCOVERED and the two sets pinned equal. Deleting a row changes what is
+#: discovered; deleting a tuple changes the keys; either way the equality test below fails.
+_ROW_RE = re.compile(r"^\| \*\*(0\.7\.\d+ – 0\.7\.\d+)\*\*")
+
+
+def _rows_in_compatibility() -> set[str]:
+    return {
+        m.group(1)
+        for m in (
+            _ROW_RE.match(line)
+            for line in COMPATIBILITY.read_text(encoding="utf-8").splitlines()
+        )
+        if m
+    }
+
+
 KNOWN_BAD_BANDS = (
     (
         "| **0.7.13 – 0.7.15**",
@@ -259,6 +312,23 @@ KNOWN_BAD_BANDS = (
         ),
     ),
 )
+
+
+def test_the_guarded_bands_are_exactly_the_documented_bands() -> None:
+    """Anti-shrink pin: the hardcoded list and the document must name the same bands.
+
+    Without this, `KNOWN_BAD_BANDS` is silenced by deletion — remove a tuple and its row together
+    and every remaining test simply runs over less, which is what passing looks like. This is the
+    only test here that can fail for a band no longer mentioned anywhere.
+    """
+    documented = _rows_in_compatibility()
+    guarded = {p.removeprefix("| **").removesuffix("**") for p, _ in KNOWN_BAD_BANDS}
+    assert guarded == documented, (
+        f"COMPATIBILITY.md §3 documents {sorted(documented)} but this file guards "
+        f"{sorted(guarded)}. A band in the document and not the list is unguarded; a band in the "
+        "list and not the document has lost the row that was its only barrier. Nothing was yanked, "
+        "so if a band genuinely stopped being known-bad, delete it from BOTH deliberately."
+    )
 
 
 @pytest.mark.parametrize(
