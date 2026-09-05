@@ -2804,3 +2804,51 @@ Measured after: python **1167 passed / 20 skipped** · `pytest scripts -q` **116
 bare and `STREAM=1`-only runs both still exit 6 · ts **164 pass / 0 fail** · go ok · `verify/` clean ·
 `contract/` byte-identical to HEAD.
 
+### Phase 6 — ACDP P3: the guard that makes the adoption impossible to half-do — DONE
+
+Three files enumerate the ACDP pass-through slots — `python/seam_sdk/client.py`,
+`python/seam_sdk/aio.py`, `ts/src/client.ts` — and nothing checked them. When tags 7-10 were adopted
+both Python docstrings "enumerated four of the eleven as if that were the set", and that was caught
+**by hand**. A guard added after the mistake documents the mistake; this one lands in the phase
+*before* the adoption that will need it.
+
+The expected set is DERIVED from `contract/field-manifest.txt` — `ContextBinding/*` minus the frozen
+base six — never hardcoded. A test carrying its own copy of the answer is self-calibrating and proves
+nothing.
+
+**The tripwire had the classic shrink-the-inputs hole, and the mutation round found it.** Four
+mutations kill it: widening `FROZEN_BASE_SIX` with a real slot (1), making the docstring check always
+say "named" (3), dropping the camelCase mapping so the TS half stops matching (2), and deleting a
+source (1). That last one initially killed **nothing** — every test was parametrized over `SOURCES`,
+so removing `ts/src/client.ts` just ran fewer cases and the file stayed green. A guard that checks
+less passes. `SOURCES` is now derived-and-checked: the tree is searched for the phrase every
+pass-through docstring uses, and the list must equal what is found — which also catches a *fourth*
+client layer appearing, the realistic way this goes stale.
+
+Criterion 3's honesty is preserved rather than papered over: `FROZEN_BASE_SIX` is hardcoded, so
+widening *it* silences the guard as effectively as updating the docstrings would satisfy it. Nothing
+makes a hardcoded list mutation-proof. The exact-equality pin buys that the silencing edit is loud
+and reviewable, and there is now a test demonstrating that mechanism explicitly so the soft spot does
+not have to be rediscovered.
+
+The mutation fixture uses `ContextBinding/revocation` and `revocation_trust_class` — ACDP P3 tags
+12-13 — because they are the **real** next fields, not invented ones. That makes the test a rehearsal
+of the actual event.
+
+**The #96 comment corrected four definitions**, each verified verbatim against the proto rather than
+against the plan's summary of it: `unplaceable` has two producers and the second fires *even with* a
+valid pre-boundary receipt; `unknown` explicitly is **not** "staler than the bound" (a stale negative
+triggers a re-source, and only a failed re-source yields `unknown`); `not_revoked` is scoped to ONE
+authority, not "registries"; and `key_unidentified` is keyed on the **key fingerprint**, so an
+unidentifiable key cannot be cleared against ANY held producer-signed revocation. The proto adds a
+fifth nuance the plan did not name and the comment carries it: registry-attested revocations remain
+scoped by §6 to the serving or receipting registry, so the scope differs by trust class.
+
+The comment also answers the spec question with a measurement instead of a forecast — the vendored
+`verify/docs/seam-event.v1.md` is **93 lines** behind the runtime's copy *today* — and records that
+the regeneration #96 asks for is no longer pending: the runtime merged `ac325d7` (#531) and pushed
+it, so #96 is now the blocker on every merge in this repo rather than a forward-looking task.
+
+Measured after: python **1178 passed / 20 skipped** · `ruff` clean · comment posted to #96, issue
+left OPEN.
+

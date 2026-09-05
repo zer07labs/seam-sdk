@@ -550,7 +550,13 @@ proving the unmodified tree is unaffected.
 
 ### Phase 6 — ACDP P3: the guard that makes the adoption impossible to half-do
 
-**Status:** TODO
+**Status:** DONE. One divergence found by mutation: every test was parametrized over `SOURCES`, so
+DELETING a source silenced the guard while leaving it green — criterion 4's exact concern, and the
+plan's own "quiet opt-out" failure mode arriving through the list rather than through a flag.
+`SOURCES` is now derived from the tree and checked by exact equality. Two things beyond the plan: the
+proto carries a fifth correction the plan did not name (registry-attested revocations stay scoped by
+§6 to the serving or receipting registry), and the spec question is answered with a measurement — the
+vendored copy is 93 lines stale today — rather than the predicted "it will need one".
 
 **Delivers:** a tripwire binding the three pass-through docstrings to the contract manifest, and two
 factual corrections posted to #96.
