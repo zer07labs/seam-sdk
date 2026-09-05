@@ -573,7 +573,9 @@ def test_claude_mds_gotcha_names_the_exit_codes_this_gate_actually_produces(
     gotcha = CLAUDE_MD.read_text(encoding="utf-8")
     # Located by the command, not by any exit code in the prose — the needle must not be a thing
     # this test is about to assert, or a paragraph that dropped a code would simply stop being found.
-    start = gotcha.index("`STREAM=1 EVENTS=1 make check-contract` exits")
+    # Anchored on the script spelling, not the `make` one: Phase 7 changed the documented command
+    # because `make` collapses every exit code to its own 2 (see the sibling test below).
+    start = gotcha.index("`STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exits")
     para = gotcha[start : gotcha.index("\n\n", start)]
 
     # 8 — a matched api lag with the event surface also disagreeing.
@@ -903,4 +905,42 @@ def test_a_service_with_no_methods_is_caught(
     )
     assert f"a SERVICE in {language}" in r.stderr, (
         f"the refusal must say it found a SERVICE (not an RPC) and in which language:\n{r.stderr}"
+    )
+
+
+def test_claude_md_prescribes_the_script_not_make_for_the_contract_gate() -> None:
+    """The four codes above are only readable if the documented command actually returns them.
+
+    `make check-contract` runs this same script, but GNU make replaces a failed recipe's status
+    with its own **2** — and 2 is a real, differently-meaning code in this gate's vocabulary (the
+    `STREAM=1` streamed-payload mirror-field refusal). So the `make` form reports every distinct
+    outcome — 6, 7, 8, 5, 3, 1 — as the one code that means "a mirror field disagrees".
+
+    CLAUDE.md's Gotchas paragraph spends most of its length telling a reader to distinguish those
+    codes, and for two years' worth of sessions its Commands section prescribed the one invocation
+    that cannot express them. Measured, not reasoned: `make` returned 2 where the script returned 6
+    on the same tree. This pins the fix so the convenient spelling does not drift back in.
+    """
+    claude_md = (REPO / "CLAUDE.md").read_text(encoding="utf-8")
+    command_line = next(
+        (
+            ln
+            for ln in claude_md.splitlines()
+            if ln.startswith("- Contract surface gate:")
+        ),
+        None,
+    )
+    assert command_line is not None, (
+        "CLAUDE.md no longer has a `- Contract surface gate:` line in its Commands section. That "
+        "line is what tells a reader how to run the gate; if it moved, re-point this test at it."
+    )
+    assert "./scripts/check-contract.sh" in command_line, (
+        "CLAUDE.md's contract-gate command no longer invokes the script directly: "
+        f"{command_line!r}. The exit code IS the result for this gate, and `make` collapses every "
+        "one of them to its own 2 — which this gate already uses to mean something else."
+    )
+    assert "make check-contract" not in command_line.split("**call the script")[0], (
+        "CLAUDE.md's contract-gate command prescribes `make check-contract` again. It returns 2 "
+        "for every failure mode, including the six the Gotchas paragraph asks the reader to tell "
+        "apart. Mentioning `make` in the surrounding caveat is fine; prescribing it is not."
     )

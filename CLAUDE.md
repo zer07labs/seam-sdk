@@ -6,7 +6,12 @@ deliberately links nothing of Seam's.
 
 ## Commands
 - Codegen (**run first** — see Gotchas): `make generate` · against a runtime checkout: `make generate-local RUNTIME=../seam-runtime`
-- Contract surface gate: `STREAM=1 EVENTS=1 make check-contract`
+- Contract surface gate: `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` — **call the script, not
+  `make check-contract`.** The exit code IS the result here (see Gotchas), and `make` replaces a
+  failed recipe's status with its own **2** — which is itself a real, differently-meaning code in
+  this gate's vocabulary (the `STREAM=1` mirror-field refusal), so every distinct outcome arrives
+  wearing one that means something else. The `make` target still exists and is fine for CI, where
+  only pass/fail is read.
 - Python (use the venv — a system `pytest`/`ruff` fails to resolve the package): setup `pip install -e "./python[dev]"` ·
   lint `python/.venv/bin/ruff check python && python/.venv/bin/ruff format --check python` · test `cd python && .venv/bin/pytest -q`
 - TypeScript (in `ts/`): `npm run typecheck` · `npm run build` · `npm test`
@@ -27,14 +32,15 @@ deliberately links nothing of Seam's.
   `test_grpcio_floor.py` go red after a `make generate` that bumps gencode. Raise the floor; don't relax the test.
 - Python CI installs editable **and** builds the wheel to import it in a clean venv — an editable install
   cannot see a packaging defect. Don't trust a green suite alone before a release.
-- **`STREAM=1 EVENTS=1 make check-contract` exits **6** on every pre-ACDP local checkout** — local stubs
+- **`STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exits **6** on every pre-ACDP local checkout** — local stubs
   lag the committed manifest by five `ContextBinding` fields (`content_hash`, `receipt_hash`,
   `key_status`, `resolved_status`, `retraction`) until a regeneration pulls a BSR module that carries
   them. The gate recognises exactly that case and downgrades its output to a NOTE naming
   `contract/expected-local-lag.txt` — it still exits **6**, since CI is the authority, not this checkout.
   Anything the gate names beyond exactly those five fields is real drift, not this known lag.
-  **Read the exit code, not just this bullet.** Several other codes are reachable from the same
-  command — 5 (RPC-manifest drift), 3 (stubs absent) and 1 among them — and none is the recorded lag.
+  **Read the exit code, not just this bullet** — which is why the command above is the script and
+  not `make`. Several other codes are reachable from the same command — 5 (RPC-manifest drift),
+  3 (stubs absent) and 1 among them — and none is the recorded lag.
   Three matter here. If `seam.event.v1`'s field surface disagrees with
   `contract/event-field-manifest.txt`, the run exits **8** — 8 exists precisely so an event
   regression cannot arrive wearing the code this bullet tells you to read past — and the NOTE then

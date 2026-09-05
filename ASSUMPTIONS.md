@@ -564,9 +564,14 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   close on its own). `EXPECTED-FROM` is 2026-08-31, so the 60-day trigger is still far off — but the
   *contents* are no longer merely stale, they are now actively wrong in CI: seam-runtime merged its
   ACDP P3 key-revocation work and pushed the BSR, so a CI regeneration emits two `ContextBinding`
-  fields (tags 12-13) that the recorded lag does not list. The lag file describes a five-field gap;
-  CI now has a seven-field one. Local checkouts still see the recorded five, so this repo stays
-  green while `main` does not — which is exactly the divergence the entry warned the window would
+  fields (tags 12-13) the manifest does not declare. Note the direction, because an earlier
+  wording here had it backwards: CI fails on the gate's NOT-IN-THE-MANIFEST branch — a two-field
+  **surplus** — and never consults this file at all. Seven is the local-stub-vs-BSR delta, and it
+  becomes a recorded *gap* only once tags 12-13 are declared. Local checkouts still show exactly
+  the recorded five, so this repo stays green while `main` does not — and the file's own NOTE now
+  teaches a **wrong cause** on every local run: it explains the lag as "a BSR module that has not
+  yet republished these", when the BSR has republished and gone two fields further. The local
+  stubs are simply old. Re-recording it is Phase 8's, not a hand-edit here — which is exactly the divergence the entry warned the window would
   produce. Resolving it needs the BSR regeneration credentials this workstation lacks, so the entry
   stays open and the fix stays interlocked with Phase 8. Recorded rather than papered over.
   This cycle also produced the first hard evidence for the **social** failure mode this entry names
@@ -658,6 +663,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   matrix, which is why the docstring cites the issue rather than a line of code. Nothing in this repo
   can promote it, and the docstring already says the list is orientation rather than a guarantee to
   branch on — so the cost of it being wrong stays bounded to trust, as the entry records. Stays open
+  against #526. See DECISIONS.md.
 
 
 ## Appending a new workstream to `PROGRESS.md` rather than starting a fresh one
@@ -805,5 +811,5 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Status:** UNCONFIRMED as a design choice (reviewed 2026-09-04, unchanged) — deliberately
   deferred, with the trigger wired to fire loudly rather than left to be noticed. The tripwire
   shipped this cycle and has never fired: `seam.api.v1` is still the only package the RPC manifest
-  covers, and the event surface reached by `assert_event_surface_preconditions` declares services
-  but no manifest of its own. Nothing has yet asked for the second package that would settle it.
+  covers, and the event surface reached by `assert_event_surface_preconditions` declares **no**
+  services and has no manifest of its own. Nothing has yet asked for the second package that would settle it.

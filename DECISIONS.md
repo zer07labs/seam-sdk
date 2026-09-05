@@ -62,13 +62,16 @@ changing status:
 
 - **`contract/expected-local-lag.txt` is a window, not a permanent excuse** — the window has begun
   closing on its own. seam-runtime merged its ACDP P3 key-revocation work and pushed the BSR, so a
-  CI regeneration now emits two `ContextBinding` fields the recorded lag does not list: the lag file
-  describes a five-field gap and CI has a seven-field one. Local checkouts still see five, so this
-  checkout stays green while `main` does not. Resolving it needs BSR regeneration credentials this
+  CI regeneration now emits two `ContextBinding` fields the manifest does not declare, so `main`
+  fails on the gate's NOT-IN-THE-MANIFEST branch — a two-field **surplus**, which never consults
+  the lag file at all. (Seven is the local-stub-vs-BSR delta; it becomes a recorded *gap* only
+  once tags 12-13 are declared. An earlier wording here stated the direction backwards.) Local
+  checkouts still show exactly the recorded five, so this checkout stays green while `main` does
+  not. Resolving it needs BSR regeneration credentials this
   workstation lacks, which is the same blocker Phase 8 waits on.
 - **Cloudsmith quarantine for the 0.7.39-0.7.43 band** — consolidated onto issue #43 on 2026-09-02
   so both known-bad bands get one answer. Re-verified that nothing can quietly create a third band
-  while the decision waits: `.github/workflows/publish.yml:69-143` resolves every `ci-ok` check run
+  while the decision waits: `.github/workflows/publish.yml:69-148` resolves every `ci-ok` check run
   for the release SHA through the check-runs API and treats an absent conclusion as a refusal, so
   today's red `main` blocks publication rather than repeating the pattern that produced the band.
 

@@ -223,92 +223,113 @@ def test_the_commitment_digest_exclusion_is_stated() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    "required",
-    [
-        "0.7.20",  # the floor
-        "0.7.13",  # unimportable band
-        "0.7.17",  # wire-broken band
-        "0.7.39",  # gencode/floor skew band — the lower edge, proven by the CI red/green boundary
-    ],
+#: The §3 known-bad bands, each as (row prefix, the facts a reader acts on).
+#:
+#: One list, three bands. The previous shape was a weak substring parametrize over four version
+#: strings PLUS a strong row test special-cased to one band — the same rule in two places with one
+#: copy incomplete, which is this repo's recurring defect and was live here: a verification round
+#: mutation-tested the guard and found that deleting the `0.7.16 – 0.7.19` row, or the
+#: `**Floor: 0.7.20.**` line, left the whole suite green. `"0.7.17"` never appears in the table at
+#: all (the row is spelled `0.7.16 – 0.7.19`) and matched only unrelated prose; `"0.7.20"` appears
+#: five times elsewhere. So two of the three bands the substring check named were unguarded while
+#: reading as covered.
+#:
+#: The needles are per-band because the rows genuinely differ: only the skew band names a fixing
+#: release. Each needle is the thing a consumer uses to recognise they are hitting the band.
+KNOWN_BAD_BANDS = (
+    (
+        "| **0.7.13 – 0.7.15**",
+        (("ModuleNotFoundError", "the symptom — how a consumer recognises this band"),),
+    ),
+    (
+        "| **0.7.16 – 0.7.19**",
+        (("UNAUTHENTICATED", "the symptom — the error a consumer actually sees"),),
+    ),
+    (
+        "| **0.7.39 – 0.7.43**",
+        (
+            (
+                "0.7.47",
+                "the release that fixes it — without it the row tells a reader nothing to do",
+            ),
+            (
+                "VersionError",
+                "the symptom, which is how a consumer recognises they are hitting this",
+            ),
+        ),
+    ),
 )
-def test_the_known_bad_bands_stay_documented(required: str) -> None:
-    """Nothing was yanked (see CHANGELOG.md's "No yank" entry), so these versions remain installable
-    document is the only barrier. Dropping a band silently re-exposes it.
-
-    This is a WEAK check by construction — a version string can appear for unrelated reasons, so
-    passing here does not prove the band is documented, only that the number is mentioned
-    somewhere. The band itself is guarded by the test below, which exists because this one
-    demonstrably was not enough.
-    """
-    assert required in COMPATIBILITY.read_text(encoding="utf-8"), (
-        f"COMPATIBILITY.md no longer mentions {required}. Nothing was yanked, so these versions are "
-        f"still installable from Cloudsmith and the document is the only mitigation."
-    )
 
 
-def test_the_gencode_skew_band_is_a_table_row_not_merely_a_mention() -> None:
-    """The §3 row for 0.7.39-0.7.43 must survive as a ROW, not as a passing reference.
+@pytest.mark.parametrize(
+    "prefix,needles", KNOWN_BAD_BANDS, ids=lambda v: v if isinstance(v, str) else ""
+)
+def test_each_known_bad_band_is_a_table_row_not_merely_a_mention(
+    prefix: str, needles: tuple[tuple[str, str], ...]
+) -> None:
+    """Every §3 band must survive as a ROW, and carry the facts a reader acts on.
 
-    Written after the parametrize above was caught being vacuous for this band: "0.7.43" already
-    appeared in COMPATIBILITY.md for unrelated reasons, so the row could be deleted outright and
-    the whole suite still passed — 557 green with the band gone. A guard that cannot fail for the
-    thing it guards is worse than no guard, because it is read as coverage.
-
-    It also pins the two facts a reader acts on, which a substring check cannot: the release that
-    fixes it, and the symptom that identifies it.
+    Nothing was yanked (see CHANGELOG.md's "No yank" entry), so these versions remain installable
+    from Cloudsmith and this document is the only barrier. A substring check cannot enforce that:
+    a version number appears for unrelated reasons, so the row can be deleted outright with the
+    suite green. That was measured, twice — first for 0.7.39-0.7.43 (557 green with the row gone),
+    then for 0.7.16-0.7.19 and the 0.7.20 floor, which is why this test is now parametrized over
+    every band instead of guarding one and trusting a substring for the others.
     """
     rows = [
         line
         for line in COMPATIBILITY.read_text(encoding="utf-8").splitlines()
-        if line.startswith("| **0.7.39 – 0.7.43**")
+        if line.startswith(prefix)
     ]
     assert len(rows) == 1, (
-        "COMPATIBILITY.md §3 no longer carries exactly one table row for the 0.7.39-0.7.43 "
-        f"gencode/floor skew band (found {len(rows)}). Five releases shipped that defect on red "
-        "CI and none was yanked, so this row is the only barrier between a consumer and a wheel "
-        "whose declared protobuf floor is lower than the gencode it bundles. If the band was "
-        "re-derived, update this test deliberately — do not delete it."
+        f"COMPATIBILITY.md §3 no longer carries exactly one table row starting {prefix!r} "
+        f"(found {len(rows)}). None of these versions was yanked, so this row is the only barrier "
+        "between a consumer and a broken wheel. If the band was re-derived, update this test "
+        "deliberately — do not delete it."
     )
-    row = rows[0]
-    for needle, why in (
-        (
-            "0.7.47",
-            "the release that fixes it — without it the row tells a reader nothing to do",
-        ),
-        (
-            "VersionError",
-            "the symptom, which is how a consumer recognises they are hitting this",
-        ),
-    ):
-        assert needle in row, (
-            f"the 0.7.39-0.7.43 row no longer states {needle!r}: {why}"
+    for needle, why in needles:
+        assert needle in rows[0], (
+            f"the {prefix!r} row no longer states {needle!r}: {why}"
         )
 
 
-def test_the_skew_band_row_renders_inside_the_table() -> None:
-    """A blank line before the row would end the GFM table and render it as literal pipes.
+@pytest.mark.parametrize("prefix", [p for p, _ in KNOWN_BAD_BANDS])
+def test_each_known_bad_row_renders_inside_the_table(prefix: str) -> None:
+    """A blank line before a row would end the GFM table and render it as literal pipes.
 
-    That is not hypothetical: the row was first committed with exactly that defect and read fine
-    in the diff. Markdown tables are whitespace-terminated, so this is a one-character failure
-    that no prose review catches and no substring check notices.
+    That is not hypothetical: the skew-band row was first committed with exactly that defect and
+    read fine in the diff. Markdown tables are whitespace-terminated, so this is a one-character
+    failure that no prose review catches and no substring check notices.
     """
     lines = COMPATIBILITY.read_text(encoding="utf-8").splitlines()
     # Not a bare `next(...)`: with the row absent that raises StopIteration carrying no message,
     # and a guard whose failure explains nothing is half a guard.
-    idx = next(
-        (i for i, ln in enumerate(lines) if ln.startswith("| **0.7.39 – 0.7.43**")),
-        None,
-    )
+    idx = next((i for i, ln in enumerate(lines) if ln.startswith(prefix)), None)
     assert idx is not None, (
-        "COMPATIBILITY.md §3 has no 0.7.39-0.7.43 row at all, so its rendering cannot be checked. "
-        "The sibling test above says why the row has to exist."
+        f"COMPATIBILITY.md §3 has no row starting {prefix!r} at all, so its rendering cannot be "
+        "checked. The sibling test above says why the row has to exist."
     )
     assert lines[idx - 1].startswith("|"), (
-        "the 0.7.39-0.7.43 row is not contiguous with the rows above it — the preceding line is "
+        f"the {prefix!r} row is not contiguous with the rows above it — the preceding line is "
         f"{lines[idx - 1]!r}. A GFM table ends at the first non-table line, so this row would "
         "render as literal pipe characters in a paragraph rather than as a row of the known-bad "
         "table."
+    )
+
+
+def test_the_floor_is_stated_as_its_own_line() -> None:
+    """`Floor: 0.7.20` is the one instruction a reader can act on without reading the table.
+
+    Guarded as a whole LINE because the substring `0.7.20` occurs five times elsewhere in this
+    document — so the sentence that makes it the floor was deletable with every test green, which
+    a verification round demonstrated. The floor is what `seam-adapters` pins against; losing the
+    statement loses the reason the pin is what it is.
+    """
+    lines = COMPATIBILITY.read_text(encoding="utf-8").splitlines()
+    assert any(ln.startswith("**Floor: 0.7.20.**") for ln in lines), (
+        "COMPATIBILITY.md §3 no longer states `**Floor: 0.7.20.**` as its own line. 0.7.20 is the "
+        "first release that is both importable and wire-correct; if the floor genuinely moved, "
+        "change it here deliberately rather than deleting the statement."
     )
 
 

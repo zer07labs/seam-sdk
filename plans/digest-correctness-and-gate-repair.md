@@ -66,11 +66,17 @@ corruption was in the differential's own transport. **No `engines` pin, no upstr
 basis.** The one genuine residue is unrelated and minor: `ts/package.json` declares no `engines` field
 at all, which is worth fixing as packaging hygiene and is scoped as such in Phase 3.
 
-**4. ACDP P3 (issue #96) is readiness work only, and cannot be adopted this cycle.** The runtime's
-tags 12-13 live on branch `feat/acdp-p3-key-revocation`, which is **not pushed to origin at all** —
-`origin/main`'s `ContextBinding` ends at tag 11. The BSR is what `buf push` updates on merge, so there
-is nothing to regenerate against and a manifest declaring the fields today would turn CI red against a
-BSR that lacks them. What *is* doable now is the guard that makes the adoption impossible to get
+**4. ACDP P3 (issue #96) is readiness work only, and cannot be adopted this cycle.** *(Corrected in
+Phase 7 — the original reason below was true when written and is now false.)* The stated blocker was
+that tags 12-13 lived on an unpushed branch, so there was nothing to regenerate against. The runtime
+has since merged `feat/acdp-p3-key-revocation` as `ac325d7` (#531) and `buf push`ed it, so
+`origin/main`'s `ContextBinding` now carries tags 12 and 13 and **the consequence is inverted**:
+declaring the fields today would turn CI *green*, and not declaring them is what keeps `main` red —
+the field-surface gate fails on a two-field surplus, blocking every merge including PR #97. The
+remaining blocker is different and narrower: adopting the fields properly wants a regeneration this
+workstation cannot run (`buf registry login` against a private BSR module), and the adoption is a
+deliberate decision about whether this SDK carries the fields, which the gate's own refusal text says
+must be made before the manifest moves. What *is* doable now is the guard that makes the adoption impossible to get
 half-right, plus a set of corrections to the issue itself. Several of #96's vocabulary definitions are
 superseded by the proto it describes: `unplaceable` has two producers, not one — the second is "the
 acting revocation names a different controller than the producer", which fires *even with* a valid
@@ -621,12 +627,19 @@ the 0.7.39–0.7.43 band — was already posted, across comments dated 2026-08-2
 plan was written without checking the thread. Rather than restate it, the posted evidence was
 re-verified as still current and two things were checked that could have invalidated it:
 
-- The 2026-08-24 comment's load-bearing claim that `python/tests/test_retracted_claims.py` keeps the
-  advisory from eroding still holds — and holds *more* strongly than described, since that file now
-  also pins the 0.7.39–0.7.43 row's existence, its `0.7.47` fix reference, and its contiguity with
-  the rows above it. Phase 4 rewrote that file's exemption predicate without touching the version
-  assertions; this was verified rather than assumed, because the whole "documented, not yanked"
-  disposition rests on that guard.
+- The 2026-08-24 comment's load-bearing claim that `python/tests/test_retracted_claims.py` keeps
+  the advisory from eroding **was checked by reading the assertions, and reading was not enough.**
+  Phase 4 had indeed left the version assertions untouched (`git diff 6d763c8 HEAD` on that file is
+  empty), which is what the first check established — but the phase's verification round mutation-
+  tested the guard instead and found it vacuous for two of the three things the comment names:
+  deleting the `| **0.7.16 – 0.7.19**` row, or the `**Floor: 0.7.20.**` line, left the whole suite
+  green. `"0.7.17"` never appears in the §3 table at all (the row is spelled `0.7.16 – 0.7.19`) and
+  matched only unrelated prose; `"0.7.20"` appears five times elsewhere. So the comment's claim was
+  true for one band and false for two, and this phase initially confirmed it on the wrong evidence
+  — asserting that assertions *exist* is not asserting that they *fire*, which is this plan's own
+  subject. Fixed in this phase: the row test is now parametrized over all three bands with per-band
+  symptom needles, the floor is pinned as a whole line, and both were mutation-demonstrated. A
+  correction was posted to #43, since the "documented, not yanked" disposition rests on that guard.
 - The band the issue is deciding about was created by publishing on red CI, and `main` is red right
   now — so the obvious way for this issue to get worse is a sixth band appearing while it waits.
   It cannot: `publish.yml` resolves every `ci-ok` check run for the release SHA through the
@@ -638,8 +651,8 @@ Edge-cases section warns against, so none was posted. Recorded here instead, per
 **#44 was materially wrong and was corrected.** The thread's list of eight names to reserve was
 derived from repo names plus judgement, and no comment stated its inclusion criterion — which is why
 the error survived two sweeps. Sweeping `[project] name =` across the workspace gives **eleven**
-branded distributions, all 404 on PyPI today. Three of the posted eight (`seam-verify`, a Rust
-crate; `seam-adapters` and `seam-connectors`, repo names) build no Python distribution at all, and
+branded distributions, all 404 on PyPI today. Two of the posted eight (`seam-verify`, a Rust
+crate; `seam-adapters`, a repo name) build no Python distribution at all, and
 five real ones were missing (`seam-claude-agent`, `seam-connector-sdk`, `seam-learning-batch`,
 `seam-learning-keys`, `seam-aegis`). The comment leads with the criterion, not the list.
 
@@ -724,8 +737,12 @@ credential and a human decision, and closing them to shrink the count would be d
 **Delivers:** the complete, reviewed specification of the adoption change, so that landing it once
 the BSR republishes is mechanical rather than a fresh design exercise.
 
-**Depends on:** the runtime merging `feat/acdp-p3-key-revocation` to `main`, which is what
-`buf push`es the BSR. That branch is **not pushed to origin at all** today.
+**Depends on:** *(satisfied 2026-09-04 — recorded here because the acceptance criteria name it as
+the checkable blocking fact.)* This depended on the runtime merging `feat/acdp-p3-key-revocation`
+to `main`, which is what `buf push`es the BSR. It merged as `ac325d7` (#531); `origin/main`'s
+`ContextBinding` carries tags 12-13 and the BSR has republished — proved by this repo's own `main`
+CI failing with `+ ContextBinding/revocation` and `+ ContextBinding/revocation_trust_class` in both
+the python and typescript jobs. The phase stays **BLOCKED** on operator decision, not on upstream.
 
 **Files (when unblocked):** `contract/field-manifest.txt`, `contract/expected-local-lag.txt`,
 `python/tests/test_field_manifest_gate.py`, `python/seam_sdk/client.py`, `python/seam_sdk/aio.py`,
