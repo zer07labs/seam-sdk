@@ -6,6 +6,60 @@ assumption, the independent recommender's analysis, the human verdict, and the r
 produced it.
 
 
+## 2026-09-05 — /reconcile over `plans/digest-correctness-and-gate-repair.md`
+
+Closing pass for the whole plan. Most of the backlog was reviewed and re-dated during Phase 7, so
+this records only what **moved** since, rather than restating fourteen unchanged entries.
+
+### One assumption got its first real test, and it held
+
+**"Phase 8 converts the vendored citation rather than grandfathering it"** was CONFIRMED on a
+*prediction*, and the entry said so honestly: an earlier version claimed it was "vindicated within
+the same run", which was vacuous — the converted citation had not moved because nothing had
+refreshed the vendored file. The status was rewritten to rest on the durable reason instead: *"the
+copy is refreshed whole-file on upstream's cadence, so the next refresh drifts any line anchor into
+it, whenever that is."*
+
+**This run performed that refresh.** Phase 8 re-pinned `verify/docs/seam-event.v1.md` to `ac325d7`,
+whole-file and verbatim: **69 insertions, 5 deletions**. Every line number below the first insertion
+moved. Nothing broke, because the citation had been converted to needle-based rather than
+grandfathered — which is precisely the outcome the two alternatives differ on. Had it been
+grandfathered with a `#73` comment, this refresh is the run that would have drifted it.
+
+**Verdict: CONFIRM, and the evidence is upgraded** from "durable reason, not in-run evidence" to
+measured. The prediction named an event that has now happened.
+
+### One assumption changed shape rather than status
+
+**"`contract/expected-local-lag.txt` is a window, not a permanent excuse"** stays `UNCONFIRMED`, but
+what it is waiting on has changed. It was recorded against a five-field gap whose stated cause —
+"the BSR has not caught up" — became false while nobody was looking. Phase 8 re-recorded it to seven
+fields, corrected the cause (the BSR is *ahead*; the local stubs are old), and armed the trigger
+explicitly: the **next** re-record, not this one, is the point at which curating the file stops being
+the better trade and a one-time `buf registry login` on the workstation plus deleting the file
+outright becomes it. That is now written in the file in capitals rather than inferred from
+`git log`, which is what the entry's own honesty riders asked for.
+
+### The rest
+
+Fourteen entries stay `UNCONFIRMED`, each carrying a 2026-09-04 review note saying what the review
+found. Three of them — the `tool_input` canonical-bytes entry, the JCS large-integer entry, and the
+Cloudsmith quarantine entry — gained the **re-open trigger they had never had**, which is the
+difference between an open question and scenery.
+
+Nothing in the backlog is blocked on this repo. What remains needs a runtime answer, a consumer, a
+credential, or a JDK this workstation does not have — and each entry names which.
+
+### Plan status
+
+All eight phases DONE. Phase 8 was written as BLOCKED and specified in advance; it landed on
+operator go-ahead once the blocker dissolved upstream, and needed no design decisions because the
+specification already existed. That is the argument for writing a blocked phase down rather than
+deferring it, and it is worth carrying to the next plan.
+
+---
+
+
 ## 2026-09-04 — ACDP P3 adoption: W4.3 re-answered, and the lag file re-recorded rather than left lying
 
 Phase 8 was written as BLOCKED and specified in advance. Both halves of that turned out to matter:
