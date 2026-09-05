@@ -827,3 +827,34 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   shipped this cycle and has never fired: `seam.api.v1` is still the only package the RPC manifest
   covers, and the event surface reached by `assert_event_surface_preconditions` declares **no**
   services and has no manifest of its own. Nothing has yet asked for the second package that would settle it.
+
+## 0.7.39–0.7.43 stays installable now that the harder-failing band has been deleted
+- **Plan:** none — arose from executing [#43](https://github.com/zer07labs/seam-sdk/issues/43) on 2026-09-05
+- **Assumed:** that deleting 0.7.13–0.7.19 does not, by itself, change the right disposition for
+  0.7.39–0.7.43 — the two bands are being judged on their own defects rather than on parity.
+- **Chose:** delete only what #43 named, and leave 0.7.39–0.7.43 installable. #43's scope is the
+  0.7.7 release and the 0.7.13–0.7.19 window; the third band was never in it, and widening a
+  destructive action beyond its authorization because the neighbouring case moved is precisely the
+  reasoning that should require a fresh decision rather than inherit one.
+- **What actually changed:** `DECISIONS.md`'s recorded disposition for 0.7.39–0.7.43 rested on four
+  arguments, and the deletion **removed one of them outright** — "the precedent already covers
+  worse" is now false, because the worse band is gone and the asymmetry it appealed to is inverted.
+  The other three still stand on their own: the defect is conditional (it bites only where
+  something else caps `protobuf` below 7.36.0), it is self-detecting at first import via protobuf's
+  own runtime-version check, and a consumer who resolved `protobuf` freely is working today. So the
+  conclusion survives its lost premise — but it is now a three-legged argument that used to have
+  four, and nobody has re-weighed it since the leg came off.
+- **Alternatives:** (a) delete 0.7.39–0.7.43 too, restoring parity — rejected as unauthorized and,
+  more importantly, as the one action that would break something that currently works, which none
+  of the 0.7.13–0.7.19 deletions did; (b) declare the question settled by the deletion — rejected,
+  since that would let a destructive action silently re-decide an adjacent case it was never scoped
+  to touch.
+- **Blast radius if wrong:** low and asymmetric. If the band should have gone too, the cost is that
+  an installable-but-conditionally-broken wheel stays reachable, mitigated by an advisory in three
+  documents. If it should NOT go and someone deletes it for parity, the cost is a hard resolution
+  failure for consumers who are working fine today — irreversible per registry.
+- **Owner / re-open trigger:** whoever next touches the advisory, or the first consumer report of a
+  `VersionError` from 0.7.39–0.7.43. Re-open immediately if anyone proposes deleting the band *for
+  consistency with #43* — that is the specific reasoning this entry exists to interrupt.
+- **Status:** UNCONFIRMED (recorded 2026-09-05). The disposition is unchanged and deliberately so;
+  what is unconfirmed is whether it should be, now that the argument supporting it is one leg short.

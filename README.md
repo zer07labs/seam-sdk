@@ -15,7 +15,9 @@ the public contract, never on the runtime internals.
 > `authorize()` call against a current runtime (`UNAUTHENTICATED: admission ticket is not valid` —
 > the ticket is fine); 0.7.39–0.7.43 declare a `protobuf` floor below their own bundled gencode, so
 > `import seam_sdk` raises `VersionError` for anyone whose closure caps `protobuf` below 7.36.0.
-> None of the three is visible from the version number. Full detail and root cause:
+> None of the three is visible from the version number. **0.7.13–0.7.19 was deleted from the
+> registry on 2026-09-05, so a pin inside that band now fails to resolve rather than installing
+> something broken; 0.7.39–0.7.43 is still installable.** Full detail and root cause:
 > [`CHANGELOG.md`](CHANGELOG.md) and [`COMPATIBILITY.md`](COMPATIBILITY.md) §3.
 
 > **Before you pin a version, read [`COMPATIBILITY.md`](COMPATIBILITY.md).** This SDK takes the

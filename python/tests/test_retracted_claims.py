@@ -281,9 +281,13 @@ _ROW_RE = re.compile(r"^\| \*\*(0\.7\.\d+ – 0\.7\.\d+)\*\*")
 _CHANGELOG_ROW_RE = re.compile(r"^\| (0\.7\.\d+–0\.7\.\d+) \|")
 
 #: Every known-bad band this repo has ever published. This list may GROW and may never SHRINK: a
-#: release that was broken stays broken, and nothing was yanked, so each of these remains installable
-#: from Cloudsmith forever. That is what makes a frozen floor the right shape here rather than a
-#: symmetric equality — see the test below for why equality alone was not enough.
+#: release that was broken stays broken. That was originally argued from installability — nothing
+#: had been yanked, so every band remained on Cloudsmith forever. 0.7.13-0.7.19 was deleted on
+#: 2026-09-05 (#43), which does not weaken the rule but changes why it holds: for a deleted band
+#: these rows are now the ONLY surviving record of what those versions did, so dropping one
+#: destroys the history rather than merely un-warning about a live wheel. A frozen floor is still
+#: the right shape rather than a symmetric equality — see the test below for why equality alone was
+#: not enough.
 _HISTORICAL_BANDS = frozenset({"0.7.13 – 0.7.15", "0.7.16 – 0.7.19", "0.7.39 – 0.7.43"})
 
 
@@ -380,8 +384,10 @@ def test_each_known_bad_band_is_a_table_row_not_merely_a_mention(
 ) -> None:
     """Every §3 band must survive as a ROW, and carry the facts a reader acts on.
 
-    Nothing was yanked (see CHANGELOG.md's "No yank" entry), so these versions remain installable
-    from Cloudsmith and this document is the only barrier. A substring check cannot enforce that:
+    0.7.39-0.7.43 remains installable, so for that band this document is the only barrier; the
+    first two bands were deleted on 2026-09-05 (see CHANGELOG.md's "No yank" entry, which records
+    the reversal), so for those it is the only surviving record. Either way the row has to stay,
+    and a substring check cannot enforce that:
     a version number appears for unrelated reasons, so the row can be deleted outright with the
     suite green. That was measured, twice — first for 0.7.39-0.7.43 (557 green with the row gone),
     then for 0.7.16-0.7.19 and the 0.7.20 floor, which is why this test is now parametrized over
@@ -394,8 +400,9 @@ def test_each_known_bad_band_is_a_table_row_not_merely_a_mention(
     ]
     assert len(rows) == 1, (
         f"COMPATIBILITY.md §3 no longer carries exactly one table row starting {prefix!r} "
-        f"(found {len(rows)}). None of these versions was yanked, so this row is the only barrier "
-        "between a consumer and a broken wheel. If the band was re-derived, update this test "
+        f"(found {len(rows)}). This row is either the only barrier between a consumer and a broken "
+        "wheel (0.7.39-0.7.43, still installable) or the only surviving record of one "
+        "(0.7.13-0.7.19, deleted 2026-09-05). If the band was re-derived, update this test "
         "deliberately — do not delete it."
     )
     for needle, why in needles:
