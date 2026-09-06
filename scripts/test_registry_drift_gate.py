@@ -68,6 +68,38 @@ LANDED = datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc)
 FILLER_TAGS = 25
 
 
+@pytest.fixture(autouse=True)
+def _no_ambient_registry_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make "any new live-path test must pass `env=`" a mechanism instead of a sentence.
+
+    `run()`'s `env` defaults to `None`, which hands the child a copy of this process's environment.
+    On a machine carrying a real `SEAM_REGISTRY_TOKEN` that means a live-path test written without
+    an explicit `env=` reaches the actual registry with the actual secret — and passes. That has
+    already happened here once (three requests to api.cloudsmith.io, suite green); the remedy
+    applied was per-test discipline, which is exactly the kind of remedy that decays.
+
+    Removing the variable for the duration of every test makes the omission fail CLOSED: the script
+    finds no credential and exits 2, so the test that forgot says so instead of quietly working.
+
+    Phase 5 makes this more likely, not less — it introduces a workflow whose whole job is to put a
+    Cloudsmith secret into that variable.
+    """
+    monkeypatch.delenv("SEAM_REGISTRY_TOKEN", raising=False)
+
+
+def test_the_ambient_token_scrubber_is_actually_in_effect() -> None:
+    """Anti-vacuity for the fixture above, which is invisible when it works.
+
+    An autouse fixture that stopped being applied — renamed, moved to a class, shadowed by a
+    conftest — would restore the hazard silently, since every test that passes `env=` explicitly
+    stays green either way.
+    """
+    assert "SEAM_REGISTRY_TOKEN" not in os.environ, (
+        "the autouse scrubber is not running, so a live-path test that omits `env=` would inherit "
+        "a real credential from this process and query the real registry."
+    )
+
+
 def _git(repo: Path, *args: str, when: datetime | None = None) -> str:
     env = None
     if when is not None:
@@ -872,12 +904,38 @@ def test_the_happy_live_path_queries_one_canary_then_the_target(tmp_path: Path) 
     proc = run(repo, None, tmp_path, env=live_env(bin_dir))
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert versions_queried(calls) == [ROSTER[0], "0.7.78"]
+    # And exactly two invocations, counted rather than inferred. `versions_queried` filters on
+    # `version:`, so a third request to some URL without that qualifier — a discovery call, a
+    # retry against a different endpoint — is invisible to the assertion above. The stub appends
+    # one line per invocation, so this counts them.
+    assert len(calls.read_text().splitlines()) == 2, (
+        f"the run made {len(calls.read_text().splitlines())} requests, not 2:\n{calls.read_text()}"
+    )
     assert f"canary {ROSTER[0]}" in proc.stdout
     # `yank.yml` carries no timeout, so this is the one part of the request that is deliberately
     # NOT a mirror of it. A hung GET in a scheduled job is a silent multi-hour burn, and nothing
     # else here would notice the flag disappearing.
+    #
+    # The VALUE, not just the flag. `--max-time 0` means "no timeout during transfer" to curl, so a
+    # present-but-zero argument restores exactly the burn the constant exists to prevent while
+    # satisfying any `"--max-time" in line` check. That mutation survived a whole battery.
+    ceiling = _load_script().CURL_MAX_SECONDS
+    assert isinstance(ceiling, int) and ceiling > 0, (
+        f"CURL_MAX_SECONDS is {ceiling!r}. curl reads 0 as 'never time out', which is the state "
+        f"this constant exists to make impossible."
+    )
     for line in calls.read_text().splitlines():
-        assert "--max-time" in line, f"the request has no timeout: {line}"
+        args = line.split()
+        assert "--max-time" in args, f"the request has no timeout: {line}"
+        assert args[args.index("--max-time") + 1] == str(ceiling), (
+            f"--max-time carries {args[args.index('--max-time') + 1]!r}, not CURL_MAX_SECONDS "
+            f"({ceiling}). The constant documents the ceiling; the request has to use it."
+        )
+    # F1: the success path prints four lines and none of them may carry the credential. The
+    # parametrised leak test below covers only paths that exit 2, so every one of these prints was
+    # ungrepped — a token interpolated into "instrument proven by canary …" leaked on every GREEN
+    # run, which is the majority of runs, with the whole suite passing.
+    assert STUB_TOKEN not in proc.stdout + proc.stderr, "the token leaked on the clean path"
 
 
 def test_a_dead_instrument_aborts_before_the_target_is_ever_asked(tmp_path: Path) -> None:
@@ -1013,6 +1071,51 @@ def test_supplying_a_response_file_performs_no_query_at_all(tmp_path: Path) -> N
     proc = run(repo, published("0.7.78"), tmp_path, env=live_env(bin_dir))
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert calls.read_text() == "", f"curl was invoked on the offline path: {calls.read_text()}"
+
+
+@pytest.mark.parametrize("verdict", ["clean", "deferred", "warned", "drift"])
+def test_the_credential_never_appears_on_a_path_that_reaches_a_verdict(
+    tmp_path: Path, verdict: str
+) -> None:
+    """The four **succeeding** paths, which the failing-path sweep below does not cover.
+
+    That sweep asserts `returncode == 2` on every case, so the four `print()`s that produce an
+    actual verdict were ungrepped — and those run far more often than any failure does. A token
+    interpolated into `"instrument proven by canary … "` would leak on every GREEN scheduled run,
+    forever, with all eighty-odd tests here passing.
+
+    Not hypothetical for this repo: Phase 5 resolves the credential in shell by stripping a
+    `Bearer ` prefix, and GitHub masks the registered secret, not a derivative of it. A leaked
+    stripped token is a working credential in a run log that nothing redacts.
+    """
+    # Only the target's age differs: the canary answers in every case, so the certificate line —
+    # the one that names a canary and is therefore the likeliest place for a token to be
+    # interpolated — is printed on all four.
+    age = {"clean": 10, "deferred": 10, "warned": 120, "drift": 14400}[verdict]
+    repo = make_repo(tmp_path, version="0.7.78")
+    responses: dict[str, object] = {ROSTER[0]: published(ROSTER[0])}
+    if verdict == "clean":
+        responses["0.7.78"] = published("0.7.78")
+    bin_dir, _ = curl_stub(tmp_path, responses)
+    proc = run(
+        repo, None, tmp_path, now=LANDED + timedelta(minutes=age), env=live_env(bin_dir)
+    )
+    expected = 1 if verdict == "drift" else 0
+    assert proc.returncode == expected, (
+        f"{verdict}: exit {proc.returncode}, expected {expected}\n{proc.stdout}{proc.stderr}"
+    )
+    assert f"canary {ROSTER[0]}" in proc.stdout, (
+        f"{verdict}: the certificate line was not printed, so this case is not covering the "
+        f"line most likely to interpolate a credential"
+    )
+    # Three of these four exit 0, so the return code alone cannot tell them apart — without this
+    # the parametrisation could silently collapse onto one branch and claim to cover four.
+    marker = {"clean": "OK —", "deferred": "DEFERRED", "warned": "::warning::", "drift": "DRIFT —"}
+    assert marker[verdict] in proc.stdout, (
+        f"{verdict}: expected {marker[verdict]!r} in the output, so this case is not exercising "
+        f"the branch it names:\n{proc.stdout}"
+    )
+    assert STUB_TOKEN not in proc.stdout + proc.stderr, f"{verdict}: the token leaked"
 
 
 @pytest.mark.parametrize(
@@ -1183,6 +1286,68 @@ def test_a_credential_with_edge_whitespace_reaches_curl_stripped(tmp_path: Path)
         f"the header value is not the token with its edges stripped: {headers}. The brackets are "
         f"the point — a value whose whitespace survived shows up either as extra spaces inside "
         f"them or, for a newline, as a line that never closes."
+    )
+
+
+def test_a_canary_answered_at_the_wrong_version_is_not_a_working_instrument(
+    tmp_path: Path,
+) -> None:
+    """The certificate must be earned by the same filter the verdict depends on.
+
+    `registry_formats` takes a version and keeps only rows at it. If the canary's health were
+    computed over every `seam-sdk` row in the response instead, the positive control would stop
+    exercising the `version:` qualifier — which is precisely the part of the query most likely to
+    be silently ignored, and the part the target's empty answer is being trusted against.
+
+    The response here is a plausible page: real `seam-sdk` rows, both formats, just not at the
+    version that was asked for. That is what a dropped or misspelled qualifier returns.
+    """
+    repo = make_repo(tmp_path, version="0.7.78")
+    elsewhere: dict[str, object] = {c: published("0.6.1") for c in ROSTER if c != "0.7.78"}
+    elsewhere["0.7.78"] = published("0.7.78")
+    bin_dir, _ = curl_stub(tmp_path, elsewhere)
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    assert proc.returncode == 2, (
+        f"a canary whose rows are all at some OTHER version certified the instrument and the run "
+        f"reached a verdict anyway: exit {proc.returncode}\n{proc.stdout}{proc.stderr}"
+    )
+    assert "nothing usable for any canary" in proc.stderr, (
+        f"it exited 2, but not through the canary's own refusal: {proc.stderr}"
+    )
+
+
+def test_an_unsafe_version_is_never_put_into_a_request(tmp_path: Path) -> None:
+    """`assert_query_safe` runs BEFORE anything is fetched, and only the call log can show that.
+
+    The refusal is reached either way, so the exit code proves nothing about ordering: moved below
+    the fetch, the guard still exits 2 — after building
+    `?query=seam-sdk+version:0.7.78&admin=1&page_size=50` from a value read out of `main` and
+    sending it. Two attacker-chosen parameters reach the registry and every assertion stays green.
+    """
+    repo = make_repo(tmp_path, version="0.7.78&admin=1")
+    bin_dir, calls = curl_stub(tmp_path, {ROSTER[0]: published(ROSTER[0])})
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "&" in proc.stderr, f"the refusal does not name the offending character: {proc.stderr}"
+    assert calls.read_text() == "", (
+        f"a version the guard rejects was still put on the wire: {calls.read_text()!r}. The guard "
+        f"has to run before the request is built, not merely before the verdict."
+    )
+
+
+def test_the_roster_is_deep_enough_to_survive_a_yank(tmp_path: Path) -> None:
+    """The comment claims "three, so two would have to go before this needs an edit". Pin it.
+
+    The mechanism (any candidate may answer) is pinned by the tests above; the DEPTH is a separate
+    claim and shrinking the tuple to two left every one of them green. Distinctness matters for
+    the same reason: three copies of one version is a one-entry roster wearing a three-entry shape,
+    and a single yank brings the whole check down to a permanent exit 2 that readers learn to
+    scroll past.
+    """
+    roster = _load_script().CANARY_VERSIONS
+    assert len(set(roster)) >= 3, (
+        f"CANARY_VERSIONS is {roster}. Fewer than three distinct entries and one yank leaves the "
+        f"check unable to prove its own instrument."
     )
 
 

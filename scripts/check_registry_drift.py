@@ -155,8 +155,13 @@ REQUIRED_FORMATS = ("python", "npm")
 #:
 #: Why the ages are spread: retention. Three of the OLDEST plausible versions would maximise
 #: exposure to a cleanup sweep aging all of them out at once. One old, one middle, one recent
-#: hedges that — and hedges the opposite risk too, since the target only moves upward and will
-#: eventually pass any entry chosen near it.
+#: hedges that.
+#:
+#: And note what the spread buys on the other side, which is stronger than the drop-if-equal rule
+#: needed: every entry is already strictly BELOW the current target (0.7.77), and the target only
+#: ever moves upward. So no entry can equal the target again, and the branch that drops one can
+#: never actually shrink this roster. That rule stays because it is what makes the roster safe to
+#: re-point carelessly — not because this particular roster needs it.
 CANARY_VERSIONS = ("0.7.50", "0.7.65", "0.7.75")
 
 #: The list endpoint `yank.yml:69-71` uses. Same request shape deliberately: that is the shape

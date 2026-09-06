@@ -3326,8 +3326,9 @@ filed as its own issue during finalization.
 #### Phase 4 — the live query and the canary · DONE, with one item this session could not do
 
 * **2026-09-06.** `scripts/check_registry_drift.py` learns to fetch; `scripts/test_registry_drift_gate.py`
-  58 -> 84 tests. No workflow yet (Phase 5), no reporting yet (Phase 6). Written at 79 tests and a
-  claimed 13/13; the verification gate found the claim false and this record is the corrected one.
+  58 -> 92 tests. No workflow yet (Phase 5), no reporting yet (Phase 6). Written at 79 tests and a
+  claimed 13/13; two gate rounds found that claim false and seven further blind guards, and this
+  record is the corrected one.
 * **⚠ `CANARY_VERSIONS` is UNCONFIRMED against the live registry, and the first draft of that
   warning was not honest about how weak the evidence is.** The plan requires one `curl` with the
   real credential; this run had neither the credential (a repository secret) nor authorisation to
@@ -3340,7 +3341,9 @@ filed as its own issue during finalization.
   second reason: only three refusals are on record because nothing was watching, which is the
   premise of #100 and the reason this file exists. The roster is now `0.7.50` / `0.7.65` /
   `0.7.75` — one old, one middle, one recent, so a retention sweep cannot age all three out
-  together and the target (which only moves upward) cannot pass all three. **It fails safe:** a
+  together. The spread also settles the drop-if-equal rule in a stronger direction than first
+  written: every entry is already strictly below the target (0.7.77) and the target only moves
+  upward, so no entry can ever equal it again and that branch cannot shrink this roster at all. **It fails safe:** a
   wrong roster makes every run exit 2 naming all three candidates, never a wrong verdict. But that
   is a broken instrument rather than a working one, so it is worth confirming rather than
   discovering.
@@ -3360,6 +3363,26 @@ filed as its own issue during finalization.
   so the kernel refused the file and `PATH` fell through to the REAL curl. It surfaced only because
   the network is unreachable here (curl exit 56). The stub is assembled line by line now and
   asserts its own shebang.
+* **A second gate round found six more guards that could not be observed failing.** All six are
+  closed, and one of them is the sharpest instance of the pattern this run keeps finding. **The
+  leak sweep asserted `returncode == 2` on every case**, so the four `print()`s that produce an
+  actual verdict were never grepped — and those are the lines that run on the majority of runs. A
+  credential interpolated into *"instrument proven by canary …"* would have leaked on every GREEN
+  scheduled run, forever, with the whole suite passing. Phase 5 sharpens it rather than softening
+  it: the workflow strips a `Bearer ` prefix in shell, and GitHub masks the registered secret, not
+  a derivative of it, so the leaked value would be a working credential nothing redacts. The other
+  five: the canary's health was computed without exercising the `version:` filter the verdict
+  depends on (a plausible page of `seam-sdk` rows at OTHER versions certified the instrument);
+  `assert_query_safe`'s POSITION was unpinned, so moved below the fetch it still exited 2 — after
+  putting `?query=seam-sdk+version:0.7.78&admin=1&page_size=50` on the wire, two extra parameters
+  sourced from a value read out of `main`; `--max-time` was asserted by presence alone, and
+  `CURL_MAX_SECONDS = 0` means *never time out* to curl, restoring exactly the silent multi-hour
+  burn the constant exists to prevent; the roster's declared depth was prose, so shrinking the
+  tuple to two left every test green; and *"any new live-path test must pass `env=`"* was a
+  sentence rather than a mechanism — the defect it guards against has already happened once here
+  (three real requests to api.cloudsmith.io carrying the real secret, suite green), and the remedy
+  applied then was per-test discipline. It is now an autouse fixture that deletes
+  `SEAM_REGISTRY_TOKEN`, so an omitted `env=` fails closed at exit 2 instead of quietly working.
 * **Proof: 24/24 mutations caught, and the number this record first carried was wrong.** It said
   13/13. The verification gate re-ran them and `canary_any_format` — weakening the canary's
   "serves BOTH formats" test to "serves anything" — survived: honest tally **12/13**. Its failure
@@ -3372,7 +3395,12 @@ filed as its own issue during finalization.
   name dropped, `query` renamed, repository renamed), `--max-time` removed, curl's stderr echoed
   into an error message, the `curl`-absent guard defused, a token smuggled into `-A`, and the
   credential's edges left unstripped. All 24 are caught now.
-* **Counts:** `scripts` **309** (`test_registry_drift_gate.py` 58 -> 84) · python **1250 passed / 20 skipped** · ruff clean.
+* **Final proof: 32/32.** The six round-2 survivors plus two mutations written to falsify the
+  fixes themselves — `assert_query_safe` MOVED rather than deleted (so it still exits 2, just too
+  late, which is the only version of that mutation the fix has to survive), and the autouse
+  scrubber defused and the suite re-run with a real-looking `SEAM_REGISTRY_TOKEN` in the ambient
+  environment. Both red. A fix whose own mutation is not run is a fix nobody has watched work.
+* **Counts:** `scripts` **317** (`test_registry_drift_gate.py` 58 -> 92) · python **1250 passed / 20 skipped** · ruff clean.
 * **Still not exercised against a network** — every test drives a stubbed `curl`. The live path's
   correctness will be established by the first scheduled run.
 * **Next:** Phase 5 — `.github/workflows/registry-drift.yml`, read-only.

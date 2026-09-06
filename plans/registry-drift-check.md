@@ -760,6 +760,17 @@ the three lag states, the two things easy to get wrong, and the exit-code contra
 >    clause discriminates nothing. Retracted in the file. The roster also moved from three
 >    near-contemporaneous versions to one old / one middle / one recent (`0.7.50`, `0.7.65`,
 >    `0.7.75`), hedging both retention and the target overtaking the whole roster.
+> 7. *A second gate round found six more unfalsifiable guards; final tally 32/32.* The leak sweep
+>    asserted `returncode == 2` on every case, leaving all four verdict-path `print()`s ungrepped —
+>    a credential in the certificate line would leak on every GREEN run with the suite passing. The
+>    canary's health did not exercise the `version:` filter the verdict depends on.
+>    `assert_query_safe`'s POSITION was unpinned: moved below the fetch it still exits 2, after
+>    putting two extra query parameters sourced from `main` on the wire. `--max-time` was asserted
+>    by presence, and `0` means *never time out*. The roster's declared depth was prose. And "every
+>    live-path test must pass `env=`" was a sentence, now an autouse fixture that deletes
+>    `SEAM_REGISTRY_TOKEN` so the omission fails closed. Both fixes that could be defused were
+>    mutated in turn — the guard moved rather than deleted, and the scrubber removed with a real
+>    token in the ambient environment.
 
 **Delivers.** The script learns to fetch the Cloudsmith response itself when `--packages-json` is
 absent, and to refuse loudly when it cannot.
