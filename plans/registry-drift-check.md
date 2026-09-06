@@ -305,7 +305,33 @@ changed.
 
 ## Phase 2 — the `scripts/` twin of the declared-dependency guard
 
-**Status: TODO**
+**Status: DONE** (2026-09-06)
+
+> **Divergences from this section as written.**
+> 1. *Criterion 1 ("count up by 2") — landed at +46 (17 → 63).* The verification gate found the
+>    headline comparison structurally unfalsifiable: `if not (candidates & installed):` could be
+>    replaced by `if False:` with the whole file still green, because red-first was demonstrated by
+>    hand with a temporary file that then got deleted. Closing that needed the verdict factored out
+>    as data (`_undeclared_imports`) plus committed fire/silence tests, and an import-form matrix —
+>    three of the AST walk's four branches are exercised by no real file in `scripts/`, so they had
+>    no regression protection at all.
+> 2. *Criterion 3's numeric floor was the wrong quantity.* "The scanned file count is ≥ 5" is an
+>    independent re-glob of the directory: it measures the repository, not the scan. A filter
+>    narrowed to `pytest` — verbatim the case the criterion existed to cover — passed it untouched,
+>    as did a walk that opened one file, and the no-glob case reported "across 7 files" while
+>    having opened none. Replaced with three quantities all derived from the scan's own return
+>    value. The sibling at `python/tests/test_test_dependencies_are_declared.py` had this right.
+> 3. *Criterion 4's `137 passed` was stale arithmetic, not a missing test.* 135 at `f177cfb`, +39
+>    from Phase 1 → 174, +46 here → **220**.
+> 4. *The planned docstring claim was false and had to be retracted rather than written.* Two
+>    drafts said a collection error arrives with "no useful traceback"; pytest in fact prints the
+>    importing line and `E ModuleNotFoundError`. The true, narrower claim is that this fails
+>    locally and names the *distribution* where `ModuleNotFoundError` names only the *module*.
+> 5. *`_lane_installs` was split into `_installs_in`* so the `run:` shapes it must refuse could be
+>    fed to it directly, and it now refuses an unreadable shape instead of parsing what it can. A
+>    multi-line `run:` block, or a second step whose prose merely mentioned pip, previously
+>    widened the install set — and `installed` is only ever intersected against, so widening makes
+>    the guard quietly *more* permissive. Loud-or-nothing is the only safe direction here.
 
 **Delivers.** A test that every third-party top-level import in any `scripts/test_*.py` is installed
 by `workflow-guards`' single `pip install` line (`ci.yml:642`).

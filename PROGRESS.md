@@ -3204,3 +3204,38 @@ filed as its own issue during finalization.
   `"  release-outcome:"` against `textwrap.dedent`-ed text were silent no-ops, and three mutation
   scripts failed to apply. Both had been reporting as passing evidence.
 * **Next:** Phase 2 — the `scripts/` twin of the declared-dependency guard.
+
+#### Phase 2 — the `scripts/` twin of the declared-dependency guard · DONE
+
+* **2026-09-06 · verdict GAPS (4 items), all four closed · Opus verifier.** The verifier reproduced
+  every claimed number exactly and confirmed every constraint held; all four gaps were in what the
+  guard protected, and in three docstrings describing protection it did not have.
+* **G1 — the anti-vacuity floor measured the repository, not the scan.** It floored an independent
+  re-glob, so a filter narrowed to `pytest` (verbatim the case its own docstring claimed to cover)
+  and a walk that opened one file both survived, and the no-glob case reported "across 7 files"
+  while having opened none. Every quantity is now derived from the scan's own return value; that
+  message now reads "across the 0 files it actually opened".
+* **G2 — nothing committed pinned the guard's failure path.** `if not (candidates & installed):`
+  could be replaced by `if False:` with all 21 tests green. Red-first had been demonstrated by hand
+  with a synthetic file that was then deleted, so the proof left with it. The verdict is now
+  returned as data by `_undeclared_imports` and driven by committed fire/silence tests — the same
+  predicate the real guard runs, not a reimplementation of it.
+* **G3 — an overclaim, one instance shipping in the failure text a human reads.** Three places said
+  a collection error carries "no useful traceback"; pytest in fact prints the importing line and
+  `E ModuleNotFoundError`. Retracted in place: the true claim is that it fails locally, before the
+  push, and names the *distribution* where `ModuleNotFoundError` names only the *module*.
+* **G4 — the install-line parser degraded by silently widening.** A multi-line `run:` block, or a
+  step whose prose merely mentioned pip, contributed junk tokens; `installed` is only ever
+  intersected against, so a set that grew made the guard quietly more permissive. It now parses per
+  line and refuses an unreadable shape rather than parsing what it can.
+* **Files:** `scripts/test_ci_gate.py` (17 → 63 tests). No new file, so no `.github/workflows/ci.yml`
+  step and no `workflow-guards` wiring change — confirmed by
+  `test_every_scripts_test_file_runs_in_ci` staying green.
+* **Proof:** 16/16 mutations caught, including all three the verifier found surviving
+  (`overbroad_filter`, `scan_only_one_file`, `guard_disabled`) and the two it flagged as
+  unprotected-but-correct (`importfrom_ignored`, `fallback_always_wins`). Run in a disposable git
+  worktree; the real tree was never edited.
+* **Counts:** `scripts` **220** (was 178 pre-fix, 174 after Phase 1) · python **1246 passed /
+  20 skipped** · `ruff check` clean. The plan's predicted `137` was stale arithmetic — recorded as a
+  divergence in the phase, same class of defect the plan reviewer already flagged once.
+* **Next:** Phase 3 — `scripts/check_registry_drift.py`, the decision core, offline.
