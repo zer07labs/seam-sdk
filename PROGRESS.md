@@ -3440,7 +3440,43 @@ filed as its own issue during finalization.
   scope the job does not use is standing authority for nothing on a job holding a production
   credential, and an undeclared scope is `none` rather than inherited, so the staleness arm 403s
   unless `actions: read` lands in the same commit that needs it.
-* **Proof: 41/41 mutations caught, after a gate round that found thirteen survivors.** The first
+* **A second gate round found twenty-one more, and they were a different kind again.** Round 1's
+  survivors were edits to things no test read. Round 2's were edits to things the tests read but
+  did not read *far enough* — and three of them are worse than anything in round 1:
+  * **`export` deleted survived**, and the harness could not have caught it by construction. It
+    appends `echo "${SEAM_REGISTRY_TOKEN:-}"` and runs it in the same bash process, where a
+    non-exported assignment is perfectly visible. The one thing `export` exists for — reaching a
+    CHILD — is the one thing that harness cannot observe. The read-back is a `python3 -c` child
+    now, which is the only thing that can tell an exported variable from a shell one.
+  * **`trap 'exit 0' ERR` survived**, one line, and it makes drift unable to redden the job. So did
+    `set +e` with any trailing command, and any command after the invocation at all — the step's
+    status is its last command's. The guard's own comment said *"the step's exit status IS the
+    verdict"* while inspecting only the tokens on the invocation line. The refusal path is
+    unaffected by all three (`exit 2` does not fire an ERR trap), so every credential case stayed
+    green while only the verdict was lost.
+  * **The permissions guard was still going to redden Phase 6** — round 1's finding relocated
+    rather than fixed. The needle was the literal `"gh issue"`, and this script spells subprocess
+    calls as argv lists: `["gh", "issue", "create"]` contains no such substring. Phase 6 written
+    the way every other call in the file is written would have demanded `issues: write` be REMOVED
+    on the day it became necessary. The needles are regexes now, and the fix has a positive
+    control: the argv form with the scope declared is asserted to PASS, and without it to FAIL.
+  * **The mask guard checked how a line opens, not that it masks anything.** `echo "::add-mask::"`
+    (an empty registration), `echo "::add-mask::x"` (a literal), and `… > /dev/null` (a directive
+    the runner never receives) all passed. And nothing stopped the token being printed BEFORE the
+    mask — `set -x`, which the workflow's own comment names as the scenario, survived.
+  * Also: `defaults.run.shell: pwsh` at workflow or job level (equivalent to the per-step override
+    the same test catches), `checkout` with `ref:` or `repository:` (the verdict becomes a
+    statement about a frozen commit or another repository), `timeout-minutes: 360` (GitHub's own
+    default, written longhand), `python3 -m pip --quiet install` (a flag between `pip` and
+    `install`), pip via `uses:`, and both loosenings of the `Bearer` rule the shell's comment
+    promises — one of which eats six characters off a token that merely starts with those letters.
+* **`--report` was pre-allowlisted for Phase 6 and would have been a permanent red.** The
+  invocation allowlist carried it "ready for Phase 6" while `check_registry_drift.py` has no such
+  flag: argparse exits 2 on an unrecognised argument, so adding it to the workflow would have
+  passed the test and produced infrastructure-red on every scheduled run. The allowlist is empty
+  now, and a second assertion cross-checks any flag against the script's own `add_argument` calls —
+  which is the check that would have caught it.
+* **Proof: 65 distinct mutations caught across three batteries.** The first
   round was 20/20 against the mutations I thought of, and the number was not the problem — the
   *set* was. Every one of those twenty was something a test already parsed. The gate went looking
   for edits the tests do not parse at all, and found that the check could be switched off, muted,
@@ -3470,7 +3506,10 @@ filed as its own issue during finalization.
     `packages: read`, and `concurrency: cancel-in-progress` — which the plan explicitly rejected
     without anything enforcing the rejection.
   * **`cron: "17 */2 * * 1"` survived** — a weekly cadence wearing a two-hourly hour field. The
-    guard read the hour field alone; it reads all five now.
+    guard read the hour field alone. It is a real parser now, with its own nine-case table:
+    `*/N` and `A-B/N` are both accepted (`17 1-23/2 * * *` is a correct every-two-hours spelling,
+    and the first fix rejected it), an explicit list is read as its largest gap wrapping past
+    midnight, and anything that is not a fixed sub-daily cadence on every day returns `None`.
 * **A record claim of mine was false, and the gate ran the experiment.** This checkpoint said
   `pip install` added inline was caught "only incidentally". It is not: `test_the_job_installs_nothing`
   fails on it directly, with its own message. The error was methodological — the battery runs
@@ -3482,8 +3521,13 @@ filed as its own issue during finalization.
   raw secret with `-z`, so a value that is a single space — or `"Bearer  x"`, or a newline — is not
   empty: the fallback is never consulted and a perfectly good Cargo token sitting in scope is
   discarded. That is a permanent exit 2 whose log says the credential is missing while the
-  repository can see one. This workflow trims each source before testing it, and the ORDER is the
-  part that is easy to get wrong — my first fix trimmed before removing the prefix, which turns
+  repository can see one. This workflow trims each source before testing it. **Be precise about the symptom**, because the
+  first draft of this bullet was not: `.github/workflows/yank.yml:62` refuses with exit **1**, not
+  2, and in the whitespace-only case it never reaches the refusal at all — `TOKEN=" "` is not empty,
+  so it proceeds and 401s at Cloudsmith. The permanent-exit-2-saying-the-credential-is-missing
+  outcome is what *this* workflow would produce had it inherited the hole, via `registry_token()`'s
+  `not token.strip()`. The hole is the same; the symptom differs by file. The ORDER is the part
+  that is easy to get wrong — my first fix trimmed before removing the prefix, which turns
   `"Bearer "` into `"Bearer"`, not empty, and sends it. Leading whitespace, then the prefix, then
   trailing whitespace. Four new positive shapes and four new refusals pin it. **`yank.yml` still
   has the hole** and is deliberately not touched here.
@@ -3496,7 +3540,7 @@ filed as its own issue during finalization.
   scope not in an explicit justification table. All three of Phase 6's moves were simulated against
   it: the job-level move passes, a declared-but-unused `issues: write` fails, and both scopes pass
   once the script actually uses them.
-* **Counts:** `scripts` **351** (`test_registry_drift_gate.py` 92 -> 126) · python **1256 passed /
+* **Counts:** `scripts` **367** (`test_registry_drift_gate.py` 92 -> 142) · python **1257 passed /
   21 skipped** — six more passing and one more skipped than Phase 4, every one of them accounted
   for. The new workflow enters two parametrised sweeps over `.github/workflows/`:
   `test_no_workflow_calls_buf_generate_directly` passes and

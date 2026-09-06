@@ -991,6 +991,26 @@ the re-point instruction.
 >    real sites are `:227`, `:385`, `:607`, `:711`, which this plan's own criterion 11 had right.
 >    Citations inside workflow comments are not swept by
 >    `python/tests/test_compatibility_citations_resolve.py`, so that one would not have self-healed.
+> 7. *A second gate round found twenty-one more survivors; final tally 65 distinct mutations.*
+>    Round 1's were edits to things no test read; round 2's were edits to things the tests read but
+>    did not read far enough. Three matter most. **`export` deleted survived, and the harness could
+>    not have caught it** — it appends an `echo` and runs it in the same bash process, where a
+>    non-exported assignment is visible; the read-back is a `python3 -c` child now. **`trap 'exit 0'
+>    ERR` survived**, along with `set +e` and any command after the invocation: one line each, and
+>    drift can no longer redden the job, while every credential case stays green because the
+>    refusal path is untouched. **And the permissions guard was still going to redden Phase 6** —
+>    the needle was the literal `gh issue`, and this script spells subprocess calls as argv lists,
+>    so `["gh", "issue", "create"]` matches nothing. The needles are regexes now and the fix has a
+>    positive control that asserts the argv form PASSES with the scope declared and FAILS without.
+>    Also survived: `echo "::add-mask::"` and `echo "::add-mask::x"` (a mask of nothing, and of a
+>    literal), the mask redirected to `/dev/null`, `set -x`, `defaults.run.shell` at either level,
+>    `checkout` with `ref:` or `repository:`, `timeout-minutes: 360`, `python3 -m pip --quiet
+>    install`, pip via `uses:`, and both loosenings of the `Bearer` rule.
+> 8. *`--report` was pre-allowlisted here for Phase 6, and that was a bug rather than preparation.*
+>    `check_registry_drift.py` has no such flag, so argparse would have exited 2 on every scheduled
+>    run — a permanent infrastructure-red at the cadence this plan says gets muted. The allowlist
+>    is empty, and any flag is cross-checked against the script's own `add_argument` calls. **Phase
+>    6 adds `--report` to both in the commit that implements it.**
 
 **Delivers.** The scheduled workflow. It runs the check and goes **red** on drift. It files nothing
 yet.

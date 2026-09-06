@@ -92,11 +92,29 @@ jobs:
           # `Bearer` must be followed by whitespace to be a prefix. A bare "Bearer" is left alone —
           # same as `yank.yml`'s `${TOKEN#Bearer }` — and fails loudly at the registry rather than
           # having its first six characters eaten off a token that happened to start with them.
+          #
+          # First line only, and carriage returns dropped everywhere.
+          #
+          # The first-line rule is about the mask: a credential is one line, and a secret pasted
+          # with a stray newline reaches `echo "::add-mask::$TOKEN"`, which registers ONE line as
+          # a mask and prints the rest as ordinary log text — a partial credential in a run log,
+          # from a value that looked handled. Taking line one turns such a secret into an empty or
+          # obviously-wrong token, which refuses loudly instead.
+          #
+          # `tr -d '\r'` is NOT about a trailing Windows newline; `[[:space:]]` already covers that
+          # at the edges. It is about a CR in the MIDDLE, which the trims cannot reach. That value
+          # goes on to `curl -H "X-Api-Key: <token>"`, and a bare CR inside a header value is a
+          # header-splitting shape rather than a cosmetic blemish. Removing it leaves a token that
+          # fails at the registry, which is the right kind of failure.
           creds() {
             printf %s "$1" \
-              | sed -e 's/^[[:space:]]*//' \
-                    -e 's/^Bearer[[:space:]][[:space:]]*//' \
-                    -e 's/[[:space:]]*$//'
+              | tr -d '\r' \
+              | sed -n '1{
+                  s/^[[:space:]]*//
+                  s/^Bearer[[:space:]][[:space:]]*//
+                  s/[[:space:]]*$//
+                  p
+                }'
           }
           TOKEN="$(creds "${CLOUDSMITH_API_KEY:-}")"
           if [ -z "$TOKEN" ]; then

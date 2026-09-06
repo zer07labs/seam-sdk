@@ -21,6 +21,7 @@ Run: `python -m pytest scripts/test_registry_drift_gate.py -q`
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import os
@@ -1473,13 +1474,21 @@ def _token_script() -> str:
         "the truncated region no longer contains the credential resolution — this harness would "
         "be executing an empty script and passing."
     )
-    # The EXPORTED name, not the local. What the checker actually reads is `SEAM_REGISTRY_TOKEN`;
-    # a resolution that gets `TOKEN` right and then fails to export it leaves the script with no
-    # credential, which is exit 2 forever.
-    return run[: run.index(marker)] + 'echo "RESOLVED=[${SEAM_REGISTRY_TOKEN:-}]"\n'
+    # Read back from a CHILD PROCESS, not with `echo`. The checker is a child, and a bare
+    # assignment is fully visible to the rest of the same bash process — so `echo
+    # "${SEAM_REGISTRY_TOKEN:-}"` passes identically whether or not `export` is there, and deleting
+    # the word `export` left all 126 tests green while the real job handed the script nothing.
+    # A python child is the only thing that can tell an exported variable from a shell one.
+    return run[: run.index(marker)] + (
+        "python3 -c 'import os; print(\"RESOLVED=[%s]\" % os.environ.get"
+        '("SEAM_REGISTRY_TOKEN", ""))\'\n'
+    )
 
 
 def _run_token_script(dedicated: str | None, cargo: str | None) -> subprocess.CompletedProcess[str]:
+    # `/usr/bin:/bin` gives the step a real `sed`, `tr` and `python3` — the last of which is what
+    # reads the exported variable back. Deliberately NOT the ambient PATH: the step must not be
+    # able to reach anything this machine happens to have installed.
     env = {"PATH": "/usr/bin:/bin"}
     if dedicated is not None:
         env["CLOUDSMITH_API_KEY"] = dedicated
@@ -1508,6 +1517,69 @@ def test_the_workflow_runs_on_a_clock_and_on_demand_and_nothing_else() -> None:
     assert crons, "the schedule declares no cron — the check would only ever run on demand"
 
 
+def _cron_period_minutes(spec: str) -> int | None:
+    """The largest gap between consecutive runs, or `None` if there is no fixed sub-daily one.
+
+    Reading the hour field alone is what let `17 */2 * * 1` through — a weekly cadence wearing a
+    two-hourly hour field. So day-of-month, month and day-of-week must all be `*` before the hour
+    field means anything at all.
+
+    `*/N` and `A-B/N` are both accepted: `17 1-23/2 * * *` is a correct every-two-hours spelling
+    and rejecting it would be a guard enforcing a preferred syntax rather than a property. An
+    explicit list (`17 0,12 * * *`) is read as the largest gap between its entries, wrapping at
+    midnight — 0 and 12 is a twelve-hour period, not a two-hour one.
+    """
+    fields = spec.split()
+    if len(fields) != 5:
+        return None
+    minute, hours, dom, month, dow = fields
+    if (dom, month, dow) != ("*", "*", "*") or not minute.isdigit():
+        return None
+    if hours == "*":
+        return 60
+    step_form = re.fullmatch(r"(?:\*|(\d+)-(\d+))/(\d+)", hours)
+    if step_form:
+        low, high, step = step_form.groups()
+        first, last = (int(low), int(high)) if low else (0, 23)
+        runs = list(range(first, last + 1, int(step)))
+    elif re.fullmatch(r"\d+(?:,\d+)*", hours):
+        runs = sorted(int(h) for h in hours.split(","))
+    else:
+        return None
+    if not runs:
+        return None
+    if len(runs) == 1:
+        return 24 * 60
+    gaps = [(b - a) * 60 for a, b in zip(runs, runs[1:])]
+    gaps.append((runs[0] + 24 - runs[-1]) * 60)  # the wrap past midnight
+    return max(gaps)
+
+
+@pytest.mark.parametrize(
+    ("spec", "expected"),
+    [
+        ("17 */2 * * *", 120),
+        ("17 1-23/2 * * *", 120),   # the same cadence, spelled out
+        ("17 */6 * * *", 360),
+        ("17 0,12 * * *", 720),     # a list, read as its largest gap
+        ("17 3 * * *", 1440),       # once a day
+        ("17 */2 * * 1", None),     # Mondays only — weekly, wearing a two-hourly hour field
+        ("17 */2 1 * *", None),     # the 1st of the month
+        ("*/5 * * * *", None),      # the minute field is not a fixed minute
+        ("17 nonsense * * *", None),
+    ],
+)
+def test_the_cron_period_reader_is_not_fooled_by_the_hour_field(spec, expected) -> None:
+    """The parser the guard below depends on, driven directly.
+
+    It is the piece that was wrong — reading `c.split()[1]` and calling it the period — so it gets
+    its own cases rather than being exercised only through the one cron the workflow happens to
+    carry. `1-23/2` and `0,12` are the two shapes that separate "reads the syntax" from "matches
+    a prefix".
+    """
+    assert _cron_period_minutes(spec) == expected
+
+
 def test_the_cron_cannot_step_over_the_warn_band() -> None:
     """The middle tier is the one that has to be *observed*; the soft tier only has to suppress.
 
@@ -1524,25 +1596,15 @@ def test_the_cron_cannot_step_over_the_warn_band() -> None:
     """
     module = _load_script()
     crons = [entry["cron"] for entry in _triggers()["schedule"]]
-    (fields,) = {c.split() for c in crons} if False else ({tuple(c.split()) for c in crons},)
-    (spec,) = fields
-    minute, hours, dom, month, dow = spec
-    # Reading the hour field alone is not enough to know the period. `17 */2 * * 1` runs every two
-    # hours ON MONDAYS — a weekly cadence wearing a two-hourly hour field, and the warn band it is
-    # named for is unreachable again. Both that and `17 */2 1 * *` passed the hour-only version.
-    assert (dom, month, dow) == ("*", "*", "*"), (
-        f"the cron restricts day-of-month/month/day-of-week to {(dom, month, dow)}, so the hour "
-        f"field is not the period. The real cadence is far longer than it looks."
-    )
-    assert hours.startswith("*/"), f"cannot read a period out of the cron hour field {hours!r}"
-    assert minute.isdigit(), f"the minute field {minute!r} is not a single fixed minute"
-    period = int(hours[2:]) * 60
     band = module.HARD_GRACE_MINUTES - module.SOFT_GRACE_MINUTES
-    assert 0 < period < band, (
-        f"the workflow runs every {period} minutes and the warn band is only {band} minutes wide "
-        f"({module.SOFT_GRACE_MINUTES}m to {module.HARD_GRACE_MINUTES}m). A release can cross the "
-        f"whole band between two runs, so the warn tier would never be printed and escalation "
-        f"would arrive with no prior notice."
+    periods = {c: _cron_period_minutes(c) for c in crons}
+    tight = [c for c, minutes in periods.items() if minutes is not None and minutes < band]
+    assert tight, (
+        f"no cron entry runs often enough: {periods}. The warn band is {band} minutes wide "
+        f"({module.SOFT_GRACE_MINUTES}m to {module.HARD_GRACE_MINUTES}m), and a release that "
+        f"crosses it between two runs escalates with the middle tier never printed — code that "
+        f"exists and never executes. `None` means the entry does not run at a fixed sub-daily "
+        f"cadence on every day, which is the shape `17 */2 * * 1` hides in."
     )
 
 
@@ -1566,6 +1628,21 @@ def test_the_cron_cannot_step_over_the_warn_band() -> None:
         # `${TOKEN#Bearer }` eats exactly one and leaves the rest leading the header value.
         ("  cs-key  ", "", "cs-key"),
         ("Bearer   cs-key", "", "cs-key"),
+        # The rule the shell's comment promises: `Bearer` is a prefix only when something separates
+        # it from the value. Without these two, `s/^Bearer[[:space:]]*//` (zero-or-more) and
+        # `s/^Bearer  *//` (literal spaces only) both pass — the first eats six characters off a
+        # token that merely starts with those letters, the second stops handling a tab.
+        ("BearerTok123", "", "BearerTok123"),
+        ("Bearer\ttok", "", "tok"),
+        # A secret pasted from Windows, and one pasted with a stray second line. The second is the
+        # one that mattered: `::add-mask::` registers one line, so an unhandled multi-line token
+        # printed its tail into the run log as ordinary text.
+        ("cs-key\r", "", "cs-key"),
+        # A CR in the MIDDLE, which neither trim can reach — and the only shape that distinguishes
+        # `tr -d '\r'` from the trailing-whitespace rule. It matters because the value goes into
+        # `X-Api-Key: <token>`, where a bare CR is a header-splitting shape.
+        ("cs\rkey", "", "cskey"),
+        ("cs-key\nrubbish", "", "cs-key"),
     ],
     ids=[
         "dedicated-only",
@@ -1578,6 +1655,11 @@ def test_the_cron_cannot_step_over_the_warn_band() -> None:
         "newline-only-dedicated-falls-through",
         "dedicated-surrounded-by-whitespace",
         "bearer-followed-by-several-spaces",
+        "bearer-with-no-separator-is-not-a-prefix",
+        "bearer-separated-by-a-tab",
+        "carriage-return-from-a-windows-paste",
+        "carriage-return-inside-the-value",
+        "only-the-first-line-is-the-credential",
     ],
 )
 def test_the_credential_reaches_the_checker_by_the_name_it_reads(
@@ -1654,11 +1736,22 @@ def test_the_token_is_masked_before_anything_can_print_it() -> None:
     deleted.
     """
     code = _wf_code()
-    # `startswith("echo")`, not `"::add-mask::" in ln`. `_wf_code()` drops whole-line comments only
-    # — it cannot drop trailing ones without corrupting `${TOKEN#Bearer }` — so demoting the
-    # directive to `:  # echo "::add-mask::$TOKEN"` leaves a line that contains the needle, sits at
-    # the right index, and emits nothing. That mutation passed the containment version of this test.
-    masks = [i for i, ln in enumerate(code) if ln.strip().startswith(("echo \"::add-mask::", "echo '::add-mask::"))]
+    # Three separate things, because each was defeated on its own:
+    #   * it must EMIT, not mention — `_wf_code()` drops whole-line comments only (it cannot drop
+    #     trailing ones without corrupting `${TOKEN#Bearer }`), so `:  # echo "::add-mask::$TOKEN"`
+    #     kept the needle, the index and the ordering while running nothing;
+    #   * the argument must be THE TOKEN — `echo "::add-mask::"` registers an empty mask and
+    #     `echo "::add-mask::x"` masks a literal, both silently;
+    #   * the output must reach the runner — `echo "::add-mask::$TOKEN" > /dev/null` is a mask
+    #     nobody receives.
+    # `printf` is accepted as well as `echo`: it is a correct way to emit the directive and
+    # rejecting it would be a guard dictating style rather than behaviour.
+    emitters = re.compile(r"^(?:echo|printf)\s")
+    masks = [
+        i
+        for i, ln in enumerate(code)
+        if emitters.match(ln.strip()) and "::add-mask::" in ln
+    ]
     assert masks, (
         "the step never EMITS `::add-mask::` — a line mentioning it is not the same as a line "
         f"running it. Lines seen: {[ln for ln in code if '::add-mask::' in ln]}. Without the "
@@ -1666,6 +1759,17 @@ def test_the_token_is_masked_before_anything_can_print_it() -> None:
         "echoes it, and the value here is a trimmed derivative that Actions does not redact on "
         "its own."
     )
+    for i in masks:
+        line = code[i]
+        assert re.search(r"\$\{?TOKEN\b", line), (
+            f"the mask directive does not carry the token: {line.strip()!r}. `::add-mask::` with "
+            f"a literal or an empty argument registers a mask for something that is not the "
+            f"credential, and nothing else here would notice."
+        )
+        assert not re.search(r"[>|]", line), (
+            f"the mask directive's output is redirected: {line.strip()!r}. The runner reads "
+            f"workflow commands off the step's stdout; a mask it never sees masks nothing."
+        )
     users = [
         i
         for i, ln in enumerate(code)
@@ -1674,6 +1778,46 @@ def test_the_token_is_masked_before_anything_can_print_it() -> None:
     assert users and min(masks) < min(users), (
         f"the mask is emitted at line {min(masks)} but the token is first used at {min(users)}. "
         f"`::add-mask::` does not redact output that was already written."
+    )
+    # Ordering relative to the two known consumers is not enough. `::add-mask::` cannot redact what
+    # was already printed, so ANY line that writes the token before it is a leak — and the step's
+    # own comment names `set -x` as the scenario while nothing enforced against it.
+    for i, ln in enumerate(code[: min(masks)]):
+        assert not re.match(r"^\s*(?:echo|printf|cat|tee)\b", ln) or "$TOKEN" not in ln, (
+            f"line {i} prints the token before the mask is registered: {ln.strip()!r}"
+        )
+    assert not any(re.match(r"^\s*set\s+[-+][a-z]*x", ln) for ln in code), (
+        "the step enables shell tracing. Every command — including the assignments that build the "
+        "token — is echoed to the log, and the trace of the assignment runs before `::add-mask::` "
+        "can register anything."
+    )
+
+
+def test_the_checkers_exit_status_is_the_steps_exit_status() -> None:
+    """The verdict travels out of this job as an exit code and nothing else.
+
+    So anything that decouples the two turns a drift into a green job, and none of it appears on
+    the invocation line where the guard above looks. All three of these survived:
+
+        trap 'exit 0' ERR      one line, anywhere after `set -euo pipefail`
+        set +e                 plus any trailing command
+        <invocation>; echo ok  the step's status becomes the last command's
+
+    `exit 2` does not fire an ERR trap and `if [ … ]` conditions are exempt from `-e`, so the
+    credential tests stay green throughout — the refusal path is untouched. Only the verdict is
+    lost.
+    """
+    code = [ln for ln in _wf_code() if ln.strip()]
+    for pattern, why in (
+        (r"^\s*trap\b", "a trap can convert a failing command into a successful step"),
+        (r"^\s*set\s+\+", "`set +e` disarms the errexit the rest of this step relies on"),
+    ):
+        offenders = [ln.strip() for ln in code if re.match(pattern, ln)]
+        assert not offenders, f"{offenders}: {why}"
+    assert "python3 scripts/" in code[-1], (
+        f"the last command in the step is {code[-1].strip()!r}, not the checker. The step's exit "
+        f"status is its last command's, so anything after the invocation replaces the verdict "
+        f"with its own success."
     )
 
 
@@ -1707,6 +1851,16 @@ def test_the_checkout_asks_for_tags_explicitly() -> None:
     """
     checkout = next(s for s in _job()["steps"] if "checkout" in str(s.get("uses", "")))
     with_ = checkout.get("with") or {}
+    # WHAT is checked out, not only how much of it. `ref: v0.1.0` freezes the check on a commit
+    # whose version the registry does serve, so it prints OK forever while `main` drifts;
+    # `repository: someone/else` answers about a different repository entirely. Both are one
+    # `with:` key and both left every other assertion green. The plan's "scheduled runs execute on
+    # the default branch — which is exactly what the source says" is the claim being enforced here.
+    assert set(with_) <= {"fetch-depth", "fetch-tags"}, (
+        f"the checkout takes {sorted(set(with_) - {'fetch-depth', 'fetch-tags'})}. `ref:` and "
+        f"`repository:` change which source the verdict is about; the check is a statement about "
+        f"this repository's default branch and nothing else."
+    )
     assert with_.get("fetch-depth") == 0, (
         f"the checkout does not set `fetch-depth: 0` (got {with_.get('fetch-depth')!r}). "
         f"`version_landed_at` uses `git log -S` over the whole history and a shallow clone "
@@ -1720,9 +1874,18 @@ def test_the_checkout_asks_for_tags_explicitly() -> None:
 
 def test_the_job_is_bounded_and_cannot_be_told_to_ignore_itself() -> None:
     """A scheduled job with no ceiling is a silent multi-hour burn; `continue-on-error` is a mute."""
-    assert isinstance(_job().get("timeout-minutes"), int), (
+    timeout = _job().get("timeout-minutes")
+    assert isinstance(timeout, int), (
         "the job declares no `timeout-minutes`. A hung request in a scheduled job burns until "
         "GitHub's six-hour default, every two hours, with nobody watching."
+    )
+    # A NUMBER, not merely a declaration. `timeout-minutes: 360` is GitHub's own default written
+    # out longhand — it satisfies "is an int" and changes nothing. The job makes at most a handful
+    # of HTTP requests, each already capped by `CURL_MAX_SECONDS`.
+    assert 0 < timeout <= 30, (
+        f"`timeout-minutes: {timeout}` is not a ceiling. The job does a checkout and a few capped "
+        f"requests; anything near GitHub's six-hour default means a hang is indistinguishable "
+        f"from a slow day for hours at a time."
     )
     assert "continue-on-error" not in WORKFLOW.read_text(encoding="utf-8"), (
         "`continue-on-error` appears in the workflow. This check's only output is whether the job "
@@ -1739,12 +1902,18 @@ def test_the_job_installs_nothing() -> None:
     notices — the script itself cannot tell you what it is no longer allowed to import.
     """
     for step in _job()["steps"]:
+        # An action can install too. `uses: BSFishy/pip-action@v1` runs pip without the word
+        # appearing in any `run:` body, and the shell-only scan never saw it.
+        action = str(step.get("uses", ""))
+        assert "pip" not in action.lower(), (
+            f"step uses {action!r}, which installs packages without a `run:` line to notice."
+        )
         body = "\n".join(
             ln for ln in str(step.get("run") or "").splitlines() if not ln.strip().startswith("#")
         )
-        # `pip3 install` and `python -m pip install` are the same act. Matching the literal
-        # `pip install` let `pip3 install requests` through as its own step.
-        assert not re.search(r"\b(?:python3?\s+-m\s+)?pip3?\s+install\b", body), (
+        # `pip3`, `python -m pip`, and any flags in between — `python3 -m pip --quiet install`
+        # evaded the tighter pattern. Each of those is the same act with different spelling.
+        assert not re.search(r"\b(?:python3?\s+-m\s+)?pip3?\s+(?:-\S+\s+)*install\b", body), (
             f"step {step.get('name') or step.get('uses')!r} installs packages. The checker is "
             f"stdlib-only by design; if it now needs a dependency, that is the thing to revisit."
         )
@@ -1780,14 +1949,21 @@ def test_the_declared_permissions_are_exactly_what_the_job_uses() -> None:
         for step in _job()["steps"]
         for ln in str(step.get("run") or "").splitlines()
         if not ln.strip().startswith("#")
-    ) + "\n" + SCRIPT.read_text(encoding="utf-8")
+    ) + "\n" + _script_code()
 
     #: scope -> (needle that proves it is used, what needs it). Anything outside this mapping is
     #: standing authority nobody has argued for, on a job that holds a production credential.
+    #
+    #: The needles are REGEXES, not substrings, because this codebase spells subprocess calls as
+    #: argv lists — `subprocess.run(["gh", "issue", "create", …])` contains no `gh issue` anywhere.
+    #: Phase 6 written in the convention every other call in `check_registry_drift.py` uses would
+    #: have reddened this test on the day it landed, demanding that `issues: write` be REMOVED at
+    #: the moment it became necessary. That is the same failure this test was rewritten to avoid,
+    #: one spelling over.
     justifiable = {
         "contents": (None, "checking out the repository"),
-        "issues": ("gh issue", "filing, commenting on or reopening an issue"),
-        "actions": ("/actions/", "reading the Actions API for this workflow's own run history"),
+        "issues": (r"\bgh\b\W{1,8}issue\b", "filing, commenting on or reopening an issue"),
+        "actions": (r"/actions/", "reading the Actions API for this workflow's own run history"),
     }
     unknown = set(perms) - set(justifiable)
     assert not unknown, (
@@ -1799,7 +1975,7 @@ def test_the_declared_permissions_are_exactly_what_the_job_uses() -> None:
     for scope, (needle, why) in justifiable.items():
         if needle is None:
             continue
-        uses = needle in body
+        uses = re.search(needle, body) is not None
         declared = scope in perms
         assert uses == declared, (
             f"the job {'does' if uses else 'does not'} do {why}, but `{scope}` is "
@@ -1807,6 +1983,57 @@ def test_the_declared_permissions_are_exactly_what_the_job_uses() -> None:
             f"is `none` rather than inherited and the call 403s; a declared-but-unused one is "
             f"standing authority for nothing."
         )
+
+
+def _script_code() -> str:
+    """`check_registry_drift.py` with comments and docstrings removed.
+
+    The permissions needles are searched in this, not in the raw file. Scanning the raw source
+    reintroduces on the script side the exact bug divergence 2 fixed on the workflow side: a
+    comment containing a docs.github.com/en/actions/ URL, or a docstring saying "Phase 6 will file
+    with `gh issue create`", would demand a permission for prose.
+
+    `ast.unparse` drops comments for free and preserves string literals — which must be preserved,
+    since the calls themselves live in them (`["gh", "issue", …]`). Docstrings survive `unparse`,
+    so they are deleted from the tree first.
+    """
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        first = node.body[0] if node.body else None
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        ):
+            node.body.pop(0)
+            if not node.body:
+                node.body.append(ast.Pass())
+    return ast.unparse(tree)
+
+
+def test_the_permissions_needles_survive_the_spelling_this_codebase_uses() -> None:
+    """Anti-vacuity for the regexes above, which are invisible until a scope is declared.
+
+    Both spellings must be recognised: the shell one a workflow would use, and the argv one every
+    subprocess call in `check_registry_drift.py` already uses. A needle that only matches the first
+    is a needle that fires on Phase 6's documentation and not on Phase 6's code.
+    """
+    issues = r"\bgh\b\W{1,8}issue\b"
+    for spelling in (
+        'gh issue create --title "x"',
+        'subprocess.run(["gh", "issue", "create", "--title", title])',
+        "subprocess.run(['gh', 'issue', 'list'])",
+    ):
+        assert re.search(issues, spelling), f"the issues needle does not match {spelling!r}"
+    for absent in ("gh release create", "issue_number = 4", "ghost issues are not real"):
+        assert not re.search(issues, absent), f"the issues needle falsely matches {absent!r}"
+    # And the stripper must actually strip: today the script mentions neither needle in code, and
+    # this pins that a comment cannot make it appear to.
+    code = _script_code()
+    assert "#:" not in code and '"""' not in code, "comments or docstrings survived the stripper"
+    assert "REGISTRY_URL" in code, "the stripper removed code, not just prose"
 
 
 def test_the_secrets_are_actually_wired_into_the_step() -> None:
@@ -1819,7 +2046,9 @@ def test_the_secrets_are_actually_wired_into_the_step() -> None:
     infrastructure and gets muted. That is verbatim the failure this block exists to prevent, one
     level up from where it was being checked.
     """
-    env = _drift_step().get("env") or {}
+    # Job-level and step-level are equivalent here; requiring the step's own `env:` would redden
+    # on a purely cosmetic move.
+    env = {**(_job().get("env") or {}), **(_drift_step().get("env") or {})}
     for name in ("CLOUDSMITH_API_KEY", "CARGO_REGISTRIES_ZER07LABS_TOKEN"):
         assert name in env, (
             f"the step does not receive {name}. The shell below resolves it correctly and finds "
@@ -1863,6 +2092,14 @@ def test_the_job_runs_where_its_shell_actually_works() -> None:
         assert "shell" not in step, (
             f"step {step.get('name') or step.get('uses')!r} overrides `shell:` to "
             f"{step['shell']!r}. These tests run it under bash regardless."
+        )
+    # `defaults: run: shell:` does the same thing one level up, at either the workflow or the job,
+    # and the per-step check above cannot see it. Both survived.
+    for scope, holder in (("workflow", _workflow()), ("job", _job())):
+        shell = ((holder.get("defaults") or {}).get("run") or {}).get("shell")
+        assert shell is None, (
+            f"{scope}-level `defaults.run.shell` is {shell!r}. It applies to every `run:` step "
+            f"exactly as a per-step override would, and nothing here executes the step under it."
         )
 
 
@@ -1935,7 +2172,22 @@ def test_the_workflow_runs_the_checker_this_file_is_about() -> None:
     # Flags are allowlisted rather than pattern-matched, so adding one is a deliberate edit HERE
     # as well as there. Phase 6 adds `--report`; that is the moment to decide it belongs, not a
     # thing to discover afterwards.
-    allowed = {"--report"}
+    # EMPTY today, and that is the point. `--report` was pre-allowlisted here "for Phase 6" while
+    # the script had no such flag — so adding it to the workflow would have passed this test and
+    # produced `unrecognized arguments: --report`, argparse exit 2, on every scheduled run. A flag
+    # belongs on this list in the commit that implements it, not before.
+    allowed: set[str] = set()
+    declared = set(re.findall(r'add_argument\(\s*"(--[a-z-]+)"', SCRIPT.read_text(encoding="utf-8")))
+    assert len(declared) >= 4, (
+        f"only {sorted(declared)} parsed out of the script's argparse setup — the cross-check "
+        f"below would be comparing against almost nothing."
+    )
+    unknown_to_script = [tok for tok in tokens[2:] if tok.startswith("--") and tok not in declared]
+    assert not unknown_to_script, (
+        f"the workflow passes {unknown_to_script}, which `{SCRIPT.name}` does not declare. "
+        f"argparse exits 2 on an unrecognised argument, so this is a permanent infrastructure-red "
+        f"at a cadence that gets muted — not a loud failure."
+    )
     extra = [tok for tok in tokens[2:] if tok not in allowed]
     assert not extra, (
         f"the invocation carries {extra}. Arguments change the question the check asks — a grace "
