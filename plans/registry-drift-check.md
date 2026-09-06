@@ -925,7 +925,34 @@ the re-point instruction.
 
 ## Phase 5 — `.github/workflows/registry-drift.yml`, read-only
 
-**Status: TODO**
+**Status: DONE** (2026-09-06). Two divergences, both from a claim the plan and I both got wrong:
+
+> 1. *The cron's justification was false as written, and my first test asserted it.* The plan ties
+>    the two-hour period to the SOFT window, and the workflow comment I drafted said a 90-minute
+>    soft window "needs to be sampled more often than it is wide". A 120-minute period fails that,
+>    and the test I wrote from it went red against the workflow the plan specifies. The claim is
+>    wrong, not the cron: the soft tier's job is to stay QUIET while a publish may still be
+>    running, and nothing depends on a run landing inside it. The tier that must be observed is the
+>    WARN band — it exists so "something is wrong, but a job could still be alive" is said once
+>    before escalation. So the bound is `period < HARD - SOFT` (120 < 270), and a six-hour cron
+>    would let a release cross the whole band between runs, leaving the middle tier unreachable in
+>    production. Comment and test both now say that; `cron_widened_past_the_warn_band` is red.
+> 2. *Criterion 8's sibling guard bit on prose.* `test_the_check_is_not_also_a_job_in_ci_yml` first
+>    scanned raw workflow text, and `ci.yml:680` MENTIONS `check_registry_drift.py` in a comment
+>    explaining why the drift question is not asked there — the very argument the test enforces. It
+>    now scans comment-stripped `run:` bodies, the `_code()` discipline `scripts/test_yank_gate.py:51-62`
+>    established for exactly this failure.
+
+> 3. *Criterion 11 is 20/20, over a wider set than the five the plan names.* The five are red
+>    (`mask_deleted`, `and_list_resolution`, `fetch_tags_dropped`, `refusal_exits_one`,
+>    `pip_install_as_a_separate_step`). The other fifteen: `fetch_depth_dropped`, `timeout_removed`,
+>    `continue_on_error_added`, `pull_request_trigger_added`, `set_e_removed`, `mask_after_export`,
+>    `export_renamed`, `script_path_wrong`, `packages_json_passed`, `unused_issues_scope`,
+>    `permissions_removed`, `cron_widened_past_the_warn_band`, `bearer_strip_dropped`,
+>    `refusal_removed_entirely`. Note `pip_install_added` INLINE was caught only incidentally — by
+>    the credential test aborting under `set -e` when `pip` is absent from the stub PATH, not by the
+>    guard that exists for it. Re-run as its own step, `test_the_job_installs_nothing` is the
+>    detector, which is the mutation the plan actually asks for.
 
 **Delivers.** The scheduled workflow. It runs the check and goes **red** on drift. It files nothing
 yet.

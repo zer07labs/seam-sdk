@@ -32,6 +32,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "check_registry_drift.py"
@@ -1397,4 +1398,402 @@ def test_the_script_imports_only_the_standard_library() -> None:
     assert not third_party, (
         f"{SCRIPT.name} imports {third_party}, which is not in the standard library. The "
         "registry-drift workflow installs nothing, so this would fail the scheduled run outright."
+    )
+
+
+# ── Phase 5: the scheduled workflow that runs all of the above ────────────────────────────────
+#
+# The workflow is a second implementation of the credential resolution — the script reads
+# `SEAM_REGISTRY_TOKEN`, and something has to put a Cloudsmith secret into it. `yank.yml` shipped
+# that same resolution with a bug that made every invocation 401, dry run included, and nothing
+# noticed because the failure was CLOSED: it could not delete the wrong thing, it simply never
+# worked. The same shape here is worse, not better — a permanently-401ing drift check exits 2 on
+# every scheduled run, which reads as "infrastructure is flaky" and gets muted.
+#
+# So the shell is EXECUTED here, exactly as `scripts/test_yank_gate.py:9-12` argues. Reading it
+# would not have caught that bug and will not catch the next one.
+
+WORKFLOW = REPO / ".github" / "workflows" / "registry-drift.yml"
+
+
+def _workflow() -> dict:
+    parsed = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    assert parsed is not None, f"{WORKFLOW.name} did not parse; every guard below would be vacuous"
+    return parsed
+
+
+def _triggers() -> dict:
+    # YAML 1.1 resolves a bare `on:` key to the boolean True, which is why this is not `wf["on"]`.
+    # Same handling as `scripts/test_yank_gate.py:222`.
+    wf = _workflow()
+    return wf[True] if True in wf else wf["on"]
+
+
+def _job() -> dict:
+    jobs = _workflow()["jobs"]
+    assert len(jobs) == 1, f"expected one job, got {sorted(jobs)}"
+    return next(iter(jobs.values()))
+
+
+def _drift_step() -> dict:
+    return next(s for s in _job()["steps"] if "installable" in str(s.get("name", "")))
+
+
+def _wf_code() -> list[str]:
+    """The step's shell with comment lines removed.
+
+    Every static assertion about the step goes through this, never the raw `run`. The comments in
+    this step quote the strings the guards look for — `set -euo pipefail`, `::add-mask::` and
+    `pip install` all appear in prose beside the code that does or does not do them. That is not
+    hypothetical: two of `yank.yml`'s guards were vacuous for exactly this reason
+    (`scripts/test_yank_gate.py:51-62`), and one of them stayed green with the real line deleted.
+    """
+    return [ln for ln in _drift_step()["run"].splitlines() if not ln.strip().startswith("#")]
+
+
+def _token_script() -> str:
+    """The workflow's own shell, truncated at the call it is setting up for.
+
+    Truncating rather than stubbing `python3` keeps this honest about its subject: the credential
+    resolution and the refusal, not the check itself — which has eighty tests of its own above.
+    """
+    run = _drift_step()["run"]
+    marker = "python3 scripts/"
+    assert marker in run, (
+        "the step no longer invokes the checker with `python3 scripts/…`, which is where this "
+        "harness truncates. Re-point the marker rather than deleting the guard."
+    )
+    assert "CLOUDSMITH_API_KEY" in run[: run.index(marker)], (
+        "the truncated region no longer contains the credential resolution — this harness would "
+        "be executing an empty script and passing."
+    )
+    # The EXPORTED name, not the local. What the checker actually reads is `SEAM_REGISTRY_TOKEN`;
+    # a resolution that gets `TOKEN` right and then fails to export it leaves the script with no
+    # credential, which is exit 2 forever.
+    return run[: run.index(marker)] + 'echo "RESOLVED=[${SEAM_REGISTRY_TOKEN:-}]"\n'
+
+
+def _run_token_script(dedicated: str | None, cargo: str | None) -> subprocess.CompletedProcess[str]:
+    env = {"PATH": "/usr/bin:/bin"}
+    if dedicated is not None:
+        env["CLOUDSMITH_API_KEY"] = dedicated
+    if cargo is not None:
+        env["CARGO_REGISTRIES_ZER07LABS_TOKEN"] = cargo
+    # Plain `bash -c`, NOT `bash -e`. The step sets its own `set -euo pipefail`; running it under
+    # an externally imposed `-e` would hide the removal of that line.
+    return subprocess.run(
+        ["bash", "-c", _token_script()], capture_output=True, text=True, env=env, check=False
+    )
+
+
+def test_the_workflow_runs_on_a_clock_and_on_demand_and_nothing_else() -> None:
+    """No `pull_request` trigger, and that is not a noise judgement like `framework-coinstall.yml`'s.
+
+    Secrets are unavailable to a fork-triggered run, so the resolution below would find nothing and
+    exit 2 on every external contribution — an infrastructure failure, reported correctly, forever.
+    And nothing in a pull request can change this answer: it is a statement about the default
+    branch and the registry.
+    """
+    assert set(_triggers()) == {"schedule", "workflow_dispatch"}, (
+        f"triggers are {sorted(_triggers())}. A push/PR trigger cannot see secrets on a fork and "
+        f"would exit 2 on every external contribution."
+    )
+    crons = [entry["cron"] for entry in _triggers()["schedule"]]
+    assert crons, "the schedule declares no cron — the check would only ever run on demand"
+
+
+def test_the_cron_cannot_step_over_the_warn_band() -> None:
+    """The middle tier is the one that has to be *observed*; the soft tier only has to suppress.
+
+    Worth being precise, because the obvious version of this test is wrong. A first draft asserted
+    the period must be narrower than `SOFT_GRACE_MINUTES`, and the shipped 120-minute cron fails
+    that against a 90-minute soft window — correctly, because the soft tier's job is to say nothing
+    while a publish may still be running. Whether any run happens to land inside it is luck, and
+    nothing depends on that luck.
+
+    The warn band is different. It exists so that "something is wrong, but a job could still be
+    alive" is stated once before anything escalates. If the period exceeded the band's WIDTH
+    (`HARD - SOFT`), a release could go from too-fresh to escalated with no run in between, and the
+    middle tier would be decoration — present in the code, never reachable in production.
+    """
+    module = _load_script()
+    crons = [entry["cron"] for entry in _triggers()["schedule"]]
+    (hours,) = {c.split()[1] for c in crons}
+    assert hours.startswith("*/"), f"cannot read a period out of the cron hour field {hours!r}"
+    period = int(hours[2:]) * 60
+    band = module.HARD_GRACE_MINUTES - module.SOFT_GRACE_MINUTES
+    assert 0 < period < band, (
+        f"the workflow runs every {period} minutes and the warn band is only {band} minutes wide "
+        f"({module.SOFT_GRACE_MINUTES}m to {module.HARD_GRACE_MINUTES}m). A release can cross the "
+        f"whole band between two runs, so the warn tier would never be printed and escalation "
+        f"would arrive with no prior notice."
+    )
+
+
+@pytest.mark.parametrize(
+    ("dedicated", "cargo", "expected"),
+    [
+        ("cs-key", "", "cs-key"),
+        ("", "Bearer cargo-tok", "cargo-tok"),
+        ("", "cargo-tok", "cargo-tok"),
+        ("Bearer cs-key", "", "cs-key"),
+        ("cs-key", "Bearer cargo-tok", "cs-key"),
+        ("Bearer ", "Bearer cargo-tok", "cargo-tok"),
+    ],
+    ids=[
+        "dedicated-only",
+        "cargo-with-bearer",
+        "cargo-without-bearer",
+        "dedicated-with-bearer",
+        "both-set",
+        "prefix-only-dedicated-falls-through",
+    ],
+)
+def test_the_credential_reaches_the_checker_by_the_name_it_reads(
+    dedicated: str, cargo: str, expected: str
+) -> None:
+    """The same six shapes `scripts/test_yank_gate.py:93-113` covers, asserted on the export.
+
+    `cargo-with-bearer` is the shape that was broken in `yank.yml`: the org Cargo token carries the
+    prefix, and a token still wearing `Bearer ` arrives as `X-Api-Key: Bearer …` and authenticates
+    as nothing. Here that is not a closed failure — every run exits 2 and the check is dead.
+    """
+    p = _run_token_script(dedicated, cargo)
+    assert p.returncode == 0, f"the step refused a usable credential: {p.stdout}{p.stderr}"
+    assert f"RESOLVED=[{expected}]" in p.stdout, (
+        f"SEAM_REGISTRY_TOKEN is not {expected!r} — got {p.stdout.strip()!r}. The checker reads "
+        f"that variable and nothing else; a token resolved into a name it does not read is the "
+        f"same as no token."
+    )
+
+
+@pytest.mark.parametrize(
+    ("dedicated", "cargo"),
+    [("", ""), (None, None), ("", "Bearer "), ("Bearer ", "")],
+    ids=[
+        "both-empty",
+        "both-unset",
+        "cargo-is-only-the-prefix",
+        "dedicated-is-only-the-prefix",
+    ],
+)
+def test_a_missing_credential_is_infrastructure_and_exits_2_not_1(
+    dedicated: str | None, cargo: str | None
+) -> None:
+    """**Exit 2, and the digit is the whole point.**
+
+    `yank.yml` exits 1 here and is right to — it is a destructive tool where 1 means "refused".
+    In this workflow 1 already means *the registry is behind the source*. A repository that has
+    lost its Cloudsmith secret would then file a drift verdict about a release that published
+    perfectly well, and the verdict would be indistinguishable from a real one.
+
+    `both-unset` is the case `set -u` decides: a bare `${VAR#Bearer }` on an absent variable
+    aborts the step with bash's own status, not with the refusal.
+    """
+    p = _run_token_script(dedicated, cargo)
+    assert p.returncode == 2, (
+        f"an unusable credential exited {p.returncode}, not 2. 1 is the drift verdict; a missing "
+        f"secret reported as drift is a wrong answer, not a loud one. Output: {p.stdout}{p.stderr}"
+    )
+    assert "No Cloudsmith credential" in p.stdout + p.stderr, (
+        "the step failed, but not with its own refusal — so it failed for some other reason and "
+        f"this test is not proving what it claims: {p.stdout}{p.stderr}"
+    )
+
+
+def test_the_token_is_masked_before_anything_can_print_it() -> None:
+    """`::add-mask::` only masks output that comes AFTER it, so its position is the guarantee.
+
+    Read from the comment-stripped body: the comment beside this line says the word `add-mask`,
+    and a substring search over the raw `run` is satisfied by that comment with the real directive
+    deleted.
+    """
+    code = _wf_code()
+    masks = [i for i, ln in enumerate(code) if "::add-mask::" in ln]
+    assert masks, (
+        "the step never emits `::add-mask::`. The token would appear in plain text in the Actions "
+        "log the first time anything echoes it — including a future `set -x` added while debugging."
+    )
+    users = [
+        i
+        for i, ln in enumerate(code)
+        if "SEAM_REGISTRY_TOKEN" in ln or "python3 scripts/" in ln
+    ]
+    assert users and min(masks) < min(users), (
+        f"the mask is emitted at line {min(masks)} but the token is first used at {min(users)}. "
+        f"`::add-mask::` does not redact output that was already written."
+    )
+
+
+def test_the_token_resolution_does_not_rely_on_an_and_list() -> None:
+    """`publish.yml` resolves with `[ -z … ] && TOKEN=…`; that step has no `set -e`, this one does.
+
+    The AND-list is safe by a rule about AND-OR exit status that most readers do not hold, and it
+    becomes the step's exit status if it is ever moved last. The explicit `if` is immune to both.
+    """
+    offenders = [ln for ln in _wf_code() if "&&" in ln and "TOKEN=" in ln]
+    assert not offenders, (
+        f"the token resolution uses an AND-list under `set -euo pipefail`: {offenders}. Use the "
+        f"explicit `if`, as `yank.yml:54-62` does."
+    )
+    # EXACT line match, not a substring of the step: the comment above the resolution contains
+    # this literal, and `in run` was satisfied by prose in `yank.yml` with the real line deleted.
+    assert any(ln.strip() == "set -euo pipefail" for ln in _wf_code()), (
+        "the step lost `set -euo pipefail`. Without it an unset secret no longer aborts, and the "
+        "refusal below is reached with a variable that silently expanded to nothing."
+    )
+
+
+def test_the_checkout_asks_for_tags_explicitly() -> None:
+    """`fetch-depth: 0` is *believed* to bring tags. That is behaviour, not a contract.
+
+    A tag-less checkout here is not a loud failure. `tag_present()` answers "absent" for every
+    version, which selects state C's remediation — *"the version commit landed but the tag push
+    failed"* — for what is really state B. Every release would be misdiagnosed, confidently and in
+    the same direction. `TAG_FLOOR` catches it as an exit 2; this is the belt to that braces, and
+    it is asserted here because the two are independent and either alone is a single point.
+    """
+    checkout = next(s for s in _job()["steps"] if "checkout" in str(s.get("uses", "")))
+    with_ = checkout.get("with") or {}
+    assert with_.get("fetch-depth") == 0, (
+        f"the checkout does not set `fetch-depth: 0` (got {with_.get('fetch-depth')!r}). "
+        f"`version_landed_at` uses `git log -S` over the whole history and a shallow clone "
+        f"truncates it."
+    )
+    assert with_.get("fetch-tags") is True, (
+        "the checkout does not set `fetch-tags: true`. Without tags, every release is diagnosed "
+        "as 'the tag push failed' regardless of what actually happened."
+    )
+
+
+def test_the_job_is_bounded_and_cannot_be_told_to_ignore_itself() -> None:
+    """A scheduled job with no ceiling is a silent multi-hour burn; `continue-on-error` is a mute."""
+    assert isinstance(_job().get("timeout-minutes"), int), (
+        "the job declares no `timeout-minutes`. A hung request in a scheduled job burns until "
+        "GitHub's six-hour default, every two hours, with nobody watching."
+    )
+    assert "continue-on-error" not in WORKFLOW.read_text(encoding="utf-8"), (
+        "`continue-on-error` appears in the workflow. This check's only output is whether the job "
+        "is red; a job that cannot go red reports nothing at all."
+    )
+
+
+def test_the_job_installs_nothing() -> None:
+    """The other end of the checker's stdlib-only obligation, seen from the workflow.
+
+    `scripts/check_registry_drift.py` shells out to `curl` instead of importing `requests`
+    precisely so this job needs no dependency resolution. A `pip install` appearing here would
+    mean that obligation had been dropped somewhere in the script, and this is the assertion that
+    notices — the script itself cannot tell you what it is no longer allowed to import.
+    """
+    for step in _job()["steps"]:
+        body = "\n".join(
+            ln for ln in str(step.get("run") or "").splitlines() if not ln.strip().startswith("#")
+        )
+        assert "pip install" not in body, (
+            f"step {step.get('name') or step.get('uses')!r} installs packages. The checker is "
+            f"stdlib-only by design; if it now needs a dependency, that is the thing to revisit."
+        )
+
+
+def test_the_declared_permissions_are_exactly_what_the_job_uses() -> None:
+    """Both directions, so this survives Phases 6 and 7 without being rewritten.
+
+    A `permissions:` block grants ONLY what it lists — an undeclared scope is `none`, not
+    inherited. So the staleness arm (`gh api …/actions/…/runs`) 403s unless `actions: read` travels
+    in the same commit, and the issue arm 403s without `issues: write`. The reverse direction
+    matters too: a scope declared for work that was later removed is standing authority nothing
+    needs, on a job that reads a production credential.
+    """
+    perms = _workflow().get("permissions")
+    assert isinstance(perms, dict), (
+        f"top-level `permissions:` is {perms!r}. It must be an explicit mapping — omitting it "
+        f"inherits the repository default, which may be read/write for everything."
+    )
+    assert not any("permissions" in step for step in _job()["steps"]), "steps cannot take permissions"
+    assert perms.get("contents") == "read", "the job checks out the repository"
+    body = "\n".join(
+        ln
+        for step in _job()["steps"]
+        for ln in str(step.get("run") or "").splitlines()
+        if not ln.strip().startswith("#")
+    )
+    for scope, needle, why in (
+        ("issues", "gh issue", "filing or updating an issue"),
+        ("actions", "/actions/", "reading the Actions API"),
+    ):
+        uses = needle in body
+        declared = scope in perms
+        assert uses == declared, (
+            f"the job {'does' if uses else 'does not'} do {why}, but `{scope}` is "
+            f"{'declared' if declared else 'not declared'} in `permissions:`. An undeclared scope "
+            f"is `none` and the call 403s; a declared-but-unused one is standing authority for "
+            f"nothing."
+        )
+
+
+def test_the_workflow_runs_the_checker_this_file_is_about() -> None:
+    """Anti-vacuity for the whole block: everything above tests a shell that must call the script.
+
+    A rename that left this workflow pointing at a path that no longer exists would keep every
+    assertion above green — the credential still resolves, the mask is still emitted — while the
+    scheduled run does nothing but `python3: can't open file`, every two hours, forever.
+    """
+    invocations = [ln.strip() for ln in _wf_code() if "python3 scripts/" in ln]
+    assert len(invocations) == 1, f"expected exactly one checker invocation, got {invocations}"
+    (called,) = [tok for tok in invocations[0].split() if tok.endswith(".py")]
+    assert (REPO / called).resolve() == SCRIPT.resolve(), (
+        f"the workflow runs {called}, which is not {SCRIPT.relative_to(REPO)}."
+    )
+
+
+def test_the_check_is_not_also_a_job_in_ci_yml() -> None:
+    """It is a scheduled sibling, for `framework-coinstall.yml:5-8`'s reason and one of its own.
+
+    That file's argument — the answer changes when a third party changes, so `ci-ok` stays a
+    statement about the diff — holds here. The sharper reason is that this check exists to catch a
+    release that was never dispatched, and a job that runs on a push cannot see that: the failure
+    mode is precisely that nothing ran.
+    """
+    # Comment-stripped `run:` bodies, not the raw file. `ci.yml:680` *mentions* this script in a
+    # comment explaining why the drift question is not asked there — which is the argument this
+    # test enforces, so matching on it would fail for saying the right thing.
+    hosts = []
+    for suffix in ("*.yml", "*.yaml"):
+        for candidate in (REPO / ".github" / "workflows").glob(suffix):
+            parsed = yaml.safe_load(candidate.read_text(encoding="utf-8"))
+            body = "\n".join(
+                ln
+                for job in (parsed.get("jobs") or {}).values()
+                for step in (job.get("steps") or [])
+                for ln in str(step.get("run") or "").splitlines()
+                if not ln.strip().startswith("#")
+            )
+            if SCRIPT.name in body:
+                hosts.append(candidate.name)
+    hosts = sorted(hosts)
+    assert hosts == [WORKFLOW.name], (
+        f"{SCRIPT.name} is invoked from {hosts}. Running it on a push cannot observe a release "
+        f"that was never dispatched, and holding unrelated merges hostage to registry uptime is "
+        f"what `framework-coinstall.yml:5-8` argues against."
+    )
+
+
+def test_the_scheduled_run_never_passes_a_saved_response() -> None:
+    """`--packages-json` is the one way to reach a clean verdict without querying anything.
+
+    Offline mode exists for the tests and for a human reproducing a run by hand, and it carries its
+    own health check — but a saved file cannot go stale in a way that check can see. A workflow
+    pointed at a captured response would print `OK` on a schedule, forever, describing a registry
+    it never contacted. The script cannot prevent that; this is where it gets prevented.
+    """
+    body = "\n".join(
+        ln
+        for step in _job()["steps"]
+        for ln in str(step.get("run") or "").splitlines()
+        if not ln.strip().startswith("#")
+    )
+    assert "--packages-json" not in body, (
+        "the scheduled job passes `--packages-json`, so it reads a file instead of the registry. "
+        "The verdict would then be a statement about that file's age, not about the registry."
     )

@@ -1,0 +1,100 @@
+name: registry drift
+
+# Does the registry actually serve the version `main` says it released?
+#
+# DELIBERATELY NOT A JOB IN ci.yml, for `framework-coinstall.yml:5-8`'s reason plus one of its own.
+# That file's argument is that the answer changes when a third party changes, not when this
+# repository changes, so `ci-ok` stays a statement about the diff. Both halves hold here. The
+# additional reason is sharper: this check exists to catch a release that was NEVER DISPATCHED
+# (`scripts/check_registry_drift.py`'s state A/B/C table). A job that runs on a push cannot see
+# that, because the failure mode is precisely that nothing ran. It has to be on a clock of its own.
+#
+# THERE IS NO `pull_request:` TRIGGER, and unlike `framework-coinstall.yml` that is not a choice
+# about noise. Secrets are unavailable to workflows triggered by a fork PR, so the credential
+# resolution below would find nothing and the job would exit 2 on every external contribution —
+# an infrastructure failure reported as one, correctly, and permanently. Nothing in a pull request
+# can change this answer anyway: it is a statement about the default branch and the registry.
+#
+# EXIT 2 IS INFRASTRUCTURE AND NEVER A VERDICT — a missing credential, an unreachable registry, an
+# unparseable response, or an unexpected crash. Exit 1 is the drift verdict. Both turn the job red;
+# the log distinguishes them, and nothing downstream may treat a 2 as drift.
+#
+# This phase is READ-ONLY: `permissions: contents: read`, and the job reports into its own log and
+# nowhere else. Reporting (an issue, a suppression path) is a later phase and adds the scopes it
+# needs in the same commit that uses them.
+
+on:
+  schedule:
+    # Every two hours, at :17. The number is bounded by the WARN band, not by the soft one. The
+    # soft tier (0-90m) exists to stay quiet while a publish may still be running; nothing depends
+    # on a run landing inside it. The warn tier (90m-360m) exists to be *said* — "something is
+    # wrong, but a job could still be alive" — once, before anything escalates. A period wider than
+    # that 270-minute band would let a release cross it between two runs, and the middle tier would
+    # be code that never executes in production.
+    #
+    # :17 rather than :00 to stay off the hour boundary GitHub schedules most heavily, where a busy
+    # queue delays a run well past its nominal time.
+    - cron: "17 */2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: is main's declared version installable?
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # BOTH, explicitly. `fetch-depth: 0` is widely believed to bring tags with it, but that
+          # is `actions/checkout` behaviour rather than a contract — and a tag-less checkout here
+          # is not a loud failure. `tag_present()` would report every release as "tag ABSENT",
+          # which selects state C's remediation ("the tag push failed") for what is really state B.
+          # Every release would be misdiagnosed in the same confident direction. Phase 3's
+          # `TAG_FLOOR` catches the same thing as an exit 2; this is the belt to that braces.
+          fetch-depth: 0
+          fetch-tags: true
+
+      # Pins the interpreter instead of inheriting whatever the runner image happens to ship, as
+      # every other workflow in this repo does. NOTHING IS INSTALLED AFTER IT: the check is
+      # stdlib-only by design (that is why it shells out to `curl` rather than importing
+      # `requests`), so a `pip install` appearing in this job would mean that obligation had been
+      # quietly dropped somewhere in `scripts/check_registry_drift.py`.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: is the declared version installable?
+        env:
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
+          CARGO_REGISTRIES_ZER07LABS_TOKEN: ${{ secrets.CARGO_REGISTRIES_ZER07LABS_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Dedicated key if set, else the org Cargo token, each with a leading "Bearer " stripped.
+          # The same resolution as `yank.yml:54-62`, written the same way and for the same reason:
+          # `publish.yml:369-371` does it as an `&&` one-liner, which is safe there by a rule about
+          # AND-list exit status that most readers do not hold, and this step runs under
+          # `set -euo pipefail`. The explicit `if` is immune to that rule and to unset variables.
+          TOKEN="${CLOUDSMITH_API_KEY:-}"
+          TOKEN="${TOKEN#Bearer }"
+          if [ -z "$TOKEN" ]; then
+            TOKEN="${CARGO_REGISTRIES_ZER07LABS_TOKEN:-}"
+            TOKEN="${TOKEN#Bearer }"
+          fi
+          if [ -z "$TOKEN" ]; then
+            # EXIT 2, not 1. `yank.yml` exits 1 here and is right to: it is a destructive tool and
+            # 1 means "refused". Here 1 already means "the registry is behind the source", and a
+            # missing credential is not evidence of that. Reporting it as drift would file a wrong
+            # verdict for a repository-configuration problem.
+            echo "::error::No Cloudsmith credential in scope — cannot query the registry."
+            exit 2
+          fi
+          # Masked before it is exported, so the value cannot reach a log even if the script below
+          # is later changed to echo its environment. The script itself never prints the token —
+          # `scripts/test_registry_drift_gate.py` pins that — but this is the cheap half of that
+          # guarantee and it does not depend on the script staying correct.
+          echo "::add-mask::$TOKEN"
+          export SEAM_REGISTRY_TOKEN="$TOKEN"
+          python3 scripts/check_registry_drift.py

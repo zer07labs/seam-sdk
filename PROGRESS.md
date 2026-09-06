@@ -3404,3 +3404,57 @@ filed as its own issue during finalization.
 * **Still not exercised against a network** — every test drives a stubbed `curl`. The live path's
   correctness will be established by the first scheduled run.
 * **Next:** Phase 5 — `.github/workflows/registry-drift.yml`, read-only.
+
+#### Phase 5 — the scheduled workflow, read-only · DONE
+
+* **2026-09-06.** `.github/workflows/registry-drift.yml` (new) · `scripts/test_registry_drift_gate.py`
+  92 -> 113 tests. The check now runs on a clock. It goes red on drift and files nothing —
+  `permissions: contents: read`, and that is the whole of it. Reporting is Phase 6.
+* **Shipping the read-only half alone is a real boundary, not a slice for its own sake.** The first
+  live scheduled run happens with no write permission at all, so a wrong verdict costs a red job
+  and nothing else — no issue, no comment, no notification to anyone. Given `CANARY_VERSIONS` is
+  still unconfirmed, that ordering is worth more here than it usually is.
+* **The cron's stated reason was wrong, and my own test caught it.** The plan ties the two-hour
+  period to the soft window, and the comment I drafted said a 90-minute soft window "needs to be
+  sampled more often than it is wide" — which a 120-minute cron plainly is not. The cron is right
+  and the reason was wrong: the soft tier exists to stay QUIET while a publish may still be
+  running, so nothing depends on a run landing inside it. The tier that has to be *observed* is the
+  warn band, which exists to say "something is wrong, but a job could still be alive" once before
+  anything escalates. The bound is therefore `period < HARD - SOFT` — 120 < 270 — and a six-hour
+  cron would let a release cross the entire band between runs, leaving the middle tier as code that
+  never executes in production. That mutation is red.
+* **A guard that bit on the argument for its own existence.** The sibling-workflow test scanned raw
+  workflow text for `check_registry_drift.py`, and `.github/workflows/ci.yml:680` names the script in a comment
+  explaining why the drift question is *not* asked there. It now reads comment-stripped `run:`
+  bodies — `scripts/test_yank_gate.py:51-62`'s discipline, which exists because two of that file's
+  guards were satisfied by prose quoting the strings they searched for.
+* **The credential resolution is EXECUTED, not read**, across the same ten shapes
+  `scripts/test_yank_gate.py:93-140` covers — and asserted on `SEAM_REGISTRY_TOKEN`, the name the
+  checker actually reads, rather than on the local `TOKEN`. A resolution that gets the value right
+  and fails to export it leaves the script with no credential and exits 2 forever.
+* **Every refusal exits 2, and the digit is the point.** `yank.yml` exits 1 here and is right to —
+  it is destructive, and 1 means "refused". In this workflow 1 already means *the registry is
+  behind the source*, so a repository that lost its Cloudsmith secret would file a drift verdict
+  about a release that published perfectly well, indistinguishable from a real one.
+* **`permissions:` is asserted in both directions**, so it survives Phases 6 and 7 unedited: a
+  scope the job does not use is standing authority for nothing on a job holding a production
+  credential, and an undeclared scope is `none` rather than inherited, so the staleness arm 403s
+  unless `actions: read` lands in the same commit that needs it.
+* **Proof: 20/20 mutations caught** — the five the plan names plus fifteen more. One worth
+  recording: `pip install` added INLINE was caught only incidentally, by the credential test
+  aborting under `set -e` because `pip` is absent from the stub's PATH — not by the guard written
+  for it. Re-run as its own step, which is what the plan actually specifies,
+  `test_the_job_installs_nothing` is the detector. An incidental catch is not evidence the guard
+  works.
+* **Counts:** `scripts` **338** (`test_registry_drift_gate.py` 92 -> 113) · python **1255 passed / 21
+  skipped** — five more passing and one more skipped than Phase 4, every one of them accounted
+  for. The new workflow enters two parametrised sweeps over
+  `.github/workflows/`: `test_no_workflow_calls_buf_generate_directly` passes and
+  `test_ci_runs_a_node_version_the_package_claims_to_support` skips, since this job sets up no
+  Node. The other four are citation parameters — this checkpoint cites four files the guard had
+  not been asked about before. Verified, not drift. ruff clean.
+* **Not in `ci-ok`'s `needs:`**, deliberately — a scheduled sibling like `framework-coinstall.yml`,
+  for its reasoning at `.github/workflows/framework-coinstall.yml:5-8` plus one of its own: this check exists to
+  catch a release that was never dispatched, and a job that runs on a push cannot see that.
+* **Next:** Phase 6 — reporting: one issue per version, a suppression path, provable
+  non-collision.
