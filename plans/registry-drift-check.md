@@ -1163,7 +1163,137 @@ is infrastructure and never a verdict.
 
 ## Phase 6 — reporting: one issue per version, a suppression path, and provable non-collision
 
-**Status: TODO**
+**Status: DONE** (2026-09-06). Six divergences, then a verification round that found seven gaps —
+including one in this phase's own headline fix, which had moved the defect rather than closed it.
+Divergences 7-13 below are that round's; divergence 5 is corrected rather than extended, because it
+turned out to be stating the opposite of the truth.
+
+1. **Criterion 12 is not implemented as written, deliberately: `actions: read` is NOT declared.**
+   The plan grants all three scopes here so that Phase 7 inherits them. Phase 5's permissions guard
+   refuses a scope nothing uses — correctly, and in both directions — so declaring `actions: read`
+   one phase early would have forced that guard to be weakened to accept it. Phase 7 adds the scope
+   in the commit that reads the Actions API. The coupling is now asserted from both ends: a new
+   control renders the Phase 7 call and checks the `actions` needle matches it, so the needle cannot
+   be silently wrong on the day it is needed, and a second assertion states that the scope is absent
+   *today* and names itself as the line to delete when Phase 7 lands.
+2. **Criterion 12's exact-dict assertion was replaced by a level assertion.** Pinning the whole
+   mapping duplicates `test_the_declared_permissions_are_exactly_what_the_job_uses` and forces its
+   own rewrite in Phase 7 — the "guard that gets edited into something weaker" failure that guard's
+   own comment warns about. What the reasoned guard genuinely cannot see is the LEVEL: it tests a
+   scope's presence, so `issues: read` on a job that files issues satisfies it and 403s at runtime.
+   That is what is asserted instead.
+3. ⚠ **The permissions guard was justifying `issues: write` with PROSE, not with the code.** Its
+   needle was `\bgh\b\W{1,8}issue\b`, and the only two things in the whole script that matched it
+   were error messages — ``f"unreadable row from `gh issue list`"`` and ``f"`gh issue list` returned
+   a non-numeric issue number"``. The actual calls read `_gh(["issue", "create", …], repo)`, where
+   `"gh"` lives inside `_gh`'s own argv and is never adjacent to `"issue"`. Phase 5's anti-vacuity
+   control asserted the needle against `subprocess.run(["gh", "issue", "create"])` — a spelling this
+   codebase does not use anywhere — so it passed while the real file satisfied the needle only
+   through prose. Surfaced by a mutation aimed at something else entirely (`listing_row_errors_ignored`
+   deleted those two messages and left every call intact; the permissions test went red). **Fixed
+   structurally**: the searched surface is now `ast.unparse` with every string literal *blanked*,
+   plus a separate argv surface built only from list/tuple literals in a call's first positional
+   slot. Prose cannot reach it at all. The needle names write verbs only, so `gh issue list` no
+   longer argues for `write`. The needles moved to one module-level table shared by the guard and
+   its control, and the control now builds the real surface from a synthetic script instead of
+   asserting regexes against hand-written strings.
+4. **Three guards the plan did not ask for, each closing a way to switch Phase 6 off with
+   everything green.** (a) `--report` is a single token in the workflow; deleting it leaves the
+   verdict correct, the workflow running, the permissions right, and the check permanently silent.
+   Nothing asserted it. (b) `--state all` narrowed to `--state open` drops the closed suppressed
+   issue out of the listing, so the check files a duplicate every two hours while the suppressor
+   sees their issue exactly where they left it — and every suppression test stays green, because the
+   `gh` stub answered regardless of what it was asked. Fixed in both halves: the stub honours
+   `--state`, and the argv is pinned. (c) `--repo` on every `gh` call: without it `gh` falls back to
+   the checkout's git remote, which is invisible on the happy path and wrong in exactly the fork,
+   mirror and `ref:` cases `issue_repo()` exists to prevent.
+5. **Criterion 10 got a stronger assertion than it asked for — and its first version did not
+   earn the claim.** Non-collision was the stated goal; the test also asserts that
+   `RELEASE_NOTICE_TITLE` renders *identically* to `publish.yml`'s extracted template for every
+   version. The cross-link finds that issue by exact title, so the two halves of #100 agreeing
+   character-for-character is a precondition for the link working at all.
+   **What this bullet originally said — "nothing else in either repo checks it" — was backwards**,
+   and the verification round proved it by mutation. The template was extracted from the workflow,
+   but the `${TAG}` -> `v<version>` binding was supplied by the test itself. Changing
+   `release-outcome`'s `TAG="${GITHUB_REF_NAME}"` to `TAG="${GITHUB_REF_NAME#v}"` — the spelling
+   three other jobs in that same file already use, so a plausible consistency edit — breaks the
+   cross-link, and this test stayed green. What caught it was `scripts/test_release_notice_gate.py`,
+   incidentally, because its fixtures happen to use a `v`-prefixed tag. The sibling suite was
+   protecting the cross-link; the test claiming the credit was not. Now the tag expression is
+   extracted from the job too and asserted, so the edit fails in the test that owns the property.
+6. **Criteria 4c and 8 were both widened.** 4c covers the soft tier as well as the warn tier: both
+   must reach GitHub not at all, not even the read. 8 covers six infrastructure paths rather than
+   four — `REPO` unset and an empty offline response were added, the first being a failure mode
+   Phase 6 itself introduced.
+
+7. **The prose defect had MOVED, not closed — found by the verification round, in this phase's own
+   headline fix.** Divergence 3 hardened the two *script* surfaces and left the *workflow* half of
+   the same needle search as raw text with only WHOLE-LINE comments stripped. A trailing comment
+   survives that filter — a hazard `_wf_code()`'s docstring, in this very file, already warned
+   about. So appending `# replaces the manual \`gh issue create\` runbook step` to the workflow's
+   `run:` line justified `issues: write` on a script where every write verb had been renamed away,
+   and the suite stayed green. An `echo` of the same sentence did it too. The forward-looking half
+   was worse: an unearned `actions: read` could be justified by a workflow comment naming
+   `/actions/`, caught only by the one assertion Phase 7 is explicitly instructed to delete.
+   The fix is exclusion, not a better filter: the workflow's `run:` text is no longer part of the
+   permissions surface at all. No scope can be earned there — the whole design of this phase is
+   that the `gh` calls live in the script — so a surface that cannot help can only be imitated.
+   The hardcoded `issues` belt became a loop over every *declared* scope, each of which must match
+   its needle in the ARGV surface specifically; the previous belt protected `issues` and left
+   `actions` bare, which is exactly the scope arriving next.
+8. **`_script_argv` was separating assignment-from-call, not prose-from-argv.** It took the first
+   positional slot of *any* call, so `"\n".join(["Run \`gh issue create\` by hand."])` satisfied the
+   write needle. `_issue_body` builds its markdown as `lines = [...]` then joins the name — excluded
+   only by that spelling, and one inlining refactor away from re-opening the hole. Now filtered to
+   an allowlist of spawn callees (`_gh`, `run`). An allowlist rather than a denylist because the
+   directions are not symmetric: an unlisted *spawn* helper makes a needle stop matching, which
+   trips the guard loudly, while an unlisted *prose builder* re-admits the sentences silently.
+9. **The truncation warning had no floor — the anti-vacuity guard was itself vacuous.** Replacing
+   `if len(issues) == ISSUE_LIMIT:` with `if True:` makes every run cry truncation forever, and all
+   184 tests passed. The test pinned only that the warning fires AT the limit. It is now
+   parametrised over at-the-limit and one-below, asserting silence in the second. A denominator pin
+   with no floor of its own is precisely the failure class this plan keeps naming.
+10. **Criterion 1's "names the missing format(s)" was not pinned in the body.** The test used a
+   fixture where BOTH formats were missing, and its `npm`/`python` needles were already satisfied by
+   the body's packages row, which names both ecosystems on every issue ever filed. Replacing
+   `sorted(missing)` with `sorted(REQUIRED_FORMATS)` — every body claiming both formats are missing
+   — left the suite green. A half-published release is an ordinary outcome here, since `publish.yml`
+   uploads the wheel and the npm package in separate steps, and it would have filed a body that
+   misstates what is broken. A half-published case now asserts the missing-formats row names
+   `python` and does NOT name `npm`.
+11. **Criterion 10's second assertion was never implemented, and divergence 5 did not record the
+   omission.** The criterion asks that both sides match by exact equality; this script's half was
+   pinned, `publish.yml`'s `$2 == t` was pinned nowhere, in either gate file. Now asserted.
+12. **`reopen` then `comment` is not atomic, and the order was the harmful one.** A reopen that
+   succeeds followed by a comment that fails leaves the issue OPEN and uncommented — and every
+   later run then matches the "already reported, not commenting again" row, so the "the drift is
+   back" record is never written by any run, ever, and nothing retries because nothing can tell
+   that state from a normal open report. Reversed to comment-then-reopen: commenting on a closed
+   issue is legal, so a failed reopen leaves CLOSED-and-unlabelled and the next run retries the
+   pair. Worst case becomes a duplicate comment instead of permanent silence.
+13. **Two hazards the phase assumed away, both now closed.** (a) The label projection joined with
+   `join(",")` and split on `,`, but GitHub permits a comma inside a label NAME: one label spelled
+   `wontfix,deliberately-unpublished` split into two, the second matching the suppression label
+   exactly — a real drift silenced by an issue nobody labelled as suppressed, and splitting only
+   ever ADDS entries, so the failure direction is always toward silence. Now U+001F, in the `--jq`
+   and in the stub alike. (b) A GitHub outage began reddening runs that had PROVED the registry
+   healthy, since the clean path's advisory read is new in this phase. That path is now best-effort
+   — a `::warning::` and exit 0, because it has no report to lose and its whole output is a
+   courtesy notice — while the drift path keeps exit 2, pinned by its own floor test. Red on this
+   workflow has to keep meaning "something to look at about the registry", or it gets muted.
+
+**Proof.** 40 distinct mutations across three batteries — the third covering the review round
+above, one mutation per gap, all caught. Two of the three needed a corrected re-run before being
+counted: a mutation that reddens tests it cannot reach is a harness bug wearing a detection's
+clothes, and both were re-anchored and re-run rather than recorded as found. 30 distinct mutations
+across the first two batteries. Round 1: 23 of 24 caught, the miss being a
+bad anchor in the harness rather than a survivor (re-run and caught in round 2). `infra_becomes_a_verdict`
+— exit 2 demoted to exit 1 — kills 60 tests, which is the depth the never-a-verdict rule needed.
+`infra_reaches_reporting` kills exactly the six `test_no_infrastructure_failure_ever_reaches_github`
+cases: a broken credential cannot file an issue indistinguishable from a real drift. Round 2 added
+the prose finding's own control pair — deleting the two error messages must NOT change anything now,
+and renaming the argv verbs must redden the permissions guard.
+
 
 **Delivers.** `--report` mode. The check files an issue, comments-and-reopens rather than
 duplicating, suppresses a deliberately-unpublished version, and cross-links the `release-outcome`

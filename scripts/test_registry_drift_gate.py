@@ -1940,31 +1940,26 @@ def test_the_declared_permissions_are_exactly_what_the_job_uses() -> None:
     )
     assert not any("permissions" in step for step in _job()["steps"]), "steps cannot take permissions"
 
-    # The surface is the workflow's shell PLUS the script it runs. Phase 6 puts `gh issue` inside
-    # `check_registry_drift.py --report`, not in the `run:` line — so a needle search over the
-    # workflow alone would demand that `issues: write` be REMOVED at the exact moment it becomes
-    # necessary. Same for Phase 7's Actions-API read.
-    body = "\n".join(
-        ln
-        for step in _job()["steps"]
-        for ln in str(step.get("run") or "").splitlines()
-        if not ln.strip().startswith("#")
-    ) + "\n" + _script_code()
-
-    #: scope -> (needle that proves it is used, what needs it). Anything outside this mapping is
-    #: standing authority nobody has argued for, on a job that holds a production credential.
+    # THE SURFACE IS THE SCRIPT, AND ONLY THE SCRIPT. The workflow's `run:` text is deliberately
+    # NOT part of it, and that exclusion is a fix rather than an oversight.
     #
-    #: The needles are REGEXES, not substrings, because this codebase spells subprocess calls as
-    #: argv lists — `subprocess.run(["gh", "issue", "create", …])` contains no `gh issue` anywhere.
-    #: Phase 6 written in the convention every other call in `check_registry_drift.py` uses would
-    #: have reddened this test on the day it landed, demanding that `issues: write` be REMOVED at
-    #: the moment it became necessary. That is the same failure this test was rewritten to avoid,
-    #: one spelling over.
-    justifiable = {
-        "contents": (None, "checking out the repository"),
-        "issues": (r"\bgh\b\W{1,8}issue\b", "filing, commenting on or reopening an issue"),
-        "actions": (r"/actions/", "reading the Actions API for this workflow's own run history"),
-    }
+    # Phase 6 rebuilt this guard because prose was justifying `issues: write` — but it hardened
+    # only the script half and left the workflow half as raw text with whole-line comments
+    # stripped. A TRAILING comment survives that filter, which `_wf_code()`'s docstring already
+    # warned about in this very file. So
+    #     python3 scripts/check_registry_drift.py --report  # replaces the `gh issue create` runbook
+    # justified `issues: write` with a sentence, on a script where no issue write existed at all.
+    # An `echo "...gh issue create..."` did it too. The hole had moved, not closed.
+    #
+    # It is excluded rather than filtered because no scope needs it: the whole design of this
+    # phase is that the `gh` calls live in the script, so the `run:` line contains no `gh` call
+    # and no `api` call to find. A surface that cannot help can only hurt.
+    body = _script_argv() + "\n" + _script_code()
+
+    # `PERMISSION_NEEDLES` is module-level so the control test below searches the SAME regexes
+    # this guard enforces. Anything outside that mapping is standing authority nobody has argued
+    # for, on a job that holds a production credential.
+    justifiable = PERMISSION_NEEDLES
     unknown = set(perms) - set(justifiable)
     assert not unknown, (
         f"`permissions:` declares {sorted(unknown)}, which nothing here accounts for. Add the "
@@ -1984,20 +1979,46 @@ def test_the_declared_permissions_are_exactly_what_the_job_uses() -> None:
             f"standing authority for nothing."
         )
 
+    # BELT, over every declared scope rather than over `issues` alone. The loop above searches
+    # argv AND blanked code; this one insists the justification appear in the ARGV specifically —
+    # the surface that can only be built by handing a list literal to a call.
+    #
+    # It is a loop and not a hardcoded line because the hardcoded version protected `issues` and
+    # left `actions` bare, so the scope Phase 7 adds would have landed with no belt at all on the
+    # day the assertion naming it gets deleted. A belt that covers only the scope that already has
+    # one is not a belt.
+    argv = _script_argv()
+    for scope in perms:
+        needle, why = justifiable[scope]
+        if needle is None:
+            continue
+        assert re.search(needle, argv), (
+            f"`{scope}` is declared, but no ARGV in the script does {why} — only the wider "
+            f"surface says so. A permission has to be earned by a call, not by anything a "
+            f"sentence can imitate."
+        )
 
-def _script_code() -> str:
-    """`check_registry_drift.py` with comments and docstrings removed.
 
-    The permissions needles are searched in this, not in the raw file. Scanning the raw source
-    reintroduces on the script side the exact bug divergence 2 fixed on the workflow side: a
-    comment containing a docs.github.com/en/actions/ URL, or a docstring saying "Phase 6 will file
-    with `gh issue create`", would demand a permission for prose.
+#: scope -> (regex proving the job uses it, what needs it). ONE copy, shared by the guard that
+#: enforces it and by the control that proves the guard is not vacuous. A second copy would be a
+#: second thing to forget, and being satisfied by the wrong thing is this needle's entire failure
+#: mode — see `test_a_permission_cannot_be_justified_by_prose_about_the_code`.
+#:
+#: The `issues` needle names WRITE verbs only. `gh issue list` needs `issues: read`; it must not be
+#: what argues for `write`.
+PERMISSION_NEEDLES = {
+    "contents": (None, "checking out the repository"),
+    "issues": (
+        r"\bissue\s+(?:create|comment|reopen|edit|close|delete|lock)\b",
+        "filing, commenting on or reopening an issue",
+    ),
+    "actions": (r"/actions/", "reading the Actions API for this workflow's own run history"),
+}
 
-    `ast.unparse` drops comments for free and preserves string literals — which must be preserved,
-    since the calls themselves live in them (`["gh", "issue", …]`). Docstrings survive `unparse`,
-    so they are deleted from the tree first.
-    """
-    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+
+def _script_tree(src: str | None = None) -> ast.Module:
+    """`check_registry_drift.py` parsed, with every docstring deleted from the tree."""
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8") if src is None else src)
     for node in ast.walk(tree):
         if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
@@ -2010,30 +2031,229 @@ def _script_code() -> str:
             node.body.pop(0)
             if not node.body:
                 node.body.append(ast.Pass())
+    return tree
+
+
+def _argv_words(node: ast.List | ast.Tuple) -> list[str]:
+    words = []
+    for element in node.elts:
+        if isinstance(element, ast.Constant) and isinstance(element.value, str):
+            words.append(element.value)
+        elif isinstance(element, ast.JoinedStr):
+            # An f-string in an argv slot is still an argv word: Phase 7's Actions read is
+            # `f"repos/{repo}/actions/runs"`, and dropping it would hide the call it is.
+            words.append(
+                "".join(
+                    part.value
+                    for part in element.values
+                    if isinstance(part, ast.Constant) and isinstance(part.value, str)
+                )
+            )
+    return words
+
+
+#: Callees whose first positional argument IS an argv. An allowlist, not a denylist, and the
+#: direction matters: an unlisted spawn helper makes a needle stop matching, which trips the guard
+#: loudly, while an unlisted PROSE builder would silently re-admit exactly the sentences this
+#: surface exists to exclude. `run` covers `subprocess.run`; `_gh` is this script's own wrapper.
+ARGV_CALLEES = frozenset({"_gh", "run"})
+
+
+def _callee_name(node: ast.Call) -> str | None:
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    return None
+
+
+def _script_argv(src: str | None = None) -> str:
+    """Every list/tuple literal handed as the FIRST POSITIONAL argument to a SPAWN callee.
+
+    This is the surface that proves the script SPAWNS something, as distinct from the surface that
+    merely talks about spawning it.
+
+    **The callee filter is load-bearing and was added after review.** Taking the first positional
+    slot of *any* call makes the separation "assignment vs call" rather than "prose vs argv", and
+    those come apart under an ordinary refactor: `_issue_body` builds its markdown as
+    `lines = [...]` then `"\n".join(lines)`, which is excluded only because the list is bound to a
+    name first. Inline it to `return "\n".join([...])` — a pure-style change nobody would question
+    in review — and a bullet reading ``Run `gh issue create` by hand to refile.`` lands in the argv
+    surface and justifies `issues: write` on its own. Verified: that exact spelling satisfied the
+    write needle before this filter existed.
+    """
+    lines = []
+    for node in ast.walk(_script_tree(src)):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        if not isinstance(node.args[0], (ast.List, ast.Tuple)):
+            continue
+        if _callee_name(node) not in ARGV_CALLEES:
+            continue
+        lines.append(" ".join(_argv_words(node.args[0])))
+    return "\n".join(lines)
+
+
+class _BlankStrings(ast.NodeTransformer):
+    def visit_Constant(self, node: ast.Constant) -> ast.Constant:
+        if isinstance(node.value, str):
+            return ast.copy_location(ast.Constant(value=""), node)
+        return node
+
+
+def _script_code(src: str | None = None) -> str:
+    r"""`check_registry_drift.py` as structure and names only — every string literal blanked.
+
+    **The blanking is the fix for a real defect this phase found, not tidiness.** Before it, the
+    needle for `issues` was `\bgh\b\W{1,8}issue\b`, and the only things in the whole script that
+    matched it were two ERROR MESSAGES: ``f"unreadable row from `gh issue list`"`` and ``f"`gh
+    issue list` returned a non-numeric issue number"``. The actual calls are spelled
+    `_gh(["issue", "create", …], repo)` — `"gh"` lives inside `_gh`'s own argv and is never
+    adjacent to `"issue"` — so the permission was being justified by prose ABOUT the code while the
+    code itself went unread. A mutation that deleted those two messages (leaving every `gh issue`
+    call intact) turned the guard red, which is how it surfaced.
+
+    Prose can no longer reach the surface at all: strings survive only via `_script_argv`, which
+    keeps them exclusively where they are an argv. Docstrings are deleted from the tree first,
+    since `ast.unparse` would otherwise emit them.
+    """
+    tree = _BlankStrings().visit(_script_tree(src))
+    ast.fix_missing_locations(tree)
     return ast.unparse(tree)
 
 
-def test_the_permissions_needles_survive_the_spelling_this_codebase_uses() -> None:
-    """Anti-vacuity for the regexes above, which are invisible until a scope is declared.
+def _permission_surface(source: str) -> str:
+    """The exact surface the guard searches, built from an arbitrary script instead of the real one.
 
-    Both spellings must be recognised: the shell one a workflow would use, and the argv one every
-    subprocess call in `check_registry_drift.py` already uses. A needle that only matches the first
-    is a needle that fires on Phase 6's documentation and not on Phase 6's code.
+    Parameterising the builders is what makes the control below a control. The previous version of
+    this test asserted the needle against hand-written spellings — including
+    `subprocess.run(["gh", "issue", "create"])`, which this codebase does not use anywhere — and
+    passed while the real file satisfied the needle only through two error messages.
     """
-    issues = r"\bgh\b\W{1,8}issue\b"
-    for spelling in (
-        'gh issue create --title "x"',
-        'subprocess.run(["gh", "issue", "create", "--title", title])',
-        "subprocess.run(['gh', 'issue', 'list'])",
-    ):
-        assert re.search(issues, spelling), f"the issues needle does not match {spelling!r}"
-    for absent in ("gh release create", "issue_number = 4", "ghost issues are not real"):
-        assert not re.search(issues, absent), f"the issues needle falsely matches {absent!r}"
-    # And the stripper must actually strip: today the script mentions neither needle in code, and
-    # this pins that a comment cannot make it appear to.
+    return _script_argv(source) + "\n" + _script_code(source)
+
+
+def test_a_permission_cannot_be_justified_by_prose_about_the_code() -> None:
+    """The control that would have caught the defect `_script_code` now documents.
+
+    A script that only TALKS about `gh issue create` — in an exception message, in a `print`, in a
+    markdown body it assembles — must not be able to justify `issues: write`. A script that
+    actually spawns it must. Both halves are asserted, because either alone is satisfiable by a
+    needle that is simply always-false or always-true.
+    """
+    needle, _why = PERMISSION_NEEDLES["issues"]
+
+    talks_about_it = """
+def f(repo):
+    body = ["Close this issue and label it.", "Run `gh issue create` by hand to refile."]
+    print(f"filing with `gh issue create` on {repo}")
+    raise RuntimeError(f"`gh issue create` exited non-zero")
+"""
+    assert not re.search(needle, _permission_surface(talks_about_it)), (
+        "prose about `gh issue create` satisfies the issues needle. A permission would then be "
+        "justified by a comment-shaped string rather than by a call, which is the defect this "
+        "control exists for."
+    )
+
+    does_it = """
+def f(repo):
+    _gh(["issue", "create", "--title", title, "--body", body], repo)
+"""
+    assert re.search(needle, _permission_surface(does_it)), (
+        "the codebase's own spelling of a `gh issue create` does not satisfy the issues needle, "
+        "so the guard would demand `issues: write` be REMOVED at the moment it became necessary."
+    )
+
+    reads_only = """
+def f(repo):
+    _gh(["issue", "list", "--state", "all"], repo)
+"""
+    assert not re.search(needle, _permission_surface(reads_only)), (
+        "`gh issue list` satisfies the WRITE needle. Listing needs `issues: read`; it must not be "
+        "what argues for `write`."
+    )
+
+    # An argv-shaped list handed to a STRING BUILDER is prose wearing an argv's clothes. This is
+    # the refactor `_script_argv`'s callee filter exists for: `_issue_body` is one inlining away
+    # from this shape, and the bullet is the kind of remediation text it genuinely contains.
+    prose_in_a_list = """
+def f():
+    return "\\n".join(["Run `gh issue create` by hand to refile."])
+"""
+    assert not re.search(needle, _permission_surface(prose_in_a_list)), (
+        "a markdown bullet passed to `join` satisfies the issues needle. The separation has to be "
+        "prose-vs-argv, not assignment-vs-call — those come apart under an ordinary refactor."
+    )
+
+    # And the real file must be on the right side of that line — this is the assertion that went
+    # green for the wrong reason before the surface was rebuilt.
+    assert re.search(needle, _script_argv()), (
+        "no `gh issue <write verb>` appears in any argv in the script, yet `issues: write` is "
+        "declared. Either the call moved or the needle stopped describing it."
+    )
+
+    # The blanking must remove prose without removing code.
     code = _script_code()
     assert "#:" not in code and '"""' not in code, "comments or docstrings survived the stripper"
     assert "REGISTRY_URL" in code, "the stripper removed code, not just prose"
+    assert "unreadable row" not in code, "a string literal survived the blanker"
+    assert "Registry drift" not in code, "a string literal survived the blanker"
+
+
+def test_the_workflow_shell_cannot_argue_for_a_permission() -> None:
+    """A trailing comment on the `run:` line justified `issues: write` with a sentence.
+
+    Phase 6 rebuilt the script half of this surface and left the workflow half as raw text with
+    only WHOLE-LINE comments stripped — a filter `_wf_code()`'s own docstring, in this file,
+    already warned is defeated by a trailing comment. So
+
+        python3 scripts/check_registry_drift.py --report  # replaces the `gh issue create` runbook
+
+    earned the scope while the script contained no issue write at all, and an `echo` of the same
+    sentence did it too. The needle was never the problem; the surface was.
+
+    The fix is exclusion rather than a better filter, because no scope can be earned there: every
+    `gh` call lives in the script by design, so the `run:` block has nothing to contribute and can
+    only be imitated.
+    """
+    needle, _why = PERMISSION_NEEDLES["issues"]
+
+    # FLOOR: the sentence really does satisfy the needle. Without this the test could pass because
+    # the needle stopped matching anything at all, which is the failure it is meant to detect.
+    imitation = "python3 scripts/check_registry_drift.py --report  # the `gh issue create` runbook"
+    assert re.search(needle, imitation), (
+        "the imitation no longer matches the needle, so this control proves nothing. Re-word it "
+        "until it does — the point is that a MATCHING sentence must still not reach the surface."
+    )
+
+    surface = _script_argv() + "\n" + _script_code()
+    run_text = "\n".join(str(step.get("run") or "") for step in _job()["steps"])
+    assert "add-mask" in run_text, "floor: the credential shell is where this test thinks it is"
+    assert "add-mask" not in surface, (
+        "the workflow's shell is back in the permissions surface. Every scope must be earned by "
+        "the script's own argv; a `run:` line can say anything."
+    )
+
+
+def test_the_actions_needle_is_ready_for_the_phase_that_needs_it() -> None:
+    """`actions: read` is not declared yet, so its needle is unexercised until Phase 7 lands.
+
+    An unexercised regex is an unverified one, and the direction it fails in is silent: a needle
+    that never matches makes the guard demand the scope be REMOVED on the day the heartbeat starts
+    reading the Actions API. Same failure the `issues` needle actually had, caught one phase early.
+    """
+    needle, _why = PERMISSION_NEEDLES["actions"]
+    heartbeat = """
+def f(repo, workflow):
+    _gh(["api", f"repos/{repo}/actions/workflows/{workflow}/runs"], repo)
+"""
+    assert re.search(needle, _permission_surface(heartbeat)), (
+        "the Actions-API call Phase 7 will make does not satisfy the actions needle."
+    )
+    assert "actions" not in (_job().get("permissions") or {}), (
+        "`actions: read` is declared. Phase 7 grants it in the commit that uses it; if that has "
+        "landed, this assertion is the one to delete."
+    )
 
 
 def test_the_secrets_are_actually_wired_into_the_step() -> None:
@@ -2172,11 +2392,12 @@ def test_the_workflow_runs_the_checker_this_file_is_about() -> None:
     # Flags are allowlisted rather than pattern-matched, so adding one is a deliberate edit HERE
     # as well as there. Phase 6 adds `--report`; that is the moment to decide it belongs, not a
     # thing to discover afterwards.
-    # EMPTY today, and that is the point. `--report` was pre-allowlisted here "for Phase 6" while
-    # the script had no such flag — so adding it to the workflow would have passed this test and
-    # produced `unrecognized arguments: --report`, argparse exit 2, on every scheduled run. A flag
-    # belongs on this list in the commit that implements it, not before.
-    allowed: set[str] = set()
+    # `--report` is here because Phase 6 implemented it, in the same commit — it was on this list
+    # once BEFORE that, "ready for Phase 6", while the script had no such flag. Adding it to the
+    # workflow then would have passed this test and produced `unrecognized arguments: --report`,
+    # argparse exit 2, on every scheduled run. The cross-check below is what would have caught it,
+    # and it is the reason a flag never joins this set speculatively.
+    allowed = {"--report"}
     declared = set(re.findall(r'add_argument\(\s*"(--[a-z-]+)"', SCRIPT.read_text(encoding="utf-8")))
     assert len(declared) >= 4, (
         f"only {sorted(declared)} parsed out of the script's argparse setup — the cross-check "
@@ -2251,4 +2472,1019 @@ def test_the_scheduled_run_never_passes_a_saved_response() -> None:
     assert "--packages-json" not in body, (
         "the scheduled job passes `--packages-json`, so it reads a file instead of the registry. "
         "The verdict would then be a statement about that file's age, not about the registry."
+    )
+
+
+# ── Phase 6: reporting, suppression, and provable non-collision ───────────────────────────────
+#
+# `gh` is stubbed as an executable first on PATH, in the shape `scripts/test_release_notice_gate.py`
+# uses: it logs every argv and answers `issue list` with a pre-rendered TSV. No mocks and no
+# monkeypatching — the script builds a real argv and a real process reads it, so a change to the
+# flags, to the `--jq` expression, or to the ORDER of the calls is visible from here.
+#
+# The property this block cares about most is not what the check files. It is what it does NOT
+# file. An infrastructure failure must reach exit 2 with the `gh` log EMPTY, and both grace tiers
+# must reach exit 0 with the `gh` log empty. A reporter that files on a broken instrument is worse
+# than no reporter at all: the issue it opens is indistinguishable from a real one, and the only
+# way to tell them apart is to redo by hand the work the check exists to do.
+
+_SCRIPT_MODULE = _load_script()
+DRIFT_TITLE = _SCRIPT_MODULE.DRIFT_TITLE
+RELEASE_NOTICE_TITLE = _SCRIPT_MODULE.RELEASE_NOTICE_TITLE
+SUPPRESSION_LABEL = _SCRIPT_MODULE.SUPPRESSION_LABEL
+ISSUE_LIMIT = _SCRIPT_MODULE.ISSUE_LIMIT
+
+#: The repository the stubbed `gh` is told it is filing against. Deliberately the real one: `REPO`
+#: env resolution refuses anything that is not `owner/name`, and a fixture value that happened to
+#: be malformed would pass every test here for the wrong reason.
+STUB_REPO = "zer07labs/seam-sdk"
+
+#: The version every reporting fixture drifts on. One constant so a test that asserts on a title
+#: and a test that asserts on a listing cannot disagree about which release they are describing.
+DRIFTING = "0.7.78"
+
+
+#: The intra-field label separator, one copy, shared by the stub and by the script's `--jq`.
+#: U+001F because GitHub permits a comma inside a label NAME and forbids nothing that would
+#: collide with a unit separator.
+LABEL_SEP = "\x1f"
+
+
+def gh_stub(
+    tmp_path: Path,
+    listing: list[tuple[int, str, list[str], str]],
+    *,
+    fail_on: tuple[str, str] | None = None,
+) -> tuple[Path, Path]:
+    """A `gh` first on PATH. Returns (bin dir, argv-log path).
+
+    `listing` rows are `(number, state, labels, title)` — exactly the four fields the script's own
+    `--jq` projects, so the parser is exercised rather than bypassed.
+
+    The log is NUL-delimited, not line-delimited, and that is not fussiness: the issue BODY is
+    multi-line, so a `printf '[%s]\\n'` log of the kind `curl_stub` uses would split one argument
+    across many lines and make the argv unrecoverable. Each invocation is preceded by a literal
+    `CALL` record, which is why argv can be grouped per call rather than flattened into one stream
+    where the ORDER of `reopen` and `comment` would be unobservable.
+
+    `fail_on` makes one verb pair fail the way a GitHub outage does — non-zero with a message on
+    stderr — so the promise that a delivery failure never becomes a verdict is testable.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    log = tmp_path / "gh-argv"
+    log.write_bytes(b"")
+    tsv = tmp_path / "issues.tsv"
+    # Labels joined by U+001F, mirroring the script's `--jq ... join("\u001f")`. A comma here
+    # would make the stub disagree with the real projection on exactly the input that matters —
+    # a label whose NAME contains a comma — so the parser would be exercised against a shape
+    # GitHub never produces.
+    tsv.write_text(
+        "".join(
+            f"{number}\t{state}\t{LABEL_SEP.join(labels)}\t{title}\n"
+            for number, state, labels, title in listing
+        ),
+        encoding="utf-8",
+    )
+    lines = [
+        "#!/usr/bin/env bash",
+        f"""printf 'CALL\\0' >> {log}""",
+        f"""printf '%s\\0' "$@" >> {log}""",
+    ]
+    if fail_on is not None:
+        lines += [
+            f"""if [ "$1" = "{fail_on[0]}" ] && [ "$2" = "{fail_on[1]}" ]; then""",
+            """  echo 'gh: HTTP 503 — the GitHub API is unavailable' >&2""",
+            "  exit 1",
+            "fi",
+        ]
+    lines += [
+        """if [ "$1" = "issue" ] && [ "$2" = "list" ]; then""",
+        # The stub HONOURS `--state`, and that is load-bearing rather than fidelity for its own
+        # sake. `--state all` narrowed to `--state open` is otherwise an invisible edit: a closed
+        # suppressed issue drops out of the listing, the check files a duplicate every two hours
+        # forever, and every suppression test stays green because the stub answered regardless of
+        # what it was asked.
+        """  case "$*" in""",
+        f"""    *"--state open"*) awk -F'\t' '$2 == "OPEN"' {tsv} ;;""",
+        f"""    *"--state closed"*) awk -F'\t' '$2 == "CLOSED"' {tsv} ;;""",
+        f"""    *) cat {tsv} ;;""",
+        """  esac""",
+        "fi",
+        "exit 0",
+    ]
+    stub = bin_dir / "gh"
+    stub.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    stub.chmod(0o755)
+    assert stub.read_text().startswith("#!"), "the stub shebang must be at column 0"
+    return bin_dir, log
+
+
+def gh_calls(log: Path) -> list[list[str]]:
+    """Every `gh` invocation, argv-exact and in order."""
+    calls: list[list[str]] = []
+    for part in log.read_bytes().split(b"\0"):
+        token = part.decode("utf-8")
+        if token == "CALL":
+            calls.append([])
+        elif token:
+            assert calls, f"argv {token!r} arrived before any CALL marker — the stub is broken"
+            calls[-1].append(token)
+    return calls
+
+
+def gh_verbs(log: Path) -> list[str]:
+    """`issue list`, `issue create`, … in the order they were invoked."""
+    return [" ".join(call[:2]) for call in gh_calls(log)]
+
+
+def gh_writes(log: Path) -> list[str]:
+    """Every call that is not the read. This is what must be empty on every non-drift path."""
+    return [verb for verb in gh_verbs(log) if verb != "issue list"]
+
+
+def gh_flag(log: Path, verb: str, flag: str) -> str:
+    """The value of `--title` / `--body` on the one call with this verb."""
+    matches = [call for call in gh_calls(log) if " ".join(call[:2]) == verb]
+    assert len(matches) == 1, f"expected exactly one `{verb}`, saw {len(matches)}"
+    argv = matches[0]
+    assert flag in argv, f"`{verb}` was invoked without {flag}: {argv}"
+    return argv[argv.index(flag) + 1]
+
+
+def report_env(
+    bin_dir: Path, *, repo: str | None = STUB_REPO, token: str | None = None
+) -> dict[str, str]:
+    """The environment a reporting run sees. `REPO` and `GH_TOKEN` are wiped first, then set.
+
+    Wiped rather than merely overwritten: an ambient `REPO` on the developer's machine would make
+    the `REPO`-is-unset test pass by filing against whatever that named, which is the one outcome
+    it exists to forbid.
+    """
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("SEAM_REGISTRY_TOKEN", "REPO", "GH_TOKEN")
+    }
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
+    env["GH_TOKEN"] = "stub-gh-token"
+    if repo is not None:
+        env["REPO"] = repo
+    if token is not None:
+        env["SEAM_REGISTRY_TOKEN"] = token
+    return env
+
+
+def report_run(
+    repo: Path,
+    packages: object | None,
+    tmp_path: Path,
+    *,
+    listing: list[tuple[int, str, list[str], str]] | None = None,
+    now: datetime | None = None,
+    extra: list[str] | None = None,
+    gh_bin: Path | None = None,
+    gh_log: Path | None = None,
+    env_repo: str | None = STUB_REPO,
+) -> tuple[subprocess.CompletedProcess[str], Path]:
+    """Run the checker with `--report` against a stubbed `gh`. Returns (proc, argv log)."""
+    if gh_bin is None or gh_log is None:
+        gh_bin, gh_log = gh_stub(tmp_path, listing or [])
+    proc = run(
+        repo,
+        packages,
+        tmp_path,
+        now=now,
+        extra=["--report", *(extra or [])],
+        env=report_env(gh_bin, repo=env_repo),
+    )
+    return proc, gh_log
+
+
+def drift_listing(number: int, state: str, labels: list[str]) -> list[tuple[int, str, list[str], str]]:
+    return [(number, state, labels, DRIFT_TITLE.format(version=DRIFTING))]
+
+
+def test_the_gh_stub_records_a_multiline_argument_without_losing_it(tmp_path: Path) -> None:
+    """The instrument for this whole block, proved before anything is measured with it.
+
+    Every assertion below about a body reads it back through `gh_calls`. If the log could not
+    survive an embedded newline — and the real body is a markdown table, so it is full of them —
+    every one of those assertions would be measuring the truncation instead of the body.
+    """
+    bin_dir, log = gh_stub(tmp_path, [])
+    body = "line one\nline two\n\n| a | b |"
+    subprocess.run(
+        [str(bin_dir / "gh"), "issue", "create", "--title", "t", "--body", body], check=True
+    )
+    assert gh_calls(log) == [["issue", "create", "--title", "t", "--body", body]]
+
+
+# ── The decision table ────────────────────────────────────────────────────────────────────────
+
+
+def test_a_first_drift_files_exactly_one_issue_that_says_what_is_wrong(tmp_path: Path) -> None:
+    """Criterion 1. Nothing has been reported yet, so the check reports it — once."""
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    proc, log = report_run(repo, published("0.7.77"), tmp_path, listing=[])
+
+    assert proc.returncode == 1, proc.stderr
+    assert gh_verbs(log) == ["issue list", "issue create"], gh_calls(log)
+    assert gh_flag(log, "issue create", "--title") == DRIFT_TITLE.format(version=DRIFTING)
+
+    body = gh_flag(log, "issue create", "--body")
+    # The body has to stand on its own: whoever opens the issue is not holding the run log.
+    for needle in (
+        DRIFTING,
+        "seam-sdk",
+        "@zer07labs/seam-sdk",
+        "npm",
+        "python",
+        "present",
+        "minutes",
+        SUPPRESSION_LABEL,
+    ):
+        assert needle in body, f"the filed body never mentions {needle!r}:\n{body}"
+
+
+def test_the_body_names_the_format_that_is_actually_missing(tmp_path: Path) -> None:
+    """Criterion 1's "names the missing format(s)", pinned where it can actually fail.
+
+    The both-missing case above CANNOT check this. Its `"npm"` and `"python"` needles are already
+    satisfied by the packages row — ``| packages | `seam-sdk` (python), `@zer07labs/seam-sdk`
+    (npm) |`` — which names both ecosystems on every body ever filed. So replacing the verdict's
+    `sorted(missing)` with `sorted(REQUIRED_FORMATS)`, making every issue claim BOTH formats are
+    missing, left all 184 tests green. A half-published release would then file a body that
+    misstates what is broken, and the person acting on it would go looking for the wrong failure.
+
+    Half-published is not hypothetical here: `publish.yml` uploads the wheel and the npm package
+    in separate steps, so one landing without the other is an ordinary outcome.
+    """
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    # The npm package IS served at the drifting version; the wheel is not.
+    proc, log = report_run(
+        repo,
+        rows(("seam-sdk", "0.7.77", "python"), ("@zer07labs/seam-sdk", DRIFTING, "npm")),
+        tmp_path,
+        listing=[],
+    )
+    assert proc.returncode == 1, proc.stderr
+    body = gh_flag(log, "issue create", "--body")
+
+    missing_row = next(
+        (ln for ln in body.splitlines() if "missing" in ln.lower() and "|" in ln), None
+    )
+    assert missing_row is not None, f"no row names what is missing:\n{body}"
+    assert "python" in missing_row, f"the missing format is not named:\n{missing_row}"
+    assert "npm" not in missing_row, (
+        f"the body claims npm is missing when the registry serves it. A body that names both "
+        f"formats regardless of which one failed is indistinguishable from one that names "
+        f"neither:\n{missing_row}"
+    )
+
+
+def test_a_drift_already_reported_does_not_report_it_again(tmp_path: Path) -> None:
+    """Criterion 2. The check runs every two hours; re-detection is not new information.
+
+    A comment per run is precisely how a reporter gets muted by the people it reports to.
+    """
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    proc, log = report_run(
+        repo, published("0.7.77"), tmp_path, listing=drift_listing(42, "OPEN", [])
+    )
+    assert proc.returncode == 1, proc.stderr
+    assert gh_writes(log) == [], gh_calls(log)
+    assert "#42" in proc.stdout
+
+
+def test_a_drift_that_came_back_comments_then_reopens(tmp_path: Path) -> None:
+    """Criterion 3. Closed and unlabelled means someone believed it fixed. It is not fixed.
+
+    THE ORDER IS PINNED, AND IT IS COMMENT-THEN-REOPEN. The two calls are not atomic, and the
+    order decides what a failure between them costs. Reopen-then-comment, failing on the comment,
+    leaves the issue OPEN and uncommented — and every later run then matches the `state == "OPEN"`
+    row ("already reported, not commenting again"), so the "the drift is back" record is never
+    written by any run, ever, and nothing retries because nothing can distinguish that state from
+    a normal open report.
+
+    Comment-then-reopen strands nothing: commenting on a closed issue is legal, so a failed reopen
+    leaves CLOSED-and-unlabelled and the next run retries the pair. Its worst case is a duplicate
+    comment; the other order's worst case is silence.
+    """
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    proc, log = report_run(
+        repo, published("0.7.77"), tmp_path, listing=drift_listing(42, "CLOSED", [])
+    )
+    assert proc.returncode == 1, proc.stderr
+    assert gh_verbs(log) == ["issue list", "issue comment", "issue reopen"], gh_calls(log)
+    assert gh_calls(log)[2][:3] == ["issue", "reopen", "42"]
+    assert DRIFTING in gh_flag(log, "issue comment", "--body")
+
+
+def test_a_failed_reopen_leaves_the_issue_retryable(tmp_path: Path) -> None:
+    """The reason the order above is what it is, exercised rather than merely asserted.
+
+    `gh` dies on the reopen, after the comment landed. The run must exit 2 (infrastructure), and
+    the issue must still be CLOSED — which is what makes the NEXT run take the reopen row again
+    instead of the "already reported" one. An order assertion alone would still pass if the
+    recovery reasoning behind it were wrong.
+    """
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    gh_bin, gh_log = gh_stub(
+        tmp_path, drift_listing(42, "CLOSED", []), fail_on=("issue", "reopen")
+    )
+    proc, log = report_run(
+        repo, published("0.7.77"), tmp_path, gh_bin=gh_bin, gh_log=gh_log
+    )
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "issue comment" in gh_verbs(log), gh_calls(log)
+    # The comment is on the issue; the state never moved. A rerun sees CLOSED and tries again.
+    assert gh_verbs(log) == ["issue list", "issue comment", "issue reopen"], gh_calls(log)
+
+
+def test_a_comma_in_some_other_label_cannot_suppress_a_drift(tmp_path: Path) -> None:
+    """GitHub permits a comma inside a label NAME. The projection must not treat one as a delimiter.
+
+    With `join(",")`, an issue carrying the single label `wontfix,deliberately-unpublished` — one
+    label, one comma, entirely legal — splits into two, the second of which equals the suppression
+    label exactly. A real drift would then be suppressed by an issue nobody ever labelled as
+    suppressed, and the `::warning::` would name a label the repository does not have, so the
+    person reading it could not even find what was silencing them.
+
+    The direction is what makes this worth a test: splitting only ever ADDS label entries, so the
+    failure is always toward false SILENCE, never toward noise.
+    """
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    proc, log = report_run(
+        repo,
+        published("0.7.77"),
+        tmp_path,
+        listing=drift_listing(42, "CLOSED", [f"wontfix,{SUPPRESSION_LABEL}"]),
+    )
+    # Not suppressed: exit 1, and the issue is reopened and commented like any other recurrence.
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "SUPPRESSED" not in proc.stdout, proc.stdout
+    assert gh_verbs(log) == ["issue list", "issue comment", "issue reopen"], gh_calls(log)
+
+
+def test_a_github_outage_on_a_clean_run_does_not_redden_a_healthy_registry(
+    tmp_path: Path,
+) -> None:
+    """The clean path's GitHub read is BEST EFFORT. Everywhere else, a `gh` failure is exit 2.
+
+    Before reporting existed, a clean run touched nothing. Making it read GitHub means a GitHub
+    outage would turn a run that PROVED the registry healthy into a red job — and red on this
+    workflow has to keep meaning "there is something to look at about the registry", or it gets
+    muted, which is the exact failure this check exists to prevent.
+
+    Softening costs nothing here because this path has no report to lose: its whole output is a
+    courtesy notice that an already-open issue can be closed. It stays audible one severity down,
+    so a broken credential still announces itself on every clean run — earlier than it otherwise
+    would, since the drift path only speaks when there is drift.
+    """
+    repo = make_repo(tmp_path, version="0.7.77", tag=True)
+    gh_bin, gh_log = gh_stub(tmp_path, [], fail_on=("issue", "list"))
+    proc, log = report_run(
+        repo, published("0.7.77"), tmp_path, gh_bin=gh_bin, gh_log=gh_log
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "::warning::" in proc.stdout, proc.stdout
+    assert "clean" in proc.stdout.lower()
+    # It really did try — otherwise this passes for the wrong reason on a run that never called.
+    assert gh_verbs(log) == ["issue list"], gh_calls(log)
+
+
+def test_a_github_outage_on_a_drift_run_is_still_exit_two(tmp_path: Path) -> None:
+    """The floor under the softening above: only the CLEAN path is best-effort.
+
+    Without this, widening the `except InfraError` to cover both branches would leave the clean
+    test green while a real drift silently exited 0 with nobody told — the reporter's single worst
+    outcome, reached by a change that looks like consistency.
+    """
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    gh_bin, gh_log = gh_stub(tmp_path, [], fail_on=("issue", "create"))
+    proc, log = report_run(
+        repo, published("0.7.77"), tmp_path, gh_bin=gh_bin, gh_log=gh_log
+    )
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "DRIFT" in proc.stdout, "the verdict must still be printed before the delivery failed"
+
+
+def test_a_deliberate_non_publish_is_suppressed_but_never_silent(tmp_path: Path) -> None:
+    """Criterion 4. Closed AND labelled: exit 0, no writes, and a warning that names all three.
+
+    Named rather than merely emitted. A suppression is a standing decision, and the only thing that
+    keeps a standing decision reviewable is that every run says which issue is making it.
+    """
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    proc, log = report_run(
+        repo,
+        published("0.7.77"),
+        tmp_path,
+        listing=drift_listing(42, "CLOSED", [SUPPRESSION_LABEL]),
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert gh_writes(log) == [], gh_calls(log)
+    assert "::warning::" in proc.stdout
+    for needle in ("#42", DRIFTING, SUPPRESSION_LABEL):
+        assert needle in proc.stdout, f"the suppression warning never names {needle!r}"
+    # And it still says the registry is wrong — a suppressed drift is a drift.
+    assert "still does not serve" in proc.stdout
+
+
+def test_reopening_a_labelled_issue_stops_the_suppression(tmp_path: Path) -> None:
+    """Criterion 4b. The label alone must not suppress; the state is half the key.
+
+    Reopening is how a person says "I want to hear about this again", and it is the cheaper of the
+    two undo gestures — cheaper than hunting down a label. If it did not work, the suppression
+    would be one-way.
+    """
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    proc, log = report_run(
+        repo,
+        published("0.7.77"),
+        tmp_path,
+        listing=drift_listing(42, "OPEN", [SUPPRESSION_LABEL]),
+    )
+    assert proc.returncode == 1, proc.stderr
+    assert gh_writes(log) == [], gh_calls(log)
+
+
+@pytest.mark.parametrize(
+    ("age", "band", "marker"),
+    [(10, "soft", "DEFERRED"), (200, "warn", "::warning::")],
+)
+def test_neither_grace_tier_touches_github(
+    tmp_path: Path, age: int, band: str, marker: str
+) -> None:
+    """Criterion 4c, both tiers. Grace means grace — not even the read.
+
+    The moment a grace tier files anything it has stopped being a grace window and become a
+    reporting tier with a softer adjective. The read is included in that: `gh issue list` is
+    harmless, but allowing it is what makes the write one edit away.
+    """
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    proc, log = report_run(
+        repo,
+        published("0.7.77"),
+        tmp_path,
+        listing=[],
+        now=LANDED + timedelta(minutes=age),
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert marker in proc.stdout, f"the {band} tier did not announce itself:\n{proc.stdout}"
+    assert gh_calls(log) == [], f"the {band} tier called GitHub: {gh_calls(log)}"
+
+
+def test_a_recovered_registry_says_the_issue_can_be_closed_and_closes_nothing(
+    tmp_path: Path,
+) -> None:
+    """Criterion 5. The check only ever adds. Closing is a person's decision.
+
+    A reporter that can retract its own reports is a much larger authority than one that can only
+    speak, and the failure mode is far worse: a bug in the clean path would erase the record of a
+    real outage rather than merely add noise to it.
+    """
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    proc, log = report_run(
+        repo, published(DRIFTING), tmp_path, listing=drift_listing(42, "OPEN", [])
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert gh_writes(log) == [], gh_calls(log)
+    assert "::notice::" in proc.stdout
+    assert "#42" in proc.stdout
+    assert "never closes" in proc.stdout
+
+
+def test_a_clean_run_with_nothing_outstanding_says_nothing_to_github(tmp_path: Path) -> None:
+    """The ordinary case — most runs. One read, no writes, no notice."""
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    proc, log = report_run(repo, published(DRIFTING), tmp_path, listing=[])
+    assert proc.returncode == 0, proc.stderr
+    assert gh_writes(log) == [], gh_calls(log)
+    assert "::notice::" not in proc.stdout
+
+
+# ── Exact-title matching: three questions, one listing ────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("state", "labels"),
+    [("CLOSED", [SUPPRESSION_LABEL]), ("OPEN", []), ("CLOSED", [])],
+)
+def test_an_issue_that_merely_quotes_the_title_is_not_the_report(
+    tmp_path: Path, state: str, labels: list[str]
+) -> None:
+    """Criterion 6. Containment is not identity, in any of the three ways it could matter.
+
+    One listing answers three questions — is this reported, is it suppressed, is there a release
+    notice to link — and that is only safe while every match is exact equality. A substring match
+    would let a discussion thread that quotes the title answer any of the three: closed with the
+    label it would suppress a real drift, open it would swallow the first report entirely.
+    """
+    exact = DRIFT_TITLE.format(version=DRIFTING)
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    proc, log = report_run(
+        repo,
+        published("0.7.77"),
+        tmp_path,
+        listing=[(99, state, labels, f"Re: {exact} — is this still happening?")],
+    )
+    assert proc.returncode == 1, proc.stderr
+    assert gh_verbs(log) == ["issue list", "issue create"], gh_calls(log)
+    assert gh_flag(log, "issue create", "--title") == exact
+
+
+def test_a_drift_issue_for_another_version_does_not_answer_for_this_one(tmp_path: Path) -> None:
+    """The title carries the version, so suppression is scoped to one release and never to all."""
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    proc, log = report_run(
+        repo,
+        published("0.7.77"),
+        tmp_path,
+        listing=[(7, "CLOSED", [SUPPRESSION_LABEL], DRIFT_TITLE.format(version="0.7.77"))],
+    )
+    assert proc.returncode == 1, proc.stderr
+    assert gh_verbs(log) == ["issue list", "issue create"], gh_calls(log)
+
+
+# ── The cross-link to the merged half of #100 ─────────────────────────────────────────────────
+
+
+def test_an_open_release_notice_is_linked_from_the_filed_issue(tmp_path: Path) -> None:
+    """Criterion 9. Both halves of #100 can fire on one release; they should not read as two bugs.
+
+    `release-outcome` reports the publish RUN; this reports the registry's STATE. When both have
+    something to say they are saying it about the same release, and a reader arriving at either one
+    should be able to reach the other.
+    """
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    proc, log = report_run(
+        repo,
+        published("0.7.77"),
+        tmp_path,
+        listing=[(7, "OPEN", [], RELEASE_NOTICE_TITLE.format(version=DRIFTING))],
+    )
+    assert proc.returncode == 1, proc.stderr
+    body = gh_flag(log, "issue create", "--body")
+    assert "#7" in body, f"the release notice was not linked:\n{body}"
+
+
+def test_a_closed_release_notice_is_not_linked(tmp_path: Path) -> None:
+    """A closed notice is a resolved run. Linking it would point a live issue at a dead lead."""
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    proc, log = report_run(
+        repo,
+        published("0.7.77"),
+        tmp_path,
+        listing=[(7, "CLOSED", [], RELEASE_NOTICE_TITLE.format(version=DRIFTING))],
+    )
+    assert proc.returncode == 1, proc.stderr
+    assert "#7" not in gh_flag(log, "issue create", "--body")
+
+
+def _release_outcome_title_template() -> str:
+    """The `TITLE=` literal from `publish.yml`'s `release-outcome` job, read out of the workflow.
+
+    Extracted rather than restated. The whole point of the test below is that these two titles can
+    never collide, and a hand-copied second version of the other side's template would keep
+    agreeing with itself long after `publish.yml` had moved.
+    """
+    publish = REPO / ".github" / "workflows" / "publish.yml"
+    job = yaml.safe_load(publish.read_text(encoding="utf-8"))["jobs"]["release-outcome"]
+    body = "\n".join(str(step.get("run") or "") for step in job["steps"])
+    found = re.findall(r'TITLE="([^"]*)"', body)
+    assert len(found) == 1, (
+        f"expected exactly one TITLE= assignment in release-outcome, found {found}. The "
+        f"non-collision proof below is only as good as its knowledge of what the other side files."
+    )
+    return found[0]
+
+
+def _release_outcome_tag_expr() -> str:
+    """The `TAG=` right-hand side from the same job, extracted rather than assumed.
+
+    THIS IS THE FRAGILE HALF, and the test used to supply it itself with `.replace("${TAG}",
+    f"v{version}")`. That hardcodes the one thing most likely to move: three other jobs in the same
+    file spell it `${GITHUB_REF_NAME#v}`, so "make release-outcome consistent with its neighbours"
+    is a plausible, well-intentioned edit. It would make `publish.yml` file `Release 0.7.78 did not
+    publish` while this script hunts for `Release v0.7.78 did not publish`, and the cross-link would
+    silently stop matching — with the test that claims to prove the equality still green, because
+    it was rendering through its own assumption rather than through the workflow's.
+    """
+    publish = REPO / ".github" / "workflows" / "publish.yml"
+    job = yaml.safe_load(publish.read_text(encoding="utf-8"))["jobs"]["release-outcome"]
+    body = "\n".join(str(step.get("run") or "") for step in job["steps"])
+    found = re.findall(r'TAG="([^"]*)"', body)
+    assert len(found) == 1, (
+        f"expected exactly one TAG= assignment in release-outcome, found {found}."
+    )
+    return found[0]
+
+
+def test_the_two_reporters_can_never_file_the_same_issue() -> None:
+    """Criterion 10. Non-collision by construction, pinned against the other side's real template.
+
+    Two mechanisms file issues about the same release. If their titles could ever coincide, each
+    would find the other's issue by exact-title match and take it for its own: this check would
+    "already reported" a `release-outcome` issue and never file, and a `deliberately-unpublished`
+    label meant for one would silence the other.
+
+    Substring, not just inequality. Both matchers are exact-equality today, so inequality alone is
+    enough — but that is a property of the current implementation, and a future editor relaxing
+    either matcher to `contains` should be caught by this test rather than by an outage.
+    """
+    other = _release_outcome_title_template()
+    assert other, "release-outcome's TITLE= extracted empty"
+    assert "did not publish" in other, (
+        f"the extracted template {other!r} does not look like the release notice title — the "
+        f"regex is matching something else in the job's shell."
+    )
+
+    # The tag binding comes out of the workflow too. `GITHUB_REF_NAME` is the pushed tag, so an
+    # UNSTRIPPED `${GITHUB_REF_NAME}` is what puts the `v` into the filed title — and
+    # `RELEASE_NOTICE_TITLE` carries that `v` in its own literal. Asserting the expression rather
+    # than rendering through a hardcoded `f"v{version}"` is what makes the neighbour-consistency
+    # edit (`${GITHUB_REF_NAME#v}`, as at `.github/workflows/publish.yml:163`) fail HERE, in the
+    # test that claims to own this equality, instead of incidentally in the sibling suite.
+    tag_expr = _release_outcome_tag_expr()
+    assert tag_expr == "${GITHUB_REF_NAME}", (
+        f"release-outcome now derives its tag as {tag_expr!r}. If the `v` is stripped there, "
+        f"publish.yml files `Release 0.7.78 did not publish` while this script looks for "
+        f"`Release v0.7.78 did not publish`, and the cross-link dies silently. Either restore it "
+        f"or drop the `v` from RELEASE_NOTICE_TITLE — they have to move together."
+    )
+
+    for version in ("0.7.69", "0.7.72", "0.7.77", DRIFTING, "0.8.0", "1.0.0"):
+        # Rendered through the workflow's OWN tag expression, not through this test's idea of it.
+        rendered_other = other.replace("${TAG}", tag_expr.replace("${GITHUB_REF_NAME}", f"v{version}"))
+        # The cross-link finds that issue by exact title, so our copy of it must render identically
+        # to what `publish.yml` actually files.
+        assert RELEASE_NOTICE_TITLE.format(version=version) == rendered_other, (
+            f"RELEASE_NOTICE_TITLE renders {RELEASE_NOTICE_TITLE.format(version=version)!r} but "
+            f"publish.yml files {rendered_other!r} — the cross-link can never match."
+        )
+        mine = DRIFT_TITLE.format(version=version)
+        assert mine != rendered_other
+        assert mine not in rendered_other
+        assert rendered_other not in mine
+
+    # Criterion 10 asks that BOTH sides match exactly. This script's half is pinned by
+    # `test_an_issue_that_merely_quotes_the_title_is_not_the_report`; publish.yml's half is this.
+    # Without it the criterion is half-implemented: `release-outcome` relaxing its `awk` to a
+    # substring test would make it adopt a discussion thread quoting its title, and the sibling
+    # suite's fixtures do not contain the notice title so they would not notice either.
+    publish_body = "\n".join(
+        str(step.get("run") or "")
+        for step in yaml.safe_load(
+            (REPO / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
+        )["jobs"]["release-outcome"]["steps"]
+    )
+    assert "$2 == t" in publish_body, (
+        "release-outcome no longer selects its issue by EXACT title. Both reporters match by "
+        "equality; if either relaxes to a substring the two can adopt each other's issues, which "
+        "is the collision this whole test exists to rule out."
+    )
+
+
+# ── Reporting is opt-in, and never speaks for a broken instrument ─────────────────────────────
+
+
+def test_without_the_flag_a_drift_is_printed_and_nothing_is_filed(tmp_path: Path) -> None:
+    """Criterion 7. A local or manual run is read-only.
+
+    `gh` is on PATH and would work. Off by default is a choice, not an accident of the environment:
+    same instinct as `.github/workflows/yank.yml`'s `dry_run: true` default.
+    """
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    bin_dir, log = gh_stub(tmp_path, drift_listing(42, "CLOSED", []))
+    proc = run(
+        repo,
+        published("0.7.77"),
+        tmp_path,
+        env=report_env(bin_dir),
+    )
+    assert proc.returncode == 1, proc.stderr
+    assert "DRIFT —" in proc.stdout
+    assert gh_calls(log) == [], gh_calls(log)
+
+
+def test_reporting_is_off_in_the_parser_and_not_merely_in_how_it_is_called() -> None:
+    """`--report` defaults off where it is DECLARED, not only where the workflow invokes it.
+
+    The test above proves a run without the flag files nothing. This proves the flag is what is
+    missing, rather than the absence being an accident of that invocation — a `default=True` would
+    keep that test green while making every local run a reporting run.
+    """
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+    declarations = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "add_argument"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == "--report"
+    ]
+    assert len(declarations) == 1, f"expected one --report declaration, found {len(declarations)}"
+    kwargs = {kw.arg: kw.value for kw in declarations[0].keywords}
+    assert isinstance(kwargs.get("action"), ast.Constant)
+    assert kwargs["action"].value == "store_true", ast.unparse(declarations[0])
+    default = kwargs.get("default")
+    assert default is None or (isinstance(default, ast.Constant) and default.value is False), (
+        f"--report carries a default: {ast.unparse(declarations[0])}"
+    )
+
+
+@pytest.mark.parametrize(
+    "broken",
+    ["no-canary", "http-401", "no-token", "no-tags", "no-repo-env", "empty-response"],
+)
+def test_no_infrastructure_failure_ever_reaches_github(tmp_path: Path, broken: str) -> None:
+    """Criterion 8. Exit 2 with an EMPTY `gh` log, on every way the instrument can be broken.
+
+    This is the single most important assertion in the block. An issue filed because the credential
+    expired is indistinguishable, to whoever opens it, from an issue filed because a release did
+    not publish — and the only way to tell them apart is to redo by hand exactly the work this
+    check exists to do. A reporter that files on a broken instrument is worse than no reporter.
+    """
+    version = DRIFTING
+    packages: object | None = published("0.7.77")
+    env_repo: str | None = STUB_REPO
+    filler = FILLER_TAGS
+    curl_bin: Path | None = None
+    token: str | None = None
+
+    if broken == "no-canary":
+        curl_bin, _ = curl_stub(tmp_path, {})
+        packages, token = None, STUB_TOKEN
+    elif broken == "http-401":
+        curl_bin, _ = curl_stub(tmp_path, {}, fail_with=22)
+        packages, token = None, STUB_TOKEN
+    elif broken == "no-token":
+        curl_bin, _ = curl_stub(tmp_path, {v: published(v) for v in ROSTER})
+        packages, token = None, None
+    elif broken == "no-tags":
+        filler = 0
+    elif broken == "no-repo-env":
+        env_repo = None
+    elif broken == "empty-response":
+        packages = []
+
+    repo = make_repo(tmp_path, version=version, tag=True, filler_tags=filler)
+    gh_bin, log = gh_stub(tmp_path, [])
+    # One bin dir holds both stubs, so `curl` and `gh` are resolved by the same PATH entry and a
+    # test cannot accidentally reach the real one while stubbing the other.
+    assert curl_bin is None or curl_bin == gh_bin
+
+    env = report_env(gh_bin, repo=env_repo, token=token)
+    proc = run(repo, packages, tmp_path, extra=["--report"], env=env)
+
+    assert proc.returncode == 2, f"{broken} exited {proc.returncode}\n{proc.stdout}\n{proc.stderr}"
+    assert "::error::" in proc.stderr
+    assert gh_calls(log) == [], f"{broken} reached GitHub: {gh_calls(log)}"
+
+
+def test_a_github_outage_never_becomes_a_verdict(tmp_path: Path) -> None:
+    """`gh` failing is infrastructure — exit 2 — and the verdict is still in the log.
+
+    The order inside `main` is load-bearing and this is what pins it. Reporting talks to GitHub and
+    GitHub has outages; if the report were computed before the verdict were printed, an outage
+    would exit 2 with the answer never printed at all, and the run would be a total loss rather
+    than an undelivered one. The verdict is the run's product; the issue is a delivery mechanism.
+    """
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    gh_bin, log = gh_stub(tmp_path, [], fail_on=("issue", "create"))
+    proc, _ = report_run(
+        repo, published("0.7.77"), tmp_path, gh_bin=gh_bin, gh_log=log
+    )
+    assert proc.returncode == 2, proc.stdout
+    assert "DRIFT —" in proc.stdout, "the verdict was lost to the delivery failure"
+    assert "::error::" in proc.stderr
+    assert "503" in proc.stderr
+
+
+# ── The listing itself has to be trustworthy ──────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("row", "why"),
+    [
+        ("42\tOPEN\n", "a row with too few fields"),
+        ("not-a-number\tOPEN\t\tRegistry drift\n", "a non-numeric issue number"),
+    ],
+)
+def test_an_unreadable_listing_is_infrastructure_not_an_empty_listing(
+    tmp_path: Path, row: str, why: str
+) -> None:
+    """A listing that cannot be parsed must not read as "no issue exists" and file a duplicate."""
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    gh_bin, log = gh_stub(tmp_path, [])
+    (tmp_path / "issues.tsv").write_text(row, encoding="utf-8")
+    proc = run(
+        repo,
+        published("0.7.77"),
+        tmp_path,
+        extra=["--report"],
+        env=report_env(gh_bin),
+    )
+    assert proc.returncode == 2, f"{why} exited {proc.returncode}: {proc.stdout}"
+    assert gh_writes(log) == [], gh_calls(log)
+
+
+@pytest.mark.parametrize(
+    ("count", "warns"),
+    [
+        pytest.param(ISSUE_LIMIT, True, id="at-the-limit-warns"),
+        pytest.param(ISSUE_LIMIT - 1, False, id="one-below-stays-quiet"),
+    ],
+)
+def test_a_listing_at_exactly_the_limit_says_it_may_be_a_window(
+    tmp_path: Path, count: int, warns: bool
+) -> None:
+    """Pinning the denominator. At exactly `--limit` the listing may not be the whole set.
+
+    "No existing issue" would then mean "none in the part I could see", and the check would file a
+    duplicate every two hours forever. It still files — the alternative is going silent on a real
+    drift — but it says why the answer may be wrong.
+    """
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    filler = [
+        (n, "CLOSED", [], f"unrelated issue {n}") for n in range(1, count + 1)
+    ]
+    proc, log = report_run(repo, published("0.7.77"), tmp_path, listing=filler)
+    assert proc.returncode == 1, proc.stderr
+    if warns:
+        assert "truncated" in proc.stdout
+        assert str(ISSUE_LIMIT) in proc.stdout
+    else:
+        # THE FLOOR. Without this the guard is unfalsifiable in the direction that will actually
+        # happen: replacing the `len(issues) == ISSUE_LIMIT` test with `if True` makes every run
+        # cry truncation forever, and the at-the-limit case above stays green. A warning that
+        # cannot be observed NOT firing is a warning nobody will believe by the third week.
+        assert "truncated" not in proc.stdout, proc.stdout
+    assert gh_verbs(log) == ["issue list", "issue create"], gh_verbs(log)
+
+
+def test_one_listing_answers_every_question_the_run_asks(tmp_path: Path) -> None:
+    """Exactly one read per run, whatever the verdict.
+
+    Not efficiency — blast radius. Three separate `gh issue list` calls could disagree with each
+    other if an issue changed state between them, and the check would then reason about a
+    repository state that never existed at any single moment.
+    """
+    for verdict, packages in (("drift", published("0.7.77")), ("clean", published(DRIFTING))):
+        sub = tmp_path / verdict
+        sub.mkdir()
+        repo = make_repo(sub, version=DRIFTING, tag=True)
+        _, log = report_run(repo, packages, sub, listing=drift_listing(42, "OPEN", []))
+        assert gh_verbs(log).count("issue list") == 1, f"{verdict}: {gh_verbs(log)}"
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "seam-sdk", "zer07labs/seam-sdk/extra", "a b/c"])
+def test_a_repo_that_is_not_owner_slash_name_is_refused_before_any_call(
+    tmp_path: Path, bad: str
+) -> None:
+    """The reporting target comes from `${{ github.repository }}`, and is validated anyway.
+
+    Deriving it from the checkout's git remotes would make the target depend on how the checkout
+    was made — a fork, a mirror, a `ref:` override — and file issues wherever that pointed.
+    """
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    gh_bin, log = gh_stub(tmp_path, [])
+    env = report_env(gh_bin, repo=None)
+    if bad:
+        env["REPO"] = bad
+    proc = run(
+        repo, published("0.7.77"), tmp_path, extra=["--report"], env=env
+    )
+    assert proc.returncode == 2, f"REPO={bad!r} exited {proc.returncode}: {proc.stdout}"
+    assert gh_calls(log) == [], gh_calls(log)
+
+
+# ── The workflow declares the write it performs ───────────────────────────────────────────────
+
+
+def test_the_job_declares_the_issue_write_it_now_performs() -> None:
+    """Criterion 12, the falsifiable half.
+
+    `test_the_declared_permissions_are_exactly_what_the_job_uses` already refuses a scope nothing
+    uses; this refuses a use nothing declares. Together they are an equality, and neither direction
+    alone is one — a job can be broken by an over-grant or by an under-grant, and only the second
+    fails at runtime with a 403 that reads like a GitHub problem.
+
+    `actions: read` is deliberately NOT here. The plan grants it in this phase, but nothing in this
+    phase reads the Actions API, and the exactness guard above correctly refuses it. Phase 7 adds
+    the heartbeat and the scope in the same commit — recorded as this phase's divergence.
+    """
+    perms = _job().get("permissions") or {}
+    # Deliberately NOT an exact-dict assertion. Pinning the whole mapping would duplicate
+    # `test_the_declared_permissions_are_exactly_what_the_job_uses` and force its own rewrite in
+    # Phase 7 — a guard that has to be edited to add a legitimate scope is a guard that gets edited
+    # into something weaker. What that guard cannot see is the LEVEL: it checks a scope's presence,
+    # so `issues: read` on a job that files issues would satisfy it and 403 at runtime.
+    assert perms.get("issues") == "write", (
+        f"`issues` is {perms.get('issues')!r}. The job creates, comments on and reopens an issue; "
+        f"a read grant 403s on all three, and the failure arrives as a GitHub-shaped error rather "
+        f"than as a workflow-shaped one."
+    )
+
+
+def test_the_scheduled_run_actually_reports() -> None:
+    """`--report` is what makes this phase exist, and it lives in one word of one line.
+
+    Deleting it leaves every test in this file green — the script still reaches the right verdict,
+    the workflow still runs, the permissions are still correct — and the check goes permanently
+    silent: a red job in a tab nobody opens. That is the whole unfalsifiable-green class in a
+    single-token diff, so it gets its own assertion rather than riding on the allowlist above,
+    which only says the flag is *permitted*.
+    """
+    invocations = [
+        line
+        for line in _wf_code()
+        if SCRIPT.name in line
+    ]
+    assert invocations, f"the workflow never invokes {SCRIPT.name}"
+    assert all("--report" in line for line in invocations), (
+        f"the scheduled run does not pass --report, so it computes a verdict and tells nobody: "
+        f"{invocations}"
+    )
+
+
+def test_the_reporting_credentials_are_wired_into_the_step() -> None:
+    """`gh` needs `GH_TOKEN`, and the reporting target comes from `REPO`.
+
+    Same reasoning as the registry secrets one row up, and the same failure: the reporting tests
+    inject both themselves, so dropping either from the step leaves them green while every real
+    drift exits 2 with "cannot report" — an infrastructure failure caused by the workflow, at a
+    cadence that reads as flaky and gets muted.
+    """
+    env = {**(_job().get("env") or {}), **(_drift_step().get("env") or {})}
+    assert env.get("GH_TOKEN", "").strip() == "${{ github.token }}", (
+        f"GH_TOKEN is {env.get('GH_TOKEN')!r}. `gh` reads it from the environment and has no "
+        f"other credential in a job."
+    )
+    assert env.get("REPO", "").strip() == "${{ github.repository }}", (
+        f"REPO is {env.get('REPO')!r}. It must be the repository the run is about — deriving it "
+        f"from the checkout would follow a fork or a `ref:` override and file issues there."
+    )
+
+
+def test_every_call_names_the_repository_it_is_talking_about() -> None:
+    """`--repo` on every `gh` call, from `$REPO` rather than from the checkout.
+
+    `gh` falls back to the current directory's git remote when `--repo` is absent, so dropping it
+    is invisible in CI on the happy path and wrong in exactly the cases `issue_repo()` exists for:
+    a fork, a mirror, or a `ref:` override. Asserted over the argv rather than over the source, so
+    a call added later without the flag is caught by the same assertion.
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        repo = make_repo(root, version=DRIFTING, tag=True)
+        proc, log = report_run(
+            repo, published("0.7.77"), root, listing=drift_listing(42, "CLOSED", [])
+        )
+        assert proc.returncode == 1, proc.stderr
+        calls = gh_calls(log)
+        assert len(calls) == 3, calls
+        for call in calls:
+            assert "--repo" in call, f"a `gh` call without --repo: {call}"
+            assert call[call.index("--repo") + 1] == STUB_REPO, call
+
+
+def test_the_listing_asks_for_closed_issues_too(tmp_path: Path) -> None:
+    """`--state all`. Suppression lives on a CLOSED issue, so an open-only listing cannot see it.
+
+    The failure is not a crash: the suppressed issue simply is not there, the check reads that as
+    "nothing reported yet", and files a fresh duplicate every two hours — while the person who
+    suppressed it sees their closed, labelled issue sitting exactly where they left it.
+    """
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    _, log = report_run(repo, published("0.7.77"), tmp_path, listing=[])
+    listing = [call for call in gh_calls(log) if call[:2] == ["issue", "list"]]
+    assert len(listing) == 1, listing
+    argv = listing[0]
+    assert "--state" in argv, argv
+    assert argv[argv.index("--state") + 1] == "all", argv
+
+
+def test_the_stub_would_notice_an_open_only_listing(tmp_path: Path) -> None:
+    """The behavioural half of the assertion above, through a stub that honours `--state`.
+
+    A static argv pin says what was asked; this says what happens when the wrong thing is asked.
+    Together they mean neither a changed flag nor a changed stub can quietly restore the green.
+    """
+    bin_dir, log = gh_stub(tmp_path, drift_listing(42, "CLOSED", [SUPPRESSION_LABEL]))
+    listed = subprocess.run(
+        [str(bin_dir / "gh"), "issue", "list", "--state", "open"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert listed.stdout.strip() == "", (
+        "the stub answered an open-only listing with a CLOSED issue, so `--state all` narrowed to "
+        "`--state open` would be unobservable from here."
     )

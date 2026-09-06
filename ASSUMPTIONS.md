@@ -932,8 +932,10 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 ## The three canary versions are actually published
 
 - **Plan:** `plans/registry-drift-check.md` (Phase 4)
-- **Assumed:** `0.7.50`, `0.7.60` and `0.7.65` are each served by the registry in both the `python`
-  and `npm` formats.
+- **Assumed:** `0.7.50`, `0.7.65` and `0.7.75` are each served by the registry in both the `python`
+  and `npm` formats. (Recorded first as `0.7.50`/`0.7.60`/`0.7.65`; the roster moved during Phase 4
+  and this entry did not follow it until Phase 6 noticed. The constant in
+  `scripts/check_registry_drift.py` is the authority, not this line.)
 - **Chose:** ship them as `CANARY_VERSIONS` unconfirmed, with the uncertainty written into the
   constant, the plan and this file. The plan requires one `curl` with the real credential before
   merge; this session had neither the credential nor authorisation to query a registry, and
@@ -952,3 +954,26 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   moment a run exits 2 naming the canaries.
 - **Status:** UNCONFIRMED (recorded 2026-09-06). ⚠ This one is unconfirmed in the strong sense —
   it is a fact about the world that nobody has checked, not a judgement call awaiting review.
+
+
+## The `deliberately-unpublished` label exists in the repository
+
+- **Plan:** `plans/registry-drift-check.md` (Phase 6)
+- **Assumed:** when someone follows the filed issue's instructions — close it AND label it
+  `deliberately-unpublished` — that label is available to apply in `zer07labs/seam-sdk`.
+- **Chose:** ship the suppression path without creating the label. Creating one is a repository
+  settings change rather than a code change, it is not in this PR's diff, and this session has no
+  authorisation to make writes against the repository's configuration. The issue body names the
+  exact label string, so a person creating it on the spot gets it right.
+- **Alternatives:** (a) have the check create the label itself on first use — rejected: it needs a
+  wider grant than `issues: write`, and a reporter that can create labels can also create the one
+  that silences it; (b) suppress on the closed state alone with no label — rejected in the plan,
+  because closing is the ordinary "this is fixed" gesture and would suppress every recurrence;
+  (c) key suppression off a curated file in the repo — rejected in the plan, at length.
+- **Blast radius if wrong:** small and self-announcing. Nothing breaks: the check keeps reporting,
+  which is the safe direction. The person trying to suppress hits a missing label in the GitHub UI
+  and creates it — GitHub offers exactly that from the label picker — at the cost of one moment of
+  confusion.
+- **Owner / re-open trigger:** the first person who needs to suppress a version. Re-open if the
+  label turns out to need org-level permissions this repository's maintainers do not hold.
+- **Status:** UNCONFIRMED (recorded 2026-09-06).

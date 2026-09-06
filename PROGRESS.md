@@ -3552,3 +3552,168 @@ filed as its own issue during finalization.
   catch a release that was never dispatched, and a job that runs on a push cannot see that.
 * **Next:** Phase 6 — reporting: one issue per version, a suppression path, provable
   non-collision.
+
+### Phase 6 — the reporter, and a guard that was reading prose about the code · **DONE**
+
+`--report` turns the verdict into an issue. Four rows, and only the last changes the exit code: no
+issue -> create; open -> say nothing, it already says it; closed and unlabelled -> reopen and
+comment; closed and labelled `deliberately-unpublished` -> a `::warning::` naming it, exit 0. The
+clean path emits a `::notice::` when a drift issue is open and **never closes it** — a reporter that
+can retract its own reports is a much larger authority than one that can only speak, and the failure
+mode is worse: a bug in the clean path erases the record of a real outage instead of adding noise to
+it.
+
+**The verdict is printed before anything is reported, and the order is load-bearing.** Reporting
+talks to GitHub and GitHub has outages. Computing the report first would exit 2 with the answer never
+printed at all — the run a total loss rather than an undelivered one. The verdict is the product; the
+issue is a delivery mechanism for it.
+
+**Neither grace tier reaches GitHub at all — not even the read.** The moment a grace tier files
+anything it has stopped being a grace window and become a reporting tier with a softer adjective.
+Allowing the harmless `gh issue list` is what would make the write one edit away.
+
+* ⚠ **A Phase 5 guard was justifying `issues: write` with PROSE rather than with the code, and its
+  own anti-vacuity control is what hid it.** The needle was `\bgh\b\W{1,8}issue\b`. The only two
+  things in the entire script that matched it were error messages — ``f"unreadable row from `gh
+  issue list`"`` and ``f"`gh issue list` returned a non-numeric issue number"``. Every real call is
+  spelled `_gh(["issue", "create", ...], repo)`, where `"gh"` sits inside `_gh`'s own argv and is
+  never adjacent to `"issue"`. The control asserted the needle against
+  `subprocess.run(["gh", "issue", "create"])` — **a spelling this codebase uses nowhere** — so it
+  passed while the file satisfied the needle only through prose. It surfaced from a mutation aimed
+  somewhere else: deleting those two messages, leaving every call intact, turned the permissions
+  test red. This is the same class the last three gate rounds found, one layer further in: not a
+  guard nothing reads, nor a guard read too shallowly, nor a guard satisfied by a recomputation of
+  itself, but **a guard satisfied by a description of the thing it is supposed to observe** —
+  written by a control that tested an imagined spelling instead of the real one.
+  The fix is structural rather than a better regex. The searched surface is now `ast.unparse` with
+  every string literal *blanked*, plus a separate argv surface built from list/tuple literals in a
+  call's **first positional slot** — narrowed further, after review, to an allowlist of spawn
+  callees. The needle names write verbs only, so `gh issue list` no longer argues for `write`. Both
+  regexes live in one module-level table shared by the guard and its control, and the control builds
+  the real surface from a synthetic script — prose-only must fail, this codebase's own spelling must
+  pass, and read-only must fail.
+  **This bullet originally ended "Prose cannot reach either", and that was an overclaim** — true of
+  the script, false of the guard. See the review round below, which is where it was caught.
+* **Phase 7's needle was verified a phase early, for the same reason.** An unexercised regex is an
+  unverified one, and it fails silently in the direction that matters: a needle that never matches
+  demands the scope be REMOVED on the day the heartbeat starts reading the Actions API. A control
+  renders the Phase 7 call and asserts the `actions` needle matches it, while a second assertion
+  states the scope is absent today and names itself as the line to delete.
+* **`actions: read` is deliberately not declared here**, diverging from the plan's criterion 12. The
+  permissions guard refuses a scope nothing uses, so granting it one phase early would have meant
+  weakening that guard to accept it. And criterion 12's exact-dict assertion was replaced by a
+  **level** assertion: pinning the whole mapping duplicates the reasoned guard and forces its own
+  rewrite in Phase 7. What the reasoned guard genuinely cannot see is the level — it tests presence,
+  so `issues: read` on a job that files issues satisfies it and 403s at runtime.
+* **Three more ways to switch Phase 6 off with everything green.** `--report` is one token in the
+  workflow: delete it and the verdict stays correct, the workflow keeps running, the permissions
+  stay right, and the check goes permanently silent. Nothing asserted it. `--state all` narrowed to
+  `--state open` drops the closed suppressed issue out of the listing — a duplicate filed every two
+  hours while the suppressor sees their issue exactly where they left it — and every suppression
+  test stayed green **because the `gh` stub answered regardless of what it was asked**; the stub
+  honours `--state` now and the argv is pinned. `--repo` dropped from a `gh` call falls back to the
+  checkout's git remote, invisible on the happy path and wrong in exactly the fork, mirror and
+  `ref:` cases `issue_repo()` exists for.
+* **Non-collision got a second, stronger assertion.** The plan asked that the two reporters' titles
+  can never coincide. The test also pins that this script's `RELEASE_NOTICE_TITLE` renders
+  *identically* to the `TITLE=` template extracted from `publish.yml`'s `release-outcome` job, for
+  every version tried. The cross-link finds that issue by exact title, so character-for-character
+  agreement is a precondition for the link working — and nothing else in either half of #100 checks
+  it.
+* **Proof: 30 distinct mutations across two batteries.** Round 1 caught 23 of 24; the miss was a bad
+  anchor in my own harness, not a survivor, and it was re-run and caught in round 2. Demoting exit 2
+  to exit 1 kills **60** tests, which is the depth the never-a-verdict rule needed to have. Letting
+  an `InfraError` path reach the reporting code kills exactly the six
+  `test_no_infrastructure_failure_ever_reaches_github` cases — a broken credential cannot file an
+  issue indistinguishable from a real drift, which is the single property that decides whether this
+  reporter is worth having. Round 2 added the prose finding's own control pair: deleting the two
+  error messages must now change **nothing**, and renaming the argv verbs must redden the
+  permissions guard.
+* **ASSUMPTIONS.md carried a stale roster.** It recorded the canaries as `0.7.50`/`0.7.60`/`0.7.65`;
+  the constant has been `0.7.50`/`0.7.65`/`0.7.75` since Phase 4 corrected it. Fixed, with a note
+  that the constant is the authority. A new entry logs that the `deliberately-unpublished` label is
+  assumed to exist in the repository — the check deliberately cannot create it, since a reporter
+  able to create labels can create the one that silences it.
+* **Counts:** `scripts/test_registry_drift_gate.py` 142 -> 184 at the phase's first close, then
+  -> 191 after the verification round below · `scripts` 416 · python 1257 passed / 21 skipped.
+  `scripts/test_release_notice_gate.py` still 54, untouched (criterion 11). ruff clean. Phase 6
+  touches no `python/tests` file, so the python figures move only by the citation parameters this
+  section's own prose adds.
+* **Proof: 40 mutations across three batteries.** Round 1: 23/24, the miss a bad anchor in the
+  harness rather than a survivor, re-run and caught in round 2. Round 2: 6/6, including the
+  negative control that deleting the two error messages must now change nothing. The review round
+  added 10 more, one per gap, all caught — and two of those needed a second, corrected run:
+  `str.index("    except InfraError as exc:")` matches INSIDE a 12-space indent, so the first
+  attempt spliced a second `except` onto the wrong `try` and reddened eleven tests for a reason
+  unrelated to the mutation. A "caught" that fails the wrong tests is not evidence, and both were
+  re-run against exact block anchors before being counted.
+
+#### Phase 6 verification round — seven gaps, one of them inside the fix above
+
+A fresh Opus verifier reviewed the phase against the plan. It did not argue any of these; it
+mutated the code and watched the suite stay green. Verdict **GAPS**, all seven now closed and
+mutation-proved.
+
+* ⚠ **The prose hole had MOVED, not closed — in this phase's own headline fix.** The rebuild
+  hardened the two *script* surfaces and left the *workflow* half of the same needle search as raw
+  text with only WHOLE-LINE comments stripped. A **trailing** comment survives that filter — a
+  hazard `_wf_code()`'s docstring, in the very same file, already warned about and told future
+  readers to match on line SHAPE instead. So appending
+  `# replaces the manual \`gh issue create\` runbook step` to the workflow's `run:` line justified
+  `issues: write` on a script where every write verb had been renamed away, and the suite stayed
+  green. An `echo` of the same sentence did it too. The forward-looking half was worse: an unearned
+  `actions: read` could be justified by a workflow comment naming `/actions/`, caught only by the
+  single assertion Phase 7 is explicitly instructed to delete — so on the day the scope legitimately
+  arrives it would have had the full prose hole and no belt at all.
+  The fix is **exclusion, not a better filter**: the workflow's `run:` text is no longer part of the
+  permissions surface. Nothing is lost, because no scope can be earned there — the whole design of
+  this phase is that the `gh` calls live in the script, so the `run:` block has no call to find and
+  can only be imitated. The hardcoded `issues` belt became a loop over every *declared* scope, each
+  of which must match its needle in the ARGV surface specifically. A belt that covered only the
+  scope that already had one was not a belt.
+  This is the fourth consecutive round in which the same defect class appeared one layer further in.
+  Worth stating plainly: **the phase that found the prose defect also reproduced it**, in the fix.
+* **The argv surface was separating assignment-from-call, not prose-from-argv.** It took the first
+  positional slot of *any* call, so `"\n".join(["Run \`gh issue create\` by hand."])` satisfied the
+  write needle. `_issue_body` is excluded only because it binds `lines = [...]` before joining —
+  a spelling, not a property, and one inlining refactor from re-opening the hole. Now filtered to an
+  allowlist (`_gh`, `run`). Allowlist and not denylist because the directions are asymmetric: an
+  unlisted *spawn* helper makes a needle stop matching and trips the guard loudly; an unlisted
+  *prose builder* re-admits the sentence silently.
+* **The anti-vacuity guard was itself vacuous.** `if len(issues) == ISSUE_LIMIT:` -> `if True:`
+  makes every run cry truncation forever, and all 184 tests passed — the test pinned only that the
+  warning fires AT the limit, never that it stays quiet below. Now parametrised in both directions.
+* **"Names the missing format(s)" was satisfied by the wrong sentence.** The test used a
+  both-missing fixture, and its `npm`/`python` needles were already satisfied by the body's packages
+  row, which names both ecosystems on every issue ever filed. Replacing `sorted(missing)` with
+  `sorted(REQUIRED_FORMATS)` left the suite green while every filed issue claimed both formats were
+  missing. `publish.yml` uploads the wheel and the npm package in separate steps, so half-published
+  is an ordinary outcome, and the body would have misstated what was broken.
+* **Criterion 10 was half-implemented, and the divergence list did not say so.** This script's
+  exact-match was pinned; `publish.yml`'s `$2 == t` was pinned nowhere in either gate file.
+* **The non-collision test re-supplied the binding it claimed to verify.** It extracted the title
+  template from `publish.yml` but hardcoded the `${TAG}` -> `v<version>` step — the fragile half.
+  Changing `release-outcome` to `TAG="${GITHUB_REF_NAME#v}"`, which is how three other jobs in that
+  same file already spell it, breaks the cross-link, and the test stayed green. `test_release_notice_gate.py`
+  caught it *incidentally*, because its fixtures happen to use a `v`-prefixed tag. So the sibling
+  suite was protecting the cross-link and the test claiming the credit was not — the reverse of what
+  this phase originally recorded, now corrected in the plan.
+* **`reopen` then `comment` is not atomic, and the order was the harmful one.** A successful reopen
+  followed by a failed comment leaves the issue OPEN and uncommented — after which every run matches
+  the "already reported" row, so the "the drift is back" record is never written by any run, ever,
+  and nothing retries because nothing can tell that state from a normal open report. Reversed:
+  commenting on a closed issue is legal, so a failed reopen leaves CLOSED-and-unlabelled and the
+  next run retries the pair. Worst case becomes a duplicate comment instead of permanent silence.
+* **Two assumptions the phase never stated, both closed.** A comma is legal inside a GitHub label
+  NAME, and the projection joined and split on `,` — so one label spelled
+  `wontfix,deliberately-unpublished` split into two, the second matching the suppression label
+  exactly, silencing a real drift via an issue nobody labelled as suppressed. Splitting only ever
+  ADDS entries, so that failure direction is always toward silence. Now U+001F, in the `--jq` and
+  the stub alike. Separately, the clean path's advisory read is new in this phase, and it had begun
+  turning runs that PROVED the registry healthy red whenever GitHub was down; it is now best-effort
+  (a `::warning::`, exit 0) with a floor test keeping the drift path at exit 2. Red on this workflow
+  has to keep meaning "something to look at about the registry", or it gets muted — which is the
+  failure the whole check exists to prevent.
+
+* **Next:** Phase 7 — the watcher's own heartbeat, which adds `actions: read` in the commit that
+  reads the Actions API.
