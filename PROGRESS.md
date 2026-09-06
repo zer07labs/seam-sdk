@@ -3238,4 +3238,28 @@ filed as its own issue during finalization.
 * **Counts:** `scripts` **220** (was 178 pre-fix, 174 after Phase 1) · python **1246 passed /
   20 skipped** · `ruff check` clean. The plan's predicted `137` was stale arithmetic — recorded as a
   divergence in the phase, same class of defect the plan reviewer already flagged once.
+* **Round 2 GAPS (2 new, same class), all closed.** The verifier confirmed G1-G4 genuinely closed
+  and then found the fix had left the same shape of hole one level up.
+  * **N1 — the guard's wiring to the scan was unpinned.** Handing the comparison `{}` left all 63
+    tests green: `_undeclared_imports` was pinned, the floors were pinned, the connection between
+    them was not. A shared `_scan_and_verdict()` was not enough on its own — on a healthy tree the
+    verdict is `[]` whether the scan ran or was replaced, so no assertion over the real result can
+    tell the two apart. Closed with a canary: one known-undeclared module driven through the real
+    pipeline, which an empty input cannot produce a finding for.
+  * **N2 — the parser still widened on UNQUOTED prose.** `echo run pip install requests here` ->
+    `{here, requests}`. The committed case was double-quoted, so its refusal came from the stray
+    `"` making a token unparseable — an accident, not detection. Now what identifies a pip
+    invocation is what PRECEDES `pip install` (nothing, or `python -m`), so prose is refused for
+    being prose. Splitting per shell command rather than per line fixed a second, opposite bug for
+    free: a `#` anywhere left of a real install used to drop the whole line.
+  * **N3/N4 — two more claims that outran the code**, in the same overclaiming class as G3. The
+    `_DIST_ARG` comment said a requirements filename does not match; it does, and cannot be made
+    not to, since `.` is legal in a distribution name (`zope.interface`). The section comment said
+    the guard names the distribution; it does so only when the module resolves locally or via the
+    alias map. Both narrowed to what is true, and the real exclusion path (`-r` is not a valid
+    flag here, so it raises first) written down.
+* **Proof, round 2:** 19/19 mutations caught, including `guard_input_emptied` — the one that
+  survived the first attempt at N1 and forced the canary design.
+* **Counts:** `test_ci_gate.py` 17 -> 68 · `scripts` **225** · python **1246 passed / 20 skipped** ·
+  ruff clean.
 * **Next:** Phase 3 — `scripts/check_registry_drift.py`, the decision core, offline.

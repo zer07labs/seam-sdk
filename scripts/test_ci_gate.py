@@ -422,7 +422,10 @@ def test_the_live_suite_join_is_not_vacuous() -> None:
 #     install line does, so today that asymmetry surfaces only on the runner.
 #   * `ModuleNotFoundError` names the MODULE. Where module and distribution differ — `import yaml`
 #     wanting `pyyaml`, `import grpc` wanting `grpcio` — it does not name the thing you have to
-#     add to the install line. This guard does.
+#     add to the install line. This guard does, whenever it can resolve one: from
+#     `packages_distributions()` if the module is installed locally (the usual case, since whoever
+#     added the import has it), or from `_MODULE_ALIASES`. Failing both it falls back to the
+#     module name and says no more than `ModuleNotFoundError` would.
 #
 # That is the whole claim. It is a real improvement and a small one.
 
@@ -453,9 +456,19 @@ _VALUELESS_PIP_FLAGS = frozenset(
 )
 
 #: A `pip install` argument that is a distribution: a PEP 508 name, optional extras, optional
-#: version specifier. A stray word from an `echo`, a line-continuation `\`, or a requirements
-#: filename does not match — and `_installs_in` refuses rather than guessing.
+#: version specifier. A line-continuation `\`, a quoted fragment, a URL and a `$VAR` do not match,
+#: and `_installs_in` refuses rather than guessing.
+#:
+#: It does NOT reject `requirements.txt` — and cannot, because a `.` is legal in a distribution
+#: name (`zope.interface`, `ruamel.yaml`), so no regex separates the two. A requirements file is
+#: excluded upstream instead: pip only reads one behind `-r`/`-c`, and those are not in
+#: `_VALUELESS_PIP_FLAGS`, so the flag raises before the filename is ever looked at.
 _DIST_ARG = re.compile(r"^(?P<name>[A-Za-z][A-Za-z0-9._-]*)(?:\[[^\]]*\])?(?:[<>=!~][^\s]*)?$")
+
+#: What may legally sit between the start of a shell command and `pip install`. Empty, or the
+#: `python -m` form. Anything else — `echo`, `sudo`, half a sentence — means this is not a pip
+#: invocation at all, and the words after it are prose rather than distributions.
+_PIP_PREFIX = re.compile(r"\s*(?:python3?\s+-m\s+)?")
 
 
 def _normalize_dist(name: str) -> str:
@@ -477,36 +490,50 @@ def _installs_in(steps: list[dict]) -> set[str]:
     makes the guard quietly more permissive — it goes green while a genuinely undeclared import
     sits in the tree, which is precisely the silent-pass this whole file exists to prevent. So an
     unrecognised token raises, and an unrecognised flag raises rather than being assumed
-    valueless. Parsing per line, not per `run:` block, is part of the same discipline: a
-    multi-line block whose other lines merely mention pip must not contribute its prose.
+    valueless. Parsing per shell COMMAND, not per `run:` block and not per line, is part of the
+    same discipline. Splitting the block on lines was not enough: `echo run pip install requests
+    here` contains the substring, and a substring match happily read `requests` and `here` as
+    distributions. What identifies a pip invocation is what comes BEFORE `pip install` — nothing,
+    or `python -m` — so that is what is checked, and prose is refused for being prose rather than
+    for happening to contain a stray quote.
     """
     found: set[str] = set()
     for step in steps:
         for line in str(step.get("run") or "").splitlines():
-            before, sep, after = line.partition("pip install")
-            # A `#` ahead of it makes the line a comment; a shell separator after it ends the
-            # command, and anything past that separator belongs to a different one.
-            if not sep or "#" in before:
-                continue
-            for tok in re.split(r"[;&|#]", after)[0].split():
-                if tok.startswith("-"):
-                    assert tok in _VALUELESS_PIP_FLAGS, (
-                        f"`{tok}` appears on a `pip install` line in {CI.name} and this parser "
-                        "does not know it. If it takes a value, the token after it is a path or "
-                        "a URL rather than a distribution, and reading it as one would widen the "
-                        "install set silently. Add it to `_VALUELESS_PIP_FLAGS` only if it takes "
-                        "no value."
-                    )
+            for segment in re.split(r"[;&|]+", line):
+                before, sep, after = segment.partition("pip install")
+                if not sep:
                     continue
-                matched = _DIST_ARG.match(tok)
-                assert matched, (
-                    f"`{tok}` follows `pip install` in {CI.name} but is not a distribution "
-                    "specifier. The `run:` shape changed — a line continuation, a requirements "
-                    "file, a prose line mentioning pip — and this parser cannot read it. It "
-                    "refuses rather than guessing, because a wrong guess here only ever ADDS to "
-                    "the install set, which makes the guard below pass when it should not."
+                # A `#` to its left makes this a shell comment. `run:` blocks are YAML block
+                # scalars, so `safe_load` leaves shell comments in the string for us to skip.
+                if "#" in before:
+                    continue
+                assert _PIP_PREFIX.fullmatch(before), (
+                    f"`{segment.strip()}` in {CI.name} contains `pip install` but is not a pip "
+                    f"invocation — {before.strip()!r} precedes it. The words after it are prose, "
+                    "not distributions, and reading them as distributions would widen the install "
+                    "set silently. If this really is an install command, this parser needs to "
+                    "learn its shape."
                 )
-                found.add(_normalize_dist(matched.group("name")))
+                for tok in re.split(r"[#]", after)[0].split():
+                    if tok.startswith("-"):
+                        assert tok in _VALUELESS_PIP_FLAGS, (
+                            f"`{tok}` appears on a `pip install` line in {CI.name} and this "
+                            "parser does not know it. If it takes a value, the token after it is "
+                            "a path or a URL rather than a distribution, and reading it as one "
+                            "would widen the install set silently. Add it to "
+                            "`_VALUELESS_PIP_FLAGS` only if it takes no value."
+                        )
+                        continue
+                    matched = _DIST_ARG.match(tok)
+                    assert matched, (
+                        f"`{tok}` follows `pip install` in {CI.name} but is not a distribution "
+                        "specifier. The `run:` shape changed — a line continuation, a quoted "
+                        "fragment, a `$VAR` — and this parser cannot read it. It refuses rather "
+                        "than guessing, because a wrong guess here only ever ADDS to the install "
+                        "set, which makes the guard below pass when it should not."
+                    )
+                    found.add(_normalize_dist(matched.group("name")))
     return found
 
 
@@ -610,6 +637,49 @@ def _undeclared_imports(third_party: dict[str, set[str]], installed: set[str]) -
     return undeclared
 
 
+def _scan_and_verdict(
+    extra: dict[str, set[str]] | None = None,
+) -> tuple[dict[str, set[str]], set[str], list[str]]:
+    """The scan, the install list, and the verdict — the whole pipeline, in one place.
+
+    The guard, the anti-vacuity floors and the wiring canary all read THIS. With a call site each,
+    narrowing or emptying the guard's input left the floors looking at a different, healthy scan
+    and every assertion in this section green — `if False:` moved up a level.
+
+    `extra` exists because on a healthy tree the verdict is `[]` no matter what, so no assertion
+    over the real result can tell a scan that ran from one that was replaced by `{}`. Injecting a
+    known-undeclared module gives the pipeline something it MUST say, which is the only way to
+    observe from the outside that the pipeline is still connected. See the canary test below.
+    """
+    third_party = {**_scripts_third_party_imports(), **(extra or {})}
+    installed = _lane_installs()
+    return third_party, installed, _undeclared_imports(third_party, installed)
+
+
+#: A module name no distribution has ever carried, so it resolves through the identity fallback and
+#: can never accidentally intersect the lane's install list.
+_CANARY_MODULE = "nodistributionisnamedthis"
+
+
+def test_the_guard_is_wired_to_the_scan_and_not_to_an_empty_one() -> None:
+    """Pin the pipeline itself, not just its parts.
+
+    Both halves were already pinned: `_undeclared_imports` fires on a bad module, and the floors
+    prove the scan sees seven files. Neither notices if the wiring BETWEEN them is cut — hand the
+    comparison `{}` and the verdict is `[]`, which is exactly what a healthy tree produces, so the
+    guard passes, the floors pass, and the whole section is decorative.
+
+    Driving one known-undeclared module through the real pipeline is what makes that observable:
+    an empty input cannot produce a finding, so silence here means the wiring is cut.
+    """
+    _, _, verdict = _scan_and_verdict({_CANARY_MODULE: {"test_zz_canary.py"}})
+    assert len(verdict) == 1, (
+        f"the pipeline was handed a module the lane cannot install and said {verdict!r}. Its "
+        "input is not the scan."
+    )
+    assert _CANARY_MODULE in verdict[0] and "test_zz_canary.py" in verdict[0], verdict[0]
+
+
 def test_every_scripts_test_import_is_installed_by_the_guards_lane() -> None:
     """An import the lane does not install fails at collection, on the runner, not here.
 
@@ -617,7 +687,7 @@ def test_every_scripts_test_import_is_installed_by_the_guards_lane() -> None:
     exact asymmetry that made `python/tests/` need the same guard. This moves it forward to a
     local run, and names the distribution rather than the module.
     """
-    undeclared = _undeclared_imports(_scripts_third_party_imports(), _lane_installs())
+    _, _, undeclared = _scan_and_verdict()
     assert not undeclared, (
         f"A scripts/ test imports something `{LANE}` does not install:\n"
         + "\n".join(undeclared)
@@ -727,9 +797,11 @@ def test_the_scripts_import_scan_is_not_vacuous() -> None:
     walk that opened a single file both sailed through, and the no-glob case reported "across 7
     files" while the scan had in fact opened none.
     """
-    third_party = _scripts_third_party_imports()
+    third_party, installed, verdict = _scan_and_verdict()
     files_seen: set[str] = set().union(*third_party.values()) if third_party else set()
 
+    assert not verdict, f"the real scan should be clean; got {verdict}"
+    assert installed, "the lane install list parsed empty"
     assert "pytest" in third_party, (
         f"the scan found no `pytest` import across the {len(files_seen)} files it actually "
         "opened — the glob, the walk, or the filter is returning nothing"
@@ -779,6 +851,10 @@ _TWO = {"pyyaml", "pytest"}
         ("multi-line block", "set -euo pipefail\npip install pyyaml pytest\necho done\n", _TWO),
         ("commented-out line", "# pip install requests everywhere\npip install pyyaml pytest", _TWO),
         ("separator ends it", "pip install pyyaml pytest && echo installed requests", _TWO),
+        # A `#` anywhere left of `pip install` used to drop the whole line, so a real install
+        # sharing a line with a quoted `#` silently vanished from the set. Narrowing is the safe
+        # direction, but it is still wrong.
+        ("hash left of a real install", 'echo "#1 priority" && pip install pytest', {"pytest"}),
     ],
 )
 def test_the_parser_reads_the_run_shapes_it_is_meant_to(
@@ -795,11 +871,17 @@ def test_the_parser_reads_the_run_shapes_it_is_meant_to(
 @pytest.mark.parametrize(
     ("label", "run_block"),
     [
-        ("prose mentioning pip", 'echo "you probably want to pip install requests here"'),
+        # UNQUOTED prose is the one that matters. The quoted form below was refused even by the
+        # substring parser, but only because the closing `"` made a token unparseable — an
+        # accident, not detection. Both are here so a regression cannot hide behind the lucky one.
+        ("unquoted prose", "echo run pip install requests here"),
+        ("a sentence a human would write", "echo If it fails, pip install requests first"),
+        ("quoted prose", 'echo "you probably want to pip install requests here"'),
         ("line continuation", "pip install pyyaml \\\n  requests\n"),
         ("requirements file", "pip install -r requirements.txt"),
         ("index url", "pip install --index-url https://example.invalid/simple pytest"),
         ("editable path", "pip install -e ./python[dev]"),
+        ("a shell variable", "pip install $EXTRA_DEPS"),
     ],
 )
 def test_a_run_shape_the_parser_cannot_read_refuses_instead_of_widening(
@@ -808,10 +890,13 @@ def test_a_run_shape_the_parser_cannot_read_refuses_instead_of_widening(
     """An unreadable shape must raise, not quietly contribute whatever it managed to parse.
 
     This is the asymmetry `_installs_in` documents, made checkable. Each of these previously
-    returned a plausible-looking set that was too LARGE — `requests` from a sentence about pip,
-    `requirements-txt` from a flag's argument — and `installed` only ever widens the guard. A
-    guard that grew permissive without saying so is the same silent pass the section opens by
-    describing.
+    returned a plausible-looking set that was too LARGE — `requests` and `here` from a sentence
+    about pip — and `installed` only ever widens the guard. A guard that grew permissive without
+    saying so is the same silent pass the section opens by describing.
+
+    The prose cases are refused for the right reason now: what identifies a pip invocation is what
+    precedes `pip install` (nothing, or `python -m`), not the presence of the substring. A parser
+    that refuses prose only when the prose happens to contain a stray quote is not refusing prose.
     """
     with pytest.raises(AssertionError, match="pip install"):
         _installs_in([{"run": run_block}])
