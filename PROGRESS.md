@@ -3041,3 +3041,144 @@ which fails if the probe ever becomes real and says to re-point it at the next r
 Measured after: `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exit **6**, NOTE naming
 `contract/expected-local-lag.txt` with all seven fields · `scripts/check_vendored_spec.py
 --from local:../seam-runtime` **OK, verbatim and current** · python **1185 passed / 20 skipped**.
+
+## Repo map — `plans/registry-drift-check.md` (registry drift check, issue #100 second half)
+
+Written at `f177cfb` (= `origin/main` = tag `v0.7.77`) so `/implement` does not re-pay for discovery.
+Every line below was opened and verified during planning; line numbers are as of `f177cfb`.
+
+**The release path, end to end**
+
+- `.github/workflows/release-on-runtime.yml:173-187` — commit-and-tag. The push to `main` sits at
+  `.github/workflows/release-on-runtime.yml:180` and `:182`, `:186`, `:187` (two `git tag -a` calls
+  and the tag push) all come after it — which is what makes "tag absent, in-tree version bumped"
+  (state C) reachable. `.github/workflows/release-on-runtime.yml:187` pushes its two refspecs
+  **non-atomically**, so `v` landing without `go/v` is reachable too.
+- `.github/workflows/release-on-runtime.yml:80-161` — the wire-framing gate; every refusal here
+  leaves no commit and no tag (state A, which is consistent and must not alarm).
+- `scripts/set_version.sh:46-61` — the only stamp; touches `ts/package.json` and
+  `python/pyproject.toml` and nothing else, with a read-back postcondition.
+- `.github/workflows/publish.yml:24` — triggers on `tags: ["v*"]`, which does **not** match
+  `go/v0.7.77`. Only the root tag starts a publish.
+- `.github/workflows/publish.yml:82-83` — `ci-green` polls 40 x 30s = 20 min before `npm`/`python`
+  start; `.github/workflows/publish.yml:625` and `:721` add 10 x 30s retries per ecosystem. Together
+  they are the publish latency the grace window is sized against.
+- `.github/workflows/publish.yml:771` — the **only** `timeout-minutes` in the file. `ci-green`
+  (`.github/workflows/publish.yml:63`), `version-check` (`:150`), `npm` (`:189`), `python` (`:282`),
+  `publish-verify` (`.github/workflows/publish.yml:526`) and `registry-smoke` (`:587`) declare none, so their real bound is
+  GitHub's default 360-minute job limit. That limit sizes the check's HARD grace tier only: a job
+  killed at it makes the run fail, which `release-outcome` reports itself
+  (`.github/workflows/publish.yml:768`, `if: always()`), so the limit bounds *duplication*, not
+  *detection*. The SOFT tier is sized on the declared ceilings instead.
+
+**The half already shipped — read, do not modify**
+
+- `.github/workflows/publish.yml:761-765` — the blind-spot comment. Phase 1 fixes its dangling
+  "see the issue this job cites"; Phase 9 updates it once the new workflow exists. Both edits must
+  be line-count-neutral so citations into this file do not move.
+- `.github/workflows/publish.yml:766-832` — `release-outcome`, whose title template sits at `:788`.
+  Create-vs-comment is **exact** title equality over the first 100 open issues,
+  `.github/workflows/publish.yml:818-824`; job-level `permissions`,
+  `.github/workflows/publish.yml:772-774`, replace top-level rather than extend them.
+- `scripts/test_release_notice_gate.py:62-109` — the canonical hermeticity harness: `gh` stubbed as a
+  heredoc executable, `chmod(0o755)`, every argv appended to a call-log file, canned responses
+  pre-rendered in the tool's real output shape, executed under `bash -c` with a fully-replaced env.
+
+**What the new check reads**
+
+- `.github/workflows/yank.yml:55-76` — the two pieces reused verbatim.
+  `.github/workflows/yank.yml:55-63` is the explicit-`if` credential resolution with `Bearer `
+  stripped from both sources, argued at `.github/workflows/yank.yml:38-54`;
+  `.github/workflows/yank.yml:69-76` is the Cloudsmith list-API query and its three `jq` filters.
+- `ts/package.json:2` and `ts/package.json:14-17` — npm name `@zer07labs/seam-sdk` and its registry.
+- `python/pyproject.toml:3` — the authoritative in-tree version (first `^version = "..."`).
+- `.github/workflows/ci.yml:23-38` — `version-lockstep`; a py/ts mismatch is impossible on a green
+  `main`, so the new script treats one as infrastructure rather than as drift.
+
+**The template to inherit**
+
+- `.github/workflows/publish.yml:30-34` — top-level `permissions` declaring `checks: read` and
+  `actions: read` so `ci-green` can read the Actions API. An explicit block grants only what it
+  lists, so any job reading `repos/.../actions/...` must declare `actions: read` itself.
+- `.github/workflows/framework-coinstall.yml:5-8` — why a world-facing check is deliberately NOT a
+  job in `ci.yml`. Inherited unchanged. `.github/workflows/framework-coinstall.yml:62-64` records
+  that it needs no credential, which is the one place the new check legitimately differs.
+- `scripts/probe_framework_coinstall.py:171-194` — the exit-code discipline being copied: positive
+  infra markers checked before the verdict marker, anything unrecognised is infrastructure,
+  "Refusing to guess a verdict".
+
+**CI wiring the new files must satisfy**
+
+- `.github/workflows/ci.yml:625-682` — `workflow-guards`, the credential-free lane. A new
+  `scripts/test_*.py` needs its own named step here.
+- `.github/workflows/ci.yml:642` — the only install: `pyyaml pytest grpcio cryptography`. A new
+  `scripts/` test may import nothing else. An undeclared import is a CI **collection error** — but
+  scoped to one step, not the job's whole suite: `workflow-guards` invokes pytest once per file
+  (`.github/workflows/ci.yml:644` and `:649`, `:654`, `:660`, `:665`, `:671`, `:677`, `:682`), so
+  the steps above it have already reported and only the ones below are skipped. It is loud, on the
+  PR that introduces it.
+- `scripts/test_ci_gate.py:277-301` — set equality both directions between `scripts/test_*.py` on
+  disk and the tokens named in `workflow-guards` `run:` strings.
+- `scripts/test_ci_gate.py:191-201` — forbids `BUF_TOKEN`, `buf-setup-action` and `make generate` in
+  that lane.
+- `scripts/test_ci_gate.py:388-402` — the both-sides-non-empty precedent for a set join.
+- `python/tests/test_workflows_generate_through_the_makefile.py:37-46` — scans **every** workflow
+  file, `.yml` and `.yaml`; the new workflow must not invoke `buf generate`.
+
+**Test conventions the new suite must follow**
+
+- `scripts/test_yank_gate.py:36-48` — truncate the workflow shell at the first network call rather
+  than stubbing it, to stay honest about coverage.
+- `scripts/test_yank_gate.py:51-62` — strip comments before any static string assertion; a guard a
+  comment can satisfy is not a guard. (Phase 1's comment guard is the deliberate inversion and must
+  say so.)
+- `scripts/test_yank_gate.py:65-80` — model an unset secret as absent-from-env, distinct from empty;
+  run the extracted shell under plain `bash -c`, never `bash -e`.
+- `scripts/test_publish_gate.py:75` — stub `sleep` to a no-op so retry ceilings run in milliseconds.
+- `scripts/test_vendored_spec_gate.py:61-110` — build **real** throwaway git repositories in
+  `tmp_path` rather than mocking git; this is how states A/B/C and the grace window are simulated.
+- `python/tests/test_test_dependencies_are_declared.py:164-181` — the anti-vacuity idiom: one named
+  sentinel plus one numeric floor, floor calibrated at roughly one third of a measured count.
+
+**Guards on the documents this plan writes**
+
+- `python/tests/test_compatibility_citations_resolve.py:95-99` — `PROGRESS.md` is in scope with a
+  floor of 30 citations; every backticked `file:line` here must resolve and stay in range.
+  `plans/` is not scanned at all.
+
+**Files the plan creates (no line numbers — they do not exist yet)**
+
+- `scripts/check_registry_drift.py` — the check. Exit 0 clean / 1 drift / 2 infrastructure.
+- `scripts/test_registry_drift_gate.py` — its whole hermetic suite; must be wired into
+  `workflow-guards` as its own named step in the same commit that creates it.
+- `.github/workflows/registry-drift.yml` — `schedule` + `workflow_dispatch` only, no
+  `pull_request` (fork PRs have no secrets).
+
+**Measured baseline** — `cd python && .venv/bin/pytest -q` **1245 passed / 20 skipped** at this
+map's current text (1186 at bare `f177cfb`, 1229 with the map's first draft). The growth is entirely
+citation parametrization from this section: the citation suite moves 434 -> 477 -> 493 by the same
+deltas, confirmed by reverting `PROGRESS.md` alone. **Do not pin this number in an acceptance
+criterion** — every phase that writes here moves it; record a before/after pair and show the two
+deltas agree instead.
+· `python/.venv/bin/python -m pytest scripts -q` **135 passed** ·
+`STREAM=1 EVENTS=1 ./scripts/check-contract.sh` **exit 6**, NOTE naming
+`contract/expected-local-lag.txt` and exactly seven `ContextBinding` fields. The bare command
+`python -m pytest` fails on this workstation (Xcode shim) — use `python3` or
+`python/.venv/bin/python`.
+
+### PR strategy — registry-drift-check
+
+**3 PRs.** Chosen over one PR because the three groups have genuinely different review shapes and
+different blast radii, and because the middle group is safe to merge before the last one exists.
+
+* **PR 1 — Phases 1-2.** Two independent hygiene guards. Touches a comment block in `publish.yml`
+  and adds two tests to `scripts/test_ci_gate.py`. No new file, no new workflow, nothing scheduled.
+* **PR 2 — Phases 3-5.** The decision core, the live query, and the scheduled workflow in
+  **read-only** form: it goes red on drift and files nothing. Mergeable on its own precisely
+  because it cannot write — the worst it can do is redden a scheduled run.
+* **PR 3 — Phases 6, 7, 9.** Issue reporting, the watcher's own heartbeat, and documentation
+  closure. This is the first group that writes to anything outside the repo, so it reviews as a
+  unit with the guards that constrain it.
+
+Phase 8 is **dropped** from this plan (scope creep: tag-vs-tag, not registry-vs-source) and is
+filed as its own issue during finalization.
