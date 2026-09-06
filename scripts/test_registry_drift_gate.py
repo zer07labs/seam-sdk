@@ -10,8 +10,11 @@ These build **real git repositories** in `tmp_path` rather than mocking `git`, f
 namespace are the subject matter here; a mock of them would only ever assert my model of git, which
 is precisely the thing that could be wrong.
 
-The registry response is injected as a file (`--packages-json`). Phase 4 adds the live query behind
-a stubbed `curl`; nothing in this file touches a network.
+The registry response is injected as a file (`--packages-json`), or fetched behind a stubbed `curl`.
+Nothing here touches a network — but that is a property of every live-path test passing an EXPLICIT
+`env`, not something the file gets for free. One of them did not, and on a machine carrying a real
+`SEAM_REGISTRY_TOKEN` it made three real requests to api.cloudsmith.io with the real secret while
+still reporting green. Any new live-path test must pass `env=live_env(...)`.
 
 Run: `python -m pytest scripts/test_registry_drift_gate.py -q`
 """
@@ -21,6 +24,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -31,6 +35,28 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "check_registry_drift.py"
+
+def _load_script():
+    """Load the checker by path — `scripts/` is not a package, so a plain import will not find it.
+
+    Same loader idiom as `scripts/test_vendored_spec_gate.py:35-47`. Used for the one branch that
+    cannot be reached through the CLI: an exhausted canary roster needs `CANARY_VERSIONS` itself to
+    be different, and making it settable from the environment would add production surface for a
+    test's benefit.
+    """
+    spec = importlib.util.spec_from_file_location("check_registry_drift", SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+#: The canary roster, read from the script rather than restated here. A second copy is a second
+#: thing to forget: changing `CANARY_VERSIONS` used to redden four tests that had hardcoded it,
+#: which is a maintenance tax with no diagnostic value — the roster's CONTENT is not what these
+#: tests are about.
+ROSTER = _load_script().CANARY_VERSIONS
 
 #: The moment every fixture repo dates its version commit from, unless it says otherwise. Fixed
 #: rather than derived from `datetime.now()` so a failure is reproducible at any hour.
@@ -536,12 +562,19 @@ def test_omitting_the_registry_response_is_infrastructure_not_a_skip(tmp_path: P
     It now goes live instead, and with no credential in the environment that is infrastructure.
     The property under test is unchanged and is the one that matters: omitting the response never
     produces a verdict, and never produces silence.
+
+    The environment is supplied explicitly, and that is not tidiness. Passing `env=None` inherits
+    the ambient one — so on a machine where `SEAM_REGISTRY_TOKEN` happens to be set, this test made
+    three REAL requests to api.cloudsmith.io carrying the real secret, and passed for a different
+    reason than the one it names. Phase 5 introduces a workflow where that variable IS in scope.
     """
     repo = make_repo(tmp_path, version="0.7.78")
-    proc = run(repo, None, tmp_path)
+    bin_dir, calls = curl_stub(tmp_path, {ROSTER[0]: published(ROSTER[0])})
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir, token=None))
     assert proc.returncode == 2, f"exit {proc.returncode}: {proc.stdout}{proc.stderr}"
     assert "::error::" in proc.stderr
     assert "cannot determine" not in (proc.stdout + proc.stderr).lower()
+    assert calls.read_text() == "", "a query was attempted with no credential"
 
 
 def test_a_repo_that_is_not_a_git_checkout_is_infrastructure(tmp_path: Path) -> None:
@@ -744,8 +777,14 @@ def curl_stub(
     responses: dict[str, object],
     *,
     fail_with: int | None = None,
+    stderr_text: str | None = None,
 ) -> tuple[Path, Path]:
     """A `curl` first on PATH. Returns (bin dir, call-log path).
+
+    Two logs are written, not one. `curl-calls` holds `"$*"` — argv joined by spaces, which is what
+    almost every assertion here wants. Beside it, `curl-argv` holds `"$@"` one bracketed argument
+    per line, because joining destroys the only thing that distinguishes a well-formed header from
+    a malformed one: whitespace at an argument's edges survives `$*` invisibly.
 
     A version with no entry in `responses` answers `[]` — which is what the real registry returns
     for a version it does not carry, and therefore what a genuine drift looks like.
@@ -766,10 +805,18 @@ def curl_stub(
         (responses_dir / version).write_text(
             payload if isinstance(payload, str) else json.dumps(payload), encoding="utf-8"
         )
+    argv_log = tmp_path / "curl-argv"
+    argv_log.write_text("")
     lines = [
         "#!/usr/bin/env bash",
         f"""printf '%s\\n' "$*" >> {calls}""",
+        f"""printf '[%s]\\n' "$@" >> {argv_log}""",
     ]
+    if stderr_text is not None:
+        # Real `curl -sf` does not quote request headers on stderr, but nothing in the script
+        # guarantees that stays true of every curl build and proxy — so the script's promise not to
+        # echo it has to be testable rather than assumed.
+        lines.append(f"""printf '%s\\n' '{stderr_text}' >&2""")
     if fail_with is not None:
         # What `-f` actually does, emulated so the flag is testable rather than decorative: WITH
         # it curl turns an HTTP >= 400 into a non-zero exit and prints no body; WITHOUT it the
@@ -820,12 +867,17 @@ def test_the_happy_live_path_queries_one_canary_then_the_target(tmp_path: Path) 
     """Two GETs on the common path, in that order, and a clean verdict."""
     repo = make_repo(tmp_path, version="0.7.78")
     bin_dir, calls = curl_stub(
-        tmp_path, {"0.7.50": published("0.7.50"), "0.7.78": published("0.7.78")}
+        tmp_path, {ROSTER[0]: published(ROSTER[0]), "0.7.78": published("0.7.78")}
     )
     proc = run(repo, None, tmp_path, env=live_env(bin_dir))
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert versions_queried(calls) == ["0.7.50", "0.7.78"]
-    assert "canary 0.7.50" in proc.stdout
+    assert versions_queried(calls) == [ROSTER[0], "0.7.78"]
+    assert f"canary {ROSTER[0]}" in proc.stdout
+    # `yank.yml` carries no timeout, so this is the one part of the request that is deliberately
+    # NOT a mirror of it. A hung GET in a scheduled job is a silent multi-hour burn, and nothing
+    # else here would notice the flag disappearing.
+    for line in calls.read_text().splitlines():
+        assert "--max-time" in line, f"the request has no timeout: {line}"
 
 
 def test_a_dead_instrument_aborts_before_the_target_is_ever_asked(tmp_path: Path) -> None:
@@ -843,7 +895,7 @@ def test_a_dead_instrument_aborts_before_the_target_is_ever_asked(tmp_path: Path
     assert "0.7.78" not in versions_queried(calls), (
         f"the target was queried through an unproven instrument: {versions_queried(calls)}"
     )
-    for candidate in ("0.7.50", "0.7.60", "0.7.65"):
+    for candidate in ROSTER:
         assert candidate in proc.stderr, f"the refusal does not name {candidate}: {proc.stderr}"
 
 
@@ -855,13 +907,16 @@ def test_one_yanked_canary_does_not_brick_the_instrument(
 ) -> None:
     """The whole reason the roster is a set. Without this it is a single pin wearing a tuple."""
     repo = make_repo(tmp_path, version="0.7.78")
-    responses: dict[str, object] = {"0.7.60": published("0.7.60")}
+    first, second = ROSTER[0], ROSTER[1]
+    responses: dict[str, object] = {second: published(second)}
     if target_published:
         responses["0.7.78"] = published("0.7.78")
     bin_dir, calls = curl_stub(tmp_path, responses)
     proc = run(repo, None, tmp_path, env=live_env(bin_dir))
     assert proc.returncode == expected, proc.stdout + proc.stderr
-    assert versions_queried(calls)[:2] == ["0.7.50", "0.7.60"]
+    assert versions_queried(calls)[:2] == [first, second], (
+        "the first candidate must be tried and found wanting before the second"
+    )
 
 
 def test_a_canary_equal_to_the_target_is_dropped_and_the_run_still_reaches_a_verdict(
@@ -875,16 +930,19 @@ def test_a_canary_equal_to_the_target_is_dropped_and_the_run_still_reaches_a_ver
     mute on the live version, not a corner case. The entry must be dropped, and an empty target
     must then produce **1**, not 2.
     """
-    repo = make_repo(tmp_path, version="0.7.50")
-    bin_dir, calls = curl_stub(tmp_path, {"0.7.60": published("0.7.60")})
+    target, backup = ROSTER[0], ROSTER[1]
+    repo = make_repo(tmp_path, version=target)
+    bin_dir, calls = curl_stub(tmp_path, {backup: published(backup)})
     proc = run(repo, None, tmp_path, env=live_env(bin_dir))
-    assert proc.returncode == 1, f"exit {proc.returncode} — the target's drift was muted\n{proc.stdout}{proc.stderr}"
+    assert proc.returncode == 1, (
+        f"exit {proc.returncode} — the target's drift was muted\n{proc.stdout}{proc.stderr}"
+    )
     asked = versions_queried(calls)
-    assert asked.count("0.7.50") == 1, f"0.7.50 was queried as a canary as well: {asked}"
-    assert asked[0] == "0.7.60", asked
+    assert asked.count(target) == 1, f"{target} was queried as a canary as well: {asked}"
+    assert asked[0] == backup, asked
 
 
-@pytest.mark.parametrize("truncated", ["0.7.50", "0.7.78"], ids=["canary", "target"])
+@pytest.mark.parametrize("truncated", [ROSTER[0], "0.7.78"], ids=["canary", "target"])
 def test_a_full_page_is_truncation_and_never_a_verdict(tmp_path: Path, truncated: str) -> None:
     """A response of exactly `page_size` rows means the `version:` qualifier was likely ignored.
 
@@ -896,7 +954,7 @@ def test_a_full_page_is_truncation_and_never_a_verdict(tmp_path: Path, truncated
         {"name": "seam-sdk", "version": f"0.0.{i}", "format": "python"} for i in range(50)
     ]
     responses: dict[str, object] = {
-        "0.7.50": published("0.7.50"),
+        ROSTER[0]: published(ROSTER[0]),
         "0.7.78": published("0.7.78"),
     }
     responses[truncated] = full_page
@@ -910,7 +968,7 @@ def test_a_full_page_is_truncation_and_never_a_verdict(tmp_path: Path, truncated
 def test_a_real_drift_end_to_end_over_the_live_path(tmp_path: Path) -> None:
     """Target empty, canary populated, past the hard tier — the case this whole file exists for."""
     repo = make_repo(tmp_path, version="0.7.78")
-    bin_dir, _ = curl_stub(tmp_path, {"0.7.50": published("0.7.50")})
+    bin_dir, _ = curl_stub(tmp_path, {ROSTER[0]: published(ROSTER[0])})
     proc = run(repo, None, tmp_path, env=live_env(bin_dir))
     assert proc.returncode == 1, proc.stdout + proc.stderr
     assert "State B" in proc.stdout
@@ -941,7 +999,7 @@ def test_a_missing_credential_is_two_and_never_one(tmp_path: Path, token: str | 
     never be able to say that.
     """
     repo = make_repo(tmp_path, version="0.7.78")
-    bin_dir, calls = curl_stub(tmp_path, {"0.7.50": published("0.7.50")})
+    bin_dir, calls = curl_stub(tmp_path, {ROSTER[0]: published(ROSTER[0])})
     proc = run(repo, None, tmp_path, env=live_env(bin_dir, token=token))
     assert proc.returncode == 2, proc.stdout
     assert "SEAM_REGISTRY_TOKEN" in proc.stderr
@@ -951,7 +1009,7 @@ def test_a_missing_credential_is_two_and_never_one(tmp_path: Path, token: str | 
 def test_supplying_a_response_file_performs_no_query_at_all(tmp_path: Path) -> None:
     """The offline path Phase 3 shipped must not silently start requiring a network."""
     repo = make_repo(tmp_path, version="0.7.78")
-    bin_dir, calls = curl_stub(tmp_path, {"0.7.50": published("0.7.50")})
+    bin_dir, calls = curl_stub(tmp_path, {ROSTER[0]: published(ROSTER[0])})
     proc = run(repo, published("0.7.78"), tmp_path, env=live_env(bin_dir))
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert calls.read_text() == "", f"curl was invoked on the offline path: {calls.read_text()}"
@@ -959,7 +1017,7 @@ def test_supplying_a_response_file_performs_no_query_at_all(tmp_path: Path) -> N
 
 @pytest.mark.parametrize(
     "broken",
-    ["all-canaries-empty", "http-failure", "truncated", "not-json"],
+    ["all-canaries-empty", "http-failure", "truncated", "not-json", "token-on-curl-stderr"],
 )
 def test_the_credential_never_appears_in_any_output(tmp_path: Path, broken: str) -> None:
     """Asserted over every failing path, because a token is leaked once and then forever."""
@@ -971,10 +1029,16 @@ def test_the_credential_never_appears_in_any_output(tmp_path: Path, broken: str)
     elif broken == "truncated":
         bin_dir, _ = curl_stub(
             tmp_path,
-            {"0.7.50": [{"name": "seam-sdk", "version": f"0.0.{i}", "format": "npm"} for i in range(50)]},
+            {ROSTER[0]: [{"name": "seam-sdk", "version": f"0.0.{i}", "format": "npm"} for i in range(50)]},
+        )
+    elif broken == "token-on-curl-stderr":
+        # The nastiest shape: the credential comes back OUT of the subprocess. If curl's stderr
+        # were ever echoed into the error message, the token would land in a public run log.
+        bin_dir, _ = curl_stub(
+            tmp_path, {}, fail_with=22, stderr_text=f"curl: auth failed for {STUB_TOKEN}"
         )
     else:
-        bin_dir, _ = curl_stub(tmp_path, {"0.7.50": "<html>error</html>"})
+        bin_dir, _ = curl_stub(tmp_path, {ROSTER[0]: "<html>error</html>"})
     proc = run(repo, None, tmp_path, env=live_env(bin_dir))
     assert proc.returncode == 2, f"{broken}: exit {proc.returncode}"
     assert STUB_TOKEN not in proc.stdout + proc.stderr, f"{broken}: the token leaked"
@@ -983,7 +1047,7 @@ def test_the_credential_never_appears_in_any_output(tmp_path: Path, broken: str)
 def test_a_response_that_is_not_json_is_infrastructure(tmp_path: Path) -> None:
     """An HTML error page from a proxy must not parse as "no rows"."""
     repo = make_repo(tmp_path, version="0.7.78")
-    bin_dir, _ = curl_stub(tmp_path, {"0.7.50": "<html>502</html>"})
+    bin_dir, _ = curl_stub(tmp_path, {ROSTER[0]: "<html>502</html>"})
     proc = run(repo, None, tmp_path, env=live_env(bin_dir))
     assert proc.returncode == 2, proc.stdout
     assert "not JSON" in proc.stderr
@@ -996,7 +1060,75 @@ def test_curl_absent_from_path_is_infrastructure(tmp_path: Path) -> None:
     env = {"PATH": str(empty), "SEAM_REGISTRY_TOKEN": STUB_TOKEN}
     proc = run(repo, None, tmp_path, env=env)
     assert proc.returncode == 2, proc.stdout
-    assert "curl" in proc.stderr
+    # Both halves matter. Exit 2 alone is satisfied by the top-level crash handler, and a
+    # traceback's rendered source line contains the word `curl` — so the named guard could be
+    # deleted entirely and this test would still pass, reporting a crash as a handled condition.
+    assert "not on PATH" in proc.stderr, proc.stderr
+    assert "Traceback" not in proc.stderr, f"the guard was skipped and this crashed: {proc.stderr}"
+
+
+@pytest.mark.parametrize(
+    "canary_format", ["python", "npm"], ids=["python only", "npm only"]
+)
+def test_a_half_published_canary_does_not_count_as_a_working_instrument(
+    tmp_path: Path, canary_format: str
+) -> None:
+    """The instrument is healthy only when a canary returns BOTH formats, and nothing pinned that.
+
+    Every canary in this file returned both or nothing, so `set(REQUIRED_FORMATS) <= formats` could
+    be weakened to `if formats:` with all 79 tests green — and the failure that hides is a
+    confident wrong verdict, not a missed one:
+
+      A credential (or a Cloudsmith entitlement) that can read `python` rows but not `npm` makes
+      every query return the python row alone. The weakened check announces "instrument proven by
+      canary 0.7.50 (both formats present)" — a falsehood — and then reports DRIFT because npm is
+      missing from the target too. An issue filed against a release that shipped perfectly well.
+
+    Half an answer is not a working instrument; it is a systematically wrong one, and the two are
+    indistinguishable from the target's answer alone.
+    """
+    repo = make_repo(tmp_path, version="0.7.78")
+    half = [row for row in published(ROSTER[0]) if row["format"] == canary_format]
+    bin_dir, _ = curl_stub(tmp_path, {ROSTER[0]: half, "0.7.78": published("0.7.78")})
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    assert proc.returncode == 2, (
+        f"a canary answering only in {canary_format} was accepted as proof\n"
+        f"{proc.stdout}{proc.stderr}"
+    )
+    assert "nothing usable" in proc.stderr
+
+
+def test_the_request_is_the_shape_yank_yml_already_proves(tmp_path: Path) -> None:
+    """The whole justification for shelling to `curl` is byte-comparability with `yank.yml:69-71`.
+
+    That claim is made in four places in prose and was enforced nowhere, so the URL, the query
+    parameter names and `page_size` could all drift with a green suite. `versions_queried()` only
+    reads the version substring back out, which is deliberately not the same thing.
+
+    `page_size` is the sharpest of them. The truncation check compares `len(rows)` against
+    `PAGE_SIZE`, and that comparison is only meaningful if the request ASKED for that page size.
+    Drop the parameter and the server's own default governs — at which point a page-of-everything
+    of any other length sails through and the run reports DRIFT for a published version.
+    """
+    yank = (REPO / ".github" / "workflows" / "yank.yml").read_text(encoding="utf-8")
+    matched = re.search(r'"(https://api\.cloudsmith\.io/[^"]*page_size=\d+)"', yank)
+    assert matched, (
+        "no Cloudsmith list URL found in yank.yml — the shape this mirrors moved, and the "
+        "byte-comparability claim needs re-checking by hand"
+    )
+    expected = matched.group(1).replace("$VERSION", "0.7.78")
+
+    module = _load_script()
+    assert module.REGISTRY_URL + module._query_for("0.7.78") == expected, (
+        f"the request has drifted from the one yank.yml proves.\n"
+        f"  here: {module.REGISTRY_URL + module._query_for('0.7.78')}\n"
+        f"  yank: {expected}"
+    )
+    assert f"page_size={module.PAGE_SIZE}" in expected, (
+        f"PAGE_SIZE={module.PAGE_SIZE} is not the page size the request asks for. The truncation "
+        "check compares row counts against it, so the two must be the same number or that check "
+        "is comparing against nothing."
+    )
 
 
 def test_the_credential_travels_only_in_a_header_never_in_the_url(tmp_path: Path) -> None:
@@ -1009,7 +1141,7 @@ def test_the_credential_travels_only_in_a_header_never_in_the_url(tmp_path: Path
     """
     repo = make_repo(tmp_path, version="0.7.78")
     bin_dir, calls = curl_stub(
-        tmp_path, {"0.7.50": published("0.7.50"), "0.7.78": published("0.7.78")}
+        tmp_path, {ROSTER[0]: published(ROSTER[0]), "0.7.78": published("0.7.78")}
     )
     proc = run(repo, None, tmp_path, env=live_env(bin_dir))
     assert proc.returncode == 0, proc.stdout + proc.stderr
@@ -1018,23 +1150,40 @@ def test_the_credential_travels_only_in_a_header_never_in_the_url(tmp_path: Path
     for line in logged.splitlines():
         url = next((tok for tok in line.split() if tok.startswith("http")), "")
         assert STUB_TOKEN not in url, f"the credential is in the URL: {url}"
-    assert "X-Api-Key:" in logged, "the credential is not being sent as a header at all"
+        # Checking the URL alone is too narrow: the token could be added anywhere else in argv —
+        # a `-A seam/<token>` user-agent, say — and no assertion here would notice. Exactly once,
+        # and only as the X-Api-Key value.
+        assert line.count(STUB_TOKEN) == 1, f"the credential appears more than once: {line}"
+        assert f"X-Api-Key: {STUB_TOKEN}" in line, f"not sent as the X-Api-Key header: {line}"
 
 
-def _load_script():
-    """Load the checker by path — `scripts/` is not a package, so a plain import will not find it.
+def test_a_credential_with_edge_whitespace_reaches_curl_stripped(tmp_path: Path) -> None:
+    """Phase 5 resolves this token in shell, where a trailing newline is easy to acquire.
 
-    Same loader idiom as `scripts/test_vendored_spec_gate.py:35-47`. Used for the one branch that
-    cannot be reached through the CLI: an exhausted canary roster needs `CANARY_VERSIONS` itself to
-    be different, and making it settable from the environment would add production surface for a
-    test's benefit.
+    `$(cat …)`, a secret pasted with a newline, a `${VAR#Bearer }` on a value that had one — all
+    produce a token whose edges carry whitespace. Unstripped it builds `X-Api-Key: <tok>\\n`, and
+    the run then fails in a way that names the REGISTRY (curl errors, exit 2) rather than the
+    credential — recoverable, but for no reason and pointing at the wrong thing.
+
+    Nothing else here can see it. `curl-calls` joins argv with spaces, so an argument's trailing
+    newline is indistinguishable from the separator that follows it; every existing assertion stays
+    green with the strip removed. This reads the per-argument log instead.
     """
-    spec = importlib.util.spec_from_file_location("check_registry_drift", SCRIPT)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    repo = make_repo(tmp_path, version="0.7.78")
+    bin_dir, calls = curl_stub(
+        tmp_path, {ROSTER[0]: published(ROSTER[0]), "0.7.78": published("0.7.78")}
+    )
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir, token=f"  {STUB_TOKEN}\n"))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    argv = calls.with_name("curl-argv").read_text().splitlines()
+    assert argv, "the stub recorded no arguments"
+    headers = [a for a in argv if a.startswith("[X-Api-Key:")]
+    assert headers, f"no X-Api-Key argument reached curl at all: {argv}"
+    assert set(headers) == {f"[X-Api-Key: {STUB_TOKEN}]"}, (
+        f"the header value is not the token with its edges stripped: {headers}. The brackets are "
+        f"the point — a value whose whitespace survived shows up either as extra spaces inside "
+        f"them or, for a newline, as a line that never closes."
+    )
 
 
 def test_a_roster_with_nothing_left_to_probe_names_the_constant(

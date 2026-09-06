@@ -743,8 +743,23 @@ the three lag states, the two things easy to get wrong, and the exit-code contra
 >    indented, which made the kernel refuse the file — so `PATH` fell through and the REAL curl
 >    answered the test. It failed loudly here only because the network is unreachable (exit 56).
 >    The stub is now assembled line by line and asserts its own shebang is at column 0.
-> 5. *Criterion 11's mutation round is 13/13*, including two that first survived: `token_in_the_url`
->    (divergence 2) and `empty_roster_tolerated` (divergence 3).
+> 5. *Criterion 11's mutation round is 24/24 — and it was recorded as 13/13 before the gate.* Two
+>    of the original thirteen first survived and were closed here: `token_in_the_url` (divergence 2)
+>    and `empty_roster_tolerated` (divergence 3). A third, `canary_any_format`, survived and was
+>    NOT noticed — the honest figure for that round is **12/13**. Weakening the canary's
+>    both-formats test to "any format" is not a missed detection but a confident wrong verdict: a
+>    credential scoped to `python` alone satisfies the weakened canary, the run prints *"instrument
+>    proven … (both formats present)"*, and a healthy release is reported as DRIFT under the
+>    instrument's own certificate. Eleven mutations were added around it — the two adjacent
+>    weakenings, the four ways the query can silently address the wrong thing, `--max-time`
+>    removed, curl's stderr echoed into an error, the `curl`-absent guard defused, a token
+>    smuggled into `-A`, and the credential's edges left unstripped.
+> 6. *The `CANARY_VERSIONS` comment claimed evidence it did not have.* It offered "carries both
+>    `vX` and `go/vX` tags" as excluding a refused release; `release-on-runtime.yml` creates both
+>    tags in one step before `publish.yml` starts, so `go/v0.7.69`/`70`/`72` exist too and the
+>    clause discriminates nothing. Retracted in the file. The roster also moved from three
+>    near-contemporaneous versions to one old / one middle / one recent (`0.7.50`, `0.7.65`,
+>    `0.7.75`), hedging both retention and the target overtaking the whole roster.
 
 **Delivers.** The script learns to fetch the Cloudsmith response itself when `--packages-json` is
 absent, and to refuse loudly when it cannot.

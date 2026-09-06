@@ -129,23 +129,42 @@ REQUIRED_FORMATS = ("python", "npm")
 #: nothing, and would convert that version's drift into an exit 2, muting the check on exactly the
 #: version it is watching.
 #:
-#: Selection rule, and it is NOT "any tag": a tag proves a release was ATTEMPTED, not that it
-#: landed. `publish.yml:748-749` records v0.7.69, v0.7.70 and v0.7.72 as correctly REFUSED —
-#: tagged, never published — so they are excluded, as is every never-tagged version (0.7.44-46,
-#: 0.7.62, 0.7.74 …). Each entry below carries both `vX` and `go/vX` tags and no recorded refusal.
+#: ⚠ UNCONFIRMED AGAINST THE LIVE REGISTRY, and be precise about how weak the evidence is.
 #:
-#: ⚠ UNCONFIRMED AGAINST THE LIVE REGISTRY. These were selected from tag history, which is
-#: evidence of intent rather than of publication. If they are wrong the check exits 2 naming every
-#: candidate it tried — loud and never a wrong verdict — but that is a broken instrument, not a
-#: working one. Re-point by querying each and keeping those that return both formats.
-CANARY_VERSIONS = ("0.7.50", "0.7.60", "0.7.65")
+#: The rule actually applied is "has a tag, minus the three refusals anyone happened to record".
+#: An earlier draft of this comment claimed more: that each entry carries both `vX` and `go/vX`
+#: tags, offered as though that excluded a refused release. It does not. `release-on-runtime.yml`
+#: creates both tags in one step, BEFORE publish.yml starts — so `go/v0.7.69`, `go/v0.7.70` and
+#: `go/v0.7.72` exist too, and the clause has zero discriminating power against exactly the case
+#: it was invoked to exclude.
+#:
+#: Worse, "no recorded refusal" is weakest precisely here. The reason only three refusals are on
+#: record (`publish.yml:748-749`) is that nothing was watching — which is the premise of
+#: seam-sdk#100 and the reason this file exists. Absence of a refusal record is close to
+#: uninformative for this population.
+#:
+#: So: verify these against the live registry. Query each with the real credential and keep the
+#: ones returning BOTH formats. Until then the instrument is unproven — and an unproven instrument
+#: exits 2 naming every candidate it tried, which is loud and never a wrong verdict, but that is
+#: not the same thing as working.
+#:
+#: Why a set and not a pin: an entry equal to the target is dropped at runtime (a canary that IS
+#: the target cannot distinguish a broken query from a real lag), and `yank.yml` can delete any
+#: version, so a single pin is one yank from a permanent exit 2 that everyone learns to scroll
+#: past. Three, so two would have to go before this needs an edit.
+#:
+#: Why the ages are spread: retention. Three of the OLDEST plausible versions would maximise
+#: exposure to a cleanup sweep aging all of them out at once. One old, one middle, one recent
+#: hedges that — and hedges the opposite risk too, since the target only moves upward and will
+#: eventually pass any entry chosen near it.
+CANARY_VERSIONS = ("0.7.50", "0.7.65", "0.7.75")
 
 #: The list endpoint `yank.yml:69-71` uses. Same request shape deliberately: that is the shape
 #: believed to work, and a drift check whose query differs from the one proven in production is
 #: testing something else.
 REGISTRY_URL = "https://api.cloudsmith.io/v1/packages/zer07labs/internal/"
 
-#: A response carrying exactly this many rows is treated as truncated — see `_fetch`.
+#: A response carrying exactly this many rows is treated as truncated — see `fetch_registry`.
 PAGE_SIZE = 50
 
 #: `yank.yml` has no timeout; a hung GET in a scheduled job is a silent multi-hour burn.
@@ -391,7 +410,10 @@ def registry_token() -> str:
             "the query cannot be made. Refusing rather than reporting an unqueried registry as "
             "behind the source."
         )
-    return token
+    # Returned stripped. Phase 5 resolves this from a secret in shell, where a trailing newline is
+    # easy to carry in; it would build a malformed header — recoverable (curl errors, exit 2) but
+    # pointlessly so.
+    return token.strip()
 
 
 def _query_for(version: str) -> str:
@@ -399,7 +421,7 @@ def _query_for(version: str) -> str:
     return f"?query={PACKAGE_NAME}+version:{version}&page_size={PAGE_SIZE}"
 
 
-def fetch_registry(version: str, token: str) -> list:
+def fetch_registry(version: str, token: str) -> object:
     """GET the rows for one version.
 
     `curl`, not `urllib`, and that is not stylistic. This repo's hermeticity convention is stub
