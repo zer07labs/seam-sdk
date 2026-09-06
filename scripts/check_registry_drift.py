@@ -393,9 +393,15 @@ def main(argv: list[str] | None = None) -> int:
             )
         rows = _load_packages_json(args.packages_json)
 
-        # The instrument is exercised BEFORE the clock is consulted. Checking the age first and
-        # skipping the query for a fresh version would leave a broken instrument unnoticed on
-        # exactly the runs that follow a release.
+        # The instrument is exercised BEFORE the clock is consulted. The rule that actually has
+        # teeth is narrower than "before", and worth stating in the form a future editor can
+        # check: NO PATH MAY REACH A VERDICT WITHOUT HAVING RUN THE QUERY. Moving these two lines
+        # below the clock changes nothing on its own — everything here is unconditional — but it
+        # is the shape from which the tempting optimisation follows: return early inside the soft
+        # window and skip the query for a fresh version. That leaves a broken instrument unnoticed
+        # on exactly the runs that follow a release, which is when it is needed. The
+        # `fresh`-parametrised cases in `scripts/test_registry_drift_gate.py` pin the early return;
+        # nothing can pin a pure reorder, because a pure reorder is not observable.
         assert_offline_instrument_healthy(rows, f"--packages-json {args.packages_json}")
         found = registry_formats(rows, version)
         missing = set(REQUIRED_FORMATS) - found

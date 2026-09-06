@@ -3291,8 +3291,34 @@ filed as its own issue during finalization.
   exited 2 from "cannot date this version" and passed with the guard deleted. The format clause had
   no fixture carrying a third package format — and is verdict-inert anyway, so it is pinned on the
   reported line instead.
-* **Counts:** `scripts` **262** · python **1246 passed / 20 skipped** · ruff clean ·
+* **Counts at first commit:** `scripts` 262 · python 1250 passed / 20 skipped · ruff clean ·
   `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` still exit **6** naming the seven recorded lag
-  fields.
-* **Not exercised against a network.** Every test is hermetic; the live query is Phase 4.
+  fields. (The first draft of this line said 1246, which was Phase 2's number carried forward —
+  the same staleness this phase went out of its way to fix in a docstring two paragraphs up.)
+* **Round 2 GAPS (7), all closed. The code was sound — the verifier found no input producing a
+  wrong verdict — and the suite was thin.** One claim above was also false and is corrected:
+  * **The ordering rule was pinned by nothing, and the record said otherwise.** The mutation named
+    `instrument_after_clock` deleted the instrument check rather than reordering it. Both faithful
+    reorderings passed all 37 tests, because every broken-instrument case ran ten days past the
+    release where the grace window is irrelevant. They run at 30 minutes now too, which is what
+    makes the early-return shape go red. Honest tally: **32/33**, the survivor being a pure
+    reorder that is semantically inert — nothing short-circuits, so it changes no behaviour and no
+    behavioural test can catch it. The script's comment now states the rule with teeth instead.
+  * **Three criteria were asserted on shape rather than content** — the warning could collapse to
+    "not on the registry yet", the DEFERRED line could drop its numbers, the query refusal could
+    name `"?"` instead of the offending character. All three now assert what the criteria ask for.
+  * **A swallowed git failure becomes a false DRIFT**, not a missing answer: `for-each-ref` fails,
+    the tag date vanishes, the clock falls back ten days, and a legitimate re-dispatch is reported
+    as drift. That is infrastructure reaching exit 1. Pinned with a `git` stub first on `PATH`.
+  * **Three more unpinned invariants**, each closed: the `max()` mirror dated its tag equal to the
+    commit so it could not tell `max` from "the tag if present"; nothing ever omitted
+    `--packages-json`, so the one branch Phase 4 will edit could be turned into a
+    print-and-exit-0; and the `^` anchor in `PYPROJECT_VERSION` had no decoy that could defeat it.
+  * **`_seam_sdk_rows`' type guards passed for the wrong reason** — removing them made the health
+    check raise instead, exit 2 either way. Phase 4 removes that covering check on the live path,
+    where a non-list error body would then read as drift with nothing red.
+* **Final counts:** `scripts` **283** (`test_registry_drift_gate.py` 37 -> 58) · python **1250
+  passed / 20 skipped** · ruff clean.
+* **Not exercised against a network.** Every test is hermetic; the live query is Phase 4, and its
+  correctness will be established by the first scheduled run rather than by this session.
 * **Next:** Phase 4 — the live registry query and the canary roster.

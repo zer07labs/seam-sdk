@@ -441,6 +441,45 @@ per-file steps give a named check per gate in the PR's check list, which is wort
 > 6. *Also fixed in passing:* `test_every_scripts_test_file_runs_in_ci`'s docstring said "Six
 >    `python -m pytest` steps" and this phase makes it eight. The number was removed rather than
 >    corrected — it is the same staleness that assertion exists to catch, one level up.
+>
+> **Round 2 — the verification gate found the code sound and the SUITE thin. Seven gaps, all
+> closed; and one claim in this record was false and is corrected here.**
+>
+> 7. ⚠ **Criterion 17's "15/15" was wrong, and wrong in the direction that matters.** The mutation
+>    named `instrument_after_clock` *deleted* the instrument check; it never *reordered* anything,
+>    so the ordering rule this phase states in bold was pinned by nothing. Both faithful
+>    reorderings passed all 37 tests. The cause was mundane: every broken-instrument case ran ten
+>    days past the release, where the grace window is irrelevant. They now run at 30 minutes too,
+>    which is what makes the early-return shape — literally the "cheap implementation" this phase
+>    rejects — go red. The honest tally is **32/33**, and the one survivor is `order_reordered`,
+>    which is *semantically inert*: with nothing short-circuiting, moving the two lines changes no
+>    observable behaviour, so no behavioural test can pin it. The comment in the script now states
+>    the rule that does have teeth — no path may reach a verdict without having run the query —
+>    rather than the textual ordering that merely suggests it.
+> 8. *Criteria 4, 5 and 13 were asserted on shape, not on content.* The warning could collapse to
+>    "not on the registry yet", the DEFERRED line could drop its numbers, and the query refusal
+>    could replace the offending character with `"?"` — all with a green suite, while each
+>    criterion explicitly asks for that content. Now asserted.
+> 9. ➕ *`_git`'s failure guard could flip a verdict and had no test.* Swallowing a non-zero git
+>    exit makes `for-each-ref` failure drop the tag date silently, the clock falls back to the old
+>    commit date, and a legitimate re-dispatch is reported as **drift** — infrastructure reaching
+>    exit 1, the one thing the exit-code contract forbids. Pinned with a `git` stub first on
+>    `PATH`, per the repo's convention.
+> 10. ➕ *The `max()` mirror could not tell `max` from "the tag date if there is one".* It dated the
+>    tag EQUAL to the commit, so both implementations agree. A tag OLDER than the commit separates
+>    them, and without the commit side of the max that case reports drift on a version half an hour
+>    old.
+> 11. ➕ *"No path prints 'cannot determine' and exits 0" was unguarded at the one branch that will
+>    be edited next.* Nothing omitted `--packages-json`, so replacing its refusal with exactly that
+>    construct left the suite green. Phase 4 edits this branch to make the flag optional.
+> 12. ➕ *`_seam_sdk_rows`' type guards passed for the wrong reason, and it matters forward.* With
+>    them removed the walk returns `[]` and the health check raises instead — exit 2 either way.
+>    Phase 4 removes that covering health check on the live path, where a non-list error body would
+>    then read as drift with nothing red. Now asserted on the message.
+> 13. ➕ *The `^` anchor in `PYPROJECT_VERSION` was unpinned* — the fixture's only decoy sat at
+>    column 0 *after* the real version, so it tested "first match wins" and not the anchor. An
+>    indented decoy now precedes it; without the anchor the parse silently returns the decoy, which
+>    is a wrong version rather than a refusal.
 
 **Delivers.** The script that answers the question, with the registry response **injected from a
 file**. No network, no `gh`, no reporting. Exit **0** clean or within grace, **1** drift, **2**

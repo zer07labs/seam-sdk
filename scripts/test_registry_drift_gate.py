@@ -19,6 +19,8 @@ Run: `python -m pytest scripts/test_registry_drift_gate.py -q`
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -76,7 +78,12 @@ _BASE_ENV = {
 def _write_version(repo: Path, version: str, ts_version: str | None = None) -> None:
     (repo / "python").mkdir(parents=True, exist_ok=True)
     (repo / "ts").mkdir(parents=True, exist_ok=True)
+    # Two decoys, on purpose. The INDENTED one comes first, so `PYPROJECT_VERSION`'s `^` anchor is
+    # what keeps it out — drop the anchor and the parse silently reads `indented-decoy`. The
+    # trailing `[tool.*]` one is at column 0, so only "first match wins" excludes it. A fixture
+    # with just the second decoy tests the weaker of the two rules.
     (repo / "python" / "pyproject.toml").write_text(
+        '[build-system]\nrequires = ["hatchling"]\n  version = "indented-decoy"\n\n'
         f'[project]\nname = "seam-sdk"\nversion = "{version}"\n\n'
         f'[tool.ruff]\nversion = "not-this-one"\n',
         encoding="utf-8",
@@ -143,6 +150,7 @@ def run(
     raw_json: str | None = None,
     packages_json: Path | None = None,
     extra: list[str] | None = None,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     args = [sys.executable, str(SCRIPT), "--repo", str(repo)]
     if packages_json is not None:
@@ -153,7 +161,7 @@ def run(
         args += ["--packages-json", str(path)]
     args += ["--now", (now or LANDED + timedelta(days=10)).isoformat()]
     args += extra or []
-    return subprocess.run(args, capture_output=True, text=True)
+    return subprocess.run(args, capture_output=True, text=True, env=env)
 
 
 # ── The three states ──────────────────────────────────────────────────────────────────────────
@@ -251,8 +259,20 @@ def test_all_four_grace_boundaries_in_both_directions(
     repo = make_repo(tmp_path, version="0.7.78")
     proc = run(repo, published("0.7.77"), tmp_path, now=LANDED + timedelta(minutes=age))
     assert proc.returncode == expected_code, f"age={age}: {proc.stdout}{proc.stderr}"
-    warned = "::warning::" in proc.stdout + proc.stderr
+    out = proc.stdout + proc.stderr
+    warned = "::warning::" in out
     assert warned is expect_warning, f"age={age}: warning={warned}, expected {expect_warning}"
+    if warned:
+        # The criterion says the warning names the age, BOTH thresholds and the missing formats.
+        # Asserting only that a warning exists let it collapse to "not on the registry yet" — true,
+        # useless, and indistinguishable in a run summary from the message that tells you what to
+        # do. A warning nobody can act on is a warning nobody reads.
+        warning = next(ln for ln in out.splitlines() if ln.startswith("::warning::"))
+        assert str(age) in warning, f"the warning does not say how old it is: {warning}"
+        assert "90" in warning and "360" in warning, f"the warning names no thresholds: {warning}"
+        assert "npm" in warning and "python" in warning, (
+            f"the warning does not say what is missing: {warning}"
+        )
 
 
 def test_the_soft_tier_says_when_it_will_stop_deferring(tmp_path: Path) -> None:
@@ -261,8 +281,13 @@ def test_the_soft_tier_says_when_it_will_stop_deferring(tmp_path: Path) -> None:
     proc = run(repo, published("0.7.77"), tmp_path, now=LANDED + timedelta(minutes=30))
     assert proc.returncode == 0
     assert "DEFERRED" in proc.stdout
-    assert "stops deferring" in proc.stdout
     assert "::warning::" not in proc.stdout + proc.stderr
+    # Both halves of the criterion, and both are content rather than shape: how old it is, and
+    # when it stops. `stops deferring` alone survived a mutation that deleted the number after it,
+    # which is the half a reader actually needs.
+    assert "30 minutes old" in proc.stdout, proc.stdout
+    assert "in 60 minutes" in proc.stdout, proc.stdout
+    assert "escalates at 360" in proc.stdout, proc.stdout
 
 
 def test_the_clock_takes_the_tag_date_when_the_tag_is_newer(tmp_path: Path) -> None:
@@ -316,6 +341,7 @@ def test_a_few_minutes_of_clock_skew_reads_as_brand_new(tmp_path: Path) -> None:
 # ── Never a verdict: the broken instrument must be distinguishable from a clean answer ─────────
 
 
+@pytest.mark.parametrize("age_minutes", [30, 14400], ids=["fresh", "long past the window"])
 @pytest.mark.parametrize(
     ("label", "payload"),
     [
@@ -327,16 +353,25 @@ def test_a_few_minutes_of_clock_skew_reads_as_brand_new(tmp_path: Path) -> None:
         ("a list of scalars", "[1, 2, 3]"),
     ],
 )
-def test_a_broken_instrument_is_two_and_never_zero(tmp_path: Path, label: str, payload: str) -> None:
-    """None of these may exit 0, and none of them may exit 1.
+def test_a_broken_instrument_is_two_and_never_zero(
+    tmp_path: Path, label: str, payload: str, age_minutes: int
+) -> None:
+    """None of these may exit 0, and none of them may exit 1 — at ANY age.
 
     A check that silently returns "nothing lagging" because its query broke is this repo's named
     failure class, and it would be a same-shape regression of the very bug this check exists to
     close. `@zer07labs/seam-sdk-extra` is in the list because the name comparison is exact after
     the scope strip — a near-miss must not count as evidence the query worked.
+
+    **The `fresh` age is what pins the ordering rule**, and it was missing. Every case here used to
+    run ten days past the release, where the grace window is irrelevant — so moving the clock check
+    above the query, or returning early inside soft grace (literally the "cheap implementation" the
+    plan rejects), left all 37 tests green. The consequence is precise: a broken query goes
+    unreported on exactly the runs following a release, which is when it matters and is the whole
+    reason the instrument is exercised first.
     """
     repo = make_repo(tmp_path, version="0.7.78")
-    proc = run(repo, None, tmp_path, raw_json=payload)
+    proc = run(repo, None, tmp_path, raw_json=payload, now=LANDED + timedelta(minutes=age_minutes))
     assert proc.returncode == 2, f"{label}: exit {proc.returncode}\n{proc.stdout}{proc.stderr}"
     assert "::error::" in proc.stderr
 
@@ -424,6 +459,14 @@ def test_a_query_unsafe_version_is_two_and_never_one(tmp_path: Path, version: st
     assert "digits-and-dots" in proc.stderr, (
         f"{version!r} was refused for the wrong reason: {proc.stderr}"
     )
+    # The criterion says it NAMES the offending character. Without this the whole computation can
+    # be replaced by a literal `"?"` and the shared phrase above still matches — the message would
+    # tell you the version is malformed without telling you which character made it so, which for
+    # a value read out of `main` is most of the diagnosis.
+    offender = next(ch for ch in version if not (ch.isdigit() or ch == "."))
+    assert repr(offender) in proc.stderr, (
+        f"{version!r}: the refusal does not name {offender!r}: {proc.stderr}"
+    )
 
 
 def test_an_empty_version_is_refused_before_the_query_guard_ever_sees_it(tmp_path: Path) -> None:
@@ -479,6 +522,205 @@ def test_there_is_no_code_path_that_reports_nothing_and_exits_zero(tmp_path: Pat
         assert proc.returncode == 0, label
         assert proc.stdout.strip(), f"{label}: exited 0 saying nothing"
         assert "0.7.78" in proc.stdout, f"{label}: did not name the version"
+
+
+def test_omitting_the_registry_response_is_infrastructure_not_a_skip(tmp_path: Path) -> None:
+    """There must be no path that shrugs and exits 0, and this is the easiest place to grow one.
+
+    Nothing else in this file ever omits `--packages-json`, so the branch that refuses when it is
+    absent had no coverage at all: replacing it with `print("cannot determine…"); return 0` left
+    all 37 tests green. That is verbatim the construct the phase forbids. It matters forward as
+    well as backward — Phase 4 edits exactly this branch to make the flag optional, and the safe
+    version of that edit is "fetch it live", not "carry on without one".
+    """
+    repo = make_repo(tmp_path, version="0.7.78")
+    proc = run(repo, None, tmp_path)
+    assert proc.returncode == 2, f"exit {proc.returncode}: {proc.stdout}{proc.stderr}"
+    assert "::error::" in proc.stderr
+    assert "cannot determine" not in (proc.stdout + proc.stderr).lower()
+
+
+def test_a_repo_that_is_not_a_git_checkout_is_infrastructure(tmp_path: Path) -> None:
+    """Named in the phase's edge cases and previously untested."""
+    repo = tmp_path / "plain"
+    _write_version(repo, "0.7.78")
+    proc = run(repo, published("0.7.77"), tmp_path)
+    assert proc.returncode == 2, proc.stdout
+    assert "::error::" in proc.stderr
+
+
+def test_a_git_command_that_fails_stops_the_run_rather_than_dropping_its_answer(
+    tmp_path: Path,
+) -> None:
+    """A swallowed git failure does not stay infrastructure — it becomes a false DRIFT.
+
+    `_git` raising on a non-zero exit had no test, and the consequence of removing it is specific
+    rather than vague: `for-each-ref` fails, the tag date silently becomes "no tag", the clock
+    falls back to the old commit date, and a legitimate re-dispatch — the
+    `.github/workflows/release-on-runtime.yml:176-181` path that `max()` exists for — is reported
+    as drift. That is exit 1 reached from an infrastructure condition, which is the one thing this
+    script's exit-code contract forbids.
+
+    Stubbed as an executable first on `PATH`, per the repo's convention, so the failure is real
+    rather than monkeypatched.
+    """
+    real_git = shutil.which("git")
+    assert real_git, "git is not on PATH"
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    stub = bindir / "git"
+    stub.write_text(
+        f'#!/bin/sh\n# argv is: -C <repo> <subcommand> …\nif [ "$3" = "for-each-ref" ]; then\n'
+        f'  echo "simulated git failure" >&2\n  exit 128\nfi\nexec {real_git} "$@"\n',
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+
+    repo = make_repo(
+        tmp_path,
+        version="0.7.78",
+        landed=LANDED,
+        tag=True,
+        tag_at=LANDED + timedelta(days=10) - timedelta(minutes=30),
+    )
+    env = {**os.environ, "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}"}
+    proc = run(repo, published("0.7.77"), tmp_path, env=env)
+    assert proc.returncode == 2, (
+        f"a failed git call produced exit {proc.returncode} — infrastructure reached a verdict\n"
+        f"{proc.stdout}{proc.stderr}"
+    )
+    assert "for-each-ref" in proc.stderr
+
+
+def test_the_clock_takes_the_commit_date_when_the_tag_is_older(tmp_path: Path) -> None:
+    """The other side of `max()`, which the existing mirror could not see.
+
+    That mirror dates the tag EQUAL to the commit, so `max(commit, tag)` and a plain
+    `tag if tag else commit` agree and it cannot tell them apart. A tag older than the commit
+    separates them: taking the tag alone would date this release ten days back and report drift on
+    a version that landed half an hour ago.
+    """
+    repo = make_repo(
+        tmp_path, version="0.7.78", landed=LANDED, tag=True, tag_at=LANDED - timedelta(days=10)
+    )
+    proc = run(repo, published("0.7.77"), tmp_path, now=LANDED + timedelta(minutes=30))
+    assert proc.returncode == 0, f"the commit date was ignored: {proc.stdout}{proc.stderr}"
+    assert "DEFERRED" in proc.stdout
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ('{"results": []}', "not a list of packages"),
+        ("[1, 2, 3]", "not an object"),
+        ('[{"name": "seam-sdk", "version": "0.7.78", "format": "python"}, "x"]', "not an object"),
+    ],
+)
+def test_a_response_of_the_wrong_shape_says_what_shape_it_is(
+    tmp_path: Path, payload: str, expected: str
+) -> None:
+    """These previously passed for the wrong reason, and it matters forward.
+
+    With `_seam_sdk_rows`' type guards removed, the walk returns `[]` and the health check raises
+    instead — exit 2 either way, so the guards were unpinned. Phase 4 removes that covering health
+    check on the live path, where a non-list error body would then read as drift with nothing red.
+    Asserting the message keeps the guards where they are.
+    """
+    repo = make_repo(tmp_path, version="0.7.78")
+    proc = run(repo, None, tmp_path, raw_json=payload)
+    assert proc.returncode == 2, proc.stdout
+    assert expected in proc.stderr, proc.stderr
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("2026-09-06T12:00:00", "carries no timezone"), ("yesterday", "cannot parse")],
+)
+def test_an_unusable_now_is_infrastructure(tmp_path: Path, value: str, expected: str) -> None:
+    """A naive or unparseable `--now` cannot produce an age, so it cannot produce a verdict."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    packages = tmp_path / "p.json"
+    packages.write_text(json.dumps(published("0.7.78")), encoding="utf-8")
+    # Not routed through `run()`: it supplies a well-formed `--now` of its own, which is the value
+    # under test here.
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--repo",
+            str(repo),
+            "--packages-json",
+            str(packages),
+            "--now",
+            value,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2, proc.stdout
+    assert expected in proc.stderr, proc.stderr
+
+
+@pytest.mark.parametrize(
+    ("break_it", "expected"),
+    [
+        ("no-pyproject", "does not exist"),
+        ("no-package-json", "does not exist"),
+        ("indented-version-only", 'no `version = "..."` at column 0'),
+        ("bad-package-json", "not valid JSON"),
+    ],
+)
+def test_a_source_manifest_that_cannot_be_read_is_infrastructure(
+    tmp_path: Path, break_it: str, expected: str
+) -> None:
+    """Four ways the version is unreadable, none of which may become a verdict.
+
+    `indented-version-only` is the one that earns its place twice: it also pins the `^` anchor in
+    `PYPROJECT_VERSION`. Without the anchor the parse quietly returns the indented decoy, which is
+    a wrong version rather than a refusal — and a wrong version asks the registry a question about
+    a release that does not exist.
+    """
+    repo = make_repo(tmp_path, version="0.7.78")
+    pyproject = repo / "python" / "pyproject.toml"
+    package_json = repo / "ts" / "package.json"
+    if break_it == "no-pyproject":
+        pyproject.unlink()
+    elif break_it == "no-package-json":
+        package_json.unlink()
+    elif break_it == "indented-version-only":
+        pyproject.write_text('[project]\n  version = "0.7.78"\n', encoding="utf-8")
+    else:
+        package_json.write_text("{not json", encoding="utf-8")
+    proc = run(repo, published("0.7.78"), tmp_path)
+    assert proc.returncode == 2, f"{break_it}: exit {proc.returncode}\n{proc.stdout}"
+    assert expected in proc.stderr, f"{break_it}: {proc.stderr}"
+
+
+def test_a_soft_window_wider_than_the_hard_one_is_refused(tmp_path: Path) -> None:
+    """Otherwise the warn band is empty and the soft tier suppresses past the escalation point.
+
+    A guard added during implementation and, until now, never observed failing — which by this
+    plan's own standard is not evidence.
+    """
+    repo = make_repo(tmp_path, version="0.7.78")
+    proc = run(
+        repo,
+        published("0.7.77"),
+        tmp_path,
+        extra=["--soft-grace-minutes", "400", "--hard-grace-minutes", "100"],
+    )
+    assert proc.returncode == 2, proc.stdout
+    assert "exceeds" in proc.stderr
+
+
+def test_a_packages_path_that_is_not_readable_is_infrastructure(tmp_path: Path) -> None:
+    """The `OSError` arm, distinct from the missing-file arm above."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    as_dir = tmp_path / "adirectory.json"
+    as_dir.mkdir()
+    proc = run(repo, None, tmp_path, packages_json=as_dir)
+    assert proc.returncode == 2, proc.stdout
+    assert "cannot be read" in proc.stderr
 
 
 # ── The script's own dependencies ─────────────────────────────────────────────────────────────
