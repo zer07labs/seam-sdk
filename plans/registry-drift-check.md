@@ -952,7 +952,45 @@ the re-point instruction.
 >    `refusal_removed_entirely`. Note `pip_install_added` INLINE was caught only incidentally — by
 >    the credential test aborting under `set -e` when `pip` is absent from the stub PATH, not by the
 >    guard that exists for it. Re-run as its own step, `test_the_job_installs_nothing` is the
->    detector, which is the mutation the plan actually asks for.
+>    detector, which is the mutation the plan actually asks for. **⚠ That last sentence was wrong
+>    and the gate disproved it** — see divergence 4.
+> 4. *The gate found thirteen survivors, and the first round's 20/20 was honest about the number
+>    while being wrong about the set.* Every one of those twenty was an edit some test already
+>    parsed. The survivors were edits nothing parsed: the whole `env:` block deleted or one
+>    `secrets.` name misspelt (the credential tests inject their own environment, so all ten stayed
+>    green while the real job received nothing); `|| true`, `&`, `> /dev/null`, a grace override and
+>    a `--repo` override appended to the invocation, which was pinned only at the script path;
+>    `if: false` on the job or the step; `::add-mask::` demoted to a trailing comment, which
+>    `_wf_code()` cannot strip without corrupting `${TOKEN#Bearer }`; `pip3 install`;
+>    `runs-on: windows-latest` and `shell: pwsh`; `actions/checkout@v3`, where `fetch-tags` did not
+>    exist and an unknown `with:` key is silently ignored; `python-version: "3.7"`;
+>    `setup-python` deleted; an unused `packages: read`; `concurrency: cancel-in-progress`, which
+>    this plan rejects in prose with nothing enforcing it; and `cron: "17 */2 * * 1"` — a weekly
+>    cadence wearing a two-hourly hour field. Final round 41/41. **And the "incidental catch" claim
+>    in divergence 3 is false**: `test_the_job_installs_nothing` fails on the inline `pip install`
+>    directly. The error was methodological — the battery ran pytest with `-x` and reported the
+>    first failure in file order as "the detector". `-x` establishes that a mutation was caught, not
+>    what caught it.
+> 5. *Two things the plan asked for turned out to be wrong, and are implemented differently.*
+>    (a) The credential resolution is NOT byte-identical to `yank.yml`'s. That file tests the raw
+>    secret with `-z`, so a whitespace-only value is not empty, the fallback is never consulted, and
+>    a usable Cargo token in scope is discarded — a permanent exit 2 whose log says the credential
+>    is missing. Each source is trimmed here, in the order leading-whitespace → prefix →
+>    trailing-whitespace (trimming first turns `"Bearer "` into `"Bearer"`, which is not empty and
+>    gets sent). `yank.yml` still has the hole and is out of scope for this plan.
+>    (b) The `permissions:` guard reads job-level in preference to top-level and scans the invoked
+>    script as well as the workflow's shell. Written the plan's way it would have reddened at every
+>    one of Phase 6's three moves — including demanding `issues: write` be removed at the moment it
+>    became necessary, since Phase 6 puts `gh issue` in the script rather than the `run:` line. All
+>    three moves are now simulated against it.
+> 6. *Smaller, recorded for completeness.* `python-version: "3.12"` rather than the plan's `"3.11"`,
+>    matching `.github/workflows/framework-coinstall.yml:53`, the sibling scheduled workflow.
+>    `export SEAM_REGISTRY_TOKEN=…` rather than a prefix assignment, so the truncation harness can
+>    execute the region. And the workflow comment shipped `publish.yml:369-371` for the `&&`
+>    one-liner — inherited verbatim from `.github/workflows/yank.yml:38-39`, which is stale; the
+>    real sites are `:227`, `:385`, `:607`, `:711`, which this plan's own criterion 11 had right.
+>    Citations inside workflow comments are not swept by
+>    `python/tests/test_compatibility_citations_resolve.py`, so that one would not have self-healed.
 
 **Delivers.** The scheduled workflow. It runs the check and goes **red** on drift. It files nothing
 yet.

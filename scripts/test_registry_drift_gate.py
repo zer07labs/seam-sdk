@@ -1440,13 +1440,19 @@ def _drift_step() -> dict:
 
 
 def _wf_code() -> list[str]:
-    """The step's shell with comment lines removed.
+    """The step's shell with whole-line comments removed.
 
-    Every static assertion about the step goes through this, never the raw `run`. The comments in
-    this step quote the strings the guards look for — `set -euo pipefail`, `::add-mask::` and
-    `pip install` all appear in prose beside the code that does or does not do them. That is not
-    hypothetical: two of `yank.yml`'s guards were vacuous for exactly this reason
-    (`scripts/test_yank_gate.py:51-62`), and one of them stayed green with the real line deleted.
+    Every static assertion about the step goes through this, never the raw `run`. The step's own
+    comments quote `set -euo pipefail` verbatim, so a substring search over the raw body is
+    satisfied by prose with the real line deleted — which is how two of `yank.yml`'s guards were
+    vacuous (`scripts/test_yank_gate.py:51-62`).
+
+    **It removes whole-line comments only, and that is a real limit rather than an oversight.**
+    Stripping everything after a `#` would corrupt the lines that matter most here: `${TOKEN#Bearer }`
+    is a parameter expansion, not a comment. So a directive demoted to a TRAILING comment —
+    `:  # echo "::add-mask::$TOKEN"` — survives this filter. Any assertion whose mutation looks
+    like that must match on the line's SHAPE (does it start with the command?) rather than on the
+    needle appearing somewhere in it. `test_the_token_is_masked_before_anything_can_print_it` does.
     """
     return [ln for ln in _drift_step()["run"].splitlines() if not ln.strip().startswith("#")]
 
@@ -1518,8 +1524,18 @@ def test_the_cron_cannot_step_over_the_warn_band() -> None:
     """
     module = _load_script()
     crons = [entry["cron"] for entry in _triggers()["schedule"]]
-    (hours,) = {c.split()[1] for c in crons}
+    (fields,) = {c.split() for c in crons} if False else ({tuple(c.split()) for c in crons},)
+    (spec,) = fields
+    minute, hours, dom, month, dow = spec
+    # Reading the hour field alone is not enough to know the period. `17 */2 * * 1` runs every two
+    # hours ON MONDAYS — a weekly cadence wearing a two-hourly hour field, and the warn band it is
+    # named for is unreachable again. Both that and `17 */2 1 * *` passed the hour-only version.
+    assert (dom, month, dow) == ("*", "*", "*"), (
+        f"the cron restricts day-of-month/month/day-of-week to {(dom, month, dow)}, so the hour "
+        f"field is not the period. The real cadence is far longer than it looks."
+    )
     assert hours.startswith("*/"), f"cannot read a period out of the cron hour field {hours!r}"
+    assert minute.isdigit(), f"the minute field {minute!r} is not a single fixed minute"
     period = int(hours[2:]) * 60
     band = module.HARD_GRACE_MINUTES - module.SOFT_GRACE_MINUTES
     assert 0 < period < band, (
@@ -1539,6 +1555,17 @@ def test_the_cron_cannot_step_over_the_warn_band() -> None:
         ("Bearer cs-key", "", "cs-key"),
         ("cs-key", "Bearer cargo-tok", "cs-key"),
         ("Bearer ", "Bearer cargo-tok", "cargo-tok"),
+        # Beyond the ten `scripts/test_yank_gate.py:93-140` covers. `yank.yml` tests the RAW value
+        # with `-z`, so a secret that is a single space is not empty: the fallback is never
+        # consulted and a perfectly good Cargo token in scope is discarded. That is a permanent
+        # exit 2 whose log says the credential is missing while the repository can see one.
+        ("   ", "Bearer cargo-tok", "cargo-tok"),
+        ("\n", "cargo-tok", "cargo-tok"),
+        # And a usable value with whitespace around it must arrive trimmed rather than being
+        # refused or sent malformed. `Bearer` followed by more than one space is the same case:
+        # `${TOKEN#Bearer }` eats exactly one and leaves the rest leading the header value.
+        ("  cs-key  ", "", "cs-key"),
+        ("Bearer   cs-key", "", "cs-key"),
     ],
     ids=[
         "dedicated-only",
@@ -1547,6 +1574,10 @@ def test_the_cron_cannot_step_over_the_warn_band() -> None:
         "dedicated-with-bearer",
         "both-set",
         "prefix-only-dedicated-falls-through",
+        "whitespace-only-dedicated-falls-through",
+        "newline-only-dedicated-falls-through",
+        "dedicated-surrounded-by-whitespace",
+        "bearer-followed-by-several-spaces",
     ],
 )
 def test_the_credential_reaches_the_checker_by_the_name_it_reads(
@@ -1569,12 +1600,26 @@ def test_the_credential_reaches_the_checker_by_the_name_it_reads(
 
 @pytest.mark.parametrize(
     ("dedicated", "cargo"),
-    [("", ""), (None, None), ("", "Bearer "), ("Bearer ", "")],
+    [
+        ("", ""),
+        (None, None),
+        ("", "Bearer "),
+        ("Bearer ", ""),
+        # Whitespace is not a credential, in either source or after the prefix comes off.
+        ("   ", "  "),
+        ("\n", ""),
+        ("Bearer   ", ""),
+        ("", "Bearer \t"),
+    ],
     ids=[
         "both-empty",
         "both-unset",
         "cargo-is-only-the-prefix",
         "dedicated-is-only-the-prefix",
+        "both-are-whitespace",
+        "dedicated-is-a-newline",
+        "dedicated-is-prefix-plus-spaces",
+        "cargo-is-prefix-plus-a-tab",
     ],
 )
 def test_a_missing_credential_is_infrastructure_and_exits_2_not_1(
@@ -1609,10 +1654,17 @@ def test_the_token_is_masked_before_anything_can_print_it() -> None:
     deleted.
     """
     code = _wf_code()
-    masks = [i for i, ln in enumerate(code) if "::add-mask::" in ln]
+    # `startswith("echo")`, not `"::add-mask::" in ln`. `_wf_code()` drops whole-line comments only
+    # — it cannot drop trailing ones without corrupting `${TOKEN#Bearer }` — so demoting the
+    # directive to `:  # echo "::add-mask::$TOKEN"` leaves a line that contains the needle, sits at
+    # the right index, and emits nothing. That mutation passed the containment version of this test.
+    masks = [i for i, ln in enumerate(code) if ln.strip().startswith(("echo \"::add-mask::", "echo '::add-mask::"))]
     assert masks, (
-        "the step never emits `::add-mask::`. The token would appear in plain text in the Actions "
-        "log the first time anything echoes it — including a future `set -x` added while debugging."
+        "the step never EMITS `::add-mask::` — a line mentioning it is not the same as a line "
+        f"running it. Lines seen: {[ln for ln in code if '::add-mask::' in ln]}. Without the "
+        "directive the token appears in plain text in the Actions log the first time anything "
+        "echoes it, and the value here is a trimmed derivative that Actions does not redact on "
+        "its own."
     )
     users = [
         i
@@ -1690,7 +1742,9 @@ def test_the_job_installs_nothing() -> None:
         body = "\n".join(
             ln for ln in str(step.get("run") or "").splitlines() if not ln.strip().startswith("#")
         )
-        assert "pip install" not in body, (
+        # `pip3 install` and `python -m pip install` are the same act. Matching the literal
+        # `pip install` let `pip3 install requests` through as its own step.
+        assert not re.search(r"\b(?:python3?\s+-m\s+)?pip3?\s+install\b", body), (
             f"step {step.get('name') or step.get('uses')!r} installs packages. The checker is "
             f"stdlib-only by design; if it now needs a dependency, that is the thing to revisit."
         )
@@ -1705,31 +1759,153 @@ def test_the_declared_permissions_are_exactly_what_the_job_uses() -> None:
     matters too: a scope declared for work that was later removed is standing authority nothing
     needs, on a job that reads a production credential.
     """
-    perms = _workflow().get("permissions")
+    # Job-level if present, else top-level — because job permissions REPLACE top-level rather
+    # than extend them, so whichever is nearest the job is the one that decides. Reading only the
+    # top level would have made this test red the moment Phase 6 moves the block down, which is
+    # the plan's own instruction; a guard that forces its own rewrite at the next phase is a guard
+    # that gets rewritten into something weaker.
+    perms = _job().get("permissions", _workflow().get("permissions"))
     assert isinstance(perms, dict), (
-        f"top-level `permissions:` is {perms!r}. It must be an explicit mapping — omitting it "
-        f"inherits the repository default, which may be read/write for everything."
+        f"`permissions:` is {perms!r}. It must be an explicit mapping — omitting it inherits the "
+        f"repository default, which may be read/write for everything."
     )
     assert not any("permissions" in step for step in _job()["steps"]), "steps cannot take permissions"
-    assert perms.get("contents") == "read", "the job checks out the repository"
+
+    # The surface is the workflow's shell PLUS the script it runs. Phase 6 puts `gh issue` inside
+    # `check_registry_drift.py --report`, not in the `run:` line — so a needle search over the
+    # workflow alone would demand that `issues: write` be REMOVED at the exact moment it becomes
+    # necessary. Same for Phase 7's Actions-API read.
     body = "\n".join(
         ln
         for step in _job()["steps"]
         for ln in str(step.get("run") or "").splitlines()
         if not ln.strip().startswith("#")
+    ) + "\n" + SCRIPT.read_text(encoding="utf-8")
+
+    #: scope -> (needle that proves it is used, what needs it). Anything outside this mapping is
+    #: standing authority nobody has argued for, on a job that holds a production credential.
+    justifiable = {
+        "contents": (None, "checking out the repository"),
+        "issues": ("gh issue", "filing, commenting on or reopening an issue"),
+        "actions": ("/actions/", "reading the Actions API for this workflow's own run history"),
+    }
+    unknown = set(perms) - set(justifiable)
+    assert not unknown, (
+        f"`permissions:` declares {sorted(unknown)}, which nothing here accounts for. Add the "
+        f"scope to `justifiable` together with the needle that proves the job uses it — an "
+        f"unexplained scope is standing authority for work nobody can point at."
     )
-    for scope, needle, why in (
-        ("issues", "gh issue", "filing or updating an issue"),
-        ("actions", "/actions/", "reading the Actions API"),
-    ):
+    assert perms.get("contents") == "read", "the job checks out the repository"
+    for scope, (needle, why) in justifiable.items():
+        if needle is None:
+            continue
         uses = needle in body
         declared = scope in perms
         assert uses == declared, (
             f"the job {'does' if uses else 'does not'} do {why}, but `{scope}` is "
             f"{'declared' if declared else 'not declared'} in `permissions:`. An undeclared scope "
-            f"is `none` and the call 403s; a declared-but-unused one is standing authority for "
-            f"nothing."
+            f"is `none` rather than inherited and the call 403s; a declared-but-unused one is "
+            f"standing authority for nothing."
         )
+
+
+def test_the_secrets_are_actually_wired_into_the_step() -> None:
+    """The credential tests inject their own env, so they prove the shell and nothing upstream of it.
+
+    `_run_token_script()` sets `CLOUDSMITH_API_KEY` itself. That is right for testing the
+    resolution, and it means deleting the step's whole `env:` block — or misspelling one
+    `secrets.` reference — leaves every one of those ten cases green while the real job receives
+    nothing and exits 2 on every scheduled run, forever, at a cadence that reads as flaky
+    infrastructure and gets muted. That is verbatim the failure this block exists to prevent, one
+    level up from where it was being checked.
+    """
+    env = _drift_step().get("env") or {}
+    for name in ("CLOUDSMITH_API_KEY", "CARGO_REGISTRIES_ZER07LABS_TOKEN"):
+        assert name in env, (
+            f"the step does not receive {name}. The shell below resolves it correctly and finds "
+            f"nothing there, which is a permanent exit 2 with the secret sitting in scope."
+        )
+        assert env[name].strip() == "${{ secrets.%s }}" % name, (
+            f"{name} is wired to {env[name]!r}, not to the secret of the same name. A misspelt "
+            f"`secrets.` reference expands to the empty string — GitHub does not error on it."
+        )
+
+
+def test_nothing_can_switch_the_job_off_without_reddening_a_test() -> None:
+    """`if: false` on the job or the step is the cheapest way to delete this check.
+
+    One line, no code removed, 113 tests still testifying that the workflow works. There is no
+    conditional logic in this job and no reason for one to appear; if a real condition is ever
+    needed, this assertion is the place to argue for it.
+    """
+    job = _job()
+    assert "if" not in job, f"the job carries `if: {job['if']!r}` — it can be switched off silently"
+    for step in job["steps"]:
+        assert "if" not in step, (
+            f"step {step.get('name') or step.get('uses')!r} carries `if: {step['if']!r}`. A step "
+            f"that does not run is a check that does not run, and the job still reports success."
+        )
+
+
+def test_the_job_runs_where_its_shell_actually_works() -> None:
+    """`runs-on: windows-latest` makes `set -euo pipefail` a syntax error, invisibly to every test.
+
+    Every assertion here executes the step's shell under `bash` on this machine. None of them can
+    see which interpreter GitHub would hand it. The same goes for an explicit `shell:` override.
+    """
+    runner = _job()["runs-on"]
+    assert isinstance(runner, str) and runner.startswith("ubuntu-"), (
+        f"the job runs on {runner!r}. Every guard in this file executes the step under bash; on a "
+        f"Windows runner the default shell is PowerShell and `set -euo pipefail` is not a "
+        f"statement it has."
+    )
+    for step in _job()["steps"]:
+        assert "shell" not in step, (
+            f"step {step.get('name') or step.get('uses')!r} overrides `shell:` to "
+            f"{step['shell']!r}. These tests run it under bash regardless."
+        )
+
+
+def test_the_actions_the_job_depends_on_are_pinned_where_their_inputs_exist() -> None:
+    """`fetch-tags` did not exist before `actions/checkout` v4.1.0, and an unknown `with:` key is
+    silently IGNORED rather than an error.
+
+    So downgrading to `@v3` leaves `test_the_checkout_asks_for_tags_explicitly` green — it reads the
+    YAML — while tags stop being fetched and every release is misdiagnosed as "the tag push
+    failed". `TAG_FLOOR` still catches it as exit 2, so the braces hold; this is the belt.
+    """
+    uses = {str(step.get("uses", "")).split("@")[0]: str(step.get("uses", "")) for step in _job()["steps"]}
+    assert uses.get("actions/checkout") == "actions/checkout@v4", (
+        f"checkout is pinned to {uses.get('actions/checkout')!r}. `fetch-tags:` is a v4.1.0+ input "
+        f"and older versions ignore it without complaining."
+    )
+    setup = next(
+        (s for s in _job()["steps"] if str(s.get("uses", "")).startswith("actions/setup-python")),
+        None,
+    )
+    assert setup is not None, (
+        "the setup-python step is gone. `ubuntu-latest` happens to ship a python3, so the job "
+        "would still run — on whatever version the image drifts to next."
+    )
+    pinned = str((setup.get("with") or {}).get("python-version", ""))
+    assert tuple(int(part) for part in pinned.split(".")) >= (3, 11), (
+        f"python-version is pinned to {pinned!r}. The checker is written against 3.11+ and this is "
+        f"the only place the interpreter is chosen."
+    )
+
+
+def test_no_run_can_be_cancelled_by_the_next_one() -> None:
+    """The plan rejected `concurrency:` explicitly; nothing enforced the rejection.
+
+    Cancelling a run mid-flight produces a missing answer that looks exactly like a passing one —
+    the job ends without a verdict, and the schedule moves on. At a ~1-minute job against a 2-hour
+    period there is nothing to de-duplicate anyway.
+    """
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "concurrency" not in text, (
+        "the workflow declares `concurrency:`. A cancelled run is an unanswered question that "
+        "reports as a finished one."
+    )
 
 
 def test_the_workflow_runs_the_checker_this_file_is_about() -> None:
@@ -1741,10 +1917,37 @@ def test_the_workflow_runs_the_checker_this_file_is_about() -> None:
     """
     invocations = [ln.strip() for ln in _wf_code() if "python3 scripts/" in ln]
     assert len(invocations) == 1, f"expected exactly one checker invocation, got {invocations}"
-    (called,) = [tok for tok in invocations[0].split() if tok.endswith(".py")]
-    assert (REPO / called).resolve() == SCRIPT.resolve(), (
-        f"the workflow runs {called}, which is not {SCRIPT.relative_to(REPO)}."
+    tokens = invocations[0].split()
+    # THE WHOLE LINE, token by token — not just the `.py` argument. Reading only the script path
+    # left every one of these green while the check was disabled or answered a different question:
+    #
+    #   … check_registry_drift.py || true     the job can never go red
+    #   … check_registry_drift.py &           backgrounded; the status is discarded
+    #   … check_registry_drift.py > /dev/null the verdict never reaches the log
+    #   … --hard-grace-minutes 100000         exit 1 becomes unreachable; DEFERRED forever
+    #   … --repo /tmp                         a verdict about a directory that is not this repo
+    #
+    # Every one is a one-line diff with 100-odd tests testifying that the workflow works.
+    assert tokens[0] == "python3", f"the invocation does not start with python3: {invocations[0]!r}"
+    assert (REPO / tokens[1]).resolve() == SCRIPT.resolve(), (
+        f"the workflow runs {tokens[1]}, which is not {SCRIPT.relative_to(REPO)}."
     )
+    # Flags are allowlisted rather than pattern-matched, so adding one is a deliberate edit HERE
+    # as well as there. Phase 6 adds `--report`; that is the moment to decide it belongs, not a
+    # thing to discover afterwards.
+    allowed = {"--report"}
+    extra = [tok for tok in tokens[2:] if tok not in allowed]
+    assert not extra, (
+        f"the invocation carries {extra}. Arguments change the question the check asks — a grace "
+        f"override makes the drift verdict unreachable, a `--repo` override asks about somewhere "
+        f"else. Add the flag to `allowed` here in the same change that adds it there."
+    )
+    for operator in ("||", "&&", "&", ">", ">>", "|", ";", "`", "$("):
+        assert operator not in invocations[0], (
+            f"the invocation line contains {operator!r}: {invocations[0]!r}. The step's exit "
+            f"status IS the verdict; anything that redirects, backgrounds or swallows it turns a "
+            f"drift into a green job."
+        )
 
 
 def test_the_check_is_not_also_a_job_in_ci_yml() -> None:

@@ -73,15 +73,34 @@ jobs:
         run: |
           set -euo pipefail
           # Dedicated key if set, else the org Cargo token, each with a leading "Bearer " stripped.
-          # The same resolution as `yank.yml:54-62`, written the same way and for the same reason:
-          # `publish.yml:369-371` does it as an `&&` one-liner, which is safe there by a rule about
-          # AND-list exit status that most readers do not hold, and this step runs under
-          # `set -euo pipefail`. The explicit `if` is immune to that rule and to unset variables.
-          TOKEN="${CLOUDSMITH_API_KEY:-}"
-          TOKEN="${TOKEN#Bearer }"
+          # Structurally the resolution `yank.yml:54-62` uses, and an `if` rather than the `&&`
+          # one-liner at `publish.yml:227`/`:385`/`:607`/`:711` for that file's reason: those steps
+          # have no `set -e`, this one does, and the AND-list is safe only by a rule about AND-OR
+          # exit status that most readers do not hold. The explicit `if` is immune to it and to
+          # unset variables.
+          #
+          # It differs from `yank.yml` in ONE way, deliberately: each source is whitespace-trimmed
+          # before it is tested. `yank.yml` tests the raw value with `-z`, so a secret that is a
+          # single space — or `"Bearer  x"`, or a value that is only a newline — is not empty, the
+          # fallback is never consulted, and a perfectly good Cargo token sitting in scope is
+          # discarded. That is a permanent exit 2 whose log says the credential is missing while
+          # the repository can see one. `yank.yml` has the same hole and is not touched here.
+          # Order matters and the obvious order is wrong: trimming BEFORE removing the prefix
+          # turns "Bearer " into "Bearer", which is not empty, so it is accepted as a credential
+          # and sent. Leading whitespace, then the prefix, then trailing whitespace.
+          #
+          # `Bearer` must be followed by whitespace to be a prefix. A bare "Bearer" is left alone —
+          # same as `yank.yml`'s `${TOKEN#Bearer }` — and fails loudly at the registry rather than
+          # having its first six characters eaten off a token that happened to start with them.
+          creds() {
+            printf %s "$1" \
+              | sed -e 's/^[[:space:]]*//' \
+                    -e 's/^Bearer[[:space:]][[:space:]]*//' \
+                    -e 's/[[:space:]]*$//'
+          }
+          TOKEN="$(creds "${CLOUDSMITH_API_KEY:-}")"
           if [ -z "$TOKEN" ]; then
-            TOKEN="${CARGO_REGISTRIES_ZER07LABS_TOKEN:-}"
-            TOKEN="${TOKEN#Bearer }"
+            TOKEN="$(creds "${CARGO_REGISTRIES_ZER07LABS_TOKEN:-}")"
           fi
           if [ -z "$TOKEN" ]; then
             # EXIT 2, not 1. `yank.yml` exits 1 here and is right to: it is a destructive tool and
@@ -91,10 +110,15 @@ jobs:
             echo "::error::No Cloudsmith credential in scope — cannot query the registry."
             exit 2
           fi
-          # Masked before it is exported, so the value cannot reach a log even if the script below
-          # is later changed to echo its environment. The script itself never prints the token —
-          # `scripts/test_registry_drift_gate.py` pins that — but this is the cheap half of that
-          # guarantee and it does not depend on the script staying correct.
+          # Masked before it is exported. Be precise about what this does and does not buy.
+          # Actions redacts the REGISTERED secret automatically; the value here is a derivative —
+          # trimmed, and with `Bearer ` removed — so it is not covered by that and needs its own
+          # mask. What the mask cannot cover: it is emitted after the assignments above, so a
+          # `set -x` added while debugging would print the value before this line runs; and
+          # `::add-mask::` registers one line, so a multi-line secret masks only its first. The
+          # real guarantee is that the script never prints the token, which
+          # `scripts/test_registry_drift_gate.py` pins on every path that reaches a verdict and
+          # every path that fails. This is the cheap second layer, not the first.
           echo "::add-mask::$TOKEN"
           export SEAM_REGISTRY_TOKEN="$TOKEN"
           python3 scripts/check_registry_drift.py

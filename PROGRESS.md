@@ -3440,18 +3440,68 @@ filed as its own issue during finalization.
   scope the job does not use is standing authority for nothing on a job holding a production
   credential, and an undeclared scope is `none` rather than inherited, so the staleness arm 403s
   unless `actions: read` lands in the same commit that needs it.
-* **Proof: 20/20 mutations caught** — the five the plan names plus fifteen more. One worth
-  recording: `pip install` added INLINE was caught only incidentally, by the credential test
-  aborting under `set -e` because `pip` is absent from the stub's PATH — not by the guard written
-  for it. Re-run as its own step, which is what the plan actually specifies,
-  `test_the_job_installs_nothing` is the detector. An incidental catch is not evidence the guard
-  works.
-* **Counts:** `scripts` **338** (`test_registry_drift_gate.py` 92 -> 113) · python **1255 passed / 21
-  skipped** — five more passing and one more skipped than Phase 4, every one of them accounted
-  for. The new workflow enters two parametrised sweeps over
-  `.github/workflows/`: `test_no_workflow_calls_buf_generate_directly` passes and
+* **Proof: 41/41 mutations caught, after a gate round that found thirteen survivors.** The first
+  round was 20/20 against the mutations I thought of, and the number was not the problem — the
+  *set* was. Every one of those twenty was something a test already parsed. The gate went looking
+  for edits the tests do not parse at all, and found that the check could be switched off, muted,
+  redirected, or cut off from its credential with a one-line diff and 113 green tests testifying
+  that it worked:
+  * **The `env:` block was asserted by nothing.** The credential tests inject their own
+    environment — right for testing the resolution, and it meant deleting the whole block, or
+    misspelling one `secrets.` reference, left all ten cases green while the real job received
+    nothing. Permanent exit 2 at a two-hour cadence, which reads as flaky infrastructure and gets
+    muted: verbatim the failure the test banner says the block exists to prevent, one level above
+    where it was being checked.
+  * **The invocation was pinned only at the script path.** `|| true` (the job can never go red),
+    `&` (status discarded), `> /dev/null` (the verdict never reaches the log),
+    `--hard-grace-minutes 100000` (exit 1 unreachable) and `--repo /tmp` (a verdict about a
+    directory that is not this repo) all survived. The whole line is pinned now, token by token,
+    with flags on an allowlist so Phase 6's `--report` is a deliberate edit in both places.
+  * **`if: false`** on the job or the step survived — the cheapest possible deletion of a check.
+  * **`::add-mask::` demoted to a trailing comment survived**, and this is the sharp one:
+    `_wf_code()` exists to stop a comment satisfying a guard, and it strips whole-line comments
+    only, because stripping past a `#` would corrupt `${TOKEN#Bearer }`. So `:  # echo
+    "::add-mask::$TOKEN"` kept the needle, the index and the ordering while emitting nothing. The
+    assertion matches the line's shape now, not the needle's presence.
+  * **`pip3 install` evaded the literal `pip install`.** So did `runs-on: windows-latest` and
+    `shell: pwsh` (where `set -euo pipefail` is not a statement), `actions/checkout@v3` (where
+    `fetch-tags` did not exist and an unknown `with:` key is silently ignored, so the belt goes
+    while the braces hold), `python-version: "3.7"`, deleting `setup-python` entirely, an unused
+    `packages: read`, and `concurrency: cancel-in-progress` — which the plan explicitly rejected
+    without anything enforcing the rejection.
+  * **`cron: "17 */2 * * 1"` survived** — a weekly cadence wearing a two-hourly hour field. The
+    guard read the hour field alone; it reads all five now.
+* **A record claim of mine was false, and the gate ran the experiment.** This checkpoint said
+  `pip install` added inline was caught "only incidentally". It is not: `test_the_job_installs_nothing`
+  fails on it directly, with its own message. The error was methodological — the battery runs
+  pytest with `-x` and reports the first failure as "the detector", and in file order the
+  credential test comes first. Both fail. **`-x` tells you a mutation was caught; it does not tell
+  you what caught it**, and every "by:" attribution from that battery is the first test in file
+  order rather than the intended one. The batteries print all failing tests now.
+* **A credential hole in the shell itself, inherited from `yank.yml`.** `.github/workflows/yank.yml:54-62` tests the
+  raw secret with `-z`, so a value that is a single space — or `"Bearer  x"`, or a newline — is not
+  empty: the fallback is never consulted and a perfectly good Cargo token sitting in scope is
+  discarded. That is a permanent exit 2 whose log says the credential is missing while the
+  repository can see one. This workflow trims each source before testing it, and the ORDER is the
+  part that is easy to get wrong — my first fix trimmed before removing the prefix, which turns
+  `"Bearer "` into `"Bearer"`, not empty, and sends it. Leading whitespace, then the prefix, then
+  trailing whitespace. Four new positive shapes and four new refusals pin it. **`yank.yml` still
+  has the hole** and is deliberately not touched here.
+* **The permissions guard would have forced its own rewrite in Phase 6**, which is exactly what
+  writing it in both directions was meant to prevent. It read top-level `permissions:` only, and
+  Phase 6 moves the block to the job level; and it searched for `gh issue` in the workflow's shell,
+  while Phase 6 puts that call inside `check_registry_drift.py --report` — so it would have
+  demanded `issues: write` be REMOVED at the moment it became necessary. It now reads job-level in
+  preference to top-level, scans the workflow's shell PLUS the script it invokes, and refuses any
+  scope not in an explicit justification table. All three of Phase 6's moves were simulated against
+  it: the job-level move passes, a declared-but-unused `issues: write` fails, and both scopes pass
+  once the script actually uses them.
+* **Counts:** `scripts` **351** (`test_registry_drift_gate.py` 92 -> 126) · python **1256 passed /
+  21 skipped** — six more passing and one more skipped than Phase 4, every one of them accounted
+  for. The new workflow enters two parametrised sweeps over `.github/workflows/`:
+  `test_no_workflow_calls_buf_generate_directly` passes and
   `test_ci_runs_a_node_version_the_package_claims_to_support` skips, since this job sets up no
-  Node. The other four are citation parameters — this checkpoint cites four files the guard had
+  Node. The other five are citation parameters — this checkpoint cites five files the guard had
   not been asked about before. Verified, not drift. ruff clean.
 * **Not in `ci-ok`'s `needs:`**, deliberately — a scheduled sibling like `framework-coinstall.yml`,
   for its reasoning at `.github/workflows/framework-coinstall.yml:5-8` plus one of its own: this check exists to
