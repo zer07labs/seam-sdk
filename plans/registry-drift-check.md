@@ -710,7 +710,41 @@ the three lag states, the two things easy to get wrong, and the exit-code contra
 
 ## Phase 4 — the live registry query, and the canary that proves the instrument works
 
-**Status: TODO**
+**Status: DONE** (2026-09-06) — ⚠ **with one pre-merge item this session could not perform.**
+
+> **⚠ `CANARY_VERSIONS` IS UNCONFIRMED AGAINST THE LIVE REGISTRY.** This section requires one
+> `curl` with the real credential before merge, and this run had neither the credential (it is a
+> repository secret) nor authorisation to query a registry. `0.7.50` / `0.7.60` / `0.7.65` were
+> selected from tag history, which is evidence a release was ATTEMPTED, not that it landed —
+> exactly the distinction the selection rule warns about. **This is not a silent risk:** an
+> unconfirmed-and-wrong roster makes every scheduled run exit 2 naming all three candidates tried,
+> which is loud, correct, and never a wrong verdict. But the instrument would be broken rather than
+> working. Confirm before merge, or accept that the first scheduled run performs the confirmation
+> and reports it as infrastructure. The constant carries the same warning inline.
+>
+> **Divergences from this section as written.**
+> 1. *The `--packages-json`-is-required refusal became the live branch, as planned* — but the test
+>    Phase 3's gate added for it (nothing may print "cannot determine" and exit 0) still holds and
+>    still passes, now via the token guard. That was the point of pinning it before editing it.
+> 2. ➕ *A property the section did not name: the credential must travel in a HEADER, never in the
+>    URL.* Nothing could see the difference — the leak tests grep the run's own output, and every
+>    error message prints the query string rather than the URL, so moving the token into the query
+>    leaks it to every proxy and access log with the whole suite green. Pinned by reading the
+>    recorded argv.
+> 3. ➕ *The empty-roster branch needed the module loaded by path to be reachable at all*, since
+>    with three entries no CLI invocation can empty the candidate list. Loaded with
+>    `importlib.util.spec_from_file_location`, the idiom `scripts/test_vendored_spec_gate.py`
+>    already uses; making `CANARY_VERSIONS` settable from the environment was rejected as adding
+>    production surface for a test's benefit. Its assertion matches wording unique to that branch,
+>    not the constant's name — the generic all-canaries-failed message also names the constant, so
+>    matching that passes with the guard deleted and pins nothing.
+> 4. *A stub bug worth recording, because it is the quiet kind.* The `curl` stub's `-f` emulation
+>    is multi-line, which gave `textwrap.dedent` no common indent to strip, which left the shebang
+>    indented, which made the kernel refuse the file — so `PATH` fell through and the REAL curl
+>    answered the test. It failed loudly here only because the network is unreachable (exit 56).
+>    The stub is now assembled line by line and asserts its own shebang is at column 0.
+> 5. *Criterion 11's mutation round is 13/13*, including two that first survived: `token_in_the_url`
+>    (divergence 2) and `empty_roster_tolerated` (divergence 3).
 
 **Delivers.** The script learns to fetch the Cloudsmith response itself when `--packages-json` is
 absent, and to refuse loudly when it cannot.

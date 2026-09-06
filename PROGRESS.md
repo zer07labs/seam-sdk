@@ -3322,3 +3322,39 @@ filed as its own issue during finalization.
 * **Not exercised against a network.** Every test is hermetic; the live query is Phase 4, and its
   correctness will be established by the first scheduled run rather than by this session.
 * **Next:** Phase 4 — the live registry query and the canary roster.
+
+#### Phase 4 — the live query and the canary · DONE, with one item this session could not do
+
+* **2026-09-06.** `scripts/check_registry_drift.py` learns to fetch; `scripts/test_registry_drift_gate.py`
+  58 -> 79 tests. No workflow yet (Phase 5), no reporting yet (Phase 6).
+* **⚠ `CANARY_VERSIONS` is UNCONFIRMED against the live registry, and that is a real pre-merge
+  item.** The plan requires one `curl` with the real credential; this run had neither the
+  credential (a repository secret) nor authorisation to query a registry. `0.7.50` / `0.7.60` /
+  `0.7.65` came from tag history — evidence a release was attempted, not that it landed, which is
+  precisely the distinction the selection rule exists to draw. **It fails safe:** a wrong roster
+  makes every run exit 2 naming all three candidates, never a wrong verdict. But that is a broken
+  instrument rather than a working one, so it is worth confirming rather than discovering.
+* **The canary is the instrument's positive control**, and it is a roster rather than a pin for a
+  specific reason recorded in the code: the first draft pinned the then-current version, so a real
+  drift on that version made the canary come back empty and the run exit 2 — "my instrument is
+  broken" for exactly the condition it exists to report. Any entry equal to the target is dropped
+  at runtime, and one yank cannot brick it.
+* **Two properties nothing could see, both now pinned.** The credential must travel in a header,
+  never the URL — the leak tests grep the run's own output and every message prints the query
+  string rather than the URL, so moving the token into the query leaked it to every proxy and
+  access log with the suite green. And the empty-roster branch is unreachable through the CLI with
+  three entries, so it needed the module loaded by path; its assertion matches wording unique to
+  that branch, because the generic refusal further down also names the constant.
+* **A stub bug worth recording, because it is the quiet kind.** The `curl` stub's `-f` emulation is
+  multi-line, so `textwrap.dedent` had no common indent to strip, so the shebang stayed indented,
+  so the kernel refused the file and `PATH` fell through to the REAL curl. It surfaced only because
+  the network is unreachable here (curl exit 56). The stub is assembled line by line now and
+  asserts its own shebang.
+* **Proof:** 13/13 mutations caught — deleted canary, canary after target, `-sf` to `-s`, roster
+  not filtered against the target, deleted truncation check, deleted token guard, canary accepting
+  any format, canary accepting the first candidate blindly, tolerated empty roster, ignored curl
+  exit status, unchecked JSON, token in the URL, and the offline path fetching anyway.
+* **Counts:** `scripts` **304** · python **1250 passed / 20 skipped** · ruff clean.
+* **Still not exercised against a network** — every test drives a stubbed `curl`. The live path's
+  correctness will be established by the first scheduled run.
+* **Next:** Phase 5 — `.github/workflows/registry-drift.yml`, read-only.

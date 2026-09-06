@@ -43,16 +43,31 @@ FOUR THINGS THAT ARE EASY TO GET WRONG
    `release-on-runtime.yml:176-181` has a branch where nothing is committed ("already at $VER —
    tagging only") and `:182`-`:187` tag and push anyway. A re-dispatch would otherwise inherit the
    original bump's date, get zero grace, and fire against a publish that started ninety seconds ago.
-4. **An empty answer must never read as a clean one.** With `--packages-json` there is no canary to
-   prove the query worked, so the response itself has to carry the proof: it must contain at least
-   one `seam-sdk` row at SOME version. A file with no `seam-sdk` row in it is not a plausible
-   response to a `seam-sdk` query — it is a broken instrument, and it exits 2. (The live path
-   answers this differently, with a canary query; see `CANARY` handling there. An empty target
-   response is trusted as drift only because a canary returned rows on the same credential in the
-   same run.)
+4. **An empty answer must never read as a clean one, and the two modes prove that differently.**
+   Live, the query is scoped to one version, so a genuine drift really does return `[]` — and that
+   emptiness is trusted only because `CANARY_VERSIONS` was queried FIRST, on the same credential in
+   the same run, and came back with rows. Offline (`--packages-json`) there is no canary, so the
+   file itself must carry the proof: at least one `seam-sdk` row at SOME version, or it is not a
+   plausible response to a `seam-sdk` query and exits 2. These are deliberately opposite rules for
+   the same-looking input; do not unify them.
+
+WHY THERE IS A CANARY, AND WHY IT IS A SET
+-------------------------------------------
+Without one, every failure of the query surface — a wrong URL, a scope-less token, a silently
+ignored `version:` qualifier — reads as "the registry does not have it", i.e. as drift. A confident
+wrong verdict is the worst thing this check could produce, worse than no check, because it trains
+its reader to ignore it.
+
+A single pinned version does not work either, and its first draft proved it: pinned to the then-
+current version, a real drift on that version made the canary come back empty and the run exit 2 —
+"my instrument is broken" for precisely the condition it exists to report. Hence a roster, hence
+the runtime rule that any entry equal to the target is dropped, and hence "healthy if ANY candidate
+answers" — one yank must not brick the instrument.
 
 Usage:  scripts/check_registry_drift.py [--repo DIR] [--packages-json FILE] [--now ISO8601]
                                         [--soft-grace-minutes N] [--hard-grace-minutes N]
+        With --packages-json the response is read from that file and nothing is fetched.
+        Without it the registry is queried live and SEAM_REGISTRY_TOKEN must be set.
 Exit:   0 = the registry serves it, or it is younger than the hard window
         1 = drift
         2 = infrastructure — never a verdict, INCLUDING every unhandled exception
@@ -62,6 +77,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -106,6 +122,38 @@ PACKAGE_NAME = "seam-sdk"
 #: Both are stamped to one version by `scripts/set_version.sh`, so a wheel-only check is a partial
 #: answer — half a release is still a broken release.
 REQUIRED_FORMATS = ("python", "npm")
+
+#: Versions asserted to be published in BOTH formats. A set rather than a single pin, so one yank
+#: does not brick the instrument; three, so two would have to be yanked before this needs an edit.
+#: Any entry equal to the target is dropped at runtime — a canary that IS the target proves
+#: nothing, and would convert that version's drift into an exit 2, muting the check on exactly the
+#: version it is watching.
+#:
+#: Selection rule, and it is NOT "any tag": a tag proves a release was ATTEMPTED, not that it
+#: landed. `publish.yml:748-749` records v0.7.69, v0.7.70 and v0.7.72 as correctly REFUSED —
+#: tagged, never published — so they are excluded, as is every never-tagged version (0.7.44-46,
+#: 0.7.62, 0.7.74 …). Each entry below carries both `vX` and `go/vX` tags and no recorded refusal.
+#:
+#: ⚠ UNCONFIRMED AGAINST THE LIVE REGISTRY. These were selected from tag history, which is
+#: evidence of intent rather than of publication. If they are wrong the check exits 2 naming every
+#: candidate it tried — loud and never a wrong verdict — but that is a broken instrument, not a
+#: working one. Re-point by querying each and keeping those that return both formats.
+CANARY_VERSIONS = ("0.7.50", "0.7.60", "0.7.65")
+
+#: The list endpoint `yank.yml:69-71` uses. Same request shape deliberately: that is the shape
+#: believed to work, and a drift check whose query differs from the one proven in production is
+#: testing something else.
+REGISTRY_URL = "https://api.cloudsmith.io/v1/packages/zer07labs/internal/"
+
+#: A response carrying exactly this many rows is treated as truncated — see `_fetch`.
+PAGE_SIZE = 50
+
+#: `yank.yml` has no timeout; a hung GET in a scheduled job is a silent multi-hour burn.
+CURL_MAX_SECONDS = 60
+
+#: Resolved from `CLOUDSMITH_API_KEY` / `CARGO_REGISTRIES_ZER07LABS_TOKEN` by the workflow shell,
+#: not here, so the resolution is testable as shell the way `yank.yml:55-63`'s is.
+TOKEN_ENV = "SEAM_REGISTRY_TOKEN"
 
 #: The version is interpolated into a URL query string (`?query=seam-sdk+version:<v>`), where `+`
 #: means SPACE and `#`, `&`, `%` and whitespace are all structural. `yank.yml:64-66` guards its own
@@ -328,6 +376,118 @@ def assert_offline_instrument_healthy(rows: object, source: str) -> None:
         )
 
 
+def registry_token() -> str:
+    """The Cloudsmith credential, from the environment.
+
+    Absent or empty is `InfraError`, exit 2 — a deliberate divergence from `yank.yml:61-63`, which
+    exits 1. There, 1 means "refused". Here, 1 means "the registry is behind the source", and a
+    missing secret must never be able to say that.
+    """
+    token = os.environ.get(TOKEN_ENV, "")
+    if not token.strip():
+        raise InfraError(
+            f"{TOKEN_ENV} is unset or empty. The workflow resolves it from CLOUDSMITH_API_KEY "
+            "with a CARGO_REGISTRIES_ZER07LABS_TOKEN fallback; if both are empty in this context "
+            "the query cannot be made. Refusing rather than reporting an unqueried registry as "
+            "behind the source."
+        )
+    return token
+
+
+def _query_for(version: str) -> str:
+    """The query string, mirroring `yank.yml:70`. Safe to print — it carries no credential."""
+    return f"?query={PACKAGE_NAME}+version:{version}&page_size={PAGE_SIZE}"
+
+
+def fetch_registry(version: str, token: str) -> list:
+    """GET the rows for one version.
+
+    `curl`, not `urllib`, and that is not stylistic. This repo's hermeticity convention is stub
+    executables first on `PATH` (`scripts/test_release_notice_gate.py:62-83`), with the rule "no
+    mocks, no cassettes". `urllib` can only be controlled by monkeypatching, which would make this
+    the one guard in the repo whose world is a mock. Shelling out also keeps the request
+    byte-comparable to `yank.yml:69-71`.
+
+    `-sf` matters: without `-f` a 401 or a 500 returns an error BODY with exit 0, and a body that
+    is not a list of packages parses to "no rows" — which reads as drift. Every HTTP failure has
+    to arrive as a non-zero exit.
+    """
+    query = _query_for(version)
+    try:
+        proc = subprocess.run(
+            [
+                "curl",
+                "-sf",
+                "--max-time",
+                str(CURL_MAX_SECONDS),
+                "-H",
+                f"X-Api-Key: {token}",
+                f"{REGISTRY_URL}{query}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise InfraError("`curl` is not on PATH — cannot query the registry") from exc
+    if proc.returncode != 0:
+        # Neither the argv nor stderr is echoed: the argv carries the credential, and curl's
+        # stderr can quote the request. The exit status is the diagnosis (22 = HTTP >= 400,
+        # 28 = timeout, 6 = DNS).
+        raise InfraError(
+            f"curl exited {proc.returncode} querying {query} — the registry could not be read. "
+            "22 is an HTTP error (a bad or unscoped credential lands here), 28 a timeout, 6 DNS. "
+            "This is infrastructure: an unanswered query says nothing about what is published."
+        )
+    try:
+        rows = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise InfraError(f"the response to {query} is not JSON: {exc}") from exc
+    if isinstance(rows, list) and len(rows) == PAGE_SIZE:
+        raise InfraError(
+            f"the response to {query} carries exactly {PAGE_SIZE} rows, which is the page size. "
+            "Treat that as evidence the `version:` qualifier was IGNORED and a first page of "
+            "everything came back: a target version outside that page would read as absent, and "
+            "the run would report drift for a published version. Raise page_size, or stop "
+            "trusting the qualifier."
+        )
+    return rows
+
+
+def assert_live_instrument_healthy(target: str, token: str) -> str:
+    """Prove the query works before believing anything it says about the target. Returns the
+    canary that answered.
+
+    This is the runtime form of the repo's "pin the denominator" idiom. Without it EVERY failure
+    of the query surface reads as drift, which is the worst outcome available here — a confident
+    wrong verdict. It runs FIRST so no code path can interpret a target result against an
+    unproven instrument.
+
+    Healthy if ANY candidate returns both formats; unhealthy only if all of them come back short.
+    That is what survives an individual yank, and it is why this is a roster rather than a pin.
+    """
+    candidates = [v for v in CANARY_VERSIONS if v != target]
+    if not candidates:
+        raise InfraError(
+            f"every entry in CANARY_VERSIONS equals the target version {target}, so there is no "
+            "independent probe left. A canary that IS the target cannot distinguish a broken "
+            "query from a real lag. Add a published version to the roster."
+        )
+    tried: list[str] = []
+    for candidate in candidates:
+        formats = registry_formats(fetch_registry(candidate, token), candidate)
+        tried.append(f"{candidate} -> {', '.join(sorted(formats)) or 'nothing'}")
+        if set(REQUIRED_FORMATS) <= formats:
+            return candidate
+    raise InfraError(
+        "the registry query returned nothing usable for any canary version ("
+        + "; ".join(tried)
+        + "). Either the query shape is wrong, or every canary has been yanked and "
+        "CANARY_VERSIONS needs re-pointing. Refusing to read the target's answer through an "
+        "instrument that has not been shown to work."
+    )
+
+
 def _load_packages_json(path: Path) -> object:
     try:
         raw = path.read_text(encoding="utf-8")
@@ -365,7 +525,12 @@ def _remediation(version: str, tagged: bool, missing: set[str]) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[1])
-    parser.add_argument("--packages-json", type=Path, default=None)
+    parser.add_argument(
+        "--packages-json",
+        type=Path,
+        default=None,
+        help="a saved registry response; omit to query the registry live",
+    )
     parser.add_argument("--now", default=None, help="ISO 8601; defaults to real UTC now")
     parser.add_argument("--soft-grace-minutes", type=int, default=SOFT_GRACE_MINUTES)
     parser.add_argument("--hard-grace-minutes", type=int, default=HARD_GRACE_MINUTES)
@@ -387,11 +552,17 @@ def main(argv: list[str] | None = None) -> int:
         version = source_version(args.repo)
         assert_query_safe(version)
 
-        if args.packages_json is None:
-            raise InfraError(
-                "--packages-json is required: the live registry query is not implemented yet."
-            )
-        rows = _load_packages_json(args.packages_json)
+        proved_by = None
+        if args.packages_json is not None:
+            rows = _load_packages_json(args.packages_json)
+            assert_offline_instrument_healthy(rows, f"--packages-json {args.packages_json}")
+        else:
+            token = registry_token()
+            # Canary FIRST. A failed instrument must abort before the target answer is even
+            # computed, so there is no code path on which a target result is interpreted against
+            # an unproven instrument.
+            proved_by = assert_live_instrument_healthy(version, token)
+            rows = fetch_registry(version, token)
 
         # The instrument is exercised BEFORE the clock is consulted. The rule that actually has
         # teeth is narrower than "before", and worth stating in the form a future editor can
@@ -402,7 +573,6 @@ def main(argv: list[str] | None = None) -> int:
         # on exactly the runs that follow a release, which is when it is needed. The
         # `fresh`-parametrised cases in `scripts/test_registry_drift_gate.py` pin the early return;
         # nothing can pin a pure reorder, because a pure reorder is not observable.
-        assert_offline_instrument_healthy(rows, f"--packages-json {args.packages_json}")
         found = registry_formats(rows, version)
         missing = set(REQUIRED_FORMATS) - found
 
@@ -425,6 +595,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"::error::{exc}", file=sys.stderr)
         return 2
 
+    if proved_by:
+        print(f"instrument proven by canary {proved_by} (both formats present)")
     print(f"source version: {version}  (tag v{version} {'present' if tagged else 'ABSENT'})")
     print(f"registry serves: {', '.join(sorted(found)) or '<nothing>'}")
     print(f"most recent release attempt: {started.isoformat()} ({age_minutes:.0f} minutes ago)")

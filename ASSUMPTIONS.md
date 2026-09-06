@@ -927,3 +927,28 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Owner / re-open trigger:** the first exit 2 naming skew on a real scheduled run. Re-open if
   Cloudsmith or GitHub tag dates turn out to be routinely ahead by more than a few seconds.
 - **Status:** UNCONFIRMED (recorded 2026-09-06).
+
+
+## The three canary versions are actually published
+
+- **Plan:** `plans/registry-drift-check.md` (Phase 4)
+- **Assumed:** `0.7.50`, `0.7.60` and `0.7.65` are each served by the registry in both the `python`
+  and `npm` formats.
+- **Chose:** ship them as `CANARY_VERSIONS` unconfirmed, with the uncertainty written into the
+  constant, the plan and this file. The plan requires one `curl` with the real credential before
+  merge; this session had neither the credential nor authorisation to query a registry, and
+  guessing quietly would have been worse than shipping a labelled gap.
+- **Alternatives:** (a) block Phase 4 until the confirmation happens — rejected, everything else in
+  the phase is verifiable now and the roster is one constant to edit; (b) pick versions with a
+  weaker rule (any tag) — rejected, `publish.yml:748-749` records three tagged-but-refused versions,
+  so a tag is not evidence of publication and that is the whole selection rule; (c) probe without a
+  version filter as the instrument check — rejected in the plan, because it exercises a different
+  query than the target and so cannot prove the `version:` qualifier works.
+- **Blast radius if wrong:** contained and loud. Every scheduled run exits 2 naming all three
+  candidates tried and both possible causes. It never produces a wrong verdict; it produces no
+  verdict, visibly. The cost is that the check is not actually watching anything until the roster
+  is corrected — which is a real cost, just not a silent one.
+- **Owner / re-open trigger:** whoever merges Phase 4, or the first scheduled run. Re-open the
+  moment a run exits 2 naming the canaries.
+- **Status:** UNCONFIRMED (recorded 2026-09-06). ⚠ This one is unconfirmed in the strong sense —
+  it is a fact about the world that nobody has checked, not a judgement call awaiting review.
