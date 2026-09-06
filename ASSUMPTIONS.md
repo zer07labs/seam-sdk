@@ -858,3 +858,25 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   consistency with #43* — that is the specific reasoning this entry exists to interrupt.
 - **Status:** UNCONFIRMED (recorded 2026-09-05). The disposition is unchanged and deliberately so;
   what is unconfirmed is whether it should be, now that the argument supporting it is one leg short.
+
+
+## The blind-spot citation must fit on one line
+
+- **Plan:** `plans/registry-drift-check.md` (Phase 1)
+- **Assumed:** the `publish.yml` blind-spot paragraph will never need its citation to wrap onto a
+  second comment line.
+- **Chose:** `_pointer_window` in `scripts/test_release_notice_gate.py` returns the promise LINE
+  only. Three earlier drafts drew a wider boundary and each was defeated by a decoy placed inside
+  it; the last used `endswith((".", "!", "?"))` to decide whether a sentence was finished, which
+  made the guard's verdict depend on the promise line's final character. Deleting the heuristic
+  removes the whole defeat class rather than the latest instance of it.
+- **Alternatives:** (a) widen the terminal-punctuation set — rejected, it is the same argument one
+  round later and still platform- and prose-sensitive; (b) allow an explicit continuation marker
+  (a trailing `\`) — rejected as inventing syntax for a comment; (c) drop the guard and keep only
+  the comment fix — rejected, it is the pointer rotting unnoticed that #100 is about.
+- **Blast radius if wrong:** low and immediate. If someone writes a citation that wraps, the suite
+  goes red on the PR that does it with a message saying to join it onto the promise line. Nothing
+  ships broken; the cost is one confusing minute for that author. Reversible in a commit.
+- **Owner / re-open trigger:** whoever next rewrites that paragraph. Re-open if the citation
+  genuinely cannot fit — at which point the answer is to shorten the prose, not to widen the guard.
+- **Status:** UNCONFIRMED (recorded 2026-09-06).

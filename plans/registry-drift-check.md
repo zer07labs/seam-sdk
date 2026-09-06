@@ -220,7 +220,30 @@ rather than asserting equality against a number frozen when the plan was written
 
 ## Phase 1 — `publish.yml`'s blind-spot comment cites the issue it says it cites
 
-**Status: TODO**
+**Status: DONE** (2026-09-06, commit on `feat/registry-drift-check`). Three divergences, all in the
+guard rather than the edit:
+
+* **Two tests, not one.** Criterion 3 said "one more test"; the Tests paragraph beside it names two,
+  and criterion 4's red-first is unsatisfiable without the second. A plan defect — the verifier
+  confirmed neither test is redundant. The file went 15 → 54 tests, because the guard needed a
+  regression set (see below), not because the phase grew.
+* **The pointer window is the promise LINE, not the paragraph.** The planned guard was defeated in
+  three consecutive review rounds, each time by a decoy reference placed just inside a generously
+  drawn boundary: first the whole 19-line comment block (`(see #69)` seventeen lines up satisfied
+  it), then the paragraph (any comment line added below it), then the promise sentence with a
+  one-line wrap extension (`.)`, `."`, `…`, `。` were misread as unfinished, so the verdict turned
+  on the promise line's last character). The boundary is now the line, with no punctuation
+  heuristic — it cannot be widened by editing the file it checks. **Cost accepted:** a citation
+  that wraps onto a second line reads as absent and reddens the suite. Logged in `ASSUMPTIONS.md`.
+* **The pattern accepts a workflow path as well as `#100`, and resolves it on disk.** Criterion 2
+  asked for `#\s*100\b`. Phase 9 re-points this comment at the shipped workflow, so a path is a
+  legitimate pointer — but it must exist (a regex cannot tell a live path from a dead one), it must
+  not be `publish.yml` itself (a self-reference), and the existence check lists the directory
+  rather than calling `is_file()`, because APFS resolves `Ci.yml` and `ubuntu-latest` does not.
+
+Verification took three rounds and stopped at the cap; the user accepted the terminal fix. Evidence:
+all 10 guard clauses caught by individual mutation, a 16-case sweep over promise-line endings, and
+every defeat from all three rounds firing against the real file.
 
 **Delivers.** `publish.yml:765` currently ends *"…it is deliberately NOT solved here (see the issue
 this job cites)"* — and the job body (`:766-832`) cites **no issue number, no URL and no repo

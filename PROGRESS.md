@@ -3182,3 +3182,25 @@ different blast radii, and because the middle group is safe to merge before the 
 
 Phase 8 is **dropped** from this plan (scope creep: tag-vs-tag, not registry-vs-source) and is
 filed as its own issue during finalization.
+
+#### Phase 1 — the blind-spot comment cites its issue · DONE
+
+* **2026-09-06 · verdict PASS (accepted at the round cap) · Opus verifier · 3 rounds.**
+* **Round 1 GAPS (7 items).** The pattern matched a bare `#\d+` anywhere in the 19-line comment
+  block. Defeated by adding `(see #69)` seventeen lines above and deleting the real citation.
+* **Round 2 GAPS (3 new defeats, same class).** Scope was anchored at the top but unbounded at the
+  bottom, so any comment line added below supplied the pointer; a duplicate marker re-widened it;
+  and the case-sensitive `publish.` lookahead disagreed with APFS.
+* **Round 3 GAPS (1, same class).** The wrap heuristic misread `.)`, `."`, `…`, `。` as unfinished
+  sentences. Verdict turned on the promise line's final character. Fix was terminal rather than
+  incremental: the heuristic was deleted and the window narrowed to the promise line.
+* **Files:** `.github/workflows/publish.yml` (line 765 only; file still 832 lines, so every
+  line-anchored citation into `.github/workflows/publish.yml:766-832` is unmoved) ·
+  `scripts/test_release_notice_gate.py` (15 → 54 tests).
+* **Proof:** each of the guard's 10 clauses caught by an individual mutation; a 16-case sweep over
+  promise-line endings; all defeats from all three rounds firing against the real file; both
+  Phase 9 headroom forms still green.
+* **Two scaffolding bugs the mutation battery caught in the tests themselves:** fixtures matching
+  `"  release-outcome:"` against `textwrap.dedent`-ed text were silent no-ops, and three mutation
+  scripts failed to apply. Both had been reporting as passing evidence.
+* **Next:** Phase 2 — the `scripts/` twin of the declared-dependency guard.
