@@ -406,7 +406,41 @@ per-file steps give a named check per gate in the PR's check list, which is wort
 
 ## Phase 3 — `scripts/check_registry_drift.py`: the decision core, offline
 
-**Status: TODO**
+**Status: DONE** (2026-09-06)
+
+> **Divergences from this section as written.**
+> 1. ➕ *A skip path this section did not anticipate: `CLOCK_SKEW_TOLERANCE_MINUTES = 5`.* A
+>    negative age — `--now` before the release attempt, or a tag dated ahead of the checker — sits
+>    below EVERY grace threshold, so the two-tier window deferred it silently and would have gone
+>    on doing so forever. That is precisely the "never a skip path" rule this phase states, broken
+>    by the mechanism meant to enforce it. Found by running the script, not by reading it. Small
+>    skew is clamped to zero (a tag date a few seconds ahead is NTP jitter and means "brand new");
+>    beyond the tolerance it is `InfraError`.
+> 2. *Criterion 9 needed a design decision the plan left implicit, and Phase 4 depends on it.*
+>    "An empty list → 2" and criterion 2's "response lacks it → 1" are only compatible if the
+>    OFFLINE positive control is the response itself: it must carry at least one `seam-sdk` row at
+>    some version, or it is not a plausible answer to a `seam-sdk` query. Live, Phase 4's canary
+>    plays that role, so an empty TARGET response there is trusted as drift. Implemented as a named
+>    `assert_offline_instrument_healthy()` so Phase 4 has an explicit seam, with both rules written
+>    down next to each other.
+> 3. *Criterion 13's `""` case is unreachable and was split out rather than left implying coverage.*
+>    Both manifest readers refuse an empty version first (the pyproject pattern requires a
+>    character between the quotes; an empty `package.json` version reads as missing), so nothing
+>    can reach `assert_query_safe` with one. Its empty branch is defensive, exactly like
+>    `yank.yml:65`'s `|""` arm, and now has a test that says so.
+> 4. *The `format` clause is verdict-inert and is pinned on the OUTPUT instead.* Dropping it can
+>    only add non-required formats to `found`, and `missing` is `{python, npm} - found`, so the
+>    exit code is identical either way. What it corrupts is the diagnosis — `registry serves:
+>    docker, raw` tells someone chasing a failed publish that the registry holds something relevant
+>    to this release. Asserted there.
+> 5. *The mutation round (criterion 17) found two test defects on its first pass, not one.*
+>    `no_query_guard` survived because the unsafe version was written to the worktree without being
+>    committed, so `version_landed_at` refused first — exit 2 for an unrelated reason, and the test
+>    passed with the guard deleted. `format_clause_dropped` survived per (4). Both fixed; the
+>    committed suite now catches 15/15.
+> 6. *Also fixed in passing:* `test_every_scripts_test_file_runs_in_ci`'s docstring said "Six
+>    `python -m pytest` steps" and this phase makes it eight. The number was removed rather than
+>    corrected — it is the same staleness that assertion exists to catch, one level up.
 
 **Delivers.** The script that answers the question, with the registry response **injected from a
 file**. No network, no `gh`, no reporting. Exit **0** clean or within grace, **1** drift, **2**

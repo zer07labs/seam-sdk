@@ -3263,3 +3263,36 @@ filed as its own issue during finalization.
 * **Counts:** `test_ci_gate.py` 17 -> 68 · `scripts` **225** · python **1246 passed / 20 skipped** ·
   ruff clean.
 * **Next:** Phase 3 — `scripts/check_registry_drift.py`, the decision core, offline.
+
+#### Phase 3 — the decision core, offline · DONE
+
+* **2026-09-06.** `scripts/check_registry_drift.py` (new, stdlib-only) ·
+  `scripts/test_registry_drift_gate.py` (new, 37 tests) · one new `workflow-guards` step in
+  `.github/workflows/ci.yml`.
+* **The comparison is `is main's declared version installable?`** — one question, no tag involved.
+  `.github/workflows/release-on-runtime.yml:180` pushes the version commit before `:182`/`:186`/`:187` tag, so that
+  one comparison is true in the never-dispatched state and false in both failure states. The tag is
+  read only to choose the remediation text.
+* **A skip path the plan did not anticipate, found by running the script.** A negative age — a
+  release attempt dated after `now` — sits below every grace threshold, so the two-tier window
+  deferred it silently and forever. That is the "never a skip path" rule broken by the mechanism
+  meant to enforce it. Five minutes of skew now clamps to "brand new"; more than that is
+  infrastructure.
+* **The offline/live positive-control split is now explicit.** Offline, the injected response must
+  itself contain a `seam-sdk` row at some version, or it is a broken instrument (exit 2). Live,
+  Phase 4's canary plays that role, so an empty target response is trusted as drift. Written as a
+  named function so Phase 4 has a seam rather than a surprise.
+* **Proof:** 15/15 mutations caught — inverted verdict, commit-date-only clock, collapsed tiers,
+  escalating warn band, instrument checked after the clock, deleted crash handler, deleted query
+  guard, deleted instrument check, deleted tag floor, deleted skew guard, unstripped npm scope,
+  substring name match, dropped format clause, dropped version clause, unchecked lockstep.
+* **Two of those first survived, and both were test defects rather than code defects.** The
+  query-safety test wrote its unsafe version to the worktree without committing it, so the run
+  exited 2 from "cannot date this version" and passed with the guard deleted. The format clause had
+  no fixture carrying a third package format — and is verdict-inert anyway, so it is pinned on the
+  reported line instead.
+* **Counts:** `scripts` **262** · python **1246 passed / 20 skipped** · ruff clean ·
+  `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` still exit **6** naming the seven recorded lag
+  fields.
+* **Not exercised against a network.** Every test is hermetic; the live query is Phase 4.
+* **Next:** Phase 4 — the live registry query and the canary roster.

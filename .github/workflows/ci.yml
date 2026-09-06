@@ -675,6 +675,13 @@ jobs:
       # `ci.yml`'s `verify` job exercises against the real tree instead.
       - name: the independence gate is a denylist that actually catches a Seam crate
         run: python -m pytest scripts/test_independence_gate.py -q
+      # `release-outcome` reports a publish that RAN and failed; it is a job inside publish.yml, so
+      # a release that was never dispatched at all fails as silently as before (seam-sdk#100).
+      # check_registry_drift.py answers the durable question instead — does the registry serve what
+      # main claims — and these drive it against real throwaway git repos and injected registry
+      # responses. No network: the scheduled workflow is what exercises it live.
+      - name: the registry-drift check fires on a real lag and refuses to guess
+        run: python -m pytest scripts/test_registry_drift_gate.py -q
       # Also runs inside the `python` job. Duplicated on purpose: there it proves the guard passes,
       # here it proves the guard needs nothing but a checkout — which is the actual claim
       # seam-adapters relies on (seam-sdk#54).

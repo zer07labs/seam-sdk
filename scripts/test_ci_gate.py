@@ -280,8 +280,11 @@ def test_the_pytest_step_sets_seam_require_wheel_build() -> None:
 def test_every_scripts_test_file_runs_in_ci() -> None:
     """The `workflow-guards` job names its test files one by one, so a new one never runs.
 
-    Six `python -m pytest scripts/test_*.py` steps, each a hardcoded filename. The list happens to
-    be complete today, which is exactly the state in which nobody notices it is a list: adding
+    One `python -m pytest scripts/test_*.py` step per file, each naming its filename literally.
+    (Deliberately not stating how many: the count was written as "six" and was eight two commits
+    later, which is the same staleness this assertion exists to catch, one level up.) The list
+    happens to be complete today, which is exactly the state in which nobody notices it is a list:
+    adding
     `scripts/test_whatever.py` gets it collected locally and never on CI, so it can sit red — or
     absent — indefinitely. `python/tests/` is guarded by a directory-scoped run; `scripts/` is not.
 
