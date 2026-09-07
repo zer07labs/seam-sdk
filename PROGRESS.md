@@ -51,7 +51,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 >
 > **Done in Phase 1 (2026-08-31).** Delivery was verified against this tree — `record_digest_v3` at
 > `python/seam_sdk/crypto.py:635`, `ts/src/crypto.ts:814`, `verify/src/verify.rs:448`; the 6a/6b
-> streamed arms live at `python/seam_sdk/admin.py:129` and `ts/src/admin.ts:141`; KATs at
+> streamed arms live at `python/seam_sdk/admin.py:130` and `ts/src/admin.ts:142`; KATs at
 > `conformance/vectors.json:70` — and the plan is now `plans/archive/record-digest-v3.md`.
 > `plans/authorize-single-canonicalization.md` turned out to be delivered too (issue #60, closed
 > 2026-08-25) and had **no index row at all**, so it was archived in the same pass. Delivery PRs:
@@ -62,14 +62,14 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 
 | Path | Purpose / relevance |
 |---|---|
-| `python/seam_sdk/_collective.py:84` | `collective_outcome_of(resp: Union["pb.DecisionResponse", "pb.SessionStep"])` — fail-closed decode. **Phase 3 DONE**: widened to the union. `:1-30` documents why raw field access is unsafe (optional presence + `UNSPECIFIED` == 0 ⇒ a naive negative test allows on every unknown value). |
-| `ts/src/client.ts:218` | `collectiveOutcomeOf(resp: DecisionResponse | SessionStep)` — the TS twin. **Phase 3 DONE.** It needed a real union: protobuf-es brands messages, so passing a `SessionStep` is a *compile error* today (reproduced: `TS2345`, `$typeName` mismatch). `:146-151` `UnknownCollectiveVerdictError(rawValue, decisionId: string)` — **required** `string`, so `:229`'s `resp.decisionId` became `resp.decisionId ?? ""`; a verifier mutation removing that coalesce reddens a test, so it is load-bearing, not decoration. |
+| `python/seam_sdk/_collective.py:99` | `collective_outcome_of(resp: Union["pb.DecisionResponse", "pb.SessionStep"])` — fail-closed decode. **Phase 3 DONE**: widened to the union. `:1-30` documents why raw field access is unsafe (optional presence + `UNSPECIFIED` == 0 ⇒ a naive negative test allows on every unknown value). |
+| `ts/src/client.ts:237` | `collectiveOutcomeOf(resp: DecisionResponse | SessionStep)` — the TS twin. **Phase 3 DONE.** It needed a real union: protobuf-es brands messages, so passing a `SessionStep` is a *compile error* today (reproduced: `TS2345`, `$typeName` mismatch). `:146-151` `UnknownCollectiveVerdictError(rawValue, decisionId: string)` — **required** `string`, so `:229`'s `resp.decisionId` became `resp.decisionId ?? ""`; a verifier mutation removing that coalesce reddens a test, so it is load-bearing, not decoration. |
 | `ts/gen/seam/api/v1/seam_pb.ts` | Branded `SessionStep = Message<"seam.api.v1.SessionStep"> & {…}` — the reason Phase 3's TS half is a hard block, not a typing nicety. Also carries `collectiveOutcome?` on the same branded type. Cited by symbol, not by line: this is a generated, gitignored file, and a line number into it is correct only until the next `make generate`. |
 | `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi` | `SessionStep.collective_outcome` in the Python stubs — generated, never surfaced. Cited by symbol for the same reason as the row above; it carried `:289,297` until round 3, in direct violation of that rule and of `test_no_document_line_anchors_into_a_generated_file`, which it evaded **only** because a comma-list matches `CITATION` not at all. The rule was stated one row up and broken the next. |
-| `python/seam_sdk/client.py:541`, `ts/src/client.ts:789` | `submit_commit` / `submitCommit` return a `SessionStep` — the caller Phase 3 exists for. |
+| `python/seam_sdk/client.py:541`, `ts/src/client.ts:809` | `submit_commit` / `submitCommit` return a `SessionStep` — the caller Phase 3 exists for. |
 | `python/tests/test_collective_outcome.py`, `ts/tests/collective_outcome.test.ts` | `DecisionResponse` cases only. **Phase 3** adds the `SessionStep` cases (absent ⇒ none; `UNSPECIFIED` ⇒ raise; unknown ⇒ raise; non-commit step ⇒ none). Drive red first. |
-| `python/seam_sdk/client.py:473` + `python/seam_sdk/client.py:514` · `python/seam_sdk/aio.py:371` + `python/seam_sdk/aio.py:412` · `ts/src/client.ts:736` + `ts/src/client.ts:772` | `submit_evaluation` / `submit_objection` — **already delivered** by `c49d005`. Do not re-plan. Written as six separate citations rather than three comma-lists, because a comma-list matches `CITATION` **not at all**: `` `…:723,759` `` was wrong twice in a row — once before this phase and once *inside the commit whose message claims it shifted every citation below `:239`* — and nothing ever said so. |
-| `python/seam_sdk/client.py:506-507` · `python/seam_sdk/aio.py:404-405` · `ts/src/client.ts:758` | `confidence` presence mapping — `None` ⇒ field-absent, never `0.0`. Correct in both languages; pinned by `python/tests/test_evaluation_confidence.py:55,64,87,100` and `ts/tests/evaluation.test.ts:59,70,85,93`. |
+| `python/seam_sdk/client.py:473` + `python/seam_sdk/client.py:514` · `python/seam_sdk/aio.py:371` + `python/seam_sdk/aio.py:412` · `ts/src/client.ts:756` + `ts/src/client.ts:792` | `submit_evaluation` / `submit_objection` — **already delivered** by `c49d005`. Do not re-plan. Written as six separate citations rather than three comma-lists, because a comma-list matches `CITATION` **not at all**: `` `…:723,759` `` was wrong twice in a row — once before this phase and once *inside the commit whose message claims it shifted every citation below `:239`* — and nothing ever said so. |
+| `python/seam_sdk/client.py:506-507` · `python/seam_sdk/aio.py:404-405` · `ts/src/client.ts:778` | `confidence` presence mapping — `None` ⇒ field-absent, never `0.0`. Correct in both languages; pinned by `python/tests/test_evaluation_confidence.py:55,64,87,100` and `ts/tests/evaluation.test.ts:59,70,85,93`. |
 > **Read every row below as *as at plan time*, 2026-08-31, unless the row says otherwise.** Some
 > were updated mid-run and some were not, which is worse than either — an unstamped map invites a
 > reader to treat a stale row as current. The rows known to have moved since are corrected inline.
@@ -93,7 +93,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `python/tests/test_compatibility_citations_resolve.py` | Every backticked `file:line` in `COMPATIBILITY.md`/`DECISIONS.md` must resolve; `:61-64,:92` ≥10 each; `:76` sibling paths need a `seam-runtime/` prefix; `:141-172` `ANCHORED` needles must hit **exactly once** within `CITATION_SLACK` (`:176`). **Phase 8** adds the vendored-file rule. |
 | `verify/docs/seam-event.v1.md` | Byte-verbatim vendored spec, pinned in its header. **Phase 9** refreshes it whole-file. Source of #73's citation drift. |
 | `scripts/check_vendored_spec.py:22-38` | Integrity (`:24-26`) / reachability (`:28-32`) / **currency** (`:34-38`) — fails on staleness by explicit decision. This is what will announce runtime P1a Phase 6 by reddening `spec-pin` (`.github/workflows/ci.yml:588-589`) on every PR. |
-| `python/seam_sdk/crypto.py:631-635` | `record_digest_v3` takes `context_digest` as an **opaque 32-byte sub-digest**, deliberately not reimplemented. **This is why ACDP P1a costs the digest layer nothing** — verified: `context_digest` appears only as an input (`:624,668,702`, `python/seam_sdk/admin.py:141`), and no context-provenance formula exists in `python/`, `ts/` or `verify/`. `:386` `_frame` · `:390` `_opt` · `:609` `_opt_bytes` · `:394` `record_digest_v2`. |
+| `python/seam_sdk/crypto.py:631-635` | `record_digest_v3` takes `context_digest` as an **opaque 32-byte sub-digest**, deliberately not reimplemented. **This is why ACDP P1a costs the digest layer nothing** — verified: `context_digest` appears only as an input (`:624,668,702`, `python/seam_sdk/admin.py:142`), and no context-provenance formula exists in `python/`, `ts/` or `verify/`. `:386` `_frame` · `:390` `_opt` · `:609` `_opt_bytes` · `:394` `record_digest_v2`. |
 | `verify/src/verify.rs:668-674` | `schema_version` dispatch (2 ⇒ v2, 3 ⇒ v3, else refuse); `:636-644` ceiling refusal. P1a keeps `schema_version = 3`, so **no new arm**. |
 | `python/tests/test_errors_is_import_light.py:87-100` | `crypto.py` may import only `cryptography`; `errors.py` only `grpc`. seam-runtime's `sdk-digest-parity` gate loads `crypto.py` standalone. **No phase may add an import to either.** |
 | `scripts/test_ci_gate.py:79,98,141` | `ci-ok`'s `needs:` must equal the full job set both ways; `ALLOWED_ADVISORY` (the literal is at `:52`, asserted by the test at `:98`) may hold only `{integration, spec-pin}`; `workflow-guards` must stay free of `BUF_TOKEN`/`buf-setup-action`/`make generate` (banned triple at `:191-195`). **Any new CI job must be added to `needs:`.** |
@@ -168,8 +168,8 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   the plan moved. Merge commit `68e92c2`; branch `feat/publish-integrity-and-tracking-state`.
 - **Delivery verified against code, not status tables** (the whole point of the phase):
   `record_digest_v3` at `python/seam_sdk/crypto.py:635`, `ts/src/crypto.ts:814`,
-  `verify/src/verify.rs:448`; streamed v3 arms at `python/seam_sdk/admin.py:129` (with `:107`
-  refusing `schema_version > 3`) and `ts/src/admin.ts:141` (with `:109` the matching ceiling
+  `verify/src/verify.rs:448`; streamed v3 arms at `python/seam_sdk/admin.py:130` (with `:107`
+  refusing `schema_version > 3`) and `ts/src/admin.ts:142` (with `:109` the matching ceiling
   refusal); KATs at `conformance/vectors.json:70`;
   issue #56 CLOSED 2026-08-25.
 - **Divergence:** `plans/authorize-single-canonicalization.md` was also fully delivered (5/5 phases
@@ -638,7 +638,7 @@ ERROR: a breaking change and must be handled, never silently rewritten away.
   `ContextBinding` field present — all eleven, `content_hash` / `receipt_hash` / `key_status` /
   `resolved_status` / `retraction` among them.
 - **No wrapper change was needed, exactly as the plan predicted** — verified rather than assumed:
-  `resolve_context` (`python/seam_sdk/client.py:718`) and `resolveContext` (`ts/src/client.ts:926`)
+  `resolve_context` (`python/seam_sdk/client.py:718`) and `resolveContext` (`ts/src/client.ts:946`)
   return the generated `ContextBinding` straight through, so the five fields reach callers with no
   SDK work. What both *did* carry was a docstring enumerating four of the eleven fields as if that
   were the set; both now say what they actually return, and both carry the vocabulary warning.
@@ -1010,7 +1010,7 @@ linear sequencing keeps it trivial.
 
 **Ground-truth corrections made while planning.** Recorded rather than smoothed over, because two of
 them change what the phases do:
-- `ts/src/client.ts:218` already carries `collectiveOutcomeOf` over a `DecisionResponse | SessionStep`
+- `ts/src/client.ts:237` already carries `collectiveOutcomeOf` over a `DecisionResponse | SessionStep`
   union. TypeScript is not a judgement call — it gets the twin.
 - The #85 failing set is the shared-8099 set **minus the first test**, not the whole set. Four tests
   use the `server` fixture (in `python/tests/test_integration.py` at `960cf81`, lines 69/93/108/306 —
@@ -1029,7 +1029,7 @@ them change what the phases do:
 
 | Path | Purpose / relevance |
 |---|---|
-| `python/seam_sdk/_collective.py:84` | `collective_outcome_of` — the shape Phase 3 mirrors: `HasField` gate at `:116`, frozen dataclass at `:52`, union signature at `:84-86`. |
+| `python/seam_sdk/_collective.py:99` | `collective_outcome_of` — the shape Phase 3 mirrors: `HasField` gate at `:116`, frozen dataclass at `:52`, union signature at `:84-86`. |
 | `python/seam_sdk/_policy.py` | **Phase 3 created it.** `policy_enforcement_of(resp)` returning `None` iff absent. New module, not a `_collective.py` addition — that module's docstring is entirely about a growth policy this field does not have. |
 | `python/seam_sdk/__init__.py:10` | Where `_collective`'s exports are imported; Phase 3 adds `_policy`'s alongside, plus two `__all__` entries. |
 | `ts/src/client.ts:218` | `collectiveOutcomeOf` over the union. **Phase 4 inserted `policyEnforcementOf` immediately after it**, so this citation survived unchanged; the `submitCommit` citation did not, and was repointed by measurement in the same commit. |
