@@ -987,6 +987,15 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Chose:** ship it, inherited verbatim from `.github/workflows/yank.yml`, which has used this
   query shape in production. No test in this repo executes it — `scripts/test_yank_gate.py`
   truncates before the call — so "it works in yank.yml" is the whole of the evidence.
+- **Evidence, upgraded 2026-09-06:** that evidence is much stronger than it was written as. The
+  call at `.github/workflows/yank.yml:69-71` runs `curl -sf` under `set -euo pipefail`
+  (`.github/workflows/yank.yml:37`), so any HTTP status at or above 400 aborts the step and fails
+  the run; and it sits *before* the `dry_run` early-exit, so it is unconditional. The workflow is a
+  single step, and it has **27 runs, all successful, none failed**. Every one of them therefore
+  executed this exact query shape against the live registry and got a 2xx that `jq` then parsed.
+  That is production observation, not inference from a file. It also disposes of the credential
+  question underneath it: `CLOUDSMITH_API_KEY` is a working **API key** for the `api.cloudsmith.io`
+  host — see the entry below, which exists because those two credentials are not interchangeable.
 - **Blast radius if wrong:** bounded by the canary, and deliberately so. If the query shape were
   wrong the canary versions would come back empty too, and an empty canary is exit 2 ("the
   instrument is broken") rather than exit 1 ("the registry lags"). The failure is loud and names
@@ -1014,3 +1023,37 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   version the registry demonstrably serves, this is the assumption that broke.
 - **Status:** UNCONFIRMED (recorded 2026-09-06). ⚠ Unconfirmed in the strong sense — a fact about a
   third party's API that nobody here has checked.
+
+
+## `api.cloudsmith.io` and `dl.cloudsmith.io` take DIFFERENT credentials
+
+- **Plan:** `plans/registry-drift-check.md` (Phase 4)
+- **Assumed:** the token this check sends is the kind of token the host it sends it to accepts.
+- **Chose:** `X-Api-Key` against `api.cloudsmith.io`, matching `.github/workflows/yank.yml:69-71`
+  rather than the `registry-smoke` step in `publish.yml`, which reads a *different* host. This
+  looks like a detail and is not: Cloudsmith has two credential types and they are not
+  interchangeable. An **entitlement token** authenticates basic-auth reads of the download host
+  `dl.cloudsmith.io` and is scoped to a subset of packages; an **API key** authenticates
+  `X-Api-Key` calls to the management API `api.cloudsmith.io`. This was established the hard way
+  during this run: a token supplied for verification returned 200 from `dl` and **401 from `api`**,
+  and its entitlement covered 3,285 packages of which none matched `seam-sdk` at all.
+- **Why it is recorded rather than merely fixed:** an entitlement token pointed at `api` fails
+  *closed and loudly* (401 → exit 2), which is the safe direction. But the reverse mistake — reading
+  a *narrower* entitlement's package list and concluding a version is absent — would produce a false
+  **exit 1**, a drift report for a version the registry serves perfectly well. The check must never
+  fail in that direction, so the host/credential pairing is load-bearing, not incidental.
+- **Alternatives:** (a) probe `dl.cloudsmith.io/basic/.../simple/` like `registry-smoke` does —
+  rejected: the simple index is per-format and entitlement-scoped, so an absence there is
+  ambiguous between "not published" and "not in this entitlement", which is exactly the ambiguity
+  this check exists to remove; (b) accept either credential and pick the host from its shape —
+  rejected as guessing at a third party's token format.
+- **Blast radius if wrong:** contained. A wrong-type credential 401s, the canary roster comes back
+  empty, and the run exits 2 naming the instrument. No verdict is produced.
+- **Owner / re-open trigger:** whoever rotates the Cloudsmith secrets. Re-open if
+  `CLOUDSMITH_API_KEY` is ever repointed at an entitlement token — the drift check and
+  `.github/workflows/yank.yml` would both start 401ing, and yank's 27-for-27 record is the canary
+  for that.
+- **Status:** CONFIRMED (2026-09-06) for the half that matters — that the two hosts take different
+  credentials, and that `CLOUDSMITH_API_KEY` is an API key accepted by `api.cloudsmith.io`, is
+  observed, not assumed. What stays UNCONFIRMED is whether that key's *own* scope covers every
+  `seam-sdk` row the check will ask about; yank's successful queries are evidence it does.

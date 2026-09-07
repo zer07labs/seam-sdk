@@ -2509,7 +2509,10 @@ DRIFTING = "0.7.78"
 #: The intra-field label separator, one copy, shared by the stub and by the script's `--jq`.
 #: U+001F because GitHub permits a comma inside a label NAME and forbids nothing that would
 #: collide with a unit separator.
-LABEL_SEP = "\x1f"
+#: DERIVED from the script, never restated. This literal used to be a third independent copy of a
+#: value the script also wrote twice, and three copies that happen to agree are not one value —
+#: `join(",")` in the projection passed every test in this file while suppressing real drift.
+LABEL_SEP = _SCRIPT_MODULE.LABEL_SEP
 
 
 def gh_stub(
@@ -2639,6 +2642,24 @@ def heartbeat_argv(repo: str = STUB_REPO) -> list[str]:
     against a literal or it would be asking the constant to confirm itself.
     """
     return ["api", heartbeat_verb(repo).split(" ", 1)[1], "--jq", ".workflow_runs[].created_at"]
+
+
+def issue_list_argv(repo: str = STUB_REPO) -> list[str]:
+    """The ONE `gh issue list` argv this check may ever emit, word for word.
+
+    `--state all` was pinned; its neighbours were not, and each is load-bearing. Dropping `labels`
+    from `--json` makes real `gh` error, so the check exits 2 forever. Dropping `--limit` falls back
+    to gh's default of 30 on a repository already past issue #100 — an existing drift issue outside
+    that window is re-filed every two hours, and the truncation warning could never fire.
+    """
+    return [
+        "issue", "list",
+        "--state", "all",
+        "--limit", str(_SCRIPT_MODULE.ISSUE_LIMIT),
+        "--json", "number,state,title,labels",
+        "--jq", _SCRIPT_MODULE._ISSUE_LIST_JQ,
+        "--repo", repo,
+    ]
 
 
 def gh_writes(log: Path) -> list[str]:
@@ -3922,8 +3943,15 @@ def test_the_staleness_arm_cannot_raise_whatever_goes_wrong_inside_it(monkeypatc
         ("17 */2 * * *", 500, True),
         ("17 */12 * * *", 500, False),
         ("17 */12 * * *", 2500, True),
+        # This row pins the multiplier's VALUE, which the three above do not. They constrain it
+        # only to (0.694, 3.47), so 1 and 2 both pass — and at 1 the arm warns whenever a single
+        # cron period slips, which the workflow's own cron comment says GitHub does routinely. A
+        # warning that is wrong every time is the muted-guard failure this design argues against.
+        # 300 minutes is quiet only when the multiplier is at least 2.5, so 1 and 2 both redden it.
+        ("17 */2 * * *", 300, False),
     ],
-    ids=["two-hourly-warns", "twelve-hourly-stays-quiet", "twelve-hourly-warns-later"],
+    ids=["two-hourly-warns", "twelve-hourly-stays-quiet", "twelve-hourly-warns-later",
+         "two-hourly-quiet-below-threshold"],
 )
 def test_the_threshold_the_heartbeat_uses_moves_with_the_cron(
     monkeypatch, cron: str, silence_minutes: int, warns: bool
@@ -3997,6 +4025,106 @@ def test_the_write_classifier_notices_a_write_smuggled_through_gh_api(tmp_path: 
     ):
         with pytest.raises(AssertionError):
             gh_writes(_fabricated_log(tmp_path, name, [heartbeat_argv() + extra]))
+
+
+def test_a_roster_entry_that_could_alter_the_request_is_refused(monkeypatch) -> None:
+    """The canary roster reaches the SAME URL interpolation as the source version.
+
+    Only the source version was ever validated. `_query_for` builds `?query=seam-sdk+version:<v>`
+    for roster entries too, so an entry carrying `&` appends a parameter to the request instead of
+    failing — and the roster constant's own comment says values of this class must be checked. The
+    refusal must be an `InfraError`, so it exits 2 rather than reading as a verdict.
+    """
+    # Both halves are load-bearing, and the first draft of this test had neither. Asserting only
+    # that an InfraError comes out passes with the guard DELETED: execution falls through to
+    # `fetch_registry`, which raises InfraError of its own and quotes the version in the message.
+    # A mutation run caught that — the test was green against its own removal.
+    reached: list[str] = []
+
+    def must_not_run(version: str, token: str) -> object:
+        reached.append(version)
+        raise AssertionError(f"fetch_registry was reached with {version!r} before validation")
+
+    monkeypatch.setattr(_SCRIPT_MODULE, "CANARY_VERSIONS", ("0.7.50&admin=1", "0.7.65"))
+    monkeypatch.setattr(_SCRIPT_MODULE, "fetch_registry", must_not_run)
+    with pytest.raises(_SCRIPT_MODULE.InfraError) as caught:
+        _SCRIPT_MODULE.assert_live_instrument_healthy("0.7.77", "stub-token")
+    assert "not plain digits-and-dots" in str(caught.value), caught.value
+    assert reached == [], f"the entry reached the request path before being validated: {reached}"
+
+
+def test_an_interpreter_older_than_the_dates_it_must_parse_is_refused(monkeypatch) -> None:
+    """3.10 and below fail deep inside date parsing, which reads as a broken repository.
+
+    Both date sources are Z-suffixed — git's `%cI` and GitHub's `created_at` — and
+    `datetime.fromisoformat` only accepts `Z` from 3.11. The docs tell a reader to run this with
+    `python3`, which on a stock macOS is 3.9, and the failure they got named the commit date rather
+    than the interpreter. Exit 2, because a wrong interpreter is infrastructure and 1 is drift.
+    """
+    monkeypatch.setattr(_SCRIPT_MODULE.sys, "version_info", (3, 10, 4, "final", 0))
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        code = _SCRIPT_MODULE.main([])
+    assert code == 2, code
+    assert "3.11" in buf.getvalue(), buf.getvalue()
+
+
+def test_the_issue_listing_call_is_argv_exact(tmp_path: Path) -> None:
+    """`--state all` was pinned; `--limit`, `--json` and `--jq` were not, and each is load-bearing."""
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    _, log = report_run(repo, published("0.7.60"), tmp_path)
+    listings = [c for c in gh_calls(log) if c[:2] == ["issue", "list"]]
+    assert listings == [issue_list_argv()], listings
+
+
+def test_the_label_projection_survives_a_real_jq(tmp_path: Path) -> None:
+    """The `--jq` program is EXECUTED here, not merely quoted — and that is the whole point.
+
+    The stub hand-writes the TSV, so until this test the projection had never once run. Mutating
+    `join("\u001f")` to `join(",")` left every test in this file green, while in production a label
+    like `foo,deliberately-unpublished` split into two, one of them exactly equal to the suppression
+    label, and a real drift was silently suppressed and never reported again.
+
+    jq is preinstalled on GitHub's ubuntu runners, so this does not skip: a skipped guard is the
+    same hole wearing a different colour. The program is taken from the ARGV the script actually
+    sent, not from the constant, so this is behaviour rather than a constant agreeing with itself.
+    """
+    jq = shutil.which("jq")
+    assert jq, (
+        "jq is required by this test, which executes the real `--jq` projection. It is preinstalled "
+        "on GitHub ubuntu runners; skipping instead would restore the hole this test closes."
+    )
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    _, log = report_run(repo, published("0.7.60"), tmp_path)
+    listing = next(c for c in gh_calls(log) if c[:2] == ["issue", "list"])
+    program = listing[listing.index("--jq") + 1]
+
+    payload = json.dumps([{ "number": 7, "state": "CLOSED", "title": "t",
+                            "labels": [{"name": "area:ci,urgent"},
+                                       {"name": _SCRIPT_MODULE.SUPPRESSION_LABEL}]}])
+    out = subprocess.run([jq, "-r", program], input=payload, capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    fields = out.stdout.rstrip("\n").split("\t", 3)
+    assert len(fields) == 4, fields
+    assert fields[2].split(_SCRIPT_MODULE.LABEL_SEP) == ["area:ci,urgent",
+                                                         _SCRIPT_MODULE.SUPPRESSION_LABEL]
+
+
+def test_two_labels_on_one_issue_are_read_as_two(tmp_path: Path) -> None:
+    """No listing row anywhere in this file carried more than one label before this one.
+
+    The only comma case was a SINGLE label containing a comma, for which a comma join and a
+    unit-separator join produce identical output — so even a stub that ran jq would have missed it.
+    A closed drift issue carrying an unrelated label alongside the suppression label must still
+    suppress, and must still say so.
+    """
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    listing = [(7, "CLOSED", ["area:ci,urgent", SUPPRESSION_LABEL],
+                DRIFT_TITLE.format(version=DRIFTING))]
+    proc, log = report_run(repo, published("0.7.60"), tmp_path, listing=listing)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "::warning::" in proc.stdout, proc.stdout
+    assert gh_writes(log) == [], gh_writes(log)
 
 
 def test_the_gh_stub_refuses_a_repo_flag_on_api_the_way_gh_does(tmp_path: Path) -> None:

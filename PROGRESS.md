@@ -3114,7 +3114,7 @@ Every line below was opened and verified during planning; line numbers are as of
 - `.github/workflows/ci.yml:642` — the only install: `pyyaml pytest grpcio cryptography`. A new
   `scripts/` test may import nothing else. An undeclared import is a CI **collection error** — but
   scoped to one step, not the job's whole suite: `workflow-guards` invokes pytest once per file
-  (`.github/workflows/ci.yml:644` and `:649`, `:654`, `:660`, `:665`, `:671`, `:677`, `:682`), so
+  (`.github/workflows/ci.yml:644` and `:649`, `:654`, `:660`, `:665`, `:671`, `:677`, `:684`), so
   the steps above it have already reported and only the ones below are skipped. It is loud, on the
   PR that introduces it.
 - `scripts/test_ci_gate.py:277-301` — set equality both directions between `scripts/test_*.py` on
@@ -3826,7 +3826,65 @@ needed escalating further.
   and 2160), so no single constant satisfies the rows. Note G1's mutation is killed by the assertion
   on WHICH diagnostic is printed, not by the return code — the G7 wrapper masks the exit-code symptom
   by design, so the narrow assertion is what carries the proof.
-* **Counts:** drift gate 201 → **218**; scripts suite 426 → **444**.
+* **Counts:** drift gate 201 → **219**; scripts suite 426 → **444**. ⚠ The Phase 7 commit message
+  and an earlier draft of this line both said 218. That was measured before Phase 9's own test split
+  was applied and never re-measured — 426 + 18 = 444 and 201 + 18 = 219 reconcile, 218 does not. The
+  whole-feature gate caught it. Left visible rather than quietly corrected, because it is the same
+  class of error as the falsified mutation count two sections above, and small wrong numbers are how
+  the big ones acquire credibility.
+
+### Whole-feature verification — 7 findings, and one of them was in my own fix
+
+A fresh-Opus gate reviewed the feature end to end rather than phase by phase: **43 of 48 mutations
+caught, 0 broken anchors**, and it correctly declined to count two `<`/`<=` boundary survivors as
+findings, since the boundary tests deliberately probe 89/91 and 359/361. Verdict GAPS (7), none
+blocking a first scheduled run.
+
+* **F1 (the serious one) · the `--jq` projection had never once executed, and the separator existed
+  in THREE independent copies.** The script wrote it twice and the stub restated it a third time, so
+  `join(",")` in the projection passed all 219 tests — while in production a label like
+  `area:ci,urgent` split into two, one of them exactly equal to the suppression label, and a real
+  drift went silently suppressed and was never reported again. Now ONE `LABEL_SEP`, with the jq
+  spelling DERIVED from it (JSON has no backslash-x escape, so the `\u001f` form is computed, not
+  retyped), an argv-exact pin for `gh issue list` — `--state all` was pinned, its neighbours were
+  not — and a test that runs REAL jq over the argv the script actually sent. Same shape as Phase 7's
+  G3: an instrument more permissive than the tool it stands in for.
+* **F2 · `staleness_threshold_minutes()`'s docstring still described the pre-Phase-7 measurement,**
+  both halves of it, on the function that produces the number. Every other prose surface had been
+  updated; this one sat six lines above the comparison it misdescribed.
+* **F3 · no interpreter floor, and the documented invocation provably failed.** Both README and
+  CLAUDE.md said `python3 scripts/check_registry_drift.py`; on a stock 3.9 that returned "cannot
+  parse commit date" — an instrument fault wearing the costume of a malformed repository. Guarded in
+  `main` with exit 2, following the model this script already cites.
+* **F4 · the multiplier's VALUE was unpinned.** The three derivation rows constrained it only to
+  (0.694, 3.47), so 1 and 2 both passed — and at 1 the arm warns whenever a single cron period
+  slips, which the workflow's own comment says GitHub does routinely.
+* **F5 · the canary roster reached the same URL interpolation with no validation** — and this is the
+  one worth reading twice. I added the production guard and a test for it, and **the mutation
+  battery reported the test as a SURVIVOR**: with the guard deleted, execution falls through to
+  `fetch_registry`, which raises `InfraError` of its own and quotes the version, so
+  `pytest.raises(InfraError)` plus a substring check passed either way. My own guard was
+  unfalsifiable, in a session spent hunting exactly that. Now it pins the specific refusal AND
+  asserts the request path is never reached, and it is red against its own removal.
+* **F6/F7 · the exit-0 contract omitted the suppression path in two of three places; only
+  `FileNotFoundError` was caught** at the `git`/`curl`/`gh` call sites, so any other `OSError` —
+  EAGAIN under fork pressure — escaped as a traceback. That is the mechanism behind the one
+  unreproduced flake the gate observed and honestly reported as unconfirmed.
+* **Two corrections to the review, both verified before acting.** Its suggested row for F4,
+  `("17 */2 * * *", 400, False)`, is arithmetically wrong: at the shipped multiplier the threshold
+  is 360, so 400 warns and that row would be red against correct code. 300 is the value that forces
+  the multiplier above 2.5 and excludes both 1 and 2. And its claim that a plan line cites a
+  3.11 assertion in `scripts/test_ci_gate.py` was right that the claim is false — that file asserts
+  only that a `setup-python` step exists, and mentions no version anywhere.
+* **Documentation drift, all repaired:** a `Status: TODO` on a phase that had shipped; a permissions
+  list two-thirds complete since Phase 7; a suppression row promising a NOTE where the code prints a
+  warning; the reopen/comment order backwards in a table that records the divergence fixing it;
+  pre-round-2 cron residue calling a two-hourly schedule six-hourly; the superseded canary roster in
+  two places; and — two lines above the step that runs the check that closed it — a `ci.yml` comment
+  still saying a never-dispatched release "fails as silently as before".
+* **Proof: 7 mutations, 7 caught** (F5 only after its guard was repaired; recorded as it happened).
+* **Counts:** drift gate 219 → **225**; scripts suite 444 → **450**; python **1257 / 21** unchanged;
+  contract gate still exit 6.
 * **Next:** Phase 9 — documentation closure, then the finalization pass.
 
 ### Phase 9 — documentation closure · **DONE**

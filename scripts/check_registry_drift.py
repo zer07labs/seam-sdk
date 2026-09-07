@@ -68,7 +68,8 @@ Usage:  scripts/check_registry_drift.py [--repo DIR] [--packages-json FILE] [--n
                                         [--soft-grace-minutes N] [--hard-grace-minutes N]
         With --packages-json the response is read from that file and nothing is fetched.
         Without it the registry is queried live and SEAM_REGISTRY_TOKEN must be set.
-Exit:   0 = the registry serves it, or it is younger than the hard window
+Exit:   0 = the registry serves it, it is younger than the hard window, or the drift is
+            suppressed by a closed issue carrying the `deliberately-unpublished` label
         1 = drift
         2 = infrastructure — never a verdict, INCLUDING every unhandled exception
 """
@@ -228,6 +229,22 @@ WORKFLOW_FILENAME = "registry-drift.yml"
 #: number: a hardcoded "360 minutes" keeps agreeing with itself after the cron moves to twelve
 #: hours, at which point the warning fires on every normal run and gets muted. Deriving it makes
 #: that class of drift unrepresentable.
+#: The label separator, ONE definition for what used to be three. The jq program that BUILDS the
+#: field and the parser that READS it each held their own literal, and the test stub restated it a
+#: third time — so `join(",")` in the jq passed every test while, in production, a label like
+#: `foo,deliberately-unpublished` split into two, one of them equal to the suppression label, and a
+#: real drift went silently suppressed. The jq spelling is DERIVED rather than written out, because
+#: JSON — and therefore jq — has no `\x` escape: `\u001f` is the only form it accepts.
+LABEL_SEP = "\x1f"
+_LABEL_SEP_JQ = "\\u%04x" % ord(LABEL_SEP)
+
+#: The projection, as a named constant so the argv can be pinned word-for-word by a test the way
+#: the heartbeat's is. Kept next to the separator it uses: the two drifting apart is the failure
+#: this whole block exists to prevent.
+_ISSUE_LIST_JQ = (
+    f'.[] | [.number, .state, ((.labels|map(.name))|join("{_LABEL_SEP_JQ}")), .title] | @tsv'
+)
+
 CRON = "17 */2 * * *"
 STALENESS_MULTIPLIER = 3
 
@@ -270,6 +287,11 @@ def _git(repo: Path, *args: str) -> str:
         )
     except FileNotFoundError as exc:
         raise InfraError("`git` is not on PATH — cannot read the source tree") from exc
+    except OSError as exc:
+        # FileNotFoundError is only the spelling anyone thought of. Any other OSError — EAGAIN when
+        # the machine cannot fork, EMFILE, a broken pipe — escaped to the top-level handler, which
+        # correctly exits 2 but prints a traceback for a condition that has a one-line description.
+        raise InfraError(f"could not run `git`: {exc}") from exc
     if proc.returncode != 0:
         raise InfraError(
             f"`git {' '.join(args)}` failed in {repo} (exit {proc.returncode}): "
@@ -518,6 +540,11 @@ def fetch_registry(version: str, token: str) -> object:
         )
     except FileNotFoundError as exc:
         raise InfraError("`curl` is not on PATH — cannot query the registry") from exc
+    except OSError as exc:
+        # FileNotFoundError is only the spelling anyone thought of. Any other OSError — EAGAIN when
+        # the machine cannot fork, EMFILE, a broken pipe — escaped to the top-level handler, which
+        # correctly exits 2 but prints a traceback for a condition that has a one-line description.
+        raise InfraError(f"could not run `curl`: {exc}") from exc
     if proc.returncode != 0:
         # Neither the argv nor stderr is echoed: the argv carries the credential, and curl's
         # stderr can quote the request. The exit status is the diagnosis (22 = HTTP >= 400,
@@ -554,6 +581,12 @@ def assert_live_instrument_healthy(target: str, token: str) -> str:
     Healthy if ANY candidate returns both formats; unhealthy only if all of them come back short.
     That is what survives an individual yank, and it is why this is a roster rather than a pin.
     """
+    for entry in CANARY_VERSIONS:
+        # The roster reaches the SAME interpolation as the source version, via `_query_for`, and
+        # only the source version was ever checked. A hand-edited constant is a narrow threat, but
+        # this constant's own comment says values of this class must be validated, and an entry
+        # carrying `&` would append a parameter to the request rather than fail.
+        assert_query_safe(entry)
     candidates = [v for v in CANARY_VERSIONS if v != target]
     if not candidates:
         raise InfraError(
@@ -652,6 +685,11 @@ def _gh(args: list[str], repo: str, *, repo_flag: bool = True) -> str:
         )
     except FileNotFoundError as exc:
         raise InfraError("`gh` is not on PATH — cannot report") from exc
+    except OSError as exc:
+        # FileNotFoundError is only the spelling anyone thought of. Any other OSError — EAGAIN when
+        # the machine cannot fork, EMFILE, a broken pipe — escaped to the top-level handler, which
+        # correctly exits 2 but prints a traceback for a condition that has a one-line description.
+        raise InfraError(f"could not run `gh`: {exc}") from exc
     except subprocess.TimeoutExpired as exc:
         raise InfraError(f"`gh {args[0]} {args[1]}` timed out after {GH_MAX_SECONDS}s") from exc
     if proc.returncode != 0:
@@ -687,7 +725,7 @@ def fetch_issues(repo: str) -> list[dict]:
             # which equals the suppression label exactly — silently suppressing a real
             # drift on an issue nobody ever labelled as suppressed. U+001F cannot be typed
             # into a label name, and @tsv passes it through untouched.
-            r'.[] | [.number, .state, ((.labels|map(.name))|join("\u001f")), .title] | @tsv',
+            _ISSUE_LIST_JQ,
         ],
         repo,
     )
@@ -706,7 +744,7 @@ def fetch_issues(repo: str) -> list[dict]:
             {
                 "number": int(number),
                 "state": state.strip().upper(),
-                "labels": [name for name in labels.split("\x1f") if name],
+                "labels": [name for name in labels.split(LABEL_SEP) if name],
                 "title": title,
             }
         )
@@ -903,7 +941,13 @@ def cron_period_minutes(spec: str | None = None) -> int | None:
 
 
 def staleness_threshold_minutes() -> int | None:
-    """How large a gap between successful scheduled runs is worth saying out loud.
+    """How long a SILENCE since the newest COMPLETED scheduled run is worth saying out loud.
+
+    Not "a gap between successful runs" — that was the pre-Phase-7 measurement and both halves of
+    it changed. `success` filtered on the VERDICT, so a drift run (exit 1) was invisible; and a gap
+    between two past points cannot see a schedule that stopped and never resumed. This docstring
+    described the old behaviour for one commit while sitting on the function that produces the
+    number, which is the most misleading place for it to be wrong.
 
     DERIVED, never written down beside the cron as a second number. A hardcoded "360 minutes" goes
     on agreeing with itself after the cron moves to twelve hours, at which point the warning fires
@@ -1041,6 +1085,22 @@ def report_clean(version: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if sys.version_info < (3, 11):
+        # Exit 2, not 1: a wrong interpreter is infrastructure, and 1 is the drift verdict. Same
+        # reasoning and same shape as `scripts/probe_framework_coinstall.py:47-56`, which this
+        # script already cites as its model. Without it, 3.10 and below fail deep inside date
+        # parsing with "cannot parse commit date" — an instrument fault wearing the costume of a
+        # malformed repository, and the docs told people to invoke it in exactly the way that
+        # produces it.
+        print(
+            f"::error::this check needs Python 3.11+ (running {sys.version.split()[0]}). Both date "
+            f"sources are Z-suffixed — git's `%cI` and GitHub's `created_at` — and "
+            f"`datetime.fromisoformat` only learned to accept `Z` in 3.11. Use "
+            f"`python/.venv/bin/python scripts/check_registry_drift.py`.",
+            file=sys.stderr,
+        )
+        return 2
+
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument(

@@ -373,7 +373,10 @@ per-file steps give a named check per gate in the PR's check list, which is wort
 
 **Edge cases & failure modes.**
 * `sys.stdlib_module_names` needs 3.10+; `workflow-guards` pins 3.11 (`ci.yml:635`). Fine, and the
-  pin is itself asserted at `scripts/test_ci_gate.py:180-184`.
+  pin is ⚠ **NOT** asserted: `scripts/test_ci_gate.py:183` requires only that a `setup-python`
+  step EXISTS, and nothing in that file mentions a version at all. An earlier draft of this line
+  claimed otherwise. The version that matters now is the drift check's own 3.11 floor, which is
+  guarded in the script itself rather than in CI.
 * First-party names: `scripts/` is not a package, and the sibling tests import their subjects by
   `importlib.util.spec_from_file_location` (`scripts/test_vendored_spec_gate.py:35-47`), not by
   `import`. So the first-party set should be empty; if a future file does `import check_registry_drift`
@@ -714,7 +717,7 @@ the three lag states, the two things easy to get wrong, and the exit-code contra
 
 > **⚠ `CANARY_VERSIONS` IS UNCONFIRMED AGAINST THE LIVE REGISTRY.** This section requires one
 > `curl` with the real credential before merge, and this run had neither the credential (it is a
-> repository secret) nor authorisation to query a registry. `0.7.50` / `0.7.60` / `0.7.65` were
+> repository secret) nor authorisation to query a registry. `0.7.50` / `0.7.65` / `0.7.75` were
 > selected from tag history, which is evidence a release was ATTEMPTED, not that it landed —
 > exactly the distinction the selection rule warns about. **This is not a silent risk:** an
 > unconfirmed-and-wrong roster makes every scheduled run exit 2 naming all three candidates tried,
@@ -816,7 +819,7 @@ to scroll past.
 #: publish.yml:748-749 records v0.7.69, v0.7.70 and v0.7.72 as correctly REFUSED — tagged, never
 #: published — so they and every never-tagged version (0.7.44-46, 0.7.62, 0.7.74, ...) are excluded.
 #: Each entry below has both `vX` and `go/vX` tags and no recorded refusal.
-CANARY_VERSIONS = ("0.7.50", "0.7.60", "0.7.65")
+CANARY_VERSIONS = ("0.7.50", "0.7.65", "0.7.75")
 ```
 
 **These three must be confirmed against the live registry once, by hand, before Phase 4 merges** —
@@ -858,7 +861,7 @@ at lower cost. Recorded because it is the obvious alternative and a later reader
 
 `curl` invocation mirrors `yank.yml:69-71`: `-sf` (so a 4xx/5xx is a non-zero exit rather than an
 error body parsed as JSON), `-H "X-Api-Key: $TOKEN"`, output to a temp file. Add
-`--max-time 60`; `yank.yml` has none, and a hung GET in a scheduled job is a silent 6-hour burn.
+`--max-time 60`; `yank.yml` has none, and a hung GET in a scheduled job burns until the job timeout.
 Non-zero `curl` → `InfraError` carrying the exit status.
 
 *What I rejected:* querying without a version filter and paginating the whole package list to derive
@@ -1107,7 +1110,7 @@ check runs). Whichever phase lands the staleness arm must add the scope in the s
 asserts the two travel together.
 
 *What I rejected:* `concurrency:` to cancel overlapping runs. No workflow in this repo declares one,
-the job is ~1 minute against a 6-hour period, and cancelling a run mid-flight is a way to produce a
+the job is ~1 minute against a 2-hour period, and cancelling a run mid-flight is a way to produce a
 missing answer that looks like a passing one.
 
 **Edge cases & failure modes.**
@@ -1331,8 +1334,8 @@ Decision table once drift is established:
 |---|---|---|
 | none | `gh issue create` | 1 |
 | open | nothing — already reported | 1 |
-| closed, no suppression label | `gh issue reopen` + `gh issue comment` | 1 |
-| closed, labelled `deliberately-unpublished` | print a NOTE naming the issue | **0** |
+| closed, no suppression label | `gh issue comment` **then** `gh issue reopen` | 1 |
+| closed, labelled `deliberately-unpublished` | print a `::warning::` naming the issue | **0** |
 
 And when there is **no** drift but an open drift issue exists for the current version: print a
 `::notice::` saying it can be closed. **The check never closes an issue itself.** A reporter that can
@@ -1411,7 +1414,7 @@ is not new information; the open issue already says it.
   GitHub outage never erases the answer.
 * `--limit 500` is a finite window (the repo is at issue ~#101). If the listing returns exactly the
   limit, emit a `::warning::` that the window may be truncated — pinning the denominator at runtime.
-* Two runs racing (a scheduled run and a dispatch) could both create. Bounded by the 6-hour period
+* Two runs racing (a scheduled run and a dispatch) could both create. Bounded by the 2-hour period
   and a ~1-minute job; a duplicate is cosmetic, and adding `concurrency:` to prevent it would
   contradict Phase 5's reasoning. Recorded, not fixed.
 * `gh issue list` piped into a reader that exits early can SIGPIPE under `pipefail` — write to a file
@@ -1457,7 +1460,7 @@ pre-rendered TSV (`scripts/test_release_notice_gate.py:62-83,104-109`):
     sibling reporter is untouched.
 12. ➕ **The job's `permissions:` block is exactly `{contents: read, issues: write, actions: read}`,**
     asserted as a set, with a message saying which phase needs each and that an explicit block grants
-    only what it lists. Dropping `actions` must go red here, not in a scheduled run six hours later.
+    only what it lists. Dropping `actions` must go red here, not in a scheduled run two hours later.
 13. **Mutation round:** change the drift title to `Release v<version> did not publish` → (10) red;
     remove the label check → (4) red; treat a labelled-but-open issue as suppressed → (4b) red; let
     the warn band call `gh` → (4c) red; make the `awk` match a substring instead of `==` → (6) red;
@@ -1648,7 +1651,8 @@ declined to fix.
 
 ## Phase 9 — documentation closure
 
-**Status: TODO**
+**Status: DONE** (2026-09-07, commit `c068d8a`). One divergence: the drafts predated the Phase 7
+verification round and were stale on arrival — refreshed before applying.
 
 **Delivers.** The repo tells the truth about the new mechanism, and `publish.yml`'s blind-spot
 comment records that the gap is closed.
@@ -1770,7 +1774,8 @@ check unable to answer, and none of them can make it answer *wrong*. That proper
 three places — `InfraError` raised before any verdict is computed, the canary query ordered ahead of
 the target query, and the assertion that every exit-2 path leaves the `gh` call log empty.
 
-**Blast radius of the check itself.** It has `contents: read` and `issues: write`, no registry write
+**Blast radius of the check itself.** It has `contents: read`, `issues: write` and — since Phase 7 —
+`actions: read` for its own run history, no registry write
 scope, no publish path, no ability to tag or dispatch. The worst it can do when wrong is file a
 spurious issue. It is not on any decision path, not required by `ci-ok`, and no other job depends on
 it — the same "reporter, never a gate" invariant `scripts/test_release_notice_gate.py:232-240` pins
