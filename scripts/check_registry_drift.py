@@ -217,6 +217,35 @@ REPO_ENV = "REPO"
 #: Same reasoning as `CURL_MAX_SECONDS`: a hung `gh` in a scheduled job is a silent burn.
 GH_MAX_SECONDS = 60
 
+#: The workflow's own filename, used to ask the Actions API about this check's run history. A
+#: constant rather than a literal at the call site because renaming the file silently breaks the
+#: query — the API answers 404, the heartbeat degrades to a warning nobody reads, and the staleness
+#: arm is off forever. `test_the_workflow_filename_constant_is_the_real_filename` pins it.
+WORKFLOW_FILENAME = "registry-drift.yml"
+
+#: The workflow's cron, and the multiple of its period that counts as "the schedule has evidently
+#: been skipping". The THRESHOLD IS DERIVED from the cron rather than written beside it as a second
+#: number: a hardcoded "360 minutes" keeps agreeing with itself after the cron moves to twelve
+#: hours, at which point the warning fires on every normal run and gets muted. Deriving it makes
+#: that class of drift unrepresentable.
+CRON = "17 */2 * * *"
+STALENESS_MULTIPLIER = 3
+
+#: The heartbeat's own question, as a query string. `status=completed`, NOT `status=success`: the
+#: runs API filters on the check run's STATUS OR CONCLUSION, so `success` selects runs whose
+#: CONCLUSION was green — a statement about the VERDICT, not about whether the schedule fired. This
+#: check exits 1 on drift and 2 on infrastructure, so every run of a real incident is invisible
+#: under `success`, and the first green run afterwards measures a span covering the whole incident
+#: and announces that the schedule has been skipping when it never missed a beat — crying wolf
+#: immediately after the arm's subject did the exact thing it was built to report.
+#:
+#: Dropping `status` altogether is not the fix either. With no filter the response also carries
+#: `queued` and `in_progress` runs, which on a `schedule` trigger includes THIS run — so the
+#: measurement would quietly mean one thing on a scheduled run and another on a `workflow_dispatch`
+#: one. `completed` excludes the current run unconditionally, and that is what lets `now` be the
+#: newest point rather than a tie with it.
+HEARTBEAT_QUERY = "event=schedule&status=completed&per_page=5"
+
 #: `[project].version` is the first `version = "..."` at column 0. Later tables are indented or come
 #: after, and `grep -m1 '^version'` picks this same line — the rule `scripts/set_version.sh:46-50`
 #: stamps by and `ci.yml:33` / `publish.yml:165` read by, so the three cannot drift apart.
@@ -599,8 +628,14 @@ def issue_repo() -> str:
     return repo
 
 
-def _gh(args: list[str], repo: str) -> str:
+def _gh(args: list[str], repo: str, *, repo_flag: bool = True) -> str:
     """One `gh` call. Every failure is infrastructure — never a verdict.
+
+    `repo_flag=False` for `gh api`, which has no `--repo` and exits 1 on an unknown flag. The
+    repository goes into the API path instead. It stays the same helper rather than growing a
+    second one so that every `gh` invocation keeps one timeout, one failure translation, and one
+    argv shape — and so the permissions guard, which reads argv literals handed to `_gh`, keeps
+    seeing all of them.
 
     `capture_output` rather than `publish.yml:818-823`'s write-to-a-file-first. That file exists to
     dodge a shell hazard this is not exposed to: `gh … | reader` under `set -o pipefail`, where a
@@ -609,7 +644,7 @@ def _gh(args: list[str], repo: str) -> str:
     """
     try:
         proc = subprocess.run(
-            ["gh", *args, "--repo", repo],
+            ["gh", *args, *(["--repo", repo] if repo_flag else [])],
             capture_output=True,
             text=True,
             timeout=GH_MAX_SECONDS,
@@ -810,6 +845,185 @@ def report_drift(
     return False
 
 
+def cron_period_minutes(spec: str | None = None) -> int | None:
+    """The largest gap between consecutive firings, or `None` if there is no fixed sub-daily one.
+
+    ONE implementation, here, driven by the test suite rather than mirrored in it. Phase 5 grew a
+    parser of this shape inside `scripts/test_registry_drift_gate.py` to check that the cron cannot
+    step over the warn band; Phase 7 needs the same number at RUNTIME to derive its staleness
+    threshold. Writing a second one would have put two readings of the same string in two files,
+    free to disagree — and the disagreement would surface as a staleness warning that fires
+    constantly or never, both of which end in it being muted. The test now imports this function,
+    so its parametrised cases drive the code that actually runs.
+
+    Reading the hour field alone is what let `17 */2 * * 1` through — a weekly cadence wearing a
+    two-hourly hour field. So day-of-month, month and day-of-week must all be `*` before the hour
+    field means anything at all.
+
+    `*/N` and `A-B/N` are both accepted: `17 1-23/2 * * *` is a correct every-two-hours spelling and
+    rejecting it would be a guard enforcing a preferred syntax rather than a property. An explicit
+    list (`17 0,12 * * *`) is read as the largest gap between its entries, wrapping at midnight —
+    0 and 12 is a twelve-hour period, not a two-hour one.
+
+    `None` rather than an exception: the caller is a warnings-only arm that must never raise, and a
+    cron this cannot read is a reason to say so and stop, not to fail a run about the registry.
+    """
+    # `CRON` is read HERE rather than bound as a default argument. A default is evaluated once, at
+    # def time, which would make the constant unpatchable — and therefore make "the threshold is
+    # derived from the cron" an untestable claim: a hardcoded 360 satisfies
+    # `threshold == period * MULTIPLIER` for as long as the shipped cron happens to be two-hourly.
+    # Reading the global lets the test move the cron and watch the threshold follow.
+    spec = CRON if spec is None else spec
+    fields = spec.split()
+    if len(fields) != 5:
+        return None
+    minute, hours, dom, month, dow = fields
+    if (dom, month, dow) != ("*", "*", "*") or not minute.isdigit():
+        return None
+    if hours == "*":
+        return 60
+    step_form = re.fullmatch(r"(?:\*|(\d+)-(\d+))/(\d+)", hours)
+    if step_form:
+        low, high, step = step_form.groups()
+        if int(step) == 0:
+            return None
+        first, last = (int(low), int(high)) if low else (0, 23)
+        runs = list(range(first, last + 1, int(step)))
+    elif re.fullmatch(r"\d+(?:,\d+)*", hours):
+        runs = sorted(int(h) for h in hours.split(","))
+    else:
+        return None
+    if not runs:
+        return None
+    if len(runs) == 1:
+        return 24 * 60
+    gaps = [(b - a) * 60 for a, b in zip(runs, runs[1:])]
+    gaps.append((runs[0] + 24 - runs[-1]) * 60)  # the wrap past midnight
+    return max(gaps)
+
+
+def staleness_threshold_minutes() -> int | None:
+    """How large a gap between successful scheduled runs is worth saying out loud.
+
+    DERIVED, never written down beside the cron as a second number. A hardcoded "360 minutes" goes
+    on agreeing with itself after the cron moves to twelve hours, at which point the warning fires
+    on every normal run and gets muted — the guard still present, still green, and no longer
+    describing anything.
+    """
+    period = cron_period_minutes()
+    return None if period is None else period * STALENESS_MULTIPLIER
+
+
+def _staleness_heartbeat(now: datetime) -> None:
+    """The body of the heartbeat. Warnings only; `warn_if_schedule_is_stale` owns the guarantee.
+
+    A scheduled check can stop existing without anyone noticing — the same class of failure it was
+    built to catch, one level up. GitHub drops scheduled runs under load, and the observable signal
+    is SILENCE: the newest completed scheduled run is further in the past than the schedule can
+    explain.
+
+    **This function cannot change the exit code, and that is a category rule rather than a
+    convenience.** A failure here says the watcher could not check on itself; it says nothing about
+    whether the registry serves the version. Letting it vote would be exactly the error
+    `scripts/probe_framework_coinstall.py:168-170` names — an instrument's own health reported as a
+    finding about the thing it measures. Every failure path below is a `::warning::` and a return,
+    and the wrapper catches anything that finds a way around them.
+
+    `issue_repo()` is resolved INSIDE this try rather than passed in. Evaluated at the call site it
+    sat outside every handler, so an unset `$REPO` — already softened to a warning by `report_clean`
+    eleven lines earlier — came back as a traceback and exit 2 on a run that had just PROVED the
+    registry healthy. An argument list is the one place a warnings-only arm can still raise.
+
+    `workflow_dispatch` runs are excluded from the HISTORY by the query. Including them would let a
+    burst of manual runs — which is what someone does while investigating a dead schedule — mask
+    the dead schedule. `now` is this run's own clock whatever triggered it, and that asymmetry is
+    the point: a human pressing "Run workflow" because they suspect silence is precisely who needs
+    the answer, and a history of past runs alone cannot give it to them.
+    """
+    try:
+        repo = issue_repo()
+        raw = _gh(
+            [
+                "api",
+                f"repos/{repo}/actions/workflows/{WORKFLOW_FILENAME}/runs?{HEARTBEAT_QUERY}",
+                "--jq",
+                ".workflow_runs[].created_at",
+            ],
+            repo,
+            repo_flag=False,
+        )
+    except InfraError as exc:
+        print(f"::warning::could not read this workflow's own run history: {exc}")
+        return
+
+    stamps = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            stamps.append(_parse_iso(line, what="a workflow run's created_at"))
+        except InfraError as exc:
+            print(f"::warning::could not read this workflow's own run history: {exc}")
+            return
+
+    if not stamps:
+        # Nothing has completed yet: a first run, or the first since the workflow was added. Not a
+        # failure and not a warning — there is genuinely nothing to measure, and a warning here
+        # would fire once per new workflow forever and teach everyone to ignore this arm.
+        return
+
+    threshold = staleness_threshold_minutes()
+    if threshold is None:
+        print(
+            f"::warning::cannot derive a staleness threshold from cron {CRON!r}, so this run "
+            f"cannot say whether the schedule has been skipping."
+        )
+        return
+
+    # SILENCE SINCE THE NEWEST COMPLETED RUN, not the gap between the two newest. A gap compares two
+    # points in the PAST, so a schedule that stopped and never resumed leaves its last two runs a
+    # nominal cadence apart forever and the gap arm stays quiet about it permanently. Silence
+    # reports the same number one cron period EARLIER — on the resuming run rather than the one
+    # after it — needs one stamp rather than two, and is the only evidence of ONGOING silence
+    # available from inside the thing that went silent.
+    silence_minutes = (now - max(stamps)).total_seconds() / 60
+    if silence_minutes > threshold:
+        print(
+            f"::warning::the most recent completed scheduled run of this workflow started "
+            f"{silence_minutes:.0f} minutes ago, more than {STALENESS_MULTIPLIER}x the "
+            f"{cron_period_minutes()}-minute cron period ({threshold}m). The schedule has been "
+            f"skipping. This says nothing about the registry — the verdict above stands on its own."
+        )
+
+
+def warn_if_schedule_is_stale(now: datetime) -> None:
+    """The arm's one entry point: it warns, and it CANNOT RAISE.
+
+    Criterion 7 says this arm can never change the exit code, and every handler in the body catches
+    `InfraError` — the only failure anyone had so far thought of. `cron_period_minutes` can raise
+    `ValueError` on a cron step of zero, a change in GitHub's response shape can raise whatever it
+    likes, and the next edit can raise something nobody has named. Any of those escaping reaches the
+    top-level handler and exits 2, reporting an instrument's own health as a finding about the
+    registry — on a run that may have just proved the registry fine.
+
+    The blanket belongs HERE and nowhere else. Inside the body it would swallow the four named
+    diagnostics the `InfraError` handlers exist to print. Around the reporting `try` in `main` it
+    would be worse than the bug it fixes: that block `return 2`s, so a crash would become a VERDICT
+    instead of a warning — the invariant inverted rather than restored.
+
+    A blanket catch can of course hide a permanently-broken arm. The answer is not to drop it but to
+    pin the positive path: three tests require this arm to actually warn on real silence, so an arm
+    that always crashes reddens all three.
+    """
+    try:
+        _staleness_heartbeat(now)
+    except Exception as exc:  # noqa: BLE001 — deliberate: this arm may not vote, by any route
+        print(
+            f"::warning::the staleness heartbeat itself failed ({exc!r}) and is being ignored. "
+            f"This says nothing about the registry — the verdict above stands on its own."
+        )
+
 def report_clean(version: str) -> None:
     """No drift. If a drift issue for this version is open, say it can be closed — and stop there.
 
@@ -961,7 +1175,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if verdict == "drift":
             if report_drift(version, tagged, missing, age_minutes):
-                return 0
+                code = 0
         elif verdict == "clean":
             # BEST EFFORT, AND ONLY HERE. Before reporting existed, a clean run touched nothing;
             # making it read GitHub means a GitHub outage would turn a run that PROVED the
@@ -986,6 +1200,17 @@ def main(argv: list[str] | None = None) -> int:
     except InfraError as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 2
+
+    # ── the watcher's own heartbeat ───────────────────────────────────────────────────────────
+    #
+    # AFTER the verdict and after reporting, and only on the tiers that already talked to GitHub.
+    # `deferred` and `warned` must reach it not at all — including this read — or the grace window
+    # stops being a grace window, which is the invariant
+    # `test_neither_grace_tier_touches_github` exists to hold.
+    #
+    # `code` is deliberately not reassigned anywhere below this line.
+    if verdict in ("drift", "clean"):
+        warn_if_schedule_is_stale(now)
     return code
 
 

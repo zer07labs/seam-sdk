@@ -1474,7 +1474,48 @@ unpublished version.
 
 ## Phase 7 — the watcher's own heartbeat
 
-**Status: TODO**
+**Status: DONE** (2026-09-06; gaps closed 2026-09-07). Eight divergences, then a verification round that found EIGHT MORE gaps — four of them mutations this phase's own battery had run and recorded as caught, plus a regression against Phase 6 the battery never probed. Fix set designed by two independent Opus passes and mutation-proved 12/12. Two of them are guards this phase had to REPAIR
+before it could add to them, and one is the same prose-vs-structure confusion Phase 6 found, running
+in the opposite direction.
+
+1. **The cron parser was consolidated rather than written twice.** Phase 5 had already grown one
+   inside `scripts/test_registry_drift_gate.py` for the warn-band guard; Phase 7 needs the same
+   number at RUNTIME to derive its threshold. A second implementation would have put two readings of
+   one string in two files, free to disagree — and the disagreement surfaces as a staleness warning
+   that fires always or never, muted either way. The richer version moved into
+   `scripts/check_registry_drift.py` and the test now aliases it, so Phase 5's parametrised cases
+   drive the code that actually runs in production.
+2. **`test_the_job_is_bounded_and_cannot_be_told_to_ignore_itself` had to be fixed first.** It
+   asserted `"continue-on-error" not in WORKFLOW.read_text()` — a substring over the raw file,
+   including comments. Phase 7's required header section explains that `continue-on-error` is
+   deliberately absent, which trips that search, so the guard would have forced its own
+   documentation to be deleted to stay green. Now over the parsed YAML, per holder. This is exactly
+   Phase 6's prose-vs-structure defect inverted: there prose could SATISFY a guard, here prose could
+   BREAK one, and both are answered by reading structure instead of text.
+3. **The threshold derivation was not falsifiable as first written.** `cron_period_minutes(spec =
+   CRON)` binds the constant at def time, so the constant cannot be moved and
+   `threshold == period x MULTIPLIER` is satisfied by a HARDCODED 360 for as long as the shipped
+   cron happens to be two-hourly — which is precisely the mistuning being guarded against. `CRON` is
+   now read at call time, and the test moves it to `*/12` and requires the threshold to follow.
+4. **`_gh` grew `repo_flag=False` instead of a second helper.** `gh api` has no `--repo` and exits 1
+   on an unknown flag. One helper keeps one timeout, one failure translation and one argv shape —
+   and, load-bearing after Phase 6, keeps every `gh` invocation visible to the permissions guard,
+   which reads argv literals handed to `_gh`.
+5. **`gh_writes` now recognises the heartbeat explicitly rather than exempting a subcommand.**
+   `gh api` can POST perfectly well; classifying the whole subcommand as read-only would mean a
+   future write smuggled through it counted as no write at all, on the very assertion that exists to
+   catch writes. The helper asserts the only `api` call is the read-only heartbeat.
+6. **`cron_period_minutes` returns `None` rather than raising.** Its caller is a warnings-only arm
+   that must never raise; a cron it cannot read is a reason to say so and stop, not to fail a run
+   about the registry.
+7. **The plan said "on each run"; the heartbeat runs only on the `drift` and `clean` tiers.** Taken
+   literally it would have made a GitHub call inside the grace window, breaking the Phase 6
+   invariant that neither grace tier reaches GitHub at all — not even a read. It sits after
+   reporting, gated on the verdict, with a new test re-asserting the grace invariant against the
+   call that could newly break it.
+8. **Criterion 2b is covered by the mutation battery rather than by its own test.** Commenting out
+   `schedule:` is a mutation of criterion 1's subject, not a separate property; it is run as
+   `schedule_commented_out` and must redden the same named test.
 
 **Delivers.** Guards that the check keeps its schedule and its shape, plus a runtime warning when the
 schedule has evidently been skipping.
@@ -1495,16 +1536,25 @@ layers, honestly ranked:
 2. **Runtime staleness warning** (partial). ⚠ **Requires `actions: read` on the job**, which Phase 6
    grants; without it the query 403s, because an explicit `permissions:` block grants only what it
    lists. On each run, ask
-   `gh api "repos/$REPO/actions/workflows/registry-drift.yml/runs?event=schedule&status=success&per_page=5"`
-   for `created_at` timestamps, and `::warning::` if the gap between the two most recent successful
-   scheduled runs exceeds **3×** the cron period (3 × 2 h = 6 h). GitHub does drop scheduled runs under load; this
+   `gh api "repos/$REPO/actions/workflows/registry-drift.yml/runs?event=schedule&status=completed&per_page=5"`
+   for `created_at` timestamps, and `::warning::` if the NEWEST of them is older than **3×** the
+   cron period (3 × 2 h = 6 h). ⚠ **Two corrections to what this section originally specified**, both
+   found by the Phase 7 verification gate. (a) `status=success` filtered on the VERDICT, not on
+   whether the schedule fired — the runs API matches a check run's status *or conclusion*, and this
+   check exits 1 on drift, so every run of a real incident was invisible and the first green run
+   afterwards measured across the whole incident. (b) The gap between the two most recent runs
+   compares two points in the PAST, so a schedule that stops and never resumes leaves them a nominal
+   cadence apart forever; measuring silence against the current run's clock reports the same number
+   one cron period earlier and needs one stamp rather than two. GitHub does drop scheduled runs under load; this
    catches the *resumed-after-a-gap* case, which is the observable one. **This arm can never change
    the exit code.** A failure of this query is a `::warning::` and nothing more — it is diagnostics
    about the watcher, not evidence about the subject, and letting it vote would be exactly the
    category error `probe_framework_coinstall.py:168-170` names. The workflow filename used in the
    query is a module constant, asserted equal to the real filename.
-3. **The residual, stated plainly:** *permanent* cron silence is undetectable from inside the thing
-   that went silent. The only real fix is an out-of-repo watcher, and writing into `zer07labs/seam`
+3. **The residual, stated plainly — and smaller than this plan predicted.** A schedule that stops
+   and never resumes is undetectable from a HISTORY of past runs, but not from the current run's
+   clock: a `workflow_dispatch` run now answers it, which is the run a human presses precisely
+   because they suspect silence. What remains undetectable is silence with nobody looking. The only real fix is an out-of-repo watcher, and writing into `zer07labs/seam`
    is out of scope for this plan by constraint. Recorded in Long-term posture as priced debt, with
    the mitigation that `workflow_dispatch` gives any human an on-demand answer in about a minute.
 
@@ -1530,9 +1580,15 @@ moving the problem rather than solving it.
    own escape hatch must be one the guards notice, so it is never done quietly or left in place.
 3. Adding `pull_request:` to the workflow makes a named test fail with the fork-secret reasoning in
    the message.
-4. With `gh` stubbed to return two `created_at` values 40 hours apart, the run prints a `::warning::`
-   naming the gap **and** the exit code is unchanged from the no-warning run (asserted by running the
-   same scenario twice, with and without the gap, and comparing return codes).
+4. ⚠ **AMENDED after the verification gate.** With `gh` stubbed so the NEWEST completed scheduled
+   run is 40 hours old, the run prints a `::warning::` naming the silence in minutes **and** the exit
+   code is unchanged from the quiet run (asserted by running the same scenario twice and comparing
+   return codes). Originally specified as the gap between two stamps 40 hours apart; see layer 2.
+4b. ➕ **The threshold is pinned where it is USED, not only where it is defined.** Moving `CRON` to
+   twelve-hourly must flip the arm's own warn/quiet answer on a fixed history — the derivation test
+   alone cannot see a hardcoded `360`, because 120 × 3 equals 360 for the shipped cron.
+4c. ➕ **A bad `$REPO` on a CLEAN run leaves the exit code unchanged.** The heartbeat's argument list
+   is the one place a warnings-only arm can still raise.
 5. With `gh api` stubbed to fail, the exit code is unchanged and a `::warning::` is printed.
 6. The workflow-filename constant equals the actual filename on disk.
 7. **Mutation round:** make the staleness arm raise `InfraError` → (4)/(5) red.

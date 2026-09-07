@@ -22,7 +22,9 @@ Run: `python -m pytest scripts/test_registry_drift_gate.py -q`
 from __future__ import annotations
 
 import ast
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -54,11 +56,15 @@ def _load_script():
     return module
 
 
+#: The checker, loaded ONCE. Everything below that needs a constant or a function out of it reads
+#: it from here rather than re-loading, so the whole suite is talking about a single module object.
+_SCRIPT_MODULE = _load_script()
+
 #: The canary roster, read from the script rather than restated here. A second copy is a second
 #: thing to forget: changing `CANARY_VERSIONS` used to redden four tests that had hardcoded it,
 #: which is a maintenance tax with no diagnostic value — the roster's CONTENT is not what these
 #: tests are about.
-ROSTER = _load_script().CANARY_VERSIONS
+ROSTER = _SCRIPT_MODULE.CANARY_VERSIONS
 
 #: The moment every fixture repo dates its version commit from, unless it says otherwise. Fixed
 #: rather than derived from `datetime.now()` so a failure is reproducible at any hour.
@@ -1517,48 +1523,25 @@ def test_the_workflow_runs_on_a_clock_and_on_demand_and_nothing_else() -> None:
     assert crons, "the schedule declares no cron — the check would only ever run on demand"
 
 
-def _cron_period_minutes(spec: str) -> int | None:
-    """The largest gap between consecutive runs, or `None` if there is no fixed sub-daily one.
-
-    Reading the hour field alone is what let `17 */2 * * 1` through — a weekly cadence wearing a
-    two-hourly hour field. So day-of-month, month and day-of-week must all be `*` before the hour
-    field means anything at all.
-
-    `*/N` and `A-B/N` are both accepted: `17 1-23/2 * * *` is a correct every-two-hours spelling
-    and rejecting it would be a guard enforcing a preferred syntax rather than a property. An
-    explicit list (`17 0,12 * * *`) is read as the largest gap between its entries, wrapping at
-    midnight — 0 and 12 is a twelve-hour period, not a two-hour one.
-    """
-    fields = spec.split()
-    if len(fields) != 5:
-        return None
-    minute, hours, dom, month, dow = fields
-    if (dom, month, dow) != ("*", "*", "*") or not minute.isdigit():
-        return None
-    if hours == "*":
-        return 60
-    step_form = re.fullmatch(r"(?:\*|(\d+)-(\d+))/(\d+)", hours)
-    if step_form:
-        low, high, step = step_form.groups()
-        first, last = (int(low), int(high)) if low else (0, 23)
-        runs = list(range(first, last + 1, int(step)))
-    elif re.fullmatch(r"\d+(?:,\d+)*", hours):
-        runs = sorted(int(h) for h in hours.split(","))
-    else:
-        return None
-    if not runs:
-        return None
-    if len(runs) == 1:
-        return 24 * 60
-    gaps = [(b - a) * 60 for a, b in zip(runs, runs[1:])]
-    gaps.append((runs[0] + 24 - runs[-1]) * 60)  # the wrap past midnight
-    return max(gaps)
+#: NOT a second implementation — the script's own, so the parametrised cases below drive the code
+#: that actually runs in production. Phase 5 wrote this parser here, in the test, because only the
+#: test needed it; Phase 7 needs the same number at RUNTIME to derive its staleness threshold from
+#: the cron rather than writing "360 minutes" beside it. Two readings of one string in two files
+#: are free to disagree, and the disagreement would surface as a staleness warning that fires
+#: always or never — muted either way. Moved to `scripts/check_registry_drift.py`; this alias keeps
+#: the existing cases pointed at it.
+_cron_period_minutes = _SCRIPT_MODULE.cron_period_minutes
 
 
 @pytest.mark.parametrize(
     ("spec", "expected"),
     [
         ("17 */2 * * *", 120),
+        # A step of zero. `range(0, 24, 0)` raises `ValueError`, which is not an `InfraError`, so
+        # without the guard it escapes the warnings-only arm and exits 2. Both spellings, because
+        # the bare `*/N` and the `A-B/N` forms reach the same `int(step)`.
+        ("17 */0 * * *", None),
+        ("17 0-23/0 * * *", None),
         ("17 1-23/2 * * *", 120),   # the same cadence, spelled out
         ("17 */6 * * *", 360),
         ("17 0,12 * * *", 720),     # a list, read as its largest gap
@@ -1887,10 +1870,20 @@ def test_the_job_is_bounded_and_cannot_be_told_to_ignore_itself() -> None:
         f"requests; anything near GitHub's six-hour default means a hang is indistinguishable "
         f"from a slow day for hours at a time."
     )
-    assert "continue-on-error" not in WORKFLOW.read_text(encoding="utf-8"), (
-        "`continue-on-error` appears in the workflow. This check's only output is whether the job "
-        "is red; a job that cannot go red reports nothing at all."
-    )
+    # OVER THE PARSED YAML, not over the file's text. A substring search also matches the word
+    # inside a COMMENT — and this workflow's header now explains that `continue-on-error` is
+    # deliberately absent, which would trip a text search and force the explanation to be deleted
+    # to keep the guard green. That is the same prose-vs-structure confusion this phase already
+    # fixed in the permissions guard, running in the opposite direction: there prose could satisfy
+    # a guard, here prose could break one. Both are answered by reading structure.
+    holders = [("job", _job())] + [
+        (f"step {i}", step) for i, step in enumerate(_job().get("steps") or [])
+    ]
+    for where, node in holders:
+        assert "continue-on-error" not in node, (
+            f"`continue-on-error` is set on the {where}. This check's only output is whether the "
+            f"job is red; a job that cannot go red reports nothing at all."
+        )
 
 
 def test_the_job_installs_nothing() -> None:
@@ -2235,12 +2228,16 @@ def test_the_workflow_shell_cannot_argue_for_a_permission() -> None:
     )
 
 
-def test_the_actions_needle_is_ready_for_the_phase_that_needs_it() -> None:
-    """`actions: read` is not declared yet, so its needle is unexercised until Phase 7 lands.
+def test_the_actions_needle_matches_the_call_that_earned_the_scope() -> None:
+    """`actions: read` is declared, and its needle must go on matching the call that authorises it.
 
     An unexercised regex is an unverified one, and the direction it fails in is silent: a needle
-    that never matches makes the guard demand the scope be REMOVED on the day the heartbeat starts
-    reading the Actions API. Same failure the `issues` needle actually had, caught one phase early.
+    that never matches makes the guard demand the scope be REMOVED, which would switch the arm off
+    while leaving every structural test green. Same failure the `issues` needle actually had.
+
+    The name and the first line of this docstring both used to say "not declared yet ... until
+    Phase 7 lands". Phase 7 landed in this same diff and inverted the assertion, and only the prose
+    was left behind — the exact drift class this file exists to catch, in the file that catches it.
     """
     needle, _why = PERMISSION_NEEDLES["actions"]
     heartbeat = """
@@ -2250,9 +2247,15 @@ def f(repo, workflow):
     assert re.search(needle, _permission_surface(heartbeat)), (
         "the Actions-API call Phase 7 will make does not satisfy the actions needle."
     )
-    assert "actions" not in (_job().get("permissions") or {}), (
-        "`actions: read` is declared. Phase 7 grants it in the commit that uses it; if that has "
-        "landed, this assertion is the one to delete."
+    # Phase 7 has landed, so the "not declared yet" assertion that used to stand here is gone —
+    # this test named it as the line to delete and it was deleted in that commit. What remains is
+    # the half that keeps mattering: the needle must go on matching the call it authorises. The
+    # coupling in the other direction is not lost — it is enforced better, by
+    # `test_the_declared_permissions_are_exactly_what_the_job_uses`, which fails if the scope is
+    # declared without the call OR the call is made without the scope.
+    assert "actions" in (_job().get("permissions") or {}), (
+        "the heartbeat reads the Actions API but `actions: read` is not declared. An undeclared "
+        "scope is `none` rather than inherited, so the call 403s and the staleness arm is off."
     )
 
 
@@ -2488,7 +2491,6 @@ def test_the_scheduled_run_never_passes_a_saved_response() -> None:
 # than no reporter at all: the issue it opens is indistinguishable from a real one, and the only
 # way to tell them apart is to redo by hand the work the check exists to do.
 
-_SCRIPT_MODULE = _load_script()
 DRIFT_TITLE = _SCRIPT_MODULE.DRIFT_TITLE
 RELEASE_NOTICE_TITLE = _SCRIPT_MODULE.RELEASE_NOTICE_TITLE
 SUPPRESSION_LABEL = _SCRIPT_MODULE.SUPPRESSION_LABEL
@@ -2515,6 +2517,7 @@ def gh_stub(
     listing: list[tuple[int, str, list[str], str]],
     *,
     fail_on: tuple[str, str] | None = None,
+    runs: list[str] | None = None,
 ) -> tuple[Path, Path]:
     """A `gh` first on PATH. Returns (bin dir, argv-log path).
 
@@ -2529,11 +2532,16 @@ def gh_stub(
 
     `fail_on` makes one verb pair fail the way a GitHub outage does — non-zero with a message on
     stderr — so the promise that a delivery failure never becomes a verdict is testable.
+
+    `runs` is the heartbeat's answer: the `created_at` timestamps `gh api --jq` would emit, newest
+    first, one per line.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     log = tmp_path / "gh-argv"
     log.write_bytes(b"")
+    runs_file = tmp_path / "workflow-runs.txt"
+    runs_file.write_text("".join(f"{r}\n" for r in (runs or [])), encoding="utf-8")
     tsv = tmp_path / "issues.tsv"
     # Labels joined by U+001F, mirroring the script's `--jq ... join("\u001f")`. A comma here
     # would make the stub disagree with the real projection on exactly the input that matters —
@@ -2571,6 +2579,22 @@ def gh_stub(
         f"""    *) cat {tsv} ;;""",
         """  esac""",
         "fi",
+        # Phase 7's heartbeat. `runs=None` answers with NOTHING rather than with a plausible
+        # history, so every test written before the heartbeat existed keeps exercising the
+        # fewer-than-two-stamps path — which is the honest default for a stub that was never told
+        # about run history, and keeps those tests silent rather than accidentally asserting a
+        # staleness verdict they never meant to express.
+        """if [ "$1" = "api" ]; then""",
+        # FIDELITY, and load-bearing in the same way `--state` is. Real `gh api` has no `--repo`
+        # and exits 1 on it. Without this the stub tolerates a flag production rejects, so flipping
+        # `repo_flag=False` to `True` stays invisible here while the heartbeat would be dead on
+        # every real run, behind a `::warning::` nobody reads — the "off but still present" state
+        # this arm exists to make impossible.
+        """  for a in "$@"; do""",
+        """    if [ "$a" = "--repo" ]; then echo "unknown flag: --repo" >&2; exit 1; fi""",
+        """  done""",
+        f"""  cat {runs_file}""",
+        "fi",
         "exit 0",
     ]
     stub = bin_dir / "gh"
@@ -2598,9 +2622,51 @@ def gh_verbs(log: Path) -> list[str]:
     return [" ".join(call[:2]) for call in gh_calls(log)]
 
 
+#: Phase 7's heartbeat, as it appears in the argv log. Built from the script's own constant so a
+#: rename shows up here rather than as a mysteriously absent call.
+def heartbeat_verb(repo: str = STUB_REPO) -> str:
+    return (
+        f"api repos/{repo}/actions/workflows/{_SCRIPT_MODULE.WORKFLOW_FILENAME}/runs"
+        f"?{_SCRIPT_MODULE.HEARTBEAT_QUERY}"
+    )
+
+
+def heartbeat_argv(repo: str = STUB_REPO) -> list[str]:
+    """The ONE `gh api` argv this check may ever emit, word for word.
+
+    Built from the script's own constants, so it answers "did anything get ADDED to the call" and
+    not "is the call right" — that second question is a different test, and it has to compare
+    against a literal or it would be asking the constant to confirm itself.
+    """
+    return ["api", heartbeat_verb(repo).split(" ", 1)[1], "--jq", ".workflow_runs[].created_at"]
+
+
 def gh_writes(log: Path) -> list[str]:
-    """Every call that is not the read. This is what must be empty on every non-drift path."""
-    return [verb for verb in gh_verbs(log) if verb != "issue list"]
+    """Every call that MUTATES. This is what must be empty on every non-drift path.
+
+    There are two READS — `issue list` and Phase 7's `gh api` heartbeat — and the second is
+    recognised explicitly rather than by "it is an api call, so it must be safe". `gh api` can
+    POST perfectly well; classifying a whole subcommand as read-only would mean a future write
+    smuggled through it counts as no write at all, on the exact assertion that exists to catch
+    writes.
+    """
+    writes = []
+    for call in gh_calls(log):
+        verb = " ".join(call[:2])
+        if verb == "issue list":
+            continue
+        if call[0] == "api":
+            assert call == heartbeat_argv(), (
+                f"an unrecognised `gh api` call reached the log: {call!r}. Exactly ONE `gh api` "
+                f"argv is classified read-only here, word for word, because a DENYLIST of write "
+                f"flags cannot do this job: `-XPOST` and `--method=POST` are one argv token each "
+                f"so membership never sees them, and `-F`/`--raw-field` are as much a write as "
+                f"`-f`/`--field`. Five of the seven real write spellings evaded the list this "
+                f"replaced. An allowlist has no next spelling to miss."
+            )
+            continue
+        writes.append(verb)
+    return writes
 
 
 def gh_flag(log: Path, verb: str, flag: str) -> str:
@@ -2689,7 +2755,7 @@ def test_a_first_drift_files_exactly_one_issue_that_says_what_is_wrong(tmp_path:
     proc, log = report_run(repo, published("0.7.77"), tmp_path, listing=[])
 
     assert proc.returncode == 1, proc.stderr
-    assert gh_verbs(log) == ["issue list", "issue create"], gh_calls(log)
+    assert gh_verbs(log) == ["issue list", "issue create", heartbeat_verb()], gh_calls(log)
     assert gh_flag(log, "issue create", "--title") == DRIFT_TITLE.format(version=DRIFTING)
 
     body = gh_flag(log, "issue create", "--body")
@@ -2776,7 +2842,7 @@ def test_a_drift_that_came_back_comments_then_reopens(tmp_path: Path) -> None:
         repo, published("0.7.77"), tmp_path, listing=drift_listing(42, "CLOSED", [])
     )
     assert proc.returncode == 1, proc.stderr
-    assert gh_verbs(log) == ["issue list", "issue comment", "issue reopen"], gh_calls(log)
+    assert gh_verbs(log) == ["issue list", "issue comment", "issue reopen", heartbeat_verb()], gh_calls(log)
     assert gh_calls(log)[2][:3] == ["issue", "reopen", "42"]
     assert DRIFTING in gh_flag(log, "issue comment", "--body")
 
@@ -2824,7 +2890,7 @@ def test_a_comma_in_some_other_label_cannot_suppress_a_drift(tmp_path: Path) -> 
     # Not suppressed: exit 1, and the issue is reopened and commented like any other recurrence.
     assert proc.returncode == 1, proc.stdout + proc.stderr
     assert "SUPPRESSED" not in proc.stdout, proc.stdout
-    assert gh_verbs(log) == ["issue list", "issue comment", "issue reopen"], gh_calls(log)
+    assert gh_verbs(log) == ["issue list", "issue comment", "issue reopen", heartbeat_verb()], gh_calls(log)
 
 
 def test_a_github_outage_on_a_clean_run_does_not_redden_a_healthy_registry(
@@ -2851,7 +2917,7 @@ def test_a_github_outage_on_a_clean_run_does_not_redden_a_healthy_registry(
     assert "::warning::" in proc.stdout, proc.stdout
     assert "clean" in proc.stdout.lower()
     # It really did try — otherwise this passes for the wrong reason on a run that never called.
-    assert gh_verbs(log) == ["issue list"], gh_calls(log)
+    assert gh_verbs(log) == ["issue list", heartbeat_verb()], gh_calls(log)
 
 
 def test_a_github_outage_on_a_drift_run_is_still_exit_two(tmp_path: Path) -> None:
@@ -2991,7 +3057,7 @@ def test_an_issue_that_merely_quotes_the_title_is_not_the_report(
         listing=[(99, state, labels, f"Re: {exact} — is this still happening?")],
     )
     assert proc.returncode == 1, proc.stderr
-    assert gh_verbs(log) == ["issue list", "issue create"], gh_calls(log)
+    assert gh_verbs(log) == ["issue list", "issue create", heartbeat_verb()], gh_calls(log)
     assert gh_flag(log, "issue create", "--title") == exact
 
 
@@ -3005,7 +3071,7 @@ def test_a_drift_issue_for_another_version_does_not_answer_for_this_one(tmp_path
         listing=[(7, "CLOSED", [SUPPRESSION_LABEL], DRIFT_TITLE.format(version="0.7.77"))],
     )
     assert proc.returncode == 1, proc.stderr
-    assert gh_verbs(log) == ["issue list", "issue create"], gh_calls(log)
+    assert gh_verbs(log) == ["issue list", "issue create", heartbeat_verb()], gh_calls(log)
 
 
 # ── The cross-link to the merged half of #100 ─────────────────────────────────────────────────
@@ -3324,7 +3390,7 @@ def test_a_listing_at_exactly_the_limit_says_it_may_be_a_window(
         # cry truncation forever, and the at-the-limit case above stays green. A warning that
         # cannot be observed NOT firing is a warning nobody will believe by the third week.
         assert "truncated" not in proc.stdout, proc.stdout
-    assert gh_verbs(log) == ["issue list", "issue create"], gh_verbs(log)
+    assert gh_verbs(log) == ["issue list", "issue create", heartbeat_verb()], gh_verbs(log)
 
 
 def test_one_listing_answers_every_question_the_run_asks(tmp_path: Path) -> None:
@@ -3343,7 +3409,7 @@ def test_one_listing_answers_every_question_the_run_asks(tmp_path: Path) -> None
 
 
 @pytest.mark.parametrize("bad", ["", "   ", "seam-sdk", "zer07labs/seam-sdk/extra", "a b/c"])
-def test_a_repo_that_is_not_owner_slash_name_is_refused_before_any_call(
+def test_a_repo_that_is_not_owner_slash_name_is_refused_before_any_call_on_the_drift_path(
     tmp_path: Path, bad: str
 ) -> None:
     """The reporting target comes from `${{ github.repository }}`, and is validated anyway.
@@ -3449,10 +3515,20 @@ def test_every_call_names_the_repository_it_is_talking_about() -> None:
         )
         assert proc.returncode == 1, proc.stderr
         calls = gh_calls(log)
-        assert len(calls) == 3, calls
+        assert len(calls) == 4, calls
         for call in calls:
+            if call[0] == "api":
+                # `gh api` HAS NO `--repo` and exits 1 on an unknown flag, so it names the
+                # repository in the path instead. The obligation is unchanged — the call must not
+                # be able to resolve against the checkout's remote — so it is asserted, not
+                # exempted. `$REPO` is where the value comes from in both shapes.
+                assert f"repos/{STUB_REPO}/" in call[1], (
+                    f"a `gh api` call that does not name the repository in its path: {call}"
+                )
+                continue
             assert "--repo" in call, f"a `gh` call without --repo: {call}"
             assert call[call.index("--repo") + 1] == STUB_REPO, call
+        assert [c[0] for c in calls].count("api") == 1, calls
 
 
 def test_the_listing_asks_for_closed_issues_too(tmp_path: Path) -> None:
@@ -3488,3 +3564,518 @@ def test_the_stub_would_notice_an_open_only_listing(tmp_path: Path) -> None:
         "the stub answered an open-only listing with a CLOSED issue, so `--state all` narrowed to "
         "`--state open` would be unobservable from here."
     )
+
+
+# ── Phase 7: the watcher's own heartbeat ──────────────────────────────────────────────────────
+#
+# A scheduled check can stop existing without anyone noticing, which is the failure it was built to
+# catch, one level up. These are the PR-time layer: they make deletion or detuning impossible to
+# land quietly. They can say nothing about a schedule that stops firing for GitHub's own reasons —
+# that is the runtime arm below, and the residual after both is written into the workflow header.
+
+
+def test_the_check_still_runs_on_a_schedule() -> None:
+    """Criterion 1. Without `schedule:` the check exists and never runs.
+
+    That is the worst of the failure modes available here, because every other guard in this file
+    keeps passing: the workflow is present, the script is correct, the permissions are right, and
+    the answer is never computed. `workflow_dispatch` alone would leave a tool nobody remembers to
+    invoke, which is indistinguishable from not having one.
+    """
+    triggers = _triggers()
+    assert "schedule" in triggers, (
+        "the workflow has no `schedule:` trigger, so this check runs only when a human remembers "
+        "to press the button. It exists to catch a release that was NEVER DISPATCHED — a failure "
+        "whose whole character is that nobody noticed — so a trigger nobody notices is no trigger."
+    )
+    entries = triggers["schedule"]
+    assert isinstance(entries, list) and entries, f"`schedule:` is empty: {entries!r}"
+    assert all("cron" in e for e in entries), entries
+
+
+def test_the_cron_is_the_one_the_threshold_is_derived_from() -> None:
+    """Criterion 2. The workflow's cron and the script's `CRON` are the same string.
+
+    They have to be, because the staleness threshold is DERIVED from `CRON` at runtime. If the
+    workflow moved to a twelve-hour cadence and the constant did not, the threshold would stay at
+    3x two hours and every ordinary run would warn that the schedule is skipping — a warning that
+    is wrong every time is muted within a week, and the arm is then off while still present.
+
+    The derivation itself is asserted here too, rather than the number: pinning "360" would be a
+    second hardcoded value agreeing with the first, which is the thing being prevented.
+    """
+    crons = [e["cron"] for e in _triggers()["schedule"]]
+    assert crons == [_SCRIPT_MODULE.CRON], (
+        f"the workflow runs on {crons} but `check_registry_drift.CRON` is "
+        f"{_SCRIPT_MODULE.CRON!r}. The staleness threshold is derived from the constant, so the "
+        f"two drifting apart silently mistunes the heartbeat."
+    )
+    period = _SCRIPT_MODULE.cron_period_minutes()
+    assert period is not None, f"the shipped cron {_SCRIPT_MODULE.CRON!r} has no fixed period"
+    assert _SCRIPT_MODULE.staleness_threshold_minutes() == (
+        period * _SCRIPT_MODULE.STALENESS_MULTIPLIER
+    ), "the threshold is not derived from the cron period"
+
+    # THE DERIVATION, WATCHED MOVING. The assertion above is satisfied by a hardcoded 360 for as
+    # long as the shipped cron is two-hourly — which is exactly the mistuning being guarded
+    # against, so it cannot be the only check. Move the cron and the threshold must follow it.
+    original = _SCRIPT_MODULE.CRON
+    try:
+        _SCRIPT_MODULE.CRON = "17 */12 * * *"
+        assert _SCRIPT_MODULE.cron_period_minutes() == 720
+        assert _SCRIPT_MODULE.staleness_threshold_minutes() == 720 * (
+            _SCRIPT_MODULE.STALENESS_MULTIPLIER
+        ), (
+            "the threshold did not follow the cron. It is written down beside it rather than "
+            "derived from it, so a cadence change silently mistunes the heartbeat."
+        )
+    finally:
+        _SCRIPT_MODULE.CRON = original
+
+
+def test_the_check_never_grows_a_pull_request_trigger() -> None:
+    """Criterion 3. Secrets are unavailable to a fork-PR-triggered workflow.
+
+    The credential resolution would find nothing and the job would exit 2 on every external
+    contribution — an infrastructure failure, reported correctly as one, permanently. And nothing
+    in a pull request can change this answer anyway: it is a statement about the default branch and
+    the registry, not about the diff.
+    """
+    assert "pull_request" not in _triggers(), (
+        "the workflow gained a `pull_request:` trigger. Secrets are not available to workflows "
+        "triggered by a fork PR, so this job would exit 2 on every external contribution forever, "
+        "and the answer it computes has nothing to do with the diff in any case."
+    )
+
+
+def test_the_on_demand_trigger_survives() -> None:
+    """Its own test, because it is the design's escape hatch rather than a detail of the PR guard.
+
+    `workflow_dispatch` is the on-demand answer a human gets in about a minute, and it is what the
+    staleness arm's silence measurement exists to serve: a dispatch run is the one run that can
+    report a schedule which stopped and never resumed. Deleting it used to fail a test named after
+    pull-request triggers, which misdirects the reader at exactly the moment the escape hatch
+    disappears.
+    """
+    assert "workflow_dispatch" in _triggers(), (
+        "`workflow_dispatch` is gone. It is the on-demand answer a human gets in about a minute, "
+        "and after the heartbeat learned to measure silence it is the only run that can report a "
+        "schedule which stopped and never resumed."
+    )
+
+
+def test_the_workflow_filename_constant_is_the_real_filename() -> None:
+    """Criterion 6. The heartbeat asks the Actions API about a file by name.
+
+    Rename the workflow without the constant and the API answers 404: the heartbeat degrades to a
+    `::warning::` that nobody reads, and the staleness arm is off permanently while every other
+    test stays green.
+    """
+    assert _SCRIPT_MODULE.WORKFLOW_FILENAME == WORKFLOW.name
+    assert WORKFLOW.exists()
+
+
+#: The clock every heartbeat fixture runs at, and the anchor its run histories are written
+#: against. It is deliberately the SAME value `run()` already defaults `--now` to, so naming it
+#: shifts nothing — but once the arm measures silence as `now - newest`, an unstated clock stops
+#: being harmless: the histories below were dated five days before that default, which would have
+#: made every one of them warn, including the fixtures whose whole job is to assert silence.
+HEARTBEAT_NOW = LANDED + timedelta(days=10)
+
+
+def _stale_run(tmp_path: Path, runs: list[str] | None, *, now: datetime = HEARTBEAT_NOW):
+    """A clean reporting run whose heartbeat sees `runs`. Returns (proc, log)."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    repo = make_repo(tmp_path, version="0.7.77", tag=True)
+    gh_bin, gh_log = gh_stub(tmp_path, [], runs=runs)
+    return report_run(repo, published("0.7.77"), tmp_path, now=now, gh_bin=gh_bin, gh_log=gh_log)
+
+
+def _arm_says(monkeypatch, *, cron: str, stamps: list[str], now: datetime) -> str:
+    """Run the heartbeat arm IN-PROCESS with `CRON` moved, and return everything it printed.
+
+    In-process because `CRON` is a module constant: a subprocess cannot be told to move it, so no
+    out-of-process test can tell `staleness_threshold_minutes()` apart from a literal `360`. That
+    is the whole of the gap this exists to close — the derivation was pinned where it is DEFINED
+    and never where it is USED, and 120 x 3 happens to equal 360 for the shipped cron, so the two
+    agree on every value the suite ever looked at.
+
+    `_SCRIPT_MODULE` is the same loaded module the cron parser tests already drive, so this adds no
+    new mechanism. Nothing here reads a wall clock: `now` and every stamp are literals.
+    """
+    monkeypatch.setattr(_SCRIPT_MODULE, "CRON", cron)
+    monkeypatch.setattr(_SCRIPT_MODULE, "issue_repo", lambda: STUB_REPO)
+    monkeypatch.setattr(_SCRIPT_MODULE, "_gh", lambda *a, **k: "\n".join(stamps))
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        _SCRIPT_MODULE.warn_if_schedule_is_stale(now)
+    return buf.getvalue()
+
+
+def _stamp(now: datetime, *, minutes_ago: float) -> str:
+    return (now - timedelta(minutes=minutes_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def test_a_schedule_that_has_been_skipping_says_so_and_changes_nothing(tmp_path: Path) -> None:
+    """Criterion 4. A 40-hour gap warns, and the exit code is identical to the no-gap run.
+
+    The comparison is the point. Asserting only that a warning appears would leave the arm free to
+    also change the verdict — and a heartbeat that can turn a healthy registry red is worse than no
+    heartbeat, because it makes the check's own red untrustworthy. So the same scenario runs twice,
+    differing only in the run history, and the return codes are compared to each other rather than
+    to a constant.
+    """
+    stale = ["2026-09-09T20:00:00Z", "2026-09-09T18:00:00Z"]   # newest is 40h before the clock
+    healthy = ["2026-09-11T11:00:00Z", "2026-09-11T09:00:00Z"]  # newest is 1h before it
+
+    warned, _ = _stale_run(tmp_path / "a", stale)
+    quiet, _ = _stale_run(tmp_path / "b", healthy)
+
+    assert "::warning::" in warned.stdout, warned.stdout
+    assert "2400" in warned.stdout, f"the silence is not named in minutes:\n{warned.stdout}"
+    # The FULL sentence, not the word. The derive-failure message — "cannot derive a staleness
+    # threshold ... whether the schedule has been skipping" — also contains "skipping", so the
+    # short needle cannot tell "it skipped" from "I have no idea whether it skipped", and those
+    # are opposite claims. A test that accepts either is not reading the answer.
+    assert "The schedule has been skipping" in warned.stdout, warned.stdout
+    assert "::warning::" not in quiet.stdout, quiet.stdout
+    assert warned.returncode == quiet.returncode, (
+        f"the staleness arm changed the exit code ({warned.returncode} vs {quiet.returncode}). It "
+        f"is diagnostics about the watcher, never evidence about the registry."
+    )
+
+
+def test_a_heartbeat_that_cannot_be_read_changes_nothing(tmp_path: Path) -> None:
+    """Criterion 5. `gh api` fails: a warning, and the exit code is untouched.
+
+    This is the path that decides whether the arm is safe to have at all. An Actions API that 403s
+    — which is exactly what a missing `actions: read` produces — must not be able to fail a run
+    about the registry.
+    """
+    repo = make_repo(tmp_path, version="0.7.77", tag=True)
+    # The path is derived from the same constant the script builds it from, so a change to the
+    # query shape cannot leave this test silently failing to fail.
+    gh_bin, gh_log = gh_stub(
+        tmp_path, [], fail_on=("api", heartbeat_verb().split(" ", 1)[1])
+    )
+    broken, log = report_run(repo, published("0.7.77"), tmp_path, gh_bin=gh_bin, gh_log=gh_log)
+
+    healthy, _ = _stale_run(tmp_path / "ok", ["2026-09-06T12:00:00Z", "2026-09-06T10:00:00Z"])
+    assert "::warning::" in broken.stdout, broken.stdout
+    assert "run history" in broken.stdout
+    assert broken.returncode == healthy.returncode, (
+        f"a failed heartbeat changed the exit code ({broken.returncode} vs "
+        f"{healthy.returncode}). A broken instrument about the instrument is not a verdict."
+    )
+    assert [c[0] for c in gh_calls(log)].count("api") == 1, gh_calls(log)
+
+
+def test_an_unreadable_timestamp_is_a_warning_and_not_a_crash(tmp_path: Path) -> None:
+    """The `--jq` could answer with something that is not a timestamp. That is still not a verdict.
+
+    Without this the arm's parse sits on the happy path only, and a GitHub response shape change
+    would surface as an uncaught exception — which the top-level handler turns into exit 2, making
+    a schedule diagnostic fail a run about the registry after all.
+    """
+    proc, _ = _stale_run(tmp_path, ["2026-09-06T12:00:00Z", "not-a-timestamp"])
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "::warning::" in proc.stdout
+
+
+def test_too_little_history_is_silent_but_a_single_ancient_run_is_not(tmp_path: Path) -> None:
+    """No completed run at all is not evidence. ONE RECENT run is not either. One ANCIENT run IS.
+
+    A warning on a newly added workflow would fire once for every new workflow and teach its first
+    reader that this arm cries wolf, which is the failure mode being guarded against. But the rule
+    that bought that — `len(stamps) < 2` — exempted the single-stamp case wholesale, so a workflow
+    whose one and only completed run was days ago read identically to one added a minute ago.
+
+    Measuring silence needs one stamp rather than two, so the exemption shrinks to exactly what it
+    was always meant to cover: nothing to measure at all. The third case is what stops this test
+    passing by simply never warning.
+    """
+    for name, history, quiet in (
+        ("none", [], True),
+        ("one-recent", ["2026-09-11T11:00:00Z"], True),
+        ("one-ancient", ["2026-09-09T20:00:00Z"], False),
+    ):
+        proc, _ = _stale_run(tmp_path / name, history)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert ("The schedule has been skipping" in proc.stdout) is not quiet, (
+            f"[{name}] expected {'silence' if quiet else 'a warning'}:\n{proc.stdout}"
+        )
+
+
+def test_the_heartbeat_asks_whether_the_schedule_fired_not_whether_it_was_green(
+    tmp_path: Path,
+) -> None:
+    """`event=schedule`, and `status=completed` — never `status=success`.
+
+    `event=schedule` is the half that was always right: pressing "Run workflow" is precisely what
+    someone does while investigating a check that has gone quiet, so counting manual runs would
+    make the arm blindest exactly when it is being consulted.
+
+    `status` is the half that was wrong. The runs API filters on a check run's STATUS OR
+    CONCLUSION, so `success` selects on the VERDICT rather than on whether the schedule fired.
+    This check exits 1 on drift, so every run of a real incident is invisible under `success`, and
+    the first green run afterwards measures across the whole incident and reports a schedule that
+    never missed a beat as skipping — crying wolf immediately after the arm's subject did the one
+    thing it exists to report.
+
+    This asserts against LITERALS on purpose. `heartbeat_argv()` is built from the script's own
+    constants, so comparing to it would only ask the constant to agree with itself.
+    """
+    _, log = _stale_run(tmp_path, ["2026-09-11T11:00:00Z", "2026-09-11T09:00:00Z"])
+    api = [c for c in gh_calls(log) if c[0] == "api"]
+    assert len(api) == 1, gh_calls(log)
+    assert "event=schedule" in api[0][1], api[0]
+    assert "status=completed" in api[0][1], api[0]
+    assert "status=success" not in api[0][1], (
+        f"the heartbeat is filtering its own run history to SUCCESSFUL runs: {api[0][1]!r}. A "
+        f"drift verdict exits 1, so every run that reported drift is invisible here, and the "
+        f"first clean run after an incident measures a span covering the whole incident and "
+        f"announces that the schedule has been skipping when it never missed a beat."
+    )
+    assert "--repo" not in api[0], (
+        f"`gh api` has no `--repo` and exits 1 on it, so this heartbeat would be dead on every "
+        f"real run behind a warning nobody reads: {api[0]!r}"
+    )
+
+
+def _fabricated_log(tmp_path: Path, name: str, calls: list[list[str]]) -> Path:
+    """An argv log the stub could have written. NUL-delimited, `CALL` before each invocation."""
+    parts: list[str] = []
+    for call in calls:
+        parts.append("CALL")
+        parts.extend(call)
+    log = tmp_path / f"{name}.log"
+    log.write_bytes(b"\0".join(p.encode("utf-8") for p in parts) + b"\0")
+    return log
+
+
+@pytest.mark.parametrize(
+    "repo_value",
+    [None, "", "   ", "seam-sdk", "a b/c"],
+    ids=["unset", "empty", "whitespace", "no-slash", "spaces"],
+)
+def test_a_broken_reporting_target_cannot_redden_a_clean_run(
+    tmp_path: Path, repo_value: str | None
+) -> None:
+    """Criterion 7, on the path that actually broke. A bad `$REPO` must not fail a healthy run.
+
+    `report_clean` resolves `issue_repo()` inside a best-effort handler precisely so a GitHub
+    problem cannot redden a run that PROVED the registry healthy. The heartbeat then resolved the
+    same value again as an ARGUMENT AT THE CALL SITE — outside every handler — so the identical
+    `InfraError`, already softened to a `::warning::` eleven lines earlier, came back as a
+    traceback and exit 2. The same failure, softened once and then fatal.
+
+    The exit code is compared to the healthy run rather than to a literal `0`, so this cannot pass
+    by both runs being broken in the same new way.
+    """
+    broken_dir = tmp_path / "broken"
+    broken_dir.mkdir(parents=True, exist_ok=True)
+    repo = make_repo(broken_dir, version="0.7.77", tag=True)
+    gh_bin, gh_log = gh_stub(broken_dir, [], runs=["2026-09-11T11:00:00Z"])
+    broken, _ = report_run(
+        repo,
+        published("0.7.77"),
+        broken_dir,
+        now=HEARTBEAT_NOW,
+        gh_bin=gh_bin,
+        gh_log=gh_log,
+        env_repo=repo_value,
+    )
+    healthy, _ = _stale_run(tmp_path / "healthy", ["2026-09-11T11:00:00Z"])
+
+    assert "Traceback" not in broken.stderr, broken.stderr
+    assert broken.returncode == healthy.returncode, (
+        f"a reporting target the heartbeat cannot use changed the exit code "
+        f"({broken.returncode} vs {healthy.returncode}) on a run whose registry verdict was "
+        f"clean. Diagnostics about the watcher are not evidence about the registry."
+    )
+    assert "run history" in broken.stdout, broken.stdout
+
+
+def test_the_staleness_arm_cannot_raise_whatever_goes_wrong_inside_it(monkeypatch) -> None:
+    """Criterion 7 as a CLASS, not as the list of failures somebody happened to think of.
+
+    Every handler inside the body catches `InfraError`. `cron_period_minutes` can raise
+    `ValueError` on a cron step of zero, a change in GitHub's response shape can raise anything,
+    and the next edit can raise something nobody has named — all of which reach the top-level
+    handler and exit 2, reporting the instrument's own health as a finding about the registry.
+    """
+    def boom(_now):
+        raise ZeroDivisionError("boom")
+
+    monkeypatch.setattr(_SCRIPT_MODULE, "_staleness_heartbeat", boom)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        _SCRIPT_MODULE.warn_if_schedule_is_stale(HEARTBEAT_NOW)  # must not raise
+    out = buf.getvalue()
+    assert "::warning::" in out, out
+    assert "ZeroDivisionError" in out, out
+
+
+@pytest.mark.parametrize(
+    ("cron", "silence_minutes", "warns"),
+    [
+        ("17 */2 * * *", 500, True),
+        ("17 */12 * * *", 500, False),
+        ("17 */12 * * *", 2500, True),
+    ],
+    ids=["two-hourly-warns", "twelve-hourly-stays-quiet", "twelve-hourly-warns-later"],
+)
+def test_the_threshold_the_heartbeat_uses_moves_with_the_cron(
+    monkeypatch, cron: str, silence_minutes: int, warns: bool
+) -> None:
+    """The ARM's threshold, not the helper's. This is the gap the helper's own test cannot see.
+
+    `test_the_cron_is_the_one_the_threshold_is_derived_from` proves
+    `staleness_threshold_minutes()` follows `CRON`. Nothing proved the arm CALLS it — and since
+    120 x 3 == 360 for the shipped cron, a literal `threshold = 360` agrees with the derivation on
+    every value the suite ever looked at, leaving the helper as unreachable dead code.
+
+    Falsifiable in both directions, which is what makes it more than a second copy of the helper
+    test: a hardcoded 360 makes the twelve-hourly case warn, and a hardcoded 2160 makes the
+    two-hourly case go quiet. No single constant satisfies all three rows.
+    """
+    out = _arm_says(
+        monkeypatch,
+        cron=cron,
+        stamps=[_stamp(HEARTBEAT_NOW, minutes_ago=silence_minutes)],
+        now=HEARTBEAT_NOW,
+    )
+    assert ("The schedule has been skipping" in out) is warns, out
+
+
+def test_a_cron_the_arm_cannot_read_warns_and_changes_nothing(monkeypatch) -> None:
+    """The `threshold is None` branch, which no test had ever executed.
+
+    Reached when the cron is not a fixed sub-daily cadence. Without the step-of-zero guard in the
+    parser this same input raises `ValueError` instead — which is not an `InfraError`, so it would
+    escape to the top level and exit 2 from an arm whose contract is warnings-only.
+
+    The needle is `cron period`, not `skipping`: the derive-failure message ends "...cannot say
+    whether the schedule has been SKIPPING", so the short needle cannot tell it apart from the
+    warning that says the schedule HAS been skipping. They are opposite claims.
+    """
+    out = _arm_says(
+        monkeypatch,
+        cron="17 */0 * * *",
+        stamps=[_stamp(HEARTBEAT_NOW, minutes_ago=5000)],
+        now=HEARTBEAT_NOW,
+    )
+    assert "cannot derive a staleness threshold" in out, out
+    assert "cron period" not in out, f"it claimed to measure a cadence it cannot read:\n{out}"
+
+
+def test_the_heartbeat_call_is_argv_exact(tmp_path: Path) -> None:
+    """Exactly one `gh api` call, and exactly the argv the script's constants describe."""
+    _, log = _stale_run(tmp_path, ["2026-09-11T11:00:00Z", "2026-09-11T09:00:00Z"])
+    assert [c for c in gh_calls(log) if c[0] == "api"] == [heartbeat_argv()], gh_calls(log)
+
+
+def test_the_write_classifier_notices_a_write_smuggled_through_gh_api(tmp_path: Path) -> None:
+    """Guard the guard. `gh_writes` claims no write reaches GitHub through `gh api`.
+
+    It used to claim that by denying a hand-written list of flags — `-X`, `--method`, `-f`,
+    `--field` — which took the SHORT form of one pair and the LONG form of the other, and tested
+    membership on whole argv tokens. Five of the seven real spellings below walked straight past
+    it, on the assertion whose whole purpose is catching a write.
+
+    This is the control that stops the allowlist becoming vacuous: it pins that the classifier
+    accepts the real call and rejects every one of those spellings.
+    """
+    assert gh_writes(_fabricated_log(tmp_path, "clean", [heartbeat_argv()])) == []
+    for name, extra in (
+        ("dash-x-split", ["-X", "POST"]),
+        ("dash-x-glued", ["-XPOST"]),
+        ("method-equals", ["--method=POST"]),
+        ("upper-f", ["-F", "ref=main"]),
+        ("raw-field", ["--raw-field", "ref=main"]),
+        ("input", ["--input", "-"]),
+    ):
+        with pytest.raises(AssertionError):
+            gh_writes(_fabricated_log(tmp_path, name, [heartbeat_argv() + extra]))
+
+
+def test_the_gh_stub_refuses_a_repo_flag_on_api_the_way_gh_does(tmp_path: Path) -> None:
+    """Instrument fidelity, and load-bearing in the same way honouring `--state` is.
+
+    Real `gh api` has no `--repo` and exits 1 on it. While the stub tolerated it, flipping
+    `repo_flag=False` to `True` was invisible to all 201 tests, and the heartbeat would have been
+    dead on every real run behind a `::warning::` nobody reads — present, green, and off.
+
+    The `issue list` half of the assertion keeps this targeted: `--repo` is correct there, and a
+    stub that banned it everywhere would be a different bug.
+    """
+    gh_bin, _ = gh_stub(tmp_path, [(1, "OPEN", [], "t")], runs=["2026-09-11T11:00:00Z"])
+    env = report_env(gh_bin)
+    refused = subprocess.run(
+        [str(gh_bin / "gh"), "api", "some/path", "--repo", STUB_REPO],
+        capture_output=True, text=True, env=env,
+    )
+    assert refused.returncode == 1, refused
+    assert "unknown flag: --repo" in refused.stderr, refused.stderr
+    allowed = subprocess.run(
+        [str(gh_bin / "gh"), "issue", "list", "--repo", STUB_REPO, "--state", "all"],
+        capture_output=True, text=True, env=env,
+    )
+    assert allowed.returncode == 0, allowed
+
+
+def test_a_schedule_that_stopped_dead_is_named_by_the_run_a_human_presses(tmp_path: Path) -> None:
+    """The case the pairwise gap provably cannot see, and the reason `now` is a parameter.
+
+    A gap compares two points in the PAST. A schedule that stopped and never resumed leaves its
+    last two runs a nominal cadence apart forever, so the gap arm is permanently silent about it —
+    and permanent silence is the residual the workflow header names, whose stated mitigation is
+    `workflow_dispatch`. Until now that dispatch run's heartbeat said nothing at all.
+
+    The two runs differ ONLY in `now`, so this cannot pass with `now` ignored.
+    """
+    healthy = ["2026-09-11T11:00:00Z", "2026-09-11T09:00:00Z"]
+    dead, _ = _stale_run(tmp_path / "dead", healthy, now=HEARTBEAT_NOW + timedelta(days=3))
+    alive, _ = _stale_run(tmp_path / "alive", healthy)
+
+    assert "The schedule has been skipping" in dead.stdout, dead.stdout
+    assert "The schedule has been skipping" not in alive.stdout, alive.stdout
+    assert dead.returncode == alive.returncode == 0
+
+
+def test_a_dense_history_through_an_incident_is_not_a_skipping_schedule(tmp_path: Path) -> None:
+    """48 hours of runs every two hours, the newest an hour old. The schedule never missed.
+
+    This is what `status=completed` buys and what `status=success` could not: during a real
+    incident every run exits 1, so under `success` this history would be empty of everything but
+    the pre-incident runs, and the arm would announce a skipping schedule about a schedule firing
+    perfectly. It also pins that measuring silence is not oversensitive — a dense history stays
+    quiet, so the warnings above are about absence rather than about volume.
+    """
+    history = [_stamp(HEARTBEAT_NOW, minutes_ago=m) for m in range(60, 60 + 24 * 120, 120)]
+    proc, _ = _stale_run(tmp_path, history)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "The schedule has been skipping" not in proc.stdout, proc.stdout
+
+
+def test_neither_grace_tier_reaches_the_heartbeat_either(tmp_path: Path) -> None:
+    """The grace tiers touch GitHub not at all, and the heartbeat is a GitHub call.
+
+    Phase 6 pinned this for reporting; Phase 7 adds a second call on the same code path, so the
+    invariant needs re-asserting against the thing that could newly break it. A grace window that
+    makes any request has stopped being a grace window.
+    """
+    for minutes, expect in ((10, "DEFERRED"), (200, "::warning::")):
+        (tmp_path / f"g{minutes}").mkdir(parents=True, exist_ok=True)
+        repo = make_repo(tmp_path / f"g{minutes}", version=DRIFTING, tag=True)
+        gh_bin, gh_log = gh_stub(tmp_path / f"g{minutes}", [], runs=["2026-09-06T12:00:00Z"])
+        proc, log = report_run(
+            repo,
+            published("0.7.77"),
+            tmp_path / f"g{minutes}",
+            gh_bin=gh_bin,
+            gh_log=gh_log,
+            now=LANDED + timedelta(minutes=minutes),
+        )
+        assert expect in proc.stdout, proc.stdout
+        assert gh_calls(log) == [], gh_calls(log)

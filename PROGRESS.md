@@ -3717,3 +3717,114 @@ mutation-proved.
 
 * **Next:** Phase 7 — the watcher's own heartbeat, which adds `actions: read` in the commit that
   reads the Actions API.
+
+### Phase 7 — the watcher's own heartbeat · **DONE**
+
+A scheduled check can stop existing without anyone noticing, which is the failure it was built to
+catch, one level up. Three layers, honestly ranked, and the third is a residual rather than a fix:
+PR-time structural guards (complete for what they cover — deletion or detuning cannot land quietly);
+a runtime staleness warning (partial — it catches the resumed-after-a-gap case, which is the
+observable one); and permanent cron silence, which is undetectable from inside the thing that went
+silent and needs an out-of-repo watcher this plan is scoped away from.
+
+**`actions: read` arrived in the commit that earned it.** Phase 6's belt made that automatic rather
+than disciplined: the guard demands a declared scope be justified by an argv in the script, so the
+scope could not land before the call, and the assertion Phase 6 left saying "not declared yet" named
+itself as the line to delete. It was deleted here, and replaced by its opposite.
+
+**The arm cannot vote.** Every failure path is a `::warning::` and a return: a 403 from a missing
+scope, an unreachable API, an unparseable timestamp, a cron it cannot read. The test that matters
+runs the same scenario twice, differing only in run history, and compares the two exit codes to each
+other rather than to a constant — a heartbeat that can turn a healthy registry red is worse than no
+heartbeat, because it makes the check's own red untrustworthy.
+
+* ⚠ **Two guards had to be repaired before this phase could add to them.**
+  `test_the_job_is_bounded_and_cannot_be_told_to_ignore_itself` asserted
+  `"continue-on-error" not in WORKFLOW.read_text()` — a substring over the raw file, comments
+  included. Phase 7's required header section explains that `continue-on-error` is deliberately
+  absent, which trips that search, so the guard would have forced its own documentation to be
+  deleted to stay green. **This is Phase 6's prose-vs-structure defect running backwards**: there
+  prose could satisfy a guard, here prose could break one. Same answer both times — read structure,
+  not text. It is now asserted per holder over the parsed YAML.
+* ⚠ **The threshold derivation was not falsifiable as first written, and I nearly shipped it.**
+  `cron_period_minutes(spec = CRON)` binds the constant at def time, so the constant cannot be moved
+  by a test — and `threshold == period x MULTIPLIER` is satisfied by a **hardcoded 360** for as long
+  as the shipped cron happens to be two-hourly, which is exactly the mistuning being guarded
+  against. The mutation `threshold_hardcoded` would have survived. `CRON` is now read at call time
+  and the test moves the cron to `*/12` and requires the threshold to follow it.
+* **One cron parser, not two.** Phase 5 had grown one inside the test file for the warn-band guard;
+  this phase needs the same number at runtime. Two readings of one string in two files are free to
+  disagree, and the disagreement surfaces as a staleness warning that fires always or never — muted
+  either way. The richer version moved into the script and the test aliases it, so Phase 5's
+  parametrised cases now drive production code.
+* **The plan said "on each run"; taken literally that breaks Phase 6.** A heartbeat inside the grace
+  window is a GitHub call inside the grace window, and the invariant is that neither tier reaches
+  GitHub at all — not even a read. It is gated on the verdict, and a new test re-asserts the grace
+  invariant against the call that could newly break it.
+* **`gh api` has no `--repo`,** so it names the repository in its path and `_gh` grew a flag rather
+  than a sibling — one timeout, one failure translation, one argv shape, and every invocation still
+  visible to the permissions guard. `gh_writes` recognises that one call explicitly instead of
+  treating the whole `api` subcommand as read-only: `gh api` can POST, and exempting a subcommand
+  would mean a write smuggled through it counted as no write on the assertion built to catch writes.
+* **Counts:** `scripts/test_registry_drift_gate.py` 191 -> 201 · `scripts` 426 · python 1257
+  passed / 21 skipped. ruff clean; contract gate still exit 6 on the recorded local lag.
+* **Proof, as it actually went: 11 mutations run, 11 caught — and then a fresh-Opus gate found FOUR
+  SURVIVORS, plus a regression the battery never probed.** Corrected here rather than overwritten: a
+  falsified "no survivors" line is worse than no line, because it is the sentence that stops the next
+  reader looking.
+* **The four survivors.** `threshold_hardcoded` applied to the ARM instead of the helper; a `gh api`
+  write smuggled past the flag denylist as `-F`; `repo_flag` flipped to true, invisible because the
+  stub tolerated a flag real `gh` rejects; and `now` passed as `None`, because the parameter was
+  never read. **The regression:** `issue_repo()` evaluated at the heartbeat's call site, outside
+  every handler — turning a clean run with a bad reporting target from exit 0 with a warning into
+  exit 2 with a traceback, undoing Phase 6's clean-path softening eleven lines after it was applied.
+* **Why `threshold_hardcoded` looked caught when it was not: one name, two mutations.** The one that
+  fell hardcodes the helper's RETURN, and the derivation test sees it. The one that survived
+  hardcodes the arm's LOCAL, and nothing looked there — 120 × 3 equals 360 for the shipped cron, so
+  the literal and the derivation agree on every value the suite ever evaluated. A guard placed where
+  a value is DEFINED says nothing about where it is USED. That is a fifth distinct shape of
+  unfalsifiable-green, and the first one this workstream shipped into a phase it had already called
+  proved.
+* **What did hold:** `actions_scope_dropped` reddens both
+  `test_the_declared_permissions_are_exactly_what_the_job_uses` and
+  `test_the_actions_needle_matches_the_call_that_earned_the_scope`, so the scope is coupled to the
+  call from both ends. `heartbeat_votes_on_the_exit_code` kills 6, `event_schedule_dropped` 12.
+
+#### Phase 7 verification round — eight gaps, and a fix set two independent passes agreed on
+
+The gate returned GAPS (8: two HIGH, three MEDIUM, three LOW). Because the fix set had real design
+content, it went through **two independent Opus design passes** rather than one, reconciled against
+each other. They converged without conferring on the two calls that mattered — `status=completed`,
+and the coupling that makes the query fix and the `now` fix inseparable — which is why neither
+needed escalating further.
+
+* **G1 · the arm could vote after all.** `issue_repo()` moved inside the arm's own `try`. The old
+  code carried a comment asserting "`code` is deliberately not reassigned anywhere below this line",
+  which is true and which guards the wrong thing: the arm changed the exit code by RAISING, not by
+  assigning. The protection was written against the shape the violation was imagined to take.
+* **G7 · and it could raise in ways nobody had enumerated.** A wrapper now owns the guarantee with a
+  blanket `except Exception`. Deliberately NOT inside the body, where it would swallow the four named
+  diagnostics, and deliberately NOT around the reporting `try`, which returns 2 — that placement
+  would convert a crash into a VERDICT, inverting the invariant rather than restoring it.
+* **G5 · the query asked the wrong question.** `status=completed`, never `status=success`. Asserted
+  against literals, because building the expectation from the script's own constant would only ask
+  the constant to agree with itself.
+* **G6 · silence replaces the pairwise gap.** It reports the same number one cron period earlier,
+  needs one stamp instead of two, and sees the case the gap provably cannot — a schedule that stopped
+  and never resumed. Shipping it WITHOUT G5 would have been worse than the status quo: it would warn
+  on every run for the whole duration of a live drift.
+* **G3/G4 · a denylist is not a classification.** The read-only assertion took the short form of one
+  flag pair and the long form of the other; five of seven real write spellings walked past it. Now an
+  exact-argv allowlist, with a control test pinning all six. The `gh` stub also learned to reject
+  `--repo` on `api` the way the real tool does, which is what made `repo_flag` observable at all.
+* **G8 · the doc drift this file exists to catch, in the file that catches it.** A test asserting
+  `actions: read` IS declared still carried a name and docstring saying it is not declared yet.
+* **Fixture landmine caught before it bit:** `--now` defaulted ten days after every heartbeat
+  history, so measuring silence would have made every fixture warn — including the ones whose whole
+  job is to assert silence. Anchored to the same value, so naming it shifted nothing.
+* **Proof: 12 mutations, 12 caught, no survivors.** Both directions of the hardcoded threshold (360
+  and 2160), so no single constant satisfies the rows. Note G1's mutation is killed by the assertion
+  on WHICH diagnostic is printed, not by the return code — the G7 wrapper masks the exit-code symptom
+  by design, so the narrow assertion is what carries the proof.
+* **Counts:** drift gate 201 → **218**; scripts suite 426 → **444**.
+* **Next:** Phase 9 — documentation closure, then the finalization pass.
