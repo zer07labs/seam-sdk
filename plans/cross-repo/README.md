@@ -30,14 +30,14 @@ a moved line as evidence the surrounding design may have moved too.
 
 ## The asks
 
-| Plan | Target | Headline | Issue | State (2026-09-03) |
+| Plan | Target | Headline | Issue | State (2026-09-07) |
 |---|---|---|---|---|
 | [`seam-runtime-wire-framing-handshake.md`](seam-runtime-wire-framing-handshake.md) | seam-runtime | Carry `wire_framing_version` in the release dispatch so the SDK can refuse a release it has not adapted to | [#418](https://github.com/zer07labs/seam-runtime/issues/418) | ✅ **done** — landed and CLOSED COMPLETED 2026-08-26; the SDK flipped `runtime_emits_version` to true on 2026-09-03. The latch sat stale for that week, so the gate now also refuses a dispatch that carries the field while the latch reads false. |
-| [`seam-runtime-verify-crate-rename.md`](seam-runtime-verify-crate-rename.md) | seam-runtime | Rename `crates/seam-verify` so two crates in one org stop sharing a package name | [#419](https://github.com/zer07labs/seam-runtime/issues/419) | 🟡 **hygiene** — downgraded from blocker; see the plan |
-| [`seam-runtime-data-plane-bind-guard.md`](seam-runtime-data-plane-bind-guard.md) | seam-runtime | Give the data plane a `validate_mgmt_bind` equivalent | [#420](https://github.com/zer07labs/seam-runtime/issues/420) | 🔴 **live** |
-| [`seam-runtime-evidence-bundle-export.md`](seam-runtime-evidence-bundle-export.md) | seam-runtime | A bearer-scoped evidence bundle — an export, not a cross-tenant read grant | [#421](https://github.com/zer07labs/seam-runtime/issues/421) | 🔴 **live** |
-| [`seam-runtime-anchor-feed.md`](seam-runtime-anchor-feed.md) | seam-runtime | Publish a read-only anchor feed; without one no verifier can detect truncation | [#422](https://github.com/zer07labs/seam-runtime/issues/422) | 🔴 **live** — bounds what this SDK is allowed to claim |
-| [`seam-runtime-commitment-digest-spec.md`](seam-runtime-commitment-digest-spec.md) | seam-runtime | Write the spec for `seam-commitment-digest:v1` | [#423](https://github.com/zer07labs/seam-runtime/issues/423) | 🔴 **live** |
+| [`seam-runtime-verify-crate-rename.md`](seam-runtime-verify-crate-rename.md) | seam-runtime | Rename `crates/seam-verify` so two crates in one org stop sharing a package name | [#419](https://github.com/zer07labs/seam-runtime/issues/419) | ✅ **done** — closed COMPLETED 2026-08-26 by seam-runtime#442 (`d1fcf95`). `crates/seam-verify/Cargo.toml` declares `name = "seam-verify-internal"`; `publish = false` stays and `[[bin]] name = "seam-verify"` is unchanged, so nothing that *runs* the binary notices. **The directory is still `crates/seam-verify`** — the package name moved, not the path, which is exactly what an `ls crates/` check misreads as "never landed". It had already been downgraded from blocker when seam-sdk moved to Cloudsmith. |
+| [`seam-runtime-data-plane-bind-guard.md`](seam-runtime-data-plane-bind-guard.md) | seam-runtime | Give the data plane a `validate_mgmt_bind` equivalent | [#420](https://github.com/zer07labs/seam-runtime/issues/420) | ✅ **closed COMPLETED 2026-08-26** — the runtime-side delivery is *not* verified from here: this repo's clean-room rule means `seam-runtime/crates/**` Rust sources are never read, so what is checked is the issue's state, not its code. |
+| [`seam-runtime-evidence-bundle-export.md`](seam-runtime-evidence-bundle-export.md) | seam-runtime | A bearer-scoped evidence bundle — an export, not a cross-tenant read grant | [#421](https://github.com/zer07labs/seam-runtime/issues/421) | ✅ **closed COMPLETED 2026-08-29** — same caveat as #420: state verified, code not read from here. |
+| [`seam-runtime-anchor-feed.md`](seam-runtime-anchor-feed.md) | seam-runtime | Publish a read-only anchor feed; without one no verifier can detect truncation | [#422](https://github.com/zer07labs/seam-runtime/issues/422) | ✅ **done, and live in production** — closed COMPLETED 2026-08-26, merged as seam-runtime#453 (`bec8e2c`), deployed `sha-bec8e2c`. `GET /v1/anchors` serves the anchors newest-first with **no credential of any kind**, and the acceptance criterion was demonstrated against the real chain, decoded with the connectors Python SDK rather than runtime code. **What that changes here:** `verify/` still does **not** detect truncation. It never reads that feed. What moved is the *reason* — from *no such feed exists* to *this SDK has not built one* — and those are different sentences carrying different caveats. Re-examine it under its own plan; the prose does not move ahead of the code. |
+| [`seam-runtime-commitment-digest-spec.md`](seam-runtime-commitment-digest-spec.md) | seam-runtime | Write the spec for `seam-commitment-digest:v1` | [#423](https://github.com/zer07labs/seam-runtime/issues/423) | ✅ **done** — closed COMPLETED 2026-08-26; `seam-runtime/docs/specs/seam-commitment-digest.v1.md` exists (2026-08-25). This SDK already implements that framing in all five languages, written against a doc comment in a private repo — so what landed is a **conformance-and-citation** opportunity, not new implementation. |
 | [`seam-runtime-acdp-p1a-spec-and-lockstep.md`](seam-runtime-acdp-p1a-spec-and-lockstep.md) | seam-runtime | File the ACDP downstream obligation their own plan says must not be forgotten, and sequence the `sdk-digest-parity` un-pin | [#525](https://github.com/zer07labs/seam-runtime/issues/525) | 🔴 **live** — coordination only; the contract half is already delivered and adopted (seam-sdk#80) |
 | [`seam-hub-sdk-install-caveat.md`](seam-hub-sdk-install-caveat.md) | seam | The hub quickstart says `pip install seam-sdk` with no co-installability caveat | [#26](https://github.com/zer07labs/seam/issues/26) | 🔴 **live** — proposed diff attached in full |
 
@@ -47,8 +47,11 @@ a moved line as evidence the surrounding design may have moved too.
 #418 (wire_framing_version)  ──►  seam-sdk flips runtime_emits_version to true   [DONE 2026-09-03]
                                   (contract/wire-framing.json — the gate now refuses, not warns)
 
-#422 (anchor feed)           ──►  seam-sdk may claim truncation detection
-                                  (guarded today by python/tests/test_retracted_claims.py)
+#422 (anchor feed)           ──►  seam-sdk may claim truncation detection   [FEED LANDED 2026-08-26]
+                                  GET /v1/anchors is live and unauthenticated, so the BLOCK is gone.
+                                  The work is not: verify/ never reads the feed, so the caveat stands
+                                  until code changes it, and not one commit earlier.
+                                  (guarded by python/tests/test_retracted_claims.py)
 
 #420 (bind guard)            ──►  #421 (evidence bundle) is worth designing
                                   (an auditor role over an unenforced read path is decoration)
@@ -56,7 +59,15 @@ a moved line as evidence the surrounding design may have moved too.
 #423 (commitment-digest spec) ─►  any second, independent implementation of that framing
 ```
 
-`#419` blocks nothing since `seam-sdk` moved to Cloudsmith.
+`#419` blocks nothing since `seam-sdk` moved to Cloudsmith. `#420`, `#421` and `#423` are closed and
+block nothing further here.
+
+**Closed is not the same as delivered, and this table has now been wrong in both directions.** It
+carried five asks as 🔴 live for twelve days after they closed — long enough to mislead a session into
+waiting on work that was already done. The opposite error was made while correcting it: `ls crates/`
+still shows `seam-verify`, which reads as "#419 never landed", when what moved was the package name
+inside `Cargo.toml` and not the directory. So check the artefact the ask actually named — a file, a
+route, a declared name — rather than the closure state or the path you expected it to change.
 
 ## Asks in other repos (no local plan — the issue body is the whole ask)
 

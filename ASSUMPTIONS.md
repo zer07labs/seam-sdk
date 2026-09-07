@@ -573,8 +573,10 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   60 days from `EXPECTED-FROM` (see the file's own header) — if `contract/expected-local-lag.txt` is
   still present and its five fields still match the local/BSR gap at that point, the split recorded
   here is not a window and this assumption needs to be revisited, per the plan's own Open Q3 text.
-- **Status:** UNCONFIRMED (reviewed 2026-09-04, and the window this entry names has started to
-  close on its own). `EXPECTED-FROM` is 2026-08-31, so the 60-day trigger is still far off — but the
+- **Status (SUPERSEDED 2026-09-07 — the RESOLVED line at the end of this entry is the current one;
+  both are kept because how a status was reached matters as much as the status, and deleting the
+  first would erase the record of a window that was real while it lasted):** was UNCONFIRMED
+  (reviewed 2026-09-04, and the window this entry names has started to close on its own). `EXPECTED-FROM` is 2026-08-31, so the 60-day trigger is still far off — but the
   *contents* are no longer merely stale, they are now actively wrong in CI: seam-runtime merged its
   ACDP P3 key-revocation work and pushed the BSR, so a CI regeneration emits two `ContextBinding`
   fields (tags 12-13) the manifest does not declare. Note the direction, because an earlier
