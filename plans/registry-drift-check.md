@@ -406,7 +406,80 @@ per-file steps give a named check per gate in the PR's check list, which is wort
 
 ## Phase 3 — `scripts/check_registry_drift.py`: the decision core, offline
 
-**Status: TODO**
+**Status: DONE** (2026-09-06)
+
+> **Divergences from this section as written.**
+> 1. ➕ *A skip path this section did not anticipate: `CLOCK_SKEW_TOLERANCE_MINUTES = 5`.* A
+>    negative age — `--now` before the release attempt, or a tag dated ahead of the checker — sits
+>    below EVERY grace threshold, so the two-tier window deferred it silently and would have gone
+>    on doing so forever. That is precisely the "never a skip path" rule this phase states, broken
+>    by the mechanism meant to enforce it. Found by running the script, not by reading it. Small
+>    skew is clamped to zero (a tag date a few seconds ahead is NTP jitter and means "brand new");
+>    beyond the tolerance it is `InfraError`.
+> 2. *Criterion 9 needed a design decision the plan left implicit, and Phase 4 depends on it.*
+>    "An empty list → 2" and criterion 2's "response lacks it → 1" are only compatible if the
+>    OFFLINE positive control is the response itself: it must carry at least one `seam-sdk` row at
+>    some version, or it is not a plausible answer to a `seam-sdk` query. Live, Phase 4's canary
+>    plays that role, so an empty TARGET response there is trusted as drift. Implemented as a named
+>    `assert_offline_instrument_healthy()` so Phase 4 has an explicit seam, with both rules written
+>    down next to each other.
+> 3. *Criterion 13's `""` case is unreachable and was split out rather than left implying coverage.*
+>    Both manifest readers refuse an empty version first (the pyproject pattern requires a
+>    character between the quotes; an empty `package.json` version reads as missing), so nothing
+>    can reach `assert_query_safe` with one. Its empty branch is defensive, exactly like
+>    `yank.yml:65`'s `|""` arm, and now has a test that says so.
+> 4. *The `format` clause is verdict-inert and is pinned on the OUTPUT instead.* Dropping it can
+>    only add non-required formats to `found`, and `missing` is `{python, npm} - found`, so the
+>    exit code is identical either way. What it corrupts is the diagnosis — `registry serves:
+>    docker, raw` tells someone chasing a failed publish that the registry holds something relevant
+>    to this release. Asserted there.
+> 5. *The mutation round (criterion 17) found two test defects on its first pass, not one.*
+>    `no_query_guard` survived because the unsafe version was written to the worktree without being
+>    committed, so `version_landed_at` refused first — exit 2 for an unrelated reason, and the test
+>    passed with the guard deleted. `format_clause_dropped` survived per (4). Both fixed; the
+>    committed suite now catches 15/15.
+> 6. *Also fixed in passing:* `test_every_scripts_test_file_runs_in_ci`'s docstring said "Six
+>    `python -m pytest` steps" and this phase makes it eight. The number was removed rather than
+>    corrected — it is the same staleness that assertion exists to catch, one level up.
+>
+> **Round 2 — the verification gate found the code sound and the SUITE thin. Seven gaps, all
+> closed; and one claim in this record was false and is corrected here.**
+>
+> 7. ⚠ **Criterion 17's "15/15" was wrong, and wrong in the direction that matters.** The mutation
+>    named `instrument_after_clock` *deleted* the instrument check; it never *reordered* anything,
+>    so the ordering rule this phase states in bold was pinned by nothing. Both faithful
+>    reorderings passed all 37 tests. The cause was mundane: every broken-instrument case ran ten
+>    days past the release, where the grace window is irrelevant. They now run at 30 minutes too,
+>    which is what makes the early-return shape — literally the "cheap implementation" this phase
+>    rejects — go red. The honest tally is **32/33**, and the one survivor is `order_reordered`,
+>    which is *semantically inert*: with nothing short-circuiting, moving the two lines changes no
+>    observable behaviour, so no behavioural test can pin it. The comment in the script now states
+>    the rule that does have teeth — no path may reach a verdict without having run the query —
+>    rather than the textual ordering that merely suggests it.
+> 8. *Criteria 4, 5 and 13 were asserted on shape, not on content.* The warning could collapse to
+>    "not on the registry yet", the DEFERRED line could drop its numbers, and the query refusal
+>    could replace the offending character with `"?"` — all with a green suite, while each
+>    criterion explicitly asks for that content. Now asserted.
+> 9. ➕ *`_git`'s failure guard could flip a verdict and had no test.* Swallowing a non-zero git
+>    exit makes `for-each-ref` failure drop the tag date silently, the clock falls back to the old
+>    commit date, and a legitimate re-dispatch is reported as **drift** — infrastructure reaching
+>    exit 1, the one thing the exit-code contract forbids. Pinned with a `git` stub first on
+>    `PATH`, per the repo's convention.
+> 10. ➕ *The `max()` mirror could not tell `max` from "the tag date if there is one".* It dated the
+>    tag EQUAL to the commit, so both implementations agree. A tag OLDER than the commit separates
+>    them, and without the commit side of the max that case reports drift on a version half an hour
+>    old.
+> 11. ➕ *"No path prints 'cannot determine' and exits 0" was unguarded at the one branch that will
+>    be edited next.* Nothing omitted `--packages-json`, so replacing its refusal with exactly that
+>    construct left the suite green. Phase 4 edits this branch to make the flag optional.
+> 12. ➕ *`_seam_sdk_rows`' type guards passed for the wrong reason, and it matters forward.* With
+>    them removed the walk returns `[]` and the health check raises instead — exit 2 either way.
+>    Phase 4 removes that covering health check on the live path, where a non-list error body would
+>    then read as drift with nothing red. Now asserted on the message.
+> 13. ➕ *The `^` anchor in `PYPROJECT_VERSION` was unpinned* — the fixture's only decoy sat at
+>    column 0 *after* the real version, so it tested "first match wins" and not the anchor. An
+>    indented decoy now precedes it; without the anchor the parse silently returns the decoy, which
+>    is a wrong version rather than a refusal.
 
 **Delivers.** The script that answers the question, with the registry response **injected from a
 file**. No network, no `gh`, no reporting. Exit **0** clean or within grace, **1** drift, **2**
@@ -637,7 +710,67 @@ the three lag states, the two things easy to get wrong, and the exit-code contra
 
 ## Phase 4 — the live registry query, and the canary that proves the instrument works
 
-**Status: TODO**
+**Status: DONE** (2026-09-06) — ⚠ **with one pre-merge item this session could not perform.**
+
+> **⚠ `CANARY_VERSIONS` IS UNCONFIRMED AGAINST THE LIVE REGISTRY.** This section requires one
+> `curl` with the real credential before merge, and this run had neither the credential (it is a
+> repository secret) nor authorisation to query a registry. `0.7.50` / `0.7.60` / `0.7.65` were
+> selected from tag history, which is evidence a release was ATTEMPTED, not that it landed —
+> exactly the distinction the selection rule warns about. **This is not a silent risk:** an
+> unconfirmed-and-wrong roster makes every scheduled run exit 2 naming all three candidates tried,
+> which is loud, correct, and never a wrong verdict. But the instrument would be broken rather than
+> working. Confirm before merge, or accept that the first scheduled run performs the confirmation
+> and reports it as infrastructure. The constant carries the same warning inline.
+>
+> **Divergences from this section as written.**
+> 1. *The `--packages-json`-is-required refusal became the live branch, as planned* — but the test
+>    Phase 3's gate added for it (nothing may print "cannot determine" and exit 0) still holds and
+>    still passes, now via the token guard. That was the point of pinning it before editing it.
+> 2. ➕ *A property the section did not name: the credential must travel in a HEADER, never in the
+>    URL.* Nothing could see the difference — the leak tests grep the run's own output, and every
+>    error message prints the query string rather than the URL, so moving the token into the query
+>    leaks it to every proxy and access log with the whole suite green. Pinned by reading the
+>    recorded argv.
+> 3. ➕ *The empty-roster branch needed the module loaded by path to be reachable at all*, since
+>    with three entries no CLI invocation can empty the candidate list. Loaded with
+>    `importlib.util.spec_from_file_location`, the idiom `scripts/test_vendored_spec_gate.py`
+>    already uses; making `CANARY_VERSIONS` settable from the environment was rejected as adding
+>    production surface for a test's benefit. Its assertion matches wording unique to that branch,
+>    not the constant's name — the generic all-canaries-failed message also names the constant, so
+>    matching that passes with the guard deleted and pins nothing.
+> 4. *A stub bug worth recording, because it is the quiet kind.* The `curl` stub's `-f` emulation
+>    is multi-line, which gave `textwrap.dedent` no common indent to strip, which left the shebang
+>    indented, which made the kernel refuse the file — so `PATH` fell through and the REAL curl
+>    answered the test. It failed loudly here only because the network is unreachable (exit 56).
+>    The stub is now assembled line by line and asserts its own shebang is at column 0.
+> 5. *Criterion 11's mutation round is 24/24 — and it was recorded as 13/13 before the gate.* Two
+>    of the original thirteen first survived and were closed here: `token_in_the_url` (divergence 2)
+>    and `empty_roster_tolerated` (divergence 3). A third, `canary_any_format`, survived and was
+>    NOT noticed — the honest figure for that round is **12/13**. Weakening the canary's
+>    both-formats test to "any format" is not a missed detection but a confident wrong verdict: a
+>    credential scoped to `python` alone satisfies the weakened canary, the run prints *"instrument
+>    proven … (both formats present)"*, and a healthy release is reported as DRIFT under the
+>    instrument's own certificate. Eleven mutations were added around it — the two adjacent
+>    weakenings, the four ways the query can silently address the wrong thing, `--max-time`
+>    removed, curl's stderr echoed into an error, the `curl`-absent guard defused, a token
+>    smuggled into `-A`, and the credential's edges left unstripped.
+> 6. *The `CANARY_VERSIONS` comment claimed evidence it did not have.* It offered "carries both
+>    `vX` and `go/vX` tags" as excluding a refused release; `release-on-runtime.yml` creates both
+>    tags in one step before `publish.yml` starts, so `go/v0.7.69`/`70`/`72` exist too and the
+>    clause discriminates nothing. Retracted in the file. The roster also moved from three
+>    near-contemporaneous versions to one old / one middle / one recent (`0.7.50`, `0.7.65`,
+>    `0.7.75`), hedging both retention and the target overtaking the whole roster.
+> 7. *A second gate round found six more unfalsifiable guards; final tally 32/32.* The leak sweep
+>    asserted `returncode == 2` on every case, leaving all four verdict-path `print()`s ungrepped —
+>    a credential in the certificate line would leak on every GREEN run with the suite passing. The
+>    canary's health did not exercise the `version:` filter the verdict depends on.
+>    `assert_query_safe`'s POSITION was unpinned: moved below the fetch it still exits 2, after
+>    putting two extra query parameters sourced from `main` on the wire. `--max-time` was asserted
+>    by presence, and `0` means *never time out*. The roster's declared depth was prose. And "every
+>    live-path test must pass `env=`" was a sentence, now an autouse fixture that deletes
+>    `SEAM_REGISTRY_TOKEN` so the omission fails closed. Both fixes that could be defused were
+>    mutated in turn — the guard moved rather than deleted, and the scrubber removed with a real
+>    token in the ambient environment.
 
 **Delivers.** The script learns to fetch the Cloudsmith response itself when `--packages-json` is
 absent, and to refuse loudly when it cannot.
@@ -792,7 +925,92 @@ the re-point instruction.
 
 ## Phase 5 — `.github/workflows/registry-drift.yml`, read-only
 
-**Status: TODO**
+**Status: DONE** (2026-09-06). Two divergences, both from a claim the plan and I both got wrong:
+
+> 1. *The cron's justification was false as written, and my first test asserted it.* The plan ties
+>    the two-hour period to the SOFT window, and the workflow comment I drafted said a 90-minute
+>    soft window "needs to be sampled more often than it is wide". A 120-minute period fails that,
+>    and the test I wrote from it went red against the workflow the plan specifies. The claim is
+>    wrong, not the cron: the soft tier's job is to stay QUIET while a publish may still be
+>    running, and nothing depends on a run landing inside it. The tier that must be observed is the
+>    WARN band — it exists so "something is wrong, but a job could still be alive" is said once
+>    before escalation. So the bound is `period < HARD - SOFT` (120 < 270), and a six-hour cron
+>    would let a release cross the whole band between runs, leaving the middle tier unreachable in
+>    production. Comment and test both now say that; `cron_widened_past_the_warn_band` is red.
+> 2. *Criterion 8's sibling guard bit on prose.* `test_the_check_is_not_also_a_job_in_ci_yml` first
+>    scanned raw workflow text, and `ci.yml:680` MENTIONS `check_registry_drift.py` in a comment
+>    explaining why the drift question is not asked there — the very argument the test enforces. It
+>    now scans comment-stripped `run:` bodies, the `_code()` discipline `scripts/test_yank_gate.py:51-62`
+>    established for exactly this failure.
+
+> 3. *Criterion 11 is 20/20, over a wider set than the five the plan names.* The five are red
+>    (`mask_deleted`, `and_list_resolution`, `fetch_tags_dropped`, `refusal_exits_one`,
+>    `pip_install_as_a_separate_step`). The other fifteen: `fetch_depth_dropped`, `timeout_removed`,
+>    `continue_on_error_added`, `pull_request_trigger_added`, `set_e_removed`, `mask_after_export`,
+>    `export_renamed`, `script_path_wrong`, `packages_json_passed`, `unused_issues_scope`,
+>    `permissions_removed`, `cron_widened_past_the_warn_band`, `bearer_strip_dropped`,
+>    `refusal_removed_entirely`. Note `pip_install_added` INLINE was caught only incidentally — by
+>    the credential test aborting under `set -e` when `pip` is absent from the stub PATH, not by the
+>    guard that exists for it. Re-run as its own step, `test_the_job_installs_nothing` is the
+>    detector, which is the mutation the plan actually asks for. **⚠ That last sentence was wrong
+>    and the gate disproved it** — see divergence 4.
+> 4. *The gate found thirteen survivors, and the first round's 20/20 was honest about the number
+>    while being wrong about the set.* Every one of those twenty was an edit some test already
+>    parsed. The survivors were edits nothing parsed: the whole `env:` block deleted or one
+>    `secrets.` name misspelt (the credential tests inject their own environment, so all ten stayed
+>    green while the real job received nothing); `|| true`, `&`, `> /dev/null`, a grace override and
+>    a `--repo` override appended to the invocation, which was pinned only at the script path;
+>    `if: false` on the job or the step; `::add-mask::` demoted to a trailing comment, which
+>    `_wf_code()` cannot strip without corrupting `${TOKEN#Bearer }`; `pip3 install`;
+>    `runs-on: windows-latest` and `shell: pwsh`; `actions/checkout@v3`, where `fetch-tags` did not
+>    exist and an unknown `with:` key is silently ignored; `python-version: "3.7"`;
+>    `setup-python` deleted; an unused `packages: read`; `concurrency: cancel-in-progress`, which
+>    this plan rejects in prose with nothing enforcing it; and `cron: "17 */2 * * 1"` — a weekly
+>    cadence wearing a two-hourly hour field. Final round 41/41. **And the "incidental catch" claim
+>    in divergence 3 is false**: `test_the_job_installs_nothing` fails on the inline `pip install`
+>    directly. The error was methodological — the battery ran pytest with `-x` and reported the
+>    first failure in file order as "the detector". `-x` establishes that a mutation was caught, not
+>    what caught it.
+> 5. *Two things the plan asked for turned out to be wrong, and are implemented differently.*
+>    (a) The credential resolution is NOT byte-identical to `yank.yml`'s. That file tests the raw
+>    secret with `-z`, so a whitespace-only value is not empty, the fallback is never consulted, and
+>    a usable Cargo token in scope is discarded — a permanent exit 2 whose log says the credential
+>    is missing. Each source is trimmed here, in the order leading-whitespace → prefix →
+>    trailing-whitespace (trimming first turns `"Bearer "` into `"Bearer"`, which is not empty and
+>    gets sent). `yank.yml` still has the hole and is out of scope for this plan.
+>    (b) The `permissions:` guard reads job-level in preference to top-level and scans the invoked
+>    script as well as the workflow's shell. Written the plan's way it would have reddened at every
+>    one of Phase 6's three moves — including demanding `issues: write` be removed at the moment it
+>    became necessary, since Phase 6 puts `gh issue` in the script rather than the `run:` line. All
+>    three moves are now simulated against it.
+> 6. *Smaller, recorded for completeness.* `python-version: "3.12"` rather than the plan's `"3.11"`,
+>    matching `.github/workflows/framework-coinstall.yml:53`, the sibling scheduled workflow.
+>    `export SEAM_REGISTRY_TOKEN=…` rather than a prefix assignment, so the truncation harness can
+>    execute the region. And the workflow comment shipped `publish.yml:369-371` for the `&&`
+>    one-liner — inherited verbatim from `.github/workflows/yank.yml:38-39`, which is stale; the
+>    real sites are `:227`, `:385`, `:607`, `:711`, which this plan's own criterion 11 had right.
+>    Citations inside workflow comments are not swept by
+>    `python/tests/test_compatibility_citations_resolve.py`, so that one would not have self-healed.
+> 7. *A second gate round found twenty-one more survivors; final tally 65 distinct mutations.*
+>    Round 1's were edits to things no test read; round 2's were edits to things the tests read but
+>    did not read far enough. Three matter most. **`export` deleted survived, and the harness could
+>    not have caught it** — it appends an `echo` and runs it in the same bash process, where a
+>    non-exported assignment is visible; the read-back is a `python3 -c` child now. **`trap 'exit 0'
+>    ERR` survived**, along with `set +e` and any command after the invocation: one line each, and
+>    drift can no longer redden the job, while every credential case stays green because the
+>    refusal path is untouched. **And the permissions guard was still going to redden Phase 6** —
+>    the needle was the literal `gh issue`, and this script spells subprocess calls as argv lists,
+>    so `["gh", "issue", "create"]` matches nothing. The needles are regexes now and the fix has a
+>    positive control that asserts the argv form PASSES with the scope declared and FAILS without.
+>    Also survived: `echo "::add-mask::"` and `echo "::add-mask::x"` (a mask of nothing, and of a
+>    literal), the mask redirected to `/dev/null`, `set -x`, `defaults.run.shell` at either level,
+>    `checkout` with `ref:` or `repository:`, `timeout-minutes: 360`, `python3 -m pip --quiet
+>    install`, pip via `uses:`, and both loosenings of the `Bearer` rule.
+> 8. *`--report` was pre-allowlisted here for Phase 6, and that was a bug rather than preparation.*
+>    `check_registry_drift.py` has no such flag, so argparse would have exited 2 on every scheduled
+>    run — a permanent infrastructure-red at the cadence this plan says gets muted. The allowlist
+>    is empty, and any flag is cross-checked against the script's own `add_argument` calls. **Phase
+>    6 adds `--report` to both in the commit that implements it.**
 
 **Delivers.** The scheduled workflow. It runs the check and goes **red** on drift. It files nothing
 yet.

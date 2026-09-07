@@ -897,3 +897,75 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Owner / re-open trigger:** whoever next rewrites that paragraph. Re-open if the citation
   genuinely cannot fit — at which point the answer is to shorten the prose, not to widen the guard.
 - **Status:** UNCONFIRMED (recorded 2026-09-06).
+
+
+## The offline positive control is "the response mentions seam-sdk at all"
+
+- **Plan:** `plans/registry-drift-check.md` (Phase 3, acceptance criteria 2 and 9)
+- **Assumed:** a `--packages-json` file containing no `seam-sdk` row at any version is always a
+  broken instrument, never a true report that the registry has nothing.
+- **Chose:** `assert_offline_instrument_healthy()` refuses (exit 2) unless the injected response
+  carries at least one `seam-sdk` row at some version. The plan's criteria required this without
+  saying so: criterion 9 makes an empty list exit 2, criterion 2 makes "the response lacks it"
+  exit 1, and those are only compatible if non-emptiness is what proves the query ran. Offline
+  there is no canary, so the response is the only evidence available.
+- **Alternatives:** (a) treat an empty response as drift — rejected, it makes a broken query
+  indistinguishable from a real lag, which is the named failure class #100 documents; (b) require
+  the caller to pass a separate proof-of-life file — rejected as inventing an interface for a
+  transitional flag Phase 4 makes optional; (c) no offline check at all, defer everything to
+  Phase 4's canary — rejected, it leaves the offline path (which CI runs on every PR) with no
+  positive control whatsoever.
+- **Blast radius if wrong:** contained to the offline path. If a legitimate response can be empty,
+  the check exits 2 and says why, which is noisy but never a wrong verdict. The live path is
+  deliberately governed by the opposite rule — an empty TARGET response is trusted as drift
+  because a canary answered on the same credential in the same run — so this does not constrain
+  Phase 4.
+- **Owner / re-open trigger:** whoever implements Phase 4. Re-open if the two rules ever need to
+  become one; they are different on purpose and the reason is written at both sites.
+- **Status:** UNCONFIRMED (recorded 2026-09-06).
+
+
+## Five minutes is the boundary between clock skew and a broken clock
+
+- **Plan:** `plans/registry-drift-check.md` (Phase 3 — not in the section as written)
+- **Assumed:** a release attempt dated up to five minutes after `now` is NTP jitter and means
+  "brand new"; more than that means the clock or the input is wrong.
+- **Chose:** `CLOCK_SKEW_TOLERANCE_MINUTES = 5`, clamping inside it and `InfraError` outside.
+  Found by running the script rather than reading it: a negative age is below every grace
+  threshold, so an unguarded one defers silently and indefinitely — the exact skip path the phase
+  forbids, created by the mechanism meant to enforce it.
+- **Alternatives:** (a) refuse any negative age — rejected, a tag creator date a few seconds ahead
+  of the checker would fail a scheduled run for nothing; (b) clamp every negative age to zero —
+  rejected, it silently accepts a genuinely wrong clock and hides the condition; (c) compare
+  against the runner's clock only — rejected, the dates come from the clone, not the runner.
+- **Blast radius if wrong:** low in both directions. Too tight and a scheduled run exits 2 with a
+  message naming the skew; too loose and a badly-skewed clock buys at most five extra minutes of
+  silence on a check whose soft window is ninety.
+- **Owner / re-open trigger:** the first exit 2 naming skew on a real scheduled run. Re-open if
+  Cloudsmith or GitHub tag dates turn out to be routinely ahead by more than a few seconds.
+- **Status:** UNCONFIRMED (recorded 2026-09-06).
+
+
+## The three canary versions are actually published
+
+- **Plan:** `plans/registry-drift-check.md` (Phase 4)
+- **Assumed:** `0.7.50`, `0.7.60` and `0.7.65` are each served by the registry in both the `python`
+  and `npm` formats.
+- **Chose:** ship them as `CANARY_VERSIONS` unconfirmed, with the uncertainty written into the
+  constant, the plan and this file. The plan requires one `curl` with the real credential before
+  merge; this session had neither the credential nor authorisation to query a registry, and
+  guessing quietly would have been worse than shipping a labelled gap.
+- **Alternatives:** (a) block Phase 4 until the confirmation happens — rejected, everything else in
+  the phase is verifiable now and the roster is one constant to edit; (b) pick versions with a
+  weaker rule (any tag) — rejected, `publish.yml:748-749` records three tagged-but-refused versions,
+  so a tag is not evidence of publication and that is the whole selection rule; (c) probe without a
+  version filter as the instrument check — rejected in the plan, because it exercises a different
+  query than the target and so cannot prove the `version:` qualifier works.
+- **Blast radius if wrong:** contained and loud. Every scheduled run exits 2 naming all three
+  candidates tried and both possible causes. It never produces a wrong verdict; it produces no
+  verdict, visibly. The cost is that the check is not actually watching anything until the roster
+  is corrected — which is a real cost, just not a silent one.
+- **Owner / re-open trigger:** whoever merges Phase 4, or the first scheduled run. Re-open the
+  moment a run exits 2 naming the canaries.
+- **Status:** UNCONFIRMED (recorded 2026-09-06). ⚠ This one is unconfirmed in the strong sense —
+  it is a fact about the world that nobody has checked, not a judgement call awaiting review.

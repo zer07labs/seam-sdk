@@ -3263,3 +3263,292 @@ filed as its own issue during finalization.
 * **Counts:** `test_ci_gate.py` 17 -> 68 · `scripts` **225** · python **1246 passed / 20 skipped** ·
   ruff clean.
 * **Next:** Phase 3 — `scripts/check_registry_drift.py`, the decision core, offline.
+
+#### Phase 3 — the decision core, offline · DONE
+
+* **2026-09-06.** `scripts/check_registry_drift.py` (new, stdlib-only) ·
+  `scripts/test_registry_drift_gate.py` (new, 37 tests) · one new `workflow-guards` step in
+  `.github/workflows/ci.yml`.
+* **The comparison is `is main's declared version installable?`** — one question, no tag involved.
+  `.github/workflows/release-on-runtime.yml:180` pushes the version commit before `:182`/`:186`/`:187` tag, so that
+  one comparison is true in the never-dispatched state and false in both failure states. The tag is
+  read only to choose the remediation text.
+* **A skip path the plan did not anticipate, found by running the script.** A negative age — a
+  release attempt dated after `now` — sits below every grace threshold, so the two-tier window
+  deferred it silently and forever. That is the "never a skip path" rule broken by the mechanism
+  meant to enforce it. Five minutes of skew now clamps to "brand new"; more than that is
+  infrastructure.
+* **The offline/live positive-control split is now explicit.** Offline, the injected response must
+  itself contain a `seam-sdk` row at some version, or it is a broken instrument (exit 2). Live,
+  Phase 4's canary plays that role, so an empty target response is trusted as drift. Written as a
+  named function so Phase 4 has a seam rather than a surprise.
+* **Proof:** 15/15 mutations caught — inverted verdict, commit-date-only clock, collapsed tiers,
+  escalating warn band, instrument checked after the clock, deleted crash handler, deleted query
+  guard, deleted instrument check, deleted tag floor, deleted skew guard, unstripped npm scope,
+  substring name match, dropped format clause, dropped version clause, unchecked lockstep.
+* **Two of those first survived, and both were test defects rather than code defects.** The
+  query-safety test wrote its unsafe version to the worktree without committing it, so the run
+  exited 2 from "cannot date this version" and passed with the guard deleted. The format clause had
+  no fixture carrying a third package format — and is verdict-inert anyway, so it is pinned on the
+  reported line instead.
+* **Counts at first commit:** `scripts` 262 · python 1250 passed / 20 skipped · ruff clean ·
+  `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` still exit **6** naming the seven recorded lag
+  fields. (The first draft of this line said 1246, which was Phase 2's number carried forward —
+  the same staleness this phase went out of its way to fix in a docstring two paragraphs up.)
+* **Round 2 GAPS (7), all closed. The code was sound — the verifier found no input producing a
+  wrong verdict — and the suite was thin.** One claim above was also false and is corrected:
+  * **The ordering rule was pinned by nothing, and the record said otherwise.** The mutation named
+    `instrument_after_clock` deleted the instrument check rather than reordering it. Both faithful
+    reorderings passed all 37 tests, because every broken-instrument case ran ten days past the
+    release where the grace window is irrelevant. They run at 30 minutes now too, which is what
+    makes the early-return shape go red. Honest tally: **32/33**, the survivor being a pure
+    reorder that is semantically inert — nothing short-circuits, so it changes no behaviour and no
+    behavioural test can catch it. The script's comment now states the rule with teeth instead.
+  * **Three criteria were asserted on shape rather than content** — the warning could collapse to
+    "not on the registry yet", the DEFERRED line could drop its numbers, the query refusal could
+    name `"?"` instead of the offending character. All three now assert what the criteria ask for.
+  * **A swallowed git failure becomes a false DRIFT**, not a missing answer: `for-each-ref` fails,
+    the tag date vanishes, the clock falls back ten days, and a legitimate re-dispatch is reported
+    as drift. That is infrastructure reaching exit 1. Pinned with a `git` stub first on `PATH`.
+  * **Three more unpinned invariants**, each closed: the `max()` mirror dated its tag equal to the
+    commit so it could not tell `max` from "the tag if present"; nothing ever omitted
+    `--packages-json`, so the one branch Phase 4 will edit could be turned into a
+    print-and-exit-0; and the `^` anchor in `PYPROJECT_VERSION` had no decoy that could defeat it.
+  * **`_seam_sdk_rows`' type guards passed for the wrong reason** — removing them made the health
+    check raise instead, exit 2 either way. Phase 4 removes that covering check on the live path,
+    where a non-list error body would then read as drift with nothing red.
+* **Final counts:** `scripts` **283** (`test_registry_drift_gate.py` 37 -> 58) · python **1250
+  passed / 20 skipped** · ruff clean.
+* **Not exercised against a network.** Every test is hermetic; the live query is Phase 4, and its
+  correctness will be established by the first scheduled run rather than by this session.
+* **Next:** Phase 4 — the live registry query and the canary roster.
+
+#### Phase 4 — the live query and the canary · DONE, with one item this session could not do
+
+* **2026-09-06.** `scripts/check_registry_drift.py` learns to fetch; `scripts/test_registry_drift_gate.py`
+  58 -> 92 tests. No workflow yet (Phase 5), no reporting yet (Phase 6). Written at 79 tests and a
+  claimed 13/13; two gate rounds found that claim false and seven further blind guards, and this
+  record is the corrected one.
+* **⚠ `CANARY_VERSIONS` is UNCONFIRMED against the live registry, and the first draft of that
+  warning was not honest about how weak the evidence is.** The plan requires one `curl` with the
+  real credential; this run had neither the credential (a repository secret) nor authorisation to
+  query a registry. The rule actually applied is "has a tag, minus the three refusals someone
+  happened to record" — and the comment claimed more than that, offering "carries both `vX` and
+  `go/vX` tags" as though it excluded a refused release. It does not: `release-on-runtime.yml`
+  creates both tags in one step before `publish.yml` starts, so `go/v0.7.69`, `go/v0.7.70` and
+  `go/v0.7.72` all exist. The clause had zero discriminating power against exactly the case it was
+  invoked to exclude, and the comment now retracts it. "No recorded refusal" is weak here for a
+  second reason: only three refusals are on record because nothing was watching, which is the
+  premise of #100 and the reason this file exists. The roster is now `0.7.50` / `0.7.65` /
+  `0.7.75` — one old, one middle, one recent, so a retention sweep cannot age all three out
+  together. The spread also settles the drop-if-equal rule in a stronger direction than first
+  written: every entry is already strictly below the target (0.7.77) and the target only moves
+  upward, so no entry can ever equal it again and that branch cannot shrink this roster at all. **It fails safe:** a
+  wrong roster makes every run exit 2 naming all three candidates, never a wrong verdict. But that
+  is a broken instrument rather than a working one, so it is worth confirming rather than
+  discovering.
+* **The canary is the instrument's positive control**, and it is a roster rather than a pin for a
+  specific reason recorded in the code: the first draft pinned the then-current version, so a real
+  drift on that version made the canary come back empty and the run exit 2 — "my instrument is
+  broken" for exactly the condition it exists to report. Any entry equal to the target is dropped
+  at runtime, and one yank cannot brick it.
+* **Two properties nothing could see, both now pinned.** The credential must travel in a header,
+  never the URL — the leak tests grep the run's own output and every message prints the query
+  string rather than the URL, so moving the token into the query leaked it to every proxy and
+  access log with the suite green. And the empty-roster branch is unreachable through the CLI with
+  three entries, so it needed the module loaded by path; its assertion matches wording unique to
+  that branch, because the generic refusal further down also names the constant.
+* **A stub bug worth recording, because it is the quiet kind.** The `curl` stub's `-f` emulation is
+  multi-line, so `textwrap.dedent` had no common indent to strip, so the shebang stayed indented,
+  so the kernel refused the file and `PATH` fell through to the REAL curl. It surfaced only because
+  the network is unreachable here (curl exit 56). The stub is assembled line by line now and
+  asserts its own shebang.
+* **A second gate round found six more guards that could not be observed failing.** All six are
+  closed, and one of them is the sharpest instance of the pattern this run keeps finding. **The
+  leak sweep asserted `returncode == 2` on every case**, so the four `print()`s that produce an
+  actual verdict were never grepped — and those are the lines that run on the majority of runs. A
+  credential interpolated into *"instrument proven by canary …"* would have leaked on every GREEN
+  scheduled run, forever, with the whole suite passing. Phase 5 sharpens it rather than softening
+  it: the workflow strips a `Bearer ` prefix in shell, and GitHub masks the registered secret, not
+  a derivative of it, so the leaked value would be a working credential nothing redacts. The other
+  five: the canary's health was computed without exercising the `version:` filter the verdict
+  depends on (a plausible page of `seam-sdk` rows at OTHER versions certified the instrument);
+  `assert_query_safe`'s POSITION was unpinned, so moved below the fetch it still exited 2 — after
+  putting `?query=seam-sdk+version:0.7.78&admin=1&page_size=50` on the wire, two extra parameters
+  sourced from a value read out of `main`; `--max-time` was asserted by presence alone, and
+  `CURL_MAX_SECONDS = 0` means *never time out* to curl, restoring exactly the silent multi-hour
+  burn the constant exists to prevent; the roster's declared depth was prose, so shrinking the
+  tuple to two left every test green; and *"any new live-path test must pass `env=`"* was a
+  sentence rather than a mechanism — the defect it guards against has already happened once here
+  (three real requests to api.cloudsmith.io carrying the real secret, suite green), and the remedy
+  applied then was per-test discipline. It is now an autouse fixture that deletes
+  `SEAM_REGISTRY_TOKEN`, so an omitted `env=` fails closed at exit 2 instead of quietly working.
+* **Proof: 24/24 mutations caught, and the number this record first carried was wrong.** It said
+  13/13. The verification gate re-ran them and `canary_any_format` — weakening the canary's
+  "serves BOTH formats" test to "serves anything" — survived: honest tally **12/13**. Its failure
+  mode is the one this whole file exists to prevent, not a missed detection. A credential that can
+  read `python` but not `npm` satisfies the weakened canary, the run announces *"instrument proven
+  by canary … (both formats present)"*, and then reports DRIFT on a perfectly healthy release. A
+  confident wrong verdict, wearing the instrument's own certificate. Eleven further mutations were
+  added around it — the two adjacent weakenings (`any overlapping format`, `python only`), the
+  four ways the query itself can silently address the wrong thing (`page_size` dropped, package
+  name dropped, `query` renamed, repository renamed), `--max-time` removed, curl's stderr echoed
+  into an error message, the `curl`-absent guard defused, a token smuggled into `-A`, and the
+  credential's edges left unstripped. All 24 are caught now.
+* **Final proof: 32/32.** The six round-2 survivors plus two mutations written to falsify the
+  fixes themselves — `assert_query_safe` MOVED rather than deleted (so it still exits 2, just too
+  late, which is the only version of that mutation the fix has to survive), and the autouse
+  scrubber defused and the suite re-run with a real-looking `SEAM_REGISTRY_TOKEN` in the ambient
+  environment. Both red. A fix whose own mutation is not run is a fix nobody has watched work.
+* **Counts:** `scripts` **317** (`test_registry_drift_gate.py` 58 -> 92) · python **1250 passed / 20 skipped** · ruff clean.
+* **Still not exercised against a network** — every test drives a stubbed `curl`. The live path's
+  correctness will be established by the first scheduled run.
+* **Next:** Phase 5 — `.github/workflows/registry-drift.yml`, read-only.
+
+#### Phase 5 — the scheduled workflow, read-only · DONE
+
+* **2026-09-06.** `.github/workflows/registry-drift.yml` (new) · `scripts/test_registry_drift_gate.py`
+  92 -> 113 tests. The check now runs on a clock. It goes red on drift and files nothing —
+  `permissions: contents: read`, and that is the whole of it. Reporting is Phase 6.
+* **Shipping the read-only half alone is a real boundary, not a slice for its own sake.** The first
+  live scheduled run happens with no write permission at all, so a wrong verdict costs a red job
+  and nothing else — no issue, no comment, no notification to anyone. Given `CANARY_VERSIONS` is
+  still unconfirmed, that ordering is worth more here than it usually is.
+* **The cron's stated reason was wrong, and my own test caught it.** The plan ties the two-hour
+  period to the soft window, and the comment I drafted said a 90-minute soft window "needs to be
+  sampled more often than it is wide" — which a 120-minute cron plainly is not. The cron is right
+  and the reason was wrong: the soft tier exists to stay QUIET while a publish may still be
+  running, so nothing depends on a run landing inside it. The tier that has to be *observed* is the
+  warn band, which exists to say "something is wrong, but a job could still be alive" once before
+  anything escalates. The bound is therefore `period < HARD - SOFT` — 120 < 270 — and a six-hour
+  cron would let a release cross the entire band between runs, leaving the middle tier as code that
+  never executes in production. That mutation is red.
+* **A guard that bit on the argument for its own existence.** The sibling-workflow test scanned raw
+  workflow text for `check_registry_drift.py`, and `.github/workflows/ci.yml:680` names the script in a comment
+  explaining why the drift question is *not* asked there. It now reads comment-stripped `run:`
+  bodies — `scripts/test_yank_gate.py:51-62`'s discipline, which exists because two of that file's
+  guards were satisfied by prose quoting the strings they searched for.
+* **The credential resolution is EXECUTED, not read**, across the same ten shapes
+  `scripts/test_yank_gate.py:93-140` covers — and asserted on `SEAM_REGISTRY_TOKEN`, the name the
+  checker actually reads, rather than on the local `TOKEN`. A resolution that gets the value right
+  and fails to export it leaves the script with no credential and exits 2 forever.
+* **Every refusal exits 2, and the digit is the point.** `yank.yml` exits 1 here and is right to —
+  it is destructive, and 1 means "refused". In this workflow 1 already means *the registry is
+  behind the source*, so a repository that lost its Cloudsmith secret would file a drift verdict
+  about a release that published perfectly well, indistinguishable from a real one.
+* **`permissions:` is asserted in both directions**, so it survives Phases 6 and 7 unedited: a
+  scope the job does not use is standing authority for nothing on a job holding a production
+  credential, and an undeclared scope is `none` rather than inherited, so the staleness arm 403s
+  unless `actions: read` lands in the same commit that needs it.
+* **A second gate round found twenty-one more, and they were a different kind again.** Round 1's
+  survivors were edits to things no test read. Round 2's were edits to things the tests read but
+  did not read *far enough* — and three of them are worse than anything in round 1:
+  * **`export` deleted survived**, and the harness could not have caught it by construction. It
+    appends `echo "${SEAM_REGISTRY_TOKEN:-}"` and runs it in the same bash process, where a
+    non-exported assignment is perfectly visible. The one thing `export` exists for — reaching a
+    CHILD — is the one thing that harness cannot observe. The read-back is a `python3 -c` child
+    now, which is the only thing that can tell an exported variable from a shell one.
+  * **`trap 'exit 0' ERR` survived**, one line, and it makes drift unable to redden the job. So did
+    `set +e` with any trailing command, and any command after the invocation at all — the step's
+    status is its last command's. The guard's own comment said *"the step's exit status IS the
+    verdict"* while inspecting only the tokens on the invocation line. The refusal path is
+    unaffected by all three (`exit 2` does not fire an ERR trap), so every credential case stayed
+    green while only the verdict was lost.
+  * **The permissions guard was still going to redden Phase 6** — round 1's finding relocated
+    rather than fixed. The needle was the literal `"gh issue"`, and this script spells subprocess
+    calls as argv lists: `["gh", "issue", "create"]` contains no such substring. Phase 6 written
+    the way every other call in the file is written would have demanded `issues: write` be REMOVED
+    on the day it became necessary. The needles are regexes now, and the fix has a positive
+    control: the argv form with the scope declared is asserted to PASS, and without it to FAIL.
+  * **The mask guard checked how a line opens, not that it masks anything.** `echo "::add-mask::"`
+    (an empty registration), `echo "::add-mask::x"` (a literal), and `… > /dev/null` (a directive
+    the runner never receives) all passed. And nothing stopped the token being printed BEFORE the
+    mask — `set -x`, which the workflow's own comment names as the scenario, survived.
+  * Also: `defaults.run.shell: pwsh` at workflow or job level (equivalent to the per-step override
+    the same test catches), `checkout` with `ref:` or `repository:` (the verdict becomes a
+    statement about a frozen commit or another repository), `timeout-minutes: 360` (GitHub's own
+    default, written longhand), `python3 -m pip --quiet install` (a flag between `pip` and
+    `install`), pip via `uses:`, and both loosenings of the `Bearer` rule the shell's comment
+    promises — one of which eats six characters off a token that merely starts with those letters.
+* **`--report` was pre-allowlisted for Phase 6 and would have been a permanent red.** The
+  invocation allowlist carried it "ready for Phase 6" while `check_registry_drift.py` has no such
+  flag: argparse exits 2 on an unrecognised argument, so adding it to the workflow would have
+  passed the test and produced infrastructure-red on every scheduled run. The allowlist is empty
+  now, and a second assertion cross-checks any flag against the script's own `add_argument` calls —
+  which is the check that would have caught it.
+* **Proof: 65 distinct mutations caught across three batteries.** The first
+  round was 20/20 against the mutations I thought of, and the number was not the problem — the
+  *set* was. Every one of those twenty was something a test already parsed. The gate went looking
+  for edits the tests do not parse at all, and found that the check could be switched off, muted,
+  redirected, or cut off from its credential with a one-line diff and 113 green tests testifying
+  that it worked:
+  * **The `env:` block was asserted by nothing.** The credential tests inject their own
+    environment — right for testing the resolution, and it meant deleting the whole block, or
+    misspelling one `secrets.` reference, left all ten cases green while the real job received
+    nothing. Permanent exit 2 at a two-hour cadence, which reads as flaky infrastructure and gets
+    muted: verbatim the failure the test banner says the block exists to prevent, one level above
+    where it was being checked.
+  * **The invocation was pinned only at the script path.** `|| true` (the job can never go red),
+    `&` (status discarded), `> /dev/null` (the verdict never reaches the log),
+    `--hard-grace-minutes 100000` (exit 1 unreachable) and `--repo /tmp` (a verdict about a
+    directory that is not this repo) all survived. The whole line is pinned now, token by token,
+    with flags on an allowlist so Phase 6's `--report` is a deliberate edit in both places.
+  * **`if: false`** on the job or the step survived — the cheapest possible deletion of a check.
+  * **`::add-mask::` demoted to a trailing comment survived**, and this is the sharp one:
+    `_wf_code()` exists to stop a comment satisfying a guard, and it strips whole-line comments
+    only, because stripping past a `#` would corrupt `${TOKEN#Bearer }`. So `:  # echo
+    "::add-mask::$TOKEN"` kept the needle, the index and the ordering while emitting nothing. The
+    assertion matches the line's shape now, not the needle's presence.
+  * **`pip3 install` evaded the literal `pip install`.** So did `runs-on: windows-latest` and
+    `shell: pwsh` (where `set -euo pipefail` is not a statement), `actions/checkout@v3` (where
+    `fetch-tags` did not exist and an unknown `with:` key is silently ignored, so the belt goes
+    while the braces hold), `python-version: "3.7"`, deleting `setup-python` entirely, an unused
+    `packages: read`, and `concurrency: cancel-in-progress` — which the plan explicitly rejected
+    without anything enforcing the rejection.
+  * **`cron: "17 */2 * * 1"` survived** — a weekly cadence wearing a two-hourly hour field. The
+    guard read the hour field alone. It is a real parser now, with its own nine-case table:
+    `*/N` and `A-B/N` are both accepted (`17 1-23/2 * * *` is a correct every-two-hours spelling,
+    and the first fix rejected it), an explicit list is read as its largest gap wrapping past
+    midnight, and anything that is not a fixed sub-daily cadence on every day returns `None`.
+* **A record claim of mine was false, and the gate ran the experiment.** This checkpoint said
+  `pip install` added inline was caught "only incidentally". It is not: `test_the_job_installs_nothing`
+  fails on it directly, with its own message. The error was methodological — the battery runs
+  pytest with `-x` and reports the first failure as "the detector", and in file order the
+  credential test comes first. Both fail. **`-x` tells you a mutation was caught; it does not tell
+  you what caught it**, and every "by:" attribution from that battery is the first test in file
+  order rather than the intended one. The batteries print all failing tests now.
+* **A credential hole in the shell itself, inherited from `yank.yml`.** `.github/workflows/yank.yml:54-62` tests the
+  raw secret with `-z`, so a value that is a single space — or `"Bearer  x"`, or a newline — is not
+  empty: the fallback is never consulted and a perfectly good Cargo token sitting in scope is
+  discarded. That is a permanent exit 2 whose log says the credential is missing while the
+  repository can see one. This workflow trims each source before testing it. **Be precise about the symptom**, because the
+  first draft of this bullet was not: `.github/workflows/yank.yml:62` refuses with exit **1**, not
+  2, and in the whitespace-only case it never reaches the refusal at all — `TOKEN=" "` is not empty,
+  so it proceeds and 401s at Cloudsmith. The permanent-exit-2-saying-the-credential-is-missing
+  outcome is what *this* workflow would produce had it inherited the hole, via `registry_token()`'s
+  `not token.strip()`. The hole is the same; the symptom differs by file. The ORDER is the part
+  that is easy to get wrong — my first fix trimmed before removing the prefix, which turns
+  `"Bearer "` into `"Bearer"`, not empty, and sends it. Leading whitespace, then the prefix, then
+  trailing whitespace. Four new positive shapes and four new refusals pin it. **`yank.yml` still
+  has the hole** and is deliberately not touched here.
+* **The permissions guard would have forced its own rewrite in Phase 6**, which is exactly what
+  writing it in both directions was meant to prevent. It read top-level `permissions:` only, and
+  Phase 6 moves the block to the job level; and it searched for `gh issue` in the workflow's shell,
+  while Phase 6 puts that call inside `check_registry_drift.py --report` — so it would have
+  demanded `issues: write` be REMOVED at the moment it became necessary. It now reads job-level in
+  preference to top-level, scans the workflow's shell PLUS the script it invokes, and refuses any
+  scope not in an explicit justification table. All three of Phase 6's moves were simulated against
+  it: the job-level move passes, a declared-but-unused `issues: write` fails, and both scopes pass
+  once the script actually uses them.
+* **Counts:** `scripts` **367** (`test_registry_drift_gate.py` 92 -> 142) · python **1257 passed /
+  21 skipped** — six more passing and one more skipped than Phase 4, every one of them accounted
+  for. The new workflow enters two parametrised sweeps over `.github/workflows/`:
+  `test_no_workflow_calls_buf_generate_directly` passes and
+  `test_ci_runs_a_node_version_the_package_claims_to_support` skips, since this job sets up no
+  Node. The other five are citation parameters — this checkpoint cites five files the guard had
+  not been asked about before. Verified, not drift. ruff clean.
+* **Not in `ci-ok`'s `needs:`**, deliberately — a scheduled sibling like `framework-coinstall.yml`,
+  for its reasoning at `.github/workflows/framework-coinstall.yml:5-8` plus one of its own: this check exists to
+  catch a release that was never dispatched, and a job that runs on a push cannot see that.
+* **Next:** Phase 6 — reporting: one issue per version, a suppression path, provable
+  non-collision.
