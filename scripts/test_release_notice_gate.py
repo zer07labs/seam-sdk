@@ -414,8 +414,10 @@ def _blind_spot_failures(text: str, job_key: str, repo: Path) -> list[str]:
         failures.append(
             "the sentence saying this gap is 'deliberately NOT solved here' gives the reader "
             "nowhere to go." + detail + " Name the tracking issue (`zer07labs/seam-sdk#100`) or "
-            "the workflow that closes it, in that sentence — a citation further down the block "
-            "is not where anyone looks, and has twice been used to defeat this guard."
+            "the workflow that closes it ON THAT LINE — the window is the promise line itself, "
+            "not the sentence and not the paragraph, because every wider boundary this guard has "
+            "had was defeated by a decoy just inside it. If the citation no longer fits, shorten "
+            "the prose and join it onto that line; do not widen the window."
         )
     return failures
 

@@ -84,7 +84,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `.github/workflows/publish.yml:316` | `make generate` **again at publish time**, against unpinned plugins — the open half of #52. `:390-401` pre-upload smoke installs protobuf *unconstrained*, so the skew is invisible to it; `registry-smoke` (`:519`) likewise. Measured at planning: `grep -rn protobuf .github/workflows/` yielded **one** hit, a prose comment — no workflow pinned protobuf anywhere, so nothing caught the skew. **Phase 6 closed that** (DONE 2026-08-31): the same grep now yields 17, and `.github/workflows/publish.yml:423` installs the built wheel with `protobuf==$FLOOR`. The declared floor and the emitted gencode are both **7.36.0** (`python/pyproject.toml:50`, `python/seam_sdk/_gen/seam/api/v1/seam_pb2.py`'s `Protobuf Python Version` header — cited by symbol, not by line, since it is a generated, gitignored file) — zero headroom, which is why this phase ran first. |
 | `.github/workflows/publish.yml:63-148` | `ci-green` — resolves every `ci-ok` conclusion for the tagged commit. Sound: `:107` still-running ⇒ `pending`, `:117-126` one-green-cannot-mask-one-red, `:143-148` timeout is a refusal. `:192`/`:285` gate both npm and python. **Must not regress.** |
 | `.github/workflows/publish.yml:150-188` | `version-check` — tag vs in-tree versions. It had **no branch-ancestry check** (`.github/workflows/ci.yml:19` runs on every branch push, so a tag at a green feature-branch commit published cleanly); **Phase 6 added one at `:176`**, which is inside this row's own range. Read the range as the job, not as evidence of the gap — it was widened in round 1 until it contained the very step it is cited for lacking. |
-| `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:1207`. |
+| `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:1286`. |
 | `python/tests/test_protobuf_floor.py:72,88` | The two pure-file-read assertions Phase 6 runs at publish time. `:29-31` reads only `_gen/seam/api/v1/seam_pb2.py`; `:47-51` **skips** when `_gen` is absent. `:88-99` forces `cap == gencode_major + 1` — this is why "widen the floor" is not a metadata edit. |
 | `python/tests/test_grpcio_floor.py:38` | Module-level `import grpc` — matters if Phase 6 runs it in the publish job. |
 | `.github/workflows/yank.yml` | `workflow_dispatch`, `dry_run` default `"true"`. A hard **DELETE** (`:91-92`), not a PyPI-style yank. Its token line did **not** strip the cargo token's `"Bearer "` prefix (`.github/workflows/publish.yml:383-385` does) — **Phase 10 fixed it** (DONE 2026-08-31) at `.github/workflows/yank.yml:55-60`, and left the version/format/name filters (`:73-76`) byte-unchanged. `scripts/test_yank_gate.py` now executes the resolution and pins those filters. |
@@ -155,7 +155,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   - *R2 GAPS (3):* the `:109`→`:141` fix reached `PROGRESS.md` but missed
     `plans/archive/record-digest-v3.md:12`; removing a duplicated execution-order block ate the
     blank line and merged two paragraphs; and the path repoint **over-replaced** four quoted
-    `DECISIONS.md` section titles, which are lookup keys that must match `DECISIONS.md:1399`
+    `DECISIONS.md` section titles, which are lookup keys that must match `DECISIONS.md:1478`
     verbatim, not paths.
   - *R3 PASS:* all three closed, both halves of the over-replacement checked (quoted titles reverted,
     `**Plan:**` paths still archive-pointed), no new breakage, 545/17 green.
@@ -3114,7 +3114,7 @@ Every line below was opened and verified during planning; line numbers are as of
 - `.github/workflows/ci.yml:642` — the only install: `pyyaml pytest grpcio cryptography`. A new
   `scripts/` test may import nothing else. An undeclared import is a CI **collection error** — but
   scoped to one step, not the job's whole suite: `workflow-guards` invokes pytest once per file
-  (`.github/workflows/ci.yml:644` and `:649`, `:654`, `:660`, `:665`, `:671`, `:677`, `:682`), so
+  (`.github/workflows/ci.yml:644` and `:649`, `:654`, `:660`, `:665`, `:671`, `:677`, `:684`), so
   the steps above it have already reported and only the ones below are skipped. It is loud, on the
   PR that introduces it.
 - `scripts/test_ci_gate.py:277-301` — set equality both directions between `scripts/test_*.py` on
@@ -3342,7 +3342,8 @@ filed as its own issue during finalization.
   premise of #100 and the reason this file exists. The roster is now `0.7.50` / `0.7.65` /
   `0.7.75` — one old, one middle, one recent, so a retention sweep cannot age all three out
   together. The spread also settles the drop-if-equal rule in a stronger direction than first
-  written: every entry is already strictly below the target (0.7.77) and the target only moves
+  written: every entry is already strictly below the target (0.7.77 then, 0.9.0 now — the target
+  moved and the argument only got stronger) and the target only moves
   upward, so no entry can ever equal it again and that branch cannot shrink this roster at all. **It fails safe:** a
   wrong roster makes every run exit 2 naming all three candidates, never a wrong verdict. But that
   is a broken instrument rather than a working one, so it is worth confirming rather than
@@ -3552,3 +3553,466 @@ filed as its own issue during finalization.
   catch a release that was never dispatched, and a job that runs on a push cannot see that.
 * **Next:** Phase 6 — reporting: one issue per version, a suppression path, provable
   non-collision.
+
+### Phase 6 — the reporter, and a guard that was reading prose about the code · **DONE**
+
+`--report` turns the verdict into an issue. Four rows, and only the last changes the exit code: no
+issue -> create; open -> say nothing, it already says it; closed and unlabelled -> reopen and
+comment; closed and labelled `deliberately-unpublished` -> a `::warning::` naming it, exit 0. The
+clean path emits a `::notice::` when a drift issue is open and **never closes it** — a reporter that
+can retract its own reports is a much larger authority than one that can only speak, and the failure
+mode is worse: a bug in the clean path erases the record of a real outage instead of adding noise to
+it.
+
+**The verdict is printed before anything is reported, and the order is load-bearing.** Reporting
+talks to GitHub and GitHub has outages. Computing the report first would exit 2 with the answer never
+printed at all — the run a total loss rather than an undelivered one. The verdict is the product; the
+issue is a delivery mechanism for it.
+
+**Neither grace tier reaches GitHub at all — not even the read.** The moment a grace tier files
+anything it has stopped being a grace window and become a reporting tier with a softer adjective.
+Allowing the harmless `gh issue list` is what would make the write one edit away.
+
+* ⚠ **A Phase 5 guard was justifying `issues: write` with PROSE rather than with the code, and its
+  own anti-vacuity control is what hid it.** The needle was `\bgh\b\W{1,8}issue\b`. The only two
+  things in the entire script that matched it were error messages — ``f"unreadable row from `gh
+  issue list`"`` and ``f"`gh issue list` returned a non-numeric issue number"``. Every real call is
+  spelled `_gh(["issue", "create", ...], repo)`, where `"gh"` sits inside `_gh`'s own argv and is
+  never adjacent to `"issue"`. The control asserted the needle against
+  `subprocess.run(["gh", "issue", "create"])` — **a spelling this codebase uses nowhere** — so it
+  passed while the file satisfied the needle only through prose. It surfaced from a mutation aimed
+  somewhere else: deleting those two messages, leaving every call intact, turned the permissions
+  test red. This is the same class the last three gate rounds found, one layer further in: not a
+  guard nothing reads, nor a guard read too shallowly, nor a guard satisfied by a recomputation of
+  itself, but **a guard satisfied by a description of the thing it is supposed to observe** —
+  written by a control that tested an imagined spelling instead of the real one.
+  The fix is structural rather than a better regex. The searched surface is now `ast.unparse` with
+  every string literal *blanked*, plus a separate argv surface built from list/tuple literals in a
+  call's **first positional slot** — narrowed further, after review, to an allowlist of spawn
+  callees. The needle names write verbs only, so `gh issue list` no longer argues for `write`. Both
+  regexes live in one module-level table shared by the guard and its control, and the control builds
+  the real surface from a synthetic script — prose-only must fail, this codebase's own spelling must
+  pass, and read-only must fail.
+  **This bullet originally ended "Prose cannot reach either", and that was an overclaim** — true of
+  the script, false of the guard. See the review round below, which is where it was caught.
+* **Phase 7's needle was verified a phase early, for the same reason.** An unexercised regex is an
+  unverified one, and it fails silently in the direction that matters: a needle that never matches
+  demands the scope be REMOVED on the day the heartbeat starts reading the Actions API. A control
+  renders the Phase 7 call and asserts the `actions` needle matches it, while a second assertion
+  states the scope is absent today and names itself as the line to delete.
+* **`actions: read` is deliberately not declared here**, diverging from the plan's criterion 12. The
+  permissions guard refuses a scope nothing uses, so granting it one phase early would have meant
+  weakening that guard to accept it. And criterion 12's exact-dict assertion was replaced by a
+  **level** assertion: pinning the whole mapping duplicates the reasoned guard and forces its own
+  rewrite in Phase 7. What the reasoned guard genuinely cannot see is the level — it tests presence,
+  so `issues: read` on a job that files issues satisfies it and 403s at runtime.
+* **Three more ways to switch Phase 6 off with everything green.** `--report` is one token in the
+  workflow: delete it and the verdict stays correct, the workflow keeps running, the permissions
+  stay right, and the check goes permanently silent. Nothing asserted it. `--state all` narrowed to
+  `--state open` drops the closed suppressed issue out of the listing — a duplicate filed every two
+  hours while the suppressor sees their issue exactly where they left it — and every suppression
+  test stayed green **because the `gh` stub answered regardless of what it was asked**; the stub
+  honours `--state` now and the argv is pinned. `--repo` dropped from a `gh` call falls back to the
+  checkout's git remote, invisible on the happy path and wrong in exactly the fork, mirror and
+  `ref:` cases `issue_repo()` exists for.
+* **Non-collision got a second, stronger assertion.** The plan asked that the two reporters' titles
+  can never coincide. The test also pins that this script's `RELEASE_NOTICE_TITLE` renders
+  *identically* to the `TITLE=` template extracted from `publish.yml`'s `release-outcome` job, for
+  every version tried. The cross-link finds that issue by exact title, so character-for-character
+  agreement is a precondition for the link working — and nothing else in either half of #100 checks
+  it.
+* **Proof: 30 distinct mutations across two batteries.** Round 1 caught 23 of 24; the miss was a bad
+  anchor in my own harness, not a survivor, and it was re-run and caught in round 2. Demoting exit 2
+  to exit 1 kills **60** tests, which is the depth the never-a-verdict rule needed to have. Letting
+  an `InfraError` path reach the reporting code kills exactly the six
+  `test_no_infrastructure_failure_ever_reaches_github` cases — a broken credential cannot file an
+  issue indistinguishable from a real drift, which is the single property that decides whether this
+  reporter is worth having. Round 2 added the prose finding's own control pair: deleting the two
+  error messages must now change **nothing**, and renaming the argv verbs must redden the
+  permissions guard.
+* **ASSUMPTIONS.md carried a stale roster.** It recorded the canaries as `0.7.50`/`0.7.60`/`0.7.65`;
+  the constant has been `0.7.50`/`0.7.65`/`0.7.75` since Phase 4 corrected it. Fixed, with a note
+  that the constant is the authority. A new entry logs that the `deliberately-unpublished` label is
+  assumed to exist in the repository — the check deliberately cannot create it, since a reporter
+  able to create labels can create the one that silences it.
+* **Counts:** `scripts/test_registry_drift_gate.py` 142 -> 184 at the phase's first close, then
+  -> 191 after the verification round below · `scripts` 416 · python 1257 passed / 21 skipped.
+  `scripts/test_release_notice_gate.py` still 54, untouched (criterion 11). ruff clean. Phase 6
+  touches no `python/tests` file, so the python figures move only by the citation parameters this
+  section's own prose adds.
+* **Proof: 40 mutations across three batteries.** Round 1: 23/24, the miss a bad anchor in the
+  harness rather than a survivor, re-run and caught in round 2. Round 2: 6/6, including the
+  negative control that deleting the two error messages must now change nothing. The review round
+  added 10 more, one per gap, all caught — and two of those needed a second, corrected run:
+  `str.index("    except InfraError as exc:")` matches INSIDE a 12-space indent, so the first
+  attempt spliced a second `except` onto the wrong `try` and reddened eleven tests for a reason
+  unrelated to the mutation. A "caught" that fails the wrong tests is not evidence, and both were
+  re-run against exact block anchors before being counted.
+
+#### Phase 6 verification round — seven gaps, one of them inside the fix above
+
+A fresh Opus verifier reviewed the phase against the plan. It did not argue any of these; it
+mutated the code and watched the suite stay green. Verdict **GAPS**, all seven now closed and
+mutation-proved.
+
+* ⚠ **The prose hole had MOVED, not closed — in this phase's own headline fix.** The rebuild
+  hardened the two *script* surfaces and left the *workflow* half of the same needle search as raw
+  text with only WHOLE-LINE comments stripped. A **trailing** comment survives that filter — a
+  hazard `_wf_code()`'s docstring, in the very same file, already warned about and told future
+  readers to match on line SHAPE instead. So appending
+  `# replaces the manual \`gh issue create\` runbook step` to the workflow's `run:` line justified
+  `issues: write` on a script where every write verb had been renamed away, and the suite stayed
+  green. An `echo` of the same sentence did it too. The forward-looking half was worse: an unearned
+  `actions: read` could be justified by a workflow comment naming `/actions/`, caught only by the
+  single assertion Phase 7 is explicitly instructed to delete — so on the day the scope legitimately
+  arrives it would have had the full prose hole and no belt at all.
+  The fix is **exclusion, not a better filter**: the workflow's `run:` text is no longer part of the
+  permissions surface. Nothing is lost, because no scope can be earned there — the whole design of
+  this phase is that the `gh` calls live in the script, so the `run:` block has no call to find and
+  can only be imitated. The hardcoded `issues` belt became a loop over every *declared* scope, each
+  of which must match its needle in the ARGV surface specifically. A belt that covered only the
+  scope that already had one was not a belt.
+  This is the fourth consecutive round in which the same defect class appeared one layer further in.
+  Worth stating plainly: **the phase that found the prose defect also reproduced it**, in the fix.
+* **The argv surface was separating assignment-from-call, not prose-from-argv.** It took the first
+  positional slot of *any* call, so `"\n".join(["Run \`gh issue create\` by hand."])` satisfied the
+  write needle. `_issue_body` is excluded only because it binds `lines = [...]` before joining —
+  a spelling, not a property, and one inlining refactor from re-opening the hole. Now filtered to an
+  allowlist (`_gh`, `run`). Allowlist and not denylist because the directions are asymmetric: an
+  unlisted *spawn* helper makes a needle stop matching and trips the guard loudly; an unlisted
+  *prose builder* re-admits the sentence silently.
+* **The anti-vacuity guard was itself vacuous.** `if len(issues) == ISSUE_LIMIT:` -> `if True:`
+  makes every run cry truncation forever, and all 184 tests passed — the test pinned only that the
+  warning fires AT the limit, never that it stays quiet below. Now parametrised in both directions.
+* **"Names the missing format(s)" was satisfied by the wrong sentence.** The test used a
+  both-missing fixture, and its `npm`/`python` needles were already satisfied by the body's packages
+  row, which names both ecosystems on every issue ever filed. Replacing `sorted(missing)` with
+  `sorted(REQUIRED_FORMATS)` left the suite green while every filed issue claimed both formats were
+  missing. `publish.yml` uploads the wheel and the npm package in separate steps, so half-published
+  is an ordinary outcome, and the body would have misstated what was broken.
+* **Criterion 10 was half-implemented, and the divergence list did not say so.** This script's
+  exact-match was pinned; `publish.yml`'s `$2 == t` was pinned nowhere in either gate file.
+* **The non-collision test re-supplied the binding it claimed to verify.** It extracted the title
+  template from `publish.yml` but hardcoded the `${TAG}` -> `v<version>` step — the fragile half.
+  Changing `release-outcome` to `TAG="${GITHUB_REF_NAME#v}"`, which is how three other jobs in that
+  same file already spell it, breaks the cross-link, and the test stayed green. `test_release_notice_gate.py`
+  caught it *incidentally*, because its fixtures happen to use a `v`-prefixed tag. So the sibling
+  suite was protecting the cross-link and the test claiming the credit was not — the reverse of what
+  this phase originally recorded, now corrected in the plan.
+* **`reopen` then `comment` is not atomic, and the order was the harmful one.** A successful reopen
+  followed by a failed comment leaves the issue OPEN and uncommented — after which every run matches
+  the "already reported" row, so the "the drift is back" record is never written by any run, ever,
+  and nothing retries because nothing can tell that state from a normal open report. Reversed:
+  commenting on a closed issue is legal, so a failed reopen leaves CLOSED-and-unlabelled and the
+  next run retries the pair. Worst case becomes a duplicate comment instead of permanent silence.
+* **Two assumptions the phase never stated, both closed.** A comma is legal inside a GitHub label
+  NAME, and the projection joined and split on `,` — so one label spelled
+  `wontfix,deliberately-unpublished` split into two, the second matching the suppression label
+  exactly, silencing a real drift via an issue nobody labelled as suppressed. Splitting only ever
+  ADDS entries, so that failure direction is always toward silence. Now U+001F, in the `--jq` and
+  the stub alike. Separately, the clean path's advisory read is new in this phase, and it had begun
+  turning runs that PROVED the registry healthy red whenever GitHub was down; it is now best-effort
+  (a `::warning::`, exit 0) with a floor test keeping the drift path at exit 2. Red on this workflow
+  has to keep meaning "something to look at about the registry", or it gets muted — which is the
+  failure the whole check exists to prevent.
+
+* **Next:** Phase 7 — the watcher's own heartbeat, which adds `actions: read` in the commit that
+  reads the Actions API.
+
+### Phase 7 — the watcher's own heartbeat · **DONE**
+
+A scheduled check can stop existing without anyone noticing, which is the failure it was built to
+catch, one level up. Three layers, honestly ranked, and the third is a residual rather than a fix:
+PR-time structural guards (complete for what they cover — deletion or detuning cannot land quietly);
+a runtime staleness warning (partial — it catches the resumed-after-a-gap case, which is the
+observable one); and permanent cron silence, which is undetectable from inside the thing that went
+silent and needs an out-of-repo watcher this plan is scoped away from.
+
+**`actions: read` arrived in the commit that earned it.** Phase 6's belt made that automatic rather
+than disciplined: the guard demands a declared scope be justified by an argv in the script, so the
+scope could not land before the call, and the assertion Phase 6 left saying "not declared yet" named
+itself as the line to delete. It was deleted here, and replaced by its opposite.
+
+**The arm cannot vote.** Every failure path is a `::warning::` and a return: a 403 from a missing
+scope, an unreachable API, an unparseable timestamp, a cron it cannot read. The test that matters
+runs the same scenario twice, differing only in run history, and compares the two exit codes to each
+other rather than to a constant — a heartbeat that can turn a healthy registry red is worse than no
+heartbeat, because it makes the check's own red untrustworthy.
+
+* ⚠ **Two guards had to be repaired before this phase could add to them.**
+  `test_the_job_is_bounded_and_cannot_be_told_to_ignore_itself` asserted
+  `"continue-on-error" not in WORKFLOW.read_text()` — a substring over the raw file, comments
+  included. Phase 7's required header section explains that `continue-on-error` is deliberately
+  absent, which trips that search, so the guard would have forced its own documentation to be
+  deleted to stay green. **This is Phase 6's prose-vs-structure defect running backwards**: there
+  prose could satisfy a guard, here prose could break one. Same answer both times — read structure,
+  not text. It is now asserted per holder over the parsed YAML.
+* ⚠ **The threshold derivation was not falsifiable as first written, and I nearly shipped it.**
+  `cron_period_minutes(spec = CRON)` binds the constant at def time, so the constant cannot be moved
+  by a test — and `threshold == period x MULTIPLIER` is satisfied by a **hardcoded 360** for as long
+  as the shipped cron happens to be two-hourly, which is exactly the mistuning being guarded
+  against. The mutation `threshold_hardcoded` would have survived. `CRON` is now read at call time
+  and the test moves the cron to `*/12` and requires the threshold to follow it.
+* **One cron parser, not two.** Phase 5 had grown one inside the test file for the warn-band guard;
+  this phase needs the same number at runtime. Two readings of one string in two files are free to
+  disagree, and the disagreement surfaces as a staleness warning that fires always or never — muted
+  either way. The richer version moved into the script and the test aliases it, so Phase 5's
+  parametrised cases now drive production code.
+* **The plan said "on each run"; taken literally that breaks Phase 6.** A heartbeat inside the grace
+  window is a GitHub call inside the grace window, and the invariant is that neither tier reaches
+  GitHub at all — not even a read. It is gated on the verdict, and a new test re-asserts the grace
+  invariant against the call that could newly break it.
+* **`gh api` has no `--repo`,** so it names the repository in its path and `_gh` grew a flag rather
+  than a sibling — one timeout, one failure translation, one argv shape, and every invocation still
+  visible to the permissions guard. `gh_writes` recognises that one call explicitly instead of
+  treating the whole `api` subcommand as read-only: `gh api` can POST, and exempting a subcommand
+  would mean a write smuggled through it counted as no write on the assertion built to catch writes.
+* **Counts:** `scripts/test_registry_drift_gate.py` 191 -> 201 · `scripts` 426 · python 1257
+  passed / 21 skipped. ruff clean; contract gate still exit 6 on the recorded local lag.
+* **Proof, as it actually went: 11 mutations run, 11 caught — and then a fresh-Opus gate found FOUR
+  SURVIVORS, plus a regression the battery never probed.** Corrected here rather than overwritten: a
+  falsified "no survivors" line is worse than no line, because it is the sentence that stops the next
+  reader looking.
+* **The four survivors.** `threshold_hardcoded` applied to the ARM instead of the helper; a `gh api`
+  write smuggled past the flag denylist as `-F`; `repo_flag` flipped to true, invisible because the
+  stub tolerated a flag real `gh` rejects; and `now` passed as `None`, because the parameter was
+  never read. **The regression:** `issue_repo()` evaluated at the heartbeat's call site, outside
+  every handler — turning a clean run with a bad reporting target from exit 0 with a warning into
+  exit 2 with a traceback, undoing Phase 6's clean-path softening eleven lines after it was applied.
+* **Why `threshold_hardcoded` looked caught when it was not: one name, two mutations.** The one that
+  fell hardcodes the helper's RETURN, and the derivation test sees it. The one that survived
+  hardcodes the arm's LOCAL, and nothing looked there — 120 × 3 equals 360 for the shipped cron, so
+  the literal and the derivation agree on every value the suite ever evaluated. A guard placed where
+  a value is DEFINED says nothing about where it is USED. That is a fifth distinct shape of
+  unfalsifiable-green, and the first one this workstream shipped into a phase it had already called
+  proved.
+* **What did hold:** `actions_scope_dropped` reddens both
+  `test_the_declared_permissions_are_exactly_what_the_job_uses` and
+  `test_the_actions_needle_matches_the_call_that_earned_the_scope`, so the scope is coupled to the
+  call from both ends. `heartbeat_votes_on_the_exit_code` kills 6, `event_schedule_dropped` 12.
+
+#### Phase 7 verification round — eight gaps, and a fix set two independent passes agreed on
+
+The gate returned GAPS (8: two HIGH, three MEDIUM, three LOW). Because the fix set had real design
+content, it went through **two independent Opus design passes** rather than one, reconciled against
+each other. They converged without conferring on the two calls that mattered — `status=completed`,
+and the coupling that makes the query fix and the `now` fix inseparable — which is why neither
+needed escalating further.
+
+* **G1 · the arm could vote after all.** `issue_repo()` moved inside the arm's own `try`. The old
+  code carried a comment asserting "`code` is deliberately not reassigned anywhere below this line",
+  which is true and which guards the wrong thing: the arm changed the exit code by RAISING, not by
+  assigning. The protection was written against the shape the violation was imagined to take.
+* **G7 · and it could raise in ways nobody had enumerated.** A wrapper now owns the guarantee with a
+  blanket `except Exception`. Deliberately NOT inside the body, where it would swallow the four named
+  diagnostics, and deliberately NOT around the reporting `try`, which returns 2 — that placement
+  would convert a crash into a VERDICT, inverting the invariant rather than restoring it.
+* **G5 · the query asked the wrong question.** `status=completed`, never `status=success`. Asserted
+  against literals, because building the expectation from the script's own constant would only ask
+  the constant to agree with itself.
+* **G6 · silence replaces the pairwise gap.** It reports the same number one cron period earlier,
+  needs one stamp instead of two, and sees the case the gap provably cannot — a schedule that stopped
+  and never resumed. Shipping it WITHOUT G5 would have been worse than the status quo: it would warn
+  on every run for the whole duration of a live drift.
+* **G3/G4 · a denylist is not a classification.** The read-only assertion took the short form of one
+  flag pair and the long form of the other; five of seven real write spellings walked past it. Now an
+  exact-argv allowlist, with a control test pinning all six. The `gh` stub also learned to reject
+  `--repo` on `api` the way the real tool does, which is what made `repo_flag` observable at all.
+* **G8 · the doc drift this file exists to catch, in the file that catches it.** A test asserting
+  `actions: read` IS declared still carried a name and docstring saying it is not declared yet.
+* **Fixture landmine caught before it bit:** `--now` defaulted ten days after every heartbeat
+  history, so measuring silence would have made every fixture warn — including the ones whose whole
+  job is to assert silence. Anchored to the same value, so naming it shifted nothing.
+* **Proof: 12 mutations, 12 caught, no survivors.** Both directions of the hardcoded threshold (360
+  and 2160), so no single constant satisfies the rows. Note G1's mutation is killed by the assertion
+  on WHICH diagnostic is printed, not by the return code — the G7 wrapper masks the exit-code symptom
+  by design, so the narrow assertion is what carries the proof.
+* **Counts:** drift gate 201 → **219**; scripts suite 426 → **444**. ⚠ The Phase 7 commit message
+  and an earlier draft of this line both said 218. That was measured before Phase 9's own test split
+  was applied and never re-measured — 426 + 18 = 444 and 201 + 18 = 219 reconcile, 218 does not. The
+  whole-feature gate caught it. Left visible rather than quietly corrected, because it is the same
+  class of error as the falsified mutation count two sections above, and small wrong numbers are how
+  the big ones acquire credibility.
+
+### Whole-feature verification — 7 findings, and one of them was in my own fix
+
+A fresh-Opus gate reviewed the feature end to end rather than phase by phase: **43 of 48 mutations
+caught, 0 broken anchors**, and it correctly declined to count two `<`/`<=` boundary survivors as
+findings, since the boundary tests deliberately probe 89/91 and 359/361. Verdict GAPS (7), none
+blocking a first scheduled run.
+
+* **F1 (the serious one) · the `--jq` projection had never once executed, and the separator existed
+  in THREE independent copies.** The script wrote it twice and the stub restated it a third time, so
+  `join(",")` in the projection passed all 219 tests — while in production a label like
+  `area:ci,urgent` split into two, one of them exactly equal to the suppression label, and a real
+  drift went silently suppressed and was never reported again. Now ONE `LABEL_SEP`, with the jq
+  spelling DERIVED from it (JSON has no backslash-x escape, so the `\u001f` form is computed, not
+  retyped), an argv-exact pin for `gh issue list` — `--state all` was pinned, its neighbours were
+  not — and a test that runs REAL jq over the argv the script actually sent. Same shape as Phase 7's
+  G3: an instrument more permissive than the tool it stands in for.
+* **F2 · `staleness_threshold_minutes()`'s docstring still described the pre-Phase-7 measurement,**
+  both halves of it, on the function that produces the number. Every other prose surface had been
+  updated; this one sat six lines above the comparison it misdescribed.
+* **F3 · no interpreter floor, and the documented invocation provably failed.** Both README and
+  CLAUDE.md said `python3 scripts/check_registry_drift.py`; on a stock 3.9 that returned "cannot
+  parse commit date" — an instrument fault wearing the costume of a malformed repository. Guarded in
+  `main` with exit 2, following the model this script already cites.
+* **F4 · the multiplier's VALUE was unpinned.** The three derivation rows constrained it only to
+  (0.694, 3.47), so 1 and 2 both passed — and at 1 the arm warns whenever a single cron period
+  slips, which the workflow's own comment says GitHub does routinely.
+* **F5 · the canary roster reached the same URL interpolation with no validation** — and this is the
+  one worth reading twice. I added the production guard and a test for it, and **the mutation
+  battery reported the test as a SURVIVOR**: with the guard deleted, execution falls through to
+  `fetch_registry`, which raises `InfraError` of its own and quotes the version, so
+  `pytest.raises(InfraError)` plus a substring check passed either way. My own guard was
+  unfalsifiable, in a session spent hunting exactly that. Now it pins the specific refusal AND
+  asserts the request path is never reached, and it is red against its own removal.
+* **F6/F7 · the exit-0 contract omitted the suppression path in two of three places; only
+  `FileNotFoundError` was caught** at the `git`/`curl`/`gh` call sites, so any other `OSError` —
+  EAGAIN under fork pressure — escaped as a traceback. That is the mechanism behind the one
+  unreproduced flake the gate observed and honestly reported as unconfirmed.
+* **Two corrections to the review, both verified before acting.** Its suggested row for F4,
+  `("17 */2 * * *", 400, False)`, is arithmetically wrong: at the shipped multiplier the threshold
+  is 360, so 400 warns and that row would be red against correct code. 300 is the value that forces
+  the multiplier above 2.5 and excludes both 1 and 2. And its claim that a plan line cites a
+  3.11 assertion in `scripts/test_ci_gate.py` was right that the claim is false — that file asserts
+  only that a `setup-python` step exists, and mentions no version anywhere.
+* **Documentation drift, all repaired:** a `Status: TODO` on a phase that had shipped; a permissions
+  list two-thirds complete since Phase 7; a suppression row promising a NOTE where the code prints a
+  warning; the reopen/comment order backwards in a table that records the divergence fixing it;
+  pre-round-2 cron residue calling a two-hourly schedule six-hourly; the superseded canary roster in
+  two places; and — two lines above the step that runs the check that closed it — a `ci.yml` comment
+  still saying a never-dispatched release "fails as silently as before".
+* **Proof: 7 mutations, 7 caught** (F5 only after its guard was repaired; recorded as it happened).
+* **Counts:** drift gate 219 → **225**; scripts suite 444 → **450**; python **1257 / 21** unchanged;
+  contract gate still exit 6.
+* **Next:** Phase 9 — documentation closure, then the finalization pass.
+
+### Phase 9 — documentation closure · **DONE**
+
+The last phase in the execution order (Phase 8 was dropped as scope creep and is filed separately).
+Six files, and the interesting part is what had to change between drafting and applying.
+
+* **`publish.yml`'s blind-spot NOTE now says the gap is covered.** It used to end "it is
+  deliberately NOT solved here — see zer07labs/seam-sdk#100", which was true when written and is
+  the exact shape of comment that quietly outlives its subject. Rewritten LINE-COUNT-NEUTRAL (3
+  insertions, 3 deletions, no net change) so the edit cannot shift any line number cited elsewhere
+  in this repo — `publish.yml` is one of the most-cited files here, and a one-line insertion would
+  have invalidated citations in three documents for a prose fix.
+* **`README.md`** gains the consumer-facing paragraph: what the check asks, that exit 2 is
+  infrastructure and never a verdict, the two-tier grace, how to run it read-only, and how to record
+  a deliberately-unpublished version. **`CLAUDE.md`** gains one Commands bullet. **`plans/README.md`**
+  gains its row.
+* **`DECISIONS.md`** takes the calls a later reader would otherwise re-litigate. Labelled a DESIGN
+  record explicitly, because that file describes itself as the record of `/reconcile` passes and the
+  assumption reconciliation for this plan is still to come as its own entry. One entry CORRECTS the
+  reasoning rather than restating it: the original argument for a suppression label over a curated
+  file was "a curated file goes stale", which is wrong — a closed labelled issue goes stale
+  identically. The real grounds are locality and two-act deliberateness, and because the staleness is
+  symmetric, the per-run warning is not optional; it is what pays for the choice.
+* **`ASSUMPTIONS.md`** takes the two query-shape entries, both UNCONFIRMED. They are not equally
+  weighted, and the entries say so: the first can only produce a false exit 2 (caught by the canary),
+  while the second — that Cloudsmith ERRORS on an unrecognised `version:` qualifier rather than
+  ignoring it — is the one that could produce a false exit **1**, which is the direction this check
+  must never fail in.
+* **Divergence: the drafts were stale by the time they were applied.** They were written before the
+  Phase 7 verification round, so the `plans/README.md` row still claimed the review found one moved
+  defect, and the `DECISIONS.md` entry omitted the three heartbeat calls a reader is most likely to
+  question — `status=completed` over `status=success`, silence over a pairwise gap, and why the
+  blanket catch sits in a wrapper rather than in the arm or around the reporting `try`. Both
+  refreshed before applying. Documentation drafted ahead of a verification gate has to be re-read
+  after it, not just applied.
+* **Divergence: `publish.yml`'s own guard rejected the rewrite three times, correctly each time.**
+  `test_the_blind_spot_comment_points_at_a_real_issue` requires the tracking citation to sit on the
+  SAME LINE as the promise "NOT solved here" — not in the block, not in the paragraph, not in the
+  sentence. Attempt one used a bare `#100` and was rejected because a bare hash is also a colour hex
+  and a markdown heading. Attempt two dropped the promise phrase, and the guard said restore it or
+  retire the guard deliberately — it will not silently stop checking. Attempt three put the citation
+  one line below the promise. The guard's docstring explains the narrowness: three earlier drafts of
+  it were each defeated by a decoy placed just inside a more generous boundary, and the last one
+  turned on whether a prose line happened to end in a full stop. Recorded because the constraint is
+  invisible from the comment itself, and the next person to reword that paragraph will meet it too.
+* **Gates:** python **1257 passed / 21 skipped** · scripts **444 passed** · drift gate **218
+  passed** · ruff clean · contract gate **exit 6**, naming exactly the seven recorded
+  `ContextBinding` lag fields.
+* **Next:** the finalization pass — whole-feature verify, then the three issues this run owes.
+
+### Reconcile — 7 assumptions settled, and two of my own claims overturned
+
+All seven `ASSUMPTIONS.md` entries tagged to this plan are closed. None was a one-way door — each is
+reversible in a commit and every blast radius is bounded by exit 2 — so all seven were Opus's to
+decide *and* settle, per the ladder. Four independent Opus analyses ran in parallel, one per cluster.
+The durable record with per-entry reasoning is in `DECISIONS.md`; only what changed in the tree is
+repeated here.
+
+**One assumption stopped being an assumption.** `fetch_registry` gained a server-side positive
+control (`scripts/check_registry_drift.py:606`): a response carrying `seam-sdk` rows but **none** at
+the version asked for now raises `InfraError` naming the versions that came back. The entry it closes
+claimed a mechanism that is unreachable — `registry_formats`
+(`scripts/check_registry_drift.py:469`) re-filters client-side, so wrong-version rows are inert and
+cannot make a published target look absent. The real hole was narrower and worse: the truncation
+guard at `scripts/check_registry_drift.py:583` tests `len(rows) == PAGE_SIZE`, an **equality**, so a
+server-side page cap *below* 50 leaves it permanently silent while a canary inside the window
+certifies the instrument and the target outside it exits 1 for a published version. The new control
+is blind to page size, sort order and row count. It cost zero extra requests.
+
+**The canary roster changed** to `("0.7.71", "0.7.50", "0.7.65", "0.7.75")`
+(`scripts/check_registry_drift.py:185`). 0.7.71 is first because it is the only version in this
+repo's history observed through the canary's *own* endpoint, query shape and credential — a
+`yank.yml` dry run printed both required formats for it and deleted nothing, which is
+`assert_live_instrument_healthy` passing for real. Every other candidate rests on a different surface
+from the list API the canary queries. Ordering is free and load-bearing: the loop returns on the
+first healthy candidate. The constant's comment also lost a false rationale — it justified the age
+spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
+yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:739`).
+
+**Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
+recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
+applied, because yank re-filters client-side so an EMPTY result is consistent with both readings.
+That holds for the empty results — but the **non-empty** ones discriminate, which I missed. A query
+for 0.7.71 returned rows at 0.7.71; two minutes later, queries for 0.7.13 and 0.7.19 each returned
+rows at their own version. With ~200 rows and `page_size=50`, an ignored qualifier would have handed
+every run the same fixed window, and no window holds both ends. Verified from the run logs directly.
+The second correction is the one above: that entry's stated blast radius was wrong in the safe
+direction.
+
+**A guard was nearly laundered by the new one.** Adding the positive control made
+`test_a_canary_answered_at_the_wrong_version_is_not_a_working_instrument` fail — the new guard fires
+first with a sharper diagnosis, since a canary answering at some other version *is* the qualifier not
+being applied, and the old assertion blamed the roster instead. Moving that assertion was correct, but
+it would have silently un-pinned the thing the test actually existed to protect: with the control
+firing first, `registry_formats`' version clause could be deleted and that test would still pass. It
+had no other coverage. `test_registry_formats_keeps_only_rows_at_that_version` now pins all three
+clauses directly, where no earlier guard can stand in front of them, and
+`test_every_canary_empty_is_still_the_rosters_own_refusal` keeps the loop's own refusal branch
+reachable. This is the seventh shape of the unfalsifiable-green defect this workstream has found, and
+the first where *my own fix* was what would have caused it.
+
+**Provisioned, not just decided:** the `deliberately-unpublished` label did not exist —
+`gh label list` returned only GitHub's nine defaults. The code needs no change and is built for the
+absence (nothing filters by label server-side, `--label` is never passed to `gh`, and an absent label
+makes suppression unreachable so the reporter can only fail toward speaking), but *applying* a label
+needs triage while *creating* one needs write, so a triage-level collaborator could not have followed
+the issue's own instructions. Created with a description naming its reader.
+
+**Found outside the seven, and larger than any of them:** `release-outcome` — the merged first half
+of #100 — has never been able to file an issue. It has no `actions/checkout` step and its `gh` calls
+pass no `-R`, so `gh` cannot resolve the repository and the job dies with `fatal: not a git
+repository`. It was only ever observed on the success path, where it exits before touching `gh`. Six
+consecutive failed releases reported nothing. Filed as #112 rather than fixed here, to keep the PR's
+scope honest.
+
+**The first scheduled run will exit 1, and that is correct.** In-tree is **0.9.0** (0.7.77 when this
+was written — the gap widened while the outage ran); the newest version that actually published is
+0.7.75, because every tag from v0.7.76 through v0.9.0 failed at `ci-green` with all three publishing
+jobs skipped. The check will file a drift issue on its first run, far past the hard grace window.
+That is a true positive — precisely the blind spot #100 describes, invisible until now because the
+event-based half could not report it. The CI outage behind it is fixed (#117); the unpublished tags
+are not, and closing that gap is a release action rather than part of this PR.
+
+* **Counts:** drift gate 225 → **231**; scripts 450 → **456**; python 1257 → **1273 / 21
+  skipped** — the jump is citation parameters generated by this section and the `DECISIONS.md`
+  entry, not new behaviour tests.
+* **Gates:** contract gate **exit 6**, naming exactly the seven recorded `ContextBinding` lag fields.
+* **Next:** `/ship` — three PRs, then remove `.drive.lock`.

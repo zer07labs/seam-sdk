@@ -66,9 +66,12 @@ answers" — one yank must not brick the instrument.
 
 Usage:  scripts/check_registry_drift.py [--repo DIR] [--packages-json FILE] [--now ISO8601]
                                         [--soft-grace-minutes N] [--hard-grace-minutes N]
-        With --packages-json the response is read from that file and nothing is fetched.
+        With --packages-json the response is read from that file and nothing is fetched; it
+        must be an UNSCOPED `?query=seam-sdk` dump, because offline that file is the only
+        proof the query ran at all.
         Without it the registry is queried live and SEAM_REGISTRY_TOKEN must be set.
-Exit:   0 = the registry serves it, or it is younger than the hard window
+Exit:   0 = the registry serves it, it is younger than the hard window, or the drift is
+            suppressed by a closed issue carrying the `deliberately-unpublished` label
         1 = drift
         2 = infrastructure — never a verdict, INCLUDING every unhandled exception
 """
@@ -123,46 +126,63 @@ PACKAGE_NAME = "seam-sdk"
 #: answer — half a release is still a broken release.
 REQUIRED_FORMATS = ("python", "npm")
 
-#: Versions asserted to be published in BOTH formats. A set rather than a single pin, so one yank
-#: does not brick the instrument; three, so two would have to be yanked before this needs an edit.
-#: Any entry equal to the target is dropped at runtime — a canary that IS the target proves
-#: nothing, and would convert that version's drift into an exit 2, muting the check on exactly the
-#: version it is watching.
+#: Versions asserted to be published in BOTH formats. A roster rather than a single pin, so one
+#: yank does not brick the instrument. Any entry equal to the target is dropped at runtime — a
+#: canary that IS the target proves nothing, and would convert that version's drift into an exit 2,
+#: muting the check on exactly the version it is watching.
 #:
-#: ⚠ UNCONFIRMED AGAINST THE LIVE REGISTRY, and be precise about how weak the evidence is.
+#: THE RULE, and it is a real predicate rather than the near-tautology this comment used to carry:
+#: a canary is a version whose publish run's `registry-smoke` job is GREEN, and which is named in
+#: no CHANGELOG advisory band.
 #:
-#: The rule actually applied is "has a tag, minus the three refusals anyone happened to record".
-#: An earlier draft of this comment claimed more: that each entry carries both `vX` and `go/vX`
-#: tags, offered as though that excluded a refused release. It does not. `release-on-runtime.yml`
-#: creates both tags in one step, BEFORE publish.yml starts — so `go/v0.7.69`, `go/v0.7.70` and
-#: `go/v0.7.72` exist too, and the clause has zero discriminating power against exactly the case
-#: it was invoked to exclude.
+#: Why `registry-smoke` is the right clause, in the repo's own words at `publish.yml:790-794`: it
+#: is "the ONLY job whose success proves the release landed: it installs the published artifact
+#: back OUT of Cloudsmith and runs the conformance vectors against it." Anything weaker — a tag, a
+#: green npm step — cannot tell a finished release from one that uploaded and never became
+#: installable. An earlier draft of this comment applied "has a tag, minus the three refusals
+#: anyone happened to record", and conceded it was weak; it was weaker than it looked, because the
+#: reason only three refusals are on record (`publish.yml:748-749`) is that nothing was watching,
+#: which is the premise of seam-sdk#100 and the reason this file exists.
 #:
-#: Worse, "no recorded refusal" is weakest precisely here. The reason only three refusals are on
-#: record (`publish.yml:748-749`) is that nothing was watching — which is the premise of
-#: seam-sdk#100 and the reason this file exists. Absence of a refusal record is close to
-#: uninformative for this population.
+#: Evidence, recorded and re-checkable without a live query (2026-09-06):
+#:   0.7.71 — publish run 33479578480 green, AND observed through THIS canary's own endpoint and
+#:            query shape: yank run 33969742508 (2026-09-05, dry_run) printed
+#:            `python seam-sdk 0.7.71` twice and `npm @zer07labs/seam-sdk 0.7.71`, then deleted
+#:            nothing. That is `assert_live_instrument_healthy` passing for real, on the list API,
+#:            on the production credential. It is the ONLY version in this repo's history with
+#:            evidence of exactly the kind this assertion needs, which is why it is FIRST: the
+#:            loop below short-circuits on the first healthy candidate, so ordering decides which
+#:            version the normal path actually exercises, and it costs nothing.
+#:   0.7.50 — publish run 32933376474, `registry-smoke` green (both formats).
+#:   0.7.65 — publish run 33267190153, `registry-smoke` green (both formats).
+#:   0.7.75 — publish run 33986357361, `registry-smoke` green (both formats). Also the NEWEST
+#:            version that has published at all: every tag from v0.7.76 up failed at `ci-green`
+#:            with all three publishing jobs skipped.
+#: Those runs prove publication in both formats. Present-tense presence is inferred from the
+#: complete yank history, not observed — see the next paragraph for why that inference is sound.
 #:
-#: So: verify these against the live registry. Query each with the real credential and keep the
-#: ones returning BOTH formats. Until then the instrument is unproven — and an unproven instrument
-#: exits 2 naming every candidate it tried, which is loud and never a wrong verdict, but that is
-#: not the same thing as working.
+#: What the yank predicate actually is, because getting this wrong is how the next editor
+#: re-points this roster badly: `yank.yml` has 27 runs, and the ONLY versions ever deleted are
+#: 0.7.7 and 0.7.13-0.7.19 — the exact scope of issue #43, which closed 16 minutes after the last
+#: run. The predicate is "named in an advisory as unconditionally broken", NOT "old".
+#: `CHANGELOG.md:662` names the two broken bands, and 0.7.39-0.7.43 was deliberately NOT deleted
+#: despite being older than everything in this roster (`CHANGELOG.md:696`). No retention sweep has
+#: ever run here. An earlier draft of this comment justified the age spread as a hedge against
+#: retention aging all entries out at once; that hazard is not real in this repo, and stating a
+#: wrong reason invites a future editor to optimise for the wrong variable — dropping a safe old
+#: version in favour of one sitting inside an advisory band. Keep the spread if you like it, but
+#: the reason is diversification against an unknown future predicate, not retention.
 #:
-#: Why a set and not a pin: an entry equal to the target is dropped at runtime (a canary that IS
-#: the target cannot distinguish a broken query from a real lag), and `yank.yml` can delete any
-#: version, so a single pin is one yank from a permanent exit 2 that everyone learns to scroll
-#: past. Three, so two would have to go before this needs an edit.
+#: The residual risk is real and unavoidable: 0.7.39-0.7.43 were fine until #52 found the
+#: protobuf-floor defect, so any version can BECOME advisory-listed later. That is exactly what a
+#: multi-entry roster with "healthy if ANY answers" is for.
 #:
-#: Why the ages are spread: retention. Three of the OLDEST plausible versions would maximise
-#: exposure to a cleanup sweep aging all of them out at once. One old, one middle, one recent
-#: hedges that.
-#:
-#: And note what the spread buys on the other side, which is stronger than the drop-if-equal rule
-#: needed: every entry is already strictly BELOW the current target (0.7.77), and the target only
-#: ever moves upward. So no entry can equal the target again, and the branch that drops one can
-#: never actually shrink this roster. That rule stays because it is what makes the roster safe to
-#: re-point carelessly — not because this particular roster needs it.
-CANARY_VERSIONS = ("0.7.50", "0.7.65", "0.7.75")
+#: Note what the spread buys beyond the drop-if-equal rule: every entry is strictly BELOW the
+#: current target (0.7.77), and the target only ever moves upward, so no entry can equal the
+#: target again and the dropping branch can never actually shrink this roster. That rule stays
+#: because it is what makes the roster safe to re-point carelessly — not because this roster
+#: needs it.
+CANARY_VERSIONS = ("0.7.71", "0.7.50", "0.7.65", "0.7.75")
 
 #: The list endpoint `yank.yml:69-71` uses. Same request shape deliberately: that is the shape
 #: believed to work, and a drift check whose query differs from the one proven in production is
@@ -184,6 +204,83 @@ TOKEN_ENV = "SEAM_REGISTRY_TOKEN"
 #: operator-typed input the same way. The obligation is stronger here: this value is read from
 #: `main`, so a refusal means the world is not the world this script models — exit 2, never 1.
 SAFE_VERSION = re.compile(r"^[0-9]+(\.[0-9]+)*$")
+
+#: The reported issue's title, and it must never collide with `release-outcome`'s.
+#:
+#: That job (`publish.yml:788`) files `Release <tag> did not publish`, matching by EXACT title
+#: equality over open issues (`publish.yml:822-824`). Two exact matchers over two title shapes that
+#: share no prefix cannot find each other's issues in either direction — which is true by
+#: construction, and therefore gets a test rather than a paragraph. The two mechanisms report
+#: different things about the same release (an event that failed, versus a state that persists),
+#: so both existing at once is correct; both writing to one issue would not be.
+DRIFT_TITLE = "Registry drift: seam-sdk {version} is not installable"
+
+#: `release-outcome`'s title, rendered here ONLY to look for one to cross-link. Never written.
+#: `GITHUB_REF_NAME` carries the `v`, so the tag — not the bare version — is what it interpolates.
+RELEASE_NOTICE_TITLE = "Release v{version} did not publish"
+
+#: Suppression: a CLOSED drift issue carrying this label means "we know, and we are leaving it".
+#: Two deliberate acts, scoped to one version, and the label need not pre-exist — this script only
+#: ever READS label names out of the listing and never filters by label server-side, so a label
+#: nobody has created simply never matches.
+SUPPRESSION_LABEL = "deliberately-unpublished"
+
+#: A finite window over the issue list. The repository is around issue #100, so this is not close
+#: to binding — but a listing that comes back at exactly the limit may be truncated, and the run
+#: says so rather than concluding from a window it cannot see past.
+ISSUE_LIMIT = 500
+
+#: `gh` needs to be told which repository. The workflow passes `${{ github.repository }}`; a local
+#: `--report` without it refuses rather than guessing from the checkout's remotes.
+REPO_ENV = "REPO"
+
+#: Same reasoning as `CURL_MAX_SECONDS`: a hung `gh` in a scheduled job is a silent burn.
+GH_MAX_SECONDS = 60
+
+#: The workflow's own filename, used to ask the Actions API about this check's run history. A
+#: constant rather than a literal at the call site because renaming the file silently breaks the
+#: query — the API answers 404, the heartbeat degrades to a warning nobody reads, and the staleness
+#: arm is off forever. `test_the_workflow_filename_constant_is_the_real_filename` pins it.
+WORKFLOW_FILENAME = "registry-drift.yml"
+
+#: The workflow's cron, and the multiple of its period that counts as "the schedule has evidently
+#: been skipping". The THRESHOLD IS DERIVED from the cron rather than written beside it as a second
+#: number: a hardcoded "360 minutes" keeps agreeing with itself after the cron moves to twelve
+#: hours, at which point the warning fires on every normal run and gets muted. Deriving it makes
+#: that class of drift unrepresentable.
+#: The label separator, ONE definition for what used to be three. The jq program that BUILDS the
+#: field and the parser that READS it each held their own literal, and the test stub restated it a
+#: third time — so `join(",")` in the jq passed every test while, in production, a label like
+#: `foo,deliberately-unpublished` split into two, one of them equal to the suppression label, and a
+#: real drift went silently suppressed. The jq spelling is DERIVED rather than written out, because
+#: JSON — and therefore jq — has no `\x` escape: `\u001f` is the only form it accepts.
+LABEL_SEP = "\x1f"
+_LABEL_SEP_JQ = "\\u%04x" % ord(LABEL_SEP)
+
+#: The projection, as a named constant so the argv can be pinned word-for-word by a test the way
+#: the heartbeat's is. Kept next to the separator it uses: the two drifting apart is the failure
+#: this whole block exists to prevent.
+_ISSUE_LIST_JQ = (
+    f'.[] | [.number, .state, ((.labels|map(.name))|join("{_LABEL_SEP_JQ}")), .title] | @tsv'
+)
+
+CRON = "17 */2 * * *"
+STALENESS_MULTIPLIER = 3
+
+#: The heartbeat's own question, as a query string. `status=completed`, NOT `status=success`: the
+#: runs API filters on the check run's STATUS OR CONCLUSION, so `success` selects runs whose
+#: CONCLUSION was green — a statement about the VERDICT, not about whether the schedule fired. This
+#: check exits 1 on drift and 2 on infrastructure, so every run of a real incident is invisible
+#: under `success`, and the first green run afterwards measures a span covering the whole incident
+#: and announces that the schedule has been skipping when it never missed a beat — crying wolf
+#: immediately after the arm's subject did the exact thing it was built to report.
+#:
+#: Dropping `status` altogether is not the fix either. With no filter the response also carries
+#: `queued` and `in_progress` runs, which on a `schedule` trigger includes THIS run — so the
+#: measurement would quietly mean one thing on a scheduled run and another on a `workflow_dispatch`
+#: one. `completed` excludes the current run unconditionally, and that is what lets `now` be the
+#: newest point rather than a tie with it.
+HEARTBEAT_QUERY = "event=schedule&status=completed&per_page=5"
 
 #: `[project].version` is the first `version = "..."` at column 0. Later tables are indented or come
 #: after, and `grep -m1 '^version'` picks this same line — the rule `scripts/set_version.sh:46-50`
@@ -209,6 +306,11 @@ def _git(repo: Path, *args: str) -> str:
         )
     except FileNotFoundError as exc:
         raise InfraError("`git` is not on PATH — cannot read the source tree") from exc
+    except OSError as exc:
+        # FileNotFoundError is only the spelling anyone thought of. Any other OSError — EAGAIN when
+        # the machine cannot fork, EMFILE, a broken pipe — escaped to the top-level handler, which
+        # correctly exits 2 but prints a traceback for a condition that has a one-line description.
+        raise InfraError(f"could not run `git`: {exc}") from exc
     if proc.returncode != 0:
         raise InfraError(
             f"`git {' '.join(args)}` failed in {repo} (exit {proc.returncode}): "
@@ -396,7 +498,10 @@ def assert_offline_instrument_healthy(rows: object, source: str) -> None:
             f"{source} contains no `{PACKAGE_NAME}` package at any version. That is not a "
             "plausible response to a seam-sdk query — the query shape, the credential or the file "
             "is wrong. Refusing to report this as drift: an empty answer and a broken instrument "
-            "must never look the same."
+            "must never look the same. If you captured this file with the check's own "
+            "version-scoped query, that is the mistake: for a genuinely-absent version that "
+            "response is legitimately `[]`, and offline it cannot be told apart from a query that "
+            "failed. Re-capture without the `version:` qualifier."
         )
 
 
@@ -457,6 +562,11 @@ def fetch_registry(version: str, token: str) -> object:
         )
     except FileNotFoundError as exc:
         raise InfraError("`curl` is not on PATH — cannot query the registry") from exc
+    except OSError as exc:
+        # FileNotFoundError is only the spelling anyone thought of. Any other OSError — EAGAIN when
+        # the machine cannot fork, EMFILE, a broken pipe — escaped to the top-level handler, which
+        # correctly exits 2 but prints a traceback for a condition that has a one-line description.
+        raise InfraError(f"could not run `curl`: {exc}") from exc
     if proc.returncode != 0:
         # Neither the argv nor stderr is echoed: the argv carries the credential, and curl's
         # stderr can quote the request. The exit status is the diagnosis (22 = HTTP >= 400,
@@ -478,6 +588,32 @@ def fetch_registry(version: str, token: str) -> object:
             "the run would report drift for a published version. Raise page_size, or stop "
             "trusting the qualifier."
         )
+    # The server-side positive control, and the ONLY check here that can observe the `version:`
+    # qualifier actually being applied. Everything else re-filters client-side — `registry_formats`
+    # applies `.version == version` again (see it below) — which is what makes an over-inclusive
+    # response harmless, and is also exactly what LAUNDERS a filter that was never applied. The
+    # truncation guard above catches the ignored-qualifier case only when the response comes back
+    # at exactly PAGE_SIZE; a server that caps pages BELOW 50 makes that equality permanently
+    # silent, and then a target outside the window reads as absent and exits 1 for a published
+    # version. "Rows came back, none at the version I asked for" is a statement about the SERVER
+    # that no client-side filter can restate.
+    #
+    # It cannot misfire in a working world: a correctly-filtered response carries only `version`,
+    # and a genuine drift — or a yanked canary — returns zero seam-sdk rows, so `present` is empty
+    # and this is silent. If it ever does fire, the message carries the versions that came back,
+    # which is precisely the observation needed to settle the question, delivered as exit 2 and
+    # never as a verdict.
+    matched = _seam_sdk_rows(rows)
+    if matched and not any(row.get("version") == version for row in matched):
+        present = sorted({str(row.get("version")) for row in matched})
+        raise InfraError(
+            f"the response to {query} carries {len(matched)} `{PACKAGE_NAME}` rows — at "
+            f"{', '.join(present[:5])}{' and others' if len(present) > 5 else ''} — and NONE at "
+            f"{version}. A query scoped to one version cannot answer with other versions, so the "
+            "`version:` qualifier was not applied and this response is a window over everything. "
+            "The absence of the asked-for version from it is not evidence of anything. "
+            "Infrastructure, never drift."
+        )
     return rows
 
 
@@ -493,6 +629,12 @@ def assert_live_instrument_healthy(target: str, token: str) -> str:
     Healthy if ANY candidate returns both formats; unhealthy only if all of them come back short.
     That is what survives an individual yank, and it is why this is a roster rather than a pin.
     """
+    for entry in CANARY_VERSIONS:
+        # The roster reaches the SAME interpolation as the source version, via `_query_for`, and
+        # only the source version was ever checked. A hand-edited constant is a narrow threat, but
+        # this constant's own comment says values of this class must be validated, and an entry
+        # carrying `&` would append a parameter to the request rather than fail.
+        assert_query_safe(entry)
     candidates = [v for v in CANARY_VERSIONS if v != target]
     if not candidates:
         raise InfraError(
@@ -549,18 +691,487 @@ def _remediation(version: str, tagged: bool, missing: set[str]) -> str:
     )
 
 
+def issue_repo() -> str:
+    """`owner/name` for the `gh` calls, from the environment rather than from git remotes.
+
+    Deriving it from the checkout would make the reporting target depend on how the checkout was
+    made — a fork, a mirror, a `ref:` override — and file issues wherever that pointed. The
+    workflow passes `${{ github.repository }}`, which is what the run is actually about.
+    """
+    repo = os.environ.get(REPO_ENV, "").strip()
+    if not repo:
+        raise InfraError(
+            f"--report needs ${REPO_ENV} (owner/name) and it is unset or empty. Refusing to guess "
+            "the repository to file against."
+        )
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+        raise InfraError(f"${REPO_ENV} is {repo!r}, which is not `owner/name`.")
+    return repo
+
+
+def _gh(args: list[str], repo: str, *, repo_flag: bool = True) -> str:
+    """One `gh` call. Every failure is infrastructure — never a verdict.
+
+    `repo_flag=False` for `gh api`, which has no `--repo` and exits 1 on an unknown flag. The
+    repository goes into the API path instead. It stays the same helper rather than growing a
+    second one so that every `gh` invocation keeps one timeout, one failure translation, and one
+    argv shape — and so the permissions guard, which reads argv literals handed to `_gh`, keeps
+    seeing all of them.
+
+    `capture_output` rather than `publish.yml:818-823`'s write-to-a-file-first. That file exists to
+    dodge a shell hazard this is not exposed to: `gh … | reader` under `set -o pipefail`, where a
+    reader exiting early turns a SIGPIPE into a job failure. There is no pipe here; Python reads
+    the child's stdout to EOF.
+    """
+    try:
+        proc = subprocess.run(
+            ["gh", *args, *(["--repo", repo] if repo_flag else [])],
+            capture_output=True,
+            text=True,
+            timeout=GH_MAX_SECONDS,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise InfraError("`gh` is not on PATH — cannot report") from exc
+    except OSError as exc:
+        # FileNotFoundError is only the spelling anyone thought of. Any other OSError — EAGAIN when
+        # the machine cannot fork, EMFILE, a broken pipe — escaped to the top-level handler, which
+        # correctly exits 2 but prints a traceback for a condition that has a one-line description.
+        raise InfraError(f"could not run `gh`: {exc}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise InfraError(f"`gh {args[0]} {args[1]}` timed out after {GH_MAX_SECONDS}s") from exc
+    if proc.returncode != 0:
+        # `gh`'s stderr is echoed: unlike the registry call, nothing secret is passed to it. The
+        # token is `GH_TOKEN` in the environment, which `gh` does not print.
+        raise InfraError(
+            f"`gh {' '.join(args[:2])}` exited {proc.returncode}: {proc.stderr.strip()}"
+        )
+    return proc.stdout
+
+
+def fetch_issues(repo: str) -> list[dict]:
+    """Every issue, open and closed, as `{number, state, labels, title}`.
+
+    ONE listing serves three questions — this version's drift issue, whether it is suppressed, and
+    whether `release-outcome` has an open issue to cross-link — and that is only safe because every
+    match below is exact title equality. A substring or prefix match over one listing would let any
+    of the three answer for another.
+    """
+    raw = _gh(
+        [
+            "issue",
+            "list",
+            "--state",
+            "all",
+            "--limit",
+            str(ISSUE_LIMIT),
+            "--json",
+            "number,state,title,labels",
+            "--jq",
+            # UNIT SEPARATOR, not a comma. GitHub permits a comma inside a label NAME, so
+            # join(",") makes `foo,deliberately-unpublished` split into two labels, one of
+            # which equals the suppression label exactly — silently suppressing a real
+            # drift on an issue nobody ever labelled as suppressed. U+001F cannot be typed
+            # into a label name, and @tsv passes it through untouched.
+            _ISSUE_LIST_JQ,
+        ],
+        repo,
+    )
+    issues = []
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        # maxsplit=3 so a title containing a tab stays whole rather than losing its tail.
+        fields = line.split("\t", 3)
+        if len(fields) != 4:
+            raise InfraError(f"unreadable row from `gh issue list`: {line!r}")
+        number, state, labels, title = fields
+        if not number.isdigit():
+            raise InfraError(f"`gh issue list` returned a non-numeric issue number: {line!r}")
+        issues.append(
+            {
+                "number": int(number),
+                "state": state.strip().upper(),
+                "labels": [name for name in labels.split(LABEL_SEP) if name],
+                "title": title,
+            }
+        )
+    if len(issues) == ISSUE_LIMIT:
+        # Pinning the denominator: at exactly the limit the listing may be a window rather than the
+        # whole set, and "no existing issue" would then mean "none in the part I could see".
+        print(
+            f"::warning::the issue listing came back at exactly --limit {ISSUE_LIMIT}, so it may "
+            f"be truncated. An existing drift issue outside the window would be reported as a new "
+            f"one. Raise ISSUE_LIMIT."
+        )
+    return issues
+
+
+def _exact(issues: list[dict], title: str) -> dict | None:
+    """The one issue whose title is EXACTLY this, or None.
+
+    Exact equality, mirroring `publish.yml:824`'s `awk -F'\t' '$2 == t'`. An issue whose title
+    merely CONTAINS the drift title — a discussion thread quoting it, say — must not be mistaken
+    for the report, or closing that thread with the label would suppress a real drift.
+    """
+    for issue in issues:
+        if issue["title"] == title:
+            return issue
+    return None
+
+
+def _issue_body(
+    version: str, tagged: bool, missing: set[str], age_minutes: float, cross_link: dict | None
+) -> str:
+    formats = ", ".join(sorted(missing))
+    lines = [
+        f"`python/pyproject.toml` declares **{version}**, and the registry does not serve it.",
+        "",
+        "| | |",
+        "|---|---|",
+        f"| version | `{version}` |",
+        f"| missing formats | {formats} |",
+        f"| packages | `{PACKAGE_NAME}` (python), `@zer07labs/{PACKAGE_NAME}` (npm) |",
+        f"| tag `v{version}` | {'present' if tagged else '**absent**'} |",
+        f"| age of the release attempt | {age_minutes:.0f} minutes |",
+        "",
+        _remediation(version, tagged, missing),
+        "",
+    ]
+    if cross_link:
+        lines += [
+            f"`release-outcome` also reported this release: #{cross_link['number']}. That issue is "
+            f"about the publish RUN; this one is about the registry's state, which stays true "
+            f"across re-runs.",
+            "",
+        ]
+    lines += [
+        "---",
+        "",
+        "**This issue does not close itself.** The check only ever adds: it files, comments and "
+        "reopens, and never closes. A reporter that can silence itself is a larger authority than "
+        "one that can only speak.",
+        "",
+        "**A re-detection will not comment while this is open.** The check runs every two hours; "
+        "re-detecting the same drift is not new information, and a comment per run is how a "
+        "reporter gets muted.",
+        "",
+        f"**If {version} is deliberately staying unpublished**, close this issue AND label it "
+        f"`{SUPPRESSION_LABEL}`. Both, and on this issue — that is the suppression path, and it is "
+        f"scoped to this version alone. Every suppressed run still prints a `::warning::` naming "
+        f"this issue, so a suppression that has outlived its reason stays visible.",
+    ]
+    return "\n".join(lines)
+
+
+def report_drift(
+    version: str, tagged: bool, missing: set[str], age_minutes: float
+) -> bool:
+    """File, comment, reopen — or recognise a suppression. Returns True if suppressed.
+
+    The decision table, and note that only the last row changes the exit code:
+
+        no issue                        -> create                      exit 1
+        open issue                      -> nothing; it already says so  exit 1
+        closed, unlabelled              -> reopen + comment            exit 1
+        closed, labelled                -> a ::warning:: naming it     exit 0
+    """
+    repo = issue_repo()
+    issues = fetch_issues(repo)
+    title = DRIFT_TITLE.format(version=version)
+    existing = _exact(issues, title)
+
+    if existing is None:
+        cross_link = _exact(issues, RELEASE_NOTICE_TITLE.format(version=version))
+        if cross_link and cross_link["state"] != "OPEN":
+            cross_link = None
+        body = _issue_body(version, tagged, missing, age_minutes, cross_link)
+        _gh(["issue", "create", "--title", title, "--body", body], repo)
+        print(f"filed a new drift issue: {title}")
+        return False
+
+    if existing["state"] == "OPEN":
+        print(f"drift already reported on #{existing['number']} — not commenting again")
+        return False
+
+    if SUPPRESSION_LABEL in existing["labels"]:
+        # A ::warning::, not a print. The staleness here is symmetric with the curated-file design
+        # this was chosen over: if `main` ever returns to this version, a closed labelled issue
+        # suppresses just as permanently and just as silently. The warning is what makes that
+        # visible in every run summary rather than only in stdout nobody opens.
+        print(
+            f"::warning::drift on {version} is SUPPRESSED by #{existing['number']}, which is "
+            f"closed and labelled `{SUPPRESSION_LABEL}`. The registry still does not serve "
+            f"{', '.join(sorted(missing))}. Reopen or unlabel that issue to hear about this again."
+        )
+        return True
+
+    # COMMENT FIRST, THEN REOPEN. The pair is not atomic and the order decides what a failure
+    # between the two costs. Reopening first and failing on the comment leaves the issue OPEN and
+    # uncommented — and every later run then takes the `state == "OPEN"` row above ("already
+    # reported"), so the "the drift is back" record is never written by any run, ever. Nothing
+    # retries it, because nothing can tell that state apart from a normal open report.
+    #
+    # This order strands nothing: a comment on a CLOSED issue is legal and harmless, so if the
+    # reopen then fails the next run still sees CLOSED-and-unlabelled and retries the whole pair.
+    # The cost of a failure here is a duplicate comment, which is noise; the other order's cost is
+    # silence, which is the thing this check exists to prevent.
+    _gh(
+        [
+            "issue",
+            "comment",
+            str(existing["number"]),
+            "--body",
+            _issue_body(version, tagged, missing, age_minutes, None),
+        ],
+        repo,
+    )
+    _gh(["issue", "reopen", str(existing["number"])], repo)
+    print(f"commented on and reopened #{existing['number']} — the drift is back")
+    return False
+
+
+def cron_period_minutes(spec: str | None = None) -> int | None:
+    """The largest gap between consecutive firings, or `None` if there is no fixed sub-daily one.
+
+    ONE implementation, here, driven by the test suite rather than mirrored in it. Phase 5 grew a
+    parser of this shape inside `scripts/test_registry_drift_gate.py` to check that the cron cannot
+    step over the warn band; Phase 7 needs the same number at RUNTIME to derive its staleness
+    threshold. Writing a second one would have put two readings of the same string in two files,
+    free to disagree — and the disagreement would surface as a staleness warning that fires
+    constantly or never, both of which end in it being muted. The test now imports this function,
+    so its parametrised cases drive the code that actually runs.
+
+    Reading the hour field alone is what let `17 */2 * * 1` through — a weekly cadence wearing a
+    two-hourly hour field. So day-of-month, month and day-of-week must all be `*` before the hour
+    field means anything at all.
+
+    `*/N` and `A-B/N` are both accepted: `17 1-23/2 * * *` is a correct every-two-hours spelling and
+    rejecting it would be a guard enforcing a preferred syntax rather than a property. An explicit
+    list (`17 0,12 * * *`) is read as the largest gap between its entries, wrapping at midnight —
+    0 and 12 is a twelve-hour period, not a two-hour one.
+
+    `None` rather than an exception: the caller is a warnings-only arm that must never raise, and a
+    cron this cannot read is a reason to say so and stop, not to fail a run about the registry.
+    """
+    # `CRON` is read HERE rather than bound as a default argument. A default is evaluated once, at
+    # def time, which would make the constant unpatchable — and therefore make "the threshold is
+    # derived from the cron" an untestable claim: a hardcoded 360 satisfies
+    # `threshold == period * MULTIPLIER` for as long as the shipped cron happens to be two-hourly.
+    # Reading the global lets the test move the cron and watch the threshold follow.
+    spec = CRON if spec is None else spec
+    fields = spec.split()
+    if len(fields) != 5:
+        return None
+    minute, hours, dom, month, dow = fields
+    if (dom, month, dow) != ("*", "*", "*") or not minute.isdigit():
+        return None
+    if hours == "*":
+        return 60
+    step_form = re.fullmatch(r"(?:\*|(\d+)-(\d+))/(\d+)", hours)
+    if step_form:
+        low, high, step = step_form.groups()
+        if int(step) == 0:
+            return None
+        first, last = (int(low), int(high)) if low else (0, 23)
+        runs = list(range(first, last + 1, int(step)))
+    elif re.fullmatch(r"\d+(?:,\d+)*", hours):
+        runs = sorted(int(h) for h in hours.split(","))
+    else:
+        return None
+    if not runs:
+        return None
+    if len(runs) == 1:
+        return 24 * 60
+    gaps = [(b - a) * 60 for a, b in zip(runs, runs[1:])]
+    gaps.append((runs[0] + 24 - runs[-1]) * 60)  # the wrap past midnight
+    return max(gaps)
+
+
+def staleness_threshold_minutes() -> int | None:
+    """How long a SILENCE since the newest COMPLETED scheduled run is worth saying out loud.
+
+    Not "a gap between successful runs" — that was the pre-Phase-7 measurement and both halves of
+    it changed. `success` filtered on the VERDICT, so a drift run (exit 1) was invisible; and a gap
+    between two past points cannot see a schedule that stopped and never resumed. This docstring
+    described the old behaviour for one commit while sitting on the function that produces the
+    number, which is the most misleading place for it to be wrong.
+
+    DERIVED, never written down beside the cron as a second number. A hardcoded "360 minutes" goes
+    on agreeing with itself after the cron moves to twelve hours, at which point the warning fires
+    on every normal run and gets muted — the guard still present, still green, and no longer
+    describing anything.
+    """
+    period = cron_period_minutes()
+    return None if period is None else period * STALENESS_MULTIPLIER
+
+
+def _staleness_heartbeat(now: datetime) -> None:
+    """The body of the heartbeat. Warnings only; `warn_if_schedule_is_stale` owns the guarantee.
+
+    A scheduled check can stop existing without anyone noticing — the same class of failure it was
+    built to catch, one level up. GitHub drops scheduled runs under load, and the observable signal
+    is SILENCE: the newest completed scheduled run is further in the past than the schedule can
+    explain.
+
+    **This function cannot change the exit code, and that is a category rule rather than a
+    convenience.** A failure here says the watcher could not check on itself; it says nothing about
+    whether the registry serves the version. Letting it vote would be exactly the error
+    `scripts/probe_framework_coinstall.py:168-170` names — an instrument's own health reported as a
+    finding about the thing it measures. Every failure path below is a `::warning::` and a return,
+    and the wrapper catches anything that finds a way around them.
+
+    `issue_repo()` is resolved INSIDE this try rather than passed in. Evaluated at the call site it
+    sat outside every handler, so an unset `$REPO` — already softened to a warning by `report_clean`
+    eleven lines earlier — came back as a traceback and exit 2 on a run that had just PROVED the
+    registry healthy. An argument list is the one place a warnings-only arm can still raise.
+
+    `workflow_dispatch` runs are excluded from the HISTORY by the query. Including them would let a
+    burst of manual runs — which is what someone does while investigating a dead schedule — mask
+    the dead schedule. `now` is this run's own clock whatever triggered it, and that asymmetry is
+    the point: a human pressing "Run workflow" because they suspect silence is precisely who needs
+    the answer, and a history of past runs alone cannot give it to them.
+    """
+    try:
+        repo = issue_repo()
+        raw = _gh(
+            [
+                "api",
+                f"repos/{repo}/actions/workflows/{WORKFLOW_FILENAME}/runs?{HEARTBEAT_QUERY}",
+                "--jq",
+                ".workflow_runs[].created_at",
+            ],
+            repo,
+            repo_flag=False,
+        )
+    except InfraError as exc:
+        print(f"::warning::could not read this workflow's own run history: {exc}")
+        return
+
+    stamps = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            stamps.append(_parse_iso(line, what="a workflow run's created_at"))
+        except InfraError as exc:
+            print(f"::warning::could not read this workflow's own run history: {exc}")
+            return
+
+    if not stamps:
+        # Nothing has completed yet: a first run, or the first since the workflow was added. Not a
+        # failure and not a warning — there is genuinely nothing to measure, and a warning here
+        # would fire once per new workflow forever and teach everyone to ignore this arm.
+        return
+
+    threshold = staleness_threshold_minutes()
+    if threshold is None:
+        print(
+            f"::warning::cannot derive a staleness threshold from cron {CRON!r}, so this run "
+            f"cannot say whether the schedule has been skipping."
+        )
+        return
+
+    # SILENCE SINCE THE NEWEST COMPLETED RUN, not the gap between the two newest. A gap compares two
+    # points in the PAST, so a schedule that stopped and never resumed leaves its last two runs a
+    # nominal cadence apart forever and the gap arm stays quiet about it permanently. Silence
+    # reports the same number one cron period EARLIER — on the resuming run rather than the one
+    # after it — needs one stamp rather than two, and is the only evidence of ONGOING silence
+    # available from inside the thing that went silent.
+    silence_minutes = (now - max(stamps)).total_seconds() / 60
+    if silence_minutes > threshold:
+        print(
+            f"::warning::the most recent completed scheduled run of this workflow started "
+            f"{silence_minutes:.0f} minutes ago, more than {STALENESS_MULTIPLIER}x the "
+            f"{cron_period_minutes()}-minute cron period ({threshold}m). The schedule has been "
+            f"skipping. This says nothing about the registry — the verdict above stands on its own."
+        )
+
+
+def warn_if_schedule_is_stale(now: datetime) -> None:
+    """The arm's one entry point: it warns, and it CANNOT RAISE.
+
+    Criterion 7 says this arm can never change the exit code, and every handler in the body catches
+    `InfraError` — the only failure anyone had so far thought of. `cron_period_minutes` can raise
+    `ValueError` on a cron step of zero, a change in GitHub's response shape can raise whatever it
+    likes, and the next edit can raise something nobody has named. Any of those escaping reaches the
+    top-level handler and exits 2, reporting an instrument's own health as a finding about the
+    registry — on a run that may have just proved the registry fine.
+
+    The blanket belongs HERE and nowhere else. Inside the body it would swallow the four named
+    diagnostics the `InfraError` handlers exist to print. Around the reporting `try` in `main` it
+    would be worse than the bug it fixes: that block `return 2`s, so a crash would become a VERDICT
+    instead of a warning — the invariant inverted rather than restored.
+
+    A blanket catch can of course hide a permanently-broken arm. The answer is not to drop it but to
+    pin the positive path: three tests require this arm to actually warn on real silence, so an arm
+    that always crashes reddens all three.
+    """
+    try:
+        _staleness_heartbeat(now)
+    except Exception as exc:  # noqa: BLE001 — deliberate: this arm may not vote, by any route
+        print(
+            f"::warning::the staleness heartbeat itself failed ({exc!r}) and is being ignored. "
+            f"This says nothing about the registry — the verdict above stands on its own."
+        )
+
+def report_clean(version: str) -> None:
+    """No drift. If a drift issue for this version is open, say it can be closed — and stop there.
+
+    The check never closes an issue itself. `release-outcome` is write-additive only and this stays
+    the same shape: closing is a person's decision, and a reporter that can retract its own reports
+    is much harder to trust than one that cannot.
+    """
+    repo = issue_repo()
+    existing = _exact(fetch_issues(repo), DRIFT_TITLE.format(version=version))
+    if existing and existing["state"] == "OPEN":
+        print(
+            f"::notice::#{existing['number']} reports drift on {version}, but the registry now "
+            f"serves it in both formats. That issue can be closed. This check never closes one."
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
+    if sys.version_info < (3, 11):
+        # Exit 2, not 1: a wrong interpreter is infrastructure, and 1 is the drift verdict. Same
+        # reasoning and same shape as `scripts/probe_framework_coinstall.py:47-56`, which this
+        # script already cites as its model. Without it, 3.10 and below fail deep inside date
+        # parsing with "cannot parse commit date" — an instrument fault wearing the costume of a
+        # malformed repository, and the docs told people to invoke it in exactly the way that
+        # produces it.
+        print(
+            f"::error::this check needs Python 3.11+ (running {sys.version.split()[0]}). Both date "
+            f"sources are Z-suffixed — git's `%cI` and GitHub's `created_at` — and "
+            f"`datetime.fromisoformat` only learned to accept `Z` in 3.11. Use "
+            f"`python/.venv/bin/python scripts/check_registry_drift.py`.",
+            file=sys.stderr,
+        )
+        return 2
+
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument(
         "--packages-json",
         type=Path,
         default=None,
-        help="a saved registry response; omit to query the registry live",
+        help=(
+            "a saved UNSCOPED `?query=seam-sdk` dump (no `version:` qualifier); it must "
+            "carry seam-sdk rows at some version. Omit to query the registry live."
+        ),
     )
     parser.add_argument("--now", default=None, help="ISO 8601; defaults to real UTC now")
     parser.add_argument("--soft-grace-minutes", type=int, default=SOFT_GRACE_MINUTES)
     parser.add_argument("--hard-grace-minutes", type=int, default=HARD_GRACE_MINUTES)
+    parser.add_argument(
+        "--report",
+        action="store_true",
+        help=(
+            "file, comment on or reopen a GitHub issue for a drift verdict. OFF by default: a "
+            "local or manual run is read-only, and a tool with side effects should have to be "
+            "asked. Same instinct as yank.yml's `dry_run: true` default."
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -628,12 +1239,17 @@ def main(argv: list[str] | None = None) -> int:
     print(f"registry serves: {', '.join(sorted(found)) or '<nothing>'}")
     print(f"most recent release attempt: {started.isoformat()} ({age_minutes:.0f} minutes ago)")
 
+    # ── the verdict, printed BEFORE anything is reported ────────────────────────────────────
+    #
+    # The order is load-bearing. Reporting talks to GitHub, and GitHub has outages; if the report
+    # were computed first, a `gh` failure would exit 2 with the answer never printed. The verdict
+    # is this run's product and the issue is a delivery mechanism for it, so the log always carries
+    # it even when the delivery fails.
+    formats = ", ".join(sorted(missing))
     if not missing:
         print(f"OK — the registry serves {version} in both formats.")
-        return 0
-
-    formats = ", ".join(sorted(missing))
-    if age_minutes < args.soft_grace_minutes:
+        verdict, code = "clean", 0
+    elif age_minutes < args.soft_grace_minutes:
         remaining = args.soft_grace_minutes - age_minutes
         print(
             f"DEFERRED — {formats} missing for {version}, but the attempt is only "
@@ -641,9 +1257,8 @@ def main(argv: list[str] | None = None) -> int:
             f"deferring silently in {remaining:.0f} minutes (soft={args.soft_grace_minutes}m) and "
             f"escalates at {args.hard_grace_minutes}m."
         )
-        return 0
-
-    if age_minutes < args.hard_grace_minutes:
+        verdict, code = "deferred", 0
+    elif age_minutes < args.hard_grace_minutes:
         print(
             f"::warning::seam-sdk {version} is not on the registry ({formats} missing) "
             f"{age_minutes:.0f} minutes after the release attempt. That is past the declared "
@@ -651,14 +1266,63 @@ def main(argv: list[str] | None = None) -> int:
             f"job could still be alive up to {args.hard_grace_minutes}m, so this is not escalated "
             f"yet."
         )
-        return 0
+        verdict, code = "warned", 0
+    else:
+        print(
+            f"DRIFT — seam-sdk {version} is not installable {age_minutes:.0f} minutes after the "
+            f"release attempt, past the hard window of {args.hard_grace_minutes}m. No publish job "
+            f"for it can still be alive.\n" + _remediation(version, tagged, missing)
+        )
+        verdict, code = "drift", 1
 
-    print(
-        f"DRIFT — seam-sdk {version} is not installable {age_minutes:.0f} minutes after the "
-        f"release attempt, past the hard window of {args.hard_grace_minutes}m. No publish job for "
-        f"it can still be alive.\n" + _remediation(version, tagged, missing)
-    )
-    return 1
+    if not args.report:
+        return code
+
+    # ── reporting ───────────────────────────────────────────────────────────────────────────
+    #
+    # `deferred` and `warned` reach GitHub not at all — not even the read. The middle tier exists
+    # to say "something is wrong and a job could still be alive"; the moment it files anything it
+    # has become a reporting tier, and the grace window stops being a grace window.
+    try:
+        if verdict == "drift":
+            if report_drift(version, tagged, missing, age_minutes):
+                code = 0
+        elif verdict == "clean":
+            # BEST EFFORT, AND ONLY HERE. Before reporting existed, a clean run touched nothing;
+            # making it read GitHub means a GitHub outage would turn a run that PROVED the
+            # registry healthy into a red job. That misreports the answer: red on this workflow
+            # has to mean "there is something to look at about the registry", or it gets muted,
+            # and a muted workflow is the failure this whole check exists to prevent.
+            #
+            # Nothing is lost by softening it. This path has no report to lose — its entire
+            # output is a courtesy `::notice::` that an already-open issue can now be closed. The
+            # drift path keeps exit 2, because there the report IS the product.
+            #
+            # It is not silent: a broken credential still says so on every clean run, one
+            # severity down, which is the earliest anyone could learn of it.
+            try:
+                report_clean(version)
+            except InfraError as exc:
+                print(
+                    f"::warning::the registry is clean, but GitHub could not be reached to "
+                    f"check for an open drift issue: {exc}. The verdict above stands; only the "
+                    f"advisory notice is missing."
+                )
+    except InfraError as exc:
+        print(f"::error::{exc}", file=sys.stderr)
+        return 2
+
+    # ── the watcher's own heartbeat ───────────────────────────────────────────────────────────
+    #
+    # AFTER the verdict and after reporting, and only on the tiers that already talked to GitHub.
+    # `deferred` and `warned` must reach it not at all — including this read — or the grace window
+    # stops being a grace window, which is the invariant
+    # `test_neither_grace_tier_touches_github` exists to hold.
+    #
+    # `code` is deliberately not reassigned anywhere below this line.
+    if verdict in ("drift", "clean"):
+        warn_if_schedule_is_stale(now)
+    return code
 
 
 if __name__ == "__main__":

@@ -6,6 +6,85 @@ assumption, the independent recommender's analysis, the human verdict, and the r
 produced it.
 
 
+## 2026-09-06 — `plans/registry-drift-check.md`: the calls worth not re-litigating
+
+A DESIGN record rather than a `/reconcile` pass — the assumption reconciliation for this plan comes
+later, and is a separate entry. These are the decisions whose reasoning is not visible from the diff,
+written down because each one has an obvious-looking alternative that is wrong for a reason.
+
+**One comparison, not two.** The check asks "is `main`'s declared version installable?" and never
+"does every tag have a package?". `release-on-runtime.yml` pushes the version commit to `main`
+BEFORE it tags, so the source-vs-registry comparison already covers both the tagged-but-unpublished
+state and the never-tagged one. A tag-keyed check is strictly weaker: it cannot see a release whose
+tag push failed. The tag is still read, but only for DIAGNOSIS — it selects which remediation text
+the issue carries, never whether there is drift.
+
+**Two-tier grace, and the tiers are sized off different things.** `SOFT = 90` minutes is silence
+while a publish may still be indexing; it is sized on the declared retry ceilings in `publish.yml`.
+`HARD = 360` is sized on the job time limit — past it, no publish job for that version can still be
+alive. The middle band exists to be *said* once before anything escalates. The cron period is bounded
+by `HARD - SOFT` (270 minutes), NOT by `SOFT`: nothing depends on a run landing inside the silent
+tier, but a period wider than the warn band would let a release cross it between two runs, leaving
+the middle tier as code that never executes in production. Note what the job limit does and does not
+buy: it bounds DUPLICATION, not detection, because `release-outcome` already covers the hung-job case.
+
+**The clock is `max(commit date, tag creator date)`,** not the commit date. `release-on-runtime.yml`
+has a branch that makes no commit and tags anyway, so a re-dispatch would otherwise inherit the
+original bump's date and get zero grace — reporting drift on a release that started two minutes ago.
+
+**The canary is a three-entry roster that drops any entry equal to the target,** never a single
+pinned version. The first draft pinned one, which happened to BE the current target; canary-first
+ordering then made a real drift return an empty canary and exit 2, reporting "instrument broken" for
+exactly the condition the instrument exists to catch. The roster passes if ANY candidate answers.
+
+**The check never closes an issue.** A reporter that can retract its own reports is a much larger
+authority than one that can only speak, and its failure mode is worse: a bug in the clean path erases
+the record of a real outage rather than adding noise to it. When drift clears, it prints a
+`::notice::` saying the issue can be closed, and stops there.
+
+**Suppression is a label on a CLOSED issue, not a curated file** — and the grounds are not the ones
+first written down. The original argument was that a curated file goes stale; that argument is wrong,
+because a closed labelled issue goes stale in exactly the same way (if `main` ever returns to that
+version it suppresses just as permanently). The real grounds are LOCALITY — the suppression sits on
+the thing it suppresses, where anyone investigating already is — and TWO-ACT DELIBERATENESS: closing
+alone is the ordinary "this is fixed" gesture and must not suppress, so it takes a close AND a label.
+Because the staleness is symmetric, the `::warning::` on every run is not optional; it is what pays
+for the choice.
+
+**No `pull_request:` trigger,** and unlike the sibling `framework-coinstall.yml` this is not a
+judgement about noise. Secrets are unavailable to a fork-PR-triggered workflow, so credential
+resolution would find nothing and the job would exit 2 on every external contribution — permanently,
+and correctly, which is the worst kind of permanent red. Nothing in a pull request can change this
+answer in any case: it is a statement about the default branch and the registry.
+
+**The watcher's own heartbeat asks whether the schedule FIRED, not whether it was green** —
+`status=completed`, never `status=success`. The runs API matches a check run's status *or*
+conclusion, so `success` filters on the VERDICT. This check exits 1 on drift, so every run of a real
+incident would be invisible to it, and the first green run afterwards would measure across the whole
+incident and announce a skipping schedule about a schedule that never missed a beat — crying wolf
+immediately after the check did its job. Dropping `status` altogether is not the fix either: with no
+filter the response carries `in_progress` runs, which on a scheduled trigger includes the current
+run, so the measurement would quietly mean one thing on a scheduled run and another on a dispatched
+one.
+
+**It measures SILENCE since the newest completed run, not the gap between the two newest.** A gap
+compares two points in the PAST, so a schedule that stops and never resumes leaves its last two runs
+a nominal cadence apart forever and the gap arm stays quiet about it permanently. Silence reports the
+same number one cron period earlier, needs one stamp instead of two, and is what lets a
+`workflow_dispatch` run answer the question a human presses it to ask.
+
+**The arm can never change the exit code, and that guarantee lives in a wrapper** with a blanket
+`except Exception`. Not inside the arm's body, where it would swallow the named diagnostics the
+`InfraError` handlers exist to print; and emphatically not around the reporting `try`, which returns
+2 — that placement looks like tidying and converts a crash into a VERDICT, inverting the invariant
+rather than restoring it. A blanket catch can hide a permanently-broken arm, so the positive path is
+pinned by tests that require the arm to actually warn on real silence.
+
+**Exit 2 is infrastructure and never a verdict, and 2 is the crash code too.** Python exits 1 on an
+uncaught exception and 1 is the drift verdict here, so any crash would otherwise read as drift and
+file a wrong issue. A top-level handler maps every unexpected exception to 2.
+
+
 ## 2026-09-05 — /reconcile over `plans/digest-correctness-and-gate-repair.md`
 
 Closing pass for the whole plan. Most of the backlog was reviewed and re-dated during Phase 7, so
@@ -1820,6 +1899,171 @@ doors (already-published breaking changes); the rest are low-stakes/reversible.
 confirmed-amended with a real code change (KAT pinning rewired to the shared conformance vector,
 duplicated literals deleted). 0 changed in substance, 0 deferred. No follow-up code work needed
 before the next `/ship` beyond what's already in this pass.
+
+
+---
+
+## 2026-09-06 — reconcile `plans/registry-drift-check.md`'s ASSUMPTIONS.md (7 entries)
+
+Ranked by blast radius, highest first: the two that could produce a **false exit 1** on a published
+version lead, because exit 1 files an issue and 1 is the drift verdict — a wrong one there is the
+confident-wrong-verdict failure this whole check exists to avoid. Then the two that could take the
+watcher down (no verdict, indefinitely), then the three that cost a person a confused minute.
+
+None of the seven turned out to be a genuine one-way door: each is reversible in a commit, and every
+blast radius is bounded by exit 2, which is infrastructure and never a verdict. So all seven were
+Opus's to decide *and* settle, per the ladder. Four independent Opus analyses ran in parallel, one
+per cluster; I re-derived every load-bearing claim against the code and the run logs before applying
+any of them, and two of the analyses corrected me rather than the other way round.
+
+### Cloudsmith ERRORS on an unrecognised `version:` qualifier rather than ignoring it
+- **Recommender (Opus):** CHANGE the code. The entry's stated mechanism — "wrong-version rows make a
+  published target look absent" — is **unreachable**: `registry_formats`
+  (`scripts/check_registry_drift.py:469`) re-applies `.version == version` client-side, so
+  wrong-version rows are inert. Only truncation can hide a published target, and the existing guard
+  at `scripts/check_registry_drift.py:583` tests `len(rows) == PAGE_SIZE` — an **equality**, blind to
+  every window size except exactly 50. A server-side page cap *below* 50 leaves it permanently
+  silent, and then a canary inside the window certifies the instrument while the target outside it
+  exits 1 for a published version.
+- **Verdict:** Change. Added a server-side positive control to `fetch_registry`
+  (`scripts/check_registry_drift.py:606`): if a response carries `seam-sdk` rows but none at the
+  version asked for, raise `InfraError` naming the versions that came back. That is a statement about
+  the *server* which no client-side filter can restate; it costs zero extra requests and fires on the
+  first canary query, before the target is ever fetched. I tightened the analysis's draft in one
+  place — it built the membership test with `str()` coercion while `registry_formats` compares raw,
+  which is two different notions of "matches the version"; the shipped guard reuses
+  `registry_formats`' exact clause so the two cannot diverge.
+- **Why this direction is safe:** if the qualifier is ever genuinely broken, this makes the check exit
+  2 permanently rather than sometimes answering correctly. That is the right trade under this repo's
+  own rule — exit 2 is infrastructure, never a verdict — and the message is self-diagnosing. It also
+  is not a new behaviour class: the >50-row case already exits 2 permanently today.
+- **Status:** No longer an assumption — checked at runtime on every run. Four tests added, including
+  the two failure directions that matter: an empty response must still read as drift (or the check
+  could never report anything), and a yanked canary must still fall through to the next candidate.
+
+### The three canary versions are actually published
+- **Recommender (Opus):** CONFIRM, with one roster change. Settled from recorded evidence without a
+  live query: `registry-smoke` is green on each version's publish run, and
+  `.github/workflows/publish.yml:790-794` states in the repo's own voice why that is the only job whose
+  success proves a release landed.
+- **Verdict:** Confirm + change the roster to `("0.7.71", "0.7.50", "0.7.65", "0.7.75")`
+  (`scripts/check_registry_drift.py:185`). 0.7.71 goes **first** because it is the only version in
+  this repo's history observed through the canary's own endpoint, query shape and credential — yank
+  run 33969742508 printed both required formats and deleted nothing, which is
+  `assert_live_instrument_healthy` passing for real. Every other candidate rests on a *different*
+  surface (`dl.cloudsmith.io` / `npm.cloudsmith.io`) from the list API the canary actually queries.
+  Order is free and load-bearing: the loop returns on the first healthy candidate.
+- **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
+  a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
+  advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
+  exact scope of issue #43, and `CHANGELOG.md:739` records that the *older* 0.7.39–0.7.43 band was
+  deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
+  badly; it now states the real predicate.
+- **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
+
+### The Cloudsmith `?query=` shape returns the rows it is asked for
+- **Recommender (Opus):** CONFIRM with corrected wording — and it overturned a caveat I had recorded
+  as unresolvable.
+- **Verdict:** Confirm. I had written that the 27 `yank.yml` runs could not settle whether the
+  `version:` qualifier is applied, because yank re-filters client-side too, so an EMPTY result is
+  consistent with both. That holds for the empty results — but the **non-empty** ones discriminate,
+  which I had missed. A query for 0.7.71 returned rows at 0.7.71; two minutes later, queries for
+  0.7.13 and 0.7.19 each returned rows at their own version. With ~200 `seam-sdk` rows and
+  `page_size=50`, an ignored qualifier would have returned the same fixed window every time, and no
+  window holds both ends. I verified this directly from the run logs rather than accepting it.
+- **Status:** CONFIRMED as reworded. Explicitly **not** evidence for the sibling entry above: under
+  `curl -sf`, "honoured" and "silently ignored" both return 2xx. Run IDs are cited in the entry
+  because GitHub expires logs and all 27 runs are from two days.
+
+### The offline positive control is "the response mentions seam-sdk at all"
+- **Recommender (Opus):** CONFIRM the behaviour; change three strings.
+- **Verdict:** Confirm. `--packages-json` is provably not a production path, and the one case where
+  the rule could be accused of refusing a true report — every version genuinely gone — is answered
+  the same way by the live path, which also exits 2. The two rules are opposite in mechanism and
+  identical in that outcome, which is a stronger defence than the entry gave itself.
+- **Residual, fixed rather than deferred:** the flag's real contract is "an UNSCOPED
+  `?query=seam-sdk` dump", and nothing said so. A human capturing the check's own version-scoped
+  response during an incident gets refused — correctly, but with a message blaming the query shape,
+  the credential or the file, never the actual mistake. The help string, the refusal text
+  (`scripts/check_registry_drift.py:484`) and the module Usage block now name the required shape.
+- **Status:** CONFIRMED, with the contract documented.
+
+### Five minutes is the boundary between clock skew and a broken clock
+- **Recommender (Opus):** CONFIRM with corrected wording.
+- **Verdict:** Confirm. `CLOCK_SKEW_TOLERANCE_MINUTES` (`scripts/check_registry_drift.py:119`) has
+  three orders of magnitude of headroom over real NTP jitter between GitHub-hosted runners, and costs
+  at most five minutes against a ninety-minute soft window. Exit 2 is the only response to a
+  future-dated release that neither lies nor goes quiet: exit 1 would let an author-settable tag date
+  force a permanent false DRIFT, and clamping would let it force renewable silence.
+- **Correction:** the entry's blast-radius bullet said "a scheduled run exits 2" — singular. The dates
+  come from git objects in the clone, so a bad date is persistent and the check exits 2 on *every*
+  run until a human fixes it. The cost is a watcher that is down, not a run that is noisy. The entry
+  now also records the `max(landed, tag_date)` asymmetry — the less trustworthy date wins — and the
+  shape the eventual fix should take if it ever fires.
+- **Status:** CONFIRMED.
+
+### The `deliberately-unpublished` label exists in the repository
+- **Recommender (Opus):** the assumption is FALSE; the choice it justified is still right.
+- **Verdict:** Confirm the code, resolve the fact. `gh label list -R zer07labs/seam-sdk` returns
+  exactly GitHub's nine untouched defaults — the label did not exist. The code needs no change and is
+  built for the absence: nothing filters by label server-side, `--label` is never passed to `gh` (the
+  failure that would have hurt, since it would error on every filing), and an absent label makes
+  suppression unreachable, so the reporter can only fail toward speaking. Rather than leave a
+  provisioning fact recorded as an open judgement, I created the label with a description naming its
+  reader. Two reasons: *applying* a label needs triage but *creating* one needs write, so a
+  triage-level collaborator could not have followed the issue's own instructions; and with nothing to
+  autocomplete against, the next person hand-types it, and a case or underscore slip silently fails
+  the exact membership test.
+- **Status:** SETTLED-FALSE, then CONFIRMED and RESOLVED.
+
+### The blind-spot citation must fit on one line
+- **Recommender (Opus):** CONFIRM the window; change the failure message.
+- **Verdict:** Confirm. The one-line window is right for two reasons stronger than convenience: it is
+  fail-safe in one direction only (narrowing can produce more "no pointer found" verdicts, never
+  fewer, and every historical defeat went the other way), and the boundary is not editable from the
+  file under test — a paragraph boundary was defeated, a sentence boundary was defeated, but a line
+  is a property of the text the guard receives, not one a prose author can renegotiate.
+- **Change:** the message told authors to name the issue "in that sentence" while the guard's unit is
+  the **line**. An author whose citation is in the promise sentence but wrapped onto line 2 would read
+  that and conclude they had complied — and the natural fix for a confused author is to widen the
+  window back to the sentence, which is the defeat this guard already suffered once. Message corrected
+  at `scripts/test_release_notice_gate.py:414-421`; the only assertion on it matches "nowhere to go",
+  which is preserved, so no test changed.
+- **Also recorded:** the wrap the entry said nobody has needed has already happened.
+  `.github/workflows/publish.yml:764` carries the promise and issue pointer at 100 characters, and
+  `.github/workflows/publish.yml:765` carries the workflow pointer *outside* the window. The guard
+  passes today only because a redundant pointer shares the promise line.
+- **Status:** CONFIRMED on the window, message corrected.
+
+---
+
+**Summary:** 7 settled, all by Opus, none escalated — 5 confirmed (4 of them with corrected wording),
+1 settled-false-then-resolved by provisioning the label, and 1 changed in substance by adding a
+runtime guard that removes the assumption entirely. 0 deferred. Two of my own recorded claims were
+overturned in the process and are corrected in place rather than quietly dropped: the `version:`
+qualifier *is* demonstrably applied (the non-empty yank results discriminate, which I had said they
+could not), and the qualifier entry's blast radius was wrong in the safe direction.
+
+**Found outside the seven, and it matters more than any of them:** `release-outcome` — the merged
+first half of seam-sdk#100 — has never been able to file an issue. It has no `actions/checkout` step
+and its `gh` calls pass no `-R`, so `gh` cannot resolve the repository and the job dies with
+`fatal: not a git repository`. It was only ever observed on the success path, where it exits before
+touching `gh` — the same unfalsifiable-green shape this workstream keeps finding. Six consecutive
+failed releases (v0.7.76 through v0.8.0) reported nothing. Filed as seam-sdk#112 rather than fixed
+here, to keep this PR's scope honest.
+
+**Consequence for the first scheduled run:** the in-tree version is **0.9.0** — it was 0.7.77 when
+this was written, and the gap only widened while the outage ran — and the newest version that
+actually published is 0.7.75. Every tag from v0.7.76 through v0.9.0 failed at `ci-green` with all
+three publishing jobs skipped. So the first real run of this check will exit **1** and file a drift
+issue, far past the hard grace window. That is a true positive, not a misconfiguration: it is
+exactly the blind spot seam-sdk#100 describes, and it was invisible precisely because the
+event-based half could not report it. Read the first red run as the instrument working.
+
+**The CI outage that caused the gap is fixed (#117), but the gap is not.** Green CI only means the
+*next* release can publish; the tags that already failed stay unpublished until someone re-dispatches
+them or a newer release supersedes them. Closing the registry gap is a deliberate release action and
+is deliberately not part of this PR.
 
 ---
 

@@ -19,9 +19,44 @@ name: registry drift
 # unparseable response, or an unexpected crash. Exit 1 is the drift verdict. Both turn the job red;
 # the log distinguishes them, and nothing downstream may treat a 2 as drift.
 #
-# This phase is READ-ONLY: `permissions: contents: read`, and the job reports into its own log and
-# nowhere else. Reporting (an issue, a suppression path) is a later phase and adds the scopes it
-# needs in the same commit that uses them.
+# The job files ONE issue per version and never closes one. `--report` is what turns that on; a
+# local or manual run of the same script is read-only. Suppression is a CLOSED issue carrying the
+# `deliberately-unpublished` label, which still prints a `::warning::` on every run — a suppression
+# that has outlived its reason has to stay visible, because it goes stale in exactly the way a
+# curated allowlist would.
+#
+# `permissions:` is at the JOB level and lists only what the job can be shown to use. Job
+# permissions REPLACE the top-level block rather than extending it, and an undeclared scope is
+# `none` rather than inherited. `actions: read` arrived in the commit that made the Actions-API
+# call, not before it — `scripts/test_registry_drift_gate.py` asserts the coupling in both
+# directions, over the SCRIPT'S ARGV rather than over anything written here, so a scope can
+# neither arrive early nor outlive the call that earned it. Prose in this file cannot argue for a
+# permission; that was a real defect, found by mutation, and the fix was to stop reading this
+# block into the guard's surface at all.
+#
+# HOW THIS CHECK CAN ITSELF FAIL — a scheduled watcher can stop existing without anyone noticing,
+# which is the same class of failure it was built to catch, one level up. Three layers, honestly
+# ranked:
+#
+#   1. PR-TIME STRUCTURAL GUARDS (strongest, and complete for what they cover). The `schedule`
+#      trigger, the exact cron, `workflow_dispatch`, the absence of `continue-on-error`, and the
+#      checkout inputs are each pinned by a named test. Deleting or detuning any of them in a pull
+#      request cannot land quietly. They see nothing about a schedule that stops firing on its own.
+#   2. RUNTIME STALENESS WARNING (partial). Each reporting run asks the Actions API for this
+#      workflow's recent COMPLETED scheduled runs and warns when the newest of them is older than
+#      three cron periods. `completed`, not `successful`: this check exits 1 on drift, so
+#      filtering on success would make every run of a real incident invisible, and the first green
+#      run afterwards would measure across the whole incident and report a schedule that never
+#      missed a beat as skipping — crying wolf immediately after the check did its job. It is
+#      warnings only and can never change the exit code: it is diagnostics about the watcher, not
+#      evidence about the registry.
+#   3. THE RESIDUAL, STATED PLAINLY, AND IT IS SMALLER THAN IT WAS. A schedule that stops and
+#      never resumes cannot be seen in a HISTORY of past runs — the last two stay a nominal
+#      cadence apart forever. Measuring silence against THIS run's clock does see it, so a
+#      `workflow_dispatch` run now answers the question a human presses it to ask, in about a
+#      minute. What is genuinely undetectable is silence with nobody looking: if the schedule dies
+#      and no one dispatches, nothing here runs to notice. The only real fix for that is an
+#      out-of-repo watcher, which is out of scope here.
 
 on:
   schedule:
@@ -37,14 +72,15 @@ on:
     - cron: "17 */2 * * *"
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
   drift:
     name: is main's declared version installable?
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read      # the checkout
+      issues: write       # file, comment on and reopen the one drift issue per version
+      actions: read       # this workflow's own run history, for the staleness heartbeat
     steps:
       - uses: actions/checkout@v4
         with:
@@ -70,6 +106,10 @@ jobs:
         env:
           CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
           CARGO_REGISTRIES_ZER07LABS_TOKEN: ${{ secrets.CARGO_REGISTRIES_ZER07LABS_TOKEN }}
+          # `gh` reads GH_TOKEN; REPO is passed explicitly rather than derived from the checkout's
+          # remotes, so the reporting target cannot follow a `ref:` or a fork.
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           # Dedicated key if set, else the org Cargo token, each with a leading "Bearer " stripped.
@@ -139,4 +179,4 @@ jobs:
           # every path that fails. This is the cheap second layer, not the first.
           echo "::add-mask::$TOKEN"
           export SEAM_REGISTRY_TOKEN="$TOKEN"
-          python3 scripts/check_registry_drift.py
+          python3 scripts/check_registry_drift.py --report

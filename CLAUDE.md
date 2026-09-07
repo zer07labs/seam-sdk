@@ -12,6 +12,9 @@ deliberately links nothing of Seam's.
   this gate's vocabulary (the `STREAM=1` mirror-field refusal), so every distinct outcome arrives
   wearing one that means something else. The `make` target still exists and is fine for CI, where
   only pass/fail is read.
+- Registry drift (read-only by default; needs `SEAM_REGISTRY_TOKEN`, and `REPO` + `GH_TOKEN` only
+  for `--report`): `python3 scripts/check_registry_drift.py` — **exit 2 is infrastructure, never a
+  verdict**; 1 is drift, 0 is clean-or-still-in-grace.
 - Python (use the venv — a system `pytest`/`ruff` fails to resolve the package): setup `pip install -e "./python[dev]"` ·
   lint `python/.venv/bin/ruff check python && python/.venv/bin/ruff format --check python` · test `cd python && .venv/bin/pytest -q`
 - TypeScript (in `ts/`): `npm run typecheck` · `npm run build` · `npm test`
