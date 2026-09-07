@@ -1956,7 +1956,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:696` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:739` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -2052,12 +2052,18 @@ touching `gh` — the same unfalsifiable-green shape this workstream keeps findi
 failed releases (v0.7.76 through v0.8.0) reported nothing. Filed as seam-sdk#112 rather than fixed
 here, to keep this PR's scope honest.
 
-**Consequence for the first scheduled run:** the in-tree version is 0.7.77, and the newest version
-that actually published is 0.7.75 — every tag from v0.7.76 up failed at `ci-green` with all three
-publishing jobs skipped. So the first real run of this check will exit **1** and file a drift issue,
-well past the hard grace window. That is a true positive, not a misconfiguration: it is exactly the
-blind spot seam-sdk#100 describes, and it has been invisible until now precisely because the
+**Consequence for the first scheduled run:** the in-tree version is **0.9.0** — it was 0.7.77 when
+this was written, and the gap only widened while the outage ran — and the newest version that
+actually published is 0.7.75. Every tag from v0.7.76 through v0.9.0 failed at `ci-green` with all
+three publishing jobs skipped. So the first real run of this check will exit **1** and file a drift
+issue, far past the hard grace window. That is a true positive, not a misconfiguration: it is
+exactly the blind spot seam-sdk#100 describes, and it was invisible precisely because the
 event-based half could not report it. Read the first red run as the instrument working.
+
+**The CI outage that caused the gap is fixed (#117), but the gap is not.** Green CI only means the
+*next* release can publish; the tags that already failed stay unpublished until someone re-dispatches
+them or a newer release supersedes them. Closing the registry gap is a deliberate release action and
+is deliberately not part of this PR.
 
 ---
 

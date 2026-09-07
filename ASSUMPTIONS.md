@@ -1054,7 +1054,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Correction to this entry's stated rationale (2026-09-06):** the code comment justified the age
   spread as a hedge against a *retention* sweep aging all entries out at once. No retention sweep
   has ever run here, and the real yank predicate is "named in an advisory as unconditionally
-  broken", not "old" — `CHANGELOG.md:696` records that 0.7.39–0.7.43 was deliberately **not**
+  broken", not "old" — `CHANGELOG.md:739` records that 0.7.39–0.7.43 was deliberately **not**
   deleted despite being older than every roster entry. A wrong reason in that comment is how the
   next editor re-points the roster badly, dropping a safe old version in favour of one sitting
   inside an advisory band; the comment now states the real predicate. None of the four roster
