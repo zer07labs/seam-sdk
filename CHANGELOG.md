@@ -18,6 +18,35 @@ than trusting a summary here.
 
 ### Added
 
+- **`SeamRpcError.trailing_metadata()` — status details reach the typed error (Python).** Server
+  trailing metadata is now lifted onto every typed `SeamRpcError` as a tuple of `(key, value)` pairs.
+  This is where `grpc-status-details-bin` travels, and with it any `google.rpc.Status` detail —
+  `ErrorInfo`, `RetryInfo`, `BadRequest`.
+
+  Previously the typed error was rebuilt from the status code and details string alone, so a consumer
+  could only reach those by walking `__cause__` until it found the raw `grpc.RpcError`. That worked,
+  and `seam-adapters` did exactly that — but it rested on an implementation detail nothing documented
+  and nothing tested, which a refactor could have broken with no signature change and no version
+  signal. Asked for in seam-sdk#119.
+
+  **`None` and `()` are different answers.** `None` means no trailing metadata was ever observed —
+  the error was constructed directly, or the raw error had no such accessor. `()` means the wire was
+  read and carried nothing. Conflating them loses the difference between "the server told us nothing"
+  and "we never asked".
+
+  **Values are carried raw and undecoded.** `-bin` keys stay `bytes`, everything else stays `str`,
+  and keys are not lowercased. Decoding to `google.rpc.Status` would need an import this module's
+  contract forbids, so a caller that wants the decoded form imports the decoder itself.
+
+  Purely additive: the third constructor parameter has a default, so two-argument construction and
+  older pickles still work, and `except grpc.RpcError` handlers are unaffected. TypeScript is
+  unchanged — the ask was Python-only.
+
+- **`map_rpc_error` documents its `__cause__` guarantee, and a guard enforces it.** Every call site
+  raises with `from e`, so the raw error stays reachable for anything not lifted onto the typed
+  object. The test suite now walks the package's AST and fails on a `raise map_rpc_error(...)` with
+  no `from` clause — including one added to a module no behavioural test exercises yet.
+
 - **`CollectiveOutcome.effective_threshold` — quorum's denominator, on both decoded outcomes.**
   `seam_sdk.CollectiveOutcome.effective_threshold` (Python) and `CollectiveOutcome.effectiveThreshold`
   (TypeScript) now carry `seam.api.v1`'s `optional uint32 effective_threshold`: how many APPROVE
