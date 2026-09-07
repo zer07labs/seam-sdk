@@ -228,3 +228,58 @@ test("a SessionStep decodes a recognized verdict identically to a DecisionRespon
   );
   assert.deepEqual(fromStep, fromResp);
 });
+
+// ── effectiveThreshold: quorum's denominator, and the zero that is not absence ────────────────────
+
+test("effectiveThreshold is carried when the round declares one", () => {
+  // A quorum commit-terminal step reports the bar it actually had to clear. Without this on the DTO
+  // a caller holding only the decoded form cannot judge the round at all — the counters say how
+  // many approved, and nothing says how many were needed.
+  const outcome = collectiveOutcomeOf(
+    resp({
+      verdict: CollectiveVerdict.APPROVED,
+      approveCount: 2,
+      declaredParticipantCount: 5,
+      effectiveThreshold: 2,
+    }),
+  );
+  assert.equal(outcome?.effectiveThreshold, 2);
+  // And it is NOT the declared count — reading that as quorum's denominator is the documented
+  // misread, so this pins them as separately observable rather than coincidentally equal.
+  assert.equal(outcome?.declaredParticipantCount, 5);
+});
+
+test("an absent effectiveThreshold is undefined and never zero", () => {
+  // Decision mode has no threshold concept, so the wire says nothing rather than saying zero.
+  // `undefined` is NOT APPLICABLE. A `0` would be a fabricated claim, and the dangerous direction
+  // of the two: "zero approvals needed" is a bar every round clears.
+  const outcome = collectiveOutcomeOf(
+    resp({ verdict: CollectiveVerdict.APPROVED, approveCount: 1 }),
+  );
+  assert.equal(outcome?.effectiveThreshold, undefined);
+  assert.ok(!("effectiveThreshold" in outcome!) || outcome!.effectiveThreshold === undefined);
+});
+
+test("an explicit zero threshold stays zero and does not collapse to absent", () => {
+  // The discriminating case, and the one a `?? undefined`-shaped coalesce or any truthiness check
+  // silently fails: a round that really did declare a threshold of 0 is a different statement from
+  // a mode that has no threshold. protobuf-es already models the wire's `optional` correctly, so
+  // the one thing the decoder must not do is help.
+  const r = resp({ verdict: CollectiveVerdict.APPROVED, effectiveThreshold: 0 });
+  assert.equal(r.collectiveOutcome?.effectiveThreshold, 0);
+
+  const outcome = collectiveOutcomeOf(r);
+  assert.equal(outcome?.effectiveThreshold, 0);
+  assert.notEqual(outcome?.effectiveThreshold, undefined);
+});
+
+test("a SessionStep carries effectiveThreshold identically to a DecisionResponse", () => {
+  // One decoder, two message types — the same equality the verdict path asserts. A threshold read
+  // on only one of them would be the second implementation this module exists to prevent.
+  const fields = {
+    verdict: CollectiveVerdict.APPROVED,
+    approveCount: 2,
+    effectiveThreshold: 2,
+  };
+  assert.deepEqual(collectiveOutcomeOf(step(fields)), collectiveOutcomeOf(resp(fields)));
+});

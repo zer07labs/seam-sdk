@@ -593,6 +593,23 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   a full phase plus four verification rounds precisely because that block is the one every local run
   prints and nobody re-reads. Fixed (the sentence is now conditional, with both branches pinned by
   tests), but the mechanism it demonstrates is the one to watch at day 60. See DECISIONS.md.
+- **Status: RESOLVED (2026-09-07). It was a window, and the window closed** — not by waiting, and
+  not at day 60. The premise the entry rested on was that resolving it "needs the BSR regeneration
+  credentials this workstation lacks". That was false by the time it mattered: `buf registry
+  whoami` answers, `make generate` pulls `buf.build/zer07labs/seam` clean, and the regeneration
+  emitted all seven recorded fields plus the two that CI was failing on. The recorded gap is
+  therefore zero, `contract/expected-local-lag.txt` is DELETED, and
+  `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exits 0 on this checkout for the first time.
+  Take the lesson the entry was pointing at, which is not about ACDP: **a standing local/CI split
+  was load-bearing on an unverified claim about this workstation, and nobody re-checked the claim
+  for four days.** The blast radius the entry called "low structurally, social in practice" is
+  exactly what happened — the file became scenery, and while it was scenery the gate it downgraded
+  went red in CI for a different reason and the local NOTE kept reporting the old one.
+  The absence is now asserted rather than merely true:
+  `python/tests/test_field_manifest_gate.py`'s `test_this_repo_records_no_standing_local_lag`
+  refuses a silent re-record, per the deleted file's own escalation clause. The downgrade mechanism
+  itself is untouched and still fully tested against scratch fixtures — what was removed is this
+  repo's standing use of it, not the capability.
 
 ## `seam.event.v1` gets its own manifest file, not a partition of the api one
 

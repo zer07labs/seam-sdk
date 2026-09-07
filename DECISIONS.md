@@ -665,7 +665,7 @@ Measured against the real corpus, that rule is wrong twice, and both failures pr
 wrong answers rather than misses:
 
 - **In a table row the subject wins.** `PROGRESS.md`'s repo-map row for `python/seam_sdk/crypto.py`
-  names `python/seam_sdk/admin.py:141` mid-sentence and then continues with four more bare
+  names `python/seam_sdk/admin.py:142` mid-sentence and then continues with four more bare
   references, all of which are crypto.py. Binding them to the nearer citation reports
   `python/seam_sdk/crypto.py:630` as past-EOF — it is `_opt_bytes`, and the claim is true.
 - **Inheritance must not cross a line.** `PROGRESS.md` writes `p1a:103-107` followed by bare
@@ -1171,7 +1171,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:684-701` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:727-744` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -1513,9 +1513,9 @@ not as written.
   columns and never on the version alone (`verify/src/verify.rs:605-614`); a genuine v1 record falls
   through to `continue` and is tested twice — `verify/tests/authenticity.rs:238`
   (`a_v1_record_is_link_verified_but_not_recomputed`, whose skipped-not-recomputed assertion is at
-  `verify/tests/authenticity.rs:254-257`) and `verify/tests/authenticity.rs:944`
+  `verify/tests/authenticity.rs:254-257`) and `verify/tests/authenticity.rs:977`
   (`a_genuine_v1_record_is_still_skipped_not_refused`). The per-column parametrization at
-  `verify/tests/authenticity.rs:906-909` exercises each column with the other three removed, and the
+  `verify/tests/authenticity.rs:939-942` exercises each column with the other three removed, and the
   comment immediately above it records the decoy that forced it: "a decoy that guarded only on tag
   10 passed an earlier version of this test, leaving the three v3 columns unchecked with a green
   suite."
@@ -2058,3 +2058,103 @@ publishing jobs skipped. So the first real run of this check will exit **1** and
 well past the hard grace window. That is a true positive, not a misconfiguration: it is exactly the
 blind spot seam-sdk#100 describes, and it has been invisible until now precisely because the
 event-based half could not report it. Read the first red run as the instrument working.
+
+---
+
+## 2026-09-07 — adopt the two contract changes `main` had been failing on, and close the local/CI split
+
+`main`'s CI had been red on every run since `f177cfb`, and stayed red through five more release
+commits up to v0.9.0. None of it was any open pull request. One upstream change caused all three
+failing jobs, and the gates were doing their job: the runtime published `seam.api.v1`
+`CollectiveOutcome.effective_threshold` and the whole of `seam.event.v1` `PolicyDenied` (tag 24),
+and this SDK had not decided whether it carries them. `python` and `typescript` both fail at
+`make check-contract` (exit 8); `spec pin` fails because the vendored `seam-event.v1.md` predates
+POLICY_DENIED. Decisions below; every one is recorded because a manifest write without a recorded
+decision is the silent pass the gate exists to remove.
+
+### `CollectiveOutcome.effective_threshold` — the SDK carries it, on both decoded DTOs
+
+- **Decided by:** Opus.
+- **The field:** `optional uint32 effective_threshold = 7` — how many APPROVE ballots a QUORUM round
+  actually needed, after any bound policy override REPLACED the wire's `required_approvals`.
+- **Verdict:** ADOPT, and wire it into the hand-written clients rather than leaving it to the stubs.
+  Not a close call. The proto states that `stated_value_contradicted_tally` must be judged against
+  `effective_threshold` whenever it is present, and that reading `declared_participant_count` as
+  quorum's denominator "is what let a round that MISSED its bar seal with an APPROVED verdict while
+  nothing in this message could contradict it". `seam_sdk.CollectiveOutcome` and TS
+  `CollectiveOutcome` are the forms callers are told to use instead of the raw stub — so omitting
+  the field from them reproduces that exact defect one layer up, in the layer we own.
+- **Presence, not value.** `None`/`undefined` means NOT APPLICABLE and never zero. Decision mode has
+  no threshold concept, so a bare proto3 read returning `0` would be a fabricated claim — and the
+  dangerous direction of the two, because "zero approvals needed" is a bar every round clears.
+  Python reads `HasField`; TypeScript carries protobuf-es's `number | undefined` through untouched.
+  Both are pinned by a test that sets an EXPLICIT zero and asserts it survives as zero: that is the
+  one case a truthiness check passes every other test while getting wrong.
+- **Status:** ADOPTED. `contract/field-manifest.txt` declares it;
+  `python/seam_sdk/_collective.py` and `ts/src/client.ts` decode it; 3/3 and 2/2 mutations killed.
+
+### `seam.event.v1` `PolicyDenied` (tag 24) — carried, and the verifier had to change with it
+
+- **Decided by:** Opus.
+- **Verdict:** ADOPT. `seam.event.v1` has no hand-written client layer here — it reaches consumers as
+  generated stubs plus the Rust verifier — so "what carries it" is answered in `verify/`, and the
+  answer was not "nothing".
+- **The part that was not optional:** `POLICY_DENIED` is ADVISORY in the spec's `enum EventKind`, and
+  `verify/src/wire.rs`'s `ADVISORY_KINDS` must equal that set or `--strict` refuses a healthy stream
+  carrying one. That is the `AUTHORIZE_EVALUATED` regression verbatim — the one a stale copy of this
+  same spec shipped once already — except louder: this kind is emitted per REFUSED COMMITMENT, so
+  under a strict bound policy a missing entry refuses real streams at a material rate rather than
+  once. Re-pinning the spec without this would have been the shape of that bug with the document
+  updated to prove it.
+- **Also decoded into the canonical identity** (tag 24 on the pb envelope, `policy_denied` on the
+  JSON one, both mapped in `with_identity`), for the reason tag 23 is: identity is the RE-ENCODED
+  event, so a payload left undecoded is a payload outside the dedup identity.
+- **Status:** ADOPTED. `contract/event-field-manifest.txt` declares all four entries;
+  `KNOWN_KINDS` gains it in both SDKs; `verify/docs/seam-event.v1.md` re-pinned verbatim to
+  seam-runtime `cfffb90`; 4/4 verifier mutations killed, each by a distinct test.
+
+### The Rust spec-sync check was reading a working tree, and mostly not running at all
+
+- **Decided by:** Opus. Found by the change above: adding `POLICY_DENIED` to `ADVISORY_KINDS` turned
+  `advisory_kinds_are_pinned_to_the_spec` red locally.
+- **Why it went red:** layer 2 read `../../seam-runtime/docs/specs/seam-event.v1.md` — a sibling
+  *working tree*, whatever branch someone last checked out. It was current here; the sibling was not.
+- **The direction that matters is the other one.** A working tree can also make it PASS: a stale
+  `ADVISORY_KINDS` against an equally stale sibling agrees with itself. And in CI, where no sibling
+  is ever checked out, the layer skipped entirely — so the arm billed as "the spec itself" reached
+  no pull request, ever.
+- **Verdict:** read the VENDORED copy (`verify/docs/seam-event.v1.md`) instead. Always present,
+  ships inside the crate so a third-party standalone build gets it too, and separately proven
+  byte-identical to the runtime's file at a named commit AND at the tracked ref's tip by
+  `scripts/check_vendored_spec.py` in the `spec-pin` job. Not circular: `ADVISORY_KINDS` and the
+  markdown are independent artifacts, and what keeps the markdown honest lives outside the crate.
+  `SEAM_RUNTIME_DIR` still overrides, and a set-but-wrong one is still a hard failure. The silent
+  skip path is gone.
+- **Status:** CHANGED.
+
+### `contract/expected-local-lag.txt` — deleted, and the split it papered over is closed
+
+- **Decided by:** Opus. This settles the `ASSUMPTIONS.md` entry "a window, not a permanent excuse".
+- **The premise was false.** The entry said resolving it "needs the BSR regeneration credentials this
+  workstation lacks". `buf registry whoami` answers; `make generate` pulls the module clean. Nobody
+  re-checked the claim for four days, and while it stood the file recorded a seven-field lag that a
+  single regeneration erased.
+- **Verdict:** regenerate, DELETE the file, per its own escalation clause — a third re-record was
+  the trigger to do the login and stop curating it, and the third re-record is exactly what these
+  new fields would have required.
+- **What it cost, while it stood:** the local gate and CI stopped comparing the same things. Local
+  printed a NOTE about a known lag; CI failed on a NOT-IN-THE-MANIFEST surplus and never read the
+  file at all. A gate that is red in CI and green-with-a-footnote locally trains readers to stop
+  looking, which is the failure this repo names most often and found again here.
+- **Status:** RESOLVED. Absence is asserted, not merely true —
+  `test_this_repo_records_no_standing_local_lag` refuses a silent re-record. The downgrade mechanism
+  is untouched and still fully tested against scratch fixtures.
+
+---
+
+**Summary:** 4 decisions, all by Opus, none escalated — 3 adoptions and 1 removal. Two were forced
+by the first two (the verifier's advisory set, and the spec-sync source); neither was in scope when
+the work started, and both are cases where making the gate green without them would have shipped
+the defect the gate exists to catch. `main`'s three failing jobs are the acceptance criteria, and
+all three pass locally against the same inputs CI uses — including `check_vendored_spec.py --from gh`
+against the live GitHub API, which is the backend CI runs.

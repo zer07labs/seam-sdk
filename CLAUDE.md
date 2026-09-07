@@ -35,23 +35,23 @@ deliberately links nothing of Seam's.
   `test_grpcio_floor.py` go red after a `make generate` that bumps gencode. Raise the floor; don't relax the test.
 - Python CI installs editable **and** builds the wheel to import it in a clean venv — an editable install
   cannot see a packaging defect. Don't trust a green suite alone before a release.
-- **`STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exits **6** on every pre-ACDP local checkout** — local stubs
-  lag the committed manifest by seven `ContextBinding` fields (`content_hash`, `receipt_hash`,
-  `key_status`, `resolved_status`, `retraction`, and the ACDP P3 pair `revocation` /
-  `revocation_trust_class`) until a regeneration pulls a BSR module that carries them. Note the
-  direction: the BSR is AHEAD of this checkout, not behind it — a regeneration closes the gap, and
-  nothing upstream has to happen first. The gate recognises exactly that case and downgrades its output to a NOTE naming
-  `contract/expected-local-lag.txt` — it still exits **6**, since CI is the authority, not this checkout.
-  Anything the gate names beyond exactly those seven fields is real drift, not this known lag.
+- **`STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exits **0** on a checkout whose stubs are current** —
+  and that is new. It used to exit **6** on every local run, because the stubs here lagged the
+  committed manifest by seven `ContextBinding` fields and no one could regenerate; the gate carried a
+  recorded-lag file (`contract/expected-local-lag.txt`) whose whole job was to downgrade that standing
+  refusal to a NOTE. Both are gone. `buf registry login` is done on this workstation, `make generate`
+  pulls the BSR module clean, and the recorded lag closed with it — so a local run and a CI run now
+  compare the same two things and agree. If the gate is red here, it is red in CI too. **Regenerate
+  before believing a field-surface refusal**: stale stubs are the one cause this checkout can fix by
+  itself, and it now can.
   **Read the exit code, not just this bullet** — which is why the command above is the script and
-  not `make`. Several other codes are reachable from the same command — 5 (RPC-manifest drift),
-  3 (stubs absent) and 1 among them — and none is the recorded lag.
-  Three matter here. If `seam.event.v1`'s field surface disagrees with
-  `contract/event-field-manifest.txt`, the run exits **8** — 8 exists precisely so an event
-  regression cannot arrive wearing the code this bullet tells you to read past — and the NOTE then
-  says so instead of claiming 6. But if the disagreement is one of the **four streamed-payload mirror
-  fields** (`session_lifecycle`, `chain_head_attestation`, `ciphertext_digest`,
-  `AuditEntryEvent.actor`), `STREAM=1` refuses earlier with exit **2** and no NOTE is printed at all.
+  not `make`. Several codes are reachable from the same command: 6 (api field or enum-value surface
+  disagrees with `contract/field-manifest.txt`), 5 (RPC-manifest drift), 3 (stubs absent), 1
+  (RPC/Authorize/admin surface stale). Three more matter. If `seam.event.v1`'s field surface
+  disagrees with `contract/event-field-manifest.txt`, the run exits **8** — 8 is deliberately not 6,
+  so an event regression cannot arrive wearing the api code. But if the disagreement is one of the
+  **four streamed-payload mirror fields** (`session_lifecycle`, `chain_head_attestation`,
+  `ciphertext_digest`, `AuditEntryEvent.actor`), `STREAM=1` refuses earlier with exit **2**.
   Earlier still — ahead of all three — is exit **7**, a structural precondition of the event gate:
   `seam.event.v1` is asserted to have zero enums, zero nested messages, and **zero services**. The
   verb clause is the newest: `contract/rpc-manifest.txt` covers `seam.api.v1` only, so a service
@@ -63,6 +63,11 @@ deliberately links nothing of Seam's.
   a failed precondition means the surface being compared is not the surface the gate knows how to
   read. Those four codes — 6, 8, 2, 7 — are pinned against the gate's real behaviour by
   `python/tests/test_event_field_manifest_gate.py`, so this paragraph cannot drift from it silently.
+- **A field the stubs carry and the manifest does not is a DECISION, not a chore.** The gate refuses
+  and names it; the remedy is to decide whether this SDK carries it — wire it into the hand-written
+  clients or record in the PR why not — and only then write the manifest. Running
+  `--write-manifest` first turns the refusal back into the silent pass it exists to remove, and a
+  bare run additionally rewrites the api manifest from whatever the local stubs happen to be.
 
 <!-- Shared cross-repo context (zer07labs/seam, cloned as a sibling). -->
 @../seam/CLAUDE.md
