@@ -185,6 +185,21 @@ is honored first if you ever prefer a separate key.) **No per-format setup is ne
 repos are format-agnostic; the same repo that holds the Cargo crates accepts an npm package or a wheel on
 first push (verified: `npm.cloudsmith.io/zer07labs/internal/` already answers, like the Cargo endpoint).
 
+*Is the released version actually installable?* [`registry-drift.yml`](.github/workflows/registry-drift.yml)
+asks that every two hours, comparing `main`'s declared version against what Cloudsmith serves in **both**
+formats (wheel and npm — one landing without the other is drift, not a partial success). It exists because
+`publish.yml`'s own notifier can only report a publish that RAN and failed; a release that was never
+dispatched at all is invisible from inside the workflow that never started. **Exit 2 is infrastructure —
+a missing credential, an unreachable registry, an unparseable answer — and never a verdict**; exit 1 is
+drift. A fresh release gets a two-tier grace window (silent for 90 minutes while a publish may still be
+indexing, then a warning) before anything is filed. Run it yourself read-only with
+`python3 scripts/check_registry_drift.py`; `--report` is what files an issue, and only CI passes it.
+
+To record a version that is *deliberately* never going to be published — `v0.7.69`, `v0.7.70` and
+`v0.7.72` are permanent gaps of exactly this kind — close its drift issue and label it
+**`deliberately-unpublished`**. Both acts are required, and the check still prints a `::warning::`
+naming that issue on every run: a suppression that has outlived its reason must not become silence.
+
 **Consuming it** — point the consumer at Cloudsmith and add the dependency:
 
 ```sh

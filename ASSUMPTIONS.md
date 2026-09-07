@@ -977,3 +977,40 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Owner / re-open trigger:** the first person who needs to suppress a version. Re-open if the
   label turns out to need org-level permissions this repository's maintainers do not hold.
 - **Status:** UNCONFIRMED (recorded 2026-09-06).
+
+
+## The Cloudsmith `?query=` shape returns the rows it is asked for
+
+- **Plan:** `plans/registry-drift-check.md` (Phase 4)
+- **Assumed:** `GET /packages/zer07labs/internal/?query=seam-sdk+version:X` returns the `seam-sdk`
+  rows at version X, in each published format.
+- **Chose:** ship it, inherited verbatim from `.github/workflows/yank.yml`, which has used this
+  query shape in production. No test in this repo executes it — `scripts/test_yank_gate.py`
+  truncates before the call — so "it works in yank.yml" is the whole of the evidence.
+- **Blast radius if wrong:** bounded by the canary, and deliberately so. If the query shape were
+  wrong the canary versions would come back empty too, and an empty canary is exit 2 ("the
+  instrument is broken") rather than exit 1 ("the registry lags"). The failure is loud and names
+  the canaries.
+- **Owner / re-open trigger:** the first scheduled run after merge, read out of the run log.
+- **Status:** UNCONFIRMED (recorded 2026-09-06).
+
+
+## Cloudsmith ERRORS on an unrecognised `version:` qualifier rather than ignoring it
+
+- **Plan:** `plans/registry-drift-check.md` (Phase 4)
+- **Assumed:** if `version:` were not a supported qualifier, the registry would reject the query
+  rather than silently drop it and return every `seam-sdk` row at every version.
+- **Chose:** ship it, with a structural backstop rather than a test. This is the assumption that
+  matters more than its sibling above, because it is the one that could produce a false **exit 1**
+  rather than a false exit 2: a silently-ignored qualifier returns rows for the wrong versions, and
+  a target that looks absent among them would be reported as drift that is not real. That is the
+  direction this whole check must never fail in.
+- **Alternatives:** verifying it live — impossible in this session, which has neither the
+  credential nor authorisation to query a registry.
+- **Blast radius if wrong:** one wrongly-filed issue, self-correcting on the next run once the
+  query is fixed. Phase 4's truncation check exists for exactly this: a response at exactly the
+  page limit is reported as possibly-a-window rather than read as the whole set.
+- **Owner / re-open trigger:** the first scheduled run after merge. If it files a drift issue for a
+  version the registry demonstrably serves, this is the assumption that broke.
+- **Status:** UNCONFIRMED (recorded 2026-09-06). ⚠ Unconfirmed in the strong sense — a fact about a
+  third party's API that nobody here has checked.

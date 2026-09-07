@@ -84,7 +84,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `.github/workflows/publish.yml:316` | `make generate` **again at publish time**, against unpinned plugins — the open half of #52. `:390-401` pre-upload smoke installs protobuf *unconstrained*, so the skew is invisible to it; `registry-smoke` (`:519`) likewise. Measured at planning: `grep -rn protobuf .github/workflows/` yielded **one** hit, a prose comment — no workflow pinned protobuf anywhere, so nothing caught the skew. **Phase 6 closed that** (DONE 2026-08-31): the same grep now yields 17, and `.github/workflows/publish.yml:423` installs the built wheel with `protobuf==$FLOOR`. The declared floor and the emitted gencode are both **7.36.0** (`python/pyproject.toml:50`, `python/seam_sdk/_gen/seam/api/v1/seam_pb2.py`'s `Protobuf Python Version` header — cited by symbol, not by line, since it is a generated, gitignored file) — zero headroom, which is why this phase ran first. |
 | `.github/workflows/publish.yml:63-148` | `ci-green` — resolves every `ci-ok` conclusion for the tagged commit. Sound: `:107` still-running ⇒ `pending`, `:117-126` one-green-cannot-mask-one-red, `:143-148` timeout is a refusal. `:192`/`:285` gate both npm and python. **Must not regress.** |
 | `.github/workflows/publish.yml:150-188` | `version-check` — tag vs in-tree versions. It had **no branch-ancestry check** (`.github/workflows/ci.yml:19` runs on every branch push, so a tag at a green feature-branch commit published cleanly); **Phase 6 added one at `:176`**, which is inside this row's own range. Read the range as the job, not as evidence of the gap — it was widened in round 1 until it contained the very step it is cited for lacking. |
-| `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:1207`. |
+| `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:1286`. |
 | `python/tests/test_protobuf_floor.py:72,88` | The two pure-file-read assertions Phase 6 runs at publish time. `:29-31` reads only `_gen/seam/api/v1/seam_pb2.py`; `:47-51` **skips** when `_gen` is absent. `:88-99` forces `cap == gencode_major + 1` — this is why "widen the floor" is not a metadata edit. |
 | `python/tests/test_grpcio_floor.py:38` | Module-level `import grpc` — matters if Phase 6 runs it in the publish job. |
 | `.github/workflows/yank.yml` | `workflow_dispatch`, `dry_run` default `"true"`. A hard **DELETE** (`:91-92`), not a PyPI-style yank. Its token line did **not** strip the cargo token's `"Bearer "` prefix (`.github/workflows/publish.yml:383-385` does) — **Phase 10 fixed it** (DONE 2026-08-31) at `.github/workflows/yank.yml:55-60`, and left the version/format/name filters (`:73-76`) byte-unchanged. `scripts/test_yank_gate.py` now executes the resolution and pins those filters. |
@@ -155,7 +155,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   - *R2 GAPS (3):* the `:109`→`:141` fix reached `PROGRESS.md` but missed
     `plans/archive/record-digest-v3.md:12`; removing a duplicated execution-order block ate the
     blank line and merged two paragraphs; and the path repoint **over-replaced** four quoted
-    `DECISIONS.md` section titles, which are lookup keys that must match `DECISIONS.md:1399`
+    `DECISIONS.md` section titles, which are lookup keys that must match `DECISIONS.md:1478`
     verbatim, not paths.
   - *R3 PASS:* all three closed, both halves of the over-replacement checked (quoted titles reverted,
     `**Plan:**` paths still archive-pointed), no new breakage, 545/17 green.
@@ -3828,3 +3828,52 @@ needed escalating further.
   by design, so the narrow assertion is what carries the proof.
 * **Counts:** drift gate 201 → **218**; scripts suite 426 → **444**.
 * **Next:** Phase 9 — documentation closure, then the finalization pass.
+
+### Phase 9 — documentation closure · **DONE**
+
+The last phase in the execution order (Phase 8 was dropped as scope creep and is filed separately).
+Six files, and the interesting part is what had to change between drafting and applying.
+
+* **`publish.yml`'s blind-spot NOTE now says the gap is covered.** It used to end "it is
+  deliberately NOT solved here — see zer07labs/seam-sdk#100", which was true when written and is
+  the exact shape of comment that quietly outlives its subject. Rewritten LINE-COUNT-NEUTRAL (3
+  insertions, 3 deletions, no net change) so the edit cannot shift any line number cited elsewhere
+  in this repo — `publish.yml` is one of the most-cited files here, and a one-line insertion would
+  have invalidated citations in three documents for a prose fix.
+* **`README.md`** gains the consumer-facing paragraph: what the check asks, that exit 2 is
+  infrastructure and never a verdict, the two-tier grace, how to run it read-only, and how to record
+  a deliberately-unpublished version. **`CLAUDE.md`** gains one Commands bullet. **`plans/README.md`**
+  gains its row.
+* **`DECISIONS.md`** takes the calls a later reader would otherwise re-litigate. Labelled a DESIGN
+  record explicitly, because that file describes itself as the record of `/reconcile` passes and the
+  assumption reconciliation for this plan is still to come as its own entry. One entry CORRECTS the
+  reasoning rather than restating it: the original argument for a suppression label over a curated
+  file was "a curated file goes stale", which is wrong — a closed labelled issue goes stale
+  identically. The real grounds are locality and two-act deliberateness, and because the staleness is
+  symmetric, the per-run warning is not optional; it is what pays for the choice.
+* **`ASSUMPTIONS.md`** takes the two query-shape entries, both UNCONFIRMED. They are not equally
+  weighted, and the entries say so: the first can only produce a false exit 2 (caught by the canary),
+  while the second — that Cloudsmith ERRORS on an unrecognised `version:` qualifier rather than
+  ignoring it — is the one that could produce a false exit **1**, which is the direction this check
+  must never fail in.
+* **Divergence: the drafts were stale by the time they were applied.** They were written before the
+  Phase 7 verification round, so the `plans/README.md` row still claimed the review found one moved
+  defect, and the `DECISIONS.md` entry omitted the three heartbeat calls a reader is most likely to
+  question — `status=completed` over `status=success`, silence over a pairwise gap, and why the
+  blanket catch sits in a wrapper rather than in the arm or around the reporting `try`. Both
+  refreshed before applying. Documentation drafted ahead of a verification gate has to be re-read
+  after it, not just applied.
+* **Divergence: `publish.yml`'s own guard rejected the rewrite three times, correctly each time.**
+  `test_the_blind_spot_comment_points_at_a_real_issue` requires the tracking citation to sit on the
+  SAME LINE as the promise "NOT solved here" — not in the block, not in the paragraph, not in the
+  sentence. Attempt one used a bare `#100` and was rejected because a bare hash is also a colour hex
+  and a markdown heading. Attempt two dropped the promise phrase, and the guard said restore it or
+  retire the guard deliberately — it will not silently stop checking. Attempt three put the citation
+  one line below the promise. The guard's docstring explains the narrowness: three earlier drafts of
+  it were each defeated by a decoy placed just inside a more generous boundary, and the last one
+  turned on whether a prose line happened to end in a full stop. Recorded because the constraint is
+  invisible from the comment itself, and the next person to reword that paragraph will meet it too.
+* **Gates:** python **1257 passed / 21 skipped** · scripts **444 passed** · drift gate **218
+  passed** · ruff clean · contract gate **exit 6**, naming exactly the seven recorded
+  `ContextBinding` lag fields.
+* **Next:** the finalization pass — whole-feature verify, then the three issues this run owes.

@@ -6,6 +6,85 @@ assumption, the independent recommender's analysis, the human verdict, and the r
 produced it.
 
 
+## 2026-09-06 — `plans/registry-drift-check.md`: the calls worth not re-litigating
+
+A DESIGN record rather than a `/reconcile` pass — the assumption reconciliation for this plan comes
+later, and is a separate entry. These are the decisions whose reasoning is not visible from the diff,
+written down because each one has an obvious-looking alternative that is wrong for a reason.
+
+**One comparison, not two.** The check asks "is `main`'s declared version installable?" and never
+"does every tag have a package?". `release-on-runtime.yml` pushes the version commit to `main`
+BEFORE it tags, so the source-vs-registry comparison already covers both the tagged-but-unpublished
+state and the never-tagged one. A tag-keyed check is strictly weaker: it cannot see a release whose
+tag push failed. The tag is still read, but only for DIAGNOSIS — it selects which remediation text
+the issue carries, never whether there is drift.
+
+**Two-tier grace, and the tiers are sized off different things.** `SOFT = 90` minutes is silence
+while a publish may still be indexing; it is sized on the declared retry ceilings in `publish.yml`.
+`HARD = 360` is sized on the job time limit — past it, no publish job for that version can still be
+alive. The middle band exists to be *said* once before anything escalates. The cron period is bounded
+by `HARD - SOFT` (270 minutes), NOT by `SOFT`: nothing depends on a run landing inside the silent
+tier, but a period wider than the warn band would let a release cross it between two runs, leaving
+the middle tier as code that never executes in production. Note what the job limit does and does not
+buy: it bounds DUPLICATION, not detection, because `release-outcome` already covers the hung-job case.
+
+**The clock is `max(commit date, tag creator date)`,** not the commit date. `release-on-runtime.yml`
+has a branch that makes no commit and tags anyway, so a re-dispatch would otherwise inherit the
+original bump's date and get zero grace — reporting drift on a release that started two minutes ago.
+
+**The canary is a three-entry roster that drops any entry equal to the target,** never a single
+pinned version. The first draft pinned one, which happened to BE the current target; canary-first
+ordering then made a real drift return an empty canary and exit 2, reporting "instrument broken" for
+exactly the condition the instrument exists to catch. The roster passes if ANY candidate answers.
+
+**The check never closes an issue.** A reporter that can retract its own reports is a much larger
+authority than one that can only speak, and its failure mode is worse: a bug in the clean path erases
+the record of a real outage rather than adding noise to it. When drift clears, it prints a
+`::notice::` saying the issue can be closed, and stops there.
+
+**Suppression is a label on a CLOSED issue, not a curated file** — and the grounds are not the ones
+first written down. The original argument was that a curated file goes stale; that argument is wrong,
+because a closed labelled issue goes stale in exactly the same way (if `main` ever returns to that
+version it suppresses just as permanently). The real grounds are LOCALITY — the suppression sits on
+the thing it suppresses, where anyone investigating already is — and TWO-ACT DELIBERATENESS: closing
+alone is the ordinary "this is fixed" gesture and must not suppress, so it takes a close AND a label.
+Because the staleness is symmetric, the `::warning::` on every run is not optional; it is what pays
+for the choice.
+
+**No `pull_request:` trigger,** and unlike the sibling `framework-coinstall.yml` this is not a
+judgement about noise. Secrets are unavailable to a fork-PR-triggered workflow, so credential
+resolution would find nothing and the job would exit 2 on every external contribution — permanently,
+and correctly, which is the worst kind of permanent red. Nothing in a pull request can change this
+answer in any case: it is a statement about the default branch and the registry.
+
+**The watcher's own heartbeat asks whether the schedule FIRED, not whether it was green** —
+`status=completed`, never `status=success`. The runs API matches a check run's status *or*
+conclusion, so `success` filters on the VERDICT. This check exits 1 on drift, so every run of a real
+incident would be invisible to it, and the first green run afterwards would measure across the whole
+incident and announce a skipping schedule about a schedule that never missed a beat — crying wolf
+immediately after the check did its job. Dropping `status` altogether is not the fix either: with no
+filter the response carries `in_progress` runs, which on a scheduled trigger includes the current
+run, so the measurement would quietly mean one thing on a scheduled run and another on a dispatched
+one.
+
+**It measures SILENCE since the newest completed run, not the gap between the two newest.** A gap
+compares two points in the PAST, so a schedule that stops and never resumes leaves its last two runs
+a nominal cadence apart forever and the gap arm stays quiet about it permanently. Silence reports the
+same number one cron period earlier, needs one stamp instead of two, and is what lets a
+`workflow_dispatch` run answer the question a human presses it to ask.
+
+**The arm can never change the exit code, and that guarantee lives in a wrapper** with a blanket
+`except Exception`. Not inside the arm's body, where it would swallow the named diagnostics the
+`InfraError` handlers exist to print; and emphatically not around the reporting `try`, which returns
+2 — that placement looks like tidying and converts a crash into a VERDICT, inverting the invariant
+rather than restoring it. A blanket catch can hide a permanently-broken arm, so the positive path is
+pinned by tests that require the arm to actually warn on real silence.
+
+**Exit 2 is infrastructure and never a verdict, and 2 is the crash code too.** Python exits 1 on an
+uncaught exception and 1 is the drift verdict here, so any crash would otherwise read as drift and
+file a wrong issue. A top-level handler maps every unexpected exception to 2.
+
+
 ## 2026-09-05 — /reconcile over `plans/digest-correctness-and-gate-repair.md`
 
 Closing pass for the whole plan. Most of the backlog was reviewed and re-dated during Phase 7, so
