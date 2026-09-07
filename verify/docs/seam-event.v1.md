@@ -1,8 +1,12 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ ac325d7 (refreshed 2026-09-04 for ACDP P3 key
-     revocation — `revocation` (tag 12) and `revocation_trust_class` (tag 13), seam-runtime#531 — which, like P2
-     `retraction` before them, are served on ResolveContext and NEVER sealed into the record digest. The previous
-     pin was @ 3b3d4ae (2026-08-31, ACDP D3 receipt provenance: the four `ContextBinding` receipt slots sealed
-     into digest v3 (P1a, seam-runtime#520), plus P2 `retraction` (seam-runtime#523)). The runtime spec is the
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ cfffb90 (refreshed 2026-09-07 for
+     `POLICY_DENIED` (envelope tag 24, seam-runtime#468/#607) — the advisory trace a commitment a bound policy
+     REFUSED now leaves. Like `AUTHORIZE_EVALUATED` it seals nothing, so it is the only record the refusal
+     happened; it is ADVISORY and MUST NOT be linked into the audit chain. The previous pin was @ ac325d7
+     (2026-09-04, ACDP P3 key revocation — `revocation` (tag 12) and `revocation_trust_class` (tag 13),
+     seam-runtime#531 — which, like P2 `retraction` before them, are served on ResolveContext and NEVER
+     sealed into the record digest), and before that @ 3b3d4ae (2026-08-31, ACDP D3 receipt provenance: the
+     four `ContextBinding` receipt slots sealed into digest v3 (P1a, seam-runtime#520), plus P2 `retraction`
+     (seam-runtime#523)). The runtime spec is the
      source of truth; refresh this copy whenever the spec changes — a stale copy here once shipped a real
      verifier bug (the AUTHORIZE_EVALUATED advisory omission), and it has been stale twice more since: it
      carried no §Record digest (v3) before an earlier refresh, and no §"Presence on the wire" before the
@@ -25,7 +29,15 @@
      `spec-pin` went red on every open pull request until this refresh. NOTE what this copy does and does
      not claim: it documents the runtime's event stream, not this repository's verifier coverage.
      src/verify.rs does not compute `context_digest` and does not read the four receipt slots — the spec
-     describing them here is correct and the verifier not implementing them is also correct. -->
+     describing them here is correct and the verifier not implementing them is also correct.
+     THIS refresh is the other kind, and the distinction is the reason the sentence above exists. The P1a/P2/P3
+     refreshes were spec-only here: the fields they added are ones this verifier deliberately does not read.
+     `POLICY_DENIED` is not like that — it adds a member to the spec's ADVISORY set, and `ADVISORY_KINDS` in
+     src/wire.rs must equal that set or `--strict` refuses a healthy stream carrying one. That is the
+     AUTHORIZE_EVALUATED regression exactly, and this time it would fire per refused commitment rather than
+     once. So the same commit that re-pinned this file also added the kind to `ADVISORY_KINDS` and decoded
+     tag 24 into the canonical identity, which is what step 4 of the gate's own remedy asks for: when the
+     diff changes normative behaviour, the verifier and its tests need the same change, not just this file. -->
 
 # `seam-event.v1` — event-stream wire spec (language-neutral)
 
@@ -76,6 +88,7 @@ enum EventKind {
   CHAIN_HEAD_ATTESTATION // the issuer-signed audit chain head (A14; CHAINED; tag 22)
   SESSION_LIFECYCLE // ADVISORY — a session lifecycle transition, "opened" only today (not chained; tag 21)
   AUTHORIZE_EVALUATED // ADVISORY — one advisory authorization was evaluated (not chained; tag 23)
+  POLICY_DENIED     // ADVISORY — a bound policy REFUSED a commitment (not chained; tag 24)
 }
 ```
 
@@ -358,6 +371,57 @@ fail-open (verdict returned, `seam.security` WARN logged). The `{authorize_id, c
 agent_aid, agent_id, tool_name, tool_input_digest, subject_digest?, reason}` field set on an ESCALATE row
 is the complete contract a future control-plane escalation inbox consumes — built from events alone, with
 no wire change.
+
+
+### `POLICY_DENIED` (additive, tag 24 — advisory, not chained)
+
+The audit row for a commitment a **bound policy refused**. Like `AUTHORIZE_EVALUATED`, that path
+**seals nothing** — no decision record, no DEK, no chain append — so this event is the *only* trace the
+refusal ever happened.
+
+It exists because that refusal was otherwise durably **invisible** on the one-shot path: a
+policy-denied `RunDecision` errors before the seal, before the metrics tick and before the outbox wake,
+leaving no trace at all. For a system whose claim is an auditable decision boundary, "a refused action
+leaves no record" is the wrong failure mode. This is a durable **trace**, deliberately not a decision
+record — nothing was decided.
+
+```proto
+message PolicyDenied {                 // envelope tag 24
+  string policy_version = 1;           // the policy the binding named — STAGED, not "ran under"
+  string mode = 2;                     // the coordination mode the refused session was opened in
+  string reason = 3;                   // ALREADY-REDACTED deny reason, PRE-JOINED (D-030, #542)
+}
+```
+
+Envelope: `event_id = "{session_id}#pd#{seq}"`; `session_id` is **present** (unlike
+`AUTHORIZE_EVALUATED`, a refused commitment always has one, and it is the only handle a consumer has to
+correlate the refusal with the attempt); `decision_id` is **absent** (nothing sealed, so there is no
+decision to join to); `classification` is **fixed `Internal`** — gate redaction on `when_kind`.
+
+**Advisory**: no `digest`/`checksum`, empty `prev_checksum`. A consumer must not attempt to link this
+event into the audit chain; it was never appended to one.
+
+**`policy_version` is STAGED, not proof of enforcement.** It names what the binding staged, exactly as
+the identically named field on `seam.api.v1.DecisionResponse` does. A populated value is not on its own
+evidence that the named policy's rules evaluated anything.
+
+**Reason rule (D-030).** `reason` is built from the closed-set, operator-authored capability classes
+the evaluator produced — never agent-proposed content, and with objector ids stripped, so a denial
+cannot leak *who* objected to a consumer that may not be entitled to know.
+
+**`reason` is ONE string and consumers MUST NOT split it.** The runtime's error boundary
+(`seam_coord_macp::map_macp_err`) joins the evaluator's reasons with `"; "` before this producer ever
+sees them, and the #542 redaction emits that *same* delimiter **inside** a single reason
+(`... (objector ids withheld; see operator logs)`). Splitting the joined message back apart is
+therefore lossy: two reasons yield **three** parts, one dangling mid-parenthetical. A repeated field
+here could only ever be filled by shredding the text, so the wire carries what the runtime actually
+holds. The `seam-coord-macp` test `the_joined_denial_message_is_not_safely_splittable` pins the
+hazard, so a future rewording of the redaction cannot quietly make this advice stale.
+
+**Volume.** Unlike the periodic `CHAIN_HEAD_ATTESTATION`, this is emitted per refused commitment; under
+a strict bound policy that can be a material rate. Emission is fail-open — the refusal is already being
+returned to the caller as a typed error, so a failed append must not convert a clean denial into a
+different error.
 
 ### `BUDGET_BREACH` (additive, tag 17 — advisory, not chained)
 

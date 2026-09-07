@@ -66,6 +66,7 @@ export const KNOWN_KINDS: ReadonlySet<string> = new Set([
   "SESSION_LIFECYCLE",
   "CHAIN_HEAD_ATTESTATION",
   "AUTHORIZE_EVALUATED",
+  "POLICY_DENIED",
 ]);
 
 /** Recompute a streamed `DECISION_SEALED`'s record digest from its payload and compare it to the wire

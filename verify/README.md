@@ -63,7 +63,8 @@ whose links all hash correctly — nor a **payload rewrite** that keeps the `(pr
 intact. For those, add `--issuer` (below).
 
 **Chained-ness is by field presence, never by kind.** Advisory events (`LEARNING_*`, `BUDGET_BREACH`,
-`SESSION_LIFECYCLE`, `AUTHORIZE_EVALUATED`) and the off-chain `chain_anchor` carry no digest and do not
+`SESSION_LIFECYCLE`, `AUTHORIZE_EVALUATED`, `POLICY_DENIED`) and the off-chain `chain_anchor` carry no
+digest and do not
 advance the head. A verifier that keys on `kind` instead breaks on the first advisory event in an
 unfiltered stream.
 

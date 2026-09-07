@@ -63,6 +63,7 @@ KNOWN_KINDS = frozenset(
         "SESSION_LIFECYCLE",
         "CHAIN_HEAD_ATTESTATION",
         "AUTHORIZE_EVALUATED",
+        "POLICY_DENIED",
     }
 )
 

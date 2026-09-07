@@ -18,6 +18,49 @@ than trusting a summary here.
 
 ### Added
 
+- **`CollectiveOutcome.effective_threshold` — quorum's denominator, on both decoded outcomes.**
+  `seam_sdk.CollectiveOutcome.effective_threshold` (Python) and `CollectiveOutcome.effectiveThreshold`
+  (TypeScript) now carry `seam.api.v1`'s `optional uint32 effective_threshold`: how many APPROVE
+  ballots a QUORUM round actually needed, after any bound policy override REPLACED the wire's
+  `required_approvals`.
+
+  It matters because without it the decoded outcome cannot be judged. `declared_participant_count`
+  is MACP-**unanimous**'s denominator, not quorum's, and the proto records that reading it as
+  quorum's is what let a round that MISSED its bar seal with an APPROVED verdict. The proto also
+  states that `stated_value_contradicted_tally` must be judged against `effective_threshold`
+  whenever it is present. Both are unanswerable from the previous DTO.
+
+  **`None` / `undefined` means NOT APPLICABLE, never zero.** Decision mode has no threshold concept,
+  so the wire says nothing rather than saying `0` — and `0` is the reading that would hurt, because
+  "zero approvals needed" is a bar every round clears. Absence also covers the producer's narrower
+  fail-silent path (an unreadable round state). Do not coalesce it to a number.
+
+- **`POLICY_DENIED` (`seam-event.v1` envelope tag 24) is a known, advisory event kind.** `KNOWN_KINDS`
+  carries it in both SDKs, and the `PolicyDenied` payload (`policy_version`, `mode`, `reason`) is on
+  the generated stubs. It is the durable trace of a commitment a bound policy REFUSED — that path
+  seals nothing, so the event is the only record the refusal happened.
+
+  **`reason` is ONE string and consumers MUST NOT split it.** The runtime joins the evaluator's
+  reasons with `"; "` before the producer sees them, and the redaction emits that same delimiter
+  *inside* a single reason — so splitting is lossy: two reasons yield three parts, one dangling
+  mid-parenthetical.
+
+### Fixed
+
+- **`seam-verify` no longer refuses a healthy stream carrying a `POLICY_DENIED` event.** The kind is
+  ADVISORY in the spec — nothing is sealed, so the row carries no `digest`/`checksum` by design —
+  and `ADVISORY_KINDS` had not been told. Under `--strict` such an event was filed UNVERIFIABLE and
+  the whole stream exited 2. This is the same shape as the `AUTHORIZE_EVALUATED` false refusal, with
+  a wider blast radius: one row is emitted per refused commitment, so a stream under a strict bound
+  policy carries many rather than one. The tag-24 payload is also decoded into the canonical dedup
+  identity, so two refusals differing only in `reason` cannot collapse into one.
+
+- **The verifier's spec-sync check now runs where it is read.** `ADVISORY_KINDS` was checked against
+  a sibling `seam-runtime` *working tree* — whatever branch happened to be checked out — which could
+  green a stale list against an equally stale sibling, and skipped entirely in CI, where no sibling
+  exists. It now reads the vendored `verify/docs/seam-event.v1.md`, which ships inside the crate and
+  is separately proven byte-identical to the runtime's own file by the `spec-pin` job. No skip path.
+
 - **`canonicalize_tool_input()` and `authorize(canonical=…)` — derive the tool-input digest once,
   not twice** (seam-sdk#60). A caller that needs the digest *before* the call — to record it on a
   handle row — canonicalized the input itself and then handed the object to the SDK, which

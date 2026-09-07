@@ -1020,15 +1020,33 @@ def lag_stubs(scratch_stubs):
     return py, ts
 
 
-def test_the_committed_lag_file_declares_exactly_the_seven_known_fields() -> None:
-    """Anti-vacuity floor for the file itself, no stubs required — a regression here (an emptied or
-    narrowed file) would make every downgrade test below pass vacuously."""
-    assert LAG_FILE.exists(), f"{LAG_FILE} is missing"
-    entries = _entries(LAG_FILE)
-    assert entries == sorted(_KNOWN_LAG_FIELDS), entries
-    header = LAG_FILE.read_text()
-    assert "EXPECTED-FROM:" in header
-    assert "--write-manifest" in header and "DELETES" in header
+def test_this_repo_records_no_standing_local_lag() -> None:
+    """The committed lag file is GONE, and its absence is the property now asserted.
+
+    It recorded seven `ContextBinding` fields the local stubs lacked and the manifest declared, and
+    it existed only because this workstation could not regenerate. That premise ended: `buf registry
+    login` landed, `make generate` pulls the BSR module clean, and the gap closed — so a local run
+    and a CI run compare the same two surfaces. There is nothing left to downgrade.
+
+    Asserted as an absence rather than deleted outright, because the file's own escalation clause
+    asked for exactly this: two recordings read as a contract that moved twice, three read as a
+    workstation that cannot regenerate, and at that point the right trade is the login and deleting
+    the file rather than curating it further. A recording that quietly comes back is the failure
+    mode that clause names, so re-adding one must mean editing this test too — which is the whole
+    point of a trigger.
+
+    The DOWNGRADE MECHANISM is untouched and still fully tested: every test below writes its own lag
+    file into `tmp_path` and points `SEAM_EXPECTED_LOCAL_LAG` at it. Those never read the committed
+    file, so removing it costs no coverage — `_KNOWN_LAG_FIELDS` survives below purely as the
+    seven-field sample those fixtures are built from.
+    """
+    assert not LAG_FILE.exists(), (
+        f"{LAG_FILE} is back. That is a re-record, and the file's own header called the third one a "
+        "trigger rather than a routine update: it means a checkout again cannot regenerate. Decide "
+        "that deliberately — and if it is right, restore this test's original assertion (the file "
+        "declares exactly its recorded set, carries EXPECTED-FROM, and documents that "
+        "--write-manifest DELETES it) instead of just letting the file sit here unchecked."
+    )
 
 
 def test_an_exact_match_of_the_known_lag_downgrades_to_a_note_naming_the_lag_file(

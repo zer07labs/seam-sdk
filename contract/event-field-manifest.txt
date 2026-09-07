@@ -137,6 +137,9 @@ LearningDecision/schema_id
 LearningOutcome/correct
 LearningOutcome/policy_key
 LearningOutcome/verified_by
+PolicyDenied/mode
+PolicyDenied/policy_version
+PolicyDenied/reason
 PolicyKey/context_class
 PolicyKey/mode
 PolicyKey/task_type
@@ -158,6 +161,7 @@ SeamEvent/learning_outcome
 SeamEvent/namespace
 SeamEvent/occurred_at
 SeamEvent/payload
+SeamEvent/policy_denied
 SeamEvent/prev_checksum
 SeamEvent/schema_version
 SeamEvent/seq

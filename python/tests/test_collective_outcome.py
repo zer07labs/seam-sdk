@@ -260,3 +260,74 @@ def test_a_session_step_decodes_a_recognized_verdict_identically_to_a_response()
     )
     assert from_step == from_resp
     assert from_step is not None and from_step.approved is True
+
+
+# ── effective_threshold: quorum's denominator, and the zero that is not absence ────────────────────
+
+
+def test_effective_threshold_is_carried_when_the_round_declares_one() -> None:
+    """A quorum commit-terminal step reports the bar it actually had to clear. Without this on the
+    DTO, an SDK caller holding only the decoded form cannot judge the round at all — the counters
+    say how many approved, and nothing says how many were needed."""
+    outcome = collective_outcome_of(
+        _resp(
+            verdict=pb.COLLECTIVE_VERDICT_APPROVED,
+            approve_count=2,
+            declared_participant_count=5,
+            effective_threshold=2,
+        )
+    )
+    assert outcome is not None
+    assert outcome.effective_threshold == 2
+    # And it is NOT the declared count — reading that as quorum's denominator is the documented
+    # misread, so the test pins that they are separately observable rather than coincidentally equal.
+    assert outcome.declared_participant_count == 5
+
+
+def test_an_absent_effective_threshold_is_none_and_never_zero() -> None:
+    """Decision mode has no threshold concept, so the wire says nothing rather than saying zero.
+    `None` is NOT APPLICABLE. A `0` here would be a fabricated claim, and the dangerous direction of
+    the two: "zero approvals needed" is a bar every round clears."""
+    outcome = collective_outcome_of(
+        _resp(verdict=pb.COLLECTIVE_VERDICT_APPROVED, approve_count=1)
+    )
+    assert outcome is not None
+    assert outcome.effective_threshold is None
+    # The raw proto cannot tell you this — it answers 0 either way. That gap is the reason the
+    # decoder reads presence rather than value.
+    assert (
+        _resp(
+            verdict=pb.COLLECTIVE_VERDICT_APPROVED
+        ).collective_outcome.effective_threshold
+        == 0
+    )
+
+
+def test_an_explicit_zero_threshold_stays_zero_and_does_not_collapse_to_absent() -> (
+    None
+):
+    """The discriminating case, and the one a truthiness check silently fails: a round that really
+    did declare a threshold of 0 is a different statement from a mode that has no threshold. Only
+    `HasField` separates them; `if outcome.effective_threshold` reports both as absent and would
+    pass every other test in this section."""
+    resp = pb.DecisionResponse(decision_id="dec-1")
+    outcome_pb = pb.CollectiveOutcome(verdict=pb.COLLECTIVE_VERDICT_APPROVED)
+    outcome_pb.effective_threshold = 0
+    resp.collective_outcome.CopyFrom(outcome_pb)
+    assert resp.collective_outcome.HasField("effective_threshold")
+
+    outcome = collective_outcome_of(resp)
+    assert outcome is not None
+    assert outcome.effective_threshold == 0
+    assert outcome.effective_threshold is not None
+
+
+def test_a_session_step_carries_effective_threshold_identically_to_a_response() -> None:
+    """One decoder, two message types — the same equality the verdict path asserts. A threshold
+    read on only one of them would be the second implementation this module exists to prevent."""
+    kwargs = dict(
+        verdict=pb.COLLECTIVE_VERDICT_APPROVED, approve_count=2, effective_threshold=2
+    )
+    assert collective_outcome_of(_step(**kwargs)) == collective_outcome_of(
+        _resp(**kwargs)
+    )

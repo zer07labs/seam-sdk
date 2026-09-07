@@ -41,7 +41,8 @@ fn usage() -> ! {
              projection or base64 protobuf ('-' reads stdin).\n\
          \n\
              An event is a link iff it carries `digest` and `checksum` — by FIELD PRESENCE, never by\n    \
-             kind. Advisory events (LEARNING_*, BUDGET_BREACH, SESSION_LIFECYCLE, AUTHORIZE_EVALUATED)\n    \
+             kind. Advisory events (LEARNING_*, BUDGET_BREACH, SESSION_LIFECYCLE, AUTHORIZE_EVALUATED,\n     \
+             POLICY_DENIED)\n    \
              and the off-chain `chain_anchor` carry neither, and do not advance the head.\n\
          \n\
              --strict  Refuse a stream containing any non-advisory event with no digest/checksum.\n              \

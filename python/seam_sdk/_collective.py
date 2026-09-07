@@ -58,7 +58,10 @@ class CollectiveOutcome:
 
     ``declared_participant_count`` is not redundant with the vote counts, and the gap between them
     is the point — MACP's ``unanimous`` algorithm uses DECLARED participants as its denominator, so
-    a panel of 3 with 2 APPROVE votes is denied for not all having voted.
+    a panel of 3 with 2 APPROVE votes is denied for not all having voted. It is **unanimous's**
+    denominator and not the universal one: a QUORUM round's denominator is
+    ``effective_threshold``, and reading the declared count as quorum's is the specific misreading
+    the proto records as having let a round that MISSED its bar seal with an APPROVED verdict.
     """
 
     verdict: (
@@ -69,6 +72,18 @@ class CollectiveOutcome:
     abstain_count: int  # includes ESCALATE / REVIEW
     declared_participant_count: int
     stated_value_contradicted_tally: bool
+    #: The quorum round's EFFECTIVE APPROVAL THRESHOLD — how many APPROVE ballots the round actually
+    #: needed, after any bound policy override REPLACED the wire's ``required_approvals``. This is
+    #: quorum's denominator; :attr:`declared_participant_count` is unanimous's.
+    #:
+    #: ``None`` means NOT APPLICABLE, and a caller must never read it as zero. The field is
+    #: ``optional`` on the wire for exactly that reason: decision mode has no threshold concept, so
+    #: a present-but-meaningless ``0`` would be a fabricated claim rather than a missing one — and
+    #: ``0`` is the more dangerous of the two to fabricate, because "zero approvals needed" reads as
+    #: satisfied by every round. Absence also covers the producer's narrower fail-silent path (an
+    #: unreadable round state), which is why the proto promises presence on a quorum commit-terminal
+    #: step *whose round state is readable* rather than on every quorum step.
+    effective_threshold: Optional[int] = None
 
     @property
     def approved(self) -> bool:
@@ -128,4 +143,13 @@ def collective_outcome_of(
         abstain_count=outcome.abstain_count,
         declared_participant_count=outcome.declared_participant_count,
         stated_value_contradicted_tally=outcome.stated_value_contradicted_tally,
+        # `HasField`, never a bare read: `effective_threshold` is `optional uint32`, so proto3 hands
+        # back `0` when it is absent — and unlike the counters, `0` is not a harmless zero here. It
+        # is a threshold every round meets. Presence is the only thing that separates "this mode has
+        # no bar" from "the bar is nothing", and this is the one place that distinction is made.
+        effective_threshold=(
+            outcome.effective_threshold
+            if outcome.HasField("effective_threshold")
+            else None
+        ),
     )

@@ -62,6 +62,12 @@ pub struct SeamEventPb {
     /// so the payload is part of the event's canonical identity across both transports.
     #[prost(message, optional, tag = "23")]
     pub authorize_evaluated: Option<AuthorizeEvaluatedPb>,
+    /// tag 24 — the ADVISORY `POLICY_DENIED` payload (spec §POLICY_DENIED). Not chained: a refused
+    /// commitment seals nothing, so this row is the only trace the refusal happened. Decoded (not
+    /// skipped) for the same reason tag 23 is — the payload is part of the event's canonical identity
+    /// across both transports.
+    #[prost(message, optional, tag = "24")]
+    pub policy_denied: Option<PolicyDeniedPb>,
 }
 
 /// The `CHAIN_HEAD_ATTESTATION` payload (tag 22), transcribed from `seam-event.v1.md` §CHAIN_HEAD_ATTESTATION.
@@ -95,6 +101,24 @@ pub struct AuditEntryPb {
     /// tag 4 — the authenticated operator subject (rt-D §4); `None` on the unauthenticated plane.
     #[prost(string, optional, tag = "4")]
     pub actor: Option<String>,
+}
+
+/// The `POLICY_DENIED` payload (envelope tag 24) — ADVISORY, unchained. Transcribed from
+/// `seam-event.v1.md` §POLICY_DENIED. Never verified (nothing is sealed); decoded only so the payload
+/// participates in the canonical dedup identity.
+///
+/// `reason` is ONE string and MUST NOT be split. The runtime joins the evaluator's reasons with
+/// `"; "` before this producer ever sees them, and the redaction emits that same delimiter INSIDE a
+/// single reason — so splitting it back apart is lossy. Modelled as one `String` here so there is no
+/// shape in this crate that invites the split.
+#[derive(Clone, PartialEq, Message)]
+pub struct PolicyDeniedPb {
+    #[prost(string, tag = "1")]
+    pub policy_version: String,
+    #[prost(string, tag = "2")]
+    pub mode: String,
+    #[prost(string, tag = "3")]
+    pub reason: String,
 }
 
 /// The `AUTHORIZE_EVALUATED` payload (envelope tag 23) — ADVISORY, unchained. Transcribed from
@@ -236,6 +260,8 @@ pub struct SeamEventJson {
     pub chain_head_attestation: Option<ChainHeadAttestationJson>,
     #[serde(default)]
     pub authorize_evaluated: Option<AuthorizeEvaluatedJson>,
+    #[serde(default)]
+    pub policy_denied: Option<PolicyDeniedJson>,
 }
 
 #[derive(Deserialize)]
@@ -258,6 +284,18 @@ pub struct AuditEntryJson {
     pub reason: String,
     #[serde(default)]
     pub actor: Option<String>,
+}
+
+/// The JSON projection of `PolicyDeniedPb`. Every field defaults, like its neighbours: a producer
+/// that omits an empty string must not make the whole event unparseable.
+#[derive(Deserialize)]
+pub struct PolicyDeniedJson {
+    #[serde(default)]
+    pub policy_version: String,
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
+    pub reason: String,
 }
 
 #[derive(Deserialize)]
@@ -349,6 +387,9 @@ pub struct Event {
     pub audit: Option<AuditEntry>,
     /// The `AUTHORIZE_EVALUATED` payload — advisory; carried only for the dedup identity.
     pub authorize: Option<AuthorizeEvaluatedPb>,
+    /// The `POLICY_DENIED` payload — advisory; carried only for the dedup identity, exactly as
+    /// `authorize` is.
+    pub denial: Option<PolicyDeniedPb>,
     pub cert: Option<Cert>,
     /// The `CHAIN_HEAD_ATTESTATION` payload, when this event is one. `None` otherwise.
     pub attestation: Option<Attestation>,
@@ -630,6 +671,11 @@ impl Event {
                     policy_version: a.policy_version,
                     subject_digest: a.subject_digest,
                 }),
+                denial: j.policy_denied.map(|d| PolicyDeniedPb {
+                    policy_version: d.policy_version,
+                    mode: d.mode,
+                    reason: d.reason,
+                }),
                 cert: cert.transpose()?,
                 attestation: attestation.transpose()?,
                 decision: decision.transpose()?,
@@ -669,6 +715,7 @@ impl Event {
                 actor: a.actor,
             }),
             authorize: pb.authorize_evaluated,
+            denial: pb.policy_denied,
             cert: pb.erasure_certificate.map(|c| Cert {
                 subject: c.subject,
                 erased: c.erased,
@@ -753,6 +800,10 @@ impl Event {
                 actor: a.actor.clone(),
             }),
             authorize_evaluated: self.authorize.clone(),
+            // Carried for the same reason tag 23 is: identity is the RE-ENCODED event, so a payload
+            // dropped here is a payload outside the dedup identity. Two POLICY_DENIED rows differing
+            // only in `reason` would then re-encode to identical bytes.
+            policy_denied: self.denial.clone(),
             erasure_certificate: self.cert.as_ref().map(|c| ErasureCertificatePb {
                 subject: c.subject.clone(),
                 erased: c.erased.clone(),
@@ -810,6 +861,12 @@ pub const ADVISORY_KINDS: &[&str] = &[
     // DEK, no chain append — so the row carries no digest/checksum by design. Its omission made --strict
     // refuse any stream containing a single ESCALATE verdict (emitted unconditionally).
     "AUTHORIZE_EVALUATED",
+    // ADVISORY per spec §POLICY_DENIED (tag 24): a bound policy's refusal errors before the seal, so
+    // nothing is sealed, no DEK is issued and nothing is appended — the row carries no
+    // digest/checksum by design. Same omission, same consequence as the line above, but louder: this
+    // one is emitted per REFUSED COMMITMENT rather than once per authorize call, so under a strict
+    // bound policy a missing entry here refuses a healthy stream at a material rate.
+    "POLICY_DENIED",
 ];
 
 #[cfg(test)]
@@ -826,13 +883,28 @@ mod tests {
     /// 1. **Always** — the list is pinned against the hardcoded expected set below. A kind can only be
     ///    added/removed here by ALSO editing this test, and the loud names point straight at the spec
     ///    section to reconcile against.
-    /// 2. **When the runtime checkout is reachable** — the list is additionally checked EQUAL to the
-    ///    spec's own ADVISORY annotations, parsed the same way the runtime tripwire parses them. The
-    ///    sibling is located like the differential harness locates ours: `SEAM_RUNTIME_DIR` overrides;
-    ///    otherwise `../../seam-runtime` beside this repo. A set-but-wrong `SEAM_RUNTIME_DIR` is a hard
-    ///    FAILURE (someone asked for the check; silently skipping it would keep a broken gate green);
-    ///    an absent sibling with no override is a skip (a third party building this crate standalone
-    ///    cannot be required to hold Seam's private repo — independence is the product claim).
+    /// 2. **Always, against the spec text itself** — the list is additionally checked EQUAL to the
+    ///    spec's own ADVISORY annotations, parsed the same way the runtime tripwire parses them, read
+    ///    from the VENDORED copy at `docs/seam-event.v1.md`.
+    ///
+    ///    That source used to be a sibling `../../seam-runtime` working tree, and it was the wrong
+    ///    one in both directions. A working tree is whatever branch someone last checked out: it made
+    ///    this test fail against a current `ADVISORY_KINDS` when the sibling sat on an older branch,
+    ///    and — the direction that matters — it would PASS a stale `ADVISORY_KINDS` against an equally
+    ///    stale sibling. It also skipped entirely in CI, where no sibling is ever checked out, so the
+    ///    layer billed as "the spec itself" ran nowhere reliable and reached no pull request.
+    ///
+    ///    The vendored copy has neither problem. It is always present (it ships inside this crate, so
+    ///    a third party building standalone gets it too — independence is the product claim), and it
+    ///    is not merely assumed current: `scripts/check_vendored_spec.py` proves it byte-identical to
+    ///    the runtime's own file at a named commit AND at the tracked ref's tip, over the GitHub API,
+    ///    in the `spec-pin` CI job. Comparing against it is not circular — `ADVISORY_KINDS` and the
+    ///    vendored markdown are independent artifacts, and the thing that keeps the markdown honest
+    ///    lives outside this crate entirely.
+    ///
+    ///    `SEAM_RUNTIME_DIR` still overrides the path, for deliberately checking against a runtime
+    ///    checkout. A set-but-wrong one stays a hard FAILURE: someone asked for the check, and
+    ///    silently skipping it would keep a broken gate green.
     #[test]
     fn advisory_kinds_are_pinned_to_the_spec() {
         // Layer 1 — the hardcoded pin. Reconcile ONLY against seam-event.v1.md `enum EventKind`'s
@@ -843,6 +915,7 @@ mod tests {
             "BUDGET_BREACH",
             "SESSION_LIFECYCLE",
             "AUTHORIZE_EVALUATED",
+            "POLICY_DENIED",
         ]
         .into();
         let ours: BTreeSet<&str> = ADVISORY_KINDS.iter().copied().collect();
@@ -866,16 +939,19 @@ mod tests {
                 );
                 p
             }
+            // No skip path. The vendored copy ships with this crate, so there is no environment in
+            // which this layer has nothing to read — which is the whole reason it is no longer
+            // pointed at a sibling that may or may not be there.
             Err(_) => {
                 let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../seam-runtime/docs/specs/seam-event.v1.md");
-                if !p.is_file() {
-                    eprintln!(
-                        "skipping spec cross-check: no sibling seam-runtime checkout (set \
-                         SEAM_RUNTIME_DIR to enforce it)"
-                    );
-                    return;
-                }
+                    .join("docs/seam-event.v1.md");
+                assert!(
+                    p.is_file(),
+                    "{} is missing. It is the vendored spec this crate documents itself against; \
+                     without it there is nothing to check ADVISORY_KINDS against, and a silent skip \
+                     here is how the AUTHORIZE_EVALUATED regression shipped.",
+                    p.display()
+                );
                 p
             }
         };
@@ -906,6 +982,93 @@ mod tests {
     fn b64e(b: &[u8]) -> String {
         use base64::Engine;
         base64::engine::general_purpose::STANDARD.encode(b)
+    }
+
+    /// A POLICY_DENIED event must be recognized on BOTH transports — decoded from base64 protobuf
+    /// (tag 24) and from the JSON projection — classify as advisory, and canonicalize to the SAME
+    /// identity bytes. The twin of the AUTHORIZE_EVALUATED test below, and it exists for a sharper
+    /// reason: this kind is emitted per REFUSED COMMITMENT, so a stream under a strict bound policy
+    /// carries many of them, and `--strict` refusing one refuses the whole stream.
+    #[test]
+    fn policy_denied_is_advisory_on_both_transports() {
+        let pb = SeamEventPb {
+            schema_version: "seam-event.v1".into(),
+            event_id: "sess01#pd#3".into(),
+            seq: 3,
+            occurred_at: 1_700,
+            tenant: "acme".into(),
+            namespace: "fraud".into(),
+            kind: "POLICY_DENIED".into(),
+            policy_denied: Some(PolicyDeniedPb {
+                policy_version: "p1".into(),
+                mode: "macp.mode.decision.v1".into(),
+                reason: "capability_not_granted; objector ids withheld (see operator logs)".into(),
+            }),
+            ..Default::default()
+        };
+        let from_pb = Event::parse(&b64e(&pb.encode_to_vec())).expect("pb transport must parse");
+        assert!(from_pb.is_advisory(), "POLICY_DENIED is advisory");
+        assert!(
+            !from_pb.is_link(),
+            "nothing was sealed, so there is no digest/checksum and no chain link"
+        );
+        assert_eq!(
+            from_pb.denial.as_ref().map(|d| d.mode.as_str()),
+            Some("macp.mode.decision.v1"),
+            "the tag-24 payload must be decoded, not skipped"
+        );
+
+        let json = r#"{"schema_version":"seam-event.v1","event_id":"sess01#pd#3","seq":3,
+            "occurred_at":1700,"tenant":"acme","namespace":"fraud","kind":"POLICY_DENIED",
+            "prev_checksum":"","policy_denied":{"policy_version":"p1",
+            "mode":"macp.mode.decision.v1",
+            "reason":"capability_not_granted; objector ids withheld (see operator logs)"}}"#
+            .replace('\n', "");
+        let from_json = Event::parse(&json).expect("JSON transport must parse");
+        assert!(from_json.is_advisory());
+        assert_eq!(
+            from_pb.bytes, from_json.bytes,
+            "one event, two transports — the canonical identity must collapse them"
+        );
+    }
+
+    /// The payload is part of the identity, not decoration. Two refusals differing ONLY in `reason`
+    /// are two different events; if tag 24 were decoded but dropped from `with_identity`, they would
+    /// re-encode to the same bytes and `dedup` would delete one — erasing the record of a refusal,
+    /// which for an advisory row is the only record there is.
+    #[test]
+    fn two_policy_denials_differing_only_in_reason_do_not_dedupe_into_one() {
+        let mk = |reason: &str| {
+            Event {
+                event_id: "sess01#pd#3".into(),
+                seq: 3,
+                occurred_at: 1_700,
+                tenant: "acme".into(),
+                namespace: "fraud".into(),
+                kind: "POLICY_DENIED".into(),
+                prev_checksum: Vec::new(),
+                digest: None,
+                checksum: None,
+                audit: None,
+                authorize: None,
+                denial: Some(PolicyDeniedPb {
+                    policy_version: "p1".into(),
+                    mode: "macp.mode.decision.v1".into(),
+                    reason: reason.into(),
+                }),
+                cert: None,
+                attestation: None,
+                decision: None,
+                bytes: Vec::new(),
+            }
+            .with_identity()
+        };
+
+        assert_ne!(
+            mk("capability_not_granted").bytes,
+            mk("budget_exhausted").bytes,
+            "the reason must reach the canonical bytes, or dedup collapses two distinct refusals"
+        );
     }
 
     /// An AUTHORIZE_EVALUATED event must be recognized on BOTH transports — decoded from base64 protobuf

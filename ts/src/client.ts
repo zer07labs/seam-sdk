@@ -184,9 +184,28 @@ export interface CollectiveOutcome {
   /** Includes ESCALATE / REVIEW. */
   abstainCount: number;
   /** Not redundant with the vote counts — MACP's `unanimous` algorithm uses DECLARED participants
-   * as its denominator, so a panel of 3 with 2 APPROVE votes is denied for not all having voted. */
+   * as its denominator, so a panel of 3 with 2 APPROVE votes is denied for not all having voted.
+   * It is **unanimous's** denominator and not the universal one: a QUORUM round's denominator is
+   * {@link CollectiveOutcome.effectiveThreshold}, and reading the declared count as quorum's is the
+   * specific misreading the proto records as having let a round that MISSED its bar seal with an
+   * APPROVED verdict. */
   declaredParticipantCount: number;
   statedValueContradictedTally: boolean;
+  /** The quorum round's EFFECTIVE APPROVAL THRESHOLD — how many APPROVE ballots the round actually
+   * needed, after any bound policy override REPLACED the wire's `required_approvals`. This is
+   * quorum's denominator; `declaredParticipantCount` is unanimous's.
+   *
+   * `undefined` means NOT APPLICABLE and must never be read as zero. The field is `optional` on the
+   * wire for exactly that reason: decision mode has no threshold concept, so a present-but-
+   * meaningless `0` would be a fabricated claim rather than a missing one — and `0` is the more
+   * dangerous of the two to fabricate, because "zero approvals needed" reads as satisfied by every
+   * round. Absence also covers the producer's narrower fail-silent path (an unreadable round
+   * state), which is why the proto promises presence on a quorum commit-terminal step *whose round
+   * state is readable* rather than on every quorum step.
+   *
+   * Carried through verbatim rather than defaulted: protobuf-es already models the wire's
+   * `optional` as `number | undefined`, so the one thing this decoder must not do is `?? 0`. */
+  effectiveThreshold?: number;
 }
 
 /** Decode `resp.collectiveOutcome`, fail-closed. Accepts a `DecisionResponse` **or** a `SessionStep`.
@@ -235,6 +254,7 @@ export function collectiveOutcomeOf(
     abstainCount: outcome.abstainCount,
     declaredParticipantCount: outcome.declaredParticipantCount,
     statedValueContradictedTally: outcome.statedValueContradictedTally,
+    effectiveThreshold: outcome.effectiveThreshold,
   };
 }
 

@@ -55,7 +55,8 @@ test("KNOWN_KINDS includes the A14 kinds and the authorize outbox kind", () => {
   assert.ok(KNOWN_KINDS.has("SESSION_LIFECYCLE"));
   assert.ok(KNOWN_KINDS.has("CHAIN_HEAD_ATTESTATION"));
   assert.ok(KNOWN_KINDS.has("AUTHORIZE_EVALUATED"));
-  assert.equal(KNOWN_KINDS.size, 9);
+  assert.ok(KNOWN_KINDS.has("POLICY_DENIED"));
+  assert.equal(KNOWN_KINDS.size, 10);
 });
 
 test("verifyStreamedRecordDigest: genuine → true, rewrite → false, strip → false", () => {
