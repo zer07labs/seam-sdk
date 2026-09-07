@@ -257,6 +257,39 @@ fn a_v1_record_is_link_verified_but_not_recomputed() {
     );
 }
 
+// ── POLICY_DENIED is advisory (the same regression, one kind later) ──────────────────────────────────
+
+#[test]
+fn a_policy_denied_event_does_not_break_strict_issuer_verification() {
+    // POLICY_DENIED (spec §POLICY_DENIED, tag 24) is ADVISORY for the same reason its neighbour below
+    // is: a refused commitment errors before the seal, so nothing is sealed, nothing is appended, and
+    // the row carries no digest/checksum BY DESIGN. This is the end-to-end shape of the regression
+    // the unit test pins — a healthy attested stream carrying one must still authenticate.
+    //
+    // Worth having BOTH: the unit test proves the kind classifies advisory, this proves the whole
+    // pipeline agrees, and it was the pipeline that reported UNVERIFIABLE and exited 2 last time. The
+    // blast radius is also wider here than it was for tag 23 — a bound policy emits one of these per
+    // REFUSED COMMITMENT, so a stream under a strict policy carries many, not one.
+    let mut stream = golden("attested_chain.jsonl");
+    stream.push_str(
+        "\n{\"schema_version\":\"seam-event.v1\",\"event_id\":\"sess01#pd#9\",\"seq\":9,\
+         \"occurred_at\":1701,\"tenant\":\"acme\",\"namespace\":\"fraud\",\
+         \"kind\":\"POLICY_DENIED\",\"prev_checksum\":\"\",\
+         \"policy_denied\":{\"policy_version\":\"p1\",\"mode\":\"macp.mode.decision.v1\",\
+         \"reason\":\"capability_not_granted\"}}",
+    );
+    let (code, out) = run("pd-strict", &stream, &["--strict", "--issuer", ISSUER]);
+    assert_eq!(
+        code, VERIFIED,
+        "a healthy attested stream + one POLICY_DENIED must PASS under --strict --issuer:\n{out}"
+    );
+    assert!(out.contains("CHAIN AUTHENTICATED"), "{out}");
+    assert!(
+        out.contains("advisory (skipped): 1"),
+        "the event must be classified advisory, not unverifiable:\n{out}"
+    );
+}
+
 // ── AUTHORIZE_EVALUATED is advisory (P1 regression) ───────────────────────────────────────────────────
 
 #[test]

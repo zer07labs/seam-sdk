@@ -136,6 +136,7 @@ Challenge/receiver_aid
 CollectiveOutcome/abstain_count
 CollectiveOutcome/approve_count
 CollectiveOutcome/declared_participant_count
+CollectiveOutcome/effective_threshold
 CollectiveOutcome/reject_count
 CollectiveOutcome/stated_value_contradicted_tally
 CollectiveOutcome/verdict
