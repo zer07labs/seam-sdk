@@ -21,14 +21,17 @@ Run: `python -m pytest scripts/test_ci_gate.py -q`
 from __future__ import annotations
 
 import ast
+import re
 import subprocess
 import sys
+from importlib.metadata import packages_distributions
 from pathlib import Path
 
 import pytest
 import yaml
 
 CI = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
+SCRIPTS = Path(__file__).resolve().parent
 
 #: The credential-free lane — the only job that runs without BUF_TOKEN (see seam-sdk#54).
 LANE = "workflow-guards"
@@ -400,3 +403,531 @@ def test_the_live_suite_join_is_not_vacuous() -> None:
         "found no live-suite files in any integration step that sets SEAM_GRPC_BIN — either the "
         "job was restructured or the env var moved, and this guard can no longer see coverage"
     )
+
+
+# ── Every third-party import in scripts/ is installed by the lane that runs it ────────────────
+#
+# `python/tests/` has this guard: `test_test_dependencies_are_declared.py` walks each test
+# module's AST and fails when an import is not in the `dev` extra. `scripts/` has never had one.
+#
+# Be precise about what it is worth, because two drafts of this section overstated it. The first
+# called it an outage; it is not. `workflow-guards` runs pytest ONCE PER FILE (the `run:` steps
+# below `pip install`), so an undeclared import reddens exactly its own step, on the PR that
+# introduces it, under a named check. The second draft then claimed the resulting failure carries
+# no useful traceback — and that is simply false. Run it: pytest prints the importing line and
+# `E ModuleNotFoundError: No module named 'requests'`. What is actually true is narrower, and
+# still worth having:
+#
+#   * It fails LOCALLY, by name, before the push. The local venv carries far more than the lane's
+#     install line does, so today that asymmetry surfaces only on the runner.
+#   * `ModuleNotFoundError` names the MODULE. Where module and distribution differ — `import yaml`
+#     wanting `pyyaml`, `import grpc` wanting `grpcio` — it does not name the thing you have to
+#     add to the install line. This guard does, whenever it can resolve one: from
+#     `packages_distributions()` if the module is installed locally (the usual case, since whoever
+#     added the import has it), or from `_MODULE_ALIASES`. Failing both it falls back to the
+#     module name and says no more than `ModuleNotFoundError` would.
+#
+# That is the whole claim. It is a real improvement and a small one.
+
+#: Module name -> distribution, for the cases where they differ and `packages_distributions()`
+#: cannot help (it only knows what is installed in the interpreter running the test, which on a
+#: developer's machine is a superset of the lane and on the lane is exactly it).
+_MODULE_ALIASES = {"yaml": "pyyaml", "grpc": "grpcio", "_pytest": "pytest"}
+
+#: `pip install` flags that take no value, so whatever follows them is still a distribution.
+#: Deliberately an allowlist rather than a "skip anything starting with `-`" rule: a flag that
+#: DOES take a value (`-r`, `-c`, `--index-url`) makes the next token a filename or a URL, and
+#: reading that as a distribution widens the install set — see `_installs_in` on why widening is
+#: the one direction that must never happen quietly.
+_VALUELESS_PIP_FLAGS = frozenset(
+    {
+        "-q",
+        "--quiet",
+        "-U",
+        "--upgrade",
+        "--no-deps",
+        "--no-cache-dir",
+        "--no-input",
+        "--pre",
+        "--user",
+        "--force-reinstall",
+        "--disable-pip-version-check",
+    }
+)
+
+#: A `pip install` argument that is a distribution: a PEP 508 name, optional extras, optional
+#: version specifier. A line-continuation `\`, a quoted fragment, a URL and a `$VAR` do not match,
+#: and `_installs_in` refuses rather than guessing.
+#:
+#: It does NOT reject `requirements.txt` — and cannot, because a `.` is legal in a distribution
+#: name (`zope.interface`, `ruamel.yaml`), so no regex separates the two. A requirements file is
+#: excluded upstream instead: pip only reads one behind `-r`/`-c`, and those are not in
+#: `_VALUELESS_PIP_FLAGS`, so the flag raises before the filename is ever looked at.
+_DIST_ARG = re.compile(r"^(?P<name>[A-Za-z][A-Za-z0-9._-]*)(?:\[[^\]]*\])?(?:[<>=!~][^\s]*)?$")
+
+#: What may legally sit between the start of a shell command and `pip install`. Empty, or the
+#: `python -m` form. Anything else — `echo`, `sudo`, half a sentence — means this is not a pip
+#: invocation at all, and the words after it are prose rather than distributions.
+_PIP_PREFIX = re.compile(r"\s*(?:python3?\s+-m\s+)?")
+
+
+def _normalize_dist(name: str) -> str:
+    """PEP 503 name normalization — `PyYAML`, `pyyaml` and `py_yaml` are one distribution."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _installs_in(steps: list[dict]) -> set[str]:
+    """The distributions a job's steps install, read out of their `run:` blocks.
+
+    Split from `_lane_installs` so the shapes this parser must refuse can be handed to it
+    directly. Exercising them through the real file would mean editing `ci.yml` to test the guard
+    that reads `ci.yml`.
+
+    **This parser fails loudly or not at all.** Every other outcome of a misread is survivable: a
+    distribution wrongly dropped makes the guard below fire, noisily, on an import that is in fact
+    declared, and a human sorts it out in a minute. The unsurvivable outcome is a set that GREW.
+    `installed` is only ever intersected against, so one token wrongly read as a distribution
+    makes the guard quietly more permissive — it goes green while a genuinely undeclared import
+    sits in the tree, which is precisely the silent-pass this whole file exists to prevent. So an
+    unrecognised token raises, and an unrecognised flag raises rather than being assumed
+    valueless. Parsing per shell COMMAND, not per `run:` block and not per line, is part of the
+    same discipline. Splitting the block on lines was not enough: `echo run pip install requests
+    here` contains the substring, and a substring match happily read `requests` and `here` as
+    distributions. What identifies a pip invocation is what comes BEFORE `pip install` — nothing,
+    or `python -m` — so that is what is checked, and prose is refused for being prose rather than
+    for happening to contain a stray quote.
+    """
+    found: set[str] = set()
+    for step in steps:
+        for line in str(step.get("run") or "").splitlines():
+            for segment in re.split(r"[;&|]+", line):
+                before, sep, after = segment.partition("pip install")
+                if not sep:
+                    continue
+                # A `#` to its left makes this a shell comment. `run:` blocks are YAML block
+                # scalars, so `safe_load` leaves shell comments in the string for us to skip.
+                if "#" in before:
+                    continue
+                assert _PIP_PREFIX.fullmatch(before), (
+                    f"`{segment.strip()}` in {CI.name} contains `pip install` but is not a pip "
+                    f"invocation — {before.strip()!r} precedes it. The words after it are prose, "
+                    "not distributions, and reading them as distributions would widen the install "
+                    "set silently. If this really is an install command, this parser needs to "
+                    "learn its shape."
+                )
+                for tok in re.split(r"[#]", after)[0].split():
+                    if tok.startswith("-"):
+                        assert tok in _VALUELESS_PIP_FLAGS, (
+                            f"`{tok}` appears on a `pip install` line in {CI.name} and this "
+                            "parser does not know it. If it takes a value, the token after it is "
+                            "a path or a URL rather than a distribution, and reading it as one "
+                            "would widen the install set silently. Add it to "
+                            "`_VALUELESS_PIP_FLAGS` only if it takes no value."
+                        )
+                        continue
+                    matched = _DIST_ARG.match(tok)
+                    assert matched, (
+                        f"`{tok}` follows `pip install` in {CI.name} but is not a distribution "
+                        "specifier. The `run:` shape changed — a line continuation, a quoted "
+                        "fragment, a `$VAR` — and this parser cannot read it. It refuses rather "
+                        "than guessing, because a wrong guess here only ever ADDS to the install "
+                        "set, which makes the guard below pass when it should not."
+                    )
+                    found.add(_normalize_dist(matched.group("name")))
+    return found
+
+
+def _lane_installs() -> set[str]:
+    """The distributions `workflow-guards` actually installs, read out of `ci.yml`.
+
+    Parsed rather than hardcoded. A copy of `{pyyaml, pytest, grpcio, cryptography}` in this file
+    would go stale the day that line changes, and a guard that asserts yesterday's install list
+    is worse than none — it would pass while the lane no longer installs what a test imports.
+    """
+    return _installs_in(yaml.safe_load(CI.read_text())["jobs"][LANE]["steps"])
+
+
+def _third_party_imports_in(source: str, filename: str = "<source>") -> set[str]:
+    """The top-level non-stdlib modules `source` imports, in every form Python offers.
+
+    Split out of the directory scan so the import forms it must catch can be pinned against
+    source text rather than against whichever forms `scripts/` happens to use this week. Three of
+    the branches below are exercised by no file in the tree today — an untested branch is an
+    unprotected one, and the point of a scan is that it keeps working for the import nobody has
+    written yet.
+
+    Parsed with `ast`, not grepped: `ast` sees the import whatever the formatting and — unlike a
+    regex — cannot be fooled by the word `import` inside a docstring or a string literal, of
+    which these files have many. That is load-bearing rather than stylistic. `test_publish_gate.py`
+    carries `from google.protobuf import runtime_version` inside a string constant, and a grep
+    would report `protobuf` as an undeclared dependency of a file that does not import it.
+
+    `__import__(...)` and `importlib.import_module(...)` are out of contract: a dynamic import is
+    invisible to a static walk, here and in the `python/tests/` sibling alike.
+    """
+    tops: set[str] = set()
+    for node in ast.walk(ast.parse(source, filename=filename)):
+        if isinstance(node, ast.Import):
+            mods = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            # `level > 0` is a relative import — impossible here (`scripts/` is not a package),
+            # and first-party by construction anywhere else.
+            mods = [node.module] if node.module and node.level == 0 else []
+        else:
+            continue
+        tops |= {
+            top
+            for top in (m.split(".")[0] for m in mods)
+            if top not in sys.stdlib_module_names
+        }
+    return tops
+
+
+def _scripts_third_party_imports() -> dict[str, set[str]]:
+    """Top-level third-party module -> the `scripts/test_*.py` files importing it.
+
+    There is deliberately **no first-party exemption**. `scripts/` is not a package, and the
+    sibling guards load their subject with `importlib.util.spec_from_file_location` rather than
+    importing it. So a plain `import check_registry_drift` SHOULD fail here — it would work
+    locally, where pytest prepends the test's directory to `sys.path`, and it would fail on the
+    lane with exactly the collection error this guard exists to move forward in time.
+
+    Nothing in `scripts/` currently uses the `try: … except ImportError:` optional-dependency
+    idiom, so unlike the `python/tests/` sibling this makes no exemption for it. If one is ever
+    needed, this guard will flag it — and the answer is to mirror the sibling's exemption
+    deliberately, not to widen this scan.
+    """
+    found: dict[str, set[str]] = {}
+    for path in sorted(SCRIPTS.glob("test_*.py")):
+        for top in _third_party_imports_in(path.read_text(encoding="utf-8"), str(path)):
+            found.setdefault(top, set()).add(path.name)
+    return found
+
+
+def _candidate_dists(mod: str) -> set[str]:
+    """Distributions a top-level module could come from.
+
+    `packages_distributions()` is authoritative but only knows what is installed in the
+    interpreter running this test. `_MODULE_ALIASES` is the fallback for when it is not — a
+    contributor whose venv lacks `grpcio` would otherwise see `import grpc` resolve to a
+    distribution literally named `grpc`, which is not on the lane's install line, and get a
+    confident failure about a dependency that is in fact declared.
+    """
+    resolved = _MODULE_ALIASES.get(mod, mod)
+    dists = packages_distributions().get(mod) or packages_distributions().get(resolved) or []
+    return {_normalize_dist(d) for d in dists} or {_normalize_dist(resolved)}
+
+
+def _undeclared_imports(third_party: dict[str, set[str]], installed: set[str]) -> list[str]:
+    """The verdict, as data: one line per module the lane does not install.
+
+    Returned rather than asserted so that the test proving this can FIRE runs the same predicate
+    the real guard runs. A negative test that reimplements the comparison proves only that the
+    reimplementation works — and the comparison is the one line here worth protecting, since
+    stubbing it out to `if False:` leaves every other assertion in this section green.
+    """
+    undeclared: list[str] = []
+    for mod, importers in sorted(third_party.items()):
+        candidates = _candidate_dists(mod)
+        if not (candidates & installed):
+            undeclared.append(
+                f"  `import {mod}` in {', '.join(sorted(importers))} -> distribution "
+                f"{sorted(candidates)}, which the `{LANE}` lane does not install"
+            )
+    return undeclared
+
+
+def _scan_and_verdict(
+    extra: dict[str, set[str]] | None = None,
+) -> tuple[dict[str, set[str]], set[str], list[str]]:
+    """The scan, the install list, and the verdict — the whole pipeline, in one place.
+
+    The guard, the anti-vacuity floors and the wiring canary all read THIS. With a call site each,
+    narrowing or emptying the guard's input left the floors looking at a different, healthy scan
+    and every assertion in this section green — `if False:` moved up a level.
+
+    `extra` exists because on a healthy tree the verdict is `[]` no matter what, so no assertion
+    over the real result can tell a scan that ran from one that was replaced by `{}`. Injecting a
+    known-undeclared module gives the pipeline something it MUST say, which is the only way to
+    observe from the outside that the pipeline is still connected. See the canary test below.
+    """
+    third_party = {**_scripts_third_party_imports(), **(extra or {})}
+    installed = _lane_installs()
+    return third_party, installed, _undeclared_imports(third_party, installed)
+
+
+#: A module name no distribution has ever carried, so it resolves through the identity fallback and
+#: can never accidentally intersect the lane's install list.
+_CANARY_MODULE = "nodistributionisnamedthis"
+
+
+def test_the_guard_is_wired_to_the_scan_and_not_to_an_empty_one() -> None:
+    """Pin the pipeline itself, not just its parts.
+
+    Both halves were already pinned: `_undeclared_imports` fires on a bad module, and the floors
+    prove the scan sees seven files. Neither notices if the wiring BETWEEN them is cut — hand the
+    comparison `{}` and the verdict is `[]`, which is exactly what a healthy tree produces, so the
+    guard passes, the floors pass, and the whole section is decorative.
+
+    Driving one known-undeclared module through the real pipeline is what makes that observable:
+    an empty input cannot produce a finding, so silence here means the wiring is cut.
+    """
+    _, _, verdict = _scan_and_verdict({_CANARY_MODULE: {"test_zz_canary.py"}})
+    assert len(verdict) == 1, (
+        f"the pipeline was handed a module the lane cannot install and said {verdict!r}. Its "
+        "input is not the scan."
+    )
+    assert _CANARY_MODULE in verdict[0] and "test_zz_canary.py" in verdict[0], verdict[0]
+
+
+def test_every_scripts_test_import_is_installed_by_the_guards_lane() -> None:
+    """An import the lane does not install fails at collection, on the runner, not here.
+
+    It passes locally, where the venv carries far more than the lane's install line does — the
+    exact asymmetry that made `python/tests/` need the same guard. This moves it forward to a
+    local run, and names the distribution rather than the module.
+    """
+    _, _, undeclared = _scan_and_verdict()
+    assert not undeclared, (
+        f"A scripts/ test imports something `{LANE}` does not install:\n"
+        + "\n".join(undeclared)
+        + "\n\nOn the runner that import fails at COLLECTION, so the step aborts before running "
+        f"a single test. Add the distribution to the `pip install` line in {CI.name}'s `{LANE}` "
+        "job — or, if the import is of a sibling script, load it with "
+        "`importlib.util.spec_from_file_location` as the other gate tests do."
+    )
+
+
+@pytest.mark.parametrize(
+    "mod",
+    [
+        # A real distribution that the lane genuinely does not install. Resolves identically
+        # whether or not the developer's venv happens to carry it.
+        "requests",
+        # And one that exists nowhere, so the identity fallback is the only path to a verdict.
+        "nodistributionisnamedthis",
+    ],
+)
+def test_the_undeclared_import_check_fires_on_an_import_the_lane_lacks(mod: str) -> None:
+    """The guard above has teeth, and this is the committed proof of it.
+
+    Without this, `if not (candidates & installed):` can be replaced by `if False:` and the whole
+    file stays green — the headline assertion would be unfalsifiable, which is the failure this
+    repo keeps rediscovering. Red-first by hand does not count: the synthetic file gets deleted
+    and the proof leaves with it.
+    """
+    verdict = _undeclared_imports({mod: {"test_zz_synthetic.py"}}, _lane_installs())
+    assert len(verdict) == 1, f"`import {mod}` produced no verdict at all: {verdict}"
+    assert mod in verdict[0], f"the verdict names no module: {verdict[0]}"
+    assert "test_zz_synthetic.py" in verdict[0], (
+        f"the verdict does not say which file to fix: {verdict[0]}"
+    )
+
+
+@pytest.mark.parametrize("mod", ["yaml", "pytest", "grpc", "cryptography"])
+def test_the_undeclared_import_check_stays_silent_on_a_declared_import(mod: str) -> None:
+    """The other half: it must not fire on the four the lane does install.
+
+    One of these is the whole reason `_MODULE_ALIASES` exists — `yaml` and `grpc` are named
+    nothing like the distributions carrying them, and a guard that flagged those would be
+    uninstallable noise from its first run.
+    """
+    assert _undeclared_imports({mod: {"test_ci_gate.py"}}, _lane_installs()) == []
+
+
+@pytest.mark.parametrize(
+    ("label", "source", "expected"),
+    [
+        ("plain", "import requests", {"requests"}),
+        ("dotted", "import requests.adapters", {"requests"}),
+        ("aliased", "import requests as r", {"requests"}),
+        ("multi-name", "import os, requests, yaml", {"requests", "yaml"}),
+        ("from", "from requests import get", {"requests"}),
+        ("from-dotted", "from requests.adapters import HTTPAdapter", {"requests"}),
+        ("from-multi", "from requests import get, post", {"requests"}),
+        ("from-aliased", "from requests import get as g", {"requests"}),
+        ("function-level", "def f():\n    import requests\n", {"requests"}),
+        ("class-level", "class C:\n    from requests import get\n", {"requests"}),
+        ("conditional", "if True:\n    import requests\n", {"requests"}),
+        (
+            "type-checking",
+            "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    import requests\n",
+            {"requests"},
+        ),
+        # No optional-dependency exemption, deliberately — see `_scripts_third_party_imports`.
+        (
+            "try-except-ImportError",
+            "try:\n    import requests\nexcept ImportError:\n    requests = None\n",
+            {"requests"},
+        ),
+        ("stdlib-plain", "import os", set()),
+        ("stdlib-dotted", "import os.path", set()),
+        ("stdlib-from", "from pathlib import Path", set()),
+        ("future", "from __future__ import annotations", set()),
+        ("relative-bare", "from . import sibling", set()),
+        ("relative-parent", "from .. import cousin", set()),
+        ("relative-named", "from .sibling import thing", set()),
+        # The reason this is `ast` and not a regex.
+        ("string-literal", 'X = "import requests"', set()),
+        ("docstring", '"""Never import requests from here."""', set()),
+        # Out of contract, asserted so the boundary is written down rather than assumed.
+        ("dynamic-dunder", '__import__("requests")', set()),
+        ("dynamic-importlib", 'importlib.import_module("requests")', set()),
+    ],
+)
+def test_the_scan_sees_every_static_import_form(
+    label: str, source: str, expected: set[str]
+) -> None:
+    """Each import form, pinned against source text instead of against today's `scripts/`.
+
+    Most of these forms appear in no file in the tree, so the branches handling them carry no
+    regression protection from the directory scan alone — `from X import y` for a third-party `X`
+    is the sharpest case: deleting its branch entirely changes no real verdict.
+    """
+    assert _third_party_imports_in(source, filename=f"<{label}>") == expected
+
+
+def test_the_scripts_import_scan_is_not_vacuous() -> None:
+    """Guard the guard: an empty scan satisfies the headline test above for free.
+
+    Every quantity below is derived from what the scan RETURNED, never from an independent
+    re-glob of the directory. That distinction is the whole point. An earlier draft floored
+    `len(sorted(SCRIPTS.glob("test_*.py")))`, which measures the repository rather than the scan —
+    so a filter narrowed to `pytest` (verbatim the case its own docstring claimed to cover) and a
+    walk that opened a single file both sailed through, and the no-glob case reported "across 7
+    files" while the scan had in fact opened none.
+    """
+    third_party, installed, verdict = _scan_and_verdict()
+    files_seen: set[str] = set().union(*third_party.values()) if third_party else set()
+
+    assert not verdict, f"the real scan should be clean; got {verdict}"
+    assert installed, "the lane install list parsed empty"
+    assert "pytest" in third_party, (
+        f"the scan found no `pytest` import across the {len(files_seen)} files it actually "
+        "opened — the glob, the walk, or the filter is returning nothing"
+    )
+    assert len(third_party) >= 2, (
+        f"the scan resolved to {sorted(third_party)}. Two is not headroom, it is the semantic "
+        "floor: with only the sentinel surviving there is no way to distinguish a working scan "
+        "from one filtered down to `pytest` itself."
+    )
+    assert len(files_seen) >= 5, (
+        f"only {len(files_seen)} scripts/test_*.py files contributed an import (7 at the commit "
+        "that added this, all seven of them). The roster is stable and slowly growing, so a drop "
+        "below 5 means the glob or the walk broke, not that the tests were deleted."
+    )
+
+
+def test_the_lane_install_list_is_read_not_assumed() -> None:
+    """The parse must actually find the install line, or every check above passes vacuously.
+
+    If `_lane_installs()` returned an empty set, `candidates & installed` would be empty for every
+    module and the guard above would fail loudly — so this is not protecting against silence. It
+    is protecting against the opposite: a parse that returns something plausible but wrong (say,
+    the flags rather than the packages) would produce a confusing failure rather than a clean one.
+    """
+    installed = _lane_installs()
+    assert {"pyyaml", "pytest"} <= installed, (
+        f"parsed the `{LANE}` install list as {sorted(installed)}, which is missing distributions "
+        f"the lane demonstrably installs. The `run:` line shape in {CI.name} changed and this "
+        "parser did not follow it."
+    )
+    assert not any(tok.startswith("-") for tok in installed), (
+        f"parsed a flag as a distribution: {sorted(installed)}. The token filter is wrong."
+    )
+
+
+_FOUR = {"pyyaml", "pytest", "grpcio", "cryptography"}
+_TWO = {"pyyaml", "pytest"}
+
+
+@pytest.mark.parametrize(
+    ("label", "run_block", "expected"),
+    [
+        ("the real shape", "pip install --quiet pyyaml pytest grpcio cryptography", _FOUR),
+        ("python -m form", "python -m pip install pyyaml pytest", _TWO),
+        ("extras and pins", "pip install pyyaml pytest==8.4.2 grpcio[extra] cryptography", _FOUR),
+        # The degradation that mattered: a multi-line block contributes only its install line.
+        ("multi-line block", "set -euo pipefail\npip install pyyaml pytest\necho done\n", _TWO),
+        ("commented-out line", "# pip install requests everywhere\npip install pyyaml pytest", _TWO),
+        ("separator ends it", "pip install pyyaml pytest && echo installed requests", _TWO),
+        # A `#` anywhere left of `pip install` used to drop the whole line, so a real install
+        # sharing a line with a quoted `#` silently vanished from the set. Narrowing is the safe
+        # direction, but it is still wrong.
+        ("hash left of a real install", 'echo "#1 priority" && pip install pytest', {"pytest"}),
+    ],
+)
+def test_the_parser_reads_the_run_shapes_it_is_meant_to(
+    label: str, run_block: str, expected: set[str]
+) -> None:
+    """Shapes the parser must handle, including the two it used to mis-handle by widening.
+
+    Asserted as an exact set, not a count: the widening bugs produced sets of the right size for
+    the wrong reason (`requests` in, `grpcio` out reads as two either way).
+    """
+    assert _installs_in([{"run": run_block}]) == expected, label
+
+
+@pytest.mark.parametrize(
+    ("label", "run_block"),
+    [
+        # UNQUOTED prose is the one that matters. The quoted form below was refused even by the
+        # substring parser, but only because the closing `"` made a token unparseable — an
+        # accident, not detection. Both are here so a regression cannot hide behind the lucky one.
+        ("unquoted prose", "echo run pip install requests here"),
+        ("a sentence a human would write", "echo If it fails, pip install requests first"),
+        ("quoted prose", 'echo "you probably want to pip install requests here"'),
+        ("line continuation", "pip install pyyaml \\\n  requests\n"),
+        ("requirements file", "pip install -r requirements.txt"),
+        ("index url", "pip install --index-url https://example.invalid/simple pytest"),
+        ("editable path", "pip install -e ./python[dev]"),
+        ("a shell variable", "pip install $EXTRA_DEPS"),
+    ],
+)
+def test_a_run_shape_the_parser_cannot_read_refuses_instead_of_widening(
+    label: str, run_block: str
+) -> None:
+    """An unreadable shape must raise, not quietly contribute whatever it managed to parse.
+
+    This is the asymmetry `_installs_in` documents, made checkable. Each of these previously
+    returned a plausible-looking set that was too LARGE — `requests` and `here` from a sentence
+    about pip — and `installed` only ever widens the guard. A guard that grew permissive without
+    saying so is the same silent pass the section opens by describing.
+
+    The prose cases are refused for the right reason now: what identifies a pip invocation is what
+    precedes `pip install` (nothing, or `python -m`), not the presence of the substring. A parser
+    that refuses prose only when the prose happens to contain a stray quote is not refusing prose.
+    """
+    with pytest.raises(AssertionError, match="pip install"):
+        _installs_in([{"run": run_block}])
+
+
+def test_the_alias_map_resolves_modules_whose_distribution_is_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The alias map only does work when `packages_distributions()` cannot.
+
+    In a venv carrying pyyaml and grpcio — this one, and the lane — the runtime lookup already
+    answers correctly, so deleting the map changes nothing and no test notices. It earns its place
+    on the machine that does NOT have them, where the fallback is the only thing standing between
+    `import grpc` and a false report that grpcio is undeclared. Stubbing the lookup empty is the
+    only way to exercise that, so it is stubbed.
+    """
+    monkeypatch.setitem(globals(), "packages_distributions", dict)
+    assert _candidate_dists("yaml") == {"pyyaml"}
+    assert _candidate_dists("grpc") == {"grpcio"}
+    assert _candidate_dists("cryptography") == {"cryptography"}
+
+
+def test_the_runtime_lookup_answers_where_the_alias_map_cannot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The converse, and the reason `packages_distributions()` is consulted at all.
+
+    No module in `scripts/` needs it: `pytest` and `cryptography` resolve by identity, `yaml` and
+    `grpc` by the alias map. So dropping the lookup entirely changes no real verdict and, without
+    this test, nothing goes red. It is load-bearing for the import this repo has not written yet —
+    one whose module name matches neither its distribution nor any alias hardcoded above.
+    """
+    monkeypatch.setitem(globals(), "packages_distributions", lambda: {"cv2": ["OpenCV_Python"]})
+    assert _candidate_dists("cv2") == {"opencv-python"}

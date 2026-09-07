@@ -762,7 +762,7 @@ jobs:
   # reports a publish that ran and failed. A publish that never ran at all — no tag pushed, trigger
   # misconfigured, workflow file broken — fails silently exactly as before, because nothing
   # executes. That case needs a check that runs on its own schedule and compares the registry to
-  # the source; it is deliberately NOT solved here (see the issue this job cites).
+  # the source; it is deliberately NOT solved here — see zer07labs/seam-sdk#100.
   release-outcome:
     name: report a release that did not publish
     if: always() && github.event_name == 'push'

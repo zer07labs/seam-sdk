@@ -3041,3 +3041,225 @@ which fails if the probe ever becomes real and says to re-point it at the next r
 Measured after: `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exit **6**, NOTE naming
 `contract/expected-local-lag.txt` with all seven fields · `scripts/check_vendored_spec.py
 --from local:../seam-runtime` **OK, verbatim and current** · python **1185 passed / 20 skipped**.
+
+## Repo map — `plans/registry-drift-check.md` (registry drift check, issue #100 second half)
+
+Written at `f177cfb` (= `origin/main` = tag `v0.7.77`) so `/implement` does not re-pay for discovery.
+Every line below was opened and verified during planning; line numbers are as of `f177cfb`.
+
+**The release path, end to end**
+
+- `.github/workflows/release-on-runtime.yml:173-187` — commit-and-tag. The push to `main` sits at
+  `.github/workflows/release-on-runtime.yml:180` and `:182`, `:186`, `:187` (two `git tag -a` calls
+  and the tag push) all come after it — which is what makes "tag absent, in-tree version bumped"
+  (state C) reachable. `.github/workflows/release-on-runtime.yml:187` pushes its two refspecs
+  **non-atomically**, so `v` landing without `go/v` is reachable too.
+- `.github/workflows/release-on-runtime.yml:80-161` — the wire-framing gate; every refusal here
+  leaves no commit and no tag (state A, which is consistent and must not alarm).
+- `scripts/set_version.sh:46-61` — the only stamp; touches `ts/package.json` and
+  `python/pyproject.toml` and nothing else, with a read-back postcondition.
+- `.github/workflows/publish.yml:24` — triggers on `tags: ["v*"]`, which does **not** match
+  `go/v0.7.77`. Only the root tag starts a publish.
+- `.github/workflows/publish.yml:82-83` — `ci-green` polls 40 x 30s = 20 min before `npm`/`python`
+  start; `.github/workflows/publish.yml:625` and `:721` add 10 x 30s retries per ecosystem. Together
+  they are the publish latency the grace window is sized against.
+- `.github/workflows/publish.yml:771` — the **only** `timeout-minutes` in the file. `ci-green`
+  (`.github/workflows/publish.yml:63`), `version-check` (`:150`), `npm` (`:189`), `python` (`:282`),
+  `publish-verify` (`.github/workflows/publish.yml:526`) and `registry-smoke` (`:587`) declare none, so their real bound is
+  GitHub's default 360-minute job limit. That limit sizes the check's HARD grace tier only: a job
+  killed at it makes the run fail, which `release-outcome` reports itself
+  (`.github/workflows/publish.yml:768`, `if: always()`), so the limit bounds *duplication*, not
+  *detection*. The SOFT tier is sized on the declared ceilings instead.
+
+**The half already shipped — read, do not modify**
+
+- `.github/workflows/publish.yml:761-765` — the blind-spot comment. Phase 1 fixes its dangling
+  "see the issue this job cites"; Phase 9 updates it once the new workflow exists. Both edits must
+  be line-count-neutral so citations into this file do not move.
+- `.github/workflows/publish.yml:766-832` — `release-outcome`, whose title template sits at `:788`.
+  Create-vs-comment is **exact** title equality over the first 100 open issues,
+  `.github/workflows/publish.yml:818-824`; job-level `permissions`,
+  `.github/workflows/publish.yml:772-774`, replace top-level rather than extend them.
+- `scripts/test_release_notice_gate.py:62-109` — the canonical hermeticity harness: `gh` stubbed as a
+  heredoc executable, `chmod(0o755)`, every argv appended to a call-log file, canned responses
+  pre-rendered in the tool's real output shape, executed under `bash -c` with a fully-replaced env.
+
+**What the new check reads**
+
+- `.github/workflows/yank.yml:55-76` — the two pieces reused verbatim.
+  `.github/workflows/yank.yml:55-63` is the explicit-`if` credential resolution with `Bearer `
+  stripped from both sources, argued at `.github/workflows/yank.yml:38-54`;
+  `.github/workflows/yank.yml:69-76` is the Cloudsmith list-API query and its three `jq` filters.
+- `ts/package.json:2` and `ts/package.json:14-17` — npm name `@zer07labs/seam-sdk` and its registry.
+- `python/pyproject.toml:3` — the authoritative in-tree version (first `^version = "..."`).
+- `.github/workflows/ci.yml:23-38` — `version-lockstep`; a py/ts mismatch is impossible on a green
+  `main`, so the new script treats one as infrastructure rather than as drift.
+
+**The template to inherit**
+
+- `.github/workflows/publish.yml:30-34` — top-level `permissions` declaring `checks: read` and
+  `actions: read` so `ci-green` can read the Actions API. An explicit block grants only what it
+  lists, so any job reading `repos/.../actions/...` must declare `actions: read` itself.
+- `.github/workflows/framework-coinstall.yml:5-8` — why a world-facing check is deliberately NOT a
+  job in `ci.yml`. Inherited unchanged. `.github/workflows/framework-coinstall.yml:62-64` records
+  that it needs no credential, which is the one place the new check legitimately differs.
+- `scripts/probe_framework_coinstall.py:171-194` — the exit-code discipline being copied: positive
+  infra markers checked before the verdict marker, anything unrecognised is infrastructure,
+  "Refusing to guess a verdict".
+
+**CI wiring the new files must satisfy**
+
+- `.github/workflows/ci.yml:625-682` — `workflow-guards`, the credential-free lane. A new
+  `scripts/test_*.py` needs its own named step here.
+- `.github/workflows/ci.yml:642` — the only install: `pyyaml pytest grpcio cryptography`. A new
+  `scripts/` test may import nothing else. An undeclared import is a CI **collection error** — but
+  scoped to one step, not the job's whole suite: `workflow-guards` invokes pytest once per file
+  (`.github/workflows/ci.yml:644` and `:649`, `:654`, `:660`, `:665`, `:671`, `:677`, `:682`), so
+  the steps above it have already reported and only the ones below are skipped. It is loud, on the
+  PR that introduces it.
+- `scripts/test_ci_gate.py:277-301` — set equality both directions between `scripts/test_*.py` on
+  disk and the tokens named in `workflow-guards` `run:` strings.
+- `scripts/test_ci_gate.py:191-201` — forbids `BUF_TOKEN`, `buf-setup-action` and `make generate` in
+  that lane.
+- `scripts/test_ci_gate.py:388-402` — the both-sides-non-empty precedent for a set join.
+- `python/tests/test_workflows_generate_through_the_makefile.py:37-46` — scans **every** workflow
+  file, `.yml` and `.yaml`; the new workflow must not invoke `buf generate`.
+
+**Test conventions the new suite must follow**
+
+- `scripts/test_yank_gate.py:36-48` — truncate the workflow shell at the first network call rather
+  than stubbing it, to stay honest about coverage.
+- `scripts/test_yank_gate.py:51-62` — strip comments before any static string assertion; a guard a
+  comment can satisfy is not a guard. (Phase 1's comment guard is the deliberate inversion and must
+  say so.)
+- `scripts/test_yank_gate.py:65-80` — model an unset secret as absent-from-env, distinct from empty;
+  run the extracted shell under plain `bash -c`, never `bash -e`.
+- `scripts/test_publish_gate.py:75` — stub `sleep` to a no-op so retry ceilings run in milliseconds.
+- `scripts/test_vendored_spec_gate.py:61-110` — build **real** throwaway git repositories in
+  `tmp_path` rather than mocking git; this is how states A/B/C and the grace window are simulated.
+- `python/tests/test_test_dependencies_are_declared.py:164-181` — the anti-vacuity idiom: one named
+  sentinel plus one numeric floor, floor calibrated at roughly one third of a measured count.
+
+**Guards on the documents this plan writes**
+
+- `python/tests/test_compatibility_citations_resolve.py:95-99` — `PROGRESS.md` is in scope with a
+  floor of 30 citations; every backticked `file:line` here must resolve and stay in range.
+  `plans/` is not scanned at all.
+
+**Files the plan creates (no line numbers — they do not exist yet)**
+
+- `scripts/check_registry_drift.py` — the check. Exit 0 clean / 1 drift / 2 infrastructure.
+- `scripts/test_registry_drift_gate.py` — its whole hermetic suite; must be wired into
+  `workflow-guards` as its own named step in the same commit that creates it.
+- `.github/workflows/registry-drift.yml` — `schedule` + `workflow_dispatch` only, no
+  `pull_request` (fork PRs have no secrets).
+
+**Measured baseline** — `cd python && .venv/bin/pytest -q` **1245 passed / 20 skipped** at this
+map's current text (1186 at bare `f177cfb`, 1229 with the map's first draft). The growth is entirely
+citation parametrization from this section: the citation suite moves 434 -> 477 -> 493 by the same
+deltas, confirmed by reverting `PROGRESS.md` alone. **Do not pin this number in an acceptance
+criterion** — every phase that writes here moves it; record a before/after pair and show the two
+deltas agree instead.
+· `python/.venv/bin/python -m pytest scripts -q` **135 passed** ·
+`STREAM=1 EVENTS=1 ./scripts/check-contract.sh` **exit 6**, NOTE naming
+`contract/expected-local-lag.txt` and exactly seven `ContextBinding` fields. The bare command
+`python -m pytest` fails on this workstation (Xcode shim) — use `python3` or
+`python/.venv/bin/python`.
+
+### PR strategy — registry-drift-check
+
+**3 PRs.** Chosen over one PR because the three groups have genuinely different review shapes and
+different blast radii, and because the middle group is safe to merge before the last one exists.
+
+* **PR 1 — Phases 1-2.** Two independent hygiene guards. Touches a comment block in `publish.yml`
+  and adds two tests to `scripts/test_ci_gate.py`. No new file, no new workflow, nothing scheduled.
+* **PR 2 — Phases 3-5.** The decision core, the live query, and the scheduled workflow in
+  **read-only** form: it goes red on drift and files nothing. Mergeable on its own precisely
+  because it cannot write — the worst it can do is redden a scheduled run.
+* **PR 3 — Phases 6, 7, 9.** Issue reporting, the watcher's own heartbeat, and documentation
+  closure. This is the first group that writes to anything outside the repo, so it reviews as a
+  unit with the guards that constrain it.
+
+Phase 8 is **dropped** from this plan (scope creep: tag-vs-tag, not registry-vs-source) and is
+filed as its own issue during finalization.
+
+#### Phase 1 — the blind-spot comment cites its issue · DONE
+
+* **2026-09-06 · verdict PASS (accepted at the round cap) · Opus verifier · 3 rounds.**
+* **Round 1 GAPS (7 items).** The pattern matched a bare `#\d+` anywhere in the 19-line comment
+  block. Defeated by adding `(see #69)` seventeen lines above and deleting the real citation.
+* **Round 2 GAPS (3 new defeats, same class).** Scope was anchored at the top but unbounded at the
+  bottom, so any comment line added below supplied the pointer; a duplicate marker re-widened it;
+  and the case-sensitive `publish.` lookahead disagreed with APFS.
+* **Round 3 GAPS (1, same class).** The wrap heuristic misread `.)`, `."`, `…`, `。` as unfinished
+  sentences. Verdict turned on the promise line's final character. Fix was terminal rather than
+  incremental: the heuristic was deleted and the window narrowed to the promise line.
+* **Files:** `.github/workflows/publish.yml` (line 765 only; file still 832 lines, so every
+  line-anchored citation into `.github/workflows/publish.yml:766-832` is unmoved) ·
+  `scripts/test_release_notice_gate.py` (15 → 54 tests).
+* **Proof:** each of the guard's 10 clauses caught by an individual mutation; a 16-case sweep over
+  promise-line endings; all defeats from all three rounds firing against the real file; both
+  Phase 9 headroom forms still green.
+* **Two scaffolding bugs the mutation battery caught in the tests themselves:** fixtures matching
+  `"  release-outcome:"` against `textwrap.dedent`-ed text were silent no-ops, and three mutation
+  scripts failed to apply. Both had been reporting as passing evidence.
+* **Next:** Phase 2 — the `scripts/` twin of the declared-dependency guard.
+
+#### Phase 2 — the `scripts/` twin of the declared-dependency guard · DONE
+
+* **2026-09-06 · verdict GAPS (4 items), all four closed · Opus verifier.** The verifier reproduced
+  every claimed number exactly and confirmed every constraint held; all four gaps were in what the
+  guard protected, and in three docstrings describing protection it did not have.
+* **G1 — the anti-vacuity floor measured the repository, not the scan.** It floored an independent
+  re-glob, so a filter narrowed to `pytest` (verbatim the case its own docstring claimed to cover)
+  and a walk that opened one file both survived, and the no-glob case reported "across 7 files"
+  while having opened none. Every quantity is now derived from the scan's own return value; that
+  message now reads "across the 0 files it actually opened".
+* **G2 — nothing committed pinned the guard's failure path.** `if not (candidates & installed):`
+  could be replaced by `if False:` with all 21 tests green. Red-first had been demonstrated by hand
+  with a synthetic file that was then deleted, so the proof left with it. The verdict is now
+  returned as data by `_undeclared_imports` and driven by committed fire/silence tests — the same
+  predicate the real guard runs, not a reimplementation of it.
+* **G3 — an overclaim, one instance shipping in the failure text a human reads.** Three places said
+  a collection error carries "no useful traceback"; pytest in fact prints the importing line and
+  `E ModuleNotFoundError`. Retracted in place: the true claim is that it fails locally, before the
+  push, and names the *distribution* where `ModuleNotFoundError` names only the *module*.
+* **G4 — the install-line parser degraded by silently widening.** A multi-line `run:` block, or a
+  step whose prose merely mentioned pip, contributed junk tokens; `installed` is only ever
+  intersected against, so a set that grew made the guard quietly more permissive. It now parses per
+  line and refuses an unreadable shape rather than parsing what it can.
+* **Files:** `scripts/test_ci_gate.py` (17 → 63 tests). No new file, so no `.github/workflows/ci.yml`
+  step and no `workflow-guards` wiring change — confirmed by
+  `test_every_scripts_test_file_runs_in_ci` staying green.
+* **Proof:** 16/16 mutations caught, including all three the verifier found surviving
+  (`overbroad_filter`, `scan_only_one_file`, `guard_disabled`) and the two it flagged as
+  unprotected-but-correct (`importfrom_ignored`, `fallback_always_wins`). Run in a disposable git
+  worktree; the real tree was never edited.
+* **Counts:** `scripts` **220** (was 178 pre-fix, 174 after Phase 1) · python **1246 passed /
+  20 skipped** · `ruff check` clean. The plan's predicted `137` was stale arithmetic — recorded as a
+  divergence in the phase, same class of defect the plan reviewer already flagged once.
+* **Round 2 GAPS (2 new, same class), all closed.** The verifier confirmed G1-G4 genuinely closed
+  and then found the fix had left the same shape of hole one level up.
+  * **N1 — the guard's wiring to the scan was unpinned.** Handing the comparison `{}` left all 63
+    tests green: `_undeclared_imports` was pinned, the floors were pinned, the connection between
+    them was not. A shared `_scan_and_verdict()` was not enough on its own — on a healthy tree the
+    verdict is `[]` whether the scan ran or was replaced, so no assertion over the real result can
+    tell the two apart. Closed with a canary: one known-undeclared module driven through the real
+    pipeline, which an empty input cannot produce a finding for.
+  * **N2 — the parser still widened on UNQUOTED prose.** `echo run pip install requests here` ->
+    `{here, requests}`. The committed case was double-quoted, so its refusal came from the stray
+    `"` making a token unparseable — an accident, not detection. Now what identifies a pip
+    invocation is what PRECEDES `pip install` (nothing, or `python -m`), so prose is refused for
+    being prose. Splitting per shell command rather than per line fixed a second, opposite bug for
+    free: a `#` anywhere left of a real install used to drop the whole line.
+  * **N3/N4 — two more claims that outran the code**, in the same overclaiming class as G3. The
+    `_DIST_ARG` comment said a requirements filename does not match; it does, and cannot be made
+    not to, since `.` is legal in a distribution name (`zope.interface`). The section comment said
+    the guard names the distribution; it does so only when the module resolves locally or via the
+    alias map. Both narrowed to what is true, and the real exclusion path (`-r` is not a valid
+    flag here, so it raises first) written down.
+* **Proof, round 2:** 19/19 mutations caught, including `guard_input_emptied` — the one that
+  survived the first attempt at N1 and forced the canary design.
+* **Counts:** `test_ci_gate.py` 17 -> 68 · `scripts` **225** · python **1246 passed / 20 skipped** ·
+  ruff clean.
+* **Next:** Phase 3 — `scripts/check_registry_drift.py`, the decision core, offline.
