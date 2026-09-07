@@ -143,17 +143,48 @@ class ProtocolViolationError(SeamError):
         super().__init__(message)
 
 
+def _normalized_trailing_metadata(raw):
+    """Reduce whatever a gRPC error hands back for trailing metadata to plain, picklable builtins.
+
+    **Why normalize instead of storing the object.** The three shapes that reach here are
+    ``grpc.aio.Metadata`` (aio), a tuple of ``grpc._common._Metadatum`` namedtuples (sync), and a
+    plain tuple of pairs (hand-rolled stubs and interceptors). Storing any of them directly puts a
+    grpc internal into ``__reduce__``'s payload, which makes unpickling depend on that class still
+    living at the same import path in the *receiving* interpreter. ``grpc.aio.Metadata`` does pickle
+    on grpcio 1.83, but this package's floor is ``grpcio>=1.64`` and nothing promises it there — so
+    the property would be true by observation, which is the kind of guarantee this repo keeps
+    finding out was never a guarantee. A tuple of ``(key, value)`` pairs is picklable by
+    construction on every version.
+
+    Values are passed through untouched: ``-bin`` keys carry ``bytes`` and everything else carries
+    ``str``, and coercing either would corrupt the ``grpc-status-details-bin`` payload this exists to
+    preserve. Keys are not lowercased — what the wire sent is what a caller gets.
+
+    Returns ``None`` when there is nothing to record, which is deliberately distinct from ``()``.
+    See :meth:`SeamRpcError.trailing_metadata`.
+    """
+    if raw is None:
+        return None
+    try:
+        return tuple((k, v) for k, v in raw)
+    except Exception:
+        # A non-iterable, or items that are not pairs. "We have nothing from the wire" is the honest
+        # answer; raising here would replace the server's real error with an error about reading it.
+        return None
+
+
 class SeamRpcError(SeamError, grpc.RpcError):
     """A server-returned gRPC error, typed by status code.
 
     Subclasses :class:`SeamError` **and** ``grpc.RpcError`` — so it is catchable as either, and exposes the
-    standard ``code()``/``details()`` accessors. Prefer catching a specific subclass
+    standard ``code()``/``details()``/``trailing_metadata()`` accessors. Prefer catching a specific subclass
     (e.g. :class:`PermissionDeniedError`); the raw ``except grpc.RpcError`` still works too.
     """
 
-    def __init__(self, code: grpc.StatusCode, details: str):
+    def __init__(self, code: grpc.StatusCode, details: str, trailing_metadata=None):
         self._code = code
         self._details = details
+        self._trailing_metadata = _normalized_trailing_metadata(trailing_metadata)
         super().__init__(f"{code.name}: {details}" if details else code.name)
 
     def __reduce__(self):
@@ -161,13 +192,40 @@ class SeamRpcError(SeamError, grpc.RpcError):
         # (code, details) pair this __init__ takes — so unpickling raised TypeError. Rebuilding from
         # the real constructor arguments keeps these errors picklable across multiprocessing /
         # concurrent.futures boundaries, where a worker's typed error must survive the trip back.
-        return (type(self), (self._code, self._details))
+        #
+        # The third element is normalized to builtins by __init__, so widening this tuple did not
+        # widen what pickle has to be able to reach. An OLD two-element pickle still loads, because
+        # the third parameter has a default.
+        return (type(self), (self._code, self._details, self._trailing_metadata))
 
     def code(self) -> grpc.StatusCode:
         return self._code
 
     def details(self) -> str:
         return self._details
+
+    def trailing_metadata(self):
+        """The server's trailing metadata as a tuple of ``(key, value)`` pairs, or ``None``.
+
+        This is where ``grpc-status-details-bin`` travels, and with it any ``google.rpc.Status``
+        detail — ``ErrorInfo``, ``RetryInfo``, ``BadRequest``. Before this existed a consumer could
+        only reach them by walking ``__cause__`` until it found the raw ``grpc.RpcError``, which
+        worked but rested on an implementation detail nothing documented and nothing tested
+        (seam-sdk#119, asked by ``seam-adapters``).
+
+        **``None`` and ``()`` are different answers, and the difference is the point.** ``None``
+        means no trailing metadata was ever observed — the error was constructed directly, or the
+        raw error had no such accessor. ``()`` means the wire was read and carried nothing. A
+        consumer that conflates them cannot tell "the server told us nothing" from "we never
+        asked", which is exactly the false green seam-sdk#119 raised.
+
+        **Decoding is deliberately not done here.** Turning the ``-bin`` value into a
+        ``google.rpc.Status`` needs ``google.rpc`` / ``grpc_status``, and this module may import the
+        standard library and ``grpc`` and nothing else — see the module docstring and seam-sdk#54.
+        Carrying the raw pairs needs no import at all; a caller that wants the decoded form imports
+        the decoder itself, where the cost is theirs and visible.
+        """
+        return self._trailing_metadata
 
 
 class InvalidArgumentError(SeamRpcError):
@@ -231,7 +289,21 @@ _BY_CODE = {
 
 def map_rpc_error(exc: grpc.RpcError) -> SeamRpcError:
     """Map a raw ``grpc.RpcError`` to the typed :class:`SeamRpcError` subclass for its status code.
-    Already-typed errors pass through unchanged (so mapping is idempotent)."""
+    Already-typed errors pass through unchanged (so mapping is idempotent).
+
+    **Every call site raises the result with ``from e``, and that is a contract.** The raw error stays
+    reachable as ``__cause__`` on the typed one, so anything this mapping does not lift onto the typed
+    object — ``initial_metadata``, the underlying ``AioRpcError``, the channel-level detail — remains
+    available to a caller who needs it. It was already true; ``seam-adapters`` relied on it by
+    observation, nothing documented it and nothing tested it, and a refactor that dropped ``from e``
+    would have broken every such consumer silently, with no signature change and no version signal
+    (seam-sdk#119). ``test_status_mapping.py`` now walks the package's AST and fails on a
+    ``raise map_rpc_error(...)`` that has no ``from`` clause.
+
+    Prefer :meth:`SeamRpcError.trailing_metadata` over walking the chain: it is the status details
+    lifted onto the typed error, and it distinguishes "the wire carried nothing" from "we never
+    reached the wire", which the chain walk cannot.
+    """
     if isinstance(exc, SeamRpcError):
         return exc
     code = (
@@ -242,7 +314,19 @@ def map_rpc_error(exc: grpc.RpcError) -> SeamRpcError:
         # UNKNOWN rather than letting `code.name` raise AttributeError inside the mapping layer.
         code = grpc.StatusCode.UNKNOWN
     details = (exc.details() if callable(getattr(exc, "details", None)) else "") or ""
-    return _BY_CODE.get(code, InternalError)(code, details)
+    # Trailing metadata is read with the same defensiveness as code()/details() above, and for the
+    # same reason: `grpc.RpcError` is a plain Exception subclass, so a stub or an interceptor can
+    # raise one carrying no such accessor at all. A raising accessor is treated as "nothing
+    # observed" rather than propagated — the server's real error must not be displaced by a failure
+    # to read metadata about it.
+    trailing = None
+    accessor = getattr(exc, "trailing_metadata", None)
+    if callable(accessor):
+        try:
+            trailing = accessor()
+        except Exception:
+            trailing = None
+    return _BY_CODE.get(code, InternalError)(code, details, trailing)
 
 
 class _MappedStub:

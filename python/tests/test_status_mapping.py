@@ -19,6 +19,7 @@ the first and fail the second.
 
 from __future__ import annotations
 
+import pathlib
 import pickle
 import threading
 import time
@@ -205,6 +206,7 @@ class AbortingSeam(rpc.SeamAdmissionServicer, rpc.SeamAuthorizationServicer):
 
     def __init__(self):
         self.abort_with = None
+        self.trailing = None
         self.admits = 0
         self._lock = threading.Lock()
 
@@ -220,6 +222,8 @@ class AbortingSeam(rpc.SeamAdmissionServicer, rpc.SeamAuthorizationServicer):
 
     def Authorize(self, request, context):  # noqa: N802
         if self.abort_with is not None:
+            if self.trailing is not None:
+                context.set_trailing_metadata(self.trailing)
             context.abort(self.abort_with, f"aborted with {self.abort_with.name}")
         return pb.AuthorizeResponse(verdict=pb.ALLOW, authorize_id="01AUTHZ")
 
@@ -283,3 +287,252 @@ def test_unimplemented_is_reachable_and_typed_so_adapters_can_degrade(aborting_s
     with SeamClient.connect(addr) as client:
         with pytest.raises(UnimplementedError):
             client.authorize(Agent(SEED), "t", {})
+
+
+# ── Trailing metadata: status details reach the typed error (seam-sdk#119) ────────────────────────
+#
+# Asked by `seam-adapters`. `map_rpc_error` rebuilt the typed error from (code, details) alone, so
+# `grpc-status-details-bin` — where `google.rpc.Status` details travel — never reached the object.
+# It was not lost, because every call site raises `from e`, but reading it meant walking `__cause__`
+# to find an AioRpcError: a rule nothing documented and nothing tested, which a refactor could break
+# with no signature change and no version signal.
+
+
+class _RawWithTrailing(_RawRpcError):
+    """A raw gRPC error that also carries trailing metadata, as a real one does."""
+
+    def __init__(self, code, details="boom", trailing=()):
+        super().__init__(code, details)
+        self._trailing = trailing
+
+    def trailing_metadata(self):
+        return self._trailing
+
+
+def test_trailing_metadata_survives_the_mapping():
+    raw = _RawWithTrailing(
+        grpc.StatusCode.FAILED_PRECONDITION,
+        "policy denied: unvoted governed round",
+        trailing=(("x-seam-reason", "policy-denied"),),
+    )
+    mapped = map_rpc_error(raw)
+    assert mapped.trailing_metadata() == (("x-seam-reason", "policy-denied"),)
+
+
+def test_a_binary_metadatum_survives_byte_for_byte():
+    """The whole point of the ask. `grpc-status-details-bin` is a serialized `google.rpc.Status`;
+    coercing its value to `str` — or decoding it here — would corrupt exactly the payload a consumer
+    needs. It is carried through untouched."""
+    blob = b"\x08\x09\x12\x05hello\x00\xff"
+    mapped = map_rpc_error(
+        _RawWithTrailing(
+            grpc.StatusCode.INVALID_ARGUMENT,
+            "bad",
+            trailing=(("grpc-status-details-bin", blob),),
+        )
+    )
+    assert mapped.trailing_metadata() == (("grpc-status-details-bin", blob),)
+    assert mapped.trailing_metadata()[0][1] is blob, "no copy, no re-encode"
+
+
+def test_an_aio_metadata_object_is_normalized_to_plain_tuples():
+    """`grpc.aio.Metadata` pickles on grpcio 1.83, but this package's floor is `grpcio>=1.64` and
+    nothing promises it there. Normalizing at construction makes picklability true by construction
+    instead of true by observation — the distinction this repo keeps rediscovering the hard way."""
+    from grpc.aio import Metadata
+
+    md = Metadata(("grpc-status-details-bin", b"\x08\x09"), ("date", "Mon"))
+    mapped = map_rpc_error(_RawWithTrailing(grpc.StatusCode.INTERNAL, "x", trailing=md))
+    out = mapped.trailing_metadata()
+    assert out == (("grpc-status-details-bin", b"\x08\x09"), ("date", "Mon"))
+    assert type(out) is tuple
+    assert all(type(pair) is tuple for pair in out), (
+        "a grpc internal (Metadata, _Metadatum) in the payload would make unpickling depend on "
+        "that class living at the same import path in the RECEIVING interpreter"
+    )
+
+
+def test_absent_and_empty_trailing_metadata_are_different_answers():
+    """`None` = never observed. `()` = the wire was read and carried nothing. A consumer that
+    conflates them cannot tell "the server told us nothing" from "we never asked" — which is the
+    false green seam-sdk#119 raised."""
+    never = map_rpc_error(_RawRpcError(grpc.StatusCode.INTERNAL, "no accessor at all"))
+    empty = map_rpc_error(
+        _RawWithTrailing(grpc.StatusCode.INTERNAL, "read, and empty", trailing=())
+    )
+    assert never.trailing_metadata() is None
+    assert empty.trailing_metadata() == ()
+    assert never.trailing_metadata() != empty.trailing_metadata()
+
+
+def test_an_error_with_no_trailing_metadata_accessor_still_maps():
+    """Same defensiveness as the no-`code()` case above: `grpc.RpcError` is a plain Exception
+    subclass, so a stub or interceptor can raise one with no such method."""
+
+    class Bare(grpc.RpcError):
+        pass
+
+    mapped = map_rpc_error(Bare())
+    assert type(mapped) is InternalError
+    assert mapped.trailing_metadata() is None
+
+
+def test_a_raising_accessor_does_not_displace_the_real_error():
+    """A failure to READ metadata about the error must never replace the error itself. The status
+    the server sent is the thing the caller has to act on."""
+
+    class Hostile(grpc.RpcError):
+        def code(self):
+            return grpc.StatusCode.PERMISSION_DENIED
+
+        def details(self):
+            return "scope floor"
+
+        def trailing_metadata(self):
+            raise RuntimeError("channel already closed")
+
+    mapped = map_rpc_error(Hostile())
+    assert type(mapped) is PermissionDeniedError
+    assert mapped.code() is grpc.StatusCode.PERMISSION_DENIED
+    assert mapped.details() == "scope floor"
+    assert mapped.trailing_metadata() is None
+
+
+def test_unpairable_metadata_degrades_to_none_rather_than_raising():
+    mapped = map_rpc_error(
+        _RawWithTrailing(grpc.StatusCode.INTERNAL, "x", trailing=object())
+    )
+    assert mapped.trailing_metadata() is None
+
+
+def test_trailing_metadata_survives_a_pickle_round_trip():
+    """`__reduce__` grew a third element. It must still cross a process boundary — the property the
+    two-element version existed to protect."""
+    err = map_rpc_error(
+        _RawWithTrailing(
+            grpc.StatusCode.RESOURCE_EXHAUSTED,
+            "cap",
+            trailing=(("grpc-status-details-bin", b"\x08\x09"), ("k", "v")),
+        )
+    )
+    clone = pickle.loads(pickle.dumps(err))
+    assert type(clone) is type(err)
+    assert clone.code() is err.code()
+    assert clone.details() == err.details()
+    assert clone.trailing_metadata() == err.trailing_metadata()
+
+
+def test_the_two_argument_constructor_still_works():
+    """Purely additive: the third parameter has a default, so existing construction — and an OLD
+    two-element pickle payload — still loads."""
+    err = SeamRpcError(grpc.StatusCode.INTERNAL, "boom")
+    assert err.trailing_metadata() is None
+    revived = pickle.loads(pickle.dumps(err))
+    assert revived.details() == "boom"
+
+
+def test_idempotent_mapping_keeps_the_metadata():
+    """`_MappedStub` maps at the boundary and callers may map again; the pass-through arm must not
+    drop what the first mapping captured."""
+    once = map_rpc_error(
+        _RawWithTrailing(grpc.StatusCode.UNAVAILABLE, "down", trailing=(("a", "b"),))
+    )
+    twice = map_rpc_error(once)
+    assert twice is once
+    assert twice.trailing_metadata() == (("a", "b"),)
+
+
+def test_trailing_metadata_survives_a_real_server_abort(aborting_server):
+    """The second level, as this file's header requires: the table test above passes whether or not
+    anything actually reads trailing metadata off a live channel. This one fails if it does not."""
+    servicer, addr = aborting_server
+    servicer.abort_with = grpc.StatusCode.FAILED_PRECONDITION
+    servicer.trailing = (
+        ("x-seam-reason", "policy-denied"),
+        ("grpc-status-details-bin", b"\x08\x09real-wire"),
+    )
+    with SeamClient.connect(addr) as client:
+        with pytest.raises(FailedPreconditionError) as excinfo:
+            client.authorize(Agent(SEED), "t", {})
+
+    md = dict(excinfo.value.trailing_metadata())
+    assert md["x-seam-reason"] == "policy-denied"
+    assert md["grpc-status-details-bin"] == b"\x08\x09real-wire"
+
+
+# ── The `__cause__` guarantee is a contract now, not an observation (seam-sdk#119) ────────────────
+
+
+def _raise_sites_of_map_rpc_error():
+    """Every `raise map_rpc_error(...)` in the package, with whether it has a `from` clause.
+
+    Static rather than behavioural on purpose. A behavioural test can only cover the paths it
+    happens to drive; this one sees a site the moment it is written, including one added to a module
+    no test exercises yet — which is the case that would otherwise ship broken.
+    """
+    import ast
+
+    pkg = pathlib.Path(__file__).resolve().parents[1] / "seam_sdk"
+    sites = []
+    for path in sorted(pkg.rglob("*.py")):
+        if "_gen" in path.parts:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Raise) or node.exc is None:
+                continue
+            exc = node.exc
+            if (
+                isinstance(exc, ast.Call)
+                and isinstance(exc.func, ast.Name)
+                and exc.func.id == "map_rpc_error"
+            ):
+                sites.append(
+                    (
+                        path.relative_to(pkg.parent).as_posix(),
+                        node.lineno,
+                        node.cause is not None,
+                    )
+                )
+    return sites
+
+
+def test_every_map_rpc_error_raise_preserves_the_raw_error_as_cause():
+    """`seam-adapters` reads status details by walking `__cause__` until it finds an `AioRpcError`.
+    That works, and it worked before anyone wrote it down — which is the problem: a refactor that
+    raised without `from e` would break every consumer doing it, silently."""
+    sites = _raise_sites_of_map_rpc_error()
+
+    assert sites, (
+        "the AST scan found NO `raise map_rpc_error(...)` sites at all. That is a broken scan, not "
+        "a clean bill of health — this package raises it from the mapped stub, the aio client and "
+        "the admin client. A guard that passes by finding nothing is this repo's named failure class."
+    )
+
+    missing = [f"{f}:{ln}" for f, ln, has_cause in sites if not has_cause]
+    assert not missing, (
+        "these raise the mapped error without `from e`, which severs `__cause__` and with it the "
+        "only route to anything not lifted onto the typed error:\n  "
+        + "\n  ".join(missing)
+    )
+
+
+def test_the_cause_chain_actually_reaches_the_raw_error():
+    """The behavioural half. The AST guard proves the syntax is present; this proves the object it
+    produces is the one a consumer expects to find at the end of the walk."""
+    from seam_sdk.errors import _MappedStub
+
+    raw = _RawWithTrailing(
+        grpc.StatusCode.FAILED_PRECONDITION, "policy denied: x", trailing=(("a", "b"),)
+    )
+
+    class _Stub:
+        def Call(self, *a, **k):
+            raise raw
+
+    with pytest.raises(FailedPreconditionError) as excinfo:
+        _MappedStub(_Stub()).Call()
+
+    assert excinfo.value.__cause__ is raw, "the raw error must survive as __cause__"
+    # And the reason a caller no longer HAS to walk it:
+    assert excinfo.value.trailing_metadata() == (("a", "b"),)

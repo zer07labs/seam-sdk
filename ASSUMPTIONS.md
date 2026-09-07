@@ -1052,11 +1052,11 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   What is still inferred rather than observed is only "and nobody has deleted them since". Against
   that: `yank.yml` has 27 runs and the only versions ever deleted are 0.7.7 and 0.7.13–0.7.19 — the
   exact scope of issue #43, closed sixteen minutes after the final run, and corroborated
-  independently by `CHANGELOG.md:692-693` in the repo's own words.
+  independently by `CHANGELOG.md:721-722` in the repo's own words.
 - **Correction to this entry's stated rationale (2026-09-06):** the code comment justified the age
   spread as a hedge against a *retention* sweep aging all entries out at once. No retention sweep
   has ever run here, and the real yank predicate is "named in an advisory as unconditionally
-  broken", not "old" — `CHANGELOG.md:739` records that 0.7.39–0.7.43 was deliberately **not**
+  broken", not "old" — `CHANGELOG.md:768` records that 0.7.39–0.7.43 was deliberately **not**
   deleted despite being older than every roster entry. A wrong reason in that comment is how the
   next editor re-points the roster badly, dropping a safe old version in favour of one sitting
   inside an advisory band; the comment now states the real predicate. None of the four roster
@@ -1251,3 +1251,32 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   credentials, and that `CLOUDSMITH_API_KEY` is an API key accepted by `api.cloudsmith.io`, is
   observed, not assumed. What stays UNCONFIRMED is whether that key's *own* scope covers every
   `seam-sdk` row the check will ask about; yank's successful queries are evidence it does.
+
+## `SeamRpcError` carries trailing metadata as normalized pairs, not the grpc object
+
+*Plan: none — driven by seam-sdk#119, filed by `seam-adapters`. Recorded 2026-09-07.*
+
+- **Assumed:** a consumer that wants `google.rpc.Status` details wants the bytes, not a decoded
+  object, and wants them on the typed error rather than at the end of a `__cause__` walk.
+- **Chose:** store `tuple[tuple[str, str | bytes], ...] | None`, normalized at construction from
+  whatever the raw error's accessor returns. `None` is reserved for "never observed" and is
+  deliberately distinct from `()`.
+- **Alternatives:** (a) store the `grpc.aio.Metadata` / `_Metadatum` object as handed over — rejected
+  because `__reduce__` would then carry a grpc internal, making unpickling depend on that class
+  living at the same import path in the receiving interpreter; it pickles on grpcio 1.83 but the
+  declared floor is `grpcio>=1.64` and nothing promises it there, so the property would be true by
+  observation. (b) decode to `google.rpc.Status` here — rejected outright: this module may import the
+  standard library and `grpc` and nothing else, and `seam-adapters` loads the single file with no SDK
+  install. (c) document the `__cause__` guarantee and stop there — the issue offered this and called
+  it nearly free; it was done as well, but alone it leaves every consumer walking a chain and
+  distinguishing "the chain did not reach the wire" from "the wire carried nothing" by hand.
+- **Blast radius if wrong:** this is a **public API addition on a published SDK**. Additive today —
+  the third parameter defaults, older pickles load, `except grpc.RpcError` is untouched — but once
+  consumers read `trailing_metadata()`, removing or reshaping it breaks them. The shape is the
+  commitment, not the feature.
+- **Owner / re-open trigger:** if a consumer asks for the *decoded* `google.rpc.Status` rather than
+  the raw pairs, that is a new decision and belongs in a module that may import `grpc_status` — not a
+  widening of this one. Revisit if `seam-adapters` reports the pairs are insufficient in practice.
+- **Status:** UNCONFIRMED (recorded 2026-09-07). The five raise sites and the wire behaviour are
+  pinned by tests and mutation-proved 6/6; what is unconfirmed is the API *shape* against a real
+  downstream consumer, which only seam-adapters can settle by using it.
