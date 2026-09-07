@@ -874,12 +874,31 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   round later and still platform- and prose-sensitive; (b) allow an explicit continuation marker
   (a trailing `\`) — rejected as inventing syntax for a comment; (c) drop the guard and keep only
   the comment fix — rejected, it is the pointer rotting unnoticed that #100 is about.
-- **Blast radius if wrong:** low and immediate. If someone writes a citation that wraps, the suite
-  goes red on the PR that does it with a message saying to join it onto the promise line. Nothing
-  ships broken; the cost is one confusing minute for that author. Reversible in a commit.
+- **Blast radius if wrong:** low and immediate, but the message was wrong about itself. The suite
+  goes red on the PR that writes a wrapping citation — that part holds. The message did **not** say
+  to join it onto the promise line; it said to name the issue "in that sentence", while the guard's
+  unit is the **line**. An author whose citation is in the promise sentence but wrapped onto line 2
+  would read that and conclude they had complied, and the natural fix for a confused author is to
+  widen `_pointer_window` back to the sentence — which is defeat #3, re-run. Corrected 2026-09-06.
 - **Owner / re-open trigger:** whoever next rewrites that paragraph. Re-open if the citation
   genuinely cannot fit — at which point the answer is to shorten the prose, not to widen the guard.
-- **Status:** UNCONFIRMED (recorded 2026-09-06).
+- **Status:** CONFIRMED (2026-09-06) on the window, with the failure message corrected in the same
+  pass (`scripts/test_release_notice_gate.py:414-421`). Two properties settle the one-line rule and
+  neither is about convenience. It is **fail-safe in one direction only**: narrowing the window can
+  produce more "no pointer found" verdicts, never fewer, and there is no input where it green-lights
+  a missing citation — the right shape for a guard whose entire failure history is under-reporting.
+  And the boundary is **not editable from the file under test**: the paragraph boundary was (defeat
+  #3), the sentence boundary was (defeat #4, punctuation), but a line is a property of the text the
+  guard receives, not one a prose author can renegotiate.
+
+  One factual correction to this entry's own premise: the wrap it says nobody has needed has
+  already happened. `.github/workflows/publish.yml:764` carries the promise and the issue pointer at
+  100 characters, and `.github/workflows/publish.yml:765` carries the *workflow* pointer — outside
+  the window, invisible to the guard. The guard passes today only because a second, redundant
+  pointer shares the promise line, which means the `_WORKFLOW_POINTER` arm is currently exercised by
+  fixtures alone. Not a defect (the issue pointer is valid, and `zer07labs/seam-sdk#100` is open),
+  but if #100 closes and the citation is re-pointed at the workflow alone, that line must absorb a
+  36-character path. Nothing enforces YAML line length here, so "shorten the prose" stays available.
 
 
 ## The offline positive control is "the response mentions seam-sdk at all"
@@ -905,7 +924,24 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   Phase 4.
 - **Owner / re-open trigger:** whoever implements Phase 4. Re-open if the two rules ever need to
   become one; they are different on purpose and the reason is written at both sites.
-- **Status:** UNCONFIRMED (recorded 2026-09-06).
+- **Status:** CONFIRMED (2026-09-06). Two things settle it. First, `--packages-json` is provably
+  not a production path: the scheduled job never passes it, and
+  `scripts/test_registry_drift_gate.py` pins that the scheduled run never passes a saved response —
+  a saved file cannot go stale in a way the check can see, so a workflow pointed at one would print
+  OK forever about a registry it never contacted. CI exercises the offline path only as test
+  fixtures, never for a verdict; one correction to this entry's own wording, which said CI "runs"
+  the offline path on every PR. Second, the one case where this rule could be accused of refusing a
+  true report — every `seam-sdk` version genuinely gone — is answered the *same* way by the live
+  path, where no canary returns both formats and `assert_live_instrument_healthy`
+  (`scripts/check_registry_drift.py:620`) also exits 2. The two rules are opposite in mechanism and
+  identical in that outcome, which is a stronger defence than this entry originally gave itself.
+- **Residual, fixed rather than deferred (2026-09-06):** the flag's real contract is "an UNSCOPED
+  `?query=seam-sdk` dump", and nothing said so anywhere. A human capturing the check's *own*
+  version-scoped response during a live incident gets refused — correctly, since for a genuinely
+  absent version that response is legitimately `[]` and offline it cannot be told apart from a
+  failed query — but with a message blaming the query shape, the credential or the file, never the
+  actual mistake. The refusal stays. The help string, the refusal text
+  (`scripts/check_registry_drift.py:484`) and the module Usage block now name the required shape.
 
 
 ## Five minutes is the boundary between clock skew and a broken clock
@@ -924,9 +960,35 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Blast radius if wrong:** low in both directions. Too tight and a scheduled run exits 2 with a
   message naming the skew; too loose and a badly-skewed clock buys at most five extra minutes of
   silence on a check whose soft window is ninety.
+- **Blast radius, corrected 2026-09-06:** asymmetric, and the too-tight direction is much larger
+  than "a scheduled run". `started` comes from git objects in the clone — a committer date and an
+  annotated tag's creator date — so a single bad date is a *persistent property of the repository*.
+  It exits 2 on **every** run, every two hours, until a human edits or deletes the offending tag or
+  commit. The cost is not one red job; it is a watcher that produces no verdict at all for an
+  unbounded period, which is one step removed from the invisibility this check exists to catch.
+  That does not change the disposition — see the status — but it is the sharper re-open trigger.
 - **Owner / re-open trigger:** the first exit 2 naming skew on a real scheduled run. Re-open if
-  Cloudsmith or GitHub tag dates turn out to be routinely ahead by more than a few seconds.
-- **Status:** UNCONFIRMED (recorded 2026-09-06).
+  Cloudsmith or GitHub tag dates turn out to be routinely ahead by more than a few seconds. Note
+  the asymmetry it will land on: `started = max(landed, tag_date)` lets the *tag* creator date —
+  arbitrary, author-settable metadata that feeds the clock and never the verdict — override the
+  content-derived commit date the check is actually keyed on, so one absurd tag date wedges the
+  check into permanent exit 2 even when `landed` is sane. If this fires, the fix is to clamp
+  `tag_date` into `[landed, now + tolerance]` with a `::warning::` and continue on `landed`, so a
+  bad tag degrades the clock instead of disabling the watcher. It is **not** to raise the
+  tolerance, and it is **not** the clamp-everything alternative this entry already rejected.
+- **Status:** CONFIRMED (2026-09-06). Five minutes holds in both directions.
+  `CLOCK_SKEW_TOLERANCE_MINUTES` (`scripts/check_registry_drift.py:119`) is not too tight: the only
+  sub-five-minute source of future-dating in the real pipeline is inter-runner NTP delta, which is
+  milliseconds-to-seconds on GitHub-hosted runners — three orders of magnitude of headroom — and
+  both dates are written by runners on the same NTP discipline as the checker. It is not too loose:
+  a `started` up to five minutes ahead clamps to age 0, buying at most five extra minutes on a
+  ninety-minute soft window. And exit 2 is the only defensible response to a future-dated release.
+  Tag dates are author-controllable in principle (`git tag -a` takes the tagger's clock;
+  `GIT_COMMITTER_DATE` overrides both), so enumerate what a hostile or broken future date can
+  force: under exit 1 it forces a permanent false DRIFT and an auto-filed issue per version, until
+  the check is muted; under a clamp it forces permanent silence, renewable every ninety minutes —
+  exactly the outcome this file exists to prevent. Exit 2 is the only option that neither lies nor
+  goes quiet.
 
 
 ## The three canary versions are actually published
@@ -950,10 +1012,36 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   candidates tried and both possible causes. It never produces a wrong verdict; it produces no
   verdict, visibly. The cost is that the check is not actually watching anything until the roster
   is corrected — which is a real cost, just not a silent one.
-- **Owner / re-open trigger:** whoever merges Phase 4, or the first scheduled run. Re-open the
-  moment a run exits 2 naming the canaries.
-- **Status:** UNCONFIRMED (recorded 2026-09-06). ⚠ This one is unconfirmed in the strong sense —
-  it is a fact about the world that nobody has checked, not a judgement call awaiting review.
+- **Owner / re-open trigger:** the first scheduled run that exits 2 naming the canaries. The prior
+  on that is now much lower than when this entry was written.
+- **Status:** CONFIRMED (2026-09-06, from recorded evidence — no live query made), and the roster
+  CHANGED in the same pass to `("0.7.71", "0.7.50", "0.7.65", "0.7.75")`
+  (`scripts/check_registry_drift.py:185`). Publication is proven for all four by their publish
+  runs' `registry-smoke` job, which `.github/workflows/publish.yml:790-794` calls "the ONLY job
+  whose success proves the release landed: it installs the published artifact back OUT of Cloudsmith
+  and runs the conformance vectors against it." Green for 0.7.50 (run 32933376474), 0.7.65
+  (33267190153), 0.7.75 (33986357361) and 0.7.71 (33479578480).
+
+  0.7.71 was added, and put **first**, because it is the only version in this repo's history
+  observed through the canary's *own* endpoint, query shape and credential: yank run 33969742508
+  (2026-09-05, `dry_run=true`) printed `python seam-sdk 0.7.71` twice and
+  `npm @zer07labs/seam-sdk 0.7.71`, then deleted nothing. That is `assert_live_instrument_healthy`
+  passing for real. Every other candidate rests on `dl.cloudsmith.io` / `npm.cloudsmith.io` — a
+  different surface from the list API the canary queries. Order is free and load-bearing: the loop
+  returns on the first healthy candidate, so first place is the entry the normal path exercises.
+
+  What is still inferred rather than observed is only "and nobody has deleted them since". Against
+  that: `yank.yml` has 27 runs and the only versions ever deleted are 0.7.7 and 0.7.13–0.7.19 — the
+  exact scope of issue #43, closed sixteen minutes after the final run, and corroborated
+  independently by `CHANGELOG.md:692-693` in the repo's own words.
+- **Correction to this entry's stated rationale (2026-09-06):** the code comment justified the age
+  spread as a hedge against a *retention* sweep aging all entries out at once. No retention sweep
+  has ever run here, and the real yank predicate is "named in an advisory as unconditionally
+  broken", not "old" — `CHANGELOG.md:696` records that 0.7.39–0.7.43 was deliberately **not**
+  deleted despite being older than every roster entry. A wrong reason in that comment is how the
+  next editor re-points the roster badly, dropping a safe old version in favour of one sitting
+  inside an advisory band; the comment now states the real predicate. None of the four roster
+  versions appears in either advisory band.
 
 
 ## The `deliberately-unpublished` label exists in the repository
@@ -976,7 +1064,31 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   confusion.
 - **Owner / re-open trigger:** the first person who needs to suppress a version. Re-open if the
   label turns out to need org-level permissions this repository's maintainers do not hold.
-- **Status:** UNCONFIRMED (recorded 2026-09-06).
+- **Status:** SETTLED-FALSE, then CONFIRMED and RESOLVED (2026-09-06). Checked directly:
+  `gh label list -R zer07labs/seam-sdk` returned exactly GitHub's nine untouched default labels, and
+  `deliberately-unpublished` was **not** among them. The assumption as written was false.
+
+  The *code* decision it justified needs no change, and the code is built for exactly this absence:
+  nothing is filtered server-side by label (`gh issue list` is called with no `--label` flag and the
+  labels are compared client-side), the script never passes `--label` to `gh` at all — which is the
+  failure that would actually have hurt, since `gh issue create --label <nonexistent>` errors and an
+  InfraError on every filing would have taken the whole reporter down — and an absent label makes
+  suppression simply unreachable, so the reporter can only fail toward speaking.
+
+  Rather than leave a provisioning fact recorded as an open judgement call, the label was created
+  in this pass, coloured and described so its reader is named:
+  `On a CLOSED drift issue: never publishing this version. Read by scripts/check_registry_drift.py`.
+  Two reasons it was worth doing rather than deferring. There is a permission wall this entry did
+  not account for: *applying* an existing label needs GitHub **triage**, but *creating* one needs
+  **write** — so a triage-level collaborator following the issue's own instructions could not have
+  completed them. And with no label to autocomplete against, the next person would hand-type it
+  from the issue body; `Deliberately-Unpublished`, `deliberately_unpublished` or a trailing space
+  all fail the exact, case-sensitive membership test. That near-miss is self-correcting within one
+  cron period — an unlabelled closed issue takes the reopen branch, which re-renders the body
+  carrying the exact string and reopens — but it is better not to run the loop at all. Do **not**
+  "fix" the near-miss by loosening the match: that would widen the set of strings able to silence a
+  reporter, inverting this file's own principle that a reporter which can silence itself is a
+  larger authority than one which can only speak.
 
 
 ## The Cloudsmith `?query=` shape returns the rows it is asked for
@@ -1001,7 +1113,43 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   instrument is broken") rather than exit 1 ("the registry lags"). The failure is loud and names
   the canaries.
 - **Owner / re-open trigger:** the first scheduled run after merge, read out of the run log.
-- **Status:** UNCONFIRMED (recorded 2026-09-06).
+- **Status:** CONFIRMED (2026-09-06) as reworded, on production evidence — acceptance, array shape,
+  both-format inclusion, and version-responsiveness are all observed in `yank.yml` run logs.
+
+  Stronger than "27 green runs". The green runs prove the request is accepted (host, path,
+  `X-Api-Key`, the `?query=` parameter and the `+version:` fragment all return 2xx — under `curl -sf`
+  with `set -euo pipefail`, any status at or above 400 would abort the step) and that the body is a
+  parseable JSON array of objects. Read out of the logs, a matched version comes back as
+  `npm @zer07labs/seam-sdk` plus two `python seam-sdk` rows — wheel and sdist, i.e. both required
+  formats in one response (runs 30716657744, 30717020127, 33969742508). Eight runs then took the
+  returned `slug_perm` straight into a DELETE and got 2xx, so the rows are real, addressable
+  packages. And the response tracks registry state: a query for 0.7.7 returned three rows on
+  2026-08-01 and nothing on 2026-09-05, after the deletion in between.
+
+  The qualifier is demonstrably **doing work**, which I had recorded as unprovable from this
+  evidence and was wrong about. My earlier caveat was that `yank.yml` re-filters client-side too, so
+  an EMPTY result cannot distinguish "server filtered" from "server ignored the filter". That holds
+  for the empty results — but the **non-empty** ones discriminate. At 13:43:56 on 2026-09-05 a query
+  for 0.7.71 returned rows at 0.7.71 (run 33969742508); two minutes later, queries for 0.7.13 and
+  0.7.19 each returned rows at their own version (runs 33969836323, 33969859516). The registry holds
+  67 `v*`-tagged versions at roughly three rows each and `page_size=50` caps any response at 50, so a
+  silently-ignored qualifier would have handed every one of those runs the *same* fixed window — and
+  no window can contain both the 0.7.1x group and 0.7.71 under any ordering monotone in version or
+  in upload date. The response varied with the version asked for. Verified directly from the run
+  logs, not taken from the analysis.
+- **What is still NOT proven, and why it is safe:** that the array contains *only* those rows. The
+  evidence above excludes a fixed window but not relevance ranking over a superset. It does not need
+  to be excluded: `registry_formats` (`scripts/check_registry_drift.py:469`) applies the same
+  three-clause filter, so a superset can never make a missing version read as present, and the one
+  way over-inclusion could bite — the target pushed out of a truncated page — is exit 2 at
+  `scripts/check_registry_drift.py:583`, never exit 1.
+- **This entry is NOT evidence for its sibling below.** Under `curl -sf`, "qualifier honoured" and
+  "qualifier silently ignored" both return 2xx, so 27 green runs are consistent with either. The
+  sibling was settled by a code change instead — see its own status.
+- **Note on durability:** the run IDs above are cited deliberately, because GitHub retains run logs
+  for a limited window and all 27 runs are from 2026-08-01 and 2026-09-05. If the logs expire, the
+  argument survives in the IDs and in this paragraph; it cannot be re-derived from the workflow file
+  alone.
 
 
 ## Cloudsmith ERRORS on an unrecognised `version:` qualifier rather than ignoring it
@@ -1021,8 +1169,35 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   page limit is reported as possibly-a-window rather than read as the whole set.
 - **Owner / re-open trigger:** the first scheduled run after merge. If it files a drift issue for a
   version the registry demonstrably serves, this is the assumption that broke.
-- **Status:** UNCONFIRMED (recorded 2026-09-06). ⚠ Unconfirmed in the strong sense — a fact about a
-  third party's API that nobody here has checked.
+- **Status:** CHANGED — the code now checks this at runtime, so it is no longer an assumption
+  (2026-09-06). `fetch_registry` gained a server-side positive control
+  (`scripts/check_registry_drift.py:606`): if a response carries `seam-sdk` rows but **none** at the
+  version asked for, it raises `InfraError` naming the versions that did come back. "Rows came back,
+  none at the version I asked for" is a statement about the server that no client-side filter can
+  restate — and it costs zero extra requests, firing on the first canary query before the target is
+  ever fetched.
+
+  Why a code change rather than a confirm: this entry's stated mechanism is **unreachable**, and its
+  real risk lay somewhere else. `registry_formats` (`scripts/check_registry_drift.py:469`)
+  re-applies `.version == version` client-side, so rows for the wrong versions are inert — they
+  cannot make a published target look absent. Only a **truncated** response can do that. With
+  `page_size=50` honoured, truncation is already caught: three registry rows per release across 67
+  `v*` tags puts the unfiltered set near 200, so an unqualified query returns exactly the page size
+  and the guard at `scripts/check_registry_drift.py:583` refuses with exit 2. The residual exposure
+  was a server-side page cap **below** 50, at which point that equality is permanently blind, a
+  canary inside the window certifies the instrument, and a target outside it exits 1 for a published
+  version. The new control fires under every configuration of that: any page size, any sort order,
+  any row count.
+
+  The canary could not have covered this, and it is worth recording why: it judges health through
+  `registry_formats`, so the certificate would have been earned by the very client-side filter that
+  masks the server-side failure. The roster is also spread old-to-recent and returns on first match,
+  so the oldest entry certifies exactly the ascending window that excludes the newest target.
+- **Blast radius, corrected 2026-09-06:** this entry claimed "Phase 4's truncation check exists for
+  exactly this". It covers only the page-size-honoured half. It also said the first symptom would be
+  a wrongly-filed drift issue; on the row arithmetic above the overwhelmingly likely first symptom
+  is an unexplained exit 2 at exactly 50 rows. And "self-correcting on the next run" overstates it —
+  a clean run only emits a `::notice::`, so a person must close the issue.
 
 
 ## `api.cloudsmith.io` and `dl.cloudsmith.io` take DIFFERENT credentials

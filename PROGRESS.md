@@ -3935,3 +3935,81 @@ Six files, and the interesting part is what had to change between drafting and a
   passed** · ruff clean · contract gate **exit 6**, naming exactly the seven recorded
   `ContextBinding` lag fields.
 * **Next:** the finalization pass — whole-feature verify, then the three issues this run owes.
+
+### Reconcile — 7 assumptions settled, and two of my own claims overturned
+
+All seven `ASSUMPTIONS.md` entries tagged to this plan are closed. None was a one-way door — each is
+reversible in a commit and every blast radius is bounded by exit 2 — so all seven were Opus's to
+decide *and* settle, per the ladder. Four independent Opus analyses ran in parallel, one per cluster.
+The durable record with per-entry reasoning is in `DECISIONS.md`; only what changed in the tree is
+repeated here.
+
+**One assumption stopped being an assumption.** `fetch_registry` gained a server-side positive
+control (`scripts/check_registry_drift.py:606`): a response carrying `seam-sdk` rows but **none** at
+the version asked for now raises `InfraError` naming the versions that came back. The entry it closes
+claimed a mechanism that is unreachable — `registry_formats`
+(`scripts/check_registry_drift.py:469`) re-filters client-side, so wrong-version rows are inert and
+cannot make a published target look absent. The real hole was narrower and worse: the truncation
+guard at `scripts/check_registry_drift.py:583` tests `len(rows) == PAGE_SIZE`, an **equality**, so a
+server-side page cap *below* 50 leaves it permanently silent while a canary inside the window
+certifies the instrument and the target outside it exits 1 for a published version. The new control
+is blind to page size, sort order and row count. It cost zero extra requests.
+
+**The canary roster changed** to `("0.7.71", "0.7.50", "0.7.65", "0.7.75")`
+(`scripts/check_registry_drift.py:185`). 0.7.71 is first because it is the only version in this
+repo's history observed through the canary's *own* endpoint, query shape and credential — a
+`yank.yml` dry run printed both required formats for it and deleted nothing, which is
+`assert_live_instrument_healthy` passing for real. Every other candidate rests on a different surface
+from the list API the canary queries. Ordering is free and load-bearing: the loop returns on the
+first healthy candidate. The constant's comment also lost a false rationale — it justified the age
+spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
+yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:696`).
+
+**Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
+recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
+applied, because yank re-filters client-side so an EMPTY result is consistent with both readings.
+That holds for the empty results — but the **non-empty** ones discriminate, which I missed. A query
+for 0.7.71 returned rows at 0.7.71; two minutes later, queries for 0.7.13 and 0.7.19 each returned
+rows at their own version. With ~200 rows and `page_size=50`, an ignored qualifier would have handed
+every run the same fixed window, and no window holds both ends. Verified from the run logs directly.
+The second correction is the one above: that entry's stated blast radius was wrong in the safe
+direction.
+
+**A guard was nearly laundered by the new one.** Adding the positive control made
+`test_a_canary_answered_at_the_wrong_version_is_not_a_working_instrument` fail — the new guard fires
+first with a sharper diagnosis, since a canary answering at some other version *is* the qualifier not
+being applied, and the old assertion blamed the roster instead. Moving that assertion was correct, but
+it would have silently un-pinned the thing the test actually existed to protect: with the control
+firing first, `registry_formats`' version clause could be deleted and that test would still pass. It
+had no other coverage. `test_registry_formats_keeps_only_rows_at_that_version` now pins all three
+clauses directly, where no earlier guard can stand in front of them, and
+`test_every_canary_empty_is_still_the_rosters_own_refusal` keeps the loop's own refusal branch
+reachable. This is the seventh shape of the unfalsifiable-green defect this workstream has found, and
+the first where *my own fix* was what would have caused it.
+
+**Provisioned, not just decided:** the `deliberately-unpublished` label did not exist —
+`gh label list` returned only GitHub's nine defaults. The code needs no change and is built for the
+absence (nothing filters by label server-side, `--label` is never passed to `gh`, and an absent label
+makes suppression unreachable so the reporter can only fail toward speaking), but *applying* a label
+needs triage while *creating* one needs write, so a triage-level collaborator could not have followed
+the issue's own instructions. Created with a description naming its reader.
+
+**Found outside the seven, and larger than any of them:** `release-outcome` — the merged first half
+of #100 — has never been able to file an issue. It has no `actions/checkout` step and its `gh` calls
+pass no `-R`, so `gh` cannot resolve the repository and the job dies with `fatal: not a git
+repository`. It was only ever observed on the success path, where it exits before touching `gh`. Six
+consecutive failed releases reported nothing. Filed as #112 rather than fixed here, to keep the PR's
+scope honest.
+
+**The first scheduled run will exit 1, and that is correct.** In-tree is 0.7.77; the newest version
+that actually published is 0.7.75, because every tag from v0.7.76 up failed at `ci-green` with all
+three publishing jobs skipped. The check will file a drift issue on its first run, well past the hard
+grace window. That is a true positive — precisely the blind spot #100 describes, invisible until now
+because the event-based half could not report it.
+
+* **Counts:** drift gate 225 → **231**; scripts 450 → **456**; python 1257 → **1273 / 21
+  skipped** — the jump is citation parameters generated by this section and the `DECISIONS.md`
+  entry, not new behaviour tests.
+* **Gates:** contract gate **exit 6**, naming exactly the seven recorded `ContextBinding` lag fields.
+* **Next:** `/ship` — three PRs, then remove `.drive.lock`.

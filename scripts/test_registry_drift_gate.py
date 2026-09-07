@@ -1031,6 +1031,81 @@ def test_a_full_page_is_truncation_and_never_a_verdict(tmp_path: Path, truncated
     assert "page size" in proc.stderr
 
 
+def test_rows_at_other_versions_only_means_the_qualifier_was_ignored(tmp_path: Path) -> None:
+    """The server-side positive control, and the only check that can see the filter not applied.
+
+    The truncation guard above catches an ignored `version:` qualifier ONLY when the response comes
+    back at exactly PAGE_SIZE. A server that caps pages below 50 makes that equality permanently
+    silent — and then the target sits outside a window of everything, reads as absent, and exits 1
+    for a published version. Here the window is 6 rows: far under the page size, so truncation
+    cannot fire, and without this guard the run would report drift.
+    """
+    window = rows(
+        ("seam-sdk", "0.7.20", "python"),
+        ("@zer07labs/seam-sdk", "0.7.20", "npm"),
+        ("seam-sdk", "0.7.21", "python"),
+        ("@zer07labs/seam-sdk", "0.7.21", "npm"),
+        ("seam-sdk", "0.7.22", "python"),
+        ("@zer07labs/seam-sdk", "0.7.22", "npm"),
+    )
+    assert len(window) < _SCRIPT_MODULE.PAGE_SIZE, "the truncation guard must not be what fires"
+    repo = make_repo(tmp_path, version="0.7.78")
+    bin_dir, _ = curl_stub(tmp_path, {ROSTER[0]: published(ROSTER[0]), "0.7.78": window})
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    assert proc.returncode == 2, (
+        f"a window over everything read as a verdict: exit {proc.returncode}\n"
+        f"{proc.stdout}{proc.stderr}"
+    )
+    assert "was not applied" in proc.stderr, proc.stderr
+    assert "0.7.20" in proc.stderr, "the message must carry the versions that came back"
+
+
+def test_an_empty_response_is_still_drift_and_not_a_broken_filter(tmp_path: Path) -> None:
+    """The guard must stay silent on zero rows, or the check could never report drift at all.
+
+    This is the failure direction that would matter most: `[]` is what a genuine lag looks like on
+    the live path, and a positive control that fired on it would convert every true positive into
+    exit 2 — a check that can only ever say "infrastructure".
+    """
+    repo = make_repo(tmp_path, version="0.7.78")
+    bin_dir, _ = curl_stub(tmp_path, {ROSTER[0]: published(ROSTER[0])})
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    assert proc.returncode == 1, f"an empty answer stopped reading as drift: {proc.stdout}{proc.stderr}"
+    assert "was not applied" not in proc.stderr
+
+
+def test_a_superset_carrying_the_target_is_not_refused(tmp_path: Path) -> None:
+    """Over-inclusion is harmless and must stay harmless.
+
+    Cloudsmith may rank matches to the top of a superset rather than filtering hard; nothing in the
+    recorded evidence excludes that. `registry_formats` re-filters, so a superset CONTAINING the
+    target is a correct answer — and this guard must not turn it into exit 2.
+    """
+    superset = published("0.7.78") + rows(
+        ("seam-sdk", "0.7.20", "python"),
+        ("@zer07labs/seam-sdk", "0.7.20", "npm"),
+    )
+    repo = make_repo(tmp_path, version="0.7.78")
+    bin_dir, _ = curl_stub(tmp_path, {ROSTER[0]: published(ROSTER[0]), "0.7.78": superset})
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    assert proc.returncode == 0, f"a superset carrying the target was refused: {proc.stdout}{proc.stderr}"
+
+
+def test_a_yanked_canary_still_falls_through_to_the_next(tmp_path: Path) -> None:
+    """A yanked canary answers `[]`, so the positive control must not fire on it either.
+
+    Otherwise the guard added to protect the roster would be the thing that breaks it: one yank
+    would exit 2 at the first candidate instead of trying the rest, which is precisely the single
+    point of failure the roster exists to remove.
+    """
+    repo = make_repo(tmp_path, version="0.7.78")
+    bin_dir, calls = curl_stub(tmp_path, {ROSTER[1]: published(ROSTER[1])})
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    assert proc.returncode == 1, f"the roster did not survive a yanked first entry: {proc.stdout}{proc.stderr}"
+    asked = versions_queried(calls)
+    assert asked[:2] == [ROSTER[0], ROSTER[1]], asked
+
+
 def test_a_real_drift_end_to_end_over_the_live_path(tmp_path: Path) -> None:
     """Target empty, canary populated, past the hard tier — the case this whole file exists for."""
     repo = make_repo(tmp_path, version="0.7.78")
@@ -1309,6 +1384,16 @@ def test_a_canary_answered_at_the_wrong_version_is_not_a_working_instrument(
 
     The response here is a plausible page: real `seam-sdk` rows, both formats, just not at the
     version that was asked for. That is what a dropped or misspelled qualifier returns.
+
+    The diagnosis moved, deliberately. This used to assert the canary loop's own refusal
+    ("nothing usable for any canary"), which blames the ROSTER — the weaker reading of this
+    evidence. `fetch_registry`'s server-side positive control now fires first and names the actual
+    cause: a query scoped to one version answered with other versions. Same exit 2, better
+    sentence. The loop's refusal is still reachable and still pinned, by the all-yanked case below.
+
+    Because that guard would now fire here whatever `registry_formats` does, this test alone no
+    longer pins the version clause — `test_registry_formats_keeps_only_rows_at_that_version` does,
+    directly, where no earlier guard can launder it.
     """
     repo = make_repo(tmp_path, version="0.7.78")
     elsewhere: dict[str, object] = {c: published("0.6.1") for c in ROSTER if c != "0.7.78"}
@@ -1319,8 +1404,44 @@ def test_a_canary_answered_at_the_wrong_version_is_not_a_working_instrument(
         f"a canary whose rows are all at some OTHER version certified the instrument and the run "
         f"reached a verdict anyway: exit {proc.returncode}\n{proc.stdout}{proc.stderr}"
     )
-    assert "nothing usable for any canary" in proc.stderr, (
-        f"it exited 2, but not through the canary's own refusal: {proc.stderr}"
+    assert "was not applied" in proc.stderr, (
+        f"it exited 2, but not with the qualifier diagnosis this shape warrants: {proc.stderr}"
+    )
+
+
+def test_registry_formats_keeps_only_rows_at_that_version() -> None:
+    """The three clauses of `registry_formats`, driven red one at a time, as a unit.
+
+    This exists because the end-to-end above can no longer pin the version clause: the server-side
+    positive control in `fetch_registry` refuses a wrong-version response before the loop ever
+    computes formats, so that test now passes with or without the clause. A guard that is only
+    observed through a stricter guard in front of it is not observed at all.
+    """
+    fmt = _SCRIPT_MODULE.registry_formats
+    assert fmt(published("0.7.77"), "0.7.77") == {"python", "npm"}
+    # version clause
+    assert fmt(published("0.6.1"), "0.7.77") == set()
+    # format clause — a format this release does not ship is not a published format
+    assert fmt(rows(("seam-sdk", "0.7.77", "cargo")), "0.7.77") == set()
+    # name clause — a longer name that merely starts with the package name is a different package
+    assert fmt(rows(("@zer07labs/seam-sdk-extra", "0.7.77", "npm")), "0.7.77") == set()
+
+
+def test_every_canary_empty_is_still_the_rosters_own_refusal(tmp_path: Path) -> None:
+    """The loop's refusal branch, kept pinned now that the wrong-version shape routes elsewhere.
+
+    Every canary answering `[]` is the all-yanked case: no rows at all, so the positive control is
+    silent by design, and the roster is genuinely out of candidates. That must still name the
+    roster and say it may need re-pointing.
+    """
+    repo = make_repo(tmp_path, version="0.7.78")
+    bin_dir, _ = curl_stub(tmp_path, {"0.7.78": published("0.7.78")})
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    assert proc.returncode == 2, f"exit {proc.returncode}\n{proc.stdout}{proc.stderr}"
+    assert "nothing usable for any canary" in proc.stderr, proc.stderr
+    assert "was not applied" not in proc.stderr, (
+        f"the positive control fired on empty responses, which would break roster fallthrough: "
+        f"{proc.stderr}"
     )
 
 

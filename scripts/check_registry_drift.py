@@ -66,7 +66,9 @@ answers" — one yank must not brick the instrument.
 
 Usage:  scripts/check_registry_drift.py [--repo DIR] [--packages-json FILE] [--now ISO8601]
                                         [--soft-grace-minutes N] [--hard-grace-minutes N]
-        With --packages-json the response is read from that file and nothing is fetched.
+        With --packages-json the response is read from that file and nothing is fetched; it
+        must be an UNSCOPED `?query=seam-sdk` dump, because offline that file is the only
+        proof the query ran at all.
         Without it the registry is queried live and SEAM_REGISTRY_TOKEN must be set.
 Exit:   0 = the registry serves it, it is younger than the hard window, or the drift is
             suppressed by a closed issue carrying the `deliberately-unpublished` label
@@ -124,46 +126,63 @@ PACKAGE_NAME = "seam-sdk"
 #: answer — half a release is still a broken release.
 REQUIRED_FORMATS = ("python", "npm")
 
-#: Versions asserted to be published in BOTH formats. A set rather than a single pin, so one yank
-#: does not brick the instrument; three, so two would have to be yanked before this needs an edit.
-#: Any entry equal to the target is dropped at runtime — a canary that IS the target proves
-#: nothing, and would convert that version's drift into an exit 2, muting the check on exactly the
-#: version it is watching.
+#: Versions asserted to be published in BOTH formats. A roster rather than a single pin, so one
+#: yank does not brick the instrument. Any entry equal to the target is dropped at runtime — a
+#: canary that IS the target proves nothing, and would convert that version's drift into an exit 2,
+#: muting the check on exactly the version it is watching.
 #:
-#: ⚠ UNCONFIRMED AGAINST THE LIVE REGISTRY, and be precise about how weak the evidence is.
+#: THE RULE, and it is a real predicate rather than the near-tautology this comment used to carry:
+#: a canary is a version whose publish run's `registry-smoke` job is GREEN, and which is named in
+#: no CHANGELOG advisory band.
 #:
-#: The rule actually applied is "has a tag, minus the three refusals anyone happened to record".
-#: An earlier draft of this comment claimed more: that each entry carries both `vX` and `go/vX`
-#: tags, offered as though that excluded a refused release. It does not. `release-on-runtime.yml`
-#: creates both tags in one step, BEFORE publish.yml starts — so `go/v0.7.69`, `go/v0.7.70` and
-#: `go/v0.7.72` exist too, and the clause has zero discriminating power against exactly the case
-#: it was invoked to exclude.
+#: Why `registry-smoke` is the right clause, in the repo's own words at `publish.yml:790-794`: it
+#: is "the ONLY job whose success proves the release landed: it installs the published artifact
+#: back OUT of Cloudsmith and runs the conformance vectors against it." Anything weaker — a tag, a
+#: green npm step — cannot tell a finished release from one that uploaded and never became
+#: installable. An earlier draft of this comment applied "has a tag, minus the three refusals
+#: anyone happened to record", and conceded it was weak; it was weaker than it looked, because the
+#: reason only three refusals are on record (`publish.yml:748-749`) is that nothing was watching,
+#: which is the premise of seam-sdk#100 and the reason this file exists.
 #:
-#: Worse, "no recorded refusal" is weakest precisely here. The reason only three refusals are on
-#: record (`publish.yml:748-749`) is that nothing was watching — which is the premise of
-#: seam-sdk#100 and the reason this file exists. Absence of a refusal record is close to
-#: uninformative for this population.
+#: Evidence, recorded and re-checkable without a live query (2026-09-06):
+#:   0.7.71 — publish run 33479578480 green, AND observed through THIS canary's own endpoint and
+#:            query shape: yank run 33969742508 (2026-09-05, dry_run) printed
+#:            `python seam-sdk 0.7.71` twice and `npm @zer07labs/seam-sdk 0.7.71`, then deleted
+#:            nothing. That is `assert_live_instrument_healthy` passing for real, on the list API,
+#:            on the production credential. It is the ONLY version in this repo's history with
+#:            evidence of exactly the kind this assertion needs, which is why it is FIRST: the
+#:            loop below short-circuits on the first healthy candidate, so ordering decides which
+#:            version the normal path actually exercises, and it costs nothing.
+#:   0.7.50 — publish run 32933376474, `registry-smoke` green (both formats).
+#:   0.7.65 — publish run 33267190153, `registry-smoke` green (both formats).
+#:   0.7.75 — publish run 33986357361, `registry-smoke` green (both formats). Also the NEWEST
+#:            version that has published at all: every tag from v0.7.76 up failed at `ci-green`
+#:            with all three publishing jobs skipped.
+#: Those runs prove publication in both formats. Present-tense presence is inferred from the
+#: complete yank history, not observed — see the next paragraph for why that inference is sound.
 #:
-#: So: verify these against the live registry. Query each with the real credential and keep the
-#: ones returning BOTH formats. Until then the instrument is unproven — and an unproven instrument
-#: exits 2 naming every candidate it tried, which is loud and never a wrong verdict, but that is
-#: not the same thing as working.
+#: What the yank predicate actually is, because getting this wrong is how the next editor
+#: re-points this roster badly: `yank.yml` has 27 runs, and the ONLY versions ever deleted are
+#: 0.7.7 and 0.7.13-0.7.19 — the exact scope of issue #43, which closed 16 minutes after the last
+#: run. The predicate is "named in an advisory as unconditionally broken", NOT "old".
+#: `CHANGELOG.md:662` names the two broken bands, and 0.7.39-0.7.43 was deliberately NOT deleted
+#: despite being older than everything in this roster (`CHANGELOG.md:696`). No retention sweep has
+#: ever run here. An earlier draft of this comment justified the age spread as a hedge against
+#: retention aging all entries out at once; that hazard is not real in this repo, and stating a
+#: wrong reason invites a future editor to optimise for the wrong variable — dropping a safe old
+#: version in favour of one sitting inside an advisory band. Keep the spread if you like it, but
+#: the reason is diversification against an unknown future predicate, not retention.
 #:
-#: Why a set and not a pin: an entry equal to the target is dropped at runtime (a canary that IS
-#: the target cannot distinguish a broken query from a real lag), and `yank.yml` can delete any
-#: version, so a single pin is one yank from a permanent exit 2 that everyone learns to scroll
-#: past. Three, so two would have to go before this needs an edit.
+#: The residual risk is real and unavoidable: 0.7.39-0.7.43 were fine until #52 found the
+#: protobuf-floor defect, so any version can BECOME advisory-listed later. That is exactly what a
+#: multi-entry roster with "healthy if ANY answers" is for.
 #:
-#: Why the ages are spread: retention. Three of the OLDEST plausible versions would maximise
-#: exposure to a cleanup sweep aging all of them out at once. One old, one middle, one recent
-#: hedges that.
-#:
-#: And note what the spread buys on the other side, which is stronger than the drop-if-equal rule
-#: needed: every entry is already strictly BELOW the current target (0.7.77), and the target only
-#: ever moves upward. So no entry can equal the target again, and the branch that drops one can
-#: never actually shrink this roster. That rule stays because it is what makes the roster safe to
-#: re-point carelessly — not because this particular roster needs it.
-CANARY_VERSIONS = ("0.7.50", "0.7.65", "0.7.75")
+#: Note what the spread buys beyond the drop-if-equal rule: every entry is strictly BELOW the
+#: current target (0.7.77), and the target only ever moves upward, so no entry can equal the
+#: target again and the dropping branch can never actually shrink this roster. That rule stays
+#: because it is what makes the roster safe to re-point carelessly — not because this roster
+#: needs it.
+CANARY_VERSIONS = ("0.7.71", "0.7.50", "0.7.65", "0.7.75")
 
 #: The list endpoint `yank.yml:69-71` uses. Same request shape deliberately: that is the shape
 #: believed to work, and a drift check whose query differs from the one proven in production is
@@ -479,7 +498,10 @@ def assert_offline_instrument_healthy(rows: object, source: str) -> None:
             f"{source} contains no `{PACKAGE_NAME}` package at any version. That is not a "
             "plausible response to a seam-sdk query — the query shape, the credential or the file "
             "is wrong. Refusing to report this as drift: an empty answer and a broken instrument "
-            "must never look the same."
+            "must never look the same. If you captured this file with the check's own "
+            "version-scoped query, that is the mistake: for a genuinely-absent version that "
+            "response is legitimately `[]`, and offline it cannot be told apart from a query that "
+            "failed. Re-capture without the `version:` qualifier."
         )
 
 
@@ -565,6 +587,32 @@ def fetch_registry(version: str, token: str) -> object:
             "everything came back: a target version outside that page would read as absent, and "
             "the run would report drift for a published version. Raise page_size, or stop "
             "trusting the qualifier."
+        )
+    # The server-side positive control, and the ONLY check here that can observe the `version:`
+    # qualifier actually being applied. Everything else re-filters client-side — `registry_formats`
+    # applies `.version == version` again (see it below) — which is what makes an over-inclusive
+    # response harmless, and is also exactly what LAUNDERS a filter that was never applied. The
+    # truncation guard above catches the ignored-qualifier case only when the response comes back
+    # at exactly PAGE_SIZE; a server that caps pages BELOW 50 makes that equality permanently
+    # silent, and then a target outside the window reads as absent and exits 1 for a published
+    # version. "Rows came back, none at the version I asked for" is a statement about the SERVER
+    # that no client-side filter can restate.
+    #
+    # It cannot misfire in a working world: a correctly-filtered response carries only `version`,
+    # and a genuine drift — or a yanked canary — returns zero seam-sdk rows, so `present` is empty
+    # and this is silent. If it ever does fire, the message carries the versions that came back,
+    # which is precisely the observation needed to settle the question, delivered as exit 2 and
+    # never as a verdict.
+    matched = _seam_sdk_rows(rows)
+    if matched and not any(row.get("version") == version for row in matched):
+        present = sorted({str(row.get("version")) for row in matched})
+        raise InfraError(
+            f"the response to {query} carries {len(matched)} `{PACKAGE_NAME}` rows — at "
+            f"{', '.join(present[:5])}{' and others' if len(present) > 5 else ''} — and NONE at "
+            f"{version}. A query scoped to one version cannot answer with other versions, so the "
+            "`version:` qualifier was not applied and this response is a window over everything. "
+            "The absence of the asked-for version from it is not evidence of anything. "
+            "Infrastructure, never drift."
         )
     return rows
 
@@ -1107,7 +1155,10 @@ def main(argv: list[str] | None = None) -> int:
         "--packages-json",
         type=Path,
         default=None,
-        help="a saved registry response; omit to query the registry live",
+        help=(
+            "a saved UNSCOPED `?query=seam-sdk` dump (no `version:` qualifier); it must "
+            "carry seam-sdk rows at some version. Omit to query the registry live."
+        ),
     )
     parser.add_argument("--now", default=None, help="ISO 8601; defaults to real UTC now")
     parser.add_argument("--soft-grace-minutes", type=int, default=SOFT_GRACE_MINUTES)
