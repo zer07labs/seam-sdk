@@ -1874,6 +1874,15 @@ Correct is the third option: computed in the same single pass as `field_surface_
 reported alongside them, decided once at the end — which is what the script already argues for the
 enum probe ("a script that exited on the field report first would never show the enum one").
 
+**Update (2026-09-07): the premise sentence above no longer holds, and the conclusion is stronger
+for it.** This checkout has been regenerated from the BSR, so the api field surface agrees and a
+bare local contract-gate run exits **0** — `exit 6` no longer always fires locally. That removes
+the *reason* the after-the-api-report placement was unsafe, not the *risk*: the next time local
+stubs fall behind the BSR, `exit 6` fires again, and a probe sitting after it would go silent for
+exactly as long as nobody regenerates — silently, and looking like a run that gated. The placement
+chosen here is correct in both states, which is why it was chosen over the one that merely happened
+to work in the state the repo was in that day.
+
 Both wrong placements were **built and measured**, not reasoned about. Exiting on the spot is caught
 by `test_both_surfaces_disagreeing_at_once_reports_both_and_exits_8` and only by it — the api report
 vanishes from the output. Reporting after the exit is caught by the three single-surface cases, which
