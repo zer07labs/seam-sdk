@@ -321,6 +321,71 @@ def test_a_manual_run_during_staged_adoption_still_catches_a_mismatch() -> None:
 # run, so the gate tells the operator to set an input it is ignoring, and they loop.
 
 
+# ── the two release tags reach the remote together, or not at all ──────────────────────────────
+
+
+def _tag_push_line() -> list[str]:
+    """The argv of the step's tag push, as a token list.
+
+    Read out of the step's `run` with comments removed, because this workflow's comments name the
+    very flag the assertion below is about — and a guard a comment can satisfy is a search for a
+    word someone wrote, not a guard. `scripts/test_yank_gate.py` records this repo hitting that
+    hole in both directions inside one week.
+    """
+    step = _index(lambda s: "tag" in str(s.get("name", "")).lower(), "the commit+tag step")
+    body = _steps()[step]["run"]
+    lines = [ln.strip() for ln in body.splitlines() if not ln.strip().startswith("#")]
+    pushes = [ln for ln in lines if ln.startswith("git push") and "v$VER" in ln]
+    assert len(pushes) == 1, (
+        f"expected exactly one tag push in the commit+tag step, found {len(pushes)}: {pushes}. "
+        f"If the release grew a second one, this guard covers the wrong line."
+    )
+    return pushes[0].replace('"', "").split()
+
+
+def test_the_two_release_tags_are_pushed_atomically() -> None:
+    """Half a release is worse than none: `go get` resolves nothing while pip resolves fine.
+
+    The Go module lives in `go/`, and Go resolves a nested module's versions ONLY from `go/vX.Y.Z`
+    tags, so both tags have to land for a release to be fetchable in every language. Without
+    `--atomic` git updates the refs one at a time and a failure between them leaves `v$VER` pushed
+    and `go/v$VER` absent (#109).
+
+    This pins the SHAPE of the argv rather than searching the file for the flag. A substring test
+    passes on a comment that merely mentions `--atomic`, and the comment four lines above the push
+    does exactly that.
+    """
+    assert _tag_push_line() == [
+        "git",
+        "push",
+        "--atomic",
+        "origin",
+        "v$VER",
+        "go/v$VER",
+    ], _tag_push_line()
+
+
+def test_both_tags_are_created_before_either_is_pushed() -> None:
+    """`--atomic` is only atomic over refs that exist when the push runs.
+
+    Creating a tag, pushing it, then creating the second and pushing that would satisfy the
+    assertion above one push at a time while reintroducing exactly the window it closes.
+    """
+    step = _index(lambda s: "tag" in str(s.get("name", "")).lower(), "the commit+tag step")
+    lines = [
+        ln.strip()
+        for ln in _steps()[step]["run"].splitlines()
+        if not ln.strip().startswith("#")
+    ]
+    tag_idx = [i for i, ln in enumerate(lines) if ln.startswith("git tag")]
+    push_idx = [i for i, ln in enumerate(lines) if ln.startswith("git push") and "v$VER" in ln]
+    assert len(tag_idx) == 2, f"expected both release tags to be created here: {lines}"
+    assert max(tag_idx) < min(push_idx), (
+        "a tag is pushed before the other one is created, so the atomic push covers one ref: "
+        f"{lines}"
+    )
+
+
 def _gate_step() -> dict:
     return next(s for s in _steps() if s.get("name") == GATE)
 
