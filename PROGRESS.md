@@ -2917,7 +2917,11 @@ still free, and `seam-verify` remains the irreversible one.
 **#48 and #40 untouched.** #48 is blocked upstream and nothing here moves it — re-verified
 2026-09-04 that `crewAIInc/crewAI#7103` is still OPEN and `crewai` 1.15.20 still pins
 `opentelemetry-exporter-otlp-proto-http~=1.42.0`; the weekly `framework-coinstall` probe already
-watches for the flip, so "still blocked" would be a notification carrying no information. #40 is a
+watches for the flip, so "still blocked" would be a notification carrying no information. **That
+probe fired on 2026-09-10 and the row flipped** — `crewai` 1.15.21 (2026-09-09) widened the pin;
+`crewAIInc/crewAI#7103` is still open, so it did not end the way this paragraph expected. Left
+as written because it is a dated record and was true on 2026-09-04; the current state is
+`COMPATIBILITY.md` §4a and the 2026-09-10 update in `DECISIONS.md`. #40 is a
 feature request outside this plan's subject entirely. Reasons recorded in the plan, per criterion 2.
 
 **The enum-manifest assumption was promoted — by running `buf`, not by citing its config.** The
@@ -3974,7 +3978,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:768`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:782`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually

@@ -99,7 +99,7 @@ mismatch cannot ship.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:756-773`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:770-787`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -230,7 +230,7 @@ breakage is carried by downstream packages that pinned the exporter too tightly 
 
 | Framework | Constraint | Expected | Tracking |
 |---|---|---|---|
-| `crewai` | `>=1.15.3,<2` | `incompatible` | [#48](https://github.com/zer07labs/seam-sdk/issues/48) — pins the OTLP exporter `~=1.42.0`, below the lift. Upstream fix [crewAIInc/crewAI#7103](https://github.com/crewAIInc/crewAI/pull/7103) is **open, not merged** — that PR merging and releasing is what ends this row |
+| `crewai` | `>=1.15.3,<2` | `compatible` | **Ended 2026-09-09 by `crewai` 1.15.21**, which widened the OTLP exporter from `~=1.42.0` to `<2,>=1.42` and so takes the lift. [#48](https://github.com/zer07labs/seam-sdk/issues/48). Note it did **not** end the way this cell predicted: [crewAIInc/crewAI#7103](https://github.com/crewAIInc/crewAI/pull/7103) is *still open*. **Co-installability needs `crewai>=1.15.21`** — 1.15.20 and below still pin tightly, so a consumer holding one of those is unchanged |
 | `langchain` | `>=1.2,<2` | `compatible` | — pulls no OpenTelemetry at all |
 | `strands-agents` | `>=1.50.2,<2` | `compatible` | — base install pulls no exporter at all; the `otel`/`all` extras add it by *range*, so those take the lift too |
 | `claude-agent-sdk` | `>=0.2,<0.3` | `compatible` | — `opentelemetry-api` only, no protobuf edge |

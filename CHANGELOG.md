@@ -16,6 +16,20 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Changed
+
+- **`seam-sdk` is co-installable with CrewAI again — no change on our side was needed.** `crewai`
+  1.15.21 (2026-09-09) widened `opentelemetry-exporter-otlp-proto-http` from `~=1.42.0` to
+  `<2,>=1.42`, so it now takes OpenTelemetry's `protobuf<7` lift and shares a virtualenv with this
+  SDK's `protobuf>=7.36.1` floor. `COMPATIBILITY.md` §4a's row reads `compatible`, and
+  `seam-adapters` consumers no longer need the two-virtualenv split for CrewAI.
+
+  **This needs `crewai>=1.15.21`.** 1.15.20 and below still pin the exporter tightly and are
+  unchanged. Note also that [crewAIInc/crewAI#7103](https://github.com/crewAIInc/crewAI/pull/7103) —
+  the upstream PR this repo had been tracking as the fix — **is still open**; the pin widened
+  through some other change, which is why the scheduled resolution probe measures the state rather
+  than watching that PR. Tracked as seam-sdk#48.
+
 ### Added
 
 - **`SeamRpcError.trailing_metadata()` — status details reach the typed error (Python).** Server
