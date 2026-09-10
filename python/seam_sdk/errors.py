@@ -233,7 +233,26 @@ class InvalidArgumentError(SeamRpcError):
 
 
 class FailedPreconditionError(SeamRpcError):
-    """`FAILED_PRECONDITION`."""
+    """`FAILED_PRECONDITION`.
+
+    **On a session commit this is not a transport fault and not a readiness problem, and it must
+    not be retried as-is.** Retrying the identical request fails identically — the state that has
+    to change is the caller's, not the server's.
+
+    It is also **not terminal**: a refused commit does not resolve the session, so the session is
+    still live and the correct behaviour is to do the missing thing and commit again.
+
+    Two ordinary causes are **indistinguishable by status code**:
+
+    * the bound policy's panel voted and the policy refused the commitment;
+    * the bound policy has a real ``voting.algorithm`` and the round received **no APPROVE or
+      REJECT ballot at all**, so the algorithm was never evaluated (seam-runtime#565). The remedy
+      is to cast ballots, then commit again.
+
+    The message text differentiates them — the second names the algorithm that was never evaluated
+    — but **the message is not a contract and must not be parsed.** If a caller needs to branch,
+    branch on its own knowledge of whether it voted, not on this error.
+    """
 
 
 class PermissionDeniedError(SeamRpcError):
