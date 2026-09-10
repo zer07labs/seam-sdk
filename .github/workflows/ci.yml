@@ -682,6 +682,13 @@ jobs:
       # responses. No network: the scheduled workflow is what exercises it live.
       - name: the registry-drift check fires on a real lag and refuses to guess
         run: python -m pytest scripts/test_registry_drift_gate.py -q
+      # The probe reserves exit 1 for "a row disagrees with COMPATIBILITY.md" and 2 for "no verdict
+      # could be established" — but Python also spends 1 on an uncaught exception, so every crash
+      # arrived wearing the verdict code (seam-sdk#110). These run the real script against scratch
+      # trees with a failure injected, so the property proved is the process exit code rather than
+      # a return value. No network and no `uv` needed on any asserted path.
+      - name: a crashed co-install probe exits as infrastructure, never as a verdict
+        run: python -m pytest scripts/test_framework_coinstall_gate.py -q
       # Also runs inside the `python` job. Duplicated on purpose: there it proves the guard passes,
       # here it proves the guard needs nothing but a checkout — which is the actual claim
       # seam-adapters relies on (seam-sdk#54).

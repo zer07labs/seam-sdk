@@ -184,4 +184,10 @@ jobs:
           # nested module's versions ONLY from `go/vX.Y.Z` tags — the root `v$VER` tag is invisible to
           # `go get`. Tag the SAME commit both ways so every release is fetchable in every language.
           git tag -a "go/v$VER" -m "seam-sdk Go module v$VER (follows seam-runtime)"
-          git push origin "v$VER" "go/v$VER"
+          # --atomic: without it git updates the two refs one at a time, so a network failure, a
+          # hook rejection or a race between them leaves `v$VER` pushed and `go/v$VER` absent —
+          # half a release, where pip resolves fine and `go get` resolves nothing at that version
+          # (#109). Nothing downstream notices: the drift check compares the registry against
+          # main's declared version, deliberately one comparison and not a tag survey, so a
+          # missing Go module tag is invisible from there by design.
+          git push --atomic origin "v$VER" "go/v$VER"

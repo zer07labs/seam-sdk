@@ -58,6 +58,7 @@ def _run(
     npm: str = "success",
     python: str = "success",
     open_issues: list[dict] | None = None,
+    repository: str = "zer07labs/seam-sdk",
 ) -> tuple[subprocess.CompletedProcess, list[list[str]]]:
     """Run the notice script with a stubbed `gh`; return the process and every `gh` argv it made."""
     bin_dir = tmp_path / "bin"
@@ -71,10 +72,25 @@ def _run(
 
     # The stub answers `issue list` with a pre-rendered TSV — exactly the shape the script's
     # `--jq '.[] | "\(.number)\t\(.title)"'` produces — and records every invocation.
+    #
+    # It also REFUSES a call that does not name a repo, because that is what the real `gh` does
+    # here. This job has no `actions/checkout`, so there is no git remote to resolve a target
+    # from, and an unqualified call dies on `fatal: not a git repository` before reaching the
+    # API. A stub that answered anyway would be testing an environment the job never runs in —
+    # and that is precisely how #112 stayed green for six releases while filing nothing. Every
+    # test in this file inherits the refusal; none of them opts out.
     (bin_dir / "gh").write_text(
         textwrap.dedent(f"""\
         #!/usr/bin/env bash
         printf '%s\\n' "$*" >> {calls}
+        case " $* " in
+          *" -R "*|*" --repo "*) ;;
+          *)
+            echo "failed to run git: fatal: not a git repository \\
+(or any of the parent directories): .git" >&2
+            exit 1
+            ;;
+        esac
         if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
           cat {listing}
         fi
@@ -93,7 +109,7 @@ def _run(
         "SMOKE": smoke,
         "GITHUB_REF_NAME": "v0.7.72",
         "GITHUB_SERVER_URL": "https://github.com",
-        "GITHUB_REPOSITORY": "zer07labs/seam-sdk",
+        "GITHUB_REPOSITORY": repository,
         "GITHUB_RUN_ID": "12345",
     }
     proc = subprocess.run(
@@ -239,6 +255,54 @@ def test_it_cannot_turn_a_failed_release_green() -> None:
     wf = yaml.safe_load(PUBLISH.read_text())
     dependents = [j for j, spec in wf["jobs"].items() if JOB in (spec.get("needs") or [])]
     assert dependents == [], f"{dependents} depend on the notifier, making a reporter into a gate"
+
+
+def test_every_gh_call_names_its_repo(tmp_path: Path) -> None:
+    """`gh` with no `-R` and no checkout resolves nothing — the reporter's only real failure (#112).
+
+    This job has no `actions/checkout` on purpose: it reads job results, not the tree. But `gh`
+    takes its target repository from the git remote of the working directory, so with no checkout
+    an unqualified call exits 1 on `fatal: not a git repository` before it reaches the API.
+
+    That is not a hypothesis. Run 34012020168 (v0.7.77) ends exactly there, and no
+    `Release v0.7.77 did not publish` issue exists — nor for v0.7.76, v0.7.78, v0.7.79, v0.7.80
+    or v0.8.0, all of which failed at `ci-green`.
+
+    It survived every test in this file because the stub `gh` answered regardless, and because
+    the only path anyone ever watched was the success path, where the script exits before
+    touching `gh` at all. Asserting on the recorded argv is what closes that: the flag has to be
+    on the call the script actually made, not merely somewhere in the workflow text.
+    """
+    proc, argv = _run(tmp_path, ci_green="failure", npm="skipped", python="skipped", smoke="skipped")
+    assert proc.returncode == 0, proc.stderr
+    assert argv, "the script made no gh calls at all, so this proves nothing"
+    unqualified = [a for a in argv if "-R" not in a and "--repo" not in a]
+    assert not unqualified, (
+        f"{len(unqualified)} gh call(s) name no repo and would die before the API: {unqualified}"
+    )
+
+
+def test_the_repo_named_is_the_one_actions_reports(tmp_path: Path) -> None:
+    """A hardcoded `zer07labs/seam-sdk` would work here and break in a fork or a rename.
+
+    Pins that the value comes from `$GITHUB_REPOSITORY`: the run below sets it to something the
+    literal never matches, so a hardcoded owner/name fails this while passing the test above.
+    """
+    proc, argv = _run(
+        tmp_path,
+        ci_green="failure",
+        npm="skipped",
+        python="skipped",
+        smoke="skipped",
+        repository="someone-else/a-fork",
+    )
+    assert proc.returncode == 0, proc.stderr
+    targeted = [a for a in argv if "-R" in a]
+    assert targeted, f"no gh call carried -R; saw {argv}"
+    for call in targeted:
+        assert call[call.index("-R") + 1] == "someone-else/a-fork", (
+            f"gh was pointed at a repo that is not $GITHUB_REPOSITORY: {call}"
+        )
 
 
 # ── The blind-spot paragraph's pointer ───────────────────────────────────────────────────────

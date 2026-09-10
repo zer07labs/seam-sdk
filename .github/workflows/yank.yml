@@ -46,17 +46,42 @@ jobs:
           # dedicated secret happens to be set. A safety tool that silently does not work is worse
           # than one known to be broken, because it is discovered in the incident, not before it.
           #
-          # Both sources are stripped, not just the Cargo one: a dedicated key never carries the
-          # prefix, so stripping it costs nothing and removes one way to be wrong. A source that is
-          # ONLY the prefix strips to empty, so it is skipped: if it is the sole credential the
-          # step refuses below, and otherwise the other source is used. Either way nothing
-          # malformed is sent — the set of inputs this refuses is a superset of what it refused
-          # before the strip, so the fix cannot make a previously-refused shape proceed.
-          TOKEN="${CLOUDSMITH_API_KEY:-}"
-          TOKEN="${TOKEN#Bearer }"
+          # Both sources go through the same resolution, not just the Cargo one: a dedicated key
+          # never carries the prefix, so stripping it costs nothing and removes one way to be
+          # wrong. A source that is ONLY the prefix strips to empty, so it is skipped: if it is
+          # the sole credential the step refuses below, and otherwise the other source is used.
+          # Either way nothing malformed is sent — the set of inputs this refuses is a superset of
+          # what it refused before, so the fix cannot make a previously-refused shape proceed.
+          #
+          # The surrounding-whitespace trim is why this is a function rather than two lines
+          # (#111). `-z` tests for EMPTY, not blank: a secret holding a pasted trailing newline or
+          # a run of spaces was "set", so the fallback to the Cargo token NEVER RAN even when that
+          # secret held a good credential, the clean "no credential in scope" refusal below never
+          # fired either, and a whitespace token went to Cloudsmith to fail as a confusing auth
+          # error. On a yank a confusing failure is the expensive kind — the operator cannot tell
+          # whether the version was deleted before it.
+          #
+          # ORDER IS LOAD-BEARING, in two ways this got wrong before it got right.
+          #
+          # Deleting ALL whitespace before the prefix strip — the obvious one-liner — turns
+          # "Bearer cargo-tok" into "Bearercargo-tok", which no longer matches `${t#Bearer }` and
+          # is then sent verbatim. That is a worse bug than the one being fixed.
+          #
+          # Trimming the TRAILING side before the strip is just as wrong for the opposite reason:
+          # a source that is only "Bearer " trims to "Bearer", the pattern needs the space, and a
+          # value that used to resolve to empty and fall through now resolves to the literal
+          # "Bearer" and is sent. So: leading only, then strip, then trim both sides of what is
+          # left.
+          resolve_credential() {
+            local t="$1"
+            t="${t#"${t%%[![:space:]]*}"}"
+            t="${t#Bearer }"
+            t="${t#"${t%%[![:space:]]*}"}"; t="${t%"${t##*[![:space:]]}"}"
+            printf %s "$t"
+          }
+          TOKEN="$(resolve_credential "${CLOUDSMITH_API_KEY:-}")"
           if [ -z "$TOKEN" ]; then
-            TOKEN="${CARGO_REGISTRIES_ZER07LABS_TOKEN:-}"
-            TOKEN="${TOKEN#Bearer }"
+            TOKEN="$(resolve_credential "${CARGO_REGISTRIES_ZER07LABS_TOKEN:-}")"
           fi
           if [ -z "$TOKEN" ]; then
             echo "::error::No Cloudsmith credential in scope."; exit 1

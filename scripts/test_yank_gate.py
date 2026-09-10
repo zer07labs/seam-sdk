@@ -101,6 +101,20 @@ def _run(dedicated: str | None, cargo: str | None) -> subprocess.CompletedProces
         # The shape the first version of these guards did not cover: a dedicated key that is ONLY
         # the prefix strips to empty and must fall through to the Cargo token, never be sent as "".
         ("Bearer ", "Bearer cargo-tok", "cargo-tok"),
+        # #111: a BLANK dedicated key is not an empty one. `-z` said it was set, so the fallback
+        # never ran and a good Cargo token was silently ignored. These are the shapes a secret
+        # actually acquires — a pasted trailing newline, a value trimmed to spaces in transit.
+        ("   ", "Bearer cargo-tok", "cargo-tok"),
+        ("\n", "cargo-tok", "cargo-tok"),
+        ("\t \n", "Bearer cargo-tok", "cargo-tok"),
+        ("Bearer \n", "cargo-tok", "cargo-tok"),
+        # ...and a credential that is real but padded must survive, not be refused alongside them.
+        ("  cs-key\n", "", "cs-key"),
+        ("\n  Bearer cs-key  ", "", "cs-key"),
+        ("", "  Bearer cargo-tok\n", "cargo-tok"),
+        # Multiple spaces after the prefix: `${t#Bearer }` eats exactly one, and the trim that
+        # follows the strip is what removes the rest.
+        ("Bearer   cs-key", "", "cs-key"),
     ],
     ids=[
         "dedicated-only",
@@ -109,6 +123,14 @@ def _run(dedicated: str | None, cargo: str | None) -> subprocess.CompletedProces
         "dedicated-with-bearer",
         "both-set",
         "prefix-only-dedicated-falls-through",
+        "blank-dedicated-falls-through",
+        "newline-dedicated-falls-through",
+        "mixed-blank-dedicated-falls-through",
+        "prefix-plus-newline-falls-through",
+        "padded-dedicated-still-resolves",
+        "padded-and-prefixed-dedicated-resolves",
+        "padded-cargo-resolves",
+        "extra-space-after-prefix",
     ],
 )
 def test_the_bearer_prefix_is_stripped_from_whichever_source_is_used(
@@ -131,12 +153,26 @@ def test_the_bearer_prefix_is_stripped_from_whichever_source_is_used(
 
 @pytest.mark.parametrize(
     ("dedicated", "cargo"),
-    [("", ""), (None, None), ("", "Bearer "), ("Bearer ", "")],
+    [
+        ("", ""),
+        (None, None),
+        ("", "Bearer "),
+        ("Bearer ", ""),
+        # #111: blank is not a credential either. Before the trim these two PROCEEDED — the first
+        # `-z` was false, so the fallback was skipped, and the second `-z` was false too, so the
+        # refusal below never fired. A whitespace token then went to Cloudsmith.
+        ("   ", "  "),
+        ("\n", None),
+        ("\t", "Bearer  \n"),
+    ],
     ids=[
         "both-empty",
         "both-unset",
         "cargo-is-only-the-prefix",
         "dedicated-is-only-the-prefix",
+        "both-blank",
+        "blank-dedicated-cargo-unset",
+        "both-blank-one-carrying-the-prefix",
     ],
 )
 def test_an_unusable_credential_refuses_rather_than_proceeding(
