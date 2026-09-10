@@ -1171,7 +1171,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:756-773` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:770-787` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -1602,8 +1602,10 @@ either way.
 **Two implementation facts, both learned by getting them wrong first:**
 1. **Resolve with the shim's declared constraint, never the bare name.** Bare `crewai` resolves fine
    — by backtracking to **1.6.1**, a release predating the conflict — and reports a false
-   `compatible`. With `crewai>=1.15.3,<2` the same resolver proves it unsatisfiable. A probe that
-   confidently reports the wrong answer is worse than no probe.
+   `compatible`. With `crewai>=1.15.3,<2` the same resolver proved it unsatisfiable *at the time of
+   writing*; as of `crewai` 1.15.21 (2026-09-09) both spellings resolve, for different reasons, and
+   only the constrained one would have caught the years the answer differed. The lesson outlives the
+   example: a probe that confidently reports the wrong answer is worse than no probe.
 2. **Exit codes cannot classify the outcome.** uv exits non-zero for an unsatisfiable graph, a
    missing package *and* a disabled network, and all three say "unsatisfiable". The probe classifies
    on the message and treats anything it cannot positively identify as **infrastructure (exit 2)**,
@@ -1638,6 +1640,32 @@ notices when it lands.
 
 **Status:** RECORDED. Re-answer if a second framework becomes incompatible, or if the pin-style
 generalisation above stops explaining the cases.
+
+### 2026-09-10 update — the row flipped, and the probe is how anyone found out
+
+`crewai` **1.15.21**, released 2026-09-09, widened `opentelemetry-exporter-otlp-proto-http` from
+`~=1.42.0` to `<2,>=1.42`. It therefore takes OTel's `protobuf<7` lift, and `crewai>=1.15.3,<2`
+now resolves against this SDK's floors. `COMPATIBILITY.md` §4a's row reads `compatible`.
+
+Two things about how that arrived are worth keeping, because both were reasoned about above:
+
+* **The mechanism held exactly as designed.** This entry says a row flipping to `compatible` means
+  the upstream fix landed "and nothing else in this org watches for that" — `seam-adapters`'
+  resolution probe installs its shims without the `[sdk]` extra, so it stays green either way. That
+  is what happened. The flip was caught 2026-09-10 by `framework-coinstall.yml` firing on a PR that
+  touched the probe script; the last **scheduled** run (2026-09-07) was green, and the next was not
+  due until Monday 2026-09-14. Nothing else in the org would have said a word.
+* **The specific prediction was wrong.** Both this entry and the table's own Tracking cell named
+  `crewAIInc/crewAI#7103` as what would end the row — "one upstream PR against CrewAI's exporter pin
+  is cheaper than a permanent pipeline pin". **That PR is still open.** The pin widened through some
+  other change. The decision was right and the forecast inside it was not, which is the argument for
+  a probe that measures the state rather than a watcher subscribed to the event — the same
+  state-versus-event distinction seam-sdk#100 turns on.
+
+The rejection of widening our own protobuf floor stands and is now moot for this framework.
+
+**Status:** RESOLVED for `crewai` (2026-09-10). The generalisation and the probe remain in force for
+the other three rows and for whatever framework is next.
 
 ## 2026-08-23 — `plans/archive/sdk-exec-w1-w7.md` Phase 8 (W7): the digest dual-verify obligation
 
@@ -1956,7 +1984,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:768` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:782` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
