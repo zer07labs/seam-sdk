@@ -43,6 +43,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import traceback
 
 if sys.version_info < (3, 11):  # noqa: E402 — must run before the tomllib import below
     # Exit 2, not 1: this is an infrastructure condition (wrong interpreter), and 1 is reserved for
@@ -263,4 +264,20 @@ def _explain(row: Row, verdict: str, evidence: str) -> str:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # Python exits 1 on an uncaught exception, and 1 is this script's VERDICT code — "a row
+    # disagrees with the table". Without this handler a typo, an `IndexError` on a malformed row
+    # or a `KeyError` from a renamed field reports itself as a substantive finding about framework
+    # co-installability, produced by a crash. That is the never-a-verdict property the interpreter
+    # check at the top of this file already names; it guarded the one instance it thought of and
+    # left the general case open (#110).
+    #
+    # `except SystemExit: raise` is load-bearing: without it the handler swallows the real code
+    # from `sys.exit(main())` — and argparse's `--help` — and turns every run into a 2.
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except BaseException as exc:  # noqa: BLE001 — deliberate; a crash must not read as a verdict
+        print(f"::error::probe_framework_coinstall crashed: {exc!r}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        sys.exit(2)
