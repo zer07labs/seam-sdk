@@ -815,18 +815,25 @@ jobs:
             printf 'whether to fix forward and re-tag, or to leave the version permanently unpublished.\n'
           } > "$BODY"
 
+          # Every `gh` call names the repo explicitly. This job deliberately has no
+          # `actions/checkout` — it reads job results, not the tree — and `gh` resolves its target
+          # from the git remote of the working directory. With no checkout there is no remote, so
+          # an unqualified call exits 1 on `fatal: not a git repository` before reaching the API.
+          # That is not hypothetical: it is why this reporter never filed anything for v0.7.76
+          # through v0.8.0 (#112). `$GITHUB_REPOSITORY` is always set by Actions.
+          #
           # One issue per tag: a re-run of a failing release comments rather than opening a second.
           # gh output goes to a file rather than through a pipe — `set -o pipefail` plus a reader
           # that exits early turns a SIGPIPE into a spurious job failure.
           LISTING="$(mktemp)"
-          gh issue list --state open --limit 100 --json number,title \
+          gh issue list -R "$GITHUB_REPOSITORY" --state open --limit 100 --json number,title \
             --jq '.[] | "\(.number)\t\(.title)"' > "$LISTING"
           EXISTING="$(awk -F'\t' -v t="$TITLE" '$2 == t { print $1; exit }' "$LISTING")"
 
           if [ -n "$EXISTING" ]; then
-            gh issue comment "$EXISTING" --body-file "$BODY"
+            gh issue comment "$EXISTING" -R "$GITHUB_REPOSITORY" --body-file "$BODY"
             echo "release failure reported on existing #$EXISTING"
           else
-            gh issue create --title "$TITLE" --body-file "$BODY"
+            gh issue create -R "$GITHUB_REPOSITORY" --title "$TITLE" --body-file "$BODY"
             echo "release failure reported as a new issue"
           fi
