@@ -108,12 +108,20 @@ def collective_outcome_of(
     its own fail policy rather than being handed a value.
 
     **On a ``SessionStep``, absent is the common case and does not mean "not supported".** The field
-    is present ONLY on the step that applied the commit envelope and sealed the session; it is absent
-    on every open/propose/vote/ballot step, and also on the sealed-idempotent replay and the
-    pending-commitment seal retry
+    is present ONLY on the step that applied the commit envelope and **freshly sealed** the session —
+    the durable write performed on this call; it is absent on every open/propose/vote/ballot step,
+    and also on the sealed-idempotent replay and the pending-commitment seal retry
     (``seam.api.v1``, ``SessionStep.collective_outcome`` field 4 — cited by field, not by line: the
     proto lives in another repository that nothing here tracks or gates). Read ``None`` from a
     non-terminal step as "not yet decided", never as a missing feature.
+
+    **"Freshly" is load-bearing, and this said only "sealed the session" until seam-runtime#561.**
+    The two readings used to differ on the store fast path, which could return a verdict folded from
+    a different round than the ``decision_id`` beside it named. #561 closed that gap in the only safe
+    direction — the fast path now yields absence rather than a mismatched verdict — so the reading
+    that used to be wrong is the correct one. One consequence is worth having: **in the affirmative
+    direction only**, this field is now a sound answer to "did *this* call seal?". Presence means
+    yes. Absence still means nothing of the sort, because it also covers every step that never seals.
 
     One decoder, two message types, on purpose: the hazard being guarded is a property of the FIELD —
     ``optional`` presence over an open enum whose zero value is UNSPECIFIED — not of the message that

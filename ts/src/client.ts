@@ -216,11 +216,20 @@ export interface CollectiveOutcome {
  * that means for its own fail policy rather than being handed a value.
  *
  * **On a `SessionStep`, absent is the common case and does not mean "not supported".** The field is
- * present ONLY on the step that applied the commit envelope and sealed the session; it is absent on
- * every open/propose/vote/ballot step, and also on the sealed-idempotent replay and the
- * pending-commitment seal retry (`seam.api.v1`, `SessionStep.collective_outcome` field 4 — cited by
- * field, not by line: the proto lives in another repository that nothing here tracks or gates).
+ * present ONLY on the step that applied the commit envelope and **freshly sealed** the session — the
+ * durable write performed on this call; it is absent on every open/propose/vote/ballot step, and
+ * also on the sealed-idempotent replay and the pending-commitment seal retry (`seam.api.v1`,
+ * `SessionStep.collective_outcome` field 4 — cited by field, not by line: the proto lives in another
+ * repository that nothing here tracks or gates).
  * Read `undefined` from a non-terminal step as "not yet decided", never as a missing feature.
+ *
+ * **"Freshly" is load-bearing, and this said only "sealed the session" until seam-runtime#561.** The
+ * two readings used to differ on the store fast path, which could return a verdict folded from a
+ * different round than the `decisionId` beside it named. #561 closed that gap in the only safe
+ * direction — the fast path now yields absence rather than a mismatched verdict — so the reading
+ * that used to be wrong is the correct one. One consequence is worth having: **in the affirmative
+ * direction only**, this field is now a sound answer to "did *this* call seal?". Presence means yes.
+ * Absence still means nothing of the sort, because it also covers every step that never seals.
  *
  * One decoder, two message types, on purpose: the hazard being guarded is a property of the FIELD —
  * `optional` presence over an open enum whose zero value is UNSPECIFIED — not of the message that
@@ -276,7 +285,31 @@ export function collectiveOutcomeOf(
  * `pb.PolicyEnforcement`; see the dual-declaration note at the top of `index.ts` for why, and for
  * the hazard that runs opposite to intuition. */
 export interface PolicyEnforcement {
-  /** true iff a real policy definition gated this commitment. */
+  /** `true` iff a real, mode-matching policy definition gated this commitment.
+   *
+   * **`false` has THREE distinct meanings, and only two of them mean what it looks like.** Read it
+   * as **"no enforcement evidence for this call"**, never as "this ran ungoverned" — under the third
+   * that reading is exactly backwards:
+   *
+   * 1. no real policy was bound — no registry, an unresolvable bound id, or a `mode` that did not
+   *    match the session's. The commit was evaluated as if this field did not exist;
+   * 2. a real policy WAS bound but did not gate the record being returned, so attesting it would be
+   *    false (a synthetic `session.expired`/`session.cancelled`; governance moved under an
+   *    evicted-and-re-driven id; a record sealed fail-open while its policy id did not resolve);
+   * 3. the record **was** gated and carries its own rules digest proving it, but the runtime no
+   *    longer holds a live binding to say WHICH policy, so it withholds the name rather than guess.
+   *    This is not an edge case — it is every response served from the store after the live run was
+   *    evicted or dropped by a restart.
+   *
+   * An auditor reading only 1 and 2 concludes the decision ran ungoverned. Under 3 it proves the
+   * opposite. **This SDK cannot distinguish the three**, and neither can the wire: that is the
+   * deliberate cost of a runtime that refuses to fabricate a policy name. `SessionStep` expresses
+   * case 2 by omitting the field entirely; `DecisionResponse` has no presence to use and reports
+   * this zero value instead.
+   *
+   * `true` says a real policy definition gated the commitment and names its **id** — not its
+   * **revision**. Nothing in the response binds the record's rules digest to whatever is registered
+   * under that id now. */
   readonly enforced: boolean;
   /** `undefined` **iff the id is absent**, never `""`. `policy_id` has explicit presence of its own,
    * so an explicitly-encoded empty string is a different answer from an unset one; collapsing them
@@ -314,11 +347,30 @@ export interface PolicyEnforcement {
  * `PolicyEnforcement` message comment, `GetDecision`/`ReplayDecision` do **not** carry the field,
  * so a fetched or replayed decision reads `undefined` regardless of what was enforced when it was
  * sealed. On a `SessionStep`, **absent is the common case** — not an error, and not a missing
- * feature: the field is populated on exactly three steps: the **commit-terminal** step; the **sealed-idempotent
- * replay** (a resubmit against an already-sealed session, re-reporting a seal this call did not
- * perform); and the **pending-commitment seal retry**. It is absent on every non-terminal step —
- * open, propose, vote, ballot — on **both suspended shapes** (awaiting an approver, and the budget
- * breach), and on the **expiry seal**.
+ * feature: the field is reachable on three steps — the **commit-terminal** step; the
+ * **sealed-idempotent replay** (a resubmit against an already-sealed session, re-reporting a seal
+ * this call did not perform); and the **pending-commitment seal retry** — and on each of those only
+ * when the `decisionId` being returned was sealed by **this runtime process** *and* was sealed by a
+ * **commit** (seam-runtime#561). Both clauses were added after a measurement contradicted the rule
+ * as previously written, and each names a real absence a caller can reach: a session id re-driven
+ * after its live state was evicted (the engine holds the policy governing the *new* round while the
+ * id names a record sealed under the *old* one), and any step taken after a **cancel or expiry
+ * seal** inside the post-terminal grace window (the commitment is a synthetic
+ * `session.expired`/`session.cancelled` termination that no policy evaluated — before #561 this
+ * reported `{enforced: true, policyId: …}`, contradicting the expiry step immediately before it).
+ * It is absent on every non-terminal step — open, propose, vote, ballot — on **both suspended
+ * shapes** (awaiting an approver, and the budget breach), and on the **expiry seal**.
+ *
+ * **Until seam-runtime#561 this gave those three sites as a bare count with no further condition,
+ * and that was wrong in the FAIL-OPEN direction** — the one direction this helper exists to close.
+ * A caller who reads a bare count as a guarantee treats absence on a commit-terminal step as
+ * impossible, and either crashes on the unwrap or, worse for an audit trail, reads absence as
+ * "unenforced". Those are opposite conclusions. **Read an `undefined` as "no enforcement evidence
+ * for this call", never as "this ran ungoverned".** The enumeration is still the right shape; what
+ * it needed is the per-site condition above, not a general rule. The retracted sentence is
+ * deliberately not reproduced here — a reader skimming for the rule finds whichever version is on
+ * the page, and `python/tests/test_presence_rules_agree_across_languages.py` refuses it in either
+ * language.
  *
  * Two things in that list contradict the proto's own comment for this field (`seam.api.v1`,
  * `SessionStep.policy_enforcement` field 3 — cited by field, not by line: the proto lives in another
