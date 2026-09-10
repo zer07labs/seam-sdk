@@ -1292,7 +1292,24 @@ def test_the_quoted_claims_still_match_their_source_word_for_word(
     if sibling_path.startswith(SIBLING_PREFIXES):
         target = REPO.parent / sibling_path
         if not target.exists():
-            pytest.skip(f"{path} is in a sibling repo not checked out here")
+            # This skip is now DELEGATION, not blindness — and the difference is worth writing
+            # down, because for a while it was blindness and read identically. `scripts/
+            # check_sibling_quotes.py` re-checks exactly these entries over the GitHub API, in
+            # ci.yml's `sibling-quotes` job, using an App token scoped to the two private siblings.
+            # It reads `QUOTED` out of THIS file with `ast`, so there is one table, not two.
+            #
+            # Before that job existed (seam-sdk#103) the sibling rows were verified only on a
+            # workstation that happened to have the siblings cloned — a property of someone's
+            # laptop rather than of the repo — and it had already let one through: seam-aegis
+            # bumped `seam-agent-core[sdk]` 0.5 -> 0.6 on 2026-09-05 and CI stayed green.
+            #
+            # So do not read this skip as "cannot be checked here". If that job is ever removed,
+            # this becomes a silent gap again, which is why `scripts/test_sibling_quotes_gate.py`
+            # fails when the job stops running the checker.
+            pytest.skip(
+                f"{path} is in a sibling repo not checked out here; covered in CI by the "
+                f"`sibling-quotes` job via scripts/check_sibling_quotes.py"
+            )
     else:
         target = REPO / path
         assert target.exists(), (

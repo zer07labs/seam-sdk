@@ -622,6 +622,41 @@ jobs:
           GH_TOKEN: ${{ steps.app.outputs.token }}
         run: python scripts/check_vendored_spec.py --from gh
 
+  sibling-quotes:
+    name: sibling quotes (claims about seam-adapters / seam-aegis)
+    needs: preflight
+    if: needs.preflight.outputs.have_bot_app == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Scoped to the two repos `QUOTED` actually names, and no more. `spec-pin` above asks for
+      # seam-runtime for the same reason: the App can reach several repos, and a job that reads one
+      # thing asks for one thing. `scripts/check_sibling_quotes.py`'s own `SIBLING_REPOS` must agree
+      # with this list — `scripts/test_sibling_quotes_gate.py` fails if they drift apart, so this
+      # cannot be widened on one side only.
+      - name: Mint a seam-deps-bot App token, scoped to the two sibling repos
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.SEAM_BOT_APP_ID }}
+          private-key: ${{ secrets.SEAM_BOT_PRIVATE_KEY }}
+          owner: zer07labs
+          repositories: seam-adapters,seam-aegis
+      # This is the ONLY place the sibling half of `QUOTED` is checked in CI. The pytest that owns
+      # that table skips those entries — `../seam-adapters` is not checked out here and never will
+      # be — so before this job the only mechanism that can catch a claim whose source changes value
+      # in place ran on a workstation and nowhere else (seam-sdk#103).
+      - name: quoted claims about sibling repos still match their source
+        env:
+          # NOT github.token: both siblings are private and the default token is scoped to this
+          # repo, so it would 404 — and a 404 here is reported as INFRASTRUCTURE, never as drift.
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: python scripts/check_sibling_quotes.py
+
   workflow-guards:
     name: guards (no credentials required)
     runs-on: ubuntu-latest
@@ -689,6 +724,12 @@ jobs:
       # a return value. No network and no `uv` needed on any asserted path.
       - name: a crashed co-install probe exits as infrastructure, never as a verdict
         run: python -m pytest scripts/test_framework_coinstall_gate.py -q
+      # The `sibling-quotes` job above needs an App token a fork PR cannot mint, so it is
+      # ADVISORY. These prove its CHECKER against a stubbed `gh` with no credential at all, which
+      # is what makes that exemption tolerable: a fork PR still proves the logic even though it
+      # cannot run the job. Same property `spec-pin` has, for the same reason.
+      - name: the sibling-quote checker fires, and cannot pass by checking nothing
+        run: python -m pytest scripts/test_sibling_quotes_gate.py -q
       # Also runs inside the `python` job. Duplicated on purpose: there it proves the guard passes,
       # here it proves the guard needs nothing but a checkout — which is the actual claim
       # seam-adapters relies on (seam-sdk#54).
@@ -722,6 +763,7 @@ jobs:
       - verify
       - verify-msrv
       - spec-pin
+      - sibling-quotes
       - workflow-guards
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -730,7 +772,7 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
           # Comma-separated. scripts/test_ci_gate.py asserts this list stays minimal.
-          ADVISORY: integration,spec-pin
+          ADVISORY: integration,spec-pin,sibling-quotes
         run: |
           set -euo pipefail
           bad=$(printf '%s' "$NEEDS" | jq -r --arg adv "$ADVISORY" '

@@ -9,9 +9,9 @@ are conditional on `preflight` outputs, so a PR where a secret does not resolve 
 core test jobs and still shows green**. The gate therefore distinguishes:
 
   * REQUIRED — must report `success`. A skip means its assertions never ran.
-  * ADVISORY — may skip, must not fail. `integration` and `spec-pin`, each of which needs a secret
-    a fork PR cannot have. Advisory is not tolerance: one of these RUNNING and FAILING still
-    blocks the merge.
+  * ADVISORY — may skip, must not fail. `integration`, `spec-pin` and `sibling-quotes`, each of
+    which needs a secret a fork PR cannot have. Advisory is not tolerance: one of these RUNNING and
+    FAILING still blocks the merge.
 
 Keeping that list minimal is the whole point, so it is asserted here too.
 
@@ -53,7 +53,19 @@ GATE = "ci-ok"
 #:     repository; drift blocking the merge was a deliberate call, since the copy went stale three
 #:     times and a warning would have been ignored a fourth. Its CHECKER is separately exercised
 #:     in `workflow-guards`, which needs no credential, so a fork PR still proves the logic.
-ALLOWED_ADVISORY = {"integration", "spec-pin"}
+#:   * sibling-quotes — reads two PRIVATE sibling repos (seam-adapters, seam-aegis) through a scoped
+#:     seam-deps-bot App token, which a fork PR's secretless run cannot mint. Added 2026-09-10 for
+#:     seam-sdk#103, and the reasoning is worth stating because "advisory" is what this entry is
+#:     fixing, not what it is asking for: the sibling half of `QUOTED` was checked by NOTHING in CI
+#:     before it. `test_the_quoted_claims_still_match_their_source_word_for_word` skips those rows —
+#:     `../seam-adapters` is not checked out here and never will be — so a claim whose source
+#:     changes value in place was verified only on a workstation that happened to have the siblings
+#:     cloned. It had already let one through: seam-aegis bumped `seam-agent-core[sdk]` 0.5 -> 0.6
+#:     on 2026-09-05 and CI stayed green. So this trades a SILENT skip for a DECLARED one, and adds
+#:     real coverage on every non-fork PR. Its checker is separately exercised in `workflow-guards`
+#:     against a stubbed `gh`, needing no credential, so a fork PR still proves the logic — the same
+#:     property spec-pin has, and the reason both are tolerable here.
+ALLOWED_ADVISORY = {"integration", "spec-pin", "sibling-quotes"}
 
 
 def _workflow() -> dict:
