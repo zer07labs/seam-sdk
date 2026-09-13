@@ -167,6 +167,10 @@ The SDK is **not** published to public npmjs / PyPI. It ships to the org's **pri
 `docs/deployment.md` § Publishing](https://github.com/zer07labs/seam-runtime)). One registry hosts all
 formats: Cargo, **npm**, **Python**.
 
+> `internal` is for employees and CI only — it holds the private runtime crates, and Cargo crates ship
+> source. Design partners get [`zer07labs/partner`](#partner-distribution-private--cloudsmith-zer07labspartner)
+> instead, which the allowlisted packages are copied into after each verified release.
+
 **Cutting a release — one version everywhere.** The SDK version tracks the **seam-runtime** version: a
 runtime release fires a `repository_dispatch` here ([`release-on-runtime.yml`](.github/workflows/release-on-runtime.yml)),
 which bumps `ts/package.json` + `python/pyproject.toml` to match, commits, and tags `vX.Y.Z` — that tag
@@ -216,6 +220,89 @@ pip install seam-sdk --extra-index-url \
 
 > Endpoint hosts follow the per-format Cloudsmith convention (`cargo.cloudsmith.io/…` → `npm.`/`python.`).
 > If a call 4xx's on a URL, confirm it against Cloudsmith → the repo → **Set Me Up**.
+
+## Partner distribution (private — Cloudsmith `zer07labs/partner`)
+
+**`zer07labs/internal` is never partner-accessible, and no permission grant changes that.** It holds the
+thirteen private runtime crates (`seam-kernel`, `seam-crypto`, `seam-store`, `seam-kms-vault`, `seamd`)
+and `seam-learning-keys` alongside the SDK. Cargo crates ship **source**, so a token that can read
+`internal` can read the closed half of the product. There is no read scope that lets a partner see the
+wheel and not the crates.
+
+So partner-facing packages are **copied into a second repo, `zer07labs/partner`**, which contains only what
+a design partner installs. A partner gets an entitlement token to `partner` and never to `internal`.
+
+| | `zer07labs/internal` | `zer07labs/partner` |
+|---|---|---|
+| Who holds a token | employees / CI only | design partners |
+| Contents | everything — SDK **and** the private runtime crates | the allowlist below, nothing else |
+| How things arrive | `publish.yml` uploads | copied from `internal` after a verified release |
+
+**What gets promoted is an explicit allowlist**, literal in
+[`scripts/promote-to-partner.sh`](scripts/promote-to-partner.sh):
+
+```
+@zer07labs/seam-sdk|npm
+seam-sdk|python
+```
+
+There are no globs and no "everything except". A package that is not on this list by **name and format**
+is never copied — and a name on the list that matches nothing in `internal` is a **refusal**, not a skip,
+so a half-promoted release cannot report success. Format is part of the key because `internal` already
+carries a crate called `seam-verify`: a name-only match would put Rust source in a partner's hands the
+day something publishes a crate named `seam-sdk`. Adding a package means editing that list in a reviewed
+commit.
+
+**When it runs.** `publish.yml`'s `promote-partner` job, gated on `registry-smoke` — the only job whose
+success shows the release actually *landed* (it installs the published artifact back out of Cloudsmith and
+runs the conformance vectors). Promoting on "npm and python both succeeded" would forward a version that
+uploaded and never became installable. Nothing about where the SDK publishes has changed: `internal` is
+still the upload target and still what every internal consumer resolves.
+
+**Backfilling already-published versions** — [`promote-partner-backfill.yml`](.github/workflows/promote-partner-backfill.yml),
+`workflow_dispatch`, taking either one `version` or a `since` floor. Locally:
+
+```sh
+CLOUDSMITH_PARTNER_API_KEY=… ./scripts/promote-to-partner.sh 0.14.3
+CLOUDSMITH_PARTNER_API_KEY=… ./scripts/promote-to-partner.sh --since 0.7.47
+```
+
+Safe to re-run and safe to resume after a timeout: the script checks the destination before every copy.
+That check is load-bearing, not defensive — **`cloudsmith copy` is not idempotent.** Copying a package
+that is already in the destination exits **0** and creates a *second* copy under a new slug, so
+"tolerate the already-exists error" (how the publish jobs handle re-runs) cannot work here; there is no
+error to tolerate.
+
+> **The CLI verb is `copy`.** `cloudsmith promote` is an alias for **`move`** — it would take the version
+> *out* of `internal`, where every internal consumer resolves it, with no undo. Both workflows pin
+> `cloudsmith-cli==1.11.1` so that stays true.
+
+*Credentials.* A **separate** org-level secret `CLOUDSMITH_PARTNER_API_KEY` (visibility: all repos),
+backed by the Cloudsmith service account **`ci-partner-promote`** — `partner` Write, `internal` Read,
+nothing else. Deliberately **not** the publishing key: that one can push to `internal`, and promotion has
+no business being able to. Raw value, **no `Bearer ` prefix** (that prefix belongs to the Cargo token; the
+script refuses a prefixed key rather than letting it surface as a confusing 401).
+
+> **The explicit grant is not what makes it safe — the repository default is.** A Cloudsmith repo has a
+> `default_privilege` that applies to every org member and service account *on top of* any explicit grant,
+> and `internal` was set to **`Admin`**. So `ci-partner-promote`, holding an explicit `Read`, could still
+> push a package into `internal` — measured, not theorised. `internal.default_privilege` is now **`None`**
+> (matching `partner` and `internal-staging`), which costs nobody access because every real consumer holds
+> an explicit grant: team `seam` Write, service `ci-seam-runtime` Write, `ajit-koti` Admin. **If that
+> default is ever set back to `Admin`, the partner token silently regains write on `internal` and nothing
+> in CI will notice.**
+
+**Consuming it** — identical to the `internal` snippets above with the repo name changed:
+
+```sh
+# npm: .npmrc
+@zer07labs:registry=https://npm.cloudsmith.io/zer07labs/partner/
+//npm.cloudsmith.io/zer07labs/partner/:_authToken=${CLOUDSMITH_PARTNER_TOKEN}
+
+# Python
+pip install seam-sdk --extra-index-url \
+  https://token:${CLOUDSMITH_PARTNER_TOKEN}@dl.cloudsmith.io/basic/zer07labs/partner/python/simple/
+```
 
 ## Contract changes
 

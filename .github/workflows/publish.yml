@@ -744,6 +744,62 @@ jobs:
           console.log("published @zer07labs/seam-sdk reproduces the conformance vectors — OK");
           JS
 
+  # ── Partner-facing packages → Cloudsmith `zer07labs/partner` ───────────────────────────────────
+  # `internal` cannot be handed to a design partner, and no permission grant fixes that: it holds
+  # the thirteen private runtime crates (seam-kernel, seam-crypto, seam-store, seam-kms-vault,
+  # seamd) plus seam-learning-keys, and a Cargo crate ships SOURCE. A token that reads `internal`
+  # reads the closed half of the product. `partner` is the repo a partner CAN be given a token to.
+  #
+  # This copies; it does not re-publish and it does not re-point anything. The npm and python jobs
+  # above still push to `internal` exactly as before, and `internal` remains the registry every
+  # internal consumer resolves. The artifact that lands in `partner` is the same bytes Cloudsmith
+  # already stored, because a second `twine upload`/`npm publish` of a rebuilt artifact would be a
+  # different file with the same version number — the one thing a partner-facing mirror must not be.
+  #
+  # GATED ON registry-smoke, not on npm+python. `registry-smoke` is the only job whose success shows
+  # the release actually LANDED — it installs the published artifact back out of Cloudsmith and runs
+  # the conformance vectors against it (that is why `release-outcome` below reads it and nothing
+  # weaker). Promoting on npm+python alone would forward a version that uploaded and never became
+  # installable, which is a failure this repo has already had.
+  #
+  # It deliberately does NOT feed `release-outcome`. A promotion failure does not mean the release
+  # failed — `internal` is published and correct — and adding it to that job's `needs` would file
+  # "Release vX.Y.Z did not publish" for a release that published fine.
+  promote-partner:
+    name: partner-facing packages → Cloudsmith partner
+    if: github.event_name == 'push'
+    needs: [npm, python, registry-smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: install cloudsmith-cli
+        # PINNED. The verb this job needs is `copy`, and the CLI also ships `promote` as an alias
+        # for `move` — an unpinned upgrade that reshuffled those names would turn a mirror into a
+        # migration, silently. The pin is what makes `scripts/promote-to-partner.sh`'s header
+        # ("verified against 1.11.1") a claim that stays true.
+        run: python -m pip install --quiet "cloudsmith-cli==1.11.1"
+      - name: promote the allowlisted packages
+        env:
+          # A SEPARATE credential: write on `partner`, read on `internal`, nothing else. Not the
+          # publishing key — that one can push to `internal`, and this job has no business being
+          # able to. Raw value, no "Bearer " prefix (that prefix belongs to the Cargo token and
+          # the script refuses it explicitly).
+          CLOUDSMITH_PARTNER_API_KEY: ${{ secrets.CLOUDSMITH_PARTNER_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDSMITH_PARTNER_API_KEY:-}" ]; then
+            echo "::error::CLOUDSMITH_PARTNER_API_KEY is not set — the release published to internal, but nothing was promoted to partner."
+            exit 1
+          fi
+          echo "::add-mask::$CLOUDSMITH_PARTNER_API_KEY"
+          # The tag is `vX.Y.Z`; Cloudsmith versions carry no `v`. The script refuses a leading `v`
+          # rather than querying for a version that cannot exist.
+          ./scripts/promote-to-partner.sh "${GITHUB_REF_NAME#v}"
+
   # ── A refused release told nobody ──────────────────────────────────────────────────────────────
   # Every job above this one is a gate, and all of them work. v0.7.69, v0.7.70 and v0.7.72 were each
   # refused correctly — and each refusal was discovered days later, by hand, because a failed

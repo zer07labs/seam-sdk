@@ -730,6 +730,12 @@ jobs:
       # cannot run the job. Same property `spec-pin` has, for the same reason.
       - name: the sibling-quote checker fires, and cannot pass by checking nothing
         run: python -m pytest scripts/test_sibling_quotes_gate.py -q
+
+      - name: the partner-promotion allowlist holds
+        # The boundary between "a partner can install the SDK" and "a partner has the private runtime
+        # crates". Runs the real script against a stubbed Cloudsmith whose `copy` duplicates on re-copy
+        # exactly as the live API does, so the destination check cannot be quietly removed.
+        run: python -m pytest scripts/test_promote_partner_gate.py -q
       # Also runs inside the `python` job. Duplicated on purpose: there it proves the guard passes,
       # here it proves the guard needs nothing but a checkout — which is the actual claim
       # seam-adapters relies on (seam-sdk#54).
