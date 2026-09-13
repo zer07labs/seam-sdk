@@ -3,7 +3,7 @@
 Checkpoint trail and repo map for the post-adoption hardening / ACDP P1a readiness workstream.
 `/implement` writes a block per phase; a resumed run reads this instead of re-scanning the repo.
 
-**Plan:** [`plans/post-adoption-hardening-and-acdp-readiness.md`](plans/post-adoption-hardening-and-acdp-readiness.md)
+**Plan:** [`plans/post-adoption-hardening-and-acdp-readiness.md`](plans/archive/post-adoption-hardening-and-acdp-readiness.md)
 — 10 phases. (Phase 9 was BLOCKED on `seam-runtime` ACDP P1a Phases 4 and 6 when this plan was written; both merged 2026-08-31 and it is now DONE.)
 
 **Execution order ≠ numbering:** 1 → 6 → 7 → 10 → 3 → 4 → 5 → 2 → 8. **Phase 6 runs immediately after
@@ -985,7 +985,7 @@ BSR-shaped surface. No workflow sets any `SEAM_*` override (verifier checked ind
 Checkpoint trail for the consumer-decoders / event-surface workstream. Appended rather than
 replacing the record above: the post-adoption and gate-blindness trails stay where they are.
 
-**Plan:** [`plans/consumer-decoders-and-event-surface.md`](plans/consumer-decoders-and-event-surface.md)
+**Plan:** [`plans/consumer-decoders-and-event-surface.md`](plans/archive/consumer-decoders-and-event-surface.md)
 — 5 phases across 3 issues:
 [#85](https://github.com/zer07labs/seam-sdk/issues/85),
 [#87](https://github.com/zer07labs/seam-sdk/issues/87),
@@ -2157,7 +2157,7 @@ between workstreams *without* either gutting its coverage or growing without bou
 question, and it is recorded as an open question in the plan rather than settled here under handoff
 pressure.
 
-**Plan:** [`plans/digest-correctness-and-gate-repair.md`](plans/digest-correctness-and-gate-repair.md)
+**Plan:** [`plans/digest-correctness-and-gate-repair.md`](plans/archive/digest-correctness-and-gate-repair.md)
 — 8 phases, one of which (Phase 8) is BLOCKED and deliberately not attempted this cycle.
 
 ## Baseline (measured 2026-09-03, before any phase)

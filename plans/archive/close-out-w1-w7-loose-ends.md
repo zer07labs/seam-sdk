@@ -23,7 +23,7 @@
 > Each phase's own `Status:` field below is authoritative — this banner summarises them,
 > never substitutes for them.
 > **Source:** the three limits stated honestly at the end of
-> [`plans/archive/sdk-exec-w1-w7.md`](archive/sdk-exec-w1-w7.md) and in PR #51's report, re-verified against this
+> [`plans/archive/sdk-exec-w1-w7.md`](sdk-exec-w1-w7.md) and in PR #51's report, re-verified against this
 > tree on 2026-08-24.
 > **seam-sdk only.** No cross-repo *writes* — Phase 4 files plans locally and comments on existing
 > issues, which the workspace convention treats as unrestricted. Nothing here needs a credential.

@@ -1,7 +1,46 @@
 # Post-adoption hardening and ACDP P1a readiness
 
+> **📦 ARCHIVED 2026-09-13 — DELIVERED, all 10 phases across PRs #79–#84, reconciled.** Archived
+> after a delivery verification **against this tree** (per `plans/README.md`'s archiving rule). It
+> had been DONE and sitting in the active index since 2026-08-31 — the longest-standing of the five
+> archived in this pass, and the one I initially miscounted out of the set.
+>
+> **The fail-open residue is closed, and closed the right way.** `python/seam_sdk/_collective.py`
+> exists and its module docstring states the exact hazard the phase was written for: on a response
+> that does not carry the `optional` `collective_outcome`, reading `resp.collective_outcome.verdict`
+> yields `COLLECTIVE_VERDICT_UNSPECIFIED` **with no signal** that nothing was there. Generated but
+> unreachable safely — now decoded fail-closed rather than left as a proto3 presence trap.
+>
+> **The publish-time gencode/floor skew is shut.** `publish.yml:318-328` carries the gate and names
+> its origin case by version: v0.7.43 shipped `protobuf>=7.35.1,<8` over 7.36.0 gencode, and
+> protobuf's runtime-version check rejects a runtime OLDER than the gencode that produced a file.
+> The comment also records that floor and gencode are currently EQUAL, i.e. zero headroom — which is
+> a live operational fact, not decoration, and is why `CLAUDE.md` warns that regenerating can outrun
+> the dependency floors.
+>
+> **The field-level contract manifest exists** — `contract/field-manifest.txt`, 246 entries today.
+> This is the phase's central claim: [#49](https://github.com/zer07labs/seam-sdk/issues/49) was a
+> verb-level failure, and this closes the same class one level down, so the next additive field
+> cannot regenerate in unwired.
+>
+> **Every issue this plan carries is CLOSED**, verified individually rather than from the table:
+> [#50](https://github.com/zer07labs/seam-sdk/issues/50),
+> [#52](https://github.com/zer07labs/seam-sdk/issues/52),
+> [#48](https://github.com/zer07labs/seam-sdk/issues/48),
+> [#73](https://github.com/zer07labs/seam-sdk/issues/73),
+> [#76](https://github.com/zer07labs/seam-sdk/issues/76).
+>
+> **Phase 9 (adopt ACDP P1a) is DONE** — the block cleared 2026-08-31 when the runtime merged the
+> proto (`7c1d16d`) and published the spec (`3b3d4ae`); the SDK re-pinned the vendored copy in #80
+> and adopted the five fields as declared-not-interpreted.
+>
+> Worth recording for the next reader: this plan was pressure-tested by two Opus review rounds
+> **before any code** (see its `## Plan review`), and the plan it spawned —
+> `archive/gate-blindness-hardening.md` — was an adversarial audit of the machinery *this* one left
+> behind. That pairing is the pattern, not an accident.
+
 **Issues:** [#50](https://github.com/zer07labs/seam-sdk/issues/50) (close), [#52](https://github.com/zer07labs/seam-sdk/issues/52), [#48](https://github.com/zer07labs/seam-sdk/issues/48), [#73](https://github.com/zer07labs/seam-sdk/issues/73), [#76](https://github.com/zer07labs/seam-sdk/issues/76)
-**Repo map / checkpoint trail:** [`PROGRESS.md`](../PROGRESS.md)
+**Repo map / checkpoint trail:** [`PROGRESS.md`](../../PROGRESS.md)
 **Phases:** 10 — nine READY (one of them a cross-repo filing), one BLOCKED on `seam-runtime`.
 **Execution order ≠ numbering:** run **Phase 6 first**, or immediately after Phase 1. It depends on nothing and is the only phase guarding a hazard that fires on every release; see its Sequencing note.
 

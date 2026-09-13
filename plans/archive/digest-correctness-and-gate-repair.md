@@ -1,5 +1,44 @@
 # Digest correctness, gate repair, and ACDP P3 readiness
 
+> **📦 ARCHIVED 2026-09-13 — DELIVERED, all 8 phases across 3 PRs.** Archived after a delivery
+> verification **against this tree** (per `plans/README.md`'s archiving rule). This plan's own index
+> row recorded that the last pass did **not** perform one beyond spot-checking the Phase 1 latch;
+> that gap is what this note closes.
+>
+> **Phase 1 — the release gate that cannot refuse.** `contract/wire-framing.json` reads
+> `"runtime_emits_version": true`. Both halves of the repair are present in the file's own rationale
+> block: an ABSENT framing version is now a regression, **and** a dispatch carrying a framing version
+> while the latch reads false is refused as proof the latch is stale — which is the staleness that
+> made the first week after adoption toothless. `"supported": 2`, unchanged, correctly: no framing
+> has moved since.
+>
+> **Phase 2 — digests that alias.** Both guards are in the shipped crypto, in both languages:
+> `python/seam_sdk/crypto.py:190` (`_MAX_SAFE_INT`, applied at `:272`) and `ts/src/crypto.ts:192`
+> (`MAX_SAFE`, applied at `:213`).
+>
+> **Phase 3 — divergences that needed a decision.** Recorded, with the failing inputs rather than a
+> summary: `COMPATIBILITY.md:466` (the `2^64+5` / `5` byte-identical alias, and `-1n` onto `2^64-1`),
+> `:470` (a lone surrogate in an object **key**, accepted by TS where Python raised), `:471` (the
+> value position, which was always guarded — which is exactly what made the key position easy to
+> miss).
+>
+> **Phase 5 — the verb surface nobody watches.** `assert_event_surface_preconditions` exists
+> (`scripts/check-contract.sh:533`) and is invoked in the real run (`:687`), alongside
+> `assert_known_nested_messages_only` (`:411`/`:685`) and `assert_no_nested_enums` (`:495`/`:686`).
+> Its service clause has since been exercised by work this plan did not anticipate — see
+> `CLAUDE.md`'s exit-7 paragraph.
+>
+> **Phases 6 and 8 — ACDP P3.** Adopted; the tags-11/12/13 strip semantics are implemented and
+> documented against the spec in `python/seam_sdk/crypto.py:465-466`, and `record_digest_v3` takes
+> the three digests as parameters at `:645`. Issue
+> [#96](https://github.com/zer07labs/seam-sdk/issues/96) is CLOSED.
+>
+> **Phase 7 — hygiene.** [#50](https://github.com/zer07labs/seam-sdk/issues/50),
+> [#52](https://github.com/zer07labs/seam-sdk/issues/52) verified CLOSED.
+>
+> One audit finding was **refuted** rather than actioned — see this plan's Context §3. That remains
+> the record; nothing in this verification disturbs it.
+
 ## Context
 
 `seam-sdk` is in good shape: 1016 python tests pass, `scripts/` 100, `verify/` clean, ts and go green,

@@ -1,5 +1,33 @@
 # Consumer decoders and the event surface
 
+> **📦 ARCHIVED 2026-09-13 — DELIVERED, all 5 phases across 3 PRs.** Issues
+> [#87](https://github.com/zer07labs/seam-sdk/issues/87),
+> [#88](https://github.com/zer07labs/seam-sdk/issues/88),
+> [#85](https://github.com/zer07labs/seam-sdk/issues/85) all verified CLOSED. Archived after a
+> delivery verification **against this tree** (per `plans/README.md`'s archiving rule).
+>
+> **The decoder half.** The presence-aware pair ships in both languages —
+> `policy_enforcement_of` at `python/seam_sdk/_policy.py:154`, `policyEnforcementOf` at
+> `ts/src/client.ts:410` — and the TS doc comment at `:279` still states the property the pair
+> exists for: the unsafe-to-guess case is expressed by returning `undefined`, so an absent
+> `policy_enforcement` cannot read as "no policy was enforced".
+>
+> **The contract half.** `contract/event-field-manifest.txt` is live and is compared per language in
+> both directions behind exit 8. It now carries **94** fields, not the 90 this plan shipped: the
+> growth arrived through #117, which is the manifest doing precisely its job — a field cannot
+> regenerate in unwired and unnamed. The four exit codes that make that surface legible (6, 8, 2, 7)
+> are pinned against the gate's real behaviour by `python/tests/test_event_field_manifest_gate.py`,
+> which passes today.
+>
+> **Phase 2's live-server helper** survives as `python/tests/live_server.py`, with
+> `test_live_server_helper.py` and `test_live_fixtures_are_isolated.py` guarding it.
+>
+> **One claim in this file was already corrected in place and is left as written**, because an
+> archived plan is a historical record: while in progress its index row said "shipped (#92)", and
+> there is no PR #92 — the live-server work is #90, verified against `git log origin/main`. That is
+> exactly the kind of claim `plans/README.md` says to check against code rather than a status table,
+> and it is recorded here because the correction is more useful than the erasure.
+
 Three independent issues: a flaky required-lane gate that blocks releases (#85), a fail-open decode
 gap a downstream repo is working around today (#87 ask 2), and a contract surface with no manifest
 (#88). They share no files and no mechanism. They are planned together because they are the whole of
