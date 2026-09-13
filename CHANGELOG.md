@@ -56,6 +56,47 @@ than trusting a summary here.
 
 ### Added
 
+- **`verify/` now discloses unverified CONTENT — a link whose `kind` it cannot model** (seam-sdk
+  #130). `seam-event.v1` §Versioning, refreshed in the same commit as #484, makes this a MUST for
+  any verifier claiming recompute coverage: an unmodelled `kind` carrying `digest`/`checksum` is
+  still a link and MUST be verified and folded into the running head — but its digest cannot be
+  recomputed from a payload the consumer cannot parse, so such events MUST be disclosed as
+  unverified content and MUST NOT be folded into a green claim.
+
+  The linkage half already held by construction (chained-ness keys on field presence, never on
+  `kind`). The content half was not expressible: the report printed `links checked` and `records
+  recomputed` and nothing between them. **The natural reading of that gap is wrong** — `links`
+  minus `records recomputed` is already non-zero on a perfectly healthy stream, because
+  `AUDIT_ENTRY` / `ERASURE_CERTIFICATE` / `CHAIN_HEAD_ATTESTATION` are chained kinds that
+  legitimately never recompute and v1 `DECISION_SEALED` records are link-only by schema. A reader
+  doing the subtraction could not tell a kind the verifier models and chooses not to recompute from
+  a kind it could not parse at all, which is the precise distinction the clause asks to be
+  disclosed.
+
+  `chain` now reports it directly, in both modes and **including the zero** — a coverage line that
+  vanishes when empty cannot be told apart from a build that never measured it:
+
+  ```
+    unverified content: 2 link(s) of unmodelled kind: GRAPH_COMMIT, RETENTION_HOLD (first seq 2)
+  ```
+
+  Under `--json`, two additive keys: `unverified_content` (a count) and `unmodelled_kinds` (the
+  distinct names, sorted and deduped). No existing key changed.
+
+  **`--strict` is deliberately NOT overloaded.** The spec permits refusing such a stream (a MAY)
+  and requires disclosing it (a MUST). Overloading `--strict` — whose documented meaning is the
+  narrower "non-advisory events carrying no chain fields at all" — would turn an additive,
+  spec-blessed upstream change into a hard refusal inside someone's audit pipeline the day the
+  runtime adds a kind. The number is disclosed on stdout and in the JSON, so a caller who wants
+  that refusal can have it; reversing this is a one-line change if a consumer asks for it.
+
+  `wire::MODELLED_KINDS` is pinned to the vendored spec's full `enum EventKind` by a new tripwire,
+  the twin of the existing ADVISORY one. This matters because the counter is fail-safe against
+  *omission* — a kind nobody added is correctly disclosed — so nothing would otherwise go red when
+  the spec grows one, and the first person to notice would be an auditor reading a coverage number
+  rather than a maintainer reading a red build. The trigger is the vendored-copy refresh, and the
+  remedy is a DECISION (model the payload, or record why not), never a one-line append.
+
 - **`SeamRpcError.trailing_metadata()` — status details reach the typed error (Python).** Server
   trailing metadata is now lifted onto every typed `SeamRpcError` as a tuple of `(key, value)` pairs.
   This is where `grpc-status-details-bin` travels, and with it any `google.rpc.Status` detail —
