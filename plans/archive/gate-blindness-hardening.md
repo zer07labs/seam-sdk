@@ -1,5 +1,54 @@
 # Gate-blindness hardening
 
+> **📦 ARCHIVED 2026-09-13 — DELIVERED, 8 phases.** Archived after a delivery verification **against
+> this tree** (per `plans/README.md`'s archiving rule). This is the plan this repo's whole vacuity
+> discipline comes from — *a gate whose result is decided by something other than the property it
+> names* — and it is cited by nearly every guard test added since, including ones written after it
+> was delivered (the `unverified content` disclosure closed for #130 on this same day carries a
+> six-mutation battery because of this file).
+>
+> **Phase 1 — enum values enter the field manifest.** `contract/field-manifest.txt` carries the
+> `<Enum>#<VALUE>` spelling and the rationale for choosing `#` (it cannot occur in a proto message,
+> field, enum or value name) at `:339`. The manifest is 246 entries today.
+>
+> **Phase 2 — the grpcio half of the #52 defect class.** `python/tests/test_grpcio_floor.py` and
+> `test_protobuf_floor.py` both present and green.
+>
+> **Phase 3 — invert the verifier-independence allowlist.** `scripts/check-independence.sh` plus
+> `scripts/test_independence_gate.py`, driven in CI with synthetic `cargo tree` text
+> (`ci.yml:711-712`) precisely so the gate is proved capable of catching a Seam crate, while the real
+> `cargo tree -e normal` runs in the `verify` job against the real tree. Two different questions, two
+> different lanes — which is the whole point of the phase.
+>
+> **Phase 4 — nested-message tripwire.** `assert_known_nested_messages_only`
+> (`scripts/check-contract.sh:411`) and `assert_no_nested_enums` (`:495`), both invoked at `:685-686`.
+>
+> **Phase 5 — THE ONLY FINDING THIS SWEEP TURNED UP. The artifact is gone; the mechanism survives, and it
+> fails safe.** This phase built `contract/expected-local-lag.txt` to make an expected local/BSR gap
+> distinguishable from real drift. **That file no longer exists** — it was deleted when the
+> seven-field `ContextBinding` lag closed and `make generate` started pulling the BSR module clean on
+> this workstation. What remains is the *machinery*: `EXPECTED_LOCAL_LAG` (`check-contract.sh:120`),
+> `expected_local_lag_fields` (`:336`), and the downgrade arm (`:1067`). Verified dormant in the
+> correct direction — the arm is guarded by `[ -f "$EXPECTED_LOCAL_LAG" ]` and by an exact-match test
+> on both languages' missing sets, so with the file absent `lag_match` stays 0, no downgrade happens,
+> and a refusal stands as a refusal. **Absent file ⇒ no downgrade is the fail-safe default**, and a
+> re-armable facility is the right residue for a phase whose subject was a *temporary* expected gap.
+> Nothing to do; recorded so the next reader does not mistake live-but-dormant code for dead code, or
+> re-file the deletion as a regression.
+>
+> (This is also why the 2026-09-13 pass corrected `plans/aitp-timestamp-encoding.md`, whose Phase 8
+> acceptance still demanded the exit **6** that this file's mechanism used to downgrade — a criterion
+> that could no longer be met by any change.)
+>
+> **Phases 6 and 7 — the record stops misdirecting the next run.**
+> `python/tests/test_compatibility_citations_resolve.py` and `test_retracted_claims.py` are both
+> present and both bite: the citation guard went red four times during this same day's work on #130
+> and #132 and had to be re-anchored by re-deriving from the tree, which is the guard doing exactly
+> what this phase built it to do.
+>
+> **Phase 8 — hygiene.** [#77](https://github.com/zer07labs/seam-sdk/issues/77) and
+> [#78](https://github.com/zer07labs/seam-sdk/issues/78) verified CLOSED.
+
 ## Context
 
 `plans/post-adoption-hardening-and-acdp-readiness.md` shipped ten phases whose subject was guards

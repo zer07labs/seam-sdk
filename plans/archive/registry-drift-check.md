@@ -1,5 +1,34 @@
 # Registry drift check — a scheduled comparison of what Cloudsmith serves against what `main` says
 
+> **📦 ARCHIVED 2026-09-13 — DELIVERED, eight of nine phases; Phase 8 dropped on purpose.** Issue
+> [#100](https://github.com/zer07labs/seam-sdk/issues/100)'s second half, closed. Archived after a
+> delivery verification **against this tree, not against the status table** (per `plans/README.md`'s
+> archiving rule) — this row had sat in the active table since 2026-09-07.
+>
+> **Verified present and load-bearing:** `scripts/check_registry_drift.py` and
+> `.github/workflows/registry-drift.yml`, scheduled `17 */2 * * *` (`registry-drift.yml:72`) — every
+> two hours, inside the `HARD - SOFT` = 270-minute bound the plan derives. The canary roster is a
+> four-entry tuple that drops any entry equal to the target (`check_registry_drift.py:185`, filtered
+> at `:638`), which is the shape Phase 4 arrived at after the single-pinned-version draft returned an
+> empty canary on exactly the condition the instrument exists to catch. Suppression is
+> `SUPPRESSION_LABEL = "deliberately-unpublished"` (`:226`). The staleness heartbeat is live
+> (`HEARTBEAT_QUERY`, `:283`; `actions: read` granted at `registry-drift.yml:83`) and asks
+> `status=completed`, not `status=success` — a watcher that only counts its own green runs cannot see
+> itself failing.
+>
+> **The "never closes an issue" property still holds, checked rather than assumed:** the script
+> contains no issue-close call of any form. A reporter that can retract its own reports is a larger
+> problem than a duplicate issue.
+>
+> **Documentation closure (Phase 9) verified in place:** `CLAUDE.md:15-16` carries the exit-code
+> vocabulary (2 is infrastructure and never a verdict) and `README.md:196` carries the `--report`
+> gating.
+>
+> **Phase 8 was DROPPED as scope creep, and that stays dropped** — tag-vs-tag Go module atomicity,
+> zero occurrences across 67 `v*` tags; the real fix is `--atomic`, filed separately. Worth noting
+> that the separate fix has since been exercised for real: the v0.14.2 re-tag on 2026-09-13 pushed
+> `v0.14.2` and `go/v0.14.2` with `git push --atomic`.
+
 Issue [#100](https://github.com/zer07labs/seam-sdk/issues/100), second half. The first half shipped as
 PR #101 (`release-outcome`, `.github/workflows/publish.yml:766-832`) and is **not touched by this plan
 except for one comment**.
