@@ -18,6 +18,30 @@ than trusting a summary here.
 
 ### Changed
 
+- **`AUTHORIZE_EVALUATED` outbox rows now carry keyed commitments, not bare hashes** (seam-runtime
+  #484). On the durable event row, `tool_input_digest` and `subject_digest` become
+  `hmac-sha256:<kid>:<hex>` over `put(domain) ‖ put(tenant) ‖ put(value)`. A bare `sha256(subject)`
+  was a set-membership oracle — an end-user identifier has a small, enumerable preimage space, so
+  anyone holding a row could confirm a guess at the identifier by brute force. Keying removes that,
+  wherever the deployment's issuer seed is secret (i.e. not under `SEAM_DEV_INSECURE`, where the
+  derived key is public and these fields conceal nothing).
+
+  **No SDK client surface changes shape, and the request side is untouched.**
+  `AuthorizeRequest.tool_input_digest` is still `sha256:<hex>` over the RFC 8785 (JCS) canonical
+  input and is still exactly what `call_sig` covers. The two constructions are deliberately
+  different and must not be compared to each other.
+
+  **What a stream consumer must change.** Legacy rows are never backfilled, so a pre-cutover
+  `subject_digest` will never equal a commitment written after it: a query spanning the deploy
+  returns nothing rather than erroring. Partition at the cutover and join on `authorize_id`. The
+  same applies to an SDK handle-log join — the handle log records the *request-side* digest, which
+  this change does not touch, so it no longer equals the value on the corresponding outbox row.
+  Pre-cutover rows also stay brute-forceable permanently; an outbox row is append-only.
+
+  `verify/` is unaffected in behaviour: it reads both fields as opaque strings for the dedup
+  identity and never parses their prefix. `verify/docs/seam-event.v1.md` and
+  `verify/proto/seam/event/v1/seam_event.proto` are refreshed to say so.
+
 - **`seam-sdk` is co-installable with CrewAI again — no change on our side was needed.** `crewai`
   1.15.21 (2026-09-09) widened `opentelemetry-exporter-otlp-proto-http` from `~=1.42.0` to
   `<2,>=1.42`, so it now takes OpenTelemetry's `protobuf<7` lift and shares a virtualenv with this

@@ -1,4 +1,20 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ cfffb90 (refreshed 2026-09-07 for
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ f50401c (refreshed 2026-09-13 for
+     seam-runtime#484 — on the durable `AUTHORIZE_EVALUATED` row, BOTH digest-bearing fields become KEYED
+     COMMITMENTS (`hmac-sha256:<kid>:<hex>` over `put(domain) ‖ put(tenant) ‖ put(value)`) rather than bare
+     hashes. The reason is that an end-user identifier has a small, enumerable preimage space, so
+     `sha256(subject)` was a set-membership oracle to anyone holding the row: a guess could be confirmed by
+     brute force, without breaking anything. Keying removes that oracle wherever the deployment's issuer
+     seed is secret — which is every production deployment, and NOT a `SEAM_DEV_INSECURE` one, where the
+     derived key is public too and these fields conceal nothing.
+     THE REQUEST SIDE IS UNTOUCHED, and the two constructions must not be compared:
+     `AuthorizeRequest.tool_input_digest` in `seam.api.v1` is still `sha256:<hex>` over the RFC 8785 (JCS)
+     canonical input, and is still exactly what `call_sig` covers. No client surface in this repo changes
+     shape — this is an emit-side change to the event stream. What a consumer must know is that legacy rows
+     are never backfilled and no longer join to new ones: an improvised join on the digest returns empty
+     rather than erroring, and the documented join is on `authorize_id`.
+     The same upstream commit also added a normative §Versioning clause on UNMODELLED event kinds, which is
+     a different kind of change — see the foot of this header, where its obligation is discharged.
+     The previous pin was @ cfffb90 (2026-09-07, for
      `POLICY_DENIED` (envelope tag 24, seam-runtime#468/#607) — the advisory trace a commitment a bound policy
      REFUSED now leaves. Like `AUTHORIZE_EVALUATED` it seals nothing, so it is the only record the refusal
      happened; it is ADVISORY and MUST NOT be linked into the audit chain. The previous pin was @ ac325d7
@@ -37,7 +53,26 @@
      AUTHORIZE_EVALUATED regression exactly, and this time it would fire per refused commitment rather than
      once. So the same commit that re-pinned this file also added the kind to `ADVISORY_KINDS` and decoded
      tag 24 into the canonical identity, which is what step 4 of the gate's own remedy asks for: when the
-     diff changes normative behaviour, the verifier and its tests need the same change, not just this file. -->
+     diff changes normative behaviour, the verifier and its tests need the same change, not just this file.
+     THIS refresh discharges that same step-4 obligation in the OTHER direction — by establishing that
+     nothing needs to change, and citing where. Two normative movements arrived together in f50401c, and
+     they land differently:
+       * #484's keyed commitments are EMIT-SIDE ONLY. src/wire.rs carries `tool_input_digest` (tag 6) and
+         `subject_digest` (tag 10) as opaque strings that feed the dedup identity and nothing else — it
+         never parses their prefix, never recomputes them, and never compares one against a request-side
+         digest. A value-shape change in a field it does not read cannot reach it. What DID need saying is
+         said at the top of this header, because the un-joinability across the cutover is a fact about this
+         stream that a reader of this copy has to know before writing a query.
+       * The §Versioning clause on an unmodelled `kind` IS normative for a verifier, and this one already
+         conforms BY CONSTRUCTION rather than by luck. The clause requires that an unmodelled kind carrying
+         `digest`/`checksum` still be verified and still advance `running_head`: `chain_anchored`
+         (src/verify.rs) keys chained-ness on FIELD PRESENCE and never on `kind` — its doc comment says so
+         in those words — and the skip arm fires only when an event carries no digest/checksum at all, so
+         an unmodelled kind that is a link is treated as one. For content coverage the clause requires that
+         such an event not be folded into a green claim: its payload yields no `decision`, so the
+         `--issuer` recompute loop skips it and it can never reach `records_recomputed`, which is reported
+         separately from `links checked` on every run. Neither property was written for this clause; both
+         are already load-bearing for `LEARNING_DECISION` and for the off-chain `chain_anchor`. -->
 
 # `seam-event.v1` — event-stream wire spec (language-neutral)
 
@@ -347,11 +382,11 @@ message AuthorizeEvaluated {           // envelope tag 23
   string agent_aid = 3;                // the VERIFIED caller AID (derived, never asserted)
   string agent_id = 4;                 // the registry identity the scope floor was evaluated against
   string tool_name = 5;
-  string tool_input_digest = 6;        // "sha256:<hex>" over the RFC 8785 (JCS) canonical input
+  string tool_input_digest = 6;        // "hmac-sha256:<kid>:<hex>" — a KEYED commitment
   string verdict = 7;                  // "ALLOW" | "DENY" | "TRANSFORM" | "ESCALATE"
   string reason = 8;                   // closed-set / operator-authored only (D-030)
   string policy_version = 9;
-  optional string subject_digest = 10; // sha256(subject) hex — NEVER the raw subject
+  optional string subject_digest = 10; // "hmac-sha256:<kid>:<hex>" — NEVER the raw subject
 }
 ```
 
@@ -359,9 +394,56 @@ Envelope: `event_id = "{authorize_id}#az#{seq}"`; `classification` is **fixed `I
 and a closed-set reason — no subject, secret, or agent content can reach it, so classification-gated
 redaction never fires: gate on `when_kind`).
 
-**PII rule.** The end-user data subject rides ONLY as `subject_digest = sha256(subject)`. GDPR erasure
-walks *decision records*; an outbox row is un-shredable, so a raw end-user id here would be an
-un-erasable copy of it. The digest stays correlation-preserving — an erasure operator recomputes it.
+**PII rule.** The end-user data subject rides ONLY as `subject_digest`, and the request input ONLY as
+`tool_input_digest`. Both are **keyed commitments**, not bare hashes:
+
+```
+hmac-sha256:<kid>:<hex>     hex = HMAC-SHA256(k_deploy, put(domain) ‖ put(tenant) ‖ put(value))
+```
+
+GDPR erasure walks *decision records*; an outbox row is un-shredable, so a raw end-user id here would
+be an un-erasable copy of it. A **bare** hash was never sufficient for that. An end-user identifier
+has a small, enumerable preimage space, so `sha256(subject)` is a set-membership oracle: anyone
+holding the row can confirm a guess at the identifier by brute force or a rainbow table, without
+breaking anything. Keying the construction removes that oracle — **wherever the deployment's issuer
+seed is secret**, which is every production deployment. Where the seed is public (a
+`SEAM_DEV_INSECURE` runtime) the key derived from it is public too, and these fields conceal nothing.
+
+`k_deploy` is per-deployment: derived from the issuer seed under its own domain label, or supplied
+explicitly. `<kid>` is a 4-byte key-id derived from the key material itself, so a row always names
+the key it was written under and a rotation is legible rather than silent.
+
+**The request side is unchanged.** `seam.api.v1`'s request `tool_input_digest` is still
+`sha256:<hex>` over the RFC 8785 (JCS) canonical input, and is still what `call_sig` covers. Only the
+value this runtime *emits* is a commitment. The two are deliberately different constructions and must
+not be compared to each other.
+
+**What this preserves, and what it costs.**
+
+- **Correlation is preserved within one key.** Two rows sharing a `<kid>` and a commitment are the
+  same underlying value, so joins, dedup and counting work exactly as before. Correlation across a
+  key rotation is not preserved — that is what rotating is for.
+- **Recompute is no longer unilateral.** Confirming that a given subject produced a given row now
+  requires `k_deploy`. An operator holding the key can still do it; someone holding only the rows
+  cannot. That is precisely the exposure this closes and the convenience it costs.
+- **An in-band operator recompute facility is specified and is _not built_.** No management verb
+  recomputes a commitment for an erasure operator. What an operator can do **today** is nothing
+  in-band; the capability is described so it is not mistaken for shipped.
+
+**Legacy rows — read this before writing any query that spans the cutover.**
+
+- Rows written before the cutover carry the **old bare-hash** values and are **not backfilled**.
+  They remain brute-forceable permanently: an outbox row is append-only and un-shredable, so there
+  is nothing to rewrite them to. Treat any pre-cutover `subject_digest` as a disclosed identifier
+  under a dictionary or rainbow-table attack.
+- **Legacy rows no longer join to new rows.** For the same subject, a `subject_digest` written
+  before the cutover will never equal a commitment written after it. A query spanning the deploy
+  returns nothing rather than erroring — it fails silently. Partition at the cutover, and join on
+  `authorize_id`.
+- **The SDK handle-log join.** An SDK's local handle log records the *request-side*
+  `tool_input_digest`, which this change does not touch, so it no longer equals the value on the
+  corresponding outbox row. The documented join is on `authorize_id` and stays correct; an
+  improvised join on the digest breaks silently and returns empty.
 
 **Emission contract.** Emission is per-namespace config (`authorize.emit_events`, default on) with an
 `authorize.event_sample_rate` knob — **except for `ESCALATE`**, which always emits (sampling-exempt) and
@@ -1141,3 +1223,21 @@ The JSON projection is a field-for-field mapping of `SeamEvent` with `bytes` fie
 
 `schema_version` is `"seam-event.v1"`. Consumers MUST be **tolerant readers** (ignore unknown fields).
 A breaking change bumps to `seam-event.v2`; the runtime may emit both during a migration window.
+
+Consumers MUST likewise tolerate an unknown event **`kind`**: it MUST NOT stall or fail delivery of
+the stream. A delivery consumer skips it; a fail-loud consumer MAY instead divert it to a dead-letter
+path and keep consuming — `seam-learning`'s decoder does exactly that, deliberately, and its enum is
+kept closed on purpose. Adding a `kind` is an additive change within `seam-event.v1`, on the same
+footing as adding a field.
+
+**Tolerance never extends to *attesting* the stream — but chain verification does not key on `kind`
+at all** (§Ordering & integrity: *"Chained-ness is by field presence, not by `kind`"*). An unmodelled
+`kind` carrying `digest`/`checksum` **is a link**: a verifier MUST verify it and advance
+`running_head` exactly as for a kind it models, because the link check needs no payload semantics —
+`digest` is on the wire. Skipping it instead falsely reports the chain **broken at the next link**.
+
+What an unmodelled `kind` costs is *content* coverage, not linkage: its `digest` cannot be recomputed
+from a payload the consumer cannot parse, so a verifier claiming recompute coverage MUST disclose
+such events as unverified content — the same disclose-or-refuse rule the pre-cutover note carries —
+and MUST NOT fold them into a green claim. A `--strict` verifier MAY refuse the stream outright; that
+is a refusal to attest, not a delivery failure, and the tolerant-reader rule does not forbid it.

@@ -143,19 +143,31 @@ message SeamEvent {
 // AUTHORIZE_EVALUATED payload (envelope tag 23) — ADVISORY, unchained. The audit row for one advisory
 // authorization; `authorize_id` (a ULID) is its handle, never a `decision_id` (nothing was sealed).
 //
-// PII rule: the end-user data subject rides ONLY as `subject_digest = sha256(subject)`, never raw — an
-// outbox row is un-shredable, so a raw end-user id here would be an un-erasable copy of it.
+// PII rule: the end-user data subject rides ONLY as `subject_digest`, never raw — an outbox row is
+// un-shredable, so a raw end-user id here would be an un-erasable copy of it. Since seam-runtime#484 both
+// digest fields are KEYED COMMITMENTS, `hmac-sha256:<kid>:<hex>` over `put(domain) ‖ put(tenant) ‖
+// put(value)`, not bare hashes: an end-user id has a small enumerable preimage space, so a bare
+// `sha256(subject)` let anyone holding the row confirm a guess at the identifier. They stay
+// correlation-preserving WITHIN one `<kid>` — joins and dedup are unchanged — but recompute now needs the
+// per-deployment key, so an operator holding it can still correlate and a row-holder cannot. Rows written
+// before the cutover keep the old bare hashes, are never backfilled, remain brute-forceable, and DO NOT
+// join to rows written after it. Where the issuer seed is public (`SEAM_DEV_INSECURE`) so is the derived
+// key, and these fields conceal nothing. The normative prose is `docs/seam-event.v1.md` §AUTHORIZE_EVALUATED.
+//
+// This verifier reads both fields as OPAQUE strings (they feed the dedup identity and nothing else) and
+// never parses the prefix, so the change is documentation truth here rather than behaviour.
 message AuthorizeEvaluated {
   string authorize_id = 1;                // ULID — the handle returned to the caller
   optional string client_request_id = 2;  // the caller's idempotent audit-join key, when supplied
   string agent_aid = 3;                   // the VERIFIED caller AID (derived, never asserted)
   string agent_id = 4;                    // the registry identity the scope floor was evaluated against
   string tool_name = 5;
-  string tool_input_digest = 6;           // "sha256:<hex>" over the RFC 8785 (JCS) canonical input
+  string tool_input_digest = 6;           // "hmac-sha256:<kid>:<hex>" — a KEYED commitment, NOT the
+                                          // request-side digest and never equal to it
   string verdict = 7;                     // "ALLOW" | "DENY" | "TRANSFORM" | "ESCALATE"
   string reason = 8;                      // closed-set / operator-authored only (D-030)
   string policy_version = 9;
-  optional string subject_digest = 10;    // sha256(subject) hex — NEVER the raw subject
+  optional string subject_digest = 10;    // "hmac-sha256:<kid>:<hex>" — NEVER the raw subject
 }
 
 // SESSION_LIFECYCLE payload (envelope tag 21) — ADVISORY, unchained (CP-09). Operational metadata only:
