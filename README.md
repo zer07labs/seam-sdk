@@ -279,7 +279,17 @@ error to tolerate.
 
 *Credentials.* A **separate** org-level secret `CLOUDSMITH_PARTNER_API_KEY` (visibility: all repos),
 backed by the Cloudsmith service account **`ci-partner-promote`** — `partner` Write, `internal` Read,
-nothing else. Deliberately **not** the publishing key: that one can push to `internal`, and promotion has
+nothing else. The same value is mirrored to **Doppler `shared-ci/prd`**, which is where you read it back
+from: a GitHub secret is write-only, and the backfill above is meant to be runnable by hand, so a value
+that exists *only* in GitHub cannot be used locally. `CLOUDSMITH_API_KEY` is stored the same way, for the
+same reason.
+
+> **Rotating it means updating BOTH stores.** Cloudsmith's API returns a service key **masked**
+> (`****xxxx`) after creation — the real value is shown once, at creation or at
+> `POST /orgs/zer07labs/services/ci-partner-promote/refresh/`, and that endpoint **rotates the key as a
+> side effect of being called**. So a rotation is: call `refresh`, capture the response body, write it to
+> the GitHub org secret *and* to Doppler. Skip either and promotion starts failing with a 401 that reads
+> like a permissions problem. Deliberately **not** the publishing key: that one can push to `internal`, and promotion has
 no business being able to. Raw value, **no `Bearer ` prefix** (that prefix belongs to the Cargo token; the
 script refuses a prefixed key rather than letting it surface as a confusing 401).
 

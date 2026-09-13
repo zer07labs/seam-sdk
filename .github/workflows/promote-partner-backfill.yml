@@ -18,7 +18,9 @@ name: promote to partner (backfill)
 #
 # Requires the org secret CLOUDSMITH_PARTNER_API_KEY — the `ci-partner-promote` service account, write
 # on `partner`, read on `internal`. Same credential as the release-time job; see
-# scripts/promote-to-partner.sh.
+# scripts/promote-to-partner.sh. To run the same backfill by hand, read the value out of Doppler
+# (`doppler secrets get CLOUDSMITH_PARTNER_API_KEY --project shared-ci --config prd --plain`) — the
+# GitHub secret cannot be read back.
 
 on:
   workflow_dispatch:
