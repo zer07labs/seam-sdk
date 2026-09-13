@@ -1,0 +1,83 @@
+name: promote to partner (backfill)
+
+# Promote ALREADY-PUBLISHED versions from Cloudsmith `zer07labs/internal` into
+# `zer07labs/partner`, by hand.
+#
+# `publish.yml`'s `promote-partner` job covers every release from here on, but it only fires on a
+# tag push, so every version published before it existed is absent from `partner`. This is how they
+# get there — and how a promotion that failed for an operational reason (an expired key, a
+# Cloudsmith outage) is retried without re-cutting a release.
+#
+# ── WHY THIS IS A SEPARATE FILE AND NOT A `workflow_dispatch` INPUT ON publish.yml ──────────────
+# publish.yml already has a `workflow_dispatch` trigger, and its `publish-verify` job is gated on
+# `if: github.event_name == 'workflow_dispatch'` with no further condition. Adding a backfill input
+# there would mean every backfill ALSO published the seam-verify crate to Cloudsmith — a release of
+# an unrelated package, triggered by a routine mirror operation. Tightening publish-verify's
+# condition to dodge that would be editing a release gate to make room for a chore. A separate
+# workflow has neither problem.
+#
+# Requires the org secret CLOUDSMITH_PARTNER_API_KEY — the `ci-partner-promote` service account, write
+# on `partner`, read on `internal`. Same credential as the release-time job; see
+# scripts/promote-to-partner.sh. To run the same backfill by hand, read the value out of Doppler
+# (`doppler secrets get CLOUDSMITH_PARTNER_API_KEY --project shared-ci --config prd --plain`) — the
+# GitHub secret cannot be read back.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Exactly this version (e.g. 0.14.3). Leave blank to use `since`."
+        required: false
+        type: string
+      since:
+        description: "This version and every later one that internal holds (e.g. 0.7.47)."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    name: promote published versions → partner
+    runs-on: ubuntu-latest
+    # Generous on purpose: a copy waits for Cloudsmith to synchronise the package, which runs tens
+    # of seconds per artifact, and a `since` backfill is dozens of artifacts. If it does time out,
+    # re-run it — the script checks the destination before every copy, so a resumed run repeats
+    # nothing and the partial progress is kept.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: install cloudsmith-cli
+        # Same pin as publish.yml's promote-partner job. `copy` and `move`/`promote` are different
+        # operations in this CLI and only one of them is a mirror; pinning is what keeps that true.
+        run: python -m pip install --quiet "cloudsmith-cli==1.11.1"
+      - name: promote
+        env:
+          CLOUDSMITH_PARTNER_API_KEY: ${{ secrets.CLOUDSMITH_PARTNER_API_KEY }}
+          VERSION: ${{ inputs.version }}
+          SINCE: ${{ inputs.since }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDSMITH_PARTNER_API_KEY:-}" ]; then
+            echo "::error::CLOUDSMITH_PARTNER_API_KEY is not set."
+            exit 1
+          fi
+          echo "::add-mask::$CLOUDSMITH_PARTNER_API_KEY"
+          # Exactly one of the two, so a dispatch that fills in both does not silently get whichever
+          # branch happens to be tested first.
+          if [ -n "$VERSION" ] && [ -n "$SINCE" ]; then
+            echo "::error::give EITHER version OR since, not both — they mean different things and this run would silently honour only one."
+            exit 1
+          fi
+          if [ -n "$VERSION" ]; then
+            ./scripts/promote-to-partner.sh "${VERSION#v}"
+          elif [ -n "$SINCE" ]; then
+            ./scripts/promote-to-partner.sh --since "${SINCE#v}"
+          else
+            echo "::error::give one of 'version' or 'since'. Refusing to guess."
+            exit 1
+          fi

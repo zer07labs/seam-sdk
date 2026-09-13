@@ -12,6 +12,11 @@ deliberately links nothing of Seam's.
   this gate's vocabulary (the `STREAM=1` mirror-field refusal), so every distinct outcome arrives
   wearing one that means something else. The `make` target still exists and is fine for CI, where
   only pass/fail is read.
+- Promote to the partner registry (needs `CLOUDSMITH_PARTNER_API_KEY`; `cloudsmith-cli` on PATH):
+  `./scripts/promote-to-partner.sh 0.14.3` · backfill `./scripts/promote-to-partner.sh --since 0.7.47`
+  — the CLI verb is **`copy`**; `cloudsmith promote` is an alias for **`move`** and would delete the
+  version out of `internal`. Re-running is safe, but only because the script checks the destination
+  first: `copy` exits 0 on an already-present package and silently creates a duplicate.
 - Registry drift (read-only by default; needs `SEAM_REGISTRY_TOKEN`, and `REPO` + `GH_TOKEN` only
   for `--report`): `python3 scripts/check_registry_drift.py` — **exit 2 is infrastructure, never a
   verdict**; 1 is drift, 0 is clean-or-still-in-grace.
