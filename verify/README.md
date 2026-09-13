@@ -54,6 +54,7 @@ CHAIN VERIFIED
   events            : 767
   links checked     : 767
   advisory (skipped): 0
+  unverified content: 0 (every link's kind is modelled by this build)
   head              : 9f2c…
 ```
 
@@ -68,6 +69,30 @@ digest and do not
 advance the head. A verifier that keys on `kind` instead breaks on the first advisory event in an
 unfiltered stream.
 
+**A `kind` this build has never seen is still verified — and still disclosed.** `seam-event.v1` grows
+kinds additively, so a stream can legitimately outrun the verifier reading it. Such an event is a link
+like any other (the link check needs no payload semantics; skipping it would falsely report the chain
+broken at the *next* link) — but its digest cannot be recomputed from a payload this build cannot parse.
+That costs **content** coverage, not linkage, and the `unverified content` line above says so on every
+run, zero included, naming the kinds:
+
+```
+  unverified content: 2 link(s) of unmodelled kind: GRAPH_COMMIT, RETENTION_HOLD (first seq 2)
+                      LINKAGE verified — folded into the head above, exactly as for a kind
+                      this build models. CONTENT not verified: no payload model, so the
+                      digest was never recomputed, and these are in NO recompute count.
+```
+
+Do not try to infer this from `links` minus `records recomputed`: that difference is already non-zero on
+a healthy stream, because `AUDIT_ENTRY` / `ERASURE_CERTIFICATE` / `CHAIN_HEAD_ATTESTATION` are chained
+kinds that never recompute and v1 `DECISION_SEALED` records are link-only. Under `--json` the same
+disclosure is `"unverified_content"` (a count) and `"unmodelled_kinds"` (the distinct names).
+
+`--strict` does **not** refuse on this. It refuses on a different thing — non-advisory events carrying
+no chain fields at all — and a stream that merely outran your verifier is not the same failure as
+history nobody can check. The spec permits refusing (a MAY) and requires disclosing (a MUST); this tool
+discloses, and leaves refusing to the caller, who has the number.
+
 #### AUTHENTICITY — `chain <FILE> --issuer <AID>`
 
 Integrity proves the chain is *internally consistent*. It does not prove Seam *wrote* it: an unkeyed
@@ -79,6 +104,7 @@ band (Seam serves it at `GET /v1/trust/issuer-aid`):
 CHAIN AUTHENTICATED (integrity + issuer-signed head)
   events            : 767
   links checked     : 767
+  unverified content: 0 (every link's kind is modelled by this build)
   attestations      : 3 (issuer-signed)
   covered prefix    : 750 links
   records recomputed: 764 (v2/v3 record-digest recompute)
@@ -147,6 +173,7 @@ seam-verify chain window.jsonl --issuer <AID> --from-anchor anchor.json
 WINDOW AUTHENTICATED (issuer-anchored start)
   events            : 42
   links checked     : 42
+  unverified content: 0 (every link's kind is modelled by this build)
   attestations      : 2 (issuer-signed)
   covered prefix    : 793 links
   records recomputed: 41 (v2/v3 record-digest recompute)

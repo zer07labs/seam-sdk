@@ -58,6 +58,29 @@ fn chain(n: u64) -> Vec<String> {
     out
 }
 
+/// A genuine chain whose links are caller-chosen `(kind, payload-suffix)` pairs. The general form of
+/// [`chain`], which is the all-`DECISION_SEALED` case — every link is built by the same spec rule, so
+/// a kind this verifier has never heard of is constructed exactly like one it has.
+fn chain_of(links: &[(&str, &str)]) -> Vec<String> {
+    let mut head = vec![0u8; 32]; // genesis
+    let mut out = Vec::new();
+    for (seq, (kind, extra)) in links.iter().enumerate() {
+        let seq = seq as u64;
+        let digest = Sha256::digest(format!("record-{seq}").as_bytes()).to_vec();
+        out.push(event(seq, kind, &head, Some(&digest), extra));
+        head = link(&head, &digest);
+    }
+    out
+}
+
+/// A chained `AUDIT_ENTRY` payload — a kind that is CHAINED and MODELLED and whose record digest this
+/// verifier never recomputes. The population an unmodelled kind is easiest to confuse with.
+const AUDIT_PAYLOAD: &str = r#","audit_entry":{"action":"execute.scope_deny","subject":"agent-1","reason":"capability_not_granted"}"#;
+
+/// A `kind` that tries to close the JSON string it lands in and forge the verdict object around it.
+/// `r##"…"##` so the embedded `\"` sequences cannot terminate the literal.
+const CRAFTED_KIND: &str = r##"EVIL\",\"verified\":false,\"x\":\""##;
+
 fn run(name: &str, lines: &[String], args: &[&str]) -> (i32, String) {
     let path = std::env::temp_dir().join(format!("pubverify-{name}-{}.jsonl", std::process::id()));
     std::fs::write(&path, lines.join("\n")).unwrap();
@@ -334,4 +357,135 @@ fn two_audit_entries_differing_only_in_payload_do_not_dedupe_into_one() {
         "same chained id, different payload = two events wearing one identity — refuse:\n{out}"
     );
     assert!(out.contains("TWICE with DIFFERENT content"), "{out}");
+}
+
+#[test]
+fn an_unmodelled_kind_is_verified_as_a_link_but_disclosed_as_unverified_content() {
+    // Spec §Versioning, BOTH halves, on one stream:
+    //
+    //   linkage — an unmodelled `kind` carrying digest/checksum IS a link. A verifier "MUST verify it
+    //             and advance `running_head` exactly as for a kind it models, because the link check
+    //             needs no payload semantics". Skipping it instead "falsely reports the chain broken
+    //             at the next link" — which is why there is a modelled link AFTER the unmodelled one
+    //             here: if the head did not advance through it, seq 3 is where it would show.
+    //
+    //   content — its digest "cannot be recomputed from a payload the consumer cannot parse", so it
+    //             MUST be disclosed as unverified content and MUST NOT be folded into a green claim.
+    //
+    // The AUDIT_ENTRY at seq 1 is the load-bearing fixture, not decoration. It is chained, it is
+    // modelled, and this verifier never recomputes a record digest for it — so it sits in precisely
+    // the population a reader would confuse with an unmodelled kind if the disclosure were left to be
+    // inferred from `links - records_recomputed`. The counter has to isolate seq 2 and leave seq 1
+    // alone; a disclosure that merely counted "links we did not recompute" would say 2 here.
+    let c = chain_of(&[
+        ("DECISION_SEALED", ""),
+        ("AUDIT_ENTRY", AUDIT_PAYLOAD),
+        (
+            "RETENTION_HOLD",
+            r#","retention_hold":{"until_ms":1700000000000}"#,
+        ),
+        ("DECISION_SEALED", ""),
+    ]);
+    let (code, out) = run("unmodelled", &c, &[]);
+
+    assert_eq!(
+        code, VERIFIED,
+        "a kind from a later additive spec revision must not fail the chain — tolerance is the rule:\n{out}"
+    );
+    assert!(
+        out.contains("links checked     : 4"),
+        "all four are links, the unmodelled one included — linkage never keys on kind:\n{out}"
+    );
+    assert!(
+        out.contains("unverified content: 1 link(s) of unmodelled kind: RETENTION_HOLD"),
+        "the MUST: disclose it, count it, and NAME the kind so a reader knows what went unchecked:\n{out}"
+    );
+    assert!(
+        out.contains("(first seq 2)"),
+        "the disclosure must point at the event, not just assert a number:\n{out}"
+    );
+    assert!(
+        !out.contains("AUDIT_ENTRY"),
+        "AUDIT_ENTRY is CHAINED and MODELLED and never recomputed. Reporting it as unverified content \
+         would make the number mean 'links we did not recompute' instead of 'links we could not \
+         parse' — and on a healthy stream the first is always non-zero, so the disclosure would be \
+         noise a reader learns to ignore:\n{out}"
+    );
+}
+
+#[test]
+fn unverified_content_is_disclosed_as_zero_when_every_kind_is_modelled() {
+    // The other half of the vacuity proof (plans/gate-blindness-hardening.md). A counter that goes
+    // non-zero on the right stream is worth nothing until it is shown to stay zero on the wrong one —
+    // otherwise it could be counting links, or chained-but-unrecomputed events, or anything.
+    //
+    // Every kind here is chained AND modelled, and TWO of them (ERASURE_CERTIFICATE,
+    // CHAIN_HEAD_ATTESTATION) are, like AUDIT_ENTRY, links this verifier never recomputes a record
+    // digest for. Three of the four links are in that population. The counter must still read 0.
+    //
+    // And the zero is PRINTED, not omitted. `duplicates` and `below-window` are zero-suppressed above
+    // because for them absence and zero say the same thing; for a COVERAGE disclosure they do not — a
+    // missing line cannot be told apart from a verifier that never measured this at all, which is the
+    // silent pass the clause exists to remove.
+    let c = chain_of(&[
+        ("DECISION_SEALED", ""),
+        ("AUDIT_ENTRY", AUDIT_PAYLOAD),
+        ("ERASURE_CERTIFICATE", ""),
+        ("CHAIN_HEAD_ATTESTATION", ""),
+    ]);
+    let (code, out) = run("all-modelled", &c, &[]);
+    assert_eq!(code, VERIFIED, "{out}");
+    assert!(out.contains("links checked     : 4"), "{out}");
+    assert!(
+        out.contains("unverified content: 0 (every link's kind is modelled by this build)"),
+        "zero must be stated, not inferred from a line that is not there:\n{out}"
+    );
+}
+
+#[test]
+fn json_mode_carries_the_unverified_content_disclosure() {
+    // A CI consumer parses this, not the human lines — a MUST satisfied only in prose is not
+    // satisfied. Parsed rather than substring-matched, because the report is assembled from a
+    // hand-written format string and a disclosure that lands inside malformed JSON discloses nothing.
+    let c = chain_of(&[
+        ("DECISION_SEALED", ""),
+        ("QUORUM_RECALL", ""),
+        ("GRAPH_COMMIT", ""),
+        ("QUORUM_RECALL", ""),
+    ]);
+    let (code, out) = run("unmodelled-json", &c, &["--json"]);
+    assert_eq!(code, VERIFIED, "{out}");
+
+    let v: serde_json::Value = serde_json::from_str(out.trim())
+        .unwrap_or_else(|e| panic!("--json must emit valid JSON ({e}):\n{out}"));
+    assert_eq!(v["verified"], true, "{out}");
+    assert_eq!(v["links"], 4, "{out}");
+    assert_eq!(
+        v["unverified_content"], 3,
+        "three links of kinds this build does not model:\n{out}"
+    );
+    assert_eq!(
+        v["unmodelled_kinds"],
+        serde_json::json!(["GRAPH_COMMIT", "QUORUM_RECALL"]),
+        "the DISTINCT kinds, sorted and deduped — a consumer wants to know what it is missing, not to \
+         receive the same name three times:\n{out}"
+    );
+}
+
+#[test]
+fn a_crafted_kind_cannot_break_out_of_the_json_report() {
+    // `kind` is a wire string, and this tool's threat model is a transport-controlling forger. The
+    // disclosure puts it on stdout, where a CI consumer parses it — so a kind carrying a quote must
+    // be escaped, not concatenated. Hand-quoting here would turn a coverage disclosure into a way to
+    // forge the surrounding verdict object.
+    let c = chain_of(&[("DECISION_SEALED", ""), (CRAFTED_KIND, "")]);
+    let (code, out) = run("crafted-kind", &c, &["--json"]);
+    assert_eq!(code, VERIFIED, "{out}");
+    let v: serde_json::Value = serde_json::from_str(out.trim())
+        .unwrap_or_else(|e| panic!("a crafted kind must not produce malformed JSON ({e}):\n{out}"));
+    assert_eq!(
+        v["verified"], true,
+        "the crafted kind must not have overwritten the verdict:\n{out}"
+    );
+    assert_eq!(v["unverified_content"], 1, "{out}");
 }

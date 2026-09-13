@@ -63,16 +63,26 @@
          digest. A value-shape change in a field it does not read cannot reach it. What DID need saying is
          said at the top of this header, because the un-joinability across the cutover is a fact about this
          stream that a reader of this copy has to know before writing a query.
-       * The §Versioning clause on an unmodelled `kind` IS normative for a verifier, and this one already
-         conforms BY CONSTRUCTION rather than by luck. The clause requires that an unmodelled kind carrying
-         `digest`/`checksum` still be verified and still advance `running_head`: `chain_anchored`
-         (src/verify.rs) keys chained-ness on FIELD PRESENCE and never on `kind` — its doc comment says so
-         in those words — and the skip arm fires only when an event carries no digest/checksum at all, so
-         an unmodelled kind that is a link is treated as one. For content coverage the clause requires that
-         such an event not be folded into a green claim: its payload yields no `decision`, so the
-         `--issuer` recompute loop skips it and it can never reach `records_recomputed`, which is reported
-         separately from `links checked` on every run. Neither property was written for this clause; both
-         are already load-bearing for `LEARNING_DECISION` and for the off-chain `chain_anchor`. -->
+       * The §Versioning clause on an unmodelled `kind` IS normative for a verifier, and its two halves
+         landed differently. LINKAGE conformed BY CONSTRUCTION rather than by luck: the clause requires
+         that an unmodelled kind carrying `digest`/`checksum` still be verified and still advance
+         `running_head`, and `chain_anchored` (src/verify.rs) keys chained-ness on FIELD PRESENCE and
+         never on `kind` — its doc comment says so in those words — so the skip arm fires only when an
+         event carries no digest/checksum at all. That property was not written for this clause; it is
+         already load-bearing for `LEARNING_DECISION` and for the off-chain `chain_anchor`.
+         CONTENT did NOT conform, and this header said it did. The reasoning here originally ran: such an
+         event yields no `decision`, so the `--issuer` recompute loop skips it and it can never reach
+         `records_recomputed`, which is reported separately from `links checked` on every run — therefore
+         it is not folded into a green claim. Not being COUNTED is not the same as being DISCLOSED, and
+         the separation that argument leans on does not carry the weight put on it: `links` minus
+         `records_recomputed` is ALREADY non-zero on a healthy stream, because `AUDIT_ENTRY`,
+         `ERASURE_CERTIFICATE` and `CHAIN_HEAD_ATTESTATION` are chained kinds that legitimately never
+         recompute and v1 `DECISION_SEALED` records are link-only by schema. A reader doing that
+         subtraction cannot tell a kind we model and choose not to recompute from a kind we could not
+         parse at all — which is exactly the distinction the clause asks to be disclosed. Filed as
+         seam-sdk#130 and closed by it: `wire::MODELLED_KINDS` + `ChainReport::unmodelled` now count
+         those links at the point they are verified, and the report states the number (and names the
+         kinds) in both output modes, zero included. -->
 
 # `seam-event.v1` — event-stream wire spec (language-neutral)
 

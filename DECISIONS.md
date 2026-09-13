@@ -6,6 +6,54 @@ assumption, the independent recommender's analysis, the human verdict, and the r
 produced it.
 
 
+## 2026-09-13 — issue #130: disclose unverified content, and do NOT overload `--strict`
+
+A DESIGN record. `seam-event.v1` §Versioning states two obligations for an unmodelled `kind` and they
+have different force: disclosing such events as unverified content is a **MUST**, and refusing the
+stream outright is a **MAY** ("A `--strict` verifier MAY refuse the stream outright; that is a refusal
+to attest, not a delivery failure"). The MUST is implemented. The MAY is declined, for now, on purpose.
+
+**Why not fold it into `--strict`.** `--strict` has a documented, narrower meaning: refuse a stream
+containing non-advisory events that carry no chain fields at all — pre-cutover history this tool
+cannot verify. Unmodelled content is a different axis: those events carry chain fields, verify
+perfectly as links, and are exactly what an additive spec revision is supposed to produce. Overloading
+the flag would mean that the day `seam-runtime` adds a kind, every pipeline pinned to `--strict`
+starts refusing healthy streams until its verifier is upgraded — converting a change the spec
+explicitly blesses as additive into a hard outage in an audit pipeline. The clause's own authors made
+refusal optional; inheriting that choice is cheaper than discovering it in production.
+
+**What makes declining safe is that the disclosure is machine-readable.** A caller who does want the
+refusal has `--json` → `unverified_content`, and one comparison. Had the number existed only in the
+human report, this call would have gone the other way: a MAY you cannot act on is not a choice.
+
+**Rejected alternative: report it as `links - records_recomputed` and print nothing new.** This is the
+reading the previous report invited, and it is wrong. That difference is already non-zero on a healthy
+stream — `AUDIT_ENTRY`, `ERASURE_CERTIFICATE` and `CHAIN_HEAD_ATTESTATION` are chained kinds that
+legitimately never recompute, and v1 `DECISION_SEALED` records are link-only by schema. A reader doing
+the subtraction cannot separate "a kind we model and choose not to recompute" from "a kind we could
+not parse at all", which is the only distinction the clause actually asks about. The counter is
+therefore taken at the point each link is verified, from the kind itself.
+
+**The zero is printed.** `duplicates` and `below-window` are zero-suppressed in the human report
+because for them absence and zero say the same thing. For a coverage disclosure they do not: a missing
+line cannot be told apart from a verifier that never measured this, which is the silent pass the
+clause exists to remove. Pinned by a test, not just by intent.
+
+**Keying on `kind` here is not a contradiction of "never key on `kind`".** That rule governs
+LINKAGE, and the spec states both in the same clause: chain verification does not key on `kind` at
+all, and what an unmodelled `kind` costs is content coverage. `is_link()` stays presence-keyed and is
+the only thing the chain walk consults; `is_modelled()` is consulted only for the disclosure.
+
+**`MODELLED_KINDS` is pinned to the spec even though the counter is fail-safe without it.** Omitting a
+kind is already the safe direction — it gets disclosed, which is correct. The reason for the tripwire
+is that nothing would then ever go red to announce that the spec grew a kind: the verifier would
+simply start reporting healthy production traffic as unverified content, and the first person to
+notice would be an auditor reading a coverage number rather than a maintainer reading a red build.
+The trigger is the vendored-copy refresh, and per this repo's standing rule for a surface the manifest
+does not carry, the remedy is a DECISION — model the payload, or record why this SDK does not — never
+a one-line append to silence the test.
+
+
 ## 2026-09-06 — `plans/registry-drift-check.md`: the calls worth not re-litigating
 
 A DESIGN record rather than a `/reconcile` pass — the assumption reconciliation for this plan comes
@@ -1171,7 +1219,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:794-811` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:835-852` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -1984,7 +2032,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:806` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:847` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.

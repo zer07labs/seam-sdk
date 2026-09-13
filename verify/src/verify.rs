@@ -23,6 +23,23 @@ pub struct ChainReport {
     /// Events with no chain fields that are NOT advisory — pre-cutover history, which this tool
     /// **cannot** verify. Disclosed, never silently folded in with the advisory ones.
     pub unverifiable: Vec<u64>,
+    /// **Spec §Versioning — unverified CONTENT.** `(seq, kind)` for every verified link whose `kind`
+    /// this build does not model ([`wire::MODELLED_KINDS`]): a kind from a later additive revision of
+    /// `seam-event.v1`. Their linkage is fully checked and they advance the head like any other link —
+    /// the spec requires exactly that, since the link check needs no payload semantics. What cannot be
+    /// checked is the *content*: there is no payload model to recompute the `digest` from, so the
+    /// digest is known to commit to the head and not known to commit to anything in particular.
+    ///
+    /// §Versioning makes disclosing them a MUST ("MUST disclose such events as unverified content …
+    /// and MUST NOT fold them into a green claim"), and this field is the only thing that can.
+    /// `links - records_recomputed` cannot: that difference is ALREADY non-zero on a perfectly healthy
+    /// stream, for two entirely benign reasons that have nothing to do with unmodelled kinds —
+    /// `AUDIT_ENTRY`/`ERASURE_CERTIFICATE`/`CHAIN_HEAD_ATTESTATION` are chained kinds that legitimately
+    /// never recompute, and v1 `DECISION_SEALED` records are link-only and deliberately skipped. A
+    /// reader doing that subtraction cannot tell a kind we model and choose not to recompute from a
+    /// kind we could not parse at all, which is the precise distinction the clause asks to be
+    /// disclosed. So it is counted here, separately, at the point the link is verified.
+    pub unmodelled: Vec<(u64, String)>,
     pub head: Vec<u8>,
     /// The running head after each link, in order: `heads[0]` is genesis, `heads[k]` is the head after
     /// `k` chained links. Its length is `links + 1`. This is what an attestation's `(attested_len,
@@ -117,6 +134,7 @@ pub fn chain_anchored(
         advisory: 0,
         duplicates: 0,
         unverifiable: Vec::new(),
+        unmodelled: Vec::new(),
         head: head.clone(),
         heads: vec![head.clone()], // heads[0] = the start (genesis, or the anchor's head)
         max_schema_by_link: vec![0], // [0] = the empty window, which covers no records
@@ -163,6 +181,12 @@ pub fn chain_anchored(
         head = checksum.clone();
         r.links += 1;
         r.heads.push(head.clone());
+        // §Versioning: this link is verified — the check above needed no payload semantics — but if
+        // its kind is one this build has never seen, its CONTENT is not. Recorded here rather than
+        // inferred downstream, because by the time the report is printed the kind is gone.
+        if !e.is_modelled() {
+            r.unmodelled.push((e.seq, e.kind.clone()));
+        }
         // Clause (e): track the running max over the SAME span `heads` indexes. Taken from the decision
         // this link actually carries — an event with no decision leaves the max where it was.
         if let Some(d) = e.decision.as_ref() {

@@ -843,6 +843,16 @@ impl Event {
             .as_ref()
             .is_some_and(|a| a.action == "chain_anchor")
     }
+
+    /// Does this build model this event's `kind` at all? **Content coverage only — never linkage.**
+    ///
+    /// The one place keying on `kind` is correct, and the spec says so in the same breath as forbidding
+    /// it for linkage (§Versioning): *"chain verification does not key on `kind` at all … what an
+    /// unmodelled `kind` costs is *content* coverage, not linkage"*. [`Event::is_link`] stays presence-keyed
+    /// and is the only thing the chain walk consults.
+    pub fn is_modelled(&self) -> bool {
+        MODELLED_KINDS.contains(&self.kind.as_str())
+    }
 }
 
 /// The kinds that carry no chain fields BY DESIGN (spec `enum EventKind`, the `ADVISORY`-annotated ones).
@@ -866,6 +876,43 @@ pub const ADVISORY_KINDS: &[&str] = &[
     // digest/checksum by design. Same omission, same consequence as the line above, but louder: this
     // one is emitted per REFUSED COMMITMENT rather than once per authorize call, so under a strict
     // bound policy a missing entry here refuses a healthy stream at a material rate.
+    "POLICY_DENIED",
+];
+
+/// Every `kind` this build was written against — the vendored spec's `enum EventKind`, in full.
+///
+/// **A CONTENT-coverage list, never a linkage one.** Linkage keys on field presence
+/// ([`Event::is_link`]) and this list is not consulted there; a kind absent from it is still verified
+/// as a link and still advances the running head, exactly as spec §Versioning requires. What the list
+/// decides is narrower: whether this build can claim to have checked an event's *payload*. For a kind
+/// it has never seen it cannot — there is no payload model to decode into, so the `digest` can be
+/// checked against the head but never recomputed from the content it commits to. Spec §Versioning
+/// makes disclosing those events a MUST ("MUST disclose such events as unverified content … and MUST
+/// NOT fold them into a green claim"); [`crate::verify::ChainReport::unmodelled`] is that disclosure.
+///
+/// **Being listed here is NOT a claim that the payload is parsed.** Four of these
+/// (`LEARNING_DECISION`, `LEARNING_OUTCOME`, `BUDGET_BREACH`, `SESSION_LIFECYCLE`) have no slot on
+/// [`Event`] at all. They are ADVISORY — they carry no `digest`/`checksum` by design, so they are
+/// never links, and content coverage is a question that does not arise for them. The claim this list
+/// makes is only that the kind was **known when this build shipped**, which is precisely what
+/// §Versioning's "unmodelled" means: a kind from a later additive spec revision.
+///
+/// The fail-safe direction is the default: a kind missing here is disclosed as unverified content.
+/// The dangerous direction is a kind listed here that this build does not in fact understand — which
+/// is why the list is pinned to the vendored spec by `modelled_kinds_are_pinned_to_the_spec` rather
+/// than grown by hand. When the runtime adds a kind, refreshing the vendored copy turns that test
+/// red, and the remedy is a DECISION (model the payload, or accept the coverage gap in writing) —
+/// not a one-line append.
+pub const MODELLED_KINDS: &[&str] = &[
+    "DECISION_SEALED",
+    "AUDIT_ENTRY",
+    "LEARNING_DECISION",
+    "LEARNING_OUTCOME",
+    "BUDGET_BREACH",
+    "ERASURE_CERTIFICATE",
+    "CHAIN_HEAD_ATTESTATION",
+    "SESSION_LIFECYCLE",
+    "AUTHORIZE_EVALUATED",
     "POLICY_DENIED",
 ];
 
@@ -927,7 +974,86 @@ mod tests {
              one here but not in the spec would green an unverifiable stream."
         );
 
-        // Layer 2 — the spec itself, when reachable.
+        // Layer 2 — the spec itself. Shares ONE parse of the `enum EventKind` block with
+        // `modelled_kinds_are_pinned_to_the_spec` (see `spec_event_kinds`); this side filters the
+        // block down to the ADVISORY-annotated lines, that one keeps all of them.
+        let (spec_path, spec_set) = spec_event_kinds(|l| l.contains("ADVISORY"));
+        let ours: BTreeSet<String> = ADVISORY_KINDS.iter().map(|s| (*s).to_owned()).collect();
+        assert_eq!(
+            ours,
+            spec_set,
+            "ADVISORY_KINDS must equal the spec's ADVISORY-annotated EventKinds ({})",
+            spec_path.display()
+        );
+    }
+
+    /// The twin of `advisory_kinds_are_pinned_to_the_spec`, one axis over: that test pins the
+    /// ADVISORY-annotated SUBSET, this one pins the WHOLE `enum EventKind`.
+    ///
+    /// It exists because `MODELLED_KINDS` has a silent failure mode the advisory list does not. The
+    /// unverified-content counter is fail-safe against *omission* — a kind nobody added here is
+    /// disclosed, which is the correct answer — so nothing ever goes red to announce that the spec
+    /// grew a kind. Without this test the counter would simply start reporting production traffic as
+    /// unverified content, on a stream that is perfectly healthy, and the first person to notice
+    /// would be an auditor reading a coverage number rather than a maintainer reading a red build.
+    ///
+    /// So the trigger is deliberately the vendored-copy refresh: `scripts/check_vendored_spec.py`
+    /// forces that copy to track the runtime's file, and the moment it carries a kind this build does
+    /// not list, this test fails and names it. The remedy is a DECISION — model the payload, or
+    /// record in the PR why this SDK does not — exactly the rule `CLAUDE.md` states for a field the
+    /// stubs carry and the manifest does not. Appending the name to silence the test, without either,
+    /// converts a disclosed coverage gap into an undisclosed one, which is the whole thing the
+    /// counter exists to prevent.
+    ///
+    /// Parsed from the same vendored copy and with the same reasoning as the advisory tripwire above
+    /// (see its doc comment for why a sibling working tree was the wrong source in both directions);
+    /// `SEAM_RUNTIME_DIR` overrides identically, and a set-but-wrong one is a hard failure.
+    #[test]
+    fn modelled_kinds_are_pinned_to_the_spec() {
+        // Layer 1 — the hardcoded pin. Reconcile ONLY against the spec's `enum EventKind`.
+        let expected: BTreeSet<&str> = [
+            "DECISION_SEALED",
+            "AUDIT_ENTRY",
+            "LEARNING_DECISION",
+            "LEARNING_OUTCOME",
+            "BUDGET_BREACH",
+            "ERASURE_CERTIFICATE",
+            "CHAIN_HEAD_ATTESTATION",
+            "SESSION_LIFECYCLE",
+            "AUTHORIZE_EVALUATED",
+            "POLICY_DENIED",
+        ]
+        .into();
+        let ours: BTreeSet<&str> = MODELLED_KINDS.iter().copied().collect();
+        assert_eq!(
+            ours, expected,
+            "MODELLED_KINDS drifted from the expected set."
+        );
+
+        // Layer 2 — the spec itself. Same source, same override, same no-skip rule as the advisory
+        // tripwire; see `spec_event_kinds` for why there is no environment in which this cannot read.
+        let (spec_path, spec_set) = spec_event_kinds(|_| true);
+        let ours: BTreeSet<String> = MODELLED_KINDS.iter().map(|s| (*s).to_owned()).collect();
+        assert_eq!(
+            ours,
+            spec_set,
+            "MODELLED_KINDS must equal the spec's FULL enum EventKind ({}). A kind in the spec but \
+             not here is a CONTENT-coverage gap: this build cannot recompute its payload, so every \
+             such event on a live stream is disclosed as unverified content (spec §Versioning) even \
+             though the stream is healthy. Decide — model the payload, or record in the PR why this \
+             SDK does not — and only then add the name. Adding it to silence this test claims \
+             coverage that does not exist, which is the failure the disclosure exists to prevent. \
+             (Linkage is unaffected either way: it keys on field presence, never on kind.)",
+            spec_path.display()
+        );
+    }
+
+    /// The vendored spec's `enum EventKind` block, filtered by `keep` over the raw declaration line.
+    ///
+    /// Shared by both kind tripwires so there is exactly ONE parse of that block to get wrong:
+    /// `advisory_kinds_are_pinned_to_the_spec` passes `|l| l.contains("ADVISORY")`, this one passes
+    /// everything. Returns the path too, so a failure names the file it read.
+    fn spec_event_kinds(keep: impl Fn(&str) -> bool) -> (std::path::PathBuf, BTreeSet<String>) {
         let spec_path = match std::env::var("SEAM_RUNTIME_DIR") {
             Ok(dir) => {
                 let p = std::path::PathBuf::from(dir).join("docs/specs/seam-event.v1.md");
@@ -939,16 +1065,14 @@ mod tests {
                 );
                 p
             }
-            // No skip path. The vendored copy ships with this crate, so there is no environment in
-            // which this layer has nothing to read — which is the whole reason it is no longer
-            // pointed at a sibling that may or may not be there.
+            // No skip path — the vendored copy ships with this crate. See the advisory tripwire.
             Err(_) => {
                 let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                     .join("docs/seam-event.v1.md");
                 assert!(
                     p.is_file(),
                     "{} is missing. It is the vendored spec this crate documents itself against; \
-                     without it there is nothing to check ADVISORY_KINDS against, and a silent skip \
+                     without it there is nothing to check the kind lists against, and a silent skip \
                      here is how the AUTHORIZE_EVALUATED regression shipped.",
                     p.display()
                 );
@@ -963,20 +1087,14 @@ mod tests {
             .split_once('}')
             .expect("`enum EventKind {` must be closed by `}`")
             .0;
-        let spec_set: BTreeSet<String> = body
+        let set: BTreeSet<String> = body
             .lines()
-            .filter(|l| l.contains("ADVISORY"))
+            .filter(|l| keep(l))
             .filter_map(|l| l.split_whitespace().next())
             .filter(|t| !t.is_empty() && t.chars().all(|c| c.is_ascii_uppercase() || c == '_'))
             .map(str::to_owned)
             .collect();
-        let ours: BTreeSet<String> = ADVISORY_KINDS.iter().map(|s| (*s).to_owned()).collect();
-        assert_eq!(
-            ours,
-            spec_set,
-            "ADVISORY_KINDS must equal the spec's ADVISORY-annotated EventKinds ({})",
-            spec_path.display()
-        );
+        (spec_path, set)
     }
 
     fn b64e(b: &[u8]) -> String {

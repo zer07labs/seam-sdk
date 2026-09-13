@@ -44,6 +44,13 @@ fn usage() -> ! {
              kind. Advisory events (LEARNING_*, BUDGET_BREACH, SESSION_LIFECYCLE, AUTHORIZE_EVALUATED,\n     \
              POLICY_DENIED)\n    \
              and the off-chain `chain_anchor` carry neither, and do not advance the head.\n\
+         \n    \
+             A link whose `kind` this build does not model is STILL VERIFIED as a link and still\n    \
+             advances the head — the link check needs no payload semantics, and skipping it would\n    \
+             falsely report the chain broken at the NEXT link. What it costs is CONTENT coverage: the\n    \
+             digest cannot be recomputed from a payload this build cannot parse. Those events are\n    \
+             reported on the `unverified content` line (and as `unverified_content` under --json),\n    \
+             never folded into a green claim.\n\
          \n\
              --strict  Refuse a stream containing any non-advisory event with no digest/checksum.\n              \
                        Events written before Seam added those fields look exactly like advisory ones\n              \
@@ -103,6 +110,14 @@ fn read_lines(path: &str) -> Result<Vec<String>, String> {
 
 fn q(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_else(|_| "\"\"".into())
+}
+
+/// A JSON array of strings, escaped by `serde_json` for the same reason [`q`] is: these come off the
+/// WIRE. A `kind` is whatever the emitter — or, in this tool's threat model, a transport-controlling
+/// forger — put on the stream, and hand-quoting it would let a crafted one break out of the report a
+/// CI consumer parses.
+fn q_arr(v: &[&str]) -> String {
+    serde_json::to_string(v).unwrap_or_else(|_| "[]".into())
 }
 
 fn fail(msg: &str, json: bool, banner: &str) -> ExitCode {
@@ -268,12 +283,20 @@ fn cmd_chain(
                 };
                 println!(
                     "{{\"verified\":true,\"events\":{},\"links\":{},\"advisory\":{},\"duplicates\":{},\
-                     \"unverifiable\":{},\"head\":\"{}\"{}}}",
+                     \"unverifiable\":{},\"unverified_content\":{},\"unmodelled_kinds\":{},\
+                     \"head\":\"{}\"{}}}",
                     r.events,
                     r.links,
                     r.advisory,
                     r.duplicates,
                     r.unverifiable.len(),
+                    r.unmodelled.len(),
+                    q_arr(&{
+                        let mut k: Vec<&str> = r.unmodelled.iter().map(|(_, k)| k.as_str()).collect();
+                        k.sort_unstable();
+                        k.dedup();
+                        k
+                    }),
                     verify::hex(&r.head),
                     authenticity,
                 );
@@ -289,6 +312,34 @@ fn cmd_chain(
                 println!("  events            : {}", r.events);
                 println!("  links checked     : {}", r.links);
                 println!("  advisory (skipped): {}", r.advisory);
+                // Spec §Versioning's MUST. Printed UNCONDITIONALLY, including the zero — the other
+                // optional lines here (duplicates, below-window) are zero-suppressed because absence
+                // and zero mean the same thing for them. They do not for this one: a coverage
+                // disclosure that vanishes when it is zero cannot be told apart from a build that
+                // never measured it, and "the stream carried none" is exactly the claim a reader
+                // needs stated rather than inferred from a missing line.
+                if r.unmodelled.is_empty() {
+                    println!(
+                        "  unverified content: 0 (every link's kind is modelled by this build)"
+                    );
+                } else {
+                    let mut kinds: Vec<&str> =
+                        r.unmodelled.iter().map(|(_, k)| k.as_str()).collect();
+                    kinds.sort_unstable();
+                    kinds.dedup();
+                    println!(
+                        "  unverified content: {} link(s) of unmodelled kind: {} (first seq {})\n\
+                         {:22}LINKAGE verified — folded into the head above, exactly as for a kind\n\
+                         {:22}this build models. CONTENT not verified: no payload model, so the\n\
+                         {:22}digest was never recomputed, and these are in NO recompute count.",
+                        r.unmodelled.len(),
+                        kinds.join(", "),
+                        r.unmodelled[0].0,
+                        "",
+                        "",
+                        "",
+                    );
+                }
                 if let Some(ir) = &issuer_report {
                     println!("  attestations      : {} (issuer-signed)", ir.attestations);
                     println!("  covered prefix    : {} links", ir.covered_prefix);
