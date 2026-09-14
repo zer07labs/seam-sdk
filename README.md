@@ -302,17 +302,70 @@ script refuses a prefixed key rather than letting it surface as a confusing 401)
 > default is ever set back to `Admin`, the partner token silently regains write on `internal` and nothing
 > in CI will notice.**
 
-**Consuming it** — identical to the `internal` snippets above with the repo name changed:
+**Onboarding a partner.** Each partner gets **their own** entitlement token on `partner` — never a
+shared one, and never an API key. Mint it:
 
 ```sh
-# npm: .npmrc
-@zer07labs:registry=https://npm.cloudsmith.io/zer07labs/partner/
-//npm.cloudsmith.io/zer07labs/partner/:_authToken=${CLOUDSMITH_PARTNER_TOKEN}
-
-# Python
-pip install seam-sdk --extra-index-url \
-  https://token:${CLOUDSMITH_PARTNER_TOKEN}@dl.cloudsmith.io/basic/zer07labs/partner/python/simple/
+curl -sS -w '\nHTTP %{http_code}\n' -X POST \
+  -H "X-Api-Key: $CLOUDSMITH_API_KEY" -H "Content-Type: application/json" \
+  -d '{"name":"acme-corp"}' \
+  https://api.cloudsmith.io/v1/entitlements/zer07labs/partner/
 ```
+
+Print the status. `CLOUDSMITH_API_KEY` lives in Doppler (`shared-ci/prd`), not in anyone's shell profile,
+so the common way to run this is with the variable unset — which returns `401
+{"detail":"Incorrect authentication credentials."}`. Under a bare `-s`, with the body piped into a parser
+expecting `token`, the only thing that surfaces is a `KeyError: 'token'` from the parser, which reads like
+a response-shape problem rather than an auth failure. Prefix the command with
+`doppler run -p shared-ci -c prd --` or export the key first.
+
+The response comes back with `token` **masked** (`****************`), exactly as service keys do — piping
+it straight to `["token"]` yields asterisks, not a credential. Read the real value back from the
+`slug_perm` the create returned:
+
+```sh
+curl -s -H "X-Api-Key: $CLOUDSMITH_API_KEY" \
+  "https://api.cloudsmith.io/v1/entitlements/zer07labs/partner/<SLUG>/?show_tokens=true" \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])'
+```
+
+Per-partner matters for revocation and attribution: `POST …/<SLUG>/disable/` cuts off one partner without
+touching the others, and each token carries its own `downloads`/`clients` counters. The two entitlements
+Cloudsmith auto-creates on any repo — `Default` and one named for the creating user — are **not** for
+handing out: `Default` is shared by everything that doesn't name a token, and the user-bound one inherits
+its owner's account and, like all user tokens, **cannot be edited or scoped** (`400 {"detail": "User
+tokens cannot be edited!"}`). Only deactivation constrains those.
+
+There is nothing to store on our side. The token is readable from the API whenever it is needed, so it
+does not belong in Doppler or a GitHub secret.
+
+**What the partner configures.** The two ecosystems use **different hosts and different auth shapes**,
+which is the step that reliably costs an afternoon:
+
+```sh
+# npm: .npmrc — host is npm.cloudsmith.io, token as _authToken
+@zer07labs:registry=https://npm.cloudsmith.io/zer07labs/partner/
+//npm.cloudsmith.io/zer07labs/partner/:_authToken=${SEAM_PARTNER_TOKEN}
+
+# Python: pip — host is dl.cloudsmith.io, token as the basic-auth password
+pip install seam-sdk --extra-index-url \
+  https://token:${SEAM_PARTNER_TOKEN}@dl.cloudsmith.io/basic/zer07labs/partner/python/simple/
+```
+
+The entitlement token also works in pip's path form —
+`https://dl.cloudsmith.io/<TOKEN>/zer07labs/partner/python/simple/` — which keeps it out of a userinfo
+field that some tools log. The literal `token:` in the basic form is the username and is not a
+placeholder; `<TOKEN>:` with an empty password is a **401**. For npm there is no path form at all: every
+`dl.cloudsmith.io/<TOKEN>/…/npm/…` spelling returns 404, including the registry root.
+
+> **`CLOUDSMITH_PARTNER_API_KEY` is not the credential to paste here** — and the reason this warning
+> exists is that it *works*. Drop the service key into either snippet above and the install succeeds, so
+> nothing signals a mistake. That key also reads `internal`: fetching a private runtime crate with it
+> returns **200**, measured. Handing it to a partner ships them the closed half of the product. The
+> variable above is deliberately named `SEAM_PARTNER_TOKEN`, not `…_API_KEY`, so the two are not
+> interchangeable at a glance. A partner-repo entitlement token, by contrast, is structurally confined:
+> against `internal` it returns 404 for cargo and pip and 401 for npm — and that 404 is a real denial, not
+> a missing object, since the same URL returns 200 under a token that is allowed to read it.
 
 ## Contract changes
 
