@@ -1,5 +1,24 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ f50401c (refreshed 2026-09-13 for
-     seam-runtime#484 — on the durable `AUTHORIZE_EVALUATED` row, BOTH digest-bearing fields become KEYED
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 342d3f5 (refreshed 2026-09-14 for
+     seam-runtime#711/#730/#729 (#732) — three spec statements that CONTRADICTED the runtime, corrected
+     upstream. Two annotate `DECISION_SEALED` and `AUDIT_ENTRY` as `(CHAINED)` in `enum EventKind`, which
+     documents what was already true. The third is the substantive one and it is a WEAKENING: both
+     `policy_version` fields — `SessionLifecycle` (tag 3) and `AuditEntry` (tag 9) — are now stated to be
+     STAGED, naming what a binding staged, and NOT evidence that the named policy's rules evaluated
+     anything. `SessionLifecycle` emits at `phase = "opened"`, before anything seals, so no enforcement
+     fact can exist yet; the authorize path produces no enforcement fact AT ALL, by design. What actually
+     bound is `DecisionSealed.policy_rules_digest` (tag 13), joinable by `session_id`.
+     SPEC-ONLY HERE, and checked rather than assumed: the diff adds `(CHAINED)` annotations and prose, and
+     touches no ADVISORY annotation, so the spec's ADVISORY set is unchanged and `wire::ADVISORY_KINDS`
+     does not move. That is the step-4 question this header exists to answer, and the answer is different
+     from the `POLICY_DENIED` refresh below, where the set DID move and the verifier changed with it. The
+     `(CHAINED)` markers likewise cost nothing: `chain_anchored` keys chained-ness on FIELD PRESENCE and
+     never on `kind`, so annotating a kind cannot change what the chain walk does.
+     `policy_version` is read by no code in this repo — the verifier does not consult it — so the
+     correction changes no behaviour here. It is vendored anyway, verbatim and whole-file, because this
+     copy is what a third party builds a verifier from, and shipping them the OVERCLAIM (`the policy bound
+     at open`) would invite exactly the inference the upstream fix removes: treating a populated
+     `policy_version` as proof of enforcement.
+     The previous pin was @ f50401c (2026-09-13, seam-runtime#484 — on the durable `AUTHORIZE_EVALUATED` row, BOTH digest-bearing fields become KEYED
      COMMITMENTS (`hmac-sha256:<kid>:<hex>` over `put(domain) ‖ put(tenant) ‖ put(value)`) rather than bare
      hashes. The reason is that an end-user identifier has a small, enumerable preimage space, so
      `sha256(subject)` was a set-membership oracle to anyone holding the row: a guess could be confirmed by
@@ -124,8 +143,8 @@ SeamEvent {
 }
 
 enum EventKind {
-  DECISION_SEALED   // a DecisionRecord reached a terminal outcome (Resolved/Expired/...)
-  AUDIT_ENTRY       // an entry appended to the hash-chained audit log WITHOUT a sealed decision (tag 16)
+  DECISION_SEALED   // a DecisionRecord reached a terminal outcome (Resolved/Expired/...) (CHAINED)
+  AUDIT_ENTRY       // an entry appended to the hash-chained audit log WITHOUT a sealed decision (CHAINED; tag 16)
   LEARNING_DECISION // ADVISORY — the per-dimension arm the orchestrator chose (not chained; tag 14)
   LEARNING_OUTCOME  // ADVISORY — a delayed correctness report for a decision (not chained; tag 15)
   BUDGET_BREACH     // ADVISORY — the 6.2 R9 escalation signal (not chained; tag 17)
@@ -365,10 +384,17 @@ carries no `digest`/`checksum` and never perturbs the audit chain (a verifier ke
 message SessionLifecycle {           // envelope tag 21
   string phase = 1;                  // "opened" (only phase emitted today; vocabulary is additive)
   string mode = 2;                   // the canonical MACP mode id the session opened in
-  string policy_version = 3;         // the policy bound at open
+  string policy_version = 3;         // the policy the binding named at open — STAGED, not "bound"
   uint64 opened_at_millis = 4;       // the caller-injected session clock at open
 }
 ```
+
+**`policy_version` is STAGED, not proof of enforcement.** It names what the binding staged at open,
+exactly as the identically named field on `seam.api.v1.DecisionResponse` does. A populated value is
+not on its own evidence that the named policy's rules evaluated anything — and here it cannot be:
+this event emits at `phase = "opened"`, **before anything seals**, so no enforcement fact exists yet.
+The stream carries the companion one event later — `DecisionSealed.policy_rules_digest` (tag 13),
+joinable by `session_id`. Read that, not this, for what actually bound.
 
 Envelope: `event_id = "{session_id}#lc:{phase}@{opened_at_millis}"` — salted with the open timestamp
 because a session id can be RE-opened after sweep eviction, and delivery dedups by `event_id` (an
@@ -395,10 +421,16 @@ message AuthorizeEvaluated {           // envelope tag 23
   string tool_input_digest = 6;        // "hmac-sha256:<kid>:<hex>" — a KEYED commitment
   string verdict = 7;                  // "ALLOW" | "DENY" | "TRANSFORM" | "ESCALATE"
   string reason = 8;                   // closed-set / operator-authored only (D-030)
-  string policy_version = 9;
+  string policy_version = 9;           // the policy the binding named — STAGED, not "ran under"
   optional string subject_digest = 10; // "hmac-sha256:<kid>:<hex>" — NEVER the raw subject
 }
 ```
+
+**`policy_version` is STAGED, not proof of enforcement.** The authorize path produces **no
+enforcement fact at all**, by design: it seals nothing, and v1 routes and records policy without
+varying the verdict by policy content (no generic rule body exists — the scope floor, the guard and
+the escalate list are the honest v1). A companion attestation here would be always-false, so there
+is none; a populated `policy_version` proves only that a policy was routed and recorded.
 
 Envelope: `event_id = "{authorize_id}#az#{seq}"`; `classification` is **fixed `Internal`** (ids, digests,
 and a closed-set reason — no subject, secret, or agent content can reach it, so classification-gated
