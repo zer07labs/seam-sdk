@@ -1,0 +1,121 @@
+{
+  "$comment": [
+    "The CROSS-LANGUAGE conformance vector for the #508 per-request credential's signed payload.",
+    "",
+    "Contract: signed_payload = framed(CONTEXT) | framed(ticket) | framed(rpc_full_name) |",
+    "framed(resource_id) | framed(body_digest), where framed(x) = u32_little_endian(len_bytes(x)) | x,",
+    "CONTEXT is the ASCII bytes of `domain` below, ticket is RAW BYTES, and the three remaining fields",
+    "are UTF-8 encoded. The client signs those bytes with the agent's Ed25519 key and sends the",
+    "signature as x-seam-call-sig (base64) on HTTP / x-seam-call-sig-bin on gRPC.",
+    "",
+    "`rpc_full_name` is the gRPC full method path on BOTH transports, never the HTTP route pattern.",
+    "That is what makes ONE credential valid over either plane for a bodyless verb.",
+    "",
+    "For a BODIED verb the credential is per-transport and cannot be reused across planes: HTTP frames",
+    "JSON and binds the path id plus a digest of the exact request bytes; gRPC frames protobuf, leaves",
+    "resource_id EMPTY, and digests the whole request message (the id is inside it). See the two",
+    "bodied-verb cases.",
+    "",
+    "Every SDK and framework adapter MUST reproduce `payload_b64` byte-for-byte from the inputs.",
+    "The Rust reference is crates/seam-api/tests/request_sig_payload_vector.rs; the RUNTIME's own",
+    "seamd::authorize::request_sig_payload is asserted against this same file by",
+    "crates/seamd/tests/request_sig_payload_conformance.rs, so the spec and the server cannot drift.",
+    "",
+    "There is deliberately NO bless mode. `seam-request-call-v1` is a frozen signed-wire construction:",
+    "a mismatch is a CONTRACT BREAK, not a prompt to regenerate. Changing these bytes costs a v2 domain",
+    "Bytes are lowercase HEX, matching seam-sdk's sibling conformance/call_sig_payload_vector.json for the seam-authorize-call-v2 framing. An SDK author implements both in one sitting; two encodings across two vectors of the same shape is a transcription bug waiting to happen.",
+    "tag, a second vector and an SDK migration. To ADD a case, run the reference test with",
+    "SEAM_PRINT_REQUEST_SIG_VECTOR=1 and paste what it prints.",
+    "",
+    "A case marked `synthetic: true` uses a method name that is NOT a real RPC. Those rows exist to pin the framing itself (length prefixing, the all-empty degenerate), not any verb's contract, and the runtime-side test skips them when it checks that every other row names a genuinely credentialed verb."
+  ],
+  "domain": "seam-request-call-v1",
+  "framing": "u32-LE length prefix per field, five fields in order: domain, ticket, rpc_full_name, resource_id, body_digest",
+  "signature_algorithm": "Ed25519 over the payload bytes",
+  "cases": [
+    {
+      "name": "bodyless-read",
+      "why": "the shape the canary's read-back leg sends: a GET with no body, so body_digest is the empty string and the payload is byte-identical over HTTP and gRPC",
+      "ticket_hex": "0102030405060708090a0b0c0d0e0f10",
+      "rpc_full_name": "/seam.api.v1.SeamCoordination/GetDecision",
+      "resource_id": "dec:0193f2a4-7c1e-7b3a-9f21-5d8e2c4a6b70",
+      "body_digest": "",
+      "payload_hex": "140000007365616d2d726571756573742d63616c6c2d7631100000000102030405060708090a0b0c0d0e0f10290000002f7365616d2e6170692e76312e5365616d436f6f7264696e6174696f6e2f4765744465636973696f6e280000006465633a30313933663261342d376331652d376233612d396632312d35643865326334613662373000000000"
+    },
+    {
+      "name": "same-ticket-and-resource-different-verb",
+      "why": "THE re-pointing guard. Identical ticket and decision_id as the case above, only the verb differs — GetCommitmentProof returns the DECRYPTED commitment where GetDecision returns structural columns. An implementation that omits rpc_full_name produces the same bytes for both and is exploitable, not merely non-conformant",
+      "ticket_hex": "0102030405060708090a0b0c0d0e0f10",
+      "rpc_full_name": "/seam.api.v1.SeamCoordination/GetCommitmentProof",
+      "resource_id": "dec:0193f2a4-7c1e-7b3a-9f21-5d8e2c4a6b70",
+      "body_digest": "",
+      "payload_hex": "140000007365616d2d726571756573742d63616c6c2d7631100000000102030405060708090a0b0c0d0e0f10300000002f7365616d2e6170692e76312e5365616d436f6f7264696e6174696f6e2f476574436f6d6d69746d656e7450726f6f66280000006465633a30313933663261342d376331652d376233612d396632312d35643865326334613662373000000000"
+    },
+    {
+      "name": "bodied-verb-http",
+      "why": "HTTP frames JSON, so a bodied verb binds the path id AND a digest of the exact request bytes. Re-serializing before digesting (key reordering, whitespace) produces a different digest and fails to authenticate",
+      "ticket_hex": "aabbccddeeff00112233445566778899",
+      "rpc_full_name": "/seam.api.v1.SeamCoordination/SubmitVote",
+      "resource_id": "s-7f3c",
+      "body_digest": "sha256:c8d2e17f73469e89e710882f1a3da062867bd789494ac3812cdd447c01065b91",
+      "payload_hex": "140000007365616d2d726571756573742d63616c6c2d763110000000aabbccddeeff00112233445566778899280000002f7365616d2e6170692e76312e5365616d436f6f7264696e6174696f6e2f5375626d6974566f746506000000732d37663363470000007368613235363a63386432653137663733343639653839653731303838326631613364613036323836376264373839343934616333383132636464343437633031303635623931"
+    },
+    {
+      "name": "bodied-verb-grpc-whole-message",
+      "why": "gRPC frames protobuf, and the resource id lives INSIDE the message — so the resource_id slot is the EMPTY string and the digest covers the whole decoded request frame, binding strictly more. The consequence a client must know: for a BODIED verb the credential is per-transport; only the bodyless reads are portable",
+      "ticket_hex": "aabbccddeeff00112233445566778899",
+      "rpc_full_name": "/seam.api.v1.SeamCoordination/SubmitVote",
+      "resource_id": "",
+      "body_digest": "sha256:cd6085c5202a9fe5178f84f1259b20183e685b763482ee09b864d708a273df3f",
+      "payload_hex": "140000007365616d2d726571756573742d63616c6c2d763110000000aabbccddeeff00112233445566778899280000002f7365616d2e6170692e76312e5365616d436f6f7264696e6174696f6e2f5375626d6974566f746500000000470000007368613235363a63643630383563353230326139666535313738663834663132353962323031383365363835623736333438326565303962383634643730386132373364663366"
+    },
+    {
+      "name": "length-prefix-disambiguation-a",
+      "why": "paired with -b. Without the u32-LE length prefixes these two concatenate identically, re-opening exactly the verb/resource re-pointing gap the framing exists to close. The two payloads below MUST differ",
+      "synthetic": true,
+      "ticket_hex": "",
+      "rpc_full_name": "/seam.api.v1.SeamCoordination/Replay",
+      "resource_id": "x",
+      "body_digest": "",
+      "payload_hex": "140000007365616d2d726571756573742d63616c6c2d763100000000240000002f7365616d2e6170692e76312e5365616d436f6f7264696e6174696f6e2f5265706c6179010000007800000000"
+    },
+    {
+      "name": "length-prefix-disambiguation-b",
+      "why": "see -a. Same concatenated characters, different field boundaries",
+      "synthetic": true,
+      "ticket_hex": "",
+      "rpc_full_name": "/seam.api.v1.SeamCoordination/Replayx",
+      "resource_id": "",
+      "body_digest": "",
+      "payload_hex": "140000007365616d2d726571756573742d63616c6c2d763100000000250000002f7365616d2e6170692e76312e5365616d436f6f7264696e6174696f6e2f5265706c6179780000000000000000"
+    },
+    {
+      "name": "all-fields-empty",
+      "why": "the degenerate row. Five zero u32 prefixes after the context field — an implementation that skips empty fields rather than length-prefixing them diverges here and nowhere else",
+      "synthetic": true,
+      "ticket_hex": "",
+      "rpc_full_name": "",
+      "resource_id": "",
+      "body_digest": "",
+      "payload_hex": "140000007365616d2d726571756573742d63616c6c2d763100000000000000000000000000000000"
+    },
+    {
+      "name": "multibyte-resource-id",
+      "why": "lengths are BYTES, not characters. A UTF-16 or code-point length (JavaScript's .length, Python's len on str) produces a shorter prefix and an unverifiable signature",
+      "ticket_hex": "f0",
+      "rpc_full_name": "/seam.api.v1.SeamCoordination/SessionStatus",
+      "resource_id": "s-é中🔐",
+      "body_digest": "",
+      "payload_hex": "140000007365616d2d726571756573742d63616c6c2d763101000000f02b0000002f7365616d2e6170692e76312e5365616d436f6f7264696e6174696f6e2f53657373696f6e5374617475730b000000732dc3a9e4b8adf09f949000000000"
+    },
+    {
+      "name": "binary-ticket-with-nul-and-high-bytes",
+      "why": "the ticket is RAW BYTES, never a string. A client that decodes it to UTF-8, or truncates at a NUL, signs something else. Base64 in this fixture is transport for the vector file only",
+      "ticket_hex": "00ff7f800001",
+      "rpc_full_name": "/seam.api.v1.SeamAuthorization/GetEscalation",
+      "resource_id": "az:0193f2a4-7c1e-7b3a-9f21-000000000001",
+      "body_digest": "",
+      "payload_hex": "140000007365616d2d726571756573742d63616c6c2d76310600000000ff7f8000012c0000002f7365616d2e6170692e76312e5365616d417574686f72697a6174696f6e2f476574457363616c6174696f6e27000000617a3a30313933663261342d376331652d376233612d396632312d30303030303030303030303100000000"
+    }
+  ]
+}
