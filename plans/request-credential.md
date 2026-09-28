@@ -102,6 +102,13 @@ while failing any of these is **exploitable**, not merely non-conformant:
 - **`multibyte-resource-id`** — lengths are **bytes**. JavaScript's `String.length` and Python's
   `len()` on `str` are code units / code points; both emit a short prefix and sign something the
   server will never reconstruct.
+- **`body_input_hex` on the two bodied cases** — these pin the DIGEST COMPUTATION, not just the
+  framing around it. `body_digest` must equal `"sha256:" + lowercase_hex(sha256(those bytes))`. On
+  HTTP the input is the exact JSON you put on the wire; on gRPC it is the **decoded** protobuf
+  message, **without** the 5-byte length-prefixed-message header (1 compression flag + u32
+  big-endian length). Digesting the framed bytes is the single most likely gRPC divergence, and
+  without these two fields an implementation could reproduce all nine payloads and still get the
+  digest wrong for eleven of the sixteen verbs.
 
 There is **no bless mode**, in either repo. A mismatch is a contract break: moving these bytes costs a
 `v2` domain tag, a second vector and a migration for every published SDK.
