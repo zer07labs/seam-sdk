@@ -6,7 +6,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { create } from "@bufbuild/protobuf";
+import { create, toBinary } from "@bufbuild/protobuf";
 import type {
   DescMessage,
   DescMethodStreaming,
@@ -16,6 +16,7 @@ import type {
 } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import type { StreamResponse, Transport, UnaryResponse } from "@connectrpc/connect";
+import { ed25519 } from "@noble/curves/ed25519";
 
 import {
   Agent,
@@ -23,7 +24,7 @@ import {
   SeamClient,
   UnknownVerdictError,
 } from "../src/client.js";
-import { jcsCanonicalize } from "../src/crypto.js";
+import { jcsCanonicalize, requestSigPayload, toolInputDigest } from "../src/crypto.js";
 import { DEFAULT_ADMIN_TIMEOUT_MS, SeamAdminClient } from "../src/admin.js";
 import {
   InvalidArgumentError,
@@ -31,7 +32,19 @@ import {
   SeamRpcError,
   UnauthenticatedError,
 } from "../src/errors.js";
-import { AuthorizeVerdict } from "../gen/seam/api/v1/seam_pb.js";
+import {
+  ApprovalRequestRequestSchema,
+  AuthorizeVerdict,
+  BallotChoice,
+  BallotRequestSchema,
+  CommitRequestSchema,
+  EvaluationRequestSchema,
+  ObjectionRequestSchema,
+  OpenSessionRequestSchema,
+  ProposalRequestSchema,
+  SessionRefSchema,
+  VoteRequestSchema,
+} from "../gen/seam/api/v1/seam_pb.js";
 
 const SEED = new Uint8Array(32).fill(7);
 
@@ -40,6 +53,7 @@ interface Recorded {
   input: Record<string, unknown>;
   timeoutMs?: number;
   signal?: AbortSignal;
+  headers?: HeadersInit;
 }
 
 type UnaryHandler = (
@@ -65,10 +79,16 @@ function fakeTransport(
       method: DescMethodUnary<I, O>,
       signal: AbortSignal | undefined,
       timeoutMs: number | undefined,
-      _header: HeadersInit | undefined,
+      headers: HeadersInit | undefined,
       input: MessageInitShape<I>,
     ): Promise<UnaryResponse<I, O>> {
-      calls.push({ method: method.name, input: input as Record<string, unknown>, timeoutMs, signal });
+      calls.push({
+        method: method.name,
+        input: input as Record<string, unknown>,
+        timeoutMs,
+        signal,
+        headers,
+      });
       const out = await handle(method.name, input as Record<string, unknown>);
       return {
         stream: false,
@@ -250,6 +270,199 @@ test("unary data-plane wrappers default to the 2s deadline and accept an overrid
   assert.equal(calls[2]!.method, "GetEscalation");
   assert.equal(calls[2]!.input.authorizeId, "az-1");
   assert.equal(calls[2]!.timeoutMs, 88);
+});
+
+// ── The per-request credential (`seam-request-call-v1`, #508): every target verb ─────────────────
+
+const CREDENTIAL_TICKET = new Uint8Array([1, 2, 3, 9, 9]);
+
+/** A minimal handler covering only what `openSession`'s own admission handshake needs
+ * (`IssueChallenge`/`Admit`, for the unrelated acting `agent`) — every other RPC just gets `{}`. */
+function minimalHandle(method: string): unknown {
+  if (method === "IssueChallenge") return { receiverAid: "aid:pubkey:ed25519:recv", nonce: "n1" };
+  if (method === "Admit") return { ticket: new Uint8Array([9]), expiresAtMs: BigInt(Date.now() + 60_000) };
+  return {};
+}
+
+/** Seeds the credential's OWN ticket cache directly — `credentialHeaders` reuses whatever
+ * `authorize()`/`admit()` would for this agent, so this is the network-free way to give it one. */
+function seedCredentialTicket(client: SeamClient, aid: string): void {
+  (
+    client as unknown as {
+      tickets: Map<string, { ticket: Uint8Array; refreshAtMs: number }>;
+    }
+  ).tickets.set(aid, { ticket: CREDENTIAL_TICKET, refreshAtMs: Date.now() + 60_000 });
+}
+
+interface CredentialSpec {
+  rpc: string;
+  bodyless: boolean;
+  resourceId?: string;
+  schema?: Parameters<typeof create>[0];
+  invoke: (c: SeamClient, cred: Agent | undefined) => Promise<unknown>;
+}
+
+/** The same 15 verbs as `test_credential_wiring.py`'s `CALLS` table — rpc full name, bodyless vs.
+ * bodied (and its request schema, to recompute the expected digest independently), and how to
+ * invoke it with/without `credential`. */
+const CREDENTIAL_CALLS: Record<string, CredentialSpec> = {
+  OpenSession: {
+    rpc: "/seam.api.v1.SeamCoordination/OpenSession",
+    bodyless: false,
+    schema: OpenSessionRequestSchema,
+    invoke: (c, cred) =>
+      c.openSession(new Agent(SEED), { sessionId: "s1", participants: ["a", "b"], credential: cred }),
+  },
+  SubmitProposal: {
+    rpc: "/seam.api.v1.SeamCoordination/SubmitProposal",
+    bodyless: false,
+    schema: ProposalRequestSchema,
+    invoke: (c, cred) => c.submitProposal("s1", "a", "p1", "opt", undefined, { credential: cred }),
+  },
+  SubmitVote: {
+    rpc: "/seam.api.v1.SeamCoordination/SubmitVote",
+    bodyless: false,
+    schema: VoteRequestSchema,
+    invoke: (c, cred) => c.submitVote("s1", "a", "p1", "yes", undefined, { credential: cred }),
+  },
+  SubmitEvaluation: {
+    rpc: "/seam.api.v1.SeamCoordination/SubmitEvaluation",
+    bodyless: false,
+    schema: EvaluationRequestSchema,
+    invoke: (c, cred) => c.submitEvaluation("s1", "a", "p1", "APPROVE", { credential: cred }),
+  },
+  SubmitObjection: {
+    rpc: "/seam.api.v1.SeamCoordination/SubmitObjection",
+    bodyless: false,
+    schema: ObjectionRequestSchema,
+    invoke: (c, cred) => c.submitObjection("s1", "a", "p1", "reason", { credential: cred }),
+  },
+  SubmitCommit: {
+    rpc: "/seam.api.v1.SeamCoordination/SubmitCommit",
+    bodyless: false,
+    schema: CommitRequestSchema,
+    invoke: (c, cred) => c.submitCommit("s1", "c1", "approve", undefined, { credential: cred }),
+  },
+  SubmitApprovalRequest: {
+    rpc: "/seam.api.v1.SeamCoordination/SubmitApprovalRequest",
+    bodyless: false,
+    schema: ApprovalRequestRequestSchema,
+    invoke: (c, cred) =>
+      c.submitApprovalRequest("s1", "a", "r1", "approve", 2, undefined, { credential: cred }),
+  },
+  SubmitBallot: {
+    rpc: "/seam.api.v1.SeamCoordination/SubmitBallot",
+    bodyless: false,
+    schema: BallotRequestSchema,
+    invoke: (c, cred) =>
+      c.submitBallot("s1", "a", "r1", BallotChoice.APPROVE, "", undefined, { credential: cred }),
+  },
+  CancelSession: {
+    rpc: "/seam.api.v1.SeamCoordination/CancelSession",
+    bodyless: false,
+    schema: SessionRefSchema,
+    invoke: (c, cred) => c.cancelSession("s1", { credential: cred }),
+  },
+  ExpireSession: {
+    rpc: "/seam.api.v1.SeamCoordination/ExpireSession",
+    bodyless: false,
+    schema: SessionRefSchema,
+    invoke: (c, cred) => c.expireSession("s1", { credential: cred }),
+  },
+  SessionStatus: {
+    rpc: "/seam.api.v1.SeamCoordination/SessionStatus",
+    bodyless: true,
+    resourceId: "s1",
+    invoke: (c, cred) => c.sessionStatus("s1", { credential: cred }),
+  },
+  GetDecision: {
+    rpc: "/seam.api.v1.SeamCoordination/GetDecision",
+    bodyless: true,
+    resourceId: "d1",
+    invoke: (c, cred) => c.getDecision("d1", { credential: cred }),
+  },
+  ReplayDecision: {
+    rpc: "/seam.api.v1.SeamCoordination/ReplayDecision",
+    bodyless: true,
+    resourceId: "d1",
+    invoke: (c, cred) => c.replayDecision("d1", { credential: cred }),
+  },
+  GetEscalation: {
+    rpc: "/seam.api.v1.SeamAuthorization/GetEscalation",
+    bodyless: true,
+    resourceId: "az-1",
+    invoke: (c, cred) => c.getEscalation("az-1", { credential: cred }),
+  },
+  GetCommitmentProof: {
+    rpc: "/seam.api.v1.SeamCoordination/GetCommitmentProof",
+    bodyless: true,
+    resourceId: "d1",
+    invoke: (c, cred) => c.getCommitmentProof("d1", { credential: cred }),
+  },
+};
+
+function expectedBodyDigest(spec: CredentialSpec, recordedInput: Record<string, unknown>): string {
+  if (spec.bodyless || !spec.schema) return "";
+  const msg = create(spec.schema, recordedInput as MessageInitShape<typeof spec.schema>);
+  return toolInputDigest(toBinary(spec.schema, msg));
+}
+
+test("credential=: omitted sends no headers, on every one of the 15 target verbs", async () => {
+  for (const [name, spec] of Object.entries(CREDENTIAL_CALLS)) {
+    const calls: Recorded[] = [];
+    const client = new SeamClient(fakeTransport(calls, minimalHandle));
+    await spec.invoke(client, undefined);
+    const call = calls.find((c) => c.method === name);
+    assert.ok(call, `${name}: RPC not observed`);
+    assert.equal(call!.headers, undefined, `${name}: headers sent despite no credential`);
+  }
+});
+
+test("credential=: attaches a ticket + signature that verifies, on every one of the 15 target verbs", async () => {
+  const credential = new Agent(new Uint8Array(32).fill(3));
+  const pubkey = ed25519.getPublicKey(credential.seed);
+  for (const [name, spec] of Object.entries(CREDENTIAL_CALLS)) {
+    const calls: Recorded[] = [];
+    const client = new SeamClient(fakeTransport(calls, minimalHandle));
+    seedCredentialTicket(client, credential.aid);
+    await spec.invoke(client, credential);
+    const call = calls.find((c) => c.method === name);
+    assert.ok(call, `${name}: RPC not observed`);
+    const headers = call!.headers as Record<string, string>;
+    assert.deepEqual(Object.keys(headers).sort(), ["x-seam-call-sig-bin", "x-seam-ticket-bin"]);
+    assert.equal(
+      Buffer.from(headers["x-seam-ticket-bin"]!, "base64").toString("hex"),
+      Buffer.from(CREDENTIAL_TICKET).toString("hex"),
+      `${name}: wrong ticket on the wire`,
+    );
+
+    const bodyDigest = expectedBodyDigest(spec, call!.input);
+    const expectedPayload = requestSigPayload(CREDENTIAL_TICKET, spec.rpc, spec.resourceId ?? "", bodyDigest);
+    const sig = Buffer.from(headers["x-seam-call-sig-bin"]!, "base64");
+    assert.ok(ed25519.verify(sig, expectedPayload, pubkey), `${name}: signature does not verify`);
+  }
+});
+
+test("credential=: a different credential's key does not verify the signature", async () => {
+  const credA = new Agent(new Uint8Array(32).fill(3));
+  const credB = new Agent(new Uint8Array(32).fill(5));
+  for (const name of ["SubmitVote", "GetDecision"]) {
+    const spec = CREDENTIAL_CALLS[name]!;
+    const calls: Recorded[] = [];
+    const client = new SeamClient(fakeTransport(calls, minimalHandle));
+    seedCredentialTicket(client, credA.aid);
+    await spec.invoke(client, credA);
+    const call = calls.find((c) => c.method === name)!;
+    const headers = call.headers as Record<string, string>;
+    const sig = Buffer.from(headers["x-seam-call-sig-bin"]!, "base64");
+    const bodyDigest = expectedBodyDigest(spec, call.input);
+    const payload = requestSigPayload(CREDENTIAL_TICKET, spec.rpc, spec.resourceId ?? "", bodyDigest);
+    assert.equal(
+      ed25519.verify(sig, payload, ed25519.getPublicKey(credB.seed)),
+      false,
+      `${name}: signature verified against the WRONG credential's key`,
+    );
+  }
 });
 
 // ── Budget default: 0 ⇒ the server owns the default; the client never re-states 32 ───────────────

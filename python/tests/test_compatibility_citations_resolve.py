@@ -721,7 +721,7 @@ ANCHORED = [
     # concrete case for anchoring PROGRESS.md's load-bearing citations rather than only counting
     # them: "resolves" and "says what it claims" are different properties.
     ("PROGRESS.md", "ts/src/client.ts", "export function collectiveOutcomeOf"),
-    ("PROGRESS.md", "ts/src/client.ts", "  submitCommit("),
+    ("PROGRESS.md", "ts/src/client.ts", "  async submitCommit("),
     # Added in Phase 4 of consumer-decoders-and-event-surface, because this pair had by then been
     # wrong TWICE — once before that phase (cited `:601,637` while sitting at 623/659) and once
     # inside the very commit whose message claimed it had shifted every citation below `:239`.
@@ -731,8 +731,8 @@ ANCHORED = [
     # makes them checkable rather than merely countable: a citation that resolves but cannot be wrong
     # is the vacuity this file exists against. See the margin note below — this narrowed the tightest
     # margin in this table, deliberately, and that trade is recorded rather than absorbed.
-    ("PROGRESS.md", "ts/src/client.ts", "  submitEvaluation("),
-    ("PROGRESS.md", "ts/src/client.ts", "  submitObjection("),
+    ("PROGRESS.md", "ts/src/client.ts", "  async submitEvaluation("),
+    ("PROGRESS.md", "ts/src/client.ts", "  async submitObjection("),
     # Added in the round-5 fixes of consumer-decoders-and-event-surface, for the same reason the
     # four above were: the commit that CLOSED a stale-citation finding broke five of its own. It
     # added 5 lines of comment to check-contract.sh and 22 to test_field_manifest_gate.py above
@@ -935,17 +935,17 @@ CLAIM_LINES = {
     (
         "PROGRESS.md",
         "ts/src/client.ts",
-        "  submitCommit(",
+        "  async submitCommit(",
     ): "`submit_commit` / `submitCommit`",
     (
         "PROGRESS.md",
         "ts/src/client.ts",
-        "  submitEvaluation(",
+        "  async submitEvaluation(",
     ): "`submit_evaluation` / `submit_objection`",
     (
         "PROGRESS.md",
         "ts/src/client.ts",
-        "  submitObjection(",
+        "  async submitObjection(",
     ): "`submit_evaluation` / `submit_objection`",
     # PROGRESS.md — the five round-5 anchors. Both paths are cited more than once in the document,
     # so `test_the_claim_line_map_covers_every_needle_that_needs_it` requires every one of them here.

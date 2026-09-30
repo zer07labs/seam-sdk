@@ -139,7 +139,35 @@ against the vector, not against a round trip.
 
 ## Status
 
-**Filed, not started.** The runtime half is complete under #508; nothing in `seam-sdk` has been
-changed except the vendored vector and this plan. Nothing regresses while it waits: an SDK client
-sends no `x-seam-subject` today either, so a subject-scoped read under enforcement fails exactly as
-it does now.
+**Sequence steps 1–3 done; step 4 (the live `deny`-plane check) deferred.** The runtime half is
+complete under #508.
+
+- **Step 1** (vector) and **step 2** (`request_sig_payload`/`request_sig`, pinned per language
+  against the vector): done. `python/seam_sdk/crypto.py` and `ts/src/crypto.ts`; conformance tests
+  in `python/tests/test_request_sig_payload.py` and `ts/tests/request_sig_payload.test.ts`.
+- **Step 3** (wired into the client's subject-scoped calls, behind an explicit opt-in): done, as a
+  **per-call optional parameter** — `credential: Optional[Agent] = None` (Python, sync and async)
+  / `credential?: Agent` (TypeScript) — rather than a session-installed default, so the opt-in is
+  explicit at each call site and a caller that never passes it is provably unaffected. Wired into
+  all 15 target verbs: the 5 bodyless reads (`GetDecision`, `ReplayDecision`,
+  `GetCommitmentProof`, `GetEscalation`, `SessionStatus`) and 10 of the bodied verbs
+  (`OpenSession`, `SubmitProposal`, `SubmitEvaluation`, `SubmitObjection`, `SubmitVote`,
+  `SubmitCommit`, `SubmitApprovalRequest`, `SubmitBallot`, `CancelSession`, `ExpireSession`) —
+  everything above except HTTP-only `POST /v1/archive/replay`, which neither hand-written client
+  calls over HTTP. `ReportOutcome` stays excluded per this plan's own rule; `ResumeSession` is
+  additionally excluded because the data-plane verb is a tombstone in this SDK (resume moved to
+  the management plane, rt-D) — not itself a verb this plan's list names either way. Wiring is
+  Python- and TypeScript-only: Go, Java and Kotlin do not yet carry `call_sig_payload`'s sibling,
+  so they were never in scope for this pass (the plan's "four of the five languages already have"
+  in the trap section above overstates it for `seam-request-call-v1` specifically — verified
+  empirically rather than assumed, since only Python and TypeScript carry the primitive at all).
+  Tests: `python/tests/test_credential_wiring.py` and the credential-wiring block in
+  `ts/tests/unit_plumbing.test.ts` — server-free, over a recording fake transport/stub, asserting
+  both that `credential=` omitted sends no metadata and that supplying it produces a ticket +
+  signature that independently verifies against the credential's own Ed25519 key.
+- **Step 4** (a live check against a `deny` plane): **not started, and out of scope without a live
+  runtime to check against.** `seam-runtime/integration/tests/subject_headers_deny.rs` remains the
+  end-to-end shape to drive this against once one is available.
+
+Nothing regresses for a caller that does not opt in: omitting `credential` sends no metadata, and
+behavior is byte-for-byte what it was before this work landed.

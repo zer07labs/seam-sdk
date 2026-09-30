@@ -65,8 +65,48 @@ than trusting a summary here.
   escalation (`SEAM_ESCALATION_RETENTION_MILLIS`, 30 days by default) — all three read the same
   uniform refusal. There is no list verb: holding scope must not imply the ability to enumerate a
   namespace's escalations. Same authorization as any other subject-scoped read; carrying the
-  caller's identity to it is `plans/request-credential.md`'s per-request credential, not yet
-  wired in.
+  caller's identity to it is `plans/request-credential.md`'s per-request credential, wired in
+  below.
+
+- **The per-request credential (`seam-request-call-v1`, #508)** — an opt-in, per-call `credential`
+  argument on every subject-scoped verb, carrying the caller's identity in band alongside an
+  already-admitted ticket. This is the sound posture on a deployment that strips `x-seam-subject`
+  at its edge (`SEAM_SUBJECT_HEADERS=deny`, seam-runtime #710): a client-asserted header is no
+  longer trusted there, so a subject-scoped call needs its own proof of possession instead.
+
+  Wired into all 15 subject-scoped verbs, in Python (sync and async) and TypeScript:
+  `open_session`/`openSession`, `submit_proposal`/`submitProposal`, `submit_vote`/`submitVote`,
+  `submit_evaluation`/`submitEvaluation`, `submit_objection`/`submitObjection`,
+  `submit_commit`/`submitCommit`, `submit_approval_request`/`submitApprovalRequest`,
+  `submit_ballot`/`submitBallot`, `cancel_session`/`cancelSession`,
+  `expire_session`/`expireSession`, `session_status`/`sessionStatus`,
+  `get_decision`/`getDecision`, `replay_decision`/`replayDecision`,
+  `get_escalation`/`getEscalation`, `get_commitment_proof`/`getCommitmentProof`. Deliberately
+  **not** wired into `report_outcome`/`reportOutcome` (it does not defend against replay and would
+  duplicate a durable outbox record) or the tombstoned `resume_session` (moved to the management
+  plane). `run_decision`/`authorize`/`RunDecision`'s own AITP presentation already proves identity
+  in-body.
+
+  `credential: Optional[Agent] = None` (Python) / `credential?: Agent` (TypeScript) is additive and
+  keyword-only/optional everywhere it is accepted: a caller that never passes it is unaffected — no
+  metadata is sent, and behavior is byte-for-byte what it was before this entry. When supplied, the
+  SDK reuses the same cached/admitted ticket `authorize()` would for that agent (never minting a
+  second one) and signs Ed25519 over `frame(domain) ‖ frame(ticket) ‖ frame(rpc_full_name) ‖
+  frame(resource_id) ‖ frame(body_digest)` — a fresh domain tag (`seam-request-call-v1`), distinct
+  from `authorize()`'s own `seam-authorize-call-v2`, so a captured credential of one kind is never
+  spendable as the other. `resource_id` carries the verb's id for the 5 bodyless reads
+  (`GetDecision` and friends); a bodied verb leaves it empty and binds the whole serialized request
+  message instead — binding `rpc_full_name` is what stops a captured signature for one verb being
+  re-pointed at a more privileged one over the same ticket and resource id (e.g. `GetDecision` →
+  the decrypted `GetCommitmentProof`).
+
+  On the wire: `x-seam-ticket-bin` + `x-seam-call-sig-bin` (gRPC, raw bytes as metadata — Python's
+  `grpc` library base64-encodes `-bin` keys itself) or `x-seam-ticket` + `x-seam-call-sig` (HTTP,
+  base64 explicitly, since TypeScript's Connect-RPC transport does not do that encoding for the
+  caller). `python/seam_sdk/crypto.py`'s `request_sig_payload`/`request_sig` and
+  `ts/src/crypto.ts`'s `requestSigPayload`/`requestSig` are pinned byte-exact against the runtime's
+  own implementation by `conformance/request_sig_payload_vector.json` (9 cases, no bless mode — a
+  mismatch there is a wire contract break, not a vector to regenerate).
 
 - **`verify/` now discloses unverified CONTENT — a link whose `kind` it cannot model** (seam-sdk
   #130). `seam-event.v1` §Versioning, refreshed in the same commit as #484, makes this a MUST for

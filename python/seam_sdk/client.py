@@ -21,6 +21,7 @@ from ._authorize import (
     TicketCache,
     _resolve_canonical,
     build_authorize_request,
+    credential_metadata,
     result_of,
 )
 from .crypto import aid_from_pubkey, build_presentation, verify_tct
@@ -320,12 +321,23 @@ class SeamClient:
         return result_of(resp)
 
     def get_escalation(
-        self, authorize_id: str, *, timeout: float = DEFAULT_TIMEOUT_S
+        self,
+        authorize_id: str,
+        *,
+        credential: Optional[Agent] = None,
+        timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.EscalationView:
         """Read back one ESCALATE verdict by the ``authorize_id`` its ``AuthorizeResponse`` returned
-        (#517). NOT_FOUND for an ALLOW/DENY/TRANSFORM id, or one outside this caller's scope."""
+        (#517). NOT_FOUND for an ALLOW/DENY/TRANSFORM id, or one outside this caller's scope.
+        ``credential`` carries the caller's identity in band (#508) — see :meth:`get_decision`."""
+        md = self._credential_md(
+            credential,
+            "/seam.api.v1.SeamAuthorization/GetEscalation",
+            authorize_id,
+            timeout=timeout,
+        )
         return self._authz.GetEscalation(
-            pb.EscalationRef(authorize_id=authorize_id), timeout=timeout
+            pb.EscalationRef(authorize_id=authorize_id), timeout=timeout, metadata=md
         )
 
     def _refresh_ticket(self, agent: Agent, failed: bytes, timeout: float) -> bytes:
@@ -369,6 +381,25 @@ class SeamClient:
             if ticket is None:
                 ticket = self._admit_locked(agent, cache, timeout)
             return ticket
+
+    def _credential_md(
+        self,
+        credential: Optional[Agent],
+        rpc_full_name: str,
+        resource_id: str,
+        body=None,
+        *,
+        timeout: float,
+    ) -> Optional[list]:
+        """The gRPC ``metadata=`` value for a subject-scoped call — ``None`` unless ``credential``
+        is supplied, the whole per-request-credential feature being opt-in (#508). Reuses the same
+        cached/admitted ticket :meth:`authorize` would for this agent; never mints a second one."""
+        if credential is None:
+            return None
+        ticket = self._ticket_for(credential, timeout)
+        return credential_metadata(
+            credential.seed, ticket, rpc_full_name, resource_id, body
+        )
 
     def run_decision(
         self,
@@ -421,12 +452,14 @@ class SeamClient:
         limits: Optional[BudgetLimits] = None,
         mode: str = "",
         on_behalf_of: Sequence[str] = (),
+        credential: Optional[Agent] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.SessionStep:
         """Admit (the PoP handshake) → open an incremental session. ``budget`` is the legacy
         message count (0 means the server default, currently 32 — the proto's semantics, so the
         server owns the number); ``limits`` adds the other 6.2 dimensions. ``on_behalf_of`` binds
-        end-user data subjects to the session (see :meth:`run_decision`)."""
+        end-user data subjects to the session (see :meth:`run_decision`). ``credential`` is the
+        opt-in per-request identity (#508) — see :meth:`get_decision`."""
         req = pb.OpenSessionRequest(
             session_id=session_id,
             participants=list(participants),
@@ -437,7 +470,14 @@ class SeamClient:
         )
         if limits is not None:
             req.limits.CopyFrom(limits.to_pb())
-        return self._coord.OpenSession(req, timeout=timeout)
+        md = self._credential_md(
+            credential,
+            "/seam.api.v1.SeamCoordination/OpenSession",
+            "",
+            req,
+            timeout=timeout,
+        )
+        return self._coord.OpenSession(req, timeout=timeout, metadata=md)
 
     def submit_proposal(
         self,
@@ -447,6 +487,7 @@ class SeamClient:
         option: str,
         *,
         usage: Optional[StepUsage] = None,
+        credential: Optional[Agent] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.SessionStep:
         req = pb.ProposalRequest(
@@ -457,7 +498,14 @@ class SeamClient:
         )
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        return self._coord.SubmitProposal(req, timeout=timeout)
+        md = self._credential_md(
+            credential,
+            "/seam.api.v1.SeamCoordination/SubmitProposal",
+            "",
+            req,
+            timeout=timeout,
+        )
+        return self._coord.SubmitProposal(req, timeout=timeout, metadata=md)
 
     def submit_vote(
         self,
@@ -467,6 +515,7 @@ class SeamClient:
         value: str,
         *,
         usage: Optional[StepUsage] = None,
+        credential: Optional[Agent] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.SessionStep:
         req = pb.VoteRequest(
@@ -477,7 +526,14 @@ class SeamClient:
         )
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        return self._coord.SubmitVote(req, timeout=timeout)
+        md = self._credential_md(
+            credential,
+            "/seam.api.v1.SeamCoordination/SubmitVote",
+            "",
+            req,
+            timeout=timeout,
+        )
+        return self._coord.SubmitVote(req, timeout=timeout, metadata=md)
 
     def submit_evaluation(
         self,
@@ -490,6 +546,7 @@ class SeamClient:
         reason: str = "",
         rationale_ref: Optional[str] = None,
         usage: Optional[StepUsage] = None,
+        credential: Optional[Agent] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.SessionStep:
         """Submit a MACP evaluation for a proposal.
@@ -518,7 +575,14 @@ class SeamClient:
             req.rationale_ref = rationale_ref
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        return self._coord.SubmitEvaluation(req, timeout=timeout)
+        md = self._credential_md(
+            credential,
+            "/seam.api.v1.SeamCoordination/SubmitEvaluation",
+            "",
+            req,
+            timeout=timeout,
+        )
+        return self._coord.SubmitEvaluation(req, timeout=timeout, metadata=md)
 
     def submit_objection(
         self,
@@ -529,6 +593,7 @@ class SeamClient:
         *,
         severity: str = "",
         usage: Optional[StepUsage] = None,
+        credential: Optional[Agent] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.SessionStep:
         """Submit a MACP objection against a proposal.
@@ -545,7 +610,14 @@ class SeamClient:
         )
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        return self._coord.SubmitObjection(req, timeout=timeout)
+        md = self._credential_md(
+            credential,
+            "/seam.api.v1.SeamCoordination/SubmitObjection",
+            "",
+            req,
+            timeout=timeout,
+        )
+        return self._coord.SubmitObjection(req, timeout=timeout, metadata=md)
 
     def submit_commit(
         self,
@@ -554,6 +626,7 @@ class SeamClient:
         action: str,
         *,
         usage: Optional[StepUsage] = None,
+        credential: Optional[Agent] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.SessionStep:
         req = pb.CommitRequest(
@@ -563,7 +636,14 @@ class SeamClient:
         )
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        return self._coord.SubmitCommit(req, timeout=timeout)
+        md = self._credential_md(
+            credential,
+            "/seam.api.v1.SeamCoordination/SubmitCommit",
+            "",
+            req,
+            timeout=timeout,
+        )
+        return self._coord.SubmitCommit(req, timeout=timeout, metadata=md)
 
     # ── Quorum-mode-only steps (`macp.mode.quorum.v1`) ─────────────────────────────────────────
     # request → ballot × N → submit_commit (reused unchanged). Both verbs are rejected with a typed
@@ -580,6 +660,7 @@ class SeamClient:
         required_approvals: int,
         *,
         usage: Optional[StepUsage] = None,
+        credential: Optional[Agent] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.SessionStep:
         """Open an N-of-M approval round. Only the session initiator may submit one (enforced by
@@ -596,7 +677,14 @@ class SeamClient:
         )
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        return self._coord.SubmitApprovalRequest(req, timeout=timeout)
+        md = self._credential_md(
+            credential,
+            "/seam.api.v1.SeamCoordination/SubmitApprovalRequest",
+            "",
+            req,
+            timeout=timeout,
+        )
+        return self._coord.SubmitApprovalRequest(req, timeout=timeout, metadata=md)
 
     def submit_ballot(
         self,
@@ -607,6 +695,7 @@ class SeamClient:
         *,
         reason: str = "",
         usage: Optional[StepUsage] = None,
+        credential: Optional[Agent] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.SessionStep:
         """Cast one ballot against an open approval request.
@@ -625,7 +714,14 @@ class SeamClient:
         )
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        return self._coord.SubmitBallot(req, timeout=timeout)
+        md = self._credential_md(
+            credential,
+            "/seam.api.v1.SeamCoordination/SubmitBallot",
+            "",
+            req,
+            timeout=timeout,
+        )
+        return self._coord.SubmitBallot(req, timeout=timeout, metadata=md)
 
     def resume_session(
         self,
@@ -653,38 +749,92 @@ class SeamClient:
         return self._coord.ResumeSession(req, timeout=timeout)
 
     def cancel_session(
-        self, session_id: str, *, timeout: float = DEFAULT_TIMEOUT_S
+        self,
+        session_id: str,
+        *,
+        credential: Optional[Agent] = None,
+        timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.TerminalResponse:
-        return self._coord.CancelSession(
-            pb.SessionRef(session_id=session_id), timeout=timeout
+        req = pb.SessionRef(session_id=session_id)
+        md = self._credential_md(
+            credential,
+            "/seam.api.v1.SeamCoordination/CancelSession",
+            "",
+            req,
+            timeout=timeout,
         )
+        return self._coord.CancelSession(req, timeout=timeout, metadata=md)
 
     def expire_session(
-        self, session_id: str, *, timeout: float = DEFAULT_TIMEOUT_S
+        self,
+        session_id: str,
+        *,
+        credential: Optional[Agent] = None,
+        timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.TerminalResponse:
-        return self._coord.ExpireSession(
-            pb.SessionRef(session_id=session_id), timeout=timeout
+        req = pb.SessionRef(session_id=session_id)
+        md = self._credential_md(
+            credential,
+            "/seam.api.v1.SeamCoordination/ExpireSession",
+            "",
+            req,
+            timeout=timeout,
         )
+        return self._coord.ExpireSession(req, timeout=timeout, metadata=md)
 
     def session_status(
-        self, session_id: str, *, timeout: float = DEFAULT_TIMEOUT_S
+        self,
+        session_id: str,
+        *,
+        credential: Optional[Agent] = None,
+        timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.SessionStatusResponse:
+        md = self._credential_md(
+            credential,
+            "/seam.api.v1.SeamCoordination/SessionStatus",
+            session_id,
+            timeout=timeout,
+        )
         return self._coord.SessionStatus(
-            pb.SessionRef(session_id=session_id), timeout=timeout
+            pb.SessionRef(session_id=session_id), timeout=timeout, metadata=md
         )
 
     def get_decision(
-        self, decision_id: str, *, timeout: float = DEFAULT_TIMEOUT_S
+        self,
+        decision_id: str,
+        *,
+        credential: Optional[Agent] = None,
+        timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.DecisionRecordView:
+        """``credential``, when supplied, carries the caller's identity in band (#508) — the sound
+        posture on a deployment that strips ``x-seam-subject`` at its edge. Reuses the same
+        cached/admitted ticket :meth:`authorize` would for this agent. Omitted (the default): no
+        credential is sent, and behavior is unchanged."""
+        md = self._credential_md(
+            credential,
+            "/seam.api.v1.SeamCoordination/GetDecision",
+            decision_id,
+            timeout=timeout,
+        )
         return self._coord.GetDecision(
-            pb.DecisionRef(decision_id=decision_id), timeout=timeout
+            pb.DecisionRef(decision_id=decision_id), timeout=timeout, metadata=md
         )
 
     def replay_decision(
-        self, decision_id: str, *, timeout: float = DEFAULT_TIMEOUT_S
+        self,
+        decision_id: str,
+        *,
+        credential: Optional[Agent] = None,
+        timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.ReplayView:
+        md = self._credential_md(
+            credential,
+            "/seam.api.v1.SeamCoordination/ReplayDecision",
+            decision_id,
+            timeout=timeout,
+        )
         return self._coord.ReplayDecision(
-            pb.DecisionRef(decision_id=decision_id), timeout=timeout
+            pb.DecisionRef(decision_id=decision_id), timeout=timeout, metadata=md
         )
 
     def report_outcome(
@@ -789,10 +939,20 @@ class SeamClient:
         ).valid
 
     def get_commitment_proof(
-        self, decision_id: str, *, timeout: float = DEFAULT_TIMEOUT_S
+        self,
+        decision_id: str,
+        *,
+        credential: Optional[Agent] = None,
+        timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.CommitmentProof:
+        md = self._credential_md(
+            credential,
+            "/seam.api.v1.SeamCoordination/GetCommitmentProof",
+            decision_id,
+            timeout=timeout,
+        )
         return self._coord.GetCommitmentProof(
-            pb.DecisionRef(decision_id=decision_id), timeout=timeout
+            pb.DecisionRef(decision_id=decision_id), timeout=timeout, metadata=md
         )
 
     def verify_decision(

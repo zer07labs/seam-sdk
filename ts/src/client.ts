@@ -4,17 +4,27 @@
 
 import { createClient, type Client } from "@connectrpc/connect";
 import { createGrpcTransport, Http2SessionManager } from "@connectrpc/connect-node";
+import { create, toBinary, type DescMessage, type MessageInitShape } from "@bufbuild/protobuf";
 import { ed25519 } from "@noble/curves/ed25519";
 
 import {
+  ApprovalRequestRequestSchema,
   AuthorizeVerdict,
   BallotChoice,
+  BallotRequestSchema,
   CollectiveVerdict,
+  CommitRequestSchema,
+  EvaluationRequestSchema,
+  ObjectionRequestSchema,
+  OpenSessionRequestSchema,
+  ProposalRequestSchema,
   SeamAdmission,
   SeamAuthorization,
   SeamContext,
   SeamCoordination,
   SeamTrust,
+  SessionRefSchema,
+  VoteRequestSchema,
   type Anchor,
   type Commitment,
   type ContextBinding,
@@ -28,6 +38,7 @@ import {
   buildPresentation,
   callSig,
   jcsCanonicalize,
+  requestSig,
   toolInputDigest,
   verifyTct,
 } from "./crypto.js";
@@ -59,6 +70,18 @@ export const DEFAULT_TIMEOUT_MS = 2_000;
  * plane); it is a PER-RPC deadline — see the note on {@link DEFAULT_TIMEOUT_MS}. */
 export interface UnaryCallOptions {
   timeoutMs?: number;
+}
+
+/** {@link UnaryCallOptions} plus the opt-in per-request credential (`seam-request-call-v1`, #508) —
+ * accepted only by the subject-scoped verbs it applies to, deliberately NOT folded into the base
+ * {@link UnaryCallOptions} every unary method shares, so passing `credential` to a method that does
+ * not wire it is a compile error rather than a silently-ignored option. */
+export interface CredentialedCallOptions extends UnaryCallOptions {
+  /** Carries the caller's identity in band, alongside an already-admitted ticket — the sound posture
+   * on a deployment that strips `x-seam-subject` at its edge (`SEAM_SUBJECT_HEADERS=deny`, #710).
+   * Reuses the same cached/admitted ticket {@link SeamClient.authorize} would for this agent. Omitted
+   * (the default): no credential is sent, behavior unchanged. */
+  credential?: Agent;
 }
 
 const call = (opts?: UnaryCallOptions) => ({
@@ -700,10 +723,49 @@ export class SeamClient {
     return this.admit(agent, opts); // coalesces with any in-flight handshake
   }
 
+  // ── The per-request credential (`seam-request-call-v1`, #508) ────────────────────────────────
+
+  /** The headers one subject-scoped call's per-request credential rides on, or `undefined` when no
+   * `credential` was supplied (the common case — unaffected). `resourceId` is the verb's id for a
+   * bodyless read (`getDecision`'s `decisionId` and friends); pass `""` for a bodied verb, whose id
+   * lives inside `body` instead — gRPC leaves `resourceId` empty there and binds the WHOLE request
+   * message instead (see {@link requestSigPayload} in `crypto.ts`). `body` is the exact schema +
+   * init the caller is about to send; its `toBinary()` encoding is what the digest covers, computed
+   * from the same (schema, init) pair the RPC call below serializes — never a re-derivation that
+   * could disagree with what actually reaches the wire.
+   *
+   * `-bin`-suffixed gRPC metadata is base64 on the wire (the HTTP/2 header value is always text);
+   * unlike Python's grpc library, connect-node does not do that encoding for us, so it happens here. */
+  private async credentialHeaders<Desc extends DescMessage>(
+    credential: Agent | undefined,
+    rpcFullName: string,
+    resourceId: string,
+    opts: UnaryCallOptions | undefined,
+    body?: { schema: Desc; init: MessageInitShape<Desc> },
+  ): Promise<Record<string, string> | undefined> {
+    if (!credential) return undefined;
+    const cached = this.tickets.get(credential.aid);
+    const ticket =
+      cached && Date.now() < cached.refreshAtMs ? cached.ticket : await this.admit(credential, opts);
+    const bodyDigest =
+      body === undefined ? "" : toolInputDigest(toBinary(body.schema, create(body.schema, body.init)));
+    const sig = requestSig(credential.seed, ticket, rpcFullName, resourceId, bodyDigest);
+    return {
+      "x-seam-ticket-bin": Buffer.from(ticket).toString("base64"),
+      "x-seam-call-sig-bin": Buffer.from(sig).toString("base64"),
+    };
+  }
+
   /** Read back one ESCALATE verdict by the `authorizeId` its `authorize()` result returned
    * (#517). NOT_FOUND for an ALLOW/DENY/TRANSFORM id, or one outside this caller's scope. */
-  getEscalation(authorizeId: string, opts?: UnaryCallOptions) {
-    return this.authz.getEscalation({ authorizeId }, call(opts));
+  async getEscalation(authorizeId: string, opts?: CredentialedCallOptions) {
+    const headers = await this.credentialHeaders(
+      opts?.credential,
+      "/seam.api.v1.SeamAuthorization/GetEscalation",
+      authorizeId,
+      opts,
+    );
+    return this.authz.getEscalation({ authorizeId }, { ...call(opts), headers });
   }
 
   /**
@@ -755,47 +817,66 @@ export class SeamClient {
       limits?: BudgetLimits;
       mode?: string;
       onBehalfOf?: string[];
+      credential?: Agent;
       timeoutMs?: number;
     },
   ) {
-    return this.coord.openSession(
-      {
-        sessionId: opts.sessionId,
-        participants: opts.participants,
-        // 0 ⇒ the server default (32) — the proto owns the default, the client never re-states it.
-        budget: opts.budget ?? 0,
-        mode: opts.mode ?? "",
-        presentation: await this.presentation(agent, opts),
-        limits: opts.limits,
-        onBehalfOf: opts.onBehalfOf ?? [],
-      },
-      call(opts),
+    const init = {
+      sessionId: opts.sessionId,
+      participants: opts.participants,
+      // 0 ⇒ the server default (32) — the proto owns the default, the client never re-states it.
+      budget: opts.budget ?? 0,
+      mode: opts.mode ?? "",
+      presentation: await this.presentation(agent, opts),
+      limits: opts.limits,
+      onBehalfOf: opts.onBehalfOf ?? [],
+    };
+    const headers = await this.credentialHeaders(
+      opts.credential,
+      "/seam.api.v1.SeamCoordination/OpenSession",
+      "",
+      opts,
+      { schema: OpenSessionRequestSchema, init },
     );
+    return this.coord.openSession(init, { ...call(opts), headers });
   }
 
-  submitProposal(
+  async submitProposal(
     sessionId: string,
     proposer: string,
     proposalId: string,
     option: string,
     usage?: StepUsage,
-    opts?: UnaryCallOptions,
+    opts?: CredentialedCallOptions,
   ) {
-    return this.coord.submitProposal(
-      { sessionId, proposer, proposalId, option, usage },
-      call(opts),
+    const init = { sessionId, proposer, proposalId, option, usage };
+    const headers = await this.credentialHeaders(
+      opts?.credential,
+      "/seam.api.v1.SeamCoordination/SubmitProposal",
+      "",
+      opts,
+      { schema: ProposalRequestSchema, init },
     );
+    return this.coord.submitProposal(init, { ...call(opts), headers });
   }
 
-  submitVote(
+  async submitVote(
     sessionId: string,
     voter: string,
     proposalId: string,
     value: string,
     usage?: StepUsage,
-    opts?: UnaryCallOptions,
+    opts?: CredentialedCallOptions,
   ) {
-    return this.coord.submitVote({ sessionId, voter, proposalId, value, usage }, call(opts));
+    const init = { sessionId, voter, proposalId, value, usage };
+    const headers = await this.credentialHeaders(
+      opts?.credential,
+      "/seam.api.v1.SeamCoordination/SubmitVote",
+      "",
+      opts,
+      { schema: VoteRequestSchema, init },
+    );
+    return this.coord.submitVote(init, { ...call(opts), headers });
   }
 
   /**
@@ -811,7 +892,7 @@ export class SeamClient {
    * `rationaleRef` is a `sha256:<hex>` context ref. It is accepted and recorded on the request
    * path only — it is **NOT YET SEALED**.
    */
-  submitEvaluation(
+  async submitEvaluation(
     sessionId: string,
     evaluator: string,
     proposalId: string,
@@ -821,24 +902,30 @@ export class SeamClient {
       reason?: string;
       rationaleRef?: string;
       usage?: StepUsage;
+      credential?: Agent;
       timeoutMs?: number;
     },
   ) {
-    return this.coord.submitEvaluation(
-      {
-        sessionId,
-        evaluator,
-        proposalId,
-        recommendation,
-        reason: opts?.reason ?? "",
-        // Omitting the key is absence on the wire — never `?? 0`, which would collapse "declined
-        // to claim" into a real confidence value the caller never gave.
-        ...(opts?.confidence !== undefined ? { confidence: opts.confidence } : {}),
-        ...(opts?.rationaleRef !== undefined ? { rationaleRef: opts.rationaleRef } : {}),
-        usage: opts?.usage,
-      },
-      call(opts),
+    const init = {
+      sessionId,
+      evaluator,
+      proposalId,
+      recommendation,
+      reason: opts?.reason ?? "",
+      // Omitting the key is absence on the wire — never `?? 0`, which would collapse "declined
+      // to claim" into a real confidence value the caller never gave.
+      ...(opts?.confidence !== undefined ? { confidence: opts.confidence } : {}),
+      ...(opts?.rationaleRef !== undefined ? { rationaleRef: opts.rationaleRef } : {}),
+      usage: opts?.usage,
+    };
+    const headers = await this.credentialHeaders(
+      opts?.credential,
+      "/seam.api.v1.SeamCoordination/SubmitEvaluation",
+      "",
+      opts,
+      { schema: EvaluationRequestSchema, init },
     );
+    return this.coord.submitEvaluation(init, { ...call(opts), headers });
   }
 
   /**
@@ -847,7 +934,7 @@ export class SeamClient {
    * `severity` is one of `low | medium | high | critical`; empty defaults to `medium` (the MACP
    * default, applied server-side).
    */
-  submitObjection(
+  async submitObjection(
     sessionId: string,
     objector: string,
     proposalId: string,
@@ -855,23 +942,44 @@ export class SeamClient {
     opts?: {
       severity?: string;
       usage?: StepUsage;
+      credential?: Agent;
       timeoutMs?: number;
     },
   ) {
-    return this.coord.submitObjection(
-      { sessionId, objector, proposalId, reason, severity: opts?.severity ?? "", usage: opts?.usage },
-      call(opts),
+    const init = {
+      sessionId,
+      objector,
+      proposalId,
+      reason,
+      severity: opts?.severity ?? "",
+      usage: opts?.usage,
+    };
+    const headers = await this.credentialHeaders(
+      opts?.credential,
+      "/seam.api.v1.SeamCoordination/SubmitObjection",
+      "",
+      opts,
+      { schema: ObjectionRequestSchema, init },
     );
+    return this.coord.submitObjection(init, { ...call(opts), headers });
   }
 
-  submitCommit(
+  async submitCommit(
     sessionId: string,
     commitmentId: string,
     action: string,
     usage?: StepUsage,
-    opts?: UnaryCallOptions,
+    opts?: CredentialedCallOptions,
   ) {
-    return this.coord.submitCommit({ sessionId, commitmentId, action, usage }, call(opts));
+    const init = { sessionId, commitmentId, action, usage };
+    const headers = await this.credentialHeaders(
+      opts?.credential,
+      "/seam.api.v1.SeamCoordination/SubmitCommit",
+      "",
+      opts,
+      { schema: CommitRequestSchema, init },
+    );
+    return this.coord.submitCommit(init, { ...call(opts), headers });
   }
 
   // ── Quorum-mode-only steps (`macp.mode.quorum.v1`) ────────────────────────────────────────────
@@ -884,45 +992,55 @@ export class SeamClient {
    * mode engine, not the contract). `requiredApprovals` is the N: how many APPROVE ballots close
    * the round. Range-checked as a `uint32` here so an out-of-range value names this argument
    * rather than surfacing from the generated setter. */
-  submitApprovalRequest(
+  async submitApprovalRequest(
     sessionId: string,
     requester: string,
     requestId: string,
     action: string,
     requiredApprovals: number,
     usage?: StepUsage,
-    opts?: UnaryCallOptions,
+    opts?: CredentialedCallOptions,
   ) {
-    return this.coord.submitApprovalRequest(
-      {
-        sessionId,
-        requester,
-        requestId,
-        action,
-        requiredApprovals: u32(requiredApprovals, "requiredApprovals"),
-        usage,
-      },
-      call(opts),
+    const init = {
+      sessionId,
+      requester,
+      requestId,
+      action,
+      requiredApprovals: u32(requiredApprovals, "requiredApprovals"),
+      usage,
+    };
+    const headers = await this.credentialHeaders(
+      opts?.credential,
+      "/seam.api.v1.SeamCoordination/SubmitApprovalRequest",
+      "",
+      opts,
+      { schema: ApprovalRequestRequestSchema, init },
     );
+    return this.coord.submitApprovalRequest(init, { ...call(opts), headers });
   }
 
   /** Cast one ballot against an open approval request. One RPC covers approve/reject/abstain: the
    * three upstream MACP payloads are structurally identical, and `choice` is what selects the wire
    * envelope. `BALLOT_CHOICE_UNSPECIFIED` is not a vote — passing it is the server's
    * INVALID_ARGUMENT to raise. */
-  submitBallot(
+  async submitBallot(
     sessionId: string,
     voter: string,
     requestId: string,
     choice: BallotChoice,
     reason = "",
     usage?: StepUsage,
-    opts?: UnaryCallOptions,
+    opts?: CredentialedCallOptions,
   ) {
-    return this.coord.submitBallot(
-      { sessionId, voter, requestId, choice, reason, usage },
-      call(opts),
+    const init = { sessionId, voter, requestId, choice, reason, usage };
+    const headers = await this.credentialHeaders(
+      opts?.credential,
+      "/seam.api.v1.SeamCoordination/SubmitBallot",
+      "",
+      opts,
+      { schema: BallotRequestSchema, init },
     );
+    return this.coord.submitBallot(init, { ...call(opts), headers });
   }
 
   /** @deprecated Resume moved to the **management** plane (rt-D): this data-plane RPC now returns
@@ -942,27 +1060,67 @@ export class SeamClient {
     );
   }
 
-  cancelSession(sessionId: string, opts?: UnaryCallOptions) {
-    return this.coord.cancelSession({ sessionId }, call(opts));
+  async cancelSession(sessionId: string, opts?: CredentialedCallOptions) {
+    const init = { sessionId };
+    const headers = await this.credentialHeaders(
+      opts?.credential,
+      "/seam.api.v1.SeamCoordination/CancelSession",
+      "",
+      opts,
+      { schema: SessionRefSchema, init },
+    );
+    return this.coord.cancelSession(init, { ...call(opts), headers });
   }
-  expireSession(sessionId: string, opts?: UnaryCallOptions) {
-    return this.coord.expireSession({ sessionId }, call(opts));
+  async expireSession(sessionId: string, opts?: CredentialedCallOptions) {
+    const init = { sessionId };
+    const headers = await this.credentialHeaders(
+      opts?.credential,
+      "/seam.api.v1.SeamCoordination/ExpireSession",
+      "",
+      opts,
+      { schema: SessionRefSchema, init },
+    );
+    return this.coord.expireSession(init, { ...call(opts), headers });
   }
-  sessionStatus(sessionId: string, opts?: UnaryCallOptions) {
-    return this.coord.sessionStatus({ sessionId }, call(opts));
+  async sessionStatus(sessionId: string, opts?: CredentialedCallOptions) {
+    const headers = await this.credentialHeaders(
+      opts?.credential,
+      "/seam.api.v1.SeamCoordination/SessionStatus",
+      sessionId,
+      opts,
+    );
+    return this.coord.sessionStatus({ sessionId }, { ...call(opts), headers });
   }
 
-  getDecision(decisionId: string, opts?: UnaryCallOptions) {
-    return this.coord.getDecision({ decisionId }, call(opts));
+  async getDecision(decisionId: string, opts?: CredentialedCallOptions) {
+    const headers = await this.credentialHeaders(
+      opts?.credential,
+      "/seam.api.v1.SeamCoordination/GetDecision",
+      decisionId,
+      opts,
+    );
+    return this.coord.getDecision({ decisionId }, { ...call(opts), headers });
   }
-  replayDecision(decisionId: string, opts?: UnaryCallOptions) {
-    return this.coord.replayDecision({ decisionId }, call(opts));
+  async replayDecision(decisionId: string, opts?: CredentialedCallOptions) {
+    const headers = await this.credentialHeaders(
+      opts?.credential,
+      "/seam.api.v1.SeamCoordination/ReplayDecision",
+      decisionId,
+      opts,
+    );
+    return this.coord.replayDecision({ decisionId }, { ...call(opts), headers });
   }
   issuerAid(opts?: UnaryCallOptions) {
     return this.trust.issuerAid({}, call(opts)).then((r) => r.issuerAid);
   }
-  getCommitmentProof(decisionId: string, opts?: UnaryCallOptions) {
-    return this.coord.getCommitmentProof({ decisionId }, call(opts));
+  async getCommitmentProof(decisionId: string, opts?: CredentialedCallOptions) {
+    const headers = await this.credentialHeaders(
+      opts?.credential,
+      "/seam.api.v1.SeamCoordination/GetCommitmentProof",
+      decisionId,
+      opts,
+    );
+    return this.coord.getCommitmentProof({ decisionId }, { ...call(opts), headers });
   }
 
   /** Report a delayed correctness outcome for a sealed decision (advisory, Plan R). The sealed record is

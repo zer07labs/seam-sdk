@@ -12,7 +12,7 @@ from typing import Mapping, Optional, Sequence
 
 from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
 
-from .crypto import call_sig, jcs_canonicalize, tool_input_digest
+from .crypto import call_sig, jcs_canonicalize, request_sig, tool_input_digest
 from .errors import (
     CanonicalizationError,
     ProtocolViolationError,
@@ -229,3 +229,33 @@ def build_authorize_request(
     if features:
         req.features.update(features)
     return req
+
+
+# ── The per-request credential (`seam-request-call-v1`, #508) ──────────────────────────────────────
+# Opt-in identity for a subject-scoped call, carried in band alongside an already-obtained admission
+# ticket — see plans/request-credential.md. A caller that never passes ``credential=`` is unaffected;
+# this module only ever produces metadata when asked.
+
+
+def credential_metadata(
+    agent_seed: bytes,
+    ticket: bytes,
+    rpc_full_name: str,
+    resource_id: str,
+    body=None,
+) -> "list[tuple[str, bytes]]":
+    """The gRPC metadata pair for one subject-scoped call's per-request credential.
+
+    ``resource_id`` is the verb's id for a bodyless read (``GetDecision``'s ``decision_id`` and
+    friends); pass ``""`` for a bodied verb, whose id lives inside ``body`` instead — gRPC leaves
+    ``resource_id`` empty there and binds the WHOLE decoded request message instead (see
+    :func:`~seam_sdk.crypto.request_sig_payload`). ``body`` is that exact protobuf request message;
+    its ``SerializeToString()`` is what the digest covers, never a re-serialization taken after the
+    fact, which would let two different wire payloads share one digest.
+
+    Returns the gRPC ``metadata`` list a caller passes straight through to the stub call:
+    ``[("x-seam-ticket-bin", ticket), ("x-seam-call-sig-bin", sig)]``.
+    """
+    body_digest = "" if body is None else tool_input_digest(body.SerializeToString())
+    sig = request_sig(agent_seed, ticket, rpc_full_name, resource_id, body_digest)
+    return [("x-seam-ticket-bin", ticket), ("x-seam-call-sig-bin", sig)]
