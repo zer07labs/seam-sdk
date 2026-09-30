@@ -1,107 +1,33 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 342d3f5 (refreshed 2026-09-14 for
-     seam-runtime#711/#730/#729 (#732) — three spec statements that CONTRADICTED the runtime, corrected
-     upstream. Two annotate `DECISION_SEALED` and `AUDIT_ENTRY` as `(CHAINED)` in `enum EventKind`, which
-     documents what was already true. The third is the substantive one and it is a WEAKENING: both
-     `policy_version` fields — `SessionLifecycle` (tag 3) and `AuditEntry` (tag 9) — are now stated to be
-     STAGED, naming what a binding staged, and NOT evidence that the named policy's rules evaluated
-     anything. `SessionLifecycle` emits at `phase = "opened"`, before anything seals, so no enforcement
-     fact can exist yet; the authorize path produces no enforcement fact AT ALL, by design. What actually
-     bound is `DecisionSealed.policy_rules_digest` (tag 13), joinable by `session_id`.
-     SPEC-ONLY HERE, and checked rather than assumed: the diff adds `(CHAINED)` annotations and prose, and
-     touches no ADVISORY annotation, so the spec's ADVISORY set is unchanged and `wire::ADVISORY_KINDS`
-     does not move. That is the step-4 question this header exists to answer, and the answer is different
-     from the `POLICY_DENIED` refresh below, where the set DID move and the verifier changed with it. The
-     `(CHAINED)` markers likewise cost nothing: `chain_anchored` keys chained-ness on FIELD PRESENCE and
-     never on `kind`, so annotating a kind cannot change what the chain walk does.
-     `policy_version` is read by no code in this repo — the verifier does not consult it — so the
-     correction changes no behaviour here. It is vendored anyway, verbatim and whole-file, because this
-     copy is what a third party builds a verifier from, and shipping them the OVERCLAIM (`the policy bound
-     at open`) would invite exactly the inference the upstream fix removes: treating a populated
-     `policy_version` as proof of enforcement.
-     The previous pin was @ f50401c (2026-09-13, seam-runtime#484 — on the durable `AUTHORIZE_EVALUATED` row, BOTH digest-bearing fields become KEYED
-     COMMITMENTS (`hmac-sha256:<kid>:<hex>` over `put(domain) ‖ put(tenant) ‖ put(value)`) rather than bare
-     hashes. The reason is that an end-user identifier has a small, enumerable preimage space, so
-     `sha256(subject)` was a set-membership oracle to anyone holding the row: a guess could be confirmed by
-     brute force, without breaking anything. Keying removes that oracle wherever the deployment's issuer
-     seed is secret — which is every production deployment, and NOT a `SEAM_DEV_INSECURE` one, where the
-     derived key is public too and these fields conceal nothing.
-     THE REQUEST SIDE IS UNTOUCHED, and the two constructions must not be compared:
-     `AuthorizeRequest.tool_input_digest` in `seam.api.v1` is still `sha256:<hex>` over the RFC 8785 (JCS)
-     canonical input, and is still exactly what `call_sig` covers. No client surface in this repo changes
-     shape — this is an emit-side change to the event stream. What a consumer must know is that legacy rows
-     are never backfilled and no longer join to new ones: an improvised join on the digest returns empty
-     rather than erroring, and the documented join is on `authorize_id`.
-     The same upstream commit also added a normative §Versioning clause on UNMODELLED event kinds, which is
-     a different kind of change — see the foot of this header, where its obligation is discharged.
-     The previous pin was @ cfffb90 (2026-09-07, for
-     `POLICY_DENIED` (envelope tag 24, seam-runtime#468/#607) — the advisory trace a commitment a bound policy
-     REFUSED now leaves. Like `AUTHORIZE_EVALUATED` it seals nothing, so it is the only record the refusal
-     happened; it is ADVISORY and MUST NOT be linked into the audit chain. The previous pin was @ ac325d7
-     (2026-09-04, ACDP P3 key revocation — `revocation` (tag 12) and `revocation_trust_class` (tag 13),
-     seam-runtime#531 — which, like P2 `retraction` before them, are served on ResolveContext and NEVER
-     sealed into the record digest), and before that @ 3b3d4ae (2026-08-31, ACDP D3 receipt provenance: the
-     four `ContextBinding` receipt slots sealed into digest v3 (P1a, seam-runtime#520), plus P2 `retraction`
-     (seam-runtime#523)). The runtime spec is the
-     source of truth; refresh this copy whenever the spec changes — a stale copy here once shipped a real
-     verifier bug (the AUTHORIZE_EVALUATED advisory omission), and it has been stale twice more since: it
-     carried no §Record digest (v3) before an earlier refresh, and no §"Presence on the wire" before the
-     last one, while src/verify.rs implemented both.
-     Refreshed VERBATIM, whole-file, deliberately: a reviewer can `diff` it against the sibling checkout
-     and get nothing, which is a checkable claim. Cherry-picking only the changed sections would read as
-     tidier and would quietly end that property.
-     ENFORCED, at last — this header used to say plainly that nothing checked it.
-     scripts/check_vendored_spec.py now proves all three claims against the real seam-runtime: the body
-     is byte-identical at the pinned commit, that commit is reachable from the ref named here, and the
-     body matches that ref's tip. It runs in CI as the `spec-pin` job, and drift is red. Each of the
-     three stalenesses above was found by a person or a review gate — no test in this repo could have
-     found them, because the proof lives in another repository and had to be fetched.
-     This pin briefly read `@ dde87c8 tracking feat/b3-phase3-take-the-door`: the v3 spec text that
-     src/verify.rs implements was on an unmerged runtime branch, so the copy sat ahead of `main` on
-     purpose. That declaration is how the checker permits being ahead — an UNDECLARED off-main pin is
-     refused. It is also self-terminating, and it terminated: the branch landed as #440 and was deleted,
-     the gate went red the same hour and said to re-pin here, which is what this line now is.
-     The gate then did exactly that job a fourth time: ACDP P1a and P2 landed on runtime `main` and
-     `spec-pin` went red on every open pull request until this refresh. NOTE what this copy does and does
-     not claim: it documents the runtime's event stream, not this repository's verifier coverage.
-     src/verify.rs does not compute `context_digest` and does not read the four receipt slots — the spec
-     describing them here is correct and the verifier not implementing them is also correct.
-     THIS refresh is the other kind, and the distinction is the reason the sentence above exists. The P1a/P2/P3
-     refreshes were spec-only here: the fields they added are ones this verifier deliberately does not read.
-     `POLICY_DENIED` is not like that — it adds a member to the spec's ADVISORY set, and `ADVISORY_KINDS` in
-     src/wire.rs must equal that set or `--strict` refuses a healthy stream carrying one. That is the
-     AUTHORIZE_EVALUATED regression exactly, and this time it would fire per refused commitment rather than
-     once. So the same commit that re-pinned this file also added the kind to `ADVISORY_KINDS` and decoded
-     tag 24 into the canonical identity, which is what step 4 of the gate's own remedy asks for: when the
-     diff changes normative behaviour, the verifier and its tests need the same change, not just this file.
-     THIS refresh discharges that same step-4 obligation in the OTHER direction — by establishing that
-     nothing needs to change, and citing where. Two normative movements arrived together in f50401c, and
-     they land differently:
-       * #484's keyed commitments are EMIT-SIDE ONLY. src/wire.rs carries `tool_input_digest` (tag 6) and
-         `subject_digest` (tag 10) as opaque strings that feed the dedup identity and nothing else — it
-         never parses their prefix, never recomputes them, and never compares one against a request-side
-         digest. A value-shape change in a field it does not read cannot reach it. What DID need saying is
-         said at the top of this header, because the un-joinability across the cutover is a fact about this
-         stream that a reader of this copy has to know before writing a query.
-       * The §Versioning clause on an unmodelled `kind` IS normative for a verifier, and its two halves
-         landed differently. LINKAGE conformed BY CONSTRUCTION rather than by luck: the clause requires
-         that an unmodelled kind carrying `digest`/`checksum` still be verified and still advance
-         `running_head`, and `chain_anchored` (src/verify.rs) keys chained-ness on FIELD PRESENCE and
-         never on `kind` — its doc comment says so in those words — so the skip arm fires only when an
-         event carries no digest/checksum at all. That property was not written for this clause; it is
-         already load-bearing for `LEARNING_DECISION` and for the off-chain `chain_anchor`.
-         CONTENT did NOT conform, and this header said it did. The reasoning here originally ran: such an
-         event yields no `decision`, so the `--issuer` recompute loop skips it and it can never reach
-         `records_recomputed`, which is reported separately from `links checked` on every run — therefore
-         it is not folded into a green claim. Not being COUNTED is not the same as being DISCLOSED, and
-         the separation that argument leans on does not carry the weight put on it: `links` minus
-         `records_recomputed` is ALREADY non-zero on a healthy stream, because `AUDIT_ENTRY`,
-         `ERASURE_CERTIFICATE` and `CHAIN_HEAD_ATTESTATION` are chained kinds that legitimately never
-         recompute and v1 `DECISION_SEALED` records are link-only by schema. A reader doing that
-         subtraction cannot tell a kind we model and choose not to recompute from a kind we could not
-         parse at all — which is exactly the distinction the clause asks to be disclosed. Filed as
-         seam-sdk#130 and closed by it: `wire::MODELLED_KINDS` + `ChainReport::unmodelled` now count
-         those links at the point they are verified, and the report states the number (and names the
-         kinds) in both output modes, zero included. -->
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 2ea9f93 (refreshed 2026-09-30). Two
+     normative movements since the prior pin (342d3f5):
+     1. U-RT-1/U-RT-3 (commits 8bc00336, c11973c3) — the runtime's audit hash chain is per-tenant,
+        not global, and `ChainHeadAttestation` gains an UNSIGNED `tenant` field (wire tag 7).
+        Reconciled against `src/verify.rs`/`src/wire.rs` in the SAME change that refreshed this file
+        (seam-sdk#144, Part 1 + Part 1.5):
+          a. §Ordering & integrity now states explicitly what U-RT-1 already shipped: the hash chain
+             is walked PER TENANT, each from its own genesis — never one chain over the whole
+             interleaved outbox. `verify_authenticity_anchored`'s integrity pass (via
+             `chain_by_tenant`) now partitions by `Event.tenant` instead of one global running head;
+             every existing single-tenant fixture is unaffected (a one-tenant window's per-tenant
+             output is byte-identical to the old global one).
+          b. New "Reader obligations on `tenant`" — scoped to authenticity verification only (this
+             crate's `--issuer`): a payload `tenant` disagreeing with its envelope's is REFUSED
+             outright ("ATTESTATION TENANT MISMATCH"); a payload `tenant` empty while the envelope's
+             is not (pre-this-field legacy attestation) is accepted on the envelope alone but counted
+             (`IssuerReport::tenant_unbound`) and refused under `--strict`. Both implemented in
+             `verify_authenticity_anchored`'s attestation loop.
+          c. Per-tenant anchored-start semantics ((f0) attribution, (f4)/(f5) re-scoped per tenant) —
+             see `chain_anchored`'s wrapper over `chain_by_tenant` and
+             `verify_authenticity_by_tenant`.
+          SPEC-ONLY zero-behavior-change areas of this delta (checked, not assumed): the signed
+          `chain_head_attestation_payload` preimage itself is untouched (tenant stays unsigned until
+          seam-runtime's own Phase 4, tracked as Part 2 on seam-sdk#144 and NOT part of this refresh);
+          `record_digest_v2`/`record_digest_v3` are untouched; the erasure certificate is untouched.
+     2. seam-runtime#847 (commit 2ea9f93) — the escalation-inbox section (§AUTHORIZE_EVALUATED /
+        ESCALATE) documents that an ESCALATE verdict now ALSO writes a second, non-event, durable row
+        (`authorize_escalation`) alongside the outbox event. SPEC-ONLY, checked: this crate reads no
+        escalation-specific fields and has no code path that consumes or claims completeness over the
+        escalation inbox, so nothing here changes behaviour. -->
 
 # `seam-event.v1` — event-stream wire spec (language-neutral)
 
@@ -230,10 +156,31 @@ ChainHeadAttestation {                     // payload at SeamEvent tag 22
                           // prefix (2 = A14 v2, 3 = B3 v3) — the downgrade guard, bound into the
                           // signature. A bound, not a description: see below.
   signature:     bytes    // Ed25519 over the signed framing below
+  tenant:        string   // (tag 7, U-RT-3 Phase 2) which tenant's chain this attests. Empty on
+                          // attestations minted before this field existed. NOT YET part of the
+                          // signed framing (see below); an in-stream reader attributes
+                          // an attestation to a tenant via the enclosing envelope's own `tenant` until
+                          // U-RT-3 Phase 4 binds this field into the signature.
 }
 ```
 
-**Signed framing** (over the 32-byte SHA-256 **digest**, never the preimage):
+**Reader obligations on `tenant` (U-RT-3 Phase 3) — part of Verification below, not the wire shape
+itself.** These bind an attestation to a tenant only where that attribution is actually load-bearing:
+during **authenticity verification under a pinned issuer** (`seam-verify chain --issuer <AID>`, clause
+(a) below). Without `--issuer` this field, like every other payload field authenticity inspects (b)–(d),
+is opaque bytes the tool never interprets — integrity checking binds an attestation to a tenant only via
+the enclosing envelope, exactly as it always has. Under `--issuer`: a reader MUST prefer the payload's
+own `tenant` when non-empty, and MUST refuse the attestation outright if it disagrees with the enclosing
+envelope's `tenant` — one of the two is a lie, and a reader that picks whichever field it happens to
+read first can be steered to the wrong tenant's coverage. A payload `tenant` empty while the envelope's
+is not (an attestation minted between U-RT-1 and Phase 2) is accepted on the envelope alone — its
+signature and head-at-position still bind it to a real chain — but MUST be counted and reported as
+tenant-unbound, and a caller that has opted into strict verification MUST refuse a chain carrying any.
+
+**Signed framing** (over the 32-byte SHA-256 **digest**, never the preimage). **Unchanged by U-RT-3
+Phase 2** — `tenant` rides the payload unsigned for now, so every attestation ever minted keeps
+verifying under every verifier that exists today; U-RT-3 Phase 4 is the phase that binds it in, behind
+its own cross-repo gate:
 
 ```
 signature = Ed25519( SHA256(
@@ -271,7 +218,8 @@ notarized `(len, head)` transitively pins an issuer-signed head — see `audit-a
 the **pinned** issuer AID (a mismatch is refused before any signature work — deriving the key from the
 attestation's own `issuer_aid` would let a forgery verify against its forger), AND its `attested_head`
 equals the running head after `attested_len` chained links (an authentic attestation replayed into a
-fabricated chain dies on this position check); (b) for every `DECISION_SEALED`, recompute the record
+fabricated chain dies on this position check) — **and, since U-RT-3 Phase 3, its payload `tenant` MUST
+agree with its envelope's, per "Reader obligations on `tenant`" above**; (b) for every `DECISION_SEALED`, recompute the record
 digest (spec §Record digest) from its payload and compare it to the event's `digest` (tag 19) — a
 mismatch is a **payload rewrite** (a structural column was changed after sealing; the chain link still
 hashes, but the payload no longer matches it); (c) **a `schema_version >= 2` `DECISION_SEALED` that lacks
@@ -333,6 +281,15 @@ above, supplied out of band — e.g. one element of the public `GET /v1/anchors`
 `(attested_len, attested_head)` seeds the running head in place of genesis. An anchored start
 **relocates the trust root**, so all of the following are normative:
 
+- **(f0) — an anchored start is per tenant (U-RT-3 Phase 3).** Chains are per-`tenant` (see above), so
+  an anchor seeds exactly one tenant's chain. A verifier checking a multi-tenant window MAY be given
+  several anchors, **at most one per tenant**, each attributed to the tenant it names (its own payload
+  `tenant` since Phase 2, or the envelope's when the anchor is loaded as a full event). An anchor naming
+  a tenant absent from the window ⇒ REFUSE: the operator asked for a start the window does not contain,
+  and silently dropping it would verify a start nobody chose. An anchor minted before Phase 3 (no
+  `tenant` at all) falls back to the window's own sole tenant only when that fallback is unambiguous —
+  exactly one tenant present; two anchors naming the same tenant, or an untenanted anchor against a
+  multi-tenant window, is a usage error, refused loudly rather than guessed at silently.
 - **(f1) — the anchor is validated before it is trusted, and only under a pinned issuer.** An
   anchored start is accepted only when `--issuer` is given, and the anchor's signature MUST verify
   against a pinned issuer AID under the signed framing above, before anything is verified from it.
@@ -353,9 +310,10 @@ above, supplied out of band — e.g. one element of the public `GET /v1/anchors`
   dropped and never counted toward (f4). (The read→sign→append race above can legitimately place
   such an attestation inside the window.)
 - **(f4) — clause (d), re-scoped.** At least one valid attestation whose `attested_len` is
-  **strictly greater** than the anchor's MUST be present, else REFUSE. The anchor itself never
-  satisfies (d): the anchor feed is public, so a fabricated window appended to a genuine anchor
-  would otherwise authenticate with zero issuer coverage of its own. The anchor warrants the
+  **strictly greater** than the anchor's MUST be present, else REFUSE. Evaluated **per anchored
+  tenant** (f0): an anchor for one tenant is never satisfied by another tenant's coverage. The anchor
+  itself never satisfies (d): the anchor feed is public, so a fabricated window appended to a genuine
+  anchor would otherwise authenticate with zero issuer coverage of its own. The anchor warrants the
   prefix; only an in-window attestation warrants the window.
 - **(f5) — clause (e), re-scoped.** The ceiling is checked over the window's covered links only,
   with the running maximum seeded at 0 — never seeded from the anchor's `digest_schema`, which is a
@@ -493,8 +451,19 @@ whose append is **fail-closed**: an ESCALATE whose append fails returns an error
 because an escalation nobody can ever see is not an escalation. ALLOW/DENY/TRANSFORM appends stay
 fail-open (verdict returned, `seam.security` WARN logged). The `{authorize_id, client_request_id?,
 agent_aid, agent_id, tool_name, tool_input_digest, subject_digest?, reason}` field set on an ESCALATE row
-is the complete contract a future control-plane escalation inbox consumes — built from events alone, with
-no wire change.
+is the complete event-side contract an escalation consumer reads — built from events alone, with no wire
+change.
+
+**An ESCALATE also writes a second, non-event row, and a consumer must not confuse the two.** Since A1
+the runtime keeps a durable keyed record of every ESCALATE in its own table (`authorize_escalation`,
+`crates/seam-store/migrations/0025_authorize_escalation.sql`), written in the **same store transaction**
+as the outbox append — so the escalation inbox is no longer "built from events alone", and an
+`AUTHORIZE_EVALUATED` row with `verdict: ESCALATE` implies a matching stored row (and the reverse). Two
+differences matter to anyone joining across them. First, that table stores the caller's **raw**
+`sha256:<hex>` `tool_input_digest`, while the outbox row above carries the `#484` keyed commitment — the
+two are not equal and never join; join on `authorize_id`. Second, the table stores **no**
+`subject_digest` at all. The stored row is also retention-bounded and is deleted on expiry, whereas the
+outbox row's lifetime is the relay-GC window; neither is a mirror of the other.
 
 
 ### `POLICY_DENIED` (additive, tag 24 — advisory, not chained)
@@ -644,27 +613,40 @@ The decision being scored is identified by the **envelope `decision_id`**, not a
 
 ## Ordering & integrity
 
-- **Ordering** is by `seq`, monotonic over the runtime's **single ordered outbox stream** (one global
-  hash chain). `tenant`/`namespace` are tags consumers **filter** on; they are not separate chains in v1.
-  Consumers track one cursor (at-least-once delivery; `event_id` dedups). _Per-`(tenant,namespace)`
-  sub-streams with independent cursors are a forward-compatible v2 enhancement._
+- **Ordering** is by `seq`, monotonic over the runtime's **single ordered outbox stream** — delivery
+  and cursoring stay global. `tenant`/`namespace` are tags consumers **filter** on, not separate
+  *delivery* streams in v1. Consumers track one cursor (at-least-once delivery; `event_id` dedups).
+  _Per-`(tenant,namespace)` sub-streams with independent cursors are a forward-compatible v2
+  enhancement._ **The hash chain itself is a different axis and is per-`tenant` since U-RT-1** — see
+  the Chain bullet below; delivery being one global `seq`-ordered stream does not mean the chained
+  events riding it form one global chain.
 - **Chain:** a **chained** event carries three fields — `prev_checksum` (the head it extends), `digest`
   (its own record/action digest), and `checksum` (the head it produces, `= H(prev_checksum ‖ digest)`).
   **Chained-ness is by field presence, not by `kind`:** an event is on the chain iff `digest` + `checksum`
   are present (equivalently, `prev_checksum` is non-empty). The chained kinds are `DECISION_SEALED`,
   `AUDIT_ENTRY`, and `ERASURE_CERTIFICATE` — **except** the `action: "chain_anchor"` `AUDIT_ENTRY`, which is
   emitted off-chain (no `digest`) and is *not* a link. Advisory kinds (`LEARNING_DECISION`,
-  `LEARNING_OUTCOME`, `BUDGET_BREACH`) likewise set none of the three. A consumer
-  verifies the whole chain **from the stream alone, without trusting the transport**: with
-  `running_head = 32 zero bytes` (genesis), for each event **that has a `digest`** in `seq` order, assert
-  `prev_checksum == running_head`, assert `checksum == H(prev_checksum ‖ digest)` (**this link is now
-  cryptographically checkable** — the `digest` input is on the wire, §A), then advance
-  `running_head = checksum`. This detects a forged/inserted/rewritten event, not merely a dropped one; an
-  attacker stripping tags 19/20 off a chained event is caught at the next link (`prev_checksum ≠
-  running_head`) — equivalent in power to dropping it, which a tail-strip aside is covered by the
-  out-of-band anchor (`audit-anchor.md`). The `digest` is computed per §Record digest below — from
-  `schema_version = 2` it covers every structural column a consumer acts on plus `SHA256(ciphertext)`,
-  so a consumer recomputes it from the wire; it discloses nothing a consumer does not already hold.
+  `LEARNING_OUTCOME`, `BUDGET_BREACH`) likewise set none of the three. **Since U-RT-1 (tenant
+  partitioning), a chained `AUDIT_ENTRY`'s `prev_checksum`/`checksum` are computed per-`tenant`, not
+  over the whole database** — each tenant has its own chain from its own genesis, the same way each
+  tenant gets its own `chain_anchor` per attestation tick (`audit-anchor.md`). The wire `seq` itself is
+  unaffected (still the single global `outbox.seq`, §Ordering above) — only the chain link a chained
+  event's `prev_checksum`/`checksum` participates in is now scoped by `tenant`. **A consumer therefore
+  verifies one running chain per `tenant`, not one running chain over the whole interleaved stream**:
+  for each distinct `tenant` value seen, track its own `running_head`, initialized to 32 zero bytes
+  (genesis) the first time that tenant's `AUDIT_ENTRY` is observed; for each event **that has a
+  `digest`**, in `seq` order **within that tenant's own subsequence**, assert `prev_checksum ==
+  running_head`, assert `checksum == H(prev_checksum ‖ digest)` (**this link is now cryptographically
+  checkable** — the `digest` input is on the wire, §A), then advance that tenant's `running_head =
+  checksum`. A consumer that walks the raw interleaved stream with a single shared `running_head`
+  across tenants will see spurious chain breaks the moment two tenants both have chain activity — this
+  is not a transport bug, it is the (correct) per-tenant chain shape. This detects a forged/inserted/
+  rewritten event within a tenant's chain, not merely a dropped one; an attacker stripping tags 19/20
+  off a chained event is caught at that tenant's next link (`prev_checksum ≠ running_head`) —
+  equivalent in power to dropping it, which a tail-strip aside is covered by the out-of-band anchor
+  (`audit-anchor.md`). The `digest` is computed per §Record digest below — from `schema_version = 2` it
+  covers every structural column a consumer acts on plus `SHA256(ciphertext)`, so a consumer recomputes
+  it from the wire; it discloses nothing a consumer does not already hold.
 
 ## Retention & the relay-consumed cursor (R1)
 

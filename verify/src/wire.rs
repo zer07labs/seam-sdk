@@ -85,6 +85,11 @@ pub struct ChainHeadAttestationPb {
     pub digest_schema: u32,
     #[prost(bytes = "vec", tag = "6")]
     pub signature: Vec<u8>,
+    /// tag 7 — UNSIGNED echo of the attesting tenant, added by U-RT-3 Phase 2. Not part of the signed
+    /// preimage (Phase 4, not yet landed): this field is read-and-cross-checked against the envelope
+    /// `tenant`, never trusted on its own. See `verify_authenticity_anchored`'s tenant-agreement check.
+    #[prost(string, tag = "7")]
+    pub tenant: String,
 }
 
 /// The `AUDIT_ENTRY` payload (envelope tag 16). ALL of its fields are part of the event's canonical
@@ -272,6 +277,10 @@ pub struct ChainHeadAttestationJson {
     pub issuer_aid: String,
     pub digest_schema: u32,
     pub signature: String,
+    /// UNSIGNED, added by U-RT-3 Phase 2. `#[serde(default)]` is load-bearing: a pre-Phase-2 attestation
+    /// carries only the 6 fields above, and must still parse.
+    #[serde(default)]
+    pub tenant: String,
 }
 
 #[derive(Deserialize)]
@@ -372,6 +381,7 @@ pub struct ErasureCertificateJson {
 }
 
 /// The one shape the verifier actually works on.
+#[derive(Clone)]
 pub struct Event {
     pub event_id: String,
     pub seq: u64,
@@ -496,6 +506,8 @@ pub struct Attestation {
     pub issuer_aid: String,
     pub digest_schema: u32,
     pub signature: Vec<u8>,
+    /// UNSIGNED echo of the attesting tenant (U-RT-3 Phase 2). Empty on a pre-Phase-2 attestation.
+    pub tenant: String,
 }
 
 impl Attestation {
@@ -549,6 +561,7 @@ impl Attestation {
             issuer_aid: j.issuer_aid,
             digest_schema: j.digest_schema,
             signature: b64(&j.signature)?,
+            tenant: j.tenant,
         })
     }
 }
@@ -596,6 +609,7 @@ impl Event {
                         issuer_aid: a.issuer_aid,
                         digest_schema: a.digest_schema,
                         signature: b64(&a.signature)?,
+                        tenant: a.tenant,
                     })
                 });
             let decision = j.payload.map(|p| -> Result<Decision, String> {
@@ -732,6 +746,7 @@ impl Event {
                 issuer_aid: a.issuer_aid,
                 digest_schema: a.digest_schema,
                 signature: a.signature,
+                tenant: a.tenant,
             }),
             decision: pb.payload.map(|p| Decision {
                 decision_id: p.decision_id,
@@ -822,6 +837,7 @@ impl Event {
                 issuer_aid: a.issuer_aid.clone(),
                 digest_schema: a.digest_schema,
                 signature: a.signature.clone(),
+                tenant: a.tenant.clone(),
             }),
         };
         self.bytes = pb.encode_to_vec();

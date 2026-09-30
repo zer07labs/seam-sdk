@@ -275,6 +275,9 @@ ErasureRequest/confirm_count
 ErasureRequest/now_millis
 ErasureRequest/subject
 ErasureRequest/tenant
+EscalationDeliveryView/authorize_id
+EscalationDeliveryView/delivered
+EscalationDeliveryView/reporters_seen
 EscalationRef/authorize_id
 EscalationView/agent_aid
 EscalationView/agent_id

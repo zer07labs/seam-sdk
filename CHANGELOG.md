@@ -205,6 +205,56 @@ than trusting a summary here.
   *inside* a single reason — so splitting is lossy: two reasons yield three parts, one dangling
   mid-parenthetical.
 
+### Changed — `verify/` walks the audit hash chain per tenant (seam-sdk #144)
+
+- **`seam-verify` now walks one hash chain per tenant, matching seam-runtime U-RT-1/U-RT-3.** The
+  runtime's audit outbox has been partitioned per tenant for some time — each tenant chains
+  against its own prior entry, from its own genesis, never against another tenant's
+  (`seam-runtime` commit `8bc00336`). This crate's `chain`/`chain_anchored` still walked ONE global
+  chain over the interleaved stream, which is a live correctness gap: a real multi-tenant export
+  (`GET /v1/anchors` already returns interleaved multi-tenant attestations) would be checked
+  against the wrong prior head the moment two tenants' events interleave.
+
+  `chain`/`chain_anchored` now delegate to a new `chain_by_tenant`, and `ChainReport` gains a
+  `tenants: BTreeMap<String, TenantChain>` field carrying each tenant's own head/links/window. A
+  window containing exactly one tenant — every stream this crate verified before today, and any
+  genuinely single-tenant stream — mirrors that one tenant's state onto `ChainReport`'s existing
+  top-level fields **byte-for-byte**; this is not a behaviour change for that case. A window
+  spanning more than one tenant now reports each tenant separately instead of silently chaining
+  them together (which would previously either false-positive a break, on one tenant's event
+  legitimately following another's in `prev_checksum` terms, or worse, verify green over a stream
+  that was never one honest chain to begin with).
+
+  **The cutover itself is diagnosed, not misreported as tampering.** `seam-runtime`'s own
+  backfill left each event's envelope `tenant` from before the partitioning cutover unset, so a
+  real export spanning that date can show a tenant's first chained event not starting at genesis —
+  indistinguishable from forgery by inspection alone. An unanchored tenant's first observed link
+  failing to start at genesis is now reported as `NON-GENESIS FIRST LINK` (a distinct diagnosis
+  naming the ambiguity and pointing at `--from-anchor`), not lumped into the ordinary
+  `BROKEN CHAIN` message — every other break, and an anchored tenant's first link (already
+  signature-verified), still gets `BROKEN CHAIN` exactly as before.
+
+  **Authenticity is fanned out per tenant too.** A new `verify_authenticity_by_tenant` checks each
+  tenant's `CHAIN_HEAD_ATTESTATION`s against its own window; `main.rs`'s `chain --issuer` now uses
+  it automatically for a multi-tenant stream (single-tenant output is unchanged). `--from-anchor`
+  stays single-file: it still attributes the anchor to the window's sole chained tenant (spec
+  clause (f0)'s untenanted-anchor fallback) and now refuses as a usage error (exit 1, not 2 — a
+  caller mistake, not a verification failure) if the window spans more than one tenant.
+
+  **`ChainHeadAttestation` carries a new UNSIGNED `tenant` field (wire tag 7, seam-runtime U-RT-3
+  Phase 2)**, echoing the attesting tenant — NOT part of the signed preimage (a future Phase 4 may
+  bind it in; not yet landed). A payload `tenant` that disagrees with its own envelope `tenant` is
+  refused outright as `ATTESTATION TENANT MISMATCH` — the two are set by different parts of the
+  system and a genuine attestation always agrees with itself. A payload `tenant` left empty while
+  the envelope's is not (a pre-Phase-2 attestation) is accepted on the envelope alone — there is
+  nothing else to check it against — but counted as `tenant_unbound`, and `--strict` now refuses a
+  stream carrying any, the same posture it already has toward `unverifiable` history.
+
+  `verify/docs/seam-event.v1.md` is re-vendored at `seam-runtime@2ea9f93` (current at the time of
+  this change) to carry both the tenant-chain wording and the new field. `chain_head_attestation_payload`
+  (the SIGNED preimage computation, Part 2 of seam-sdk#144) is untouched — binding `tenant` into the
+  signature is gated on seam-runtime's own Phase 4, not yet started.
+
 ### Fixed
 
 - **`seam-verify` no longer refuses a healthy stream carrying a `POLICY_DENIED` event.** The kind is
@@ -709,7 +759,7 @@ Three independently sufficient causes of a 0.7.17-shaped incident, closed.
   One previously-green shape does turn red, and it is stated rather than glossed: a `DECISION_SEALED`
   declaring a `schema_version` above 3 while carrying **no** event `digest` at all used to fall
   through as a non-link — unverifiable, but green without `--strict` — because the digest-presence
-  check came first. The version refusal now runs before it (`verify/src/verify.rs:636-645`). This is the
+  check came first. The version refusal now runs before it (`verify/src/verify.rs:803-812`). This is the
   intended ordering: an unknown formula means the record cannot be checked *at all*, which is a
   refusal independent of whether there is a digest to compare, and "I cannot check this, so it
   passes" is the exact shape of a downgrade. No conforming producer emits it — the chain fields are

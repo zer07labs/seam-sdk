@@ -1,5 +1,7 @@
 //! The two things worth verifying, implemented from the published specs alone.
 
+use std::collections::BTreeMap;
+
 use sha2::{Digest, Sha256};
 
 use crate::wire::{Attestation, Cert, Decision, Event};
@@ -61,6 +63,41 @@ pub struct ChainReport {
     /// anchored one (produced by [`chain_anchored`]). `heads`/`max_schema_by_link` are indexed
     /// **relative to this** — `heads[k]` is the head after `k` links PAST the start, at absolute
     /// position `base_len + k` — never by the absolute position itself.
+    ///
+    /// **Multi-tenant note (U-RT-1/U-RT-3):** this field, like `head`/`heads`/`links`/
+    /// `max_schema_by_link` above, is the SINGLE-TENANT VIEW — it mirrors [`TenantChain::base_len`]
+    /// for the one tenant present when [`ChainReport::tenants`] has exactly one entry (true for
+    /// every window this crate verified before per-tenant chains existed, and for any genuinely
+    /// single-tenant window today). For a window spanning more than one tenant these top-level
+    /// fields fall back to the genesis sentinel (`0`, `[GENESIS]`, `0`, `[0]`) — a caller verifying a
+    /// multi-tenant window must read [`ChainReport::tenants`] instead; the old scalar fields have no
+    /// single honest value to report there.
+    pub base_len: u64,
+    /// **Per-tenant chain state (U-RT-1/U-RT-3), keyed by [`crate::wire::Event::tenant`].** The hash
+    /// chain is walked independently per tenant — each tenant chains against its own prior entry,
+    /// from its own genesis (or its own anchor), never against another tenant's. See
+    /// [`chain_by_tenant`] for the walk itself and [`TenantChain`] for what each entry holds.
+    pub tenants: BTreeMap<String, TenantChain>,
+    /// **Spec clause (f0).** An anchor was supplied for a tenant that this window contains NO
+    /// chained event for — i.e. a tenant in the anchors map passed to [`chain_by_tenant`] that never
+    /// made it into [`ChainReport::tenants`]. Non-empty here means the caller asked to authenticate a
+    /// start the window does not contain, and `cmd_chain` refuses outright rather than silently
+    /// ignoring the anchor (`chain_by_tenant` itself does not refuse — its caller decides, the same
+    /// division of labour genesis-vs-anchored validation already has between [`verify_anchor`] and
+    /// [`chain_anchored`]). Maps tenant name to the anchor's `attested_len`, for the refusal message.
+    pub unconsumed_anchors: BTreeMap<String, u64>,
+}
+
+/// One tenant's independent hash-chain state within a [`ChainReport`] — the per-tenant analogue of
+/// the single running head this crate used before U-RT-1/U-RT-3 partitioned the chain. Every field
+/// has the exact same meaning [`ChainReport`]'s own (now mirrored) fields always had, just scoped to
+/// this one tenant's own chain instead of the whole interleaved stream.
+#[derive(Clone)]
+pub struct TenantChain {
+    pub head: Vec<u8>,
+    pub links: usize,
+    pub heads: Vec<Vec<u8>>,
+    pub max_schema_by_link: Vec<u32>,
     pub base_len: u64,
 }
 
@@ -109,25 +146,47 @@ pub fn dedup(events: Vec<Event>) -> Result<(Vec<Event>, usize), String> {
     Ok((out, duplicates))
 }
 
-/// Verify the hash chain from the stream alone, from an **anchored start** (spec clause (f)):
-/// `base_len`/`base_head` seed the running head in place of genesis. [`chain`] is the special case
-/// `base_len == 0, base_head == GENESIS`.
+/// Verify the hash chain from the stream alone, **one running head per tenant** (spec §Ordering &
+/// integrity, U-RT-1/U-RT-3): each tenant chains against its own prior entry, from its own start —
+/// never against another tenant's, and never one chain over the whole interleaved outbox.
 ///
-/// Per `seam-event.v1.md`: for each event **that carries a `digest`**, in `seq` order, assert
-/// `prev_checksum == running_head` and `checksum == H(prev_checksum ‖ digest)`, then advance.
+/// `anchors` seeds a tenant's start from an anchored position (spec clause (f)) instead of genesis —
+/// `(base_len, base_head)` per tenant name, exactly as the single-tenant `base_len`/`base_head` pair
+/// used to seed the one chain this crate had before U-RT-1/U-RT-3. A tenant absent from `anchors`
+/// starts at genesis. This function does **not** validate any `base_head` — the caller must have
+/// already verified every one against a pinned issuer key before seeding it here ([`verify_anchor`]);
+/// seeding an unverified head is exactly the "bare `(len, head)` pair" shape spec clause (f1) forbids.
+///
+/// Per `seam-event.v1.md`: for each event **that carries a `digest`**, in `seq` order **within its own
+/// tenant's subsequence**, assert `prev_checksum == running_head` and `checksum == H(prev_checksum ‖
+/// digest)`, then advance that tenant's head. A consumer walking the raw interleaved stream with one
+/// shared head across tenants would see spurious chain breaks the moment two tenants both have chain
+/// activity — this function walks the stream once but keeps the heads apart.
 ///
 /// **Chained-ness is by field PRESENCE, not by `kind`.** A verifier keyed on `kind` trips over the first
 /// `LEARNING_DECISION` in an unfiltered stream, and over the deliberately off-chain `chain_anchor`.
+/// This check (and `advisory`/`unverifiable` counting) is GLOBAL, never per-tenant — an event with no
+/// chain fields is counted once, before any tenant lookup, exactly as it always was.
 ///
-/// This function does **not** validate `base_head` — the caller (`cmd_chain` / [`verify_anchor`]) must
-/// have already verified it against a pinned issuer key before seeding it here. Seeding an unverified
-/// head is exactly the "bare `(len, head)` pair" shape spec clause (f1) forbids as an input.
-pub fn chain_anchored(
+/// **The cutover-backfill trap.** A tenant's first *attempted* link not matching its start (genesis,
+/// since an anchored tenant's start was already validated and cannot itself be wrong) is ambiguous:
+/// either tampering, or an honest export that begins mid-chain for that tenant (a window cut after
+/// that tenant's genesis, or — the concrete historical case — a pre-tenant-partitioning backfill that
+/// zeroed `tenant` on old rows without rewriting their chain fields). Fired only when this is the
+/// tenant's OWN first attempted link and it is unanchored (`links == 0 && base_len == 0`) — every
+/// subsequent break, and every anchored tenant's first link, is unambiguous tampering (an anchored
+/// start was already signature-verified, so a mismatch there cannot be an honest gap) and gets the
+/// ordinary `BROKEN CHAIN` message.
+pub fn chain_by_tenant(
     events: &[Event],
-    base_len: u64,
-    base_head: &[u8],
+    anchors: &BTreeMap<String, (u64, Vec<u8>)>,
 ) -> Result<ChainReport, String> {
-    let mut head: Vec<u8> = base_head.to_vec();
+    let mut tenants: BTreeMap<String, TenantChain> = BTreeMap::new();
+    let mut unconsumed_anchors: BTreeMap<String, u64> = anchors
+        .iter()
+        .map(|(t, (len, _))| (t.clone(), *len))
+        .collect();
+
     let mut r = ChainReport {
         events: events.len(),
         links: 0,
@@ -135,12 +194,13 @@ pub fn chain_anchored(
         duplicates: 0,
         unverifiable: Vec::new(),
         unmodelled: Vec::new(),
-        head: head.clone(),
-        heads: vec![head.clone()], // heads[0] = the start (genesis, or the anchor's head)
-        max_schema_by_link: vec![0], // [0] = the empty window, which covers no records
-        base_len,
+        head: GENESIS.to_vec(),
+        heads: vec![GENESIS.to_vec()],
+        max_schema_by_link: vec![0],
+        base_len: 0,
+        tenants: BTreeMap::new(),
+        unconsumed_anchors: BTreeMap::new(),
     };
-    let mut max_schema: u32 = 0;
 
     for e in events {
         let (Some(digest), Some(checksum)) = (e.digest.as_ref(), e.checksum.as_ref()) else {
@@ -156,46 +216,145 @@ pub fn chain_anchored(
             continue;
         };
 
-        if e.prev_checksum != head {
+        let is_fresh_partition = !tenants.contains_key(&e.tenant);
+        let chain = tenants.entry(e.tenant.clone()).or_insert_with(|| {
+            let (base_len, base_head) = anchors
+                .get(&e.tenant)
+                .map(|(len, head)| (*len, head.clone()))
+                .unwrap_or((0, GENESIS.to_vec()));
+            unconsumed_anchors.remove(&e.tenant);
+            TenantChain {
+                head: base_head.clone(),
+                links: 0,
+                heads: vec![base_head],
+                max_schema_by_link: vec![0],
+                base_len,
+            }
+        });
+
+        if e.prev_checksum != chain.head {
+            if is_fresh_partition && chain.links == 0 && chain.base_len == 0 {
+                return Err(format!(
+                    "seq {}: NON-GENESIS FIRST LINK — tenant {:?}'s first observed chained event does \
+                     not start at genesis.\n  \
+                     expected {}\n  got      {}\n  \
+                     EITHER this event was forged/inserted/reordered, OR this is an honest export that \
+                     begins mid-chain for this tenant (a window cut after this tenant's genesis, or a \
+                     cutover-spanning export predating this tenant's chain partitioning). Re-run with \
+                     --from-anchor over a validated anchor for this tenant to resolve the ambiguity; \
+                     absent one, treat this as tampering.",
+                    e.seq,
+                    e.tenant,
+                    hex(&chain.head),
+                    hex(&e.prev_checksum)
+                ));
+            }
             return Err(format!(
-                "seq {}: BROKEN CHAIN — prev_checksum does not match the running head.\n  \
+                "seq {}: BROKEN CHAIN — prev_checksum does not match tenant {:?}'s running head.\n  \
                  expected {}\n  got      {}\n  \
                  An event was forged, inserted, reordered, dropped, or had its chain fields stripped at \
                  or before this point.",
                 e.seq,
-                hex(&head),
+                e.tenant,
+                hex(&chain.head),
                 hex(&e.prev_checksum)
             ));
         }
         let expect = link(&e.prev_checksum, digest);
         if checksum != &expect {
             return Err(format!(
-                "seq {}: FORGED LINK — checksum != H(prev_checksum ‖ digest).\n  \
+                "seq {}: FORGED LINK — checksum != H(prev_checksum ‖ digest) for tenant {:?}.\n  \
                  expected {}\n  got      {}\n  \
                  This event's own digest does not produce the head it claims. Its body was rewritten.",
                 e.seq,
+                e.tenant,
                 hex(&expect),
                 hex(checksum)
             ));
         }
-        head = checksum.clone();
-        r.links += 1;
-        r.heads.push(head.clone());
+        chain.head = checksum.clone();
+        chain.links += 1;
+        chain.heads.push(chain.head.clone());
         // §Versioning: this link is verified — the check above needed no payload semantics — but if
         // its kind is one this build has never seen, its CONTENT is not. Recorded here rather than
-        // inferred downstream, because by the time the report is printed the kind is gone.
+        // inferred downstream, because by the time the report is printed the kind is gone. GLOBAL,
+        // like `advisory`/`unverifiable` — not scoped per tenant.
         if !e.is_modelled() {
             r.unmodelled.push((e.seq, e.kind.clone()));
         }
-        // Clause (e): track the running max over the SAME span `heads` indexes. Taken from the decision
-        // this link actually carries — an event with no decision leaves the max where it was.
-        if let Some(d) = e.decision.as_ref() {
-            max_schema = max_schema.max(d.schema_version);
-        }
-        r.max_schema_by_link.push(max_schema);
+        // Clause (e): track the running max over the SAME span this tenant's `heads` indexes. Taken
+        // from the decision this link actually carries — an event with no decision leaves the max
+        // where it was.
+        let max_schema = match e.decision.as_ref() {
+            Some(d) => (*chain.max_schema_by_link.last().unwrap_or(&0)).max(d.schema_version),
+            None => *chain.max_schema_by_link.last().unwrap_or(&0),
+        };
+        chain.max_schema_by_link.push(max_schema);
     }
-    r.head = head;
+
+    r.tenants = tenants;
+    r.unconsumed_anchors = unconsumed_anchors;
+    // Single-tenant mirror (§0): every window this crate verified before U-RT-1/U-RT-3, and any
+    // genuinely single-tenant window today, hits exactly one entry here — and the top-level scalar
+    // fields below reproduce that one entry's values byte-for-byte, so this is NOT a behaviour change
+    // for any existing caller. A window spanning more than one tenant has no single honest value for
+    // these fields; they fall back to the genesis sentinel and the caller is expected to read
+    // `r.tenants` instead.
+    if r.tenants.len() == 1 {
+        let only = r.tenants.values().next().expect("len == 1");
+        r.head = only.head.clone();
+        r.heads = only.heads.clone();
+        r.links = only.links;
+        r.max_schema_by_link = only.max_schema_by_link.clone();
+        r.base_len = only.base_len;
+    }
     Ok(r)
+}
+
+/// Verify the hash chain from the stream alone, from an **anchored start** (spec clause (f)):
+/// `base_len`/`base_head` seed the running head in place of genesis. [`chain`] is the special case
+/// `base_len == 0, base_head == GENESIS`.
+///
+/// **U-RT-1/U-RT-3 note.** This crate had exactly one running head before per-tenant chains existed,
+/// so this signature has no tenant to attribute an anchor to directly — it attributes `base_len`/
+/// `base_head` to the window's **sole** chained tenant (spec clause (f0)'s untenanted-anchor
+/// fallback), and refuses as a usage error if the window's chained events span more than one tenant
+/// (ambiguous — which tenant does this anchor seed?) or carry none at all (nothing to attribute it
+/// to; `verify_authenticity_anchored`'s zero-coverage refusal catches this downstream via its caller,
+/// same as it always did). See [`chain_by_tenant`] for the actual per-tenant walk this delegates to.
+pub fn chain_anchored(
+    events: &[Event],
+    base_len: u64,
+    base_head: &[u8],
+) -> Result<ChainReport, String> {
+    let mut anchors: BTreeMap<String, (u64, Vec<u8>)> = BTreeMap::new();
+    if base_len != 0 {
+        let mut chained_tenants: Vec<&str> = events
+            .iter()
+            .filter(|e| e.is_link())
+            .map(|e| e.tenant.as_str())
+            .collect();
+        chained_tenants.sort_unstable();
+        chained_tenants.dedup();
+        match chained_tenants.as_slice() {
+            [] => {} // nothing to attribute the anchor to; the authenticity pass fails closed downstream
+            [only] => {
+                anchors.insert((*only).to_string(), (base_len, base_head.to_vec()));
+            }
+            multiple => {
+                return Err(format!(
+                    "USAGE ERROR: --from-anchor was given, but the window's chained events span {} \
+                     tenants ({}) and the anchor does not itself name one (spec clause f0) — exactly \
+                     one anchor per tenant is required, attributed by the anchor's own tenant. Split \
+                     the window per tenant, or verify from genesis and cross-check the anchor \
+                     separately.",
+                    multiple.len(),
+                    multiple.join(", ")
+                ));
+            }
+        }
+    }
+    chain_by_tenant(events, &anchors)
 }
 
 /// Verify the hash chain from the stream alone, from **genesis**. The common case; see
@@ -342,6 +501,13 @@ pub struct IssuerReport {
     /// their position is not checkable against a window that does not contain it, so they are skipped
     /// and reported here rather than silently dropped. Always `0` in genesis mode.
     pub below_window: usize,
+    /// U-RT-3 Phase 2/3. The number of valid attestations whose UNSIGNED payload `tenant` is empty
+    /// while their envelope `tenant` is not — a pre-Phase-2 attestation, accepted on the envelope
+    /// alone (there is nothing else to check it against), but counted: `--strict` refuses a stream
+    /// carrying any. An attestation whose payload `tenant` DISAGREES with its envelope outright fails
+    /// verification instead (see the attestation loop) — this field only ever counts the silent,
+    /// legacy-shaped case, never a caught mismatch.
+    pub tenant_unbound: usize,
 }
 
 /// Every v3 sub-digest is a SHA-256, so exactly this many bytes. A wire value of any other length
@@ -603,6 +769,7 @@ pub fn verify_authenticity_anchored(
     let mut below_window = 0usize;
     let mut covered_prefix = 0u64;
     let mut records_recomputed = 0usize;
+    let mut tenant_unbound = 0usize;
 
     // design-a: every v2/v3 DECISION_SEALED recomputes; a covered record with no ciphertext_digest is a
     // strip, and a v3 record missing tag 11 or 12 is a strip too — reported distinctly from a mismatch.
@@ -763,6 +930,27 @@ pub fn verify_authenticity_anchored(
             ));
         }
 
+        // U-RT-3 Phase 3 — reader obligations on tenant. Checked after the signature (so a mismatch is
+        // reported about a proven-genuine artifact) and before position work, since it is a property of
+        // the attestation itself, not of where it sits in the chain.
+        if !a.tenant.is_empty() && a.tenant != e.tenant {
+            return Err(format!(
+                "ATTESTATION TENANT MISMATCH — a CHAIN_HEAD_ATTESTATION over len {} carries payload \
+                 tenant '{}', but its own envelope tenant is '{}'.\n  \
+                 The signature is authentic, so this is an issuer-signed attestation whose two tenant \
+                 fields disagree — the envelope is set by the transport, the payload tenant by the \
+                 signer's own record of which tenant it was attesting; a genuine attestation always \
+                 agrees with itself. Refused outright, never silently trusted on either field alone.",
+                a.attested_len, a.tenant, e.tenant
+            ));
+        }
+        if a.tenant.is_empty() && !e.tenant.is_empty() {
+            // Pre-Phase-2 attestation: no payload tenant to check, so the envelope alone is trusted —
+            // there is nothing else it could be verified against. `--strict` refuses a stream carrying
+            // any (spec clause added by U-RT-3 Phase 3), the same way it already refuses `unverifiable`.
+            tenant_unbound += 1;
+        }
+
         attestations += 1;
         covered_prefix = covered_prefix.max(a.attested_len);
 
@@ -885,6 +1073,7 @@ pub fn verify_authenticity_anchored(
         records_recomputed,
         covering,
         below_window,
+        tenant_unbound,
     })
 }
 
@@ -899,6 +1088,44 @@ pub fn verify_authenticity(
     pinned_aids: &[String],
 ) -> Result<IssuerReport, String> {
     verify_authenticity_anchored(events, heads, max_schema_by_link, pinned_aids, 0, &GENESIS)
+}
+
+/// [`verify_authenticity_anchored`], fanned out **per tenant** over a [`ChainReport`] from
+/// [`chain_by_tenant`]/[`chain_anchored`]/[`chain`] — U-RT-1/U-RT-3's chains are independent per
+/// tenant, so authenticity is too: one tenant's attestations say nothing about another's, and running
+/// every tenant's events through a single window's `heads`/`max_schema_by_link` (as pre-U-RT-1 code
+/// did) would check records against the WRONG chain the moment more than one tenant is present.
+///
+/// Each tenant's events are its own (filtered by envelope `tenant`), its own window is
+/// `tc.heads`/`tc.max_schema_by_link`, and its own start is `(tc.base_len, tc.heads[0])` — genesis for
+/// an unanchored tenant, `chain_by_tenant`'s own seed for an anchored one (see that function: it stores
+/// the start head as `heads[0]` before any link is appended). A tenant failing authenticity fails the
+/// whole call — there is no such thing as "some tenants authenticated."
+pub fn verify_authenticity_by_tenant(
+    events: &[Event],
+    report: &ChainReport,
+    pinned_aids: &[String],
+) -> Result<BTreeMap<String, IssuerReport>, String> {
+    let mut out = BTreeMap::new();
+    for (tenant, tc) in &report.tenants {
+        let tenant_events: Vec<Event> = events
+            .iter()
+            .filter(|e| &e.tenant == tenant)
+            .cloned()
+            .collect();
+        let base_head = tc.heads.first().map(Vec::as_slice).unwrap_or(&GENESIS);
+        let ir = verify_authenticity_anchored(
+            &tenant_events,
+            &tc.heads,
+            &tc.max_schema_by_link,
+            pinned_aids,
+            tc.base_len,
+            base_head,
+        )
+        .map_err(|e| format!("tenant {tenant:?}: {e}"))?;
+        out.insert(tenant.clone(), ir);
+    }
+    Ok(out)
 }
 
 /// Validate an anchor `CHAIN_HEAD_ATTESTATION` against a **pinned** issuer AID, BEFORE it is trusted
@@ -994,6 +1221,8 @@ mod tests {
                 "5169458689b92af81fbbfbd1bd07aff82cb68993919837232a1b54204a0e565e\
                  e58791b607c40a48dae6a9dbf8c6129e7028fdbd0e14095d7a4c0a99c775a90a",
             ),
+            // UNSIGNED (U-RT-3 Phase 2) — not part of the preimage this KAT pins, so unset here.
+            tenant: String::new(),
         };
         let key = aid_to_key(issuer_aid).unwrap();
         let vk = VerifyingKey::from_bytes(&key).unwrap();
@@ -1021,6 +1250,8 @@ mod tests {
                 "5169458689b92af81fbbfbd1bd07aff82cb68993919837232a1b54204a0e565e\
                  e58791b607c40a48dae6a9dbf8c6129e7028fdbd0e14095d7a4c0a99c775a90a",
             ),
+            // UNSIGNED (U-RT-3 Phase 2) — not part of the preimage this KAT pins, so unset here.
+            tenant: String::new(),
         };
         att.attested_len += 1; // one field off
         let key = aid_to_key(issuer_aid).unwrap();

@@ -41,15 +41,15 @@ What to do instead, in descending order of usefulness:
 
 | Consumer | Constraint on `seam-sdk` | Verified at |
 |---|---|---|
-| `seam-adapters` (`seam-agent-core[sdk]`) | `seam-sdk>=0.7.20,<0.8` | `seam-adapters/core/pyproject.toml:22` |
-| `seam-aegis` | `seam-agent-core[sdk]>=0.6,<0.7` (reaches this SDK transitively) | `seam-aegis/pyproject.toml:28` |
+| `seam-adapters` (`seam-agent-core[sdk]`) | `seam-sdk>=0.13.1,<0.15` | `seam-adapters/core/pyproject.toml:41` |
+| `seam-aegis` | `seam-agent-core[sdk]>=0.8,<0.9` (reaches this SDK transitively) | `seam-aegis/pyproject.toml:42` |
 
 **One caveat on the first row, because the lockfile disagrees with the constraint and both are
-true.** `seam-adapters/uv.lock:3921` resolves `seam-sdk` **0.7.9** — below the declared floor — and
-that is not a violation: `seam-adapters/pyproject.toml:54` overrides the dependency with an
+true.** `seam-adapters/uv.lock:4217` resolves `seam-sdk` **0.17.0** — above the declared ceiling — and
+that is not a violation: `seam-adapters/pyproject.toml:59` overrides the dependency with an
 unconditional editable path source (`{ path = "../seam-sdk/python", editable = true }`), so the lock
 records the sibling checkout rather than a resolved release. A reader comparing the two numbers
-should not conclude the floor is being ignored.
+should not conclude the ceiling is being exceeded.
 
 ### What a compatibility-matrix cell asserts
 
@@ -99,7 +99,7 @@ mismatch cannot ship.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:875-892`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:925-942`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -279,7 +279,7 @@ comment — `.github/workflows/ci.yml:488-489` runs `scripts/check-independence.
 - **Chain integrity** — the `seam-event.v1` hash chain, from the stream alone.
 - **Authenticity** — every `CHAIN_HEAD_ATTESTATION` verifies against a pinned issuer key and sits at
   the head it attests; every v2 **and v3** `DECISION_SEALED` digest is recomputed from its payload
-  (`verify/src/verify.rs:579`). Three refusals are reported **distinctly from a digest mismatch**,
+  (`verify/src/verify.rs:745`). Three refusals are reported **distinctly from a digest mismatch**,
   because a caller that treats them as one cannot tell "these bytes were altered" from "a field was
   removed": a v3 record missing `context_digest` or `participation_digest` is refused as a **STRIP**;
   a `schema_version` this build does not implement is refused, never skipped; and a record declaring

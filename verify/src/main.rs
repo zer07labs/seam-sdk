@@ -216,9 +216,37 @@ fn cmd_chain(
     };
 
     match report {
+        // `chain_anchored`'s own usage error (an anchor given over a window spanning more than one
+        // tenant, spec clause (f0)) is a caller mistake, not a verification failure — exit 1, not 2.
+        Err(e) if e.starts_with("USAGE ERROR:") => io_error(&e, json),
         Err(e) => fail(&e, json, "CHAIN VERIFICATION FAILED"),
         Ok(mut r) => {
             r.duplicates = duplicates;
+            // Spec clause (f0): an anchor was given for a tenant this window has no chained event for.
+            // `chain_by_tenant` itself does not refuse this (see `ChainReport::unconsumed_anchors`'s own
+            // doc comment) — it is this caller's decision, the same division `verify_anchor`/
+            // `chain_anchored` already have between validating an anchor and trusting it as a start.
+            // Not reachable through this CLI's own single-file `--from-anchor` today (its wrapper only
+            // ever attributes the anchor to a tenant proven present in the window), but the check is
+            // cheap, matches the documented contract, and holds as soon as that changes.
+            if !r.unconsumed_anchors.is_empty() {
+                let mut names: Vec<String> = r
+                    .unconsumed_anchors
+                    .iter()
+                    .map(|(t, len)| format!("{t:?} (attested_len {len})"))
+                    .collect();
+                names.sort();
+                return io_error(
+                    &format!(
+                        "USAGE ERROR: an anchor was given for {} tenant(s) this window has NO chained \
+                         event for: {}.\n  \
+                         An anchor with nothing to seed cannot be a starting point for verification.",
+                        r.unconsumed_anchors.len(),
+                        names.join(", ")
+                    ),
+                    json,
+                );
+            }
             if strict && !r.unverifiable.is_empty() {
                 let msg = format!(
                     "{} event(s) carry no digest/checksum and are not advisory (first seq: {}). They \
@@ -233,7 +261,14 @@ fn cmd_chain(
             // the pinned key AND sit at the head it attests, and at least one covering attestation must be
             // present. Integrity has already passed (the head sequence in `r.heads` is trustworthy to
             // check positions against).
-            let issuer_report = if issuers.is_empty() {
+            //
+            // A window spanning more than one tenant has no single running head to check attestations
+            // against (§0's genesis-sentinel fallback on `r.heads`/`r.max_schema_by_link`) — it is
+            // fanned out per tenant instead, via `tenant_issuer_reports` below. `--from-anchor` cannot
+            // reach this branch: `chain_anchored` already refused a multi-tenant window as a usage error
+            // before this match was ever entered, so `r.tenants.len() > 1` here is always genesis mode.
+            let multi_tenant = r.tenants.len() > 1;
+            let issuer_report = if issuers.is_empty() || multi_tenant {
                 None
             } else {
                 let res = match &anchor {
@@ -257,6 +292,64 @@ fn cmd_chain(
                     Err(e) => return fail(&e, json, "AUTHENTICITY VERIFICATION FAILED"),
                 }
             };
+            let tenant_issuer_reports = if issuers.is_empty() || !multi_tenant {
+                None
+            } else {
+                match verify::verify_authenticity_by_tenant(&events, &r, issuers) {
+                    Ok(m) => Some(m),
+                    Err(e) => return fail(&e, json, "AUTHENTICITY VERIFICATION FAILED"),
+                }
+            };
+            // U-RT-3 Phase 3's `--strict`-equivalent: a stream carrying a pre-Phase-2 attestation (no
+            // payload tenant to cross-check) is silently trusted on the envelope alone by default, and
+            // refused under --strict — the same posture as `r.unverifiable` above, extended to the one
+            // new kind of "this tool could not actually check that" this field introduces.
+            if strict {
+                let tenant_unbound: usize = match (&issuer_report, &tenant_issuer_reports) {
+                    (Some(ir), None) => ir.tenant_unbound,
+                    (None, Some(m)) => m.values().map(|ir| ir.tenant_unbound).sum(),
+                    _ => 0,
+                };
+                if tenant_unbound > 0 {
+                    let msg = format!(
+                        "{tenant_unbound} attestation(s) carry no payload tenant (pre-U-RT-3-Phase-2, \
+                         accepted on the envelope alone) — and --strict refuses to report a green \
+                         result over an attestation this tool could not cross-check against itself."
+                    );
+                    return fail(&msg, json, "REFUSED (--strict)");
+                }
+            }
+            // Additive: a window spanning more than one tenant (`r.tenants` — see [`ChainReport`]'s own
+            // doc comment on its genesis-sentinel top-level fields in that case) reports each tenant's
+            // OWN links/head/authenticity here. Absent entirely for `r.tenants.len() <= 1` — the one
+            // existing caller shape — so neither output byte changes for it.
+            let tenants_json = if multi_tenant {
+                let entries: Vec<String> = r
+                    .tenants
+                    .iter()
+                    .map(|(t, tc)| {
+                        let auth = match tenant_issuer_reports.as_ref().and_then(|m| m.get(t)) {
+                            Some(ir) => format!(
+                                ",\"authenticated\":true,\"attestations\":{},\"covered_prefix\":{},\
+                                 \"records_recomputed\":{},\"tenant_unbound\":{}",
+                                ir.attestations, ir.covered_prefix, ir.records_recomputed, ir.tenant_unbound,
+                            ),
+                            None => String::new(),
+                        };
+                        format!(
+                            "{{\"tenant\":{},\"links\":{},\"base_len\":{},\"head\":\"{}\"{}}}",
+                            q(t),
+                            tc.links,
+                            tc.base_len,
+                            verify::hex(&tc.head),
+                            auth,
+                        )
+                    })
+                    .collect();
+                format!(",\"tenants\":[{}]", entries.join(","))
+            } else {
+                String::new()
+            };
             if json {
                 let authenticity = match &issuer_report {
                     Some(ir) => {
@@ -275,8 +368,12 @@ fn cmd_chain(
                         };
                         format!(
                             ",\"authenticated\":true,\"attestations\":{},\"covered_prefix\":{},\
-                             \"records_recomputed\":{}{}",
-                            ir.attestations, ir.covered_prefix, ir.records_recomputed, anchor_extra,
+                             \"records_recomputed\":{},\"tenant_unbound\":{}{}",
+                            ir.attestations,
+                            ir.covered_prefix,
+                            ir.records_recomputed,
+                            ir.tenant_unbound,
+                            anchor_extra,
                         )
                     }
                     None => String::new(),
@@ -284,7 +381,7 @@ fn cmd_chain(
                 println!(
                     "{{\"verified\":true,\"events\":{},\"links\":{},\"advisory\":{},\"duplicates\":{},\
                      \"unverifiable\":{},\"unverified_content\":{},\"unmodelled_kinds\":{},\
-                     \"head\":\"{}\"{}}}",
+                     \"head\":\"{}\"{}{}}}",
                     r.events,
                     r.links,
                     r.advisory,
@@ -299,18 +396,31 @@ fn cmd_chain(
                     }),
                     verify::hex(&r.head),
                     authenticity,
+                    tenants_json,
                 );
             } else {
                 println!(
                     "{}",
-                    match (&anchor, &issuer_report) {
-                        (Some(_), Some(_)) => "WINDOW AUTHENTICATED (issuer-anchored start)",
-                        (None, Some(_)) => "CHAIN AUTHENTICATED (integrity + issuer-signed head)",
+                    match (&anchor, &issuer_report, &tenant_issuer_reports) {
+                        (Some(_), Some(_), _) => "WINDOW AUTHENTICATED (issuer-anchored start)",
+                        (None, Some(_), _) =>
+                            "CHAIN AUTHENTICATED (integrity + issuer-signed head)",
+                        (None, None, Some(_)) => {
+                            "CHAIN AUTHENTICATED (integrity + issuer-signed head, per tenant)"
+                        }
                         _ => "CHAIN VERIFIED",
                     }
                 );
                 println!("  events            : {}", r.events);
-                println!("  links checked     : {}", r.links);
+                if multi_tenant {
+                    println!(
+                        "  links checked     : {} (top-level — N/A across {} tenants, see below)",
+                        r.links,
+                        r.tenants.len()
+                    );
+                } else {
+                    println!("  links checked     : {}", r.links);
+                }
                 println!("  advisory (skipped): {}", r.advisory);
                 // Spec §Versioning's MUST. Printed UNCONDITIONALLY, including the zero — the other
                 // optional lines here (duplicates, below-window) are zero-suppressed because absence
@@ -347,6 +457,13 @@ fn cmd_chain(
                         "  records recomputed: {} (v2/v3 record-digest recompute)",
                         ir.records_recomputed
                     );
+                    if ir.tenant_unbound > 0 {
+                        println!(
+                            "  tenant_unbound    : {} (attestation predates U-RT-3 Phase 2 — accepted \
+                             on envelope alone; re-run with --strict to refuse rather than accept them)",
+                            ir.tenant_unbound
+                        );
+                    }
                     if let Some(a) = &anchor {
                         println!(
                             "  anchored start    : base_len {} / base_head {}",
@@ -378,7 +495,32 @@ fn cmd_chain(
                         r.unverifiable.len()
                     );
                 }
-                println!("  head              : {}", verify::hex(&r.head));
+                if multi_tenant {
+                    println!("  tenants           : {}", r.tenants.len());
+                    for (t, tc) in &r.tenants {
+                        println!(
+                            "    {t:?}: links {}, head {}",
+                            tc.links,
+                            verify::hex(&tc.head)
+                        );
+                        if let Some(ir) = tenant_issuer_reports.as_ref().and_then(|m| m.get(t)) {
+                            println!(
+                                "      attestations {} (issuer-signed), covered prefix {} links, \
+                                 records recomputed {}",
+                                ir.attestations, ir.covered_prefix, ir.records_recomputed
+                            );
+                            if ir.tenant_unbound > 0 {
+                                println!(
+                                    "      tenant_unbound {} (attestation predates U-RT-3 Phase 2 — \
+                                     accepted on envelope alone)",
+                                    ir.tenant_unbound
+                                );
+                            }
+                        }
+                    }
+                } else {
+                    println!("  head              : {}", verify::hex(&r.head));
+                }
             }
             ExitCode::SUCCESS
         }

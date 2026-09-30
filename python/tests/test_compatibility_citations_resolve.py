@@ -827,7 +827,7 @@ CLAIM_LINES = {
         'exp, ok := payload["exp"].(float64)',
     ): "It is the only one with a written rationale",
     ("PROGRESS.md", "python/seam_sdk/crypto.py", "def record_digest_v3("): (
-        "`verify/src/verify.rs:448`; the 6a/6b"
+        "`verify/src/verify.rs:614`; the 6a/6b"
     ),
     (
         "DECISIONS.md",
@@ -1254,12 +1254,12 @@ QUOTED = [
         # nothing else — and only on a workstation with the sibling cloned: in CI `../seam-aegis`
         # does not exist, so the check `pytest.skip`s and the stale claim rides through green. The
         # quote is doing its job; the coverage gap is that its job is only done locally.
-        "seam-agent-core[sdk]>=0.6,<0.7",
+        "seam-agent-core[sdk]>=0.8,<0.9",
     ),
     (
         "COMPATIBILITY.md",
         "seam-adapters/core/pyproject.toml",
-        "seam-sdk>=0.7.20,<0.8",
+        "seam-sdk>=0.13.1,<0.15",
     ),
     (
         "COMPATIBILITY.md",

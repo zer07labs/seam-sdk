@@ -43,6 +43,7 @@ SeamAdmission/Admit
 SeamAdmission/IssueChallenge
 SeamAuthorization/Authorize
 SeamAuthorization/GetEscalation
+SeamAuthorization/GetEscalationDelivery
 SeamContext/RegisterContext
 SeamContext/ResolveContext
 SeamCoordination/CancelSession
