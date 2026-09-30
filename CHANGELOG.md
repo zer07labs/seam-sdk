@@ -56,6 +56,18 @@ than trusting a summary here.
 
 ### Added
 
+- **`get_escalation` / `getEscalation`** (seam-runtime #517) — read back one ESCALATE verdict by
+  the `authorize_id` its `authorize()` result returned: `SeamAuthorization.GetEscalation` on the
+  wire, taking an `EscalationRef` and returning an `EscalationView` (tenant, namespace, the
+  verified `agent_aid`, the asserted `agent_id`, `tool_name`, `tool_input_digest`, `reason`,
+  `policy_version`, `client_request_id`, `occurred_at`). `NOT_FOUND` for an ALLOW/DENY/TRANSFORM
+  id, for an id outside this caller's `(tenant, namespace)` scope, or for a retention-pruned
+  escalation (`SEAM_ESCALATION_RETENTION_MILLIS`, 30 days by default) — all three read the same
+  uniform refusal. There is no list verb: holding scope must not imply the ability to enumerate a
+  namespace's escalations. Same authorization as any other subject-scoped read; carrying the
+  caller's identity to it is `plans/request-credential.md`'s per-request credential, not yet
+  wired in.
+
 - **`verify/` now discloses unverified CONTENT — a link whose `kind` it cannot model** (seam-sdk
   #130). `seam-event.v1` §Versioning, refreshed in the same commit as #484, makes this a MUST for
   any verifier claiming recompute coverage: an unmodelled `kind` carrying `digest`/`checksum` is

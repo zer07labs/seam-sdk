@@ -319,6 +319,15 @@ class SeamClient:
             resp = self._authz.Authorize(build(ticket), timeout=timeout)
         return result_of(resp)
 
+    def get_escalation(
+        self, authorize_id: str, *, timeout: float = DEFAULT_TIMEOUT_S
+    ) -> pb.EscalationView:
+        """Read back one ESCALATE verdict by the ``authorize_id`` its ``AuthorizeResponse`` returned
+        (#517). NOT_FOUND for an ALLOW/DENY/TRANSFORM id, or one outside this caller's scope."""
+        return self._authz.GetEscalation(
+            pb.EscalationRef(authorize_id=authorize_id), timeout=timeout
+        )
+
     def _refresh_ticket(self, agent: Agent, failed: bytes, timeout: float) -> bytes:
         """Re-admit after an ``UNAUTHENTICATED``, coalescing concurrent refreshes to ONE.
 

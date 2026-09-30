@@ -700,6 +700,12 @@ export class SeamClient {
     return this.admit(agent, opts); // coalesces with any in-flight handshake
   }
 
+  /** Read back one ESCALATE verdict by the `authorizeId` its `authorize()` result returned
+   * (#517). NOT_FOUND for an ALLOW/DENY/TRANSFORM id, or one outside this caller's scope. */
+  getEscalation(authorizeId: string, opts?: UnaryCallOptions) {
+    return this.authz.getEscalation({ authorizeId }, call(opts));
+  }
+
   /**
    * Admit (the PoP handshake) → run a coordinated decision → seal, in one call.
    *

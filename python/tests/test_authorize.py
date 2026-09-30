@@ -403,6 +403,7 @@ def test_every_public_method_enforces_timeout(hanging_server):
         ),
         lambda: client.get_commitment_proof("d", timeout=0.1),
         lambda: client.verify_decision("d", "aid:pubkey:x", timeout=0.1),
+        lambda: client.get_escalation("a", timeout=0.1),
     ]
     for call in calls:
         with pytest.raises(DeadlineExceededError), warnings.catch_warnings():
@@ -503,6 +504,7 @@ def test_aio_deadlines_enforced(hanging_server):
                 ),
                 lambda: client.get_commitment_proof("d", timeout=0.1),
                 lambda: client.verify_decision("d", "aid:pubkey:x", timeout=0.1),
+                lambda: client.get_escalation("a", timeout=0.1),
             ]:
                 with pytest.raises(DeadlineExceededError), warnings.catch_warnings():
                     # resume_session is a tombstone and warns; this matrix pins deadlines only.

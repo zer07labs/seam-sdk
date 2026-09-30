@@ -55,7 +55,11 @@ dependencies = [
     # a CONSUMER's resolver may install, and a resolver free to pick runtime 7.36.0 under 7.36.1
     # gencode raises VersionError at `import seam_sdk`, in their process. Raising the floor is the
     # documented response (CLAUDE.md's Gotchas); relaxing the test is not, and never will be.
-    "protobuf>=7.36.1,<8",
+    #
+    # Raised 7.36.1 -> 7.36.2 by the regeneration that added `SeamAuthorization.GetEscalation`
+    # (runtime #517): buf's remote plugin emitted 7.36.2 gencode. Same asymmetry as the 7.36.0 ->
+    # 7.36.1 bump above — the contract change is unrelated to protobuf's own release cadence.
+    "protobuf>=7.36.2,<8",
     "cryptography>=42",
 ]
 

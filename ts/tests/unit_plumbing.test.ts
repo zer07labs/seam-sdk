@@ -244,8 +244,12 @@ test("unary data-plane wrappers default to the 2s deadline and accept an overrid
   const client = new SeamClient(fakeTransport(calls, () => ({})));
   await client.sessionStatus("s");
   await client.getDecision("d", { timeoutMs: 77 });
+  await client.getEscalation("az-1", { timeoutMs: 88 });
   assert.equal(calls[0]!.timeoutMs, DEFAULT_TIMEOUT_MS);
   assert.equal(calls[1]!.timeoutMs, 77);
+  assert.equal(calls[2]!.method, "GetEscalation");
+  assert.equal(calls[2]!.input.authorizeId, "az-1");
+  assert.equal(calls[2]!.timeoutMs, 88);
 });
 
 // ── Budget default: 0 ⇒ the server owns the default; the client never re-states 32 ───────────────

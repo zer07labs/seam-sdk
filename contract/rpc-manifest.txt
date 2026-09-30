@@ -42,6 +42,7 @@ SeamAdmin/RevokeGrant
 SeamAdmission/Admit
 SeamAdmission/IssueChallenge
 SeamAuthorization/Authorize
+SeamAuthorization/GetEscalation
 SeamContext/RegisterContext
 SeamContext/ResolveContext
 SeamCoordination/CancelSession
