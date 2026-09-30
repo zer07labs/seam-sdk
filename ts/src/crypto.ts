@@ -426,6 +426,74 @@ export function callSig(
   return ed25519.sign(callSigPayload(ticket, digest, toolName, agentId), agentSeed);
 }
 
+// ── The per-request credential (`seam-request-call-v1`, #508) ──────────────────────────────────────
+// A DIFFERENT domain tag from `seam-authorize-call-v2` above, deliberately, so a captured Authorize
+// callSig is never spendable as a request credential and vice versa. See `plans/request-credential.md`
+// for the full contract; pinned by `conformance/request_sig_payload_vector.json`, generated from the
+// runtime's Rust reference.
+export const REQUEST_SIG_CONTEXT = "seam-request-call-v1";
+
+/** The exact bytes `requestSig` signs — `frame(context) || frame(ticket) || frame(rpcFullName) ||
+ * frame(resourceId) || frame(bodyDigest)`, where `frame(x) = u32le(len(x)) || x`. Lengths are BYTE
+ * counts, not character counts.
+ *
+ * `rpcFullName` is the gRPC full method path on BOTH transports (e.g.
+ * `"/seam.api.v1.SeamCoordination/GetDecision"`), never the HTTP route pattern — that is what makes
+ * one credential valid over either plane for a bodyless verb. For a bodyless read, `resourceId` is
+ * the verb's id argument and `bodyDigest` is the empty string. For a bodied verb over gRPC,
+ * `resourceId` is the empty string (the id lives inside the message) and `bodyDigest` covers the
+ * whole DECODED request message, without the 5-byte gRPC length-prefixed-message header — see
+ * {@link toolInputDigest} for the `"sha256:<hex>"` formatting.
+ *
+ * This function pins the FRAMING only, not the digest computation — see
+ * `conformance/request_sig_payload_vector.json`'s `body_input_hex` cases, which separately pin that
+ * a digest taken after parse-and-re-encode diverges from one taken over the exact wire bytes. */
+export function requestSigPayload(
+  ticket: Uint8Array,
+  rpcFullName: string,
+  resourceId: string,
+  bodyDigest: string,
+): Uint8Array {
+  const parts = [
+    enc.encode(REQUEST_SIG_CONTEXT),
+    ticket,
+    enc.encode(rpcFullName),
+    enc.encode(resourceId),
+    enc.encode(bodyDigest),
+  ];
+  const out = new Uint8Array(parts.reduce((n, p) => n + 4 + p.length, 0));
+  const view = new DataView(out.buffer);
+  let off = 0;
+  for (const p of parts) {
+    view.setUint32(off, p.length, true); // little-endian
+    out.set(p, off + 4);
+    off += 4 + p.length;
+  }
+  return out;
+}
+
+/** The per-request credential a caller sends as `x-seam-ticket-bin` + `x-seam-call-sig-bin` (gRPC)
+ * or `x-seam-ticket` + `x-seam-call-sig` (base64, HTTP) alongside a request, to prove identity in
+ * band on a deployment that strips `x-seam-subject` at its edge (`SEAM_SUBJECT_HEADERS=deny`, #710):
+ * Ed25519 by the agent key over {@link requestSigPayload}.
+ *
+ * Binding `rpcFullName` stops a captured signature for one verb being re-pointed at a more
+ * privileged one over the same ticket and resource id (e.g. `GetDecision` → the decrypted
+ * `GetCommitmentProof`). Binding `resourceId`/`bodyDigest` stops it being re-pointed at a different
+ * resource or request body. Binding the ticket bytes stops replay against a later one. */
+export function requestSig(
+  agentSeed: Uint8Array,
+  ticket: Uint8Array,
+  rpcFullName: string,
+  resourceId: string,
+  bodyDigest: string,
+): Uint8Array {
+  return ed25519.sign(
+    requestSigPayload(ticket, rpcFullName, resourceId, bodyDigest),
+    agentSeed,
+  );
+}
+
 // ── A14 authenticity framing (seam-event.v1) ─────────────────────────────────────────────────────────
 // frame(x) = u32le(len) || x ; opt(x) = 0x00 if null else 0x01 || frame(x). Transcribed from
 // `seam-event.v1.md`. NOTE the u32 LITTLE-endian length prefix here — distinct from `lenPrefix` above
