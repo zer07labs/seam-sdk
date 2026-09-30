@@ -715,7 +715,7 @@ wrong answers rather than misses:
 - **In a table row the subject wins.** `PROGRESS.md`'s repo-map row for `python/seam_sdk/crypto.py`
   names `python/seam_sdk/admin.py:142` mid-sentence and then continues with four more bare
   references, all of which are crypto.py. Binding them to the nearer citation reports
-  `python/seam_sdk/crypto.py:630` as past-EOF — it is `_opt_bytes`, and the claim is true.
+  `python/seam_sdk/crypto.py:690` as past-EOF — it is `_opt_bytes`, and the claim is true.
 - **Inheritance must not cross a line.** `PROGRESS.md` writes `p1a:103-107` followed by bare
   companions, where `p1a` is a shorthand alias for a sibling-repo spec and not a path at all. A
   paragraph-scoped resolver walks past it and binds those references to whatever file the previous
@@ -1219,7 +1219,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:835-852` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:925-942` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -1545,7 +1545,7 @@ not as written.
 - **Correction to the entry's blast-radius claim:** "every such digest was wrong, so no correct
   caller breaks" is too strong. A proto3-JSON int64-as-string (`sealedAt: "123"`) coerced
   *correctly* through `BigInt` under the old TS behavior and is now refused. The refusal is loud, at
-  the first record, and names the fix (`ts/src/crypto.ts:725-730`) — and accepting strings reopens
+  the first record, and names the fix (`ts/src/crypto.ts:793-798`) — and accepting strings reopens
   `BigInt("")→0n` and `BigInt([5])→5n`. The choice stands; the justification does not extend to
   "nothing that used to work stops working."
   *(Citation corrected 2026-09-03. It named lines 509-522, which then held `v3Text` — the string slot
@@ -1558,12 +1558,12 @@ not as written.
 
 ### The v1 skip is a downgrade hole, closed structurally rather than documented
 - **Reviewer (Fable):** CONFIRM. Every load-bearing claim resolves. The guard keys on the four
-  columns and never on the version alone (`verify/src/verify.rs:605-614`); a genuine v1 record falls
-  through to `continue` and is tested twice — `verify/tests/authenticity.rs:238`
+  columns and never on the version alone (`verify/src/verify.rs:771-781`); a genuine v1 record falls
+  through to `continue` and is tested twice — `verify/tests/authenticity.rs:243`
   (`a_v1_record_is_link_verified_but_not_recomputed`, whose skipped-not-recomputed assertion is at
-  `verify/tests/authenticity.rs:254-257`) and `verify/tests/authenticity.rs:977`
+  `verify/tests/authenticity.rs:259-262`) and `verify/tests/authenticity.rs:982`
   (`a_genuine_v1_record_is_still_skipped_not_refused`). The per-column parametrization at
-  `verify/tests/authenticity.rs:939-942` exercises each column with the other three removed, and the
+  `verify/tests/authenticity.rs:944-947` exercises each column with the other three removed, and the
   comment immediately above it records the decoy that forced it: "a decoy that guarded only on tag
   10 passed an earlier version of this test, leaving the three v3 columns unchecked with a green
   suite."
@@ -2032,7 +2032,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:847` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:937` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -2240,3 +2240,113 @@ the work started, and both are cases where making the gate green without them wo
 the defect the gate exists to catch. `main`'s three failing jobs are the acceptance criteria, and
 all three pass locally against the same inputs CI uses — including `check_vendored_spec.py --from gh`
 against the live GitHub API, which is the backend CI runs.
+
+## 2026-09-30 — `GetEscalationDelivery` lands on the contract; the SDK does not carry it yet
+
+### `SeamAuthorization/GetEscalationDelivery` — manifest records it, hand-written clients do not wire it
+
+- **Decided by:** Opus, alongside wiring `GetEscalation` and the `seam-request-call-v1` per-request
+  credential into both SDKs (same PR). `seam-runtime` shipped `GetEscalationDelivery` the same day
+  (#847, "Escalation-inbox read: durable model, retention, tenant scope, wire surface (A1-A4)"),
+  landing on `buf.build/zer07labs/seam` while this PR was already in flight, so `check-contract.sh`
+  caught it as a second NOT-IN-THE-MANIFEST surplus alongside `GetEscalation` itself.
+- **What it is.** A bodyless read, same `EscalationRef` request `GetEscalation` already takes:
+  `(authorize_id) → EscalationDeliveryView { authorize_id, delivered, reporters_seen }`, answering
+  "has this escalation's outbox event been consumed by every relay that must see it?" as a boolean,
+  scoped by the same `authorize_escalation_read` authorization `GetEscalation` uses. It is on the
+  runtime's `#508` credentialed-read allowlist, same as `GetEscalation`.
+- **Why not wire it in the same PR.** This PR's own scope was already two features
+  (`GetEscalation`, and the `#508` credential wired across 15 verbs) discovered and built in the same
+  sitting as a second, unrelated SDK-gap investigation. `GetEscalationDelivery` was not part of
+  either originating ask (seam-sdk#157 named `GetEscalation` specifically; #508's plan predates this
+  verb entirely) — taking it on here would be a third, undiscussed feature riding the same PR, not a
+  continuation of either.
+- **Nothing regresses by deferring it.** No SDK client sends this call today; a caller wanting
+  delivery status has no way to ask for it either before or after this PR, so the capability simply
+  stays unavailable, exactly the posture #508's own plan already uses for the credential itself
+  before being wired (`plans/request-credential.md`).
+- **What the manifest entry means, precisely.** `contract/rpc-manifest.txt` records every RPC the
+  *generated stubs* carry — it is not a claim about hand-written client coverage. Adding
+  `SeamAuthorization/GetEscalationDelivery` here says only "this repo has seen this verb and made a
+  decision about it," which this entry is that decision. The gate that actually tracks hand-written
+  coverage is a human reading this file, same as it is for every other verb — there is no automated
+  "wired vs. not" check, by design (`contract/expected-local-lag.txt`'s removal earlier in this file
+  is the precedent for not building one: a second, softer bookkeeping file split what CI enforces
+  from what a human reads, and the split itself was the defect).
+- **Re-open trigger and owner.** **Trigger:** a consumer asks for it (mirroring how `GetEscalation`
+  itself was triggered by seam-adapters#213 / seam-sdk#157), or a maintainer picks it up
+  unprompted as a small follow-up — the shape is a near-exact copy of `GetEscalation`'s own wiring
+  (same request type, same bodyless-read credential shape) in `python/seam_sdk/client.py`,
+  `python/seam_sdk/aio.py` and `ts/src/client.ts`. **Owner:** whoever next touches escalation-read
+  surface in this SDK.
+- **Verdict:** Defer wiring; record the decision; add the manifest line so the gate's two directions
+  agree again. **Status:** CONFIRMED-DEFERRED — the manifest change is itself the confirmed action;
+  the wiring is the open follow-up, tracked here rather than left implicit.
+
+---
+
+**Summary:** 1 decision, by Opus, not escalated — a deferral, not an adoption: the manifest is
+brought current with the published contract; the hand-written clients are deliberately left as they
+are. Forced by CI going red on `main` itself (identical failure reproduced against an unmodified
+`origin/main` tip, independent of and pre-dating this PR's own changes) rather than by anything this
+PR set out to do.
+
+## 2026-09-30 — `verify/` walks one hash chain per tenant, not a global one (seam-sdk #144)
+
+### A third `main`-red CI job turned out not to be a doc-refresh — the vendored spec was describing a real bug
+
+- **Decided by:** the user, escalated to for exactly this reason. The `spec-pin` job
+  (`verify/docs/seam-event.v1.md` vs. `seam-runtime`'s current spec) was the third of three CI
+  failures found red on `main` itself while trying to unblock this PR (see the entry above). The
+  other two were mechanical (a manifest decision, two stale citations); this one was not — the
+  diff between the pinned copy and the runtime's current spec documented that the runtime's audit
+  hash chain has been **per-tenant** since an earlier phase (U-RT-1), while `verify/`'s own
+  `chain`/`chain_anchored` still walked one global running head over the whole interleaved stream.
+  That is not a documentation lag, it is a live correctness gap in the **published, externally-run**
+  verifier: `seam-runtime-52` confirmed the public `GET /v1/anchors` endpoint already returns
+  interleaved multi-tenant attestations today, so a real export spanning two tenants would already
+  be checked against the wrong prior head.
+- **Why this wasn't decided unilaterally.** Implementing real per-tenant chain verification is a
+  security-adjacent Rust rewrite of this crate's core verification logic — well beyond what "fix
+  the CI job" implies, and the wrong kind of call for an agent to make alone. Asked the user
+  directly: defer-and-document (the same posture as `GetEscalationDelivery` above), or implement.
+  **The user chose to implement in full** ("yes we need everything to per-tenant").
+- **What grounded the implementation, rather than inventing one from the spec diff alone.**
+  `seam-runtime` had already filed a cross-repo handoff for exactly this
+  (`seam-runtime/plans/cross-repo/seam-sdk-chain-head-attestation-tenant.md`, pinned at
+  `c11973c3`) and an open tracking issue with acceptance criteria (seam-sdk#144, 3 comments). Both
+  predate this session's discovery of the gap — this is a known, scoped, already-triaged piece of
+  work, not a novel finding. `seam-runtime-52` (the peer session on that repo) additionally supplied
+  nuances not fully spelled out in either document: `--strict`-equivalent refusal is global, not
+  per-tenant; advisory kinds never enter the per-tenant map; and the cutover-backfill trap (a
+  pre-partitioning migration left envelope `tenant` unset on old rows, so an honest export spanning
+  that cutover can show a tenant's first chained event not starting at genesis — indistinguishable
+  from tampering by inspection alone).
+- **Scope actually delivered: Part 1 + Part 1.5 of #144, not Part 2.** Per-tenant chain walk
+  (`chain_by_tenant`, `ChainReport.tenants: BTreeMap<String, TenantChain>`, a distinct
+  `NON-GENESIS FIRST LINK` diagnosis for the cutover case) and the unsigned `tenant`
+  field's agreement/legacy rules (`ATTESTATION TENANT MISMATCH` refusal;
+  `IssuerReport::tenant_unbound` counted and `--strict`-refused). Part 2 (binding `tenant` into the
+  *signed* preimage) is genuinely blocked on `seam-runtime`'s own Phase 4, not yet started there —
+  `chain_head_attestation_payload` is deliberately untouched, and #144 stays open for it.
+- **The one gap review found, not the implementing pass: single-tenant output was byte-identical
+  but silently under-reported.** `IssuerReport.tenant_unbound` was computed and correctly gated
+  `--strict`'s refusal, but for the common case today (a single-tenant stream, non-strict, carrying
+  a legacy attestation) neither the text nor JSON success output disclosed it — a clean run gave no
+  signal that some attestations were unverifiable on the tenant dimension at all, unlike this
+  crate's own stated convention for `unverifiable` (zero-suppressed disclosure, never silent
+  omission — see this file's own reasoning on that exact principle). Fixed by adding the same
+  zero-suppressed line/JSON key the multi-tenant path already had, in both
+  `main.rs`'s single-tenant text and JSON branches.
+- **Verified, not taken on the implementing pass's own report:** every re-vendored golden fixture
+  (`attested_chain.jsonl`, `payload_rewrite.jsonl`, the new `two_tenant_chain.jsonl`) diffed
+  byte-identical against `seam-runtime`'s own current copies at the same path — a genuine
+  re-vendor, not fabricated test data. The re-vendored spec body diffed byte-identical against a
+  direct `git show 2ea9f93:docs/specs/seam-event.v1.md` fetch, and `scripts/check_vendored_spec.py`
+  passes both `--from local:../seam-runtime` and `--from gh` (the actual CI backend). Full crate
+  suite (103 tests across 8 files, up from 95 pre-change) passes, `cargo clippy --all-targets -- -D
+  warnings` and `cargo fmt --check` both clean, citation drift this change caused across
+  `COMPATIBILITY.md`/`DECISIONS.md`/`PROGRESS.md`/the citation test's own `CLAIM_LINES` needle text
+  closed by the same baseline-verification methodology used elsewhere in this session.
+- **Status:** IMPLEMENTED. Part 1/1.5 done and verified; Part 2 open, tracked on seam-sdk#144, not
+  actionable until `seam-runtime` U-RT-3 Phase 4 lands.

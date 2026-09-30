@@ -74,9 +74,10 @@ pub mod verify;
 pub mod wire;
 
 // Re-exported at the crate root so an embedding caller writes `seam_verify::chain(..)` rather than
-// reaching through the module path. These four are the verification surface; everything else in
+// reaching through the module path. These are the verification surface; everything else in
 // `verify` is a helper they compose.
 pub use verify::{
-    chain, chain_anchored, erasure_certificate, link, verify_anchor, verify_authenticity,
-    verify_authenticity_anchored, ChainReport, IssuerReport,
+    chain, chain_anchored, chain_by_tenant, erasure_certificate, link, verify_anchor,
+    verify_authenticity, verify_authenticity_anchored, verify_authenticity_by_tenant, ChainReport,
+    IssuerReport, TenantChain,
 };

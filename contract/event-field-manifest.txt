@@ -105,6 +105,7 @@ ChainHeadAttestation/attested_len
 ChainHeadAttestation/digest_schema
 ChainHeadAttestation/issuer_aid
 ChainHeadAttestation/signature
+ChainHeadAttestation/tenant
 DecisionSealed/ciphertext_digest
 DecisionSealed/context_digest
 DecisionSealed/decision_id

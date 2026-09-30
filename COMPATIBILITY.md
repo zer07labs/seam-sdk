@@ -41,15 +41,15 @@ What to do instead, in descending order of usefulness:
 
 | Consumer | Constraint on `seam-sdk` | Verified at |
 |---|---|---|
-| `seam-adapters` (`seam-agent-core[sdk]`) | `seam-sdk>=0.7.20,<0.8` | `seam-adapters/core/pyproject.toml:22` |
-| `seam-aegis` | `seam-agent-core[sdk]>=0.6,<0.7` (reaches this SDK transitively) | `seam-aegis/pyproject.toml:28` |
+| `seam-adapters` (`seam-agent-core[sdk]`) | `seam-sdk>=0.13.1,<0.15` | `seam-adapters/core/pyproject.toml:41` |
+| `seam-aegis` | `seam-agent-core[sdk]>=0.8,<0.9` (reaches this SDK transitively) | `seam-aegis/pyproject.toml:42` |
 
 **One caveat on the first row, because the lockfile disagrees with the constraint and both are
-true.** `seam-adapters/uv.lock:3921` resolves `seam-sdk` **0.7.9** — below the declared floor — and
-that is not a violation: `seam-adapters/pyproject.toml:54` overrides the dependency with an
+true.** `seam-adapters/uv.lock:4217` resolves `seam-sdk` **0.17.0** — above the declared ceiling — and
+that is not a violation: `seam-adapters/pyproject.toml:59` overrides the dependency with an
 unconditional editable path source (`{ path = "../seam-sdk/python", editable = true }`), so the lock
 records the sibling checkout rather than a resolved release. A reader comparing the two numbers
-should not conclude the floor is being ignored.
+should not conclude the ceiling is being exceeded.
 
 ### What a compatibility-matrix cell asserts
 
@@ -99,7 +99,7 @@ mismatch cannot ship.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:835-852`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:925-942`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -279,7 +279,7 @@ comment — `.github/workflows/ci.yml:488-489` runs `scripts/check-independence.
 - **Chain integrity** — the `seam-event.v1` hash chain, from the stream alone.
 - **Authenticity** — every `CHAIN_HEAD_ATTESTATION` verifies against a pinned issuer key and sits at
   the head it attests; every v2 **and v3** `DECISION_SEALED` digest is recomputed from its payload
-  (`verify/src/verify.rs:579`). Three refusals are reported **distinctly from a digest mismatch**,
+  (`verify/src/verify.rs:745`). Three refusals are reported **distinctly from a digest mismatch**,
   because a caller that treats them as one cannot tell "these bytes were altered" from "a field was
   removed": a v3 record missing `context_digest` or `participation_digest` is refused as a **STRIP**;
   a `schema_version` this build does not implement is refused, never skipped; and a record declaring
@@ -417,8 +417,8 @@ so it cannot reach the taxonomy. Use `canonicalize_tool_input()`
 
 ### `canonical=` hands you the derivation, and the responsibility with it
 
-`authorize(canonical=…)` (`python/seam_sdk/client.py:257`, `python/seam_sdk/aio.py:195`; `opts.canonical`
-in TypeScript, `ts/src/client.ts:600`) is additive and keyword-only. The SDK does **not** verify the
+`authorize(canonical=…)` (`python/seam_sdk/client.py:258`, `python/seam_sdk/aio.py:196`; `opts.canonical`
+in TypeScript, `ts/src/client.ts:626`) is additive and keyword-only. The SDK does **not** verify the
 bytes — re-deriving to check would reinstate the second derivation the parameter exists to remove.
 So two things become possible that were not:
 
@@ -446,16 +446,16 @@ values reached one digest. Measured against the pre-fix build, `recordDigestV2({
 `b566fdea56b8487bc5ebc26d1d6585339e9ab2a3a499247bd7230e4f20f05d7f`. That is a digest failing at the
 only thing a digest does.
 
-The guard is `uintSlot` (`ts/src/crypto.ts:760`), which already governed the v3 record digest;
-`u64le`/`u32le` (`ts/src/crypto.ts:450`) now route through it, so v2 and the attestation framing get
+The guard is `uintSlot` (`ts/src/crypto.ts:828`), which already governed the v3 record digest;
+`u64le`/`u32le` (`ts/src/crypto.ts:518`) now route through it, so v2 and the attestation framing get
 the rule that was always written for them. Python got the same treatment: `_uint_slot`
-(`python/seam_sdk/crypto.py:600`) was `_v3_uint`, and `record_digest_v2` now shares it. Every
+(`python/seam_sdk/crypto.py:660`) was `_v3_uint`, and `record_digest_v2` now shares it. Every
 "before" below was measured against the pre-fix build, not inferred.
 
 **Read the `now` column as the record-digest arm.** In the chain-head **attestation** arm every one
 of these refusals was observed as `false` rather than as a thrown error, because
 `verifyChainHeadAttestation` wrapped its whole body in a catch that returned `false`
-(`const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid });`, `ts/src/crypto.ts:945`). The
+(`const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid });`, `ts/src/crypto.ts:1013`). The
 distinction mattered for the `true` row in particular, where the attestation arm showed no
 caller-visible change at all — `false` before, `false` after — even though what it was refusing had
 changed. **§10 closed that**: the type checks now run before the `try`, so a wrong type throws there
@@ -482,7 +482,7 @@ Python never had it. What Python had was three smaller defects in the same code:
 
 - `verify_chain_head_attestation` let that `struct.error` escape a function documented to return
   `False` on any tamper, so an out-of-range length **crashed** a caller instead of being rejected. It
-  now returns `False` (`python/seam_sdk/crypto.py:783-830`).
+  now returns `False` (`python/seam_sdk/crypto.py:843-890`).
 - `attested_len`, `attested_at` and `digest_schema` are now required to be `int`. Previously
   `True` was digested as `1` (`bool` subclasses `int`) and `5.0` raised `struct.error` — a *third*
   answer from a function that should only ever give two. Both now raise `TypeError`.
@@ -616,7 +616,7 @@ covered `{}` — so it did not mean what you thought. Convert at the boundary:
 `date.toISOString()`, `Object.fromEntries(map)`, `[...set]`. The error names the type and the
 conversion.
 
-**This reaches you through `authorize()`, not only through the helper.** `ts/src/client.ts:470` calls
+**This reaches you through `authorize()`, not only through the helper.** `ts/src/client.ts:496` calls
 `jcsCanonicalize(toolInput ?? {})` directly, so `authorize({ toolInput: { deadline: new Date() } })`
 now throws where it previously signed a digest over `{"deadline":{}}`. That is the case worth
 checking in your own code, because it is the one where the aliased digest was being *signed*.

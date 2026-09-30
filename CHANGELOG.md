@@ -56,6 +56,58 @@ than trusting a summary here.
 
 ### Added
 
+- **`get_escalation` / `getEscalation`** (seam-runtime #517) — read back one ESCALATE verdict by
+  the `authorize_id` its `authorize()` result returned: `SeamAuthorization.GetEscalation` on the
+  wire, taking an `EscalationRef` and returning an `EscalationView` (tenant, namespace, the
+  verified `agent_aid`, the asserted `agent_id`, `tool_name`, `tool_input_digest`, `reason`,
+  `policy_version`, `client_request_id`, `occurred_at`). `NOT_FOUND` for an ALLOW/DENY/TRANSFORM
+  id, for an id outside this caller's `(tenant, namespace)` scope, or for a retention-pruned
+  escalation (`SEAM_ESCALATION_RETENTION_MILLIS`, 30 days by default) — all three read the same
+  uniform refusal. There is no list verb: holding scope must not imply the ability to enumerate a
+  namespace's escalations. Same authorization as any other subject-scoped read; carrying the
+  caller's identity to it is `plans/request-credential.md`'s per-request credential, wired in
+  below.
+
+- **The per-request credential (`seam-request-call-v1`, #508)** — an opt-in, per-call `credential`
+  argument on every subject-scoped verb, carrying the caller's identity in band alongside an
+  already-admitted ticket. This is the sound posture on a deployment that strips `x-seam-subject`
+  at its edge (`SEAM_SUBJECT_HEADERS=deny`, seam-runtime #710): a client-asserted header is no
+  longer trusted there, so a subject-scoped call needs its own proof of possession instead.
+
+  Wired into all 15 subject-scoped verbs, in Python (sync and async) and TypeScript:
+  `open_session`/`openSession`, `submit_proposal`/`submitProposal`, `submit_vote`/`submitVote`,
+  `submit_evaluation`/`submitEvaluation`, `submit_objection`/`submitObjection`,
+  `submit_commit`/`submitCommit`, `submit_approval_request`/`submitApprovalRequest`,
+  `submit_ballot`/`submitBallot`, `cancel_session`/`cancelSession`,
+  `expire_session`/`expireSession`, `session_status`/`sessionStatus`,
+  `get_decision`/`getDecision`, `replay_decision`/`replayDecision`,
+  `get_escalation`/`getEscalation`, `get_commitment_proof`/`getCommitmentProof`. Deliberately
+  **not** wired into `report_outcome`/`reportOutcome` (it does not defend against replay and would
+  duplicate a durable outbox record) or the tombstoned `resume_session` (moved to the management
+  plane). `run_decision`/`authorize`/`RunDecision`'s own AITP presentation already proves identity
+  in-body.
+
+  `credential: Optional[Agent] = None` (Python) / `credential?: Agent` (TypeScript) is additive and
+  keyword-only/optional everywhere it is accepted: a caller that never passes it is unaffected — no
+  metadata is sent, and behavior is byte-for-byte what it was before this entry. When supplied, the
+  SDK reuses the same cached/admitted ticket `authorize()` would for that agent (never minting a
+  second one) and signs Ed25519 over `frame(domain) ‖ frame(ticket) ‖ frame(rpc_full_name) ‖
+  frame(resource_id) ‖ frame(body_digest)` — a fresh domain tag (`seam-request-call-v1`), distinct
+  from `authorize()`'s own `seam-authorize-call-v2`, so a captured credential of one kind is never
+  spendable as the other. `resource_id` carries the verb's id for the 5 bodyless reads
+  (`GetDecision` and friends); a bodied verb leaves it empty and binds the whole serialized request
+  message instead — binding `rpc_full_name` is what stops a captured signature for one verb being
+  re-pointed at a more privileged one over the same ticket and resource id (e.g. `GetDecision` →
+  the decrypted `GetCommitmentProof`).
+
+  On the wire: `x-seam-ticket-bin` + `x-seam-call-sig-bin` (gRPC, raw bytes as metadata — Python's
+  `grpc` library base64-encodes `-bin` keys itself) or `x-seam-ticket` + `x-seam-call-sig` (HTTP,
+  base64 explicitly, since TypeScript's Connect-RPC transport does not do that encoding for the
+  caller). `python/seam_sdk/crypto.py`'s `request_sig_payload`/`request_sig` and
+  `ts/src/crypto.ts`'s `requestSigPayload`/`requestSig` are pinned byte-exact against the runtime's
+  own implementation by `conformance/request_sig_payload_vector.json` (9 cases, no bless mode — a
+  mismatch there is a wire contract break, not a vector to regenerate).
+
 - **`verify/` now discloses unverified CONTENT — a link whose `kind` it cannot model** (seam-sdk
   #130). `seam-event.v1` §Versioning, refreshed in the same commit as #484, makes this a MUST for
   any verifier claiming recompute coverage: an unmodelled `kind` carrying `digest`/`checksum` is
@@ -152,6 +204,56 @@ than trusting a summary here.
   reasons with `"; "` before the producer sees them, and the redaction emits that same delimiter
   *inside* a single reason — so splitting is lossy: two reasons yield three parts, one dangling
   mid-parenthetical.
+
+### Changed — `verify/` walks the audit hash chain per tenant (seam-sdk #144)
+
+- **`seam-verify` now walks one hash chain per tenant, matching seam-runtime U-RT-1/U-RT-3.** The
+  runtime's audit outbox has been partitioned per tenant for some time — each tenant chains
+  against its own prior entry, from its own genesis, never against another tenant's
+  (`seam-runtime` commit `8bc00336`). This crate's `chain`/`chain_anchored` still walked ONE global
+  chain over the interleaved stream, which is a live correctness gap: a real multi-tenant export
+  (`GET /v1/anchors` already returns interleaved multi-tenant attestations) would be checked
+  against the wrong prior head the moment two tenants' events interleave.
+
+  `chain`/`chain_anchored` now delegate to a new `chain_by_tenant`, and `ChainReport` gains a
+  `tenants: BTreeMap<String, TenantChain>` field carrying each tenant's own head/links/window. A
+  window containing exactly one tenant — every stream this crate verified before today, and any
+  genuinely single-tenant stream — mirrors that one tenant's state onto `ChainReport`'s existing
+  top-level fields **byte-for-byte**; this is not a behaviour change for that case. A window
+  spanning more than one tenant now reports each tenant separately instead of silently chaining
+  them together (which would previously either false-positive a break, on one tenant's event
+  legitimately following another's in `prev_checksum` terms, or worse, verify green over a stream
+  that was never one honest chain to begin with).
+
+  **The cutover itself is diagnosed, not misreported as tampering.** `seam-runtime`'s own
+  backfill left each event's envelope `tenant` from before the partitioning cutover unset, so a
+  real export spanning that date can show a tenant's first chained event not starting at genesis —
+  indistinguishable from forgery by inspection alone. An unanchored tenant's first observed link
+  failing to start at genesis is now reported as `NON-GENESIS FIRST LINK` (a distinct diagnosis
+  naming the ambiguity and pointing at `--from-anchor`), not lumped into the ordinary
+  `BROKEN CHAIN` message — every other break, and an anchored tenant's first link (already
+  signature-verified), still gets `BROKEN CHAIN` exactly as before.
+
+  **Authenticity is fanned out per tenant too.** A new `verify_authenticity_by_tenant` checks each
+  tenant's `CHAIN_HEAD_ATTESTATION`s against its own window; `main.rs`'s `chain --issuer` now uses
+  it automatically for a multi-tenant stream (single-tenant output is unchanged). `--from-anchor`
+  stays single-file: it still attributes the anchor to the window's sole chained tenant (spec
+  clause (f0)'s untenanted-anchor fallback) and now refuses as a usage error (exit 1, not 2 — a
+  caller mistake, not a verification failure) if the window spans more than one tenant.
+
+  **`ChainHeadAttestation` carries a new UNSIGNED `tenant` field (wire tag 7, seam-runtime U-RT-3
+  Phase 2)**, echoing the attesting tenant — NOT part of the signed preimage (a future Phase 4 may
+  bind it in; not yet landed). A payload `tenant` that disagrees with its own envelope `tenant` is
+  refused outright as `ATTESTATION TENANT MISMATCH` — the two are set by different parts of the
+  system and a genuine attestation always agrees with itself. A payload `tenant` left empty while
+  the envelope's is not (a pre-Phase-2 attestation) is accepted on the envelope alone — there is
+  nothing else to check it against — but counted as `tenant_unbound`, and `--strict` now refuses a
+  stream carrying any, the same posture it already has toward `unverifiable` history.
+
+  `verify/docs/seam-event.v1.md` is re-vendored at `seam-runtime@2ea9f93` (current at the time of
+  this change) to carry both the tenant-chain wording and the new field. `chain_head_attestation_payload`
+  (the SIGNED preimage computation, Part 2 of seam-sdk#144) is untouched — binding `tenant` into the
+  signature is gated on seam-runtime's own Phase 4, not yet started.
 
 ### Fixed
 
@@ -657,7 +759,7 @@ Three independently sufficient causes of a 0.7.17-shaped incident, closed.
   One previously-green shape does turn red, and it is stated rather than glossed: a `DECISION_SEALED`
   declaring a `schema_version` above 3 while carrying **no** event `digest` at all used to fall
   through as a non-link — unverifiable, but green without `--strict` — because the digest-presence
-  check came first. The version refusal now runs before it (`verify/src/verify.rs:636-645`). This is the
+  check came first. The version refusal now runs before it (`verify/src/verify.rs:803-812`). This is the
   intended ordering: an unknown formula means the record cannot be checked *at all*, which is a
   refusal independent of whether there is a digest to compare, and "I cannot check this, so it
   passes" is the exact shape of a downgrade. No conforming producer emits it — the chain fields are

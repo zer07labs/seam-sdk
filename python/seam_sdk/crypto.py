@@ -398,6 +398,66 @@ def call_sig(
     )
 
 
+# ── The per-request credential (`seam-request-call-v1`, #508) ──────────────────────────────────────
+# A DIFFERENT domain tag from `seam-authorize-call-v2` above, deliberately, so a captured `Authorize`
+# call_sig is never spendable as a request credential and vice versa. See
+# `plans/request-credential.md` for the full contract; pinned by
+# `conformance/request_sig_payload_vector.json`, generated from the runtime's Rust reference.
+REQUEST_SIG_CONTEXT = b"seam-request-call-v1"
+
+
+def request_sig_payload(
+    ticket: bytes, rpc_full_name: str, resource_id: str, body_digest: str
+) -> bytes:
+    """The exact bytes :func:`request_sig` signs — ``frame(context) || frame(ticket) ||
+    frame(rpc_full_name) || frame(resource_id) || frame(body_digest)``, where
+    ``frame(x) = u32le(len(x)) || x``. Lengths are BYTE counts, not character counts.
+
+    ``rpc_full_name`` is the gRPC full method path on BOTH transports (e.g.
+    ``"/seam.api.v1.SeamCoordination/GetDecision"``), never the HTTP route pattern — that is what
+    makes one credential valid over either plane for a bodyless verb. For a bodyless read,
+    ``resource_id`` is the verb's id argument and ``body_digest`` is the empty string. For a bodied
+    verb over gRPC, ``resource_id`` is the empty string (the id lives inside the message) and
+    ``body_digest`` covers the whole DECODED request message, without the 5-byte gRPC
+    length-prefixed-message header — see :func:`tool_input_digest` for the ``"sha256:<hex>"``
+    formatting, computed over ``request.SerializeToString()``.
+
+    This function pins the FRAMING only, not the digest computation — see
+    ``conformance/request_sig_payload_vector.json``'s ``body_input_hex`` cases, which separately pin
+    that a digest taken after parse-and-re-encode diverges from one taken over the exact wire bytes.
+    """
+    parts = (
+        REQUEST_SIG_CONTEXT,
+        ticket,
+        rpc_full_name.encode("utf-8"),
+        resource_id.encode("utf-8"),
+        body_digest.encode("utf-8"),
+    )
+    return b"".join(struct.pack("<I", len(p)) + p for p in parts)
+
+
+def request_sig(
+    agent_seed: bytes,
+    ticket: bytes,
+    rpc_full_name: str,
+    resource_id: str,
+    body_digest: str,
+) -> bytes:
+    """Ed25519 by the agent key over :func:`request_sig_payload` — the per-request credential a
+    caller sends as ``x-seam-ticket-bin`` + ``x-seam-call-sig-bin`` (gRPC) or ``x-seam-ticket`` +
+    ``x-seam-call-sig`` (base64, HTTP) alongside a request, to prove identity in band on a
+    deployment that strips ``x-seam-subject`` at its edge (``SEAM_SUBJECT_HEADERS=deny``, #710).
+
+    Binding ``rpc_full_name`` stops a captured signature for one verb being re-pointed at a more
+    privileged one over the same ticket and resource id (e.g. ``GetDecision`` → the decrypted
+    ``GetCommitmentProof``). Binding ``resource_id``/``body_digest`` stops it being re-pointed at a
+    different resource or request body. Binding the ticket bytes stops replay against a later one.
+    """
+    return Ed25519PrivateKey.from_private_bytes(agent_seed).sign(
+        request_sig_payload(ticket, rpc_full_name, resource_id, body_digest)
+    )
+
+
 # ── A14 authenticity framing (seam-event.v1) ─────────────────────────────────────────────────────────
 # frame(x) = u32le(len(x)) || x ; opt(x) = 0x00 if None else 0x01 || frame(x). Both transcribed from
 # `seam-event.v1.md`; they let a client verify a chain-head attestation or recompute a v2 record digest

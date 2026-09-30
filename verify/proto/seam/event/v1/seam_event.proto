@@ -200,6 +200,10 @@ message ChainHeadAttestation {
   // key, exactly the downgrade claim this field exists to prevent.
   uint32 digest_schema = 5;   // 2 = A14 v2, 3 = B3 v3; bound into the signature (downgrade guard)
   bytes signature = 6;
+  // UNSIGNED echo of the attesting tenant (U-RT-3 Phase 2). Empty on a pre-Phase-2 attestation. NOT part
+  // of the signed preimage (Phase 4, not yet landed) — a verifier cross-checks it against the envelope
+  // `tenant`, never trusts it alone.
+  string tenant = 7;
 }
 
 // DECISION_SEALED payload (envelope tag 13). Structural columns of the DecisionRecord.
