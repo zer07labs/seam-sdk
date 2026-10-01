@@ -1219,7 +1219,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:925-942` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:957-974` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
