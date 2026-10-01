@@ -41,6 +41,11 @@ jobs:
       # stamp's only test run was the real release.
       - name: the version stamp still stamps
         run: ./scripts/test_set_version.sh
+      # Same reasoning, for the sibling stamp that retitles CHANGELOG.md's Unreleased heading to
+      # the version release-on-runtime.yml is cutting — its only test run was also, until now, the
+      # real release.
+      - name: the changelog still retitles
+        run: ./scripts/test_retitle_changelog.sh
 
   preflight:
     name: preflight (secret gating)

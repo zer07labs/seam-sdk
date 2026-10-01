@@ -167,6 +167,17 @@ jobs:
       - name: Bump both packages to the runtime version
         run: ./scripts/set_version.sh "${{ steps.v.outputs.version }}"
 
+      # CHANGELOG.md's own intro paragraph has always promised this retitle ("accumulate under
+      # Unreleased and are retitled to the runtime version that carries them once it ships") but
+      # nothing ever performed it — every entry since 0.7.26 piled up under one undifferentiated
+      # "## Unreleased" heading, and a version-range review had to fall back to `git diff` between
+      # tags because the file itself could not say which entry shipped in which release.
+      # scripts/test_retitle_changelog.sh runs on every PR; same testable-script reasoning as the
+      # version stamp above, for the same reason: a CHANGELOG half-retitled by a release job is not
+      # something this repo can simply re-cut.
+      - name: Retitle CHANGELOG.md's Unreleased heading to this version
+        run: ./scripts/retitle_changelog.sh "${{ steps.v.outputs.version }}" "$(date -u +%Y-%m-%d)"
+
       - name: Commit + tag (triggers publish.yml)
         env:
           VER: ${{ steps.v.outputs.version }}
