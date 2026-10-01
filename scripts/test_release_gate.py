@@ -39,6 +39,7 @@ RELEASE = REPO / ".github" / "workflows" / "release-on-runtime.yml"
 GATE = "The runtime's wire framing must be one this SDK implements"
 CHECKOUT = "actions/checkout"
 STAMP = "Bump both packages to the runtime version"
+RETITLE = "Retitle CHANGELOG.md's Unreleased heading to this version"
 TAG = "Commit + tag (triggers publish.yml)"
 
 
@@ -82,6 +83,32 @@ def test_the_framing_gate_runs_before_anything_is_stamped_or_tagged() -> None:
             f"the framing gate is step {gate} but {name!r} is step {step} — a refusal that arrives "
             "after the version is stamped or the tag is pushed is not a gate, it is a report"
         )
+
+
+def test_the_changelog_retitle_runs_after_the_stamp_and_before_the_tag() -> None:
+    """The retitled heading has to name THIS version and land in the SAME commit as the stamp.
+
+    Running before the stamp would retitle against the version this release is replacing, not the
+    one it is becoming; running after the tag would retitle a version that was already pushed,
+    so the published tag's CHANGELOG.md would still show the stale "## Unreleased" heading.
+    """
+    stamp = _index(lambda s: s.get("name") == STAMP, f"the stamp step ({STAMP!r})")
+    retitle = _index(lambda s: s.get("name") == RETITLE, f"the retitle step ({RETITLE!r})")
+    tag = _index(lambda s: s.get("name") == TAG, f"the tag step ({TAG!r})")
+    assert stamp < retitle < tag, (
+        f"stamp is step {stamp}, retitle is step {retitle}, tag is step {tag} — the retitle must "
+        "run strictly between the version stamp and the commit+tag step"
+    )
+
+
+def test_the_changelog_retitle_calls_the_tested_script_not_a_reimplementation() -> None:
+    """scripts/test_retitle_changelog.sh exercises scripts/retitle_changelog.sh directly — that
+    coverage is worthless if the workflow step doesn't actually call that file."""
+    step = next(s for s in _steps() if s.get("name") == RETITLE)
+    assert "./scripts/retitle_changelog.sh" in step["run"], (
+        f"the retitle step no longer calls scripts/retitle_changelog.sh: {step['run']!r} — "
+        "a reimplemented inline version would not be covered by test_retitle_changelog.sh"
+    )
 
 
 def test_the_gate_still_reads_a_file_out_of_the_repo() -> None:
