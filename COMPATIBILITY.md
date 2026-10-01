@@ -171,7 +171,7 @@ this by trying.
 |---|---|---|---|
 | **Python** (`seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:381`) | Yes | **Published + supported** |
 | **TypeScript** (`@zer07labs/seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:199`, `ts/package.json:12`) | Yes | **Published + supported** |
-| **Go** | Module proxy, from the `go/vX.Y.Z` tag (`.github/workflows/release-on-runtime.yml:186`) | Tag only — no in-tree version | Resolvable, crypto shim only |
+| **Go** | Module proxy, from the `go/vX.Y.Z` tag (`.github/workflows/release-on-runtime.yml:197`) | Tag only — no in-tree version | Resolvable, crypto shim only |
 | **Java** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |
 | **Kotlin** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |
 
@@ -271,7 +271,7 @@ the wire" and "no consumer impact" are different claims.
 ## 5. What "independently verifiable" does and does not cover
 
 The published verifier (`verify/`) links **zero** Seam crates, and that is a CI gate rather than a
-comment — `.github/workflows/ci.yml:488-489` runs `scripts/check-independence.sh`, which renders
+comment — `.github/workflows/ci.yml:493-494` runs `scripts/check-independence.sh`, which renders
 `cargo tree -e normal` and fails on any `seam-*`. What it verifies:
 
 **Covered:**
