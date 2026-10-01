@@ -42,7 +42,7 @@ def build_presentation(
     """Build the pinned-key admission presentation the Seam server verifies.
 
     ``proof = base64url(Ed25519_sign( SHA256( domain || sender_aid \\0 || receiver_aid \\0 ||
-    message_id \\0 || timestamp_be_i64 \\0 || b64url_decode(pop_nonce) ) ))``.
+    message_id \\0 || timestamp_ascii_decimal \\0 || b64url_decode(pop_nonce) ) ))``.
     """
     sk = Ed25519PrivateKey.from_private_bytes(agent_seed)
     pub = sk.public_key().public_bytes_raw()
@@ -62,7 +62,7 @@ def build_presentation(
         + b"\x00"
         + str(mid).encode()
         + b"\x00"
-        + struct.pack(">q", timestamp)
+        + str(timestamp).encode("ascii")
         + b"\x00"
         + _b64url_decode(pop_nonce)
     )

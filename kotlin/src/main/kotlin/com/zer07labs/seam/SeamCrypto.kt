@@ -102,7 +102,7 @@ object SeamCrypto {
         buf.writeBytes(senderAid.toByteArray(Charsets.UTF_8)); buf.write(0)
         buf.writeBytes(receiverAid.toByteArray(Charsets.UTF_8)); buf.write(0)
         buf.writeBytes(mid.toByteArray(Charsets.UTF_8)); buf.write(0)
-        buf.writeBytes(ByteBuffer.allocate(8).putLong(timestamp).array()); buf.write(0)
+        buf.writeBytes(timestamp.toString().toByteArray(Charsets.US_ASCII)); buf.write(0)
         buf.writeBytes(b64urlDecode(popNonce))
 
         val proof = ed25519Sign(agentSeed, sha256(buf.toByteArray()))
