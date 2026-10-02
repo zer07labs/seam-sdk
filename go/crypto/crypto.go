@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -75,7 +76,7 @@ type Commitment struct {
 // BuildPresentation builds the pinned-key admission presentation.
 //
 //	proof = base64url(Ed25519_sign( SHA256( domain || sender_aid \0 || receiver_aid \0 ||
-//	        message_id \0 || timestamp_be_i64 \0 || b64url_decode(pop_nonce) ) ))
+//	        message_id \0 || timestamp_ascii_decimal \0 || b64url_decode(pop_nonce) ) ))
 func BuildPresentation(agentSeed []byte, receiverAID, popNonce string, nowMs int64) (Presentation, error) {
 	if len(agentSeed) != ed25519.SeedSize {
 		return Presentation{}, fmt.Errorf("agent seed must be %d bytes", ed25519.SeedSize)
@@ -90,8 +91,8 @@ func BuildPresentation(agentSeed []byte, receiverAID, popNonce string, nowMs int
 	if err != nil {
 		return Presentation{}, fmt.Errorf("pop_nonce is not base64url: %w", err)
 	}
-	var ts [8]byte
-	binary.BigEndian.PutUint64(ts[:], uint64(timestamp))
+	// ASCII-decimal, matching message_id's text encoding (FormatInt: the signed i64, not FormatUint)
+	ts := []byte(strconv.FormatInt(timestamp, 10))
 
 	var in []byte
 	in = append(in, proofDomain...)
@@ -101,7 +102,7 @@ func BuildPresentation(agentSeed []byte, receiverAID, popNonce string, nowMs int
 	in = append(in, 0)
 	in = append(in, []byte(mid)...)
 	in = append(in, 0)
-	in = append(in, ts[:]...)
+	in = append(in, ts...)
 	in = append(in, 0)
 	in = append(in, nonceBytes...)
 

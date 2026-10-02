@@ -16,6 +16,38 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Changed — pinned-key admission proof timestamp: big-endian i64 → ASCII-decimal (#105)
+
+**This is a breaking change to the wire format of the AITP pinned-key presentation, and it is
+held behind the release gate until the runtime side is ready — see the deploy-ordering note
+below.**
+
+`aitp-handshake` 0.4.1 → 0.11.0 fixed the RFC-AITP-0002 §3.1 erratum (spec issue #17): the
+`build_presentation` preimage's timestamp slot was an 8-byte big-endian `i64`
+(`timestamp.0.to_be_bytes()`), which the AITP reference verifier (`aitp-verifier-py`) has never
+accepted — it has always required the UTF-8 bytes of the timestamp's base-10 decimal string
+(`timestamp.0.to_string()`), matching how `message_id` was already encoded. The big-endian form
+was a bug in this SDK, not a prior convention, and it is now corrected in all five shims (Python,
+TypeScript, Go, Java, Kotlin). The domain separator (`aitp-pinned-key-v1\0`) is unchanged, so the
+two encodings are distinguishable only by trying both — not by a version tag.
+
+Nothing else in the admission presentation moves: `sender_aid`, `message_id`, `timestamp`, and
+every TCT/record-digest/chain-head-attestation value are byte-identical before and after. The
+commitment-digest length prefixes (a separate, unrelated 8-byte big-endian encoding inside
+`seamCommitmentDigest`) are untouched — they are a length frame, not a timestamp, and the two are
+easy to conflate in Java and Kotlin where the lines are textually near-identical.
+
+`conformance/vectors.json`'s `admission.presentation.descriptor.proof` is the one value this
+changes; it was spliced in place rather than regenerated (this repo is not the vector's author —
+seam-runtime's emitter is, and its atomic follow-up PR will byte-diff a freshly emitted vector
+against this one).
+
+**Deploy ordering**: `contract/wire-framing.json`'s `supported` moves 2 → 3 in this same change,
+which makes `release-on-runtime.yml` refuse to tag any SDK release until the runtime dispatches
+`wire_framing_version: 3` — i.e. until the runtime's own dual-accepting verifier has landed on
+`main` and republished. Merging this change does not by itself publish an SDK that mints
+ASCII-decimal proofs against a runtime that only verifies big-endian ones.
+
 ### Added — `supersedes` on the commit path (#141)
 
 - **`submit_commit`/`submitCommit` accept an opt-in `supersedes`**, naming the commitment id the

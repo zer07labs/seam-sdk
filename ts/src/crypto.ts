@@ -72,8 +72,8 @@ export function buildPresentation(
   const senderAid = aidFromPubkey(pub);
   const messageId = uuidFromBytes(sha256(concat(enc.encode("seam-pop-mid"), enc.encode(popNonce))));
   const timestamp = Math.floor(nowMs / 1000);
-  const ts = new Uint8Array(8);
-  new DataView(ts.buffer).setBigInt64(0, BigInt(timestamp), false); // big-endian i64
+  // ASCII-decimal, matching message_id's text encoding
+  const ts = enc.encode(String(timestamp));
 
   const proofInput = concat(
     PROOF_DOMAIN,

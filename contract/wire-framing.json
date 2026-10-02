@@ -36,11 +36,12 @@
     "Bumping this without landing the matching change in all five shims is the failure this whole",
     "file exists to prevent. See contract/rpc-manifest.txt for the verb-surface equivalent."
   ],
-  "supported": 2,
+  "supported": 3,
   "runtime_emits_version": true,
   "runtime_adoption_issue": "zer07labs/seam-runtime#418 (CLOSED COMPLETED 2026-08-26) — adoption landed; latch flipped true 2026-09-03. If this line is being printed, the latch is false again: that is either a NEW staged adoption, in which case point this at its issue, or a regression.",
   "history": {
     "1": "ticket || digest — the per-call PoP framing every SDK <= 0.7.19 signed.",
-    "2": "seam-runtime #286: five length-framed fields including tool_name/agent_id. First correct in 0.7.20."
+    "2": "seam-runtime #286: five length-framed fields including tool_name/agent_id. First correct in 0.7.20.",
+    "3": "RFC-AITP-0002 §3.1 erratum (seam-sdk #105): pinned-key proof timestamp big-endian i64 → ASCII decimal. Held until the runtime dispatches wire_framing_version 3."
   }
 }

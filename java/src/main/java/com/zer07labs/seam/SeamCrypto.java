@@ -123,7 +123,7 @@ public final class SeamCrypto {
     in.write(0);
     in.writeBytes(mid.getBytes(StandardCharsets.UTF_8));
     in.write(0);
-    in.writeBytes(ByteBuffer.allocate(8).putLong(timestamp).array()); // big-endian
+    in.writeBytes(Long.toString(timestamp).getBytes(StandardCharsets.US_ASCII)); // ASCII-decimal
     in.write(0);
     in.writeBytes(b64urlDecode(popNonce));
 

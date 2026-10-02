@@ -16,7 +16,7 @@
       "descriptor": {
         "type": "pinned_key",
         "subject": "aid:pubkey:ed25519:GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
-        "proof": "A7qoBa1bFYBIcQrqKKI8wFl75ysL5fJ1HewoEWklpb5LUI3haFe4eTukildS9tItc2MsCyddI7ePkQsGVHJVBw",
+        "proof": "V3s1256xmBO57MxFezGToW7qbx0ZBx2X6FS9sv-3AfrM4wDY_8MbcFWYY1zDtsw-iJljtYwW0UCxliihOki6CQ",
         "public_key": "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE"
       },
       "message_id": "b216b10f-d1bc-2b19-c3b4-287ca50bdece",
