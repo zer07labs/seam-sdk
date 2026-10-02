@@ -48,6 +48,12 @@ which makes `release-on-runtime.yml` refuse to tag any SDK release until the run
 `main` and republished. Merging this change does not by itself publish an SDK that mints
 ASCII-decimal proofs against a runtime that only verifies big-endian ones.
 
+## 0.22.0 — 2026-10-02
+
+## 0.21.0 — 2026-10-02
+
+## 0.20.0 — 2026-10-01
+
 ## 0.19.4 — 2026-10-01
 
 ## 0.19.3 — 2026-10-01

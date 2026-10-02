@@ -41,15 +41,15 @@ What to do instead, in descending order of usefulness:
 
 | Consumer | Constraint on `seam-sdk` | Verified at |
 |---|---|---|
-| `seam-adapters` (`seam-agent-core[sdk]`) | `seam-sdk>=0.13.1,<0.15` | `seam-adapters/core/pyproject.toml:41` |
+| `seam-adapters` (`seam-agent-core[sdk]`) | `seam-sdk>=0.13.1,<0.20` | `seam-adapters/core/pyproject.toml:56` |
 | `seam-aegis` | `seam-agent-core[sdk]>=0.8,<0.9` (reaches this SDK transitively) | `seam-aegis/pyproject.toml:42` |
 
-**One caveat on the first row, because the lockfile disagrees with the constraint and both are
-true.** `seam-adapters/uv.lock:4217` resolves `seam-sdk` **0.17.0** — above the declared ceiling — and
-that is not a violation: `seam-adapters/pyproject.toml:59` overrides the dependency with an
-unconditional editable path source (`{ path = "../seam-sdk/python", editable = true }`), so the lock
-records the sibling checkout rather than a resolved release. A reader comparing the two numbers
-should not conclude the ceiling is being exceeded.
+**One caveat on the first row: the lockfile number is not a real resolution.**
+`seam-adapters/uv.lock:4217` resolves `seam-sdk` **0.17.0** — which happens to fall inside the
+declared range, but that is incidental: `seam-adapters/pyproject.toml:59` overrides the dependency
+with an unconditional editable path source (`{ path = "../seam-sdk/python", editable = true }`), so
+the lock records the sibling checkout rather than a resolved release. A reader should not take
+0.17.0 as evidence this constraint has ever been checked against a real registry release.
 
 ### What a compatibility-matrix cell asserts
 
