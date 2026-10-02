@@ -48,6 +48,26 @@ which makes `release-on-runtime.yml` refuse to tag any SDK release until the run
 `main` and republished. Merging this change does not by itself publish an SDK that mints
 ASCII-decimal proofs against a runtime that only verifies big-endian ones.
 
+### Added — `supersedes` on the commit path (#141)
+
+- **`submit_commit`/`submitCommit` accept an opt-in `supersedes`**, naming the commitment id the
+  decision being submitted replaces. Python: `supersedes: Optional[str] = None` keyword (sync and
+  async, kept argument-for-argument identical). TypeScript: `SubmitCommitOptions.supersedes`,
+  alongside `credential` — not folded into the shared `CredentialedCallOptions`, for the same
+  reason `credential` isn't.
+
+  `CommitRequest.supersedes` is EXPLICIT PRESENCE on the wire, like `confidence`/`rationale_ref` on
+  `submit_evaluation`: omitting it is absence, never `""`. It is forwarded on the request path
+  only — the server's own internal R13 supersession always takes precedence over a client-supplied
+  value if both are set, so this is a hint, not a guarantee. Mirrors the read-side
+  `Commitment.supersedes` (already exposed via `get_commitment_proof`/`getCommitmentProof`), now
+  with a write-side counterpart. Go, Java and Kotlin have no commit-path client to wire this into
+  (crypto shims only — an ergonomic client over the generated transport is a follow-up, same scope
+  line the per-request credential drew).
+
+  Closes the limitation `seam-docs`' partner doc set tracked at §15: the documented workaround
+  (registering the superseded id as `Value` context) is no longer necessary.
+
 ## 0.22.0 — 2026-10-02
 
 ## 0.21.0 — 2026-10-02
