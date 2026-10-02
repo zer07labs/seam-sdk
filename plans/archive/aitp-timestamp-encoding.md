@@ -1,6 +1,32 @@
 # Plan — #105: pinned-key proof timestamp encoding (aitp-handshake 0.4.1 → 0.11.0)
 
-Status: **planned, not started.** Verified against seam-sdk HEAD `8382ecb` on 2026-09-05.
+> **📦 ARCHIVED 2026-10-02 — DELIVERED, merged as PR #162 (`837b4e3`).** Archived after a delivery
+> verification **against this tree** (per `plans/README.md`'s archiving rule), not against this
+> plan's own status table.
+>
+> **Blocker A cleared.** `seam-runtime` merged its dual-accepting verifier (PR #911, `f76252be`)
+> and republished `ghcr.io/zer07labs/seam-runtime/seamd:main`; this PR's `integration` job was
+> re-run against that image and confirmed green before merge, not assumed.
+>
+> **All five mint sites now emit ASCII-decimal, verified at the current lines (not the plan's
+> pre-move citations):** `python/seam_sdk/crypto.py:65` (`str(timestamp).encode("ascii")`),
+> `ts/src/crypto.ts:76` (`String(timestamp)`), `go/crypto/crypto.go:95`
+> (`strconv.FormatInt(timestamp, 10)`), `java/.../SeamCrypto.java:126` (`Long.toString(timestamp)`),
+> `kotlin/.../SeamCrypto.kt:105` (`timestamp.toString()`) — all ASCII/US-ASCII encoded, matching
+> `message_id`'s existing convention. The commitment-digest length prefixes this plan warned were
+> easy to conflate with the timestamp slot are untouched.
+>
+> **The release hold is armed, not tripped.** `contract/wire-framing.json`'s `supported` is `3`;
+> the runtime still dispatches `wire_framing_version: 2` (dual-accept, not yet retiring the old
+> encoding), so `release-on-runtime.yml` correctly continues to refuse a tag until a future,
+> separate runtime decision bumps that dispatch — this is the intended steady state, not a
+> leftover blocker.
+>
+> Issue #105 closed on merge.
+>
+> ---
+>
+> Status (as originally written, superseded by the above): **planned, not started.** Verified against seam-sdk HEAD `8382ecb` on 2026-09-05.
 Companion plans (runtime-owned, read-verified): `../seam-runtime/plans/515-phase3-aitp-011.md`,
 `../seam-runtime/plans/cross-repo/seam-sdk-aitp-0.11-vectors.md`.
 
