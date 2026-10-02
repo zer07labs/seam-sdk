@@ -220,6 +220,7 @@ CollectiveOutcome/verdict
 CommitRequest/action
 CommitRequest/commitment_id
 CommitRequest/session_id
+CommitRequest/supersedes
 CommitRequest/usage
 Commitment/action
 Commitment/auth_method

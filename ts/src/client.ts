@@ -84,6 +84,16 @@ export interface CredentialedCallOptions extends UnaryCallOptions {
   credential?: Agent;
 }
 
+/** {@link CredentialedCallOptions} plus `submitCommit`'s write-side override hint (#141) —
+ * deliberately not folded into the base options either, for the same reason `credential` isn't. */
+export interface SubmitCommitOptions extends CredentialedCallOptions {
+  /** The commitment id this decision replaces. Forwarded on the request path only — the server's
+   * own internal R13 supersession always takes precedence over a client-supplied value if both are
+   * set, so this is a hint, not a guarantee. Omit rather than pass `""`: absence and an empty
+   * override read differently server-side. */
+  supersedes?: string;
+}
+
 const call = (opts?: UnaryCallOptions) => ({
   timeoutMs: opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
 });
@@ -969,9 +979,17 @@ export class SeamClient {
     commitmentId: string,
     action: string,
     usage?: StepUsage,
-    opts?: CredentialedCallOptions,
+    opts?: SubmitCommitOptions,
   ) {
-    const init = { sessionId, commitmentId, action, usage };
+    const init = {
+      sessionId,
+      commitmentId,
+      action,
+      usage,
+      // Omitting the key is absence on the wire — see the EXPLICIT PRESENCE note on
+      // `submitEvaluation`'s `confidence`/`rationaleRef` above for why this isn't `?? ""`.
+      ...(opts?.supersedes !== undefined ? { supersedes: opts.supersedes } : {}),
+    };
     const headers = await this.credentialHeaders(
       opts?.credential,
       "/seam.api.v1.SeamCoordination/SubmitCommit",

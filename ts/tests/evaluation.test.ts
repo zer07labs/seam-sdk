@@ -3,7 +3,8 @@
 // never fabricates a value into the caller's intent. `0` must survive as `0`, never collapse into
 // absence. This pins the contract at two levels: the raw proto round-trip (toBinary/fromBinary),
 // and the `submitEvaluation` wrapper itself (server-free, via a recording fake Transport, mirroring
-// unit_plumbing.test.ts). Also covers `submitObjection`'s severity default and `authorize`'s new
+// unit_plumbing.test.ts). Also covers `submitObjection`'s severity default, `submitCommit`'s new
+// `supersedes` override hint (#141, same explicit-presence shape), and `authorize`'s new
 // `subjects` plumbing (A-3/A-4 — signature-neutral, additive to `subject`).
 
 import { test } from "node:test";
@@ -121,6 +122,18 @@ test("submitObjection defaults severity to empty (server applies MACP's `medium`
   calls.length = 0;
   await client.submitObjection("s", "objector-a", "p-1", "too risky", { severity: "high" });
   assert.equal(calls[0]!.input.severity, "high");
+});
+
+test("submitCommit omits supersedes when absent, and sends it when given (#141)", async () => {
+  const calls: Recorded[] = [];
+  const client = new SeamClient(fakeTransport(calls));
+  await client.submitCommit("s", "c-1", "approve");
+  assert.equal(calls[0]!.method, "SubmitCommit");
+  assert.ok(!("supersedes" in calls[0]!.input), "supersedes key must be absent, not undefined-valued");
+
+  calls.length = 0;
+  await client.submitCommit("s", "c-2", "approve", undefined, { supersedes: "c-1" });
+  assert.equal(calls[0]!.input.supersedes, "c-1");
 });
 
 // ── `subjects` plumbing on `authorize` (A-3/A-4) ────────────────────────────────────────────────
