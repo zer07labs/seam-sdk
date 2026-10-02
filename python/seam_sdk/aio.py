@@ -526,15 +526,26 @@ class SeamClient:
         commitment_id: str,
         action: str,
         *,
+        supersedes: Optional[str] = None,
         usage: Optional[StepUsage] = None,
         credential: Optional[Agent] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.SessionStep:
+        """Submit a MACP commit, sealing ``commitment_id``'s decision.
+
+        ``supersedes`` names the commitment id this decision replaces. It is accepted and
+        forwarded on the request path only — the server's own internal R13 supersession always
+        takes precedence over a client-supplied value if both are set, so this is a hint, not a
+        guarantee. Omit it rather than passing ``""``: absence and an empty override read
+        differently server-side.
+        """
         req = pb.CommitRequest(
             session_id=session_id,
             commitment_id=commitment_id,
             action=action,
         )
+        if supersedes is not None:
+            req.supersedes = supersedes
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
         md = await self._credential_md(
