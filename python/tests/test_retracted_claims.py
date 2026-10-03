@@ -9,8 +9,11 @@ Two properties are checked, and the second matters more than the first:
 
 1. **A retracted claim does not come back.** Prose gets copy-pasted forward; a grep does not.
 2. **A caveat this repo is not entitled to drop does not quietly vanish.** The truncation caveat in
-   particular is a *capability* limit, not a wording preference — the published verifier genuinely
-   cannot detect a truncated chain, and a doc that stops saying so starts overclaiming.
+   particular is a *capability* limit, not a wording preference — without an independently-held
+   anchor (seam-sdk#140's `chain --expect-anchor <FILE>`), the published verifier still cannot prove
+   a stream is the whole chain, and a doc that stops saying so starts overclaiming. The flip side
+   matters too: a doc that forgets the capability is CONDITIONAL — stating it as if it always
+   applied — overclaims in the other direction.
 
 `seam-adapters` uses the same technique (`core/tests/test_doc_claims.py`), for the same reason.
 """
@@ -196,39 +199,77 @@ CHANGELOG = REPO / "CHANGELOG.md"
 
 
 def test_the_truncation_caveat_is_present_and_unhedged() -> None:
-    """The published verifier CANNOT detect truncation, and the doc must keep saying so.
+    """Without an independently-held anchor, the published verifier still cannot prove completeness
+    — and the doc must keep saying so.
 
-    A stream cut at the tail is internally consistent and verifies green. Detecting truncation needs
-    a third-party-observable append-only feed, and none is published (seam-runtime#422). Until that
-    lands, any claim that "independently verifiable" covers completeness is false.
+    seam-sdk#140 (unblocked by the live `GET /v1/anchors` feed, seam-runtime#422) made truncation
+    detection real, but only CONDITIONALLY: `chain --expect-anchor <FILE>` catches it when the caller
+    supplies a later anchor; a caller who supplies none is in the position this crate was always in. A
+    stream cut at the tail is still internally consistent and verifies green **on its own** — that
+    default did not change, and a doc that dropped this caveat because the conditional capability
+    exists would be overclaiming exactly as before, just one step removed.
 
-    This is the §9 rule "do not claim the published verifier detects truncation", made enforceable.
+    This is the §9 rule "do not claim the published verifier detects truncation UNCONDITIONALLY", made
+    enforceable. See `test_the_conditional_truncation_capability_is_stated` below for the other half:
+    the new capability's own caveat (that it is conditional) must not quietly vanish either.
     """
     text = COMPATIBILITY.read_text(encoding="utf-8")
     lowered = text.lower()
 
     assert "truncation" in lowered, (
-        "COMPATIBILITY.md no longer mentions truncation. The verifier still cannot detect it "
-        "(seam-runtime#422 is open), so removing the caveat makes the document overclaim."
+        "COMPATIBILITY.md no longer mentions truncation. Without an anchor the verifier still cannot "
+        "prove completeness, so removing the caveat makes the document overclaim."
     )
     assert (
         "cannot detect it" in lowered or "cannot prove it is the whole chain" in lowered
     ), (
-        "COMPATIBILITY.md mentions truncation but no longer states plainly that the verifier cannot "
-        "detect it. Hedging this is the overclaim the caveat exists to prevent."
+        "COMPATIBILITY.md mentions truncation but no longer states plainly that, absent an "
+        "independently-held anchor, the verifier cannot prove completeness. Hedging this is the "
+        "overclaim the caveat exists to prevent."
+    )
+
+
+def test_the_conditional_truncation_capability_is_stated() -> None:
+    """The flip side of the test above: seam-sdk#140's real, conditional capability must not be
+    silently dropped from the doc either — a document that only ever says "cannot" after #140 shipped
+    would be UNDERclaiming, which is also not what "independently verifiable" is supposed to mean.
+    """
+    text = COMPATIBILITY.read_text(encoding="utf-8")
+    lowered = text.lower()
+    assert "--expect-anchor" in text, (
+        "COMPATIBILITY.md no longer names --expect-anchor. seam-sdk#140 made truncation detection "
+        "real, conditionally — dropping the mechanism's name makes the capability unverifiable by a "
+        "reader, which is its own kind of overclaim."
+    )
+    assert "conditionally" in lowered, (
+        "COMPATIBILITY.md's truncation entry no longer says the capability is CONDITIONAL. It is not "
+        "unconditional truncation detection — only stating the condition keeps both halves honest."
     )
 
 
 def test_no_document_claims_the_verifier_detects_truncation() -> None:
-    """The inverse guard: nobody may assert the capability anywhere in the repo."""
+    """The inverse guard: nobody may assert the capability BARE/UNCONDITIONALLY anywhere in the repo.
+
+    seam-sdk#140 made the capability real, but only when the caller supplies an independently-held
+    anchor (`chain --expect-anchor <FILE>`) — this guard's three phrases
+    (`detects truncation`/`detect truncation`/`truncation detection`) remain forbidden UNQUALIFIED,
+    because every document that actually describes the capability does so by naming the mechanism
+    (`--expect-anchor`, "conditionally") rather than reaching for one of these three bare phrasings —
+    the same discipline COMPATIBILITY.md §5 itself follows. A document that writes "seam-sdk detects
+    truncation" with no condition attached is still wrong after #140, for the same reason it was wrong
+    before: the default (no anchor supplied) is unchanged, and omitting the condition states the
+    unconditional claim.
+    """
     offenders = []
     for doc in _docs():
         for start, block in _paragraphs(doc):
             low = block.lower()
             if not any(c in low for c in CAPABILITY_PHRASES):
                 continue
-            # A negated or prohibitive mention is the correct thing to have — indeed it is what this
-            # repo is required to carry while there is no published anchor feed (seam-runtime#422).
+            # A negated or prohibitive mention is the correct thing to have for the UNCONDITIONAL
+            # capability, which this repo is still required to carry (seam-sdk#140's mechanism is
+            # conditional, and the convention adopted here is to describe it by naming the mechanism
+            # rather than ever writing one of these three bare phrases — see this file's docstring).
             # The predicate lives in ONE place (`_is_exempt`) so the calibration below exercises
             # what actually runs here, not a second copy of it.
             if _is_exempt(block):
@@ -236,10 +277,12 @@ def test_no_document_claims_the_verifier_detects_truncation() -> None:
             offenders.append(f"{doc.relative_to(REPO)}:{start}: {block.strip()[:160]}")
 
     assert not offenders, (
-        "A document claims truncation detection, which the published verifier does not have:\n  "
+        "A document claims truncation detection unconditionally, which the published verifier does "
+        "not have:\n  "
         + "\n  ".join(offenders)
-        + "\n\nThere is no published anchor feed (seam-runtime#422). Fix the capability before "
-        "making the claim."
+        + "\n\nThe capability is conditional on the caller supplying an independently-held anchor "
+        "(`chain --expect-anchor <FILE>`, seam-sdk#140) — describe the mechanism rather than "
+        "claiming it bare."
     )
 
 

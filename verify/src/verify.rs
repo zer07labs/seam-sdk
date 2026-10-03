@@ -1192,6 +1192,117 @@ pub fn verify_anchor(anchor: &Attestation, pinned_aids: &[String]) -> Result<(),
     Ok(())
 }
 
+/// The truncation check (seam-sdk#140), unblocked by `seam-runtime`'s `GET /v1/anchors` feed
+/// (seam-runtime#422, live since 2026-08-26).
+///
+/// A stream cut at the tail is **internally consistent and verifies green** — every link that
+/// exists still chains correctly, so [`chain`]/[`chain_anchored`] alone can never tell "this is
+/// the whole chain" from "this is a truncated prefix of it". That is not a bug in those
+/// functions; it is a property of hashing alone, and it is why this is a SEPARATE check rather
+/// than a flag on them. What closes the gap is an **independently-held** signed artifact the
+/// caller did not get from the stream under test — fetched out of band (the anchor feed; this
+/// crate makes no network calls of its own, see `lib.rs`'s own doc on why) and validated with
+/// [`verify_anchor`] BEFORE it reaches here, exactly as `chain_anchored`'s start anchor is.
+/// `expect` need not appear anywhere in `events` — the whole point is that it did not have to.
+///
+/// **Tenant attribution** mirrors [`chain_anchored`]'s own untenanted-anchor fallback (spec
+/// clause (f0)): `expect.tenant` (U-RT-3 Phase 2, unsigned but checked for internal
+/// agreement everywhere else this crate reads it) names the tenant directly when non-empty; a
+/// legacy anchor with no payload tenant is attributed to `report`'s sole tenant, and refused as
+/// a usage error if the report spans more than one or none at all (ambiguous either way — same
+/// division of labour `chain_anchored` already draws between a caller mistake and a
+/// verification failure).
+///
+/// **The length comparison.** `report.tenants[tenant]`'s covered length is `base_len + links` —
+/// the absolute position its own chain walk actually reached, by construction identical to
+/// `base_len + (heads.len() - 1)`. A tenant the window never saw at all counts as covered `0`,
+/// deliberately folded into the same TRUNCATED verdict rather than a separate "tenant absent"
+/// case: both mean this window does not reach as far as the anchor says the real chain does.
+/// `expect.attested_len > covered` is truncation.
+///
+/// **The head comparison, when length alone passes.** Reaching far enough is not the whole
+/// claim — a window that was cut and then spliced with a DIFFERENT, same-length-or-longer
+/// fabricated tail would pass a length-only check while disagreeing with reality from the cut
+/// point on. So whenever `expect.attested_len` falls inside this tenant's own window (at or
+/// past `base_len`), the running head this tenant's chain walk actually had AT that position
+/// (`tc.heads[expect.attested_len - tc.base_len]`) must equal `expect.attested_head` — the same
+/// head-at-position pinning [`verify_authenticity_anchored`] already does for an attestation
+/// found IN the stream, applied here to one that was not. An `expect.attested_len` older than
+/// this window's own start (`< base_len`) has no head here to check against — skipped, not
+/// failed, the same `below_window` posture `verify_authenticity_anchored` already has for that
+/// case — and an unanchored tenant's `base_len` is always `0`, so this is unreachable there.
+pub fn check_not_truncated(report: &ChainReport, expect: &Attestation) -> Result<(), String> {
+    let tenant: &str = if !expect.tenant.is_empty() {
+        &expect.tenant
+    } else {
+        let names: Vec<&String> = report.tenants.keys().collect();
+        match names.as_slice() {
+            [] => {
+                return Err(
+                    "USAGE ERROR: --expect-anchor names no tenant (a legacy, pre-Phase-2 \
+                     attestation) and the verified window has no chained event for any tenant \
+                     to attribute it to."
+                        .to_string(),
+                );
+            }
+            [one] => one.as_str(),
+            multiple => {
+                return Err(format!(
+                    "USAGE ERROR: --expect-anchor names no tenant (a legacy, pre-Phase-2 \
+                     attestation), but the verified window spans {} tenants ({}) — exactly one \
+                     anchor per tenant is required, attributed by the anchor's own tenant. \
+                     Split the window per tenant, or supply an anchor carrying its tenant field.",
+                    multiple.len(),
+                    multiple
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+        }
+    };
+
+    let tc = report.tenants.get(tenant);
+    let covered = tc.map(|c| c.base_len + c.links as u64).unwrap_or(0);
+    if expect.attested_len > covered {
+        return Err(format!(
+            "TRUNCATED STREAM — tenant {tenant:?}: an independently-held CHAIN_HEAD_ATTESTATION \
+             (fetched separately, e.g. from GET /v1/anchors, and signature-verified against the \
+             pinned issuer before this check ran) attests length {}, but this window's verified \
+             chain only reaches {covered}.\n  \
+             The window you verified is internally consistent — a truncated stream always is, \
+             which is exactly what makes truncation undetectable from the stream alone. This \
+             anchor proves events exist past where this stream stops.",
+            expect.attested_len
+        ));
+    }
+
+    if let Some(tc) = tc {
+        if expect.attested_len >= tc.base_len {
+            let rel = (expect.attested_len - tc.base_len) as usize;
+            if let Some(want) = tc.heads.get(rel) {
+                if want.as_slice() != expect.attested_head.as_slice() {
+                    return Err(format!(
+                        "ANCHOR DIVERGENCE — tenant {tenant:?}: an independently-held \
+                         CHAIN_HEAD_ATTESTATION attests head {} at len {}, but this window's own \
+                         chain walk reached head {} at that same position.\n  \
+                         The window reaches far enough, but does not agree with the \
+                         independently-held anchor from that point — it is long enough to pass a \
+                         length-only check while having been cut and spliced with a different \
+                         tail. The anchor's signature is valid, so this window diverges from the \
+                         real chain, not the other way around.",
+                        hex(&expect.attested_head),
+                        expect.attested_len,
+                        hex(want)
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
