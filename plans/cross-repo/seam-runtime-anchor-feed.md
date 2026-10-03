@@ -6,6 +6,13 @@
 > [seam-sdk#51](https://github.com/zer07labs/seam-sdk/pull/51).
 > One plan, one home — if you copy this into `seam-runtime`, delete it here and leave a pointer.
 > **Anchors were true on 2026-08-23; re-verify before editing.**
+> **Update 2026-10-02 — consumed.** The feed side (acceptance criteria 1-3) landed as described
+> below. The seam-sdk side (criterion 4) landed as
+> [seam-sdk#140](https://github.com/zer07labs/seam-sdk/issues/140): `chain --issuer <AID>
+> --expect-anchor <FILE>` cross-checks a verified window against a later anchor the caller fetched
+> from `GET /v1/anchors`, refusing a short window as TRUNCATED and a same-length-but-diverged one as
+> an ANCHOR DIVERGENCE. `COMPATIBILITY.md` §5 and `python/tests/test_retracted_claims.py` were
+> updated in the same change, as this criterion asked.
 
 ---
 

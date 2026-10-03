@@ -26,13 +26,19 @@
 //!   `participation_digest` is refused as a **strip**, reported distinctly from a digest
 //!   mismatch; a `schema_version` this build does not implement is refused, never skipped;
 //! * **GDPR erasure certificates**, from the issuer AID alone ([`erasure_certificate`]).
+//! * **Truncation — conditionally, when the caller supplies a later anchor** ([`check_not_truncated`],
+//!   seam-sdk#140). A stream cut at the tail is internally consistent and verifies green **on its
+//!   own** — that is a property of hashing, not a gap this crate can close by itself. What closes it
+//!   is `seam-runtime`'s `GET /v1/anchors` feed (seam-runtime#422, live since 2026-08-26): fetch the
+//!   latest anchor out of band (this crate makes no network call of its own), validate it with
+//!   [`verify_anchor`], and check it against the verified [`ChainReport`]. That check also pins the
+//!   HEAD at the overlapping position, not only the length — a cut-and-spliced tail can be made as
+//!   long as the real one, so length alone is not the whole claim. A caller who does not supply one
+//!   is in exactly the position this crate was always in: it can prove the chain it was **given** is
+//!   consistent, and nothing more.
 //!
 //! **Not** verified, and stated here so no caller infers otherwise:
 //!
-//! * **Truncation.** A stream cut at the tail is internally consistent and verifies green. Detecting
-//!   truncation needs a third-party-observable append-only feed, and no such feed is published today
-//!   (tracked as `zer07labs/seam-runtime#422`). This crate can prove the chain you were **given** is
-//!   consistent; it cannot prove it is the **whole** chain.
 //! * **The commitment digest** (`seam-commitment-digest:v1`). It is not implemented here at all. The
 //!   five SDK crypto shims implement it; this crate does not, and any claim that the published
 //!   verifier checks commitment digests is wrong.
@@ -77,7 +83,7 @@ pub mod wire;
 // reaching through the module path. These are the verification surface; everything else in
 // `verify` is a helper they compose.
 pub use verify::{
-    chain, chain_anchored, chain_by_tenant, erasure_certificate, link, verify_anchor,
-    verify_authenticity, verify_authenticity_anchored, verify_authenticity_by_tenant, ChainReport,
-    IssuerReport, TenantChain,
+    chain, chain_anchored, chain_by_tenant, check_not_truncated, erasure_certificate, link,
+    verify_anchor, verify_authenticity, verify_authenticity_anchored,
+    verify_authenticity_by_tenant, ChainReport, IssuerReport, TenantChain,
 };

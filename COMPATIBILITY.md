@@ -99,7 +99,7 @@ mismatch cannot ship.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1000-1017`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1022-1039`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -287,17 +287,24 @@ comment — `.github/workflows/ci.yml:493-494` runs `scripts/check-independence.
   **DOWNGRADE** — v1 has no stream-recomputable digest, so relabelling a v3 record as v1 is the one
   direction the recompute cannot catch by construction.
 - **Erasure certificates** — from the issuer AID alone, no Seam credential and no network call.
+- **Truncation — conditionally, when the caller supplies a later anchor** (`chain --expect-anchor
+  <FILE>`, seam-sdk#140). A stream cut at the tail is internally consistent and verifies **green on
+  its own** — that is a property of hashing, not a gap `chain`/`chain_anchored` can close by
+  themselves, which is why this is a separate flag rather than something either of them does
+  automatically. What closes it: fetch the latest anchor from `GET /v1/anchors` (live since
+  [`seam-runtime#422`](https://github.com/zer07labs/seam-runtime/issues/422), 2026-08-26 — `verify/`
+  makes no network call of its own), validate it against the pinned issuer, and check the verified
+  window against it. A window that does not reach as far as the anchor attests is refused as
+  **TRUNCATED**; one that reaches far enough but disagrees with the anchor's head at that position
+  (a cut-and-spliced tail can be made exactly as long as the real one) is refused as an **ANCHOR
+  DIVERGENCE** — reaching far enough is not the whole claim. **A caller who supplies no anchor is in
+  the position this crate was always in** and that default is unchanged: it can prove the chain it
+  was given is consistent, and cannot prove it is the whole chain. Only the conditional capability
+  is new.
 
 **NOT covered — stated plainly, because the phrase "independently verifiable" would otherwise carry
 implications it does not support:**
 
-- **Truncation. The verifier cannot detect it.** A stream cut at the tail is internally consistent
-  and verifies **green**. Detecting truncation requires a third-party-observable append-only feed,
-  and none is published: `checkpoint` and `transparency` have zero hits across the runtime's crates,
-  and chain anchors exist only as outbox events with no route serving them. So an auditor can prove
-  the chain they were **given** is consistent, and **cannot prove it is the whole chain.** Tracked at
-  [`seam-runtime#422`](https://github.com/zer07labs/seam-runtime/issues/422); this claim changes only
-  when that lands.
 - **The commitment digest.** `verify/` does not implement `seam-commitment-digest:v1` at all — the
   string appears nowhere in it. The five crypto shims implement it; the published verifier does not.
   `python/tests/test_framing_rationale_is_documented.py` guards against a doc claiming otherwise.

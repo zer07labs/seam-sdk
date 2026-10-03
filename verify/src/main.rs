@@ -33,7 +33,8 @@ fn usage() -> ! {
         "seam-verify — check Seam's audit chain and erasure certificates without trusting Seam\n\
          \n\
          USAGE:\n    \
-             seam-verify chain <FILE> [--strict] [--issuer <AID>] [--from-anchor <FILE>] [--json]\n    \
+             seam-verify chain <FILE> [--strict] [--issuer <AID>] [--from-anchor <FILE>]\n                             \
+             [--expect-anchor <FILE>] [--json]\n    \
              seam-verify erasure-cert <FILE> --issuer <AID> [--json]\n\
          \n\
          chain <FILE>\n    \
@@ -78,6 +79,17 @@ fn usage() -> ! {
                        GET /v1/anchors) or a full seam-event.v1 CHAIN_HEAD_ATTESTATION event line.\n                      \
                        Requires --issuer: the anchor is verified against the pinned AID before it is\n                      \
                        trusted — an unsigned or wrong-issuer anchor is REFUSED, never silently seeded.\n\
+         \n    \
+             --expect-anchor <FILE>  TRUNCATION CHECK (seam-sdk#140): FILE is a later anchor you hold\n                      \
+                       INDEPENDENTLY of this stream (fetch one from GET /v1/anchors — this tool makes no\n                      \
+                       network call of its own). Same shape as --from-anchor; it does not need to appear\n                      \
+                       in the stream. A window cut at the tail is internally consistent and verifies\n                      \
+                       green on its own — that is what makes truncation undetectable from the stream\n                      \
+                       alone. If the window's verified chain does not reach as far as this anchor attests,\n                      \
+                       the stream is REFUSED as TRUNCATED; if it reaches far enough but the head there\n                      \
+                       disagrees with the anchor, it is REFUSED as an ANCHOR DIVERGENCE (a cut-and-spliced\n                      \
+                       tail can be as long as the real one). Requires --issuer, for the same reason\n                      \
+                       --from-anchor does: an unvalidated anchor proves nothing either way.\n\
          \n\
          erasure-cert <FILE> --issuer <AID>\n    \
              Verify a signed GDPR erasure certificate against the issuer AID and NOTHING else. Get the\n    \
@@ -176,8 +188,15 @@ fn cmd_chain(
     json: bool,
     issuers: &[String],
     from_anchor: Option<&str>,
+    expect_anchor: Option<&str>,
 ) -> ExitCode {
     let anchor = match load_anchor(from_anchor, issuers, json) {
+        Ok(a) => a,
+        Err(code) => return code,
+    };
+    // Same loader as `--from-anchor`: parse + pin + signature + non-vacuous. `load_anchor`'s own
+    // error text names no flag, so it reads correctly for either caller.
+    let expect = match load_anchor(expect_anchor, issuers, json) {
         Ok(a) => a,
         Err(code) => return code,
     };
@@ -246,6 +265,19 @@ fn cmd_chain(
                     ),
                     json,
                 );
+            }
+            // Truncation check (seam-sdk#140): independent of authenticity below — it compares the
+            // verified window's own reach against an anchor the caller holds separately, and needs
+            // nothing from `--issuer`'s in-stream attestation checking to do it.
+            if let Some(e) = &expect {
+                match verify::check_not_truncated(&r, e) {
+                    Ok(()) => {}
+                    Err(err) if err.starts_with("USAGE ERROR:") => return io_error(&err, json),
+                    Err(err) if err.starts_with("ANCHOR DIVERGENCE") => {
+                        return fail(&err, json, "ANCHOR DIVERGENCE")
+                    }
+                    Err(err) => return fail(&err, json, "TRUNCATED STREAM"),
+                }
             }
             if strict && !r.unverifiable.is_empty() {
                 let msg = format!(
@@ -350,6 +382,12 @@ fn cmd_chain(
             } else {
                 String::new()
             };
+            // Anchored-only key, so JSON stays byte-identical to before this flag existed whenever
+            // `--expect-anchor` is absent.
+            let truncation_extra = match &expect {
+                Some(e) => format!(",\"not_truncated_through\":{}", e.attested_len),
+                None => String::new(),
+            };
             if json {
                 let authenticity = match &issuer_report {
                     Some(ir) => {
@@ -381,7 +419,7 @@ fn cmd_chain(
                 println!(
                     "{{\"verified\":true,\"events\":{},\"links\":{},\"advisory\":{},\"duplicates\":{},\
                      \"unverifiable\":{},\"unverified_content\":{},\"unmodelled_kinds\":{},\
-                     \"head\":\"{}\"{}{}}}",
+                     \"head\":\"{}\"{}{}{}}}",
                     r.events,
                     r.links,
                     r.advisory,
@@ -397,6 +435,7 @@ fn cmd_chain(
                     verify::hex(&r.head),
                     authenticity,
                     tenants_json,
+                    truncation_extra,
                 );
             } else {
                 println!(
@@ -521,6 +560,13 @@ fn cmd_chain(
                 } else {
                     println!("  head              : {}", verify::hex(&r.head));
                 }
+                if let Some(e) = &expect {
+                    println!(
+                        "  not truncated thru: {} (checked against an independently-held anchor — \
+                         seam-sdk#140)",
+                        e.attested_len
+                    );
+                }
             }
             ExitCode::SUCCESS
         }
@@ -600,6 +646,9 @@ fn main() -> ExitCode {
     // is refused loudly, the same shape as a second positional FILE below — silently keeping the LAST
     // one would seed a start the caller never actually asked for.
     let mut from_anchor: Option<String> = None;
+    // Truncation check (seam-sdk#140): exactly one independently-held anchor to check the window's
+    // reach against, same one-wins-loudly shape as `from_anchor` above.
+    let mut expect_anchor: Option<String> = None;
 
     let mut it = argv[1..].iter();
     while let Some(a) = it.next() {
@@ -625,6 +674,22 @@ fn main() -> ExitCode {
                 }
                 None => {
                     eprintln!("seam-verify: --from-anchor requires a FILE");
+                    usage();
+                }
+            },
+            "--expect-anchor" => match it.next() {
+                Some(v) => {
+                    if expect_anchor.is_some() {
+                        eprintln!(
+                            "seam-verify: --expect-anchor given twice — exactly one anchor checks \
+                             the window's reach"
+                        );
+                        usage();
+                    }
+                    expect_anchor = Some(v.clone());
+                }
+                None => {
+                    eprintln!("seam-verify: --expect-anchor requires a FILE");
                     usage();
                 }
             },
@@ -659,7 +724,22 @@ fn main() -> ExitCode {
                     );
                     usage();
                 }
-                cmd_chain(&p, strict, json, &issuers, from_anchor.as_deref())
+                if expect_anchor.is_some() && issuers.is_empty() {
+                    eprintln!(
+                        "seam-verify: --expect-anchor requires --issuer — an unvalidated anchor \
+                         proves nothing either way, so it is verified against the pinned AID before \
+                         the window is checked against it"
+                    );
+                    usage();
+                }
+                cmd_chain(
+                    &p,
+                    strict,
+                    json,
+                    &issuers,
+                    from_anchor.as_deref(),
+                    expect_anchor.as_deref(),
+                )
             }
             None => {
                 eprintln!("seam-verify: chain requires a FILE (or '-')");
@@ -669,6 +749,10 @@ fn main() -> ExitCode {
         "erasure-cert" => {
             if from_anchor.is_some() {
                 eprintln!("seam-verify: --from-anchor is a chain-only flag");
+                usage();
+            }
+            if expect_anchor.is_some() {
+                eprintln!("seam-verify: --expect-anchor is a chain-only flag");
                 usage();
             }
             // A certificate names exactly ONE signer; repeatable --issuer is a chain-only affordance for

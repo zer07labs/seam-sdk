@@ -84,6 +84,28 @@ ASCII-decimal proofs against a runtime that only verifies big-endian ones.
   `#817` they aren't: `collective_outcome`/`participant_verdicts` carry a second, narrower
   freshness condition that `policy_enforcement` does not.
 
+### Added — `verify/`: a truncation check, conditional on an independently-held anchor (#140)
+
+- **`chain --issuer <AID> --expect-anchor <FILE>`.** A stream cut at the tail is internally
+  consistent and verifies green **on its own** — that is a property of hashing, not a gap
+  `chain`/`chain_anchored` can close by themselves, which is why this ships as a separate flag
+  rather than something either of them does automatically. `--expect-anchor` takes a LATER anchor
+  the caller fetched independently (e.g. one element of `GET /v1/anchors`, live since
+  `seam-runtime#422`; this crate still makes no network call of its own) — it never needs to appear
+  in the stream under test. Same validation `--from-anchor` already gets (parsed, pinned,
+  signature-verified, refused if vacuous) before it is trusted.
+
+  A window that does not reach as far as the anchor attests is refused as **TRUNCATED STREAM**. One
+  that reaches far enough but disagrees with the anchor's head at that position is refused as an
+  **ANCHOR DIVERGENCE** — reaching far enough is not the whole claim, since a cut-and-spliced tail
+  can be made exactly as long as the real one; the check pins the head at the overlapping position
+  too, the same way `verify_authenticity_anchored` already does for an attestation found IN the
+  stream. A caller who supplies no anchor is in the position this crate was always in — unchanged.
+
+  `COMPATIBILITY.md` §5 and `python/tests/test_retracted_claims.py` are updated in the same change:
+  the capability is real but conditional, and the doc states both halves — what it now does, and
+  what is still unchanged without an anchor — rather than letting either overclaim.
+
 ## 0.22.0 — 2026-10-02
 
 ## 0.21.0 — 2026-10-02
