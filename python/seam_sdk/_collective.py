@@ -123,6 +123,16 @@ def collective_outcome_of(
     direction only**, this field is now a sound answer to "did *this* call seal?". Presence means
     yes. Absence still means nothing of the sort, because it also covers every step that never seals.
 
+    **On a ``DecisionResponse``, the same freshly-sealed gate applies, added for seam-runtime#817.**
+    The field is present ONLY when THIS call's own write produced the ``decision_id`` returned
+    beside it — a durable seal performed on this call. It is absent on an idempotent resubmit of an
+    already-sealed ``session_id`` and on the losing side of a concurrent seal race, even though
+    ``decision_id`` still names the real stored record in both cases (``seam.api.v1``,
+    ``DecisionResponse.collective_outcome`` field 9 — cited by field, not by line, same convention
+    as the ``SessionStep`` citation above). Pair with ``participant_verdicts``: an empty list there
+    is NOT on its own a freshness signal — a genuine no-votes call looks identical — but this
+    field's presence is.
+
     One decoder, two message types, on purpose: the hazard being guarded is a property of the FIELD —
     ``optional`` presence over an open enum whose zero value is UNSPECIFIED — not of the message that
     carries it. A second implementation per message type would be a second place for the fail-open

@@ -30,6 +30,15 @@ immediate ``RunDecision`` response only; per the generated ``PolicyEnforcement``
 ``GetDecision``/``ReplayDecision`` do **not** carry it at all, so a fetched or replayed decision
 reads ``None`` regardless of what was enforced when it was sealed.
 
+This "immediate response only" rule is about the VERB (``RunDecision`` vs. ``GetDecision``/
+``ReplayDecision``), not about freshness — do not read it as "every immediate ``RunDecision``
+response carries ``policy_enforcement``, ``collective_outcome``, and ``participant_verdicts``
+alike." The latter two carry a SECOND, narrower condition (seam-runtime#817): they are further
+withheld on an idempotent resubmit or a lost concurrent-seal race, even though that response is
+still the immediate one. ``policy_enforcement`` itself has no such further condition on
+``DecisionResponse`` — it is derived from the returned record's own governing policy, not from
+which call produced that record.
+
 On a ``SessionStep``, **absence is the common case**, not an error and not a missing feature. The
 field is reachable on three steps, and on each of them only under a further condition:
 

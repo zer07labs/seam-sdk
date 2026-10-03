@@ -68,6 +68,22 @@ ASCII-decimal proofs against a runtime that only verifies big-endian ones.
   Closes the limitation `seam-docs`' partner doc set tracked at §15: the documented workaround
   (registering the superseded id as `Value` context) is no longer necessary.
 
+### Changed — extend the `freshly_sealed` doc discipline to `DecisionResponse` (#160)
+
+- **`collective_outcome_of`/`collectiveOutcomeOf`'s docs now state the freshness rule for
+  `DecisionResponse`, not only `SessionStep`.** `seam-runtime#817` fixed a bug where
+  `RunDecision`'s `collective_outcome`/`participant_verdicts` described the new call's votes
+  rather than the stored record on an idempotent resubmit or a lost concurrent-seal race; both
+  fields are now present only when THIS call's own write produced the returned `decision_id`.
+  `seam-sdk` already documented this exact discipline for `SessionStep` (added for
+  `seam-runtime#561`) but had no equivalent text for `DecisionResponse`, even though the decoder
+  accepts both message types. Doc-only — no decoding logic changed.
+- **`policy_enforcement`'s docs now distinguish the verb-scoped rule from the freshness
+  condition.** Its "accompanies the immediate `RunDecision` response only" statement is true but,
+  read carelessly, could imply all three fields on an immediate response are symmetric. After
+  `#817` they aren't: `collective_outcome`/`participant_verdicts` carry a second, narrower
+  freshness condition that `policy_enforcement` does not.
+
 ## 0.22.0 — 2026-10-02
 
 ## 0.21.0 — 2026-10-02

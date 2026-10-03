@@ -264,6 +264,16 @@ export interface CollectiveOutcome {
  * direction only**, this field is now a sound answer to "did *this* call seal?". Presence means yes.
  * Absence still means nothing of the sort, because it also covers every step that never seals.
  *
+ * **On a `DecisionResponse`, the same freshly-sealed gate applies, added for seam-runtime#817.**
+ * The field is present ONLY when THIS call's own write produced the `decisionId` returned beside
+ * it — a durable seal performed on this call. It is absent on an idempotent resubmit of an
+ * already-sealed `sessionId` and on the losing side of a concurrent seal race, even though
+ * `decisionId` still names the real stored record in both cases (`seam.api.v1`,
+ * `DecisionResponse.collective_outcome` field 9 — cited by field, not by line, same convention as
+ * the `SessionStep` citation above). Pair with `participantVerdicts`: an empty array there is NOT
+ * on its own a freshness signal — a genuine no-votes call looks identical — but this field's
+ * presence is.
+ *
  * One decoder, two message types, on purpose: the hazard being guarded is a property of the FIELD —
  * `optional` presence over an open enum whose zero value is UNSPECIFIED — not of the message that
  * carries it. A second implementation per message type is a second place for the fail-open inversion
@@ -379,7 +389,18 @@ export interface PolicyEnforcement {
  * `DecisionResponse` it accompanies the immediate `RunDecision` response only; per the generated
  * `PolicyEnforcement` message comment, `GetDecision`/`ReplayDecision` do **not** carry the field,
  * so a fetched or replayed decision reads `undefined` regardless of what was enforced when it was
- * sealed. On a `SessionStep`, **absent is the common case** — not an error, and not a missing
+ * sealed.
+ *
+ * This "immediate response only" rule is about the VERB (`RunDecision` vs. `GetDecision`/
+ * `ReplayDecision`), not about freshness — do not read it as "every immediate `RunDecision`
+ * response carries `policyEnforcement`, `collectiveOutcome`, and `participantVerdicts` alike." The
+ * latter two carry a SECOND, narrower condition (seam-runtime#817): they are further withheld on an
+ * idempotent resubmit or a lost concurrent-seal race, even though that response is still the
+ * immediate one. `policyEnforcement` itself has no such further condition on `DecisionResponse` —
+ * it is derived from the returned record's own governing policy, not from which call produced that
+ * record.
+ *
+ * On a `SessionStep`, **absent is the common case** — not an error, and not a missing
  * feature: the field is reachable on three steps — the **commit-terminal** step; the
  * **sealed-idempotent replay** (a resubmit against an already-sealed session, re-reporting a seal
  * this call did not perform); and the **pending-commitment seal retry** — and on each of those only
