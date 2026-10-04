@@ -378,7 +378,18 @@ and `GetEscalation` itself (as opposed to the deferred `GetEscalationDelivery`) 
 
 ### Phase 4 — Docs, a tracking issue, and finalization
 
-**Status:** TODO
+**Status:** DONE — implemented with two deviations from the plan's literal text, both required by
+the test suite, neither a scope change the verifier flagged as a problem:
+1. The CHANGELOG header cites both issues (`seam-sdk #173, seam-runtime #951`), not just the
+   runtime one as step 2's literal text showed — matching every sibling Unreleased header's
+   convention of citing the local issue, which the plan's own stated precedent (`GetEscalation`)
+   actually followed too (its runtime cite sits in the bullet body, not the header — the plan
+   misread that precedent).
+2. `COMPATIBILITY.md` and `DECISIONS.md` were touched despite not being in this phase's `Files`
+   list and despite step 2's "do not add a `COMPATIBILITY.md` entry" instruction — this is not a
+   new entry, it's repointing one pre-existing `CHANGELOG.md:NNN` citation in each file that the
+   new CHANGELOG entry's 11 lines pushed stale (`1022-1039` → `1033-1050`, content byte-identical,
+   confirmed required by reverting it and watching the citation-anchor tests go red).
 **Risk:** simple — docs-only (`CHANGELOG.md`, `README.md`) plus issue filing; fully contained,
 cheap to redo. No neighbor to batch with (last phase), so it still gets its own solo gate.
 

@@ -4163,3 +4163,42 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
   (recorded in `DECISIONS.md`), not an assumption; no ambiguity needed `ASSUMPTIONS.md`.
 - **Next:** Phase 4 (CHANGELOG.md, README.md, a `seam-runtime#951`-citing tracking issue, whole-plan
   finalization).
+
+## Phase 4 — Docs, a tracking issue, and finalization — DONE (2026-10-04)
+
+- **Verdict:** PASS, 1 round, Opus verifier (solo gate, Risk: simple — last phase, no neighbor to
+  batch with). This verify round doubled as the whole-plan finalization check per `/implement`'s
+  §4 (Phase 4's own "Approach" already was the finalization gate for all four phases together).
+- **Files touched:** `CHANGELOG.md` (+11, new Unreleased entry), `README.md` (+7/-3, governance-RPC
+  list + symmetry sentence), `COMPATIBILITY.md` (+1/-1), `DECISIONS.md` (+1/-1).
+- **Tracking issue:** [zer07labs/seam-sdk#173](https://github.com/zer07labs/seam-sdk/issues/173),
+  citing `seam-runtime#951` for the semantics and `seam-sdk#172` for the unrelated Phase 3 deferral.
+  Not cited in-repo — plan's acceptance criteria only required it exist and be linked from the PR,
+  confirmed by the verifier re-reading the criteria; it's linked at `/ship` time.
+- **Gates, all re-run clean:** Python `1329 passed, 22 skipped, 0 failed`; `ruff check`/`ruff format
+  --check` clean; TS `tests 192, pass 182, fail 0, skipped 10`; `STREAM=1 EVENTS=1
+  ./scripts/check-contract.sh` → exit 0.
+- **Divergence from plan (both required by the suite, not scope creep):** (1) CHANGELOG header
+  cites `seam-sdk #173, seam-runtime #951` — both issues, not just the runtime one the plan's
+  literal text showed, matching every sibling header's local-issue-citing convention. (2)
+  `COMPATIBILITY.md`/`DECISIONS.md` each had one pre-existing `CHANGELOG.md:NNN` citation
+  repointed (`1022-1039` → `1033-1050`) because the new 11-line CHANGELOG entry pushed it stale —
+  proven required, not cosmetic, by reverting it and watching 4 citation-anchor tests go red.
+  Both annotated inline in `plans/revoke-tenant.md`'s Phase 4 section.
+- **Whole-feature finalization, independently re-derived by the verifier, not taken on trust:**
+  end-to-end callability proven via the actual Phase 1/2 unit tests against fake servicers/transport;
+  field-name agreement across the Phase 1→3 seam (`subject_aid`/`subjectAid`) confirmed exact;
+  `ASSUMPTIONS.md` diff against the merge-base is empty — every phase's "no assumptions" claim
+  holds; cumulative scope is exactly 13 files across 4 commits, zero touching `go/`, `java/`,
+  `kotlin/`, or `verify/`.
+- **One pre-existing, out-of-scope repo-health item surfaced, not caused by this feature:**
+  `scripts/check_registry_drift.py:168-169` carries two `CHANGELOG.md` citations that were
+  already stale on `main` before this plan — left alone per the repo's own documented discipline
+  (`PROGRESS.md:104`: repointing a stale citation by the shift delta moves a broken pointer to a
+  differently-broken place while looking like maintenance). Worth a separate follow-up issue,
+  outside this plan's scope.
+- **Assumptions logged this phase:** none.
+- **Plan status:** all 4 phases DONE. Whole-plan finalization complete. `ASSUMPTIONS.md` has zero
+  entries for this plan — `/reconcile` is not needed before `/ship`.
+- **Next:** `/ship` — push `feat/revoke-tenant`, open one PR covering all 4 phases (linking
+  seam-sdk#172 and seam-sdk#173), watch CI, merge on green.

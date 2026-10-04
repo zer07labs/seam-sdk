@@ -452,12 +452,13 @@ non-destructive (returns `would_erase` / `held` / `already_erased`); `erase_subj
 a **non-empty `tenant`** scope (erasure never crosses tenants) and a `confirm_count` that must **equal the
 preview's `would_erase` count**, and returns a signed, chain-anchored `ErasureCertificate`.
 `erase_subject_confirmed`/`eraseSubjectConfirmed` does both in one call. The client also wraps the governance
-RPCs (`enroll_tenant`, `list_tenants`, `register_party`, `place`/`release_legal_hold`, `enforce_retention`,
+RPCs (`enroll_tenant`, `revoke_tenant`, `list_tenants`, `register_party`, `place`/`release_legal_hold`, `enforce_retention`,
 `audit_trail`). The live preview→confirm→erase flow (+ empty-tenant / wrong-count rejections + bearer-auth)
 is covered by `test_admin.py` (Python) and `admin.test.ts` (TS).
 
-Party/grant lifecycle is symmetric: `register_party` has its inverse `remove_party`, and cross-namespace
-grants are managed with `place_grant` / `revoke_grant` / `list_grants` (same wrappers in TS).
+Party/grant lifecycle is symmetric: `register_party` has its inverse `remove_party`, cross-namespace
+grants are managed with `place_grant` / `revoke_grant` / `list_grants`, and `enroll_tenant` has its
+inverse `revoke_tenant` (same wrappers in TS).
 
 `SeamAdminClient` also **streams the governance outbox** (`seam-event.v1`) via `stream_events` /
 `streamEvents`: **drain** mode (`follow=False`) yields the current backlog and closes (`ack=True` marks
