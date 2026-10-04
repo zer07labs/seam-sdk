@@ -4191,14 +4191,15 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
   `ASSUMPTIONS.md` diff against the merge-base is empty — every phase's "no assumptions" claim
   holds; cumulative scope is exactly 13 files across 4 commits, zero touching `go/`, `java/`,
   `kotlin/`, or `verify/`.
-- **Pre-existing, out-of-scope repo-health items surfaced, not caused by this feature:** **5**
+- **Pre-existing, out-of-scope repo-health items surfaced, not caused by this feature:** **6**
   `CHANGELOG.md:NNN` citations repo-wide (`scripts/check_registry_drift.py:168-169`,
-  `ASSUMPTIONS.md:1055,1059`, `DECISIONS.md:2035`) were already stale on `main` before this
-  plan — corrected count from this checkpoint's first draft, which only named 2 of the 5; the
-  `/ship` verify round's repo-wide sweep found the other 3. All left alone per the repo's own
-  documented discipline (`PROGRESS.md:104`: repointing a stale citation by the shift delta moves
-  a broken pointer to a differently-broken place while looking like maintenance). Worth a
-  separate follow-up issue, outside this plan's scope.
+  `ASSUMPTIONS.md:1055,1059`, `DECISIONS.md:2035`, `PROGRESS.md:3981`) were already stale on
+  `main` before this plan — corrected count from this checkpoint's first two drafts, which named
+  2 of 6 and then 5 of 6; the `/ship` re-verify round's repo-wide sweep found the last one, a
+  direct sibling of `DECISIONS.md:2035` (same "0.7.39–0.7.43 spared" claim, same staleness). All
+  left alone per the repo's own documented discipline (`PROGRESS.md:104`: repointing a stale
+  citation by the shift delta moves a broken pointer to a differently-broken place while looking
+  like maintenance). Worth a separate follow-up issue, outside this plan's scope.
 - **A second, more consequential finding from the `/ship` verify round: the BSR contract moved
   under this plan while it was in flight.** Three same-day pushes to `buf.build/zer07labs/seam`
   on 2026-10-04 (confirmed via `buf registry module commit list`) refined `RevokeTenant`'s own
