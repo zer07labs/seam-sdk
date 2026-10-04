@@ -4229,3 +4229,4 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
   bookkeeping accuracy with no code/doc-surface change, confirmed by a clean full-suite re-run
   (1334 passed, 22 skipped, 0 failed) instead.
 - pushed `feat/revoke-tenant` `55ee694`
+- PR #174 opened: https://github.com/zer07labs/seam-sdk/pull/174
