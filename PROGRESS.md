@@ -4029,3 +4029,78 @@ are not, and closing that gap is a release action rather than part of this PR.
   entry, not new behaviour tests.
 * **Gates:** contract gate **exit 6**, naming exactly the seven recorded `ContextBinding` lag fields.
 * **Next:** `/ship` — three PRs, then remove `.drive.lock`.
+
+# PROGRESS — `plans/revoke-tenant.md`
+
+Checkpoint trail and repo map for wiring `SeamAdmin.RevokeTenant` into the Python and TypeScript
+clients. 4 phases, all TODO as of this entry (plan just written and reviewed — `/implement` has not
+started). `/implement` appends a block per phase below this header as it runs.
+
+**Plan:** [`plans/revoke-tenant.md`](plans/revoke-tenant.md) — 4 phases: Python client/tests → TS
+client/tests → contract manifests + a `DECISIONS.md` entry for an unrelated deferred field → docs +
+tracking issues + finalization.
+
+**PR strategy — recommend 1 PR.** All four phases are one coherent story (see the plan's Open
+Questions #2); `/implement` decides for real.
+
+**Repo map** (what this plan touches, one line each):
+- `contract/rpc-manifest.txt`, `contract/field-manifest.txt` — the two-directional contract-surface
+  declarations `check-contract.sh` diffs against the generated stubs.
+- `python/seam_sdk/admin.py` — `SeamAdminClient`; all `SeamAdmin.*` RPCs are hand-wired here,
+  sync-only, grouped into `# ──`-delimited sections.
+- `python/seam_sdk/errors.py` — typed exception hierarchy + `_MappedStub`, auto-converts every
+  `SeamAdminClient` RPC's `grpc.RpcError` to its typed subclass.
+- `python/tests/test_admin.py` — `RecordingAdmin` fake servicer + unit tests for every
+  `SeamAdminClient` method's wire shape.
+- `python/tests/test_lifecycle_and_timeouts.py` — `ADMIN_CALLS` table + generic timeout
+  introspection tests.
+- `ts/src/admin.ts` — TypeScript mirror of `admin.py`; `errorMappingInterceptor` installed once in
+  `SeamAdminClient.connect`.
+- `ts/src/errors.ts` — TS typed error hierarchy + `errorMappingInterceptor`/`toSeamError`.
+- `ts/tests/unit_plumbing.test.ts` — `fakeTransport` + `ADMIN_CALLS` deadline table + per-verb
+  wire-shape assertions.
+- `scripts/check-contract.sh` — the contract-freshness gate; `--write-manifest` is an escape hatch
+  this plan deliberately does not use.
+- `python/tests/test_field_manifest_gate.py` — currently has one failing test
+  (`test_an_exact_match_of_the_known_lag_downgrades_to_a_note_naming_the_lag_file`) from the two
+  manifest gaps this plan closes.
+- `CHANGELOG.md` — `## Unreleased`, one `### <Type> — <title> (#issue)` header per change.
+- `README.md` lines ~455-459 — governance-RPC list + party/grant symmetry sentence.
+- `DECISIONS.md:2244-2284` — `GetEscalationDelivery`'s entry is the template for the new
+  `VerifyAnchorRequest.tenant` entry.
+- `go/crypto/`, `java/.../SeamCrypto.java`, `kotlin/.../SeamCrypto.kt` — confirmed OUT of scope,
+  crypto + conformance only.
+
+**Baseline at plan time:** `python/.venv/bin/pytest -q` → `1 failed, 1324 passed, 22 skipped`
+(the one failure is the `test_field_manifest_gate.py` test above). `npm test` (ts/) → 182 pass / 10
+skip, green. `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` → exit 5 (`SeamAdmin/RevokeTenant`
+missing). `ci.yml` last green on `main`: 2026-10-03 (`f23a9e1`), before the 2026-10-04 BSR push that
+introduced the gap.
+
+**PR strategy (decided at /implement start):** 1 PR, covering all 4 phases. Why: they're one
+coherent story (wire the RPC that was asked for, close the contract gap it depends on, record the
+one unrelated decision found along the way) — matching PR #154's own precedent of bundling related
+small changes rather than fragmenting review. Confirmed at /plan time (Open Questions #2),
+re-confirmed here.
+
+**Risk tiers:** Phase 1 complex, Phase 2 complex, Phase 3 complex, Phase 4 simple. Every phase gets
+a solo verify gate — no batching, since no two adjacent phases are both tagged simple.
+
+## Phase 1 — Python: `SeamAdminClient.revoke_tenant` — DONE (2026-10-04)
+
+- **Verdict:** PASS, 1 round, Opus verifier (solo gate, Risk: complex).
+- **Files touched:** `python/seam_sdk/admin.py` (+13), `python/tests/test_admin.py` (+12),
+  `python/tests/test_lifecycle_and_timeouts.py` (+1).
+- **Tests:** `pytest -q tests/test_admin.py tests/test_lifecycle_and_timeouts.py` → 38 passed, 4
+  skipped. Full suite → 1 failed (pre-existing, confirmed byte-identical on pristine `main` by the
+  verifier via a detached worktree), 1327 passed, 22 skipped. `ruff check`/`ruff format --check`
+  clean.
+- **Gap closed mid-phase (before verify):** the full-suite run surfaced 2 unrelated new failures in
+  `test_compatibility_citations_resolve.py`, caused by this file's own `/implement`-start header
+  append using `` `DECISIONS.md` `` and `` `:2244-2284` `` as two separate backtick spans instead of
+  one `path:line` token — fixed to `` `DECISIONS.md:2244-2284` ``; suite back to the expected 1
+  pre-existing failure.
+- **Correction carried into the plan:** pristine-`main` baseline was `1324 passed`, actually
+  `1325 passed` — fixed in `plans/revoke-tenant.md`'s Context and Phase 3 acceptance criteria.
+- **Assumptions logged this phase:** none — no ambiguity arose.
+- **Next:** Phase 2 (TypeScript `revokeTenant`).
