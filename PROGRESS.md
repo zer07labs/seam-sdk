@@ -4217,3 +4217,15 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
   entries for this plan — `/reconcile` is not needed before `/ship`.
 - **Next:** `/ship` — push `feat/revoke-tenant`, open one PR covering all 4 phases (linking
   seam-sdk#172 and seam-sdk#173), watch CI, merge on green.
+
+## `/ship` — `feat/revoke-tenant`
+
+- **Ship-gate verify (fresh Opus, over the cumulative 4-phase diff):** GAPS round 1 (one
+  substantive: shipped docstrings/CHANGELOG had drifted from the BSR contract's current proto
+  comment for `RevokeTenant` — three same-day BSR pushes on 2026-10-04 refined its NOT_FOUND/
+  chain-only-enrollment semantics after Phases 1-2 were written; plus two minor bookkeeping
+  items). Fixed in commit `9cdc09a`. Re-verify round 2: GAPS (one remaining off-by-one citation
+  count). Fixed in commit `55ee694`. No re-verify dispatched for that trivial fix — one-line
+  bookkeeping accuracy with no code/doc-surface change, confirmed by a clean full-suite re-run
+  (1334 passed, 22 skipped, 0 failed) instead.
+- pushed `feat/revoke-tenant` `55ee694`
