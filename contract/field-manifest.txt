@@ -366,6 +366,7 @@ RevokeGrantRequest/from_ns
 RevokeGrantRequest/revoker
 RevokeGrantRequest/tenant
 RevokeGrantRequest/to_ns
+RevokeTenantRequest/subject_aid
 RunDecisionRequest/context_refs
 RunDecisionRequest/contexts
 RunDecisionRequest/features
@@ -395,6 +396,7 @@ TrustDecision/level
 TrustDecision/subject
 VerifyAnchorRequest/anchor
 VerifyAnchorRequest/party_id
+VerifyAnchorRequest/tenant
 VerifyAttestationRequest/attestation
 VerifyAttestationRequest/party_id
 VerifyCommitmentRequest/commitment

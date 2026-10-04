@@ -4097,8 +4097,8 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
   clean.
 - **Gap closed mid-phase (before verify):** the full-suite run surfaced 2 unrelated new failures in
   `test_compatibility_citations_resolve.py`, caused by this file's own `/implement`-start header
-  append using `` `DECISIONS.md` `` and `` `:2244-2284` `` as two separate backtick spans instead of
-  one `path:line` token — fixed to `` `DECISIONS.md:2244-2284` ``; suite back to the expected 1
+  append putting the filename and the line range in two separate backtick spans instead of one
+  `path:line` token — fixed to `` `DECISIONS.md:2244-2284` ``; suite back to the expected 1
   pre-existing failure.
 - **Correction carried into the plan:** pristine-`main` baseline was `1324 passed`, actually
   `1325 passed` — fixed in `plans/revoke-tenant.md`'s Context and Phase 3 acceptance criteria.
@@ -4121,3 +4121,45 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
   the uncommitted Phase 2 diff touches only the two files above.
 - **Assumptions logged this phase:** none — no ambiguity arose.
 - **Next:** Phase 3 (contract manifests + `VerifyAnchorRequest.tenant` `DECISIONS.md` entry).
+
+## Phase 3 — Contract manifests, and the `VerifyAnchorRequest.tenant` decision — DONE (2026-10-04)
+
+- **Verdict:** PASS, 1 round, Opus verifier (solo gate, Risk: complex) — 5 non-blocking gaps found
+  and closed before this checkpoint (see below).
+- **Files touched:** `contract/rpc-manifest.txt` (+1, `SeamAdmin/RevokeTenant`),
+  `contract/field-manifest.txt` (+2, `RevokeTenantRequest/subject_aid` +
+  `VerifyAnchorRequest/tenant`), `DECISIONS.md` (new entry).
+- **Causality independently proved by the verifier**, not just claimed: reverting the three manifest
+  lines and re-running reproduced the exact Baseline failure (`check-contract.sh` → exit 5,
+  `test_field_manifest_gate.py` → 1 failed) — confirming these three lines are precisely what
+  resolves it, not a coincidental pass.
+- **Gate:** `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` → exit 0 (both languages, all 45 RPCs /
+  249 fields / 15 enum values / 95 event fields present).
+- **Tests:** full Python suite → `1329 passed, 22 skipped, 0 failed` (was `1 failed, 1327 passed`
+  before this phase — the pre-existing `test_field_manifest_gate.py` failure is now resolved).
+  `ruff check`/`ruff format --check` clean. TS unaffected, still `182 pass / 0 fail / 10 skip`.
+- **DECISIONS.md entry added:** `VerifyAnchorRequest.tenant` lands on the contract; the SDK does
+  not carry it yet — deferred because the write side (`RegisterPartyRequest.tenant`) doesn't exist
+  upstream, confirmed by reading the generated stubs directly (only `party_id`/`pubkey` present).
+  Tracking issue: [zer07labs/seam-sdk#172](https://github.com/zer07labs/seam-sdk/issues/172), citing
+  `seam-runtime#903`.
+- **Gaps closed from verify round (all non-blocking, closed before commit):**
+  1. Plan's literal citation text (a generated-stub path with a line-number suffix) would have put
+     a line-numbered
+     anchor into a generated file inside `DECISIONS.md`, tripping
+     `test_no_document_line_anchors_into_a_generated_tree` — cited by symbol name instead; plan
+     annotated with this divergence.
+  2. Re-open trigger reworded: leads with the automatic, CI-enforced observable trigger
+     (`check-contract.sh` refusing on `+ RegisterPartyRequest/tenant`) rather than relying on a
+     human watching `seam-runtime#903`, and clarifies "#903 Phase 3" is the generated proto
+     comment's own label — `seam-runtime#903`'s own body does not describe a party-registration
+     phase, so a reader following the issue alone would find nothing to watch for.
+  3. This `PROGRESS.md` entry and the plan's `Status: DONE` flip (you're reading both).
+  4. Entry placement breaks `DECISIONS.md`'s file-tail chronological order (inserted between two
+     2026-09-30 entries rather than at EOF) — left as-is: harmless, nothing enforces ordering, and
+     every existing `DECISIONS.md:NNNN` citation elsewhere in the repo targets lines below the
+     insertion point, so nothing went stale.
+- **Assumptions logged this phase:** none — the `VerifyAnchorRequest.tenant` call is a decision
+  (recorded in `DECISIONS.md`), not an assumption; no ambiguity needed `ASSUMPTIONS.md`.
+- **Next:** Phase 4 (CHANGELOG.md, README.md, a `seam-runtime#951`-citing tracking issue, whole-plan
+  finalization).

@@ -279,9 +279,18 @@ idempotency and validation are server-side, untested here, matching sibling meth
 
 ### Phase 3 — Contract manifests, and the `VerifyAnchorRequest.tenant` decision
 
-**Status:** TODO
+**Status:** DONE — implemented with one deliberate deviation from the Approach's literal text (see
+below); verify round found the deviation already correctly applied, no code gap.
 **Risk:** complex — gates CI for the whole SDK (`check-contract.sh`) and carries a real judgment
 call (the `VerifyAnchorRequest.tenant` deferral, recorded in `DECISIONS.md`). Solo gate.
+
+**Divergence from plan:** step 5's literal citation text below (`` `python/seam_sdk/_gen/.../seam_pb2.pyi:706-712` ``,
+`` `ts/gen/.../seam_pb.ts:2584-2596` ``) would have put a line-numbered anchor into a gitignored,
+regenerated file **inside `DECISIONS.md`**, which `test_no_document_line_anchors_into_a_generated_tree`
+forbids for every doc in `DOCS` (`DECISIONS.md` included) — running it verbatim turns the suite red.
+The actual `DECISIONS.md` entry cites those stubs by symbol name (`seam_pb2.pyi` / `seam_pb.ts`)
+instead, per that same test's own sanctioned alternative. Same substitution applies everywhere
+below that names a generated-stub line number for use inside `DECISIONS.md` prose.
 
 **Delivers:** `check-contract.sh` reaches exit 0; the pre-existing
 `test_field_manifest_gate.py::test_an_exact_match_of_the_known_lag_downgrades_to_a_note_naming_the_lag_file`
