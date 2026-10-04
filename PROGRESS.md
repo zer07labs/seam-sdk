@@ -4104,3 +4104,20 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
   `1325 passed` — fixed in `plans/revoke-tenant.md`'s Context and Phase 3 acceptance criteria.
 - **Assumptions logged this phase:** none — no ambiguity arose.
 - **Next:** Phase 2 (TypeScript `revokeTenant`).
+
+## Phase 2 — TypeScript: `SeamAdminClient.revokeTenant` — DONE (2026-10-04)
+
+- **Verdict:** PASS, 1 round, Opus verifier (solo gate, Risk: complex).
+- **Files touched:** `ts/src/admin.ts` (+10), `ts/tests/unit_plumbing.test.ts` (+7/-1 — table
+  entry, test rename, wire-shape assertion).
+- **Tests:** `npm run typecheck` clean, `npm run build` clean, `npm test` → `tests 192, pass 182,
+  fail 0, skipped 10` (unchanged pass count — `revokeTenant` rides the existing generic
+  `ADMIN_CALLS`/wire-shape tests rather than adding a standalone one). No lint script exists in
+  `ts/package.json` — typecheck+build+test is the complete local gate.
+- **Verifier went beyond reading:** mutation-tested both new assertions (stripped `call(opts)`,
+  swapped `subjectAid` value) to confirm they're load-bearing, not vacuous; restored the tree and
+  re-ran all three gates clean afterward.
+- **Diff scope confirmed TS-only:** `git diff main...HEAD --stat` shows Phase 1's commit alone;
+  the uncommitted Phase 2 diff touches only the two files above.
+- **Assumptions logged this phase:** none — no ambiguity arose.
+- **Next:** Phase 3 (contract manifests + `VerifyAnchorRequest.tenant` `DECISIONS.md` entry).

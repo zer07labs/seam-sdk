@@ -139,6 +139,7 @@ const ADMIN_CALLS: Record<
   eraseSubjectConfirmed: (a, o) => a.eraseSubjectConfirmed("acme", "cust-42", undefined, o),
   enrollTenant: (a, o) => a.enrollTenant("aid:x", "acme", "ns", o),
   listTenants: (a, o) => a.listTenants(o),
+  revokeTenant: (a, o) => a.revokeTenant("aid:x", o),
   registerParty: (a, o) => a.registerParty("p", new Uint8Array(32), o),
   removeParty: (a, o) => a.removeParty("p", o),
   placeGrant: (a, o) => a.placeGrant("acme", "from", "to", "op:x", 9999999999999n, o),
@@ -177,7 +178,7 @@ test("the admin default deadline is generous but finite", () => {
 
 // ── The grant/party wrappers put the right request on the wire ───────────────────────────────────
 
-test("placeGrant / revokeGrant / listGrants / removeParty wrap SeamAdmin verbatim", async () => {
+test("placeGrant / revokeGrant / listGrants / removeParty / revokeTenant wrap SeamAdmin verbatim", async () => {
   const calls: Recorded[] = [];
   const admin = new SeamAdminClient(
     fakeTransport(calls, (method) =>
@@ -204,6 +205,10 @@ test("placeGrant / revokeGrant / listGrants / removeParty wrap SeamAdmin verbati
   await admin.removeParty("party-1");
   assert.equal(calls[3]!.method, "RemoveParty");
   assert.deepEqual(calls[3]!.input, { partyId: "party-1" });
+
+  await admin.revokeTenant("aid:x");
+  assert.equal(calls[4]!.method, "RevokeTenant");
+  assert.deepEqual(calls[4]!.input, { subjectAid: "aid:x" });
 });
 
 // ── Data plane: the 2s default deadline rides every RPC a call fans out to ───────────────────────

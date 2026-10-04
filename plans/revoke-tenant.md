@@ -207,7 +207,10 @@ needed for `RevokeTenant` to participate; only the `ADMIN_CALLS` table entry bel
 
 ### Phase 2 — TypeScript: `SeamAdminClient.revokeTenant`
 
-**Status:** TODO
+**Status:** DONE — implemented exactly as planned, no approach divergence. Solo Opus verify PASS
+on round 1: implementation matches spec verbatim at `ts/src/admin.ts:269-277`; interceptor-based
+NotFoundError mapping confirmed and empirically exercised via `errors_taxonomy.test.ts:121-128`;
+both new assertions survived mutation testing (deadline override, wire-shape payload). No gaps.
 **Risk:** complex — same reasoning as Phase 1 (new public-SDK-surface method, network/service
 boundary). Solo gate.
 
