@@ -267,10 +267,12 @@ export class SeamAdminClient {
   }
 
   /** Revoke (soft-delete) a subject AID's enrollment — the inverse of `enrollTenant`. The durable
-   * row is tombstoned (never deleted) and the in-memory binding is evicted with no restart.
-   * Idempotent: revoking an already-revoked AID succeeds. An AID with no enrollment row at all gets
-   * a `NotFoundError`; a tenant-scoped operator gets the same success as an idempotent re-revoke
-   * instead, so it cannot use this to probe another tenant's AIDs (seam-runtime #951). Requires the
+   * row is tombstoned (never deleted), the in-memory binding is evicted with no restart, and a
+   * `tenant_revoked` entry is chained. Idempotent: revoking an already-revoked AID succeeds. An AID
+   * with no enrollment row AND no live `enroll:` chain entry gets a `NotFoundError`; a tenant-scoped
+   * operator gets the same success as an idempotent re-revoke instead, so it cannot use this to
+   * probe another tenant's AIDs (seam-runtime #951). A chain-only enrollment (a chain entry with no
+   * row) is revoked by chaining a `tenant_revoked` entry same as any other. Requires the
    * `tenant:revoke` operator scope. */
   async revokeTenant(subjectAid: string, opts?: UnaryCallOptions): Promise<void> {
     await this.admin.revokeTenant({ subjectAid }, call(opts));

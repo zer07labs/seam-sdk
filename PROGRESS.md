@@ -4191,12 +4191,26 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
   `ASSUMPTIONS.md` diff against the merge-base is empty — every phase's "no assumptions" claim
   holds; cumulative scope is exactly 13 files across 4 commits, zero touching `go/`, `java/`,
   `kotlin/`, or `verify/`.
-- **One pre-existing, out-of-scope repo-health item surfaced, not caused by this feature:**
-  `scripts/check_registry_drift.py:168-169` carries two `CHANGELOG.md` citations that were
-  already stale on `main` before this plan — left alone per the repo's own documented discipline
-  (`PROGRESS.md:104`: repointing a stale citation by the shift delta moves a broken pointer to a
-  differently-broken place while looking like maintenance). Worth a separate follow-up issue,
-  outside this plan's scope.
+- **Pre-existing, out-of-scope repo-health items surfaced, not caused by this feature:** **5**
+  `CHANGELOG.md:NNN` citations repo-wide (`scripts/check_registry_drift.py:168-169`,
+  `ASSUMPTIONS.md:1055,1059`, `DECISIONS.md:2035`) were already stale on `main` before this
+  plan — corrected count from this checkpoint's first draft, which only named 2 of the 5; the
+  `/ship` verify round's repo-wide sweep found the other 3. All left alone per the repo's own
+  documented discipline (`PROGRESS.md:104`: repointing a stale citation by the shift delta moves
+  a broken pointer to a differently-broken place while looking like maintenance). Worth a
+  separate follow-up issue, outside this plan's scope.
+- **A second, more consequential finding from the `/ship` verify round: the BSR contract moved
+  under this plan while it was in flight.** Three same-day pushes to `buf.build/zer07labs/seam`
+  on 2026-10-04 (confirmed via `buf registry module commit list`) refined `RevokeTenant`'s own
+  proto comment after Phases 1-2's docstrings were written: NOT_FOUND now requires **no
+  enrollment row AND no live `enroll:` chain entry** (not just "no row"), and a **chain-only**
+  enrollment (chain entry, no row) is revoked rather than refused. No existing gate catches this
+  — `check-contract.sh` compares RPC/field names, not doc comments. Found and fixed in this same
+  commit: `python/seam_sdk/admin.py`, `ts/src/admin.ts`, `CHANGELOG.md`'s entry, and the plan's
+  own blockquote of the proto comment (`plans/revoke-tenant.md`) all re-synced to the current
+  contract text, re-fetched via `make generate` and verified against the live generated stubs.
+  The CHANGELOG wording change added 2 more lines, requiring a second repoint of the same two
+  `COMPATIBILITY.md`/`DECISIONS.md` "No yank" citations (`1033-1050` → `1035-1052`).
 - **Assumptions logged this phase:** none.
 - **Plan status:** all 4 phases DONE. Whole-plan finalization complete. `ASSUMPTIONS.md` has zero
   entries for this plan — `/reconcile` is not needed before `/ship`.

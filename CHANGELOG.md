@@ -110,12 +110,14 @@ ASCII-decimal proofs against a runtime that only verifies big-endian ones.
 
 - **`revoke_tenant`/`revokeTenant`** — soft-delete a subject AID's enrollment, the inverse of
   `enroll_tenant`/`enrollTenant`: `SeamAdmin.RevokeTenant` on the wire, taking just
-  `subject_aid` and returning nothing. The durable row is tombstoned (never deleted); the
-  in-memory binding is evicted with no restart. Idempotent: revoking an already-revoked AID
-  succeeds. An AID with no enrollment row at all gets `NotFoundError`; a tenant-scoped operator
-  gets the same success as a re-revoke instead, so the error can't be used to probe another
-  tenant's AIDs. Requires the `tenant:revoke` operator scope. Go, Java and Kotlin have no
-  admin-surface client to wire this into (crypto shims only, by design).
+  `subject_aid` and returning nothing. The durable row is tombstoned (never deleted), the
+  in-memory binding is evicted with no restart, and a `tenant_revoked` entry is chained.
+  Idempotent: revoking an already-revoked AID succeeds. An AID with no enrollment row AND no
+  live `enroll:` chain entry gets `NotFoundError`; a tenant-scoped operator gets the same
+  success as a re-revoke instead, so the error can't be used to probe another tenant's AIDs. A
+  chain-only enrollment (a chain entry with no row) is revoked the same as any other. Requires
+  the `tenant:revoke` operator scope. Go, Java and Kotlin have no admin-surface client to wire
+  this into (crypto shims only, by design).
 
 ## 0.22.0 — 2026-10-02
 

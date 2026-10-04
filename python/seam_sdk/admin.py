@@ -373,11 +373,14 @@ class SeamAdminClient:
         self, subject_aid: str, *, timeout: float = DEFAULT_ADMIN_TIMEOUT_S
     ) -> None:
         """Revoke (soft-delete) a subject AID's enrollment — the inverse of ``enroll_tenant``. The
-        durable row is tombstoned (never deleted) and the in-memory binding is evicted with no
-        restart. Idempotent: revoking an already-revoked AID succeeds. An AID with no enrollment
-        row at all gets ``NotFoundError``; a tenant-scoped operator gets the same success as an
+        durable row is tombstoned (never deleted), the in-memory binding is evicted with no
+        restart, and a ``tenant_revoked`` entry is chained. Idempotent: revoking an
+        already-revoked AID succeeds. An AID with no enrollment row AND no live ``enroll:`` chain
+        entry gets ``NotFoundError``; a tenant-scoped operator gets the same success as an
         idempotent re-revoke instead, so it cannot use this to probe another tenant's AIDs
-        (seam-runtime #951). Requires the ``tenant:revoke`` operator scope."""
+        (seam-runtime #951). A chain-only enrollment (a chain entry with no row) is revoked by
+        chaining a ``tenant_revoked`` entry same as any other. Requires the ``tenant:revoke``
+        operator scope."""
         self._admin.RevokeTenant(
             pb.RevokeTenantRequest(subject_aid=subject_aid), timeout=timeout
         )

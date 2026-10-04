@@ -61,17 +61,21 @@ scoping this plan, and both were checked against the code rather than taken on t
 
 The semantics of `RevokeTenant` are pinned from **one** authority: the generated gRPC servicer
 docstring, sourced from the runtime's own proto comment
-(`python/seam_sdk/_gen/seam/api/v1/seam_pb2_grpc.py:1574-1582`, mirrored in
-`ts/gen/seam/api/v1/seam_pb.ts:3546-3554`):
+(`python/seam_sdk/_gen/seam/api/v1/seam_pb2_grpc.py:1575-1583`, mirrored in
+`ts/gen/seam/api/v1/seam_pb.ts:3546-3554`). **Re-fetched and re-quoted during Phase 4's `/ship`
+verify round** — the BSR module moved under this plan with three same-day pushes (2026-10-04), the
+last after this quote was first written; the quote below is the current text, confirmed by
+re-running `make generate`:
 
 > Revoke (soft-delete) a subject AID's enrollment — the inverse of EnrollTenant; parity with the
 > HTTP `DELETE /v1/tenants/{subject_aid}`. The durable row is tombstoned (never deleted), the
 > in-memory binding is evicted with no restart, and a `tenant_revoked` entry is chained. Idempotent:
-> a retry of an already-revoked AID is OK; an AID with no enrollment row at all is NOT_FOUND (#951;
-> a tenant-scoped operator gets OK instead, so it cannot probe other tenants' AIDs). `tenant:revoke`
-> scope (a tenant-scoped operator may revoke only its own tenant's AIDs). Returns `Empty` by design;
-> an outcome-bearing variant would be a new RPC, not a response-type change (buf
-> `RPC_SAME_RESPONSE_TYPE`).
+> a retry of an already-revoked AID is OK; an AID with no enrollment row AND no live `enroll:`
+> chain entry is NOT_FOUND (#951; a tenant-scoped operator gets OK instead, so it cannot probe other
+> tenants' AIDs). A chain-only enrollment (a chain entry with no row) is revoked by chaining a
+> `tenant_revoked` entry (#717). `tenant:revoke` scope (a tenant-scoped operator may revoke only its
+> own tenant's AIDs). Returns `Empty` by design; an outcome-bearing variant would be a new RPC, not
+> a response-type change (buf `RPC_SAME_RESPONSE_TYPE`).
 
 `zer07labs/seam-runtime#951` (fetched and read this session, **CLOSED**, title: *"revoke_tenant:
 return NOT_FOUND instead of a silent 204 for an AID with no enrollment row (decide before
@@ -79,10 +83,15 @@ RevokeTenant ships in an SDK)"*) is the record that this decision was **made**, 
 statement of what it is — its body only poses the question ("...would catch it, but it changes the
 HTTP/gRPC contract, so decide before an SDK release picks up `RevokeTenant`") and carries no
 comments. The proto comment above is the single source of truth for behavior; #951 is cited in docs
-as the decision's paper trail. The default on "no enrollment row at all" is **NOT_FOUND**; a
-tenant-scoped operator gets **OK instead** (not the reverse). The HTTP-layer detail from the
-originating cross-session message (`DELETE /v1/tenants/{subject_aid}` → 204) is a runtime/REST-gateway
-concern outside this SDK's gRPC surface and needs no SDK-side test.
+as the decision's paper trail. The default on "no enrollment row AND no live `enroll:` chain entry"
+is **NOT_FOUND**; a tenant-scoped operator gets **OK instead** (not the reverse); a chain-only
+enrollment (no row, but a live chain entry) is **revoked**, not NOT_FOUND. `zer07labs/seam-runtime#717`
+is cited in the proto comment but is **CLOSED and unrelated** ("Orphaned: AttestedFactLog has a
+durable schema with no caller…") — the same "proto comment cites an issue whose body doesn't
+describe the work" pattern already on record for `#903` in `DECISIONS.md`; don't chase #717
+expecting chain-only-enrollment detail. The HTTP-layer detail from the originating cross-session
+message (`DELETE /v1/tenants/{subject_aid}` → 204) is a runtime/REST-gateway concern outside this
+SDK's gRPC surface and needs no SDK-side test.
 
 The closest precedent for *how* to land a plain (non-crypto-framing) RPC addition is PR #154
 (merged 2026-09-30), which wired `SeamAuthorization.GetEscalation` into Python + TypeScript only,
