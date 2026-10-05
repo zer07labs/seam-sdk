@@ -4029,3 +4029,252 @@ are not, and closing that gap is a release action rather than part of this PR.
   entry, not new behaviour tests.
 * **Gates:** contract gate **exit 6**, naming exactly the seven recorded `ContextBinding` lag fields.
 * **Next:** `/ship` — three PRs, then remove `.drive.lock`.
+
+# PROGRESS — `plans/revoke-tenant.md`
+
+Checkpoint trail and repo map for wiring `SeamAdmin.RevokeTenant` into the Python and TypeScript
+clients. 4 phases, all TODO as of this entry (plan just written and reviewed — `/implement` has not
+started). `/implement` appends a block per phase below this header as it runs.
+
+**Plan:** [`plans/revoke-tenant.md`](plans/revoke-tenant.md) — 4 phases: Python client/tests → TS
+client/tests → contract manifests + a `DECISIONS.md` entry for an unrelated deferred field → docs +
+tracking issues + finalization.
+
+**PR strategy — recommend 1 PR.** All four phases are one coherent story (see the plan's Open
+Questions #2); `/implement` decides for real.
+
+**Repo map** (what this plan touches, one line each):
+- `contract/rpc-manifest.txt`, `contract/field-manifest.txt` — the two-directional contract-surface
+  declarations `check-contract.sh` diffs against the generated stubs.
+- `python/seam_sdk/admin.py` — `SeamAdminClient`; all `SeamAdmin.*` RPCs are hand-wired here,
+  sync-only, grouped into `# ──`-delimited sections.
+- `python/seam_sdk/errors.py` — typed exception hierarchy + `_MappedStub`, auto-converts every
+  `SeamAdminClient` RPC's `grpc.RpcError` to its typed subclass.
+- `python/tests/test_admin.py` — `RecordingAdmin` fake servicer + unit tests for every
+  `SeamAdminClient` method's wire shape.
+- `python/tests/test_lifecycle_and_timeouts.py` — `ADMIN_CALLS` table + generic timeout
+  introspection tests.
+- `ts/src/admin.ts` — TypeScript mirror of `admin.py`; `errorMappingInterceptor` installed once in
+  `SeamAdminClient.connect`.
+- `ts/src/errors.ts` — TS typed error hierarchy + `errorMappingInterceptor`/`toSeamError`.
+- `ts/tests/unit_plumbing.test.ts` — `fakeTransport` + `ADMIN_CALLS` deadline table + per-verb
+  wire-shape assertions.
+- `scripts/check-contract.sh` — the contract-freshness gate; `--write-manifest` is an escape hatch
+  this plan deliberately does not use.
+- `python/tests/test_field_manifest_gate.py` — currently has one failing test
+  (`test_an_exact_match_of_the_known_lag_downgrades_to_a_note_naming_the_lag_file`) from the two
+  manifest gaps this plan closes.
+- `CHANGELOG.md` — `## Unreleased`, one `### <Type> — <title> (#issue)` header per change.
+- `README.md` lines ~455-459 — governance-RPC list + party/grant symmetry sentence.
+- `DECISIONS.md:2244-2284` — `GetEscalationDelivery`'s entry is the template for the new
+  `VerifyAnchorRequest.tenant` entry.
+- `go/crypto/`, `java/.../SeamCrypto.java`, `kotlin/.../SeamCrypto.kt` — confirmed OUT of scope,
+  crypto + conformance only.
+
+**Baseline at plan time:** `python/.venv/bin/pytest -q` → `1 failed, 1324 passed, 22 skipped`
+(the one failure is the `test_field_manifest_gate.py` test above). `npm test` (ts/) → 182 pass / 10
+skip, green. `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` → exit 5 (`SeamAdmin/RevokeTenant`
+missing). `ci.yml` last green on `main`: 2026-10-03 (`f23a9e1`), before the 2026-10-04 BSR push that
+introduced the gap.
+
+**PR strategy (decided at /implement start):** 1 PR, covering all 4 phases. Why: they're one
+coherent story (wire the RPC that was asked for, close the contract gap it depends on, record the
+one unrelated decision found along the way) — matching PR #154's own precedent of bundling related
+small changes rather than fragmenting review. Confirmed at /plan time (Open Questions #2),
+re-confirmed here.
+
+**Risk tiers:** Phase 1 complex, Phase 2 complex, Phase 3 complex, Phase 4 simple. Every phase gets
+a solo verify gate — no batching, since no two adjacent phases are both tagged simple.
+
+## Phase 1 — Python: `SeamAdminClient.revoke_tenant` — DONE (2026-10-04)
+
+- **Verdict:** PASS, 1 round, Opus verifier (solo gate, Risk: complex).
+- **Files touched:** `python/seam_sdk/admin.py` (+13), `python/tests/test_admin.py` (+12),
+  `python/tests/test_lifecycle_and_timeouts.py` (+1).
+- **Tests:** `pytest -q tests/test_admin.py tests/test_lifecycle_and_timeouts.py` → 38 passed, 4
+  skipped. Full suite → 1 failed (pre-existing, confirmed byte-identical on pristine `main` by the
+  verifier via a detached worktree), 1327 passed, 22 skipped. `ruff check`/`ruff format --check`
+  clean.
+- **Gap closed mid-phase (before verify):** the full-suite run surfaced 2 unrelated new failures in
+  `test_compatibility_citations_resolve.py`, caused by this file's own `/implement`-start header
+  append putting the filename and the line range in two separate backtick spans instead of one
+  `path:line` token — fixed to `` `DECISIONS.md:2244-2284` ``; suite back to the expected 1
+  pre-existing failure.
+- **Correction carried into the plan:** pristine-`main` baseline was `1324 passed`, actually
+  `1325 passed` — fixed in `plans/revoke-tenant.md`'s Context and Phase 3 acceptance criteria.
+- **Assumptions logged this phase:** none — no ambiguity arose.
+- **Next:** Phase 2 (TypeScript `revokeTenant`).
+
+## Phase 2 — TypeScript: `SeamAdminClient.revokeTenant` — DONE (2026-10-04)
+
+- **Verdict:** PASS, 1 round, Opus verifier (solo gate, Risk: complex).
+- **Files touched:** `ts/src/admin.ts` (+10), `ts/tests/unit_plumbing.test.ts` (+7/-1 — table
+  entry, test rename, wire-shape assertion).
+- **Tests:** `npm run typecheck` clean, `npm run build` clean, `npm test` → `tests 192, pass 182,
+  fail 0, skipped 10` (unchanged pass count — `revokeTenant` rides the existing generic
+  `ADMIN_CALLS`/wire-shape tests rather than adding a standalone one). No lint script exists in
+  `ts/package.json` — typecheck+build+test is the complete local gate.
+- **Verifier went beyond reading:** mutation-tested both new assertions (stripped `call(opts)`,
+  swapped `subjectAid` value) to confirm they're load-bearing, not vacuous; restored the tree and
+  re-ran all three gates clean afterward.
+- **Diff scope confirmed TS-only:** `git diff main...HEAD --stat` shows Phase 1's commit alone;
+  the uncommitted Phase 2 diff touches only the two files above.
+- **Assumptions logged this phase:** none — no ambiguity arose.
+- **Next:** Phase 3 (contract manifests + `VerifyAnchorRequest.tenant` `DECISIONS.md` entry).
+
+## Phase 3 — Contract manifests, and the `VerifyAnchorRequest.tenant` decision — DONE (2026-10-04)
+
+- **Verdict:** PASS, 1 round, Opus verifier (solo gate, Risk: complex) — 5 non-blocking gaps found
+  and closed before this checkpoint (see below).
+- **Files touched:** `contract/rpc-manifest.txt` (+1, `SeamAdmin/RevokeTenant`),
+  `contract/field-manifest.txt` (+2, `RevokeTenantRequest/subject_aid` +
+  `VerifyAnchorRequest/tenant`), `DECISIONS.md` (new entry).
+- **Causality independently proved by the verifier**, not just claimed: reverting the three manifest
+  lines and re-running reproduced the exact Baseline failure (`check-contract.sh` → exit 5,
+  `test_field_manifest_gate.py` → 1 failed) — confirming these three lines are precisely what
+  resolves it, not a coincidental pass.
+- **Gate:** `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` → exit 0 (both languages, all 45 RPCs /
+  249 fields / 15 enum values / 95 event fields present).
+- **Tests:** full Python suite → `1329 passed, 22 skipped, 0 failed` (was `1 failed, 1327 passed`
+  before this phase — the pre-existing `test_field_manifest_gate.py` failure is now resolved).
+  `ruff check`/`ruff format --check` clean. TS unaffected, still `182 pass / 0 fail / 10 skip`.
+- **DECISIONS.md entry added:** `VerifyAnchorRequest.tenant` lands on the contract; the SDK does
+  not carry it yet — deferred because the write side (`RegisterPartyRequest.tenant`) doesn't exist
+  upstream, confirmed by reading the generated stubs directly (only `party_id`/`pubkey` present).
+  Tracking issue: [zer07labs/seam-sdk#172](https://github.com/zer07labs/seam-sdk/issues/172), citing
+  `seam-runtime#903`.
+- **Gaps closed from verify round (all non-blocking, closed before commit):**
+  1. Plan's literal citation text (a generated-stub path with a line-number suffix) would have put
+     a line-numbered
+     anchor into a generated file inside `DECISIONS.md`, tripping
+     `test_no_document_line_anchors_into_a_generated_tree` — cited by symbol name instead; plan
+     annotated with this divergence.
+  2. Re-open trigger reworded: leads with the automatic, CI-enforced observable trigger
+     (`check-contract.sh` refusing on `+ RegisterPartyRequest/tenant`) rather than relying on a
+     human watching `seam-runtime#903`, and clarifies "#903 Phase 3" is the generated proto
+     comment's own label — `seam-runtime#903`'s own body does not describe a party-registration
+     phase, so a reader following the issue alone would find nothing to watch for.
+  3. This `PROGRESS.md` entry and the plan's `Status: DONE` flip (you're reading both).
+  4. Entry placement breaks `DECISIONS.md`'s file-tail chronological order (inserted between two
+     2026-09-30 entries rather than at EOF) — left as-is: harmless, nothing enforces ordering, and
+     every existing `DECISIONS.md:NNNN` citation elsewhere in the repo targets lines below the
+     insertion point, so nothing went stale.
+- **Assumptions logged this phase:** none — the `VerifyAnchorRequest.tenant` call is a decision
+  (recorded in `DECISIONS.md`), not an assumption; no ambiguity needed `ASSUMPTIONS.md`.
+- **Next:** Phase 4 (CHANGELOG.md, README.md, a `seam-runtime#951`-citing tracking issue, whole-plan
+  finalization).
+
+## Phase 4 — Docs, a tracking issue, and finalization — DONE (2026-10-04)
+
+- **Verdict:** PASS, 1 round, Opus verifier (solo gate, Risk: simple — last phase, no neighbor to
+  batch with). This verify round doubled as the whole-plan finalization check per `/implement`'s
+  §4 (Phase 4's own "Approach" already was the finalization gate for all four phases together).
+- **Files touched:** `CHANGELOG.md` (+11, new Unreleased entry), `README.md` (+7/-3, governance-RPC
+  list + symmetry sentence), `COMPATIBILITY.md` (+1/-1), `DECISIONS.md` (+1/-1).
+- **Tracking issue:** [zer07labs/seam-sdk#173](https://github.com/zer07labs/seam-sdk/issues/173),
+  citing `seam-runtime#951` for the semantics and `seam-sdk#172` for the unrelated Phase 3 deferral.
+  Not cited in-repo — plan's acceptance criteria only required it exist and be linked from the PR,
+  confirmed by the verifier re-reading the criteria; it's linked at `/ship` time.
+- **Gates, all re-run clean:** Python `1329 passed, 22 skipped, 0 failed`; `ruff check`/`ruff format
+  --check` clean; TS `tests 192, pass 182, fail 0, skipped 10`; `STREAM=1 EVENTS=1
+  ./scripts/check-contract.sh` → exit 0.
+- **Divergence from plan (both required by the suite, not scope creep):** (1) CHANGELOG header
+  cites `seam-sdk #173, seam-runtime #951` — both issues, not just the runtime one the plan's
+  literal text showed, matching every sibling header's local-issue-citing convention. (2)
+  `COMPATIBILITY.md`/`DECISIONS.md` each had one pre-existing `CHANGELOG.md:NNN` citation
+  repointed (`1022-1039` → `1033-1050`) because the new 11-line CHANGELOG entry pushed it stale —
+  proven required, not cosmetic, by reverting it and watching 4 citation-anchor tests go red.
+  Both annotated inline in `plans/revoke-tenant.md`'s Phase 4 section.
+- **Whole-feature finalization, independently re-derived by the verifier, not taken on trust:**
+  end-to-end callability proven via the actual Phase 1/2 unit tests against fake servicers/transport;
+  field-name agreement across the Phase 1→3 seam (`subject_aid`/`subjectAid`) confirmed exact;
+  `ASSUMPTIONS.md` diff against the merge-base is empty — every phase's "no assumptions" claim
+  holds; cumulative scope is exactly 13 files across 4 commits, zero touching `go/`, `java/`,
+  `kotlin/`, or `verify/`.
+- **Pre-existing, out-of-scope repo-health items surfaced, not caused by this feature:** **6**
+  `CHANGELOG.md:NNN` citations repo-wide (`scripts/check_registry_drift.py:168-169`,
+  `ASSUMPTIONS.md:1055,1059`, `DECISIONS.md:2035`, `PROGRESS.md:3981`) were already stale on
+  `main` before this plan — corrected count from this checkpoint's first two drafts, which named
+  2 of 6 and then 5 of 6; the `/ship` re-verify round's repo-wide sweep found the last one, a
+  direct sibling of `DECISIONS.md:2035` (same "0.7.39–0.7.43 spared" claim, same staleness). All
+  left alone per the repo's own documented discipline (`PROGRESS.md:104`: repointing a stale
+  citation by the shift delta moves a broken pointer to a differently-broken place while looking
+  like maintenance). Worth a separate follow-up issue, outside this plan's scope.
+- **A second, more consequential finding from the `/ship` verify round: the BSR contract moved
+  under this plan while it was in flight.** Three same-day pushes to `buf.build/zer07labs/seam`
+  on 2026-10-04 (confirmed via `buf registry module commit list`) refined `RevokeTenant`'s own
+  proto comment after Phases 1-2's docstrings were written: NOT_FOUND now requires **no
+  enrollment row AND no live `enroll:` chain entry** (not just "no row"), and a **chain-only**
+  enrollment (chain entry, no row) is revoked rather than refused. No existing gate catches this
+  — `check-contract.sh` compares RPC/field names, not doc comments. Found and fixed in this same
+  commit: `python/seam_sdk/admin.py`, `ts/src/admin.ts`, `CHANGELOG.md`'s entry, and the plan's
+  own blockquote of the proto comment (`plans/revoke-tenant.md`) all re-synced to the current
+  contract text, re-fetched via `make generate` and verified against the live generated stubs.
+  The CHANGELOG wording change added 2 more lines, requiring a second repoint of the same two
+  `COMPATIBILITY.md`/`DECISIONS.md` "No yank" citations (`1033-1050` → `1035-1052`).
+- **Assumptions logged this phase:** none.
+- **Plan status:** all 4 phases DONE. Whole-plan finalization complete. `ASSUMPTIONS.md` has zero
+  entries for this plan — `/reconcile` is not needed before `/ship`.
+- **Next:** `/ship` — push `feat/revoke-tenant`, open one PR covering all 4 phases (linking
+  seam-sdk#172 and seam-sdk#173), watch CI, merge on green.
+
+## `/ship` — `feat/revoke-tenant`
+
+- **Ship-gate verify (fresh Opus, over the cumulative 4-phase diff):** GAPS round 1 (one
+  substantive: shipped docstrings/CHANGELOG had drifted from the BSR contract's current proto
+  comment for `RevokeTenant` — three same-day BSR pushes on 2026-10-04 refined its NOT_FOUND/
+  chain-only-enrollment semantics after Phases 1-2 were written; plus two minor bookkeeping
+  items). Fixed in commit `9cdc09a`. Re-verify round 2: GAPS (one remaining off-by-one citation
+  count). Fixed in commit `55ee694`. No re-verify dispatched for that trivial fix — one-line
+  bookkeeping accuracy with no code/doc-surface change, confirmed by a clean full-suite re-run
+  (1334 passed, 22 skipped, 0 failed) instead.
+- pushed `feat/revoke-tenant` `55ee694`
+- PR #174 opened: https://github.com/zer07labs/seam-sdk/pull/174
+- **CI red, confirmed unrelated to this diff.** `spec pin` and `integration (live seam-grpc
+  round-trip)` both fail on code/files this branch never touched, tracing to same-day
+  (2026-10-04) upstream seam-runtime/BSR drift — the same window `/ship`'s own verify gate
+  caught for `RevokeTenant`'s docstrings. Filed zer07labs/seam-sdk#175 (stale vendored spec,
+  mechanical re-vendor) and zer07labs/seam-runtime#996 (register_party now rejects the
+  dev-insecure fleet-wide operator — ask is open on whether that's intentional). Per
+  maintainer direction: holding PR #174 unmerged, not touching either issue from this branch,
+  waiting for upstream resolution rather than merging around a red check.
+- **Maintainer then said "merge it and let seam-runtime know."** Merge attempt blocked at the
+  platform level: `gh pr merge --squash --admin` is refused by a GitHub repository ruleset on
+  `main` (id `20588746`) requiring `ci-ok` green — `bypass_actors` names only one GitHub App,
+  not this account, confirmed via `gh api repos/.../rulesets/20588746`. Notified seam-runtime's
+  session of the blocked state over `SendMessage`.
+- **seam-runtime's reply resolved #996: intentional (#903 Phase 1 / #922), not a regression —
+  fix is on seam-sdk's side.** `register_party`/`remove_party` refuse a fleet-wide (no
+  tenant-claim) operator; `RegisterPartyRequest` carries no `tenant` field, so the runtime
+  binds to the token's own `tenant` claim. Confirmed directly against the seam-runtime sibling
+  checkout (`crates/seamd/src/planes.rs:720,1124`, `scoped_auth_grpc.rs::mint_with_tenant`) —
+  scope `grant:create`, any clean tenant id. Fixed both live fixtures to install the
+  `operator_keys` snapshot and mint a tenant-bound token: `python/tests/operator_token.py`
+  (`mint_operator_token` gained an optional `tenant` kwarg), `python/tests/test_verify_attestation.py`
+  (`dual_plane` fixture), `ts/tests/operator_token.ts` (`mintOperatorToken` gained `opts.tenant`),
+  `ts/tests/verify_attestation.test.ts` (`withPlanes`). Also re-vendored `spec pin`'s target,
+  `verify/docs/seam-event.v1.md`, from `zer07labs/seam-runtime@6987aca` (one comment-only line:
+  `agent_id`'s doc reverted to "audit-only LABEL, never the scope-floor key" — confirmed
+  SPEC-ONLY, zero behavior change, since `verify/src/wire.rs` only ever carries `agent_id`
+  through as an opaque field). `python3 scripts/check_vendored_spec.py --from gh` now passes;
+  full Python suite 1334 passed; TS `npm test` 182 passed, 10 skipped (incl. the two
+  `SEAM_GRPC_BIN`-gated live tests — no local `seam-grpc` binary available: a release build
+  from the sibling `seam-runtime` checkout failed on an unrelated local macOS SDK/linker defect,
+  not this diff; CI pulls the published image rather than building from source, so this local
+  limitation doesn't apply there). Pushed `2698525`; re-watched CI.
+- **Round 1 of the re-watch: `spec pin` now green, but `integration` still red — a second,
+  genuine bug the tenant-bind fix exposed rather than fixed.** `register_party` filed "bank-A"
+  under the operator token's tenant claim (`verify-counterparties`), but
+  `VerifyPartyAttestation` looks the party up under the ATTESTATION's own `tenant` field (wire
+  tag 7, UNSIGNED) — the KAT fixture leaves that "" (the untenanted/fleet partition), so a
+  correctly-registered, untampered attestation came back `False` (CI log: "1 failed, 42
+  passed", `assert False is True`). Confirmed via `seam-runtime/crates/seamd/src/facade.rs:374`
+  (`verify_party_attestation_in(&att.tenant, party_id, att)`). Fixed by setting
+  `tenant=_TENANT`/`{tenant: TENANT}` on every attestation built in both live tests —safe
+  because the field is unsigned, so it can't invalidate the KAT signature. Full Python suite
+  still 1334 passed; TS still 182 passed/10 skipped; both lint/format clean. Pushed `76e0bd1`;
+  re-watched CI — `integration` now green, but a self-inflicted citation break surfaced in
+  `python (ruff · pytest)`: this very note cited the seam-runtime file as a bare local path
+  instead of `seam-runtime/...`-prefixed, so `test_each_citation_resolves` correctly flagged
+  it as pointing at a file that doesn't exist in this repo. Fixed in the same note (above) —
+  no code change, just this citation's own prefix.

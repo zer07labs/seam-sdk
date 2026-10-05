@@ -1,33 +1,12 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 2ea9f93 (refreshed 2026-09-30). Two
-     normative movements since the prior pin (342d3f5):
-     1. U-RT-1/U-RT-3 (commits 8bc00336, c11973c3) — the runtime's audit hash chain is per-tenant,
-        not global, and `ChainHeadAttestation` gains an UNSIGNED `tenant` field (wire tag 7).
-        Reconciled against `src/verify.rs`/`src/wire.rs` in the SAME change that refreshed this file
-        (seam-sdk#144, Part 1 + Part 1.5):
-          a. §Ordering & integrity now states explicitly what U-RT-1 already shipped: the hash chain
-             is walked PER TENANT, each from its own genesis — never one chain over the whole
-             interleaved outbox. `verify_authenticity_anchored`'s integrity pass (via
-             `chain_by_tenant`) now partitions by `Event.tenant` instead of one global running head;
-             every existing single-tenant fixture is unaffected (a one-tenant window's per-tenant
-             output is byte-identical to the old global one).
-          b. New "Reader obligations on `tenant`" — scoped to authenticity verification only (this
-             crate's `--issuer`): a payload `tenant` disagreeing with its envelope's is REFUSED
-             outright ("ATTESTATION TENANT MISMATCH"); a payload `tenant` empty while the envelope's
-             is not (pre-this-field legacy attestation) is accepted on the envelope alone but counted
-             (`IssuerReport::tenant_unbound`) and refused under `--strict`. Both implemented in
-             `verify_authenticity_anchored`'s attestation loop.
-          c. Per-tenant anchored-start semantics ((f0) attribution, (f4)/(f5) re-scoped per tenant) —
-             see `chain_anchored`'s wrapper over `chain_by_tenant` and
-             `verify_authenticity_by_tenant`.
-          SPEC-ONLY zero-behavior-change areas of this delta (checked, not assumed): the signed
-          `chain_head_attestation_payload` preimage itself is untouched (tenant stays unsigned until
-          seam-runtime's own Phase 4, tracked as Part 2 on seam-sdk#144 and NOT part of this refresh);
-          `record_digest_v2`/`record_digest_v3` are untouched; the erasure certificate is untouched.
-     2. seam-runtime#847 (commit 2ea9f93) — the escalation-inbox section (§AUTHORIZE_EVALUATED /
-        ESCALATE) documents that an ESCALATE verdict now ALSO writes a second, non-event, durable row
-        (`authorize_escalation`) alongside the outbox event. SPEC-ONLY, checked: this crate reads no
-        escalation-specific fields and has no code path that consumes or claims completeness over the
-        escalation inbox, so nothing here changes behaviour. -->
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 6987aca (refreshed 2026-10-04). One
+     movement since the prior pin (2ea9f93):
+     1. seam-runtime#916/#888 (commit 6987aca) — the `agent_id` field comment (tag 4, on both
+        `AuthorizeRequested` and the escalation-inbox payload) is corrected to align with the code:
+        it is documented as an audit-only LABEL, never the scope-floor key (that's `agent_aid`),
+        reverting an earlier comment that called it "the registry identity the scope floor was
+        evaluated against." SPEC-ONLY, checked: this crate's `wire.rs` only ever carries `agent_id`
+        through as an opaque string field (lines 141, 319, 680) — it is never read in any scope or
+        authorization decision here, so nothing in this repo's behavior changes. -->
 
 # `seam-event.v1` — event-stream wire spec (language-neutral)
 
@@ -374,7 +353,7 @@ message AuthorizeEvaluated {           // envelope tag 23
   string authorize_id = 1;             // ULID — the handle returned to the caller
   optional string client_request_id = 2; // the caller's idempotent audit-join key, when supplied
   string agent_aid = 3;                // the VERIFIED caller AID (derived, never asserted)
-  string agent_id = 4;                 // the registry identity the scope floor was evaluated against
+  string agent_id = 4;                 // audit-only LABEL, never the scope-floor key (see agent_aid)
   string tool_name = 5;
   string tool_input_digest = 6;        // "hmac-sha256:<kid>:<hex>" — a KEYED commitment
   string verdict = 7;                  // "ALLOW" | "DENY" | "TRANSFORM" | "ESCALATE"

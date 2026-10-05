@@ -24,10 +24,15 @@ from types import SimpleNamespace
 import pytest
 
 from live_server import spawn_server
+from operator_token import REGISTRY_SNAPSHOT_PATH, mint_operator_token, sign_snapshot
 
 from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
 from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as ev
 from seam_sdk import SeamAdminClient, SeamClient  # noqa: E402
+
+#: Any tenant id — `register_party` takes none on the wire (the operator token's own `tenant` claim is
+#: what the runtime binds to; see `RegisterPartyRequest`), so this pins AUTH, not a registration scope.
+_TENANT = "verify-counterparties"
 
 # ── The runtime chain_head_attestation KAT, from conformance/vectors.json ────────────────────────────
 # The counterparty signs with the ed25519 key derived from this seed; the signature is over the
@@ -48,8 +53,12 @@ _KAT_ATTESTATION = dict(
 )
 
 
-def _kat_attestation() -> ev.ChainHeadAttestation:
-    return ev.ChainHeadAttestation(**_KAT_ATTESTATION)
+def _kat_attestation(*, tenant: str = "") -> ev.ChainHeadAttestation:
+    # `tenant` (wire tag 7) is UNSIGNED — setting it here never invalidates the KAT signature, which
+    # is computed over the preimage without it. Defaults to "" (the untenanted/fleet partition),
+    # matching every pre-#903 caller; the live test below overrides it to match the tenant its
+    # operator token registered the party under.
+    return ev.ChainHeadAttestation(tenant=tenant, **_KAT_ATTESTATION)
 
 
 def _kat_pubkey() -> bytes:
@@ -108,9 +117,24 @@ def test_wrapper_returns_false_never_raises():
 
 @pytest.fixture
 def dual_plane(tmp_path):
-    """Spawn seam-grpc with BOTH the data plane (VerifyPartyAttestation) and the management plane
-    (RegisterParty) bound; yields (data_addr, mgmt_addr). Skips without SEAM_GRPC_BIN."""
-    with spawn_server(mgmt=True, log_dir=tmp_path) as srv:
+    """Spawn seam-grpc with BOTH the data plane (VerifyPartyAttestation, dev-open) and the management
+    plane (RegisterParty) bound; yields (data_addr, mgmt_addr). Skips without SEAM_GRPC_BIN.
+
+    The mgmt plane installs the `operator_keys` trust root (signed, since it's trust-bearing — see
+    `operator_token.sign_snapshot`): `register_party` refuses a fleet-wide operator since seam-runtime
+    #903 Phase 1 (seam-sdk#175 / seam-runtime#996), so a dev-open plane with no token can no longer
+    exercise it. The data plane is unaffected — `operator_keys` is "the sole trust root for the entire
+    MANAGEMENT plane" (seamd/src/registry.rs), so `VerifyPartyAttestation` stays dev-open as before."""
+    pubkey, sig_path = sign_snapshot(REGISTRY_SNAPSHOT_PATH)
+    with spawn_server(
+        mgmt=True,
+        log_dir=tmp_path,
+        env_extra={
+            "SEAM_REGISTRY_SNAPSHOT": REGISTRY_SNAPSHOT_PATH,
+            "SEAM_REGISTRY_SNAPSHOT_SIG": sig_path,
+            "SEAM_SNAPSHOT_PUBKEY": pubkey,
+        },
+    ) as srv:
         yield srv.data_addr, srv.mgmt_addr
 
 
@@ -118,24 +142,41 @@ def test_verify_party_attestation_trio_live(dual_plane):
     """Registered party + untampered KAT → True; tampered signature / tampered field / unknown → False."""
     data_addr, mgmt_addr = dual_plane
     data = SeamClient.connect(data_addr)
-    admin = SeamAdminClient.connect(mgmt_addr)
+    # register_party is authority-establishing (rt-D) and, since seam-runtime #903 Phase 1, refuses a
+    # fleet-wide operator — it needs a tenant-bound `grant:create` token (the request itself carries no
+    # tenant field; the runtime binds to the token's own `tenant` claim).
+    admin = SeamAdminClient.connect(
+        mgmt_addr, token=mint_operator_token(["grant:create"], tenant=_TENANT)
+    )
 
     admin.register_party("bank-A", _kat_pubkey())
 
+    # Every call below carries `tenant=_TENANT` on the attestation: `register_party` bound "bank-A"
+    # under _TENANT (the operator token's claim, since RegisterPartyRequest has no tenant field of its
+    # own), and `VerifyPartyAttestation` looks the party up under the ATTESTATION's own (unsigned)
+    # `tenant`, not the caller's — the two must agree or a correctly-registered, untampered attestation
+    # still comes back False, having found no party in the (wrong) tenant partition it looked under.
+
     # 1. a registered party's untampered attestation verifies
-    assert data.verify_party_attestation("bank-A", _kat_attestation()) is True
+    assert (
+        data.verify_party_attestation("bank-A", _kat_attestation(tenant=_TENANT))
+        is True
+    )
 
     # 2. a tampered signature must not verify
-    bad_sig = _kat_attestation()
+    bad_sig = _kat_attestation(tenant=_TENANT)
     tampered = bytearray(bad_sig.signature)
     tampered[0] ^= 0x01
     bad_sig.signature = bytes(tampered)
     assert data.verify_party_attestation("bank-A", bad_sig) is False
 
     # 3. a tampered field (the length is part of the signed preimage) must not verify
-    bad_field = _kat_attestation()
+    bad_field = _kat_attestation(tenant=_TENANT)
     bad_field.attested_len += 1
     assert data.verify_party_attestation("bank-A", bad_field) is False
 
     # 4. an unknown party never verifies
-    assert data.verify_party_attestation("bank-B", _kat_attestation()) is False
+    assert (
+        data.verify_party_attestation("bank-B", _kat_attestation(tenant=_TENANT))
+        is False
+    )

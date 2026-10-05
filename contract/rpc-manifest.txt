@@ -39,6 +39,7 @@ SeamAdmin/ReleaseLegalHold
 SeamAdmin/RemoveParty
 SeamAdmin/ResumeSession
 SeamAdmin/RevokeGrant
+SeamAdmin/RevokeTenant
 SeamAdmission/Admit
 SeamAdmission/IssueChallenge
 SeamAuthorization/Authorize

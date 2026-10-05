@@ -1219,7 +1219,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:1022-1039` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:1035-1052` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2290,6 +2290,48 @@ brought current with the published contract; the hand-written clients are delibe
 are. Forced by CI going red on `main` itself (identical failure reproduced against an unmodified
 `origin/main` tip, independent of and pre-dating this PR's own changes) rather than by anything this
 PR set out to do.
+
+## 2026-10-04 — `VerifyAnchorRequest.tenant` lands on the contract; the SDK does not carry it yet
+
+### `VerifyAnchorRequest/tenant` — manifest records it, hand-written clients do not wire it
+
+- **Decided by:** Opus, alongside wiring `SeamAdmin.RevokeTenant` into both SDKs (same PR). While
+  tracing `RevokeTenant`'s contract surface, `check-contract.sh` also named `VerifyAnchorRequest.tenant`
+  as a field the generated stubs carry (the `VerifyAnchorRequest` message in `seam_pb2.pyi` /
+  `seam_pb.ts`) that `contract/field-manifest.txt` did not yet record — an unrelated second gap,
+  discovered rather than asked for.
+- **What it is.** A read-side filter on `verify_party_anchor`/`verifyPartyAnchor`: narrowing anchor
+  verification to a specific tenant's view of a party, alongside the existing `party_id`/`anchor`
+  fields.
+- **Why not wire it in the same PR.** The write side is not on the contract — the `RegisterPartyRequest`
+  message carries only `party_id`/`pubkey` (same generated stubs, no `tenant` field), so no SDK caller
+  can create a tenanted party today. Wiring the read-side filter alone would expose a parameter
+  nothing can populate — dead client code, settable but never reachable from a real call path.
+- **Nothing regresses by deferring it.** Proto3 scalar fields default to `""` when unset, so leaving
+  `tenant` unwired changes no existing caller's behavior. `verify_party_anchor`/`verifyPartyAnchor`
+  continue to work exactly as before.
+- **Re-open trigger and owner.** **Observable trigger:** `check-contract.sh` itself, refusing with
+  exit 6 on `+ RegisterPartyRequest/tenant` the day that field actually lands on the BSR contract —
+  automatic and CI-enforced, so this does not depend on anyone watching an issue. **Context:** the
+  generated stub's own doc comment on the `VerifyAnchorRequest.tenant` field (in `seam_pb.ts` and
+  its Python twin) labels the write-side work "`#903` Phase 3" — but `seam-runtime#903`
+  ("seam-event.v1: refuse tenant-less events at the producer, and publish the legacy cutoff seq",
+  confirmed OPEN) does not itself describe a party-registration phase anywhere in its body; treat
+  "#903 Phase 3" as the proto comment's own label for work not yet visible in the issue, not as a
+  checklist item to find there. **Owner:** whoever next touches party-registration or
+  anchor-verification surface in this SDK; re-open and wire both halves (write-side `tenant` on
+  `RegisterParty`, read-side filter on `VerifyAnchor`) together when the gate fires.
+- **Verdict:** Defer wiring; record the decision; add the manifest line so the gate's two directions
+  agree again. **Status:** CONFIRMED-DEFERRED — the manifest change is itself the confirmed action;
+  the wiring is the open follow-up, tracked here and on seam-sdk#172 rather than left
+  implicit.
+
+---
+
+**Summary:** 1 decision, by Opus, not escalated — a deferral discovered as a side effect of wiring
+an unrelated RPC (`RevokeTenant`), not something either ask named. The manifest is brought current
+with the published contract; the hand-written clients are deliberately left as they are until the
+write side exists.
 
 ## 2026-09-30 — `verify/` walks one hash chain per tenant, not a global one (seam-sdk #144)
 

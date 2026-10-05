@@ -39,11 +39,16 @@ class RecordingAdmin(rpc.SeamAdminServicer):
         self.removed: pb.RemovePartyRequest | None = None
         self.placed: pb.PlaceGrantRequest | None = None
         self.revoked: pb.RevokeGrantRequest | None = None
+        self.revoked_tenant: pb.RevokeTenantRequest | None = None
         self.grants: list[pb.GrantView] = []
         self.erase_requests: list[pb.ErasureRequest] = []
 
     def RemoveParty(self, request, context):  # noqa: N802
         self.removed = request
+        return pb.Empty()
+
+    def RevokeTenant(self, request, context):  # noqa: N802
+        self.revoked_tenant = request
         return pb.Empty()
 
     def PlaceGrant(self, request, context):  # noqa: N802
@@ -81,6 +86,13 @@ def test_remove_party_sends_the_party_id_and_returns_none(recording_admin):
     with SeamAdminClient.connect(addr) as admin:
         assert admin.remove_party("bank-A") is None
     assert servicer.removed.party_id == "bank-A"
+
+
+def test_revoke_tenant_sends_the_subject_aid_and_returns_none(recording_admin):
+    servicer, addr = recording_admin
+    with SeamAdminClient.connect(addr) as admin:
+        assert admin.revoke_tenant("aid:x") is None
+    assert servicer.revoked_tenant.subject_aid == "aid:x"
 
 
 def test_place_grant_sends_every_field_and_returns_none(recording_admin):

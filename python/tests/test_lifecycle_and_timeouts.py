@@ -130,6 +130,7 @@ ADMIN_CALLS = {
     ),
     "enroll_tenant": lambda a: a.enroll_tenant("aid:x", "acme", "ns", timeout=0.1),
     "list_tenants": lambda a: a.list_tenants(timeout=0.1),
+    "revoke_tenant": lambda a: a.revoke_tenant("aid:x", timeout=0.1),
     "register_party": lambda a: a.register_party("p", b"\x00" * 32, timeout=0.1),
     "remove_party": lambda a: a.remove_party("p", timeout=0.1),
     "place_grant": lambda a: a.place_grant(
