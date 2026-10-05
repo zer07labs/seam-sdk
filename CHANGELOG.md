@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.33.2 — 2026-10-05
+
 ### Changed — pinned-key admission proof timestamp: big-endian i64 → ASCII-decimal (#105)
 
 **This is a breaking change to the wire format of the AITP pinned-key presentation, and it is
