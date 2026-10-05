@@ -27,6 +27,22 @@ than trusting a summary here.
   message rather than reconstructing one, so the field was already reachable the moment the
   stubs regenerated; this entry and the manifest line are the decision record, not new wiring.
 
+### Added — `verify_party_anchor`/`verifyPartyAnchor` tenant (seam-sdk #172, seam-runtime #922)
+
+- **`verify_party_anchor`/`verifyPartyAnchor`** gain an optional `tenant` (Python: keyword-only
+  `tenant: str = ""`; TypeScript: inline `opts.tenant?: string`), forwarded to
+  `VerifyAnchorRequest.tenant` — already additive on the wire (`seam-runtime` #903 Phase 3).
+  Omitted, it sends `""` — byte-identical to every existing caller's wire bytes. The write side
+  this pairs with needs no new SDK parameter: `register_party`/`registerParty` already bind a
+  tenant from the calling operator's own token claim (`seam-runtime` #903 Phase 1), never a
+  request field — pass that same tenant here to verify an anchor for a party registered under
+  it; a fleet-wide (no-tenant-claim) operator is refused at registration time. `Anchor` itself
+  carries no tenant of its own, unlike `ChainHeadAttestation` (used by the sibling
+  `verify_party_attestation`, whose tenant lives inside the attestation message instead) — so
+  this tenant is a sibling argument/option on the request, not a field of the anchor. Go, Java
+  and Kotlin need no change: callers there already set `VerifyAnchorRequest.tenant` directly on
+  the generated stub.
+
 ## 0.33.4 — 2026-10-06
 
 ## 0.33.3 — 2026-10-06

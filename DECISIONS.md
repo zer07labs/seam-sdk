@@ -1219,7 +1219,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:1049-1067` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:1065-1083` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2321,6 +2321,20 @@ PR set out to do.
   checklist item to find there. **Owner:** whoever next touches party-registration or
   anchor-verification surface in this SDK; re-open and wire both halves (write-side `tenant` on
   `RegisterParty`, read-side filter on `VerifyAnchor`) together when the gate fires.
+
+  **(Amended 2026-10-05.) This observable trigger will never fire.** The write side did not arrive
+  as a new `RegisterPartyRequest.tenant` field — `RegisterPartyRequest` still carries only
+  `party_id`/`pubkey` on seam-runtime's current `main`, unchanged. It arrived instead via the
+  *authenticated operator's token claim*: `register_party`/`registerParty`'s gRPC/facade layer binds
+  the tenant from `self.binding.require_scoped("register_party")`, never from a request field
+  (`seam-runtime#922`, merged, "fix(#903): close register_party/remove_party fleet-wide ... (Phase
+  1)"), and now refuses a fleet-wide (no-tenant-claim) operator outright. `check-contract.sh` has no
+  way to observe that — there is no new field for it to flag — so the trigger as written is
+  permanently dead, not merely slow. See the 2026-10-05 entry below for what actually happened and
+  what this SDK did about it. This bullet's original text is kept rather than rewritten, per this
+  file's own established practice (compare the amendment at "The precedent that covered worse has
+  since been reversed" above) — the trigger mechanism was wrong, not the underlying deferral
+  decision, which the new entry below also preserves rather than re-litigating.
 - **Verdict:** Defer wiring; record the decision; add the manifest line so the gate's two directions
   agree again. **Status:** CONFIRMED-DEFERRED — the manifest change is itself the confirmed action;
   the wiring is the open follow-up, tracked here and on seam-sdk#172 rather than left
@@ -2332,6 +2346,46 @@ PR set out to do.
 an unrelated RPC (`RevokeTenant`), not something either ask named. The manifest is brought current
 with the published contract; the hand-written clients are deliberately left as they are until the
 write side exists.
+
+## 2026-10-05 — `VerifyAnchorRequest.tenant` wired into both clients; the 2026-10-04 trigger corrected
+
+### Both halves the deferral above was waiting on turned out to already be live — just not the way the trigger expected
+
+- **Decided by:** Opus, running `/plan` → `/implement` for `plans/verify-anchor-tenant.md`, following
+  up directly on the entry immediately above.
+- **What actually happened, vs. what the trigger expected.** The 2026-10-04 entry's re-open trigger
+  — `check-contract.sh` refusing on a new `+ RegisterPartyRequest/tenant` field — predicted the write
+  side would arrive as a request field. It did not. `register_party`/`registerParty` still take only
+  `party_id`/`pubkey`; the tenant binding comes from the *authenticated operator's own token claim*
+  (`self.binding.require_scoped("register_party")`), confirmed live on seam-runtime's current `main`
+  and shipped in `seam-runtime#922` ("fix(#903): close register_party/remove_party fleet-wide ...
+  (Phase 1)", merged). That mechanism needed no new SDK parameter at all — `SeamAdminClient.connect`
+  already accepts any pre-minted bearer token — so the write side was never blocked on this SDK; it
+  was blocked on nothing, and the trigger that was supposed to announce it could never have fired.
+  `seam-sdk#172`'s own title ("once party registration carries a tenant on the write side") carried
+  the same wrong framing and is equally stale for the same reason.
+- **What this PR did.** Wired the read side the deferral was pairing it with:
+  `verify_party_anchor`/`verifyPartyAnchor` both grow an optional `tenant` (Python: keyword-only
+  `tenant: str = ""`; TypeScript: inline `opts.tenant?: string`), forwarded to the already-manifested
+  `VerifyAnchorRequest.tenant`. Additive and wire-compatible — proto3's empty-string default is
+  byte-identical to every existing caller's request, proven directly (serializing with `tenant=""`
+  emits zero extra bytes), not merely argued. See `CHANGELOG.md`'s Unreleased entry
+  `(seam-sdk #172, seam-runtime #922)` for the full behavior description.
+- **The 2026-10-04 entry's trigger bullet is amended in place** (above, "This observable trigger will
+  never fire") rather than rewritten — its original text, and the deferral's original conclusion, are
+  both preserved; only the mechanism prediction gets the dated correction. This file is not
+  append-only — see the precedent this PR's own planning pass cited: `DECISIONS.md:1220-1221`,
+  `DECISIONS.md:1551`, `DECISIONS.md:1952`.
+- **Verdict:** Wire both hand-written clients' read side; correct the stale trigger in place; close
+  `seam-sdk#172` via the PR. **Status:** CONFIRMED — shipped and verified (fresh-Opus gate, both
+  language phases PASS on round 1).
+
+---
+
+**Summary:** 1 decision, by Opus, not escalated — closing out a deferral this same file recorded the
+day before, once the write side it was waiting on turned out to already be live in a form its own
+trigger couldn't detect. No new ambiguity introduced; the prior entry's conclusion stands, only its
+stated trigger mechanism was wrong.
 
 ## 2026-09-30 — `verify/` walks one hash chain per tenant, not a global one (seam-sdk #144)
 

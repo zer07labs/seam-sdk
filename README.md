@@ -481,7 +481,9 @@ opaque). Sealing a decision emits a `DECISION_SEALED` event — asserted live in
 Beyond decisions & sessions, `SeamClient` wraps the rest of the data plane: independent proof retrieval +
 local verification (`get_commitment_proof`, `verify_decision`), server-side trust
 (`verify_commitment`, `verify_party_anchor`, `verify_party_attestation` — the A4 signed chain-head
-check, boolean verdict, tamper/unknown ⇒ `False` never an exception), context binding
+check, boolean verdict, tamper/unknown/wrong-tenant ⇒ `False` never an exception;
+`verify_party_anchor`/`verifyPartyAnchor` take an optional `tenant`, scoping the lookup — omitted, it
+defaults to the untenanted partition), context binding
 (`register_context`, `resolve_context`), and advisory outcome reporting (`report_outcome`, Plan R —
 emits a `LEARNING_OUTCOME`, never mutates the sealed record).
 

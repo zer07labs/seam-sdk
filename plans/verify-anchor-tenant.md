@@ -235,9 +235,18 @@ docstrings get an explicit cross-reference so a reader of one doesn't assume the
 
 ### Phase 3 — Docs, decision record, and closing the loop
 
-**Status:** TODO
+**Status:** DONE — verified PASS (fresh Opus subagent, 1 round). AC4 (issue #172 shows CLOSED)
+is necessarily N/A until the PR merges — tracked as a `/ship`-time outcome, not a gap.
 **Risk:** simple — no code; last phase, nothing to batch it with (same situation
 `plans/revoke-tenant.md`'s Phase 4 was in), so it still gates solo per `/implement`'s own rule.
+
+**Divergence from plan:** `CHANGELOG.md`'s placement instruction ("after the existing
+`revoke_tenant` entry") assumed `## Unreleased` still held that entry. It didn't by the time this
+phase executed: a `v0.33.2` release commit, pulled onto this branch before Phase 1 started (see
+`PROGRESS.md`'s pre-phase note), had already moved `revoke_tenant` and everything else under a new
+`## 0.33.2 — 2026-10-05` header, leaving `## Unreleased` empty. The new entry became the Unreleased
+section's first (and only) entry instead — verified by the Phase 3 reviewer as satisfying AC1's
+actual intent (discoverable, correctly placed, correct dual citation) despite the literal mismatch.
 
 - **Delivers:** The written record catches up with what Phases 1-2 shipped and corrects the stale
   prediction in the existing deferral entry; `seam-sdk#172` closes; this plan is indexed.

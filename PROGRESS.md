@@ -4381,6 +4381,26 @@ green before any code changed.
   byte-equality against seam-runtime's Rust source and confirmed no live-test port collision
   (8211/8212, clean against 8201-8210/8215-8218 used elsewhere). No new `ASSUMPTIONS.md`
   entries. What's next: Phase 3 (docs/decisions).
+- 2026-10-05 Phase 3 (docs, decision record, closing the loop) — PASS, 1 round, fresh Opus
+  verifier. Files: `CHANGELOG.md` (new Unreleased entry — placed as the section's first entry,
+  not "after revoke_tenant" as planned, since that entry had already moved under `## 0.33.2`
+  by the time this phase ran; verifier confirmed the divergence is faithful to AC1's intent),
+  `DECISIONS.md` (new 2026-10-05 entry at `DECISIONS.md:2350` + a purely-additive dated amendment to the
+  2026-10-04 entry's trigger bullet — verifier confirmed via diff hunk the original bullet text,
+  and the entry's CONFIRMED-DEFERRED conclusion, are byte-unchanged), `COMPATIBILITY.md:102` +
+  `DECISIONS.md:1222` (mandatory "No yank" citation repoint, byte-identity verified both
+  endpoints), `plans/README.md` (new Active/pending row), `README.md` (tenant clause in the
+  Data-plane surface trust description). Verifier independently re-confirmed every factual claim
+  against the seam-runtime sibling checkout (seam-runtime#922 merged, planes.rs's
+  require_scoped binding, RegisterPartyRequest still fieldless) rather than trusting the diff's
+  own prose. Tested: `test_compatibility_citations_resolve.py` 551 passed, full Python suite
+  1366 passed/23 skipped, `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exit 0. Two advisory
+  notes, both pre-existing/out-of-scope (unrelated stale CHANGELOG citations in ASSUMPTIONS.md/
+  PROGRESS.md/DECISIONS.md/check_registry_drift.py predating this plan; a cosmetic 2-line
+  undershoot in the "No yank" range that was already present pre-shift) — not fixed, per the
+  plan's own "don't quietly absorb a different housekeeping gap" posture. No new
+  `ASSUMPTIONS.md` entries. All three phases now DONE. What's next: finalization pass (§4),
+  then `/ship`.
 - 2026-10-06 Hotfix PR #178 (unblock v0.33.3 CI/publish, reported by a seam-runtime session
   watching its own downstream publish fail). Two unrelated, pre-existing issues, neither
   caused by the `v0.33.3` release commit (`e67b365`) itself: (1) `verify/docs/seam-event.v1.md`
