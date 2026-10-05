@@ -4230,3 +4230,11 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
   (1334 passed, 22 skipped, 0 failed) instead.
 - pushed `feat/revoke-tenant` `55ee694`
 - PR #174 opened: https://github.com/zer07labs/seam-sdk/pull/174
+- **CI red, confirmed unrelated to this diff.** `spec pin` and `integration (live seam-grpc
+  round-trip)` both fail on code/files this branch never touched, tracing to same-day
+  (2026-10-04) upstream seam-runtime/BSR drift — the same window `/ship`'s own verify gate
+  caught for `RevokeTenant`'s docstrings. Filed zer07labs/seam-sdk#175 (stale vendored spec,
+  mechanical re-vendor) and zer07labs/seam-runtime#996 (register_party now rejects the
+  dev-insecure fleet-wide operator — ask is open on whether that's intentional). Per
+  maintainer direction: holding PR #174 unmerged, not touching either issue from this branch,
+  waiting for upstream resolution rather than merging around a red check.
