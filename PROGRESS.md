@@ -4268,9 +4268,13 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
   `VerifyPartyAttestation` looks the party up under the ATTESTATION's own `tenant` field (wire
   tag 7, UNSIGNED) — the KAT fixture leaves that "" (the untenanted/fleet partition), so a
   correctly-registered, untampered attestation came back `False` (CI log: "1 failed, 42
-  passed", `assert False is True`). Confirmed via `crates/seamd/src/facade.rs:374`
+  passed", `assert False is True`). Confirmed via `seam-runtime/crates/seamd/src/facade.rs:374`
   (`verify_party_attestation_in(&att.tenant, party_id, att)`). Fixed by setting
   `tenant=_TENANT`/`{tenant: TENANT}` on every attestation built in both live tests —safe
   because the field is unsigned, so it can't invalidate the KAT signature. Full Python suite
-  still 1334 passed; TS still 182 passed/10 skipped; both lint/format clean. Not yet
-  pushed/re-watched.
+  still 1334 passed; TS still 182 passed/10 skipped; both lint/format clean. Pushed `76e0bd1`;
+  re-watched CI — `integration` now green, but a self-inflicted citation break surfaced in
+  `python (ruff · pytest)`: this very note cited the seam-runtime file as a bare local path
+  instead of `seam-runtime/...`-prefixed, so `test_each_citation_resolves` correctly flagged
+  it as pointing at a file that doesn't exist in this repo. Fixed in the same note (above) —
+  no code change, just this citation's own prefix.
