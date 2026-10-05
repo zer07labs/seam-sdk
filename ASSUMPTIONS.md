@@ -1280,3 +1280,33 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Status:** UNCONFIRMED (recorded 2026-09-07). The five raise sites and the wire behaviour are
   pinned by tests and mutation-proved 6/6; what is unconfirmed is the API *shape* against a real
   downstream consumer, which only seam-adapters can settle by using it.
+
+## `DECISIONS.md`'s new entry placement is by topical adjacency, not strict chronology
+
+- **Plan:** `plans/verify-anchor-tenant.md`
+- **Assumed:** that `DECISIONS.md` has a single settled insertion convention (either strict
+  reverse-chronological at the top, or append-only at the bottom) that this plan's Phase 3 should
+  follow for its new 2026-10-05 entry.
+- **Chose:** neither, because the file itself doesn't have one — `grep -n "^## 2026-"` shows dates
+  out of order throughout (e.g. `2026-09-30` appears both before AND after `2026-10-04`'s entry;
+  six `2026-09-04` entries in a row are internally ordered by session, not merged into date order
+  with older material). Placed the new entry immediately after the 2026-10-04 entry it follows up
+  on and cross-references, keeping topically-related content adjacent for a reader — which the
+  plan's own Approach section already named as the goal ("a reader ... should be able to tell why
+  ... without re-deriving it").
+- **Alternatives:** (a) insert at the very top of the file (mirroring the newest-looking cluster
+  near the header) — rejected: that cluster's dates (2026-09-13 etc.) are actually *older* than
+  2026-10-04's entry further down, so "top = newest" isn't this file's real rule either, and topic
+  adjacency serves the reader better than a chronological position the file doesn't consistently
+  keep anyway. (b) append at the absolute end of the file — rejected: would separate the new entry
+  from the entry it amends and cross-references, forcing a reader to jump the whole file's length.
+- **Blast radius if wrong:** purely cosmetic/organizational — no code, no test, no citation depends
+  on this entry's position in the file (only on its *content* resolving, which is verified). A
+  future `/reconcile` pass choosing a real ordering convention for this file would only need to
+  move this entry, not rewrite it.
+- **Owner / re-open trigger:** whoever next audits `DECISIONS.md`'s own structure wholesale; until
+  then, new entries should probably keep following topical-adjacency-over-strict-date, since that's
+  now the precedent this entry itself sets alongside the pre-existing mixed ordering.
+- **Status:** UNCONFIRMED (recorded 2026-10-05). The entry's *content* is verified (PASS, fresh
+  Opus gate); what's unconfirmed is only whether "topical adjacency" is the right house convention
+  for this file going forward, which no single plan can settle unilaterally.

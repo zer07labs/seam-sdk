@@ -68,14 +68,18 @@ docstrings get an explicit cross-reference so a reader of one doesn't assume the
 
 ### Phase 1 — Python: `verify_party_anchor` (sync + async) carries `tenant`
 
-**Status:** DONE — verified PASS (fresh Opus subagent, 1 round), commit pending below.
+**Status:** DONE — verified PASS (fresh Opus subagent, 1 round), committed as `07c9d42`.
 **Risk:** complex — a public SDK method signature, on both the sync and async clients.
 
 **Divergences from plan, all advisory/additive, none changing the spec:**
-- `python/tests/test_live_fixtures_are_isolated.py` needed a one-line registration (`LIVE_SUITES` +
-  its anti-vacuity count) for the new live test file — not in the original Files list because this
+- `python/tests/test_live_fixtures_are_isolated.py` needed registering the new live test file in
+  `LIVE_SUITES` and bumping its anti-vacuity count — not in the original Files list because this
   structural guard wasn't surfaced during planning; confirmed mandatory (the guard's own detector
-  flags any unregistered file that imports `live_server`), not scope creep.
+  flags any unregistered file that imports `live_server`), not scope creep. In practice this was 8
+  hunks, not one line: the registration itself plus correcting 5 now-stale "four suites"
+  prose/assertion-message references and rewording the frozen pre-85-corpus assertion's failure
+  message (confirmed message-only — its subject list, the 4 pre-85 fixture files, is unchanged) so
+  it no longer reads as if it should track `LIVE_SUITES`'s current size.
 - The async unit test uses an explicitly-named `_AioRecordingTrust.VerifyPartyAnchor` stub rather than
   the plan's cited `__getattr__`-based `_AioRecorder` pattern — a method-name typo fails loudly
   instead of silently recording under the wrong key; verifier confirmed this still satisfies "no new
@@ -169,7 +173,7 @@ docstrings get an explicit cross-reference so a reader of one doesn't assume the
 
 ### Phase 2 — TypeScript: `verifyPartyAnchor` carries `tenant`
 
-**Status:** DONE — verified PASS (fresh Opus subagent, 1 round).
+**Status:** DONE — verified PASS (fresh Opus subagent, 1 round), committed as `a4ef019`.
 **Risk:** complex — same reasoning as Phase 1, on the TS public contract.
 
 **Divergences from plan, both additive, for symmetry with Phase 1:**
@@ -235,7 +239,7 @@ docstrings get an explicit cross-reference so a reader of one doesn't assume the
 
 ### Phase 3 — Docs, decision record, and closing the loop
 
-**Status:** DONE — verified PASS (fresh Opus subagent, 1 round). AC4 (issue #172 shows CLOSED)
+**Status:** DONE — verified PASS (fresh Opus subagent, 1 round), committed as `c887d77`. AC4 (issue #172 shows CLOSED)
 is necessarily N/A until the PR merges — tracked as a `/ship`-time outcome, not a gap.
 **Risk:** simple — no code; last phase, nothing to batch it with (same situation
 `plans/revoke-tenant.md`'s Phase 4 was in), so it still gates solo per `/implement`'s own rule.

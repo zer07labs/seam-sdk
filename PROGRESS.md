@@ -4401,6 +4401,43 @@ green before any code changed.
   plan's own "don't quietly absorb a different housekeeping gap" posture. No new
   `ASSUMPTIONS.md` entries. All three phases now DONE. What's next: finalization pass (§4),
   then `/ship`.
+- 2026-10-05 Finalization (§4) — whole-feature pass across all three phases' cumulative diff
+  (`07c9d42`, `a4ef019`, `c887d77`). Tests: full Python suite re-run clean from scratch (1369
+  passed/23 skipped — count differs from each phase's own in-flight number only because later
+  phases added files, not because of a regression), `ruff check`/`format --check` clean,
+  `npm run typecheck` clean, `npm test` 185 passed/11 skipped/0 failed, `STREAM=1 EVENTS=1
+  ./scripts/check-contract.sh` exit 0 (all 45 RPCs/249 fields/15 enum values/95 event fields
+  present in both languages), `test_compatibility_citations_resolve.py` +
+  `test_live_fixtures_are_isolated.py` both green (591 passed) confirming no citation drift
+  from Phase 3's docs edits or this pass's own `ASSUMPTIONS.md` append (not in the citation
+  test's `DOCS` dict, so never at risk — confirmed by inspection, not assumed).
+  Integration-test-gap judgment (explicit, not skipped silently): the only boundary this
+  feature crosses is the gRPC wire, and each of Phase 1 and Phase 2 already has its own
+  6-case live test against a real `seam-grpc` server proving the *new* behavior (matching
+  tenant, wrong tenant, omitted tenant) end to end in its own language. Python↔TS agreement
+  is proven by two parallel per-language unit tests, each independently asserting
+  `tenant == ""` on omission in its own client — not by a single cross-language test, and
+  none is owed here: `test_client_parity.py` only compares the Python sync client against
+  its own async mirror (`from seam_sdk import aio, client` — it cannot see TypeScript at
+  all), and nothing in this feature shares a digest/crypto preimage across languages the
+  way the dual-verify obligations elsewhere in this repo do; it's a plain string field
+  forwarded verbatim. (Caught during the final whole-feature verify pass: an earlier draft
+  of this note wrongly credited `test_client_parity.py` with cross-language proof.) There
+  is no seam *between* phases
+  that isn't already either a docs-only phase (3) or independently proven (1, 2). Conclusion:
+  no new integration test needed at finalization.
+  Tracked-file closure: fixed three stale "commit pending below"/missing-commit-hash
+  mentions in `plans/verify-anchor-tenant.md`'s Phase 1/2/3 `Status:` lines (now cite
+  `07c9d42`/`a4ef019`/`c887d77`). `ASSUMPTIONS.md` sweep caught one assumption made during
+  Phase 3 but never logged at the time: the `DECISIONS.md` new-entry placement choice
+  (topical adjacency over strict chronology, since the file's dated entries are not
+  strictly chronologically ordered throughout — grep-confirmed). Logged as `UNCONFIRMED`
+  under "`DECISIONS.md`'s new entry placement is by topical adjacency, not strict
+  chronology" in `ASSUMPTIONS.md`. Docs sweep: already complete per Phase 3's own verified
+  diff; nothing further found stale during this pass. What's next: one final cumulative
+  Opus verification pass over all three phases against the plan as a whole (§4), then
+  commit this finalization work, then `/reconcile` (since `ASSUMPTIONS.md` now carries one
+  entry for this plan) before `/ship`.
 - 2026-10-06 Hotfix PR #178 (unblock v0.33.3 CI/publish, reported by a seam-runtime session
   watching its own downstream publish fail). Two unrelated, pre-existing issues, neither
   caused by the `v0.33.3` release commit (`e67b365`) itself: (1) `verify/docs/seam-event.v1.md`
