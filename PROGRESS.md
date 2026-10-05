@@ -4369,6 +4369,18 @@ green before any code changed.
   test channels matching existing convention, the extra 6th live-test case). No new
   `ASSUMPTIONS.md` entries — no genuinely unresolved judgment calls, all divergences verified.
   What's next: Phase 2 (TypeScript).
+- 2026-10-05 Phase 2 (TypeScript `verifyPartyAnchor` tenant) — PASS, 1 round, fresh Opus
+  verifier. Files: `ts/src/client.ts` (inline `{ tenant?: string; timeoutMs?: number }` opts,
+  not a named interface; plus a bidirectional `verifyPartyAttestation` doc-comment addition),
+  `ts/src/admin.ts` (`registerParty` doc comment only — used a backtick code span rather than
+  `{@link SeamClient...}` since `SeamClient` isn't imported there; verifier confirmed this was
+  the right call and that `tsc` doesn't validate `{@link}` targets anyway), `ts/tests/verify_anchor.test.ts`
+  (new, 6 live cases matching Python's Phase 1 case-for-case + 3 unit tests). Tested: `npm run
+  typecheck`/`build` clean, `npm test` 185 passed/11 skipped/0 failed, `STREAM=1 EVENTS=1
+  ./scripts/check-contract.sh` exit 0. Verifier independently re-derived the signing-payload
+  byte-equality against seam-runtime's Rust source and confirmed no live-test port collision
+  (8211/8212, clean against 8201-8210/8215-8218 used elsewhere). No new `ASSUMPTIONS.md`
+  entries. What's next: Phase 3 (docs/decisions).
 - 2026-10-06 Hotfix PR #178 (unblock v0.33.3 CI/publish, reported by a seam-runtime session
   watching its own downstream publish fail). Two unrelated, pre-existing issues, neither
   caused by the `v0.33.3` release commit (`e67b365`) itself: (1) `verify/docs/seam-event.v1.md`

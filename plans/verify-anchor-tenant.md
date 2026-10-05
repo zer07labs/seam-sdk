@@ -169,8 +169,17 @@ docstrings get an explicit cross-reference so a reader of one doesn't assume the
 
 ### Phase 2 — TypeScript: `verifyPartyAnchor` carries `tenant`
 
-**Status:** TODO
+**Status:** DONE — verified PASS (fresh Opus subagent, 1 round).
 **Risk:** complex — same reasoning as Phase 1, on the TS public contract.
+
+**Divergences from plan, both additive, for symmetry with Phase 1:**
+- The live test (`verify_anchor.test.ts`) has 6 cases, not the plan's 5 — a tampered
+  `timestampMillis` case alongside the tampered-signature case, matching Phase 1's Python test
+  case-for-case (same order, same reasoning: both fields are part of the signed preimage).
+- `verifyPartyAttestation`'s doc comment also got a one-sentence addition distinguishing its
+  message-level `tenant` from `verifyPartyAnchor`'s request-level `tenant` — the TS mirror of
+  Phase 1's bidirectional cross-reference fix, closing the same "both wrappers" gap in Context
+  that Phase 1 found under-scoped to one direction in the original Docs bullets.
 
 - **Delivers:** `SeamClient.verifyPartyAnchor` (`ts/src/client.ts:1218-1225`) grows an inline options
   field `tenant?: string`, matching the established "method-specific extra option" convention this

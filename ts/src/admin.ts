@@ -278,7 +278,11 @@ export class SeamAdminClient {
     await this.admin.revokeTenant({ subjectAid }, call(opts));
   }
 
-  /** Register a counterparty's raw 32-byte ed25519 public key (network mode). */
+  /** Register a counterparty's raw 32-byte ed25519 public key (network mode). Requires the
+   * `grant:create` operator scope; a fleet-wide (no-tenant-claim) operator is refused (seam-runtime
+   * #903 Phase 1). The party is bound to the *calling operator's own* `tenant` claim — never a request
+   * field — so that same tenant is what to pass to `SeamClient.verifyPartyAnchor`'s `tenant` option to
+   * verify this party later. */
   async registerParty(
     partyId: string,
     pubkey: Uint8Array,
