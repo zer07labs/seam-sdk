@@ -27,16 +27,23 @@ function b64url(b: Uint8Array): string {
   return Buffer.from(b).toString("base64url");
 }
 
-/** A valid compact-JWS operator token carrying `scopes`, signed by the golden operator key. */
+/** A valid compact-JWS operator token carrying `scopes`, signed by the golden operator key.
+ *
+ * `opts.tenant`, when given, binds the token to that tenant (U-RT-6) — required since seam-runtime
+ * #903 Phase 1 for any operator calling `registerParty`/`removeParty`, which now refuse a fleet-wide
+ * (no-tenant-claim) operator (seam-runtime's own `scoped_auth_grpc.rs::mint_with_tenant`). Omitted
+ * (the default) mints a fleet-wide token, byte-identical to the pre-#903 shape. */
 export function mintOperatorToken(
   scopes: string[],
-  opts?: { aud?: string; ttlSecs?: number },
+  opts?: { aud?: string; ttlSecs?: number; tenant?: string },
 ): string {
   const iat = Math.floor(Date.now() / 1000);
   const aud = opts?.aud ?? "seam-runtime";
   const exp = iat + (opts?.ttlSecs ?? 600);
   const header = JSON.stringify({ alg: "EdDSA", typ: "JWT", kid: PUBKEY_HEX });
-  const payload = JSON.stringify({ sub: "op-test", scopes, aud, iat, exp });
+  const claims: Record<string, unknown> = { sub: "op-test", scopes, aud, iat, exp };
+  if (opts?.tenant !== undefined) claims.tenant = opts.tenant;
+  const payload = JSON.stringify(claims);
   const signing = `${b64url(enc.encode(header))}.${b64url(enc.encode(payload))}`;
   const sig = ed25519.sign(enc.encode(signing), Buffer.from(SEED_HEX, "hex"));
   return `${signing}.${b64url(sig)}`;

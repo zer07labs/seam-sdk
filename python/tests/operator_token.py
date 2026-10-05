@@ -37,25 +37,34 @@ def _b64url(b: bytes) -> str:
 
 
 def mint_operator_token(
-    scopes: list[str], *, aud: str = "seam-runtime", ttl_secs: int = 600
+    scopes: list[str],
+    *,
+    aud: str = "seam-runtime",
+    ttl_secs: int = 600,
+    tenant: str | None = None,
 ) -> str:
     """A valid compact-JWS operator token carrying ``scopes``, signed by the golden operator key. Verifies
     against a runtime that installed the sibling snapshot fixture. ``aud`` defaults to the runtime audience;
-    ``ttl_secs`` sets ``exp = iat + ttl_secs``."""
+    ``ttl_secs`` sets ``exp = iat + ttl_secs``.
+
+    ``tenant``, when given, binds the token to that tenant (U-RT-6) — required since seam-runtime #903
+    Phase 1 for any operator calling ``register_party``/``remove_party``, which now refuse a fleet-wide
+    (no-tenant-claim) operator (seam-runtime's own `scoped_auth_grpc.rs::mint_with_tenant`). Omitted (the
+    default) for a fleet-wide token, byte-identical to the pre-#903 shape."""
     iat = int(time.time())
     header = json.dumps(
         {"alg": "EdDSA", "typ": "JWT", "kid": _PUBKEY_HEX}, separators=(",", ":")
     )
-    payload = json.dumps(
-        {
-            "sub": "op-test",
-            "scopes": scopes,
-            "aud": aud,
-            "iat": iat,
-            "exp": iat + ttl_secs,
-        },
-        separators=(",", ":"),
-    )
+    claims = {
+        "sub": "op-test",
+        "scopes": scopes,
+        "aud": aud,
+        "iat": iat,
+        "exp": iat + ttl_secs,
+    }
+    if tenant is not None:
+        claims["tenant"] = tenant
+    payload = json.dumps(claims, separators=(",", ":"))
     signing = f"{_b64url(header.encode())}.{_b64url(payload.encode())}"
     sig = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(_SEED_HEX)).sign(
         signing.encode("ascii")

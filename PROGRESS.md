@@ -4238,3 +4238,27 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
   dev-insecure fleet-wide operator — ask is open on whether that's intentional). Per
   maintainer direction: holding PR #174 unmerged, not touching either issue from this branch,
   waiting for upstream resolution rather than merging around a red check.
+- **Maintainer then said "merge it and let seam-runtime know."** Merge attempt blocked at the
+  platform level: `gh pr merge --squash --admin` is refused by a GitHub repository ruleset on
+  `main` (id `20588746`) requiring `ci-ok` green — `bypass_actors` names only one GitHub App,
+  not this account, confirmed via `gh api repos/.../rulesets/20588746`. Notified seam-runtime's
+  session of the blocked state over `SendMessage`.
+- **seam-runtime's reply resolved #996: intentional (#903 Phase 1 / #922), not a regression —
+  fix is on seam-sdk's side.** `register_party`/`remove_party` refuse a fleet-wide (no
+  tenant-claim) operator; `RegisterPartyRequest` carries no `tenant` field, so the runtime
+  binds to the token's own `tenant` claim. Confirmed directly against the seam-runtime sibling
+  checkout (`crates/seamd/src/planes.rs:720,1124`, `scoped_auth_grpc.rs::mint_with_tenant`) —
+  scope `grant:create`, any clean tenant id. Fixed both live fixtures to install the
+  `operator_keys` snapshot and mint a tenant-bound token: `python/tests/operator_token.py`
+  (`mint_operator_token` gained an optional `tenant` kwarg), `python/tests/test_verify_attestation.py`
+  (`dual_plane` fixture), `ts/tests/operator_token.ts` (`mintOperatorToken` gained `opts.tenant`),
+  `ts/tests/verify_attestation.test.ts` (`withPlanes`). Also re-vendored `spec pin`'s target,
+  `verify/docs/seam-event.v1.md`, from `zer07labs/seam-runtime@6987aca` (one comment-only line:
+  `agent_id`'s doc reverted to "audit-only LABEL, never the scope-floor key" — confirmed
+  SPEC-ONLY, zero behavior change, since `verify/src/wire.rs` only ever carries `agent_id`
+  through as an opaque field). `python3 scripts/check_vendored_spec.py --from gh` now passes;
+  full Python suite 1334 passed; TS `npm test` 182 passed, 10 skipped (incl. the two
+  `SEAM_GRPC_BIN`-gated live tests — no local `seam-grpc` binary available: a release build
+  from the sibling `seam-runtime` checkout failed on an unrelated local macOS SDK/linker defect,
+  not this diff; CI pulls the published image rather than building from source, so this local
+  limitation doesn't apply there). Not yet pushed/re-watched/merged.

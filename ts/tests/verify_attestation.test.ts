@@ -25,9 +25,13 @@ import {
   ChainHeadAttestationSchema,
   type ChainHeadAttestation,
 } from "../gen/seam/event/v1/seam_event_pb.js";
+import { REGISTRY_SNAPSHOT_PATH, signSnapshot, mintOperatorToken } from "./operator_token.js";
 
 const BIN = process.env.SEAM_GRPC_BIN;
 const SKIP = !BIN;
+// Any tenant id — registerParty takes none on the wire (the operator token's own `tenant` claim is what
+// the runtime binds to; see RegisterPartyRequest), so this pins AUTH, not a registration scope.
+const TENANT = "verify-counterparties";
 
 // ── The runtime chain_head_attestation KAT, from conformance/vectors.json ────────────────────────────
 const vectors = JSON.parse(
@@ -104,17 +108,26 @@ function waitPort(port: number, timeoutMs = 8000): Promise<void> {
   });
 }
 
+/** registerParty is authority-establishing (rt-D) and, since seam-runtime #903 Phase 1, refuses a
+ * fleet-wide operator — the mgmt plane here installs the `operator_keys` trust root (signed, since it's
+ * trust-bearing — see operator_token.signSnapshot) so a tenant-bound `grant:create` token can authorize
+ * it (seam-sdk#175 / seam-runtime#996). The data plane is unaffected: `operator_keys` is the trust root
+ * for the management plane only, so verifyPartyAttestation stays dev-open as before. */
 async function withPlanes(
   dataPort: number,
   mgmtPort: number,
   fn: (dataAddr: string, mgmtUrl: string) => Promise<void>,
 ): Promise<void> {
+  const [pubkey, sigPath] = signSnapshot(REGISTRY_SNAPSHOT_PATH);
   const proc = spawn(BIN!, {
     env: {
       ...process.env,
       SEAM_GRPC_LISTEN: `127.0.0.1:${dataPort}`,
       SEAM_GRPC_MGMT_LISTEN: `127.0.0.1:${mgmtPort}`,
       SEAM_DEV_INSECURE: "1",
+      SEAM_REGISTRY_SNAPSHOT: REGISTRY_SNAPSHOT_PATH,
+      SEAM_REGISTRY_SNAPSHOT_SIG: sigPath,
+      SEAM_SNAPSHOT_PUBKEY: pubkey,
     },
     stdio: "ignore",
   });
@@ -133,7 +146,9 @@ test(
   async () => {
     await withPlanes(8209, 8210, async (dataAddr, mgmtUrl) => {
       const data = SeamClient.connect(`http://${dataAddr}`);
-      const admin = SeamAdminClient.connect(mgmtUrl);
+      const admin = SeamAdminClient.connect(mgmtUrl, {
+        token: mintOperatorToken(["grant:create"], { tenant: TENANT }),
+      });
       await admin.registerParty("bank-A", katPubkey());
 
       // 1. a registered party's untampered attestation verifies

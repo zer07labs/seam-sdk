@@ -24,10 +24,15 @@ from types import SimpleNamespace
 import pytest
 
 from live_server import spawn_server
+from operator_token import REGISTRY_SNAPSHOT_PATH, mint_operator_token, sign_snapshot
 
 from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
 from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as ev
 from seam_sdk import SeamAdminClient, SeamClient  # noqa: E402
+
+#: Any tenant id — `register_party` takes none on the wire (the operator token's own `tenant` claim is
+#: what the runtime binds to; see `RegisterPartyRequest`), so this pins AUTH, not a registration scope.
+_TENANT = "verify-counterparties"
 
 # ── The runtime chain_head_attestation KAT, from conformance/vectors.json ────────────────────────────
 # The counterparty signs with the ed25519 key derived from this seed; the signature is over the
@@ -108,9 +113,24 @@ def test_wrapper_returns_false_never_raises():
 
 @pytest.fixture
 def dual_plane(tmp_path):
-    """Spawn seam-grpc with BOTH the data plane (VerifyPartyAttestation) and the management plane
-    (RegisterParty) bound; yields (data_addr, mgmt_addr). Skips without SEAM_GRPC_BIN."""
-    with spawn_server(mgmt=True, log_dir=tmp_path) as srv:
+    """Spawn seam-grpc with BOTH the data plane (VerifyPartyAttestation, dev-open) and the management
+    plane (RegisterParty) bound; yields (data_addr, mgmt_addr). Skips without SEAM_GRPC_BIN.
+
+    The mgmt plane installs the `operator_keys` trust root (signed, since it's trust-bearing — see
+    `operator_token.sign_snapshot`): `register_party` refuses a fleet-wide operator since seam-runtime
+    #903 Phase 1 (seam-sdk#175 / seam-runtime#996), so a dev-open plane with no token can no longer
+    exercise it. The data plane is unaffected — `operator_keys` is "the sole trust root for the entire
+    MANAGEMENT plane" (seamd/src/registry.rs), so `VerifyPartyAttestation` stays dev-open as before."""
+    pubkey, sig_path = sign_snapshot(REGISTRY_SNAPSHOT_PATH)
+    with spawn_server(
+        mgmt=True,
+        log_dir=tmp_path,
+        env_extra={
+            "SEAM_REGISTRY_SNAPSHOT": REGISTRY_SNAPSHOT_PATH,
+            "SEAM_REGISTRY_SNAPSHOT_SIG": sig_path,
+            "SEAM_SNAPSHOT_PUBKEY": pubkey,
+        },
+    ) as srv:
         yield srv.data_addr, srv.mgmt_addr
 
 
@@ -118,7 +138,12 @@ def test_verify_party_attestation_trio_live(dual_plane):
     """Registered party + untampered KAT → True; tampered signature / tampered field / unknown → False."""
     data_addr, mgmt_addr = dual_plane
     data = SeamClient.connect(data_addr)
-    admin = SeamAdminClient.connect(mgmt_addr)
+    # register_party is authority-establishing (rt-D) and, since seam-runtime #903 Phase 1, refuses a
+    # fleet-wide operator — it needs a tenant-bound `grant:create` token (the request itself carries no
+    # tenant field; the runtime binds to the token's own `tenant` claim).
+    admin = SeamAdminClient.connect(
+        mgmt_addr, token=mint_operator_token(["grant:create"], tenant=_TENANT)
+    )
 
     admin.register_party("bank-A", _kat_pubkey())
 
