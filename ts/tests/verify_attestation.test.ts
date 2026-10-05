@@ -39,13 +39,18 @@ const vectors = JSON.parse(
 );
 const VECTOR = vectors.chain_head_attestation;
 const KAT_SEED = Uint8Array.from(Buffer.from(VECTOR.inputs.issuer_seed_hex, "hex"));
-function katAttestation(): ChainHeadAttestation {
+// `tenant` (wire tag 7) is UNSIGNED — setting it here never invalidates the KAT signature, which is
+// computed over the preimage without it. Defaults to "" (the untenanted/fleet partition), matching
+// every pre-#903 caller; the live test below overrides it to match the tenant its operator token
+// registered the party under.
+function katAttestation(opts?: { tenant?: string }): ChainHeadAttestation {
   return create(ChainHeadAttestationSchema, {
     attestedLen: BigInt(VECTOR.inputs.attested_len),
     attestedHead: Uint8Array.from(Buffer.from(VECTOR.inputs.attested_head_hex, "hex")),
     attestedAt: BigInt(VECTOR.inputs.attested_at),
     issuerAid: VECTOR.issuer_aid as string,
     digestSchema: VECTOR.inputs.digest_schema,
+    tenant: opts?.tenant ?? "",
     signature: Uint8Array.from(Buffer.from(VECTOR.signature_hex, "hex")),
   });
 }
@@ -151,22 +156,35 @@ test(
       });
       await admin.registerParty("bank-A", katPubkey());
 
+      // Every call below carries `tenant: TENANT` on the attestation: registerParty bound "bank-A"
+      // under TENANT (the operator token's claim, since RegisterPartyRequest has no tenant field of
+      // its own), and verifyPartyAttestation looks the party up under the ATTESTATION's own (unsigned)
+      // tenant, not the caller's — the two must agree or a correctly-registered, untampered
+      // attestation still comes back false, having found no party in the (wrong) tenant partition it
+      // looked under.
+
       // 1. a registered party's untampered attestation verifies
-      assert.equal(await data.verifyPartyAttestation("bank-A", katAttestation()), true);
+      assert.equal(
+        await data.verifyPartyAttestation("bank-A", katAttestation({ tenant: TENANT })),
+        true,
+      );
 
       // 2. a tampered signature must not verify
-      const badSig = katAttestation();
+      const badSig = katAttestation({ tenant: TENANT });
       badSig.signature = Uint8Array.from(badSig.signature);
       badSig.signature[0] ^= 0x01;
       assert.equal(await data.verifyPartyAttestation("bank-A", badSig), false);
 
       // 3. a tampered field (part of the signed preimage) must not verify
-      const badField = katAttestation();
+      const badField = katAttestation({ tenant: TENANT });
       badField.attestedLen += 1n;
       assert.equal(await data.verifyPartyAttestation("bank-A", badField), false);
 
       // 4. an unknown party never verifies
-      assert.equal(await data.verifyPartyAttestation("bank-B", katAttestation()), false);
+      assert.equal(
+        await data.verifyPartyAttestation("bank-B", katAttestation({ tenant: TENANT })),
+        false,
+      );
     });
   },
 );

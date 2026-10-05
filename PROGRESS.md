@@ -4261,4 +4261,16 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
   `SEAM_GRPC_BIN`-gated live tests — no local `seam-grpc` binary available: a release build
   from the sibling `seam-runtime` checkout failed on an unrelated local macOS SDK/linker defect,
   not this diff; CI pulls the published image rather than building from source, so this local
-  limitation doesn't apply there). Not yet pushed/re-watched/merged.
+  limitation doesn't apply there). Pushed `2698525`; re-watched CI.
+- **Round 1 of the re-watch: `spec pin` now green, but `integration` still red — a second,
+  genuine bug the tenant-bind fix exposed rather than fixed.** `register_party` filed "bank-A"
+  under the operator token's tenant claim (`verify-counterparties`), but
+  `VerifyPartyAttestation` looks the party up under the ATTESTATION's own `tenant` field (wire
+  tag 7, UNSIGNED) — the KAT fixture leaves that "" (the untenanted/fleet partition), so a
+  correctly-registered, untampered attestation came back `False` (CI log: "1 failed, 42
+  passed", `assert False is True`). Confirmed via `crates/seamd/src/facade.rs:374`
+  (`verify_party_attestation_in(&att.tenant, party_id, att)`). Fixed by setting
+  `tenant=_TENANT`/`{tenant: TENANT}` on every attestation built in both live tests —safe
+  because the field is unsigned, so it can't invalidate the KAT signature. Full Python suite
+  still 1334 passed; TS still 182 passed/10 skipped; both lint/format clean. Not yet
+  pushed/re-watched.

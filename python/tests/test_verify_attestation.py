@@ -53,8 +53,12 @@ _KAT_ATTESTATION = dict(
 )
 
 
-def _kat_attestation() -> ev.ChainHeadAttestation:
-    return ev.ChainHeadAttestation(**_KAT_ATTESTATION)
+def _kat_attestation(*, tenant: str = "") -> ev.ChainHeadAttestation:
+    # `tenant` (wire tag 7) is UNSIGNED — setting it here never invalidates the KAT signature, which
+    # is computed over the preimage without it. Defaults to "" (the untenanted/fleet partition),
+    # matching every pre-#903 caller; the live test below overrides it to match the tenant its
+    # operator token registered the party under.
+    return ev.ChainHeadAttestation(tenant=tenant, **_KAT_ATTESTATION)
 
 
 def _kat_pubkey() -> bytes:
@@ -147,20 +151,32 @@ def test_verify_party_attestation_trio_live(dual_plane):
 
     admin.register_party("bank-A", _kat_pubkey())
 
+    # Every call below carries `tenant=_TENANT` on the attestation: `register_party` bound "bank-A"
+    # under _TENANT (the operator token's claim, since RegisterPartyRequest has no tenant field of its
+    # own), and `VerifyPartyAttestation` looks the party up under the ATTESTATION's own (unsigned)
+    # `tenant`, not the caller's — the two must agree or a correctly-registered, untampered attestation
+    # still comes back False, having found no party in the (wrong) tenant partition it looked under.
+
     # 1. a registered party's untampered attestation verifies
-    assert data.verify_party_attestation("bank-A", _kat_attestation()) is True
+    assert (
+        data.verify_party_attestation("bank-A", _kat_attestation(tenant=_TENANT))
+        is True
+    )
 
     # 2. a tampered signature must not verify
-    bad_sig = _kat_attestation()
+    bad_sig = _kat_attestation(tenant=_TENANT)
     tampered = bytearray(bad_sig.signature)
     tampered[0] ^= 0x01
     bad_sig.signature = bytes(tampered)
     assert data.verify_party_attestation("bank-A", bad_sig) is False
 
     # 3. a tampered field (the length is part of the signed preimage) must not verify
-    bad_field = _kat_attestation()
+    bad_field = _kat_attestation(tenant=_TENANT)
     bad_field.attested_len += 1
     assert data.verify_party_attestation("bank-A", bad_field) is False
 
     # 4. an unknown party never verifies
-    assert data.verify_party_attestation("bank-B", _kat_attestation()) is False
+    assert (
+        data.verify_party_attestation("bank-B", _kat_attestation(tenant=_TENANT))
+        is False
+    )
