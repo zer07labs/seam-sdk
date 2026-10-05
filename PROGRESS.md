@@ -4278,3 +4278,7 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
   instead of `seam-runtime/...`-prefixed, so `test_each_citation_resolves` correctly flagged
   it as pointing at a file that doesn't exist in this repo. Fixed in the same note (above) —
   no code change, just this citation's own prefix.
+- Pushed `bb5cc79`; re-watched CI — every check, including `ci-ok`, green.
+- merged #174 (`0a48c6ecb033721f8f4acd324c62082ce0a1e4a4`, squash, into `main`). No deploy to
+  watch — `seam-sdk` is published, not deployed (no Railway/Vercel target). Notified
+  seam-runtime's session that #174 is on `main`, per their "ping me once it lands" ask.
