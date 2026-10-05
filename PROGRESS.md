@@ -4282,6 +4282,93 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
 - merged #174 (`0a48c6ecb033721f8f4acd324c62082ce0a1e4a4`, squash, into `main`). No deploy to
   watch — `seam-sdk` is published, not deployed (no Railway/Vercel target). Notified
   seam-runtime's session that #174 is on `main`, per their "ping me once it lands" ask.
+
+## plans/verify-anchor-tenant.md — repo map (written by /plan, 2026-10-05)
+
+- `python/seam_sdk/client.py:928-934` — sync `verify_party_anchor`, the primary wrapper to
+  change; `python/seam_sdk/client.py:77` has `DEFAULT_TIMEOUT_S = 2.0`, the method's timeout
+  default.
+- `python/seam_sdk/aio.py:822-830` — the async twin, hand-duplicated (no shared base class) —
+  must change in lockstep: `python/tests/test_client_parity.py:64-79`'s
+  `test_the_two_clients_agree_on_each_verbs_signature` compares parameter lists in order, so a
+  half-done change reddens it, not just a names-only check.
+- `python/seam_sdk/admin.py:462-477` — `resume_session`'s `tenant: str = ""` keyword-only
+  precedent, the pattern Phase 1 mirrors.
+- `python/tests/test_verify_attestation.py:78-93` (`_RecordingTrust`/`_client_with_trust` unit
+  pattern) and `python/tests/test_verify_attestation.py:96-182` (`dual_plane` fixture +
+  `operator_token.sign_snapshot`/`mint_operator_token(..., tenant=...)` live pattern) —
+  sibling test file to model Phase 1's new `test_verify_anchor.py` after.
+- `python/tests/operator_token.py` — already carries the `tenant` kwarg (added in PR #174);
+  reused as-is by Phase 1's new live test, not modified.
+- `python/tests/test_authorize.py:400,501` — two positional `verify_party_anchor(...)` calls in
+  deadline tables; confirmed unaffected by a keyword-only addition.
+- `ts/src/client.ts:71-99` (`UnaryCallOptions`/`CredentialedCallOptions`/`call()`),
+  `ts/src/client.ts:650-672` (`authorize`'s inline-opts precedent),
+  `ts/src/client.ts:1218-1225` (`verifyPartyAnchor` itself) — the TS surface Phase 2 changes
+  and the conventions it must match.
+- `ts/src/admin.ts:335-358` — `resumeSession`'s inline `tenant?: string` precedent, the pattern
+  Phase 2 mirrors on the data plane.
+- `ts/tests/verify_attestation.test.ts` — sibling test file to model Phase 2's new
+  `verify_anchor.test.ts` after (`clientWithTrust` unit pattern, `withPlanes` live pattern).
+- `ts/tests/operator_token.ts` — already carries `mintOperatorToken`'s `opts.tenant` (added in
+  PR #174); reused as-is.
+- `contract/field-manifest.txt:399` — already lists `VerifyAnchorRequest/tenant`; no change.
+- `DECISIONS.md:2294-2327` — the 2026-10-04 deferral entry; Phase 3 amends its stale trigger
+  bullet (`DECISIONS.md:2313-2314`) in place AND appends a new dated entry (this file is not
+  append-only — `DECISIONS.md:1220-1221`, `DECISIONS.md:1551`, and `DECISIONS.md:1952` are
+  established in-place-amendment precedent).
+- `CHANGELOG.md` — `## Unreleased` was emptied by the `v0.33.2` release commit (`3de15d4`,
+  pulled onto this branch before Phase 1 started) that moved `revoke_tenant`/etc. under a new
+  `## 0.33.2 — 2026-10-05` header; Phase 3's entry is now the first entry under the (currently
+  empty) `## Unreleased`, not "after `revoke_tenant`" as originally planned — a placement
+  divergence to note inline in `plans/verify-anchor-tenant.md`'s Phase 3 when executed.
+- `plans/README.md` — Active/pending table Phase 3 adds a row to (also flagged: `revoke-tenant.md`
+  is missing from this index too — pre-existing gap, out of scope here, noted in Open questions).
+- `seam-sdk#172` — the issue this plan closes.
+- `seam-runtime/crates/seam-api/proto/seam/api/v1/seam.proto:1106-1121,1362-1365` —
+  `Anchor`/`VerifyAnchorRequest`/`RegisterPartyRequest` wire shapes, read-only sibling-repo ref.
+- `seam-runtime/crates/seamd/src/planes.rs:720,1124`, `seam-runtime/crates/seamd/src/facade.rs:351-360`,
+  `seam-runtime/crates/seamd/src/grpc.rs:1542-1559`
+  — write-side auth binding (operator-token tenant claim) and read-side gRPC passthrough,
+  read-only sibling-repo ref.
+- `seam-runtime/crates/seam-trust-aitp/src/lib.rs:605-617,1077-1085,1491-1499` — `Anchor`'s
+  signing payload (`SHA256(chain_head || le_u64(timestamp_millis))`) and `PartyRegistry`'s
+  `(tenant, party_id)` lookup, read-only sibling-repo ref.
+- `seam-runtime/docs/specs/audit-anchor.md:70-120` — normative signing-payload formula and the
+  "`Anchor` is tenant-agnostic" clause both SDKs' new docstrings cross-reference.
+- `conformance/vectors.json` — confirmed no `anchor` key exists; Phase 1/2's live tests
+  self-sign instead of pinning a KAT (unlike `chain_head_attestation`, which has one).
+
+## /implement plans/verify-anchor-tenant.md
+
+PR strategy: one PR for the whole feature (3 small, tightly-related phases closing one issue;
+no natural seam large enough to warrant splitting). Risk tiers as tagged in the plan: Phase 1
+complex, Phase 2 complex, Phase 3 simple.
+
+Pre-phase note: `git pull --ff-only` onto `feat/verify-anchor-tenant` picked up `3de15d4`
+(`chore(release): v0.33.2`), which emptied `## Unreleased` in `CHANGELOG.md` (moved
+`revoke_tenant`/etc. under a new `## 0.33.2 — 2026-10-05` header). This invalidates Phase 3's
+planned CHANGELOG placement ("after revoke_tenant") — noted for when Phase 3 executes. Also
+fixed, before Phase 1 started: two under-prefixed sibling-repo citations in this file's own
+repo map (`facade.rs`/`grpc.rs` missing their `seam-runtime/` prefix) and 6 newly-introduced
+unbound bare `:NNN` citations the ratchet test caught — both pre-existing issues in the repo
+map written during `/plan`, fixed here so `test_compatibility_citations_resolve.py` stayed
+green before any code changed.
+
+- 2026-10-05 Phase 1 (Python `verify_party_anchor` tenant) — PASS, 1 round, fresh Opus
+  verifier. Files: `python/seam_sdk/client.py`, `python/seam_sdk/aio.py` (tenant param, both;
+  plus a clarifying `verify_party_attestation` docstring sentence/addition in each),
+  `python/seam_sdk/admin.py` (`register_party` docstring only), `python/tests/test_verify_anchor.py`
+  (new), `python/tests/test_live_fixtures_are_isolated.py` (registered the new live suite —
+  divergence from plan's Files list, confirmed mandatory not scope creep; also fixed 5 stale
+  "four suites" prose/message references this addition made inaccurate). Tested: full Python
+  suite 1363 passed/23 skipped, `ruff check`/`format --check` clean, `test_client_parity.py`
+  both tests green, `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exit 0. Verifier's 5
+  advisory notes: 2 addressed directly (stale "four suites" prose; the `verify_party_attestation`
+  cross-reference gap in both clients), 3 accepted as-is (named-stub harness choice, unclosed
+  test channels matching existing convention, the extra 6th live-test case). No new
+  `ASSUMPTIONS.md` entries — no genuinely unresolved judgment calls, all divergences verified.
+  What's next: Phase 2 (TypeScript).
 - 2026-10-06 Hotfix PR #178 (unblock v0.33.3 CI/publish, reported by a seam-runtime session
   watching its own downstream publish fail). Two unrelated, pre-existing issues, neither
   caused by the `v0.33.3` release commit (`e67b365`) itself: (1) `verify/docs/seam-event.v1.md`
@@ -4304,3 +4391,5 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
   `CHANGELOG.md:937` and `PROGRESS.md:3981` cites `CHANGELOG.md:822`, both already ~130-250
   lines stale before this release — out of scope for this release-unblock hotfix; filed as a
   follow-up issue rather than folded in here.
+  **Rebased `feat/verify-anchor-tenant` onto this commit during `/sweep`'s ship pass — see the
+  rebase note further down for how the resulting citation/CHANGELOG conflicts were resolved.**
