@@ -271,6 +271,7 @@ EnrollTenantRequest/subject_aid
 EnrollTenantRequest/tenant
 ErasurePreview/already_erased
 ErasurePreview/held
+ErasurePreview/subject_enrolled
 ErasurePreview/would_erase
 ErasureRequest/confirm_count
 ErasureRequest/now_millis

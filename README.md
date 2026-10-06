@@ -448,7 +448,9 @@ cert = admin.erase_subject("tenant", subject, len(preview.would_erase))   # or: 
 ```
 
 **Erasure is preview → confirm → erase** (runtime audit P0.1): `preview_erasure`/`previewErasure` is
-non-destructive (returns `would_erase` / `held` / `already_erased`); `erase_subject`/`eraseSubject` requires
+non-destructive (returns `would_erase` / `held` / `already_erased` / `subject_enrolled` — directory
+state only, whether `subject` currently has an active enrollment in `tenant`, absent on servers
+predating it); `erase_subject`/`eraseSubject` requires
 a **non-empty `tenant`** scope (erasure never crosses tenants) and a `confirm_count` that must **equal the
 preview's `would_erase` count**, and returns a signed, chain-anchored `ErasureCertificate`.
 `erase_subject_confirmed`/`eraseSubjectConfirmed` does both in one call. The client also wraps the governance
