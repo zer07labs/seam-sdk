@@ -1300,13 +1300,21 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   adjacency serves the reader better than a chronological position the file doesn't consistently
   keep anyway. (b) append at the absolute end of the file — rejected: would separate the new entry
   from the entry it amends and cross-references, forcing a reader to jump the whole file's length.
-- **Blast radius if wrong:** purely cosmetic/organizational — no code, no test, no citation depends
-  on this entry's position in the file (only on its *content* resolving, which is verified). A
-  future `/reconcile` pass choosing a real ordering convention for this file would only need to
-  move this entry, not rewrite it.
-- **Owner / re-open trigger:** whoever next audits `DECISIONS.md`'s own structure wholesale; until
-  then, new entries should probably keep following topical-adjacency-over-strict-date, since that's
-  now the precedent this entry itself sets alongside the pre-existing mixed ordering.
-- **Status:** UNCONFIRMED (recorded 2026-10-05). The entry's *content* is verified (PASS, fresh
-  Opus gate); what's unconfirmed is only whether "topical adjacency" is the right house convention
-  for this file going forward, which no single plan can settle unilaterally.
+- **Blast radius if wrong:** purely cosmetic/organizational — no code or test depends on this
+  entry's position in the file. **Corrected on reconcile:** the claim that a future pass "would
+  only need to move this entry, not rewrite it" was false — the entry's own prose carries three
+  positional references to its neighbors ("the deferral above", "following up directly on the
+  entry immediately above", "amended in place (above, ...)"), so relocating it means rewriting
+  it. Likewise "no citation depends on position" was too broad: the entry line-cites
+  `DECISIONS.md:1220-1221`, `DECISIONS.md:1551`, and `DECISIONS.md:1952` — and `1551` is itself
+  the record of an anchor that already broke once when an earlier insertion moved it.
+- **Owner / re-open trigger:** resolved by `/reconcile` on 2026-10-05 — see `DECISIONS.md`'s
+  matching entry for the full analysis. The convention is now narrower than bare "topical
+  adjacency": default append at true EOF; in-place insertion after an existing entry is the one
+  exception, allowed only when that entry sits below `DECISIONS.md:1980` (the separator between
+  the frozen, truly-reverse-chronological older block and the append-growing newer one). Whoever
+  next touches `DECISIONS.md` structurally should keep following that narrower rule rather than
+  the originally-recorded, more permissive one.
+- **Status:** CONFIRMED (2026-10-05). Placement unchanged — it already satisfied the narrower
+  rule above. Decided by Opus per `/reconcile`'s Autonomy ladder (low blast radius, auto-settled,
+  not escalated); full reasoning logged in `DECISIONS.md`'s 2026-10-05 reconcile entry.

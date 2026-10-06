@@ -2446,3 +2446,67 @@ stated trigger mechanism was wrong.
   closed by the same baseline-verification methodology used elsewhere in this session.
 - **Status:** IMPLEMENTED. Part 1/1.5 done and verified; Part 2 open, tracked on seam-sdk#144, not
   actionable until `seam-runtime` U-RT-3 Phase 4 lands.
+
+---
+
+## 2026-10-05 — reconcile `plans/verify-anchor-tenant.md`'s ASSUMPTIONS.md (1 entry)
+
+- **Assumed (`ASSUMPTIONS.md:1284-1312`):** that this file has a single settled insertion
+  convention — either strict reverse-chronological at the top, or append-only at the bottom —
+  and that Phase 3's new 2026-10-05 entry (`DECISIONS.md:2350`) should follow it. Chose
+  "topical adjacency" instead — placing it immediately after the 2026-10-04 entry
+  (`DECISIONS.md:2294`) it amends and cross-references — reasoning that the file has no
+  consistent chronological order to follow in the first place.
+- **Recommender (Opus):** CONFIRM the placement as-is, but narrow and correct the stated
+  reasoning — "topical adjacency" alone is too permissive and the blast-radius claim backing
+  it was wrong in two places. The factual premise holds: `2026-09-30` genuinely appears both
+  before and after the 2026-10-04 entry, and there are six consecutive `2026-09-04` entries.
+  But the file isn't structureless. A separator at `DECISIONS.md:1980` splits it into two
+  internally-consistent, OPPOSITE blocks: everything above it (back to line 9) is perfectly
+  reverse-chronological with zero violations and is now effectively frozen (nothing in it is
+  newer than 2026-09-13); everything from `DECISIONS.md:1982` on is append-at-end, growing
+  forward, which is where every date inversion in the file actually lives. The new entry sits
+  in Block B, correctly below the separator — it was never at risk of violating Block A's
+  order.
+
+  The real reason to keep it adjacent rather than moving it to true EOF isn't "the file has no
+  rule" — it's that `PROGRESS.md:218-230` already recorded what the *wrong* alternative costs:
+  a prior 75-line prepend to the top of this file "silently invalidated anchors throughout
+  this file's repo map and the plan," because `python/tests/test_compatibility_citations_resolve.py`'s
+  structural check on `DECISIONS.md` only asserts a cited line is within the file's length —
+  it does not re-verify content at that line the way the `ANCHORED`-tier checks on
+  `COMPATIBILITY.md`/`PROGRESS.md` do — so a reorder that preserves file length passes clean
+  while every citation above the insertion point silently points at the wrong paragraph. A
+  tail-adjacent insertion inside Block B shifts almost nothing cited; a header prepend shifts
+  everything. That asymmetry, not reader convenience alone, is why adjacency-near-the-tail is
+  the right default and a top-of-file rewrite is not.
+
+  Two corrections to the `ASSUMPTIONS.md` entry's own claims, found while verifying rather than
+  trusting them: its blast-radius line ("a future pass would only need to move this entry, not
+  rewrite it") is false — the entry's own prose carries three positional references to its
+  neighbors, so moving it means rewriting it, not just relocating it. And "no citation depends
+  on this entry's position" is too broad — the entry itself line-cites `DECISIONS.md:1220-1221`,
+  `DECISIONS.md:1551`, and `DECISIONS.md:1952`, and `DECISIONS.md:1551` is itself the record of
+  an anchor that broke once already when an earlier insertion moved it.
+
+  **House rule going forward, narrower than bare "topical adjacency":** default is append at
+  true EOF. The one exception is an entry amending or directly continuing an existing entry's
+  own text, which may be inserted immediately after that entry — but only when the target sits
+  below `DECISIONS.md:1980`. Never insert above that separator; never reorder Block A. A
+  heading's date is the decision date, not a sort key — tail-side date inversions are expected
+  going forward and aren't defects to fix later. This rule isn't written into the file's own
+  header (`DECISIONS.md:1-7`) because doing so would itself shift every citation that targets
+  this file by the line count of whatever gets added there; recording it here, appended at true
+  EOF, shifts nothing.
+- **Verdict:** Confirm placement; correct and narrow the stated rule and the two false claims.
+- **Status:** CONFIRMED (2026-10-05). `ASSUMPTIONS.md:1284-1312`'s entry updated to match — see
+  that file for the resulting `Status:` line.
+- **Decided by:** Opus (low blast radius — cosmetic/organizational, no code or test depends on
+  this entry's position — auto-settled per `/reconcile`'s Autonomy ladder, not escalated).
+
+---
+
+**Summary:** 1 entry reconciled, CONFIRMED as-is with its reasoning corrected and narrowed into
+a house rule (append at true EOF; in-place insertion only for amendments to entries below
+`DECISIONS.md:1980`). 0 changed in substance, 0 deferred, 1 settled without escalation. No
+follow-up code work needed before the next `/ship`.
