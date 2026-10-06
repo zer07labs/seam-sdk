@@ -4484,3 +4484,43 @@ green before any code changed.
   paragraph-boundary text at both the old and new line numbers before trusting the new range,
   not just the arithmetic. A dedicated ship-gate verifier independently re-derived this same
   shift from the diff and confirmed it exact.
+- 2026-10-06 `tenant_seq` vendoring readiness (seam-runtime#973/#1030, draft, not yet merged) —
+  prepared ahead of merge per a relayed owner ask, so same-day vendoring is possible once it
+  lands. `SeamEvent` gains `optional uint64 tenant_seq = 25` on `seam.event.v1`: per-tenant
+  outbox counter, **UNSEALED** (no digest/checksum/signature), additive on the wire.
+  Two things confirmed now, independent of the upstream merge state:
+  1. **No crypto/digest code needs to change.** Already established by this session's earlier
+     unknown-event-tag audit (relayed to seam-runtime, closed): no SDK verifier re-serializes a
+     whole decoded `seam.event.v1` message to compute a digest/chain hash — Rust
+     (`verify/src/wire.rs:16-80,161-211`, `verify/src/verify.rs:525-551`), Python
+     (`python/seam_sdk/crypto.py:475-512,695`), and TypeScript (`ts/src/crypto.ts:533,882`) all
+     hand-build their preimage from an explicit, spec-transcribed field list. An unsealed,
+     non-preimage field just flows through harmlessly, same conclusion as that audit reached for
+     the sealed-vs-unsealed question in general.
+  2. **No event-consumption wiring code needs to change either**, confirmed newly this session:
+     both languages' `StreamEvents` paths are pure pass-through, not reconstruction.
+     `python/seam_sdk/admin.py:571` returns `EventStream(lambda: self._events.StreamEvents(...))`,
+     whose `__next__` (`python/seam_sdk/admin.py:228`) yields the raw generated `ev.SeamEvent` object directly —
+     same shape as `preview_erasure` returning the whole `pb.ErasurePreview` (PR #182's finding).
+     `ts/src/admin.ts:437-445`'s `streamEvents` generator does `for await (const ev of
+     events.streamEvents(...)) { yield ev; }` — also raw pass-through, typed
+     `AsyncIterable<SeamEvent>`. So `tenant_seq` will be reachable as `event.tenant_seq` in both
+     languages the instant the stubs regenerate, with zero method/type changes — exactly the
+     ErasurePreview pattern, not the `VerifyAnchorRequest.tenant` one.
+  What's actually blocked on the upstream merge (cannot be finalized from a draft): (a) BSR has
+  not been pushed with this field yet (runtime PR #1030 is still draft; `make generate` here
+  shows no `tenant_seq` today), so `contract/event-field-manifest.txt` cannot add
+  `SeamEvent/tenant_seq` yet — adding it now would make `check-contract.sh`'s EVENTS=1 gate
+  refuse in the *other* direction (declared but absent from stubs) on every branch until BSR
+  catches up; (b) `verify/docs/seam-event.v1.md`'s pinned copy (its header currently pins
+  @ `5f0bc0a`) needs re-vendoring against runtime's `docs/specs/seam-event.v1.md` once #1030
+  merges — the pin can only name a
+  real merged commit sha (`check_vendored_spec.py --from gh` fetches and diffs against it), not
+  a draft PR's branch head, which can still be rebased/squashed before merge.
+  The actual fix, once BSR reflects the merge, is mechanically identical to PR #182
+  (`ErasurePreview.subject_enrolled`): one `contract/event-field-manifest.txt` line, one
+  `CHANGELOG.md` entry, re-vendor the spec doc + bump its pin header, re-run
+  `check_vendored_spec.py` + `check-contract.sh` + the full suite. No `DECISIONS.md` entry is
+  expected to be needed (unlike `VerifyAnchorRequest.tenant`'s deferral) since there's no
+  non-wiring decision to record — both languages already carry it the moment it exists.
+  Tracked in draft PR (this branch); left as a draft until BSR picks up the merged field.
