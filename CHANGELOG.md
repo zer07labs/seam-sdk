@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.33.5 — 2026-10-06
+
 ### Added — `ErasurePreview.subject_enrolled` (seam-runtime #951)
 
 - **`preview_erasure`/`previewErasure`** now also carries `subject_enrolled` on its returned
