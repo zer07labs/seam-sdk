@@ -1,5 +1,23 @@
 # Wire `VerifyAnchorRequest.tenant` into both hand-written clients
 
+> **📦 ARCHIVED 2026-10-06 — DELIVERED, merged as PR #183 (`4469ce4`).** Archived after a delivery
+> verification against this tree, during `/sweep`. All three phases verified DONE and merged:
+> `python/seam_sdk/client.py`/`aio.py` and `ts/src/client.ts` all carry the optional `tenant`
+> parameter on `verify_party_anchor`/`verifyPartyAnchor`, forwarded to `VerifyAnchorRequest.tenant`.
+> Tracking issue [seam-sdk#172](https://github.com/zer07labs/seam-sdk/issues/172) is **CLOSED**.
+> Full suites green on the merged commit: Python 1916 passed/0 failed, TypeScript 185 passed/0
+> failed, `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exits 0.
+>
+> **The stale re-open trigger this plan's Context corrected holds up**: `DECISIONS.md`'s
+> 2026-10-04 entry was amended in place (not re-litigated) to record that the write side arrived
+> via the operator-token tenant claim, not a new `RegisterPartyRequest` field — confirmed still
+> true against current code (`register_party`'s tenant binding is still
+> `seam-runtime/crates/seamd/src/planes.rs:1124`'s scoped-operator derivation, no new request field).
+>
+> **One pre-existing index gap this plan's own Context flagged is now fixed**: `revoke-tenant.md`
+> was missing from `plans/README.md`'s index entirely (active or archived) — found separately
+> during this same `/sweep` pass and archived as `plans/archive/revoke-tenant.md`.
+
 ## Context
 
 `VerifyAnchorRequest` (`seam-runtime/crates/seam-api/proto/seam/api/v1/seam.proto:1114-1121`) carries
