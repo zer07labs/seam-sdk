@@ -6,9 +6,14 @@
         (legacy global-chained prefix, a tenant's chain re-rooting at genesis, interleaved system
         sub-chains in the NULL partition), and points to a new runbook
         (`docs/runbooks/audit-chain-boundaries.md`) for confirming them read-only. DOCS-ONLY, no
-        normative change — checked: this crate's `chain_by_tenant` already diagnoses exactly this
-        case as `NON-GENESIS FIRST LINK` (`verify/src/verify.rs:238`) rather than refusing outright,
-        so the behavior this note describes is already what this crate does; nothing here changes. -->
+        normative change — checked: of the three restart classes, only the legacy global-chained-
+        prefix one (a tenant's first OWN, unanchored observed link not starting at genesis) lands on
+        this crate's distinct `NON-GENESIS FIRST LINK` refusal (`verify/src/verify.rs:176-179,236-250`)
+        rather than the generic `BROKEN CHAIN` one — both are refusals (`Err`), not a tolerated case;
+        the other two (a re-rooted chain or an interleaved sub-chain breaking mid-window) still land
+        on the generic message. All three resolve the same way this note's own remedy says: a
+        per-tenant anchored start (`--from-anchor`, clause f0), which this crate already implements
+        and nothing here changes. -->
 
 # `seam-event.v1` — event-stream wire spec (language-neutral)
 

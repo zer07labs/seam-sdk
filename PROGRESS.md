@@ -4282,3 +4282,25 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
 - merged #174 (`0a48c6ecb033721f8f4acd324c62082ce0a1e4a4`, squash, into `main`). No deploy to
   watch — `seam-sdk` is published, not deployed (no Railway/Vercel target). Notified
   seam-runtime's session that #174 is on `main`, per their "ping me once it lands" ask.
+- 2026-10-06 Hotfix PR #178 (unblock v0.33.3 CI/publish, reported by a seam-runtime session
+  watching its own downstream publish fail). Two unrelated, pre-existing issues, neither
+  caused by the `v0.33.3` release commit (`e67b365`) itself: (1) `verify/docs/seam-event.v1.md`
+  was pinned at `seam-runtime@6987aca`; runtime main had moved to `5f0bc0a` (seam-runtime
+  #1009/#1010, a docs-only "accepted-restart points in the production chain" note) — re-vendored
+  verbatim, header updated. Of the note's three restart classes, only the legacy
+  global-chained-prefix one lands on this crate's distinct `NON-GENESIS FIRST LINK` refusal
+  (`verify/src/verify.rs:176-179,236-250`); the other two still land on the generic `BROKEN
+  CHAIN` refusal — both are refusals, not a tolerated case, and all three resolve the same way
+  via a per-tenant anchored start (`--from-anchor`), which this crate already implements, so no
+  code change was needed (a fresh-Opus verify pass caught the header's first draft overstating
+  this — "rather than refusing outright" was wrong, fixed before merge). (2) the release's
+  `retitle_changelog.sh` run shifted `CHANGELOG.md`'s "No yank" paragraph from line 1054 to 1056
+  (a +2 insert right after `## Unreleased`), pushing `COMPATIBILITY.md:101` and
+  `DECISIONS.md:1222`'s `CHANGELOG.md:1035-1052` citations past the citation test's slack
+  tolerance; repointed both to `CHANGELOG.md:1037-1054`. Tested: `check_vendored_spec.py` OK via both
+  `--from local` and `--from gh`; `test_compatibility_citations_resolve.py` 489 passed/0 failed
+  standalone (was 4 failed). Verifier also flagged two pre-existing, gate-invisible citations
+  elsewhere that the same +2 shift widened further — `DECISIONS.md:2035` cites
+  `CHANGELOG.md:937` and `PROGRESS.md:3981` cites `CHANGELOG.md:822`, both already ~130-250
+  lines stale before this release — out of scope for this release-unblock hotfix; filed as a
+  follow-up issue rather than folded in here.
