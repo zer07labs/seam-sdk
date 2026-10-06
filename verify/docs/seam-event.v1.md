@@ -1,12 +1,19 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 6987aca (refreshed 2026-10-04). One
-     movement since the prior pin (2ea9f93):
-     1. seam-runtime#916/#888 (commit 6987aca) — the `agent_id` field comment (tag 4, on both
-        `AuthorizeRequested` and the escalation-inbox payload) is corrected to align with the code:
-        it is documented as an audit-only LABEL, never the scope-floor key (that's `agent_aid`),
-        reverting an earlier comment that called it "the registry identity the scope floor was
-        evaluated against." SPEC-ONLY, checked: this crate's `wire.rs` only ever carries `agent_id`
-        through as an opaque string field (lines 141, 319, 680) — it is never read in any scope or
-        authorization decision here, so nothing in this repo's behavior changes. -->
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 5f0bc0a (refreshed 2026-10-06). One
+     movement since the prior pin (6987aca):
+     1. seam-runtime#1009/#1010 (commit 5f0bc0a) — adds a "Note — accepted-restart points in the
+        production chain" bullet to the per-tenant chain-walk section: a verifier assuming one
+        unbroken chain per tenant WILL see breaks in production history that are not forks or loss
+        (legacy global-chained prefix, a tenant's chain re-rooting at genesis, interleaved system
+        sub-chains in the NULL partition), and points to a new runbook
+        (`docs/runbooks/audit-chain-boundaries.md`) for confirming them read-only. DOCS-ONLY, no
+        normative change — checked: of the three restart classes, only the legacy global-chained-
+        prefix one (a tenant's first OWN, unanchored observed link not starting at genesis) lands on
+        this crate's distinct `NON-GENESIS FIRST LINK` refusal (`verify/src/verify.rs:176-179,236-250`)
+        rather than the generic `BROKEN CHAIN` one — both are refusals (`Err`), not a tolerated case;
+        the other two (a re-rooted chain or an interleaved sub-chain breaking mid-window) still land
+        on the generic message. All three resolve the same way this note's own remedy says: a
+        per-tenant anchored start (`--from-anchor`, clause f0), which this crate already implements
+        and nothing here changes. -->
 
 # `seam-event.v1` — event-stream wire spec (language-neutral)
 
@@ -269,6 +276,13 @@ above, supplied out of band — e.g. one element of the public `GET /v1/anchors`
   `tenant` at all) falls back to the window's own sole tenant only when that fallback is unambiguous —
   exactly one tenant present; two anchors naming the same tenant, or an untenanted anchor against a
   multi-tenant window, is a usage error, refused loudly rather than guessed at silently.
+- **Note — accepted-restart points in the production chain (#1009).** A verifier or tracker that assumes
+  one unbroken chain per `tenant` WILL see breaks in production history that are not forks or loss: the
+  legacy global-chained prefix (`tenant_seq` NULL), a tenant whose per-tenant chain re-roots at genesis
+  where an older tenant's links to a backfilled legacy row, and two interleaved system sub-chains in the
+  NULL partition. They are enumerated, with how to confirm them read-only, in
+  [`docs/runbooks/audit-chain-boundaries.md`](../runbooks/audit-chain-boundaries.md); resolve each with a
+  per-tenant anchored start (f0), never by re-enrolling or rewriting rows.
 - **(f1) — the anchor is validated before it is trusted, and only under a pinned issuer.** An
   anchored start is accepted only when `--issuer` is given, and the anchor's signature MUST verify
   against a pinned issuer AID under the signed framing above, before anything is verified from it.
