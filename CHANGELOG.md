@@ -16,6 +16,17 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added — `ErasurePreview.subject_enrolled` (seam-runtime #951)
+
+- **`preview_erasure`/`previewErasure`** now also carries `subject_enrolled` on its returned
+  `ErasurePreview` — directory state only: whether `subject` currently has an active
+  (non-revoked) enrollment in the request's `tenant`. Independent of the three record lists:
+  `false` for a revoked AID that still has records, and always `false` for `on_behalf_of`
+  subjects (never enrolled); absent on servers predating it. No client code change was needed —
+  both `preview_erasure` and `previewErasure` already return the full generated `ErasurePreview`
+  message rather than reconstructing one, so the field was already reachable the moment the
+  stubs regenerated; this entry and the manifest line are the decision record, not new wiring.
+
 ## 0.33.4 — 2026-10-06
 
 ## 0.33.3 — 2026-10-06
