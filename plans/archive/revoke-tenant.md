@@ -1,5 +1,28 @@
 # Add `SeamAdmin.RevokeTenant` to the Python and TypeScript clients
 
+> **📦 ARCHIVED 2026-10-06 — DELIVERED, merged as PR #174 (`0a48c6e`).** Archived after a delivery
+> verification **against this tree** (per `plans/README.md`'s archiving rule), not against this
+> plan's own status table — found during `/sweep` (it had been fully delivered since 2026-10-05
+> but was never indexed in `plans/README.md` at all, active or archived).
+>
+> **All four phases verified DONE in code, not just in this file's own status lines.**
+> `python/seam_sdk/admin.py` and `ts/src/admin.ts` both carry `revoke_tenant`/`revokeTenant`;
+> `contract/rpc-manifest.txt` lists `SeamAdmin/RevokeTenant`; `STREAM=1 EVENTS=1
+> ./scripts/check-contract.sh` exits 0 on current `main`. The tracking issue this plan's Phase 4
+> filed, [seam-sdk#173](https://github.com/zer07labs/seam-sdk/issues/173), is **CLOSED**.
+>
+> **Finalization's two deviations (Phase 4) hold up:** the CHANGELOG header cites both
+> `seam-sdk #173` and `seam-runtime #951` (matching every sibling entry's convention, not the
+> plan's literal single-issue text), and `COMPATIBILITY.md`/`DECISIONS.md` each got one
+> pre-existing `CHANGELOG.md:NNN` citation repointed (not a new entry) — both now folded into,
+> and further shifted by, the later citation repoints this repo's v0.33.3 hotfix (PR #178) and
+> the `verify-anchor-tenant` feature each made on top. Current citations in both files resolve
+> clean under `python/tests/test_compatibility_citations_resolve.py`.
+>
+> **No open `ASSUMPTIONS.md` entries reference this plan** (grepped at archive time) — nothing
+> left `UNCONFIRMED` from Phase 3's `VerifyAnchorRequest.tenant` deferral decision, which was
+> itself later closed out by `plans/verify-anchor-tenant.md` (seam-sdk#172).
+
 ## Context
 
 `SeamAdmin.RevokeTenant(RevokeTenantRequest{subject_aid: string}) -> Empty` shipped in
