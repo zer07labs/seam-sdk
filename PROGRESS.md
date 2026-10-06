@@ -4438,6 +4438,19 @@ green before any code changed.
   Opus verification pass over all three phases against the plan as a whole (§4), then
   commit this finalization work, then `/reconcile` (since `ASSUMPTIONS.md` now carries one
   entry for this plan) before `/ship`.
+- 2026-10-05 `/reconcile` (`5092e40`) — the one `ASSUMPTIONS.md` entry this plan logged
+  ("`DECISIONS.md`'s new entry placement is by topical adjacency, not strict chronology"),
+  low blast radius, auto-settled by Opus per the Autonomy ladder. Verdict: CONFIRMED as-is,
+  but the reasoning backing it was wrong in two places and the house rule it set was too
+  permissive — found `DECISIONS.md:1980` splits the file into a frozen, truly
+  reverse-chronological older block and an append-growing newer block where every date
+  inversion actually lives; narrowed the rule to default-append-at-true-EOF, with in-place
+  insertion after an existing entry allowed only when that entry sits below the separator.
+  Also corrected two false claims in the original entry (a blast-radius claim that moving it
+  wouldn't require rewriting it; an overbroad "no citation depends on position" claim its own
+  line-cites contradicted). Logged to `DECISIONS.md` (2026-10-05 entry) and `ASSUMPTIONS.md`'s
+  `Status:` line. Tested: `test_compatibility_citations_resolve.py` 568 passed, full Python
+  suite 1383 passed/23 skipped. What's next: `/ship`.
 - 2026-10-06 Hotfix PR #178 (unblock v0.33.3 CI/publish, reported by a seam-runtime session
   watching its own downstream publish fail). Two unrelated, pre-existing issues, neither
   caused by the `v0.33.3` release commit (`e67b365`) itself: (1) `verify/docs/seam-event.v1.md`
@@ -4460,5 +4473,14 @@ green before any code changed.
   `CHANGELOG.md:937` and `PROGRESS.md:3981` cites `CHANGELOG.md:822`, both already ~130-250
   lines stale before this release — out of scope for this release-unblock hotfix; filed as a
   follow-up issue rather than folded in here.
-  **Rebased `feat/verify-anchor-tenant` onto this commit during `/sweep`'s ship pass — see the
-  rebase note further down for how the resulting citation/CHANGELOG conflicts were resolved.**
+  **Rebased `feat/verify-anchor-tenant` onto this commit during `/sweep`'s ship pass.** Four
+  pure append-conflicts in this file (each side had appended an unrelated checkpoint at the
+  same tail location) resolved by chronological reordering — this hotfix entry and the
+  `/reconcile` entry above it now sit in date order. The one substantive conflict spanned
+  `CHANGELOG.md`/`COMPATIBILITY.md`/`DECISIONS.md`: the feature branch's own new
+  `## Unreleased` entry (16 lines) was kept above this hotfix's `## 0.33.3` header, which
+  shifted "No yank" from this entry's `1056` to `1072` and recomputed the two citations above
+  (`CHANGELOG.md:1037-1054`) to `CHANGELOG.md:1053-1070` — verified against the exact
+  paragraph-boundary text at both the old and new line numbers before trusting the new range,
+  not just the arithmetic. A dedicated ship-gate verifier independently re-derived this same
+  shift from the diff and confirmed it exact.

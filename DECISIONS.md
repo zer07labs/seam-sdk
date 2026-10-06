@@ -2451,7 +2451,7 @@ stated trigger mechanism was wrong.
 
 ## 2026-10-05 — reconcile `plans/verify-anchor-tenant.md`'s ASSUMPTIONS.md (1 entry)
 
-- **Assumed (`ASSUMPTIONS.md:1284-1312`):** that this file has a single settled insertion
+- **Assumed (`ASSUMPTIONS.md:1284-1320`):** that this file has a single settled insertion
   convention — either strict reverse-chronological at the top, or append-only at the bottom —
   and that Phase 3's new 2026-10-05 entry (`DECISIONS.md:2350`) should follow it. Chose
   "topical adjacency" instead — placing it immediately after the 2026-10-04 entry
@@ -2499,7 +2499,7 @@ stated trigger mechanism was wrong.
   this file by the line count of whatever gets added there; recording it here, appended at true
   EOF, shifts nothing.
 - **Verdict:** Confirm placement; correct and narrow the stated rule and the two false claims.
-- **Status:** CONFIRMED (2026-10-05). `ASSUMPTIONS.md:1284-1312`'s entry updated to match — see
+- **Status:** CONFIRMED (2026-10-05). `ASSUMPTIONS.md:1284-1320`'s entry updated to match — see
   that file for the resulting `Status:` line.
 - **Decided by:** Opus (low blast radius — cosmetic/organizational, no code or test depends on
   this entry's position — auto-settled per `/reconcile`'s Autonomy ladder, not escalated).
