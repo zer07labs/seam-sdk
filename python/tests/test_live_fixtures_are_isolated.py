@@ -28,13 +28,14 @@ HERE = Path(__file__).parent
 
 #: The suites that spawn a real server. Named explicitly rather than globbed: a glob silently
 #: shrinks to nothing when files are renamed, and a guard over zero files passes vacuously.
-#: ``test_no_unregistered_file_spawns_a_server`` below is what keeps this list honest — a fifth live
+#: ``test_no_unregistered_file_spawns_a_server`` below is what keeps this list honest — a new live
 #: suite added without registering it here would otherwise be invisible to every check in this file.
 LIVE_SUITES = (
     "test_integration.py",
     "test_admin.py",
     "test_streamed_decode.py",
     "test_verify_attestation.py",
+    "test_verify_anchor.py",
 )
 
 #: Files allowed to touch the live-server surface without being a live suite: the helper itself and
@@ -326,8 +327,8 @@ def _port_offenders(src: str) -> list[str]:
 
 
 #: Calling one of these is how a test reaches a server it just spawned. This is the discriminator,
-#: and it was chosen by measurement over BOTH sets rather than by intuition: it is present in all four
-#: registered live suites and absent from all four files here that spawn subprocesses for ordinary
+#: and it was chosen by measurement over BOTH sets rather than by intuition: it is present in every
+#: registered live suite and absent from all four files here that spawn subprocesses for ordinary
 #: reasons (running the conformance CLI, building a wheel, importing in a clean interpreter).
 #:
 #: ``connect_ex`` is here because it was a verified false negative (issue #92 §2): it is the
@@ -356,7 +357,7 @@ def _looks_like_a_live_suite(src: str) -> str:
       without spawning; the conjunction excludes those too.
 
     **The previous version of this used ``socket``/``grpc`` imports as the second signal, and it was
-    wrong.** Three of the four suites in ``LIVE_SUITES`` import neither. It was calibrated against the
+    wrong.** Four of the five suites in ``LIVE_SUITES`` import neither. It was calibrated against the
     four innocent files it must not redden and never re-run against the true positives already in this
     directory, so a de-adopted copy of ``test_integration.py`` — fixed ports, raw ``Popen``, ``DEVNULL``,
     bare ``terminate()`` — passed the whole guard. That is the third round in a row a detector was
@@ -417,10 +418,10 @@ def test_every_named_live_suite_exists_and_spawns() -> None:
     """Anti-vacuity floor.
 
     Every assertion below is a search over ``LIVE_SUITES``. If a file were renamed or dropped, those
-    searches would find nothing and report success. This pins the denominator first: all four files
+    searches would find nothing and report success. This pins the denominator first: all five files
     exist, and each actually spawns a server through the shared helper.
     """
-    assert len(LIVE_SUITES) == 4
+    assert len(LIVE_SUITES) == 5
     for name in LIVE_SUITES:
         src = _source(name)
         assert "from live_server import spawn_server" in src, (
@@ -433,7 +434,7 @@ def test_every_named_live_suite_exists_and_spawns() -> None:
 def test_no_unregistered_file_spawns_a_server() -> None:
     """The other half of the floor above: ``LIVE_SUITES`` must be the *whole* set, not a subset.
 
-    Every check in this file iterates that tuple, so a fifth live suite added without registering it
+    Every check in this file iterates that tuple, so a new live suite added without registering it
     here would be exempt from all of them while the file still reported green — the same
     "the search found nothing, so it passed" shape the anti-vacuity floor exists to close.
 
@@ -698,12 +699,12 @@ def test_the_detector_is_calibrated_against_real_live_suites() -> None:
     Every previous version of ``_looks_like_a_live_suite`` was tuned until a reviewer's synthetic
     example was caught and the four known-innocent files stayed green. Nobody ran it against the
     **true positives already in this directory**. Had they, the ``socket``/``grpc`` signal would have
-    died in one line: three of the four registered suites import neither.
+    died in one line: four of the five registered suites import neither.
 
     So this asserts the positive direction directly. Each registered suite is de-adopted — the helper
     import torn out, a raw ``Popen`` with ``DEVNULL`` and a fixed port put back, which is exactly what
-    the regression looks like — and the detector must catch all four. A future narrowing of the signal
-    cannot pass this without being checked against the files it exists to protect.
+    the regression looks like — and the detector must catch every one of them. A future narrowing of
+    the signal cannot pass this without being checked against the files it exists to protect.
     """
     missed = []
     for name in LIVE_SUITES:
@@ -777,7 +778,11 @@ def test_the_vendored_corpus_is_present_and_untouched() -> None:
         "test_integration.py.txt",
         "test_streamed_decode.py.txt",
         "test_verify_attestation.py.txt",
-    ], f"the pre-85 corpus is {found}; it must be the four suites LIVE_SUITES names"
+    ], (
+        f"the pre-85 corpus is {found}; it is a frozen historical snapshot of the four original "
+        f"live suites at 960cf81, NOT every name in LIVE_SUITES — a new live suite added later "
+        f"(e.g. test_verify_anchor.py) has no pre-#85 fixture to vendor and does not belong here"
+    )
 
     for path in PRE85.glob("*.py.txt"):
         src = path.read_text(encoding="utf-8")

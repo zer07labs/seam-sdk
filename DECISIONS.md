@@ -1219,7 +1219,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:1049-1067` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:1065-1083` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2321,6 +2321,20 @@ PR set out to do.
   checklist item to find there. **Owner:** whoever next touches party-registration or
   anchor-verification surface in this SDK; re-open and wire both halves (write-side `tenant` on
   `RegisterParty`, read-side filter on `VerifyAnchor`) together when the gate fires.
+
+  **(Amended 2026-10-05.) This observable trigger will never fire.** The write side did not arrive
+  as a new `RegisterPartyRequest.tenant` field — `RegisterPartyRequest` still carries only
+  `party_id`/`pubkey` on seam-runtime's current `main`, unchanged. It arrived instead via the
+  *authenticated operator's token claim*: `register_party`/`registerParty`'s gRPC/facade layer binds
+  the tenant from `self.binding.require_scoped("register_party")`, never from a request field
+  (`seam-runtime#922`, merged, "fix(#903): close register_party/remove_party fleet-wide ... (Phase
+  1)"), and now refuses a fleet-wide (no-tenant-claim) operator outright. `check-contract.sh` has no
+  way to observe that — there is no new field for it to flag — so the trigger as written is
+  permanently dead, not merely slow. See the 2026-10-05 entry below for what actually happened and
+  what this SDK did about it. This bullet's original text is kept rather than rewritten, per this
+  file's own established practice (compare the amendment at "The precedent that covered worse has
+  since been reversed" above) — the trigger mechanism was wrong, not the underlying deferral
+  decision, which the new entry below also preserves rather than re-litigating.
 - **Verdict:** Defer wiring; record the decision; add the manifest line so the gate's two directions
   agree again. **Status:** CONFIRMED-DEFERRED — the manifest change is itself the confirmed action;
   the wiring is the open follow-up, tracked here and on seam-sdk#172 rather than left
@@ -2332,6 +2346,46 @@ PR set out to do.
 an unrelated RPC (`RevokeTenant`), not something either ask named. The manifest is brought current
 with the published contract; the hand-written clients are deliberately left as they are until the
 write side exists.
+
+## 2026-10-05 — `VerifyAnchorRequest.tenant` wired into both clients; the 2026-10-04 trigger corrected
+
+### Both halves the deferral above was waiting on turned out to already be live — just not the way the trigger expected
+
+- **Decided by:** Opus, running `/plan` → `/implement` for `plans/verify-anchor-tenant.md`, following
+  up directly on the entry immediately above.
+- **What actually happened, vs. what the trigger expected.** The 2026-10-04 entry's re-open trigger
+  — `check-contract.sh` refusing on a new `+ RegisterPartyRequest/tenant` field — predicted the write
+  side would arrive as a request field. It did not. `register_party`/`registerParty` still take only
+  `party_id`/`pubkey`; the tenant binding comes from the *authenticated operator's own token claim*
+  (`self.binding.require_scoped("register_party")`), confirmed live on seam-runtime's current `main`
+  and shipped in `seam-runtime#922` ("fix(#903): close register_party/remove_party fleet-wide ...
+  (Phase 1)", merged). That mechanism needed no new SDK parameter at all — `SeamAdminClient.connect`
+  already accepts any pre-minted bearer token — so the write side was never blocked on this SDK; it
+  was blocked on nothing, and the trigger that was supposed to announce it could never have fired.
+  `seam-sdk#172`'s own title ("once party registration carries a tenant on the write side") carried
+  the same wrong framing and is equally stale for the same reason.
+- **What this PR did.** Wired the read side the deferral was pairing it with:
+  `verify_party_anchor`/`verifyPartyAnchor` both grow an optional `tenant` (Python: keyword-only
+  `tenant: str = ""`; TypeScript: inline `opts.tenant?: string`), forwarded to the already-manifested
+  `VerifyAnchorRequest.tenant`. Additive and wire-compatible — proto3's empty-string default is
+  byte-identical to every existing caller's request, proven directly (serializing with `tenant=""`
+  emits zero extra bytes), not merely argued. See `CHANGELOG.md`'s Unreleased entry
+  `(seam-sdk #172, seam-runtime #922)` for the full behavior description.
+- **The 2026-10-04 entry's trigger bullet is amended in place** (above, "This observable trigger will
+  never fire") rather than rewritten — its original text, and the deferral's original conclusion, are
+  both preserved; only the mechanism prediction gets the dated correction. This file is not
+  append-only — see the precedent this PR's own planning pass cited: `DECISIONS.md:1220-1221`,
+  `DECISIONS.md:1551`, `DECISIONS.md:1952`.
+- **Verdict:** Wire both hand-written clients' read side; correct the stale trigger in place; close
+  `seam-sdk#172` via the PR. **Status:** CONFIRMED — shipped and verified (fresh-Opus gate, both
+  language phases PASS on round 1).
+
+---
+
+**Summary:** 1 decision, by Opus, not escalated — closing out a deferral this same file recorded the
+day before, once the write side it was waiting on turned out to already be live in a form its own
+trigger couldn't detect. No new ambiguity introduced; the prior entry's conclusion stands, only its
+stated trigger mechanism was wrong.
 
 ## 2026-09-30 — `verify/` walks one hash chain per tenant, not a global one (seam-sdk #144)
 
@@ -2392,3 +2446,67 @@ write side exists.
   closed by the same baseline-verification methodology used elsewhere in this session.
 - **Status:** IMPLEMENTED. Part 1/1.5 done and verified; Part 2 open, tracked on seam-sdk#144, not
   actionable until `seam-runtime` U-RT-3 Phase 4 lands.
+
+---
+
+## 2026-10-05 — reconcile `plans/verify-anchor-tenant.md`'s ASSUMPTIONS.md (1 entry)
+
+- **Assumed (`ASSUMPTIONS.md:1284-1320`):** that this file has a single settled insertion
+  convention — either strict reverse-chronological at the top, or append-only at the bottom —
+  and that Phase 3's new 2026-10-05 entry (`DECISIONS.md:2350`) should follow it. Chose
+  "topical adjacency" instead — placing it immediately after the 2026-10-04 entry
+  (`DECISIONS.md:2294`) it amends and cross-references — reasoning that the file has no
+  consistent chronological order to follow in the first place.
+- **Recommender (Opus):** CONFIRM the placement as-is, but narrow and correct the stated
+  reasoning — "topical adjacency" alone is too permissive and the blast-radius claim backing
+  it was wrong in two places. The factual premise holds: `2026-09-30` genuinely appears both
+  before and after the 2026-10-04 entry, and there are six consecutive `2026-09-04` entries.
+  But the file isn't structureless. A separator at `DECISIONS.md:1980` splits it into two
+  internally-consistent, OPPOSITE blocks: everything above it (back to line 9) is perfectly
+  reverse-chronological with zero violations and is now effectively frozen (nothing in it is
+  newer than 2026-09-13); everything from `DECISIONS.md:1982` on is append-at-end, growing
+  forward, which is where every date inversion in the file actually lives. The new entry sits
+  in Block B, correctly below the separator — it was never at risk of violating Block A's
+  order.
+
+  The real reason to keep it adjacent rather than moving it to true EOF isn't "the file has no
+  rule" — it's that `PROGRESS.md:218-230` already recorded what the *wrong* alternative costs:
+  a prior 75-line prepend to the top of this file "silently invalidated anchors throughout
+  this file's repo map and the plan," because `python/tests/test_compatibility_citations_resolve.py`'s
+  structural check on `DECISIONS.md` only asserts a cited line is within the file's length —
+  it does not re-verify content at that line the way the `ANCHORED`-tier checks on
+  `COMPATIBILITY.md`/`PROGRESS.md` do — so a reorder that preserves file length passes clean
+  while every citation above the insertion point silently points at the wrong paragraph. A
+  tail-adjacent insertion inside Block B shifts almost nothing cited; a header prepend shifts
+  everything. That asymmetry, not reader convenience alone, is why adjacency-near-the-tail is
+  the right default and a top-of-file rewrite is not.
+
+  Two corrections to the `ASSUMPTIONS.md` entry's own claims, found while verifying rather than
+  trusting them: its blast-radius line ("a future pass would only need to move this entry, not
+  rewrite it") is false — the entry's own prose carries three positional references to its
+  neighbors, so moving it means rewriting it, not just relocating it. And "no citation depends
+  on this entry's position" is too broad — the entry itself line-cites `DECISIONS.md:1220-1221`,
+  `DECISIONS.md:1551`, and `DECISIONS.md:1952`, and `DECISIONS.md:1551` is itself the record of
+  an anchor that broke once already when an earlier insertion moved it.
+
+  **House rule going forward, narrower than bare "topical adjacency":** default is append at
+  true EOF. The one exception is an entry amending or directly continuing an existing entry's
+  own text, which may be inserted immediately after that entry — but only when the target sits
+  below `DECISIONS.md:1980`. Never insert above that separator; never reorder Block A. A
+  heading's date is the decision date, not a sort key — tail-side date inversions are expected
+  going forward and aren't defects to fix later. This rule isn't written into the file's own
+  header (`DECISIONS.md:1-7`) because doing so would itself shift every citation that targets
+  this file by the line count of whatever gets added there; recording it here, appended at true
+  EOF, shifts nothing.
+- **Verdict:** Confirm placement; correct and narrow the stated rule and the two false claims.
+- **Status:** CONFIRMED (2026-10-05). `ASSUMPTIONS.md:1284-1320`'s entry updated to match — see
+  that file for the resulting `Status:` line.
+- **Decided by:** Opus (low blast radius — cosmetic/organizational, no code or test depends on
+  this entry's position — auto-settled per `/reconcile`'s Autonomy ladder, not escalated).
+
+---
+
+**Summary:** 1 entry reconciled, CONFIRMED as-is with its reasoning corrected and narrowed into
+a house rule (append at true EOF; in-place insertion only for amendments to entries below
+`DECISIONS.md:1980`). 0 changed in substance, 0 deferred, 1 settled without escalation. No
+follow-up code work needed before the next `/ship`.

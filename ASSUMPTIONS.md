@@ -1280,3 +1280,41 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Status:** UNCONFIRMED (recorded 2026-09-07). The five raise sites and the wire behaviour are
   pinned by tests and mutation-proved 6/6; what is unconfirmed is the API *shape* against a real
   downstream consumer, which only seam-adapters can settle by using it.
+
+## `DECISIONS.md`'s new entry placement is by topical adjacency, not strict chronology
+
+- **Plan:** `plans/verify-anchor-tenant.md`
+- **Assumed:** that `DECISIONS.md` has a single settled insertion convention (either strict
+  reverse-chronological at the top, or append-only at the bottom) that this plan's Phase 3 should
+  follow for its new 2026-10-05 entry.
+- **Chose:** neither, because the file itself doesn't have one — `grep -n "^## 2026-"` shows dates
+  out of order throughout (e.g. `2026-09-30` appears both before AND after `2026-10-04`'s entry;
+  six `2026-09-04` entries in a row are internally ordered by session, not merged into date order
+  with older material). Placed the new entry immediately after the 2026-10-04 entry it follows up
+  on and cross-references, keeping topically-related content adjacent for a reader — which the
+  plan's own Approach section already named as the goal ("a reader ... should be able to tell why
+  ... without re-deriving it").
+- **Alternatives:** (a) insert at the very top of the file (mirroring the newest-looking cluster
+  near the header) — rejected: that cluster's dates (2026-09-13 etc.) are actually *older* than
+  2026-10-04's entry further down, so "top = newest" isn't this file's real rule either, and topic
+  adjacency serves the reader better than a chronological position the file doesn't consistently
+  keep anyway. (b) append at the absolute end of the file — rejected: would separate the new entry
+  from the entry it amends and cross-references, forcing a reader to jump the whole file's length.
+- **Blast radius if wrong:** purely cosmetic/organizational — no code or test depends on this
+  entry's position in the file. **Corrected on reconcile:** the claim that a future pass "would
+  only need to move this entry, not rewrite it" was false — the entry's own prose carries three
+  positional references to its neighbors ("the deferral above", "following up directly on the
+  entry immediately above", "amended in place (above, ...)"), so relocating it means rewriting
+  it. Likewise "no citation depends on position" was too broad: the entry line-cites
+  `DECISIONS.md:1220-1221`, `DECISIONS.md:1551`, and `DECISIONS.md:1952` — and `1551` is itself
+  the record of an anchor that already broke once when an earlier insertion moved it.
+- **Owner / re-open trigger:** resolved by `/reconcile` on 2026-10-05 — see `DECISIONS.md`'s
+  matching entry for the full analysis. The convention is now narrower than bare "topical
+  adjacency": default append at true EOF; in-place insertion after an existing entry is the one
+  exception, allowed only when that entry sits below `DECISIONS.md:1980` (the separator between
+  the frozen, truly-reverse-chronological older block and the append-growing newer one). Whoever
+  next touches `DECISIONS.md` structurally should keep following that narrower rule rather than
+  the originally-recorded, more permissive one.
+- **Status:** CONFIRMED (2026-10-05). Placement unchanged — it already satisfied the narrower
+  rule above. Decided by Opus per `/reconcile`'s Autonomy ladder (low blast radius, auto-settled,
+  not escalated); full reasoning logged in `DECISIONS.md`'s 2026-10-05 reconcile entry.

@@ -926,11 +926,22 @@ class SeamClient:
         ).valid
 
     def verify_party_anchor(
-        self, party_id: str, anchor: pb.Anchor, *, timeout: float = DEFAULT_TIMEOUT_S
+        self,
+        party_id: str,
+        anchor: pb.Anchor,
+        *,
+        tenant: str = "",
+        timeout: float = DEFAULT_TIMEOUT_S,
     ) -> bool:
-        """Verify a counterparty's published audit-chain anchor (network mode)."""
+        """Verify a counterparty's published audit-chain anchor (network mode). ``tenant`` scopes the
+        lookup to the partition the party was registered under — leave empty for the untenanted
+        partition, matching the pre-#903 behavior. Unlike :meth:`verify_party_attestation`, whose
+        tenant lives *inside* the attestation message itself, ``Anchor`` is deliberately
+        tenant-agnostic, so this tenant is a sibling of ``party_id``/``anchor`` on the request, not a
+        field of the anchor."""
         return self._trust.VerifyPartyAnchor(
-            pb.VerifyAnchorRequest(party_id=party_id, anchor=anchor), timeout=timeout
+            pb.VerifyAnchorRequest(party_id=party_id, anchor=anchor, tenant=tenant),
+            timeout=timeout,
         ).valid
 
     def verify_party_attestation(
@@ -943,7 +954,9 @@ class SeamClient:
         """Verify a counterparty's signed chain-head attestation against the registry-pinned key (A14
         network mode). Returns ``True`` iff the attestation's Ed25519 signature checks out against the
         pubkey registered for ``party_id``; ``False`` for an unknown party or any tamper (a boolean
-        verdict, never an exception) — mirroring :meth:`verify_party_anchor`."""
+        verdict, never an exception) — mirroring :meth:`verify_party_anchor`, except that this
+        attestation's own ``tenant`` field (unsigned) scopes the lookup, whereas ``verify_party_anchor``
+        takes ``tenant`` as a request-level argument since ``Anchor`` carries no tenant of its own."""
         return self._trust.VerifyPartyAttestation(
             pb.VerifyAttestationRequest(party_id=party_id, attestation=attestation),
             timeout=timeout,

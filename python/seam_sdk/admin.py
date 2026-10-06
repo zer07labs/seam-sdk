@@ -388,7 +388,11 @@ class SeamAdminClient:
     def register_party(
         self, party_id: str, pubkey: bytes, *, timeout: float = DEFAULT_ADMIN_TIMEOUT_S
     ) -> None:
-        """Register a counterparty's raw 32-byte ed25519 public key (network mode)."""
+        """Register a counterparty's raw 32-byte ed25519 public key (network mode). Requires the
+        ``grant:create`` operator scope; a fleet-wide (no-tenant-claim) operator is refused
+        (seam-runtime #903 Phase 1). The party is bound to the *calling operator's own* ``tenant``
+        claim — never a request field — so that same tenant is what to pass to
+        :meth:`SeamClient.verify_party_anchor`'s ``tenant`` to verify this party later."""
         self._admin.RegisterParty(
             pb.RegisterPartyRequest(party_id=party_id, pubkey=pubkey), timeout=timeout
         )

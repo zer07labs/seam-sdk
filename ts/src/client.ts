@@ -1215,19 +1215,30 @@ export class SeamClient {
     return (await this.trust.verifyCommitment({ commitment, signedArtifact }, call(opts))).valid;
   }
 
-  /** Verify a counterparty's published audit-chain anchor (network mode). */
+  /** Verify a counterparty's published audit-chain anchor (network mode). `opts.tenant` scopes the
+   * lookup to the partition the party was registered under — omitted, it sends `""` (the untenanted
+   * partition), matching the pre-#903 behavior. Unlike {@link verifyPartyAttestation}, whose tenant
+   * lives *inside* the attestation message itself, `Anchor` is deliberately tenant-agnostic, so this
+   * tenant is a sibling of `partyId`/`anchor` on the request, not a field of the anchor. */
   async verifyPartyAnchor(
     partyId: string,
     anchor: Anchor,
-    opts?: UnaryCallOptions,
+    opts?: { tenant?: string; timeoutMs?: number },
   ): Promise<boolean> {
-    return (await this.trust.verifyPartyAnchor({ partyId, anchor }, call(opts))).valid;
+    return (
+      await this.trust.verifyPartyAnchor(
+        { partyId, anchor, tenant: opts?.tenant ?? "" },
+        call(opts),
+      )
+    ).valid;
   }
 
   /** Verify a counterparty's signed chain-head attestation against the registry-pinned key (A14 network
    * mode). Resolves `true` iff the attestation's Ed25519 signature checks out against the pubkey
    * registered for `partyId`; `false` for an unknown party or any tamper (a boolean verdict, never a
-   * rejection) — mirroring {@link verifyPartyAnchor}. */
+   * rejection) — mirroring {@link verifyPartyAnchor}, except that this attestation's own `tenant` field
+   * (unsigned) scopes the lookup, whereas {@link verifyPartyAnchor} takes `tenant` as a request-level
+   * option since `Anchor` carries no tenant of its own. */
   async verifyPartyAttestation(
     partyId: string,
     attestation: ChainHeadAttestation,

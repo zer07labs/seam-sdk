@@ -358,7 +358,8 @@ jobs:
           # `npm test` ran their TypeScript twins in full. That asymmetry is exactly how the stale
           # `schema_version == 2` assertion survived on the Python side and was caught on the TS one.
           pytest -q tests/test_integration.py tests/test_admin.py \
-                    tests/test_streamed_decode.py tests/test_verify_attestation.py
+                    tests/test_streamed_decode.py tests/test_verify_attestation.py \
+                    tests/test_verify_anchor.py
       - name: typescript live round-trip
         working-directory: ts
         env:
