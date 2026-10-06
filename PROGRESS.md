@@ -4295,7 +4295,7 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
   code change was needed (a fresh-Opus verify pass caught the header's first draft overstating
   this — "rather than refusing outright" was wrong, fixed before merge). (2) the release's
   `retitle_changelog.sh` run shifted `CHANGELOG.md`'s "No yank" paragraph from line 1054 to 1056
-  (a +2 insert right after `## Unreleased`), pushing `COMPATIBILITY.md:101` and
+  (a +2 insert right after `## Unreleased`), pushing `COMPATIBILITY.md:102` and
   `DECISIONS.md:1222`'s `CHANGELOG.md:1035-1052` citations past the citation test's slack
   tolerance; repointed both to `CHANGELOG.md:1037-1054`. Tested: `check_vendored_spec.py` OK via both
   `--from local` and `--from gh`; `test_compatibility_citations_resolve.py` 489 passed/0 failed
