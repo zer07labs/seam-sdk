@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.33.7 — 2026-10-06
+
 ## 0.33.6 — 2026-10-06
 
 ## 0.33.5 — 2026-10-06
