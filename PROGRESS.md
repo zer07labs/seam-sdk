@@ -4502,7 +4502,7 @@ green before any code changed.
      `python/seam_sdk/admin.py:571` returns `EventStream(lambda: self._events.StreamEvents(...))`,
      whose `__next__` (`python/seam_sdk/admin.py:228`) yields the raw generated `ev.SeamEvent` object directly —
      same shape as `preview_erasure` returning the whole `pb.ErasurePreview` (PR #182's finding).
-     `ts/src/admin.ts:437-441`'s `streamEvents` generator does `for await (const ev of
+     `ts/src/admin.ts:437-445`'s `streamEvents` generator does `for await (const ev of
      events.streamEvents(...)) { yield ev; }` — also raw pass-through, typed
      `AsyncIterable<SeamEvent>`. So `tenant_seq` will be reachable as `event.tenant_seq` in both
      languages the instant the stubs regenerate, with zero method/type changes — exactly the
