@@ -287,8 +287,8 @@ class SeamClient:
         both, drops empty entries, dedupes first-wins, and caps the effective set at 16. **Today the
         server refuses an effective subject set larger than one** — supplying more than one is the
         server's ``INVALID_ARGUMENT`` until Phase B ships ``AuthorizeEvaluated.subject_digests``; this
-        parameter exists now so callers can migrate off ``subject`` one at a time. It is not part of
-        the signed payload (``call_sig`` does not cover ``subject`` or ``subjects``).
+        parameter exists now so callers can migrate off ``subject`` one at a time. Both are signed by
+        ``call_sig`` v3, in the order passed.
         """
         # Canonicalized ONCE, before the ticket is acquired and outside the closure below. Both
         # halves of that are load-bearing. Inside the closure it was re-derived on the refresh-and-
