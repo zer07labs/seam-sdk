@@ -117,3 +117,22 @@ def test_authorize_requests_are_signed_v3_over_their_own_wire_fields() -> None:
     Ed25519PrivateKey.from_private_bytes(SEED).public_key().verify(
         req.call_sig, payload
     )
+
+
+def test_features_sort_by_utf8_bytes_not_utf16_order() -> None:
+    """U+FFFF is EF BF BF in UTF-8 and U+10000 is F0 90 80 80, so bytewise U+FFFF sorts first; UTF-16
+    order (D800 DC00 < FFFF) would put U+10000 first. No vector case tells the two apart, so pin it
+    here — the JVM and TS twins carry the same test."""
+    case = _cases()[0]
+    p = call_sig_v3_payload(
+        bytes.fromhex(case["ticket_hex"]),
+        case["tool_input_digest"],
+        case["tool_name"],
+        case["agent_id"],
+        features={"\U00010000": "b", "￿": "a"},
+    )
+    want = (
+        "04000000" + "02000000" + "03000000efbfbf" + "0100000061"
+        "04000000f0908080" + "0100000062"
+    )
+    assert p.hex().endswith(want)
