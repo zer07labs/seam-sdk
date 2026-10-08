@@ -97,7 +97,7 @@ the number, and it is CI-enforced by `ci.yml`'s `version-lockstep` job).
   change: `.github/workflows/ci.yml`'s java and kotlin jobs invoke `./gradlew`, so the wrapper —
   not an ambient gradle — drives CI too.
 - ~~`ErasureRequest.now_millis` unexposed in both erasure wrappers~~ — **RETIRED 2026-08-24.**
-  Exposed on all four wrappers, both languages: `python/seam_sdk/admin.py:250-269` and `:271-290`;
+  Exposed on all four wrappers, both languages: `python/seam_sdk/admin.py:256-275` and `:271-290`;
   `ts/src/admin.ts:183-194` and `:198-210`. Shipped per `CHANGELOG.md`'s `now_millis` / `nowMillis`
   entry.
 - **REWRITTEN 2026-08-24 — the observation holds, two of its clauses did not.** `seam-adapters`'

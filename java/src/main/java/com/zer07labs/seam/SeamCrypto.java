@@ -338,4 +338,82 @@ public final class SeamCrypto {
     for (byte x : b) sb.append(String.format("%02x", x & 0xff));
     return sb.toString();
   }
+
+  // ── Enrolment proof-of-possession (#205) ────────────────────────────────────────────────────
+
+  /**
+   * Domain tag of the enrolment proof-of-possession (seam-runtime #1157): the subject AID's own
+   * consent, by the key it embeds, to ONE {@code EnrollTenant} binding. Bump it only in lockstep
+   * with the runtime.
+   */
+  public static final String ENROLL_POP_V1_CONTEXT = "seam-enroll-pop-v1";
+
+  /**
+   * The inputs {@link #enrollPopPayload} frames, each exactly as sent on the wire. Strings are signed
+   * as their UTF-8 bytes ({@code null} is read as empty). {@code issuedAtMs} is Unix epoch
+   * MILLISECONDS, read as an UNSIGNED 64-bit value (the proto field is {@code uint64}).
+   */
+  public record EnrollPopFields(
+      String subjectAid, String tenant, String namespace, long issuedAtMs, String nonce) {}
+
+  /**
+   * The exact bytes {@link #enrollPop} signs: {@code frame(context) | frame(subject_aid) |
+   * frame(tenant) | frame(namespace) | frame(u64le(issued_at_ms)) | frame(nonce)}, with {@code
+   * frame(x) = u32le(len_bytes(x)) | x}. {@code issued_at_ms} is 8 raw little-endian bytes, not ASCII
+   * decimal.
+   *
+   * <p>Pinned by {@code conformance/enroll_pop_v1_payload_vector.json}. Public so a caller can
+   * reproduce or verify the binding without re-deriving it from prose.
+   */
+  public static byte[] enrollPopPayload(EnrollPopFields f) {
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    enrollFrame(out, ENROLL_POP_V1_CONTEXT.getBytes(StandardCharsets.UTF_8));
+    enrollFrame(out, nz(f.subjectAid()));
+    enrollFrame(out, nz(f.tenant()));
+    enrollFrame(out, nz(f.namespace()));
+    enrollFrame(out, leBytes(f.issuedAtMs(), 8));
+    enrollFrame(out, nz(f.nonce()));
+    return out.toByteArray();
+  }
+
+  /** Refuse a nonce the runtime would refuse: 1..=128 characters of {@code [A-Za-z0-9_-]}. */
+  public static void validateEnrollPopNonce(String nonce) {
+    if (nonce == null || nonce.isEmpty() || nonce.length() > 128) {
+      throw new IllegalArgumentException("enrol pop nonce must be 1..=128 characters");
+    }
+    if (!nonce.matches("[A-Za-z0-9_-]+")) {
+      throw new IllegalArgumentException("enrol pop nonce must use only [A-Za-z0-9_-]");
+    }
+  }
+
+  /**
+   * The enrolment proof-of-possession: Ed25519 by the agent key (32-byte seed) over {@link
+   * #enrollPopPayload}, returned as the raw 64-byte signature (the {@code EnrollPop.signature} bytes
+   * field; the REST body carries it as unpadded base64url). Refuses a {@code subjectAid} that is not
+   * the seed's own AID — a proof can only speak for the key that signs it — and a nonce the runtime
+   * would refuse.
+   */
+  public static byte[] enrollPop(byte[] agentSeed, EnrollPopFields f) {
+    if (agentSeed == null || agentSeed.length != 32) {
+      throw new IllegalArgumentException("agent seed must be 32 bytes");
+    }
+    validateEnrollPopNonce(f.nonce());
+    String own = aidFromPubkey(ed25519Pub(agentSeed));
+    if (!own.equals(f.subjectAid())) {
+      throw new IllegalArgumentException(
+          "subjectAid " + f.subjectAid() + " is not this seed's AID " + own);
+    }
+    return ed25519Sign(agentSeed, enrollPopPayload(f));
+  }
+
+  private static void enrollFrame(ByteArrayOutputStream out, byte[] b) {
+    out.writeBytes(leBytes(b.length, 4));
+    out.writeBytes(b);
+  }
+
+  private static byte[] leBytes(long v, int n) {
+    byte[] out = new byte[n];
+    for (int i = 0; i < n; i++) out[i] = (byte) (v >>> (8 * i));
+    return out;
+  }
 }

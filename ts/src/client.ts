@@ -2,7 +2,7 @@
 // crypto shim. `runDecision` owns the full binding path (pinned-key PoP admission → decide → seal);
 // `verifyDecision` verifies a sealed decision's rooted TCT locally — zero server trust beyond the fetch.
 
-import { createClient, type Client } from "@connectrpc/connect";
+import { Code, createClient, type Client } from "@connectrpc/connect";
 import { createGrpcTransport, Http2SessionManager } from "@connectrpc/connect-node";
 import { create, toBinary, type DescMessage, type MessageInitShape } from "@bufbuild/protobuf";
 import { ed25519 } from "@noble/curves/ed25519";
@@ -18,6 +18,7 @@ import {
   ObjectionRequestSchema,
   OpenSessionRequestSchema,
   ProposalRequestSchema,
+  ReportOutcomeRequestSchema,
   SeamAdmission,
   SeamAuthorization,
   SeamContext,
@@ -37,13 +38,18 @@ import {
   aidFromPubkey,
   buildPresentation,
   callSigV3,
+  callSig,
+  enrollPop,
   jcsCanonicalize,
+  newEnrollPopNonce,
   requestSig,
   toolInputDigest,
   verifyTct,
+  type EnrollProof,
 } from "./crypto.js";
 import {
   errorMappingInterceptor,
+  InvalidArgumentError,
   ProtocolViolationError,
   UnauthenticatedError,
 } from "./errors.js";
@@ -141,6 +147,26 @@ export class Agent {
   }
   get aid(): string {
     return aidFromPubkey(ed25519.getPublicKey(this.seed));
+  }
+
+  /** This agent's consent to being enrolled under `tenant`/`namespace` (seam-runtime #1157): the `pop`
+   * an operator passes to `SeamAdminClient.enrollTenant(subjectAid, tenant, namespace, pop)`. Required
+   * for enrolment by a tenant-scoped operator token.
+   *
+   * `issuedAtMs` defaults to now and `nonce` to 16 fresh random bytes as 22 base64url characters; both
+   * are overridable for tests. The runtime accepts the proof for 5 minutes (and up to 60 s ahead of its
+   * clock), so mint it just before the enrolment call. */
+  enrolmentProof(
+    tenant: string,
+    namespace: string,
+    opts?: { issuedAtMs?: number | bigint; nonce?: string },
+  ): EnrollProof {
+    return enrollPop(this.seed, {
+      tenant,
+      namespace,
+      issuedAtMs: opts?.issuedAtMs ?? BigInt(Date.now()),
+      nonce: opts?.nonce ?? newEnrollPopNonce(),
+    });
   }
 }
 
@@ -1168,15 +1194,38 @@ export class SeamClient {
   }
 
   /** Report a delayed correctness outcome for a sealed decision (advisory, Plan R). The sealed record is
-   * never mutated; this only emits a LEARNING_OUTCOME. Resolves whether it was recorded. */
+   * never mutated; this only emits a LEARNING_OUTCOME. Resolves whether it was recorded.
+   *
+   * `idempotencyKey` is **required** (seam-runtime #1154): 1–128 printable ASCII characters, checked
+   * here before any network call. It must be **stable per logical outcome**. A retry of the same report
+   * must reuse the key, which makes the retry a no-op that returns the original response. A correction,
+   * or a second reporter, needs a NEW key. Reusing a key with a different `correct`/`verifiedBy` is
+   * refused with `INVALID_ARGUMENT`. Derive it from your own outcome identity (for example your review
+   * or ticket id), never from a fresh random value per attempt, which would turn every retry into a
+   * second report. It is stored durably and never erased, so keep personal data out of it.
+   *
+   * The key lives in a required options object rather than a positional argument on purpose: the old
+   * third positional was `verifiedBy`, and a string there must not silently become the key.
+   * `credential` opts in to the in-band request credential (#508), digest over the whole message. */
   async reportOutcome(
     decisionId: string,
     correct: boolean,
-    verifiedBy?: string,
-    opts?: UnaryCallOptions,
+    opts: { idempotencyKey: string; verifiedBy?: string } & CredentialedCallOptions,
   ): Promise<boolean> {
-    return (await this.coord.reportOutcome({ decisionId, correct, verifiedBy }, call(opts)))
-      .recorded;
+    const init = {
+      decisionId,
+      correct,
+      verifiedBy: opts.verifiedBy,
+      idempotencyKey: checkIdempotencyKey(opts.idempotencyKey),
+    };
+    const headers = await this.credentialHeaders(
+      opts.credential,
+      "/seam.api.v1.SeamCoordination/ReportOutcome",
+      "",
+      opts,
+      { schema: ReportOutcomeRequestSchema, init },
+    );
+    return (await this.coord.reportOutcome(init, { ...call(opts), headers })).recorded;
   }
 
   // ── Context binding (data plane) ──────────────────────────────────────────────────────────────
@@ -1287,4 +1336,17 @@ export class SeamClient {
       supersedes: c.supersedes || "",
     });
   }
+}
+
+/** The runtime's `ReportOutcome` key rule (#1154), checked before any network call: 1–128 printable
+ * ASCII characters (U+0020..U+007E). */
+function checkIdempotencyKey(key: string): string {
+  if (typeof key !== "string" || key.length < 1 || key.length > 128 || !/^[\x20-\x7e]+$/.test(key)) {
+    throw new InvalidArgumentError(
+      "reportOutcome: idempotencyKey must be 1-128 printable ASCII characters (U+0020..U+007E); " +
+        "the runtime refuses anything else with INVALID_ARGUMENT",
+      Code.InvalidArgument,
+    );
+  }
+  return key;
 }

@@ -43,6 +43,7 @@ import {
   OpenSessionRequestSchema,
   ProposalRequestSchema,
   SessionRefSchema,
+  ReportOutcomeRequestSchema,
   VoteRequestSchema,
 } from "../gen/seam/api/v1/seam_pb.js";
 
@@ -137,7 +138,9 @@ const ADMIN_CALLS: Record<
   previewErasure: (a, o) => a.previewErasure("acme", "cust-42", o),
   eraseSubject: (a, o) => a.eraseSubject("acme", "cust-42", 0n, undefined, o),
   eraseSubjectConfirmed: (a, o) => a.eraseSubjectConfirmed("acme", "cust-42", undefined, o),
-  enrollTenant: (a, o) => a.enrollTenant("aid:x", "acme", "ns", o),
+  enrollTenant: (a, o) => a.enrollTenant("aid:x", "acme", "ns", undefined, o),
+  "enrollTenant[pop]": (a, o) =>
+    a.enrollTenant("aid:x", "acme", "ns", new Agent(new Uint8Array(32)).enrolmentProof("acme", "ns"), o),
   listTenants: (a, o) => a.listTenants(o),
   revokeTenant: (a, o) => a.revokeTenant("aid:x", o),
   registerParty: (a, o) => a.registerParty("p", new Uint8Array(32), o),
@@ -308,7 +311,7 @@ interface CredentialSpec {
   invoke: (c: SeamClient, cred: Agent | undefined) => Promise<unknown>;
 }
 
-/** The same 15 verbs as `test_credential_wiring.py`'s `CALLS` table — rpc full name, bodyless vs.
+/** The same 16 verbs as `test_credential_wiring.py`'s `CALLS` table — rpc full name, bodyless vs.
  * bodied (and its request schema, to recompute the expected digest independently), and how to
  * invoke it with/without `credential`. */
 const CREDENTIAL_CALLS: Record<string, CredentialSpec> = {
@@ -330,6 +333,12 @@ const CREDENTIAL_CALLS: Record<string, CredentialSpec> = {
     bodyless: false,
     schema: VoteRequestSchema,
     invoke: (c, cred) => c.submitVote("s1", "a", "p1", "yes", undefined, { credential: cred }),
+  },
+  ReportOutcome: {
+    rpc: "/seam.api.v1.SeamCoordination/ReportOutcome",
+    bodyless: false,
+    schema: ReportOutcomeRequestSchema,
+    invoke: (c, cred) => c.reportOutcome("d1", true, { idempotencyKey: "review-77", credential: cred }),
   },
   SubmitEvaluation: {
     rpc: "/seam.api.v1.SeamCoordination/SubmitEvaluation",
@@ -413,7 +422,7 @@ function expectedBodyDigest(spec: CredentialSpec, recordedInput: Record<string, 
   return toolInputDigest(toBinary(spec.schema, msg));
 }
 
-test("credential=: omitted sends no headers, on every one of the 15 target verbs", async () => {
+test("credential=: omitted sends no headers, on every one of the 16 target verbs", async () => {
   for (const [name, spec] of Object.entries(CREDENTIAL_CALLS)) {
     const calls: Recorded[] = [];
     const client = new SeamClient(fakeTransport(calls, minimalHandle));
@@ -424,7 +433,7 @@ test("credential=: omitted sends no headers, on every one of the 15 target verbs
   }
 });
 
-test("credential=: attaches a ticket + signature that verifies, on every one of the 15 target verbs", async () => {
+test("credential=: attaches a ticket + signature that verifies, on every one of the 16 target verbs", async () => {
   const credential = new Agent(new Uint8Array(32).fill(3));
   const pubkey = ed25519.getPublicKey(credential.seed);
   for (const [name, spec] of Object.entries(CREDENTIAL_CALLS)) {
@@ -709,4 +718,23 @@ test("listLegalHolds keeps an empty tenant distinct from no filter", async () =>
   assert.equal(filtered.tenant, "");
   assert.equal(filtered.cursor, "dec:9");
   assert.equal(filtered.limit, 5);
+});
+
+test("reportOutcome sends the idempotency key and refuses an invalid one before any RPC", async () => {
+  const calls: Recorded[] = [];
+  const client = new SeamClient(fakeTransport(calls, () => ({ recorded: true })));
+  await client.reportOutcome("d1", true, { idempotencyKey: "review-77", verifiedBy: "qa" });
+  assert.equal(calls[0]!.input.idempotencyKey, "review-77");
+  assert.equal(calls[0]!.input.verifiedBy, "qa");
+  await client.reportOutcome("d1", false, { idempotencyKey: " ~" + "x".repeat(126) });
+
+  calls.length = 0;
+  for (const bad of ["", "x".repeat(129), "tab\there", "naïve", "line\n", "\x7f"]) {
+    await assert.rejects(
+      client.reportOutcome("d1", true, { idempotencyKey: bad }),
+      (e: unknown) => e instanceof InvalidArgumentError && /idempotencyKey/.test(String(e)),
+      `accepted invalid key ${JSON.stringify(bad)}`,
+    );
+  }
+  assert.equal(calls.length, 0, "an invalid key must never reach the wire");
 });

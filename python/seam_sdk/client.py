@@ -24,7 +24,14 @@ from ._authorize import (
     credential_metadata,
     result_of,
 )
-from .crypto import aid_from_pubkey, build_presentation, verify_tct
+from .crypto import (
+    EnrollProof,
+    aid_from_pubkey,
+    build_presentation,
+    enroll_pop,
+    new_enroll_pop_nonce,
+    verify_tct,
+)
 from .errors import (  # noqa: F401  (SeamError re-exported)
     IssuerMismatchError,
     SeamError,
@@ -97,6 +104,29 @@ class Agent:
             )
             self._aid = aid_from_pubkey(pub)
         return self._aid
+
+    def enrolment_proof(
+        self,
+        tenant: str,
+        namespace: str,
+        *,
+        issued_at_ms: Optional[int] = None,
+        nonce: Optional[str] = None,
+    ) -> EnrollProof:
+        """This agent's consent to being enrolled under ``tenant``/``namespace`` (seam-runtime #1157):
+        the ``pop`` an operator passes to ``SeamAdminClient.enroll_tenant(..., pop=...)``. Required for
+        enrolment by a tenant-scoped operator token.
+
+        ``issued_at_ms`` defaults to now and ``nonce`` to 16 fresh random bytes as 22 base64url
+        characters; both are overridable for tests. The runtime accepts the proof for 5 minutes (and
+        up to 60 s ahead of its clock), so mint it just before the enrolment call."""
+        return enroll_pop(
+            self.seed,
+            tenant,
+            namespace,
+            issued_at_ms=_now_ms() if issued_at_ms is None else issued_at_ms,
+            nonce=new_enroll_pop_nonce() if nonce is None else nonce,
+        )
 
 
 @dataclass
@@ -854,15 +884,40 @@ class SeamClient:
         correct: bool,
         verified_by: Optional[str] = None,
         *,
+        idempotency_key: str,
+        credential: Optional[Agent] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> bool:
         """Report a delayed correctness outcome for a sealed decision (advisory, Plan R). The sealed
         record is never mutated; this only emits a LEARNING_OUTCOME. ``verified_by`` records the source
-        (downstream system / reviewer). Returns whether it was recorded. NOT_FOUND if the id is unknown."""
-        req = pb.ReportOutcomeRequest(decision_id=decision_id, correct=correct)
+        (downstream system / reviewer). Returns whether it was recorded. NOT_FOUND if the id is unknown.
+
+        ``idempotency_key`` is **required** (seam-runtime #1154): 1–128 printable ASCII characters,
+        checked here before any network call. It must be **stable per logical outcome**. A retry of the
+        same report must reuse the key, which makes the retry a no-op that returns the original response.
+        A correction, or a second reporter, needs a NEW key. Reusing a key with a different
+        ``correct``/``verified_by`` is refused with ``INVALID_ARGUMENT``. Derive it from your own outcome
+        identity (for example your review or ticket id), never from a fresh random value per attempt,
+        which would turn every retry into a second report. It is stored durably and never erased, so keep
+        personal data out of it.
+
+        ``credential`` opts in to the in-band request credential (#508). The digest covers the whole
+        request message; this is what makes the verb callable on a header-denied plane."""
+        req = pb.ReportOutcomeRequest(
+            decision_id=decision_id,
+            correct=correct,
+            idempotency_key=_check_idempotency_key(idempotency_key),
+        )
         if verified_by is not None:
             req.verified_by = verified_by
-        return self._coord.ReportOutcome(req, timeout=timeout).recorded
+        md = self._credential_md(
+            credential,
+            "/seam.api.v1.SeamCoordination/ReportOutcome",
+            "",
+            req,
+            timeout=timeout,
+        )
+        return self._coord.ReportOutcome(req, timeout=timeout, metadata=md).recorded
 
     # ── Context binding (data plane) ─────────────────────────────────────────────────────────────
 
@@ -1011,3 +1066,16 @@ class SeamClient:
             "supersedes": c.supersedes or "",
         }
         return verify_tct(expected_issuer, c.signed_artifact.decode(), commitment)
+
+
+def _check_idempotency_key(key: str) -> str:
+    """The runtime's ``ReportOutcome`` key rule (#1154), checked before any network call: 1–128
+    printable ASCII characters (U+0020..U+007E). Shared by the sync and async clients."""
+    if not isinstance(key, str):
+        raise TypeError(f"idempotency_key must be a str, got {type(key).__name__}")
+    if not 1 <= len(key) <= 128 or not all(" " <= ch <= "~" for ch in key):
+        raise ValueError(
+            "idempotency_key must be 1-128 printable ASCII characters (U+0020..U+007E); "
+            "the runtime refuses anything else with INVALID_ARGUMENT"
+        )
+    return key

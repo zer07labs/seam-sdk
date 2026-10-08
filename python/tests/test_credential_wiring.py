@@ -1,7 +1,7 @@
 """`client.py` / `aio.py` wiring for the per-request credential (`seam-request-call-v1`, #508).
 
 `request_sig_payload`/`request_sig` themselves are pinned against the runtime's conformance vector
-in ``test_request_sig_payload.py``; this file is the layer above — that each of the 15 target verbs,
+in ``test_request_sig_payload.py``; this file is the layer above — that each of the 16 target verbs,
 in BOTH clients, attaches (or omits) the right gRPC metadata for the right RPC/resource/body.
 
 No network: ``_coord``/``_authz`` are swapped for a recorder that captures the exact request object
@@ -46,7 +46,8 @@ def _seed_ticket(tickets: dict, aid: str) -> None:
 
 class _Recorder:
     """Stands in for ``_coord``/``_authz``. Every RPC-shaped attribute records ``(req, kwargs)``
-    and returns a generic ``SessionStep`` — none of the 15 wrapper methods below inspect it."""
+    and returns a generic ``SessionStep`` (``ReportOutcome`` gets its own response type, because its
+    wrapper reads ``.recorded``). None of the other wrapper methods below inspect the response."""
 
     def __init__(self, seen: dict):
         self._seen = seen
@@ -54,6 +55,8 @@ class _Recorder:
     def __getattr__(self, name):
         def record(req, **kw):
             self._seen[name] = (req, kw)
+            if name == "ReportOutcome":
+                return pb.ReportOutcomeResponse(recorded=True)
             return pb.SessionStep(state="Open")
 
         return record
@@ -66,6 +69,8 @@ class _AioRecorder:
     def __getattr__(self, name):
         async def record(req, **kw):
             self._seen[name] = (req, kw)
+            if name == "ReportOutcome":
+                return pb.ReportOutcomeResponse(recorded=True)
             return pb.SessionStep(state="Open")
 
         return record
@@ -130,6 +135,13 @@ CALLS = {
         "bodyless": False,
         "invoke": lambda c, cred: c.submit_ballot(
             "s1", "a", "r1", pb.BALLOT_CHOICE_APPROVE, credential=cred
+        ),
+    },
+    "ReportOutcome": {
+        "rpc": "/seam.api.v1.SeamCoordination/ReportOutcome",
+        "bodyless": False,
+        "invoke": lambda c, cred: c.report_outcome(
+            "d1", True, idempotency_key="review-77", credential=cred
         ),
     },
     "CancelSession": {

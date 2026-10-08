@@ -129,6 +129,13 @@ ADMIN_CALLS = {
         "acme", "cust-42", timeout=0.1
     ),
     "enroll_tenant": lambda a: a.enroll_tenant("aid:x", "acme", "ns", timeout=0.1),
+    "enroll_tenant[pop]": lambda a: a.enroll_tenant(
+        "aid:x",
+        "acme",
+        "ns",
+        pop=Agent(bytes(32)).enrolment_proof("acme", "ns"),
+        timeout=0.1,
+    ),
     "list_tenants": lambda a: a.list_tenants(timeout=0.1),
     "revoke_tenant": lambda a: a.revoke_tenant("aid:x", timeout=0.1),
     "register_party": lambda a: a.register_party("p", b"\x00" * 32, timeout=0.1),

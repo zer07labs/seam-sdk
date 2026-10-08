@@ -41,12 +41,13 @@ What to do instead, in descending order of usefulness:
 
 | Consumer | Constraint on `seam-sdk` | Verified at |
 |---|---|---|
-| `seam-adapters` (`seam-agent-core[sdk]`) | `seam-sdk>=0.13.1,<0.20` | `seam-adapters/core/pyproject.toml:56` |
+| `seam-adapters` (`seam-agent-core[sdk]`) | `seam-sdk>=0.33.2,<0.34` | `seam-adapters/core/pyproject.toml:55` |
 | `seam-aegis` | `seam-agent-core[sdk]>=0.8,<0.9` (reaches this SDK transitively) | `seam-aegis/pyproject.toml:42` |
 
 **One caveat on the first row: the lockfile number is not a real resolution.**
-`seam-adapters/uv.lock:4217` resolves `seam-sdk` **0.17.0** — which happens to fall inside the
-declared range, but that is incidental: `seam-adapters/pyproject.toml:59` overrides the dependency
+`seam-adapters/uv.lock:4217` resolved `seam-sdk` **0.17.0** when this row was first verified. That
+was inside the range declared then and is outside the one declared now (raised to `>=0.33.2,<0.34` in
+seam-adapters f42e682), and the lock was never evidence either way: `seam-adapters/pyproject.toml:59` overrides the dependency
 with an unconditional editable path source (`{ path = "../seam-sdk/python", editable = true }`), so
 the lock records the sibling checkout rather than a resolved release. A reader should not take
 0.17.0 as evidence this constraint has ever been checked against a real registry release.
@@ -99,7 +100,7 @@ mismatch cannot ship.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1120-1137`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1141-1158`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -388,7 +389,7 @@ patch, so the callouts have to live here rather than in a version number.
 ### The accepted integer set widened, and that is irreversible
 
 `jcs_canonicalize` previously refused any `int` with `|v| > 2^53`. It now accepts an integer iff JCS
-renders it as itself (`python/seam_sdk/crypto.py:223`, `ts/src/crypto.ts:188`). Practically:
+renders it as itself (`python/seam_sdk/crypto.py:224`, `ts/src/crypto.ts:188`). Practically:
 
 | value | before | now | why |
 |---|---|---|---|
@@ -424,8 +425,8 @@ so it cannot reach the taxonomy. Use `canonicalize_tool_input()`
 
 ### `canonical=` hands you the derivation, and the responsibility with it
 
-`authorize(canonical=…)` (`python/seam_sdk/client.py:258`, `python/seam_sdk/aio.py:196`; `opts.canonical`
-in TypeScript, `ts/src/client.ts:626`) is additive and keyword-only. The SDK does **not** verify the
+`authorize(canonical=…)` (`python/seam_sdk/client.py:288`, `python/seam_sdk/aio.py:197`; `opts.canonical`
+in TypeScript, `ts/src/client.ts:652`) is additive and keyword-only. The SDK does **not** verify the
 bytes — re-deriving to check would reinstate the second derivation the parameter exists to remove.
 So two things become possible that were not:
 
@@ -456,7 +457,7 @@ only thing a digest does.
 The guard is `uintSlot` (`ts/src/crypto.ts:828`), which already governed the v3 record digest;
 `u64le`/`u32le` (`ts/src/crypto.ts:518`) now route through it, so v2 and the attestation framing get
 the rule that was always written for them. Python got the same treatment: `_uint_slot`
-(`python/seam_sdk/crypto.py:660`) was `_v3_uint`, and `record_digest_v2` now shares it. Every
+(`python/seam_sdk/crypto.py:661`) was `_v3_uint`, and `record_digest_v2` now shares it. Every
 "before" below was measured against the pre-fix build, not inferred.
 
 **Read the `now` column as the record-digest arm.** In the chain-head **attestation** arm every one
@@ -489,7 +490,7 @@ Python never had it. What Python had was three smaller defects in the same code:
 
 - `verify_chain_head_attestation` let that `struct.error` escape a function documented to return
   `False` on any tamper, so an out-of-range length **crashed** a caller instead of being rejected. It
-  now returns `False` (`python/seam_sdk/crypto.py:843-890`).
+  now returns `False` (`python/seam_sdk/crypto.py:844-891`).
 - `attested_len`, `attested_at` and `digest_schema` are now required to be `int`. Previously
   `True` was digested as `1` (`bool` subclasses `int`) and `5.0` raised `struct.error` — a *third*
   answer from a function that should only ever give two. Both now raise `TypeError`.
@@ -623,7 +624,7 @@ covered `{}` — so it did not mean what you thought. Convert at the boundary:
 `date.toISOString()`, `Object.fromEntries(map)`, `[...set]`. The error names the type and the
 conversion.
 
-**This reaches you through `authorize()`, not only through the helper.** `ts/src/client.ts:527` calls
+**This reaches you through `authorize()`, not only through the helper.** `ts/src/client.ts:553` calls
 `jcsCanonicalize(toolInput ?? {})` directly, so `authorize({ toolInput: { deadline: new Date() } })`
 now throws where it previously signed a digest over `{"deadline":{}}`. That is the case worth
 checking in your own code, because it is the one where the aliased digest was being *signed*.

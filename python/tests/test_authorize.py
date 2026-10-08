@@ -400,7 +400,7 @@ def test_every_public_method_enforces_timeout(hanging_server):
         lambda: client.session_status("s", timeout=0.1),
         lambda: client.get_decision("d", timeout=0.1),
         lambda: client.replay_decision("d", timeout=0.1),
-        lambda: client.report_outcome("d", True, timeout=0.1),
+        lambda: client.report_outcome("d", True, idempotency_key="k-1", timeout=0.1),
         lambda: client.register_context(b"c", "Digest", timeout=0.1),
         lambda: client.resolve_context(["r"], timeout=0.1),
         lambda: client.issuer_aid(timeout=0.1),
@@ -501,7 +501,9 @@ def test_aio_deadlines_enforced(hanging_server):
                 lambda: client.session_status("s", timeout=0.1),
                 lambda: client.get_decision("d", timeout=0.1),
                 lambda: client.replay_decision("d", timeout=0.1),
-                lambda: client.report_outcome("d", True, timeout=0.1),
+                lambda: client.report_outcome(
+                    "d", True, idempotency_key="k-1", timeout=0.1
+                ),
                 lambda: client.register_context(b"c", "Digest", timeout=0.1),
                 lambda: client.resolve_context(["r"], timeout=0.1),
                 lambda: client.issuer_aid(timeout=0.1),

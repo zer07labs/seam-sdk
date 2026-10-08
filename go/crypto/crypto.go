@@ -304,3 +304,74 @@ func CallSigV3(agentSeed []byte, f CallSigV3Fields) ([]byte, error) {
 	}
 	return ed25519.Sign(ed25519.NewKeyFromSeed(agentSeed), CallSigV3Payload(f)), nil
 }
+
+// EnrollPopV1Context is the domain tag of the enrolment proof-of-possession (seam-runtime #1157, SDK
+// #205): the subject AID's own consent, by the key it embeds, to ONE `EnrollTenant` binding. Bump it only
+// in lockstep with the runtime.
+const EnrollPopV1Context = "seam-enroll-pop-v1"
+
+// EnrollPopFields are the inputs EnrollPopPayload frames, each exactly as sent on the wire. Strings are
+// signed as their UTF-8 bytes.
+type EnrollPopFields struct {
+	SubjectAID string // `aid:pubkey:ed25519:<b64url>` — the AID being enrolled
+	Tenant     string
+	Namespace  string
+	IssuedAtMs uint64 // Unix epoch MILLISECONDS
+	Nonce      string // 1..=128 chars of [A-Za-z0-9_-]
+}
+
+// EnrollPopPayload is the exact byte string EnrollPopSign signs:
+//
+//	frame(context) | frame(subject_aid) | frame(tenant) | frame(namespace) | frame(u64le(issued_at_ms)) |
+//	frame(nonce)
+//
+// with frame(x) = u32le(len_bytes(x)) | x. issued_at_ms is 8 raw little-endian bytes, not ASCII decimal.
+//
+// Pinned by conformance/enroll_pop_v1_payload_vector.json. Exported so a caller can reproduce or verify
+// the binding without re-deriving it from prose.
+func EnrollPopPayload(f EnrollPopFields) []byte {
+	var out []byte
+	frame := func(b []byte) {
+		out = binary.LittleEndian.AppendUint32(out, uint32(len(b)))
+		out = append(out, b...)
+	}
+	frame([]byte(EnrollPopV1Context))
+	frame([]byte(f.SubjectAID))
+	frame([]byte(f.Tenant))
+	frame([]byte(f.Namespace))
+	frame(binary.LittleEndian.AppendUint64(nil, f.IssuedAtMs))
+	frame([]byte(f.Nonce))
+	return out
+}
+
+// ValidateEnrollPopNonce refuses a nonce the runtime would refuse: 1..=128 characters of [A-Za-z0-9_-].
+func ValidateEnrollPopNonce(nonce string) error {
+	if len(nonce) < 1 || len(nonce) > 128 {
+		return fmt.Errorf("enrol pop nonce must be 1..=128 characters, got %d", len(nonce))
+	}
+	for i := 0; i < len(nonce); i++ {
+		c := nonce[i]
+		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return fmt.Errorf("enrol pop nonce must use only [A-Za-z0-9_-]")
+		}
+	}
+	return nil
+}
+
+// EnrollPopSign is the enrolment proof-of-possession: Ed25519 by the agent key over EnrollPopPayload,
+// returned as the raw 64-byte signature (the `EnrollPop.signature` bytes field; the REST body carries it
+// as unpadded base64url). It refuses a SubjectAID that is not the seed's own AID — a proof can only speak
+// for the key that signs it — and a nonce the runtime would refuse.
+func EnrollPopSign(agentSeed []byte, f EnrollPopFields) ([]byte, error) {
+	if len(agentSeed) != ed25519.SeedSize {
+		return nil, fmt.Errorf("agent seed must be %d bytes", ed25519.SeedSize)
+	}
+	if err := ValidateEnrollPopNonce(f.Nonce); err != nil {
+		return nil, err
+	}
+	key := ed25519.NewKeyFromSeed(agentSeed)
+	if own := AIDFromPubkey(key.Public().(ed25519.PublicKey)); f.SubjectAID != own {
+		return nil, fmt.Errorf("SubjectAID %q is not this seed's AID %q", f.SubjectAID, own)
+	}
+	return ed25519.Sign(key, EnrollPopPayload(f)), nil
+}

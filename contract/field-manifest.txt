@@ -266,7 +266,11 @@ DecisionResponse/participant_verdicts
 DecisionResponse/policy_enforcement
 DecisionResponse/policy_version
 DecisionResponse/tenant
+EnrollPop/issued_at_ms
+EnrollPop/nonce
+EnrollPop/signature
 EnrollTenantRequest/namespace
+EnrollTenantRequest/pop
 EnrollTenantRequest/subject_aid
 EnrollTenantRequest/tenant
 ErasurePreview/already_erased
@@ -360,6 +364,7 @@ ReplayView/terminal
 ReportConsumedRequest/consumed_cursor
 ReportOutcomeRequest/correct
 ReportOutcomeRequest/decision_id
+ReportOutcomeRequest/idempotency_key
 ReportOutcomeRequest/verified_by
 ReportOutcomeResponse/recorded
 ResolveContextRequest/refs
