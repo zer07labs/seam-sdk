@@ -16,6 +16,23 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added
+- **`ListLegalHolds` admin verb** (#206, runtime #1060): Python `SeamAdminClient.list_legal_holds(tenant=, cursor=,
+  limit=)` and TS `SeamAdminClient.listLegalHolds({tenant, cursor, limit})` each return one page plus `next_cursor`.
+  An empty `tenant` filters the reserved legacy tenant `""`; omit it for no filter.
+
+### Fixed
+- **Releases publish again.** v0.39.2 and v0.39.3 were tagged but never published (#204, #208): CI on
+  `main` was red because the runtime added two `seam.event.v1` fields (`SeamEvent.tenant_seq`, tag 25;
+  `AuthorizeEvaluated.subject_digests`, tag 11) and the field gate refused them, as designed. Those two
+  versions stay unpublished, and so does v0.40.0, which was tagged off the same red `main` while this was
+  in review. The next runtime version carries the fix.
+- **`seam-verify` keeps `tenant_seq` and `subject_digests` in an event's identity.** Both are decoded on the
+  protobuf and JSON transports and kept in the canonical re-encode that dedup keys on. Before this, two advisory
+  events that differed only in those fields re-encoded to the same bytes, and dedup dropped one of them.
+  Neither field is sealed, so neither is verified. The Python and TS SDKs expose both through the
+  generated stubs only.
+
 ## 0.40.0 — 2026-10-08
 
 ## 0.39.3 — 2026-10-08

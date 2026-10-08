@@ -1,19 +1,17 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 5f0bc0a (refreshed 2026-10-06). One
-     movement since the prior pin (6987aca):
-     1. seam-runtime#1009/#1010 (commit 5f0bc0a) — adds a "Note — accepted-restart points in the
-        production chain" bullet to the per-tenant chain-walk section: a verifier assuming one
-        unbroken chain per tenant WILL see breaks in production history that are not forks or loss
-        (legacy global-chained prefix, a tenant's chain re-rooting at genesis, interleaved system
-        sub-chains in the NULL partition), and points to a new runbook
-        (`docs/runbooks/audit-chain-boundaries.md`) for confirming them read-only. DOCS-ONLY, no
-        normative change — checked: of the three restart classes, only the legacy global-chained-
-        prefix one (a tenant's first OWN, unanchored observed link not starting at genesis) lands on
-        this crate's distinct `NON-GENESIS FIRST LINK` refusal (`verify/src/verify.rs:176-179,236-250`)
-        rather than the generic `BROKEN CHAIN` one — both are refusals (`Err`), not a tolerated case;
-        the other two (a re-rooted chain or an interleaved sub-chain breaking mid-window) still land
-        on the generic message. All three resolve the same way this note's own remedy says: a
-        per-tenant anchored start (`--from-anchor`, clause f0), which this crate already implements
-        and nothing here changes. -->
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ e168e8d (refreshed 2026-10-08). Two
+     movements since the prior pin (5f0bc0a):
+     1. seam-runtime#973/#1030 (commit bb5677f) — adds envelope tag 25, `optional uint64 tenant_seq`:
+        a per-tenant outbox counter on every event, UNSEALED (in no digest, checksum or signature).
+        This crate decodes it on both transports and carries it in the canonical dedup identity
+        (`verify/src/wire.rs`), exactly as the spec's "a re-encode of a decoded event is therefore
+        safe so long as the decoder models tag 25" requires; it verifies nothing with it. The
+        spec's completeness consumer rule (gap / replay detection per tenant) is NOT implemented
+        here — it detects loss in transit, not tampering, and stays a follow-up.
+     2. seam-runtime#715/#1047 (commit e168e8d) — adds AUTHORIZE_EVALUATED tag 11, `repeated string
+        subject_digests`. Advisory and unchained like the rest of that payload: decoded on both
+        transports for the dedup identity only. The reader rule ("tag 10 MUST equal element 0; a
+        consumer SHOULD reject a row where it does not") is a SHOULD on a row this verifier never
+        verifies, and is not enforced here. -->
 
 # `seam-event.v1` — event-stream wire spec (language-neutral)
 
@@ -51,6 +49,7 @@ SeamEvent {
   prev_checksum:   bytes     // hash-chain link → the head this event's chain extends (tag 12)
   digest:          bytes?    // §A — this entry's record/action digest; CHAINED kinds only (tag 19)
   checksum:        bytes?    // §A — the head this entry produces = H(prev_checksum ‖ digest) (tag 20)
+  tenant_seq:      u64?      // #973 — per-tenant outbox counter, gap-free per `tenant`, UNSEALED; see §Per-tenant `tenant_seq` (tag 25)
   payload:         bytes     // kind-specific body (central seam-guard redaction on the outbox is NOT YET WIRED — see the Redaction note below)
 }
 
@@ -278,7 +277,7 @@ above, supplied out of band — e.g. one element of the public `GET /v1/anchors`
   multi-tenant window, is a usage error, refused loudly rather than guessed at silently.
 - **Note — accepted-restart points in the production chain (#1009).** A verifier or tracker that assumes
   one unbroken chain per `tenant` WILL see breaks in production history that are not forks or loss: the
-  legacy global-chained prefix (`tenant_seq` NULL), a tenant whose per-tenant chain re-roots at genesis
+  legacy global-chained prefix (`audit_entry.tenant_seq` NULL — the audit column, not the wire field), a tenant whose per-tenant chain re-roots at genesis
   where an older tenant's links to a backfilled legacy row, and two interleaved system sub-chains in the
   NULL partition. They are enumerated, with how to confirm them read-only, in
   [`docs/runbooks/audit-chain-boundaries.md`](../runbooks/audit-chain-boundaries.md); resolve each with a
@@ -374,8 +373,19 @@ message AuthorizeEvaluated {           // envelope tag 23
   string reason = 8;                   // closed-set / operator-authored only (D-030)
   string policy_version = 9;           // the policy the binding named — STAGED, not "ran under"
   optional string subject_digest = 10; // "hmac-sha256:<kid>:<hex>" — NEVER the raw subject
+  repeated string subject_digests = 11; // one keyed commitment PER effective subject (#715); [0] == subject_digest
 }
 ```
+
+**`subject_digests` (tag 11, #715).** One keyed commitment per effective subject of the authorize call — the union of
+`AuthorizeRequest.subject` and `.subjects`, deduped, `subject` first, then request order, at most 16. Each element is the
+**same** commitment as `subject_digest` (same key, same `kid`, same per-tenant domain), so it is no weaker than tag 10: it cannot be tied to
+a subject without the deployment key (rotating the key severs every join) and carries no bare-hash oracle. The row stays
+append-only and un-shredable, as tag 10's is — what this field adds is that EVERY subject of a call is *recomputable in principle* by an
+operator holding the key, not only the first (the recompute facility is specified, not built — see the legacy-rows section below); `subject_digest` (10) stays populated with the first element for legacy
+consumers. **Reader rule:** when `subject_digests` is non-empty, `subject_digest` MUST equal element 0 and a consumer SHOULD reject a row where it does not (or where tag 11 is set and tag 10 is absent). **Un-updated consumers see tag 10 only — one of up to 16 subjects, silently** (connector sinks, the SDK JSON codecs, any learning reader); deploy consumers before the producer. Subjects are committed **byte-exact**: the producer neither trims, case-folds nor normalizes, so a recompute must use the exact bytes the caller sent; the runtime commits what it is *told* is a subject. Every `AUTHORIZE_EVALUATED` row — and therefore every commitment on it — exists only when the row is emitted (`emit_events`, sampling) and survives only for the outbox retention window. Absent (empty) on rows written before the field existed and on subject-less calls — it is omitted from the
+canonical JSON when empty. Every element is held to the commitment scheme (`hmac-sha256:…`). Adding it changes the
+`seam_event_descriptor` golden: the vendored copies (seam-connectors, the hub manifest) move in lockstep.
 
 **`policy_version` is STAGED, not proof of enforcement.** The authorize path produces **no
 enforcement fact at all**, by design: it seals nothing, and v1 routes and records policy without
@@ -387,7 +397,7 @@ Envelope: `event_id = "{authorize_id}#az#{seq}"`; `classification` is **fixed `I
 and a closed-set reason — no subject, secret, or agent content can reach it, so classification-gated
 redaction never fires: gate on `when_kind`).
 
-**PII rule.** The end-user data subject rides ONLY as `subject_digest`, and the request input ONLY as
+**PII rule.** The end-user data subject rides ONLY as `subject_digest` / `subject_digests`, and the request input ONLY as
 `tool_input_digest`. Both are **keyed commitments**, not bare hashes:
 
 ```
@@ -443,7 +453,7 @@ not be compared to each other.
 whose append is **fail-closed**: an ESCALATE whose append fails returns an error rather than the verdict,
 because an escalation nobody can ever see is not an escalation. ALLOW/DENY/TRANSFORM appends stay
 fail-open (verdict returned, `seam.security` WARN logged). The `{authorize_id, client_request_id?,
-agent_aid, agent_id, tool_name, tool_input_digest, subject_digest?, reason}` field set on an ESCALATE row
+agent_aid, agent_id, tool_name, tool_input_digest, subject_digest?, subject_digests?, reason}` field set on an ESCALATE row
 is the complete event-side contract an escalation consumer reads — built from events alone, with no wire
 change.
 
@@ -640,6 +650,47 @@ The decision being scored is identified by the **envelope `decision_id`**, not a
   (`audit-anchor.md`). The `digest` is computed per §Record digest below — from `schema_version = 2` it
   covers every structural column a consumer acts on plus `SHA256(ciphertext)`, so a consumer recomputes
   it from the wire; it discloses nothing a consumer does not already hold.
+
+### Per-tenant `tenant_seq` (additive, tag 25 — every kind, UNSEALED) — #973
+
+`optional uint64 tenant_seq = 25`. The runtime's per-tenant **outbox** counter, stamped on **every** event
+(chained and advisory) at append time: the same value it stores in `outbox.tenant_seq`, allocated under the
+same lock as the global `seq`. `optional` because **`0` is a real value** (a tenant's first event) and
+**absence means "predates the counter"**, which is not the same thing.
+
+- **What it counts.** Every outbox event of one wire `tenant`, one per event, starting at `0` for a tenant
+  first seen after the cutover. Allocation is serialized and a rolled-back append consumes nothing, so it is
+  **gap-free**; commit order equals counter order. `tenant == ""` is the **system partition** (config
+  snapshots, `audit_system_management`); it has its own counter. (On Postgres that partition is stored as
+  `tenant_id IS NULL`; an empty-string tenant on a tenant path is refused by `outbox_tenant_not_empty`.)
+- **Three different counters — do not conflate them.**
+  1. `SeamEvent.tenant_seq` (this field) = `outbox.tenant_seq`: counts **all** events of the tenant.
+  2. `audit_entry.tenant_seq`: counts only **chained** audit entries; it is *not* on the event wire.
+  3. `GET /v1/audit`'s `chain_index`: a position computed while building the response; not a column.
+  Using (2) or (3) as a completeness key shows false gaps for any tenant with advisory events.
+- **UNSEALED.** `tenant_seq` is in **no digest, checksum or signature** (D-W3-20) and must not be: putting it
+  in a preimage would change every existing digest. It therefore detects **loss and duplication in the
+  stream** (a faulty relay, retention loss, a missed ack), **not adversarial suppression** by a party that
+  can rewrite the stream. Suppression stays covered by the per-tenant `CHAIN_HEAD_ATTESTATION`
+  (`attested_len`). Event bytes are never hashed by the runtime; a re-encode of a decoded event is
+  therefore safe so long as the decoder models tag 25 (every in-repo decoder does).
+- **Legacy and cutover.** Events already stored carry no field and are not rewritten. The column counts
+  ahead of the wire, so the first event that *carries* the field for a tenant may have `tenant_seq = N > 0`:
+  a consumer MUST baseline on the first present value per tenant and MUST NOT assume it is `0`. The global
+  `seq` at which the field begins to appear (the cutoff) is **published with the producer change that
+  enforces it (#903)**; until then "absent" is unclassifiable and consumers MUST NOT report it as a defect.
+- **Consumer rule.** For each tenant `T` (wire `tenant`; `""` = system), over events in delivery order:
+  1. `tenant_seq` absent and `seq` below the published cutoff: legacy; ignore for completeness.
+  2. The first event of `T` with `tenant_seq` present baselines the counter.
+  3. Each later event of `T` must carry `previous + 1`. A larger value is a **gap** (report the missing
+     range); an equal or smaller value is a **duplicate/replay** (drop by `event_id`; report if the
+     `event_id` differs).
+  4. `tenant_seq` absent **after** the cutoff is a producer defect.
+  5. A gap is evidence of loss *in transit or retention*; for chained kinds confirm against the tenant's
+     `CHAIN_HEAD_ATTESTATION.attested_len` before treating it as data loss.
+- **Does not** give ordering across tenants (use `seq`), does not backfill, and a database restored from an
+  older snapshot re-issues counters already shipped (same hazard as `seq`, `docs/runbooks/outbox-seq-reset.md`);
+  rule 3 reports it as a duplicate/regression. **Tag 25 is permanent** once consumers vendor the descriptor.
 
 ## Retention & the relay-consumed cursor (R1)
 

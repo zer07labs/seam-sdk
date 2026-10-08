@@ -30,6 +30,7 @@ SeamAdmin/EnforceRetention
 SeamAdmin/EnrollTenant
 SeamAdmin/EraseSubject
 SeamAdmin/ListGrants
+SeamAdmin/ListLegalHolds
 SeamAdmin/ListTenants
 SeamAdmin/PlaceGrant
 SeamAdmin/PlaceLegalHold

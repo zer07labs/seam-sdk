@@ -25,6 +25,7 @@ import {
   SeamEvents,
   type ErasurePreview,
   type GrantView,
+  type ListLegalHoldsResponse,
   type TenantView,
   type AuditEntry,
   type Anchor,
@@ -362,6 +363,22 @@ export class SeamAdminClient {
   }
 
   // ── Retention & legal hold ────────────────────────────────────────────────────────────────────
+
+  /** One page of legal holds, ordered by `decisionId`. To page, pass the previous response's
+   * `nextCursor` as `cursor`; `nextCursor` is present only when the page was full.
+   *
+   * An omitted `tenant` applies no filter. `tenant: ""` is a different request: it filters the reserved
+   * legacy tenant `""` and is NOT fleet-wide. A Scoped operator may only name its own tenant. `limit`
+   * is clamped server-side to 1..=1000; omitted takes the server default (100). */
+  async listLegalHolds(
+    opts?: { tenant?: string; cursor?: string; limit?: number } & UnaryCallOptions,
+  ): Promise<ListLegalHoldsResponse> {
+    // Pass each filter only when set: presence is meaningful (`tenant: ""` is not "no filter").
+    return this.admin.listLegalHolds(
+      { tenant: opts?.tenant, cursor: opts?.cursor, limit: opts?.limit },
+      call(opts),
+    );
+  }
 
   async placeLegalHold(decisionId: string, opts?: UnaryCallOptions): Promise<void> {
     await this.admin.placeLegalHold({ decisionId }, call(opts));

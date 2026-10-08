@@ -146,6 +146,7 @@ const ADMIN_CALLS: Record<
   revokeGrant: (a, o) => a.revokeGrant("acme", "from", "to", "op:x", o),
   listGrants: (a, o) => a.listGrants(o),
   resumeSession: (a, o) => a.resumeSession("s", "op:approver", o),
+  listLegalHolds: (a, o) => a.listLegalHolds(o),
   placeLegalHold: (a, o) => a.placeLegalHold("d", o),
   releaseLegalHold: (a, o) => a.releaseLegalHold("d", o),
   enforceRetention: (a, o) => a.enforceRetention(1n, 2n, 3n, undefined, o),
@@ -692,4 +693,20 @@ test("authorize rejects toolInput and canonical together rather than picking one
     () => client.authorize(new Agent(SEED), "t", undefined, { canonical: new Uint8Array(0) }),
     /empty/,
   );
+});
+
+test("listLegalHolds keeps an empty tenant distinct from no filter", async () => {
+  // `tenant: ""` filters the reserved legacy tenant; omitted is no filter at all. Proto3 `optional`
+  // tells them apart on the wire, so the wrapper must pass each filter only when the caller set it.
+  const calls: Recorded[] = [];
+  const admin = new SeamAdminClient(fakeTransport(calls, () => ({ legalHolds: [] })));
+  await admin.listLegalHolds();
+  await admin.listLegalHolds({ tenant: "", cursor: "dec:9", limit: 5 });
+  const [unfiltered, filtered] = calls.map((c) => c.input);
+  assert.equal(unfiltered.tenant, undefined);
+  assert.equal(unfiltered.cursor, undefined);
+  assert.equal(unfiltered.limit, undefined);
+  assert.equal(filtered.tenant, "");
+  assert.equal(filtered.cursor, "dec:9");
+  assert.equal(filtered.limit, 5);
 });

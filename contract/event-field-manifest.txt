@@ -89,6 +89,7 @@ AuthorizeEvaluated/client_request_id
 AuthorizeEvaluated/policy_version
 AuthorizeEvaluated/reason
 AuthorizeEvaluated/subject_digest
+AuthorizeEvaluated/subject_digests
 AuthorizeEvaluated/tool_input_digest
 AuthorizeEvaluated/tool_name
 AuthorizeEvaluated/verdict
@@ -169,6 +170,7 @@ SeamEvent/seq
 SeamEvent/session_id
 SeamEvent/session_lifecycle
 SeamEvent/tenant
+SeamEvent/tenant_seq
 SessionLifecycle/mode
 SessionLifecycle/opened_at_millis
 SessionLifecycle/phase
