@@ -50,8 +50,8 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 > checkpoint trail lives in git history (`git log -p -- PROGRESS.md`); nothing here carries over.
 >
 > **Done in Phase 1 (2026-08-31).** Delivery was verified against this tree — `record_digest_v3` at
-> `python/seam_sdk/crypto.py:695`, `ts/src/crypto.ts:882`, `verify/src/verify.rs:614`; the 6a/6b
-> streamed arms live at `python/seam_sdk/admin.py:130` and `ts/src/admin.ts:142`; KATs at
+> `python/seam_sdk/crypto.py:696`, `ts/src/crypto.ts:882`, `verify/src/verify.rs:614`; the 6a/6b
+> streamed arms live at `python/seam_sdk/admin.py:136` and `ts/src/admin.ts:142`; KATs at
 > `conformance/vectors.json:70` — and the plan is now `plans/archive/record-digest-v3.md`.
 > `plans/authorize-single-canonicalization.md` turned out to be delivered too (issue #60, closed
 > 2026-08-25) and had **no index row at all**, so it was archived in the same pass. Delivery PRs:
@@ -63,18 +63,18 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | Path | Purpose / relevance |
 |---|---|
 | `python/seam_sdk/_collective.py:99` | `collective_outcome_of(resp: Union["pb.DecisionResponse", "pb.SessionStep"])` — fail-closed decode. **Phase 3 DONE**: widened to the union. `:1-30` documents why raw field access is unsafe (optional presence + `UNSPECIFIED` == 0 ⇒ a naive negative test allows on every unknown value). |
-| `ts/src/client.ts:289` | `collectiveOutcomeOf(resp: DecisionResponse | SessionStep)` — the TS twin. **Phase 3 DONE.** It needed a real union: protobuf-es brands messages, so passing a `SessionStep` is a *compile error* today (reproduced: `TS2345`, `$typeName` mismatch). `:169-174` `UnknownCollectiveVerdictError(rawValue, decisionId: string)` — **required** `string`, so `:229`'s `resp.decisionId` became `resp.decisionId ?? ""`; a verifier mutation removing that coalesce reddens a test, so it is load-bearing, not decoration. |
+| `ts/src/client.ts:315` | `collectiveOutcomeOf(resp: DecisionResponse | SessionStep)` — the TS twin. **Phase 3 DONE.** It needed a real union: protobuf-es brands messages, so passing a `SessionStep` is a *compile error* today (reproduced: `TS2345`, `$typeName` mismatch). `:169-174` `UnknownCollectiveVerdictError(rawValue, decisionId: string)` — **required** `string`, so `:229`'s `resp.decisionId` became `resp.decisionId ?? ""`; a verifier mutation removing that coalesce reddens a test, so it is load-bearing, not decoration. |
 | `ts/gen/seam/api/v1/seam_pb.ts` | Branded `SessionStep = Message<"seam.api.v1.SessionStep"> & {…}` — the reason Phase 3's TS half is a hard block, not a typing nicety. Also carries `collectiveOutcome?` on the same branded type. Cited by symbol, not by line: this is a generated, gitignored file, and a line number into it is correct only until the next `make generate`. |
 | `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi` | `SessionStep.collective_outcome` in the Python stubs — generated, never surfaced. Cited by symbol for the same reason as the row above; it carried `:289,297` until round 3, in direct violation of that rule and of `test_no_document_line_anchors_into_a_generated_file`, which it evaded **only** because a comma-list matches `CITATION` not at all. The rule was stated one row up and broken the next. |
-| `python/seam_sdk/client.py:622`, `ts/src/client.ts:1003` | `submit_commit` / `submitCommit` return a `SessionStep` — the caller Phase 3 exists for. |
+| `python/seam_sdk/client.py:652`, `ts/src/client.ts:1029` | `submit_commit` / `submitCommit` return a `SessionStep` — the caller Phase 3 exists for. |
 | `python/tests/test_collective_outcome.py`, `ts/tests/collective_outcome.test.ts` | `DecisionResponse` cases only. **Phase 3** adds the `SessionStep` cases (absent ⇒ none; `UNSPECIFIED` ⇒ raise; unknown ⇒ raise; non-commit step ⇒ none). Drive red first. |
-| `python/seam_sdk/client.py:538` + `python/seam_sdk/client.py:587` · `python/seam_sdk/aio.py:439` + `python/seam_sdk/aio.py:488` · `ts/src/client.ts:931` + `ts/src/client.ts:973` | `submit_evaluation` / `submit_objection` — **already delivered** by `c49d005`. Do not re-plan. Written as six separate citations rather than three comma-lists, because a comma-list matches `CITATION` **not at all**: `` `…:723,759` `` was wrong twice in a row — once before this phase and once *inside the commit whose message claims it shifted every citation below `:239`* — and nothing ever said so. |
-| `python/seam_sdk/client.py:572-573` · `python/seam_sdk/aio.py:473-474` · `ts/src/client.ts:932` | `confidence` presence mapping — `None` ⇒ field-absent, never `0.0`. Correct in both languages; pinned by `python/tests/test_evaluation_confidence.py:55,64,87,100` and `ts/tests/evaluation.test.ts:59,70,85,93`. |
+| `python/seam_sdk/client.py:568` + `python/seam_sdk/client.py:617` · `python/seam_sdk/aio.py:440` + `python/seam_sdk/aio.py:489` · `ts/src/client.ts:957` + `ts/src/client.ts:999` | `submit_evaluation` / `submit_objection` — **already delivered** by `c49d005`. Do not re-plan. Written as six separate citations rather than three comma-lists, because a comma-list matches `CITATION` **not at all**: `` `…:723,759` `` was wrong twice in a row — once before this phase and once *inside the commit whose message claims it shifted every citation below `:239`* — and nothing ever said so. |
+| `python/seam_sdk/client.py:602-603` · `python/seam_sdk/aio.py:474-475` · `ts/src/client.ts:958` | `confidence` presence mapping — `None` ⇒ field-absent, never `0.0`. Correct in both languages; pinned by `python/tests/test_evaluation_confidence.py:55,64,87,100` and `ts/tests/evaluation.test.ts:59,70,85,93`. |
 > **Read every row below as *as at plan time*, 2026-08-31, unless the row says otherwise.** Some
 > were updated mid-run and some were not, which is worse than either — an unstamped map invites a
 > reader to treat a stale row as current. The rows known to have moved since are corrected inline.
 
-| `python/seam_sdk/_authorize.py:180,223` | `AuthorizeRequest.subjects` — one shared builder feeds sync + aio + TS. Delivered; tests at `python/tests/test_authorize.py:637,646`. |
+| `python/seam_sdk/_authorize.py:180,223` | `AuthorizeRequest.subjects` — one shared builder feeds sync + aio + TS. Delivered; tests at `python/tests/test_authorize.py:639,646`. |
 | `scripts/check-contract.sh` | The contract-freshness gate. `:192` probe 1 (one named RPC) · `:196-210` probe 1b and `:212-226` probe 1c (hardcoded names; 1b includes **two `seam.api.v1` field names**, `call_sig` and `on_behalf_of`, at `:205-206`) · `:228-241` probe 2 (**exactly four hardcoded field names, all on `seam.event.v1`**; `STREAM=1` hardens) · `:242-247` probe 3 (`EVENTS=1`) · `:249-275` probe 4 (RPC set comparison, both directions). Every field probe names a *pre-existing* field, so **a new message field is invisible to all of them — that is the hole Phase 5 closes.** Extractors to mirror: `:158-161` `rpcs_python` (greps `_pb2_grpc.py`), `:163-166` `rpcs_ts` (greps `@generated from rpc`), `:173-188` `--write-manifest` (**writes from Python only**, preserves the header verbatim), `:88-97` the exit-3 no-stubs guard. |
 | `contract/rpc-manifest.txt:60-61` | Declares `SubmitEvaluation`/`SubmitObjection`. The model Phase 5 mirrors one level down. |
 | `contract/field-manifest.txt` | **Phase 5 creates.** Whole-surface `seam.api.v1` field declaration (measured: **223 fields over 65 messages** — both extractors agree exactly, given the `_FIELD_NUMBER` rule in the row below), set-compared per language both directions, `--write-manifest` escape. Also the ACDP tags-7-10 tripwire. **As shipped: 228, not 223** — the plan measured the surface before ACDP reached the BSR. |
@@ -93,7 +93,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `python/tests/test_compatibility_citations_resolve.py` | Every backticked `file:line` in `COMPATIBILITY.md`/`DECISIONS.md` must resolve; `:61-64,:92` ≥10 each; `:76` sibling paths need a `seam-runtime/` prefix; `:141-172` `ANCHORED` needles must hit **exactly once** within `CITATION_SLACK` (`:176`). **Phase 8** adds the vendored-file rule. |
 | `verify/docs/seam-event.v1.md` | Byte-verbatim vendored spec, pinned in its header. **Phase 9** refreshes it whole-file. Source of #73's citation drift. |
 | `scripts/check_vendored_spec.py:22-38` | Integrity (`:24-26`) / reachability (`:28-32`) / **currency** (`:34-38`) — fails on staleness by explicit decision. This is what will announce runtime P1a Phase 6 by reddening `spec-pin` (`.github/workflows/ci.yml:588-589`) on every PR. |
-| `python/seam_sdk/crypto.py:691-695` | `record_digest_v3` takes `context_digest` as an **opaque 32-byte sub-digest**, deliberately not reimplemented. **This is why ACDP P1a costs the digest layer nothing** — verified: `context_digest` appears only as an input (`:624,668,702`, `python/seam_sdk/admin.py:142`), and no context-provenance formula exists in `python/`, `ts/` or `verify/`. `:386` `_frame` · `:390` `_opt` · `:609` `_opt_bytes` · `:394` `record_digest_v2`. |
+| `python/seam_sdk/crypto.py:692-696` | `record_digest_v3` takes `context_digest` as an **opaque 32-byte sub-digest**, deliberately not reimplemented. **This is why ACDP P1a costs the digest layer nothing** — verified: `context_digest` appears only as an input (`:624,668,702`, `python/seam_sdk/admin.py:148`), and no context-provenance formula exists in `python/`, `ts/` or `verify/`. `:386` `_frame` · `:390` `_opt` · `:609` `_opt_bytes` · `:394` `record_digest_v2`. |
 | `verify/src/verify.rs:835-841` | `schema_version` dispatch (2 ⇒ v2, 3 ⇒ v3, else refuse); `:803-811` ceiling refusal. P1a keeps `schema_version = 3`, so **no new arm**. |
 | `python/tests/test_errors_is_import_light.py:87-100` | `crypto.py` may import only `cryptography`; `errors.py` only `grpc`. seam-runtime's `sdk-digest-parity` gate loads `crypto.py` standalone. **No phase may add an import to either.** |
 | `scripts/test_ci_gate.py:79,98,141` | `ci-ok`'s `needs:` must equal the full job set both ways; `ALLOWED_ADVISORY` (the literal is at `:52`, asserted by the test at `:98`) may hold only `{integration, spec-pin}`; `workflow-guards` must stay free of `BUF_TOKEN`/`buf-setup-action`/`make generate` (banned triple at `:191-195`). **Any new CI job must be added to `needs:`.** |
@@ -167,8 +167,8 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   `python/pyproject.toml` and `ts/package.json` (version stamps) — no line number cited anywhere in
   the plan moved. Merge commit `68e92c2`; branch `feat/publish-integrity-and-tracking-state`.
 - **Delivery verified against code, not status tables** (the whole point of the phase):
-  `record_digest_v3` at `python/seam_sdk/crypto.py:695`, `ts/src/crypto.ts:882`,
-  `verify/src/verify.rs:614`; streamed v3 arms at `python/seam_sdk/admin.py:130` (with `:107`
+  `record_digest_v3` at `python/seam_sdk/crypto.py:696`, `ts/src/crypto.ts:882`,
+  `verify/src/verify.rs:614`; streamed v3 arms at `python/seam_sdk/admin.py:136` (with `:107`
   refusing `schema_version > 3`) and `ts/src/admin.ts:142` (with `:109` the matching ceiling
   refusal); KATs at `conformance/vectors.json:70`;
   issue #56 CLOSED 2026-08-25.
@@ -638,7 +638,7 @@ ERROR: a breaking change and must be handled, never silently rewritten away.
   `ContextBinding` field present — all eleven, `content_hash` / `receipt_hash` / `key_status` /
   `resolved_status` / `retraction` among them.
 - **No wrapper change was needed, exactly as the plan predicted** — verified rather than assumed:
-  `resolve_context` (`python/seam_sdk/client.py:877`) and `resolveContext` (`ts/src/client.ts:1164`)
+  `resolve_context` (`python/seam_sdk/client.py:932`) and `resolveContext` (`ts/src/client.ts:1190`)
   return the generated `ContextBinding` straight through, so the five fields reach callers with no
   SDK work. What both *did* carry was a docstring enumerating four of the eleven fields as if that
   were the set; both now say what they actually return, and both carry the vocabulary warning.
@@ -1010,7 +1010,7 @@ linear sequencing keeps it trivial.
 
 **Ground-truth corrections made while planning.** Recorded rather than smoothed over, because two of
 them change what the phases do:
-- `ts/src/client.ts:246` already carries `collectiveOutcomeOf` over a `DecisionResponse | SessionStep`
+- `ts/src/client.ts:272` already carries `collectiveOutcomeOf` over a `DecisionResponse | SessionStep`
   union. TypeScript is not a judgement call — it gets the twin.
 - The #85 failing set is the shared-8099 set **minus the first test**, not the whole set. Four tests
   use the `server` fixture (in `python/tests/test_integration.py` at `960cf81`, lines 69/93/108/306 —
@@ -1032,8 +1032,8 @@ them change what the phases do:
 | `python/seam_sdk/_collective.py:99` | `collective_outcome_of` — the shape Phase 3 mirrors: `HasField` gate at `:116`, frozen dataclass at `:52`, union signature at `:84-86`. |
 | `python/seam_sdk/_policy.py` | **Phase 3 created it.** `policy_enforcement_of(resp)` returning `None` iff absent. New module, not a `_collective.py` addition — that module's docstring is entirely about a growth policy this field does not have. |
 | `python/seam_sdk/__init__.py:10` | Where `_collective`'s exports are imported; Phase 3 adds `_policy`'s alongside, plus two `__all__` entries. |
-| `ts/src/client.ts:218` | `collectiveOutcomeOf` over the union. **Phase 4 inserted `policyEnforcementOf` immediately after it**, so this citation survived unchanged; the `submitCommit` citation did not, and was repointed by measurement in the same commit. |
-| `ts/src/client.ts:387` | **Phase 4 created it.** `policyEnforcementOf(resp)` returning `undefined` iff absent — 103 lines inserted after `collectiveOutcomeOf` ends at `:239`. |
+| `ts/src/client.ts:244` | `collectiveOutcomeOf` over the union. **Phase 4 inserted `policyEnforcementOf` immediately after it**, so this citation survived unchanged; the `submitCommit` citation did not, and was repointed by measurement in the same commit. |
+| `ts/src/client.ts:413` | **Phase 4 created it.** `policyEnforcementOf(resp)` returning `undefined` iff absent — 103 lines inserted after `collectiveOutcomeOf` ends at `:239`. |
 | `ts/src/index.ts:18` | The dual-declaration comment (called "shadowed-names" until Phase 4 retracted that word — see the record). It opened with "Two" and listed three names; Phase 4 rewrote it to name all **five** names declared on both sides (`CollectiveOutcome` was already missing before this phase) and made the count one-per-name. `python/tests/test_shadowed_names_comment.py` now enforces the list, the count, the namespace prefix, and that none of the five is on an explicit `../gen/` re-export list. |
 | `python/tests/test_collective_outcome.py:208` | The `SessionStep` arm — the model for `test_policy_enforcement.py`. |
 | `python/tests/test_integration.py` | At `960cf81`: `addr = "127.0.0.1:8099"` (line 48), hardcoded, four tests; `_wait` (26-34) proved only that *something* listens; a bare `terminate()` (66). **Phase 2's primary target** — all three are gone, so this row quotes rather than line-anchors. |
@@ -1489,7 +1489,7 @@ caught more widely than before (drop-gate 8 → 9 failures, empty-`policy_id` 1 
 
 ### Phase 4 — `policyEnforcementOf` in TypeScript, and the citations it moved · **DONE**
 
-`ts/src/client.ts:387`, inserted immediately after `collectiveOutcomeOf` ends at `:239`, so `:218`
+`ts/src/client.ts:413`, inserted immediately after `collectiveOutcomeOf` ends at `:239`, so `:218`
 survived unchanged. **K = 103 as finally committed** — 100 lines at first commit, +1 for a blank line
 round 1 caught missing against the file's own convention (the only such gap between **top-level**
 declarations; member-level `}`-then-declaration adjacencies are ordinary and plentiful), +2 for a
@@ -1541,7 +1541,7 @@ Kept in full rather than quietly amended, because "a stale citation makes a hand
 wrong" and "a corrected citation moves a margin" are different failures and only the second happened.
 
 **Round 2 then narrowed it further, deliberately, and that is the more interesting number.** Splitting
-`` `ts/src/client.ts:728,759` `` into two anchored citations put a citation at 762, seventeen lines
+`` `ts/src/client.ts:754,759` `` into two anchored citations put a citation at 762, seventeen lines
 from `submitCommit(` at 779 — and `submitObjection(`'s own margin is **14**. (This record first
 called that "the tightest in that table, displacing `publish.yml`'s 27"; both halves were wrong —
 round 3 measured the displaced entry as `authenticity.rs`'s 16, contradicting a sentence fifteen
@@ -1662,7 +1662,7 @@ split block, a Cyrillic lookalike, names inside the intro line, tab indentation)
 anyway: the fix pass introduced four more.
 
 - **The commit that claimed to have shifted every citation below `:239` missed one.** `:71` still
-  cited `ts/src/client.ts:728,759`; the true lines were 724 and 760, and both cited lines are the
+  cited `ts/src/client.ts:754,759`; the true lines were 724 and 760, and both cited lines are the
   `*/` terminating the preceding doc comment. It was ungated for the reason this phase had already
   documented in the same file — a comma-list matches `CITATION` not at all — so the claim went into
   a commit message unchecked. Fixed by splitting the three comma-lists on that row into six ordinary
@@ -1698,7 +1698,7 @@ Also corrected: "4 failed, 819 passed" was 818; two `CHANGELOG.md` companions in
 by ~87 (round 3 caught the first figure double-counting that push — 115 is the *post*-push drift); a COMPATIBILITY.md citation for `opts.canonical` that pointed at line 265 of
 `ts/src/client.ts` (written without backticks here, since it names a position that was already wrong
 before this phase widened it) and now lands inside the new `PolicyEnforcement` interface — repointed
-to `ts/src/client.ts:580`; and a historical mention of a
+to `ts/src/client.ts:606`; and a historical mention of a
 long-removed citation that was written in backticks and so read as a live one.
 
 **Round-2 verification:** python **833 passed / 17 skipped** (835 at the end of round 3) · TS 136 / 126 pass / 0 fail ·
@@ -4285,14 +4285,14 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
 
 ## plans/verify-anchor-tenant.md — repo map (written by /plan, 2026-10-05)
 
-- `python/seam_sdk/client.py:928-934` — sync `verify_party_anchor`, the primary wrapper to
-  change; `python/seam_sdk/client.py:77` has `DEFAULT_TIMEOUT_S = 2.0`, the method's timeout
+- `python/seam_sdk/client.py:983-989` — sync `verify_party_anchor`, the primary wrapper to
+  change; `python/seam_sdk/client.py:84` has `DEFAULT_TIMEOUT_S = 2.0`, the method's timeout
   default.
-- `python/seam_sdk/aio.py:822-830` — the async twin, hand-duplicated (no shared base class) —
+- `python/seam_sdk/aio.py:840-848` — the async twin, hand-duplicated (no shared base class) —
   must change in lockstep: `python/tests/test_client_parity.py:64-79`'s
   `test_the_two_clients_agree_on_each_verbs_signature` compares parameter lists in order, so a
   half-done change reddens it, not just a names-only check.
-- `python/seam_sdk/admin.py:462-477` — `resume_session`'s `tenant: str = ""` keyword-only
+- `python/seam_sdk/admin.py:480-495` — `resume_session`'s `tenant: str = ""` keyword-only
   precedent, the pattern Phase 1 mirrors.
 - `python/tests/test_verify_attestation.py:78-93` (`_RecordingTrust`/`_client_with_trust` unit
   pattern) and `python/tests/test_verify_attestation.py:96-182` (`dual_plane` fixture +
@@ -4302,11 +4302,11 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
   reused as-is by Phase 1's new live test, not modified.
 - `python/tests/test_authorize.py:400,501` — two positional `verify_party_anchor(...)` calls in
   deadline tables; confirmed unaffected by a keyword-only addition.
-- `ts/src/client.ts:71-99` (`UnaryCallOptions`/`CredentialedCallOptions`/`call()`),
-  `ts/src/client.ts:650-672` (`authorize`'s inline-opts precedent),
-  `ts/src/client.ts:1223-1230` (`verifyPartyAnchor` itself) — the TS surface Phase 2 changes
+- `ts/src/client.ts:77-105` (`UnaryCallOptions`/`CredentialedCallOptions`/`call()`),
+  `ts/src/client.ts:676-698` (`authorize`'s inline-opts precedent),
+  `ts/src/client.ts:1272-1279` (`verifyPartyAnchor` itself) — the TS surface Phase 2 changes
   and the conventions it must match.
-- `ts/src/admin.ts:335-358` — `resumeSession`'s inline `tenant?: string` precedent, the pattern
+- `ts/src/admin.ts:346-369` — `resumeSession`'s inline `tenant?: string` precedent, the pattern
   Phase 2 mirrors on the data plane.
 - `ts/tests/verify_attestation.test.ts` — sibling test file to model Phase 2's new
   `verify_anchor.test.ts` after (`clientWithTrust` unit pattern, `withPlanes` live pattern).
@@ -4493,16 +4493,16 @@ green before any code changed.
      unknown-event-tag audit (relayed to seam-runtime, closed): no SDK verifier re-serializes a
      whole decoded `seam.event.v1` message to compute a digest/chain hash — Rust
      (`verify/src/wire.rs:16-80,161-211`, `verify/src/verify.rs:525-551`), Python
-     (`python/seam_sdk/crypto.py:475-512,695`), and TypeScript (`ts/src/crypto.ts:533,882`) all
+     (`python/seam_sdk/crypto.py:476-513,695`), and TypeScript (`ts/src/crypto.ts:533,882`) all
      hand-build their preimage from an explicit, spec-transcribed field list. An unsealed,
      non-preimage field just flows through harmlessly, same conclusion as that audit reached for
      the sealed-vs-unsealed question in general.
   2. **No event-consumption wiring code needs to change either**, confirmed newly this session:
      both languages' `StreamEvents` paths are pure pass-through, not reconstruction.
-     `python/seam_sdk/admin.py:571` returns `EventStream(lambda: self._events.StreamEvents(...))`,
-     whose `__next__` (`python/seam_sdk/admin.py:228`) yields the raw generated `ev.SeamEvent` object directly —
+     `python/seam_sdk/admin.py:589` returns `EventStream(lambda: self._events.StreamEvents(...))`,
+     whose `__next__` (`python/seam_sdk/admin.py:234`) yields the raw generated `ev.SeamEvent` object directly —
      same shape as `preview_erasure` returning the whole `pb.ErasurePreview` (PR #182's finding).
-     `ts/src/admin.ts:437-445`'s `streamEvents` generator does `for await (const ev of
+     `ts/src/admin.ts:448-456`'s `streamEvents` generator does `for await (const ev of
      events.streamEvents(...)) { yield ev; }` — also raw pass-through, typed
      `AsyncIterable<SeamEvent>`. So `tenant_seq` will be reachable as `event.tenant_seq` in both
      languages the instant the stubs regenerate, with zero method/type changes — exactly the

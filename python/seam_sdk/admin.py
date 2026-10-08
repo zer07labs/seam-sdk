@@ -26,7 +26,13 @@ from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as ev
 
 from . import client as _client  # noqa: TC001 — referenced by the `raise_` annotation below
 from .errors import _MappedStub, map_rpc_error
-from .crypto import record_digest_v2, record_digest_v3  # noqa: E402
+from .crypto import (  # noqa: E402
+    EnrollProof,
+    _uint_slot,
+    record_digest_v2,
+    record_digest_v3,
+    validate_enroll_pop_nonce,
+)
 
 # Management-plane calls get their own, larger default deadline — but they DO get one.
 #
@@ -353,12 +359,24 @@ class SeamAdminClient:
         tenant: str,
         namespace: str,
         *,
+        pop: Optional[EnrollProof | pb.EnrollPop] = None,
         timeout: float = DEFAULT_ADMIN_TIMEOUT_S,
     ) -> pb.TenantView:
-        """Bind an agent identity to a tenant/namespace."""
+        """Bind an agent identity to a tenant/namespace.
+
+        ``pop`` is the subject AID's proof-of-possession for exactly this ``tenant``/``namespace``
+        (seam-runtime #1157), produced by the AGENT — ``Agent.enrolment_proof(tenant, namespace)`` —
+        not by the operator making this call. It is **required when the operator token is
+        tenant-scoped**; a fleet token may omit it, and then no ``pop`` is sent. Accepts an
+        :class:`~seam_sdk.crypto.EnrollProof` or a generated ``EnrollPop``. A malformed one (a nonce
+        outside 1..=128 chars of ``[A-Za-z0-9_-]``, a signature that is not 64 bytes) raises
+        :class:`ValueError` here, before any RPC."""
         return self._admin.EnrollTenant(
             pb.EnrollTenantRequest(
-                subject_aid=subject_aid, tenant=tenant, namespace=namespace
+                subject_aid=subject_aid,
+                tenant=tenant,
+                namespace=namespace,
+                pop=_enroll_pop_pb(pop),
             ),
             timeout=timeout,
         )
@@ -611,3 +629,32 @@ class SeamAdminClient:
             )
         except grpc.RpcError as e:
             raise map_rpc_error(e) from e
+
+
+# ── Enrolment proof-of-possession (#205) ─────────────────────────────────────────────────────────
+
+
+def _enroll_pop_pb(pop: Optional[EnrollProof | pb.EnrollPop]) -> Optional[pb.EnrollPop]:
+    """Validate an enrolment proof client-side and convert it to the wire message; ``None`` stays
+    ``None`` so the field is left unset (a fleet token's enrolment)."""
+    if pop is None:
+        return None
+    if not isinstance(pop, (EnrollProof, pb.EnrollPop)):
+        raise TypeError(
+            "pop must be an EnrollProof (Agent.enrolment_proof) or an EnrollPop, "
+            f"got {type(pop).__name__}"
+        )
+    validate_enroll_pop_nonce(pop.nonce)
+    _uint_slot("pop.issued_at_ms", pop.issued_at_ms, 64)
+    if isinstance(pop.signature, str):
+        raise TypeError(
+            "pop.signature must be the raw signature bytes, not the REST base64url string"
+        )
+    signature = bytes(pop.signature)
+    if len(signature) != 64:
+        raise ValueError(
+            f"pop.signature must be the raw 64-byte Ed25519 signature, got {len(signature)} bytes"
+        )
+    return pb.EnrollPop(
+        issued_at_ms=pop.issued_at_ms, nonce=pop.nonce, signature=signature
+    )

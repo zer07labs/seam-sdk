@@ -38,10 +38,14 @@ import {
   aidFromPubkey,
   buildPresentation,
   callSigV3,
+  callSig,
+  enrollPop,
   jcsCanonicalize,
+  newEnrollPopNonce,
   requestSig,
   toolInputDigest,
   verifyTct,
+  type EnrollProof,
 } from "./crypto.js";
 import {
   errorMappingInterceptor,
@@ -143,6 +147,26 @@ export class Agent {
   }
   get aid(): string {
     return aidFromPubkey(ed25519.getPublicKey(this.seed));
+  }
+
+  /** This agent's consent to being enrolled under `tenant`/`namespace` (seam-runtime #1157): the `pop`
+   * an operator passes to `SeamAdminClient.enrollTenant(subjectAid, tenant, namespace, pop)`. Required
+   * for enrolment by a tenant-scoped operator token.
+   *
+   * `issuedAtMs` defaults to now and `nonce` to 16 fresh random bytes as 22 base64url characters; both
+   * are overridable for tests. The runtime accepts the proof for 5 minutes (and up to 60 s ahead of its
+   * clock), so mint it just before the enrolment call. */
+  enrolmentProof(
+    tenant: string,
+    namespace: string,
+    opts?: { issuedAtMs?: number | bigint; nonce?: string },
+  ): EnrollProof {
+    return enrollPop(this.seed, {
+      tenant,
+      namespace,
+      issuedAtMs: opts?.issuedAtMs ?? BigInt(Date.now()),
+      nonce: opts?.nonce ?? newEnrollPopNonce(),
+    });
   }
 }
 

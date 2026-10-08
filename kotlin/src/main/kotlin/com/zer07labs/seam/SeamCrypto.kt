@@ -277,4 +277,74 @@ object SeamCrypto {
 
     private fun u32le(n: Int): ByteArray =
         ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(n).array()
+    // ── Enrolment proof-of-possession (#205) ────────────────────────────────────────────────────
+
+    /**
+     * Domain tag of the enrolment proof-of-possession (seam-runtime #1157): the subject AID's own
+     * consent, by the key it embeds, to ONE `EnrollTenant` binding. Bump it only in lockstep with the
+     * runtime.
+     */
+    const val ENROLL_POP_V1_CONTEXT = "seam-enroll-pop-v1"
+
+    private val ENROLL_POP_NONCE = Regex("[A-Za-z0-9_-]{1,128}")
+
+    /**
+     * The exact bytes [enrollPop] signs: `frame(context) | frame(subject_aid) | frame(tenant) |
+     * frame(namespace) | frame(u64le(issued_at_ms)) | frame(nonce)`, with
+     * `frame(x) = u32le(len_bytes(x)) | x`. `issued_at_ms` is 8 raw little-endian bytes, not ASCII
+     * decimal.
+     *
+     * Pinned by `conformance/enroll_pop_v1_payload_vector.json`. Public so a caller can reproduce or
+     * verify the binding without re-deriving it from prose.
+     */
+    fun enrollPopPayload(f: EnrollPopFields): ByteArray {
+        val out = ByteArrayOutputStream()
+        fun frame(b: ByteArray) {
+            out.writeBytes(leBytes(b.size.toLong(), 4))
+            out.writeBytes(b)
+        }
+        frame(ENROLL_POP_V1_CONTEXT.toByteArray(Charsets.UTF_8))
+        frame(f.subjectAid.toByteArray(Charsets.UTF_8))
+        frame(f.tenant.toByteArray(Charsets.UTF_8))
+        frame(f.namespace.toByteArray(Charsets.UTF_8))
+        frame(leBytes(f.issuedAtMs.toLong(), 8))
+        frame(f.nonce.toByteArray(Charsets.UTF_8))
+        return out.toByteArray()
+    }
+
+    /** Refuse a nonce the runtime would refuse: 1..=128 characters of `[A-Za-z0-9_-]`. */
+    fun validateEnrollPopNonce(nonce: String) {
+        require(ENROLL_POP_NONCE.matches(nonce)) {
+            "enrol pop nonce must be 1..=128 characters of [A-Za-z0-9_-]"
+        }
+    }
+
+    /**
+     * The enrolment proof-of-possession: Ed25519 by the agent key (32-byte seed) over
+     * [enrollPopPayload], returned as the raw 64-byte signature (the `EnrollPop.signature` bytes field;
+     * the REST body carries it as unpadded base64url). Refuses a `subjectAid` that is not the seed's
+     * own AID — a proof can only speak for the key that signs it — and a nonce the runtime would
+     * refuse.
+     */
+    fun enrollPop(agentSeed: ByteArray, f: EnrollPopFields): ByteArray {
+        require(agentSeed.size == 32) { "agent seed must be 32 bytes" }
+        validateEnrollPopNonce(f.nonce)
+        val own = aidFromPubkey(ed25519Pub(agentSeed))
+        require(f.subjectAid == own) { "subjectAid ${f.subjectAid} is not this seed's AID $own" }
+        return ed25519Sign(agentSeed, enrollPopPayload(f))
+    }
+
+    private fun leBytes(v: Long, n: Int): ByteArray = ByteArray(n) { i -> (v ushr (8 * i)).toByte() }
 }
+
+/**
+ * The inputs [SeamCrypto.enrollPopPayload] frames, each exactly as sent on the wire. Strings are
+ * signed as their UTF-8 bytes; [issuedAtMs] is Unix epoch MILLISECONDS (the proto field is `uint64`).
+ */
+data class EnrollPopFields(
+    val subjectAid: String,
+    val tenant: String,
+    val namespace: String,
+    val issuedAtMs: ULong,
+    val nonce: String,
+)

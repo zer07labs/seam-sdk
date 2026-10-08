@@ -713,9 +713,9 @@ Measured against the real corpus, that rule is wrong twice, and both failures pr
 wrong answers rather than misses:
 
 - **In a table row the subject wins.** `PROGRESS.md`'s repo-map row for `python/seam_sdk/crypto.py`
-  names `python/seam_sdk/admin.py:142` mid-sentence and then continues with four more bare
+  names `python/seam_sdk/admin.py:148` mid-sentence and then continues with four more bare
   references, all of which are crypto.py. Binding them to the nearer citation reports
-  `python/seam_sdk/crypto.py:690` as past-EOF — it is `_opt_bytes`, and the claim is true.
+  `python/seam_sdk/crypto.py:691` as past-EOF — it is `_opt_bytes`, and the claim is true.
 - **Inheritance must not cross a line.** `PROGRESS.md` writes `p1a:103-107` followed by bare
   companions, where `p1a` is a shorthand alias for a sibling-repo spec and not a path at all. A
   paragraph-scoped resolver walks past it and binds those references to whatever file the previous
@@ -1438,8 +1438,8 @@ which is strictly worse than the bug.
 
 **It does not generalise, and saying so is the point of this entry.** JCS reads every value through
 overridable methods, and the other arms are still spoofable by a subclass that *lies* rather than
-raises: a `float` subclass overriding `__abs__` (`python/seam_sdk/crypto.py:203` renders
-`repr(abs(v))`), a `str` subclass overriding `__iter__` (`python/seam_sdk/crypto.py:175`), a `dict`
+raises: a `float` subclass overriding `__abs__` (`python/seam_sdk/crypto.py:204` renders
+`repr(abs(v))`), a `str` subclass overriding `__iter__` (`python/seam_sdk/crypto.py:176`), a `dict`
 subclass overriding `__iter__` to drop keys. `CanonicalizationError` covers subclasses that raise;
 nothing covers ones that lie.
 
@@ -1541,7 +1541,7 @@ not as written.
   over-generalized. Python's validation still earns its place by a different route: v2 accepts a
   `memoryview(array("I", [0]*32))` and produces a digest whose length prefix claims 32 while 128
   bytes are hashed — the exact injectivity break framing exists to prevent — and v3 refuses it
-  (`python/seam_sdk/crypto.py:378-408`).
+  (`python/seam_sdk/crypto.py:379-409`).
 - **Correction to the entry's blast-radius claim:** "every such digest was wrong, so no correct
   caller breaks" is too strong. A proto3-JSON int64-as-string (`sealedAt: "123"`) coerced
   *correctly* through `BigInt` under the old TS behavior and is now refused. The refusal is loud, at

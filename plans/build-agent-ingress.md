@@ -103,7 +103,7 @@ distinction matters enough to state precisely:
 
 Verified against the code:
 
-- `SeamClient.open_session` (`python/seam_sdk/client.py:125-128, 163-184`) performs the **pinned-key PoP
+- `SeamClient.open_session` (`python/seam_sdk/client.py:155-158, 163-184`) performs the **pinned-key PoP
   admission handshake internally**. The caller does not touch it.
 - After that, `submit_proposal` / `submit_vote` / `submit_commit` / `report_outcome` are **plain gRPC calls
   keyed by session id and participant name** — no per-step crypto, no MACP state machine on the client side.

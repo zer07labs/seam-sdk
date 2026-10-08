@@ -388,7 +388,7 @@ patch, so the callouts have to live here rather than in a version number.
 ### The accepted integer set widened, and that is irreversible
 
 `jcs_canonicalize` previously refused any `int` with `|v| > 2^53`. It now accepts an integer iff JCS
-renders it as itself (`python/seam_sdk/crypto.py:223`, `ts/src/crypto.ts:188`). Practically:
+renders it as itself (`python/seam_sdk/crypto.py:224`, `ts/src/crypto.ts:188`). Practically:
 
 | value | before | now | why |
 |---|---|---|---|
@@ -424,8 +424,8 @@ so it cannot reach the taxonomy. Use `canonicalize_tool_input()`
 
 ### `canonical=` hands you the derivation, and the responsibility with it
 
-`authorize(canonical=…)` (`python/seam_sdk/client.py:258`, `python/seam_sdk/aio.py:196`; `opts.canonical`
-in TypeScript, `ts/src/client.ts:626`) is additive and keyword-only. The SDK does **not** verify the
+`authorize(canonical=…)` (`python/seam_sdk/client.py:288`, `python/seam_sdk/aio.py:197`; `opts.canonical`
+in TypeScript, `ts/src/client.ts:652`) is additive and keyword-only. The SDK does **not** verify the
 bytes — re-deriving to check would reinstate the second derivation the parameter exists to remove.
 So two things become possible that were not:
 
@@ -456,7 +456,7 @@ only thing a digest does.
 The guard is `uintSlot` (`ts/src/crypto.ts:828`), which already governed the v3 record digest;
 `u64le`/`u32le` (`ts/src/crypto.ts:518`) now route through it, so v2 and the attestation framing get
 the rule that was always written for them. Python got the same treatment: `_uint_slot`
-(`python/seam_sdk/crypto.py:660`) was `_v3_uint`, and `record_digest_v2` now shares it. Every
+(`python/seam_sdk/crypto.py:661`) was `_v3_uint`, and `record_digest_v2` now shares it. Every
 "before" below was measured against the pre-fix build, not inferred.
 
 **Read the `now` column as the record-digest arm.** In the chain-head **attestation** arm every one
@@ -489,7 +489,7 @@ Python never had it. What Python had was three smaller defects in the same code:
 
 - `verify_chain_head_attestation` let that `struct.error` escape a function documented to return
   `False` on any tamper, so an out-of-range length **crashed** a caller instead of being rejected. It
-  now returns `False` (`python/seam_sdk/crypto.py:843-890`).
+  now returns `False` (`python/seam_sdk/crypto.py:844-891`).
 - `attested_len`, `attested_at` and `digest_schema` are now required to be `int`. Previously
   `True` was digested as `1` (`bool` subclasses `int`) and `5.0` raised `struct.error` — a *third*
   answer from a function that should only ever give two. Both now raise `TypeError`.
@@ -623,7 +623,7 @@ covered `{}` — so it did not mean what you thought. Convert at the boundary:
 `date.toISOString()`, `Object.fromEntries(map)`, `[...set]`. The error names the type and the
 conversion.
 
-**This reaches you through `authorize()`, not only through the helper.** `ts/src/client.ts:527` calls
+**This reaches you through `authorize()`, not only through the helper.** `ts/src/client.ts:553` calls
 `jcsCanonicalize(toolInput ?? {})` directly, so `authorize({ toolInput: { deadline: new Date() } })`
 now throws where it previously signed a digest over `{"deadline":{}}`. That is the case worth
 checking in your own code, because it is the one where the aliased digest was being *signed*.

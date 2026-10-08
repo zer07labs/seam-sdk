@@ -36,7 +36,7 @@ import {
   type SeamEvent,
 } from "../gen/seam/event/v1/seam_event_pb.js";
 import { errorMappingInterceptor, InvalidArgumentError, toSeamError } from "./errors.js";
-import { recordDigestV2, recordDigestV3 } from "./crypto.js";
+import { recordDigestV2, recordDigestV3, validateEnrollPopNonce, type EnrollProof } from "./crypto.js";
 import type { BudgetLimits, UnaryCallOptions } from "./client.js";
 
 // Management-plane calls get their own, larger default deadline — but they DO get one.
@@ -254,13 +254,24 @@ export class SeamAdminClient {
 
   // ── Governance / tenancy ──────────────────────────────────────────────────────────────────────
 
-  enrollTenant(
+  /** Bind an agent identity to a tenant/namespace.
+   *
+   * `pop` is the subject AID's proof-of-possession for exactly this `tenant`/`namespace` (seam-runtime
+   * #1157), produced by the AGENT — `agent.enrolmentProof(tenant, namespace)` — not by the operator
+   * making this call. It is **required when the operator token is tenant-scoped**; a fleet token may
+   * pass `undefined`, and then no `pop` is sent. A malformed one (a nonce outside 1..=128 chars of
+   * `[A-Za-z0-9_-]`, a signature that is not 64 bytes) throws `InvalidArgumentError` before any RPC. */
+  async enrollTenant(
     subjectAid: string,
     tenant: string,
     namespace: string,
+    pop?: EnrollProof,
     opts?: UnaryCallOptions,
   ): Promise<TenantView> {
-    return this.admin.enrollTenant({ subjectAid, tenant, namespace }, call(opts));
+    return this.admin.enrollTenant(
+      { subjectAid, tenant, namespace, pop: checkedEnrollPop(pop) },
+      call(opts),
+    );
   }
 
   async listTenants(opts?: UnaryCallOptions): Promise<TenantView[]> {
@@ -489,3 +500,31 @@ export class SeamAdminClient {
 }
 
 export type { Anchor, GrantView };
+
+// ── Enrolment proof-of-possession (#205) ─────────────────────────────────────────────────────────
+// Kept at the end of the file so it shifts no line cited by COMPATIBILITY.md / DECISIONS.md above it.
+
+/** Validate an enrolment proof client-side, refusing early in the SDK's `InvalidArgumentError` style
+ * rather than sending what the runtime would refuse. `undefined` stays `undefined` — the field is left
+ * unset, which is a fleet token's enrolment. */
+function checkedEnrollPop(pop: EnrollProof | undefined): EnrollProof | undefined {
+  if (pop === undefined) return undefined;
+  const refuse = (why: string): never => {
+    throw new InvalidArgumentError(`enrollTenant: ${why}`, Code.InvalidArgument);
+  };
+  try {
+    validateEnrollPopNonce(pop.nonce);
+  } catch (e) {
+    refuse((e as Error).message);
+  }
+  if (typeof pop.issuedAtMs !== "bigint" || pop.issuedAtMs < 0n || pop.issuedAtMs >= 1n << 64n) {
+    refuse(`pop.issuedAtMs must be a bigint in [0, 2^64), got ${String(pop.issuedAtMs)}`);
+  }
+  if (!(pop.signature instanceof Uint8Array) || pop.signature.length !== 64) {
+    refuse(
+      "pop.signature must be the raw 64-byte Ed25519 signature (not the REST base64url string), got " +
+        (pop.signature instanceof Uint8Array ? `${pop.signature.length} bytes` : typeof pop.signature),
+    );
+  }
+  return { issuedAtMs: pop.issuedAtMs, nonce: pop.nonce, signature: pop.signature };
+}

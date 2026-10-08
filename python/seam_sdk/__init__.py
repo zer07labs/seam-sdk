@@ -34,6 +34,9 @@ from .crypto import (
     call_sig_payload,
     call_sig_v3,
     call_sig_v3_payload,
+    EnrollProof,
+    enroll_pop,
+    enroll_pop_payload,
     jcs_canonicalize,
     record_digest_v2,
     record_digest_v3,
@@ -96,6 +99,10 @@ __all__ = [
     "call_sig_payload",
     "call_sig_v3",
     "call_sig_v3_payload",
+    # Enrolment proof-of-possession (#205) — EnrollTenantRequest.pop
+    "EnrollProof",
+    "enroll_pop",
+    "enroll_pop_payload",
     # Streamed-event surface (A14)
     "KNOWN_KINDS",
     "verify_streamed_record_digest",

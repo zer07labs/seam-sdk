@@ -24,7 +24,14 @@ from ._authorize import (
     credential_metadata,
     result_of,
 )
-from .crypto import aid_from_pubkey, build_presentation, verify_tct
+from .crypto import (
+    EnrollProof,
+    aid_from_pubkey,
+    build_presentation,
+    enroll_pop,
+    new_enroll_pop_nonce,
+    verify_tct,
+)
 from .errors import (  # noqa: F401  (SeamError re-exported)
     IssuerMismatchError,
     SeamError,
@@ -97,6 +104,29 @@ class Agent:
             )
             self._aid = aid_from_pubkey(pub)
         return self._aid
+
+    def enrolment_proof(
+        self,
+        tenant: str,
+        namespace: str,
+        *,
+        issued_at_ms: Optional[int] = None,
+        nonce: Optional[str] = None,
+    ) -> EnrollProof:
+        """This agent's consent to being enrolled under ``tenant``/``namespace`` (seam-runtime #1157):
+        the ``pop`` an operator passes to ``SeamAdminClient.enroll_tenant(..., pop=...)``. Required for
+        enrolment by a tenant-scoped operator token.
+
+        ``issued_at_ms`` defaults to now and ``nonce`` to 16 fresh random bytes as 22 base64url
+        characters; both are overridable for tests. The runtime accepts the proof for 5 minutes (and
+        up to 60 s ahead of its clock), so mint it just before the enrolment call."""
+        return enroll_pop(
+            self.seed,
+            tenant,
+            namespace,
+            issued_at_ms=_now_ms() if issued_at_ms is None else issued_at_ms,
+            nonce=new_enroll_pop_nonce() if nonce is None else nonce,
+        )
 
 
 @dataclass

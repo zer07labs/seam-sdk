@@ -138,7 +138,9 @@ const ADMIN_CALLS: Record<
   previewErasure: (a, o) => a.previewErasure("acme", "cust-42", o),
   eraseSubject: (a, o) => a.eraseSubject("acme", "cust-42", 0n, undefined, o),
   eraseSubjectConfirmed: (a, o) => a.eraseSubjectConfirmed("acme", "cust-42", undefined, o),
-  enrollTenant: (a, o) => a.enrollTenant("aid:x", "acme", "ns", o),
+  enrollTenant: (a, o) => a.enrollTenant("aid:x", "acme", "ns", undefined, o),
+  "enrollTenant[pop]": (a, o) =>
+    a.enrollTenant("aid:x", "acme", "ns", new Agent(new Uint8Array(32)).enrolmentProof("acme", "ns"), o),
   listTenants: (a, o) => a.listTenants(o),
   revokeTenant: (a, o) => a.revokeTenant("aid:x", o),
   registerParty: (a, o) => a.registerParty("p", new Uint8Array(32), o),
