@@ -68,6 +68,13 @@ pub struct SeamEventPb {
     /// across both transports.
     #[prost(message, optional, tag = "24")]
     pub policy_denied: Option<PolicyDeniedPb>,
+    /// tag 25 — the per-tenant outbox counter (spec §tenant_seq, runtime #973). UNSEALED: in no digest,
+    /// checksum or signature, so it proves nothing and is never verified here. Decoded anyway because it is
+    /// part of the event's canonical identity: two advisory rows that differ only in `tenant_seq` are two
+    /// events, and a re-encode that dropped it would dedup one of them away. `optional` because 0 is a
+    /// real value and absence means "predates the counter".
+    #[prost(uint64, optional, tag = "25")]
+    pub tenant_seq: Option<u64>,
 }
 
 /// The `CHAIN_HEAD_ATTESTATION` payload (tag 22), transcribed from `seam-event.v1.md` §CHAIN_HEAD_ATTESTATION.
@@ -151,6 +158,10 @@ pub struct AuthorizeEvaluatedPb {
     pub policy_version: String,
     #[prost(string, optional, tag = "10")]
     pub subject_digest: Option<String>,
+    /// tag 11 — one keyed commitment per effective subject (#715). Carried for the dedup identity, like
+    /// every other field here: two rows differing only in their subject set are two different calls.
+    #[prost(string, repeated, tag = "11")]
+    pub subject_digests: Vec<String>,
 }
 
 /// The `DECISION_SEALED` payload (envelope tag 13) — the structural columns the digest-v2 recompute covers,
@@ -267,6 +278,8 @@ pub struct SeamEventJson {
     pub authorize_evaluated: Option<AuthorizeEvaluatedJson>,
     #[serde(default)]
     pub policy_denied: Option<PolicyDeniedJson>,
+    #[serde(default)]
+    pub tenant_seq: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -329,6 +342,8 @@ pub struct AuthorizeEvaluatedJson {
     pub policy_version: String,
     #[serde(default)]
     pub subject_digest: Option<String>,
+    #[serde(default)]
+    pub subject_digests: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -400,6 +415,8 @@ pub struct Event {
     /// The `POLICY_DENIED` payload — advisory; carried only for the dedup identity, exactly as
     /// `authorize` is.
     pub denial: Option<PolicyDeniedPb>,
+    /// The per-tenant outbox counter — unsealed; carried only for the dedup identity.
+    pub tenant_seq: Option<u64>,
     pub cert: Option<Cert>,
     /// The `CHAIN_HEAD_ATTESTATION` payload, when this event is one. `None` otherwise.
     pub attestation: Option<Attestation>,
@@ -684,12 +701,14 @@ impl Event {
                     reason: a.reason,
                     policy_version: a.policy_version,
                     subject_digest: a.subject_digest,
+                    subject_digests: a.subject_digests,
                 }),
                 denial: j.policy_denied.map(|d| PolicyDeniedPb {
                     policy_version: d.policy_version,
                     mode: d.mode,
                     reason: d.reason,
                 }),
+                tenant_seq: j.tenant_seq,
                 cert: cert.transpose()?,
                 attestation: attestation.transpose()?,
                 decision: decision.transpose()?,
@@ -730,6 +749,7 @@ impl Event {
             }),
             authorize: pb.authorize_evaluated,
             denial: pb.policy_denied,
+            tenant_seq: pb.tenant_seq,
             cert: pb.erasure_certificate.map(|c| Cert {
                 subject: c.subject,
                 erased: c.erased,
@@ -819,6 +839,7 @@ impl Event {
             // dropped here is a payload outside the dedup identity. Two POLICY_DENIED rows differing
             // only in `reason` would then re-encode to identical bytes.
             policy_denied: self.denial.clone(),
+            tenant_seq: self.tenant_seq,
             erasure_certificate: self.cert.as_ref().map(|c| ErasureCertificatePb {
                 subject: c.subject.clone(),
                 erased: c.erased.clone(),
@@ -1190,6 +1211,7 @@ mod tests {
                     mode: "macp.mode.decision.v1".into(),
                     reason: reason.into(),
                 }),
+                tenant_seq: None,
                 cert: None,
                 attestation: None,
                 decision: None,
@@ -1229,6 +1251,7 @@ mod tests {
                 reason: "amount_over_floor".into(),
                 policy_version: "p1".into(),
                 subject_digest: None,
+                subject_digests: Vec::new(),
             }),
             ..Default::default()
         };
@@ -1253,6 +1276,81 @@ mod tests {
         assert_eq!(
             from_pb.bytes, from_json.bytes,
             "one event, two transports — the canonical identity must collapse them"
+        );
+    }
+
+    /// `tenant_seq` (envelope tag 25) and `subject_digests` (AUTHORIZE_EVALUATED tag 11) are unsealed —
+    /// nothing verifies them — but they are part of the canonical identity, so they must survive BOTH
+    /// transports to the same bytes, and a difference in either must NOT dedup two events into one.
+    /// `tenant_seq = 0` is a real value and must stay distinct from absent ("predates the counter").
+    #[test]
+    fn tenant_seq_and_subject_digests_are_identity_on_both_transports() {
+        let mk_pb = |tenant_seq: Option<u64>, subjects: &[&str]| SeamEventPb {
+            schema_version: "seam-event.v1".into(),
+            event_id: "az02#az#8".into(),
+            seq: 8,
+            occurred_at: 1_700,
+            tenant: "acme".into(),
+            namespace: "fraud".into(),
+            kind: "AUTHORIZE_EVALUATED".into(),
+            authorize_evaluated: Some(AuthorizeEvaluatedPb {
+                authorize_id: "az02".into(),
+                agent_aid: "aid:pubkey:agent".into(),
+                agent_id: "agent-1".into(),
+                tool_name: "payments.transfer".into(),
+                tool_input_digest: "sha256:00".into(),
+                verdict: "ALLOW".into(),
+                policy_version: "p1".into(),
+                subject_digest: subjects.first().map(|s| s.to_string()),
+                subject_digests: subjects.iter().map(|s| s.to_string()).collect(),
+                ..Default::default()
+            }),
+            tenant_seq,
+            ..Default::default()
+        };
+        let parse = |pb: &SeamEventPb| Event::parse(&b64e(&pb.encode_to_vec())).expect("pb parses");
+
+        let from_pb = parse(&mk_pb(Some(0), &["hmac-sha256:k1:aa", "hmac-sha256:k1:bb"]));
+        assert_eq!(
+            from_pb.tenant_seq,
+            Some(0),
+            "tag 25 must be decoded, 0 kept as present"
+        );
+        assert_eq!(
+            from_pb.authorize.as_ref().map(|a| a.subject_digests.len()),
+            Some(2),
+            "tag 11 must be decoded, not skipped"
+        );
+
+        let json = r#"{"schema_version":"seam-event.v1","event_id":"az02#az#8","seq":8,
+            "occurred_at":1700,"tenant":"acme","namespace":"fraud","kind":"AUTHORIZE_EVALUATED",
+            "prev_checksum":"","tenant_seq":0,"authorize_evaluated":{"authorize_id":"az02",
+            "agent_aid":"aid:pubkey:agent","agent_id":"agent-1","tool_name":"payments.transfer",
+            "tool_input_digest":"sha256:00","verdict":"ALLOW","policy_version":"p1",
+            "subject_digest":"hmac-sha256:k1:aa",
+            "subject_digests":["hmac-sha256:k1:aa","hmac-sha256:k1:bb"]}}"#
+            .replace('\n', "");
+        let from_json = Event::parse(&json).expect("JSON transport must parse");
+        assert_eq!(
+            from_pb.bytes, from_json.bytes,
+            "one event, two transports — tenant_seq and subject_digests must reach the same identity"
+        );
+
+        let base = &from_pb.bytes;
+        let other_seq = parse(&mk_pb(Some(1), &["hmac-sha256:k1:aa", "hmac-sha256:k1:bb"]));
+        let absent_seq = parse(&mk_pb(None, &["hmac-sha256:k1:aa", "hmac-sha256:k1:bb"]));
+        let other_subjects = parse(&mk_pb(Some(0), &["hmac-sha256:k1:aa", "hmac-sha256:k1:cc"]));
+        assert_ne!(
+            base, &other_seq.bytes,
+            "tenant_seq must reach the canonical bytes"
+        );
+        assert_ne!(
+            base, &absent_seq.bytes,
+            "tenant_seq 0 must stay distinct from absent"
+        );
+        assert_ne!(
+            base, &other_subjects.bytes,
+            "subject_digests must reach the canonical bytes"
         );
     }
 

@@ -139,6 +139,7 @@ ADMIN_CALLS = {
     "revoke_grant": lambda a: a.revoke_grant("acme", "ns-a", "ns-b", "op", timeout=0.1),
     "list_grants": lambda a: a.list_grants(timeout=0.1),
     "resume_session": lambda a: a.resume_session("s", "approver", timeout=0.1),
+    "list_legal_holds": lambda a: a.list_legal_holds(timeout=0.1),
     "place_legal_hold": lambda a: a.place_legal_hold("d", timeout=0.1),
     "release_legal_hold": lambda a: a.release_legal_hold("d", timeout=0.1),
     "enforce_retention": lambda a: a.enforce_retention(1, 2, 3, timeout=0.1),
@@ -266,3 +267,29 @@ def test_the_aio_tombstoned_resume_warns_deprecation():
         assert coord.seen.budget == 0
 
     asyncio.run(scenario())
+
+
+# ── ListLegalHolds request presence ─────────────────────────────────────────────────────────────
+
+
+def test_list_legal_holds_keeps_an_empty_tenant_distinct_from_no_filter() -> None:
+    """``tenant=""`` filters the reserved legacy tenant; ``None`` is no filter at all. Proto3 ``optional``
+    is what tells them apart on the wire, so the wrapper must set the field only when given."""
+    seen = []
+
+    class _Admin:
+        def ListLegalHolds(self, req, timeout):
+            seen.append(req)
+            return pb.ListLegalHoldsResponse()
+
+    admin = object.__new__(SeamAdminClient)
+    admin._admin = _Admin()
+
+    admin.list_legal_holds()
+    admin.list_legal_holds(tenant="", cursor="dec:9", limit=5)
+    unfiltered, filtered = seen
+    assert not unfiltered.HasField("tenant")
+    assert not unfiltered.HasField("cursor")
+    assert not unfiltered.HasField("limit")
+    assert filtered.HasField("tenant") and filtered.tenant == ""
+    assert (filtered.cursor, filtered.limit) == ("dec:9", 5)

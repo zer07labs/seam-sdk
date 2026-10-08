@@ -489,6 +489,30 @@ class SeamAdminClient:
 
     # ── Retention & legal hold ───────────────────────────────────────────────────────────────────
 
+    def list_legal_holds(
+        self,
+        *,
+        tenant: Optional[str] = None,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+        timeout: float = DEFAULT_ADMIN_TIMEOUT_S,
+    ) -> pb.ListLegalHoldsResponse:
+        """One page of legal holds, ordered by ``decision_id``. To page, pass the previous response's
+        ``next_cursor`` as ``cursor``; ``next_cursor`` is present only when the page was full.
+
+        ``tenant=None`` applies no filter. ``tenant=""`` is a different request: it filters the reserved
+        legacy tenant ``""`` and is NOT fleet-wide. A Scoped operator may only name its own tenant.
+        ``limit`` is clamped server-side to 1..=1000; ``None`` takes the server default (100)."""
+        req = pb.ListLegalHoldsRequest()
+        # Presence is meaningful on all three, so only set what the caller set.
+        if tenant is not None:
+            req.tenant = tenant
+        if cursor is not None:
+            req.cursor = cursor
+        if limit is not None:
+            req.limit = limit
+        return self._admin.ListLegalHolds(req, timeout=timeout)
+
     def place_legal_hold(
         self, decision_id: str, *, timeout: float = DEFAULT_ADMIN_TIMEOUT_S
     ) -> None:

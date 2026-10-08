@@ -306,7 +306,16 @@ GrantView/grantor
 GrantView/tenant
 GrantView/to_ns
 IssuerAidResponse/issuer_aid
+LegalHoldView/decision_id
+LegalHoldView/origin
+LegalHoldView/placed_by
+LegalHoldView/tenant
 ListGrantsResponse/grants
+ListLegalHoldsRequest/cursor
+ListLegalHoldsRequest/limit
+ListLegalHoldsRequest/tenant
+ListLegalHoldsResponse/legal_holds
+ListLegalHoldsResponse/next_cursor
 ListTenantsResponse/tenants
 ObjectionRequest/objector
 ObjectionRequest/proposal_id
