@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.40.1 — 2026-10-08
+
 ### Breaking
 - **`ReportOutcome` requires a stable `idempotency_key`** (#209, seam-runtime #1154). Once the runtime enforces
   it (#1166), every call without a key is refused. Python: `report_outcome(..., idempotency_key=...)` is
