@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -223,4 +224,83 @@ func VerifyTCT(issuerAID, tctJWS string, c Commitment, nowS int64) bool {
 		}
 	}
 	return false
+}
+
+// CallSigV3Context is the domain tag of the `Authorize` per-call proof-of-possession, v3 (#197). v3
+// grew the signed payload from v2's ticket/digest/tool_name/agent_id to the full attribution set; the
+// distinct tag means a v2 signature can NEVER verify as a v3 one, so a version skew between SDK and
+// runtime is a clean rejection rather than a parse ambiguity. Bump it only in lockstep with the runtime.
+const CallSigV3Context = "seam-authorize-call-v3"
+
+// CallSigV3Fields are the inputs CallSigV3Payload frames. Every string is signed as its UTF-8 bytes;
+// an absent optional field is the empty string (the zero value), signed verbatim rather than skipped.
+type CallSigV3Fields struct {
+	Ticket          []byte // the admission ticket's RAW bytes
+	ToolInputDigest string // "sha256:<hex>"
+	ToolName        string
+	AgentID         string
+	Subject         string
+	Subjects        []string // signed in the order SENT — never deduped, never sorted
+	ClientRequestID string
+	SessionID       string
+	Features        [][2]string // (key, value) pairs, any order; signed sorted by (key bytes, value bytes)
+}
+
+// CallSigV3Payload is the exact byte string CallSigV3 signs:
+//
+//	frame(context) | frame(ticket) | frame(tool_input_digest) | frame(tool_name) | frame(agent_id) |
+//	frame(subject) | frame(u32le(n_subjects)) | frame(subject_i)... | frame(client_request_id) |
+//	frame(session_id) | frame(u32le(n_features)) | (frame(key) | frame(value))...
+//
+// with frame(x) = u32le(len_bytes(x)) | x — the counts are themselves framed. Length prefixing is
+// load-bearing: raw concatenation would let bytes shift across a field boundary undetected.
+//
+// Pinned by conformance/call_sig_v3_payload_vector.json. Exported so a caller can reproduce or verify
+// the binding without re-deriving it from prose.
+func CallSigV3Payload(f CallSigV3Fields) []byte {
+	var out []byte
+	frame := func(b []byte) {
+		out = binary.LittleEndian.AppendUint32(out, uint32(len(b)))
+		out = append(out, b...)
+	}
+	count := func(n int) { frame(binary.LittleEndian.AppendUint32(nil, uint32(n))) }
+
+	frame([]byte(CallSigV3Context))
+	frame(f.Ticket)
+	frame([]byte(f.ToolInputDigest))
+	frame([]byte(f.ToolName))
+	frame([]byte(f.AgentID))
+	frame([]byte(f.Subject))
+	count(len(f.Subjects))
+	for _, s := range f.Subjects {
+		frame([]byte(s))
+	}
+	frame([]byte(f.ClientRequestID))
+	frame([]byte(f.SessionID))
+
+	// Go's string `<` is bytewise over the UTF-8, which is exactly the contract's order. Sort a copy:
+	// the caller's slice is theirs.
+	features := append([][2]string(nil), f.Features...)
+	sort.Slice(features, func(i, j int) bool {
+		if features[i][0] != features[j][0] {
+			return features[i][0] < features[j][0]
+		}
+		return features[i][1] < features[j][1]
+	})
+	count(len(features))
+	for _, kv := range features {
+		frame([]byte(kv[0]))
+		frame([]byte(kv[1]))
+	}
+	return out
+}
+
+// CallSigV3 is the per-call proof-of-possession for `Authorize`: Ed25519 by the agent key over
+// CallSigV3Payload, returned as the raw 64-byte signature (the `call_sig` bytes field), as Python's
+// call_sig does.
+func CallSigV3(agentSeed []byte, f CallSigV3Fields) ([]byte, error) {
+	if len(agentSeed) != ed25519.SeedSize {
+		return nil, fmt.Errorf("agent seed must be %d bytes", ed25519.SeedSize)
+	}
+	return ed25519.Sign(ed25519.NewKeyFromSeed(agentSeed), CallSigV3Payload(f)), nil
 }

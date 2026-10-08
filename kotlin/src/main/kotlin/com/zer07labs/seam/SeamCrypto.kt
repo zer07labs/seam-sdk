@@ -4,7 +4,9 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.security.MessageDigest
+import java.util.Arrays
 import java.util.Base64
 import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
 import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
@@ -35,7 +37,36 @@ data class Commitment(
     val trustBasis: String,
 )
 
+/**
+ * The inputs [SeamCrypto.callSigV3Payload] frames. Every string is signed as its UTF-8 bytes; an
+ * absent optional field is the empty string (the default), signed verbatim rather than skipped.
+ * [ticket] is the admission ticket's RAW bytes. [subjects] are signed in the order given — never
+ * deduped, never sorted. [features] are (key, value) pairs in any order; they are signed sorted by
+ * (key bytes, value bytes).
+ *
+ * The v2 fields carry no defaults on purpose, as in Python: a forgotten `toolName`/`agentId` should
+ * fail to compile, not produce a signature the runtime rejects.
+ */
+data class CallSigV3Fields(
+    val ticket: ByteArray,
+    val toolInputDigest: String,
+    val toolName: String,
+    val agentId: String,
+    val subject: String = "",
+    val subjects: List<String> = emptyList(),
+    val clientRequestId: String = "",
+    val sessionId: String = "",
+    val features: List<Pair<String, String>> = emptyList(),
+)
+
 object SeamCrypto {
+    /**
+     * Domain tag of the `Authorize` per-call proof-of-possession, v3 (#197). The distinct tag means a
+     * v2 signature can NEVER verify as a v3 one, so SDK/runtime version skew is a clean rejection
+     * rather than a parse ambiguity. Bump it only in lockstep with the runtime.
+     */
+    const val CALL_SIG_V3_CONTEXT = "seam-authorize-call-v3"
+
     private val PROOF_DOMAIN = "aitp-pinned-key-v1".toByteArray(Charsets.UTF_8) + byteArrayOf(0)
     private val gson = Gson()
     private val mapType = object : TypeToken<Map<String, Any?>>() {}.type
@@ -188,4 +219,62 @@ object SeamCrypto {
             false
         }
     }
+
+    /**
+     * The exact bytes [callSigV3] signs: `frame(context) | frame(ticket) | frame(tool_input_digest) |
+     * frame(tool_name) | frame(agent_id) | frame(subject) | frame(u32le(n_subjects)) |
+     * frame(subject_i)... | frame(client_request_id) | frame(session_id) | frame(u32le(n_features)) |
+     * (frame(key) | frame(value))...`, with `frame(x) = u32le(len_bytes(x)) | x` — the counts are
+     * themselves framed.
+     *
+     * Features are sorted by their UTF-8 **bytes**, compared unsigned. `String.compareTo` would be
+     * wrong here: it orders by UTF-16 code unit, which disagrees with byte order for
+     * supplementary-plane vs. high-BMP characters.
+     *
+     * Pinned by `conformance/call_sig_v3_payload_vector.json`. Public so a caller can reproduce or
+     * verify the binding without re-deriving it from prose.
+     */
+    fun callSigV3Payload(f: CallSigV3Fields): ByteArray {
+        val out = ByteArrayOutputStream()
+        fun frame(b: ByteArray) {
+            out.writeBytes(u32le(b.size))
+            out.writeBytes(b)
+        }
+        frame(CALL_SIG_V3_CONTEXT.toByteArray(Charsets.UTF_8))
+        frame(f.ticket)
+        frame(f.toolInputDigest.toByteArray(Charsets.UTF_8))
+        frame(f.toolName.toByteArray(Charsets.UTF_8))
+        frame(f.agentId.toByteArray(Charsets.UTF_8))
+        frame(f.subject.toByteArray(Charsets.UTF_8))
+        frame(u32le(f.subjects.size))
+        for (s in f.subjects) frame(s.toByteArray(Charsets.UTF_8))
+        frame(f.clientRequestId.toByteArray(Charsets.UTF_8))
+        frame(f.sessionId.toByteArray(Charsets.UTF_8))
+
+        val features = f.features
+            .map { (k, v) -> k.toByteArray(Charsets.UTF_8) to v.toByteArray(Charsets.UTF_8) }
+            .sortedWith { a, b ->
+                val c = Arrays.compareUnsigned(a.first, b.first)
+                if (c != 0) c else Arrays.compareUnsigned(a.second, b.second)
+            }
+        frame(u32le(features.size))
+        for ((k, v) in features) {
+            frame(k)
+            frame(v)
+        }
+        return out.toByteArray()
+    }
+
+    /**
+     * The per-call proof-of-possession for `Authorize`: Ed25519 by the agent key (32-byte seed) over
+     * [callSigV3Payload], returned as the raw 64-byte signature (the `call_sig` bytes field), as
+     * Python's `call_sig` does.
+     */
+    fun callSigV3(agentSeed: ByteArray, f: CallSigV3Fields): ByteArray {
+        require(agentSeed.size == 32) { "agent seed must be 32 bytes" }
+        return ed25519Sign(agentSeed, callSigV3Payload(f))
+    }
+
+    private fun u32le(n: Int): ByteArray =
+        ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(n).array()
 }
