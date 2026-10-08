@@ -30,6 +30,7 @@ from .client import (
     Agent,
     BudgetLimits,
     StepUsage,
+    _check_idempotency_key,
     _now_ms,
     _u32,
 )
@@ -749,12 +750,29 @@ class SeamClient:
         correct: bool,
         verified_by: Optional[str] = None,
         *,
+        idempotency_key: str,
+        credential: Optional[Agent] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> bool:
-        req = pb.ReportOutcomeRequest(decision_id=decision_id, correct=correct)
+        """The async twin of :meth:`seam_sdk.SeamClient.report_outcome`; read its docstring for the
+        ``idempotency_key`` stability rule, which is the part that matters."""
+        req = pb.ReportOutcomeRequest(
+            decision_id=decision_id,
+            correct=correct,
+            idempotency_key=_check_idempotency_key(idempotency_key),
+        )
         if verified_by is not None:
             req.verified_by = verified_by
-        return (await self._coord.ReportOutcome(req, timeout=timeout)).recorded
+        md = await self._credential_md(
+            credential,
+            "/seam.api.v1.SeamCoordination/ReportOutcome",
+            "",
+            req,
+            timeout=timeout,
+        )
+        return (
+            await self._coord.ReportOutcome(req, timeout=timeout, metadata=md)
+        ).recorded
 
     # ── Context binding ─────────────────────────────────────────────────────────────────────────
 
