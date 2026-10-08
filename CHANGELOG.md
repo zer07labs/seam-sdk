@@ -16,6 +16,27 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Breaking
+- **`ReportOutcome` requires a stable `idempotency_key`** (#209, seam-runtime #1154). Once the runtime enforces
+  it (#1166), every call without a key is refused. Python: `report_outcome(..., idempotency_key=...)` is
+  keyword-only and required, on sync and aio. TS: `reportOutcome(id, correct, { idempotencyKey, verifiedBy? })`.
+  The old third positional `verifiedBy` moved into the options object, so a string there cannot silently
+  become the key. The key must be 1–128 printable ASCII characters and is checked before any RPC.
+  **Keep it stable per logical outcome:** a retry reuses it (a no-op that returns the original response),
+  while a correction or a second reporter needs a new one. Never use a random value per attempt. It is stored
+  durably, so keep personal data out of it.
+- **TS `enrollTenant(subjectAid, tenant, namespace, pop?, opts?)`** takes the new `pop` before `opts` and is
+  now `async`.
+
+### Added
+- **`ReportOutcome` accepts the request credential** (`credential=`; the digest covers the whole message), so it
+  works on header-denied planes such as partner.
+- **Enrolment proof-of-possession** (#205, seam-runtime #1157). `Agent.enrolment_proof(tenant, namespace)` /
+  `Agent.enrolmentProof(...)` signs `seam-enroll-pop-v1` with the AID's own key. Pass it as `pop=` to
+  `enroll_tenant` / `enrollTenant`. It is **required for tenant-scoped operator tokens** once the runtime enforces
+  it (#1164); fleet tokens may omit it. Payload and sign helpers exist in all five languages, pinned by
+  `conformance/enroll_pop_v1_payload_vector.json`.
+
 ### Changed
 - **`authorize()` signs `call_sig` v3** (#197, runtime #1125). The signature now also covers `subject`,
   `subjects` (in the order sent), `client_request_id`, `session_id` and `features`, so a captured
