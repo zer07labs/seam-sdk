@@ -5,8 +5,11 @@ import com.google.gson.reflect.TypeToken;
 import java.io.ByteArrayOutputStream;
 import java.lang.reflect.Type;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -221,6 +224,101 @@ public final class SeamCrypto {
     } catch (RuntimeException e) {
       return false;
     }
+  }
+
+  // ── Authorize call_sig v3 (#197) ────────────────────────────────────────────────────────────
+
+  /**
+   * Domain tag of the {@code Authorize} per-call proof-of-possession, v3. The distinct tag means a v2
+   * signature can NEVER verify as a v3 one, so SDK/runtime version skew is a clean rejection rather
+   * than a parse ambiguity. Bump it only in lockstep with the runtime.
+   */
+  public static final String CALL_SIG_V3_CONTEXT = "seam-authorize-call-v3";
+
+  /** One attribution feature. Features are signed sorted by (key bytes, value bytes), not as sent. */
+  public record Feature(String key, String value) {}
+
+  /**
+   * The inputs {@link #callSigV3Payload} frames. Every string is signed as its UTF-8 bytes; an absent
+   * optional field is the empty string ({@code null} is read as empty), signed verbatim rather than
+   * skipped. {@code ticket} is the admission ticket's RAW bytes. {@code subjects} are signed in the
+   * order given — never deduped, never sorted.
+   */
+  public record CallSigV3Fields(
+      byte[] ticket,
+      String toolInputDigest,
+      String toolName,
+      String agentId,
+      String subject,
+      List<String> subjects,
+      String clientRequestId,
+      String sessionId,
+      List<Feature> features) {}
+
+  /**
+   * The exact bytes {@link #callSigV3} signs: {@code frame(context) | frame(ticket) |
+   * frame(tool_input_digest) | frame(tool_name) | frame(agent_id) | frame(subject) |
+   * frame(u32le(n_subjects)) | frame(subject_i)... | frame(client_request_id) | frame(session_id) |
+   * frame(u32le(n_features)) | (frame(key) | frame(value))...}, with {@code frame(x) =
+   * u32le(len_bytes(x)) | x} — the counts are themselves framed.
+   *
+   * <p>Features are sorted by their UTF-8 <b>bytes</b>, compared unsigned. {@link String#compareTo}
+   * would be wrong here: it orders by UTF-16 code unit, which disagrees with byte order for
+   * supplementary-plane vs. high-BMP characters.
+   *
+   * <p>Pinned by {@code conformance/call_sig_v3_payload_vector.json}. Public so a caller can
+   * reproduce or verify the binding without re-deriving it from prose.
+   */
+  public static byte[] callSigV3Payload(CallSigV3Fields f) {
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    frame(out, CALL_SIG_V3_CONTEXT.getBytes(StandardCharsets.UTF_8));
+    frame(out, f.ticket() == null ? new byte[0] : f.ticket());
+    frame(out, nz(f.toolInputDigest()));
+    frame(out, nz(f.toolName()));
+    frame(out, nz(f.agentId()));
+    frame(out, nz(f.subject()));
+    List<String> subjects = f.subjects() == null ? List.of() : f.subjects();
+    frame(out, u32le(subjects.size()));
+    for (String s : subjects) frame(out, nz(s));
+    frame(out, nz(f.clientRequestId()));
+    frame(out, nz(f.sessionId()));
+
+    List<byte[][]> features = new ArrayList<>();
+    if (f.features() != null) {
+      for (Feature kv : f.features()) features.add(new byte[][] {nz(kv.key()), nz(kv.value())});
+    }
+    features.sort(
+        (a, b) -> {
+          int c = Arrays.compareUnsigned(a[0], b[0]);
+          return c != 0 ? c : Arrays.compareUnsigned(a[1], b[1]);
+        });
+    frame(out, u32le(features.size()));
+    for (byte[][] kv : features) {
+      frame(out, kv[0]);
+      frame(out, kv[1]);
+    }
+    return out.toByteArray();
+  }
+
+  /**
+   * The per-call proof-of-possession for {@code Authorize}: Ed25519 by the agent key (32-byte seed)
+   * over {@link #callSigV3Payload}, returned as the raw 64-byte signature (the {@code call_sig}
+   * bytes field), as Python's {@code call_sig} does.
+   */
+  public static byte[] callSigV3(byte[] agentSeed, CallSigV3Fields f) {
+    if (agentSeed == null || agentSeed.length != 32) {
+      throw new IllegalArgumentException("agent seed must be 32 bytes");
+    }
+    return ed25519Sign(agentSeed, callSigV3Payload(f));
+  }
+
+  private static void frame(ByteArrayOutputStream out, byte[] b) {
+    out.writeBytes(u32le(b.length));
+    out.writeBytes(b);
+  }
+
+  private static byte[] u32le(int n) {
+    return ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(n).array();
   }
 
   // ── helpers ─────────────────────────────────────────────────────────────────────────────────

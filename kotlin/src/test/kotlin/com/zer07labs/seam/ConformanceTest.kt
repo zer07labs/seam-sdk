@@ -3,8 +3,12 @@ package com.zer07labs.seam
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.io.File
+import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
+import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
+import org.bouncycastle.crypto.signers.Ed25519Signer
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -187,6 +191,96 @@ class ConformanceTest {
                 "length-prefixed, and one artifact can now verify under another's signature",
         )
     }
+
+    // -- Authorize call_sig v3 (#197) ------------------------------------------------------------
+    //
+    // conformance/call_sig_v3_payload_vector.json is the cross-language contract. NO bless mode: a
+    // mismatch is a contract break (a v4 domain tag), not a stale fixture.
+
+    @Test
+    @Suppress("UNCHECKED_CAST")
+    fun callSigV3PayloadMatchesVector() {
+        val v: Map<String, Any?> =
+            Gson().fromJson(
+                File("../conformance/call_sig_v3_payload_vector.json").readText(),
+                object : TypeToken<Map<String, Any?>>() {}.type,
+            )
+        assertEquals(SeamCrypto.CALL_SIG_V3_CONTEXT, v["domain"])
+        val cases = v["cases"] as List<Map<String, Any?>>
+        assertFalse(cases.isEmpty(), "vector is empty; every assertion below would pass vacuously")
+        for (c in cases) {
+            val got =
+                SeamCrypto.callSigV3Payload(
+                    CallSigV3Fields(
+                        ticket = hexToBytes(c["ticket_hex"] as String),
+                        toolInputDigest = c["tool_input_digest"] as String,
+                        toolName = c["tool_name"] as String,
+                        agentId = c["agent_id"] as String,
+                        subject = c["subject"] as String,
+                        subjects = c["subjects"] as List<String>,
+                        clientRequestId = c["client_request_id"] as String,
+                        sessionId = c["session_id"] as String,
+                        features = (c["features"] as List<List<String>>).map { it[0] to it[1] },
+                    ),
+                )
+            assertEquals(c["payload_hex"], hex(got), "${c["name"]}: ${c["why"]}")
+        }
+    }
+
+    /**
+     * The vector's non-ascii case has a single feature, so it cannot catch a UTF-16 sort. U+FF61
+     * (UTF-8 EF BD A1) sorts BEFORE U+1F600 (F0 9F 98 80) by bytes, but AFTER it by
+     * `String.compareTo` (0xFF61 > 0xD83D). The payload must follow byte order.
+     */
+    @Test
+    fun callSigV3SortsFeaturesByUtf8Bytes() {
+        val f =
+            CallSigV3Fields(
+                ticket = byteArrayOf(1),
+                toolInputDigest = "d",
+                toolName = "t",
+                agentId = "",
+                features = listOf("😀" to "a", "｡" to "b"),
+            )
+        val p = hex(SeamCrypto.callSigV3Payload(f))
+        assertTrue(p.indexOf("efbda1") < p.indexOf("f09f9880"), "features sorted by UTF-16 code unit, not by UTF-8 bytes")
+    }
+
+    @Test
+    fun callSigV3SignVerifyRoundTrip() {
+        val seed = ByteArray(32) { 7 }
+        val f =
+            CallSigV3Fields(
+                ticket = byteArrayOf(1, 2, 3, 4),
+                toolInputDigest = "sha256:" + "00".repeat(32),
+                toolName = "read_file",
+                agentId = "billing-agent",
+                subject = "user-1",
+                subjects = listOf("user-2", "user-3"),
+                clientRequestId = "req-0001",
+                sessionId = "sess-9",
+                features = listOf("region" to "eu", "amount_bucket" to "high"),
+            )
+        val sig = SeamCrypto.callSigV3(seed, f)
+        assertEquals(64, sig.size)
+
+        val pub = Ed25519PrivateKeyParameters(seed, 0).generatePublicKey().encoded
+        assertTrue(verify(pub, SeamCrypto.callSigV3Payload(f), sig), "signature must verify")
+        assertFalse(
+            verify(pub, SeamCrypto.callSigV3Payload(f.copy(subjects = listOf("user-3", "user-2"))), sig),
+            "signature verified over reordered subjects -- subject order is not bound",
+        )
+        assertThrows(IllegalArgumentException::class.java) { SeamCrypto.callSigV3(ByteArray(31), f) }
+    }
+
+    private fun verify(pub: ByteArray, msg: ByteArray, sig: ByteArray): Boolean {
+        val v = Ed25519Signer()
+        v.init(false, Ed25519PublicKeyParameters(pub, 0))
+        v.update(msg, 0, msg.size)
+        return v.verifySignature(sig)
+    }
+
+    private fun hex(b: ByteArray) = b.joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
     private companion object {
         const val NOW_S = 1_700_000_001L

@@ -32,7 +32,7 @@ from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
 from seam_sdk._gen.seam.api.v1 import seam_pb2_grpc as rpc
 from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as ev
 from seam_sdk.aio import SeamClient as AioSeamClient
-from seam_sdk.crypto import call_sig_payload, jcs_canonicalize, tool_input_digest
+from seam_sdk.crypto import call_sig_v3_payload, jcs_canonicalize, tool_input_digest
 from seam_sdk.errors import UnauthenticatedError
 
 SEED = bytes(range(32))
@@ -206,14 +206,22 @@ def test_call_sig_and_digest_verify_server_side(fake_server):
     assert req.tool_input == canonical  # raw input rides as the exact canonical bytes
     assert req.tool_input_digest == tool_input_digest(canonical)
     assert req.tool_input_digest == "sha256:" + hashlib.sha256(canonical).hexdigest()
-    # The per-call PoP, verified the way the SERVER does it: Ed25519 by the agent key over the v2
-    # payload, using the WIRE values off the request rather than the ones we passed in. Rebuilding
+    # The per-call PoP, verified the way the SERVER does it: Ed25519 by the agent key over the v3
+    # payload (#197), using the WIRE values off the request rather than the ones we passed in. Rebuilding
     # the payload from local variables would re-introduce the self-consistency trap — this must fail
     # if the client signs anything other than what it actually sends.
     Ed25519PublicKey.from_public_bytes(_pubkey_of_aid(agent.aid)).verify(
         req.call_sig,
-        call_sig_payload(
-            bytes(req.ticket), req.tool_input_digest, req.tool_name, req.agent_id
+        call_sig_v3_payload(
+            bytes(req.ticket),
+            req.tool_input_digest,
+            req.tool_name,
+            req.agent_id,
+            subject=req.subject,
+            subjects=list(req.subjects),
+            client_request_id=req.client_request_id,
+            session_id=req.session_id,
+            features=dict(req.features),
         ),
     )
 
@@ -645,15 +653,17 @@ def test_subjects_reach_the_wire_and_subject_stays_empty(fake_server):
     assert req.subject == ""
 
 
-def test_subjects_does_not_change_call_sig():
-    """`call_sig` covers ticket, digest, `tool_name`, `agent_id` — NOT `subject` or `subjects`
-    (A-3). This pins that a future change cannot quietly bring `subjects` under the signature
-    without a test failing here first."""
+def test_subjects_change_call_sig_in_the_order_sent():
+    """`call_sig` v3 (#197) brings `subjects` under the signature, in the order sent. This used to pin
+    the opposite (A-3: v2 left subjects unsigned); it now pins that a captured signature cannot be
+    replayed with a different subject set, or the same set reordered."""
     from seam_sdk._authorize import build_authorize_request
 
     kwargs = dict(ticket=b"tkt:1", agent_seed=SEED, tool_name="t", tool_input={"k": 1})
     req_without = build_authorize_request(**kwargs)
     req_with = build_authorize_request(**kwargs, subjects=["a", "b"])
+    req_swapped = build_authorize_request(**kwargs, subjects=["b", "a"])
 
-    assert req_without.call_sig == req_with.call_sig
     assert req_without.call_sig != b""
+    assert req_without.call_sig != req_with.call_sig
+    assert req_with.call_sig != req_swapped.call_sig

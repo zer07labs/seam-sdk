@@ -36,7 +36,7 @@ import { type ChainHeadAttestation } from "../gen/seam/event/v1/seam_event_pb.js
 import {
   aidFromPubkey,
   buildPresentation,
-  callSig,
+  callSigV3,
   jcsCanonicalize,
   requestSig,
   toolInputDigest,
@@ -663,8 +663,8 @@ export class SeamClient {
        * empty entries, dedupes first-wins, and caps the effective set at 16. **Today the server
        * refuses an effective subject set larger than one** — supplying more than one is the
        * server's `INVALID_ARGUMENT` until Phase B ships `AuthorizeEvaluated.subject_digests`; this
-       * field exists now so callers can migrate off `subject` one at a time. It is not part of the
-       * signed payload (`callSig` does not cover `subject` or `subjects`). */
+       * field exists now so callers can migrate off `subject` one at a time. Both are signed by
+       * `callSig` v3, in the order passed. */
       subjects?: string[];
       agentId?: string;
       clientRequestId?: string;
@@ -673,21 +673,26 @@ export class SeamClient {
   ): Promise<AuthorizeResult> {
     const canonical = resolveCanonical(toolInput, opts?.canonical);
     const digest = toolInputDigest(canonical);
-    const request = (ticket: Uint8Array) => ({
-      ticket,
-      toolName,
-      toolInputDigest: digest,
-      toolInput: opts?.digestOnly ? new Uint8Array(0) : canonical,
-      // The signed toolName/agentId must be the WIRE values assembled here — the runtime verifies
-      // them verbatim against the request, so any divergence is a rejected call.
-      callSig: callSig(agent.seed, ticket, digest, toolName, opts?.agentId ?? ""),
-      features: opts?.features ?? {},
-      sessionId: opts?.sessionId ?? "",
-      subject: opts?.subject ?? "",
-      subjects: opts?.subjects ?? [],
-      agentId: opts?.agentId ?? "",
-      clientRequestId: opts?.clientRequestId ?? "",
-    });
+    const request = (ticket: Uint8Array) => {
+      // Signed v3 (#197) over the WIRE values assembled here. The runtime rebuilds the payload from
+      // the request it received, so signing anything else is a rejected call.
+      const wire = {
+        ticket,
+        toolInputDigest: digest,
+        toolName,
+        agentId: opts?.agentId ?? "",
+        subject: opts?.subject ?? "",
+        subjects: opts?.subjects ?? [],
+        clientRequestId: opts?.clientRequestId ?? "",
+        sessionId: opts?.sessionId ?? "",
+        features: opts?.features ?? {},
+      };
+      return {
+        ...wire,
+        toolInput: opts?.digestOnly ? new Uint8Array(0) : canonical,
+        callSig: callSigV3(agent.seed, wire),
+      };
+    };
 
     const cached = this.tickets.get(agent.aid);
     let ticket =

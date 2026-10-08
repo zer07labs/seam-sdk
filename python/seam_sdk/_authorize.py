@@ -12,7 +12,7 @@ from typing import Mapping, Optional, Sequence
 
 from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
 
-from .crypto import call_sig, jcs_canonicalize, request_sig, tool_input_digest
+from .crypto import call_sig_v3, jcs_canonicalize, request_sig, tool_input_digest
 from .errors import (
     CanonicalizationError,
     ProtocolViolationError,
@@ -201,9 +201,10 @@ def build_authorize_request(
     it already controls, under its own signature.
 
     ``subjects`` supersedes the deprecated singular ``subject``: the server takes the union of both,
-    drops empty entries, dedupes first-wins, and caps the effective set at 16. It is **not** part of
-    the signed payload — ``call_sig`` covers ticket, digest, ``tool_name``, and ``agent_id`` only, not
-    ``subject`` or ``subjects`` — so adding it here requires no change to ``call_sig``. Today the
+    drops empty entries, dedupes first-wins, and caps the effective set at 16. ``call_sig`` is v3
+    (#197): it signs ``subject``, ``subjects`` (in the order passed here), ``client_request_id``,
+    ``session_id`` and ``features`` together with the ticket, digest, ``tool_name`` and ``agent_id``.
+    Changing any of them after signing is therefore a rejected call. Today the
     server refuses an effective subject set larger than one (``INVALID_ARGUMENT``); Phase B
     (``AuthorizeEvaluated.subject_digests``) lifts that cap.
     """
@@ -215,8 +216,17 @@ def build_authorize_request(
         tool_input_digest=digest,
         # The signed tool_name/agent_id must be the WIRE values assembled below — the runtime
         # verifies them verbatim against the request, so any divergence is a rejected call.
-        call_sig=call_sig(
-            agent_seed, ticket, digest, tool_name=tool_name, agent_id=agent_id
+        call_sig=call_sig_v3(
+            agent_seed,
+            ticket,
+            digest,
+            tool_name=tool_name,
+            agent_id=agent_id,
+            subject=subject,
+            subjects=list(subjects),
+            client_request_id=client_request_id,
+            session_id=session_id,
+            features=features,
         ),
         session_id=session_id,
         subject=subject,

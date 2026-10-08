@@ -2,6 +2,7 @@ package com.zer07labs.seam;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.gson.Gson;
@@ -9,8 +10,13 @@ import com.google.gson.reflect.TypeToken;
 import java.lang.reflect.Type;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters;
+import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters;
+import org.bouncycastle.crypto.signers.Ed25519Signer;
 import org.junit.jupiter.api.Test;
 
 /** The Java crypto shim must reproduce the Rust reference bytes exactly (conformance/vectors.json). */
@@ -222,5 +228,113 @@ class ConformanceTest {
             (String) t.get("issuer_aid"), (String) t.get("signed_artifact_jws"), shifted, NOW_S),
         "a boundary-shifted commitment verified -- the framing is separator-joined, not "
             + "length-prefixed, and one artifact can now verify under another's signature");
+  }
+
+  // -- Authorize call_sig v3 (#197) ------------------------------------------------------------
+  //
+  // conformance/call_sig_v3_payload_vector.json is the cross-language contract. NO bless mode: a
+  // mismatch is a contract break (a v4 domain tag), not a stale fixture.
+
+  @SuppressWarnings("unchecked")
+  private static List<SeamCrypto.Feature> features(Object raw) {
+    List<SeamCrypto.Feature> out = new ArrayList<>();
+    for (Object kv : (List<Object>) raw) {
+      List<String> pair = (List<String>) kv;
+      out.add(new SeamCrypto.Feature(pair.get(0), pair.get(1)));
+    }
+    return out;
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void callSigV3PayloadMatchesVector() throws Exception {
+    Map<String, Object> v =
+        new Gson()
+            .fromJson(
+                Files.readString(Path.of("..", "conformance", "call_sig_v3_payload_vector.json")),
+                MAP);
+    assertEquals(SeamCrypto.CALL_SIG_V3_CONTEXT, v.get("domain"));
+    List<Map<String, Object>> cases = (List<Map<String, Object>>) v.get("cases");
+    assertFalse(cases.isEmpty(), "vector is empty; every assertion below would pass vacuously");
+    for (Map<String, Object> c : cases) {
+      byte[] got =
+          SeamCrypto.callSigV3Payload(
+              new SeamCrypto.CallSigV3Fields(
+                  hexToBytes((String) c.get("ticket_hex")),
+                  (String) c.get("tool_input_digest"),
+                  (String) c.get("tool_name"),
+                  (String) c.get("agent_id"),
+                  (String) c.get("subject"),
+                  (List<String>) c.get("subjects"),
+                  (String) c.get("client_request_id"),
+                  (String) c.get("session_id"),
+                  features(c.get("features"))));
+      assertEquals(c.get("payload_hex"), hex(got), c.get("name") + ": " + c.get("why"));
+    }
+  }
+
+  /**
+   * The vector's non-ascii case has a single feature, so it cannot catch a UTF-16 sort. U+FF61
+   * (UTF-8 EF BD A1) sorts BEFORE U+1F600 (F0 9F 98 80) by bytes, but AFTER it by
+   * {@link String#compareTo} (0xFF61 &gt; 0xD83D). The payload must follow byte order.
+   */
+  @Test
+  void callSigV3SortsFeaturesByUtf8Bytes() {
+    String bmp = "｡";
+    String astral = "😀";
+    SeamCrypto.CallSigV3Fields f =
+        new SeamCrypto.CallSigV3Fields(
+            new byte[] {1}, "d", "t", "", "", List.of(), "", "",
+            List.of(new SeamCrypto.Feature(astral, "a"), new SeamCrypto.Feature(bmp, "b")));
+    String p = hex(SeamCrypto.callSigV3Payload(f));
+    assertTrue(
+        p.indexOf("efbda1") < p.indexOf("f09f9880"),
+        "features sorted by UTF-16 code unit, not by UTF-8 bytes");
+  }
+
+  @Test
+  void callSigV3SignVerifyRoundTrip() {
+    byte[] seed = new byte[32];
+    Arrays.fill(seed, (byte) 7);
+    SeamCrypto.CallSigV3Fields f =
+        new SeamCrypto.CallSigV3Fields(
+            new byte[] {1, 2, 3, 4},
+            "sha256:" + "00".repeat(32),
+            "read_file",
+            "billing-agent",
+            "user-1",
+            List.of("user-2", "user-3"),
+            "req-0001",
+            "sess-9",
+            List.of(
+                new SeamCrypto.Feature("region", "eu"),
+                new SeamCrypto.Feature("amount_bucket", "high")));
+    byte[] sig = SeamCrypto.callSigV3(seed, f);
+    assertEquals(64, sig.length);
+
+    byte[] pub = new Ed25519PrivateKeyParameters(seed, 0).generatePublicKey().getEncoded();
+    assertTrue(verify(pub, SeamCrypto.callSigV3Payload(f), sig), "signature must verify");
+
+    SeamCrypto.CallSigV3Fields reordered =
+        new SeamCrypto.CallSigV3Fields(
+            f.ticket(), f.toolInputDigest(), f.toolName(), f.agentId(), f.subject(),
+            List.of("user-3", "user-2"), f.clientRequestId(), f.sessionId(), f.features());
+    assertFalse(
+        verify(pub, SeamCrypto.callSigV3Payload(reordered), sig),
+        "signature verified over reordered subjects -- subject order is not bound");
+    assertThrows(IllegalArgumentException.class, () -> SeamCrypto.callSigV3(new byte[31], f));
+  }
+
+  private static boolean verify(byte[] pub, byte[] msg, byte[] sig) {
+    Ed25519Signer v = new Ed25519Signer();
+    v.init(false, new Ed25519PublicKeyParameters(pub, 0));
+    v.update(msg, 0, msg.length);
+    return v.verifySignature(sig);
+  }
+
+  private static String hex(byte[] b) {
+    StringBuilder sb = new StringBuilder(b.length * 2);
+    for (byte x : b) sb.append(String.format("%02x", x & 0xff));
+    return sb.toString();
   }
 }

@@ -13,7 +13,10 @@ import { create, toBinary, fromBinary } from "@bufbuild/protobuf";
 import type { DescMessage, DescMethodUnary, MessageInitShape } from "@bufbuild/protobuf";
 import type { Transport, UnaryResponse } from "@connectrpc/connect";
 
+import { ed25519 } from "@noble/curves/ed25519";
+
 import { Agent, SeamClient } from "../src/client.js";
+import { callSigV3Payload } from "../src/crypto.js";
 import { AuthorizeVerdict, EvaluationRequestSchema } from "../gen/seam/api/v1/seam_pb.js";
 
 const SEED = new Uint8Array(32).fill(7);
@@ -138,7 +141,7 @@ test("submitCommit omits supersedes when absent, and sends it when given (#141)"
 
 // ── `subjects` plumbing on `authorize` (A-3/A-4) ────────────────────────────────────────────────
 
-test("authorize sends subjects alongside the deprecated singular subject, without changing callSig", async () => {
+test("authorize sends subjects alongside the deprecated singular subject, and signs them (call_sig v3)", async () => {
   const agent = new Agent(SEED);
 
   const calls1: Recorded[] = [];
@@ -154,7 +157,21 @@ test("authorize sends subjects alongside the deprecated singular subject, withou
   const withoutSubjects = calls2.find((c) => c.method === "Authorize")!;
   assert.deepEqual(withoutSubjects.input.subjects, []);
 
-  // callSig must be identical whether or not `subjects` is supplied — it is not part of the
-  // signed payload (A-3): ticket, digest, toolName, agentId only.
-  assert.deepEqual(withoutSubjects.input.callSig, withSubjects.input.callSig);
+  // call_sig v3 (#197) signs `subjects`, so it must change the signature (A-3 pinned the opposite
+  // under v2). The signature must also verify over the v3 payload rebuilt from the WIRE request, the
+  // way the runtime checks it.
+  assert.notDeepEqual(withoutSubjects.input.callSig, withSubjects.input.callSig);
+  const w = withSubjects.input as Record<string, any>;
+  const payload = callSigV3Payload({
+    ticket: w.ticket,
+    toolInputDigest: w.toolInputDigest,
+    toolName: w.toolName,
+    agentId: w.agentId,
+    subject: w.subject,
+    subjects: w.subjects,
+    clientRequestId: w.clientRequestId,
+    sessionId: w.sessionId,
+    features: w.features,
+  });
+  assert.ok(ed25519.verify(w.callSig, payload, ed25519.getPublicKey(SEED)));
 });

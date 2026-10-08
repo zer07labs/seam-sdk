@@ -16,6 +16,16 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Changed
+- **`authorize()` signs `call_sig` v3** (#197, runtime #1125). The signature now also covers `subject`,
+  `subjects` (in the order sent), `client_request_id`, `session_id` and `features`, so a captured
+  signature can't be replayed with a different attribution. The runtime tries v3 first and still
+  accepts v2 for two published SDK minors after this one, then refuses it.
+  **Upgrade before then:** an older SDK will stop authorizing.
+- New public helpers: Python `call_sig_v3` / `call_sig_v3_payload`; TS `callSigV3` / `callSigV3Payload`;
+  Go `crypto.CallSigV3` / `CallSigV3Payload`; Java and Kotlin `SeamCrypto.callSigV3` / `callSigV3Payload`.
+  All are pinned by `conformance/call_sig_v3_payload_vector.json`. The v2 helpers stay exported for now.
+
 ### Added
 - **`ListLegalHolds` admin verb** (#206, runtime #1060): Python `SeamAdminClient.list_legal_holds(tenant=, cursor=,
   limit=)` and TS `SeamAdminClient.listLegalHolds({tenant, cursor, limit})` each return one page plus `next_cursor`.

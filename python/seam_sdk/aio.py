@@ -220,8 +220,8 @@ class SeamClient:
         both, drops empty entries, dedupes first-wins, and caps the effective set at 16. **Today the
         server refuses an effective subject set larger than one** — supplying more than one is the
         server's ``INVALID_ARGUMENT`` until Phase B ships ``AuthorizeEvaluated.subject_digests``; this
-        parameter exists now so callers can migrate off ``subject`` one at a time. It is not part of
-        the signed payload (``call_sig`` does not cover ``subject`` or ``subjects``).
+        parameter exists now so callers can migrate off ``subject`` one at a time. Both are signed by
+        ``call_sig`` v3, in the order passed.
         """
         # Canonicalized ONCE, before the admit and outside the closure — see the sync twin in
         # client.py for why. It matters MORE here: an aio client is the one most likely to have

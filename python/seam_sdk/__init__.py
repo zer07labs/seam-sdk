@@ -32,6 +32,8 @@ from .crypto import (
     build_presentation,
     call_sig,
     call_sig_payload,
+    call_sig_v3,
+    call_sig_v3_payload,
     jcs_canonicalize,
     record_digest_v2,
     record_digest_v3,
@@ -92,6 +94,8 @@ __all__ = [
     "tool_input_digest",
     "call_sig",
     "call_sig_payload",
+    "call_sig_v3",
+    "call_sig_v3_payload",
     # Streamed-event surface (A14)
     "KNOWN_KINDS",
     "verify_streamed_record_digest",
