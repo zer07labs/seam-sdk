@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:128`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:136`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -63,7 +63,7 @@ boundary above, that means an SDK ≥ 0.33.2 needs a runtime image built from se
 | Consumer | Constraint on `seam-sdk` | Verified at |
 |---|---|---|
 | `seam-adapters` (`seam-agent-core[sdk]`) | `seam-sdk>=0.40.1,<0.41` | `seam-adapters/core/pyproject.toml:61` |
-| `seam-aegis` | `seam-agent-core[sdk]>=0.9,<0.10` (reaches this SDK transitively) | `seam-aegis/pyproject.toml:50` |
+| `seam-aegis` | `seam-agent-core[sdk]>=0.10,<0.11` (reaches this SDK transitively) | `seam-aegis/pyproject.toml:56` |
 
 **One caveat on the first row: the lockfile number is not a real resolution.**
 `seam-adapters/uv.lock:4217` resolved `seam-sdk` **0.17.0** when this row was first verified. That
@@ -121,7 +121,7 @@ mismatch cannot ship.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1141-1158`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1153-1170`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was

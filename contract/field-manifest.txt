@@ -418,8 +418,10 @@ VerifyCommitmentRequest/commitment
 VerifyCommitmentRequest/signed_artifact
 VerifyResponse/valid
 Vote/agent
+Vote/reason
 Vote/value
 VoteRequest/proposal_id
+VoteRequest/reason
 VoteRequest/session_id
 VoteRequest/usage
 VoteRequest/value

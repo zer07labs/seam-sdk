@@ -544,15 +544,21 @@ class SeamClient:
         proposal_id: str,
         value: str,
         *,
+        reason: str = "",
         usage: Optional[StepUsage] = None,
         credential: Optional[Agent] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.SessionStep:
+        """Cast a vote on a proposal. ``reason`` is the voter's stated reason, sealed into the vote
+        envelope (seam-runtime #804). Empty means no reason, byte-identical to a vote without one. The
+        server bounds it (4096 bytes, injection-redacted, classified) and REQUIRES it when the governing
+        policy sets ``rules.seam.capture_dissent``; those checks are deliberately not mirrored here."""
         req = pb.VoteRequest(
             session_id=session_id,
             voter=voter,
             proposal_id=proposal_id,
             value=value,
+            reason=reason,
         )
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())

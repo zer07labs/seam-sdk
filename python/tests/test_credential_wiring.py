@@ -289,3 +289,21 @@ def test_a_different_credential_produces_a_signature_that_does_not_verify(
     wrong_pubkey = Ed25519PrivateKey.from_private_bytes(cred_b.seed).public_key()
     with pytest.raises(InvalidSignature):
         wrong_pubkey.verify(sig_a, payload)
+
+
+@pytest.mark.parametrize("aio", [False, True], ids=["sync", "aio"])
+def test_submit_vote_carries_the_reason(aio: bool) -> None:
+    """#207: the vote reason (#804) reaches the request, and omitting it sends the empty default."""
+    seen: dict = {}
+    if aio:
+        client = object.__new__(AioSeamClient)
+        client._coord = _AioRecorder(seen)
+        run = lambda **kw: asyncio.run(client.submit_vote("s1", "a", "p1", "no", **kw))  # noqa: E731
+    else:
+        client = object.__new__(SeamClient)
+        client._coord = _Recorder(seen)
+        run = lambda **kw: client.submit_vote("s1", "a", "p1", "no", **kw)  # noqa: E731
+    run(reason="exceeds the approved budget")
+    assert seen["SubmitVote"][0].reason == "exceeds the approved budget"
+    run()
+    assert seen["SubmitVote"][0].reason == ""
