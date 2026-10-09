@@ -161,6 +161,7 @@ rm -rf "$dir"
 dir="$(fixture)"
 mkdir -p "$dir/scripts"
 cp "$STAMP" "$dir/scripts/retitle_changelog.sh"
+cp "$ROOT/scripts/shift_changelog_citations.py" "$dir/scripts/"
 if (cd "$dir" && ./scripts/retitle_changelog.sh 9.9.9 2026-10-01 >/dev/null 2>&1) &&
     grep -qxF "## 9.9.9 — 2026-10-01" "$dir/CHANGELOG.md"; then
     ok "works with root derived from its own location (the workflow's invocation)"
@@ -169,8 +170,28 @@ else
 fi
 rm -rf "$dir"
 
+# ── The docs' CHANGELOG.md:N citations move with the lines they cite ─────────────────────────────
+# The fixture's "## Unreleased" is line 5 and the retitle inserts 2 lines after it. A citation at or
+# above line 5 stays; one below moves by 2; a range straddling it keeps its start and moves its end.
+# Without this every release commit drifted the citation gate, and a red release commit never
+# publishes (0.43.0).
+dir="$(fixture)"
+printf 'top `CHANGELOG.md:1-3`, heading `CHANGELOG.md:5`, entry `CHANGELOG.md:9`, older `CHANGELOG.md:11-15`, straddle `CHANGELOG.md:3-9`\n' >"$dir/COMPATIBILITY.md"
+printf 'see CHANGELOG.md:13\n' >"$dir/DECISIONS.md"
+printf 'untouched CHANGELOG.md:13\n' >"$dir/README.md"
+"$STAMP" 9.9.9 2026-10-01 "$dir" >/dev/null 2>&1
+if grep -qF 'top `CHANGELOG.md:1-3`, heading `CHANGELOG.md:5`, entry `CHANGELOG.md:11`, older `CHANGELOG.md:13-17`, straddle `CHANGELOG.md:3-11`' "$dir/COMPATIBILITY.md" &&
+    grep -qxF 'see CHANGELOG.md:15' "$dir/DECISIONS.md" &&
+    grep -qxF 'untouched CHANGELOG.md:13' "$dir/README.md" &&
+    [ "$(sed -n 11p "$dir/CHANGELOG.md")" = "- something new" ]; then
+    ok "shifts the gated docs' CHANGELOG.md citations below the insertion, and only those"
+else
+    bad "citations not shifted as expected: $(cat "$dir/COMPATIBILITY.md" "$dir/DECISIONS.md")"
+fi
+rm -rf "$dir"
+
 # ── The repo itself is untouched ──────────────────────────────────────────────────────────────────
-if git -C "$ROOT" diff --quiet -- CHANGELOG.md; then
+if git -C "$ROOT" diff --quiet -- CHANGELOG.md COMPATIBILITY.md DECISIONS.md PROGRESS.md; then
     ok "left the real repo CHANGELOG.md alone"
 else
     bad "MODIFIED THE REPO — the tests must run against copies only"

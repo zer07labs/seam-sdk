@@ -16,6 +16,14 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Fixed
+- **A release commit no longer drifts the citation gate.** Retitling the CHANGELOG inserts lines near the top,
+  which moved every `CHANGELOG.md:N` citation in COMPATIBILITY.md / DECISIONS.md / PROGRESS.md; once the drift
+  outran the gate's slack the release commit went red, and publish.yml refuses a red tag, so 0.43.0 never
+  published. `scripts/retitle_changelog.sh` now shifts those citations in the same commit
+  (`scripts/shift_changelog_citations.py`, also usable by hand after adding an entry). A verifier test temp-file
+  collision that failed `expect_anchor_catches_a_genuine_truncation` on the same commit is fixed too.
+
 ## 0.43.0 — 2026-10-09
 
 ### Added

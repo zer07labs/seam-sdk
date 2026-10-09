@@ -37,9 +37,14 @@ fn golden(name: &str) -> String {
     std::fs::read_to_string(format!("{path}{name}")).expect("golden must exist")
 }
 
+/// Unique per process as well as per instant: these tests run as parallel threads, and a coarse clock
+/// can hand two of them the same pid + nanos name (see the matching note in truncation.rs).
+static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn write_tmp(name: &str, ext: &str, body: &str) -> std::path::PathBuf {
+    let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
-        "multi-tenant-{name}-{}-{}.{ext}",
+        "multi-tenant-{name}-{}-{seq}-{}.{ext}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
