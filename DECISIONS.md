@@ -1139,8 +1139,8 @@ the phase ran, which is itself the finding worth recording first.
 
 ### The decision
 
-**Do not yank 0.7.39 through 0.7.43. Document them.** `COMPATIBILITY.md:134` carries the row and
-`COMPATIBILITY.md:101-128` the disposition; this entry is the reasoning behind it, and exists
+**Do not yank 0.7.39 through 0.7.43. Document them.** `COMPATIBILITY.md:155` carries the row and
+`COMPATIBILITY.md:122-149` the disposition; this entry is the reasoning behind it, and exists
 because a decision that is only implied gets re-litigated by the next person to read the issue.
 
 `yank.yml` stays available and has been repaired (below) so that it would work if this is ever
@@ -1170,7 +1170,7 @@ band is *also* self-diagnosing makes it an easier call, not a differently reason
 the blast radius of yanking is much smaller than it was there. That was the stated reason not to
 yank before, and it does not apply here."** The last sentence is aimed squarely at the precedent
 this entry leads with, so it goes first: it is **right**. *"A floor already in wide use"* does not
-describe this band, and that limb is not relied on — `COMPATIBILITY.md:101-128` scopes it to the
+describe this band, and that limb is not relied on — `COMPATIBILITY.md:122-149` scopes it to the
 first two bands for exactly this reason. What the precedent bullet below turns on is **defect
 severity**, which the objection leaves untouched: the milder defect would be deleted while worse
 ones stay installable.

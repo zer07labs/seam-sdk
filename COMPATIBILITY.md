@@ -35,19 +35,40 @@ What to do instead, in descending order of usefulness:
    runtime, not with our own tests.
 3. **Watch the known-bad bands** in §3. They are permanent and nothing was yanked.
 
+### Your runtime image pin must move with your SDK pin
+
+Lockstep is a property of **releases**, not of your deployment. If you pin `seamd` by image digest or tag
+and raise your `seam-sdk` floor without moving that pin, you can pair an SDK with a runtime older than it,
+and nothing in either repository will warn you. The release gate (`contract/wire-framing.json`) compares
+the SDK against the runtime release that **dispatches** it. It cannot see the image a consumer actually
+runs.
+
+This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:128`). The release gate held that SDK until runtime 0.33.2,
+the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
+kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
+admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
+from 2026-10-06 until it moved its image pin (seam-adapters#234).
+
+The inverse is coming. Once the runtime refuses the big-endian proof outright (seam-runtime#1167, open as
+of 2026-10-09), every SDK **below** 0.33.2 is rejected by a runtime that carries it.
+
+**Rule:** pin the runtime image and the SDK to the **same version**, and move them together. For the
+boundary above, that means an SDK ≥ 0.33.2 needs a runtime image built from seam-runtime ≥ 0.33.2.
+
 ---
 
 ## 2. Verified compatibility rows
 
 | Consumer | Constraint on `seam-sdk` | Verified at |
 |---|---|---|
-| `seam-adapters` (`seam-agent-core[sdk]`) | `seam-sdk>=0.33.2,<0.34` | `seam-adapters/core/pyproject.toml:55` |
-| `seam-aegis` | `seam-agent-core[sdk]>=0.8,<0.9` (reaches this SDK transitively) | `seam-aegis/pyproject.toml:42` |
+| `seam-adapters` (`seam-agent-core[sdk]`) | `seam-sdk>=0.40.1,<0.41` | `seam-adapters/core/pyproject.toml:61` |
+| `seam-aegis` | `seam-agent-core[sdk]>=0.9,<0.10` (reaches this SDK transitively) | `seam-aegis/pyproject.toml:50` |
 
 **One caveat on the first row: the lockfile number is not a real resolution.**
 `seam-adapters/uv.lock:4217` resolved `seam-sdk` **0.17.0** when this row was first verified. That
-was inside the range declared then and is outside the one declared now (raised to `>=0.33.2,<0.34` in
-seam-adapters f42e682), and the lock was never evidence either way: `seam-adapters/pyproject.toml:59` overrides the dependency
+was inside the range declared then and is outside the one declared now (raised to `>=0.40.1,<0.41` in
+seam-adapters f6911d4), and the lock was never evidence either way: `seam-adapters/pyproject.toml:59` overrides the dependency
 with an unconditional editable path source (`{ path = "../seam-sdk/python", editable = true }`), so
 the lock records the sibling checkout rather than a resolved release. A reader should not take
 0.17.0 as evidence this constraint has ever been checked against a real registry release.
