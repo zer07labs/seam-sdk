@@ -21,6 +21,10 @@ than trusting a summary here.
   `submitVote(..., usage, { reason })`. The reason is sealed into the vote envelope; empty means none. The runtime
   bounds it and requires it when the policy sets `rules.seam.capture_dissent`. `Vote.reason` reaches readers
   through the generated stubs.
+- **Legal-hold release grace on `ListLegalHolds`** (seam-runtime #1186/#1222): the listing now also returns holds
+  released inside the deployment's release grace, each with `released_at` / `purge_eligible_at`, and the response
+  carries `release_grace_millis`. The fields reach callers through the generated stubs, and the wrappers are
+  unchanged. **A caller that treats every row as a live hold must now skip rows with `released_at` set.**
 
 ## 0.42.0 — 2026-10-09
 

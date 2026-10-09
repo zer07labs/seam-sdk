@@ -313,6 +313,8 @@ IssuerAidResponse/issuer_aid
 LegalHoldView/decision_id
 LegalHoldView/origin
 LegalHoldView/placed_by
+LegalHoldView/purge_eligible_at
+LegalHoldView/released_at
 LegalHoldView/tenant
 ListGrantsResponse/grants
 ListLegalHoldsRequest/cursor
@@ -320,6 +322,7 @@ ListLegalHoldsRequest/limit
 ListLegalHoldsRequest/tenant
 ListLegalHoldsResponse/legal_holds
 ListLegalHoldsResponse/next_cursor
+ListLegalHoldsResponse/release_grace_millis
 ListTenantsResponse/tenants
 ObjectionRequest/objector
 ObjectionRequest/proposal_id
