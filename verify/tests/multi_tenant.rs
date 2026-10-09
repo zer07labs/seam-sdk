@@ -420,3 +420,77 @@ fn from_anchor_over_a_multi_tenant_window_is_a_usage_error() {
     assert!(out.contains("USAGE ERROR"), "{out}");
     assert!(out.contains("acme") && out.contains("globex"), "{out}");
 }
+
+// ── (6) the system partition is attested like any tenant (seam-runtime#1196/#1205) ────────────────
+
+/// The system partition (wire `tenant == ""`) gets its own `CHAIN_HEAD_ATTESTATION`, with envelope AND
+/// payload `tenant` both `""`. Spec §CHAIN_HEAD_ATTESTATION *Per partition*: `""` agreeing with `""` is
+/// agreement, NOT the tenant-unbound legacy case, so `--strict` accepts it. And `--issuer` requires a
+/// covering attestation for every partition, `""` included.
+///
+/// Built from the two-tenant golden by moving `acme`'s envelope (and its attestation's UNSIGNED payload
+/// tenant) to `""`. The records' own payload `tenant` is left alone, because it is sealed into their
+/// digests. The verifier does not police which kinds may be tenant-less (the producer does, invariant
+/// 10), so this exercises the attestation path exactly.
+#[test]
+fn the_system_partition_is_attested_like_any_tenant() {
+    let body = golden("two_tenant_chain.jsonl");
+    let to_system = |e: &mut serde_json::Value| {
+        e["tenant"] = serde_json::Value::String(String::new());
+        if e["kind"] == "CHAIN_HEAD_ATTESTATION" {
+            e["chain_head_attestation"]["tenant"] = serde_json::Value::String(String::new());
+        }
+    };
+    let system: String = body
+        .lines()
+        .map(|l| {
+            let mut e: serde_json::Value = serde_json::from_str(l).unwrap();
+            if e["tenant"] == "acme" {
+                to_system(&mut e);
+            }
+            e.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let (code, out) = run(
+        "system",
+        &system,
+        &["--issuer", ISSUER, "--strict", "--json"],
+    );
+    assert_eq!(
+        code, VERIFIED,
+        "a system-partition attestation must authenticate under --strict:\n{out}"
+    );
+    let v: serde_json::Value = serde_json::from_str(out.lines().next().unwrap()).unwrap();
+    let sys = v["tenants"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["tenant"] == "")
+        .expect("the system partition is reported");
+    assert_eq!(sys["authenticated"], true, "{out}");
+    assert_eq!(
+        sys["tenant_unbound"], 0,
+        "\"\" agreeing with \"\" is agreement, not unbound:\n{out}"
+    );
+
+    // Without its attestation, the system partition is uncovered, and --issuer refuses the whole stream.
+    let unattested: String = system
+        .lines()
+        .filter(|l| {
+            let e: serde_json::Value = serde_json::from_str(l).unwrap();
+            !(e["kind"] == "CHAIN_HEAD_ATTESTATION" && e["tenant"] == "")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (code, out) = run("system-unattested", &unattested, &["--issuer", ISSUER]);
+    assert_eq!(
+        code, FAILED,
+        "an unattested system partition must be refused under --issuer:\n{out}"
+    );
+    assert!(
+        out.contains("tenant \"\""),
+        "the refusal names the system partition:\n{out}"
+    );
+}
