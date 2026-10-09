@@ -41,6 +41,7 @@ CHECKOUT = "actions/checkout"
 STAMP = "Bump both packages to the runtime version"
 RETITLE = "Retitle CHANGELOG.md's Unreleased heading to this version"
 TAG = "Commit + tag (triggers publish.yml)"
+GREEN = "main must be green before anything is tagged"
 
 
 def _steps() -> list[dict]:
@@ -93,7 +94,9 @@ def test_the_changelog_retitle_runs_after_the_stamp_and_before_the_tag() -> None
     so the published tag's CHANGELOG.md would still show the stale "## Unreleased" heading.
     """
     stamp = _index(lambda s: s.get("name") == STAMP, f"the stamp step ({STAMP!r})")
-    retitle = _index(lambda s: s.get("name") == RETITLE, f"the retitle step ({RETITLE!r})")
+    retitle = _index(
+        lambda s: s.get("name") == RETITLE, f"the retitle step ({RETITLE!r})"
+    )
     tag = _index(lambda s: s.get("name") == TAG, f"the tag step ({TAG!r})")
     assert stamp < retitle < tag, (
         f"stamp is step {stamp}, retitle is step {retitle}, tag is step {tag} — the retitle must "
@@ -359,7 +362,7 @@ def _tag_push_line() -> list[str]:
     word someone wrote, not a guard. `scripts/test_yank_gate.py` records this repo hitting that
     hole in both directions inside one week.
     """
-    step = _index(lambda s: "tag" in str(s.get("name", "")).lower(), "the commit+tag step")
+    step = _index(lambda s: s.get("name") == TAG, f"the commit+tag step ({TAG!r})")
     body = _steps()[step]["run"]
     lines = [ln.strip() for ln in body.splitlines() if not ln.strip().startswith("#")]
     pushes = [ln for ln in lines if ln.startswith("git push") and "v$VER" in ln]
@@ -398,14 +401,16 @@ def test_both_tags_are_created_before_either_is_pushed() -> None:
     Creating a tag, pushing it, then creating the second and pushing that would satisfy the
     assertion above one push at a time while reintroducing exactly the window it closes.
     """
-    step = _index(lambda s: "tag" in str(s.get("name", "")).lower(), "the commit+tag step")
+    step = _index(lambda s: s.get("name") == TAG, f"the commit+tag step ({TAG!r})")
     lines = [
         ln.strip()
         for ln in _steps()[step]["run"].splitlines()
         if not ln.strip().startswith("#")
     ]
     tag_idx = [i for i, ln in enumerate(lines) if ln.startswith("git tag")]
-    push_idx = [i for i, ln in enumerate(lines) if ln.startswith("git push") and "v$VER" in ln]
+    push_idx = [
+        i for i, ln in enumerate(lines) if ln.startswith("git push") and "v$VER" in ln
+    ]
     assert len(tag_idx) == 2, f"expected both release tags to be created here: {lines}"
     assert max(tag_idx) < min(push_idx), (
         "a tag is pushed before the other one is created, so the atomic push covers one ref: "
@@ -491,3 +496,23 @@ def test_an_unreadable_contract_file_fails_closed() -> None:
                 f"(event={event}, dispatched={dispatched!r}) — it cannot have compared anything, "
                 f"so tagging here publishes on an unverified framing:\n{r.stdout}{r.stderr}"
             )
+
+
+def test_main_must_be_green_before_anything_is_written() -> None:
+    """A dispatch on a red main used to stamp, push the release commit and cut both tags, and only
+    publish.yml refused. That tag never published and cannot be re-cut, so a re-fired dispatch for
+    the same version failed at `git tag`. The green check must run before the stamp, so a refusal
+    writes nothing, and it must refuse rather than pass on a red, pending-forever or unreadable ci-ok."""
+    green = _index(lambda s: s.get("name") == GREEN, f"the green check ({GREEN!r})")
+    stamp = _index(lambda s: s.get("name") == STAMP, f"the stamp step ({STAMP!r})")
+    assert green < stamp, f"the green check is step {green}, the stamp is step {stamp}"
+    script = _steps()[green]["run"]
+    assert 'select(.name == "ci-ok")' in script
+    assert "grep -vx 'success' | grep -vx 'pending'" in script, (
+        "a settled non-success must refuse"
+    )
+    assert script.rstrip().endswith("exit 1"), (
+        "running out of attempts must be a refusal"
+    )
+    perms = yaml.safe_load(RELEASE.read_text())["permissions"]
+    assert perms.get("checks") == "read", "reading check runs needs checks: read"
