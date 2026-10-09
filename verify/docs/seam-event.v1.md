@@ -1,17 +1,15 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ e168e8d (refreshed 2026-10-08). Two
-     movements since the prior pin (5f0bc0a):
-     1. seam-runtime#973/#1030 (commit bb5677f) — adds envelope tag 25, `optional uint64 tenant_seq`:
-        a per-tenant outbox counter on every event, UNSEALED (in no digest, checksum or signature).
-        This crate decodes it on both transports and carries it in the canonical dedup identity
-        (`verify/src/wire.rs`), exactly as the spec's "a re-encode of a decoded event is therefore
-        safe so long as the decoder models tag 25" requires; it verifies nothing with it. The
-        spec's completeness consumer rule (gap / replay detection per tenant) is NOT implemented
-        here — it detects loss in transit, not tampering, and stays a follow-up.
-     2. seam-runtime#715/#1047 (commit e168e8d) — adds AUTHORIZE_EVALUATED tag 11, `repeated string
-        subject_digests`. Advisory and unchained like the rest of that payload: decoded on both
-        transports for the dedup identity only. The reader rule ("tag 10 MUST equal element 0; a
-        consumer SHOULD reject a row where it does not") is a SHOULD on a row this verifier never
-        verifies, and is not enforced here. -->
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 074ddd3 (refreshed 2026-10-09). One
+     movement since the prior pin (e168e8d):
+     1. seam-runtime#903/#1084 (commit 074ddd3) publishes the `tenant_seq` cutoff (seq 25792) and adds
+        a separate, not-yet-published tenant-tag cutoff. It also adds §"Tenant tag — a producer rule":
+        only AUDIT_ENTRYs with action `config_snapshot_installed` / `config_section_removed` may be
+        tenant-less, and the producer now refuses any other tenant-less event. NO CHANGE to this crate:
+        it implements neither completeness rule (as the prior pin recorded), and the spec itself says a
+        tenant-less event is not reportable as a producer defect until the tenant-tag cutoff is
+        published. When it is, a verifier MAY start refusing non-exempt tenant-less events at or after
+        that seq; that would be a decision for a later pin.
+     Earlier movements, recorded by the prior pin: tag 25 `tenant_seq` (#973) and AUTHORIZE_EVALUATED
+     tag 11 `subject_digests` (#715), both carried in the dedup identity only. -->
 
 # `seam-event.v1` — event-stream wire spec (language-neutral)
 
@@ -660,9 +658,12 @@ same lock as the global `seq`. `optional` because **`0` is a real value** (a ten
 
 - **What it counts.** Every outbox event of one wire `tenant`, one per event, starting at `0` for a tenant
   first seen after the cutover. Allocation is serialized and a rolled-back append consumes nothing, so it is
-  **gap-free**; commit order equals counter order. `tenant == ""` is the **system partition** (config
-  snapshots, `audit_system_management`); it has its own counter. (On Postgres that partition is stored as
-  `tenant_id IS NULL`; an empty-string tenant on a tenant path is refused by `outbox_tenant_not_empty`.)
+  **gap-free**; commit order equals counter order. `tenant == ""` is the **system partition**: exactly the
+  `AUDIT_ENTRY`s whose `action` is `config_snapshot_installed` or `config_section_removed` (see
+  [Tenant tag — a producer rule](#tenant-tag--a-producer-rule-invariant-10)); it has its own counter. (On
+  Postgres that partition is stored as `tenant_id IS NULL`; an empty-string tenant on a tenant path is
+  refused by `outbox_tenant_not_empty`. The Memory backend refuses it too and no longer folds it into the
+  system partition.)
 - **Three different counters — do not conflate them.**
   1. `SeamEvent.tenant_seq` (this field) = `outbox.tenant_seq`: counts **all** events of the tenant.
   2. `audit_entry.tenant_seq`: counts only **chained** audit entries; it is *not* on the event wire.
@@ -677,20 +678,48 @@ same lock as the global `seq`. `optional` because **`0` is a real value** (a ten
 - **Legacy and cutover.** Events already stored carry no field and are not rewritten. The column counts
   ahead of the wire, so the first event that *carries* the field for a tenant may have `tenant_seq = N > 0`:
   a consumer MUST baseline on the first present value per tenant and MUST NOT assume it is `0`. The global
-  `seq` at which the field begins to appear (the cutoff) is **published with the producer change that
-  enforces it (#903)**; until then "absent" is unclassifiable and consumers MUST NOT report it as a defect.
+  `seq` at which the field begins to appear is the **`tenant_seq` cutoff** and the `seq` at which the producer
+  begins refusing tenant-less events is the separate **tenant-tag cutoff**; both are published here — see
+  *Cutoffs* below; until the relevant one is filled the corresponding "absent" is unclassifiable and consumers
+  MUST NOT report it as a defect.
+- **Cutoffs (two numbers, because the two changes shipped at different times).**
+  - `tenant_seq cutoff seq: 25792` — the global `seq` of the first event that carries tag 25. #973 shipped alone
+    in 0.34.0: measured in prod, 25791 is the last event without tag 25 and 25792 the first with it. Governs
+    consumer rule 1 and rule 4 below.
+  - `Tenant-tag cutoff seq: —` *(not yet published: the global `seq` of the first event produced after the
+    deploy of the producer that refuses tenant-less events (#903, 0.41.0). It cannot be known before that
+    deploy and is never to be guessed.)* Before it, an event may be tenant-less on the wire for reasons other
+    than the two exempt actions (`AUDIT_ENTRY` with `config_snapshot_installed` / `config_section_removed`); the
+    spec makes no no-tenant-less claim for any `seq` between 25792 and this number. Until it is filled, a
+    tenant-less event is not reportable as a producer defect.
+  - The owner fills both lines from the relay/lakehouse archive, not from `min(seq)` of the live outbox, which is
+    pruned after ack. See [`docs/runbooks/tenant-seq-cutoff.md`](../runbooks/tenant-seq-cutoff.md).
 - **Consumer rule.** For each tenant `T` (wire `tenant`; `""` = system), over events in delivery order:
-  1. `tenant_seq` absent and `seq` below the published cutoff: legacy; ignore for completeness.
+  1. `tenant_seq` absent and `seq` below the `tenant_seq` cutoff: legacy; ignore for completeness.
   2. The first event of `T` with `tenant_seq` present baselines the counter.
   3. Each later event of `T` must carry `previous + 1`. A larger value is a **gap** (report the missing
      range); an equal or smaller value is a **duplicate/replay** (drop by `event_id`; report if the
      `event_id` differs).
-  4. `tenant_seq` absent **after** the cutoff is a producer defect.
+  4. `tenant_seq` absent **at or after** the `tenant_seq` cutoff is a producer defect.
   5. A gap is evidence of loss *in transit or retention*; for chained kinds confirm against the tenant's
      `CHAIN_HEAD_ATTESTATION.attested_len` before treating it as data loss.
 - **Does not** give ordering across tenants (use `seq`), does not backfill, and a database restored from an
   older snapshot re-issues counters already shipped (same hazard as `seq`, `docs/runbooks/outbox-seq-reset.md`);
   rule 3 reports it as a duplicate/regression. **Tag 25 is permanent** once consumers vendor the descriptor.
+
+## Tenant tag — a producer rule (invariant 10)
+
+Every event carries a non-empty wire `tenant` (invariant 10). Since #903 this is **enforced at the producer,
+fail-closed**: every `Store` path that appends an event (seal, audit entry, chain anchor, chain-head
+attestation, erasure/retention audit, advisory append) refuses `tenant == ""` and appends nothing (fact append is refused at the backend, `commit_fact`);
+the Postgres `CHECK (tenant_id <> '')` (migration `0030`) and the Memory backend are the second line.
+
+The **only** tenant-less events are `AUDIT_ENTRY`s with `action` = `config_snapshot_installed` or
+`config_section_removed` (deployment-global config; D-W3-22). They are the system partition (`tenant == ""` on
+the wire, `tenant_id IS NULL` in Postgres) and are written only by `commit_system_audit`. Any other kind or action
+with an empty `tenant` is a producer defect. A legal hold on a decision with no tenant-bound sealed record
+cannot be audited and is refused before it takes effect (a no-op place/release is unchanged). Adding an action to
+the exempt set is a spec change, not a code-only change.
 
 ## Retention & the relay-consumed cursor (R1)
 
