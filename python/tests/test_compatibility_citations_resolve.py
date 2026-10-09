@@ -1254,12 +1254,12 @@ QUOTED = [
         # nothing else — and only on a workstation with the sibling cloned: in CI `../seam-aegis`
         # does not exist, so the check `pytest.skip`s and the stale claim rides through green. The
         # quote is doing its job; the coverage gap is that its job is only done locally.
-        "seam-agent-core[sdk]>=0.8,<0.9",
+        "seam-agent-core[sdk]>=0.9,<0.10",
     ),
     (
         "COMPATIBILITY.md",
         "seam-adapters/core/pyproject.toml",
-        "seam-sdk>=0.33.2,<0.34",
+        "seam-sdk>=0.40.1,<0.41",
     ),
     (
         "COMPATIBILITY.md",
