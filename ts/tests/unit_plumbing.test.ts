@@ -738,3 +738,12 @@ test("reportOutcome sends the idempotency key and refuses an invalid one before 
   }
   assert.equal(calls.length, 0, "an invalid key must never reach the wire");
 });
+
+test("submitVote carries the vote reason (#207), and sends empty when omitted", async () => {
+  const calls: Recorded[] = [];
+  const client = new SeamClient(fakeTransport(calls, () => ({})));
+  await client.submitVote("s1", "a", "p1", "no", undefined, { reason: "exceeds the approved budget" });
+  await client.submitVote("s1", "a", "p1", "yes");
+  assert.equal(calls[0]!.input.reason, "exceeds the approved budget");
+  assert.equal(calls[1]!.input.reason, "");
+});

@@ -922,15 +922,19 @@ export class SeamClient {
     return this.coord.submitProposal(init, { ...call(opts), headers });
   }
 
+  /** Cast a vote on a proposal. `opts.reason` is the voter's stated reason, sealed into the vote envelope
+   * (seam-runtime #804). Omitted or empty means no reason, byte-identical to a vote without one. The
+   * server bounds it (4096 bytes, injection-redacted, classified) and REQUIRES it when the governing
+   * policy sets `rules.seam.capture_dissent`; those checks are deliberately not mirrored here. */
   async submitVote(
     sessionId: string,
     voter: string,
     proposalId: string,
     value: string,
     usage?: StepUsage,
-    opts?: CredentialedCallOptions,
+    opts?: { reason?: string } & CredentialedCallOptions,
   ) {
-    const init = { sessionId, voter, proposalId, value, usage };
+    const init = { sessionId, voter, proposalId, value, usage, reason: opts?.reason ?? "" };
     const headers = await this.credentialHeaders(
       opts?.credential,
       "/seam.api.v1.SeamCoordination/SubmitVote",
