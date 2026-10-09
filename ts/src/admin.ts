@@ -380,7 +380,13 @@ export class SeamAdminClient {
    *
    * An omitted `tenant` applies no filter. `tenant: ""` is a different request: it filters the reserved
    * legacy tenant `""` and is NOT fleet-wide. A Scoped operator may only name its own tenant. `limit`
-   * is clamped server-side to 1..=1000; omitted takes the server default (100). */
+   * is clamped server-side to 1..=1000; omitted takes the server default (100).
+   *
+   * **Not every row is a live hold** (runtime #1186). A row with `releasedAt` set is a hold released
+   * inside the deployment's release grace and not placed again. Retention still treats the record as
+   * held until `purgeEligibleAt`, and re-placing the hold before then undoes the release. Check
+   * `row.releasedAt !== undefined` before treating a row as live. The response's `releaseGraceMillis`
+   * is that grace; `0n` means no released rows are listed. */
   async listLegalHolds(
     opts?: { tenant?: string; cursor?: string; limit?: number } & UnaryCallOptions,
   ): Promise<ListLegalHoldsResponse> {

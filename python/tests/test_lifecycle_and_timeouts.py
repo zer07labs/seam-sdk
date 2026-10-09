@@ -300,3 +300,34 @@ def test_list_legal_holds_keeps_an_empty_tenant_distinct_from_no_filter() -> Non
     assert not unfiltered.HasField("limit")
     assert filtered.HasField("tenant") and filtered.tenant == ""
     assert (filtered.cursor, filtered.limit) == ("dec:9", 5)
+
+
+def test_list_legal_holds_surfaces_released_rows_inside_the_grace() -> None:
+    """runtime #1186: a hold released inside the grace is still listed, marked by ``released_at``. The
+    wrapper returns the response as-is, so the marker and ``release_grace_millis`` must reach the caller."""
+    page = pb.ListLegalHoldsResponse(
+        legal_holds=[
+            pb.LegalHoldView(decision_id="dec:live", origin="fleet"),
+            pb.LegalHoldView(
+                decision_id="dec:released",
+                origin="fleet",
+                released_at=1_000,
+                purge_eligible_at=1_000 + 604_800_000,
+            ),
+        ],
+        release_grace_millis=604_800_000,
+    )
+
+    class _Admin:
+        def ListLegalHolds(self, req, timeout):
+            return page
+
+    admin = object.__new__(SeamAdminClient)
+    admin._admin = _Admin()
+
+    got = admin.list_legal_holds()
+    assert got.release_grace_millis == 604_800_000
+    live = [h.decision_id for h in got.legal_holds if not h.HasField("released_at")]
+    assert live == ["dec:live"]
+    released = got.legal_holds[1]
+    assert released.purge_eligible_at - released.released_at == got.release_grace_millis

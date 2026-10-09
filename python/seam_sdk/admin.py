@@ -520,7 +520,13 @@ class SeamAdminClient:
 
         ``tenant=None`` applies no filter. ``tenant=""`` is a different request: it filters the reserved
         legacy tenant ``""`` and is NOT fleet-wide. A Scoped operator may only name its own tenant.
-        ``limit`` is clamped server-side to 1..=1000; ``None`` takes the server default (100)."""
+        ``limit`` is clamped server-side to 1..=1000; ``None`` takes the server default (100).
+
+        **Not every row is a live hold** (runtime #1186). A row carrying ``released_at`` is a hold
+        released inside the deployment's release grace and not placed again. Retention still treats
+        the record as held until ``purge_eligible_at``, and re-placing the hold before then undoes the
+        release. Test ``row.HasField("released_at")`` before treating a row as live. The response's
+        ``release_grace_millis`` is that grace; ``0`` means no released rows are listed."""
         req = pb.ListLegalHoldsRequest()
         # Presence is meaningful on all three, so only set what the caller set.
         if tenant is not None:
