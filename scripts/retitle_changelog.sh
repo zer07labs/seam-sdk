@@ -55,6 +55,11 @@ fi
 # The existing "## Unreleased" heading becomes this release's dated heading, and a fresh blank
 # "## Unreleased" is opened above it for whatever lands next. Em dash (U+2014), matching every
 # existing versioned heading in this file (e.g. "## 0.7.26 — 2026-08-14").
+# Where the insertion lands, and how many lines it adds, so the docs' CHANGELOG.md:N citations can be
+# moved in the same commit (see shift_changelog_citations.py for why that matters to publishing).
+INSERT_AFTER=$(grep -nx '## Unreleased' "$CHANGELOG" | head -1 | cut -d: -f1)
+LINES_BEFORE=$(wc -l <"$CHANGELOG")
+
 VER="$VER" DATE="$DATE" perl -i -0777 -pe '
   s/^## Unreleased\n/## Unreleased\n\n## $ENV{VER} — $ENV{DATE}\n/m
 ' "$CHANGELOG"
@@ -74,5 +79,8 @@ if [ "$AFTER" -ne 1 ] || [ "$VERSIONED_NO" -eq 0 ] || [ "$UNRELEASED_NO" -eq 0 ]
         "left half-edited: fix it by hand, do not re-run and risk double-stamping." >&2
     exit 1
 fi
+
+python3 "$(dirname "${BASH_SOURCE[0]}")/shift_changelog_citations.py" "$ROOT" "$INSERT_AFTER" \
+    "$(($(wc -l <"$CHANGELOG") - LINES_BEFORE))"
 
 echo "retitled CHANGELOG.md: Unreleased -> $VERSIONED_LINE (new Unreleased heading opened above it)"

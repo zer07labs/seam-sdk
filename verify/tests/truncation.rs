@@ -26,9 +26,15 @@ fn b64e(b: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(b)
 }
 
+/// Tests in this file run as threads of one process, so pid + nanos alone can collide on a coarse
+/// clock: a parallel test's length-3 anchor once overwrote another's length-5 one under the same
+/// name, and the run read the wrong anchor. The counter makes every name unique within the process.
+static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn write_tmp(name: &str, ext: &str, body: &str) -> std::path::PathBuf {
+    let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
-        "truncation-{name}-{}-{}.{ext}",
+        "truncation-{name}-{}-{seq}-{}.{ext}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
