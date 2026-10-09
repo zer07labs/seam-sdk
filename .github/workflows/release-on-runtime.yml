@@ -32,6 +32,8 @@ on:
 
 permissions:
   contents: write
+  # The "main must be green" step reads the checked-out commit's check runs. Read-only.
+  checks: read
 
 jobs:
   release:
@@ -164,6 +166,60 @@ jobs:
       # scripts/test_set_version.sh runs on every PR. It was inline here, matching pyproject's
       # `version` key by LINE NUMBER, which would have half-stamped (ts yes, python no) the first
       # time anyone added a few comment lines above it.
+      # A dispatch that arrives while main is red used to tag anyway: this job stamped, pushed the
+      # release commit, and cut v$VER + go/v$VER, and only publish.yml's ci-green refused. That left a
+      # tag that never published and could not be re-cut (the repo is public; the Go proxy may have
+      # cached it), so a re-fired dispatch failed at `git tag`. 0.39.2, 0.39.3, 0.40.0, 0.41.0 and
+      # 0.42.0 were lost that way. Refusing HERE, before anything is written, makes a refused dispatch
+      # leave nothing behind, so the runtime can re-fire the same version once main is green.
+      # Same resolution as publish.yml's ci-green: every ci-ok run must be success, pending waits,
+      # an API failure is not a verdict, and a timeout is a refusal.
+      - name: main must be green before anything is tagged
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse HEAD)"
+          ATTEMPTS=40
+          INTERVAL=30
+          STATE="not registered yet"
+          for attempt in $(seq 1 "$ATTEMPTS"); do
+            if ! CONCLUSIONS="$(gh api --paginate \
+              "repos/$REPO/commits/$SHA/check-runs" \
+              --jq '.check_runs[] | select(.name == "ci-ok") | (.conclusion // "pending")')"; then
+              CONCLUSIONS=""
+              STATE="the check-runs API call failed"
+            elif [ -z "$CONCLUSIONS" ]; then
+              STATE="not registered yet"
+            fi
+
+            if [ -n "$CONCLUSIONS" ]; then
+              BAD="$(echo "$CONCLUSIONS" | grep -vx 'success' | grep -vx 'pending' || true)"
+              if [ -n "$BAD" ]; then
+                echo "::error::main ($SHA) is not green — at least one ci-ok run is not success:"
+                while IFS= read -r c; do echo "::error::  - $c"; done <<< "$BAD"
+                echo "::error::Refusing to tag. Nothing was committed or tagged, so once main is green"
+                echo "::error::the runtime can re-fire this same version's seam-release dispatch."
+                exit 1
+              fi
+              if ! echo "$CONCLUSIONS" | grep -qx 'pending'; then
+                echo "main ($SHA) is green — safe to stamp and tag."
+                exit 0
+              fi
+              STATE="still running"
+            fi
+
+            if [ "$attempt" -lt "$ATTEMPTS" ]; then
+              echo "attempt $attempt/$ATTEMPTS: ci-ok $STATE for $SHA; waiting ${INTERVAL}s"
+              sleep "$INTERVAL"
+            fi
+          done
+
+          echo "::error::Timed out after $(( ATTEMPTS * INTERVAL ))s waiting for ci-ok on main ($SHA)."
+          echo "::error::Last seen: $STATE. Refusing to tag; nothing was written, so a re-fire is safe."
+          exit 1
+
       - name: Bump both packages to the runtime version
         run: ./scripts/set_version.sh "${{ steps.v.outputs.version }}"
 
