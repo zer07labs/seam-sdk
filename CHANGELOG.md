@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.43.0 — 2026-10-09
+
 ### Added
 - **Vote reason** (#207, seam-runtime #804/#1201): Python `submit_vote(..., reason=...)` (sync and aio) and TS
   `submitVote(..., usage, { reason })`. The reason is sealed into the vote envelope; empty means none. The runtime
