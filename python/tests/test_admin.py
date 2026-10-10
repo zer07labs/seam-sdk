@@ -41,6 +41,8 @@ class RecordingAdmin(rpc.SeamAdminServicer):
         self.revoked_tenant: pb.RevokeTenantRequest | None = None
         self.grants: list[pb.GrantView] = []
         self.erase_requests: list[pb.ErasureRequest] = []
+        # (verb, decision_id, invocation metadata as a list of (key, value)) per legal-hold call.
+        self.legal_hold_calls: list[tuple[str, str, list[tuple[str, str]]]] = []
 
     def RemoveParty(self, request, context):  # noqa: N802
         self.removed = request
@@ -67,6 +69,18 @@ class RecordingAdmin(rpc.SeamAdminServicer):
     def EraseSubject(self, request, context):  # noqa: N802
         self.erase_requests.append(request)
         return ev.ErasureCertificate(subject=request.subject)
+
+    def PlaceLegalHold(self, request, context):  # noqa: N802
+        self.legal_hold_calls.append(
+            ("place", request.decision_id, list(context.invocation_metadata()))
+        )
+        return pb.Empty()
+
+    def ReleaseLegalHold(self, request, context):  # noqa: N802
+        self.legal_hold_calls.append(
+            ("release", request.decision_id, list(context.invocation_metadata()))
+        )
+        return pb.Empty()
 
 
 @pytest.fixture
@@ -139,6 +153,58 @@ def test_list_grants_empty_is_an_empty_list(recording_admin):
     _, addr = recording_admin
     with SeamAdminClient.connect(addr) as admin:
         assert admin.list_grants() == []
+
+
+def _tenant_headers(md):
+    return [v for k, v in md if k == "x-seam-tenant"]
+
+
+def test_legal_hold_tenant_omitted_sends_no_x_seam_tenant(recording_admin):
+    """runtime #1037: an omitted tenant is the pre-#1037 request — no ``x-seam-tenant`` metadata."""
+    servicer, addr = recording_admin
+    with SeamAdminClient.connect(addr) as admin:
+        assert admin.place_legal_hold("dec:1") is None
+        assert admin.release_legal_hold("dec:1") is None
+    assert [(verb, d) for verb, d, _ in servicer.legal_hold_calls] == [
+        ("place", "dec:1"),
+        ("release", "dec:1"),
+    ]
+    for _, _, md in servicer.legal_hold_calls:
+        assert _tenant_headers(md) == []
+
+
+def test_legal_hold_tenant_given_sends_x_seam_tenant(recording_admin):
+    servicer, addr = recording_admin
+    with SeamAdminClient.connect(addr) as admin:
+        admin.place_legal_hold("dec:pre", tenant="acme")
+        admin.release_legal_hold("dec:pre", tenant="acme")
+    assert [(verb, d) for verb, d, _ in servicer.legal_hold_calls] == [
+        ("place", "dec:pre"),
+        ("release", "dec:pre"),
+    ]
+    for _, _, md in servicer.legal_hold_calls:
+        assert _tenant_headers(md) == ["acme"]
+
+
+def test_legal_hold_tenant_rides_alongside_the_bearer_token(recording_admin):
+    """The bearer interceptor appends to the call's metadata; it must not drop the tenant, nor the
+    tenant the token."""
+    servicer, addr = recording_admin
+    with SeamAdminClient.connect(addr, token="tok") as admin:
+        admin.place_legal_hold("dec:pre", tenant="acme")
+    ((_, _, md),) = servicer.legal_hold_calls
+    assert _tenant_headers(md) == ["acme"]
+    assert ("authorization", "Bearer tok") in md
+
+
+def test_legal_hold_empty_tenant_is_sent_not_dropped(recording_admin):
+    """Presence, not truthiness: ``tenant=""`` is sent so the runtime refuses it as present-but-empty,
+    rather than silently degrading to an un-named hold."""
+    servicer, addr = recording_admin
+    with SeamAdminClient.connect(addr) as admin:
+        admin.place_legal_hold("dec:pre", tenant="")
+    ((_, _, md),) = servicer.legal_hold_calls
+    assert _tenant_headers(md) == [""]
 
 
 def test_erase_subject_now_millis_absent_by_default(recording_admin):
