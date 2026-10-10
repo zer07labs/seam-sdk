@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.43.1 — 2026-10-10
+
 ### Fixed
 - **A release commit no longer drifts the citation gate.** Retitling the CHANGELOG inserts lines near the top,
   which moved every `CHANGELOG.md:N` citation in COMPATIBILITY.md / DECISIONS.md / PROGRESS.md; once the drift
