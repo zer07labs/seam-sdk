@@ -16,6 +16,24 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Changed — BREAKING: `seam-commitment-digest:v2` (runtime #1255, #802/#804; #227)
+- **The commitment digest is v2 in all five SDKs; v1 is deleted, not dual-verified.** v2 binds two more
+  fields after `trust_basis`: `committer` (the verified AID that committed) and the 32-byte
+  `seam-explanation-digest:v1` of the sealed explanation. A TCT minted by a pre-0.44 runtime no longer verifies;
+  under the pre-GA no-backward-compatibility policy deployments are recreated, so none survives.
+- **The sealed explanation is verified, not just carried.** `Commitment` gains `committer`,
+  `explanation_digest` and `explanation` (`ExplanationEntry`: kind, participant, proposal_id, value, reason,
+  optional `confidence`, optional `rationale_ref`). Verification recomputes the explanation digest from the
+  entries and requires it to equal the published one before binding it; an unknown kind or a non-canonical
+  confidence (NaN, ±inf, outside [0, 1], `-0.0`) fails closed. An absent confidence and a stated `0.0` are
+  different bytes.
+- New: `explanation_digest(entries)` (Python), `explanationDigest` (TS, Go `ExplanationDigest`, Java/Kotlin).
+  Python `commitment_view(c)` / TS `commitmentView(c)` turn a served proto `Commitment` into the verifier's
+  input; `verify_decision` uses it. Go, Java and Kotlin `Commitment` types gain the same fields (Java's record
+  no longer has a 6-argument constructor).
+- Vectors: `conformance/vectors.json` (`tct` block) and the new `conformance/commitment_digest_v2_vector.json`
+  are copied verbatim from the runtime; `conformance/tct_exp_extended.json` is re-emitted under v2.
+
 ### Fixed
 - **`verify_decision` / `verifyDecision` take `credential=`.** The proof fetch inside it is the subject-scoped
   `GetCommitmentProof`, so a credential-only partner calling it directly on an unbound client could not verify.

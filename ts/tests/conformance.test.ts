@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   buildPresentation,
+  explanationDigest,
+  seamCommitmentDigest,
   verifyTct,
   recordDigestV2,
   recordDigestV3,
@@ -89,16 +91,16 @@ test("chain-head attestation signature verifies, tamper does not (A14)", () => {
 
 // -- Commitment-digest framing coverage (W5.4 / G4) ----------------------------------------------
 //
-// `seam-commitment-digest:v1` is implemented byte-for-byte in ALL FIVE SDK languages -- the widest
-// fan-out of any framing in this repo -- and has no vector section of its own. It cannot get one
-// here either: seam-runtime's `sdk-digest-parity` job byte-diffs the whole of
-// conformance/vectors.json against its own emitter, so a block added on this side turns the
-// runtime's CI red. A vector for it must originate there.
+// `seam-commitment-digest:v2` is implemented byte-for-byte in ALL FIVE SDK languages -- the widest
+// fan-out of any framing in this repo. Its digests are pinned directly below (the `tct` block's
+// `explanation_digest_hex` / `commitment_digest_hex`, and `commitment_digest_v2.test.ts` over the
+// runtime's own reference vector); seam-runtime's `sdk-digest-parity` job byte-diffs the whole of
+// conformance/vectors.json against its own emitter, so those values originate there.
 //
 // What IS available is stronger than it looks. `verifyTct` recomputes the digest and compares it to
 // the `seam-commitment-digest:` grant inside the runtime-signed JWS, so the vector already carries a
 // runtime-produced expected value. The gap was never coverage of the digest -- it was coverage of
-// the FIELD TUPLE: the pre-existing test tampered `action` only, so one of seven framing inputs was
+// the FIELD TUPLE: the pre-existing test tampered `action` only, so one of the framing inputs was
 // proven bound.
 //
 // The difference is demonstrable, not theoretical: an implementation that silently drops
@@ -132,6 +134,23 @@ test("commitment digest binds every field", () => {
     ["supersedes (absent -> present)", { supersedes: "k-previous" }],
     ["auth_method", { auth_method: base.auth_method + "-x" }],
     ["trust_basis", { trust_basis: base.trust_basis + "-x" }],
+    ["committer", { committer: base.committer + "-x" }],
+    ["committer (present -> absent)", { committer: undefined }],
+    ["explanation (entry reason)", {
+      explanation: base.explanation!.map((e, i) => (i === 2 ? { ...e, reason: e.reason + "-x" } : e)),
+    }],
+    ["explanation (entry dropped)", { explanation: base.explanation!.slice(1) }],
+    ["explanation (order)", { explanation: [...base.explanation!].reverse() }],
+    // Absent is not zero: the first entry declined to state a confidence.
+    ["explanation (absent confidence -> 0.0)", {
+      explanation: base.explanation!.map((e, i) => (i === 0 ? { ...e, confidence: 0 } : e)),
+    }],
+    ["explanation (stated 0.0 -> absent)", {
+      explanation: base.explanation!.map((e, i) => (i === 1 ? { ...e, confidence: null } : e)),
+    }],
+    ["explanation (rationale_ref dropped)", {
+      explanation: base.explanation!.map((e, i) => (i === 0 ? { ...e, rationale_ref: null } : e)),
+    }],
   ];
   for (const [field, change] of mutations) {
     assert.equal(
@@ -140,6 +159,17 @@ test("commitment digest binds every field", () => {
       `changing ${field} did not change the commitment digest -- that field is not bound`,
     );
   }
+});
+
+test("tct block: explanation and commitment digests match the runtime (seam-commitment-digest:v2)", () => {
+  const t = vectors.tct;
+  const c = t.inputs.commitment as Commitment;
+  assert.equal(Buffer.from(explanationDigest(c.explanation!)).toString("hex"), t.explanation_digest_hex);
+  assert.equal(seamCommitmentDigest(c), t.commitment_digest_hex);
+  // The same digest via the published-only path (no entries) and via entries + agreeing published digest.
+  const published = Buffer.from(t.explanation_digest_hex, "hex");
+  assert.equal(seamCommitmentDigest({ ...c, explanation: undefined, explanation_digest: published }), t.commitment_digest_hex);
+  assert.equal(seamCommitmentDigest({ ...c, explanation_digest: t.explanation_digest_hex }), t.commitment_digest_hex);
 });
 
 test("commitment digest is injective across field boundaries", () => {

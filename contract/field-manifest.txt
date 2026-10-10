@@ -225,6 +225,9 @@ CommitRequest/usage
 Commitment/action
 Commitment/auth_method
 Commitment/authority
+Commitment/committer
+Commitment/explanation
+Commitment/explanation_digest
 Commitment/id
 Commitment/signed_artifact
 Commitment/supersedes
@@ -304,6 +307,13 @@ EvaluationRequest/reason
 EvaluationRequest/recommendation
 EvaluationRequest/session_id
 EvaluationRequest/usage
+ExplanationEntry/confidence
+ExplanationEntry/kind
+ExplanationEntry/participant
+ExplanationEntry/proposal_id
+ExplanationEntry/rationale_ref
+ExplanationEntry/reason
+ExplanationEntry/value
 GrantView/expires_at
 GrantView/from_ns
 GrantView/grantor
@@ -444,3 +454,8 @@ CollectiveVerdict#COLLECTIVE_VERDICT_ESCALATED
 CollectiveVerdict#COLLECTIVE_VERDICT_NO_VOTES
 CollectiveVerdict#COLLECTIVE_VERDICT_SPLIT
 CollectiveVerdict#COLLECTIVE_VERDICT_UNSPECIFIED
+ExplanationKind#EXPLANATION_KIND_BALLOT
+ExplanationKind#EXPLANATION_KIND_EVALUATION
+ExplanationKind#EXPLANATION_KIND_OBJECTION
+ExplanationKind#EXPLANATION_KIND_UNSPECIFIED
+ExplanationKind#EXPLANATION_KIND_VOTE

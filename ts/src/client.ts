@@ -26,6 +26,7 @@ import {
   SeamTrust,
   SessionRefSchema,
   VoteRequestSchema,
+  ExplanationKind,
   type Anchor,
   type Commitment,
   type ContextBinding,
@@ -45,6 +46,7 @@ import {
   requestSig,
   toolInputDigest,
   verifyTct,
+  type Commitment as CommitmentView,
   type EnrollProof,
 } from "./crypto.js";
 import {
@@ -1347,15 +1349,54 @@ export class SeamClient {
       throw new IssuerMismatchError(proof.issuerAid, expectedIssuer);
     const c = proof.commitment;
     if (!c) return false;
-    return verifyTct(expectedIssuer, new TextDecoder("utf-8", { fatal: true }).decode(c.signedArtifact), {
-      id: c.id,
-      action: c.action,
-      authority: c.authority,
-      auth_method: c.authMethod,
-      trust_basis: c.trustBasis,
-      supersedes: c.supersedes || "",
-    });
+    return verifyTct(
+      expectedIssuer,
+      new TextDecoder("utf-8", { fatal: true }).decode(c.signedArtifact),
+      commitmentView(c),
+    );
   }
+}
+
+// The lowercase words `seam-explanation-digest:v1` frames, by `ExplanationKind` value. An unknown or
+// UNSPECIFIED kind maps to a word the digest refuses, so verification fails closed rather than guessing.
+const EXPLANATION_KIND_WORDS: Partial<Record<ExplanationKind, string>> = {
+  [ExplanationKind.VOTE]: "vote",
+  [ExplanationKind.EVALUATION]: "evaluation",
+  [ExplanationKind.OBJECTION]: "objection",
+  [ExplanationKind.BALLOT]: "ballot",
+};
+
+/**
+ * The snake_case commitment {@link verifyTct} takes, from a served `Commitment` (seam-commitment-digest:v2).
+ *
+ * Carries the committer and the sealed explanation — the entries AND the published digest — so
+ * verification recomputes the explanation digest from the entries and requires it to equal the published
+ * one before binding it. The proto cannot tell "no entries served" from "zero entries" (`explanation` is
+ * always an array), so, as in the Python SDK's `commitment_view`, the entries are always treated as
+ * supplied: an empty list with a non-empty published digest verifies `false`. An empty
+ * `explanationDigest` (unset bytes) is "not published". Explicit presence is preserved: an absent
+ * `confidence` / `rationaleRef` stays `null`, never `0` / `""`.
+ */
+export function commitmentView(c: Commitment): CommitmentView {
+  return {
+    id: c.id,
+    action: c.action,
+    authority: c.authority,
+    auth_method: c.authMethod,
+    trust_basis: c.trustBasis,
+    supersedes: c.supersedes || "",
+    committer: c.committer,
+    explanation_digest: c.explanationDigest,
+    explanation: c.explanation.map((e) => ({
+      kind: EXPLANATION_KIND_WORDS[e.kind] ?? `<unknown kind ${e.kind}>`,
+      participant: e.participant,
+      proposal_id: e.proposalId,
+      value: e.value,
+      reason: e.reason,
+      confidence: e.confidence ?? null,
+      rationale_ref: e.rationaleRef ?? null,
+    })),
+  };
 }
 
 /** The runtime's `ReportOutcome` key rule (#1154), checked before any network call: 1–128 printable

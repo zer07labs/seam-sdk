@@ -173,6 +173,14 @@ def test_commitment_digest_binds_every_field():
         "supersedes (absent -> present)": {"supersedes": "k-previous"},
         "auth_method": {"auth_method": base["auth_method"] + "-x"},
         "trust_basis": {"trust_basis": base["trust_basis"] + "-x"},
+        # seam-commitment-digest:v2 (#802/#804): the committer and the sealed explanation are bound.
+        "committer": {"committer": base["committer"] + "-x"},
+        "explanation (reason)": {
+            "explanation": [{**base["explanation"][0], "reason": "edited"}]
+            + base["explanation"][1:]
+        },
+        "explanation (dropped entry)": {"explanation": base["explanation"][:-1]},
+        "explanation (reordered)": {"explanation": base["explanation"][::-1]},
     }
     for field, change in mutations.items():
         assert verify_tct(iss, jws, {**base, **change}, now_s=NOW_S) is False, (

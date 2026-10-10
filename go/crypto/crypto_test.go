@@ -29,8 +29,10 @@ type vectors struct {
 			IssuerSeedHex string     `json:"issuer_seed_hex"`
 			Commitment    Commitment `json:"commitment"`
 		} `json:"inputs"`
-		IssuerAID         string `json:"issuer_aid"`
-		SignedArtifactJWS string `json:"signed_artifact_jws"`
+		ExplanationDigestHex string `json:"explanation_digest_hex"`
+		CommitmentDigestHex  string `json:"commitment_digest_hex"`
+		IssuerAID            string `json:"issuer_aid"`
+		SignedArtifactJWS    string `json:"signed_artifact_jws"`
 	} `json:"tct"`
 }
 
@@ -84,6 +86,37 @@ func TestTCTVerifyValidAndTampered(t *testing.T) {
 	}
 }
 
+// The v2 vector pins both digests explicitly, not only through the signed grant.
+func TestTCTVectorDigests(t *testing.T) {
+	v := load(t)
+	c := v.TCT.Inputs.Commitment
+	ed, err := ExplanationDigest(c.Explanation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := hex.EncodeToString(ed[:]); got != v.TCT.ExplanationDigestHex {
+		t.Fatalf("explanation digest: got %s want %s", got, v.TCT.ExplanationDigestHex)
+	}
+	got, err := seamCommitmentDigest(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != v.TCT.CommitmentDigestHex {
+		t.Fatalf("commitment digest: got %s want %s", got, v.TCT.CommitmentDigestHex)
+	}
+	// Holding only the published digest (no entries) verifies the same grant.
+	pub := c
+	pub.Explanation = nil
+	pub.ExplanationDigest = ed[:]
+	if !VerifyTCT(v.TCT.IssuerAID, v.TCT.SignedArtifactJWS, pub, 1_700_000_001) {
+		t.Fatal("the published explanation_digest alone must verify")
+	}
+}
+
+func cloneEntries(in []ExplanationEntry) []ExplanationEntry {
+	return append([]ExplanationEntry(nil), in...)
+}
+
 func TestTCTVerifyFailsClosed(t *testing.T) {
 	v := load(t)
 	c := v.TCT.Inputs.Commitment
@@ -120,10 +153,14 @@ func signTCT(t *testing.T, seedHex string, c Commitment, exp float64) (issuerAID
 	priv := ed25519.NewKeyFromSeed(seed)
 	issuerAID = AIDFromPubkey(priv.Public().(ed25519.PublicKey))
 	header, _ := json.Marshal(map[string]any{"alg": "EdDSA", "typ": "aitp-tct+jwt"})
+	digest, err := seamCommitmentDigest(c)
+	if err != nil {
+		t.Fatal(err)
+	}
 	payload, _ := json.Marshal(map[string]any{
 		"iss": issuerAID, "sub": issuerAID, "aud": issuerAID,
 		"exp":    exp,
-		"grants": []string{"seam-commitment-digest:" + seamCommitmentDigest(c)},
+		"grants": []string{"seam-commitment-digest:" + digest},
 	})
 	signing := b64urlNoPad(header) + "." + b64urlNoPad(payload)
 	sig := ed25519.Sign(priv, []byte(signing))
@@ -167,7 +204,7 @@ func repeat(s string, n int) string {
 // the `seam-commitment-digest:` grant inside the runtime-signed JWS, so the vector already carries a
 // runtime-produced expected value for one commitment. The gap was never coverage of the digest — it
 // was coverage of the FIELD TUPLE: the only pre-existing test tampered `Action`, so exactly one of
-// the seven framing inputs was proven bound. The other five commitment fields and the length-prefix
+// the framing inputs was proven bound. The other five commitment fields and the length-prefix
 // property were unproven in every language.
 //
 // These two tests close that using only the committed vector.
@@ -197,6 +234,16 @@ func TestCommitmentDigestBindsEveryField(t *testing.T) {
 		{"supersedes (absent -> present)", func(c *Commitment) { c.Supersedes = "k-previous" }},
 		{"auth_method", func(c *Commitment) { c.AuthMethod += "-x" }},
 		{"trust_basis", func(c *Commitment) { c.TrustBasis += "-x" }},
+		{"committer", func(c *Commitment) { c.Committer += "-x" }},
+		{"explanation reason", func(c *Commitment) {
+			c.Explanation = cloneEntries(c.Explanation)
+			c.Explanation[0].Reason += "-x"
+		}},
+		{"explanation order", func(c *Commitment) {
+			c.Explanation = cloneEntries(c.Explanation)
+			c.Explanation[0], c.Explanation[1] = c.Explanation[1], c.Explanation[0]
+		}},
+		{"explanation dropped (entries -> empty)", func(c *Commitment) { c.Explanation = []ExplanationEntry{} }},
 	} {
 		t.Run(tc.field, func(t *testing.T) {
 			mutated := base

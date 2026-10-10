@@ -10,7 +10,10 @@ import json
 import pathlib
 from types import SimpleNamespace
 
+
 import pytest
+
+from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
 
 from seam_sdk import IssuerMismatchError, SeamClient, SeamError
 
@@ -34,15 +37,32 @@ def _proof_from_vectors(issuer_aid: str, *, action: str | None = None):
     """
     t = VECTORS["tct"]
     c = t["inputs"]["commitment"]
-    commitment = SimpleNamespace(
+    # A real proto `Commitment`, not a namespace: verify_decision reads explicit presence
+    # (`HasField`) on the explanation entries, which only the generated message carries.
+    commitment = pb.Commitment(
         id=c["id"],
         action=action if action is not None else c["action"],
         authority=c["authority"],
         auth_method=c["auth_method"],
         trust_basis=c["trust_basis"],
-        supersedes=c.get("supersedes", ""),
+        committer=c["committer"],
+        explanation_digest=bytes.fromhex(t["explanation_digest_hex"]),
         signed_artifact=t["signed_artifact_jws"].encode(),
     )
+    if c.get("supersedes"):
+        commitment.supersedes = c["supersedes"]
+    for e in c["explanation"]:
+        entry = commitment.explanation.add(
+            kind=pb.ExplanationKind.Value("EXPLANATION_KIND_" + e["kind"].upper()),
+            participant=e["participant"],
+            proposal_id=e["proposal_id"],
+            value=e["value"],
+            reason=e["reason"],
+        )
+        if e["confidence"] is not None:
+            entry.confidence = e["confidence"]
+        if e["rationale_ref"] is not None:
+            entry.rationale_ref = e["rationale_ref"]
     return SimpleNamespace(issuer_aid=issuer_aid, commitment=commitment)
 
 

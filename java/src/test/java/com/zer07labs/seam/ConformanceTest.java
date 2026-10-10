@@ -43,14 +43,59 @@ class ConformanceTest {
     return out;
   }
 
-  private static SeamCrypto.Commitment commitment(Map<String, Object> c) {
+  /** Build a commitment from a vector's JSON projection (absent confidence/rationale_ref = null). */
+  @SuppressWarnings("unchecked")
+  static SeamCrypto.Commitment commitment(Map<String, Object> c) {
+    List<SeamCrypto.ExplanationEntry> explanation = null;
+    Object rawEntries = c.get("explanation");
+    if (rawEntries != null) {
+      explanation = new ArrayList<>();
+      for (Object o : (List<Object>) rawEntries) {
+        Map<String, Object> e = (Map<String, Object>) o;
+        Object conf = e.get("confidence");
+        explanation.add(
+            new SeamCrypto.ExplanationEntry(
+                (String) e.get("kind"),
+                (String) e.get("participant"),
+                (String) e.get("proposal_id"),
+                (String) e.get("value"),
+                (String) e.get("reason"),
+                conf == null ? null : ((Number) conf).doubleValue(),
+                (String) e.get("rationale_ref")));
+      }
+    }
+    byte[] published = null;
+    Object rawDigest = c.get("explanation_digest");
+    if (rawDigest instanceof String hexDigest) {
+      published = hexToBytes(hexDigest);
+    } else if (rawDigest instanceof List<?> nums) {
+      published = new byte[nums.size()];
+      for (int i = 0; i < nums.size(); i++) published[i] = (byte) ((Number) nums.get(i)).intValue();
+    }
     return new SeamCrypto.Commitment(
         (String) c.get("id"),
         (String) c.get("action"),
         (String) c.get("authority"),
         (String) c.get("supersedes"),
         (String) c.get("auth_method"),
-        (String) c.get("trust_basis"));
+        (String) c.get("trust_basis"),
+        (String) c.get("committer"),
+        published,
+        explanation);
+  }
+
+  /** {@code base} with one of the six string fields replaced — committer and explanation kept. */
+  private static SeamCrypto.Commitment with(SeamCrypto.Commitment b, String field, String v) {
+    return new SeamCrypto.Commitment(
+        field.equals("id") ? v : b.id(),
+        field.equals("action") ? v : b.action(),
+        field.equals("authority") ? v : b.authority(),
+        field.equals("supersedes") ? v : b.supersedes(),
+        field.equals("auth_method") ? v : b.authMethod(),
+        field.equals("trust_basis") ? v : b.trustBasis(),
+        field.equals("committer") ? v : b.committer(),
+        b.explanationDigest(),
+        b.explanation());
   }
 
   @Test
@@ -86,6 +131,17 @@ class ConformanceTest {
     assertEquals(m(adm, "derived").get("sender_aid"), p.senderAid());
   }
 
+  /** The `tct` block's digests are reproduced exactly (seam-commitment-digest:v2 KAT). */
+  @Test
+  void tctCommitmentDigestV2IsByteExact() throws Exception {
+    Map<String, Object> t = m(vectors(), "tct");
+    SeamCrypto.Commitment c = commitment(m(m(t, "inputs"), "commitment"));
+    assertEquals(
+        t.get("explanation_digest_hex"),
+        java.util.HexFormat.of().formatHex(SeamCrypto.explanationDigest(c.explanation())));
+    assertEquals(t.get("commitment_digest_hex"), SeamCrypto.seamCommitmentDigest(c));
+  }
+
   @Test
   void tctVerifyValidAndTampered() throws Exception {
     Map<String, Object> t = m(vectors(), "tct");
@@ -94,9 +150,7 @@ class ConformanceTest {
     String jws = (String) t.get("signed_artifact_jws");
     assertTrue(SeamCrypto.verifyTct(iss, jws, c, 1_700_000_001L), "valid TCT must verify");
 
-    SeamCrypto.Commitment tampered =
-        new SeamCrypto.Commitment(
-            c.id(), "ALLOW", c.authority(), c.supersedes(), c.authMethod(), c.trustBasis());
+    SeamCrypto.Commitment tampered = with(c, "action", "ALLOW");
     assertFalse(
         SeamCrypto.verifyTct(iss, jws, tampered, 1_700_000_001L),
         "a tampered commitment must not verify");
@@ -124,17 +178,17 @@ class ConformanceTest {
 
   // -- Commitment-digest framing coverage (W5.4 / G4) --------------------------------------------
   //
-  // `seam-commitment-digest:v1` is implemented byte-for-byte in ALL FIVE SDK languages -- the widest
-  // fan-out of any framing in this repo -- and has no vector section of its own. It cannot get one
-  // here either: seam-runtime's `sdk-digest-parity` job byte-diffs the whole of
-  // conformance/vectors.json against its own emitter, so a block added on this side turns the
-  // runtime's CI red. A vector for it must originate there.
+  // `seam-commitment-digest:v2` is implemented byte-for-byte in ALL FIVE SDK languages -- the widest
+  // fan-out of any framing in this repo. Its standalone vector is
+  // conformance/commitment_digest_v2_vector.json (CommitmentDigestV2Test); the `tct` block of
+  // conformance/vectors.json carries the same framing. Neither is edited on this side:
+  // seam-runtime's `sdk-digest-parity` job byte-diffs them against its own emitter.
   //
-  // What IS available is stronger than it looks. `verifyTct` recomputes the digest and compares it
+  // What the `tct` block adds is stronger than it looks. `verifyTct` recomputes the digest and compares it
   // to the `seam-commitment-digest:` grant inside the runtime-signed JWS, so the vector already
   // carries a runtime-produced expected value. The gap was never coverage of the digest -- it was
   // coverage of the FIELD TUPLE: the pre-existing tests tampered `action` only, so exactly one of
-  // the seven framing inputs was proven bound.
+  // the framing inputs was proven bound.
   //
   // The difference is demonstrable, not theoretical: an implementation that silently drops
   // `supersedes` from the preimage PASSES the pre-existing KAT test (the vector's commitment has no
@@ -160,41 +214,44 @@ class ConformanceTest {
         "the unmodified vector commitment must verify -- nothing below means anything otherwise");
 
     record Mutation(String field, SeamCrypto.Commitment commitment) {}
+    List<SeamCrypto.ExplanationEntry> ex = base.explanation();
+    SeamCrypto.ExplanationEntry e0 = ex.get(0);
+    List<SeamCrypto.ExplanationEntry> reordered = new ArrayList<>(ex);
+    java.util.Collections.swap(reordered, 0, 1);
+    List<SeamCrypto.ExplanationEntry> reasonChanged = new ArrayList<>(ex);
+    reasonChanged.set(
+        0,
+        new SeamCrypto.ExplanationEntry(
+            e0.kind(), e0.participant(), e0.proposalId(), e0.value(), e0.reason() + "-x",
+            e0.confidence(), e0.rationaleRef()));
     List<Mutation> mutations =
         List.of(
-            new Mutation(
-                "id",
-                new SeamCrypto.Commitment(
-                    base.id() + "-x", base.action(), base.authority(),
-                    base.supersedes(), base.authMethod(), base.trustBasis())),
-            new Mutation(
-                "action",
-                new SeamCrypto.Commitment(
-                    base.id(), "ALLOW", base.authority(),
-                    base.supersedes(), base.authMethod(), base.trustBasis())),
-            new Mutation(
-                "authority",
-                new SeamCrypto.Commitment(
-                    base.id(), base.action(), base.authority() + "-x",
-                    base.supersedes(), base.authMethod(), base.trustBasis())),
+            new Mutation("id", with(base, "id", base.id() + "-x")),
+            new Mutation("action", with(base, "action", "ALLOW")),
+            new Mutation("authority", with(base, "authority", base.authority() + "-x")),
             // The vector's commitment omits `supersedes`, so absent is the branch already
             // exercised. This pins the PRESENT branch, which nothing covered: absent and present
             // must differ, or a supersession could be stripped from a sealed record undetected.
+            new Mutation("supersedes (absent -> present)", with(base, "supersedes", "k-previous")),
+            new Mutation("auth_method", with(base, "auth_method", base.authMethod() + "-x")),
+            new Mutation("trust_basis", with(base, "trust_basis", base.trustBasis() + "-x")),
+            new Mutation("committer", with(base, "committer", base.committer() + "-x")),
+            new Mutation("committer (present -> absent)", with(base, "committer", null)),
             new Mutation(
-                "supersedes (absent -> present)",
+                "explanation (reordered)",
                 new SeamCrypto.Commitment(
-                    base.id(), base.action(), base.authority(),
-                    "k-previous", base.authMethod(), base.trustBasis())),
+                    base.id(), base.action(), base.authority(), base.supersedes(),
+                    base.authMethod(), base.trustBasis(), base.committer(), null, reordered)),
             new Mutation(
-                "auth_method",
+                "explanation (reason)",
                 new SeamCrypto.Commitment(
-                    base.id(), base.action(), base.authority(),
-                    base.supersedes(), base.authMethod() + "-x", base.trustBasis())),
+                    base.id(), base.action(), base.authority(), base.supersedes(),
+                    base.authMethod(), base.trustBasis(), base.committer(), null, reasonChanged)),
             new Mutation(
-                "trust_basis",
+                "explanation (dropped)",
                 new SeamCrypto.Commitment(
-                    base.id(), base.action(), base.authority(),
-                    base.supersedes(), base.authMethod(), base.trustBasis() + "-x")));
+                    base.id(), base.action(), base.authority(), base.supersedes(),
+                    base.authMethod(), base.trustBasis(), base.committer(), null, List.of())));
 
     for (Mutation mut : mutations) {
       assertFalse(
@@ -219,9 +276,7 @@ class ConformanceTest {
     // Fold the id/action boundary into `id` with a NUL. Under a NUL-joined framing this collides
     // with the real commitment; under length-prefixing it cannot.
     SeamCrypto.Commitment shifted =
-        new SeamCrypto.Commitment(
-            base.id() + "\u0000" + base.action(), "", base.authority(),
-            base.supersedes(), base.authMethod(), base.trustBasis());
+        with(with(base, "id", base.id() + "\u0000" + base.action()), "action", "");
 
     assertFalse(
         SeamCrypto.verifyTct(

@@ -6,6 +6,7 @@
 package crypto
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
@@ -13,6 +14,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -65,13 +67,33 @@ type Presentation struct {
 }
 
 // Commitment is the sealed-decision commitment whose rooted TCT is verified.
+//
+// Committer, and the Explanation entries and/or the published ExplanationDigest, are bound by
+// `seam-commitment-digest:v2` (see seamCommitmentDigest). A nil Explanation means the entries are not
+// held (only the published digest, if any, is used); a non-nil empty slice is the empty explanation.
 type Commitment struct {
-	ID         string `json:"id"`
-	Action     string `json:"action"`
-	Authority  string `json:"authority"`
-	Supersedes string `json:"supersedes"`
-	AuthMethod string `json:"auth_method"`
-	TrustBasis string `json:"trust_basis"`
+	ID                string             `json:"id"`
+	Action            string             `json:"action"`
+	Authority         string             `json:"authority"`
+	Supersedes        string             `json:"supersedes"`
+	AuthMethod        string             `json:"auth_method"`
+	TrustBasis        string             `json:"trust_basis"`
+	Committer         string             `json:"committer"`
+	ExplanationDigest []byte             `json:"explanation_digest,omitempty"`
+	Explanation       []ExplanationEntry `json:"explanation,omitempty"`
+}
+
+// ExplanationEntry is one sealed explanation entry, in the order the runtime accepted it. Kind is the
+// lowercase word (see ExplanationKinds), never the proto enum name. A nil Confidence / RationaleRef is
+// ABSENT, which is a different preimage from a stated 0.0 / "".
+type ExplanationEntry struct {
+	Kind         string   `json:"kind"`
+	Participant  string   `json:"participant"`
+	ProposalID   string   `json:"proposal_id"`
+	Value        string   `json:"value"`
+	Reason       string   `json:"reason"`
+	Confidence   *float64 `json:"confidence"`
+	RationaleRef *string  `json:"rationale_ref"`
 }
 
 // BuildPresentation builds the pinned-key admission presentation.
@@ -124,32 +146,132 @@ func BuildPresentation(agentSeed []byte, receiverAID, popNonce string, nowMs int
 	}, nil
 }
 
-// seamCommitmentDigest is SHA-256 (hex) over a length-prefixed framing of a domain tag + the commitment
-// fields — each field prefixed with its 8-byte big-endian length so the digest is injective over the
-// field tuple (a `\0` separator would let boundary-shifted fields collide). Mirrors the runtime.
-func seamCommitmentDigest(c Commitment) string {
+// ExplanationKinds are the `kind` words the explanation digest frames — lowercase ASCII, exactly.
+var ExplanationKinds = []string{"vote", "evaluation", "objection", "ballot"}
+
+// ExplanationDomain and CommitmentDigestDomain are the two domain tags of the commitment binding.
+// Normative: seam-runtime docs/specs/seam-commitment-digest.v2.md.
+const (
+	ExplanationDomain      = "seam-explanation-digest:v1"
+	CommitmentDigestDomain = "seam-commitment-digest:v2"
+)
+
+// be64Frame appends F(x) = be64(len(x)) ‖ x.
+func be64Frame(out, x []byte) []byte {
+	out = binary.BigEndian.AppendUint64(out, uint64(len(x)))
+	return append(out, x...)
+}
+
+// ExplanationDigest is `seam-explanation-digest:v1` over a sealed explanation (32 raw bytes):
+//
+//	SHA-256( F("seam-explanation-digest:v1") ‖ be64(count) ‖ Σ ENTRY )
+//	ENTRY = F(kind) ‖ F(participant) ‖ F(proposal_id) ‖ F(value) ‖ F(reason) ‖ CONF ‖ REF
+//	CONF  = 0x00 | 0x01 ‖ be64(IEEE-754 bits)      REF = 0x00 | 0x01 ‖ F(rationale_ref)
+//
+// Entries are hashed in the given order, never sorted or de-duplicated. It refuses (returns an error)
+// an unknown kind or a non-canonical confidence — NaN, ±Inf, outside [0, 1], or -0.0 — rather than
+// hash it.
+func ExplanationDigest(entries []ExplanationEntry) ([32]byte, error) {
+	out := be64Frame(nil, []byte(ExplanationDomain))
+	out = binary.BigEndian.AppendUint64(out, uint64(len(entries)))
+	for i, e := range entries {
+		known := false
+		for _, k := range ExplanationKinds {
+			if e.Kind == k {
+				known = true
+				break
+			}
+		}
+		if !known {
+			return [32]byte{}, fmt.Errorf("explanation entry %d: unknown kind %q", i, e.Kind)
+		}
+		for _, f := range []string{e.Kind, e.Participant, e.ProposalID, e.Value, e.Reason} {
+			out = be64Frame(out, []byte(f))
+		}
+		if e.Confidence == nil {
+			out = append(out, 0x00)
+		} else {
+			c := *e.Confidence
+			// NaN fails both range comparisons; ±Inf fails one; -0.0 passes them, hence Signbit.
+			if !(c >= 0 && c <= 1) || math.Signbit(c) {
+				return [32]byte{}, fmt.Errorf("explanation entry %d: non-canonical confidence %v", i, c)
+			}
+			out = append(out, 0x01)
+			out = binary.BigEndian.AppendUint64(out, math.Float64bits(c))
+		}
+		if e.RationaleRef == nil {
+			out = append(out, 0x00)
+		} else {
+			out = append(out, 0x01)
+			out = be64Frame(out, []byte(*e.RationaleRef))
+		}
+	}
+	return sha256.Sum256(out), nil
+}
+
+// commitmentExplanationDigest resolves field 8: with Explanation entries, recomputed from them — and
+// if ExplanationDigest is ALSO published the two must agree (spec §Verification step 1), else an
+// error. With only the published digest: used as published (verifies who and what, not why). With
+// neither: the digest of the empty explanation.
+func commitmentExplanationDigest(c Commitment) ([]byte, error) {
+	if c.ExplanationDigest != nil && len(c.ExplanationDigest) != sha256.Size {
+		return nil, fmt.Errorf("explanation_digest must be %d bytes, got %d", sha256.Size, len(c.ExplanationDigest))
+	}
+	if c.Explanation == nil {
+		if c.ExplanationDigest != nil {
+			return c.ExplanationDigest, nil
+		}
+		d, err := ExplanationDigest(nil)
+		return d[:], err
+	}
+	d, err := ExplanationDigest(c.Explanation)
+	if err != nil {
+		return nil, err
+	}
+	if c.ExplanationDigest != nil && !bytes.Equal(c.ExplanationDigest, d[:]) {
+		return nil, fmt.Errorf("explanation_digest does not match the explanation entries")
+	}
+	return d[:], nil
+}
+
+// seamCommitmentDigest is `seam-commitment-digest:v2` (hex): SHA-256 over F(field) for
+//
+//	(domain, id, action, authority, supersedes, auth_method, trust_basis, committer, explanation_digest)
+//
+// with F(x) = be64(len(x)) ‖ x, so the digest is injective over the tuple (a `\0` separator would let
+// boundary-shifted fields collide). Field 8 is the 32 RAW bytes of the explanation digest (see
+// commitmentExplanationDigest). v1 is deleted, not dual-verified. Mirrors the runtime byte-for-byte.
+func seamCommitmentDigest(c Commitment) (string, error) {
+	ed, err := commitmentExplanationDigest(c)
+	if err != nil {
+		return "", err
+	}
 	h := sha256.New()
+	var out []byte
 	for _, f := range [][]byte{
-		[]byte("seam-commitment-digest:v1"),
+		[]byte(CommitmentDigestDomain),
 		[]byte(c.ID),
 		[]byte(c.Action),
 		[]byte(c.Authority),
 		[]byte(c.Supersedes),
 		[]byte(c.AuthMethod),
 		[]byte(c.TrustBasis),
+		[]byte(c.Committer),
+		ed,
 	} {
-		var l [8]byte
-		binary.BigEndian.PutUint64(l[:], uint64(len(f)))
-		h.Write(l[:])
-		h.Write(f)
+		out = be64Frame(out, f)
 	}
-	return hex.EncodeToString(h.Sum(nil))
+	h.Write(out)
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // VerifyTCT independently verifies a sealed commitment's rooted TCT — zero server trust, stock crypto.
 // It verifies the EdDSA JWS against the issuer's key (recovered from its AID), checks the self-issued
-// claims (`typ`, `iss==sub==aud==issuer_aid`, `exp`), and that the bound `seam-commitment-digest` grant
-// matches this exact commitment. Any malformed/forged input fails closed (returns false), never panics.
+// claims (`typ`, `iss==sub==aud==issuer_aid`, `exp`), and that the bound `seam-commitment-digest:v2`
+// grant matches this exact commitment — the decided content, the committer, and the sealed explanation.
+// Explanation entries that disagree with a published ExplanationDigest, an unknown kind, or a
+// non-canonical confidence verify false. Any malformed/forged input fails closed (returns false),
+// never panics.
 func VerifyTCT(issuerAID, tctJWS string, c Commitment, nowS int64) bool {
 	parts := strings.Split(tctJWS, ".")
 	if len(parts) != 3 {
@@ -213,7 +335,11 @@ func VerifyTCT(issuerAID, tctJWS string, c Commitment, nowS int64) bool {
 	if nowS >= int64(exp) {
 		return false
 	}
-	want := "seam-commitment-digest:" + seamCommitmentDigest(c)
+	digest, err := seamCommitmentDigest(c)
+	if err != nil {
+		return false
+	}
+	want := "seam-commitment-digest:" + digest
 	grants, ok := payload["grants"].([]any)
 	if !ok {
 		return false
