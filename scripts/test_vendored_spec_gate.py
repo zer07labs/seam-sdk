@@ -51,6 +51,7 @@ mod = _load()
 
 SPEC_V1 = "# spec\n\nbody, revision one.\n"
 SPEC_V2 = "# spec\n\nbody, revision two — the runtime moved.\n"
+SPEC_V3 = "# spec\n\nbody, revision three — main moved past the copy.\n"
 
 HEADER = "<!-- Pinned copy of up/spec.md @ {sha}{tracking} (why this exists) -->"
 
@@ -286,10 +287,19 @@ def test_tracking_ends_itself_once_the_branch_lands(world, capsys) -> None:
     up.refresh()
     write_copy(root, sha, SPEC_V2, tracking="feat/x")
 
+    # Landed, and the body is exactly main's: the header is stale, the copy is not. A notice, not a
+    # red — the release commit's CI runs at this exact moment (see test_..._landing_is_not_red...).
+    code, out = run(up, capsys)
+    assert code == 0
+    assert "has landed" in out
+    assert "delete `tracking" in out
+
+    # The expiry still bites the moment main moves past the copy.
+    up.commit(SPEC_V3, "main moves on")
+    up.refresh()
     code, out = run(up, capsys)
     assert code == 1
     assert "has landed on main" in out
-    assert "delete `tracking" in out
 
 
 def test_tracking_ends_itself_on_a_squash_merge_even_if_the_branch_survives(
@@ -313,14 +323,23 @@ def test_tracking_ends_itself_on_a_squash_merge_even_if_the_branch_survives(
     up.refresh()
     write_copy(root, sha, SPEC_V2, tracking="feat/x")
 
+    # Right after the squash merge the body is main's, byte for byte: a notice, not a red. This is
+    # the moment the runtime's release dispatch fires and the SDK release commit's CI runs, and a
+    # red here makes publish.yml refuse the tag (how 0.43.0 and 0.43.2 were lost).
+    code, out = run(up, capsys)
+    assert code == 0
+    assert "has landed" in out and "byte-identical" in out
+
+    # Once main moves on, the third arm fires exactly as before.
+    up.commit(SPEC_V3, "main moves on")
+    up.refresh()
     code, out = run(up, capsys)
     assert code == 1
     assert "byte-identical" in out
     assert "squash" in out
-    # The two older arms must genuinely be silent here, or this test proves nothing about the new
-    # one: the branch still exists, and the pinned sha is still not an ancestor of main.
+    # The branch-existence arm must genuinely be silent here, or this test proves nothing about
+    # landing detection: the branch still exists, and the pinned sha is still not on main.
     assert "no such branch" not in out
-    assert "has landed on" not in out
 
 
 def test_tracking_a_branch_that_no_longer_exists_is_red(world, capsys) -> None:
