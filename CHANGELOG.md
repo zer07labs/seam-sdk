@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.44.0 — 2026-10-10
+
 ### Changed — BREAKING: `seam-commitment-digest:v2` (runtime #1255, #802/#804; #227)
 - **The commitment digest is v2 in all five SDKs; v1 is deleted, not dual-verified.** v2 binds two more
   fields after `trust_basis`: `committer` (the verified AID that committed) and the 32-byte
