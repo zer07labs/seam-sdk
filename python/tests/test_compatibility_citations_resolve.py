@@ -1259,7 +1259,7 @@ QUOTED = [
     (
         "COMPATIBILITY.md",
         "seam-adapters/core/pyproject.toml",
-        "seam-sdk>=0.43.1,<0.44",
+        "seam-sdk>=0.43.3,<0.44",
     ),
     (
         "COMPATIBILITY.md",
