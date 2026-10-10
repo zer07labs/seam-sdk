@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.43.3 — 2026-10-10
+
 ### Added
 - **Create an agent identity (Python, #201).** `Agent.generate()` makes a new agent from 32 CSPRNG bytes.
   `create_identity_file(path, *, agent_id, tenant, endpoint) -> (path, aid)` generates one and writes it as a
