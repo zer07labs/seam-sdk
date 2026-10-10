@@ -16,6 +16,15 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added
+- **Create an agent identity (Python, #201).** `Agent.generate()` makes a new agent from 32 CSPRNG bytes.
+  `create_identity_file(path, *, agent_id, tenant, endpoint) -> (path, aid)` generates one and writes it as a
+  schema-v1 bootstrap file (`{version, seed_hex, agent_id, tenant, endpoint}`, the shape seam-agent-core's
+  `from_bootstrap` has always read): mode 0600 whatever the umask, `O_CREAT|O_EXCL|O_NOFOLLOW` temp file,
+  `fsync`, then a hard-link publish that refuses any existing path, symlinks included. The seed is never
+  returned. `load_identity_file(path=None)` reads it back (or `$SEAM_BOOTSTRAP_FILE`) into a
+  `LoadedIdentity` holding an `Agent`. The SDK now owns this schema; adapters delegate to it.
+
 ## 0.43.2 — 2026-10-10
 
 ## 0.43.1 — 2026-10-10
