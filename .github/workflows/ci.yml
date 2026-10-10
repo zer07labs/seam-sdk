@@ -334,6 +334,18 @@ jobs:
       # step is no longer the only place a startup failure is visible. It stays because it fails
       # FAST and unambiguously: if the binary itself cannot serve, this reddens before pip, npm and
       # codegen have run, and it does so with the binary's own output rather than a test-suite error.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # seam-runtime #1156: a runtime with no governing root refuses to boot, and SEAM_DEV_INSECURE
+      # installs no governance. Mint the test root + demo tenant document once (the same writer
+      # python/tests/live_server.py uses per spawn) and export its env for the smoke below and for the
+      # TS suites, which inherit it through `...process.env` (ts/tests/operator_token.ts governanceEnv).
+      - name: mint the test governing root
+        run: |
+          set -euo pipefail
+          python -m pip install -q cryptography
+          python python/tests/governing_root.py "$RUNNER_TEMP/governance" | tee -a "$GITHUB_ENV"
       - name: smoke — the binary must actually serve before the suites depend on it
         run: |
           set -uo pipefail
@@ -367,9 +379,6 @@ jobs:
                ' failure, not the test suite'"'"'s.'
           cat /tmp/seam-grpc.log
           exit 1
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
       - uses: actions/setup-node@v4
         with:
           node-version: "20"

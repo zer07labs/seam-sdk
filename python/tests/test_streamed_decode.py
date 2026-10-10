@@ -253,7 +253,11 @@ def test_streamed_events_carry_a14_payloads_live(dual_plane):
 
     data_addr, mgmt_addr = dual_plane
     data = SeamClient.connect(data_addr)
-    admin = SeamAdminClient.connect(mgmt_addr)
+    from operator_token import mint_operator_token
+
+    admin = SeamAdminClient.connect(
+        mgmt_addr, token=mint_operator_token(["audit:read"])
+    )
     agent = Agent(bytes([42] * 32))
 
     # An interactive open emits SESSION_LIFECYCLE (CP-09); a one-shot decision seals a v2 DECISION_SEALED.

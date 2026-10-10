@@ -243,6 +243,13 @@ def spawn_server(
     }
     if mgmt_port is not None:
         env["SEAM_GRPC_MGMT_LISTEN"] = f"127.0.0.1:{mgmt_port}"
+    if not (env_extra and "SEAM_CONFIG_ROOT_URL" in env_extra):
+        # seam-runtime #1156: no root is a boot refusal, and SEAM_DEV_INSECURE installs no
+        # governance. Every spawn gets the default signed root + demo tenant document unless the
+        # caller brings its own (see governing_root.py).
+        from governing_root import write_governance
+
+        env.update(write_governance(log_dir / f"governance-{data_port}"))
     if env_extra:
         env.update(env_extra)
 
