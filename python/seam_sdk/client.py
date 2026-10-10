@@ -1069,6 +1069,7 @@ class SeamClient:
         decision_id: str,
         expected_issuer: str,
         *,
+        credential: Optional[Agent] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> bool:
         """Fetch a sealed decision's proof and verify its rooted TCT locally — zero server trust.
@@ -1082,8 +1083,13 @@ class SeamClient:
         an ordinary invalid decision. Raises :class:`IssuerMismatchError` when the proof's issuer AID does
         not match `expected_issuer` — a distinct security signal (an attempted key substitution), never
         downgraded to a bland ``False``. Mirrors the Rust reference's distinct ``ClientError::Crypto``.
+
+        ``credential`` is passed to the proof fetch (:meth:`get_commitment_proof`); omitted, it defaults
+        to the client's bound agent, which a credential-only deployment needs for this subject-scoped read.
         """
-        proof = self.get_commitment_proof(decision_id, timeout=timeout)
+        proof = self.get_commitment_proof(
+            decision_id, credential=credential, timeout=timeout
+        )
         if proof.issuer_aid != expected_issuer:
             raise IssuerMismatchError(proof.issuer_aid, expected_issuer)
         c = proof.commitment

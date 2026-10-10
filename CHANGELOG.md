@@ -16,6 +16,11 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Fixed
+- **`verify_decision` / `verifyDecision` take `credential=`.** The proof fetch inside it is the subject-scoped
+  `GetCommitmentProof`, so a credential-only partner calling it directly on an unbound client could not verify.
+  The credential is passed through (Python sync + aio, TS); omitted, the bound agent is used, as since 0.43.3.
+
 ## 0.43.3 — 2026-10-10
 
 ### Added

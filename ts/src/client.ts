@@ -1340,7 +1340,7 @@ export class SeamClient {
   async verifyDecision(
     decisionId: string,
     expectedIssuer: string,
-    opts?: UnaryCallOptions,
+    opts?: CredentialedCallOptions,
   ): Promise<boolean> {
     const proof = await this.getCommitmentProof(decisionId, opts);
     if (proof.issuerAid !== expectedIssuer)
