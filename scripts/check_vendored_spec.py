@@ -64,6 +64,13 @@ no one of them covers every way a branch stops mattering:
 Without all three, a tracking note written once quietly outlives the branch it names, and the copy
 drifts from the published contract with nothing objecting.
 
+Ahead of all three, landing is checked by content history: if the body is byte-identical to the
+default branch's file NOW, the declaration has landed and only the header is stale — a notice, not a
+red, because that is exactly the moment the runtime's release train merges and the SDK release
+commit's CI runs (a red there loses the release). If the body was the default branch's file at any
+recent commit but no longer is, the default branch has moved past the copy — red, whatever the merge
+strategy and whether or not the branch survives.
+
 ## Backends
 
   * `--from gh` — the GitHub API, authenticated by `GH_TOKEN`. THE authoritative backend, and the
@@ -241,6 +248,7 @@ class Source:
     def fetch(self, repo: str, path: str, ref: str) -> bytes: ...
     def last_commit(self, repo: str, path: str, ref: str) -> str | None: ...
     def contains(self, repo: str, branch: str, sha: str) -> bool: ...
+    def commits_touching(self, repo: str, path: str, ref: str, limit: int) -> list[str]: ...
 
 
 class GitHub(Source):
@@ -280,6 +288,18 @@ class GitHub(Source):
             ]
         )
         return out.decode().strip() or None
+
+    def commits_touching(self, repo: str, path: str, ref: str, limit: int) -> list[str]:
+        out = _run(
+            [
+                "gh",
+                "api",
+                f"repos/{repo}/commits?path={path}&sha={ref}&per_page={limit}",
+                "--jq",
+                ".[].sha",
+            ]
+        )
+        return out.decode().split()
 
     def contains(self, repo: str, branch: str, sha: str) -> bool:
         # `identical` or `behind` both mean sha is reachable from branch; `ahead`/`diverged` mean
@@ -353,6 +373,10 @@ class LocalCheckout(Source):
         out = self._git("log", "-1", "--format=%H", self._rev(ref), "--", path)
         return out.decode().strip() or None
 
+    def commits_touching(self, repo: str, path: str, ref: str, limit: int) -> list[str]:
+        out = self._git("log", f"-{limit}", "--format=%H", self._rev(ref), "--", path)
+        return out.decode().split()
+
     def contains(self, repo: str, branch: str, sha: str) -> bool:
         try:
             self._git("merge-base", "--is-ancestor", sha, self._remote(branch))
@@ -407,6 +431,20 @@ def _nonempty(blob: bytes, what: str, source: Source) -> bytes:
     return blob
 
 
+#: How far back the default branch's history of the file is searched for a landed body. The window
+#: only has to cover the commits touching the spec between a train merging and someone re-pinning.
+LANDED_WINDOW = 20
+
+
+def _ever_on(source: "Source", repo: str, path: str, ref: str, body: bytes) -> str | None:
+    """The newest commit on ``ref`` (within LANDED_WINDOW commits touching ``path``) whose copy of
+    ``path`` is byte-identical to ``body``, or None."""
+    for sha in source.commits_touching(repo, path, ref, LANDED_WINDOW):
+        if source.fetch(repo, path, sha) == body:
+            return sha
+    return None
+
+
 def check(v: Vendored, source: Source) -> list[str]:
     """Check one vendored copy. Returns notices; raises `Failure` on anything that must go red."""
     path = REPO / v.local
@@ -428,6 +466,36 @@ def check(v: Vendored, source: Source) -> list[str]:
 
     # ── the tracking exception, and its expiry ──
     if head.branch:
+        # An expired declaration over a body that is ALREADY byte-identical to the default branch is
+        # a stale header, not a stale copy — the same standing as a lagging sha with matching content
+        # (a notice, below). It must not go red: the runtime's release train squash-merges and fires
+        # the SDK release in one step, so a copy pre-vendored from the train tip expires at exactly
+        # the moment the release commit's CI runs, and a red there makes publish refuse the tag. That
+        # is how a release gets lost; 0.43.0 and 0.43.2 were lost to gates going red on the release
+        # commit itself. The copy is verified verbatim against the published contract here, which
+        # is the strongest claim this gate makes, so returning early drops no check that matters.
+        #
+        # Landing is detected by CONTENT HISTORY, not by the branch: "has this exact body ever been
+        # the default branch's file?" No merge strategy hides that, and unlike the three arms below
+        # it stays true after the default branch moves on — so a squash-merged branch that survives
+        # still expires (red) the moment the published contract moves past the copy.
+        if head.body == source.fetch(v.repo, v.remote, default):
+            return [
+                f"{v.local} declares `tracking {head.branch}`, which has landed: the body is now "
+                f"byte-identical to {v.repo}@{default}. The copy is correct; only the header is "
+                f"stale. Re-pin it to {default} and delete `tracking {head.branch}` — the body does "
+                f"not change."
+            ]
+        landed_at = _ever_on(source, v.repo, v.remote, default, head.body)
+        if landed_at:
+            raise Failure(
+                f"{v.local} declares `tracking {head.branch}`, but this body has landed on "
+                f"{default} (byte-identical at {landed_at[:7]}, by merge or squash) and {default} "
+                f"has since moved past it. The exception is over and the copy is now stale against "
+                f"the published contract.\n"
+                f"  Fix: re-copy from {v.repo}@{default} and delete `tracking {head.branch}` from "
+                f"the header."
+            )
         if not source.branch_exists(v.repo, head.branch):
             raise Failure(
                 f"{v.local} declares `tracking {head.branch}`, but {v.repo} has no such branch "
@@ -470,7 +538,7 @@ def check(v: Vendored, source: Source) -> list[str]:
             f"{v.local} tracks the unmerged branch {head.branch!r}, so it documents runtime "
             f"behaviour that is NOT yet on {default}. Deliberate — the verifier in this repo "
             f"implements it — but re-pin to {default} as soon as that branch lands; this gate "
-            f"goes red when it does."
+            f"goes red once {default} moves past the landed copy."
         )
 
     # ── REACHABILITY ──

@@ -1,15 +1,14 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 074ddd3 (refreshed 2026-10-09). One
-     movement since the prior pin (e168e8d):
-     1. seam-runtime#903/#1084 (commit 074ddd3) publishes the `tenant_seq` cutoff (seq 25792) and adds
-        a separate, not-yet-published tenant-tag cutoff. It also adds §"Tenant tag — a producer rule":
-        only AUDIT_ENTRYs with action `config_snapshot_installed` / `config_section_removed` may be
-        tenant-less, and the producer now refuses any other tenant-less event. NO CHANGE to this crate:
-        it implements neither completeness rule (as the prior pin recorded), and the spec itself says a
-        tenant-less event is not reportable as a producer defect until the tenant-tag cutoff is
-        published. When it is, a verifier MAY start refusing non-exempt tenant-less events at or after
-        that seq; that would be a decision for a later pin.
-     Earlier movements, recorded by the prior pin: tag 25 `tenant_seq` (#973) and AUTHORIZE_EVALUATED
-     tag 11 `subject_digests` (#715), both carried in the dedup identity only. -->
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ b74ec09 tracking feat/1246-p13-gates-survive-restart (refreshed 2026-10-10).
+     Pinned AHEAD of the default branch, deliberately: the runtime 0.44.0 train (seam-runtime#1259) merges and
+     dispatches the SDK release in one step, so the copy has to be on SDK main first. The exception ends itself
+     when the train squash-merges (the file becomes byte-identical on both refs). One movement since the prior
+     pin (074ddd3):
+     1. seam-runtime#1205/#1196: the system partition (wire `tenant == ""`) now carries its own
+        CHAIN_HEAD_ATTESTATION, envelope and payload `tenant` both `""`, the third tenant-less kind. A verifier
+        under `--issuer` requires a covering attestation for every partition in the window, `""` included.
+        This crate already handles it (seam-sdk#220 pinned the behaviour ahead of the runtime change).
+     Earlier movements, recorded by prior pins: the `tenant_seq` cutoff and the tenant-tag producer rule
+     (#903/#1084), tag 25 `tenant_seq` (#973) and AUTHORIZE_EVALUATED tag 11 `subject_digests` (#715). -->
 
 # `seam-event.v1` — event-stream wire spec (language-neutral)
 
@@ -196,6 +195,20 @@ would be issuing, under the issuer key, exactly the downgrade claim this field e
 gap persisting by default), and at **every anchor boundary** (attest-then-anchor, so the externally
 notarized `(len, head)` transitively pins an issuer-signed head — see `audit-anchor.md`). The empty chain
 (`attested_len == 0`) is never signed (no genesis attestation).
+
+**Per partition, the system partition included (#1196).** Chains are per tenant (U-RT-1), so every trigger
+above signs one head **per partition with a non-empty chain** — each tenant's, and the **system partition's**
+(wire `tenant == ""`, Postgres `tenant_id IS NULL`: the config-install `AUDIT_ENTRY`s of
+[Tenant tag](#tenant-tag--a-producer-rule-invariant-10)). The system partition's attestation is a
+`CHAIN_HEAD_ATTESTATION` whose envelope `tenant` **and** payload `tenant` are both `""`, signed by the same
+issuer key under the same framing, chained onto that partition's own prior entry (entry id
+`chain-attest:<attested_len>`, position = that partition's link count), and it is the third and last kind
+that may be tenant-less on the wire. It exists because a whole-chain evidence bundle carries the system
+partition and a verifier under `--issuer` requires a covering attestation for **every** partition in the
+window, `""` included — an unattested system partition is indistinguishable from a fabricated one. A reader
+treats it exactly as any tenant's: payload `""` agreeing with envelope `""` is agreement, **not** the
+tenant-unbound case above (so strict verification accepts it). The system partition is attested but **never
+anchored** (`chain_anchor` is per tenant, `audit-anchor.md`) and has no `--from-anchor` scoped bundle.
 
 **Verification** (`seam-verify chain --issuer <AID>`): (a) every `CHAIN_HEAD_ATTESTATION` verifies against
 the **pinned** issuer AID (a mismatch is refused before any signature work — deriving the key from the
@@ -659,7 +672,8 @@ same lock as the global `seq`. `optional` because **`0` is a real value** (a ten
 - **What it counts.** Every outbox event of one wire `tenant`, one per event, starting at `0` for a tenant
   first seen after the cutover. Allocation is serialized and a rolled-back append consumes nothing, so it is
   **gap-free**; commit order equals counter order. `tenant == ""` is the **system partition**: exactly the
-  `AUDIT_ENTRY`s whose `action` is `config_snapshot_installed` or `config_section_removed` (see
+  `AUDIT_ENTRY`s whose `action` is `config_snapshot_installed` or `config_section_removed`, plus the
+  `CHAIN_HEAD_ATTESTATION` over that partition's own head (#1196; see
   [Tenant tag — a producer rule](#tenant-tag--a-producer-rule-invariant-10)); it has its own counter. (On
   Postgres that partition is stored as `tenant_id IS NULL`; an empty-string tenant on a tenant path is
   refused by `outbox_tenant_not_empty`. The Memory backend refuses it too and no longer folds it into the
@@ -689,7 +703,8 @@ same lock as the global `seq`. `optional` because **`0` is a real value** (a ten
   - `Tenant-tag cutoff seq: —` *(not yet published: the global `seq` of the first event produced after the
     deploy of the producer that refuses tenant-less events (#903, 0.41.0). It cannot be known before that
     deploy and is never to be guessed.)* Before it, an event may be tenant-less on the wire for reasons other
-    than the two exempt actions (`AUDIT_ENTRY` with `config_snapshot_installed` / `config_section_removed`); the
+    than the system-partition kinds (`AUDIT_ENTRY` with `config_snapshot_installed` / `config_section_removed`,
+    and the system `CHAIN_HEAD_ATTESTATION` of #1196); the
     spec makes no no-tenant-less claim for any `seq` between 25792 and this number. Until it is filled, a
     tenant-less event is not reportable as a producer defect.
   - The owner fills both lines from the relay/lakehouse archive, not from `min(seq)` of the live outbox, which is
@@ -714,12 +729,16 @@ fail-closed**: every `Store` path that appends an event (seal, audit entry, chai
 attestation, erasure/retention audit, advisory append) refuses `tenant == ""` and appends nothing (fact append is refused at the backend, `commit_fact`);
 the Postgres `CHECK (tenant_id <> '')` (migration `0030`) and the Memory backend are the second line.
 
-The **only** tenant-less events are `AUDIT_ENTRY`s with `action` = `config_snapshot_installed` or
-`config_section_removed` (deployment-global config; D-W3-22). They are the system partition (`tenant == ""` on
-the wire, `tenant_id IS NULL` in Postgres) and are written only by `commit_system_audit`. Any other kind or action
+The **only** tenant-less events are the three **system-partition kinds**: `AUDIT_ENTRY`s with `action` =
+`config_snapshot_installed` or `config_section_removed` (deployment-global config; D-W3-22), and — since
+#1196 — the `CHAIN_HEAD_ATTESTATION` that signs that partition's own head (envelope and payload `tenant` both
+`""`; see [`CHAIN_HEAD_ATTESTATION`](#chain_head_attestation-additive-tag-22--chained--a14), *Per partition*).
+They are the system partition (`tenant == ""` on the wire, `tenant_id IS NULL` in Postgres) and are written
+only through `commit_system_audit`, each by its own tenant-less producer method (`audit_system_management`,
+`record_system_chain_head_attestation`); the tenant-taking paths still refuse `""`. Any other kind or action
 with an empty `tenant` is a producer defect. A legal hold on a decision with no tenant-bound sealed record
-cannot be audited and is refused before it takes effect (a no-op place/release is unchanged). Adding an action to
-the exempt set is a spec change, not a code-only change.
+cannot be audited and is refused before it takes effect (a no-op place/release is unchanged). Adding a kind or
+an action to the exempt set is a spec change, not a code-only change.
 
 ## Retention & the relay-consumed cursor (R1)
 
