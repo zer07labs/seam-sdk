@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:223`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:241`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -121,7 +121,7 @@ mismatch cannot ship.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1236-1258`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1254-1276`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -199,8 +199,20 @@ this by trying.
 
 **Go, Java and Kotlin are crypto shims, not clients** (`README.md:160`). They carry no generated
 transport and no verb methods — they implement AID derivation, the pinned-key presentation, TCT
-verification, the commitment digest and the enrolment proof (`pop`, raw and REST form), and nothing else. If you need to *call* Seam, that is Python
+verification, the commitment digest, the `Authorize` call_sig and enrolment proof (`pop`, raw and REST
+form) framings, identity custody (`Agent` generation + the schema-v1 bootstrap file, #201) and the
+`seam-request-call-v1` request credential, and nothing else. If you need to *call* Seam, that is Python
 or TypeScript.
+
+| Identity / credential surface | Python | TypeScript | Go | Java | Kotlin |
+|---|---|---|---|---|---|
+| Generate an agent (#201) | `Agent.generate()` | — not yet | `crypto.GenerateAgent()` | `Agent.generate()` | `Agent.generate()` |
+| Create / load the bootstrap file (#201) | `create_identity_file` / `load_identity_file` | — not yet | `identity.CreateIdentityFile` / `LoadIdentityFile` | `IdentityFile.create` / `load` | `IdentityFile.create` / `load` |
+| Bound-agent default credential (#202) | `SeamClient(channel, agent=)` | `SeamClient` `{ agent }` | `crypto.RequestCredentials{Agent}` | `new RequestCredentials(agent, tickets)` | `RequestCredentials(agent, tickets)` |
+
+Go, Java and Kotlin have no client to bind an agent to, so their #202 default lives on a
+transport-agnostic `RequestCredentials`: the same explicit-wins-else-bound-else-nothing rule, with the
+admission ticket supplied by the caller's own transport.
 
 The practical consequence: **a new RPC verb costs the three shims nothing**, and a change to a crypto
 **framing** costs them everything. That is the axis 0.7.17 broke on.

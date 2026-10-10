@@ -291,7 +291,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 
 - **Delivered:** §3 carries a third known-bad band (`COMPATIBILITY.md:155`) with the narrow
   condition, the root cause, 0.7.47 as the fixed release, and **both edges proven**; the crewai row
-  (`COMPATIBILITY.md:248`) names the upstream PR that actually ends it; §2 gains a definition of
+  (`COMPATIBILITY.md:260`) names the upstream PR that actually ends it; §2 gains a definition of
   what a compatibility-matrix cell asserts (`COMPATIBILITY.md:75-110`), which is #76's ask.
 - **The band is 0.7.39-0.7.43, and round 1 of the gate is why.** I first wrote `≥ 0.7.40` with a
   paragraph arguing the lower edge was *unprovable* — "per-tag gencode is not recoverable from this
@@ -787,7 +787,7 @@ ERROR: a breaking change and must be handled, never silently rewritten away.
   *required* job in their repo red, fixable only from here; (3) a heads-up when the spec changes.
 - **Ask A's third point is evidenced, not hypothetical** — it fired during this run and cost the time
   documented above.
-- **The plan's `COMPATIBILITY.md:224-283` anchor for Ask B was fine; my check of it was not.** I
+- **The plan's `COMPATIBILITY.md:236-295` anchor for Ask B was fine; my check of it was not.** I
   read it off a branch based on `main` *before* #79 merged, saw commitment-digest text at that line,
   and recorded the anchor as stale. At `20786dc` line 203 is exactly
   `### Agent-framework co-installability` (the section runs `:203-264`). The plan was right.
@@ -3978,7 +3978,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:925`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:943`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -4465,12 +4465,12 @@ green before any code changed.
   this — "rather than refusing outright" was wrong, fixed before merge). (2) the release's
   `retitle_changelog.sh` run shifted `CHANGELOG.md`'s "No yank" paragraph from line 1054 to 1056
   (a +2 insert right after `## Unreleased`), pushing `COMPATIBILITY.md:123` and
-  `DECISIONS.md:1222`'s `CHANGELOG.md:1138-1155` citations past the citation test's slack
-  tolerance; repointed both to `CHANGELOG.md:1140-1157`. Tested: `check_vendored_spec.py` OK via both
+  `DECISIONS.md:1222`'s `CHANGELOG.md:1156-1173` citations past the citation test's slack
+  tolerance; repointed both to `CHANGELOG.md:1158-1175`. Tested: `check_vendored_spec.py` OK via both
   `--from local` and `--from gh`; `test_compatibility_citations_resolve.py` 489 passed/0 failed
   standalone (was 4 failed). Verifier also flagged two pre-existing, gate-invisible citations
   elsewhere that the same +2 shift widened further — `DECISIONS.md:2035` cites
-  `CHANGELOG.md:1040` and `PROGRESS.md:3981` cites `CHANGELOG.md:925`, both already ~130-250
+  `CHANGELOG.md:1058` and `PROGRESS.md:3981` cites `CHANGELOG.md:943`, both already ~130-250
   lines stale before this release — out of scope for this release-unblock hotfix; filed as a
   follow-up issue rather than folded in here.
   **Rebased `feat/verify-anchor-tenant` onto this commit during `/sweep`'s ship pass.** Four
@@ -4480,7 +4480,7 @@ green before any code changed.
   `CHANGELOG.md`/`COMPATIBILITY.md`/`DECISIONS.md`: the feature branch's own new
   `## Unreleased` entry (16 lines) was kept above this hotfix's `## 0.33.3` header, which
   shifted "No yank" from this entry's `1056` to `1072` and recomputed the two citations above
-  (`CHANGELOG.md:1140-1157`) to `CHANGELOG.md:1156-1173` — verified against the exact
+  (`CHANGELOG.md:1158-1175`) to `CHANGELOG.md:1174-1191` — verified against the exact
   paragraph-boundary text at both the old and new line numbers before trusting the new range,
   not just the arithmetic. A dedicated ship-gate verifier independently re-derived this same
   shift from the diff and confirmed it exact.

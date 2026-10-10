@@ -527,9 +527,9 @@ runs `SeamAdminClient` in a thread.
 |---|---|---|
 | **Python** | ✅ | ✅ **complete** — one-shot + **sessions & budgets** + **features** + **management plane** (`SeamAdminClient`: erasure/governance) + context/trust/outcome; round-trips live |
 | **TypeScript** | ✅ | ✅ **complete** — one-shot + **sessions & budgets** + **features** + **management plane** (`SeamAdminClient`: erasure/governance) + context/trust/outcome; round-trips live |
-| Go | ✅ | ✅ **shim** — conformance-tested (Ed25519 PoP, AID, TCT verify); ergonomic client over gen transport is a follow-up |
-| Java | ✅ | ✅ **shim** — conformance-tested (Bouncy Castle); client is a follow-up |
-| Kotlin | ✅ | ✅ **shim** — conformance-tested (Bouncy Castle); client is a follow-up |
+| Go | ✅ | ✅ **shim** — conformance-tested (Ed25519 PoP, AID, TCT verify, request credential) + identity file (`go/identity`); ergonomic client over gen transport is a follow-up |
+| Java | ✅ | ✅ **shim** — conformance-tested (Bouncy Castle) + `Agent`, `IdentityFile`, `RequestCredentials`; client is a follow-up |
+| Kotlin | ✅ | ✅ **shim** — conformance-tested (Bouncy Castle) + `Agent`, `IdentityFile`, `RequestCredentials`; client is a follow-up |
 
 The admission/TCT crypto is byte-identical across all five languages — pure stock Ed25519/SHA-256/JOSE,
 conformance-tested against `conformance/vectors.json` (`admission` + `tct` sections). The wider crypto
