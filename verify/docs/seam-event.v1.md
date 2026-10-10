@@ -1,12 +1,15 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ b74ec09 tracking feat/1246-p13-gates-survive-restart (refreshed 2026-10-10).
-     Pinned AHEAD of the default branch, deliberately: the runtime 0.44.0 train (seam-runtime#1259) merges and
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ ef2a56e tracking train/0.44.0 (refreshed 2026-10-10).
+     Pinned AHEAD of the default branch, deliberately: the runtime 0.44.0 train (seam-runtime#1269) merges and
      dispatches the SDK release in one step, so the copy has to be on SDK main first. The exception ends itself
-     when the train squash-merges (the file becomes byte-identical on both refs). One movement since the prior
-     pin (074ddd3):
+     when the train squash-merges (the file becomes byte-identical on both refs). Two movements since the prior
+     default-branch pin (074ddd3):
      1. seam-runtime#1205/#1196: the system partition (wire `tenant == ""`) now carries its own
         CHAIN_HEAD_ATTESTATION, envelope and payload `tenant` both `""`, the third tenant-less kind. A verifier
         under `--issuer` requires a covering attestation for every partition in the window, `""` included.
         This crate already handles it (seam-sdk#220 pinned the behaviour ahead of the runtime change).
+     2. seam-runtime#1255 (#802/#804): a prose note that the commitment's `committer` and sealed explanation
+        ride inside the existing `ciphertext_digest` and the TCT (`seam-commitment-digest:v2`). No wire change;
+        `schema_version` does not move.
      Earlier movements, recorded by prior pins: the `tenant_seq` cutoff and the tenant-tag producer rule
      (#903/#1084), tag 25 `tenant_seq` (#973) and AUTHORIZE_EVALUATED tag 11 `subject_digests` (#715). -->
 
@@ -1255,6 +1258,14 @@ manifest — so the flip surfaces as a reviewed, coordinated re-pin, never a qui
 `trust_basis`, `classification`, and `participants` (the flat id list) remain outside the digest. They
 are bound inside the commitment TCT, which is why this is acceptable rather than an oversight — but it
 is a real residual and a v4 candidate, recorded here rather than left to be rediscovered.
+
+The commitment's `committer` (#802) and its sealed **explanation** (#804 — every accepted vote,
+evaluation, objection and quorum ballot with its reason, an evaluation's `rationale_ref`, and its
+confidence *or its absence*) need no new slot here: both are part of the commitment plaintext, so they
+are inside the ciphertext that `ciphertext_digest` (tag 10) already commits to, and both are also bound
+into the TCT by [`seam-commitment-digest:v2`](seam-commitment-digest.v2.md). Neither is on this wire —
+the explanation carries free text and data-subject reasons, and crypto-shred erases it with the record.
+`schema_version` does not move.
 
 ### Record digest (v2) — `schema_version = 2` (A14) — **historical, permanent on read**
 
