@@ -245,21 +245,16 @@ jobs:
     runs-on: ubuntu-latest
     # Bounded because this job SPAWNS A SERVER. If the binary ever stops recognising a flag and
     # starts serving instead of exiting, an unbounded job waits on the 6-hour platform default.
-    # 45, not 20, only while SEAM_RUNTIME_BUILD_REF is set: a cold `cargo build --release` of seamd
-    # takes most of the old budget by itself. Back to 20 when the pin goes.
-    timeout-minutes: 45
+    timeout-minutes: 20
     permissions:
       packages: read
     env:
-      # PINNED for the runtime 0.44.0 train (seam-runtime#1269), alongside the Makefile's BUF_MODULE pin.
-      # The train changes the commitment digest to v2 (#802/#804) and merges + dispatches the SDK release
-      # in one step, so SDK main has to pass against the TRAIN's server before `seamd:main` carries it —
-      # `seamd:main` still seals v1 and `verify_decision` would refuse every decision. images.yml pushes
-      # only on main, so there is no train image; seam-grpc is built from source at this ref instead
-      # (agreed with the runtime train owner: this repo is public, so its minutes are free).
-      # UN-PIN after the train merges: set this to '' (the image path below takes over again), drop the
-      # timeout back to 20, and un-pin BUF_MODULE in the Makefile in the same change.
-      SEAM_RUNTIME_BUILD_REF: ef2a56e65e162753f6d7a0f19a1aadeb5396d195
+      # Set to a seam-runtime commit to build seam-grpc from source instead of lifting it from
+      # seamd:main — for a lockstep runtime change that must be green on SDK main BEFORE the runtime
+      # merges (images.yml pushes only on main, so an unmerged branch has no image). First used for the
+      # 0.44.0 train (seam-runtime#1269); pair it with a BUF_MODULE pin in the Makefile, and raise
+      # timeout-minutes to 45 while it is set (a cold release build of seamd takes most of 20).
+      SEAM_RUNTIME_BUILD_REF: ""
     steps:
       - uses: actions/checkout@v4
       - name: Mint a seam-deps-bot App token, scoped to seam-runtime
