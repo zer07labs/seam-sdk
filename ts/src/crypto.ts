@@ -47,13 +47,38 @@ export interface Presentation {
   pop_nonce: string;
 }
 
+/** The `kind` words `seam-explanation-digest:v1` frames — lowercase ASCII, exactly; never the proto enum name. */
+export const EXPLANATION_KINDS = ["vote", "evaluation", "objection", "ballot"] as const;
+
+/** One sealed explanation entry, as the digest frames it (snake_case, like {@link Commitment}).
+ * `confidence` / `rationale_ref` absent (`undefined` or `null`) is NOT the same as a stated `0.0` /
+ * empty string — the two produce different digests, which is the point of the digest. */
+export interface ExplanationEntryInput {
+  /** One of {@link EXPLANATION_KINDS}; anything else is refused. */
+  kind: string;
+  participant: string;
+  proposal_id: string;
+  value: string;
+  reason: string;
+  confidence?: number | null;
+  rationale_ref?: string | null;
+}
+
 export interface Commitment {
   id: string;
   action: string;
   authority: string;
   auth_method: string;
   trust_basis: string;
-  supersedes?: string;
+  supersedes?: string | null;
+  /** The verified AID that committed (#802); absent/empty encodes as the empty field. */
+  committer?: string | null;
+  /** The sealed explanation entries (#804), in sealed order. When present (even `[]`) they are
+   * recomputed into field 8 and, if {@link explanation_digest} is also given, must agree with it. */
+  explanation?: ExplanationEntryInput[] | null;
+  /** The published `seam-explanation-digest:v1` (32 raw bytes, or 64 hex chars). Used as field 8 only
+   * when no `explanation` entries are supplied; an empty value counts as "not published". */
+  explanation_digest?: Uint8Array | string | null;
 }
 
 /** The agent's `aid:pubkey:ed25519:` identity for a 32-byte Ed25519 public key. */
@@ -113,24 +138,116 @@ function lenPrefix(b: Uint8Array): Uint8Array {
   return out;
 }
 
-function seamCommitmentDigest(c: Commitment): string {
-  const fields = [
-    enc.encode("seam-commitment-digest:v1"),
-    enc.encode(c.id),
-    enc.encode(c.action),
-    enc.encode(c.authority),
-    enc.encode(c.supersedes ?? ""),
-    enc.encode(c.auth_method),
-    enc.encode(c.trust_basis),
-  ];
-  const parts: Uint8Array[] = [];
-  for (const f of fields) {
-    parts.push(lenPrefix(f), f);
-  }
-  return Buffer.from(sha256(concat(...parts))).toString("hex");
+function frame(b: Uint8Array): Uint8Array {
+  return concat(lenPrefix(b), b);
 }
 
-/** Independently verify a sealed commitment's rooted TCT — zero server trust, stock crypto only. */
+/** UTF-8 of a digest field, refusing a string that has no UTF-8 form (see {@link hasLoneSurrogate}). */
+function utf8Field(s: string, what: string): Uint8Array {
+  if (typeof s !== "string") throw new TypeError(`${what} must be a string`);
+  if (hasLoneSurrogate(s)) throw new Error(`${what} contains a lone surrogate`);
+  return enc.encode(s);
+}
+
+/**
+ * `seam-explanation-digest:v1` over a sealed explanation — 32 raw bytes.
+ *
+ * `SHA-256(F("seam-explanation-digest:v1") ‖ be64(count) ‖ Σ ENTRY)`, where
+ * `ENTRY = F(kind) ‖ F(participant) ‖ F(proposal_id) ‖ F(value) ‖ F(reason) ‖ CONF ‖ REF`,
+ * `CONF = 0x00 | 0x01 ‖ be64(IEEE-754 bits)`, `REF = 0x00 | 0x01 ‖ F(rationale_ref)`. Entries are hashed
+ * in the given (sealed) order — never sorted or de-duplicated. An absent confidence and a stated `0.0` are
+ * different bytes. Throws on an unknown kind or a non-canonical confidence (NaN, ±Infinity, outside
+ * `[0, 1]`, or `-0.0`) rather than hashing it. Normative: `seam-runtime/docs/specs/seam-commitment-digest.v2.md`.
+ */
+export function explanationDigest(entries: readonly ExplanationEntryInput[]): Uint8Array {
+  if (!Array.isArray(entries)) throw new TypeError("explanation must be an array");
+  const count = new Uint8Array(8);
+  new DataView(count.buffer).setBigUint64(0, BigInt(entries.length), false);
+  const parts: Uint8Array[] = [frame(enc.encode("seam-explanation-digest:v1")), count];
+  for (const e of entries) {
+    if (!(EXPLANATION_KINDS as readonly string[]).includes(e.kind))
+      throw new Error(`unknown explanation kind ${JSON.stringify(e.kind)}`);
+    parts.push(
+      frame(enc.encode(e.kind)),
+      frame(utf8Field(e.participant, "participant")),
+      frame(utf8Field(e.proposal_id, "proposal_id")),
+      frame(utf8Field(e.value, "value")),
+      frame(utf8Field(e.reason, "reason")),
+    );
+    const conf = e.confidence;
+    if (conf === undefined || conf === null) {
+      parts.push(new Uint8Array([0]));
+    } else {
+      if (typeof conf !== "number" || !Number.isFinite(conf) || conf < 0 || conf > 1 || Object.is(conf, -0))
+        throw new Error(`non-canonical confidence ${String(conf)}`);
+      const c = new Uint8Array(9);
+      c[0] = 1;
+      new DataView(c.buffer).setFloat64(1, conf, false);
+      parts.push(c);
+    }
+    const ref = e.rationale_ref;
+    parts.push(
+      ref === undefined || ref === null
+        ? new Uint8Array([0])
+        : concat(new Uint8Array([1]), frame(utf8Field(ref, "rationale_ref"))),
+    );
+  }
+  return sha256(concat(...parts));
+}
+
+function publishedExplanationDigest(d: Uint8Array | string | null | undefined): Uint8Array | undefined {
+  if (d === undefined || d === null) return undefined;
+  let b: Uint8Array;
+  if (typeof d === "string") {
+    if (!/^([0-9a-fA-F]{2})*$/.test(d)) throw new Error("explanation_digest is not hex");
+    b = new Uint8Array(Buffer.from(d, "hex"));
+  } else {
+    b = d;
+  }
+  // The proto `bytes explanation_digest` is an empty array when unset; empty = "not published".
+  return b.length === 0 ? undefined : b;
+}
+
+/** The explanation digest a commitment binds as field 8, checked when the entries are present.
+ *
+ * Mirrors the Python SDK's `_commitment_explanation_digest`: entries supplied (even `[]`) → recomputed,
+ * and a published digest, if also supplied, must equal it (spec §Verification step 1) or this throws;
+ * only a published digest → used as published (verifies *who* and *what*, not *why*); neither → the
+ * digest of the empty explanation. */
+function commitmentExplanationDigest(c: Commitment): Uint8Array {
+  const published = publishedExplanationDigest(c.explanation_digest);
+  if (c.explanation === undefined || c.explanation === null) return published ?? explanationDigest([]);
+  const computed = explanationDigest(c.explanation);
+  if (published !== undefined && Buffer.compare(Buffer.from(published), Buffer.from(computed)) !== 0)
+    throw new Error("explanation_digest does not match the explanation entries");
+  return computed;
+}
+
+/** `seam-commitment-digest:v2` (hex): SHA-256 over the length-prefixed domain tag and fields
+ * `(id, action, authority, supersedes, auth_method, trust_basis, committer, explanation_digest)`, field 8
+ * being the 32 RAW bytes of the explanation digest. v1 is deleted, not dual-verified. Mirrors the runtime
+ * byte-for-byte; normative: `seam-runtime/docs/specs/seam-commitment-digest.v2.md`. */
+export function seamCommitmentDigest(c: Commitment): string {
+  const fields = [
+    enc.encode("seam-commitment-digest:v2"),
+    utf8Field(c.id, "id"),
+    utf8Field(c.action, "action"),
+    utf8Field(c.authority, "authority"),
+    utf8Field(c.supersedes ?? "", "supersedes"),
+    utf8Field(c.auth_method, "auth_method"),
+    utf8Field(c.trust_basis, "trust_basis"),
+    utf8Field(c.committer ?? "", "committer"),
+    commitmentExplanationDigest(c),
+  ];
+  return Buffer.from(sha256(concat(...fields.map(frame)))).toString("hex");
+}
+
+/** Independently verify a sealed commitment's rooted TCT — zero server trust, stock crypto only.
+ *
+ * Checks the EdDSA JWS against the issuer AID's key, the self-issued claims, and that the
+ * `seam-commitment-digest:v2` grant matches this exact commitment — its decided content, its committer
+ * and its sealed explanation. Explanation entries that disagree with the published digest, an unknown
+ * kind, or a non-canonical confidence verify `false`; this never throws. */
 export function verifyTct(
   issuerAid: string,
   tctJws: string,

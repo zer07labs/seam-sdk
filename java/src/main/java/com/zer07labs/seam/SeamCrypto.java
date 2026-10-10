@@ -35,13 +35,42 @@ public final class SeamCrypto {
   public record Presentation(
       String senderAid, Descriptor descriptor, String messageId, long timestamp, String popNonce) {}
 
+  /**
+   * The {@code kind} words the explanation digest frames — lowercase ASCII, exactly; never the proto
+   * enum name ({@code EXPLANATION_KIND_VOTE} → {@code "vote"}).
+   */
+  public static final List<String> EXPLANATION_KINDS =
+      List.of("vote", "evaluation", "objection", "ballot");
+
+  /**
+   * One sealed explanation entry. {@code confidence} and {@code rationaleRef} are {@code null} when
+   * absent — an absent confidence and a stated {@code 0.0} are different bytes, which is the point of
+   * the explanation digest.
+   */
+  public record ExplanationEntry(
+      String kind,
+      String participant,
+      String proposalId,
+      String value,
+      String reason,
+      Double confidence,
+      String rationaleRef) {}
+
+  /**
+   * The commitment fields {@code seam-commitment-digest:v2} binds. {@code supersedes} and {@code
+   * committer} may be {@code null} (hashed as empty). Field 8 resolves from {@code explanation} (the
+   * entries) and/or {@code explanationDigest} (the 32 published bytes) — see {@link #verifyTct}.
+   */
   public record Commitment(
       String id,
       String action,
       String authority,
       String supersedes,
       String authMethod,
-      String trustBasis) {}
+      String trustBasis,
+      String committer,
+      byte[] explanationDigest,
+      List<ExplanationEntry> explanation) {}
 
   // ── base64url (no padding) ──────────────────────────────────────────────────────────────────
   private static String b64urlNoPad(byte[] b) {
@@ -139,10 +168,89 @@ public final class SeamCrypto {
         popNonce);
   }
 
+  private static void be64Frame(ByteArrayOutputStream out, byte[] b) {
+    out.writeBytes(ByteBuffer.allocate(8).putLong(b.length).array());
+    out.writeBytes(b);
+  }
+
   /**
-   * SHA-256 (hex) over a <b>length-prefixed</b> framing of a domain tag plus the commitment fields —
-   * each field preceded by its 8-byte big-endian length. Mirrors the runtime byte-for-byte, and
-   * mirrors the Go/Kotlin/Python/TypeScript shims.
+   * {@code seam-explanation-digest:v1} over a sealed explanation (32 raw bytes), entries in sealed
+   * order: {@code SHA-256(F("seam-explanation-digest:v1") ‖ be64(count) ‖ Σ ENTRY)}, with {@code ENTRY
+   * = F(kind) ‖ F(participant) ‖ F(proposal_id) ‖ F(value) ‖ F(reason) ‖ CONF ‖ REF}, {@code CONF =
+   * 0x00 | 0x01 ‖ be64(IEEE-754 bits)}, {@code REF = 0x00 | 0x01 ‖ F(rationale_ref)} and {@code F(x) =
+   * be64(len) ‖ x}. Never sorts, never de-duplicates.
+   *
+   * @throws IllegalArgumentException on an unknown kind or a non-canonical confidence (NaN, ±inf,
+   *     outside {@code [0.0, 1.0]}, or {@code -0.0}) — refused rather than hashed. Normative: {@code
+   *     seam-runtime/docs/specs/seam-commitment-digest.v2.md}.
+   */
+  public static byte[] explanationDigest(List<ExplanationEntry> entries) {
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    be64Frame(out, "seam-explanation-digest:v1".getBytes(StandardCharsets.UTF_8));
+    out.writeBytes(ByteBuffer.allocate(8).putLong(entries.size()).array());
+    for (ExplanationEntry e : entries) {
+      if (e == null || !EXPLANATION_KINDS.contains(e.kind())) {
+        throw new IllegalArgumentException(
+            "unknown explanation kind " + (e == null ? null : e.kind()));
+      }
+      be64Frame(out, nz(e.kind()));
+      be64Frame(out, nz(e.participant()));
+      be64Frame(out, nz(e.proposalId()));
+      be64Frame(out, nz(e.value()));
+      be64Frame(out, nz(e.reason()));
+      Double conf = e.confidence();
+      if (conf == null) {
+        out.write(0x00);
+      } else {
+        double d = conf;
+        // -0.0 has a set sign bit; `d >= 0.0` alone would admit it (and NaN fails every comparison).
+        long bits = Double.doubleToRawLongBits(d);
+        if (!(d >= 0.0 && d <= 1.0) || bits < 0) {
+          throw new IllegalArgumentException("non-canonical confidence " + d);
+        }
+        out.write(0x01);
+        out.writeBytes(ByteBuffer.allocate(8).putLong(bits).array());
+      }
+      if (e.rationaleRef() == null) {
+        out.write(0x00);
+      } else {
+        out.write(0x01);
+        be64Frame(out, e.rationaleRef().getBytes(StandardCharsets.UTF_8));
+      }
+    }
+    return sha256(out.toByteArray());
+  }
+
+  /**
+   * The explanation digest a commitment binds as field 8, checked when the entries are present. With
+   * the entries: recomputed from them, and if a published digest is ALSO given the two must agree
+   * (spec §Verification step 1). With only the published digest: used as published — verifies
+   * <i>who</i> and <i>what</i> but not <i>why</i>. With neither: the empty explanation.
+   *
+   * @throws IllegalArgumentException on a disagreement, a malformed entry, or a published digest that
+   *     is not 32 bytes.
+   */
+  static byte[] commitmentExplanationDigest(Commitment c) {
+    byte[] published = c.explanationDigest();
+    if (published != null && published.length != 32) {
+      throw new IllegalArgumentException("explanation_digest must be 32 bytes");
+    }
+    if (c.explanation() == null) {
+      return published != null ? published.clone() : explanationDigest(List.of());
+    }
+    byte[] computed = explanationDigest(c.explanation());
+    if (published != null && !MessageDigest.isEqual(published, computed)) {
+      throw new IllegalArgumentException(
+          "explanation_digest does not match the explanation entries");
+    }
+    return computed;
+  }
+
+  /**
+   * {@code seam-commitment-digest:v2} (hex): SHA-256 over a <b>length-prefixed</b> framing of a domain
+   * tag plus the commitment fields — each field preceded by its 8-byte big-endian length. Mirrors the
+   * runtime byte-for-byte, and mirrors the Go/Kotlin/Python/TypeScript shims. v1 is deleted, not
+   * dual-verified.
    *
    * <p><b>The length prefixes are not decoration and must never be "simplified" to a separator.</b>
    * The fields are arbitrary text that may itself contain NUL — UTF-8 permits U+0000, and it
@@ -153,37 +261,43 @@ public final class SeamCrypto {
    * issued for their artifact. Length-prefixing makes the digest injective over the field tuple
    * regardless of content.
    *
-   * <p>The same rationale is recorded at {@code seam-trust-aitp/src/lib.rs:350-354} in the runtime.
-   * It is written out here because this comment is the only thing standing between a future
-   * maintainer and a "cleanup" that silently breaks artifact binding — and Java and Kotlin were the
-   * two shims that carried no rationale at all while Go, Python and TypeScript did.
+   * <p>It is written out here because this comment is the only thing standing between a future
+   * maintainer and a "cleanup" that silently breaks artifact binding.
    *
    * <p>Field order is also load-bearing and must match the runtime exactly: domain, id, action,
-   * authority, supersedes, auth_method, trust_basis. Binding {@code auth_method}/{@code trust_basis}
-   * is what makes the artifact attest <i>who</i> committed it and <i>how</i> they authed, not just
-   * the decision. {@code ConformanceTest} asserts every one of these is bound.
+   * authority, supersedes, auth_method, trust_basis, committer, then the 32 RAW bytes (not hex) of the
+   * explanation digest ({@link #commitmentExplanationDigest}). Binding {@code committer}/{@code
+   * auth_method}/{@code trust_basis} makes the artifact attest <i>who</i> committed it and <i>how</i>
+   * they authed; binding the explanation makes it attest <i>why</i>. {@code ConformanceTest} asserts
+   * every one of these is bound.
+   *
+   * @throws IllegalArgumentException when field 8 cannot be resolved (see {@link
+   *     #commitmentExplanationDigest}).
    */
-  private static String seamCommitmentDigest(Commitment c) {
+  static String seamCommitmentDigest(Commitment c) {
     ByteArrayOutputStream h = new ByteArrayOutputStream();
     byte[][] fields = {
-      "seam-commitment-digest:v1".getBytes(StandardCharsets.UTF_8),
+      "seam-commitment-digest:v2".getBytes(StandardCharsets.UTF_8),
       nz(c.id()),
       nz(c.action()),
       nz(c.authority()),
       nz(c.supersedes()),
       nz(c.authMethod()),
-      nz(c.trustBasis())
+      nz(c.trustBasis()),
+      nz(c.committer()),
+      commitmentExplanationDigest(c)
     };
-    for (byte[] f : fields) {
-      h.writeBytes(ByteBuffer.allocate(8).putLong(f.length).array());
-      h.writeBytes(f);
-    }
+    for (byte[] f : fields) be64Frame(h, f);
     return hex(sha256(h.toByteArray()));
   }
 
   /**
-   * Independently verify a sealed commitment's rooted TCT — zero server trust, stock crypto only. Any
-   * malformed/forged input fails closed (returns {@code false}), never throws.
+   * Independently verify a sealed commitment's rooted TCT — zero server trust, stock crypto only.
+   * Checks the EdDSA JWS against the issuer AID's key, the self-issued claims, and that the {@code
+   * seam-commitment-digest:v2} grant matches this exact commitment (decided content, committer, and
+   * sealed explanation). Any malformed/forged input fails closed (returns {@code false}), never throws
+   * — including explanation entries that disagree with the published digest, an unknown kind, or a
+   * non-canonical confidence.
    */
   public static boolean verifyTct(String issuerAid, String tctJws, Commitment c, long nowS) {
     try {

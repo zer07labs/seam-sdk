@@ -37,6 +37,7 @@ from .crypto import (
     EnrollProof,
     enroll_pop,
     enroll_pop_payload,
+    explanation_digest,
     jcs_canonicalize,
     record_digest_v2,
     record_digest_v3,
@@ -88,6 +89,7 @@ __all__ = [
     "aid_from_pubkey",
     "build_presentation",
     "verify_tct",
+    "explanation_digest",
     # Advisory authorization (Authorize verb)
     "AuthorizeResult",
     "canonicalize_tool_input",

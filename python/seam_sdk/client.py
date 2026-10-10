@@ -1093,15 +1093,52 @@ class SeamClient:
         if proof.issuer_aid != expected_issuer:
             raise IssuerMismatchError(proof.issuer_aid, expected_issuer)
         c = proof.commitment
-        commitment = {
-            "id": c.id,
-            "action": c.action,
-            "authority": c.authority,
-            "auth_method": c.auth_method,
-            "trust_basis": c.trust_basis,
-            "supersedes": c.supersedes or "",
-        }
-        return verify_tct(expected_issuer, c.signed_artifact.decode(), commitment)
+        return verify_tct(
+            expected_issuer, c.signed_artifact.decode(), commitment_view(c)
+        )
+
+
+# The lowercase words `seam-explanation-digest:v1` frames, by `ExplanationKind` value. An unknown or
+# UNSPECIFIED kind maps to a word the digest refuses, so verification fails closed rather than guessing.
+_EXPLANATION_KIND_WORDS = {
+    pb.EXPLANATION_KIND_VOTE: "vote",
+    pb.EXPLANATION_KIND_EVALUATION: "evaluation",
+    pb.EXPLANATION_KIND_OBJECTION: "objection",
+    pb.EXPLANATION_KIND_BALLOT: "ballot",
+}
+
+
+def commitment_view(c: "pb.Commitment") -> dict:
+    """The dict :func:`~seam_sdk.crypto.verify_tct` takes, from a served ``Commitment``.
+
+    Carries the committer and the sealed explanation (entries AND the published digest), so
+    verification checks the entries against the digest before binding it (seam-commitment-digest:v2).
+    Explicit presence is preserved: an absent ``confidence`` / ``rationale_ref`` stays ``None``."""
+    return {
+        "id": c.id,
+        "action": c.action,
+        "authority": c.authority,
+        "auth_method": c.auth_method,
+        "trust_basis": c.trust_basis,
+        "supersedes": c.supersedes or "",
+        "committer": c.committer,
+        # proto3 bytes cannot say "absent": empty means not published, and the entries decide.
+        "explanation_digest": bytes(c.explanation_digest) or None,
+        "explanation": [
+            {
+                "kind": _EXPLANATION_KIND_WORDS.get(e.kind, f"<unknown kind {e.kind}>"),
+                "participant": e.participant,
+                "proposal_id": e.proposal_id,
+                "value": e.value,
+                "reason": e.reason,
+                "confidence": e.confidence if e.HasField("confidence") else None,
+                "rationale_ref": e.rationale_ref
+                if e.HasField("rationale_ref")
+                else None,
+            }
+            for e in c.explanation
+        ],
+    }
 
 
 def _check_idempotency_key(key: str) -> str:

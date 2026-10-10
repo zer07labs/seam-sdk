@@ -91,25 +91,102 @@ def _aid_to_pubkey(aid: str) -> bytes:
     raise ValueError(f"unsupported AID form: {aid!r}")
 
 
+#: The ``kind`` words the explanation digest frames — lowercase ASCII, exactly; never the proto enum name.
+EXPLANATION_KINDS = ("vote", "evaluation", "objection", "ballot")
+
+
+def _be64_frame(field: bytes) -> bytes:
+    return len(field).to_bytes(8, "big") + field
+
+
+def explanation_digest(entries) -> bytes:
+    """``seam-explanation-digest:v1`` over a sealed explanation (32 raw bytes).
+
+    ``entries`` is the list of explanation entries in the order the runtime sealed them, each a mapping
+    with ``kind`` (one of :data:`EXPLANATION_KINDS`), ``participant``, ``proposal_id``, ``value``,
+    ``reason``, and optional ``confidence`` / ``rationale_ref`` (``None`` or missing = absent). An absent
+    confidence and a stated ``0.0`` are different bytes — that distinction is the point of this digest.
+    Raises ``ValueError`` on an unknown kind or a non-canonical confidence (NaN, ±inf, outside
+    ``[0.0, 1.0]``, or ``-0.0``) rather than hashing it. Normative:
+    ``seam-runtime/docs/specs/seam-commitment-digest.v2.md``."""
+    import math
+
+    entries = list(entries)
+    out = [_be64_frame(b"seam-explanation-digest:v1"), len(entries).to_bytes(8, "big")]
+    for e in entries:
+        kind = e["kind"]
+        if kind not in EXPLANATION_KINDS:
+            raise ValueError(f"unknown explanation kind {kind!r}")
+        out += [
+            _be64_frame(kind.encode()),
+            _be64_frame(e["participant"].encode()),
+            _be64_frame(e["proposal_id"].encode()),
+            _be64_frame(e["value"].encode()),
+            _be64_frame(e["reason"].encode()),
+        ]
+        conf = e.get("confidence")
+        if conf is None:
+            out.append(b"\x00")
+        else:
+            if isinstance(conf, bool) or not isinstance(conf, (int, float)):
+                raise ValueError(f"confidence must be a number, got {conf!r}")
+            conf = float(conf)
+            if (
+                not math.isfinite(conf)
+                or not 0.0 <= conf <= 1.0
+                or math.copysign(1.0, conf) < 0
+            ):
+                raise ValueError(f"non-canonical confidence {conf!r}")
+            out.append(b"\x01" + struct.pack(">d", conf))
+        ref = e.get("rationale_ref")
+        out.append(b"\x00" if ref is None else b"\x01" + _be64_frame(ref.encode()))
+    return hashlib.sha256(b"".join(out)).digest()
+
+
+def _commitment_explanation_digest(commitment: dict) -> bytes:
+    """The explanation digest a commitment binds as field 8, checked when the entries are present.
+
+    With ``explanation`` (the entries): recomputed from them, and if ``explanation_digest`` is ALSO
+    given the two must agree (spec §Verification step 1) — otherwise ``ValueError``. With only
+    ``explanation_digest`` (32 bytes, or 64 hex chars): used as published, which verifies *who* and
+    *what* but not *why*. With neither: the empty explanation, the runtime's value when nothing was
+    deliberated."""
+    published = commitment.get("explanation_digest")
+    if isinstance(published, str):
+        published = bytes.fromhex(published)
+    elif published is not None:
+        published = bytes(published)
+    entries = commitment.get("explanation")
+    if entries is None:
+        return published if published is not None else explanation_digest([])
+    computed = explanation_digest(entries)
+    if published is not None and published != computed:
+        raise ValueError("explanation_digest does not match the explanation entries")
+    return computed
+
+
 def _seam_commitment_digest(commitment: dict) -> str:
-    """SHA-256 (hex) over a length-prefixed framing of a domain tag + the commitment fields.
+    """``seam-commitment-digest:v2`` (hex): SHA-256 over the length-prefixed domain tag and fields.
 
     Each field is prefixed with its 8-byte big-endian byte length (no separator), so the digest is
-    injective over `(domain, id, action, authority, supersedes, auth_method, trust_basis)` regardless of
-    content — a `\\0` separator would let boundary-shifted fields collide. Mirrors the runtime byte-for-byte.
+    injective over ``(domain, id, action, authority, supersedes, auth_method, trust_basis, committer,
+    explanation_digest)`` — a ``\\0`` separator would let boundary-shifted fields collide. Field 8 is the
+    32 raw bytes of the explanation digest (see :func:`_commitment_explanation_digest`). v1 is deleted,
+    not dual-verified. Mirrors the runtime byte-for-byte.
     """
     h = hashlib.sha256()
     for field in (
-        b"seam-commitment-digest:v1",
+        b"seam-commitment-digest:v2",
         commitment["id"].encode(),
         commitment["action"].encode(),
         commitment["authority"].encode(),
         (commitment.get("supersedes") or "").encode(),
         commitment["auth_method"].encode(),
         commitment["trust_basis"].encode(),
+        (commitment.get("committer") or "").encode(),
+        _commitment_explanation_digest(commitment),
     ):
-        h.update(len(field).to_bytes(8, "big"))
-        h.update(field)
+        h.update(_be64_frame(field))
     return h.hexdigest()
 
 
@@ -119,8 +196,11 @@ def verify_tct(
     """Independently verify a sealed commitment's rooted TCT — zero server trust, stock crypto only.
 
     Verifies the EdDSA JWS against the issuer's key (recovered from its AID), checks the self-issued
-    claims (`typ`, `iss==sub==aud==issuer_aid`, `exp`), and that the bound `seam-commitment-digest` grant
-    matches this exact commitment (tamper-evidence over the decided content + committer attribution).
+    claims (`typ`, `iss==sub==aud==issuer_aid`, `exp`), and that the bound `seam-commitment-digest:v2` grant
+    matches this exact commitment (tamper-evidence over the decided content, the committer, and the sealed
+    explanation). ``commitment`` carries ``committer`` and the ``explanation`` entries and/or the published
+    ``explanation_digest``; entries that disagree with the published digest, an unknown kind, or a
+    non-canonical confidence verify ``False``.
     """
     # Any malformed/forged input must fail closed (return False), never raise.
     try:

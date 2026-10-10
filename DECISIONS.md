@@ -368,8 +368,8 @@ architecture as the accidental arbiter — a normative rule that is not one. All
 outside `[-2^63, 2^63)` explicitly. Python and TypeScript need no such bound alone; they carry Go's
 constraint so the five agree, which is the same trade this whole decision is made of.
 3. **It is the only one with a written rationale.** The type assertion that *is* the rule
-   (`exp, ok := payload["exp"].(float64)`, `go/crypto/crypto.go:194`) and the truncation semantics
-   below it (`go/crypto/crypto.go:198-203`) are both argued in comments at the code; the other two
+   (`exp, ok := payload["exp"].(float64)`, `go/crypto/crypto.go:316`) and the truncation semantics
+   below it (`go/crypto/crypto.go:320-325`) are both argued in comments at the code; the other two
    rules were the shortest expression that worked in that language.
 
 The alternative considered and rejected was **union semantics** — accept anything any SDK accepts,
@@ -715,7 +715,7 @@ wrong answers rather than misses:
 - **In a table row the subject wins.** `PROGRESS.md`'s repo-map row for `python/seam_sdk/crypto.py`
   names `python/seam_sdk/admin.py:148` mid-sentence and then continues with four more bare
   references, all of which are crypto.py. Binding them to the nearer citation reports
-  `python/seam_sdk/crypto.py:691` as past-EOF — it is `_opt_bytes`, and the claim is true.
+  `python/seam_sdk/crypto.py:771` as past-EOF — it is `_opt_bytes`, and the claim is true.
 - **Inheritance must not cross a line.** `PROGRESS.md` writes `p1a:103-107` followed by bare
   companions, where `p1a` is a shorthand alias for a sibling-repo spec and not a path at all. A
   paragraph-scoped resolver walks past it and binds those references to whatever file the previous
@@ -1219,7 +1219,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:1188-1210` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:1206-1228` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -1296,7 +1296,7 @@ before the fix, so no shape that previously refused can now proceed.
 The scoping was **not** touched. Exact version equality, the python+npm format allowlist, and the
 exact-name match that keeps the org's Cargo crates unreachable are all unchanged — and are now
 pinned by `scripts/test_yank_gate.py`, which executes the credential resolution rather than reading
-it and asserts the three filters. It runs in `workflow-guards` (`.github/workflows/ci.yml:655-656`),
+it and asserts the three filters. It runs in `workflow-guards` (`.github/workflows/ci.yml:706-707`),
 needs no credential, and was proved falsifiable three ways: restoring the original one-liner,
 widening the format filter, and flipping the dry-run default each turn it red.
 
@@ -1375,7 +1375,7 @@ guard against throwaway git repos (`scripts/test_publish_gate.py:510`).
 That was not ceremony. The first draft of the ancestry step ran `git fetch --no-tags --depth=0`,
 which git rejects outright — *"depth 0 is not a positive number"* — and would have failed every
 publish. It survived a read-through and died the first time it was executed, which is the same
-argument the `ci-green` tests in that file already make (`.github/workflows/ci.yml:644-645`).
+argument the `ci-green` tests in that file already make (`.github/workflows/ci.yml:695-696`).
 
 A third defect was subtler and is worth stating as a rule. `test_protobuf_floor.py` **skips** when
 the generated tree is absent, and pytest exits **0** when every selected test skips — only *zero
@@ -1438,8 +1438,8 @@ which is strictly worse than the bug.
 
 **It does not generalise, and saying so is the point of this entry.** JCS reads every value through
 overridable methods, and the other arms are still spoofable by a subclass that *lies* rather than
-raises: a `float` subclass overriding `__abs__` (`python/seam_sdk/crypto.py:204` renders
-`repr(abs(v))`), a `str` subclass overriding `__iter__` (`python/seam_sdk/crypto.py:176`), a `dict`
+raises: a `float` subclass overriding `__abs__` (`python/seam_sdk/crypto.py:284` renders
+`repr(abs(v))`), a `str` subclass overriding `__iter__` (`python/seam_sdk/crypto.py:256`), a `dict`
 subclass overriding `__iter__` to drop keys. `CanonicalizationError` covers subclasses that raise;
 nothing covers ones that lie.
 
@@ -1541,11 +1541,11 @@ not as written.
   over-generalized. Python's validation still earns its place by a different route: v2 accepts a
   `memoryview(array("I", [0]*32))` and produces a digest whose length prefix claims 32 while 128
   bytes are hashed — the exact injectivity break framing exists to prevent — and v3 refuses it
-  (`python/seam_sdk/crypto.py:379-409`).
+  (`python/seam_sdk/crypto.py:459-489`).
 - **Correction to the entry's blast-radius claim:** "every such digest was wrong, so no correct
   caller breaks" is too strong. A proto3-JSON int64-as-string (`sealedAt: "123"`) coerced
   *correctly* through `BigInt` under the old TS behavior and is now refused. The refusal is loud, at
-  the first record, and names the fix (`ts/src/crypto.ts:793-798`) — and accepting strings reopens
+  the first record, and names the fix (`ts/src/crypto.ts:910-915`) — and accepting strings reopens
   `BigInt("")→0n` and `BigInt([5])→5n`. The choice stands; the justification does not extend to
   "nothing that used to work stops working."
   *(Citation corrected 2026-09-03. It named lines 509-522, which then held `v3Text` — the string slot
@@ -1604,8 +1604,8 @@ not as written.
   suggestion that this wait on them. The factual core is verifiable today and independent of the
   outcome: `sdk-digest-parity.sh` byte-diffs the *entire* file against a fresh runtime emit, so
   SDK-authored cases in it redden runtime CI as fake drift, exactly as assumed. The extended file is
-  loaded by all three suites (`python/tests/test_conformance.py:231`,
-  `ts/tests/conformance.test.ts:187`, `verify/tests/conformance.rs:73`).
+  loaded by all three suites (`python/tests/test_conformance.py:240`,
+  `ts/tests/conformance.test.ts:218`, `verify/tests/conformance.rs:73`).
 - **The deciding argument:** all three of seam-runtime#433's options leave the current arrangement
   correct — adopt means copy-and-delete at the same rendering, decline means the file stays. Nothing
   waits on their call, and deferring would leave `ASSUMPTIONS.md` shadowing a GitHub issue that
@@ -1769,6 +1769,14 @@ bumped domain label, and a permanent dual-verify obligation.
 **When the need is additive, add a SEPARATE digest — do not extend v1's field tuple.** A second
 digest costs one new thing; extending the tuple costs every past artifact a migration.
 
+**Superseded in the runtime 0.44.0 contract train (seam-runtime#1255, #802/#804; seam-sdk#227).** The
+tuple was extended anyway, as `seam-commitment-digest:v2` (adds `committer` and the 32-byte
+`seam-explanation-digest:v1` of the sealed explanation), and the advice above was followed in its own
+way: the explanation is its own separate digest, bound as one field. The "permanent dual-verify
+obligation" did not apply: under the owner's pre-GA no-backward-compatibility policy deployments are
+recreated, so no v1 record survives to be verified, and **v1 is deleted from all five shims, not
+dual-verified**. The six coordinated edits were made together, against the runtime's reference vector.
+
 `verify/` is **not** a sixth mirror — it does not implement the commitment digest at all, and
 `python/tests/test_framing_rationale_is_documented.py` now guards against a doc claiming otherwise.
 
@@ -1839,7 +1847,7 @@ nothing is ever *published* there.
 private, so **an external auditor cannot install the verifier from it.** Their path is what it always
 was: clone this **public, Apache-2.0** repository and build. `verify/` is a standalone cargo
 workspace with zero Seam dependencies precisely so that works anywhere, and the claim is a **CI
-gate** (`.github/workflows/ci.yml:493-494` runs `scripts/check-independence.sh`, which renders
+gate** (`.github/workflows/ci.yml:544-545` runs `scripts/check-independence.sh`, which renders
 `cargo tree -e normal`), not a comment.
 
 So publishing is **distribution convenience for internal and partner consumers** — *not* a
@@ -2032,7 +2040,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:1034` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:1052` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.

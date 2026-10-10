@@ -26,15 +26,7 @@ class ConformanceTest {
     private fun hexToBytes(s: String) =
         ByteArray(s.length / 2) { s.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
 
-    private fun commitment(c: Map<String, Any?>) =
-        Commitment(
-            c["id"] as String,
-            c["action"] as String,
-            c["authority"] as String,
-            c["supersedes"] as String?,
-            c["auth_method"] as String,
-            c["trust_basis"] as String,
-        )
+    private fun commitment(c: Map<String, Any?>) = commitmentFromJson(c)
 
     @Test
     fun pinnedKeyPresentationIsByteExact() {
@@ -86,6 +78,18 @@ class ConformanceTest {
     }
 
     @Test
+    fun tctDigestsMatchVector() {
+        val t = m(vectors, "tct")
+        val c = commitment(m(m(t, "inputs"), "commitment"))
+        assertEquals(t["explanation_digest_hex"], hex(SeamCrypto.explanationDigest(c.explanation!!)))
+        assertEquals(t["commitment_digest_hex"], SeamCrypto.seamCommitmentDigest(c))
+        // Only the published digest (no entries) must reproduce the same commitment digest.
+        val publishedOnly = c.copy(explanation = null, explanationDigest = hexToBytes(t["explanation_digest_hex"] as String))
+        assertEquals(t["commitment_digest_hex"], SeamCrypto.seamCommitmentDigest(publishedOnly))
+        assertTrue(SeamCrypto.verifyTct(t["issuer_aid"] as String, t["signed_artifact_jws"] as String, publishedOnly, NOW_S))
+    }
+
+    @Test
     fun tctVerifyFailsClosed() {
         val t = m(vectors, "tct")
         val c = commitment(m(m(t, "inputs"), "commitment"))
@@ -106,17 +110,18 @@ class ConformanceTest {
 
     // -- Commitment-digest framing coverage (W5.4 / G4) ----------------------------------------
     //
-    // `seam-commitment-digest:v1` is implemented byte-for-byte in ALL FIVE SDK languages -- the
-    // widest fan-out of any framing in this repo -- and has no vector section of its own. It cannot
-    // get one here either: seam-runtime's `sdk-digest-parity` job byte-diffs the whole of
-    // conformance/vectors.json against its own emitter, so a block added on this side turns the
-    // runtime's CI red. A vector for it must originate there.
+    // `seam-commitment-digest:v2` is implemented byte-for-byte in ALL FIVE SDK languages -- the
+    // widest fan-out of any framing in this repo. Its own reference vector is
+    // conformance/commitment_digest_v2_vector.json (see CommitmentDigestV2Test); the `tct` block of
+    // conformance/vectors.json carries `explanation_digest_hex` / `commitment_digest_hex` too. Both
+    // originate in seam-runtime, whose `sdk-digest-parity` job byte-diffs vectors.json against its
+    // own emitter.
     //
     // What IS available is stronger than it looks. `verifyTct` recomputes the digest and compares
     // it to the `seam-commitment-digest:` grant inside the runtime-signed JWS, so the vector
     // already carries a runtime-produced expected value. The gap was never coverage of the digest
     // -- it was coverage of the FIELD TUPLE: the pre-existing tests tampered `action` only, so
-    // exactly one of the seven framing inputs was proven bound.
+    // exactly one of the framing inputs was proven bound.
     //
     // The difference is demonstrable, not theoretical: an implementation that silently drops
     // `supersedes` from the preimage PASSES the pre-existing KAT test (the vector's commitment has
@@ -153,6 +158,13 @@ class ConformanceTest {
                 "supersedes (absent -> present)" to base.copy(supersedes = "k-previous"),
                 "auth_method" to base.copy(authMethod = base.authMethod + "-x"),
                 "trust_basis" to base.copy(trustBasis = base.trustBasis + "-x"),
+                "committer" to base.copy(committer = base.committer + "-x"),
+                "explanation (entry reason)" to
+                    base.copy(explanation = base.explanation!!.mapIndexed { i, e -> if (i == 0) e.copy(reason = e.reason + "-x") else e }),
+                "explanation (entry order)" to base.copy(explanation = base.explanation!!.reversed()),
+                "explanation (absent confidence -> stated 0.0)" to
+                    base.copy(explanation = base.explanation!!.mapIndexed { i, e -> if (i == 0) e.copy(confidence = 0.0) else e }),
+                "explanation (entries dropped)" to base.copy(explanation = null),
             )
 
         for ((field, mutated) in mutations) {

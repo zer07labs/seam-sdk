@@ -12,7 +12,7 @@ Pinned against `conformance/vectors.json` (generated from the Rust reference):
 - **`admission`** — the pinned-key admission presentation (Ed25519 proof-of-possession, AID
   derivation, deterministic message id).
 - **`tct`** — independent verification of a sealed commitment's rooted TCT (EdDSA JWS, self-issued
-  claims, truncated-seconds `exp`, `seam-commitment-digest` grant binding).
+  claims, truncated-seconds `exp`, `seam-commitment-digest:v2` grant binding over the committer and the sealed explanation).
 
 The vector file's `chain_head_attestation` and `record_digest_v2` sections — like the call-sig/JCS
 surface — are exercised by the full Python/TypeScript clients only, not by this shim.

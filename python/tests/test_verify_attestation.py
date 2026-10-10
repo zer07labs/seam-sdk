@@ -24,7 +24,7 @@ from types import SimpleNamespace
 import pytest
 
 from live_server import spawn_server
-from operator_token import REGISTRY_SNAPSHOT_PATH, mint_operator_token, sign_snapshot
+from operator_token import mint_operator_token
 
 from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
 from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as ev
@@ -120,20 +120,14 @@ def dual_plane(tmp_path):
     """Spawn seam-grpc with BOTH the data plane (VerifyPartyAttestation, dev-open) and the management
     plane (RegisterParty) bound; yields (data_addr, mgmt_addr). Skips without SEAM_GRPC_BIN.
 
-    The mgmt plane installs the `operator_keys` trust root (signed, since it's trust-bearing — see
-    `operator_token.sign_snapshot`): `register_party` refuses a fleet-wide operator since seam-runtime
+    The mgmt plane's `operator_keys` trust root comes from the signed governing root every spawn is
+    handed (`governing_root.py`, seam-runtime #1156): `register_party` refuses a fleet-wide operator since seam-runtime
     #903 Phase 1 (seam-sdk#175 / seam-runtime#996), so a dev-open plane with no token can no longer
     exercise it. The data plane is unaffected — `operator_keys` is "the sole trust root for the entire
     MANAGEMENT plane" (seamd/src/registry.rs), so `VerifyPartyAttestation` stays dev-open as before."""
-    pubkey, sig_path = sign_snapshot(REGISTRY_SNAPSHOT_PATH)
     with spawn_server(
         mgmt=True,
         log_dir=tmp_path,
-        env_extra={
-            "SEAM_REGISTRY_SNAPSHOT": REGISTRY_SNAPSHOT_PATH,
-            "SEAM_REGISTRY_SNAPSHOT_SIG": sig_path,
-            "SEAM_SNAPSHOT_PUBKEY": pubkey,
-        },
     ) as srv:
         yield srv.data_addr, srv.mgmt_addr
 

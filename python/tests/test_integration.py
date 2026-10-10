@@ -121,9 +121,12 @@ def test_budget_suspend_resume_loop(dual_plane):
     **management** plane (rt-D: `SeamCoordination.ResumeSession` is now a tombstone)."""
     data_addr, mgmt_addr = dual_plane
     client = SeamClient.connect(data_addr)
+    from operator_token import mint_operator_token
+
+    # No dev-open mgmt plane since seam-runtime #1156: the R9 approver presents an operator token.
     admin = SeamAdminClient.connect(
-        mgmt_addr
-    )  # dev-open mgmt plane — no operator token needed
+        mgmt_addr, token=mint_operator_token(["session:resume"])
+    )
     agent = Agent(bytes([42] * 32))
 
     # Open with a 1000-token allowance (data plane).
@@ -153,37 +156,43 @@ def test_budget_suspend_resume_loop(dual_plane):
 
 # ── Advisory authorize (Phase 1): live round-trips incl. DENY and TRANSFORM ──────────────────────
 #
-# The server is booted with SEAM_REGISTRY_SNAPSHOT governing the demo agent to `tools:
+# The server is booted with a tenant document governing the demo agent to `tools:
 # ["wire_transfer"]` — so an out-of-scope tool is a real registry DENY, and a memo carrying an
 # injection pattern is a real guard TRANSFORM (content mode), exactly the runtime's own
 # `crates/seamd/tests/authorize.rs` decision table but over the wire.
 
-GOVERNED_SNAPSHOT = """{{"snapshot_id":"live","capability_registry":{{
-  "manifests":[{{"agent_id":"{aid}","version":"1.0.0","protocol":"macp",
-                 "supported_modes":["macp.mode.decision.v1"],
-                 "max_scope":{{"tools":["wire_transfer"],"actions":[],
-                               "mode_cap":["macp.mode.decision.v1"]}},
-                 "compat":{{"min":1,"max":1}}}}],
-  "pins":[{{"agent_id":"{aid}","version":"1.0.0","status":"active"}}]}}}}"""
+
+def _governed_manifest(aid: str) -> dict:
+    return {
+        "agent_id": aid,
+        "version": "1",
+        "protocol": "macp",
+        "supported_modes": ["macp.mode.decision.v1"],
+        "max_scope": {
+            "tools": ["wire_transfer"],
+            "actions": [],
+            "mode_cap": ["macp.mode.decision.v1"],
+        },
+        "compat": {"min": 1, "max": 1},
+    }
 
 
 @pytest.fixture
 def governed_server(tmp_path):
-    """Spawn seam-grpc with a governed capability registry for the demo agent."""
-    from operator_token import sign_snapshot
+    """Spawn seam-grpc with a governed capability registry for the demo agent (seam-runtime #1156: a
+    signed tenant document over file://, replacing the retired SEAM_REGISTRY_SNAPSHOT)."""
+    from governing_root import default_tenant_doc, write_governance
 
-    snapshot = tmp_path / "registry_snapshot.json"
-    snapshot.write_text(GOVERNED_SNAPSHOT.format(aid=Agent(bytes([42] * 32)).aid))
-    pubkey, sig_path = sign_snapshot(str(snapshot))
+    aid = Agent(bytes([42] * 32)).aid
+    doc = default_tenant_doc()
+    reg = doc["capability_registry"]
+    reg["manifests"] = [m for m in reg["manifests"] if m["agent_id"] != aid] + [
+        _governed_manifest(aid)
+    ]
+    env = write_governance(tmp_path / "governance", tenant_doc=doc)
     with spawn_server(
         log_dir=tmp_path,
-        env_extra={
-            # This snapshot carries `capability_registry`, which is trust-bearing — so it must be
-            # signed or the runtime refuses to boot outright. See `operator_token.sign_snapshot`.
-            "SEAM_REGISTRY_SNAPSHOT": str(snapshot),
-            "SEAM_REGISTRY_SNAPSHOT_SIG": sig_path,
-            "SEAM_SNAPSHOT_PUBKEY": pubkey,
-        },
+        env_extra=env,
     ) as srv:
         yield srv.data_addr
 

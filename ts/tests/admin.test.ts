@@ -14,8 +14,7 @@ import { Agent, SeamClient } from "../src/client.js";
 import { SeamAdminClient } from "../src/admin.js";
 import { SeamRpcError, UnauthenticatedError } from "../src/errors.js";
 import {
-  REGISTRY_SNAPSHOT_PATH,
-  signSnapshot,
+  governanceEnv,
   mintOperatorToken,
   tamperSignature,
 } from "./operator_token.js";
@@ -36,30 +35,22 @@ function waitPort(port: number, timeoutMs = 8000): Promise<void> {
   });
 }
 
-/** Boot seam-grpc with both planes on distinct ports; run `fn`, then tear down. Passing a
- * `registrySnapshot` installs an `operator_keys` trust root, which CLOSES the mgmt plane onto compact-JWS
- * operator tokens (the shared SEAM_MGMT_TOKEN bearer was removed in seam-runtime #175); omit it for the
- * dev-open flow. This path is live on both pre- and post-#175 runtimes. */
+/** Boot seam-grpc with both planes on distinct ports; run `fn`, then tear down. The management plane is
+ * unlocked only for operator tokens signed by a key in the signed root's `operator_keys` (seam-runtime
+ * #1156 — no root LOCKS it, even under SEAM_DEV_INSECURE; there is no dev-open flow any more), so every
+ * call below presents one minted by `admin()`. */
 async function withPlanes(
   dataPort: number,
   mgmtPort: number,
-  registrySnapshot: string | undefined,
   fn: (dataAddr: string, mgmtUrl: string) => Promise<void>,
 ): Promise<void> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    ...governanceEnv(),
     SEAM_GRPC_LISTEN: `127.0.0.1:${dataPort}`,
     SEAM_GRPC_MGMT_LISTEN: `127.0.0.1:${mgmtPort}`,
     SEAM_DEV_INSECURE: "1",
   };
-  if (registrySnapshot) {
-    // Signed, not merely handed over: a trust-bearing snapshot is refused unsigned and the runtime
-    // will not boot at all, which surfaces here only as `no server`. See signSnapshot.
-    const [pubkey, sigPath] = signSnapshot(registrySnapshot);
-    env.SEAM_REGISTRY_SNAPSHOT = registrySnapshot;
-    env.SEAM_REGISTRY_SNAPSHOT_SIG = sigPath;
-    env.SEAM_SNAPSHOT_PUBKEY = pubkey;
-  }
   const proc = spawn(BIN!, { env, stdio: "ignore" });
   try {
     await waitPort(dataPort);
@@ -68,6 +59,12 @@ async function withPlanes(
   } finally {
     proc.kill();
   }
+}
+
+/** An admin client holding a fresh operator token for `scopes` — fresh per destructive call, since a
+ * destructive verb burns the token's jti. */
+function admin(mgmtUrl: string, ...scopes: string[]): SeamAdminClient {
+  return SeamAdminClient.connect(mgmtUrl, { token: mintOperatorToken(scopes) });
 }
 
 async function sealOne(dataAddr: string): Promise<{ subject: string; decisionId: string }> {
@@ -79,42 +76,42 @@ async function sealOne(dataAddr: string): Promise<{ subject: string; decisionId:
 }
 
 test("erasure: preview → confirm → erase (+ empty-tenant & wrong-count rejections)", { skip: SKIP }, async () => {
-  await withPlanes(8201, 8202, undefined, async (dataAddr, mgmtUrl) => {
+  await withPlanes(8201, 8202, async (dataAddr, mgmtUrl) => {
     const { subject, decisionId } = await sealOne(dataAddr);
-    const admin = SeamAdminClient.connect(mgmtUrl); // unauthenticated dev mgmt plane
-
-    const preview = await admin.previewErasure(TENANT, subject);
+    const preview = await admin(mgmtUrl, "erasure:preview").previewErasure(TENANT, subject);
     assert.ok(preview.wouldErase.includes(decisionId));
     assert.ok(!preview.alreadyErased.includes(decisionId));
     const count = BigInt(preview.wouldErase.length);
 
     // Empty tenant is refused (erasure never crosses tenants). Surfaced as a typed SeamRpcError — and,
     // being non-breaking, still a ConnectError.
-    await assert.rejects(admin.eraseSubject("", subject, count), (e: unknown) =>
+    await assert.rejects(admin(mgmtUrl, "erasure:execute").eraseSubject("", subject, count), (e: unknown) =>
       e instanceof SeamRpcError && e instanceof ConnectError);
     // Wrong confirm count is refused.
-    await assert.rejects(admin.eraseSubject(TENANT, subject, count + 1n), (e: unknown) =>
+    await assert.rejects(admin(mgmtUrl, "erasure:execute").eraseSubject(TENANT, subject, count + 1n), (e: unknown) =>
       e instanceof SeamRpcError);
 
     // Right count → populated, signed certificate.
-    const cert = await admin.eraseSubject(TENANT, subject, count);
+    const cert = await admin(mgmtUrl, "erasure:execute").eraseSubject(TENANT, subject, count);
     assert.equal(cert.subject, subject);
     assert.ok(cert.erased.includes(decisionId));
     assert.ok(cert.signature.length > 0);
     assert.ok(cert.issuerAid.length > 0);
 
     // Second preview → already erased, no new destruction.
-    const after = await admin.previewErasure(TENANT, subject);
+    const after = await admin(mgmtUrl, "erasure:preview").previewErasure(TENANT, subject);
     assert.ok(after.alreadyErased.includes(decisionId));
     assert.ok(!after.wouldErase.includes(decisionId));
   });
 });
 
 test("eraseSubjectConfirmed convenience path", { skip: SKIP }, async () => {
-  await withPlanes(8205, 8206, undefined, async (dataAddr, mgmtUrl) => {
+  await withPlanes(8205, 8206, async (dataAddr, mgmtUrl) => {
     const { subject, decisionId } = await sealOne(dataAddr);
-    const admin = SeamAdminClient.connect(mgmtUrl);
-    const cert = await admin.eraseSubjectConfirmed(TENANT, subject);
+    const cert = await admin(mgmtUrl, "erasure:preview", "erasure:execute").eraseSubjectConfirmed(
+      TENANT,
+      subject,
+    );
     assert.ok(cert.erased.includes(decisionId));
   });
 });
@@ -126,7 +123,7 @@ test(
     // The management plane authenticates compact-JWS operator tokens against the installed operator_keys
     // root (rt-D / CP-18d; the shared SEAM_MGMT_TOKEN bearer was removed in seam-runtime #175). Holds
     // against BOTH pre- and post-#175 runtimes — the operator-token path is already live.
-    await withPlanes(8203, 8204, REGISTRY_SNAPSHOT_PATH, async (_dataAddr, mgmtUrl) => {
+    await withPlanes(8203, 8204, async (_dataAddr, mgmtUrl) => {
       // previewErasure requires the erasure:preview scope (non-destructive → no jti needed).
       const token = mintOperatorToken(["erasure:preview"]);
       const subject = "aid:pubkey:ed25519:zzz"; // any subject — this pins AUTH, not the erase flow
@@ -159,12 +156,10 @@ test(
 );
 
 test("streamEvents (drain) yields the DECISION_SEALED event", { skip: SKIP }, async () => {
-  await withPlanes(8207, 8208, undefined, async (dataAddr, mgmtUrl) => {
+  await withPlanes(8207, 8208, async (dataAddr, mgmtUrl) => {
     const { decisionId } = await sealOne(dataAddr);
-    const admin = SeamAdminClient.connect(mgmtUrl);
-
     const events = [];
-    for await (const ev of admin.streamEvents({ follow: false })) events.push(ev);
+    for await (const ev of admin(mgmtUrl, "audit:read").streamEvents({ follow: false })) events.push(ev);
     assert.ok(events.length > 0, "expected at least the DECISION_SEALED event");
     const sealed = events.filter((e) => e.kind === "DECISION_SEALED");
     assert.ok(sealed.length > 0, `kinds seen: ${events.map((e) => e.kind).join(",")}`);

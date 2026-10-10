@@ -67,6 +67,8 @@ COMMITMENT = {
     "supersedes": None,
     "auth_method": "pinned-key",
     "trust_basis": "attested",
+    "committer": "",
+    "explanation": [],
 }
 
 #: `absent` is a sentinel distinct from a JSON `null`: one omits the claim, the other sets it to
@@ -214,16 +216,26 @@ def _b64(b: bytes) -> str:
     return base64.urlsafe_b64encode(b).decode().rstrip("=")
 
 
+# `seam-explanation-digest:v1` of the EMPTY explanation: F(domain) ‖ be64(0). This vector is about `exp`,
+# so its commitment deliberated nothing; the value is pinned by the spec (`eb7853dc…`).
+_EXPLANATION_DOMAIN = b"seam-explanation-digest:v1"
+_EMPTY_EXPLANATION_DIGEST = hashlib.sha256(
+    len(_EXPLANATION_DOMAIN).to_bytes(8, "big") + _EXPLANATION_DOMAIN + (0).to_bytes(8, "big")
+).digest()
+
+
 def _commitment_digest(c: dict) -> str:
     h = hashlib.sha256()
     for field in (
-        b"seam-commitment-digest:v1",
+        b"seam-commitment-digest:v2",
         c["id"].encode(),
         c["action"].encode(),
         c["authority"].encode(),
         (c["supersedes"] or "").encode(),
         c["auth_method"].encode(),
         c["trust_basis"].encode(),
+        c["committer"].encode(),
+        _EMPTY_EXPLANATION_DIGEST,
     ):
         h.update(len(field).to_bytes(8, "big"))
         h.update(field)

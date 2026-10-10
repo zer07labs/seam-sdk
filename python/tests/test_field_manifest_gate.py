@@ -362,7 +362,14 @@ def test_synthetic_map_entry_messages_are_excluded(manifests) -> None:
     fm, _ = manifests
     entries = _entries(fm)
     assert not [e for e in entries if e.startswith("FeaturesEntry/")]
-    assert not [e for e in entries if "Entry/key" in e or "Entry/value" in e]
+    # A synthetic map entry is a message whose ONLY fields are `key` and `value`. Matching on the
+    # name suffix instead would flag a real message that happens to end in `Entry` and has a `value`
+    # field (`ExplanationEntry`, seam-runtime#1255).
+    fields_by_message: dict = {}
+    for e in entries:
+        msg, _, field = e.partition("/")
+        fields_by_message.setdefault(msg, set()).add(field)
+    assert not [m for m, f in fields_by_message.items() if f == {"key", "value"}]
     assert "AuthorizeRequest/features" in entries
 
 
@@ -703,11 +710,11 @@ def test_nested_enum_in_ts_stub_trips_the_guard(scratch_stubs, tmp_path) -> None
 # ── the committed manifest's enum section, as shipped ──────────────────────────────────────────────
 
 
-def test_the_committed_manifest_enum_section_is_not_vacuous_and_covers_all_three_enums() -> (
+def test_the_committed_manifest_enum_section_is_not_vacuous_and_covers_all_four_enums() -> (
     None
 ):
     """The anti-vacuity floor: a future refactor that silently empties the enum section (or narrows it
-    to fewer than all three enums) must fail here, not slip through as a passing gate. Runs without
+    to fewer than all four enums) must fail here, not slip through as a passing gate. Runs without
     stubs on purpose, same as the field header test — a regression here must not be able to hide
     behind an absent `make generate`."""
     committed = REPO / "contract" / "field-manifest.txt"
@@ -716,7 +723,12 @@ def test_the_committed_manifest_enum_section_is_not_vacuous_and_covers_all_three
         f"only {len(entries)} enum values declared — the section emptied, or the extractor broke"
     )
     names = {e.split("#", 1)[0] for e in entries}
-    assert names == {"AuthorizeVerdict", "CollectiveVerdict", "BallotChoice"}, names
+    assert names == {
+        "AuthorizeVerdict",
+        "CollectiveVerdict",
+        "BallotChoice",
+        "ExplanationKind",
+    }, names
     # UNSPECIFIED zero values are DECLARED, never filtered — removing the fail-safe default every
     # OTHER value's fail-closed behaviour depends on is exactly as real a breaking change as removing
     # any other value.
@@ -724,6 +736,7 @@ def test_the_committed_manifest_enum_section_is_not_vacuous_and_covers_all_three
         "AuthorizeVerdict#AUTHORIZE_VERDICT_UNSPECIFIED",
         "BallotChoice#BALLOT_CHOICE_UNSPECIFIED",
         "CollectiveVerdict#COLLECTIVE_VERDICT_UNSPECIFIED",
+        "ExplanationKind#EXPLANATION_KIND_UNSPECIFIED",
     ):
         assert zero in entries, zero
 

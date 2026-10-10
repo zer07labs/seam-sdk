@@ -28,6 +28,27 @@ data class Presentation(
     val popNonce: String,
 )
 
+/**
+ * One entry of a commitment's sealed explanation, framed by [SeamCrypto.explanationDigest]. [kind] is
+ * the lowercase word `vote`, `evaluation`, `objection` or `ballot` (exactly; never the proto enum
+ * name). [confidence] and [rationaleRef] are `null` when absent — an absent confidence and a stated
+ * `0.0` are different bytes, which is the point of the digest.
+ */
+data class ExplanationEntry(
+    val kind: String,
+    val participant: String,
+    val proposalId: String,
+    val value: String,
+    val reason: String,
+    val confidence: Double? = null,
+    val rationaleRef: String? = null,
+)
+
+/**
+ * The commitment fields `seam-commitment-digest:v2` binds. [committer] is the verified AID that
+ * committed (empty when absent). Field 8 (the explanation digest) is resolved from [explanation] and
+ * [explanationDigest] (32 raw bytes) — see [SeamCrypto.verifyTct].
+ */
 data class Commitment(
     val id: String,
     val action: String,
@@ -35,6 +56,9 @@ data class Commitment(
     val supersedes: String?,
     val authMethod: String,
     val trustBasis: String,
+    val committer: String = "",
+    val explanation: List<ExplanationEntry>? = null,
+    val explanationDigest: ByteArray? = null,
 )
 
 /**
@@ -146,10 +170,84 @@ object SeamCrypto {
         )
     }
 
+    /** The `kind` words the explanation digest frames — lowercase ASCII, exactly; never the proto enum name. */
+    val EXPLANATION_KINDS: List<String> = listOf("vote", "evaluation", "objection", "ballot")
+
+    private fun be64(n: Long): ByteArray = ByteBuffer.allocate(8).putLong(n).array()
+
+    /** `F(x) = be64(len(x)) ‖ x`. */
+    private fun ByteArrayOutputStream.frame(b: ByteArray) {
+        writeBytes(be64(b.size.toLong()))
+        writeBytes(b)
+    }
+
     /**
-     * SHA-256 (hex) over a **length-prefixed** framing of a domain tag plus the commitment fields —
-     * each field preceded by its 8-byte big-endian length. Mirrors the runtime byte-for-byte, and
-     * mirrors the Go/Java/Python/TypeScript shims.
+     * `seam-explanation-digest:v1` over a sealed explanation, in sealed order (32 raw bytes):
+     * `SHA-256(F("seam-explanation-digest:v1") ‖ be64(count) ‖ Σ ENTRY)`, with
+     * `ENTRY = F(kind) ‖ F(participant) ‖ F(proposal_id) ‖ F(value) ‖ F(reason) ‖ CONF ‖ REF`,
+     * `CONF = 0x00 | 0x01 ‖ be64(IEEE-754 bits)`, `REF = 0x00 | 0x01 ‖ F(rationale_ref)`. Never sorts,
+     * never de-duplicates.
+     *
+     * Throws [IllegalArgumentException] on an unknown kind or a non-canonical confidence (NaN, ±inf,
+     * outside `[0.0, 1.0]`, or `-0.0`) rather than hashing it. Normative:
+     * `seam-runtime/docs/specs/seam-commitment-digest.v2.md`.
+     */
+    fun explanationDigest(entries: List<ExplanationEntry>): ByteArray {
+        val out = ByteArrayOutputStream()
+        out.frame("seam-explanation-digest:v1".toByteArray(Charsets.UTF_8))
+        out.writeBytes(be64(entries.size.toLong()))
+        for (e in entries) {
+            require(e.kind in EXPLANATION_KINDS) { "unknown explanation kind ${e.kind}" }
+            out.frame(e.kind.toByteArray(Charsets.UTF_8))
+            out.frame(e.participant.toByteArray(Charsets.UTF_8))
+            out.frame(e.proposalId.toByteArray(Charsets.UTF_8))
+            out.frame(e.value.toByteArray(Charsets.UTF_8))
+            out.frame(e.reason.toByteArray(Charsets.UTF_8))
+            val conf = e.confidence
+            if (conf == null) {
+                out.write(0)
+            } else {
+                val bits = java.lang.Double.doubleToRawLongBits(conf)
+                // `bits < 0` is the sign bit: refuses -0.0 (and any negative), which `conf >= 0.0` admits.
+                require(conf.isFinite() && conf >= 0.0 && conf <= 1.0 && bits >= 0L) {
+                    "non-canonical confidence $conf"
+                }
+                out.write(1)
+                out.writeBytes(be64(bits))
+            }
+            val ref = e.rationaleRef
+            if (ref == null) {
+                out.write(0)
+            } else {
+                out.write(1)
+                out.frame(ref.toByteArray(Charsets.UTF_8))
+            }
+        }
+        return sha256(out.toByteArray())
+    }
+
+    /**
+     * The explanation digest a commitment binds as field 8, checked when the entries are present
+     * (spec §Verification step 1). With [Commitment.explanation]: recomputed from the entries, and if
+     * [Commitment.explanationDigest] is ALSO given the two must agree — otherwise
+     * [IllegalArgumentException]. With only the published digest: used as published (verifies *who*
+     * and *what*, not *why*). With neither: the digest of the empty explanation.
+     */
+    internal fun commitmentExplanationDigest(c: Commitment): ByteArray {
+        val published = c.explanationDigest
+        val entries = c.explanation ?: return published ?: explanationDigest(emptyList())
+        val computed = explanationDigest(entries)
+        require(published == null || MessageDigest.isEqual(published, computed)) {
+            "explanation_digest does not match the explanation entries"
+        }
+        return computed
+    }
+
+    /**
+     * `seam-commitment-digest:v2` (hex): SHA-256 over a **length-prefixed** framing of a domain tag
+     * plus the commitment fields — each field preceded by its 8-byte big-endian length. Mirrors the
+     * runtime byte-for-byte, and mirrors the Go/Java/Python/TypeScript shims. v1 is deleted, not
+     * dual-verified. Normative: `seam-runtime/docs/specs/seam-commitment-digest.v2.md`.
      *
      * **The length prefixes are not decoration and must never be "simplified" to a separator.** The
      * fields are arbitrary text that may itself contain NUL — UTF-8 permits U+0000, and it survives
@@ -159,37 +257,40 @@ object SeamCrypto {
      * shift bytes across it and reuse a signature that was never issued for their artifact.
      * Length-prefixing makes the digest injective over the field tuple regardless of content.
      *
-     * The same rationale is recorded at `seam-trust-aitp/src/lib.rs:350-354` in the runtime. It is
-     * written out here because this comment is the only thing standing between a future maintainer
-     * and a "cleanup" that silently breaks artifact binding — and Kotlin and Java were the two shims
-     * that carried no rationale at all while Go, Python and TypeScript did.
+     * The same rationale is recorded in the runtime's `seam-trust-aitp/src/lib.rs`. It is written out
+     * here because this comment is the only thing standing between a future maintainer and a
+     * "cleanup" that silently breaks artifact binding.
      *
      * Field order is also load-bearing and must match the runtime exactly: domain, id, action,
-     * authority, supersedes, auth_method, trust_basis. Binding `authMethod`/`trustBasis` is what
-     * makes the artifact attest *who* committed it and *how* they authed, not just the decision.
-     * `ConformanceTest` asserts every one of these is bound.
+     * authority, supersedes, auth_method, trust_basis, committer, explanation_digest (the 32 RAW
+     * bytes, not hex — see [commitmentExplanationDigest]). Binding `authMethod`/`trustBasis`/
+     * `committer` is what makes the artifact attest *who* committed it and *how* they authed, and the
+     * explanation digest binds *why*. `ConformanceTest` asserts every one of these is bound.
      */
-    private fun seamCommitmentDigest(c: Commitment): String {
+    internal fun seamCommitmentDigest(c: Commitment): String {
         val h = ByteArrayOutputStream()
         val fields = listOf(
-            "seam-commitment-digest:v1".toByteArray(Charsets.UTF_8),
+            "seam-commitment-digest:v2".toByteArray(Charsets.UTF_8),
             c.id.toByteArray(Charsets.UTF_8),
             c.action.toByteArray(Charsets.UTF_8),
             c.authority.toByteArray(Charsets.UTF_8),
             (c.supersedes ?: "").toByteArray(Charsets.UTF_8),
             c.authMethod.toByteArray(Charsets.UTF_8),
             c.trustBasis.toByteArray(Charsets.UTF_8),
+            c.committer.toByteArray(Charsets.UTF_8),
+            commitmentExplanationDigest(c),
         )
-        for (f in fields) {
-            h.writeBytes(ByteBuffer.allocate(8).putLong(f.size.toLong()).array())
-            h.writeBytes(f)
-        }
+        for (f in fields) h.frame(f)
         return sha256(h.toByteArray()).joinToString("") { "%02x".format(it.toInt() and 0xff) }
     }
 
     /**
-     * Independently verify a sealed commitment's rooted TCT — zero server trust, stock crypto only. Any
-     * malformed/forged input fails closed (returns false), never throws.
+     * Independently verify a sealed commitment's rooted TCT — zero server trust, stock crypto only:
+     * the EdDSA JWS against the issuer AID's key, the self-issued claims, and that the bound
+     * `seam-commitment-digest:v2` grant matches this exact commitment (the decided content, the
+     * committer, and the sealed explanation). Any malformed/forged input fails closed (returns false),
+     * never throws — including explanation entries that disagree with the published
+     * `explanationDigest`, an unknown kind, or a non-canonical confidence.
      */
     fun verifyTct(issuerAid: String, tctJws: String, commitment: Commitment, nowS: Long): Boolean {
         return try {

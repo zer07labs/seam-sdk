@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { connect as tcpConnect } from "node:net";
 import { Agent, IssuerMismatchError, SeamClient } from "../src/client.js";
 import { SeamAdminClient } from "../src/admin.js";
+import { governanceEnv, mintOperatorToken } from "./operator_token.js";
 
 const BIN = process.env.SEAM_GRPC_BIN;
 const SKIP = !BIN && !process.env.SEAM_GRPC_ADDR;
@@ -18,6 +19,7 @@ async function withPlanes(
   const proc = spawn(BIN!, {
     env: {
       ...process.env,
+      ...governanceEnv(),
       SEAM_GRPC_LISTEN: `127.0.0.1:${dataPort}`,
       SEAM_GRPC_MGMT_LISTEN: `127.0.0.1:${mgmtPort}`,
       SEAM_DEV_INSECURE: "1",
@@ -54,7 +56,7 @@ async function withServer(port: number, fn: (addr: string) => Promise<void>): Pr
   let proc: ReturnType<typeof spawn> | undefined;
   if (BIN && !process.env.SEAM_GRPC_ADDR) {
     proc = spawn(BIN, {
-      env: { ...process.env, SEAM_GRPC_LISTEN: addr, SEAM_DEV_INSECURE: "1" },
+      env: { ...process.env, ...governanceEnv(), SEAM_GRPC_LISTEN: addr, SEAM_DEV_INSECURE: "1" },
       stdio: "ignore",
     });
     await waitPort(Number(addr.split(":")[1]));
@@ -120,10 +122,11 @@ test("session lifecycle: open → propose → vote → commit seals", { skip: SK
 
 test("6.2 budget loop: hard breach suspends, mgmt-plane resume continues and seals", { skip: !BIN }, async () => {
   // Resume moved to the management plane (rt-D: SeamCoordination.ResumeSession is now a tombstone), so
-  // this needs both planes; the dev-open mgmt plane accepts the R9 resume without an operator token.
+  // this needs both planes; since seam-runtime #1156 there is no dev-open mgmt plane, so the R9
+  // approver presents an operator token.
   await withPlanes(8217, 8218, async (dataAddr, mgmtUrl) => {
     const client = SeamClient.connect(`http://${dataAddr}`);
-    const admin = SeamAdminClient.connect(mgmtUrl);
+    const admin = SeamAdminClient.connect(mgmtUrl, { token: mintOperatorToken(["session:resume"]) });
     await client.openSession(demoAgent(), {
       sessionId: "ts-budget",
       participants: ["lead", "peer"],

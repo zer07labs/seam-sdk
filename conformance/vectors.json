@@ -32,11 +32,43 @@
         "action": "BLOCK",
         "authority": "decision.v1",
         "auth_method": "aitp-pinned-handshake",
-        "trust_basis": "test"
+        "trust_basis": "test",
+        "committer": "aid:pubkey:ed25519:GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
+        "explanation": [
+          {
+            "kind": "evaluation",
+            "participant": "fraud-v3",
+            "proposal_id": "p1",
+            "value": "BLOCK",
+            "reason": "velocity spike",
+            "confidence": null,
+            "rationale_ref": "sha256:abababababababababababababababababababababababababababababababab"
+          },
+          {
+            "kind": "evaluation",
+            "participant": "risk-v2",
+            "proposal_id": "p1",
+            "value": "REVIEW",
+            "reason": "",
+            "confidence": 0.0,
+            "rationale_ref": null
+          },
+          {
+            "kind": "vote",
+            "participant": "fraud-v3",
+            "proposal_id": "p1",
+            "value": "REJECT",
+            "reason": "limit breach",
+            "confidence": null,
+            "rationale_ref": null
+          }
+        ]
       }
     },
+    "explanation_digest_hex": "54803a97ad61731092761ae4bc54b611a6e3d88c1cef7bf58f7f0f65a25af973",
+    "commitment_digest_hex": "7015c10299e9a725136e7db04fab7e5383a20d6017e3a28cb86d3567a572d90a",
     "issuer_aid": "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
-    "signed_artifact_jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJhdWQiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJjbmYiOnsiamt0IjoiLS02SU01bDBPb3NMajl5V3NrSVNZaFVBM25fM0NVUlFrbXJZTVNoYV9jayJ9LCJleHAiOjQ4NTM2MDAwMDAsImdyYW50cyI6WyJzZWFtOmNvbW1pdG1lbnQiLCJzZWFtLWNvbW1pdG1lbnQtZGlnZXN0OmYwYzhkOWM5NzAwMjI4MDE0MWM2YTEzNGRmYjZhNmU0MTJjYTFkNjg0Y2NjYTM3ZGNlMjg3ZGYyYzhjNTBkMzQiXSwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJqdGkiOiIyMzQwMDIwZC1lMjJlLTY1ZTQtZWZkOS1iOTFkMmM1Y2I1NzMiLCJzdWIiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJ2ZXIiOiJhaXRwLzAuMiJ9.bWxVo7r5uFF3XAKdkgKoxg7YK-HXRit7MpXiyaoKtaV4bfoqaQfUEFggo7XruUHOJVkyxmbHUwsQGMVp_0YJDw"
+    "signed_artifact_jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJhdWQiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJjbmYiOnsiamt0IjoiLS02SU01bDBPb3NMajl5V3NrSVNZaFVBM25fM0NVUlFrbXJZTVNoYV9jayJ9LCJleHAiOjQ4NTM2MDAwMDAsImdyYW50cyI6WyJzZWFtOmNvbW1pdG1lbnQiLCJzZWFtLWNvbW1pdG1lbnQtZGlnZXN0OjcwMTVjMTAyOTllOWE3MjUxMzZlN2RiMDRmYWI3ZTUzODNhMjBkNjAxN2UzYTI4Y2I4NmQzNTY3YTU3MmQ5MGEiXSwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJqdGkiOiIyMzQwMDIwZC1lMjJlLTY1ZTQtZWZkOS1iOTFkMmM1Y2I1NzMiLCJzdWIiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJ2ZXIiOiJhaXRwLzAuMiJ9.bnABhqPEp_lO0MhjMmdiVJDuno5nBNZJX1xVSx-Lpk2qp-tcSCA8VHdRn25C8KhFqFJnFxKDYICX0Vxd6m9lBA"
   },
   "chain_head_attestation": {
     "inputs": {

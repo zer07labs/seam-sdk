@@ -32,6 +32,7 @@ from .client import (
     StepUsage,
     _check_idempotency_key,
     _now_ms,
+    commitment_view,
     _u32,
 )
 from .crypto import build_presentation, verify_tct
@@ -933,12 +934,6 @@ class SeamClient:
         if proof.issuer_aid != expected_issuer:
             raise IssuerMismatchError(proof.issuer_aid, expected_issuer)
         c = proof.commitment
-        commitment = {
-            "id": c.id,
-            "action": c.action,
-            "authority": c.authority,
-            "auth_method": c.auth_method,
-            "trust_basis": c.trust_basis,
-            "supersedes": c.supersedes or "",
-        }
-        return verify_tct(expected_issuer, c.signed_artifact.decode(), commitment)
+        return verify_tct(
+            expected_issuer, c.signed_artifact.decode(), commitment_view(c)
+        )

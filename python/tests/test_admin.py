@@ -8,7 +8,6 @@ tenant. The live tests are env-gated exactly like `test_integration.py`:
   * skipped otherwise (a running server can't be assumed to have the mgmt plane bound).
 """
 
-import contextlib
 from concurrent import futures
 
 import grpc
@@ -172,33 +171,21 @@ def test_erase_subject_confirmed_forwards_now_millis(recording_admin):
 # ── Live: erasure preview→confirm→erase + bearer auth (env-gated) ────────────────────────────────
 
 
-@contextlib.contextmanager
-def _spawn(log_dir, registry_snapshot: str | None = None):
-    """A live seam-grpc with BOTH planes bound, on OS-allocated ports.
-
-    Ports, readiness, teardown and log capture all belong to ``live_server.spawn_server`` — see its
-    docstring for the #85 failure that consolidated them. What stays here is only what is specific to
-    the management plane: the signed-snapshot env that CLOSES the plane.
+def _spawn(log_dir):
+    """Both planes up. The management plane is unlocked only for operator tokens signed by a key in
+    the signed root's `operator_keys` (seam-runtime #1156: no root, or no `operator_keys`, LOCKS it —
+    there is no dev-open plane any more, even under SEAM_DEV_INSECURE). `spawn_server` hands every
+    spawn the default root (`governing_root.py`), which carries this repo's golden operator keys.
     """
-    from operator_token import sign_snapshot
+    return spawn_server(mgmt=True, log_dir=log_dir)
 
-    env_extra: dict[str, str] = {}
-    if registry_snapshot:
-        # Signed, not merely handed over: a trust-bearing snapshot is refused unsigned, and the
-        # runtime will not boot at all. See `sign_snapshot`.
-        pubkey, sig_path = sign_snapshot(registry_snapshot)
-        env_extra = {
-            "SEAM_REGISTRY_SNAPSHOT": registry_snapshot,
-            "SEAM_REGISTRY_SNAPSHOT_SIG": sig_path,
-            "SEAM_SNAPSHOT_PUBKEY": pubkey,
-        }
-    # The mgmt plane binds because spawn_server(mgmt=True) sets SEAM_GRPC_MGMT_LISTEN, and
-    # SEAM_DEV_INSECURE lets it bind dev-open. Installing an `operator_keys` trust root via
-    # SEAM_REGISTRY_SNAPSHOT instead CLOSES the plane: every request must then carry a valid
-    # compact-JWS operator token (the shared SEAM_MGMT_TOKEN bearer was removed in seam-runtime
-    # #175). This path is live on both pre- and post-#175 runtimes.
-    with spawn_server(mgmt=True, log_dir=log_dir, env_extra=env_extra) as srv:
-        yield srv
+
+def _admin(mgmt_addr: str, *scopes: str) -> SeamAdminClient:
+    """An admin client holding a fresh operator token for ``scopes``. Fresh per call: a destructive
+    verb burns the token's jti, so a second destructive request needs a new client."""
+    from operator_token import mint_operator_token
+
+    return SeamAdminClient.connect(mgmt_addr, token=mint_operator_token(list(scopes)))
 
 
 def _seal_one(data_addr: str) -> tuple[str, str]:
@@ -219,34 +206,38 @@ def test_erasure_preview_confirm_erase(tmp_path):
     with _spawn(tmp_path) as srv:
         data_port, mgmt_port = srv.data_port, srv.mgmt_port
         subject, decision_id = _seal_one(f"127.0.0.1:{data_port}")
-        admin = SeamAdminClient.connect(
-            f"127.0.0.1:{mgmt_port}"
-        )  # unauthenticated dev mgmt plane
+        mgmt = f"127.0.0.1:{mgmt_port}"
 
         # Preview is non-destructive and lists the sealed record under would_erase.
-        preview = admin.preview_erasure(TENANT, subject)
+        preview = _admin(mgmt, "erasure:preview").preview_erasure(TENANT, subject)
         assert decision_id in preview.would_erase
         assert decision_id not in preview.already_erased
 
         # An empty tenant scope is refused (audit P0.1: erasure never crosses tenants). The error is a
         # typed SeamRpcError — and, being non-breaking, still a grpc.RpcError.
         with pytest.raises(SeamRpcError) as ei:
-            admin.erase_subject("", subject, len(preview.would_erase))
+            _admin(mgmt, "erasure:execute").erase_subject(
+                "", subject, len(preview.would_erase)
+            )
         assert isinstance(ei.value, grpc.RpcError)
 
         # The wrong confirm_count is refused (must equal the preview's would_erase count).
         with pytest.raises(SeamRpcError):
-            admin.erase_subject(TENANT, subject, len(preview.would_erase) + 1)
+            _admin(mgmt, "erasure:execute").erase_subject(
+                TENANT, subject, len(preview.would_erase) + 1
+            )
 
         # The right count returns a populated, signed certificate.
-        cert = admin.erase_subject(TENANT, subject, len(preview.would_erase))
+        cert = _admin(mgmt, "erasure:execute").erase_subject(
+            TENANT, subject, len(preview.would_erase)
+        )
         assert cert.subject == subject
         assert decision_id in cert.erased
         assert cert.signature  # signed, chain-anchored
         assert cert.issuer_aid
 
         # A second preview now shows it already erased — no new destruction.
-        after = admin.preview_erasure(TENANT, subject)
+        after = _admin(mgmt, "erasure:preview").preview_erasure(TENANT, subject)
         assert decision_id in after.already_erased
         assert decision_id not in after.would_erase
 
@@ -255,7 +246,7 @@ def test_erase_subject_confirmed_convenience(tmp_path):
     with _spawn(tmp_path) as srv:
         data_port, mgmt_port = srv.data_port, srv.mgmt_port
         subject, decision_id = _seal_one(f"127.0.0.1:{data_port}")
-        admin = SeamAdminClient.connect(f"127.0.0.1:{mgmt_port}")
+        admin = _admin(f"127.0.0.1:{mgmt_port}", "erasure:preview", "erasure:execute")
         cert = admin.erase_subject_confirmed(TENANT, subject)
         assert decision_id in cert.erased
 
@@ -268,13 +259,9 @@ def test_management_operator_token_auth(tmp_path):
     old fallback."""
     # Sibling module (pytest prepends the test dir to sys.path) — NOT `tests.operator_token`, which only
     # resolves under `python -m pytest` (cwd on path), not the CI's bare `pytest`.
-    from operator_token import (
-        REGISTRY_SNAPSHOT_PATH,
-        mint_operator_token,
-        tamper_signature,
-    )
+    from operator_token import mint_operator_token, tamper_signature
 
-    with _spawn(tmp_path, registry_snapshot=REGISTRY_SNAPSHOT_PATH) as srv:
+    with _spawn(tmp_path) as srv:
         mgmt_addr = srv.mgmt_addr
         # preview_erasure requires the `erasure:preview` scope (non-destructive → no jti needed).
         token = mint_operator_token(["erasure:preview"])
@@ -311,7 +298,7 @@ def test_stream_events_drains_decision_sealed(tmp_path):
     with _spawn(tmp_path) as srv:
         data_port, mgmt_port = srv.data_port, srv.mgmt_port
         _, decision_id = _seal_one(f"127.0.0.1:{data_port}")
-        admin = SeamAdminClient.connect(f"127.0.0.1:{mgmt_port}")
+        admin = _admin(f"127.0.0.1:{mgmt_port}", "audit:read")
 
         events = list(admin.stream_events(from_seq=0, follow=False))
         assert events, "expected at least the DECISION_SEALED event"

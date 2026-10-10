@@ -21,6 +21,7 @@ import {
   KNOWN_KINDS,
   verifyStreamedRecordDigest,
 } from "../src/admin.js";
+import { governanceEnv, mintOperatorToken } from "./operator_token.js";
 import { RecordDigestStripError } from "../src/crypto.js";
 
 const vectors = JSON.parse(
@@ -238,6 +239,7 @@ test(
     const proc = spawn(BIN!, {
       env: {
         ...process.env,
+      ...governanceEnv(),
         SEAM_GRPC_LISTEN: `127.0.0.1:${dataPort}`,
         SEAM_GRPC_MGMT_LISTEN: `127.0.0.1:${mgmtPort}`,
         SEAM_DEV_INSECURE: "1",
@@ -248,7 +250,9 @@ test(
       await waitPort(dataPort);
       await waitPort(mgmtPort);
       const data = SeamClient.connect(`http://127.0.0.1:${dataPort}`);
-      const admin = SeamAdminClient.connect(`http://127.0.0.1:${mgmtPort}`);
+      const admin = SeamAdminClient.connect(`http://127.0.0.1:${mgmtPort}`, {
+        token: mintOperatorToken(["audit:read"]),
+      });
       const agent = new Agent(new Uint8Array(32).fill(42));
 
       // Interactive open → SESSION_LIFECYCLE; one-shot decision → v2 DECISION_SEALED.
