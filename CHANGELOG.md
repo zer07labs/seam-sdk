@@ -24,6 +24,11 @@ than trusting a summary here.
   `fsync`, then a hard-link publish that refuses any existing path, symlinks included. The seed is never
   returned. `load_identity_file(path=None)` reads it back (or `$SEAM_BOOTSTRAP_FILE`) into a
   `LoadedIdentity` holding an `Agent`. The SDK now owns this schema; adapters delegate to it.
+- **A client bound to an `Agent` sends the request credential by default (Python + TS, #202).**
+  `SeamClient(channel, agent=...)` / `SeamClient.connect(target, agent=...)` (sync and aio), and
+  `new SeamClient(transport, session, { agent })` / `SeamClient.connect(baseUrl, { agent })` in TS, attach that
+  agent's `seam-request-call-v1` credential on all 16 subject-scoped verbs when the call passes no
+  `credential=`; an explicit `credential=` still overrides it. Unbound clients are unchanged (opt-in per call).
 
 ## 0.43.2 — 2026-10-10
 

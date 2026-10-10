@@ -193,7 +193,15 @@ def _u32(value: int, field: str) -> int:
 class SeamClient:
     """A high-level client over a gRPC channel to a Seam server."""
 
-    def __init__(self, channel: grpc.Channel):
+    # Class-level default so a client built without ``__init__`` (``object.__new__`` in tests and
+    # downstream doubles) reads as unbound rather than raising AttributeError.
+    _agent: Optional[Agent] = None
+
+    def __init__(self, channel: grpc.Channel, *, agent: Optional[Agent] = None):
+        # ``agent`` binds this client to one identity (seam-sdk#202): every subject-scoped verb then
+        # attaches that agent's ``seam-request-call-v1`` credential unless the call passes its own
+        # ``credential=``. Unbound (the default), the credential stays opt-in per call, as before.
+        self._agent = agent
         self._ch = channel
         # Stubs are wrapped so server errors surface as typed ``SeamRpcError`` subclasses (still
         # ``grpc.RpcError``) instead of bare status codes.
@@ -216,16 +224,21 @@ class SeamClient:
 
     @classmethod
     def connect(
-        cls, target: str, *, credentials: Optional[grpc.ChannelCredentials] = None
+        cls,
+        target: str,
+        *,
+        credentials: Optional[grpc.ChannelCredentials] = None,
+        agent: Optional[Agent] = None,
     ) -> "SeamClient":
         """Connect to a Seam data-plane endpoint. Plaintext by default (the dev/loopback path); pass
-        ``credentials=grpc.ssl_channel_credentials()`` (or a configured creds object) to use TLS."""
+        ``credentials=grpc.ssl_channel_credentials()`` (or a configured creds object) to use TLS.
+        ``agent`` binds the client to that identity — see :meth:`__init__`."""
         channel = (
             grpc.secure_channel(target, credentials)
             if credentials is not None
             else grpc.insecure_channel(target)
         )
-        return cls(channel)
+        return cls(channel, agent=agent)
 
     def close(self) -> None:
         """Close the underlying channel.
@@ -428,9 +441,12 @@ class SeamClient:
         *,
         timeout: float,
     ) -> Optional[list]:
-        """The gRPC ``metadata=`` value for a subject-scoped call — ``None`` unless ``credential``
-        is supplied, the whole per-request-credential feature being opt-in (#508). Reuses the same
+        """The gRPC ``metadata=`` value for a subject-scoped call. An explicit ``credential`` wins;
+        otherwise the client's bound agent (seam-sdk#202) is used; with neither it is ``None`` and no
+        credential is sent — opt-in per call on an unbound client, as since #508. Reuses the same
         cached/admitted ticket :meth:`authorize` would for this agent; never mints a second one."""
+        if credential is None:
+            credential = self._agent
         if credential is None:
             return None
         ticket = self._ticket_for(credential, timeout)
@@ -496,7 +512,7 @@ class SeamClient:
         message count (0 means the server default, currently 32 — the proto's semantics, so the
         server owns the number); ``limits`` adds the other 6.2 dimensions. ``on_behalf_of`` binds
         end-user data subjects to the session (see :meth:`run_decision`). ``credential`` is the
-        opt-in per-request identity (#508) — see :meth:`get_decision`."""
+        per-request identity (#508), defaulting to the bound agent (#202) — see :meth:`get_decision`."""
         req = pb.OpenSessionRequest(
             session_id=session_id,
             participants=list(participants),
@@ -862,8 +878,9 @@ class SeamClient:
     ) -> pb.DecisionRecordView:
         """``credential``, when supplied, carries the caller's identity in band (#508) — the sound
         posture on a deployment that strips ``x-seam-subject`` at its edge. Reuses the same
-        cached/admitted ticket :meth:`authorize` would for this agent. Omitted (the default): no
-        credential is sent, and behavior is unchanged."""
+        cached/admitted ticket :meth:`authorize` would for this agent. Omitted, it defaults to the
+        agent the client is bound to (``SeamClient(channel, agent=...)``, seam-sdk#202); on an unbound
+        client no credential is sent."""
         md = self._credential_md(
             credential,
             "/seam.api.v1.SeamCoordination/GetDecision",
