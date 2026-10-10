@@ -28,7 +28,7 @@ import {
   type ListLegalHoldsResponse,
   type TenantView,
   type AuditEntry,
-  type Anchor,
+  type Anchor, type RedriveOutcome,
 } from "../gen/seam/api/v1/seam_pb.js";
 // The event messages now live in the canonical seam.event.v1 package (imported by seam.api.v1).
 import {
@@ -527,9 +527,42 @@ export class SeamAdminClient {
       throw toSeamError(e);
     }
   }
+
+  /**
+   * Re-drive existing outbox events by reference (seam-runtime #1176, DLQ retry option C).
+   *
+   * Names events by their coordinates — `tenant` plus the global outbox `fromSeq` (a DLQ letter's
+   * `tenant`/`seq` headers), optionally a bounded inclusive range up to `toSeq` (at most 1000 seqs), or a
+   * single seq cross-checked by `eventId`. The runtime re-reads ITS OWN stored row for each and appends one
+   * advisory `EVENT_REDRIVEN` wrapper carrying it verbatim; a DLQ letter's own bytes never reach the
+   * stream. Resolves to one outcome per requested seq, in seq order, whose `status` is `redriven` |
+   * `not_found` | `pruned` | `not_redrivable` | `event_id_mismatch`. Requires the `events:redrive`
+   * operator scope (not `events:consume`).
+   */
+  async redriveEvents(
+    tenant: string,
+    fromSeq: bigint,
+    opts?: UnaryCallOptions & { toSeq?: bigint; eventId?: string },
+  ): Promise<RedriveOutcome[]> {
+    if (!tenant) {
+      throw new InvalidArgumentError(
+        "redriveEvents: tenant is required — the tenant whose events to re-drive",
+        Code.InvalidArgument,
+      );
+    }
+    try {
+      const res = await this.events.redriveEvents(
+        { tenant, fromSeq, toSeq: opts?.toSeq, eventId: opts?.eventId },
+        call(opts),
+      );
+      return res.outcomes;
+    } catch (e) {
+      throw toSeamError(e);
+    }
+  }
 }
 
-export type { Anchor, GrantView };
+export type { Anchor, GrantView, RedriveOutcome };
 
 // ── Enrolment proof-of-possession (#205) ─────────────────────────────────────────────────────────
 // Kept at the end of the file so it shifts no line cited by COMPATIBILITY.md / DECISIONS.md above it.

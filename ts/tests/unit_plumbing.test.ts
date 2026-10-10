@@ -155,6 +155,7 @@ const ADMIN_CALLS: Record<
   enforceRetention: (a, o) => a.enforceRetention(1n, 2n, 3n, undefined, o),
   auditTrail: (a, o) => a.auditTrail(o),
   reportEventsConsumed: (a, o) => a.reportEventsConsumed(1n, o),
+  redriveEvents: (a, o) => a.redriveEvents("acme", 1n, o),
 };
 
 test("every admin wrapper passes the 30s default deadline, and an override, on every RPC it makes", async () => {
@@ -818,4 +819,29 @@ test("submitVote carries the vote reason (#207), and sends empty when omitted", 
   await client.submitVote("s1", "a", "p1", "yes");
   assert.equal(calls[0]!.input.reason, "exceeds the approved budget");
   assert.equal(calls[1]!.input.reason, "");
+});
+
+// ── #1176: redriveEvents (DLQ retry by reference) ─────────────────────────────────────────────────
+
+test("redriveEvents sends tenant/fromSeq, and toSeq/eventId only when given; refuses an empty tenant", async () => {
+  const calls: Recorded[] = [];
+  const admin = new SeamAdminClient(
+    fakeTransport(calls, () => ({ outcomes: [{ seq: 7n, status: "redriven", redriveSeq: 99n }] })),
+  );
+  const out = await admin.redriveEvents("acme", 7n);
+  assert.equal(calls[0]!.method, "RedriveEvents");
+  const one = calls[0]!.input as { tenant: string; fromSeq: bigint; toSeq?: bigint; eventId?: string };
+  assert.equal(one.tenant, "acme");
+  assert.equal(one.fromSeq, 7n);
+  assert.equal(one.toSeq, undefined);
+  assert.equal(one.eventId, undefined);
+  assert.equal(out[0]!.status, "redriven");
+
+  await admin.redriveEvents("acme", 7n, { toSeq: 9n });
+  await admin.redriveEvents("acme", 7n, { eventId: "ev-1" });
+  assert.equal((calls[1]!.input as { toSeq?: bigint }).toSeq, 9n);
+  assert.equal((calls[2]!.input as { eventId?: string }).eventId, "ev-1");
+
+  await assert.rejects(admin.redriveEvents("", 7n), (e: unknown) => e instanceof InvalidArgumentError);
+  assert.equal(calls.length, 3);
 });

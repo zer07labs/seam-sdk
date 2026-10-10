@@ -67,6 +67,7 @@ export type {
   DecisionResponse,
   ErasurePreview,
   GrantView,
+  RedriveOutcome,
   ReplayView,
   SessionStatusResponse,
   SessionStep,
@@ -87,6 +88,7 @@ export {
   DecisionResponseSchema,
   ErasurePreviewSchema,
   GrantViewSchema,
+  RedriveOutcomeSchema,
   ReplayViewSchema,
   SessionStatusResponseSchema,
   SessionStepSchema,
@@ -101,6 +103,7 @@ export type {
   ChainHeadAttestation,
   DecisionSealed,
   ErasureCertificate,
+  EventRedriven,
   SeamEvent,
   SessionLifecycle,
 } from "../gen/seam/event/v1/seam_event_pb.js";
@@ -108,6 +111,7 @@ export {
   ChainHeadAttestationSchema,
   DecisionSealedSchema,
   ErasureCertificateSchema,
+  EventRedrivenSchema,
   SeamEventSchema,
   SessionLifecycleSchema,
 } from "../gen/seam/event/v1/seam_event_pb.js";

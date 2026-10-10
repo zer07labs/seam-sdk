@@ -365,6 +365,15 @@ ProposalRequest/proposal_id
 ProposalRequest/proposer
 ProposalRequest/session_id
 ProposalRequest/usage
+RedriveEventsRequest/event_id
+RedriveEventsRequest/from_seq
+RedriveEventsRequest/tenant
+RedriveEventsRequest/to_seq
+RedriveEventsResponse/outcomes
+RedriveOutcome/event_id
+RedriveOutcome/redrive_seq
+RedriveOutcome/seq
+RedriveOutcome/status
 RegisterContextRequest/content
 RegisterContextRequest/derived_from
 RegisterContextRequest/fidelity

@@ -127,6 +127,10 @@ ErasureCertificate/held
 ErasureCertificate/issuer_aid
 ErasureCertificate/signature
 ErasureCertificate/subject
+EventRedriven/event
+EventRedriven/original_event_id
+EventRedriven/original_kind
+EventRedriven/original_seq
 LearningDecision/algorithm_arm
 LearningDecision/algorithm_id
 LearningDecision/candidate
@@ -157,6 +161,7 @@ SeamEvent/decision_id
 SeamEvent/digest
 SeamEvent/erasure_certificate
 SeamEvent/event_id
+SeamEvent/event_redriven
 SeamEvent/kind
 SeamEvent/learning_decision
 SeamEvent/learning_outcome
