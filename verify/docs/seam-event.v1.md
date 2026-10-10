@@ -1,8 +1,6 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ ef2a56e tracking train/0.44.0 (refreshed 2026-10-10).
-     Pinned AHEAD of the default branch, deliberately: the runtime 0.44.0 train (seam-runtime#1269) merges and
-     dispatches the SDK release in one step, so the copy has to be on SDK main first. The exception ends itself
-     when the train squash-merges (the file becomes byte-identical on both refs). Two movements since the prior
-     default-branch pin (074ddd3):
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 8a65349 (refreshed 2026-10-10).
+     Two movements since the prior default-branch pin (074ddd3), both landed with the runtime 0.44.0 train
+     (seam-runtime#1269):
      1. seam-runtime#1205/#1196: the system partition (wire `tenant == ""`) now carries its own
         CHAIN_HEAD_ATTESTATION, envelope and payload `tenant` both `""`, the third tenant-less kind. A verifier
         under `--issuer` requires a covering attestation for every partition in the window, `""` included.
