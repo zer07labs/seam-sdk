@@ -85,9 +85,18 @@ export interface UnaryCallOptions {
 export interface CredentialedCallOptions extends UnaryCallOptions {
   /** Carries the caller's identity in band, alongside an already-admitted ticket — the sound posture
    * on a deployment that strips `x-seam-subject` at its edge (`SEAM_SUBJECT_HEADERS=deny`, #710).
-   * Reuses the same cached/admitted ticket {@link SeamClient.authorize} would for this agent. Omitted
-   * (the default): no credential is sent, behavior unchanged. */
+   * Reuses the same cached/admitted ticket {@link SeamClient.authorize} would for this agent. Omitted,
+   * it defaults to the agent the client is bound to ({@link SeamClientOptions.agent}, seam-sdk#202);
+   * on an unbound client no credential is sent. */
   credential?: Agent;
+}
+
+/** Options for {@link SeamClient.connect} and the {@link SeamClient} constructor. */
+export interface SeamClientOptions {
+  /** Binds the client to one identity (seam-sdk#202): every subject-scoped verb then attaches this
+   * agent's `seam-request-call-v1` credential unless the call passes its own `credential`. Unbound
+   * (the default), the credential stays opt-in per call. */
+  agent?: Agent;
 }
 
 /** {@link CredentialedCallOptions} plus `submitCommit`'s write-side override hint (#141) —
@@ -583,10 +592,15 @@ export class SeamClient {
   // constructed over an externally-supplied transport owns no session and `close()` is a no-op.
   private readonly session?: Http2SessionManager;
 
+  // The identity subject-scoped verbs default their `credential` to (seam-sdk#202), if bound.
+  private readonly agent?: Agent;
+
   constructor(
     transport: ReturnType<typeof createGrpcTransport>,
     session?: Http2SessionManager,
+    options?: SeamClientOptions,
   ) {
+    this.agent = options?.agent;
     this.admission = createClient(SeamAdmission, transport);
     this.coord = createClient(SeamCoordination, transport);
     this.trust = createClient(SeamTrust, transport);
@@ -596,7 +610,7 @@ export class SeamClient {
   }
 
   /** Connect to a Seam gRPC endpoint (e.g. `http://127.0.0.1:8090`, or `https://…` for TLS). */
-  static connect(baseUrl: string): SeamClient {
+  static connect(baseUrl: string, options?: SeamClientOptions): SeamClient {
     // An explicit session manager (rather than the transport's internal one) is the only public
     // path connect-node offers to tear the HTTP/2 session down — it is what makes close() real.
     const session = new Http2SessionManager(baseUrl);
@@ -607,6 +621,7 @@ export class SeamClient {
         sessionManager: session,
       }),
       session,
+      options,
     );
   }
 
@@ -788,7 +803,7 @@ export class SeamClient {
   // ── The per-request credential (`seam-request-call-v1`, #508) ────────────────────────────────
 
   /** The headers one subject-scoped call's per-request credential rides on, or `undefined` when no
-   * `credential` was supplied (the common case — unaffected). `resourceId` is the verb's id for a
+   * `credential` was supplied and the client is not bound to an agent (seam-sdk#202). `resourceId` is the verb's id for a
    * bodyless read (`getDecision`'s `decisionId` and friends); pass `""` for a bodied verb, whose id
    * lives inside `body` instead — gRPC leaves `resourceId` empty there and binds the WHOLE request
    * message instead (see {@link requestSigPayload} in `crypto.ts`). `body` is the exact schema +
@@ -805,6 +820,7 @@ export class SeamClient {
     opts: UnaryCallOptions | undefined,
     body?: { schema: Desc; init: MessageInitShape<Desc> },
   ): Promise<Record<string, string> | undefined> {
+    credential ??= this.agent;
     if (!credential) return undefined;
     const cached = this.tickets.get(credential.aid);
     const ticket =

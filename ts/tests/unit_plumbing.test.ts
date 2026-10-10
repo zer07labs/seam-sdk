@@ -480,6 +480,48 @@ test("credential=: a different credential's key does not verify the signature", 
   }
 });
 
+// ── A client bound to an Agent (seam-sdk#202): the bound agent is the default credential ─────────
+
+function assertSignedBy(name: string, spec: CredentialSpec, call: Recorded, signer: Agent): void {
+  const headers = call.headers as Record<string, string> | undefined;
+  assert.ok(headers, `${name}: no headers on a bound client`);
+  const sig = Buffer.from(headers!["x-seam-call-sig-bin"]!, "base64");
+  const payload = requestSigPayload(
+    CREDENTIAL_TICKET,
+    spec.rpc,
+    spec.resourceId ?? "",
+    expectedBodyDigest(spec, call.input),
+  );
+  assert.ok(ed25519.verify(sig, payload, ed25519.getPublicKey(signer.seed)), `${name}: wrong signer`);
+}
+
+test("bound agent: every target verb attaches its credential, and an explicit credential wins", async () => {
+  const bound = new Agent(new Uint8Array(32).fill(3));
+  const explicit = new Agent(new Uint8Array(32).fill(5));
+  for (const [name, spec] of Object.entries(CREDENTIAL_CALLS)) {
+    const calls: Recorded[] = [];
+    const client = new SeamClient(fakeTransport(calls, minimalHandle), undefined, { agent: bound });
+    seedCredentialTicket(client, bound.aid);
+    seedCredentialTicket(client, explicit.aid);
+
+    await spec.invoke(client, undefined);
+    assertSignedBy(name, spec, calls.find((c) => c.method === name)!, bound);
+
+    calls.length = 0;
+    await spec.invoke(client, explicit);
+    const call = calls.find((c) => c.method === name)!;
+    assertSignedBy(name, spec, call, explicit);
+    const sig = Buffer.from((call.headers as Record<string, string>)["x-seam-call-sig-bin"]!, "base64");
+    const payload = requestSigPayload(
+      CREDENTIAL_TICKET,
+      spec.rpc,
+      spec.resourceId ?? "",
+      expectedBodyDigest(spec, call.input),
+    );
+    assert.equal(ed25519.verify(sig, payload, ed25519.getPublicKey(bound.seed)), false, `${name}: bound key used`);
+  }
+});
+
 // ── Budget default: 0 ⇒ the server owns the default; the client never re-states 32 ───────────────
 
 test("openSession / resumeSession send budget 0 when unspecified (the proto owns the default)", async () => {

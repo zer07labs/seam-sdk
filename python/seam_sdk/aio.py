@@ -102,7 +102,15 @@ class _AioMappedStub:
 class SeamClient:
     """A high-level async client over a ``grpc.aio`` channel to a Seam server."""
 
-    def __init__(self, channel: grpc.aio.Channel):
+    # Class-level default so a client built without ``__init__`` (``object.__new__`` in tests and
+    # downstream doubles) reads as unbound rather than raising AttributeError.
+    _agent: Optional[Agent] = None
+
+    def __init__(self, channel: grpc.aio.Channel, *, agent: Optional[Agent] = None):
+        # ``agent`` binds this client to one identity (seam-sdk#202): every subject-scoped verb then
+        # attaches that agent's ``seam-request-call-v1`` credential unless the call passes its own
+        # ``credential=``. Unbound (the default), the credential stays opt-in per call, as before.
+        self._agent = agent
         self._ch = channel
         self._admission = _AioMappedStub(rpc.SeamAdmissionStub(channel))
         self._coord = _AioMappedStub(rpc.SeamCoordinationStub(channel))
@@ -127,16 +135,21 @@ class SeamClient:
 
     @classmethod
     def connect(
-        cls, target: str, *, credentials: Optional[grpc.ChannelCredentials] = None
+        cls,
+        target: str,
+        *,
+        credentials: Optional[grpc.ChannelCredentials] = None,
+        agent: Optional[Agent] = None,
     ) -> "SeamClient":
         """Connect to a Seam data-plane endpoint. Plaintext by default (the dev/loopback path); pass
-        ``credentials=grpc.ssl_channel_credentials()`` (or a configured creds object) to use TLS."""
+        ``credentials=grpc.ssl_channel_credentials()`` (or a configured creds object) to use TLS.
+        ``agent`` binds the client to that identity — see :meth:`__init__`."""
         channel = (
             grpc.aio.secure_channel(target, credentials)
             if credentials is not None
             else grpc.aio.insecure_channel(target)
         )
-        return cls(channel)
+        return cls(channel, agent=agent)
 
     async def close(self) -> None:
         """Close the underlying channel. Idempotent — grpc.aio tolerates a repeated close, so
@@ -316,6 +329,8 @@ class SeamClient:
         timeout: float,
     ) -> Optional[list]:
         """The async twin of :meth:`seam_sdk.SeamClient._credential_md`."""
+        if credential is None:
+            credential = self._agent
         if credential is None:
             return None
         ticket = await self._ticket_for(credential, timeout)

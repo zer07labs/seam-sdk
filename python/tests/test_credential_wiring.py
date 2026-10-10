@@ -307,3 +307,88 @@ def test_submit_vote_carries_the_reason(aio: bool) -> None:
     assert seen["SubmitVote"][0].reason == "exceeds the approved budget"
     run()
     assert seen["SubmitVote"][0].reason == ""
+
+
+# ── A client bound to an Agent (seam-sdk#202) ───────────────────────────────────────────────────
+# Bound: every target verb attaches the bound agent's credential with no ``credential=`` at all,
+# and an explicit ``credential=`` still wins. The unbound default is pinned by the two tests above.
+
+
+def _bound_sync(seen: dict, bound: Agent, explicit: Agent) -> SeamClient:
+    client = SeamClient.connect("127.0.0.1:1", agent=bound)
+    client._coord = _Recorder(seen)
+    client._authz = _Recorder(seen)
+    client._presentation = lambda agent, timeout=None: pb.PinnedPresentation()  # type: ignore
+    _seed_ticket(client._tickets, bound.aid)
+    _seed_ticket(client._tickets, explicit.aid)
+    return client
+
+
+def test_sync_bound_agent_is_the_default_credential_on_every_verb() -> None:
+    bound, explicit = Agent(CRED_SEED), Agent(OTHER_CRED_SEED)
+    for verb, spec in CALLS.items():
+        seen: dict = {}
+        client = _bound_sync(seen, bound, explicit)
+
+        spec["invoke"](client, None)
+        _assert_credential_sent_and_verifies(seen, verb, spec, bound)
+
+        spec["invoke"](client, explicit)
+        _assert_credential_sent_and_verifies(seen, verb, spec, explicit)
+        client.close()
+
+
+def test_async_bound_agent_is_the_default_credential_on_every_verb() -> None:
+    bound, explicit = Agent(CRED_SEED), Agent(OTHER_CRED_SEED)
+
+    async def scenario() -> None:
+        for verb, spec in CALLS.items():
+            seen: dict = {}
+            client = AioSeamClient.connect("127.0.0.1:1", agent=bound)
+            client._coord = _AioRecorder(seen)
+            client._authz = _AioRecorder(seen)
+
+            async def _fake_presentation(agent, timeout=None):
+                return pb.PinnedPresentation()
+
+            client._presentation = _fake_presentation  # type: ignore[method-assign]
+            _seed_ticket(client._tickets, bound.aid)
+            _seed_ticket(client._tickets, explicit.aid)
+
+            await spec["invoke"](client, None)
+            _assert_credential_sent_and_verifies(seen, verb, spec, bound)
+
+            await spec["invoke"](client, explicit)
+            _assert_credential_sent_and_verifies(seen, verb, spec, explicit)
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_an_explicit_credential_overrides_the_bound_one_not_merely_adds_to_it() -> None:
+    bound, explicit = Agent(CRED_SEED), Agent(OTHER_CRED_SEED)
+    seen: dict = {}
+    client = _bound_sync(seen, bound, explicit)
+    client.get_decision("d1", credential=explicit)
+    sig = dict(seen["GetDecision"][1]["metadata"])["x-seam-call-sig-bin"]
+    payload = request_sig_payload(TICKET, CALLS["GetDecision"]["rpc"], "d1", "")
+    with pytest.raises(InvalidSignature):
+        Ed25519PrivateKey.from_private_bytes(bound.seed).public_key().verify(
+            sig, payload
+        )
+    client.close()
+
+
+def test_the_constructor_binds_too() -> None:
+    import grpc
+
+    bound = Agent(CRED_SEED)
+    client = SeamClient(grpc.insecure_channel("127.0.0.1:1"), agent=bound)
+    seen: dict = {}
+    client._coord = _Recorder(seen)
+    _seed_ticket(client._tickets, bound.aid)
+    client.get_commitment_proof("d1")
+    _assert_credential_sent_and_verifies(
+        seen, "GetCommitmentProof", CALLS["GetCommitmentProof"], bound
+    )
+    client.close()
