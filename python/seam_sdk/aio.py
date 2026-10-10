@@ -921,12 +921,15 @@ class SeamClient:
         decision_id: str,
         expected_issuer: str,
         *,
+        credential: Optional[Agent] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> bool:
         """Async twin of :meth:`seam_sdk.SeamClient.verify_decision` — zero-server-trust local TCT
         verification against the caller-pinned issuer; raises :class:`IssuerMismatchError` on an
         attempted key substitution."""
-        proof = await self.get_commitment_proof(decision_id, timeout=timeout)
+        proof = await self.get_commitment_proof(
+            decision_id, credential=credential, timeout=timeout
+        )
         if proof.issuer_aid != expected_issuer:
             raise IssuerMismatchError(proof.issuer_aid, expected_issuer)
         c = proof.commitment

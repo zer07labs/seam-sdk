@@ -392,3 +392,31 @@ def test_the_constructor_binds_too() -> None:
         seen, "GetCommitmentProof", CALLS["GetCommitmentProof"], bound
     )
     client.close()
+
+
+@pytest.mark.parametrize("aio", [False, True], ids=["sync", "aio"])
+def test_verify_decision_passes_its_credential_to_the_proof_fetch(aio: bool) -> None:
+    """A credential-only partner calling verify_decision directly needs the proof read signed."""
+    credential = Agent(CRED_SEED)
+    seen: dict = {}
+    if aio:
+
+        async def run() -> None:
+            client = AioSeamClient.connect("127.0.0.1:1")
+            client._coord = _AioRecorder(seen)
+            _seed_ticket(client._tickets, credential.aid)
+            with pytest.raises(Exception):
+                await client.verify_decision("d1", "aid:x", credential=credential)
+            await client.close()
+
+        asyncio.run(run())
+    else:
+        client = SeamClient.connect("127.0.0.1:1")
+        client._coord = _Recorder(seen)
+        _seed_ticket(client._tickets, credential.aid)
+        with pytest.raises(Exception):
+            client.verify_decision("d1", "aid:x", credential=credential)
+        client.close()
+    _assert_credential_sent_and_verifies(
+        seen, "GetCommitmentProof", CALLS["GetCommitmentProof"], credential
+    )
