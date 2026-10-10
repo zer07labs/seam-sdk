@@ -45,6 +45,12 @@ from .crypto import (
     verify_chain_head_attestation,
     verify_tct,
 )
+from .identity import (
+    IdentityFileError,
+    LoadedIdentity,
+    create_identity_file,
+    load_identity_file,
+)
 from .errors import (
     AlreadyExistsError,
     CanonicalizationError,
@@ -69,6 +75,10 @@ from .errors import (
 
 __all__ = [
     "Agent",
+    "create_identity_file",
+    "load_identity_file",
+    "LoadedIdentity",
+    "IdentityFileError",
     "SeamClient",
     "SeamAdminClient",
     "BudgetLimits",

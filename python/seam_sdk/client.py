@@ -8,6 +8,7 @@ server trust beyond the fetch.
 from __future__ import annotations
 
 import json
+import secrets
 import threading
 import warnings
 from dataclasses import dataclass
@@ -92,6 +93,12 @@ class Agent:
             raise ValueError("agent seed must be 32 bytes")
         self.seed = seed
         self._aid: Optional[str] = None
+
+    @classmethod
+    def generate(cls) -> "Agent":
+        """A new agent identity from 32 CSPRNG bytes (``secrets.token_bytes``). To persist it, use
+        :func:`seam_sdk.identity.create_identity_file`, which generates and writes in one step."""
+        return cls(secrets.token_bytes(32))
 
     @property
     def aid(self) -> str:
