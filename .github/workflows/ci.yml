@@ -245,12 +245,54 @@ jobs:
     runs-on: ubuntu-latest
     # Bounded because this job SPAWNS A SERVER. If the binary ever stops recognising a flag and
     # starts serving instead of exiting, an unbounded job waits on the 6-hour platform default.
-    timeout-minutes: 20
+    # 45, not 20, only while SEAM_RUNTIME_BUILD_REF is set: a cold `cargo build --release` of seamd
+    # takes most of the old budget by itself. Back to 20 when the pin goes.
+    timeout-minutes: 45
     permissions:
       packages: read
+    env:
+      # PINNED for the runtime 0.44.0 train (seam-runtime#1269), alongside the Makefile's BUF_MODULE pin.
+      # The train changes the commitment digest to v2 (#802/#804) and merges + dispatches the SDK release
+      # in one step, so SDK main has to pass against the TRAIN's server before `seamd:main` carries it —
+      # `seamd:main` still seals v1 and `verify_decision` would refuse every decision. images.yml pushes
+      # only on main, so there is no train image; seam-grpc is built from source at this ref instead
+      # (agreed with the runtime train owner: this repo is public, so its minutes are free).
+      # UN-PIN after the train merges: set this to '' (the image path below takes over again), drop the
+      # timeout back to 20, and un-pin BUF_MODULE in the Makefile in the same change.
+      SEAM_RUNTIME_BUILD_REF: ef2a56e65e162753f6d7a0f19a1aadeb5396d195
     steps:
       - uses: actions/checkout@v4
+      - name: Mint a seam-deps-bot App token, scoped to seam-runtime
+        if: env.SEAM_RUNTIME_BUILD_REF != ''
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.SEAM_BOT_APP_ID }}
+          private-key: ${{ secrets.SEAM_BOT_PRIVATE_KEY }}
+          owner: zer07labs
+          repositories: seam-runtime
+      - name: check out seam-runtime at the pinned ref
+        if: env.SEAM_RUNTIME_BUILD_REF != ''
+        uses: actions/checkout@v4
+        with:
+          repository: zer07labs/seam-runtime
+          ref: ${{ env.SEAM_RUNTIME_BUILD_REF }}
+          token: ${{ steps.app.outputs.token }}
+          path: _seam-runtime
+          persist-credentials: false
+      - name: build seam-grpc from source (the same recipe as seam-runtime's Dockerfile)
+        if: env.SEAM_RUNTIME_BUILD_REF != ''
+        working-directory: _seam-runtime
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends protobuf-compiler pkg-config
+          rustup toolchain install 1.90 --profile minimal
+          cargo +1.90 build --release -p seamd --features postgres --bin seam-grpc
+          cp target/release/seam-grpc "$GITHUB_WORKSPACE/seam-grpc"
+          chmod +x "$GITHUB_WORKSPACE/seam-grpc"
+          ldd "$GITHUB_WORKSPACE/seam-grpc"
       - name: lift seam-grpc out of the published seamd image
+        if: env.SEAM_RUNTIME_BUILD_REF == ''
         env:
           # The repository's OWN token, and nothing else. `seamd` is an `internal` package, which a
           # sibling repo's GITHUB_TOKEN can read given `packages: read` above — verified on this
