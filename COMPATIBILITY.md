@@ -62,13 +62,13 @@ boundary above, that means an SDK ≥ 0.33.2 needs a runtime image built from se
 
 | Consumer | Constraint on `seam-sdk` | Verified at |
 |---|---|---|
-| `seam-adapters` (`seam-agent-core[sdk]`) | `seam-sdk>=0.40.1,<0.41` | `seam-adapters/core/pyproject.toml:61` |
-| `seam-aegis` | `seam-agent-core[sdk]>=0.10,<0.11` (reaches this SDK transitively) | `seam-aegis/pyproject.toml:56` |
+| `seam-adapters` (`seam-agent-core[sdk]`) | `seam-sdk>=0.43.1,<0.44` | `seam-adapters/core/pyproject.toml:67` |
+| `seam-aegis` | `seam-agent-core[sdk]>=0.11,<0.12` (reaches this SDK transitively) | `seam-aegis/pyproject.toml:62` |
 
 **One caveat on the first row: the lockfile number is not a real resolution.**
 `seam-adapters/uv.lock:4217` resolved `seam-sdk` **0.17.0** when this row was first verified. That
-was inside the range declared then and is outside the one declared now (raised to `>=0.40.1,<0.41` in
-seam-adapters f6911d4), and the lock was never evidence either way: `seam-adapters/pyproject.toml:59` overrides the dependency
+was inside the range declared then and is outside the one declared now (raised to `>=0.43.1,<0.44` in
+seam-adapters 4142c3b), and the lock was never evidence either way: `seam-adapters/pyproject.toml:59` overrides the dependency
 with an unconditional editable path source (`{ path = "../seam-sdk/python", editable = true }`), so
 the lock records the sibling checkout rather than a resolved release. A reader should not take
 0.17.0 as evidence this constraint has ever been checked against a real registry release.
