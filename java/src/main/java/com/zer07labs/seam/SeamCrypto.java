@@ -4,15 +4,19 @@ import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import java.io.ByteArrayOutputStream;
 import java.lang.reflect.Type;
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters;
 import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters;
 import org.bouncycastle.crypto.signers.Ed25519Signer;
@@ -529,5 +533,110 @@ public final class SeamCrypto {
     byte[] out = new byte[n];
     for (int i = 0; i < n; i++) out[i] = (byte) (v >>> (8 * i));
     return out;
+  }
+
+  // ── Enrolment proof, agent side + REST form (#214) ──────────────────────────────────────────
+
+  private static final SecureRandom RANDOM = new SecureRandom();
+
+  /**
+   * The agent-side enrolment proof-of-possession (seam-runtime #1157 / #1164): the parts of {@code
+   * EnrollTenantRequest.pop} ({@code EnrollPop}), produced by the AGENT being enrolled and handed to
+   * the operator who enrols it. {@code signature} is the RAW 64-byte Ed25519 signature, as the gRPC
+   * {@code bytes} field carries it; {@link #toRest} gives the {@code POST /v1/tenants} form, where it
+   * is unpadded base64url. {@code issuedAtMs} is Unix epoch MILLISECONDS, read as UNSIGNED. The
+   * runtime accepts a proof at most 5 minutes old and at most 60 s in the future, so produce it just
+   * before the enrolment call. Mirrors Python's and TypeScript's {@code EnrollProof}.
+   */
+  public record EnrollProof(long issuedAtMs, String nonce, byte[] signature) {
+    public EnrollProof {
+      signature = signature.clone();
+    }
+
+    @Override
+    public byte[] signature() {
+      return signature.clone();
+    }
+
+    /** The signature as unpadded base64url — the REST form. */
+    public String signatureB64url() {
+      return b64urlNoPad(signature);
+    }
+
+    /**
+     * The REST body's {@code pop} object, {@code {issued_at_ms, nonce, signature}} in that order,
+     * ready for any JSON encoder. {@code issued_at_ms} is a {@link Long}, or a {@link BigInteger} for
+     * an unsigned value past {@link Long#MAX_VALUE}, so it is never emitted negative.
+     */
+    public Map<String, Object> toRest() {
+      Map<String, Object> m = new LinkedHashMap<>();
+      m.put(
+          "issued_at_ms",
+          issuedAtMs >= 0 ? (Object) issuedAtMs : new BigInteger(Long.toUnsignedString(issuedAtMs)));
+      m.put("nonce", nonce);
+      m.put("signature", signatureB64url());
+      return m;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      return o instanceof EnrollProof p
+          && p.issuedAtMs == issuedAtMs
+          && Objects.equals(p.nonce, nonce)
+          && Arrays.equals(p.signature, signature);
+    }
+
+    @Override
+    public int hashCode() {
+      return 31 * (31 * Long.hashCode(issuedAtMs) + Objects.hashCode(nonce))
+          + Arrays.hashCode(signature);
+    }
+
+    @Override
+    public String toString() {
+      return "EnrollProof[issuedAtMs="
+          + Long.toUnsignedString(issuedAtMs)
+          + ", nonce="
+          + nonce
+          + ", signature="
+          + signatureB64url()
+          + "]";
+    }
+  }
+
+  /** A fresh nonce: 16 random bytes as unpadded base64url — 22 characters, inside the contract. */
+  public static String newEnrollPopNonce() {
+    byte[] b = new byte[16];
+    RANDOM.nextBytes(b);
+    return b64urlNoPad(b);
+  }
+
+  /**
+   * Sign an enrolment proof with the agent's own key (32-byte seed) at an explicit time and nonce.
+   * The subject AID is DERIVED from the seed — a proof can only ever speak for the key that signs it
+   * — and the nonce is validated first. Prefer {@link #enrolmentProof(byte[], String, String)}, which
+   * defaults {@code issuedAtMs} to now and the nonce to a fresh random one.
+   */
+  public static EnrollProof enrolmentProof(
+      byte[] agentSeed, String tenant, String namespace, long issuedAtMs, String nonce) {
+    if (agentSeed == null || agentSeed.length != 32) {
+      throw new IllegalArgumentException("agent seed must be 32 bytes");
+    }
+    String subject = aidFromPubkey(ed25519Pub(agentSeed));
+    byte[] sig =
+        enrollPop(agentSeed, new EnrollPopFields(subject, tenant, namespace, issuedAtMs, nonce));
+    return new EnrollProof(issuedAtMs, nonce, sig);
+  }
+
+  /**
+   * This agent's consent to being enrolled under {@code tenant}/{@code namespace}: the {@code pop} an
+   * operator sends with {@code EnrollTenant} (gRPC: the raw fields; REST: {@link
+   * EnrollProof#toRest}). Required for enrolment by a tenant-scoped operator token. {@code issuedAtMs}
+   * is now and the nonce is 16 fresh random bytes as 22 base64url characters. The counterpart of
+   * Python's {@code Agent.enrolment_proof} and TypeScript's {@code Agent.enrolmentProof}.
+   */
+  public static EnrollProof enrolmentProof(byte[] agentSeed, String tenant, String namespace) {
+    return enrolmentProof(
+        agentSeed, tenant, namespace, System.currentTimeMillis(), newEnrollPopNonce());
   }
 }

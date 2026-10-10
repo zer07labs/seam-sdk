@@ -16,6 +16,23 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added — enrolment proof helpers and REST form in Go, Java and Kotlin (#214)
+- **Go, Java and Kotlin callers can now produce the `pop` that tenant-scoped enrolment requires**
+  (seam-runtime #1164 enforces proof-of-possession). Until now these SDKs exposed only the raw signer
+  (`EnrollPopSign` / `enrollPop`). They now match Python's `Agent.enrolment_proof` / `EnrollProof.to_rest()`
+  and TypeScript's `Agent.enrolmentProof` / `enrollProofToRest`:
+  - Go: `EnrolmentProof(seed, tenant, namespace)` (defaults to now and a fresh nonce) and
+    `EnrollPop(seed, tenant, namespace, issuedAtMs, nonce)` return an `EnrollProof`. `ToREST()` returns an
+    `EnrollProofREST` that marshals to `{"issued_at_ms","nonce","signature"}`. `NewEnrollPopNonce()` is also new.
+  - Java: `SeamCrypto.enrolmentProof(seed, tenant, namespace[, issuedAtMs, nonce])` returns a
+    `SeamCrypto.EnrollProof` record. Kotlin: `SeamCrypto.enrolmentProof(seed, tenant, namespace, issuedAtMs = now,
+    nonce = fresh)` returns an `EnrollProof`. On both, `toRest()` gives an ordered map
+    (`issued_at_ms`, `nonce`, `signature`), and `newEnrollPopNonce()` is also new.
+  - In every language the subject AID is derived from the seed, the signature stays raw 64 bytes for gRPC,
+    and the REST form encodes it as unpadded base64url. New tests check each helper against
+    `conformance/enroll_pop_v1_payload_vector.json`, which is still byte-identical to the runtime's fixture. They
+    compare the raw signature, the base64url signature and the serialized REST JSON.
+
 ## 0.44.0 — 2026-10-10
 
 ### Changed — BREAKING: `seam-commitment-digest:v2` (runtime #1255, #802/#804; #227)
