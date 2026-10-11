@@ -124,3 +124,37 @@ stream red in an auditor's hands. Both are narrow — a v3 record with no tag 11
 by a conforming producer, and a v1 record with a tag-10 column contradicts the spec — and both are
 pinned by tests that were driven red before they were trusted. Reversal is a code change with no
 data migration; nothing persisted depends on either refusal.
+
+## D-036 — `bundle` verifies `seam-evidence-bundle.v1`, and is stricter than the runtime oracle in three places
+
+**Decision.** `seam-verify bundle <DIR> --issuer <AID>` implements `docs/evidence-bundle.v1.md` §
+Verifying, steps 1–6 in order, through the same library calls `chain --from-anchor --strict` makes. To
+reach step 4 the crate now implements `seam-commitment-digest:v2`, `seam-explanation-digest:v1` and the
+self-issued TCT check (`src/commitment.rs`), written from the runtime's spec text and held to the shared
+`conformance/` vectors. No dependency was added.
+
+**Where it differs from the runtime's internal oracle (`seam-verify-internal bundle`), on purpose:**
+
+1. *A member the manifest lists but the directory lacks* is exit **2** (step 1 refuses), where the oracle
+   exits 1 (an IO error). The spec puts "every listed file exists" inside step 1, which "refuses (exit 2)".
+   Only an unreadable directory or `manifest.json` is exit 1: then nothing was read to refuse.
+2. *A malformed `events.jsonl` or `anchor.json`* is exit **2**. The oracle passes `chain`'s exit 1 through.
+   In a bundle these bytes are already hash-matched to the manifest, so a member that does not parse is a
+   bundle that fails, not a caller's usage mistake.
+3. *Two manifest claims the oracle does not read are checked:* `issuer.ed25519_public_key` must be the
+   pinned AID's key, and `inclusion.anchor_attested_len` must be `anchor.json`'s `attested_len`. The spec
+   says a verifier MUST refuse a manifest that disagrees with the other files. The `window_*` counts and
+   offsets are not checked: their counting rules are the exporter's, not written in the spec, and a
+   guessed rule would refuse genuine bundles.
+
+Everything else matches the oracle exit code for exit code: a differential run over the four runtime-exported
+fixtures and seventeen single-edit tampers agreed on all thirteen tampers these three do not cover.
+
+**The TCT check is the runtime's, not the SDKs' looser one.** `grants` must be exactly
+`["seam:commitment", "seam-commitment-digest:<hex>"]` (the spec's "exactly two grants, in this order";
+the runtime compares the list), and `ver`, `cnf.jkt`, `iat` are checked as `aitp_tct::verify_tct` does.
+The Python/TS shims check only that the digest grant is present.
+
+**Not done.** `seam-event.v1.md` says a verifier that sees a sealed `resolved_status: retracted` should
+raise an anomaly. `context.json` now makes that visible, but neither the spec's six steps nor the oracle
+act on it, so this build does not either.

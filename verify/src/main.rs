@@ -8,6 +8,7 @@
 //! seam-verify chain <FILE> [--strict]              # the seam-event.v1 hash chain, from the stream alone
 //! seam-verify chain <FILE> --issuer <AID>          # + AUTHENTICITY: every issuer-signed head verifies
 //! seam-verify erasure-cert <FILE> --issuer <AID>   # a GDPR erasure certificate, from the issuer AID alone
+//! seam-verify bundle <DIR> --issuer <AID>          # a seam-evidence-bundle.v1 directory, end to end
 //! ```
 //!
 //! `FILE` is one event per line — the JSON projection or base64 protobuf; `-` reads stdin.
@@ -35,7 +36,8 @@ fn usage() -> ! {
          USAGE:\n    \
              seam-verify chain <FILE> [--strict] [--issuer <AID>] [--from-anchor <FILE>]\n                             \
              [--expect-anchor <FILE>] [--json]\n    \
-             seam-verify erasure-cert <FILE> --issuer <AID> [--json]\n\
+             seam-verify erasure-cert <FILE> --issuer <AID> [--json]\n    \
+             seam-verify bundle <DIR> --issuer <AID> [--json]\n\
          \n\
          chain <FILE>\n    \
              Verify the seam-event.v1 hash chain from the stream ALONE. One event per line: the JSON\n    \
@@ -95,6 +97,16 @@ fn usage() -> ! {
              Verify a signed GDPR erasure certificate against the issuer AID and NOTHING else. Get the\n    \
              AID out of band (Seam serves it at GET /v1/trust/issuer-aid). Pinning it is what makes the\n    \
              signature mean anything: a forged certificate verifies perfectly against its own forger.\n\
+         \n\
+         bundle <DIR> --issuer <AID>\n    \
+             Verify a seam-evidence-bundle.v1 directory (docs/evidence-bundle.v1.md) against the pinned\n    \
+             issuer AID, in the spec's order, refusing at the first failure: (1) the manifest: format,\n    \
+             pinned issuer, every listed file's sha256 and size; (2) the window, exactly as `chain\n    \
+             events.jsonl --issuer AID --from-anchor anchor.json --strict`; (3) the decision's chained\n    \
+             DECISION_SEALED and its checksum; (4) the Commitment's TCT and seam-commitment-digest:v2;\n    \
+             (5) the issuer's signed binding of that Commitment to the chain link; (6) the disclosed\n    \
+             context.json and policy.json against the chained digests. Withheld items are printed.\n    \
+             Exactly one --issuer: the bundle names its issuer, and that name is never trusted.\n\
          \n\
          EXIT CODES:\n    \
              0  verified     1  usage/IO error     2  VERIFICATION FAILED"
@@ -628,6 +640,64 @@ fn cmd_cert(path: &str, issuer: &str, json: bool) -> ExitCode {
     }
 }
 
+fn cmd_bundle(dir: &str, issuer: &str, json: bool) -> ExitCode {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    match seam_verify::verify_bundle(std::path::Path::new(dir), issuer, now) {
+        Err(seam_verify::BundleError::Usage(m)) => io_error(&m, json),
+        Err(seam_verify::BundleError::Failed { step, message }) => fail(
+            &format!("step {step}: {message}"),
+            json,
+            "EVIDENCE BUNDLE FAILED VERIFICATION",
+        ),
+        Ok(r) => {
+            if json {
+                let checks: Vec<&str> = r.checks.iter().map(String::as_str).collect();
+                let withheld: Vec<String> = r
+                    .withheld
+                    .iter()
+                    .map(|(i, why)| format!("{{\"item\":{},\"reason\":{}}}", q(i), q(why)))
+                    .collect();
+                println!(
+                    "{{\"verified\":true,\"format\":{},\"decision_id\":{},\"tenant\":{},\
+                     \"events\":{},\"links\":{},\"attestations\":{},\"covering_attestations\":{},\
+                     \"base_len\":{},\"head\":\"{}\",\"tct\":{},\"checks\":{},\"withheld\":[{}]}}",
+                    q(seam_verify::bundle::FORMAT),
+                    q(&r.decision_id),
+                    q(&r.tenant),
+                    r.window_events,
+                    r.window_links,
+                    r.attestations,
+                    r.covering,
+                    r.anchor_len,
+                    verify::hex(&r.head),
+                    match r.tct_verified {
+                        Some(true) => "\"verified\"",
+                        Some(false) => "\"absent\"",
+                        None => "null",
+                    },
+                    q_arr(&checks),
+                    withheld.join(","),
+                );
+            } else {
+                println!("EVIDENCE BUNDLE VERIFIED ({})", seam_verify::bundle::FORMAT);
+                println!("  decision  : {}", r.decision_id);
+                println!("  tenant    : {}", r.tenant);
+                println!("  head      : {}", verify::hex(&r.head));
+                for c in &r.checks {
+                    println!("  - {c}");
+                }
+                for (item, why) in &r.withheld {
+                    println!("  - withheld: {item} ({why})");
+                }
+            }
+            ExitCode::SUCCESS
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let Some(cmd) = argv.first().map(String::as_str) else {
@@ -764,6 +834,22 @@ fn main() -> ExitCode {
                 usage();
             };
             cmd_cert(&p, i, json)
+        }
+        "bundle" => {
+            if from_anchor.is_some() || expect_anchor.is_some() {
+                eprintln!(
+                    "seam-verify: bundle takes its anchor from the bundle's own anchor.json; \
+                     --from-anchor/--expect-anchor are chain-only flags"
+                );
+                usage();
+            }
+            // Like a certificate, a bundle names exactly ONE issuer, and the pin must be that issuer.
+            let (Some(p), [i]) = (positional, issuers.as_slice()) else {
+                eprintln!("seam-verify: bundle requires a DIR and exactly one --issuer <AID>");
+                usage();
+            };
+            // `--strict` is accepted and redundant: the bundle's chain step is always strict.
+            cmd_bundle(&p, i, json)
         }
         o => {
             eprintln!("seam-verify: unknown command '{o}'");

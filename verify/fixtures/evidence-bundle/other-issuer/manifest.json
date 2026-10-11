@@ -1,0 +1,63 @@
+{
+  "format": "seam-evidence-bundle.v1",
+  "scope": "decision",
+  "decision_id": "dec:d1",
+  "tenant": "design-partner",
+  "exported_at": 2000,
+  "issuer": {
+    "aid": "aid:pubkey:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg",
+    "ed25519_public_key": "fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f618",
+    "pin": "Trust comes from pinning this AID out of band (GET /v1/trust/issuer-aid, the anchors your notary holds), never from this file."
+  },
+  "inclusion": {
+    "decision_offset": 5,
+    "record_checksum": "5tAiuPyiW0O/bUUZm+zfuJLEvBBFxAwKPoSyqvOMfjY=",
+    "anchor_offset": 3,
+    "anchor_attested_len": 2,
+    "window_events": 4,
+    "window_links": 4,
+    "window_attestations": 2
+  },
+  "files": {
+    "events.jsonl": {
+      "sha256": "150393df649dcab2088e45fd970241ab34b128ebf19a98f290fdf5ce4e1d2db8",
+      "bytes": 3466
+    },
+    "anchor.json": {
+      "sha256": "9a0d410658bacac3c0be922c70a186e94bda1c7fd62014aa8c10c3adb8fb4c2a",
+      "bytes": 317
+    },
+    "commitment.json": {
+      "sha256": "772d022e41b4f821c3f420b64644bbfeb0b90fe8c5c00adbd0ce6e187ab38f33",
+      "bytes": 2037
+    },
+    "binding.json": {
+      "sha256": "dc34634612cd319b2e1b5706baef11ef0a5141def66c8ce431a1d6bab5c57d18",
+      "bytes": 421
+    },
+    "context.json": {
+      "sha256": "44c33718c3d7e6ca7b7697e1c5be42dd5af4db34f7867d88e214940a51e488ae",
+      "bytes": 445
+    },
+    "policy.json": {
+      "sha256": "2393d89814bb700367a478dfb8b81a9ba9f8f23c1b285cb4974bcaacebc9c41e",
+      "bytes": 247
+    }
+  },
+  "disclosed": [
+    "commitment",
+    "binding",
+    "context",
+    "policy"
+  ],
+  "withheld": [
+    {
+      "item": "participation",
+      "reason": "participation[].subject is the GDPR erasure predicate; only participation_digest is chained and published"
+    }
+  ],
+  "verify": [
+    "seam-verify chain events.jsonl --issuer aid:pubkey:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg --from-anchor anchor.json",
+    "seam-verify bundle . --issuer aid:pubkey:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg"
+  ]
+}

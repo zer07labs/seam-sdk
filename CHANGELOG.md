@@ -62,6 +62,24 @@ than trusting a summary here.
   ticket source): `Metadata`/`metadata(credential, rpcFullName, resourceId, body)` signs with the explicit
   credential if given, else the bound agent, else returns no headers.
 
+### Added
+- **`seam-verify bundle <DIR> --issuer <AID>` (#225; runtime #806).** The published verifier checks a
+  `seam-evidence-bundle.v1` directory end to end, in the spec's order, refusing at the first failure: the
+  manifest (format, the pinned issuer, every listed file's SHA-256 and size, required and paired members,
+  `disclosed` against `files`), the window exactly as `chain --issuer --from-anchor --strict`, the
+  decision's chained `DECISION_SEALED` and checksum, the Commitment's TCT and `seam-commitment-digest:v2`,
+  the issuer's `seam.evidence-binding.v1` signature, and the disclosed `context.json` / `policy.json`
+  against the chained digests. Withheld items are printed. Exit 0 / 1 / 2 as for `chain` and
+  `erasure-cert`; `--json` is supported. Library: `seam_verify::verify_bundle`.
+- `verify/` now implements `seam-commitment-digest:v2`, `seam-explanation-digest:v1` and Seam TCT
+  verification (`seam_verify::commitment`), held to `conformance/commitment_digest_v2_vector.json` and the
+  `vectors.json` `tct` block. Still no Seam crate in its dependency tree.
+- `verify/docs/evidence-bundle.v1.md` is a pinned verbatim copy of the runtime spec (@ 8a65349), checked by
+  `scripts/check_vendored_spec.py` (the `spec-pin` CI job) like `seam-event.v1.md`.
+- `verify/fixtures/evidence-bundle/`: four bundles written by the runtime's own exporter (full, no
+  disclosures, crypto-shredded, another issuer), which also verify under the runtime's internal oracle.
+  CI verifies `full/` with the shipped binary.
+
 ## 0.44.0 — 2026-10-10
 
 ### Changed — BREAKING: `seam-commitment-digest:v2` (runtime #1255, #802/#804; #227)

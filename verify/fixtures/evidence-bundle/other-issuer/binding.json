@@ -1,0 +1,9 @@
+{
+  "decision_id": "dec:d1",
+  "tenant": "design-partner",
+  "record_checksum": "5tAiuPyiW0O/bUUZm+zfuJLEvBBFxAwKPoSyqvOMfjY=",
+  "commitment_digest": "ca6b44b9ff5cf045e48a8a1eb40d65624adea7498c4f15a9dd0f55464a58a824",
+  "bound_at": 2000,
+  "issuer_aid": "aid:pubkey:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg",
+  "signature": "Eo79JNU4ZEjjJL4SB8Pku0Tc/soSt2KzKDxVUlG9/eH/8vD6rC0AYfcU4ddJN84eRVS8g1PEQ0uSNQhQuSWjCQ=="
+}
