@@ -658,7 +658,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   decision, and it carries a hazard that runs OPPOSITE to the intuition: both names are also declared
   by the generated module, so adding the *generated* name to the explicit list makes the generated
   type win the root name and silently displace the hand-written DTO. Proven — `tsc --noEmit` exits 0
-  and a `$typeName` probe compiles. The dual-declaration comment at `ts/src/index.ts:18` records it.
+  and a `$typeName` probe compiles. The dual-declaration comment at `ts/src/index.ts:27` records it.
 - **Blast radius if wrong:** low. Adding a named export later is additive; removing one is breaking.
   The failure mode of the current choice is ergonomic (a consumer writes `ReturnType<typeof …>`),
   not correctness.
@@ -1052,11 +1052,11 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   What is still inferred rather than observed is only "and nobody has deleted them since". Against
   that: `yank.yml` has 27 runs and the only versions ever deleted are 0.7.7 and 0.7.13–0.7.19 — the
   exact scope of issue #43, closed sixteen minutes after the final run, and corroborated
-  independently by `CHANGELOG.md:772-773` in the repo's own words.
+  independently by `CHANGELOG.md:789-790` in the repo's own words.
 - **Correction to this entry's stated rationale (2026-09-06):** the code comment justified the age
   spread as a hedge against a *retention* sweep aging all entries out at once. No retention sweep
   has ever run here, and the real yank predicate is "named in an advisory as unconditionally
-  broken", not "old" — `CHANGELOG.md:819` records that 0.7.39–0.7.43 was deliberately **not**
+  broken", not "old" — `CHANGELOG.md:836` records that 0.7.39–0.7.43 was deliberately **not**
   deleted despite being older than every roster entry. A wrong reason in that comment is how the
   next editor re-points the roster badly, dropping a safe old version in favour of one sitting
   inside an advisory band; the comment now states the real predicate. None of the four roster

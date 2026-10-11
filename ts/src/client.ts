@@ -156,6 +156,12 @@ export class Agent {
   constructor(public readonly seed: Uint8Array) {
     if (seed.length !== 32) throw new Error("agent seed must be 32 bytes");
   }
+  /** A new agent identity from 32 CSPRNG bytes (`crypto.getRandomValues`). To persist it, use
+   * {@link createIdentityFile}, which generates and writes in one step and never returns the seed. */
+  static generate(): Agent {
+    return new Agent(globalThis.crypto.getRandomValues(new Uint8Array(32)));
+  }
+
   get aid(): string {
     return aidFromPubkey(ed25519.getPublicKey(this.seed));
   }
