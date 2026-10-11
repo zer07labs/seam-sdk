@@ -1,0 +1,22 @@
+{
+  "inputs": {
+    "issuer_seed_hex": "0707070707070707070707070707070707070707070707070707070707070707",
+    "domain": "seam.audit.chain-head-attestation.v2",
+    "attested_len": 1000,
+    "attested_head_hex": "abababababababababababababababababababababababababababababababab",
+    "attested_at": 1700000000000,
+    "digest_schema": 2,
+    "tenant": "acme"
+  },
+  "frame_order": [
+    "domain",
+    "attested_len",
+    "attested_head",
+    "attested_at",
+    "digest_schema",
+    "issuer_aid",
+    "tenant"
+  ],
+  "issuer_aid": "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
+  "signature_hex": "82569f05d55b22d93f7b19f02c0cca5501583deeefb1a1d58f52a2d797fc71182e12b9ca61a141e06c4e5d3d6f889a146cf4c8cbee90e7571095c8ef38095d0a"
+}

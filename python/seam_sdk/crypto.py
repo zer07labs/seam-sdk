@@ -869,22 +869,36 @@ def record_digest_v3(
     return hashlib.sha256(pre).digest()
 
 
+CHAIN_HEAD_ATTESTATION_DOMAIN_V1 = b"seam.audit.chain-head-attestation.v1"
+#: seam-runtime #835: the v1 frames under a new domain tag, then ``frame(tenant)``. Pinned by
+#: ``conformance/chain_head_attestation_v2_vector.json``.
+CHAIN_HEAD_ATTESTATION_DOMAIN_V2 = b"seam.audit.chain-head-attestation.v2"
+
+
 def _chain_head_attestation_digest(
     attested_len: int,
     attested_head: bytes,
     attested_at: int,
     digest_schema: int,
     issuer_aid: str,
+    tenant: str | None = None,
 ) -> bytes:
-    """The 32-byte digest a ``CHAIN_HEAD_ATTESTATION`` signs over (``seam.audit.chain-head-attestation.v1``)."""
+    """The 32-byte digest a ``CHAIN_HEAD_ATTESTATION`` signs over. ``tenant=None`` is the **v1** framing
+    (``seam.audit.chain-head-attestation.v1``); a ``str`` is **v2** (``…v2``, then ``frame(tenant)``)."""
     pre = (
-        _frame(b"seam.audit.chain-head-attestation.v1")
+        _frame(
+            CHAIN_HEAD_ATTESTATION_DOMAIN_V1
+            if tenant is None
+            else CHAIN_HEAD_ATTESTATION_DOMAIN_V2
+        )
         + _frame(struct.pack("<Q", attested_len))
         + _frame(attested_head)
         + _frame(struct.pack("<Q", attested_at))
         + _frame(struct.pack("<I", digest_schema))
         + _frame(issuer_aid.encode())
     )
+    if tenant is not None:
+        pre += _frame(tenant.encode())
     return hashlib.sha256(pre).digest()
 
 
@@ -895,10 +909,19 @@ def verify_chain_head_attestation(
     attested_at: int,
     digest_schema: int,
     signature: bytes,
+    *,
+    tenant: str = "",
 ) -> bool:
     """Verify a chain-head attestation's Ed25519 signature against the PINNED issuer AID (A14). Returns
     ``True`` iff the signature checks out over the recomputed digest; ``False`` on any tamper. The key comes
-    from ``issuer_aid`` (which the caller pinned out of band), never from the attestation itself."""
+    from ``issuer_aid`` (which the caller pinned out of band), never from the attestation itself.
+
+    ``tenant`` is the attestation's own payload ``tenant`` and selects the signed framing, mirroring
+    seam-runtime #835 step 1 exactly: an empty tenant verifies under **v1 only**; a non-empty tenant under
+    **v2, else v1**. The v1 fallback is required while the runtime still signs v1 with the tenant stamped
+    outside the signature (until #835 step 3); it is dropped at step 4. Pass the tenant whenever the
+    attestation carries one — omitting it verifies v1 only, so a v2 attestation would come back ``False``.
+    """
     # An out-of-range integer is tampered input, not a caller bug, and this function's whole contract
     # is that tampered input returns ``False``. ``struct.pack`` raises ``struct.error`` on it, and the
     # recompute below sits OUTSIDE the try, so that error escaped a function documented to return
@@ -957,6 +980,8 @@ def verify_chain_head_attestation(
         )
     if not isinstance(issuer_aid, str):
         raise TypeError(f"issuer_aid must be a str, not {type(issuer_aid).__name__}")
+    if not isinstance(tenant, str):
+        raise TypeError(f"tenant must be a str, not {type(tenant).__name__}")
     # ``signature`` belongs in this pass too, and its absence was a hole in the rule rather than an
     # exemption from it. Every other argument answered a wrong TYPE with ``TypeError``; a wrong-typed
     # signature fell through to the blanket ``except`` below and came back ``False`` — and the slip
@@ -977,16 +1002,22 @@ def verify_chain_head_attestation(
             # returns ``False``. The ``TypeError`` `_uint_slot` raises for a wrong TYPE is left to
             # propagate on purpose — see above.
             return False
-    digest = _chain_head_attestation_digest(
-        attested_len, head, attested_at, digest_schema, issuer_aid
-    )
     try:
-        Ed25519PublicKey.from_public_bytes(_aid_to_pubkey(issuer_aid)).verify(
-            signature, digest
-        )
-        return True
+        key = Ed25519PublicKey.from_public_bytes(_aid_to_pubkey(issuer_aid))
     except Exception:
         return False
+
+    def under(framing_tenant: str | None) -> bool:
+        digest = _chain_head_attestation_digest(
+            attested_len, head, attested_at, digest_schema, issuer_aid, framing_tenant
+        )
+        try:
+            key.verify(signature, digest)
+            return True
+        except Exception:
+            return False
+
+    return (bool(tenant) and under(tenant)) or under(None)
 
 
 # ── call_sig v3 (`seam-authorize-call-v3`, seam-runtime #1125 / #1059) ───────────────────────────────

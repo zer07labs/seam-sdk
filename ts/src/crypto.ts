@@ -1056,27 +1056,43 @@ export function recordDigestV3(d: {
   return sha256(pre);
 }
 
-function chainHeadAttestationDigest(a: {
-  attestedLen: number | bigint;
-  attestedHead: Uint8Array;
-  attestedAt: number | bigint;
-  digestSchema: number;
-  issuerAid: string;
-}): Uint8Array {
+export const CHAIN_HEAD_ATTESTATION_DOMAIN_V1 = "seam.audit.chain-head-attestation.v1";
+/** seam-runtime #835: the v1 frames under a new domain tag, then `frame(tenant)`. Pinned by
+ * `conformance/chain_head_attestation_v2_vector.json`. */
+export const CHAIN_HEAD_ATTESTATION_DOMAIN_V2 = "seam.audit.chain-head-attestation.v2";
+
+/** `tenant === undefined` is the **v1** framing; a string is **v2** (`…v2`, then `frame(tenant)`). */
+function chainHeadAttestationDigest(
+  a: {
+    attestedLen: number | bigint;
+    attestedHead: Uint8Array;
+    attestedAt: number | bigint;
+    digestSchema: number;
+    issuerAid: string;
+  },
+  tenant?: string,
+): Uint8Array {
   const pre = concat(
-    frameLE(enc.encode("seam.audit.chain-head-attestation.v1")),
+    frameLE(enc.encode(tenant === undefined ? CHAIN_HEAD_ATTESTATION_DOMAIN_V1 : CHAIN_HEAD_ATTESTATION_DOMAIN_V2)),
     frameLE(u64le("attestedLen", a.attestedLen)),
     frameLE(a.attestedHead),
     frameLE(u64le("attestedAt", a.attestedAt)),
     frameLE(u32le("digestSchema", a.digestSchema)),
     frameLE(enc.encode(a.issuerAid)),
+    ...(tenant === undefined ? [] : [frameLE(enc.encode(tenant))]),
   );
   return sha256(pre);
 }
 
 /** Verify a chain-head attestation's Ed25519 signature against the PINNED issuer AID (A14). `true` iff the
  * signature checks out over the recomputed digest; `false` on any tamper. The key comes from `issuerAid`
- * (pinned out of band), never from the attestation itself. */
+ * (pinned out of band), never from the attestation itself.
+ *
+ * `tenant` is the attestation's own payload tenant and selects the signed framing, mirroring seam-runtime
+ * #835 step 1 exactly: empty (or absent) verifies under **v1 only**; non-empty under **v2, else v1**. The v1
+ * fallback is required while the runtime still signs v1 with the tenant outside the signature (until #835
+ * step 3); it is dropped at step 4. Pass the tenant whenever the attestation carries one — omitting it
+ * verifies v1 only, so a v2 attestation would come back `false`. */
 export function verifyChainHeadAttestation(
   issuerAid: string,
   a: {
@@ -1085,6 +1101,7 @@ export function verifyChainHeadAttestation(
     attestedAt: number | bigint;
     digestSchema: number;
     signature: Uint8Array;
+    tenant?: string;
   },
 ): boolean {
   // TYPES first, OUTSIDE the try — the same rule, and for the same reason, as Python's twin.
@@ -1126,12 +1143,19 @@ export function verifyChainHeadAttestation(
   requireUintArgument("digestSchema", a.digestSchema);
   const attestedHead = requireBytes("attestedHead", a.attestedHead);
   const signature = requireBytes("signature", a.signature);
-  try {
-    const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid });
-    return ed25519.verify(signature, digest, aidToPubkey(issuerAid), { zip215: false });
-  } catch {
-    return false;
+  const tenant = a.tenant ?? "";
+  if (typeof tenant !== "string") {
+    throw new TypeError(`tenant must be a string, not ${tenant === null ? "null" : typeof tenant}`);
   }
+  const under = (framingTenant?: string): boolean => {
+    try {
+      const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid }, framingTenant);
+      return ed25519.verify(signature, digest, aidToPubkey(issuerAid), { zip215: false });
+    } catch {
+      return false;
+    }
+  };
+  return (tenant !== "" && under(tenant)) || under();
 }
 
 // ── call_sig v3 (`seam-authorize-call-v3`, seam-runtime #1125 / #1059) ───────────────────────────────

@@ -16,6 +16,22 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added — chain-head attestation v2: the tenant inside the signature (seam-runtime #835 step 1, #144 part 2)
+- **`seam-verify`, Python `verify_chain_head_attestation` and TS `verifyChainHeadAttestation` verify the
+  v2 framing** — the v1 frames under `seam.audit.chain-head-attestation.v2`, then `frame(tenant)` — so
+  relabelling a v2 attestation to another tenant breaks its signature. The rule mirrors the runtime's
+  verifier exactly: an empty tenant verifies under v1 only; a non-empty tenant under v2, else v1. The v1
+  fallback stays until the runtime's step 4, because every attestation minted today is v1 with the tenant
+  outside the signature.
+- **Python and TS take the tenant as a new optional argument** (`tenant=` keyword / `tenant` field),
+  defaulting to empty, so existing calls are unchanged and still verify every v1 attestation. Pass the
+  attestation's tenant once the runtime signs v2 (step 3): without it a v2 attestation returns `False`.
+- `seam-verify`'s refusal of an attestation or anchor that verifies under neither framing now says it may
+  be signed under a framing newer than this build, rather than asserting forgery alone.
+- Pinned by `conformance/chain_head_attestation_v2_vector.json`, vendored verbatim from the runtime's
+  extended vectors. `conformance/vectors.json` is unchanged. Go, Java and Kotlin have no attestation
+  verifier, so nothing changes there.
+
 ## 0.46.0 — 2026-10-12
 
 ### Added
@@ -1159,7 +1175,7 @@ Three independently sufficient causes of a 0.7.17-shaped incident, closed.
   One previously-green shape does turn red, and it is stated rather than glossed: a `DECISION_SEALED`
   declaring a `schema_version` above 3 while carrying **no** event `digest` at all used to fall
   through as a non-link — unverifiable, but green without `--strict` — because the digest-presence
-  check came first. The version refusal now runs before it (`verify/src/verify.rs:803-812`). This is the
+  check came first. The version refusal now runs before it (`verify/src/verify.rs:837-846`). This is the
   intended ordering: an unknown formula means the record cannot be checked *at all*, which is a
   refusal independent of whether there is a digest to compare, and "I cannot check this, so it
   passes" is the exact shape of a downgrade. No conforming producer emits it — the chain fields are
