@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.45.0 — 2026-10-11
+
 ### Added — enrolment proof helpers and REST form in Go, Java and Kotlin (#214)
 - **Go, Java and Kotlin callers can now produce the `pop` that tenant-scoped enrolment requires**
   (seam-runtime #1164 enforces proof-of-possession). Until now these SDKs exposed only the raw signer
