@@ -1,8 +1,6 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ b0948e9 tracking train/0.45.0 (refreshed 2026-10-10).
-     Pinned AHEAD of the default branch, deliberately: the runtime 0.45.0 train (seam-runtime#1273) merges and
-     dispatches the SDK release in one step, so the copy has to be on SDK main first. The exception ends itself
-     when the train squash-merges (the file becomes byte-identical on both refs). One movement since the prior
-     pin (8a65349):
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 1872e48 (refreshed 2026-10-11).
+     One movement since the prior default-branch pin (8a65349), landed with the runtime 0.45.0 train
+     (seam-runtime#1273):
      1. seam-runtime#1176: EVENT_REDRIVEN (envelope tag 26, ADVISORY, unchained) — an operator re-drove an
         existing outbox event by reference (`SeamEvents.RedriveEvents`); the wrapper carries the original row's
         bytes verbatim. The outbox retention default becomes 8 days, never less. This crate lists the kind as
