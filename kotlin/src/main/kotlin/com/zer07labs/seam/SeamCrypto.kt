@@ -3,9 +3,11 @@ package com.zer07labs.seam
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.io.ByteArrayOutputStream
+import java.math.BigInteger
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.MessageDigest
+import java.security.SecureRandom
 import java.util.Arrays
 import java.util.Base64
 import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
@@ -436,6 +438,37 @@ object SeamCrypto {
     }
 
     private fun leBytes(v: Long, n: Int): ByteArray = ByteArray(n) { i -> (v ushr (8 * i)).toByte() }
+
+    // ── Enrolment proof, agent side + REST form (#214) ──────────────────────────────────────────
+
+    private val random = SecureRandom()
+
+    /** A fresh nonce: 16 random bytes as unpadded base64url — 22 characters, inside the contract. */
+    fun newEnrollPopNonce(): String = b64urlNoPad(ByteArray(16).also(random::nextBytes))
+
+    /**
+     * This agent's consent to being enrolled under [tenant]/[namespace]: the `pop` an operator sends
+     * with `EnrollTenant` (gRPC: the raw fields; REST: [EnrollProof.toRest]). Required for enrolment by
+     * a tenant-scoped operator token. The subject AID is DERIVED from [agentSeed] — a proof can only
+     * ever speak for the key that signs it — and the nonce is validated first.
+     *
+     * [issuedAtMs] defaults to now and [nonce] to 16 fresh random bytes as 22 base64url characters;
+     * both are overridable for tests. The runtime accepts the proof for 5 minutes (and up to 60 s ahead
+     * of its clock), so mint it just before the enrolment call. The counterpart of Python's
+     * `Agent.enrolment_proof` and TypeScript's `Agent.enrolmentProof`.
+     */
+    fun enrolmentProof(
+        agentSeed: ByteArray,
+        tenant: String,
+        namespace: String,
+        issuedAtMs: ULong = System.currentTimeMillis().toULong(),
+        nonce: String = newEnrollPopNonce(),
+    ): EnrollProof {
+        require(agentSeed.size == 32) { "agent seed must be 32 bytes" }
+        val subject = aidFromPubkey(ed25519Pub(agentSeed))
+        val sig = enrollPop(agentSeed, EnrollPopFields(subject, tenant, namespace, issuedAtMs, nonce))
+        return EnrollProof(issuedAtMs, nonce, sig)
+    }
 }
 
 /**
@@ -449,3 +482,41 @@ data class EnrollPopFields(
     val issuedAtMs: ULong,
     val nonce: String,
 )
+
+/**
+ * The agent-side enrolment proof-of-possession (seam-runtime #1157 / #1164): the parts of
+ * `EnrollTenantRequest.pop` (`EnrollPop`), produced by the AGENT being enrolled and handed to the
+ * operator who enrols it. [signature] is the RAW 64-byte Ed25519 signature, as the gRPC `bytes` field
+ * carries it; [toRest] gives the `POST /v1/tenants` form, where it is unpadded base64url. The runtime
+ * accepts a proof at most 5 minutes old and at most 60 s in the future. Mirrors Python's and
+ * TypeScript's `EnrollProof`. Not a data class: it holds a byte array, compared by content here.
+ */
+class EnrollProof(val issuedAtMs: ULong, val nonce: String, signature: ByteArray) {
+    private val sig = signature.copyOf()
+
+    /** The raw 64-byte signature (a copy). */
+    val signature: ByteArray get() = sig.copyOf()
+
+    /** The signature as unpadded base64url — the REST form. */
+    val signatureB64url: String get() = Base64.getUrlEncoder().withoutPadding().encodeToString(sig)
+
+    /**
+     * The REST body's `pop` object, `{issued_at_ms, nonce, signature}` in that order, ready for any
+     * JSON encoder. `issued_at_ms` is a [Long], or a [BigInteger] past [Long.MAX_VALUE] — never a
+     * [ULong], which a reflective encoder such as Gson would not emit as a number.
+     */
+    fun toRest(): Map<String, Any> =
+        linkedMapOf(
+            "issued_at_ms" to
+                (if (issuedAtMs <= Long.MAX_VALUE.toULong()) issuedAtMs.toLong() else BigInteger(issuedAtMs.toString())),
+            "nonce" to nonce,
+            "signature" to signatureB64url,
+        )
+
+    override fun equals(other: Any?): Boolean =
+        other is EnrollProof && other.issuedAtMs == issuedAtMs && other.nonce == nonce && other.sig.contentEquals(sig)
+
+    override fun hashCode(): Int = 31 * (31 * issuedAtMs.hashCode() + nonce.hashCode()) + sig.contentHashCode()
+
+    override fun toString(): String = "EnrollProof(issuedAtMs=$issuedAtMs, nonce=$nonce, signature=$signatureB64url)"
+}
