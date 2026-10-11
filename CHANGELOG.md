@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.45.1 — 2026-10-11
+
 ## 0.45.0 — 2026-10-11
 
 ### Added — enrolment proof helpers and REST form in Go, Java and Kotlin (#214)
