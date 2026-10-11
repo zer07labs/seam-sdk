@@ -44,6 +44,24 @@ than trusting a summary here.
   legal-hold wrapper, so there is nothing to change there. The Python asyncio client has no admin
   surface either.
 
+### Added
+- **Create an agent identity in Go, Java and Kotlin (#201).** Each shim gains an `Agent` (32-byte seed → AID;
+  `toString`/`String`/every Go `fmt` verb print the AID, never the seed) with CSPRNG generation — Go
+  `crypto.GenerateAgent()` / `crypto.NewAgent(seed)`, Java/Kotlin `Agent.generate()` / `Agent(seed)` — and the
+  schema-v1 bootstrap file Python owns: Go `identity.CreateIdentityFile(path, agentID, tenant, endpoint) (path,
+  aid, error)` / `identity.LoadIdentityFile(path)` (`""` reads `$SEAM_BOOTSTRAP_FILE`); Java/Kotlin
+  `IdentityFile.create(path, agentId, tenant, endpoint)` → `Created(path, aid)` / `IdentityFile.load(path?)`.
+  Same write as Python: an `O_CREAT|O_EXCL|O_NOFOLLOW` 0600 temp sibling (JVM: `CREATE_NEW` + `NOFOLLOW_LINKS`
+  + POSIX attribute, re-applied by path since NIO has no `fchmod`), fsync, hard-link publish that refuses any
+  existing path including a symlink, unlink, directory fsync. The seed is never returned. Errors are a typed
+  `IdentityFileError` (Go `*identity.IdentityFileError`; JVM an unchecked `RuntimeException`).
+- **The `seam-request-call-v1` credential and its bound-agent default in Go, Java and Kotlin (#202).** New
+  `RequestSigPayload`/`RequestSig`/`BodyDigest` (Go) and `requestSigPayload`/`requestSig`/`bodyDigest`
+  (Java/Kotlin `SeamCrypto`), pinned by `conformance/request_sig_payload_vector.json`. These shims have no
+  client, so the #202 rule lives on a transport-agnostic `RequestCredentials` (bound agent + a caller-supplied
+  ticket source): `Metadata`/`metadata(credential, rpcFullName, resourceId, body)` signs with the explicit
+  credential if given, else the bound agent, else returns no headers.
+
 ## 0.44.0 — 2026-10-10
 
 ### Changed — BREAKING: `seam-commitment-digest:v2` (runtime #1255, #802/#804; #227)

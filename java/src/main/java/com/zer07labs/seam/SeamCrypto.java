@@ -639,4 +639,53 @@ public final class SeamCrypto {
     return enrolmentProof(
         agentSeed, tenant, namespace, System.currentTimeMillis(), newEnrollPopNonce());
   }
+
+  // ── The per-request credential (`seam-request-call-v1`, #508) ──────────────────────────────────
+
+  /**
+   * Domain tag of the per-request credential — deliberately distinct from the {@code Authorize}
+   * call_sig tag, so a captured call_sig is never spendable as a request credential.
+   */
+  public static final String REQUEST_SIG_CONTEXT = "seam-request-call-v1";
+
+  /**
+   * The exact bytes {@link #requestSig} signs: {@code frame(context) | frame(ticket) |
+   * frame(rpc_full_name) | frame(resource_id) | frame(body_digest)}, with {@code frame(x) =
+   * u32le(len_bytes(x)) | x}. {@code rpcFullName} is the gRPC full method path on both transports. A
+   * bodyless read binds its id as {@code resourceId} and an empty {@code bodyDigest}; a bodied verb
+   * over gRPC binds an empty {@code resourceId} and {@link #bodyDigest} of the request message's exact
+   * serialized bytes. {@code null} strings are read as empty.
+   *
+   * <p>Pinned by {@code conformance/request_sig_payload_vector.json}.
+   */
+  public static byte[] requestSigPayload(
+      byte[] ticket, String rpcFullName, String resourceId, String bodyDigest) {
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    frame(out, REQUEST_SIG_CONTEXT.getBytes(StandardCharsets.UTF_8));
+    frame(out, ticket == null ? new byte[0] : ticket);
+    frame(out, nz(rpcFullName));
+    frame(out, nz(resourceId));
+    frame(out, nz(bodyDigest));
+    return out.toByteArray();
+  }
+
+  /**
+   * Ed25519 by the agent key (32-byte seed) over {@link #requestSigPayload}: the raw 64-byte {@code
+   * x-seam-call-sig-bin} value.
+   */
+  public static byte[] requestSig(
+      byte[] agentSeed, byte[] ticket, String rpcFullName, String resourceId, String bodyDigest) {
+    if (agentSeed == null || agentSeed.length != 32) {
+      throw new IllegalArgumentException("agent seed must be 32 bytes");
+    }
+    return ed25519Sign(agentSeed, requestSigPayload(ticket, rpcFullName, resourceId, bodyDigest));
+  }
+
+  /**
+   * {@code "sha256:" + lowercase hex(SHA-256(body))} over the request message's exact wire bytes —
+   * never a re-serialization taken after the fact.
+   */
+  public static String bodyDigest(byte[] body) {
+    return "sha256:" + hex(sha256(body));
+  }
 }
