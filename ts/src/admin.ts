@@ -54,6 +54,15 @@ const call = (opts?: UnaryCallOptions) => ({
   timeoutMs: opts?.timeoutMs ?? DEFAULT_ADMIN_TIMEOUT_MS,
 });
 
+// The placer-named tenant on a legal-hold place/release (runtime #1037): the `x-seam-tenant` header
+// when `tenant` is given, else no `headers` option at all — so an omitted tenant leaves the call
+// identical to the pre-#1037 one. Presence, not truthiness: `""` is sent, and the runtime refuses it
+// as present-but-empty.
+const legalHoldCall = (opts?: { tenant?: string } & UnaryCallOptions) =>
+  opts?.tenant === undefined
+    ? call(opts)
+    : { ...call(opts), headers: { "x-seam-tenant": opts.tenant } };
+
 /** The `seam-event.v1` kinds the SDK knows about. A consumer MAY branch on these, but MUST still tolerate
  * an unknown kind — the wire is a tolerant reader (new kinds are additive): pass anything not in this set
  * through opaque, never erroring on it. */
@@ -397,11 +406,26 @@ export class SeamAdminClient {
     );
   }
 
-  async placeLegalHold(decisionId: string, opts?: UnaryCallOptions): Promise<void> {
-    await this.admin.placeLegalHold({ decisionId }, call(opts));
+  /** Pin a decision against erasure and retention until the hold is released.
+   *
+   * `tenant` names the tenant the hold is placed for (runtime #1037), sent as the `x-seam-tenant`
+   * header — no proto field. Name it on a **preemptive** hold (a decision id not yet sealed) so the
+   * hold's audit entry is tenant-bound. An unenrolled or mismatched tenant is refused
+   * (`PermissionDenied`); `tenant: ""` is present-but-empty and refused (`InvalidArgument`). Omitted
+   * sends no header — the request is exactly the pre-#1037 one. */
+  async placeLegalHold(
+    decisionId: string,
+    opts?: { tenant?: string } & UnaryCallOptions,
+  ): Promise<void> {
+    await this.admin.placeLegalHold({ decisionId }, legalHoldCall(opts));
   }
-  async releaseLegalHold(decisionId: string, opts?: UnaryCallOptions): Promise<void> {
-    await this.admin.releaseLegalHold({ decisionId }, call(opts));
+  /** Release a legal hold, making the decision eligible for erasure/retention again. `tenant` is sent
+   * as the `x-seam-tenant` header exactly as on `placeLegalHold`; omitted sends none. */
+  async releaseLegalHold(
+    decisionId: string,
+    opts?: { tenant?: string } & UnaryCallOptions,
+  ): Promise<void> {
+    await this.admin.releaseLegalHold({ decisionId }, legalHoldCall(opts));
   }
 
   /** Crypto-shred decisions past their tiered retention windows; returns the purged decision ids. */

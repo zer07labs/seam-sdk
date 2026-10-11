@@ -762,6 +762,36 @@ test("listLegalHolds keeps an empty tenant distinct from no filter", async () =>
   assert.equal(filtered.limit, 5);
 });
 
+test("place/releaseLegalHold send x-seam-tenant only when a tenant is given (runtime #1037)", async () => {
+  const calls: Recorded[] = [];
+  const admin = new SeamAdminClient(fakeTransport(calls, () => ({})));
+  await admin.placeLegalHold("dec:1");
+  await admin.releaseLegalHold("dec:1");
+  await admin.placeLegalHold("dec:pre", { tenant: "acme" });
+  await admin.releaseLegalHold("dec:pre", { tenant: "acme", timeoutMs: 5 });
+  await admin.placeLegalHold("dec:pre", { tenant: "" });
+  assert.deepEqual(
+    calls.map((c) => [c.method, c.input.decisionId]),
+    [
+      ["PlaceLegalHold", "dec:1"],
+      ["ReleaseLegalHold", "dec:1"],
+      ["PlaceLegalHold", "dec:pre"],
+      ["ReleaseLegalHold", "dec:pre"],
+      ["PlaceLegalHold", "dec:pre"],
+    ],
+  );
+  const tenantOf = (c: Recorded) =>
+    c.headers === undefined ? undefined : new Headers(c.headers).get("x-seam-tenant");
+  // Omitted: no headers at all — identical to the pre-#1037 call.
+  assert.equal(calls[0]!.headers, undefined);
+  assert.equal(calls[1]!.headers, undefined);
+  assert.equal(tenantOf(calls[2]!), "acme");
+  assert.equal(tenantOf(calls[3]!), "acme");
+  assert.equal(calls[3]!.timeoutMs, 5);
+  // Presence, not truthiness: "" is sent for the runtime to refuse as present-but-empty.
+  assert.equal(tenantOf(calls[4]!), "");
+});
+
 test("reportOutcome sends the idempotency key and refuses an invalid one before any RPC", async () => {
   const calls: Recorded[] = [];
   const client = new SeamClient(fakeTransport(calls, () => ({ recorded: true })));

@@ -33,6 +33,17 @@ than trusting a summary here.
     `conformance/enroll_pop_v1_payload_vector.json`, which is still byte-identical to the runtime's fixture. They
     compare the raw signature, the base64url signature and the serialized REST JSON.
 
+### Added — optional tenant on place/release legal hold (runtime #1037; #198)
+- **`place_legal_hold` / `release_legal_hold` (Python) and `placeLegalHold` / `releaseLegalHold` (TS)
+  take an optional `tenant`**, sent as the `x-seam-tenant` gRPC metadata / header. Name it on a
+  preemptive hold (a decision id not yet sealed) so the hold's audit entry is tenant-bound. No proto
+  change. The runtime refuses an unenrolled or mismatched tenant (`PERMISSION_DENIED`) and a
+  present-but-empty one (`INVALID_ARGUMENT`); the SDK sends `""` as given rather than dropping it.
+- **Omitting `tenant` sends exactly the request it sent before** — no metadata kwarg (Python), no
+  `headers` call option (TS). Additive; no existing call changes. Go, Java and Kotlin expose no
+  legal-hold wrapper, so there is nothing to change there. The Python asyncio client has no admin
+  surface either.
+
 ## 0.44.0 — 2026-10-10
 
 ### Changed — BREAKING: `seam-commitment-digest:v2` (runtime #1255, #802/#804; #227)

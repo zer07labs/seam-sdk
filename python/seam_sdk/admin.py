@@ -183,6 +183,16 @@ class _ClientCallDetails(
     """Mutable-metadata view of a call's details, so the interceptor can append the bearer header."""
 
 
+def _tenant_metadata(tenant: Optional[str]) -> dict:
+    """The placer-named tenant on a legal-hold place/release (runtime #1037): the ``x-seam-tenant``
+    metadata when ``tenant`` is given, else no ``metadata`` kwarg at all — so an omitted tenant leaves
+    the call byte-identical to the pre-#1037 one. Presence, not truthiness: ``""`` is sent, and the
+    runtime refuses it as present-but-empty."""
+    if tenant is None:
+        return {}
+    return {"metadata": (("x-seam-tenant", tenant),)}
+
+
 class _BearerAuthInterceptor(
     grpc.UnaryUnaryClientInterceptor, grpc.UnaryStreamClientInterceptor
 ):
@@ -538,19 +548,40 @@ class SeamAdminClient:
         return self._admin.ListLegalHolds(req, timeout=timeout)
 
     def place_legal_hold(
-        self, decision_id: str, *, timeout: float = DEFAULT_ADMIN_TIMEOUT_S
+        self,
+        decision_id: str,
+        *,
+        tenant: Optional[str] = None,
+        timeout: float = DEFAULT_ADMIN_TIMEOUT_S,
     ) -> None:
-        """Pin a decision against erasure and retention until the hold is released."""
+        """Pin a decision against erasure and retention until the hold is released.
+
+        ``tenant`` names the tenant the hold is placed for (runtime #1037), sent as the ``x-seam-tenant``
+        metadata — no proto field. Name it on a **preemptive** hold (a decision id not yet sealed) so the
+        hold's audit entry is tenant-bound. An unenrolled or mismatched tenant is refused
+        (``PERMISSION_DENIED``); ``tenant=""`` is present-but-empty and refused (``INVALID_ARGUMENT``).
+        ``None`` sends no metadata — the request is exactly the pre-#1037 one."""
         self._admin.PlaceLegalHold(
-            pb.DecisionRef(decision_id=decision_id), timeout=timeout
+            pb.DecisionRef(decision_id=decision_id),
+            timeout=timeout,
+            **_tenant_metadata(tenant),
         )
 
     def release_legal_hold(
-        self, decision_id: str, *, timeout: float = DEFAULT_ADMIN_TIMEOUT_S
+        self,
+        decision_id: str,
+        *,
+        tenant: Optional[str] = None,
+        timeout: float = DEFAULT_ADMIN_TIMEOUT_S,
     ) -> None:
-        """Release a legal hold, making the decision eligible for erasure/retention again."""
+        """Release a legal hold, making the decision eligible for erasure/retention again.
+
+        ``tenant`` is sent as the ``x-seam-tenant`` metadata exactly as on :meth:`place_legal_hold`;
+        ``None`` sends none."""
         self._admin.ReleaseLegalHold(
-            pb.DecisionRef(decision_id=decision_id), timeout=timeout
+            pb.DecisionRef(decision_id=decision_id),
+            timeout=timeout,
+            **_tenant_metadata(tenant),
         )
 
     def enforce_retention(
