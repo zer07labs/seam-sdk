@@ -8,6 +8,15 @@ export * from "./client.js";
 export * from "./admin.js";
 export * from "./crypto.js";
 export * from "./errors.js";
+// Identity custody (seam-sdk#201): the schema-v1 bootstrap file — the same four names Python's
+// `seam_sdk` root exports. Listed, not star-exported, so the layout helper `identityFileBody` and the
+// module constants stay internal to `identity.ts` and its tests.
+export {
+  IdentityFileError,
+  LoadedIdentity,
+  createIdentityFile,
+  loadIdentityFile,
+} from "./identity.js";
 
 // ── Generated protobuf surface ────────────────────────────────────────────────────────────────────
 // Every generated message type that appears in a public method signature is reachable from this root

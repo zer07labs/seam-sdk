@@ -80,6 +80,23 @@ than trusting a summary here.
   disclosures, crypto-shredded, another issuer), which also verify under the runtime's internal oracle.
   CI verifies `full/` with the shipped binary.
 
+### Added — create an agent identity in TypeScript (#201)
+- **TypeScript closes the last #201 gap.** `Agent.generate()` makes an agent from 32 CSPRNG bytes
+  (`crypto.getRandomValues`). `createIdentityFile(path, { agentId, tenant, endpoint })` returns
+  `{ path, aid }` and never the seed. `loadIdentityFile(path?)` reads `$SEAM_BOOTSTRAP_FILE` when no path is
+  given and returns a `LoadedIdentity { agent, agentId, tenant, endpoint, aid }`. Its `toString`,
+  `util.inspect` and `JSON.stringify` never print the seed. Every failure throws `IdentityFileError`, with
+  Python's messages. All four are exported from the package root, matching Python's root exports.
+- The write matches Python's: an `O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW` 0600 temp sibling, `fchmod` 0600,
+  `fsync`, a hard-link publish that refuses any existing path including a live or dangling symlink, unlink,
+  and a directory `fsync`. The calls are synchronous, like Python's. The file bytes are Python's
+  `json.dumps(indent=2) + "\n"`, including its `\uXXXX` escape of non-ASCII, so files written by either SDK
+  are interchangeable. `ts/tests/fixtures/identity_v1_python.json` was written by Python's
+  `create_identity_file`. A TS test checks that it loads with the AID Python derived, and that the TS
+  writer produces the same bytes for the same seed.
+- One deliberate difference from Python: on load, a required field must be a non-empty **string**, as in
+  Go. Python would `str()` a non-string such as a number. Every writer emits strings.
+
 ## 0.44.0 — 2026-10-10
 
 ### Changed — BREAKING: `seam-commitment-digest:v2` (runtime #1255, #802/#804; #227)
