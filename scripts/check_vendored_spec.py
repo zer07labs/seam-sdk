@@ -142,6 +142,13 @@ VENDORED = (
         repo="zer07labs/seam-runtime",
         remote="docs/specs/seam-event.v1.md",
     ),
+    # What `seam-verify bundle` implements (seam-sdk#225). Same rule as the event spec: if this copy
+    # drifts, a third party building from it builds a verifier other than the one this repo ships.
+    Vendored(
+        local="verify/docs/evidence-bundle.v1.md",
+        repo="zer07labs/seam-runtime",
+        remote="docs/specs/evidence-bundle.v1.md",
+    ),
 )
 
 

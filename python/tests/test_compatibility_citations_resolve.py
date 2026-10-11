@@ -184,7 +184,7 @@ def _sibling_relative_path(path: str) -> str:
 #: * Quote the sentence and let `QUOTED` (bottom of this file) check it by content. A trade rather
 #:   than an upgrade — see that table's own note — but the half it keeps is the half that survives a
 #:   refresh: the document and the file must still say the same words.
-VENDORED = ("verify/docs/seam-event.v1.md",)
+VENDORED = ("verify/docs/seam-event.v1.md", "verify/docs/evidence-bundle.v1.md")
 
 
 #: `` `path/to/generated.pyi:106,163` `` — a comma-list. It line-anchors into a generated tree just as

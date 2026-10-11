@@ -9,6 +9,7 @@ and answers **yes** or **no**.
 cargo run -- chain events.jsonl                                  # INTEGRITY — the hash chain links
 cargo run -- chain events.jsonl --issuer aid:pubkey:ed25519:...  # AUTHENTICITY — + issuer-signed heads
 cargo run -- erasure-cert cert.json --issuer aid:pubkey:ed25519:...
+cargo run -- bundle ./evidence --issuer aid:pubkey:...           # an evidence bundle, end to end
 ```
 
 Exit **0** = verified · **1** = usage/IO error · **2** = **verification FAILED**.
@@ -30,7 +31,8 @@ seam-verify
 linked Seam's own library would be *Seam checking Seam* — which is precisely what "don't trust us" says you
 should not have to accept.
 
-It is written from the two specs in `docs/`, and nothing else. `cargo tree` is the assertion: if a Seam
+It is written from the specs in `docs/` (plus the runtime's `seam-commitment-digest.v2.md`, which the bundle
+spec cites and the shared `conformance/` vectors pin), and nothing else. `cargo tree` is the assertion: if a Seam
 crate ever appears in it, the claim has quietly stopped being true.
 
 **You do not have to use this program.** Everything it does is specified in `docs/`, precisely enough to
@@ -232,6 +234,63 @@ already trusted. The pin is where that trust enters.
 `fixtures/erasure_certificate_vector.json` is a real signature, produced by the real signer. Verify it, and
 you have checked this tool against something you did not have to take on faith.
 
+### 3. An evidence bundle — `bundle <DIR> --issuer <AID>`
+
+An evidence bundle (`docs/evidence-bundle.v1.md`) is what an operator hands an **adverse party**: someone
+who disputes a decision, has no runtime access, and has no reason to trust the operator. It is one flat
+directory, produced by `seam-ops export-evidence --decision <id> --bundle <DIR>`:
+
+| File | |
+|---|---|
+| `manifest.json` | the index: per-file SHA-256 and size, the decision's coordinates, what was disclosed and withheld. **Unsigned** |
+| `events.jsonl` + `anchor.json` | the anchored window around the decision (the `chain --from-anchor` shape) |
+| `commitment.json` | the decrypted Commitment and its TCT |
+| `binding.json` | the issuer's signed statement that *this* Commitment is the content of *that* chain link |
+| `context.json`, `policy.json` | opt-in disclosures of what the decision consumed and which rules gated it |
+
+```
+EVIDENCE BUNDLE VERIFIED (seam-evidence-bundle.v1)
+  decision  : dec:d1
+  tenant    : design-partner
+  head      : f8c1…
+  - manifest: seam-evidence-bundle.v1, issuer is the pinned AID, every listed file matches its SHA-256 and size
+  - window authenticated from the issuer-signed anchor (base_len 2): 4 link(s), 1 covering attestation(s)
+  - decision 'dec:d1' is a chained link of tenant 'design-partner' inside the authenticated window
+  - the Commitment's TCT verifies against the pinned issuer and binds its seam-commitment-digest:v2
+  - the issuer's signed binding ties this Commitment to the decision's chain link
+  - context.json recomputes the chained context_digest
+  - SHA-256(policy.json) is the chained policy_rules_digest
+  - withheld: participation (participation[].subject is the GDPR erasure predicate; …)
+```
+
+The six steps run in the spec's order and the first failure refuses with exit 2, naming the step:
+
+1. **Manifest** — `format` is `seam-evidence-bundle.v1` (any other is refused), `issuer.aid` is the AID
+   **you** pinned, every listed file exists with its listed SHA-256 and size, `events.jsonl` and
+   `anchor.json` are listed, `commitment.json`/`binding.json` come as a pair, and `disclosed` agrees with
+   `files`. A listed member that is missing is a refusal, not an IO error.
+2. **Chain** — the window, through exactly the code `chain events.jsonl --issuer <AID> --from-anchor
+   anchor.json --strict` runs: the anchor's signature, every link, every attestation, a covering one.
+3. **Inclusion** — exactly one chained `DECISION_SEALED` for the manifest's decision, in its tenant, whose
+   checksum is `inclusion.record_checksum`.
+4. **Commitment** — the TCT verifies against the pinned AID and its grant carries the recomputed
+   `seam-commitment-digest:v2` (the sealed explanation included, so a re-worded reason fails), and
+   `supersedes` matches the chained record. A Commitment with no TCT (`identity: local-sealed`) is bound
+   by step 5 alone, and the output says so.
+5. **Binding** — the `seam.evidence-binding.v1` signature verifies against the pinned AID, and it names
+   this decision, tenant, chain link and Commitment digest.
+6. **Disclosures** — `context.json` recomputes the chained `context_digest`; `SHA-256(policy.json)` is the
+   chained `policy_rules_digest`.
+
+What was **withheld** is printed with the exporter's reason: it is part of what the adverse party is told.
+The manifest is an index, never evidence — every claim in it that this tool reads is re-derived from the
+other files, and trust enters only through `--issuer`. Exactly one `--issuer` is accepted.
+
+`fixtures/evidence-bundle/` holds four bundles written by the runtime's own exporter (a full one, one with
+no disclosures, one whose record was crypto-shredded, and one from another issuer). They also verify under
+the runtime's internal oracle. `tests/bundle.rs` copies them and makes one edit per case, covering a
+refusal at every step.
+
 ---
 
 ## What it cannot tell you
@@ -244,7 +303,11 @@ Stated plainly, because a verifier that oversells itself is worse than none:
   caught — but beyond the last attested head, the published anchor (`docs/audit-anchor.md`) is still what
   pins a head at a time so a truncated history fails to reach it.
 * **It cannot read your decisions.** The digest is over the *sealed* record. The plaintext is not on the
-  wire, by design — verification discloses nothing.
+  wire, by design — verification discloses nothing. A bundle is the exception the operator chooses: it
+  discloses the Commitment, and the binding proves it is the sealed content of the link.
+* **It cannot prove a bundle disclosed everything.** Withheld items are listed with a reason, and the
+  participation list is always withheld. A v1 verifier also does not check a disclosure file the v1 spec
+  does not define; an unknown `format` is refused.
 * **It cannot verify pre-cutover history** (see `--strict` above). It will say so rather than pretend.
 
 ---
@@ -255,10 +318,12 @@ Stated plainly, because a verifier that oversells itself is worse than none:
 |---|---|
 | `docs/seam-event.v1.md` | the wire format and the chain rule — **normative**, a verbatim pinned copy of the runtime's spec (see Drift) |
 | `docs/erasure-certificate.v1.md` | the certificate signing framing — **normative** |
+| `docs/evidence-bundle.v1.md` | the evidence bundle and its binding framing — **normative**, a verbatim pinned copy of the runtime's spec (see Drift) |
 | `docs/audit-anchor.md` | the out-of-band anchor |
 | `proto/seam/event/v1/seam_event.proto` | the canonical protobuf schema |
 | `fixtures/erasure_certificate_vector.json` | a real signed certificate to check against |
-| `src/` | the reference implementation (~600 lines) |
+| `fixtures/evidence-bundle/` | four real bundles from the runtime's exporter (byte-exact: `.gitattributes` keeps git off them) |
+| `src/` | the reference implementation |
 
 ## Drift
 
@@ -282,7 +347,8 @@ you are running.
 byte-identical at the pinned commit, that commit reachable from the ref the header names, and
 byte-identical to that ref's tip. Drift is red and blocks the merge. Run it yourself with
 `python scripts/check_vendored_spec.py --from local:../seam-runtime` if you have a sibling checkout, or
-`--from gh` to read the repository directly.
+`--from gh` to read the repository directly. `docs/evidence-bundle.v1.md` is pinned and checked the same
+way.
 
 One honest limit: `seam-runtime` is private, so the job reads it with a short-lived App token and **skips**
 on a pull request that cannot see the org's secrets (a fork). Drift introduced that way is caught on the

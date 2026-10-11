@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:241`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:259`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -121,7 +121,7 @@ mismatch cannot ship.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1254-1276`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1272-1294`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -321,6 +321,11 @@ comment — `.github/workflows/ci.yml:539-540` runs `scripts/check-independence.
   **DOWNGRADE** — v1 has no stream-recomputable digest, so relabelling a v3 record as v1 is the one
   direction the recompute cannot catch by construction.
 - **Erasure certificates** — from the issuer AID alone, no Seam credential and no network call.
+- **Evidence bundles** (`bundle <DIR> --issuer <AID>`, seam-sdk#225) — the six steps of
+  `verify/docs/evidence-bundle.v1.md`: manifest hashes, the anchored window, the decision's inclusion,
+  the Commitment's TCT and `seam-commitment-digest:v2`, the issuer's signed binding of that Commitment
+  to the chain link, and the disclosed context and policy. This makes `verify/` a sixth implementation
+  of the commitment digest, held to the same `conformance/` vectors as the five shims.
 - **Truncation — conditionally, when the caller supplies a later anchor** (`chain --expect-anchor
   <FILE>`, seam-sdk#140). A stream cut at the tail is internally consistent and verifies **green on
   its own** — that is a property of hashing, not a gap `chain`/`chain_anchored` can close by
@@ -339,13 +344,13 @@ comment — `.github/workflows/ci.yml:539-540` runs `scripts/check-independence.
 **NOT covered — stated plainly, because the phrase "independently verifiable" would otherwise carry
 implications it does not support:**
 
-- **The commitment digest.** `verify/` does not implement `seam-commitment-digest:v2` at all — the
-  string appears nowhere in it. The five crypto shims implement it; the published verifier does not.
-  `python/tests/test_framing_rationale_is_documented.py` guards against a doc claiming otherwise.
+- **A standalone Commitment proof.** `verify/` implements `seam-commitment-digest:v2` and the TCT
+  check (`verify/src/commitment.rs`) only as step 4 of `bundle`; there is no `commitment` subcommand,
+  so a proof fetched outside a bundle is checked with the five crypto shims, not the published verifier.
 - **Proof acquisition.** An external auditor cannot fetch a proof: both proof verbs require an
-  enrolled, tenant-matched subject. The intended answer is an exported evidence bundle rather than a
-  cross-tenant read grant — tracked at
-  [`seam-runtime#421`](https://github.com/zer07labs/seam-runtime/issues/421).
+  enrolled, tenant-matched subject. The answer is the exported evidence bundle
+  ([`seam-runtime#806`](https://github.com/zer07labs/seam-runtime/issues/806)), which the operator
+  produces and `verify bundle` checks; there is no cross-tenant read grant.
 
 ### On independence, honestly
 

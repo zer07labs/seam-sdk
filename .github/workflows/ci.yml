@@ -553,6 +553,13 @@ jobs:
           cd verify
           AID=$(python3 -c "import json;print(json.load(open('fixtures/erasure_certificate_vector.json'))['issuer_aid'])")
           cargo run --quiet -- erasure-cert fixtures/erasure_certificate_vector.json --issuer "$AID"
+      # Same promise for the evidence bundle the runtime's own exporter wrote (seam-sdk#225). The AID is
+      # pinned HERE, not read from the bundle's manifest: trust never comes from the bundle. It is the
+      # issuer of seed 7x32, the same AID `conformance/vectors.json`'s tct block names.
+      - name: the published evidence bundle verifies
+        run: |
+          cd verify
+          cargo run --quiet -- bundle fixtures/evidence-bundle/full --issuer aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw
 
   # ── The MSRV is a PROMISE; this is what checks it ──────────────────────────────────────────────
   # `verify/Cargo.toml` declares `rust-version`, and `verify/tests/msrv.rs` asserts that declaration

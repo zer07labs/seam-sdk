@@ -1,0 +1,61 @@
+{
+  "format": "seam-evidence-bundle.v1",
+  "scope": "decision",
+  "decision_id": "dec:d1",
+  "tenant": "design-partner",
+  "exported_at": 2000,
+  "issuer": {
+    "aid": "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
+    "ed25519_public_key": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "pin": "Trust comes from pinning this AID out of band (GET /v1/trust/issuer-aid, the anchors your notary holds), never from this file."
+  },
+  "inclusion": {
+    "decision_offset": 5,
+    "record_checksum": "1TpobNZn50m06HrSp++yhPOpiLCHtYN7vjTjTyyr7z0=",
+    "anchor_offset": 3,
+    "anchor_attested_len": 2,
+    "window_events": 4,
+    "window_links": 4,
+    "window_attestations": 2
+  },
+  "files": {
+    "events.jsonl": {
+      "sha256": "d5ca2dfbe7a4eaf62494b7df1c4bc92a9ba6ecedadc41ca1fd5d6cf7b59daab1",
+      "bytes": 3466
+    },
+    "anchor.json": {
+      "sha256": "8ec2370bf0db414a7be5c6740894529443575331f33ee5f7eaf4c844ab8ad79b",
+      "bytes": 317
+    },
+    "commitment.json": {
+      "sha256": "73e188a2e5f3a90203340868096ba3b689481fc2180466012c7cac9f8da6d73d",
+      "bytes": 2037
+    },
+    "binding.json": {
+      "sha256": "144b141d47c028205fdf8debd14f94ac0908c53e27bb89f27fb0cabc577be021",
+      "bytes": 421
+    }
+  },
+  "disclosed": [
+    "commitment",
+    "binding"
+  ],
+  "withheld": [
+    {
+      "item": "context",
+      "reason": "not disclosed by the exporter (pass --disclose context)"
+    },
+    {
+      "item": "policy",
+      "reason": "not disclosed by the exporter (pass --disclose policy)"
+    },
+    {
+      "item": "participation",
+      "reason": "participation[].subject is the GDPR erasure predicate; only participation_digest is chained and published"
+    }
+  ],
+  "verify": [
+    "seam-verify chain events.jsonl --issuer aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw --from-anchor anchor.json",
+    "seam-verify bundle . --issuer aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw"
+  ]
+}

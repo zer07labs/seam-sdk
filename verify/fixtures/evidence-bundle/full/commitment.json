@@ -1,0 +1,50 @@
+{
+  "id": "k1",
+  "action": "APPROVE",
+  "authority": "macp.mode.decision.v1",
+  "auth_method": "aitp-pinned-handshake",
+  "trust_basis": "aid:pubkey:ed25519:GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE:Trusted",
+  "supersedes": null,
+  "signed_artifact": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJhdWQiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJjbmYiOnsiamt0IjoiLS02SU01bDBPb3NMajl5V3NrSVNZaFVBM25fM0NVUlFrbXJZTVNoYV9jayJ9LCJleHAiOjMxNTM2MDAwMDEsImdyYW50cyI6WyJzZWFtOmNvbW1pdG1lbnQiLCJzZWFtLWNvbW1pdG1lbnQtZGlnZXN0OmNhNmI0NGI5ZmY1Y2YwNDVlNDhhOGExZWI0MGQ2NTYyNGFkZWE3NDk4YzRmMTVhOWRkMGY1NTQ2NGE1OGE4MjQiXSwiaWF0IjoxLCJpc3MiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJqdGkiOiJlZjhmZDJiZS0zNDliLTI2MWYtNjE5Yi1iMTBkMjhkZWRkMWMiLCJzdWIiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJ2ZXIiOiJhaXRwLzAuMiJ9.hZ3EY0TDePfVJOEi3Bxu7HWzLaY1FxNiEwk__xgT6SjWeUr9NsdfPMcU-ZkKzkeqbsQEkHXbkphiHk6dd0vKDg",
+  "committer": "aid:pubkey:ed25519:GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
+  "explanation": [
+    {
+      "kind": "evaluation",
+      "participant": "a",
+      "proposal_id": "p1",
+      "value": "APPROVE",
+      "reason": "",
+      "confidence": null,
+      "rationale_ref": null
+    },
+    {
+      "kind": "evaluation",
+      "participant": "b",
+      "proposal_id": "p1",
+      "value": "APPROVE",
+      "reason": "",
+      "confidence": null,
+      "rationale_ref": null
+    },
+    {
+      "kind": "vote",
+      "participant": "a",
+      "proposal_id": "p1",
+      "value": "APPROVE",
+      "reason": "",
+      "confidence": null,
+      "rationale_ref": null
+    },
+    {
+      "kind": "vote",
+      "participant": "b",
+      "proposal_id": "p1",
+      "value": "APPROVE",
+      "reason": "",
+      "confidence": null,
+      "rationale_ref": null
+    }
+  ],
+  "issuer_aid": "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
+  "commitment_digest": "ca6b44b9ff5cf045e48a8a1eb40d65624adea7498c4f15a9dd0f55464a58a824"
+}

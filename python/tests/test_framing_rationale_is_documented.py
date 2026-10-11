@@ -24,8 +24,9 @@ import pytest
 
 REPO = pathlib.Path(__file__).parents[2]
 
-#: The five implementations of `seam-commitment-digest:v2`, and where each is expected to explain
-#: itself. `verify/` is deliberately NOT here: it does not implement the commitment digest at all.
+#: The implementations of `seam-commitment-digest:v2`, and where each is expected to explain itself:
+#: the five SDK shims, and since seam-sdk#225 the published verifier, whose `bundle` step 4 recomputes
+#: the digest to check a bundle's TCT (`verify/src/commitment.rs`).
 SHIMS = {
     "go": REPO / "go" / "crypto" / "crypto.go",
     "java": REPO
@@ -48,6 +49,7 @@ SHIMS = {
     / "SeamCrypto.kt",
     "python": REPO / "python" / "seam_sdk" / "crypto.py",
     "typescript": REPO / "ts" / "src" / "crypto.ts",
+    "verify": REPO / "verify" / "src" / "commitment.rs",
 }
 
 
@@ -97,37 +99,37 @@ def test_the_shim_explains_why_the_framing_is_length_prefixed(language: str) -> 
     )
 
 
-def test_verify_is_not_a_sixth_mirror() -> None:
-    """`verify/` does NOT implement the commitment digest, and no doc may imply it does.
+def test_verify_implements_it_in_exactly_one_place() -> None:
+    """`verify/` implements the commitment digest in `src/commitment.rs` and nowhere else.
 
-    The published verifier checks the event chain and erasure certificates. Describing it as a sixth
-    implementation of the commitment digest would overstate what an auditor running it has actually
-    verified — the precise class of overclaim this workstream is meant to remove, not add.
+    Until seam-sdk#225 the published verifier did not implement this digest at all, and this test
+    guarded against any doc implying it did. `bundle` now needs it for step 4, so the guard moves:
+    the verifier is a sixth implementation (it is in `SHIMS` above and carries the rationale), and a
+    second copy inside `verify/` would be a second thing to drift.
     """
 
-    # Look for the domain tag as CODE, not as prose. `verify/src/lib.rs` names the string in its
-    # module docs precisely to say it does NOT implement this digest, and a guard that fired on that
-    # would punish the documentation for being explicit — the opposite of what it is for.
+    # The domain tag as a string literal of its own (`b"seam-commitment-digest:v2"`, or the grant's
+    # `"seam-commitment-digest:{}"`), never as prose: docs, and user-facing messages that merely NAME
+    # the digest mid-sentence, may mention it freely.
     def implements_it(path: pathlib.Path) -> bool:
         for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
             stripped = line.lstrip()
             if stripped.startswith(("//", "#", "*", "/*")):
                 continue
-            if "seam-commitment-digest" in line:
+            if '"seam-commitment-digest:' in line:
                 return True
         return False
 
-    hits = [
-        p.relative_to(REPO)
+    hits = sorted(
+        p.relative_to(REPO).as_posix()
         for p in (REPO / "verify").rglob("*")
         if p.is_file()
         and p.suffix in {".rs", ".toml"}
         and "target" not in p.parts
+        and "tests" not in p.parts
         and implements_it(p)
-    ]
-    assert not hits, (
-        f"`seam-commitment-digest` now appears under verify/ ({hits}). If the verifier genuinely "
-        f"implements the commitment digest, that is a real change: add it to SHIMS above, give it "
-        f"the rationale comment, and update COMPATIBILITY.md — which currently states the published "
-        f"verifier does NOT cover commitment digests."
+    )
+    assert hits == ["verify/src/commitment.rs"], (
+        f"`seam-commitment-digest` appears as code under verify/ in {hits}; it belongs in "
+        f"verify/src/commitment.rs alone."
     )

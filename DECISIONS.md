@@ -1219,7 +1219,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:1254-1276` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:1272-1294` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -1296,7 +1296,7 @@ before the fix, so no shape that previously refused can now proceed.
 The scoping was **not** touched. Exact version equality, the python+npm format allowlist, and the
 exact-name match that keeps the org's Cargo crates unreachable are all unchanged — and are now
 pinned by `scripts/test_yank_gate.py`, which executes the credential resolution rather than reading
-it and asserts the three filters. It runs in `workflow-guards` (`.github/workflows/ci.yml:701-702`),
+it and asserts the three filters. It runs in `workflow-guards` (`.github/workflows/ci.yml:708-709`),
 needs no credential, and was proved falsifiable three ways: restoring the original one-liner,
 widening the format filter, and flipping the dry-run default each turn it red.
 
@@ -1375,7 +1375,7 @@ guard against throwaway git repos (`scripts/test_publish_gate.py:510`).
 That was not ceremony. The first draft of the ancestry step ran `git fetch --no-tags --depth=0`,
 which git rejects outright — *"depth 0 is not a positive number"* — and would have failed every
 publish. It survived a read-through and died the first time it was executed, which is the same
-argument the `ci-green` tests in that file already make (`.github/workflows/ci.yml:690-691`).
+argument the `ci-green` tests in that file already make (`.github/workflows/ci.yml:697-698`).
 
 A third defect was subtler and is worth stating as a rule. `test_protobuf_floor.py` **skips** when
 the generated tree is absent, and pytest exits **0** when every selected test skips — only *zero
@@ -2040,7 +2040,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:1286` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:1304` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
