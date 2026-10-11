@@ -667,6 +667,38 @@ class SeamAdminClient:
         except grpc.RpcError as e:
             raise map_rpc_error(e) from e
 
+    def redrive_events(
+        self,
+        tenant: str,
+        from_seq: int,
+        *,
+        to_seq: Optional[int] = None,
+        event_id: Optional[str] = None,
+        timeout: float = DEFAULT_ADMIN_TIMEOUT_S,
+    ) -> Sequence[pb.RedriveOutcome]:
+        """Re-drive existing outbox events by reference (seam-runtime #1176, DLQ retry option C).
+
+        Names events by their coordinates — ``tenant`` plus the global outbox ``from_seq`` (a DLQ letter's
+        ``tenant``/``seq`` headers), optionally a bounded inclusive range up to ``to_seq`` (at most 1000
+        seqs), or a single seq cross-checked by ``event_id``. The runtime re-reads ITS OWN stored row for
+        each and appends one advisory ``EVENT_REDRIVEN`` wrapper carrying it verbatim; a DLQ letter's own
+        bytes never reach the stream. Returns one :class:`pb.RedriveOutcome` per requested seq, in seq
+        order, whose ``status`` is ``redriven`` | ``not_found`` | ``pruned`` | ``not_redrivable`` |
+        ``event_id_mismatch``. Requires the ``events:redrive`` operator scope (not ``events:consume``)."""
+        if not tenant:
+            raise ValueError("tenant is required: the tenant whose events to re-drive")
+        _uint_slot("from_seq", from_seq, 64)
+        req = pb.RedriveEventsRequest(tenant=tenant, from_seq=from_seq)
+        if to_seq is not None:
+            _uint_slot("to_seq", to_seq, 64)
+            req.to_seq = to_seq
+        if event_id is not None:
+            req.event_id = event_id
+        try:
+            return list(self._events.RedriveEvents(req, timeout=timeout).outcomes)
+        except grpc.RpcError as e:
+            raise map_rpc_error(e) from e
+
 
 # ── Enrolment proof-of-possession (#205) ─────────────────────────────────────────────────────────
 

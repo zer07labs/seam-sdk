@@ -914,6 +914,11 @@ pub const ADVISORY_KINDS: &[&str] = &[
     // one is emitted per REFUSED COMMITMENT rather than once per authorize call, so under a strict
     // bound policy a missing entry here refuses a healthy stream at a material rate.
     "POLICY_DENIED",
+    // ADVISORY per spec §EVENT_REDRIVEN (tag 26, runtime #1176): an operator re-drove an existing outbox
+    // row by reference; the wrapper carries that row's bytes verbatim, has no digest/checksum and an
+    // empty prev_checksum by design. The ORIGINAL row is verified where it sits in the stream; the copy
+    // inside the wrapper is never walked as a link (it would read as a replay).
+    "EVENT_REDRIVEN",
 ];
 
 /// Every `kind` this build was written against — the vendored spec's `enum EventKind`, in full.
@@ -951,6 +956,9 @@ pub const MODELLED_KINDS: &[&str] = &[
     "SESSION_LIFECYCLE",
     "AUTHORIZE_EVALUATED",
     "POLICY_DENIED",
+    // Advisory, like the four above with no slot on `Event`: no digest, so content coverage does not
+    // arise. Its `event` bytes are a verbatim copy of a row this walk verifies in place — never decoded here.
+    "EVENT_REDRIVEN",
 ];
 
 #[cfg(test)]
@@ -1000,6 +1008,7 @@ mod tests {
             "SESSION_LIFECYCLE",
             "AUTHORIZE_EVALUATED",
             "POLICY_DENIED",
+            "EVENT_REDRIVEN",
         ]
         .into();
         let ours: BTreeSet<&str> = ADVISORY_KINDS.iter().copied().collect();
@@ -1059,6 +1068,7 @@ mod tests {
             "SESSION_LIFECYCLE",
             "AUTHORIZE_EVALUATED",
             "POLICY_DENIED",
+            "EVENT_REDRIVEN",
         ]
         .into();
         let ours: BTreeSet<&str> = MODELLED_KINDS.iter().copied().collect();

@@ -1,15 +1,15 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 8a65349 (refreshed 2026-10-10).
-     Two movements since the prior default-branch pin (074ddd3), both landed with the runtime 0.44.0 train
-     (seam-runtime#1269):
-     1. seam-runtime#1205/#1196: the system partition (wire `tenant == ""`) now carries its own
-        CHAIN_HEAD_ATTESTATION, envelope and payload `tenant` both `""`, the third tenant-less kind. A verifier
-        under `--issuer` requires a covering attestation for every partition in the window, `""` included.
-        This crate already handles it (seam-sdk#220 pinned the behaviour ahead of the runtime change).
-     2. seam-runtime#1255 (#802/#804): a prose note that the commitment's `committer` and sealed explanation
-        ride inside the existing `ciphertext_digest` and the TCT (`seam-commitment-digest:v2`). No wire change;
-        `schema_version` does not move.
-     Earlier movements, recorded by prior pins: the `tenant_seq` cutoff and the tenant-tag producer rule
-     (#903/#1084), tag 25 `tenant_seq` (#973) and AUTHORIZE_EVALUATED tag 11 `subject_digests` (#715). -->
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ b0948e9 tracking train/0.45.0 (refreshed 2026-10-10).
+     Pinned AHEAD of the default branch, deliberately: the runtime 0.45.0 train (seam-runtime#1273) merges and
+     dispatches the SDK release in one step, so the copy has to be on SDK main first. The exception ends itself
+     when the train squash-merges (the file becomes byte-identical on both refs). One movement since the prior
+     pin (8a65349):
+     1. seam-runtime#1176: EVENT_REDRIVEN (envelope tag 26, ADVISORY, unchained) — an operator re-drove an
+        existing outbox event by reference (`SeamEvents.RedriveEvents`); the wrapper carries the original row's
+        bytes verbatim. The outbox retention default becomes 8 days, never less. This crate lists the kind as
+        advisory and modelled; it never recurses into the wrapped bytes.
+     Earlier movements, recorded by prior pins: the system-partition CHAIN_HEAD_ATTESTATION (#1205/#1196), the
+     #802/#804 commitment note, the `tenant_seq` cutoff and the tenant-tag producer rule (#903/#1084), tag 25
+     `tenant_seq` (#973) and AUTHORIZE_EVALUATED tag 11 `subject_digests` (#715). -->
 
 # `seam-event.v1` — event-stream wire spec (language-neutral)
 
@@ -62,6 +62,7 @@ enum EventKind {
   SESSION_LIFECYCLE // ADVISORY — a session lifecycle transition, "opened" only today (not chained; tag 21)
   AUTHORIZE_EVALUATED // ADVISORY — one advisory authorization was evaluated (not chained; tag 23)
   POLICY_DENIED     // ADVISORY — a bound policy REFUSED a commitment (not chained; tag 24)
+  EVENT_REDRIVEN    // ADVISORY — an operator re-drove an existing outbox event by reference; wraps its bytes (not chained; tag 26)
 }
 ```
 
@@ -531,6 +532,49 @@ a strict bound policy that can be a material rate. Emission is fail-open — the
 returned to the caller as a typed error, so a failed append must not convert a clean denial into a
 different error.
 
+### `EVENT_REDRIVEN` (additive, tag 26 — advisory, not chained) — #1176
+
+An operator **re-drove** an existing outbox event by reference (DLQ retry option C,
+`SeamEvents.RedriveEvents` / `POST /v1/events/redrive`, scope `events:redrive`). The operator names the
+event by its coordinates — tenant + global `seq` (a DLQ letter's `tenant`/`seq` headers), or a bounded
+`seq` range, optionally cross-checked by `event_id` — and the runtime reads **its own stored row** and
+appends this wrapper. A DLQ letter's bytes never reach the main stream, so a forged letter (any consumer
+or tenant can write a DLQ) cannot be laundered into `seam.events.v1` by a retry.
+
+```proto
+message EventRedriven {                // envelope tag 26
+  bytes event = 1;                     // the original outbox row, VERBATIM seam-event.v1 protobuf
+  string original_event_id = 2;        // copy of the inner event_id — the consumers' dedup key
+  uint64 original_seq = 3;             // copy of the inner global seq
+  string original_kind = 4;            // copy of the inner kind
+}
+```
+
+**A wrapper, not a re-append.** A verbatim copy of the original row at a fresh offset would carry a
+`seq` (and, for a chained kind, a `prev_checksum`) that no longer fits the stream: every chain-verifying
+reader — the relay first — would read it as a replay. So the wrapper is an ordinary advisory event with
+its own fresh `seq`/`tenant_seq`, and the original travels inside it untouched (every digest, checksum
+and signature in it still verifies; it is never re-encoded).
+
+Envelope: `event_id = "{original_event_id}#rd#{seq}"` (unique per re-drive); `tenant`, `namespace`,
+`classification`, `session_id` and `decision_id` are **copied from the inner event**, so tenant
+partitioning and classification-gated redaction treat the wrapper exactly as they treat what it carries
+(`classification` therefore **varies** — a re-driven `ERASURE_CERTIFICATE` is `Pii`). **Advisory**: no
+`digest`/`checksum`, empty `prev_checksum`.
+
+**Consumers.** A consumer that re-delivers the inner event (the relay, for a DLQ retry) dedups it on the
+inner `event_id`, exactly as it dedups any at-least-once duplicate, so re-driving twice is harmless. The
+three scalar copies let a router act without decoding `event`; a consumer that needs certainty decodes it.
+An `EVENT_REDRIVEN` is itself never re-drivable (the operation answers `not_redrivable`; re-drive the
+original seq).
+
+**Audit.** Each call that re-drives anything first chains an `AUDIT_ENTRY` with action `events_redriven`
+under the re-driven tenant; if that append fails, nothing is re-driven.
+
+**Retention.** A re-drive needs the original row, so the outbox retention window has an 8-day floor (the
+DLQ topic's 7-day retention plus a day of delivery lag; see §Retention). A seq retention removed anyway
+answers `pruned` — never a silent no-op.
+
 ### `BUDGET_BREACH` (additive, tag 17 — advisory, not chained)
 
 The enterprise-6.2 escalation signal on the R9 Suspended/HITL path. `severity: "hard"` means
@@ -747,7 +791,9 @@ The outbox is **garbage-collected against the relay's durably-consumed cursor**,
 operator ack-drain's `published` flag. A consumer relaying the outbox (e.g. `seam-connectors`) reports its
 progress with `SeamEvents.ReportEventsConsumed(consumed_cursor)`; the runtime keeps a durable, **monotone**
 high-water from it (a lower re-report is ignored) and prunes a row only when it is **both** below that
-cursor **and** older than the retention window (`SEAM_OUTBOX_RETENTION_MILLIS`, default 7 days), always
+cursor **and** older than the retention window (`SEAM_OUTBOX_RETENTION_MILLIS`, default **8 days**, never
+less — #1176: an operator re-drive by reference needs the original row for as long as the DLQ keeps the
+letter, 7 days, plus a day of delivery lag; a smaller configured value is raised to the floor), always
 retaining the current max-`seq` row so the `seq` allocator cannot regress.
 
 - **Never pruned below what the relay needs.** Because prune deletes only `offset < consumed_cursor`, a row

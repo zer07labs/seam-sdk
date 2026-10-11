@@ -45,7 +45,7 @@ fn usage() -> ! {
          \n\
              An event is a link iff it carries `digest` and `checksum` — by FIELD PRESENCE, never by\n    \
              kind. Advisory events (LEARNING_*, BUDGET_BREACH, SESSION_LIFECYCLE, AUTHORIZE_EVALUATED,\n     \
-             POLICY_DENIED)\n    \
+             POLICY_DENIED, EVENT_REDRIVEN)\n    \
              and the off-chain `chain_anchor` carry neither, and do not advance the head.\n\
          \n    \
              A link whose `kind` this build does not model is STILL VERIFIED as a link and still\n    \

@@ -16,7 +16,11 @@
 # `check-contract` makes "what surface does the active contract actually expose?" a verifiable fact rather
 # than an assumption — the SDK's equivalent of the runtime's published-surface gate.
 
-BUF_MODULE ?= buf.build/zer07labs/seam
+# PINNED for the runtime 0.45.0 train (seam-runtime#1273 @ 2a4e522 — proto unchanged since b0948e9, BSR label `train-0.45.0`): the train
+# changes seam.proto and seam_event.proto (#1176 RedriveEvents / EVENT_REDRIVEN) and merges + dispatches the
+# SDK release in one step, so SDK main must generate from that proto before the default label carries it.
+# Un-pin (back to the bare module) once the train lands and BSR main is at or past this commit.
+BUF_MODULE ?= buf.build/zer07labs/seam:4875ab522603404d8343ffc027a1fc11
 RUNTIME    ?= ../seam-runtime
 
 .PHONY: generate generate-local check-contract clean lint probe-frameworks

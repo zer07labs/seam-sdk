@@ -65,6 +65,7 @@ SeamCoordination/SubmitEvaluation
 SeamCoordination/SubmitObjection
 SeamCoordination/SubmitProposal
 SeamCoordination/SubmitVote
+SeamEvents/RedriveEvents
 SeamEvents/ReportEventsConsumed
 SeamEvents/StreamEvents
 SeamTrust/IssuerAid

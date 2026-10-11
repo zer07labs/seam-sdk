@@ -97,6 +97,18 @@ than trusting a summary here.
 - One deliberate difference from Python: on load, a required field must be a non-empty **string**, as in
   Go. Python would `str()` a non-string such as a number. Every writer emits strings.
 
+### Added — event re-drive by reference (runtime #1176, train 0.45.0)
+- **`SeamAdminClient.redrive_events(tenant, from_seq, *, to_seq=None, event_id=None)`** (Python) and
+  **`redriveEvents(tenant, fromSeq, { toSeq?, eventId? })`** (TS) wrap the new `SeamEvents.RedriveEvents`: re-emit
+  existing outbox events named by their coordinates (a DLQ letter's `tenant`/`seq` headers, a range of at most
+  1000 seqs, or one seq cross-checked by `event_id`). Returns one `RedriveOutcome` per seq (`redriven` |
+  `not_found` | `pruned` | `not_redrivable` | `event_id_mismatch`). Needs the new `events:redrive` operator scope.
+- **`EVENT_REDRIVEN`** (seam.event.v1 tag 26, advisory, unchained) arrives on `stream_events` / `streamEvents`;
+  `event_redriven.event` is the original outbox row's bytes verbatim (decode with `ev.SeamEvent.FromString`).
+  TS exports `EventRedriven`/`RedriveOutcome` and their schemas.
+- **`seam-verify`** lists `EVENT_REDRIVEN` as an advisory, modelled kind: `--strict` accepts a stream carrying it,
+  and the wrapped copy is never walked as a link (the original is verified where it sits).
+
 ## 0.44.0 — 2026-10-10
 
 ### Changed — BREAKING: `seam-commitment-digest:v2` (runtime #1255, #802/#804; #227)
