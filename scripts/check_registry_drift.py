@@ -1059,12 +1059,14 @@ def _with_newest(code: int, newest_verdict: str | None, newest_error: InfraError
     a footnote. `code` 1 means an unsuppressed declared drift and nothing else — both declared
     subjects reach 1 only through a drift tier, and a suppression has already set it to 0.
 
-    `code` 2 arrives from exactly ONE caller, deliberately: `main`'s declared-clock fault path,
-    where git could not date the declared version but the newest question had already been
-    answered on its own (upload) clock. There a newest drift → 1 (a real finding, which a 2 would
-    hide) and a newest fault or no finding → 2. Every other exit-2 path returns WITHOUT calling
+    `code` 2 arrives on two paths. One is deliberate: `main`'s declared-clock fault path, where git
+    could not date the declared version but the newest question had already been answered on its
+    own (upload) clock. There a newest drift → 1 (a real finding, which a 2 would hide) and a
+    newest fault or no finding → 2. The other is incidental: a partner fault beside a SUPPRESSED
+    declared drift reaches the final call with 2, but a partner fault leaves the newest question
+    NOT CHECKED, so the answer is 2 regardless. Every other exit-2 path returns WITHOUT calling
     this, because it fires before the newest question has run; one that newly reaches this with 2
-    must decide the same thing on purpose, not inherit it.
+    and a newest answer must decide the same thing on purpose, not inherit it.
     """
     if newest_error is not None:
         return 1 if code == 1 else 2

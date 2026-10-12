@@ -4681,3 +4681,20 @@ single shared listing) · P3 simple.
 - **Tests:** `pytest scripts/` gives 701 passed; ruff clean; the citation gate gives 589 passed.
 - **Next:** finalization. One whole-feature Opus verify, a rebase onto main, then ship one PR closing #253.
 
+
+## Finalization (2026-10-12)
+- **Whole-feature Opus verify:** GAPS (tests and docs only; delivery complete). The live read-only run matched:
+  exit 1, newest 0.45.0 served by partner, 6 GETs, the token 0 times in output.
+- **Seam gap closed:** a declared partner lag beside a newest question on another version was never staged. The
+  mutant `newest_reaches … and subject != "partner"` survived the whole suite; it is now killed by
+  `test_a_declared_partner_lag_and_a_newest_drift_file_two_partner_issues_from_one_listing`. Also added, all under
+  `--report`:
+  - newest fault beside declared clean, and beside declared drift;
+  - newest grace tiers beside declared clean;
+  - newest warned beside declared drift;
+  - both partner lags suppressed;
+  - the close notice beside a declared partner lag.
+- **Doc fix:** the `_with_newest` docstring no longer claims a single exit-2 caller.
+- **Tests:** `pytest scripts/` gives 710 passed; ruff clean.
+- **Not exercisable locally:** `--report` against real GitHub. Covered by dispatching `registry-drift.yml` on the
+  branch before merge (see the PR).

@@ -6438,3 +6438,141 @@ def test_a_newest_create_failing_after_the_declared_create_is_two_and_keeps_the_
     filed = [ln for ln in proc.stdout.splitlines() if ln.startswith("filed a new drift issue:")]
     assert filed == [f"filed a new drift issue: {DRIFT_TITLE.format(version=DRIFTING)}"], filed
     assert "503" in proc.stderr, out
+
+
+# ── Final verify: the seams between the declared and newest questions under --report ────────────
+#
+# Each phase's tests staged one question at a time. These stage BOTH, with --report, on the cells
+# the whole-feature verify found uncovered: a declared PARTNER lag beside a newest question on another
+# version (two partner titles from one listing), and a newest fault or grace tier beside a clean or
+# drifting declared question.
+
+SEAM_NOW = LANDED + timedelta(minutes=14400)
+
+
+def _seam_run(
+    tmp_path: Path,
+    *,
+    internal: dict,
+    partner: dict,
+    listing: list | tuple = (),
+    unscoped: object | None = None,
+) -> tuple[subprocess.CompletedProcess, Path]:
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    bin_dir, _ = curl_stub(tmp_path, internal, partner_responses=partner, unscoped=unscoped)
+    _, gh_log = gh_stub(tmp_path, list(listing))
+    proc = run(
+        repo,
+        None,
+        tmp_path,
+        now=SEAM_NOW,
+        extra=["--report"],
+        env=report_env(bin_dir, token=STUB_TOKEN),
+    )
+    return proc, gh_log
+
+
+def _ahead(minutes_ago: float) -> list[dict]:
+    return published(AHEAD, uploaded_at=upload_stamp(SEAM_NOW - timedelta(minutes=minutes_ago)))
+
+
+def _canary() -> dict:
+    return {ROSTER[0]: published(ROSTER[0])}
+
+
+def _creates(log: Path) -> list[str]:
+    return [c[3] for c in gh_calls(log) if c[:2] == ["issue", "create"]]
+
+
+def test_a_declared_partner_lag_and_a_newest_drift_file_two_partner_issues_from_one_listing(
+    tmp_path: Path,
+) -> None:
+    """Internal serves D and V; partner serves neither. Both questions are partner lags, on two
+    different versions and so two different titles: D's issue first, then V's, from ONE listing."""
+    internal = {**_canary(), DRIFTING: published(DRIFTING), AHEAD: _ahead(14400)}
+    proc, log = _seam_run(tmp_path, internal=internal, partner=_canary())
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 1, out
+    assert _creates(log) == [
+        PARTNER_DRIFT_TITLE.format(version=DRIFTING),
+        PARTNER_DRIFT_TITLE.format(version=AHEAD),
+    ], gh_calls(log)
+    assert gh_verbs(log).count("issue list") == 1, gh_calls(log)
+    assert gh_calls(log)[-1] == heartbeat_argv(), gh_calls(log)
+    assert STUB_TOKEN not in out
+
+
+def test_a_suppressed_declared_partner_lag_does_not_suppress_the_newest_versions_lag(
+    tmp_path: Path,
+) -> None:
+    """Suppression is per version: D's closed+labelled partner issue silences D, never V."""
+    internal = {**_canary(), DRIFTING: published(DRIFTING), AHEAD: _ahead(14400)}
+    listing = [(7, "CLOSED", [SUPPRESSION_LABEL], PARTNER_DRIFT_TITLE.format(version=DRIFTING))]
+    proc, log = _seam_run(tmp_path, internal=internal, partner=_canary(), listing=listing)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert_filed_newest_only(log, AHEAD)
+
+
+def test_both_partner_lags_suppressed_is_green_and_writes_nothing(tmp_path: Path) -> None:
+    internal = {**_canary(), DRIFTING: published(DRIFTING), AHEAD: _ahead(14400)}
+    listing = [
+        (7, "CLOSED", [SUPPRESSION_LABEL], PARTNER_DRIFT_TITLE.format(version=DRIFTING)),
+        (8, "CLOSED", [SUPPRESSION_LABEL], PARTNER_DRIFT_TITLE.format(version=AHEAD)),
+    ]
+    proc, log = _seam_run(tmp_path, internal=internal, partner=_canary(), listing=listing)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert gh_writes(log) == [], gh_calls(log)
+
+
+def test_a_declared_partner_lag_beside_a_newest_clean_still_gets_the_close_notice(
+    tmp_path: Path,
+) -> None:
+    internal = {**_canary(), DRIFTING: published(DRIFTING), AHEAD: _ahead(14400)}
+    partner = {**_canary(), AHEAD: published(AHEAD)}
+    listing = [(11, "OPEN", [], PARTNER_DRIFT_TITLE.format(version=AHEAD))]
+    proc, log = _seam_run(tmp_path, internal=internal, partner=partner, listing=listing)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert f"::notice::#11 reports {AHEAD} missing from partner" in proc.stdout
+    assert _creates(log) == [PARTNER_DRIFT_TITLE.format(version=DRIFTING)], gh_calls(log)
+
+
+def test_with_report_a_newest_fault_beside_a_clean_declared_is_two_after_one_listing(
+    tmp_path: Path,
+) -> None:
+    """The declared question is clean and reached GitHub (its close-notice listing); the newest
+    question could not be answered. Nothing to file — exit 2, after exactly list + heartbeat."""
+    internal = {**_canary(), DRIFTING: published(DRIFTING)}
+    proc, log = _seam_run(tmp_path, internal=internal, partner=dict(internal), unscoped=[])
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert gh_calls(log) == [issue_list_argv(), heartbeat_argv()], gh_calls(log)
+
+
+def test_with_report_a_newest_fault_beside_a_declared_drift_files_the_drift_and_exits_one(
+    tmp_path: Path,
+) -> None:
+    """D3: a fault never hides an unsuppressed drift — the declared drift is filed and stands at 1."""
+    proc, log = _seam_run(tmp_path, internal=_canary(), partner=_canary(), unscoped=[])
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert gh_calls(log)[0] == issue_list_argv(), gh_calls(log)
+    assert _creates(log) == [DRIFT_TITLE.format(version=DRIFTING)], gh_calls(log)
+    assert gh_calls(log)[-1] == heartbeat_argv(), gh_calls(log)
+
+
+@pytest.mark.parametrize("minutes_ago", [30, 200], ids=["deferred", "warned"])
+def test_with_report_a_newest_grace_tier_beside_a_clean_declared_files_nothing(
+    tmp_path: Path, minutes_ago: float
+) -> None:
+    internal = {**_canary(), DRIFTING: published(DRIFTING), AHEAD: _ahead(minutes_ago)}
+    partner = {**_canary(), DRIFTING: published(DRIFTING)}
+    proc, log = _seam_run(tmp_path, internal=internal, partner=partner)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert gh_calls(log) == [issue_list_argv(), heartbeat_argv()], gh_calls(log)
+
+
+def test_with_report_a_newest_warned_tier_beside_a_declared_drift_files_only_the_drift(
+    tmp_path: Path,
+) -> None:
+    proc, log = _seam_run(tmp_path, internal={**_canary(), AHEAD: _ahead(200)}, partner=_canary())
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert _creates(log) == [DRIFT_TITLE.format(version=DRIFTING)], gh_calls(log)
+
