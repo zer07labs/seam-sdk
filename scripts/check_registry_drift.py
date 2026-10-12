@@ -77,6 +77,22 @@ fault never hides an internal finding: beside an internal drift it is printed an
 stands (unless that drift is suppressed, which leaves no finding to stand beside); anywhere else,
 including that suppressed case, it is exit 2.
 
+THE NEWEST RELEASE (seam-sdk#253)
+---------------------------------
+Main's declared version is not always the one partners need: while it is a suppressed internal
+drift (0.45.1 under #250), the release that DID ship goes unexamined on partner. So a second
+question is asked: one unscoped GET of internal, `NEWEST_QUERY` (`sort=-version`), finds the newest
+version complete in both formats, and partner is judged on THAT version. The client re-checks the
+server's ordering rather than trusting it, since a misspelt parameter is ignored silently, never
+refused. It never chooses the version a full page may have cut, and the answer must be at least the
+proving canary and at least a served declared version. Anything else is a fault: exit 2, unless an
+unsuppressed declared drift stands beside it (then 1). Its clock is the
+latest `uploaded_at` among internal's required-format rows at that version, not git, on the same
+grace ladder. A lag files under `PARTNER_DRIFT_TITLE` for that version, the title the declared
+question would use for it, so there is one issue per missing version whichever question finds it.
+When the newest version IS the declared version, it is skipped: the question is already answered.
+Coverage limit: a failed promotion of a version superseded within the hard window is never seen.
+
 Usage:  scripts/check_registry_drift.py [--repo DIR] [--packages-json FILE]
                                         [--partner-packages-json FILE] [--now ISO8601]
                                         [--soft-grace-minutes N] [--hard-grace-minutes N]
@@ -86,16 +102,18 @@ Usage:  scripts/check_registry_drift.py [--repo DIR] [--packages-json FILE]
         proof the query ran at all. Partner is then checked only if --partner-packages-json
         is given too (same rules), and the output says plainly when it was NOT checked.
         --partner-packages-json alone is refused: a saved partner answer is never compared
-        with a live internal one.
+        with a live internal one. Offline, the newest version is computed from the internal dump,
+        whose rows must keep `uploaded_at` for the newest question's clock.
         Without them both repositories are queried live and SEAM_REGISTRY_TOKEN, which must
         read both, has to be set.
-Exit:   0 = internal serves it (and so does partner, wherever partner was checked), it is
-            younger than the hard window, or the drift is suppressed by a closed issue
-            carrying the `deliberately-unpublished` label
-        1 = drift — internal missing it, or internal serving it and partner not
+Exit:   0 = internal serves it (and so does partner, wherever partner was checked, for both the
+            declared and the newest version), it is younger than the hard window, or the drift
+            is suppressed by a closed issue carrying the `deliberately-unpublished` label
+        1 = drift — internal missing it, internal serving it and partner not, or partner
+            missing internal's newest complete release (whatever the declared question says)
         2 = infrastructure — never a verdict, INCLUDING every unhandled exception, and
-            including a partner that could not be read, unless an unsuppressed internal drift
-            stands beside it
+            including a partner or newest-version answer that could not be read, unless an
+            unsuppressed drift on the other question stands beside it
 """
 
 from __future__ import annotations
@@ -120,6 +138,10 @@ from pathlib import Path
 #: `promote-partner` runs in the same workflow run, `needs:` `registry-smoke`, and carries its own
 #: `timeout-minutes: 20` (`publish.yml:768-773`). Declared ceilings including it: about 60
 #: minutes, still under 90. A second clock for partner would be a second thing to keep honest.
+#:
+#: The newest-version question (#253) reuses these minutes on a DIFFERENT clock: internal's
+#: `uploaded_at` for that version, not git. Promotion starts after `registry-smoke`, which declares
+#: no `timeout-minutes` of its own, so the upload clock bounds the promotion no worse than git does.
 SOFT_GRACE_MINUTES = 90
 
 #: GitHub's default per-job limit, so above this NO publish job for this version can still be

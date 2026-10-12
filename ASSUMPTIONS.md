@@ -1364,8 +1364,55 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Assumed:** this coverage is enough, the same as internal's: the check asks about the version `main` declares now and nothing older.
 - **Chose:** to keep that scope and state its limits:
   - While the declared version is a suppressed internal drift (0.45.1 under #250 today), partner's copy of the last published release (0.45.0) is not checked.
-  - A promotion that fails once on a version `main` replaces within the 6-hour hard window is never filed. Recent releases have done this (0.40.0 to 0.40.1 in 53 minutes, 0.43.2 to 0.43.3 in 1.6 hours).
+  - A promotion that fails once on a version `main` replaces within the 6-hour hard window is never filed.
   - A promotion failure that keeps happening is still caught on the next version that stays on `main`.
 - **Alternatives:** check partner against the newest version on internal, or against every version of at least 0.7.47. That would be a different question from "is main's version installable", with its own grace and suppression rules. Worth a follow-up if partners report gaps.
 - **Blast radius if wrong:** a one-off missed promotion of a short-lived version goes unreported. Partners install the newest release, which is still checked once it settles on `main`.
+- **Status:** CHANGED (2026-10-12, seam-sdk#253, plans/partner-newest-release.md). The first limit is closed: partner is now also judged on internal's newest complete release, so a suppressed declared drift no longer hides it. The second limit stands; see "Newest only, not every version" below.
+  - **Corrected example.** This entry first cited 0.40.0 → 0.40.1 and 0.43.2 → 0.43.3 as short-lived versions whose promotion could go unfiled. That was wrong. 0.40.0, 0.41.0, 0.42.0, 0.43.0 and 0.43.2 never reached `internal` at all: they were internal publish refusals, not promotion failures, so no partner check could see them. That was observed live on 2026-10-12, when the internal listing carried none of them.
+
+## Internal's `sort=-version` ordering is checked, never trusted
+- **Plan:** plans/partner-newest-release.md (D1)
+- **Assumed:** Cloudsmith's `sort=-version` orders numerically, newest first. Observed live on 2026-10-12 over 231 internal rows in 3 pages; `sort=version` reverses it. A wrong VALUE is refused (`sort=-bogus` → HTTP 400), but a wrong NAME is silently ignored (`ordering=…` falls back to `-date`).
+- **Chose:**
+  - `NEWEST_QUERY` is a constant, pinned word for word by a test.
+  - The client re-checks that plain versions are non-increasing across every row, refuses the lowest version on a full page (it may be cut), and requires the answer to be at least the proving canary and a served declared version.
+  - Any failure exits 2.
+- **Alternatives:** trust the sort, which a silently ignored parameter would turn into a confident wrong answer; or page through every row, which costs more GETs for no extra answer.
+- **Blast radius if wrong:** exit 2 (a loud infrastructure fault), never a wrong verdict.
 - **Status:** UNCONFIRMED
+
+## The newest question's clock is internal's `uploaded_at`
+- **Plan:** plans/partner-newest-release.md (D2)
+- **Assumed:** the latest `uploaded_at` among internal's required-format rows at the newest version is when promotion could first start. Partner rows carry their own `uploaded_at` about 60 s after internal's, observed 2026-10-12. The git clock belongs to main's declared version, not to the newest release.
+- **Chose:** that clock, on the same soft/hard minutes and the same skew guard. The stamp is parsed strictly and is never printed.
+- **Alternatives:** the git tag date of the newest version. That needs the tag in this checkout, and it measures the release, not the upload promotion waits on.
+- **Blast radius if wrong:** a lag is filed early or late within one grace window.
+- **Status:** UNCONFIRMED
+
+## A newest-version lag shares the partner issue title
+- **Plan:** plans/partner-newest-release.md (D4). Owner decision, 2026-10-12.
+- **Assumed:** one issue per missing version is what an operator wants, whichever question found it.
+- **Chose:** `PARTNER_DRIFT_TITLE.format(V)`. The body says which question found it ("found by"), and every partner issue body now carries that row. Suppression is per version and title.
+- **Alternatives:** a separate title for the newest question, which gives two issues for one fault.
+- **Blast radius if wrong:** cosmetic; the body still names the question.
+- **Status:** CONFIRMED (owner)
+
+## A newest-version finding is never filed from a broken run
+- **Plan:** plans/partner-newest-release.md (Phase 2, as built)
+- **Assumed:** a run whose instrument is partly broken must not write to GitHub, even when one question has a real answer.
+- **Chose:**
+  - A git-clock fault prints the newest answer and exits by the D3 table, but files nothing. The newest issue's tag row would need that checkout, and no write comes from a broken run.
+  - A newest drift beside a GitHub outage exits 2, the rule #203 already applies to a declared drift: a finding that was not delivered is infrastructure.
+- **Alternatives:** file the newest drift anyway, with a partial body.
+- **Blast radius if wrong:** a newest lag is filed one run (2 h) later, once the fault clears.
+- **Status:** UNCONFIRMED
+
+## Newest only, not every version
+- **Plan:** plans/partner-newest-release.md (D6). Owner decision, 2026-10-12.
+- **Assumed:** partners install the newest release, so the newest version is the one worth guarding.
+- **Chose:** check only internal's newest complete release.
+- **Residual, recorded and not covered:** a failed promotion of a version that is superseded within the hard window (about 6 h) is never seen, because it stops being newest before its grace ends.
+- **Alternatives:** check every version of at least 0.7.47. That means many GETs and per-version grace for a case that has not happened.
+- **Blast radius if wrong:** a short-lived version is missing on partner; the next version is still checked.
+- **Status:** CONFIRMED (owner)

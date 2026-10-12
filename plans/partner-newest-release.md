@@ -196,4 +196,4 @@ print newest drifts without filing them.
   - workflow tests pass;
   - `pytest scripts/` green;
   - `ruff check` clean.
-- **Status:** TODO
+- **Status:** DONE

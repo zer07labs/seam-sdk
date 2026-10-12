@@ -4668,3 +4668,16 @@ single shared listing) · P3 simple.
   `plans/partner-newest-release.md`.
 - **Tests:** `pytest scripts/` gives 701 passed; ruff clean. No live `--report` run, because it writes GitHub.
 - **Next:** Phase 3, the docs, workflow comments and ASSUMPTIONS, including the 0.40.0/0.43.2 correction.
+
+## Phase 3: docs, workflow comments, assumptions, DONE (2026-10-12)
+- **Verdict:** PASS on round 1. Opus verifier: simple phase, docs only. Four optional nits, all applied: the
+  workflow GET count, the docstring's "anything else is exit 2", this entry, and an ASSUMPTIONS entry for the
+  no-file-from-a-broken-run calls.
+- **Files:** the `scripts/check_registry_drift.py` docstring and `SOFT_GRACE_MINUTES` comment;
+  `.github/workflows/registry-drift.yml`, comments only, with the parsed YAML equal to HEAD; `README.md`;
+  `CLAUDE.md`; `ASSUMPTIONS.md`; `plans/partner-newest-release.md`.
+- **Correction recorded:** 0.40.0, 0.41.0, 0.42.0, 0.43.0 and 0.43.2 never reached internal. A live check on
+  2026-10-12 found 0 rows each, while 0.40.1 and 0.43.3 have 3. ASSUMPTIONS' old promotion example was wrong.
+- **Tests:** `pytest scripts/` gives 701 passed; ruff clean; the citation gate gives 589 passed.
+- **Next:** finalization. One whole-feature Opus verify, a rebase onto main, then ship one PR closing #253.
+

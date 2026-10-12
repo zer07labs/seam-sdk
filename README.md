@@ -197,8 +197,9 @@ formats (wheel and npm — one landing without the other is drift, not a partial
 repositories: `zer07labs/internal`, where a release lands, and `zer07labs/partner`, where design partners
 install from. A version on internal but missing from partner is a promotion lag, filed under its own issue
 title ("… is not on partner") whose remediation is `promote-partner-backfill.yml` or
-`./scripts/promote-to-partner.sh <version>` — after confirming `registry-smoke` passed for it. One
-credential reads both repositories. It exists because
+`./scripts/promote-to-partner.sh <version>` — after confirming `registry-smoke` passed for it. Partner is
+also checked against the newest release internal serves, so a declared version that never shipped cannot
+hide a promotion lag on the one that did. One credential reads both repositories. It exists because
 `publish.yml`'s own notifier can only report a publish that RAN and failed; a release that was never
 dispatched at all is invisible from inside the workflow that never started. **Exit 2 is infrastructure —
 a missing credential, an unreachable registry, an unparseable answer — and never a verdict**; exit 1 is
