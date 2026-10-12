@@ -18,7 +18,6 @@ use sha2::{Digest, Sha256};
 
 const VERIFIED: i32 = 0;
 const FAILED: i32 = 2;
-const USAGE: i32 = 1;
 
 // The golden issuer (ed25519 seed 07×32) — same key `tests/authenticity.rs` and `tests/anchored.rs`
 // use; duplicated here rather than shared, in the spirit of this crate's deliberate
@@ -115,7 +114,10 @@ fn two_tenants_verify_independently() {
         // digest/checksum), so it advances the chain too.
         assert_eq!(t["links"], 3, "{out}");
         assert_eq!(t["attestations"], 1, "{out}");
-        assert_eq!(t["tenant_unbound"], 0, "{out}");
+        assert!(
+            t.get("tenant_unbound").is_none(),
+            "tenant_unbound is gone (#835 step 4):\n{out}"
+        );
     }
 }
 
@@ -149,8 +151,9 @@ fn a_tampered_tenant_is_isolated_from_the_other() {
 #[test]
 fn a_mismatched_payload_tenant_is_refused_under_issuer() {
     let body = golden("two_tenant_chain.jsonl");
-    // `tenant` inside `chain_head_attestation` is UNSIGNED — mutating it alone cannot break the
-    // signature, so this exercises the agreement check specifically, not authenticity itself.
+    // Since #835 step 4 the payload `tenant` is inside the v2 signature, so this relabel would also
+    // break it — but the agreement check runs first (as in seam-runtime's seam-verify), so the refusal
+    // names the actual defect: the attestation disagrees with its own envelope.
     let mutated = mutate_line(
         &body,
         |e| e["kind"] == "CHAIN_HEAD_ATTESTATION" && e["tenant"] == "acme",
@@ -163,40 +166,50 @@ fn a_mismatched_payload_tenant_is_refused_under_issuer() {
     assert!(out.contains("ATTESTATION TENANT MISMATCH"), "{out}");
 }
 
-// ── (4) legacy (pre-Phase-2) attestation: accepted, counted, --strict refuses ─────────────────────
+// ── (4) legacy (pre-Phase-2) attestation: refused, with or without --strict (#835 step 4) ────────
 
+/// The pre-U-RT-3-Phase-2 shape — a genuine v1 attestation, no payload tenant, envelope naming a
+/// tenant — used to be accepted on the envelope's word, counted as `tenant_unbound`, and refused only
+/// under `--strict`. Since #835 step 4 there is no back-compat: it is ATTESTATION TENANT MISMATCH either
+/// way, and relabelling its payload to the envelope's tenant does not help, because v1 never signs one.
 #[test]
-fn a_legacy_attestation_with_no_payload_tenant_is_accepted_and_counted() {
-    let body = golden("two_tenant_chain.jsonl");
-    let mutated = mutate_line(
-        &body,
-        |e| e["kind"] == "CHAIN_HEAD_ATTESTATION" && e["tenant"] == "acme",
-        |e| {
-            e["chain_head_attestation"]["tenant"] = serde_json::Value::String(String::new());
-        },
-    );
+fn a_legacy_tenant_unbound_attestation_is_refused() {
+    let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
+    let genesis = vec![0u8; 32];
+    let (l0, h0) = sealed_link(0, &genesis, "acme");
+    let (l1, h1) = sealed_link(1, &h0, "acme");
+    let v1 = attestation_event_v1(2, &h1, 2, &h1, &sk, ISSUER, 2, "acme");
 
-    let (code, out) = run("unbound", &mutated, &["--issuer", ISSUER, "--json"]);
-    assert_eq!(code, VERIFIED, "accepted on the envelope alone:\n{out}");
-    let v: serde_json::Value = serde_json::from_str(out.lines().next().unwrap()).unwrap();
-    let acme = v["tenants"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|t| t["tenant"] == "acme")
-        .unwrap();
-    assert_eq!(acme["tenant_unbound"], 1, "{out}");
+    let mut legacy: serde_json::Value = serde_json::from_str(&v1).unwrap();
+    legacy["chain_head_attestation"]["tenant"] = serde_json::Value::String(String::new());
+    let legacy = format!("{l0}\n{l1}\n{legacy}");
+    for (name, args) in [
+        ("legacy-unbound", &["--issuer", ISSUER][..]),
+        (
+            "legacy-unbound-strict",
+            &["--issuer", ISSUER, "--strict"][..],
+        ),
+    ] {
+        let (code, out) = run(name, &legacy, args);
+        assert_eq!(
+            code, FAILED,
+            "a legacy tenant-unbound attestation must be refused ({name}):\n{out}"
+        );
+        assert!(out.contains("ATTESTATION TENANT MISMATCH"), "{out}");
+    }
 
-    let (code, out) = run(
-        "unbound-strict",
-        &mutated,
-        &["--issuer", ISSUER, "--strict"],
-    );
+    // The same v1 signature with its payload relabelled to `acme`: the two tenant fields now agree,
+    // so it reaches the signature — and is refused there, because a named tenant is v2 only.
+    let relabelled = format!("{l0}\n{l1}\n{v1}");
+    let (code, out) = run("v1-relabelled", &relabelled, &["--issuer", ISSUER]);
     assert_eq!(
         code, FAILED,
-        "--strict must refuse an unbound attestation:\n{out}"
+        "a v1 attestation over a tenant chain must be refused:\n{out}"
     );
-    assert!(out.contains("REFUSED"), "{out}");
+    assert!(
+        out.contains("does not verify against the pinned issuer's key"),
+        "{out}"
+    );
 }
 
 // ── (5) a cutover-spanning tenant reports NON-GENESIS FIRST LINK, not BROKEN CHAIN ───────────────
@@ -249,7 +262,7 @@ fn chain_by_tenant_reports_an_anchor_for_a_tenant_absent_from_the_window() {
     assert_eq!(r.tenants.len(), 2);
 }
 
-// ── (7) untenanted anchor fallback: correct for single-tenant, usage-error for multi-tenant ──────
+// ── (7) an anchor seeds exactly the tenant it names (#835 step 4) ─────────────────────────────────
 
 /// `seam.audit.chain-head-attestation.v1`, transcribed from the spec independently of `src/verify.rs`
 /// (same transcription `tests/authenticity.rs` / `tests/anchored.rs` use).
@@ -268,9 +281,25 @@ fn att_digest(len: u64, head: &[u8], at: u64, schema: u32, issuer_aid: &str) -> 
     h.finalize().into()
 }
 
-/// A bare six-field anchor object — byte-for-byte one element of `GET /v1/anchors`' `anchors` array.
-/// Untenanted on purpose: this is spec clause (f0)'s fallback shape, which `chain_anchored` attributes
-/// by inferring the window's sole chained tenant, never by reading a tenant off the anchor itself.
+/// What a step-3+ runtime signs for `tenant`: v2 over a named tenant, v1 for the system partition.
+fn att_digest_for(
+    len: u64,
+    head: &[u8],
+    at: u64,
+    schema: u32,
+    issuer_aid: &str,
+    tenant: &str,
+) -> [u8; 32] {
+    if tenant.is_empty() {
+        att_digest(len, head, at, schema, issuer_aid)
+    } else {
+        att_digest_v2(len, head, at, schema, issuer_aid, tenant)
+    }
+}
+
+/// A bare anchor object — byte-for-byte one element of `GET /v1/anchors`' `anchors` array — signed
+/// the way the runtime signs `tenant` (v2 for a named tenant, v1 for `""`). An empty tenant omits the
+/// key entirely: the six-field shape an anchor minted before U-RT-3 Phase 2 has.
 fn anchor_json(
     len: u64,
     head: &[u8],
@@ -278,20 +307,24 @@ fn anchor_json(
     issuer_aid: &str,
     schema: u32,
     sk: &ed25519_dalek::SigningKey,
+    tenant: &str,
 ) -> String {
     use ed25519_dalek::Signer;
     let sig = sk
-        .sign(&att_digest(len, head, at, schema, issuer_aid))
+        .sign(&att_digest_for(len, head, at, schema, issuer_aid, tenant))
         .to_bytes();
-    serde_json::json!({
+    let mut v = serde_json::json!({
         "attested_len": len,
         "attested_head": b64e(head),
         "attested_at": at,
         "issuer_aid": issuer_aid,
         "digest_schema": schema,
         "signature": b64e(&sig),
-    })
-    .to_string()
+    });
+    if !tenant.is_empty() {
+        v["tenant"] = serde_json::Value::String(tenant.to_string());
+    }
+    v.to_string()
 }
 
 fn sealed_link(seq: u64, prev: &[u8], tenant: &str) -> (String, Vec<u8>) {
@@ -316,6 +349,8 @@ fn sealed_link(seq: u64, prev: &[u8], tenant: &str) -> (String, Vec<u8>) {
     (line, checksum)
 }
 
+/// An in-stream attestation for `tenant`, signed as a step-3+ runtime signs it (v2 for a named
+/// tenant, v1 for `""`), envelope and payload both `tenant`.
 #[allow(clippy::too_many_arguments)]
 fn attestation_event(
     seq: u64,
@@ -327,17 +362,71 @@ fn attestation_event(
     digest_schema: u32,
     tenant: &str,
 ) -> String {
+    let at = 1_700 + seq;
+    let digest = att_digest_for(
+        attested_len,
+        attested_head,
+        at,
+        digest_schema,
+        issuer_aid,
+        tenant,
+    );
+    attestation_event_signed(
+        seq,
+        prev,
+        attested_len,
+        attested_head,
+        sk,
+        issuer_aid,
+        digest_schema,
+        tenant,
+        &digest,
+    )
+}
+
+/// As [`attestation_event`], but v1-signed whatever `tenant` is — what the runtime minted for every
+/// tenant before #835 step 3.
+#[allow(clippy::too_many_arguments)]
+fn attestation_event_v1(
+    seq: u64,
+    prev: &[u8],
+    attested_len: u64,
+    attested_head: &[u8],
+    sk: &ed25519_dalek::SigningKey,
+    issuer_aid: &str,
+    digest_schema: u32,
+    tenant: &str,
+) -> String {
+    let at = 1_700 + seq;
+    let digest = att_digest(attested_len, attested_head, at, digest_schema, issuer_aid);
+    attestation_event_signed(
+        seq,
+        prev,
+        attested_len,
+        attested_head,
+        sk,
+        issuer_aid,
+        digest_schema,
+        tenant,
+        &digest,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn attestation_event_signed(
+    seq: u64,
+    prev: &[u8],
+    attested_len: u64,
+    attested_head: &[u8],
+    sk: &ed25519_dalek::SigningKey,
+    issuer_aid: &str,
+    digest_schema: u32,
+    tenant: &str,
+    signed_digest: &[u8; 32],
+) -> String {
     use ed25519_dalek::Signer;
     let at = 1_700 + seq;
-    let sig = sk
-        .sign(&att_digest(
-            attested_len,
-            attested_head,
-            at,
-            digest_schema,
-            issuer_aid,
-        ))
-        .to_bytes();
+    let sig = sk.sign(signed_digest).to_bytes();
     let digest = Sha256::digest(format!("att-{seq}").as_bytes()).to_vec();
     let checksum = {
         let mut h = Sha256::new();
@@ -368,82 +457,178 @@ fn attestation_event(
     .to_string()
 }
 
-#[test]
-fn from_anchor_over_a_single_real_tenant_authenticates() {
-    let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
+fn run_anchored(name: &str, body: &str, anchor_body: &str, extra: &[&str]) -> (i32, String) {
+    let anchor_path = write_tmp(name, "json", anchor_body);
+    let mut args = vec![
+        "--issuer",
+        ISSUER,
+        "--from-anchor",
+        anchor_path.to_str().unwrap(),
+    ];
+    args.extend_from_slice(extra);
+    let res = run(name, body, &args);
+    let _ = std::fs::remove_file(&anchor_path);
+    res
+}
+
+/// `acme`'s window from an anchor at `base_len` 5: two links and a covering attestation.
+fn anchored_acme_window(sk: &ed25519_dalek::SigningKey) -> (String, u64, Vec<u8>) {
     let base_len = 5u64;
     let base_head = Sha256::digest(b"anchor-head-seed").to_vec();
     let (link1, head1) = sealed_link(5, &base_head, "acme");
     let (link2, head2) = sealed_link(6, &head1, "acme");
-    let covering_len = base_len + 2;
-    let att = attestation_event(7, &head2, covering_len, &head2, &sk, ISSUER, 2, "acme");
-    let body = format!("{link1}\n{link2}\n{att}");
-
-    let anchor_body = anchor_json(base_len, &base_head, 1_700, ISSUER, 2, &sk);
-    let anchor_path = write_tmp("anchor-single", "json", &anchor_body);
-    let (code, out) = run(
-        "anchor-single-tenant",
-        &body,
-        &[
-            "--issuer",
-            ISSUER,
-            "--from-anchor",
-            anchor_path.to_str().unwrap(),
-        ],
-    );
-    let _ = std::fs::remove_file(&anchor_path);
-    assert_eq!(
-        code, VERIFIED,
-        "an untenanted anchor over a real single tenant must work:\n{out}"
-    );
+    let att = attestation_event(7, &head2, base_len + 2, &head2, sk, ISSUER, 2, "acme");
+    (format!("{link1}\n{link2}\n{att}"), base_len, base_head)
 }
 
 #[test]
-fn from_anchor_over_a_multi_tenant_window_is_a_usage_error() {
-    let base_head = Sha256::digest(b"anchor-head-seed").to_vec();
-    // Two events, two distinct tenants, no need for either to chain validly: `chain_anchored`'s
-    // tenant-attribution check runs over `is_link()` events before any chain walk happens at all.
-    let (l1, _) = sealed_link(0, &base_head, "acme");
-    let (l2, _) = sealed_link(1, &base_head, "globex");
-    let body = format!("{l1}\n{l2}");
-
+fn from_anchor_over_a_single_real_tenant_authenticates() {
     let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
-    let anchor_body = anchor_json(5, &base_head, 1_700, ISSUER, 2, &sk);
-    let anchor_path = write_tmp("anchor-multi", "json", &anchor_body);
-    let (code, out) = run(
-        "multi-anchor-usage",
-        &body,
-        &[
-            "--issuer",
-            ISSUER,
-            "--from-anchor",
-            anchor_path.to_str().unwrap(),
-        ],
+    let (body, base_len, base_head) = anchored_acme_window(&sk);
+    let anchor = anchor_json(base_len, &base_head, 1_700, ISSUER, 2, &sk, "acme");
+    let (code, out) = run_anchored("anchor-single-tenant", &body, &anchor, &[]);
+    assert_eq!(
+        code, VERIFIED,
+        "a v2 anchor naming the window's tenant must seed it:\n{out}"
     );
-    let _ = std::fs::remove_file(&anchor_path);
-    assert_eq!(code, USAGE, "{out}");
-    assert!(out.contains("USAGE ERROR"), "{out}");
-    assert!(out.contains("acme") && out.contains("globex"), "{out}");
+    assert!(out.contains("WINDOW AUTHENTICATED"), "{out}");
+}
+
+/// #835 step 4: an untenanted anchor is a v1 signature, which never binds a tenant, so it seeds only
+/// the `""` system partition. The pre-#835 fallback to the window's sole tenant is gone: over a cut
+/// `acme` window the tenant is walked from genesis and cannot link, and over a genesis `acme` window
+/// the anchor is left unconsumed and fails closed — exit 2 either way, as in seam-runtime's own
+/// seam-verify (`an_untenanted_anchor_never_seeds_a_tenant_chain`).
+#[test]
+fn an_untenanted_anchor_never_seeds_a_tenant_chain() {
+    let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
+
+    let (cut, base_len, base_head) = anchored_acme_window(&sk);
+    let untenanted = anchor_json(base_len, &base_head, 1_700, ISSUER, 2, &sk, "");
+    let (code, out) = run_anchored("untenanted-cut", &cut, &untenanted, &[]);
+    assert_eq!(
+        code, FAILED,
+        "an untenanted anchor must not seed acme's window:\n{out}"
+    );
+    assert!(
+        out.contains("NON-GENESIS FIRST LINK") && out.contains("\"acme\""),
+        "{out}"
+    );
+
+    // The same v1 signature with `"tenant":"acme"` added: the tenant is not in a v1 signature, so
+    // this is refused at the anchor itself, before it can seed anything.
+    let mut relabelled: serde_json::Value = serde_json::from_str(&untenanted).unwrap();
+    relabelled["tenant"] = serde_json::Value::String("acme".into());
+    let (code, out) = run_anchored("v1-relabelled-anchor", &cut, &relabelled.to_string(), &[]);
+    assert_eq!(code, FAILED, "{out}");
+    assert!(out.contains("ANCHOR REJECTED"), "{out}");
+
+    let genesis = vec![0u8; 32];
+    let (l0, h0) = sealed_link(0, &genesis, "acme");
+    let (l1, h1) = sealed_link(1, &h0, "acme");
+    let att = attestation_event(2, &h1, 2, &h1, &sk, ISSUER, 2, "acme");
+    let whole = format!("{l0}\n{l1}\n{att}");
+    let anchor = anchor_json(2, &h1, 1_700, ISSUER, 2, &sk, "");
+    let (code, out) = run_anchored("untenanted-genesis", &whole, &anchor, &[]);
+    assert_eq!(code, FAILED, "{out}");
+    assert!(
+        out.contains("tenant \"\"") && out.contains("NO VALID ATTESTATION"),
+        "{out}"
+    );
+}
+
+/// An anchor seeds exactly the tenant it names, so a window spanning more than one tenant is no
+/// longer ambiguous: the named tenant starts at its anchor and every other tenant at genesis — the
+/// shape of seam-runtime's own `a_tenant_with_no_anchor_verifies_from_genesis_while_another_is_anchored`.
+#[test]
+fn from_anchor_over_a_multi_tenant_window_seeds_only_the_named_tenant() {
+    let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
+    let (acme, base_len, base_head) = anchored_acme_window(&sk);
+    let genesis = vec![0u8; 32];
+    let (g0, gh0) = sealed_link(10, &genesis, "globex");
+    let (g1, gh1) = sealed_link(11, &gh0, "globex");
+    let gatt = attestation_event(12, &gh1, 2, &gh1, &sk, ISSUER, 2, "globex");
+    let body = format!("{acme}\n{g0}\n{g1}\n{gatt}");
+
+    let anchor = anchor_json(base_len, &base_head, 1_700, ISSUER, 2, &sk, "acme");
+    let (code, out) = run_anchored("anchor-multi", &body, &anchor, &[]);
+    assert_eq!(code, VERIFIED, "{out}");
+    assert!(
+        out.contains("WINDOW AUTHENTICATED (issuer-anchored start, per tenant)"),
+        "{out}"
+    );
+
+    let (code, out) = run_anchored("anchor-multi-json", &body, &anchor, &["--json"]);
+    assert_eq!(code, VERIFIED, "{out}");
+    let v: serde_json::Value = serde_json::from_str(out.lines().next().unwrap()).unwrap();
+    let base = |t: &str| {
+        v["tenants"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["tenant"] == t)
+            .unwrap()["base_len"]
+            .clone()
+    };
+    assert_eq!(base("acme"), 5, "{out}");
+    assert_eq!(base("globex"), 0, "{out}");
+}
+
+/// A full-event anchor follows the same payload==envelope equality rule as an in-stream attestation
+/// (#835 step 4): an empty payload tenant under a named envelope is refused as a defect in the anchor
+/// itself — exit 2, before it can seed anything — not accepted on the envelope's word.
+#[test]
+fn a_full_event_anchor_whose_payload_tenant_differs_from_its_envelope_is_refused() {
+    let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
+    let (body, base_len, base_head) = anchored_acme_window(&sk);
+    let full = attestation_event(4, &[0u8; 32], base_len, &base_head, &sk, ISSUER, 2, "acme");
+
+    let (code, out) = run_anchored("full-event-anchor", &body, &full, &[]);
+    assert_eq!(
+        code, VERIFIED,
+        "an agreeing full-event anchor seeds its tenant:\n{out}"
+    );
+
+    for payload_tenant in ["", "globex"] {
+        let mut e: serde_json::Value = serde_json::from_str(&full).unwrap();
+        e["chain_head_attestation"]["tenant"] = serde_json::Value::String(payload_tenant.into());
+        let (code, out) = run_anchored("full-event-mismatch", &body, &e.to_string(), &[]);
+        assert_eq!(code, FAILED, "payload {payload_tenant:?}: {out}");
+        assert!(out.contains("ANCHOR SELF-CONTRADICTS"), "{out}");
+    }
 }
 
 // ── (6) the system partition is attested like any tenant (seam-runtime#1196/#1205) ────────────────
 
 /// The system partition (wire `tenant == ""`) gets its own `CHAIN_HEAD_ATTESTATION`, with envelope AND
-/// payload `tenant` both `""`. Spec §CHAIN_HEAD_ATTESTATION *Per partition*: `""` agreeing with `""` is
-/// agreement, NOT the tenant-unbound legacy case, so `--strict` accepts it. And `--issuer` requires a
-/// covering attestation for every partition, `""` included.
+/// payload `tenant` both `""`, signed v1. Spec §CHAIN_HEAD_ATTESTATION *Per partition*: `""` agreeing
+/// with `""` is agreement, NOT the refused empty-payload case, and it verifies under v1. And `--issuer`
+/// requires a covering attestation for every partition, `""` included.
 ///
-/// Built from the two-tenant golden by moving `acme`'s envelope (and its attestation's UNSIGNED payload
-/// tenant) to `""`. The records' own payload `tenant` is left alone, because it is sealed into their
-/// digests. The verifier does not police which kinds may be tenant-less (the producer does, invariant
-/// 10), so this exercises the attestation path exactly.
+/// Built from the two-tenant golden by moving `acme`'s envelope and its attestation's payload tenant to
+/// `""`, and RE-SIGNING that attestation under v1 (the golden's is v2 over `acme`, which an empty tenant
+/// no longer verifies under, #835 step 4) with the golden's own issuer seed. The records' own payload
+/// `tenant` is left alone, because it is sealed into their digests. The verifier does not police which
+/// kinds may be tenant-less (the producer does, invariant 10), so this exercises the attestation path
+/// exactly.
 #[test]
 fn the_system_partition_is_attested_like_any_tenant() {
     let body = golden("two_tenant_chain.jsonl");
+    let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
     let to_system = |e: &mut serde_json::Value| {
+        use ed25519_dalek::Signer;
         e["tenant"] = serde_json::Value::String(String::new());
         if e["kind"] == "CHAIN_HEAD_ATTESTATION" {
-            e["chain_head_attestation"]["tenant"] = serde_json::Value::String(String::new());
+            let a = &mut e["chain_head_attestation"];
+            a["tenant"] = serde_json::Value::String(String::new());
+            let sig = sk.sign(&att_digest(
+                a["attested_len"].as_u64().unwrap(),
+                &b64d(a["attested_head"].as_str().unwrap()),
+                a["attested_at"].as_u64().unwrap(),
+                a["digest_schema"].as_u64().unwrap() as u32,
+                a["issuer_aid"].as_str().unwrap(),
+            ));
+            a["signature"] = serde_json::Value::String(b64e(&sig.to_bytes()));
         }
     };
     let system: String = body
@@ -475,10 +660,6 @@ fn the_system_partition_is_attested_like_any_tenant() {
         .find(|t| t["tenant"] == "")
         .expect("the system partition is reported");
     assert_eq!(sys["authenticated"], true, "{out}");
-    assert_eq!(
-        sys["tenant_unbound"], 0,
-        "\"\" agreeing with \"\" is agreement, not unbound:\n{out}"
-    );
 
     // Without its attestation, the system partition is uncovered, and --issuer refuses the whole stream.
     let unattested: String = system
@@ -500,7 +681,7 @@ fn the_system_partition_is_attested_like_any_tenant() {
     );
 }
 
-// ── (8) the v2 signed framing binds the tenant (seam-runtime #835 step 1) ─────────────────────────
+// ── (8) the v2 signed framing binds the tenant (seam-runtime #835) ────────────────────────────────
 
 /// `seam.audit.chain-head-attestation.v2` — the v1 frames under the v2 domain tag, then `frame(tenant)`.
 /// Transcribed from the spec independently of `src/verify.rs`, like `att_digest` above.

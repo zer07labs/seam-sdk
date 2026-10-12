@@ -442,13 +442,32 @@ fn check_window(dir: &Path, pinned: &str) -> Result<Window, BundleError> {
     let (mut events, duplicates) = verify::dedup(events).map_err(f2)?;
     events.sort_by_key(|e| e.seq);
 
-    let mut report =
-        verify::chain_anchored(&events, anchor.attested_len, &anchor.attested_head).map_err(f2)?;
+    // The anchor seeds exactly the tenant it names — its signed tenant (#835 step 4); an untenanted
+    // (v1) anchor seeds only the `""` partition, never a tenant's chain.
+    let mut report = verify::chain_anchored(
+        &events,
+        &anchor.tenant,
+        anchor.attested_len,
+        &anchor.attested_head,
+    )
+    .map_err(f2)?;
     report.duplicates = duplicates;
     if !report.unconsumed_anchors.is_empty() {
-        return Err(f2(
-            "the anchor seeds a tenant this window has no chained event for".into(),
-        ));
+        return Err(f2(format!(
+            "the anchor seeds tenant {:?}, which this window has no chained event for (an anchor \
+             with no tenant is v1 and seeds only the system partition, never a tenant's chain)",
+            anchor.tenant
+        )));
+    }
+    // A bundle's window is one tenant's: the single-tenant view below (`report.heads`) is only
+    // meaningful for exactly one chain, so a window spanning more is refused rather than checked
+    // against the genesis sentinel.
+    if report.tenants.len() != 1 {
+        return Err(f2(format!(
+            "the window's chained events span {} tenants — an evidence bundle's window is exactly \
+             one tenant's, the one its anchor names",
+            report.tenants.len()
+        )));
     }
     if !report.unverifiable.is_empty() {
         return Err(f2(format!(
@@ -467,12 +486,6 @@ fn check_window(dir: &Path, pinned: &str) -> Result<Window, BundleError> {
         &anchor.attested_head,
     )
     .map_err(f2)?;
-    if issuer.tenant_unbound > 0 {
-        return Err(f2(format!(
-            "REFUSED (--strict): {} attestation(s) carry no payload tenant",
-            issuer.tenant_unbound
-        )));
-    }
     Ok(Window {
         events,
         report,

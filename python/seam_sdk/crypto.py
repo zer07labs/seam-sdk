@@ -916,11 +916,13 @@ def verify_chain_head_attestation(
     ``True`` iff the signature checks out over the recomputed digest; ``False`` on any tamper. The key comes
     from ``issuer_aid`` (which the caller pinned out of band), never from the attestation itself.
 
-    ``tenant`` is the attestation's own payload ``tenant`` and selects the signed framing, mirroring
-    seam-runtime #835 step 1 exactly: an empty tenant verifies under **v1 only**; a non-empty tenant under
-    **v2, else v1**. The v1 fallback is required while the runtime still signs v1 with the tenant stamped
-    outside the signature (until #835 step 3); it is dropped at step 4. Pass the tenant whenever the
-    attestation carries one — omitting it verifies v1 only, so a v2 attestation would come back ``False``.
+    ``tenant`` is the attestation's own payload ``tenant`` and selects exactly one signed framing,
+    mirroring seam-runtime #835 step 4 (strict, no fallback): an empty tenant verifies under **v1 only**
+    (the system partition; a v2 signature over ``""`` is refused), and a non-empty tenant under **v2
+    only**, so the tenant is always inside the signature and relabelling it breaks verification. A v1
+    attestation carrying a non-empty tenant — what the runtime minted before #835 step 3 — returns
+    ``False``; there is no grace period and no toggle. Pass the tenant whenever the attestation carries
+    one — omitting it verifies v1 only, so a v2 attestation would come back ``False``.
     """
     # An out-of-range integer is tampered input, not a caller bug, and this function's whole contract
     # is that tampered input returns ``False``. ``struct.pack`` raises ``struct.error`` on it, and the
@@ -1017,7 +1019,7 @@ def verify_chain_head_attestation(
         except Exception:
             return False
 
-    return (bool(tenant) and under(tenant)) or under(None)
+    return under(tenant) if tenant else under(None)
 
 
 # ── call_sig v3 (`seam-authorize-call-v3`, seam-runtime #1125 / #1059) ───────────────────────────────

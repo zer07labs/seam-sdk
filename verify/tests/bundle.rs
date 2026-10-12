@@ -1,11 +1,16 @@
 //! `seam-verify bundle` against **real** `seam-evidence-bundle.v1` directories.
 //!
 //! `fixtures/evidence-bundle/` was written by the runtime's own export path
-//! (`seamd::Seam::export_evidence_bundle`, seam-runtime@e75528f, the 0.44.0 release on main) running
-//! the scenario of the runtime's `crates/seam-verify/tests/bundle.rs` `fixture()`: seal `d0`, attest
-//! (the anchor), seal the target `d1` with an inline context, seal `d2`, attest (the cover). Issuer
-//! seed 7×32. Every directory also verifies under the runtime's internal oracle
-//! (`seam-verify-internal bundle`), so a disagreement here is a disagreement between two verifiers.
+//! (`seamd::Seam::export_evidence_bundle`, seam-runtime@460d163 on `feat/835-step4-refuse-v1-tenant`,
+//! #1303 — which signs tenant attestations v2, #835 step 3) running the scenario of the runtime's
+//! `crates/seam-verify/tests/bundle.rs` `fixture()`: seal `d0`, attest (the anchor), seal the target
+//! `d1` with an inline context, seal `d2`, attest (the cover). Issuer seed 7×32. Re-exported for #835
+//! step 4: the previous export (seam-runtime@e75528f, 0.44.0) carried v1 tenant attestations, which a
+//! step-4 verifier refuses. The commitment, context and policy members are byte-identical to that
+//! export; the anchor, events, binding and manifest moved with the v2 signatures (and the record's
+//! freshly-encrypted `ciphertext_digest`). Every directory also verifies under the runtime's internal
+//! oracle (`seam-verify-internal bundle`) at that commit, so a disagreement here is a disagreement
+//! between two verifiers.
 //!
 //! * `full/` — `--disclose context,policy`: all seven files.
 //! * `minimal/` — no disclosures: context and policy withheld with the exporter's reason.

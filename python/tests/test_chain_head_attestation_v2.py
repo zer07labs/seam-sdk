@@ -1,4 +1,5 @@
-"""seam-runtime #835 step 1: the v2 chain-head attestation framing (tenant inside the signature).
+"""seam-runtime #835: the v2 chain-head attestation framing (tenant inside the signature), and the
+step-4 strict dispatch — an empty tenant verifies under v1 only, a non-empty one under v2 only.
 
 Pinned against ``conformance/chain_head_attestation_v2_vector.json``, vendored verbatim from the
 runtime's ``crates/seam-client/tests/conformance_vectors_extended.json`` (``chain_head_attestation_v2``).
@@ -11,6 +12,8 @@ import json
 import pathlib
 
 import pytest
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from seam_sdk.crypto import (
     CHAIN_HEAD_ATTESTATION_DOMAIN_V2,
@@ -89,10 +92,41 @@ def test_any_other_tamper_still_fails(field):
     assert not verify_chain_head_attestation(**a, tenant="acme")
 
 
-def test_a_v1_attestation_with_a_tenant_still_verifies_until_step_4():
-    # Every production attestation today: v1-signed, tenant stamped outside the signature.
-    assert verify_chain_head_attestation(**_args(V1), tenant="acme")
+def test_the_v1_vector_verifies_with_its_empty_tenant():
+    # The shared v1 block is the system partition's framing, and is byte-identical forever.
     assert verify_chain_head_attestation(**_args(V1))
+    assert verify_chain_head_attestation(**_args(V1), tenant="")
+
+
+def test_the_v1_vector_relabelled_to_a_tenant_is_refused():
+    # #835 step 4, mirroring the runtime's `conformance_drift` test: a v1 signature carries the tenant
+    # outside the signature, so a non-empty tenant on it could have been relabelled — refused, with no
+    # fallback, grace period or toggle.
+    assert not verify_chain_head_attestation(**_args(V1), tenant="acme")
+
+
+def test_a_v2_signature_over_the_empty_tenant_is_refused():
+    # Never minted by the runtime; hand-rolled here with the vector's own seed. An empty tenant selects
+    # v1 only, so a genuine v2 signature over "" does not verify — and the v1 signature over the same
+    # (len, head, at, schema) does, which proves the refusal is the framing, not the key.
+    key = Ed25519PrivateKey.from_private_bytes(
+        bytes.fromhex(V2["inputs"]["issuer_seed_hex"])
+    )
+    a = _args(V2)
+    frames = (
+        a["attested_len"],
+        a["attested_head"],
+        a["attested_at"],
+        a["digest_schema"],
+        a["issuer_aid"],
+    )
+    v2_over_empty = key.sign(_chain_head_attestation_digest(*frames, ""))
+    v1 = key.sign(_chain_head_attestation_digest(*frames, None))
+    assert not verify_chain_head_attestation(**{**a, "signature": v2_over_empty})
+    assert not verify_chain_head_attestation(
+        **{**a, "signature": v2_over_empty}, tenant=""
+    )
+    assert verify_chain_head_attestation(**{**a, "signature": v1})
 
 
 def test_tenant_must_be_a_str():

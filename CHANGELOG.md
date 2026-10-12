@@ -16,6 +16,39 @@ than trusting a summary here.
 
 ## Unreleased
 
+> **Breaking — offline verification of pre-#835-step-3 tenant history now fails.** Chain-head
+> attestation dispatch is strict (seam-runtime #835 step 4): a tenant's attestation verifies under v2
+> only, so every v1 tenant attestation the runtime minted before step 3 is refused by `seam-verify
+> --issuer`, Python `verify_chain_head_attestation` and TS `verifyChainHeadAttestation`. Verify from a
+> v2 anchor onward. There is no grace flag and no toggle. Details under *Changed* below.
+
+### Changed — strict chain-head attestation dispatch (seam-runtime #835 step 4, #255) — BREAKING
+- **The attestation's own tenant selects exactly one framing.** Empty → v1 only (a v2 signature over
+  `""` is refused); non-empty → v2 only (the step-1 v1 fallback is gone). Python, TS and `seam-verify`
+  all apply it, mirroring seam-runtime #1303. A v1 attestation relabelled to a tenant, which used to
+  verify, now returns `False` / `false` / a refusal.
+- **`seam-verify chain --issuer`: the payload tenant must equal the envelope tenant.** An empty payload
+  tenant under a named envelope (the old "tenant-unbound" legacy shape) is `ATTESTATION TENANT
+  MISMATCH`, with or without `--strict`. The check now runs before the pin and signature, as in the
+  runtime's verifier. **`tenant_unbound` is removed** — from `IssuerReport`, the `--json` output (top
+  level and per tenant), the text output, the `--strict` refusal and `seam-verify bundle`.
+- **`--from-anchor` and `--expect-anchor` attribute an anchor to its own signed tenant.** An untenanted
+  anchor is v1 and stands for the `""` partition only; the sole-tenant fallback is gone. An anchor
+  whose tenant has no chained event in the window is refused as `NO VALID ATTESTATION` (exit 2, was a
+  usage error, exit 1). A window spanning several tenants is no longer a usage error under
+  `--from-anchor`: the named tenant starts at its anchor, the rest from genesis. A full-event anchor
+  whose payload tenant differs from its envelope's is refused (`ANCHOR SELF-CONTRADICTS`, exit 2).
+- **Library API:** `seam_verify::chain_anchored` takes the anchor's tenant
+  (`chain_anchored(events, &anchor.tenant, len, head)`), and `IssuerReport` loses `tenant_unbound`.
+- **Re-vendored from seam-runtime `feat/835-step4-refuse-v1-tenant` @ 460d163:** the
+  `verify/tests/goldens/{attested_chain,payload_rewrite,two_tenant_chain}.jsonl` goldens (v2 tenant
+  attestations) and `verify/docs/seam-event.v1.md` (pinned ahead, as the step-1 pin was). The
+  `verify/fixtures/evidence-bundle/` bundles were re-exported by the runtime's own exporter at that
+  commit, since the 0.44.0 export carried v1 tenant anchors.
+- **Conformance:** Python, TS and `verify/` each assert that the shared v1 vector, relabelled to a
+  non-empty tenant, is refused and that a v2 signature over the empty tenant is refused, matching the
+  runtime's new `conformance_drift` test. `conformance/vectors.json` is unchanged.
+
 ## 0.46.1 — 2026-10-12
 
 ### Added — chain-head attestation v2: the tenant inside the signature (seam-runtime #835 step 1, #144 part 2)

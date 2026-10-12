@@ -1088,11 +1088,13 @@ function chainHeadAttestationDigest(
  * signature checks out over the recomputed digest; `false` on any tamper. The key comes from `issuerAid`
  * (pinned out of band), never from the attestation itself.
  *
- * `tenant` is the attestation's own payload tenant and selects the signed framing, mirroring seam-runtime
- * #835 step 1 exactly: empty (or absent) verifies under **v1 only**; non-empty under **v2, else v1**. The v1
- * fallback is required while the runtime still signs v1 with the tenant outside the signature (until #835
- * step 3); it is dropped at step 4. Pass the tenant whenever the attestation carries one — omitting it
- * verifies v1 only, so a v2 attestation would come back `false`. */
+ * `tenant` is the attestation's own payload tenant and selects exactly one signed framing, mirroring
+ * seam-runtime #835 step 4 (strict, no fallback): empty (or absent) verifies under **v1 only** (the system
+ * partition; a v2 signature over `""` is refused), and non-empty under **v2 only**, so the tenant is always
+ * inside the signature and relabelling it breaks verification. A v1 attestation carrying a non-empty tenant
+ * — what the runtime minted before #835 step 3 — returns `false`; there is no grace period and no toggle.
+ * Pass the tenant whenever the attestation carries one — omitting it verifies v1 only, so a v2 attestation
+ * would come back `false`. */
 export function verifyChainHeadAttestation(
   issuerAid: string,
   a: {
@@ -1155,7 +1157,7 @@ export function verifyChainHeadAttestation(
       return false;
     }
   };
-  return (tenant !== "" && under(tenant)) || under();
+  return tenant !== "" ? under(tenant) : under();
 }
 
 // ── call_sig v3 (`seam-authorize-call-v3`, seam-runtime #1125 / #1059) ───────────────────────────────

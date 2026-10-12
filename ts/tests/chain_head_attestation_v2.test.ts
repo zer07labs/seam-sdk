@@ -1,4 +1,5 @@
-// seam-runtime #835 step 1: the v2 chain-head attestation framing (tenant inside the signature).
+// seam-runtime #835: the v2 chain-head attestation framing (tenant inside the signature), and the step-4
+// strict dispatch -- an empty tenant verifies under v1 only, a non-empty one under v2 only.
 //
 // Pinned against conformance/chain_head_attestation_v2_vector.json, vendored verbatim from the runtime's
 // crates/seam-client/tests/conformance_vectors_extended.json (`chain_head_attestation_v2`). The shared v1
@@ -6,7 +7,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { CHAIN_HEAD_ATTESTATION_DOMAIN_V2, verifyChainHeadAttestation } from "../src/crypto.js";
+import { ed25519 } from "@noble/curves/ed25519";
+import { sha256 } from "@noble/hashes/sha256";
+import {
+  CHAIN_HEAD_ATTESTATION_DOMAIN_V1,
+  CHAIN_HEAD_ATTESTATION_DOMAIN_V2,
+  verifyChainHeadAttestation,
+} from "../src/crypto.js";
 
 const read = (name: string) =>
   JSON.parse(readFileSync(new URL(`../../conformance/${name}`, import.meta.url), "utf8"));
@@ -50,9 +57,67 @@ test("any other tamper still fails under v2", () => {
   assert.equal(verifyChainHeadAttestation(V2.issuer_aid, { ...a, digestSchema: a.digestSchema + 1 }), false);
 });
 
-test("a v1 attestation with a tenant still verifies until #835 step 4", () => {
-  assert.equal(verifyChainHeadAttestation(V1.issuer_aid, { ...att(V1), tenant: "acme" }), true);
+test("the v1 vector verifies with its empty tenant", () => {
   assert.equal(verifyChainHeadAttestation(V1.issuer_aid, att(V1)), true);
+  assert.equal(verifyChainHeadAttestation(V1.issuer_aid, { ...att(V1), tenant: "" }), true);
+});
+
+// #835 step 4, mirroring the runtime's `conformance_drift` test: a v1 signature carries the tenant outside
+// the signature, so a non-empty tenant on it could have been relabelled -- refused, with no fallback.
+test("the v1 vector relabelled to a tenant is refused", () => {
+  assert.equal(verifyChainHeadAttestation(V1.issuer_aid, { ...att(V1), tenant: "acme" }), false);
+});
+
+// Transcribed from the spec independently of src/crypto.ts, so this also cross-checks its framing.
+const frame = (b: Uint8Array): Uint8Array => {
+  const out = new Uint8Array(4 + b.length);
+  new DataView(out.buffer).setUint32(0, b.length, true);
+  out.set(b, 4);
+  return out;
+};
+const le = (n: number, bytes: 4 | 8): Uint8Array => {
+  const out = new Uint8Array(bytes);
+  const dv = new DataView(out.buffer);
+  if (bytes === 8) dv.setBigUint64(0, BigInt(n), true);
+  else dv.setUint32(0, n, true);
+  return out;
+};
+const digest = (v: typeof V2, tenant?: string): Uint8Array => {
+  const enc = new TextEncoder();
+  const parts = [
+    frame(enc.encode(tenant === undefined ? CHAIN_HEAD_ATTESTATION_DOMAIN_V1 : CHAIN_HEAD_ATTESTATION_DOMAIN_V2)),
+    frame(le(v.inputs.attested_len, 8)),
+    frame(Buffer.from(v.inputs.attested_head_hex, "hex")),
+    frame(le(v.inputs.attested_at, 8)),
+    frame(le(v.inputs.digest_schema, 4)),
+    frame(enc.encode(v.issuer_aid)),
+    ...(tenant === undefined ? [] : [frame(enc.encode(tenant))]),
+  ];
+  return sha256(Buffer.concat(parts));
+};
+
+// Never minted by the runtime; hand-rolled with the vector's own seed. An empty tenant selects v1 only, so
+// a genuine v2 signature over "" is refused -- and the v1 signature over the same inputs verifies, which
+// proves the refusal is the framing, not the key.
+test("a v2 signature over the empty tenant is refused", () => {
+  const seed = Buffer.from(V2.inputs.issuer_seed_hex, "hex");
+  const v2OverEmpty = ed25519.sign(digest(V2, ""), seed);
+  const v1 = ed25519.sign(digest(V2), seed);
+  assert.equal(verifyChainHeadAttestation(V2.issuer_aid, { ...att(V2), signature: v2OverEmpty }), false);
+  assert.equal(
+    verifyChainHeadAttestation(V2.issuer_aid, { ...att(V2), signature: v2OverEmpty, tenant: "" }),
+    false,
+  );
+  assert.equal(verifyChainHeadAttestation(V2.issuer_aid, { ...att(V2), signature: v1 }), true);
+  // Sanity: the hand-rolled v2 digest is the runtime's, so the refusal above is not a framing typo.
+  assert.equal(
+    verifyChainHeadAttestation(V2.issuer_aid, {
+      ...att(V2),
+      signature: ed25519.sign(digest(V2, "acme"), seed),
+      tenant: "acme",
+    }),
+    true,
+  );
 });
 
 test("a non-string tenant is a caller bug, not a failed verification", () => {
