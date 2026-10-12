@@ -4524,3 +4524,101 @@ green before any code changed.
   expected to be needed (unlike `VerifyAnchorRequest.tenant`'s deferral) since there's no
   non-wiring decision to record — both languages already carry it the moment it exists.
   Tracked in draft PR (this branch); left as a draft until BSR picks up the merged field.
+
+---
+
+# PROGRESS — `plans/partner-registry-drift.md` (seam-sdk#203 acceptance)
+
+**PR strategy: one PR.** Three phases on one script, its tests and docs; none is useful to ship alone.
+**Risk tiers:** P1 complex · P2 complex · P3 simple.
+**Repo map:** `scripts/check_registry_drift.py` (the check) · `scripts/test_registry_drift_gate.py`
+(its gate; curl/gh stubs first on PATH) · `.github/workflows/registry-drift.yml` (schedule, credential
+resolution) · `.github/workflows/publish.yml:747-810` (`promote-partner`) ·
+`.github/workflows/promote-partner-backfill.yml` + `scripts/promote-to-partner.sh` (remediation) ·
+`README.md` § registry drift · `CLAUDE.md` command line.
+
+## Phase 1: query and verdict for partner, DONE (2026-10-12)
+- **Verdict:** PASS on round 2. Opus verifier: complex phase, crosses the network boundary.
+- **Round 1, GAPS:** the `--report` guard for partner verdicts was untested (an `if False:`
+  mutation survived). Also open: a partner fault beside a grace-tier or suppressed internal
+  drift; non-`InfraError` capture; the loader naming the wrong flag; partner naming on the
+  not-JSON path. All closed; every one has a test except the non-`InfraError` capture. That
+  gap was found by the final verify and closed then (see Finalization).
+- **Round 2:** PASS.
+- **Files:** `scripts/check_registry_drift.py`, `scripts/test_registry_drift_gate.py`,
+  `plans/partner-registry-drift.md`.
+- **Tests:** `pytest scripts/` gives 547 passed.
+- **Next:** Phase 2, reporting a partner lag under its own title, and restoring the heartbeat on
+  partner verdicts.
+
+## Phase 2: reporting for a partner lag, DONE (2026-10-12)
+- **Verdict:** PASS on round 2. Opus verifier: complex phase, it writes GitHub issues and adds a
+  title namespace.
+- **Round 1, GAPS:**
+  - Three mutations survived: the partner reopen comment's body, and the "not checked" and
+    "serves it" branches of the partner row.
+  - The partner grace tiers had no test with `--report`.
+  - The internal body said "not checked" when partner had been queried and errored.
+  - "Expected" was overclaimed in the partner row.
+  - A dead `or set()` fallback.
+  - No internal "can be closed" notice while partner lags.
+  - All closed with tests; each fix was mutation-checked by the verifier.
+- **Round 2:** PASS.
+- **Files:** `scripts/check_registry_drift.py`, `scripts/test_registry_drift_gate.py`,
+  `plans/partner-registry-drift.md`.
+- **Tests:** `pytest scripts/` gives 562 passed (drift gate 270). `ruff check` is clean.
+- **Next:** Phase 3, workflow comments and docs.
+
+## Phase 3: workflow comments and docs, DONE (2026-10-12)
+- **Verdict:** PASS on round 3, from an Opus verifier.
+- **Round 1, GAPS (5 wording overclaims, no logic):** the docstring said the canary proves both
+  repositories offline, the exit-0 line overclaimed partner, a suppressed drift beside a partner
+  fault was wrongly described, the workflow still said "ONE issue per version", and the README
+  sentence order was broken.
+- **Round 2, GAPS:** a "rule 4 below" pointer (it is above it), and two lines over the wrap
+  width.
+- **Round 3:** PASS.
+- **Files:** `.github/workflows/registry-drift.yml` (comments only; the parsed YAML is equal to
+  HEAD), `README.md`, `CLAUDE.md`, the docstring in `scripts/check_registry_drift.py`, and
+  `plans/partner-registry-drift.md`.
+- **Tests:** `pytest scripts/` gives 562 passed; the python suite gives 1543 passed, 24 skipped.
+
+## Finalization notes
+- **Live integration run** (2026-10-12), using the real credential against both registries:
+  - Both canaries were proven.
+  - It found a real drift: 0.45.1 is on neither registry. The publish was refused by the
+    `sibling-quotes` gate, and the version stays unpublished per #247.
+  - I pre-recorded that as #250 (exact drift title, closed, labelled
+    `deliberately-unpublished`).
+  - A live `--report` run then exited 0 with the suppression `::warning::` and made no GitHub
+    writes.
+- **Out of scope:** the dead Cargo fallback token is filed as #251.
+
+## Finalization: whole-feature verify (2026-10-12)
+- **Round 1, GAPS. Nothing blocked the merge; six items:**
+  1. The partner catch-all printed `{exc!r}`. A strict UTF-8 decode of a hostile body raised
+     UnicodeDecodeError, whose repr carries the raw bytes. Reproduced with the token in the bytes.
+  2. The non-`InfraError` capture had no test, although the Phase 1 trail claimed one.
+  3. The partner coverage limit was not recorded.
+  4. A mutant survived: the internal close notice was not pinned to OPEN.
+  5. Untested cells: a live `--report` partner run, and partner suppression vs an internal drift.
+  6. The workflow comment implied the Cargo fallback works.
+- **Fixes:**
+  - curl output is decoded with `errors="replace"`, so a non-UTF-8 body is a named "not JSON"
+    InfraError on both registries.
+  - The catch-all prints only the class name.
+  - Five tests added: a non-UTF-8 partner body, a RecursionError capture beside an internal drift,
+    OPEN-only for the close notice, partner suppression vs an internal drift, and a live
+    end-to-end partner lag with `--report` (curl and gh order, token in no gh argv).
+  - The four new guards were mutation-checked; each mutant now fails the suite.
+  - Recorded in ASSUMPTIONS.md; the workflow comment cites #251.
+- **Tests:** `pytest scripts/` gives 567 passed.
+- **Round 2, GAPS (one item):**
+  - All six round-1 gaps were confirmed closed.
+  - Two older diagnoses still echoed response content, now reachable from partner: the
+    non-object row `{row!r}` and the versions in the "NONE at" message.
+  - Fixed: the row diagnosis names only the type, and the versions list shows only values that
+    match `SAFE_VERSION` and counts the rest.
+  - A parametrised partner test covers both; reverting either fix fails it.
+  - `pytest scripts/`: 569 passed.
+- **Round 3:** PASS. A 76-case hostile-body fuzz test, run on internal and partner and as both canary and target, never leaked the token. Ready to ship.

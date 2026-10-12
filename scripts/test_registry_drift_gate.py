@@ -812,14 +812,32 @@ STUB_TOKEN = "s3cr3t-canary-token-value"
 
 
 
+def _write_payload(path: Path, payload: object) -> None:
+    """`bytes` verbatim (a body that is not UTF-8 is a case to test), `str` as-is, else JSON."""
+    if isinstance(payload, bytes):
+        path.write_bytes(payload)
+    else:
+        path.write_text(
+            payload if isinstance(payload, str) else json.dumps(payload), encoding="utf-8"
+        )
+
+
 def curl_stub(
     tmp_path: Path,
     responses: dict[str, object],
     *,
     fail_with: int | None = None,
     stderr_text: str | None = None,
+    partner_responses: dict[str, object] | None = None,
+    partner_fail_with: int | None = None,
 ) -> tuple[Path, Path]:
     """A `curl` first on PATH. Returns (bin dir, call-log path).
+
+    `zer07labs/partner` MIRRORS `responses` unless `partner_responses` is given, and is routed by
+    the `/zer07labs/partner/` path segment. Mirroring is the default because every test written
+    before the partner check is a statement about internal, and a partner that answered `[]` there
+    would turn each of them into a partner-canary exit 2 — testing nothing they claim to.
+    `partner_fail_with` makes ONLY partner requests exit with that code, the way `-f` would.
 
     Two logs are written, not one. `curl-calls` holds `"$*"` — argv joined by spaces, which is what
     almost every assertion here wants. Beside it, `curl-argv` holds `"$@"` one bracketed argument
@@ -842,9 +860,13 @@ def curl_stub(
     responses_dir = tmp_path / "responses"
     responses_dir.mkdir(exist_ok=True)
     for version, payload in responses.items():
-        (responses_dir / version).write_text(
-            payload if isinstance(payload, str) else json.dumps(payload), encoding="utf-8"
-        )
+        _write_payload(responses_dir / version, payload)
+    partner_dir = responses_dir
+    if partner_responses is not None:
+        partner_dir = tmp_path / "partner-responses"
+        partner_dir.mkdir(exist_ok=True)
+        for version, payload in partner_responses.items():
+            _write_payload(partner_dir / version, payload)
     argv_log = tmp_path / "curl-argv"
     argv_log.write_text("")
     lines = [
@@ -873,8 +895,14 @@ def curl_stub(
         'URL="${@: -1}"',
         'VER="${URL##*version:}"',
         'VER="${VER%%&*}"',
-        f'if [ -f "{responses_dir}/$VER" ]; then',
-        f'  cat "{responses_dir}/$VER"',
+        f'DIR="{responses_dir}"',
+        'case "$URL" in',
+        f'  */zer07labs/partner/*) DIR="{partner_dir}"'
+        + (f"; exit {partner_fail_with}" if partner_fail_with is not None else "")
+        + " ;;",
+        "esac",
+        'if [ -f "$DIR/$VER" ]; then',
+        '  cat "$DIR/$VER"',
         "else",
         "  echo '[]'",
         "fi",
@@ -894,6 +922,16 @@ def live_env(bin_dir: Path, *, token: str | None = STUB_TOKEN) -> dict[str, str]
     return env
 
 
+def registries_queried(calls: Path) -> list[tuple[str, str]]:
+    """`(repository slug, version)` per request, in order — which registry was asked, not only what."""
+    asked = []
+    for line in calls.read_text().splitlines():
+        url = line.split()[-1]
+        slug = url.split("/packages/zer07labs/")[1].split("/")[0]
+        asked.append((slug, url.split("version:")[1].split("&")[0].strip()))
+    return asked
+
+
 def versions_queried(calls: Path) -> list[str]:
     """The versions the stub was asked about, in order."""
     asked = []
@@ -904,21 +942,28 @@ def versions_queried(calls: Path) -> list[str]:
 
 
 def test_the_happy_live_path_queries_one_canary_then_the_target(tmp_path: Path) -> None:
-    """Two GETs on the common path, in that order, and a clean verdict."""
+    """Four GETs on the common path — canary then target, internal then partner — and a clean
+    verdict."""
     repo = make_repo(tmp_path, version="0.7.78")
     bin_dir, calls = curl_stub(
         tmp_path, {ROSTER[0]: published(ROSTER[0]), "0.7.78": published("0.7.78")}
     )
     proc = run(repo, None, tmp_path, env=live_env(bin_dir))
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert versions_queried(calls) == [ROSTER[0], "0.7.78"]
-    # And exactly two invocations, counted rather than inferred. `versions_queried` filters on
-    # `version:`, so a third request to some URL without that qualifier — a discovery call, a
+    assert registries_queried(calls) == [
+        ("internal", ROSTER[0]),
+        ("internal", "0.7.78"),
+        ("partner", ROSTER[0]),
+        ("partner", "0.7.78"),
+    ]
+    # And exactly four invocations, counted rather than inferred. `versions_queried` filters on
+    # `version:`, so a fifth request to some URL without that qualifier — a discovery call, a
     # retry against a different endpoint — is invisible to the assertion above. The stub appends
     # one line per invocation, so this counts them.
-    assert len(calls.read_text().splitlines()) == 2, (
-        f"the run made {len(calls.read_text().splitlines())} requests, not 2:\n{calls.read_text()}"
+    assert len(calls.read_text().splitlines()) == 4, (
+        f"the run made {len(calls.read_text().splitlines())} requests, not 4:\n{calls.read_text()}"
     )
+    assert "on internal and partner" in proc.stdout
     assert f"canary {ROSTER[0]}" in proc.stdout
     # `yank.yml` carries no timeout, so this is the one part of the request that is deliberately
     # NOT a mirror of it. A hung GET in a scheduled job is a silent multi-hour burn, and nothing
@@ -1003,9 +1048,13 @@ def test_a_canary_equal_to_the_target_is_dropped_and_the_run_still_reaches_a_ver
     assert proc.returncode == 1, (
         f"exit {proc.returncode} — the target's drift was muted\n{proc.stdout}{proc.stderr}"
     )
-    asked = versions_queried(calls)
-    assert asked.count(target) == 1, f"{target} was queried as a canary as well: {asked}"
-    assert asked[0] == backup, asked
+    # Per registry: the target is asked exactly once OF EACH, as a target, never as a canary.
+    asked = registries_queried(calls)
+    for registry in ("internal", "partner"):
+        mine = [v for r, v in asked if r == registry]
+        assert mine.count(target) == 1, f"{target} was queried as a {registry} canary as well: {asked}"
+        assert mine[0] == backup, asked
+    assert asked[0] == ("internal", backup), asked
 
 
 @pytest.mark.parametrize("truncated", [ROSTER[0], "0.7.78"], ids=["canary", "target"])
@@ -1503,7 +1552,279 @@ def test_a_roster_with_nothing_left_to_probe_names_the_constant(
         module.assert_live_instrument_healthy("0.7.78", "irrelevant")
 
 
+# ── seam-sdk#203: partner — the repository a design partner actually installs from ─────────────
+#
+# `internal` serving a release says nothing about whether a partner can install it: the two are
+# separate Cloudsmith repositories, and #203 is the record of `partner` lagging for twenty
+# releases while every check here stayed green. These pin that partner is asked, through its own
+# proven instrument, on the same clock — and that a partner fault never hides an internal finding.
+
+
+def test_partner_url_differs_from_internal_only_in_the_repository_slug() -> None:
+    """Same endpoint, same query; one path segment apart. Anything else is a different question."""
+    module = _load_script()
+    assert module.PARTNER_REGISTRY_URL != module.REGISTRY_URL
+    assert module.PARTNER_REGISTRY_URL == module.REGISTRY_URL.replace(
+        "/zer07labs/internal/", "/zer07labs/partner/"
+    )
+    assert module.PARTNER_REGISTRY_URL.endswith("/packages/zer07labs/partner/")
+    assert module.registry_name(module.PARTNER_REGISTRY_URL) == "partner"
+    assert module.registry_name(module.REGISTRY_URL) == "internal"
+
+
+@pytest.mark.parametrize(
+    ("age", "expected_code", "marker"),
+    [(30, 0, "DEFERRED"), (200, 0, "::warning::"), (361, 1, "DRIFT")],
+    ids=["soft", "warn", "hard"],
+)
+def test_a_partner_lag_walks_the_same_grace_ladder(
+    tmp_path: Path, age: int, expected_code: int, marker: str
+) -> None:
+    """Internal serves it, partner does not. One clock: `promote-partner` is in the same run."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    full = {ROSTER[0]: published(ROSTER[0]), "0.7.78": published("0.7.78")}
+    bin_dir, _ = curl_stub(
+        tmp_path, full, partner_responses={ROSTER[0]: published(ROSTER[0])}
+    )
+    proc = run(
+        repo, None, tmp_path, now=LANDED + timedelta(minutes=age), env=live_env(bin_dir)
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == expected_code, out
+    assert marker in out, out
+    assert "partner" in out
+    assert "partner serves: <nothing>" in proc.stdout
+    assert STUB_TOKEN not in out
+
+
+def test_a_partner_drift_names_state_p_and_both_promotion_tools(tmp_path: Path) -> None:
+    """The remediation must route to promotion — and warn against promoting a smoke-failed build."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    full = {ROSTER[0]: published(ROSTER[0]), "0.7.78": published("0.7.78")}
+    bin_dir, _ = curl_stub(
+        tmp_path,
+        full,
+        partner_responses={ROSTER[0]: published(ROSTER[0]), "0.7.78": rows(("seam-sdk", "0.7.78", "python"))},
+    )
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "State P" in proc.stdout
+    assert "promote-partner-backfill.yml" in proc.stdout
+    assert "./scripts/promote-to-partner.sh 0.7.78" in proc.stdout
+    assert "registry-smoke" in proc.stdout
+    # Half a promotion is still a lag, and the missing half is named.
+    assert "partner serves: python" in proc.stdout
+    assert "does not serve npm" in proc.stdout
+    # Not internal's states: the tag and the publish are fine.
+    assert "State B" not in proc.stdout and "State C" not in proc.stdout
+
+
+def test_internal_short_is_reported_as_internal_even_with_partner_short_too(tmp_path: Path) -> None:
+    """Partner is promoted FROM internal: one fault, reported once, at its source."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    bin_dir, _ = curl_stub(tmp_path, {ROSTER[0]: published(ROSTER[0])})
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "State B" in proc.stdout
+    assert "State P" not in proc.stdout
+    assert "partner serves: <nothing>" in proc.stdout
+
+
+@pytest.mark.parametrize("fault", ["canaries-empty", "http-failure"])
+def test_a_broken_partner_instrument_is_infrastructure_when_internal_is_clean(
+    tmp_path: Path, fault: str
+) -> None:
+    """Internal clean, partner unreadable: exit 2, and the message says WHICH registry."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    full = {ROSTER[0]: published(ROSTER[0]), "0.7.78": published("0.7.78")}
+    if fault == "canaries-empty":
+        bin_dir, calls = curl_stub(tmp_path, full, partner_responses={"0.7.78": published("0.7.78")})
+    else:
+        bin_dir, calls = curl_stub(tmp_path, full, partner_fail_with=22)
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "partner" in proc.stderr
+    assert "partner: COULD NOT BE READ" in proc.stdout
+    # The clean-internal line must not ALSO claim partner was merely skipped: it was tried.
+    assert "NOT checked" not in proc.stdout
+    assert STUB_TOKEN not in proc.stdout + proc.stderr
+    if fault == "canaries-empty":
+        # Canary first, per registry: partner's target is never read through a dead instrument.
+        assert ("partner", "0.7.78") not in registries_queried(calls), registries_queried(calls)
+
+
+@pytest.mark.parametrize(
+    ("age", "expected_code"), [(30, 2), (200, 2), (361, 1)], ids=["soft", "warn", "hard"]
+)
+def test_a_broken_partner_instrument_never_hides_an_internal_drift(
+    tmp_path: Path, age: int, expected_code: int
+) -> None:
+    """Internal short: a drift keeps its 1 with the partner fault beside it; inside the grace
+    tiers there is no finding yet, so the instrument fault is the news — 2."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    bin_dir, _ = curl_stub(tmp_path, {ROSTER[0]: published(ROSTER[0])}, partner_fail_with=22)
+    proc = run(
+        repo, None, tmp_path, now=LANDED + timedelta(minutes=age), env=live_env(bin_dir)
+    )
+    assert proc.returncode == expected_code, proc.stdout + proc.stderr
+    assert "::error::partner could not be read" in proc.stderr
+    if expected_code == 1:
+        assert "State B" in proc.stdout
+
+
+def test_offline_without_a_partner_dump_says_partner_was_not_checked(tmp_path: Path) -> None:
+    """Not checked is not clean. The clean line must say which registries it speaks for."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    proc = run(repo, published("0.7.78"), tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert "partner: NOT CHECKED" in proc.stdout
+    assert "Partner was NOT checked" in proc.stdout
+    assert "on internal and partner" not in proc.stdout
+
+
+@pytest.mark.parametrize(
+    ("partner", "expected_code", "needle"),
+    [
+        ("full", 0, "on internal and partner"),
+        ("short", 1, "State P"),
+        ("unrelated", 2, "--partner-packages-json"),
+    ],
+)
+def test_offline_with_a_partner_dump_checks_partner_by_the_offline_rule(
+    tmp_path: Path, partner: str, expected_code: int, needle: str
+) -> None:
+    """The offline instrument rule applies to the partner file too: no `seam-sdk` row at ANY
+    version is a broken capture, never an absence."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    payload = {
+        "full": published("0.7.78"),
+        "short": published("0.7.77"),
+        "unrelated": rows(("other-thing", "1.0.0", "python")),
+    }[partner]
+    pfile = tmp_path / "partner.json"
+    pfile.write_text(json.dumps(payload), "utf-8")
+    proc = run(
+        repo, published("0.7.78"), tmp_path, extra=["--partner-packages-json", str(pfile)]
+    )
+    assert proc.returncode == expected_code, proc.stdout + proc.stderr
+    assert needle in proc.stdout + proc.stderr
+
+
+@pytest.mark.parametrize("payload", ["[]", None], ids=["empty-list", "missing-file"])
+def test_an_empty_or_missing_partner_dump_is_infrastructure_named_by_its_own_flag(
+    tmp_path: Path, payload: str | None
+) -> None:
+    """`[]` is not a plausible unscoped capture; a missing file is not a capture at all. Both are
+    exit 2, and the message names the flag the operator actually passed."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    pfile = tmp_path / "partner.json"
+    if payload is not None:
+        pfile.write_text(payload, "utf-8")
+    proc = run(
+        repo, published("0.7.78"), tmp_path, extra=["--partner-packages-json", str(pfile)]
+    )
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert f"--partner-packages-json {pfile}" in proc.stderr, proc.stderr
+
+
+def test_a_non_json_partner_response_names_partner(tmp_path: Path) -> None:
+    """Every partner-side refusal must say partner — the operator otherwise debugs internal."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    full = {ROSTER[0]: published(ROSTER[0]), "0.7.78": published("0.7.78")}
+    bin_dir, _ = curl_stub(
+        tmp_path, full, partner_responses={ROSTER[0]: published(ROSTER[0]), "0.7.78": "<html>"}
+    )
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "the response from partner to" in proc.stderr, proc.stderr
+    assert "is not JSON" in proc.stderr
+
+
+def test_a_partner_dump_without_an_internal_one_is_refused(tmp_path: Path) -> None:
+    """A saved partner answer beside a LIVE internal one compares two moments. Exit 2, no query."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    bin_dir, calls = curl_stub(tmp_path, {ROSTER[0]: published(ROSTER[0])})
+    pfile = tmp_path / "partner.json"
+    pfile.write_text(json.dumps(published("0.7.78")), "utf-8")
+    proc = run(
+        repo,
+        None,
+        tmp_path,
+        extra=["--partner-packages-json", str(pfile)],
+        env=live_env(bin_dir),
+    )
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "needs --packages-json" in proc.stderr
+    assert calls.read_text() == ""
+
+
 # ── The script's own dependencies ─────────────────────────────────────────────────────────────
+
+
+def test_a_non_utf8_partner_body_is_a_named_fault_that_never_prints_its_bytes(
+    tmp_path: Path,
+) -> None:
+    """A body that is not UTF-8 is "not JSON" from partner: exit 2, partner named. It is never a
+    UnicodeDecodeError, whose repr carries the raw bytes, and here those bytes quote the token."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    full = {ROSTER[0]: published(ROSTER[0]), "0.7.78": published("0.7.78")}
+    hostile = b"\xff X-Api-Key: " + STUB_TOKEN.encode() + b" \xfe"
+    bin_dir, _ = curl_stub(
+        tmp_path, full, partner_responses={ROSTER[0]: published(ROSTER[0]), "0.7.78": hostile}
+    )
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 2, out
+    assert "partner" in out and "not JSON" in out, out
+    assert STUB_TOKEN not in out, out
+    assert "UnicodeDecodeError" not in out and "Traceback" not in out, out
+
+
+def test_an_unexpected_partner_exception_cannot_blind_an_internal_drift(tmp_path: Path) -> None:
+    """The non-InfraError capture, driven for real. A pathologically nested partner body raises
+    RecursionError inside `json.loads` — not JSONDecodeError, so not an InfraError. Captured, the
+    internal drift still reaches its verdict (exit 1, State B printed); escaping, it would hit the
+    top-level handler and exit 2 with no verdict at all. Only the class name is printed."""
+    repo = make_repo(tmp_path, version="0.7.78", tag=True)
+    nested = "[" * 200_000 + "]" * 200_000
+    bin_dir, _ = curl_stub(
+        tmp_path,
+        {ROSTER[0]: published(ROSTER[0])},
+        partner_responses={ROSTER[0]: published(ROSTER[0]), "0.7.78": nested},
+    )
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "State B" in proc.stdout, proc.stdout
+    # The whole line, so "the class name only" is pinned — a repr would append its message.
+    assert re.search(
+        r"unexpected failure reading partner: RecursionError$", proc.stderr, re.MULTILINE
+    ), proc.stderr
+    assert "Traceback" not in proc.stderr, proc.stderr
+
+
+@pytest.mark.parametrize(
+    ("body", "marker"),
+    [
+        (["X-Api-Key: " + STUB_TOKEN], "not an object"),
+        ([{"name": "seam-sdk", "version": "tok=" + STUB_TOKEN, "format": "python"}], "was not applied"),
+    ],
+    ids=["string-row", "version-field"],
+)
+def test_a_hostile_partner_body_is_diagnosed_without_being_echoed(
+    tmp_path: Path, body: object, marker: str
+) -> None:
+    """The two diagnoses that describe a malformed response — a non-object row, and rows at other
+    versions — name its shape, never its content. Partner reaches both now."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    full = {ROSTER[0]: published(ROSTER[0]), "0.7.78": published("0.7.78")}
+    bin_dir, _ = curl_stub(
+        tmp_path, full, partner_responses={ROSTER[0]: published(ROSTER[0]), "0.7.78": body}
+    )
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 2, out
+    assert marker in out and "partner" in out, out
+    assert STUB_TOKEN not in out, out
 
 
 def test_the_script_imports_only_the_standard_library() -> None:
@@ -2614,6 +2935,7 @@ def test_the_scheduled_run_never_passes_a_saved_response() -> None:
 
 DRIFT_TITLE = _SCRIPT_MODULE.DRIFT_TITLE
 RELEASE_NOTICE_TITLE = _SCRIPT_MODULE.RELEASE_NOTICE_TITLE
+PARTNER_DRIFT_TITLE = _SCRIPT_MODULE.PARTNER_DRIFT_TITLE
 SUPPRESSION_LABEL = _SCRIPT_MODULE.SUPPRESSION_LABEL
 ISSUE_LIMIT = _SCRIPT_MODULE.ISSUE_LIMIT
 
@@ -3142,6 +3464,331 @@ def test_neither_grace_tier_touches_github(
     assert proc.returncode == 0, proc.stderr
     assert marker in proc.stdout, f"the {band} tier did not announce itself:\n{proc.stdout}"
     assert gh_calls(log) == [], f"the {band} tier called GitHub: {gh_calls(log)}"
+
+
+def _partner_dump(tmp_path: Path, payload: object) -> list[str]:
+    pfile = tmp_path / "partner.json"
+    pfile.write_text(json.dumps(payload), "utf-8")
+    return ["--partner-packages-json", str(pfile)]
+
+
+def _partner_lag_run(
+    tmp_path: Path, listing: list[tuple[int, str, list[str], str]], **kw: object
+) -> tuple[subprocess.CompletedProcess[str], Path]:
+    """Internal complete, partner empty for DRIFTING, past the hard window, with --report."""
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    return report_run(
+        repo,
+        published(DRIFTING),
+        tmp_path,
+        listing=listing,
+        extra=_partner_dump(tmp_path, published("0.7.77")),
+        **kw,
+    )
+
+
+def partner_listing(
+    number: int, state: str, labels: list[str]
+) -> list[tuple[int, str, list[str], str]]:
+    return [(number, state, labels, PARTNER_DRIFT_TITLE.format(version=DRIFTING))]
+
+
+def test_a_partner_lag_files_one_issue_under_its_own_title(tmp_path: Path) -> None:
+    """One listing, one create, PARTNER_DRIFT_TITLE — never DRIFT_TITLE, which would assert that
+    the release is not installable from internal, a state the registry is not in."""
+    proc, log = _partner_lag_run(tmp_path, [])
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    calls = gh_calls(log)
+    assert sum(1 for c in calls if c[:2] == ["issue", "list"]) == 1, calls
+    creates = [c for c in calls if c[:2] == ["issue", "create"]]
+    assert len(creates) == 1, calls
+    title = creates[0][creates[0].index("--title") + 1]
+    body = creates[0][creates[0].index("--body") + 1]
+    assert title == PARTNER_DRIFT_TITLE.format(version=DRIFTING)
+    for call in calls:
+        assert DRIFT_TITLE.format(version=DRIFTING) not in call, call
+    assert "State P" in body
+    assert "`zer07labs/partner`" in body
+    assert "promote-partner-backfill.yml" in body
+    assert "registry-smoke" in body
+    # Reporting is followed by the watcher's heartbeat on a partner verdict too: a partner lag
+    # that outlasts the schedule must not also silence the check on its own schedule.
+    assert [c for c in calls if c[0] == "api"] == [heartbeat_argv()], calls
+
+
+@pytest.mark.parametrize(
+    ("state", "labels", "expected_code", "writes"),
+    [
+        ("OPEN", [], 1, []),
+        ("CLOSED", [], 1, ["comment", "reopen"]),
+        ("CLOSED", [SUPPRESSION_LABEL], 0, []),
+    ],
+    ids=["open", "closed", "suppressed"],
+)
+def test_the_partner_issue_walks_the_same_decision_table(
+    tmp_path: Path, state: str, labels: list[str], expected_code: int, writes: list[str]
+) -> None:
+    proc, log = _partner_lag_run(tmp_path, partner_listing(11, state, labels))
+    assert proc.returncode == expected_code, proc.stdout + proc.stderr
+    assert [c[1] for c in gh_calls(log) if c[0] == "issue" and c[1] != "list"] == writes
+    if labels:
+        assert "::warning::" in proc.stdout and "#11" in proc.stdout
+        assert "Partner still does not serve" in proc.stdout
+    if "comment" in writes:
+        # The reopen comment is the partner body, not the internal one: an internal body here
+        # would tell the reader the release is not installable and send them to re-publish.
+        comment = next(c for c in gh_calls(log) if c[:2] == ["issue", "comment"])
+        text = comment[comment.index("--body") + 1]
+        assert "State P" in text and "`zer07labs/partner` (internal is complete)" in text, text
+        assert "the registry does not serve it" not in text, text
+
+
+@pytest.mark.parametrize("age", [30, 200], ids=["soft", "warn"])
+def test_a_partner_lag_inside_grace_touches_no_github(tmp_path: Path, age: int) -> None:
+    """The grace invariant holds for the partner subject too: with --report, a deferred or
+    warned partner lag reaches GitHub not at all — not even the listing."""
+    proc, log = _partner_lag_run(tmp_path, [], now=LANDED + timedelta(minutes=age))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert gh_calls(log) == [], gh_calls(log)
+
+
+def test_a_partner_lag_says_an_open_internal_issue_can_be_closed(tmp_path: Path) -> None:
+    """Internal serving the version is what makes this a partner lag, so an open internal issue
+    for it is stale. `report_clean` cannot say so — the verdict is not clean — so the partner
+    path does, from the same listing, and closes nothing."""
+    listing = drift_listing(4, "OPEN", [])
+    proc, log = _partner_lag_run(tmp_path, listing)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "::notice::#4" in proc.stdout and "can be closed" in proc.stdout, proc.stdout
+    calls = gh_calls(log)
+    assert sum(1 for c in calls if c[:2] == ["issue", "list"]) == 1, calls
+    assert not any(c[:2] in (["issue", "close"], ["issue", "edit"]) for c in calls), calls
+
+
+def test_an_internal_suppression_does_not_suppress_a_partner_lag(tmp_path: Path) -> None:
+    """Suppression is scoped to one title. Closing the INTERNAL issue for this version with the
+    label says nothing about partner, and must not mute it."""
+    listing = [
+        (5, "CLOSED", [SUPPRESSION_LABEL], DRIFT_TITLE.format(version=DRIFTING)),
+    ]
+    proc, log = _partner_lag_run(tmp_path, listing)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert any(c[:2] == ["issue", "create"] for c in gh_calls(log)), gh_calls(log)
+
+
+def test_a_partner_issue_cross_links_an_open_release_notice(tmp_path: Path) -> None:
+    """An open `release-outcome` issue is the signal that registry-smoke may have failed —
+    exactly when State P says not to promote. The body must point at it."""
+    listing = [(9, "OPEN", [], RELEASE_NOTICE_TITLE.format(version=DRIFTING))]
+    proc, log = _partner_lag_run(tmp_path, listing)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    create = next(c for c in gh_calls(log) if c[:2] == ["issue", "create"])
+    assert "#9" in create[create.index("--body") + 1]
+
+
+def test_internal_and_partner_both_short_file_one_internal_issue_naming_partner(
+    tmp_path: Path,
+) -> None:
+    """One fault, at its source. The internal body records partner's state; no partner issue."""
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    proc, log = report_run(
+        repo,
+        published("0.7.77"),
+        tmp_path,
+        listing=[],
+        extra=_partner_dump(tmp_path, published("0.7.77")),
+    )
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    creates = [c for c in gh_calls(log) if c[:2] == ["issue", "create"]]
+    assert len(creates) == 1, gh_calls(log)
+    assert creates[0][creates[0].index("--title") + 1] == DRIFT_TITLE.format(version=DRIFTING)
+    body = creates[0][creates[0].index("--body") + 1]
+    assert "| `zer07labs/partner` | also missing npm, python (promotion copies" in body, body
+
+
+@pytest.mark.parametrize(
+    ("internal", "partner", "cell"),
+    [
+        (published("0.7.77"), None, "| `zer07labs/partner` | not checked |"),
+        (published("0.7.77"), "serving", "| `zer07labs/partner` | serves it |"),
+        (
+            "python-only",
+            "empty",
+            "| `zer07labs/partner` | also missing npm, python — python is served by internal, "
+            "so that is a promotion lag too |",
+        ),
+    ],
+    ids=["not-checked", "serves-it", "own-lag"],
+)
+def test_the_internal_issue_states_partner_as_observed(
+    tmp_path: Path, internal: object, partner: str | None, cell: str
+) -> None:
+    """Every branch of the partner row in the INTERNAL issue, read back from the filed body.
+    "Expected" is claimed only for formats internal is missing too."""
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    if internal == "python-only":
+        internal = [*published("0.7.77"), *rows(("seam-sdk", DRIFTING, "python"))]
+    extra = None
+    if partner == "serving":
+        extra = _partner_dump(tmp_path, published(DRIFTING))
+    elif partner == "empty":
+        extra = _partner_dump(tmp_path, published("0.7.77"))
+    proc, log = report_run(repo, internal, tmp_path, listing=[], extra=extra)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    create = next(c for c in gh_calls(log) if c[:2] == ["issue", "create"])
+    assert create[create.index("--title") + 1] == DRIFT_TITLE.format(version=DRIFTING)
+    assert cell in create[create.index("--body") + 1], create
+
+
+@pytest.mark.parametrize(
+    ("partner_dump", "expect_notice"), [(True, True), (False, False)], ids=["checked", "unchecked"]
+)
+def test_a_recovered_partner_says_its_issue_can_be_closed_only_when_partner_was_read(
+    tmp_path: Path, partner_dump: bool, expect_notice: bool
+) -> None:
+    """An offline run with no partner dump knows nothing about partner. "Can be closed" from it
+    would be an unqueried registry reading as clean."""
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    proc, log = report_run(
+        repo,
+        published(DRIFTING),
+        tmp_path,
+        listing=partner_listing(12, "OPEN", []),
+        extra=_partner_dump(tmp_path, published(DRIFTING)) if partner_dump else None,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert ("#12" in proc.stdout) is expect_notice, proc.stdout
+    assert gh_writes(log) == [], gh_calls(log)
+    assert sum(1 for c in gh_calls(log) if c[:2] == ["issue", "list"]) == 1, gh_calls(log)
+
+
+def test_no_title_is_a_prefix_of_another() -> None:
+    """Three exact-title matchers over three shapes. None may contain another, in either
+    direction, at any version — or one mechanism could find, comment on, or suppress another's
+    issue."""
+    titles = {
+        "internal": DRIFT_TITLE,
+        "partner": PARTNER_DRIFT_TITLE,
+        "release-outcome": RELEASE_NOTICE_TITLE,
+    }
+    for version in ("0.7.78", "0.45.0", "1.0.0"):
+        rendered = {k: t.format(version=version) for k, t in titles.items()}
+        assert len(set(rendered.values())) == 3, rendered
+        for a, ta in rendered.items():
+            for b, tb in rendered.items():
+                if a != b:
+                    assert not tb.startswith(ta) and ta not in tb, (a, b, ta, tb)
+
+
+def test_the_internal_close_notice_on_a_partner_lag_is_for_open_issues_only(
+    tmp_path: Path,
+) -> None:
+    """A CLOSED internal issue — a suppression like #250, or one already resolved — gets no
+    "can be closed" note: it is closed."""
+    proc, _ = _partner_lag_run(tmp_path, drift_listing(4, "CLOSED", [SUPPRESSION_LABEL]))
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "can be closed" not in proc.stdout, proc.stdout
+
+
+def test_a_partner_suppression_does_not_suppress_an_internal_drift(tmp_path: Path) -> None:
+    """The reverse of the internal-suppression test: a closed, labelled PARTNER issue says
+    nothing about internal. Internal short files its own issue."""
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    proc, log = report_run(
+        repo,
+        published("0.7.77"),
+        tmp_path,
+        listing=partner_listing(11, "CLOSED", [SUPPRESSION_LABEL]),
+        extra=_partner_dump(tmp_path, published("0.7.77")),
+    )
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    create = next(c for c in gh_calls(log) if c[:2] == ["issue", "create"])
+    assert create[create.index("--title") + 1] == DRIFT_TITLE.format(version=DRIFTING)
+    assert "SUPPRESSED" not in proc.stdout
+
+
+def test_a_live_partner_lag_end_to_end_with_report(tmp_path: Path) -> None:
+    """The seam between the phases, with no offline dump: curl and gh stubs together. Four GETs in
+    order, then one listing, one create under the partner title, then the heartbeat — and the
+    token in no argv handed to gh and in no output."""
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    bin_dir, curl_log = curl_stub(
+        tmp_path,
+        {ROSTER[0]: published(ROSTER[0]), DRIFTING: published(DRIFTING)},
+        partner_responses={ROSTER[0]: published(ROSTER[0])},
+    )
+    _, gh_log = gh_stub(tmp_path, [])
+    proc = run(
+        repo,
+        None,
+        tmp_path,
+        extra=["--report"],
+        env=report_env(bin_dir, token=STUB_TOKEN),
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 1, out
+    assert registries_queried(curl_log) == [
+        ("internal", ROSTER[0]),
+        ("internal", DRIFTING),
+        ("partner", ROSTER[0]),
+        ("partner", DRIFTING),
+    ]
+    calls = gh_calls(gh_log)
+    assert [c[:2] for c in calls] == [["issue", "list"], ["issue", "create"], ["api", calls[2][1]]]
+    assert calls[1][calls[1].index("--title") + 1] == PARTNER_DRIFT_TITLE.format(version=DRIFTING)
+    assert calls[2] == heartbeat_argv(), calls
+    assert STUB_TOKEN not in out
+    for call in calls:
+        assert not any(STUB_TOKEN in arg for arg in call), call
+
+
+@pytest.mark.parametrize("age", [30, 200], ids=["soft", "warn"])
+def test_a_partner_fault_inside_internal_grace_exits_2_and_touches_no_github(
+    tmp_path: Path, age: int
+) -> None:
+    """No finding yet, so the instrument fault is the news — and grace still means grace."""
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    proc, log = report_run(
+        repo,
+        published("0.7.77"),
+        tmp_path,
+        listing=[],
+        now=LANDED + timedelta(minutes=age),
+        extra=_partner_dump(tmp_path, rows(("other-thing", "1.0.0", "python"))),
+    )
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "::error::partner could not be read" in proc.stderr
+    assert gh_calls(log) == [], gh_calls(log)
+
+
+@pytest.mark.parametrize(
+    ("labels", "state", "expected"),
+    [(None, None, 1), ([SUPPRESSION_LABEL], "CLOSED", 2)],
+    ids=["filed", "suppressed"],
+)
+def test_a_partner_fault_beside_an_internal_drift(
+    tmp_path: Path, labels: list[str] | None, state: str | None, expected: int
+) -> None:
+    """Filed: the drift's 1 stands, the fault is printed beside it. Suppressed: there is no
+    finding left to stand beside, so the fault must not ride out on a green job — 2."""
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    listing = drift_listing(7, state, labels) if labels is not None else []
+    proc, log = report_run(
+        repo,
+        published("0.7.77"),
+        tmp_path,
+        listing=listing,
+        extra=_partner_dump(tmp_path, rows(("other-thing", "1.0.0", "python"))),
+    )
+    assert proc.returncode == expected, proc.stdout + proc.stderr
+    assert "::error::partner could not be read" in proc.stderr
+    assert "State B" in proc.stdout
+    if labels is None:
+        create = next(c for c in gh_calls(log) if c[:2] == ["issue", "create"])
+        # Queried and failed is not "not checked": the body states what this run observed.
+        body = create[create.index("--body") + 1]
+        assert "| `zer07labs/partner` | **could not be read**" in body, body
+        assert "not checked" not in body, body
 
 
 def test_a_recovered_registry_says_the_issue_can_be_closed_and_closes_nothing(

@@ -1318,3 +1318,54 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Status:** CONFIRMED (2026-10-05). Placement unchanged — it already satisfied the narrower
   rule above. Decided by Opus per `/reconcile`'s Autonomy ladder (low blast radius, auto-settled,
   not escalated); full reasoning logged in `DECISIONS.md`'s 2026-10-05 reconcile entry.
+
+## Offline runs check partner only when given a partner dump
+- **Plan:** plans/partner-registry-drift.md
+- **Assumed:** offline mode (`--packages-json`) is a local and test tool; the scheduled workflow never uses it, and a test pins that.
+- **Chose:** without `--partner-packages-json`, an offline run does not check partner and says so on two lines. The clean line never claims partner. This keeps 200+ existing offline tests meaningful without each one needing a partner fixture.
+- **Alternatives:** require both dumps offline. That is stricter, but it rewrites every offline test for no gain on the scheduled path.
+- **Blast radius if wrong:** low. A local run could be read as covering partner when it says it doesn't. Making the flag required is a one-line change.
+- **Status:** UNCONFIRMED
+
+## A partner fault never hides an internal finding
+- **Plan:** plans/partner-registry-drift.md
+- **Assumed:** partner is promoted from internal, so internal's state is the bigger finding.
+- **Chose:** internal is answered first and partner faults are captured.
+  - Internal drift with a partner fault: exit 1, with the fault printed beside it.
+  - Internal in grace with a partner fault: exit 2.
+  - Internal clean with a partner fault: exit 2.
+  - Internal drift suppressed, with a partner fault: exit 2.
+- **Alternatives:** any fault means exit 2, which the original plan had. That lets a revoked partner scope mute a real internal drift.
+- **Blast radius if wrong:** low. The exit-code mapping sits in one block of `main()`.
+- **Status:** UNCONFIRMED
+
+## One credential reads both registries; the Cargo fallback is dead
+- **Plan:** plans/partner-registry-drift.md
+- **Assumed:** `CLOUDSMITH_API_KEY` reads `zer07labs/partner`. Observed 2026-10-12: HTTP 200 with rows for every canary and for 0.45.0.
+- **Chose:** no new secret. The workflow's existing resolution serves both registries.
+- **Found, out of scope:** `CARGO_REGISTRIES_ZER07LABS_TOKEN`, the workflow's fallback, returns 401 on both repositories. If the primary key were ever unset, the fallback would exit 2 rather than read anything. It is pre-existing, and it fails loudly at exit 2, which is safe. Worth its own issue.
+- **Blast radius if wrong:** if the key lost partner read, every scheduled run would exit 2 naming partner. That is loud, never silent.
+- **Status:** UNCONFIRMED
+
+## When both registries are short, one issue is filed: the internal one
+- **Plan:** plans/partner-registry-drift.md
+- **Assumed:** a version missing from internal is necessarily missing from partner, because promotion copies from internal. So internal is the root cause.
+- **Chose:**
+  - One internal issue, whose table records partner's observed state.
+  - A partner issue only when internal is complete.
+  - A partner-lag run notes that an open internal issue for the same version can be closed.
+  - Partner issues have their own title and their own suppression scope.
+- **Alternatives:** file both issues. That gives two reports of one fault, and suppressing one would be confused with suppressing the other.
+- **Blast radius if wrong:** low. Once internal is fixed, the next run files the partner issue if partner is still short.
+- **Status:** UNCONFIRMED
+
+## Partner is judged on main's declared version only
+- **Plan:** plans/partner-registry-drift.md
+- **Assumed:** this coverage is enough, the same as internal's: the check asks about the version `main` declares now and nothing older.
+- **Chose:** to keep that scope and state its limits:
+  - While the declared version is a suppressed internal drift (0.45.1 under #250 today), partner's copy of the last published release (0.45.0) is not checked.
+  - A promotion that fails once on a version `main` replaces within the 6-hour hard window is never filed. Recent releases have done this (0.40.0 to 0.40.1 in 53 minutes, 0.43.2 to 0.43.3 in 1.6 hours).
+  - A promotion failure that keeps happening is still caught on the next version that stays on `main`.
+- **Alternatives:** check partner against the newest version on internal, or against every version of at least 0.7.47. That would be a different question from "is main's version installable", with its own grace and suppression rules. Worth a follow-up if partners report gaps.
+- **Blast radius if wrong:** a one-off missed promotion of a short-lived version goes unreported. Partners install the newest release, which is still checked once it settles on `main`.
+- **Status:** UNCONFIRMED

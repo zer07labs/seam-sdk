@@ -64,16 +64,38 @@ current version, a real drift on that version made the canary come back empty an
 the runtime rule that any entry equal to the target is dropped, and hence "healthy if ANY candidate
 answers" — one yank must not brick the instrument.
 
-Usage:  scripts/check_registry_drift.py [--repo DIR] [--packages-json FILE] [--now ISO8601]
+TWO REPOSITORIES (seam-sdk#203)
+-------------------------------
+`zer07labs/internal` is where a release lands; `zer07labs/partner` is what design partners install
+from, filled by `publish.yml`'s `promote-partner` job, which copies from internal. Both are asked,
+on one clock and one grace ladder, each instrument proven before its answer is trusted (live:
+the canary roster; offline: rule 4 above, applied to each dump). Internal is answered
+first and is the root cause when both are short: one internal issue, whose table records partner's
+observed state. Internal complete and partner short is a PROMOTION LAG — its own issue title,
+`PARTNER_DRIFT_TITLE`, its own suppression scope, and "State P" remediation. A partner instrument
+fault never hides an internal finding: beside an internal drift it is printed and the drift's 1
+stands (unless that drift is suppressed, which leaves no finding to stand beside); anywhere else,
+including that suppressed case, it is exit 2.
+
+Usage:  scripts/check_registry_drift.py [--repo DIR] [--packages-json FILE]
+                                        [--partner-packages-json FILE] [--now ISO8601]
                                         [--soft-grace-minutes N] [--hard-grace-minutes N]
+                                        [--report]
         With --packages-json the response is read from that file and nothing is fetched; it
         must be an UNSCOPED `?query=seam-sdk` dump, because offline that file is the only
-        proof the query ran at all.
-        Without it the registry is queried live and SEAM_REGISTRY_TOKEN must be set.
-Exit:   0 = the registry serves it, it is younger than the hard window, or the drift is
-            suppressed by a closed issue carrying the `deliberately-unpublished` label
-        1 = drift
-        2 = infrastructure — never a verdict, INCLUDING every unhandled exception
+        proof the query ran at all. Partner is then checked only if --partner-packages-json
+        is given too (same rules), and the output says plainly when it was NOT checked.
+        --partner-packages-json alone is refused: a saved partner answer is never compared
+        with a live internal one.
+        Without them both repositories are queried live and SEAM_REGISTRY_TOKEN, which must
+        read both, has to be set.
+Exit:   0 = internal serves it (and so does partner, wherever partner was checked), it is
+            younger than the hard window, or the drift is suppressed by a closed issue
+            carrying the `deliberately-unpublished` label
+        1 = drift — internal missing it, or internal serving it and partner not
+        2 = infrastructure — never a verdict, INCLUDING every unhandled exception, and
+            including a partner that could not be read, unless an unsuppressed internal drift
+            stands beside it
 """
 
 from __future__ import annotations
@@ -93,6 +115,11 @@ from pathlib import Path
 #: (`publish.yml:82-83`), then the npm and python build+publish jobs, then `registry-smoke` retries
 #: 10 x 30 s per ecosystem in one job (`:625,633` and `:721,724`). 90 is a bit over 2x, which
 #: absorbs queue time, cold caches and a `setup-*` miss.
+#:
+#: The SAME window bounds `partner`, and that is a claim about publish.yml rather than a convenience:
+#: `promote-partner` runs in the same workflow run, `needs:` `registry-smoke`, and carries its own
+#: `timeout-minutes: 20` (`publish.yml:768-773`). Declared ceilings including it: about 60
+#: minutes, still under 90. A second clock for partner would be a second thing to keep honest.
 SOFT_GRACE_MINUTES = 90
 
 #: GitHub's default per-job limit, so above this NO publish job for this version can still be
@@ -182,12 +209,26 @@ REQUIRED_FORMATS = ("python", "npm")
 #: target again and the dropping branch can never actually shrink this roster. That rule stays
 #: because it is what makes the roster safe to re-point carelessly — not because this roster
 #: needs it.
+#:
+#: PARTNER. The roster proves the `partner` instrument too, and the evidence above does not carry
+#: over: a green `registry-smoke` is a statement about `internal` only. Observed directly instead,
+#: through this check's own query shape on the production credential (2026-10-12): every entry
+#: returned `seam-sdk` python and `@zer07labs/seam-sdk` npm rows from `zer07labs/partner`, put there
+#: by the `promote-partner-backfill.yml --since 0.7.47` backfill. Re-pointing this roster now has
+#: two predicates, and an entry must satisfy both.
 CANARY_VERSIONS = ("0.7.71", "0.7.50", "0.7.65", "0.7.75")
 
 #: The list endpoint `yank.yml:69-71` uses. Same request shape deliberately: that is the shape
 #: believed to work, and a drift check whose query differs from the one proven in production is
 #: testing something else.
 REGISTRY_URL = "https://api.cloudsmith.io/v1/packages/zer07labs/internal/"
+
+#: The repository a design partner can be given a token to (`publish.yml:747-757`). The SAME
+#: endpoint and query shape with only the repository slug changed — derived rather than written
+#: out, so the two cannot drift apart in anything but the one segment that is meant to differ.
+#: `CLOUDSMITH_API_KEY`, the credential the workflow resolves first, reads both (observed
+#: 2026-10-12), so no second secret is involved.
+PARTNER_REGISTRY_URL = REGISTRY_URL.replace("/zer07labs/internal/", "/zer07labs/partner/")
 
 #: A response carrying exactly this many rows is treated as truncated — see `fetch_registry`.
 PAGE_SIZE = 50
@@ -214,6 +255,14 @@ SAFE_VERSION = re.compile(r"^[0-9]+(\.[0-9]+)*$")
 #: different things about the same release (an event that failed, versus a state that persists),
 #: so both existing at once is correct; both writing to one issue would not be.
 DRIFT_TITLE = "Registry drift: seam-sdk {version} is not installable"
+
+#: A promotion lag: internal serves the version, `partner` does not (seam-sdk#203). Its own title,
+#: so its own issue, its own suppression scope, and no collision with `DRIFT_TITLE` or
+#: `RELEASE_NOTICE_TITLE` — all three are matched by exact equality, and no one of them is a
+#: prefix of another, which `test_no_title_is_a_prefix_of_another` pins rather than this comment.
+#: Separate rather than folded into the internal issue because the two have different fixes and
+#: different owners: one is a publish that did not land, the other a copy that did not happen.
+PARTNER_DRIFT_TITLE = "Registry drift: seam-sdk {version} is not on partner"
 
 #: `release-outcome`'s title, rendered here ONLY to look for one to cross-link. Never written.
 #: `GITHUB_REF_NAME` carries the `v`, so the tag — not the bare version — is what it interpolates.
@@ -459,7 +508,9 @@ def _seam_sdk_rows(rows: object) -> list[dict]:
     matched: list[dict] = []
     for row in rows:
         if not isinstance(row, dict):
-            raise InfraError(f"a registry row is a {type(row).__name__}, not an object: {row!r}")
+            # The type only, never the row: a response is not ours to print, and a string row is
+            # exactly the shape an echoed request header would take.
+            raise InfraError(f"a registry row is a {type(row).__name__}, not an object")
         name = NPM_SCOPE.sub("", str(row.get("name", "")))
         if name == PACKAGE_NAME:
             matched.append(row)
@@ -531,8 +582,13 @@ def _query_for(version: str) -> str:
     return f"?query={PACKAGE_NAME}+version:{version}&page_size={PAGE_SIZE}"
 
 
-def fetch_registry(version: str, token: str) -> object:
-    """GET the rows for one version.
+def registry_name(url: str) -> str:
+    """The repository slug of a Cloudsmith list URL — `internal`, `partner`. For messages only."""
+    return url.rstrip("/").rsplit("/", 1)[-1]
+
+
+def fetch_registry(version: str, token: str, url: str = REGISTRY_URL) -> object:
+    """GET the rows for one version from one Cloudsmith repository.
 
     `curl`, not `urllib`, and that is not stylistic. This repo's hermeticity convention is stub
     executables first on `PATH` (`scripts/test_release_notice_gate.py:62-83`), with the rule "no
@@ -545,6 +601,7 @@ def fetch_registry(version: str, token: str) -> object:
     to arrive as a non-zero exit.
     """
     query = _query_for(version)
+    where = registry_name(url)
     try:
         proc = subprocess.run(
             [
@@ -554,10 +611,15 @@ def fetch_registry(version: str, token: str) -> object:
                 str(CURL_MAX_SECONDS),
                 "-H",
                 f"X-Api-Key: {token}",
-                f"{REGISTRY_URL}{query}",
+                f"{url}{query}",
             ],
             capture_output=True,
-            text=True,
+            # `errors="replace"`: a body that is not UTF-8 must fail as "not JSON" below, an
+            # InfraError naming the registry. Strict decoding raised UnicodeDecodeError instead,
+            # whose repr carries the raw bytes, so a response quoting the request header would
+            # reach a log through the error that reports it.
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
     except FileNotFoundError as exc:
@@ -572,17 +634,19 @@ def fetch_registry(version: str, token: str) -> object:
         # stderr can quote the request. The exit status is the diagnosis (22 = HTTP >= 400,
         # 28 = timeout, 6 = DNS).
         raise InfraError(
-            f"curl exited {proc.returncode} querying {query} — the registry could not be read. "
+            f"curl exited {proc.returncode} querying {where} {query} — the registry could not be "
+            "read. "
             "22 is an HTTP error (a bad or unscoped credential lands here), 28 a timeout, 6 DNS. "
             "This is infrastructure: an unanswered query says nothing about what is published."
         )
     try:
         rows = json.loads(proc.stdout)
     except json.JSONDecodeError as exc:
-        raise InfraError(f"the response to {query} is not JSON: {exc}") from exc
+        raise InfraError(f"the response from {where} to {query} is not JSON: {exc}") from exc
     if isinstance(rows, list) and len(rows) == PAGE_SIZE:
         raise InfraError(
-            f"the response to {query} carries exactly {PAGE_SIZE} rows, which is the page size. "
+            f"the response from {where} to {query} carries exactly {PAGE_SIZE} rows, which is the "
+            "page size. "
             "Treat that as evidence the `version:` qualifier was IGNORED and a first page of "
             "everything came back: a target version outside that page would read as absent, and "
             "the run would report drift for a published version. Raise page_size, or stop "
@@ -605,10 +669,17 @@ def fetch_registry(version: str, token: str) -> object:
     # never as a verdict.
     matched = _seam_sdk_rows(rows)
     if matched and not any(row.get("version") == version for row in matched):
-        present = sorted({str(row.get("version")) for row in matched})
+        # Only values that ARE versions are echoed. The versions are the diagnosis, but they are
+        # response content, and a field that does not look like a version is counted, not printed.
+        seen = {str(row.get("version")) for row in matched}
+        present = sorted(v for v in seen if SAFE_VERSION.match(v))
+        withheld = len(seen) - len(present)
+        listed = ", ".join(present[:5]) + (" and others" if len(present) > 5 else "")
+        if withheld:
+            listed = (listed + " and " if listed else "") + f"{withheld} non-version value(s)"
         raise InfraError(
-            f"the response to {query} carries {len(matched)} `{PACKAGE_NAME}` rows — at "
-            f"{', '.join(present[:5])}{' and others' if len(present) > 5 else ''} — and NONE at "
+            f"the response from {where} to {query} carries {len(matched)} `{PACKAGE_NAME}` rows — at "
+            f"{listed} — and NONE at "
             f"{version}. A query scoped to one version cannot answer with other versions, so the "
             "`version:` qualifier was not applied and this response is a window over everything. "
             "The absence of the asked-for version from it is not evidence of anything. "
@@ -617,7 +688,7 @@ def fetch_registry(version: str, token: str) -> object:
     return rows
 
 
-def assert_live_instrument_healthy(target: str, token: str) -> str:
+def assert_live_instrument_healthy(target: str, token: str, url: str = REGISTRY_URL) -> str:
     """Prove the query works before believing anything it says about the target. Returns the
     canary that answered.
 
@@ -644,12 +715,13 @@ def assert_live_instrument_healthy(target: str, token: str) -> str:
         )
     tried: list[str] = []
     for candidate in candidates:
-        formats = registry_formats(fetch_registry(candidate, token), candidate)
+        formats = registry_formats(fetch_registry(candidate, token, url), candidate)
         tried.append(f"{candidate} -> {', '.join(sorted(formats)) or 'nothing'}")
         if set(REQUIRED_FORMATS) <= formats:
             return candidate
     raise InfraError(
-        "the registry query returned nothing usable for any canary version ("
+        f"the {registry_name(url)} registry query returned nothing usable for any canary "
+        "version ("
         + "; ".join(tried)
         + "). Either the query shape is wrong, or every canary has been yanked and "
         "CANARY_VERSIONS needs re-pointing. Refusing to read the target's answer through an "
@@ -657,17 +729,17 @@ def assert_live_instrument_healthy(target: str, token: str) -> str:
     )
 
 
-def _load_packages_json(path: Path) -> object:
+def _load_packages_json(path: Path, flag: str = "--packages-json") -> object:
     try:
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
-        raise InfraError(f"--packages-json {path} does not exist") from exc
+        raise InfraError(f"{flag} {path} does not exist") from exc
     except OSError as exc:
-        raise InfraError(f"--packages-json {path} cannot be read: {exc}") from exc
+        raise InfraError(f"{flag} {path} cannot be read: {exc}") from exc
     try:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise InfraError(f"--packages-json {path} is not valid JSON: {exc}") from exc
+        raise InfraError(f"{flag} {path} is not valid JSON: {exc}") from exc
 
 
 def _remediation(version: str, tagged: bool, missing: set[str]) -> str:
@@ -689,6 +761,31 @@ def _remediation(version: str, tagged: bool, missing: set[str]) -> str:
         f"  Create and push the tags for v{version} (`v{version}` and `go/v{version}`, same "
         f"commit) to trigger the publish."
     )
+
+
+def _partner_remediation(version: str, missing: set[str]) -> str:
+    formats = ", ".join(sorted(missing))
+    return (
+        f"State P — internal serves {version} in both formats, but `partner` does not serve "
+        f"{formats}. A design partner cannot install this release.\n"
+        f"  `publish.yml`'s `promote-partner` job copies a release into partner only after "
+        f"`registry-smoke` passes, so FIRST confirm that `registry-smoke` was green for "
+        f"v{version}: if it was not, the release is broken and must not be promoted — and "
+        f"neither tool below re-checks it.\n"
+        f"  If it was green, the promotion itself failed (an expired CLOUDSMITH_PARTNER_API_KEY, "
+        f"a Cloudsmith outage). Dispatch `promote-partner-backfill.yml` with version={version}, "
+        f"or run `./scripts/promote-to-partner.sh {version}` — both check the destination before "
+        f"copying, so a re-run is safe."
+    )
+
+
+def _tier(age_minutes: float, soft: int, hard: int) -> str:
+    """Which rung of the grace ladder an attempt this old stands on. One ladder, both registries."""
+    if age_minutes < soft:
+        return "deferred"
+    if age_minutes < hard:
+        return "warned"
+    return "drift"
 
 
 def issue_repo() -> str:
@@ -820,12 +917,58 @@ def _exact(issues: list[dict], title: str) -> dict | None:
     return None
 
 
+def _partner_cell(
+    partner_missing: set[str] | None, missing: set[str], *, partner_unreadable: bool = False
+) -> str:
+    """Partner's state, for the INTERNAL issue's table. Never blank: blank reads as fine.
+
+    It states only what this run observed. A partner that was queried and failed is "could not be
+    read", never "not checked" — the second is reserved for an offline run that never asked. And
+    "expected" is claimed only for formats internal is missing too: a format internal SERVES and
+    partner does not is a promotion lag of its own, not a consequence of this issue.
+    """
+    if partner_unreadable:
+        return "**could not be read** this run (see the run log)"
+    if partner_missing is None:
+        return "not checked"
+    if not partner_missing:
+        return "serves it"
+    cell = f"also missing {', '.join(sorted(partner_missing))}"
+    own = partner_missing - missing
+    if not own:
+        return f"{cell} (promotion copies from internal, so expected)"
+    return f"{cell} — {', '.join(sorted(own))} is served by internal, so that is a promotion lag too"
+
+
 def _issue_body(
-    version: str, tagged: bool, missing: set[str], age_minutes: float, cross_link: dict | None
+    version: str,
+    tagged: bool,
+    missing: set[str],
+    age_minutes: float,
+    cross_link: dict | None,
+    *,
+    subject: str = "internal",
+    partner_missing: set[str] | None = None,
+    partner_unreadable: bool = False,
 ) -> str:
     formats = ", ".join(sorted(missing))
+    if subject == "partner":
+        lede = (
+            f"`python/pyproject.toml` declares **{version}**. `zer07labs/internal` serves it in "
+            f"both formats; `zer07labs/partner` — the repository design partners install from — "
+            f"does not."
+        )
+        where_row = "| registry | `zer07labs/partner` (internal is complete) |"
+        remediation = _partner_remediation(version, missing)
+    else:
+        lede = f"`python/pyproject.toml` declares **{version}**, and the registry does not serve it."
+        where_row = (
+            f"| `zer07labs/partner` | "
+            f"{_partner_cell(partner_missing, missing, partner_unreadable=partner_unreadable)} |"
+        )
+        remediation = _remediation(version, tagged, missing)
     lines = [
-        f"`python/pyproject.toml` declares **{version}**, and the registry does not serve it.",
+        lede,
         "",
         "| | |",
         "|---|---|",
@@ -833,9 +976,10 @@ def _issue_body(
         f"| missing formats | {formats} |",
         f"| packages | `{PACKAGE_NAME}` (python), `@zer07labs/{PACKAGE_NAME}` (npm) |",
         f"| tag `v{version}` | {'present' if tagged else '**absent**'} |",
+        where_row,
         f"| age of the release attempt | {age_minutes:.0f} minutes |",
         "",
-        _remediation(version, tagged, missing),
+        remediation,
         "",
     ]
     if cross_link:
@@ -865,7 +1009,14 @@ def _issue_body(
 
 
 def report_drift(
-    version: str, tagged: bool, missing: set[str], age_minutes: float
+    version: str,
+    tagged: bool,
+    missing: set[str],
+    age_minutes: float,
+    *,
+    subject: str = "internal",
+    partner_missing: set[str] | None = None,
+    partner_unreadable: bool = False,
 ) -> bool:
     """File, comment, reopen — or recognise a suppression. Returns True if suppressed.
 
@@ -878,14 +1029,42 @@ def report_drift(
     """
     repo = issue_repo()
     issues = fetch_issues(repo)
-    title = DRIFT_TITLE.format(version=version)
+    title = (PARTNER_DRIFT_TITLE if subject == "partner" else DRIFT_TITLE).format(version=version)
     existing = _exact(issues, title)
+    what = "Partner" if subject == "partner" else "The registry"
+
+    def body_for(cross_link: dict | None) -> str:
+        return _issue_body(
+            version,
+            tagged,
+            missing,
+            age_minutes,
+            cross_link,
+            subject=subject,
+            partner_missing=partner_missing,
+            partner_unreadable=partner_unreadable,
+        )
+
+    if subject == "partner":
+        # Internal serves this version — that is what made this a partner lag. An internal issue
+        # still open for it can be closed, and `report_clean` will not say so while partner lags,
+        # because this run's verdict is not clean. Same listing, no second read.
+        stale = _exact(issues, DRIFT_TITLE.format(version=version))
+        if stale and stale["state"] == "OPEN":
+            print(
+                f"::notice::#{stale['number']} reports drift on {version}, but internal now "
+                f"serves it in both formats. That issue can be closed. This check never closes "
+                f"one."
+            )
 
     if existing is None:
+        # The cross-link matters MORE for a partner lag, not less: `release-outcome` filing for
+        # this tag is the signal that `registry-smoke` may have failed, which is exactly when the
+        # State P remediation says not to promote.
         cross_link = _exact(issues, RELEASE_NOTICE_TITLE.format(version=version))
         if cross_link and cross_link["state"] != "OPEN":
             cross_link = None
-        body = _issue_body(version, tagged, missing, age_minutes, cross_link)
+        body = body_for(cross_link)
         _gh(["issue", "create", "--title", title, "--body", body], repo)
         print(f"filed a new drift issue: {title}")
         return False
@@ -901,7 +1080,7 @@ def report_drift(
         # visible in every run summary rather than only in stdout nobody opens.
         print(
             f"::warning::drift on {version} is SUPPRESSED by #{existing['number']}, which is "
-            f"closed and labelled `{SUPPRESSION_LABEL}`. The registry still does not serve "
+            f"closed and labelled `{SUPPRESSION_LABEL}`. {what} still does not serve "
             f"{', '.join(sorted(missing))}. Reopen or unlabel that issue to hear about this again."
         )
         return True
@@ -922,7 +1101,7 @@ def report_drift(
             "comment",
             str(existing["number"]),
             "--body",
-            _issue_body(version, tagged, missing, age_minutes, None),
+            body_for(None),
         ],
         repo,
     )
@@ -1116,7 +1295,7 @@ def warn_if_schedule_is_stale(now: datetime) -> None:
             f"This says nothing about the registry — the verdict above stands on its own."
         )
 
-def report_clean(version: str) -> None:
+def report_clean(version: str, *, partner_checked: bool) -> None:
     """No drift. If a drift issue for this version is open, say it can be closed — and stop there.
 
     The check never closes an issue itself. `release-outcome` is write-additive only and this stays
@@ -1124,10 +1303,22 @@ def report_clean(version: str) -> None:
     is much harder to trust than one that cannot.
     """
     repo = issue_repo()
-    existing = _exact(fetch_issues(repo), DRIFT_TITLE.format(version=version))
+    issues = fetch_issues(repo)
+    existing = _exact(issues, DRIFT_TITLE.format(version=version))
     if existing and existing["state"] == "OPEN":
         print(
             f"::notice::#{existing['number']} reports drift on {version}, but the registry now "
+            f"serves it in both formats. That issue can be closed. This check never closes one."
+        )
+    # Same listing, not a second one. And ONLY when partner was actually read this run: an
+    # offline run without a partner dump knows nothing about partner, and "can be closed" from it
+    # would be an unqueried registry reading as clean.
+    if not partner_checked:
+        return
+    lag = _exact(issues, PARTNER_DRIFT_TITLE.format(version=version))
+    if lag and lag["state"] == "OPEN":
+        print(
+            f"::notice::#{lag['number']} reports {version} missing from partner, but partner now "
             f"serves it in both formats. That issue can be closed. This check never closes one."
         )
 
@@ -1160,6 +1351,15 @@ def main(argv: list[str] | None = None) -> int:
             "carry seam-sdk rows at some version. Omit to query the registry live."
         ),
     )
+    parser.add_argument(
+        "--partner-packages-json",
+        type=Path,
+        default=None,
+        help=(
+            "the same kind of dump, captured from `zer07labs/partner`. Offline only. Without it, "
+            "an offline run does NOT check partner, and says so."
+        ),
+    )
     parser.add_argument("--now", default=None, help="ISO 8601; defaults to real UTC now")
     parser.add_argument("--soft-grace-minutes", type=int, default=SOFT_GRACE_MINUTES)
     parser.add_argument("--hard-grace-minutes", type=int, default=HARD_GRACE_MINUTES)
@@ -1190,6 +1390,13 @@ def main(argv: list[str] | None = None) -> int:
         version = source_version(args.repo)
         assert_query_safe(version)
 
+        if args.partner_packages_json is not None and args.packages_json is None:
+            raise InfraError(
+                "--partner-packages-json is an offline input and needs --packages-json beside it. "
+                "A live run queries partner itself; mixing a saved partner answer with a live "
+                "internal one would compare two different moments."
+            )
+
         proved_by = None
         if args.packages_json is not None:
             rows = _load_packages_json(args.packages_json)
@@ -1201,6 +1408,52 @@ def main(argv: list[str] | None = None) -> int:
             # an unproven instrument.
             proved_by = assert_live_instrument_healthy(version, token)
             rows = fetch_registry(version, token)
+
+        # ── partner ─────────────────────────────────────────────────────────────────────────
+        #
+        # Asked AFTER internal is fully answered, and its failure is CAPTURED rather than raised.
+        # A dead partner canary or a revoked partner scope is infrastructure about partner; it must
+        # not turn a real internal drift — the bigger finding, and the one partner's state follows
+        # from — into an exit 2. Which exit a captured error produces is decided at the verdict,
+        # where internal's answer is known. Same canary-first rule, per registry: no partner target
+        # is read through a partner instrument that has not answered.
+        #
+        # `partner_missing is None` means NOT CHECKED, which is different from "nothing missing".
+        # Only an offline run without --partner-packages-json takes that branch, and it prints so.
+        partner_missing: set[str] | None = None
+        partner_proved_by = None
+        partner_error: InfraError | None = None
+        try:
+            if args.packages_json is not None:
+                if args.partner_packages_json is not None:
+                    partner_rows = _load_packages_json(
+                        args.partner_packages_json, "--partner-packages-json"
+                    )
+                    assert_offline_instrument_healthy(
+                        partner_rows, f"--partner-packages-json {args.partner_packages_json}"
+                    )
+                    partner_missing = set(REQUIRED_FORMATS) - registry_formats(
+                        partner_rows, version
+                    )
+            else:
+                partner_proved_by = assert_live_instrument_healthy(
+                    version, token, PARTNER_REGISTRY_URL
+                )
+                partner_missing = set(REQUIRED_FORMATS) - registry_formats(
+                    fetch_registry(version, token, PARTNER_REGISTRY_URL), version
+                )
+        except InfraError as exc:
+            partner_error = exc
+        except Exception as exc:  # noqa: BLE001 — see below
+            # Anything else from the partner block is still a fault about PARTNER, and letting it
+            # escape would reach the top-level exit 2 BEFORE internal's verdict is printed — the
+            # exact blinding this block exists to prevent, by a different exception class. It is
+            # infrastructure (never a verdict) either way; this only decides where it is reported.
+            # The class name only, never the message or repr: an exception raised while reading
+            # a response can carry that response, and the response is not ours to print.
+            partner_error = InfraError(
+                f"unexpected failure reading partner: {type(exc).__name__}"
+            )
 
         # The instrument is exercised BEFORE the clock is consulted. The rule that actually has
         # teeth is narrower than "before", and worth stating in the form a future editor can
@@ -1235,8 +1488,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if proved_by:
         print(f"instrument proven by canary {proved_by} (both formats present)")
+    if partner_proved_by:
+        print(f"partner instrument proven by canary {partner_proved_by} (both formats present)")
     print(f"source version: {version}  (tag v{version} {'present' if tagged else 'ABSENT'})")
     print(f"registry serves: {', '.join(sorted(found)) or '<nothing>'}")
+    # Deliberately NOT prefixed `registry serves:` — that line is internal's, and is read as such.
+    if partner_error is not None:
+        print("partner: COULD NOT BE READ (see the error below)")
+    elif partner_missing is None:
+        print("partner: NOT CHECKED (offline run without --partner-packages-json)")
+    else:
+        partner_found = set(REQUIRED_FORMATS) - partner_missing
+        print(f"partner serves: {', '.join(sorted(partner_found)) or '<nothing>'}")
     print(f"most recent release attempt: {started.isoformat()} ({age_minutes:.0f} minutes ago)")
 
     # ── the verdict, printed BEFORE anything is reported ────────────────────────────────────
@@ -1245,9 +1508,53 @@ def main(argv: list[str] | None = None) -> int:
     # were computed first, a `gh` failure would exit 2 with the answer never printed. The verdict
     # is this run's product and the issue is a delivery mechanism for it, so the log always carries
     # it even when the delivery fails.
+    # `subject` says which registry the verdict is ABOUT, and it is internal whenever internal is
+    # short: partner is promoted FROM internal, so a version internal lacks is missing from partner
+    # as a consequence, and filing it twice would report one fault as two. Partner becomes the
+    # subject only when internal is complete.
+    subject = "internal"
     formats = ", ".join(sorted(missing))
-    if not missing:
+    if not missing and partner_error is not None:
+        # Internal is clean, so there is no bigger finding for a partner instrument fault to hide.
+        # It is exactly what it looks like: partner could not be read. Infrastructure.
         print(f"OK — the registry serves {version} in both formats.")
+        print(f"::error::{partner_error}", file=sys.stderr)
+        return 2
+    if not missing and partner_missing:
+        subject = "partner"
+        partner_formats = ", ".join(sorted(partner_missing))
+        print(f"OK — the registry serves {version} in both formats.")
+        tier = _tier(age_minutes, args.soft_grace_minutes, args.hard_grace_minutes)
+        if tier == "deferred":
+            print(
+                f"DEFERRED — partner lacks {partner_formats} for {version}, but the attempt is "
+                f"only {age_minutes:.0f} minutes old; `promote-partner` is plausibly still "
+                f"running. Escalates at {args.hard_grace_minutes}m."
+            )
+            verdict, code = "deferred", 0
+        elif tier == "warned":
+            print(
+                f"::warning::seam-sdk {version} is on internal but not on partner "
+                f"({partner_formats} missing) {age_minutes:.0f} minutes after the release "
+                f"attempt. Past the declared publish ceilings, not yet escalated "
+                f"(hard={args.hard_grace_minutes}m)."
+            )
+            verdict, code = "warned", 0
+        else:
+            print(
+                f"DRIFT — seam-sdk {version} is not on partner {age_minutes:.0f} minutes after "
+                f"the release attempt, past the hard window of {args.hard_grace_minutes}m.\n"
+                + _partner_remediation(version, partner_missing)
+            )
+            verdict, code = "drift", 1
+    elif not missing:
+        if partner_missing is None:
+            print(
+                f"OK — the registry serves {version} in both formats. Partner was NOT checked "
+                f"(offline, no --partner-packages-json)."
+            )
+        else:
+            print(f"OK — the registry serves {version} in both formats, on internal and partner.")
         verdict, code = "clean", 0
     elif age_minutes < args.soft_grace_minutes:
         remaining = args.soft_grace_minutes - age_minutes
@@ -1275,6 +1582,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         verdict, code = "drift", 1
 
+    if partner_error is not None:
+        # Only reachable with internal SHORT (the clean-internal case returned above). Internal's
+        # verdict stands and is printed; the partner fault is reported beside it, never instead of
+        # it. A drift keeps its 1 — the finding is real whatever partner's instrument is doing.
+        # Inside the grace tiers there is no finding yet, so the instrument fault is the news: 2.
+        print(f"::error::partner could not be read: {partner_error}", file=sys.stderr)
+        if verdict != "drift":
+            return 2
+
     if not args.report:
         return code
 
@@ -1284,8 +1600,24 @@ def main(argv: list[str] | None = None) -> int:
     # to say "something is wrong and a job could still be alive"; the moment it files anything it
     # has become a reporting tier, and the grace window stops being a grace window.
     try:
-        if verdict == "drift":
-            if report_drift(version, tagged, missing, age_minutes):
+        if verdict == "drift" and subject == "partner":
+            # Under PARTNER_DRIFT_TITLE, never DRIFT_TITLE: filing the internal title for a
+            # promotion lag would assert the release is not installable from internal, which is
+            # a state the registry is not in.
+            # `partner_missing` is non-empty here by construction: the subject only becomes
+            # partner when partner was read and is short. No `or set()` fallback — an empty set
+            # would file an issue whose "missing formats" row is blank, which reads as fine.
+            if report_drift(version, tagged, partner_missing, age_minutes, subject="partner"):
+                code = 0
+        elif verdict == "drift":
+            if report_drift(
+                version,
+                tagged,
+                missing,
+                age_minutes,
+                partner_missing=partner_missing,
+                partner_unreadable=partner_error is not None,
+            ):
                 code = 0
         elif verdict == "clean":
             # BEST EFFORT, AND ONLY HERE. Before reporting existed, a clean run touched nothing;
@@ -1301,7 +1633,9 @@ def main(argv: list[str] | None = None) -> int:
             # It is not silent: a broken credential still says so on every clean run, one
             # severity down, which is the earliest anyone could learn of it.
             try:
-                report_clean(version)
+                # `partner_error` is None here: a clean internal with a partner fault returned 2
+                # above. So "checked" is exactly "a partner answer was read".
+                report_clean(version, partner_checked=partner_missing is not None)
             except InfraError as exc:
                 print(
                     f"::warning::the registry is clean, but GitHub could not be reached to "
@@ -1311,6 +1645,12 @@ def main(argv: list[str] | None = None) -> int:
     except InfraError as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 2
+
+    # A partner fault beside an internal drift kept the drift's 1 so the finding could be filed.
+    # If that drift turned out to be SUPPRESSED, there is no finding left for the fault to stand
+    # beside, and an exit 0 would leave an unreadable partner as a footnote on a green job. 2.
+    if partner_error is not None and code == 0:
+        code = 2
 
     # ── the watcher's own heartbeat ───────────────────────────────────────────────────────────
     #
