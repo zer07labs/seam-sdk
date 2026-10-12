@@ -2,6 +2,14 @@ name: registry drift
 
 # Does the registry actually serve the version `main` says it released?
 #
+# TWO REPOSITORIES, ONE CREDENTIAL. `zer07labs/internal` is where `publish.yml` lands a release;
+# `zer07labs/partner` is what design partners install from, filled by `publish.yml`'s
+# `promote-partner` job (seam-sdk#203). Each is proven by the canary roster before its target is
+# read. A version missing from internal is ONE internal issue, which records partner's state; a
+# version on internal and missing from partner is a promotion lag, filed under its own title
+# ("… is not on partner") with its own suppression scope. The credential resolved below reads both
+# — observed 2026-10-12 — so no partner-specific secret exists or is needed.
+#
 # DELIBERATELY NOT A JOB IN ci.yml, for `framework-coinstall.yml:5-8`'s reason plus one of its own.
 # That file's argument is that the answer changes when a third party changes, not when this
 # repository changes, so `ci-ok` stays a statement about the diff. Both halves hold here. The
@@ -19,11 +27,11 @@ name: registry drift
 # unparseable response, or an unexpected crash. Exit 1 is the drift verdict. Both turn the job red;
 # the log distinguishes them, and nothing downstream may treat a 2 as drift.
 #
-# The job files ONE issue per version and never closes one. `--report` is what turns that on; a
-# local or manual run of the same script is read-only. Suppression is a CLOSED issue carrying the
-# `deliberately-unpublished` label, which still prints a `::warning::` on every run — a suppression
-# that has outlived its reason has to stay visible, because it goes stale in exactly the way a
-# curated allowlist would.
+# The job files ONE issue per version per title — internal drift, or a partner promotion lag —
+# and never closes one. `--report` is what turns that on; a local or manual run of the same
+# script is read-only. Suppression is a CLOSED issue carrying the `deliberately-unpublished` label,
+# which still prints a `::warning::` on every run — a suppression that has outlived its reason
+# has to stay visible, because it goes stale in exactly the way a curated allowlist would.
 #
 # `permissions:` is at the JOB level and lists only what the job can be shown to use. Job
 # permissions REPLACE the top-level block rather than extending it, and an undeclared scope is
@@ -104,6 +112,8 @@ jobs:
 
       - name: is the declared version installable?
         env:
+          # ONE credential for both repositories: the checker reads `internal` AND `partner` with
+          # whichever of these two resolves. There is no partner-specific secret.
           CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
           CARGO_REGISTRIES_ZER07LABS_TOKEN: ${{ secrets.CARGO_REGISTRIES_ZER07LABS_TOKEN }}
           # `gh` reads GH_TOKEN; REPO is passed explicitly rather than derived from the checkout's

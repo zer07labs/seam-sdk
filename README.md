@@ -191,18 +191,27 @@ first push (verified: `npm.cloudsmith.io/zer07labs/internal/` already answers, l
 
 *Is the released version actually installable?* [`registry-drift.yml`](.github/workflows/registry-drift.yml)
 asks that every two hours, comparing `main`'s declared version against what Cloudsmith serves in **both**
-formats (wheel and npm — one landing without the other is drift, not a partial success). It exists because
+formats (wheel and npm — one landing without the other is drift, not a partial success), in **both**
+repositories: `zer07labs/internal`, where a release lands, and `zer07labs/partner`, where design partners
+install from. A version on internal but missing from partner is a promotion lag, filed under its own issue
+title ("… is not on partner") whose remediation is `promote-partner-backfill.yml` or
+`./scripts/promote-to-partner.sh <version>` — after confirming `registry-smoke` passed for it. One
+credential reads both repositories. It exists because
 `publish.yml`'s own notifier can only report a publish that RAN and failed; a release that was never
 dispatched at all is invisible from inside the workflow that never started. **Exit 2 is infrastructure —
 a missing credential, an unreachable registry, an unparseable answer — and never a verdict**; exit 1 is
 drift. A fresh release gets a two-tier grace window (silent for 90 minutes while a publish may still be
 indexing, then a warning) before anything is filed. Run it yourself read-only with
-`python3 scripts/check_registry_drift.py`; `--report` is what files an issue, and only CI passes it.
+`python/.venv/bin/python scripts/check_registry_drift.py` (it needs Python 3.11+); `--report` is what files
+an issue, and only CI passes it. Offline, `--packages-json FILE` reads internal's answer from a file, and
+partner is checked only if `--partner-packages-json FILE` is given too — the output says so when it is not.
 
 To record a version that is *deliberately* never going to be published — `v0.7.69`, `v0.7.70` and
 `v0.7.72` are permanent gaps of exactly this kind — close its drift issue and label it
 **`deliberately-unpublished`**. Both acts are required, and the check still prints a `::warning::`
 naming that issue on every run: a suppression that has outlived its reason must not become silence.
+The label suppresses only the issue it is on: suppressing a version's internal issue does not silence
+its partner issue, nor the reverse.
 
 **Consuming it** — point the consumer at Cloudsmith and add the dependency:
 

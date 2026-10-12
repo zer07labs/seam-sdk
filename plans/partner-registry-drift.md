@@ -139,4 +139,12 @@ file and docs. None of them is independently useful to ship.
   `scripts/check_registry_drift.py` (docstring).
 - **Acceptance:** the workflow logic is byte-identical outside comments, and every existing
   workflow-structure test passes.
-- **Status:** TODO
+- **As built, and where it diverged:**
+  - The step's "one credential" comment sits in the `env:` map, not in the `run: |` script as
+    first drafted. A shell comment inside the block scalar is part of the parsed data, and the
+    before/after `yaml.safe_load` comparison caught it.
+  - The header's "ONE issue per version" became "per version per title".
+  - CLAUDE.md and README now say `python/.venv/bin/python` (3.11+). The old `python3` example
+    was already wrong on this workstation, where the system python3 is 3.9 and the script
+    refuses it.
+- **Status:** DONE

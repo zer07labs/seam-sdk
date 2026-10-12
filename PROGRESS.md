@@ -4567,3 +4567,28 @@ resolution) · `.github/workflows/publish.yml:747-810` (`promote-partner`) ·
   `plans/partner-registry-drift.md`.
 - **Tests:** `pytest scripts/` gives 562 passed (drift gate 270). `ruff check` is clean.
 - **Next:** Phase 3, workflow comments and docs.
+
+## Phase 3: workflow comments and docs, DONE (2026-10-12)
+- **Verdict:** PASS on round 3, from an Opus verifier.
+- **Round 1, GAPS (5 wording overclaims, no logic):** the docstring said the canary proves both
+  repositories offline, the exit-0 line overclaimed partner, a suppressed drift beside a partner
+  fault was wrongly described, the workflow still said "ONE issue per version", and the README
+  sentence order was broken.
+- **Round 2, GAPS:** a "rule 4 below" pointer (it is above it), and two lines over the wrap
+  width.
+- **Round 3:** PASS.
+- **Files:** `.github/workflows/registry-drift.yml` (comments only; the parsed YAML is equal to
+  HEAD), `README.md`, `CLAUDE.md`, the docstring in `scripts/check_registry_drift.py`, and
+  `plans/partner-registry-drift.md`.
+- **Tests:** `pytest scripts/` gives 562 passed; the python suite gives 1543 passed, 24 skipped.
+
+## Finalization notes
+- **Live integration run** (2026-10-12), using the real credential against both registries:
+  - Both canaries were proven.
+  - It found a real drift: 0.45.1 is on neither registry. The publish was refused by the
+    `sibling-quotes` gate, and the version stays unpublished per #247.
+  - I pre-recorded that as #250 (exact drift title, closed, labelled
+    `deliberately-unpublished`).
+  - A live `--report` run then exited 0 with the suppression `::warning::` and made no GitHub
+    writes.
+- **Out of scope:** the dead Cargo fallback token is filed as #251.

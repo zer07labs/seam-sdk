@@ -64,16 +64,38 @@ current version, a real drift on that version made the canary come back empty an
 the runtime rule that any entry equal to the target is dropped, and hence "healthy if ANY candidate
 answers" — one yank must not brick the instrument.
 
-Usage:  scripts/check_registry_drift.py [--repo DIR] [--packages-json FILE] [--now ISO8601]
+TWO REPOSITORIES (seam-sdk#203)
+-------------------------------
+`zer07labs/internal` is where a release lands; `zer07labs/partner` is what design partners install
+from, filled by `publish.yml`'s `promote-partner` job, which copies from internal. Both are asked,
+on one clock and one grace ladder, each instrument proven before its answer is trusted (live:
+the canary roster; offline: rule 4 above, applied to each dump). Internal is answered
+first and is the root cause when both are short: one internal issue, whose table records partner's
+observed state. Internal complete and partner short is a PROMOTION LAG — its own issue title,
+`PARTNER_DRIFT_TITLE`, its own suppression scope, and "State P" remediation. A partner instrument
+fault never hides an internal finding: beside an internal drift it is printed and the drift's 1
+stands (unless that drift is suppressed, which leaves no finding to stand beside); anywhere else,
+including that suppressed case, it is exit 2.
+
+Usage:  scripts/check_registry_drift.py [--repo DIR] [--packages-json FILE]
+                                        [--partner-packages-json FILE] [--now ISO8601]
                                         [--soft-grace-minutes N] [--hard-grace-minutes N]
+                                        [--report]
         With --packages-json the response is read from that file and nothing is fetched; it
         must be an UNSCOPED `?query=seam-sdk` dump, because offline that file is the only
-        proof the query ran at all.
-        Without it the registry is queried live and SEAM_REGISTRY_TOKEN must be set.
-Exit:   0 = the registry serves it, it is younger than the hard window, or the drift is
-            suppressed by a closed issue carrying the `deliberately-unpublished` label
-        1 = drift
-        2 = infrastructure — never a verdict, INCLUDING every unhandled exception
+        proof the query ran at all. Partner is then checked only if --partner-packages-json
+        is given too (same rules), and the output says plainly when it was NOT checked.
+        --partner-packages-json alone is refused: a saved partner answer is never compared
+        with a live internal one.
+        Without them both repositories are queried live and SEAM_REGISTRY_TOKEN, which must
+        read both, has to be set.
+Exit:   0 = internal serves it (and so does partner, wherever partner was checked), it is
+            younger than the hard window, or the drift is suppressed by a closed issue
+            carrying the `deliberately-unpublished` label
+        1 = drift — internal missing it, or internal serving it and partner not
+        2 = infrastructure — never a verdict, INCLUDING every unhandled exception, and
+            including a partner that could not be read, unless an unsuppressed internal drift
+            stands beside it
 """
 
 from __future__ import annotations
