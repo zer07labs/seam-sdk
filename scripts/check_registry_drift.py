@@ -612,7 +612,12 @@ def fetch_registry(version: str, token: str, url: str = REGISTRY_URL) -> object:
                 f"{url}{query}",
             ],
             capture_output=True,
-            text=True,
+            # `errors="replace"`: a body that is not UTF-8 must fail as "not JSON" below, an
+            # InfraError naming the registry. Strict decoding raised UnicodeDecodeError instead,
+            # whose repr carries the raw bytes, so a response quoting the request header would
+            # reach a log through the error that reports it.
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
     except FileNotFoundError as exc:
@@ -1435,7 +1440,11 @@ def main(argv: list[str] | None = None) -> int:
             # escape would reach the top-level exit 2 BEFORE internal's verdict is printed — the
             # exact blinding this block exists to prevent, by a different exception class. It is
             # infrastructure (never a verdict) either way; this only decides where it is reported.
-            partner_error = InfraError(f"unexpected failure reading partner: {exc!r}")
+            # The class name only, never the message or repr: an exception raised while reading
+            # a response can carry that response, and the response is not ours to print.
+            partner_error = InfraError(
+                f"unexpected failure reading partner: {type(exc).__name__}"
+            )
 
         # The instrument is exercised BEFORE the clock is consulted. The rule that actually has
         # teeth is narrower than "before", and worth stating in the form a future editor can

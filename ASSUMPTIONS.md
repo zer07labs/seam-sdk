@@ -1358,3 +1358,14 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Alternatives:** file both issues. That gives two reports of one fault, and suppressing one would be confused with suppressing the other.
 - **Blast radius if wrong:** low. Once internal is fixed, the next run files the partner issue if partner is still short.
 - **Status:** UNCONFIRMED
+
+## Partner is judged on main's declared version only
+- **Plan:** plans/partner-registry-drift.md
+- **Assumed:** this coverage is enough, the same as internal's: the check asks about the version `main` declares now and nothing older.
+- **Chose:** to keep that scope and state its limits:
+  - While the declared version is a suppressed internal drift (0.45.1 under #250 today), partner's copy of the last published release (0.45.0) is not checked.
+  - A promotion that fails once on a version `main` replaces within the 6-hour hard window is never filed. Recent releases have done this (0.40.0 to 0.40.1 in 53 minutes, 0.43.2 to 0.43.3 in 1.6 hours).
+  - A promotion failure that keeps happening is still caught on the next version that stays on `main`.
+- **Alternatives:** check partner against the newest version on internal, or against every version of at least 0.7.47. That would be a different question from "is main's version installable", with its own grace and suppression rules. Worth a follow-up if partners report gaps.
+- **Blast radius if wrong:** a one-off missed promotion of a short-lived version goes unreported. Partners install the newest release, which is still checked once it settles on `main`.
+- **Status:** UNCONFIRMED

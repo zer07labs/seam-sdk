@@ -812,6 +812,16 @@ STUB_TOKEN = "s3cr3t-canary-token-value"
 
 
 
+def _write_payload(path: Path, payload: object) -> None:
+    """`bytes` verbatim (a body that is not UTF-8 is a case to test), `str` as-is, else JSON."""
+    if isinstance(payload, bytes):
+        path.write_bytes(payload)
+    else:
+        path.write_text(
+            payload if isinstance(payload, str) else json.dumps(payload), encoding="utf-8"
+        )
+
+
 def curl_stub(
     tmp_path: Path,
     responses: dict[str, object],
@@ -850,17 +860,13 @@ def curl_stub(
     responses_dir = tmp_path / "responses"
     responses_dir.mkdir(exist_ok=True)
     for version, payload in responses.items():
-        (responses_dir / version).write_text(
-            payload if isinstance(payload, str) else json.dumps(payload), encoding="utf-8"
-        )
+        _write_payload(responses_dir / version, payload)
     partner_dir = responses_dir
     if partner_responses is not None:
         partner_dir = tmp_path / "partner-responses"
         partner_dir.mkdir(exist_ok=True)
         for version, payload in partner_responses.items():
-            (partner_dir / version).write_text(
-                payload if isinstance(payload, str) else json.dumps(payload), encoding="utf-8"
-            )
+            _write_payload(partner_dir / version, payload)
     argv_log = tmp_path / "curl-argv"
     argv_log.write_text("")
     lines = [
@@ -1753,6 +1759,47 @@ def test_a_partner_dump_without_an_internal_one_is_refused(tmp_path: Path) -> No
 
 
 # ── The script's own dependencies ─────────────────────────────────────────────────────────────
+
+
+def test_a_non_utf8_partner_body_is_a_named_fault_that_never_prints_its_bytes(
+    tmp_path: Path,
+) -> None:
+    """A body that is not UTF-8 is "not JSON" from partner: exit 2, partner named. It is never a
+    UnicodeDecodeError, whose repr carries the raw bytes, and here those bytes quote the token."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    full = {ROSTER[0]: published(ROSTER[0]), "0.7.78": published("0.7.78")}
+    hostile = b"\xff X-Api-Key: " + STUB_TOKEN.encode() + b" \xfe"
+    bin_dir, _ = curl_stub(
+        tmp_path, full, partner_responses={ROSTER[0]: published(ROSTER[0]), "0.7.78": hostile}
+    )
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 2, out
+    assert "partner" in out and "not JSON" in out, out
+    assert STUB_TOKEN not in out, out
+    assert "UnicodeDecodeError" not in out and "Traceback" not in out, out
+
+
+def test_an_unexpected_partner_exception_cannot_blind_an_internal_drift(tmp_path: Path) -> None:
+    """The non-InfraError capture, driven for real. A pathologically nested partner body raises
+    RecursionError inside `json.loads` — not JSONDecodeError, so not an InfraError. Captured, the
+    internal drift still reaches its verdict (exit 1, State B printed); escaping, it would hit the
+    top-level handler and exit 2 with no verdict at all. Only the class name is printed."""
+    repo = make_repo(tmp_path, version="0.7.78", tag=True)
+    nested = "[" * 200_000 + "]" * 200_000
+    bin_dir, _ = curl_stub(
+        tmp_path,
+        {ROSTER[0]: published(ROSTER[0])},
+        partner_responses={ROSTER[0]: published(ROSTER[0]), "0.7.78": nested},
+    )
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "State B" in proc.stdout, proc.stdout
+    # The whole line, so "the class name only" is pinned — a repr would append its message.
+    assert re.search(
+        r"unexpected failure reading partner: RecursionError$", proc.stderr, re.MULTILINE
+    ), proc.stderr
+    assert "Traceback" not in proc.stderr, proc.stderr
 
 
 def test_the_script_imports_only_the_standard_library() -> None:
@@ -3606,6 +3653,68 @@ def test_no_title_is_a_prefix_of_another() -> None:
             for b, tb in rendered.items():
                 if a != b:
                     assert not tb.startswith(ta) and ta not in tb, (a, b, ta, tb)
+
+
+def test_the_internal_close_notice_on_a_partner_lag_is_for_open_issues_only(
+    tmp_path: Path,
+) -> None:
+    """A CLOSED internal issue — a suppression like #250, or one already resolved — gets no
+    "can be closed" note: it is closed."""
+    proc, _ = _partner_lag_run(tmp_path, drift_listing(4, "CLOSED", [SUPPRESSION_LABEL]))
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "can be closed" not in proc.stdout, proc.stdout
+
+
+def test_a_partner_suppression_does_not_suppress_an_internal_drift(tmp_path: Path) -> None:
+    """The reverse of the internal-suppression test: a closed, labelled PARTNER issue says
+    nothing about internal. Internal short files its own issue."""
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    proc, log = report_run(
+        repo,
+        published("0.7.77"),
+        tmp_path,
+        listing=partner_listing(11, "CLOSED", [SUPPRESSION_LABEL]),
+        extra=_partner_dump(tmp_path, published("0.7.77")),
+    )
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    create = next(c for c in gh_calls(log) if c[:2] == ["issue", "create"])
+    assert create[create.index("--title") + 1] == DRIFT_TITLE.format(version=DRIFTING)
+    assert "SUPPRESSED" not in proc.stdout
+
+
+def test_a_live_partner_lag_end_to_end_with_report(tmp_path: Path) -> None:
+    """The seam between the phases, with no offline dump: curl and gh stubs together. Four GETs in
+    order, then one listing, one create under the partner title, then the heartbeat — and the
+    token in no argv handed to gh and in no output."""
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    bin_dir, curl_log = curl_stub(
+        tmp_path,
+        {ROSTER[0]: published(ROSTER[0]), DRIFTING: published(DRIFTING)},
+        partner_responses={ROSTER[0]: published(ROSTER[0])},
+    )
+    _, gh_log = gh_stub(tmp_path, [])
+    proc = run(
+        repo,
+        None,
+        tmp_path,
+        extra=["--report"],
+        env=report_env(bin_dir, token=STUB_TOKEN),
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 1, out
+    assert registries_queried(curl_log) == [
+        ("internal", ROSTER[0]),
+        ("internal", DRIFTING),
+        ("partner", ROSTER[0]),
+        ("partner", DRIFTING),
+    ]
+    calls = gh_calls(gh_log)
+    assert [c[:2] for c in calls] == [["issue", "list"], ["issue", "create"], ["api", calls[2][1]]]
+    assert calls[1][calls[1].index("--title") + 1] == PARTNER_DRIFT_TITLE.format(version=DRIFTING)
+    assert calls[2] == heartbeat_argv(), calls
+    assert STUB_TOKEN not in out
+    for call in calls:
+        assert not any(STUB_TOKEN in arg for arg in call), call
 
 
 @pytest.mark.parametrize("age", [30, 200], ids=["soft", "warn"])

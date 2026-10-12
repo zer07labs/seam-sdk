@@ -4542,7 +4542,8 @@ resolution) · `.github/workflows/publish.yml:747-810` (`promote-partner`) ·
 - **Round 1, GAPS:** the `--report` guard for partner verdicts was untested (an `if False:`
   mutation survived). Also open: a partner fault beside a grace-tier or suppressed internal
   drift; non-`InfraError` capture; the loader naming the wrong flag; partner naming on the
-  not-JSON path. All closed with tests.
+  not-JSON path. All closed; every one has a test except the non-`InfraError` capture. That
+  gap was found by the final verify and closed then (see Finalization).
 - **Round 2:** PASS.
 - **Files:** `scripts/check_registry_drift.py`, `scripts/test_registry_drift_gate.py`,
   `plans/partner-registry-drift.md`.
@@ -4592,3 +4593,23 @@ resolution) · `.github/workflows/publish.yml:747-810` (`promote-partner`) ·
   - A live `--report` run then exited 0 with the suppression `::warning::` and made no GitHub
     writes.
 - **Out of scope:** the dead Cargo fallback token is filed as #251.
+
+## Finalization: whole-feature verify (2026-10-12)
+- **Round 1, GAPS. Nothing blocked the merge; six items:**
+  1. The partner catch-all printed `{exc!r}`. A strict UTF-8 decode of a hostile body raised
+     UnicodeDecodeError, whose repr carries the raw bytes. Reproduced with the token in the bytes.
+  2. The non-`InfraError` capture had no test, although the Phase 1 trail claimed one.
+  3. The partner coverage limit was not recorded.
+  4. A mutant survived: the internal close notice was not pinned to OPEN.
+  5. Untested cells: a live `--report` partner run, and partner suppression vs an internal drift.
+  6. The workflow comment implied the Cargo fallback works.
+- **Fixes:**
+  - curl output is decoded with `errors="replace"`, so a non-UTF-8 body is a named "not JSON"
+    InfraError on both registries.
+  - The catch-all prints only the class name.
+  - Five tests added: a non-UTF-8 partner body, a RecursionError capture beside an internal drift,
+    OPEN-only for the close notice, partner suppression vs an internal drift, and a live
+    end-to-end partner lag with `--report` (curl and gh order, token in no gh argv).
+  - The four new guards were mutation-checked; each mutant now fails the suite.
+  - Recorded in ASSUMPTIONS.md; the workflow comment cites #251.
+- **Tests:** `pytest scripts/` gives 567 passed.
