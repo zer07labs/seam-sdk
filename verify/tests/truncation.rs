@@ -78,8 +78,8 @@ fn att_digest(len: u64, head: &[u8], at: u64, schema: u32, issuer_aid: &str) -> 
 
 /// A bare six-field anchor object — byte-for-byte one element of `GET /v1/anchors`' `anchors`
 /// array, and exactly the shape `--expect-anchor` takes (same parser as `--from-anchor`).
-/// Untenanted on purpose for most tests here: the fallback this crate attributes to the window's
-/// sole chained tenant, mirroring `chain_anchored`'s own spec clause (f0) fallback.
+/// Untenanted on purpose for most tests here: an untenanted anchor is v1 and stands for the `""`
+/// (system) partition only (#835 step 4), which is the one partition these tenant-less streams carry.
 fn anchor_json(len: u64, head: &[u8], sk: &ed25519_dalek::SigningKey) -> String {
     use ed25519_dalek::Signer;
     let sig = sk.sign(&att_digest(len, head, 1_700, 2, ISSUER)).to_bytes();
@@ -343,10 +343,14 @@ fn a_spliced_tail_as_long_as_the_anchor_is_still_caught() {
     assert!(out.contains("ANCHOR DIVERGENCE"), "{out}");
 }
 
-// ── Usage error: an untenanted anchor over an ambiguous window ───────────────────────────────
+// ── #835 step 4: an untenanted anchor never stands for a tenant's chain ──────────────────────────
 
+/// An untenanted `--expect-anchor` is a v1 signature, which never binds a tenant, so it is attributed
+/// to the `""` partition only. The pre-#835 fallback — to the window's sole tenant, and a usage error
+/// over two — is gone: over a window holding only tenant chains, `""` reaches length 0, and the
+/// anchor's claim of 5 is reported as TRUNCATED, whether the window holds one tenant or two.
 #[test]
-fn expect_anchor_over_a_multi_tenant_window_is_a_usage_error() {
+fn an_untenanted_expect_anchor_never_stands_for_a_tenant_chain() {
     let base_head = vec![0u8; 32];
     let mk_tenant_link = |seq: u64, tenant: &str| {
         let digest = Sha256::digest(format!("r{seq}").as_bytes()).to_vec();
@@ -368,27 +372,40 @@ fn expect_anchor_over_a_multi_tenant_window_is_a_usage_error() {
         })
         .to_string()
     };
-    let body = format!(
-        "{}\n{}",
-        mk_tenant_link(0, "acme"),
-        mk_tenant_link(1, "globex")
-    );
-
     let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
-    let anchor = write_tmp("expect-multi", "json", &anchor_json(5, &base_head, &sk));
-    let (code, out) = run(
-        "multi-usage",
-        &body,
-        &[
-            "--issuer",
-            ISSUER,
-            "--expect-anchor",
-            anchor.to_str().unwrap(),
-        ],
+    let anchor = write_tmp(
+        "expect-untenanted",
+        "json",
+        &anchor_json(5, &base_head, &sk),
     );
+    for (name, body) in [
+        ("one-tenant", mk_tenant_link(0, "acme")),
+        (
+            "two-tenant",
+            format!(
+                "{}\n{}",
+                mk_tenant_link(0, "acme"),
+                mk_tenant_link(1, "globex")
+            ),
+        ),
+    ] {
+        let (code, out) = run(
+            name,
+            &body,
+            &[
+                "--issuer",
+                ISSUER,
+                "--expect-anchor",
+                anchor.to_str().unwrap(),
+            ],
+        );
+        assert_eq!(code, FAILED, "{name}: {out}");
+        assert!(
+            out.contains("TRUNCATED STREAM — tenant \"\""),
+            "{name}: {out}"
+        );
+    }
     let _ = std::fs::remove_file(&anchor);
-    assert_eq!(code, USAGE, "{out}");
-    assert!(out.contains("USAGE ERROR"), "{out}");
 }
 
 #[test]

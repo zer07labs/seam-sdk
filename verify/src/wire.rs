@@ -92,10 +92,10 @@ pub struct ChainHeadAttestationPb {
     pub digest_schema: u32,
     #[prost(bytes = "vec", tag = "6")]
     pub signature: Vec<u8>,
-    /// tag 7 — the attesting tenant, added by U-RT-3 Phase 2. Signed only under the **v2** framing
-    /// (seam-runtime #835); a v1 attestation carries it outside the signature, and until #835 step 4 a v1
-    /// signature with a non-empty tenant still verifies — so it is cross-checked against the envelope
-    /// `tenant`, never trusted on its own. See `verify_authenticity_anchored`'s tenant-agreement check.
+    /// tag 7 — the attesting tenant, added by U-RT-3 Phase 2; `""` for the system partition. Selects the
+    /// signed framing (seam-runtime #835 step 4): non-empty ⇒ v2 only, which signs it; empty ⇒ v1 only.
+    /// It must also EQUAL the envelope `tenant` — see `verify_authenticity_anchored`'s tenant-agreement
+    /// check.
     #[prost(string, tag = "7")]
     pub tenant: String,
 }
@@ -291,8 +291,10 @@ pub struct ChainHeadAttestationJson {
     pub issuer_aid: String,
     pub digest_schema: u32,
     pub signature: String,
-    /// UNSIGNED, added by U-RT-3 Phase 2. `#[serde(default)]` is load-bearing: a pre-Phase-2 attestation
-    /// carries only the 6 fields above, and must still parse.
+    /// Added by U-RT-3 Phase 2; `""` for the system partition. Selects the signed framing (seam-runtime
+    /// #835 step 4): non-empty ⇒ v2 only, which signs it; empty ⇒ v1 only. `#[serde(default)]` is
+    /// load-bearing: a six-field attestation (no `tenant` key, e.g. a pre-Phase-2 one) must still parse
+    /// — it then verifies only as a v1 / system-partition attestation.
     #[serde(default)]
     pub tenant: String,
 }
@@ -516,6 +518,10 @@ impl Cert {
     }
 }
 
+/// The prefix of [`Attestation::parse_document`]'s refusal of a full-event anchor whose payload tenant
+/// differs from its envelope's — a defect in the anchor itself, not an unreadable input.
+pub const ANCHOR_SELF_CONTRADICTS: &str = "ANCHOR SELF-CONTRADICTS";
+
 #[derive(Clone)]
 pub struct Attestation {
     pub attested_len: u64,
@@ -524,8 +530,8 @@ pub struct Attestation {
     pub issuer_aid: String,
     pub digest_schema: u32,
     pub signature: Vec<u8>,
-    /// The attesting tenant (U-RT-3 Phase 2); empty on a pre-Phase-2 attestation. Selects the signed
-    /// framing: empty → v1 only, non-empty → v2, else v1 (seam-runtime #835 step 1).
+    /// The attesting tenant (U-RT-3 Phase 2); empty for the system partition. Selects exactly one signed
+    /// framing (seam-runtime #835 step 4, no fallback): empty → v1 only, non-empty → v2 only.
     pub tenant: String,
 }
 
@@ -560,10 +566,24 @@ impl Attestation {
         // Shape 2: a full seam-event.v1 event (JSON projection or base64 protobuf) carrying the
         // attestation. `Event::parse` requires schema_version/event_id, so a bare six-field object
         // (shape 1) fails here and falls through to the bare parse below — it never satisfies those.
+        //
+        // An anchor loaded this way has an envelope, so the same payload==envelope equality rule an
+        // in-stream attestation meets applies (#835 step 4) — an empty payload tenant under a named
+        // envelope included. The refusal starts with [`ANCHOR_SELF_CONTRADICTS`] so a caller can tell
+        // this content-level defect (exit 2) from an unreadable file (exit 1).
         if let Ok(ev) = Event::parse(raw) {
-            return ev.attestation.ok_or_else(|| {
-                "this seam-event.v1 event carries no chain_head_attestation".into()
-            });
+            let att = ev.attestation.ok_or_else(|| {
+                "this seam-event.v1 event carries no chain_head_attestation".to_string()
+            })?;
+            if att.tenant != ev.tenant {
+                return Err(format!(
+                    "{ANCHOR_SELF_CONTRADICTS} — the attestation payload names tenant {:?}, but its \
+                     envelope says {:?}. One of the two is a lie, and an anchor this tool cannot \
+                     attribute with confidence must never seed a verified start.",
+                    att.tenant, ev.tenant
+                ));
+            }
+            return Ok(att);
         }
 
         // Shape 1: the bare six-field object.

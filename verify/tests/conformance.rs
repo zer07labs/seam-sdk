@@ -359,3 +359,73 @@ fn the_case_loader_fails_loudly_when_the_block_is_missing() {
     let empty = std::panic::catch_unwind(|| v3_cases(&vectors(), &emptied));
     assert!(empty.is_err(), "an EMPTY extended cases array was accepted");
 }
+
+// ── #835 step 4: the chain-head attestation framing is strict per tenant ─────────────────────────
+
+/// The shared v1 chain-head vector (`conformance/vectors.json`), as the public verifier's
+/// [`seam_verify::wire::Attestation`], under `tenant`.
+fn v1_chain_head_vector(tenant: &str) -> seam_verify::wire::Attestation {
+    let v = &vectors()["chain_head_attestation"];
+    let i = &v["inputs"];
+    seam_verify::wire::Attestation {
+        attested_len: i["attested_len"].as_u64().unwrap(),
+        attested_head: unhex(i["attested_head_hex"].as_str().unwrap()),
+        attested_at: i["attested_at"].as_u64().unwrap(),
+        issuer_aid: v["issuer_aid"].as_str().unwrap().to_owned(),
+        digest_schema: i["digest_schema"].as_u64().unwrap() as u32,
+        signature: unhex(v["signature_hex"].as_str().unwrap()),
+        tenant: tenant.to_owned(),
+    }
+}
+
+/// Mirrors seam-runtime's `conformance_drift::the_v1_chain_head_vector_is_refused_under_a_non_empty_tenant`
+/// (#1303): the shared v1 vector verifies with its EMPTY tenant, and relabelled to a non-empty tenant it
+/// is REFUSED — a tenant's attestation must be v2. The vector itself is untouched. Checked through
+/// `verify_anchor`, the public entry point that runs the pin + signature check on one attestation.
+#[test]
+fn the_v1_chain_head_vector_is_refused_under_a_non_empty_tenant() {
+    let pins = [ISSUER.to_owned()];
+    let v1 = v1_chain_head_vector("");
+    assert_eq!(v1.issuer_aid, ISSUER, "the vector's issuer is seed 07×32");
+    seam_verify::verify_anchor(&v1, &pins).expect("the v1 vector verifies with its empty tenant");
+    let err = seam_verify::verify_anchor(&v1_chain_head_vector("acme"), &pins)
+        .expect_err("a v1 vector carrying a non-empty tenant must be refused (#835 step 4)");
+    assert!(err.contains("does not verify"), "{err}");
+}
+
+/// The other half of the strict rule: a v2 signature over the EMPTY tenant (never minted; hand-rolled
+/// with the vector's own seed, 07×32) is refused, because an empty tenant selects v1 only. The v2
+/// framing here is transcribed from the spec, independently of `src/verify.rs`; a v2 signature over
+/// `acme` from the same transcription verifies, so the refusal is the rule, not a framing typo.
+#[test]
+fn a_v2_chain_head_signature_over_the_empty_tenant_is_refused() {
+    let sk = SigningKey::from_bytes(&[0x07; 32]);
+    let pins = [ISSUER.to_owned()];
+    let v2_sign = |a: &seam_verify::wire::Attestation, tenant: &str| -> Vec<u8> {
+        let mut pre: Vec<u8> = Vec::new();
+        let mut frame = |part: &[u8]| {
+            pre.extend_from_slice(&(part.len() as u32).to_le_bytes());
+            pre.extend_from_slice(part);
+        };
+        frame(b"seam.audit.chain-head-attestation.v2");
+        frame(&a.attested_len.to_le_bytes());
+        frame(&a.attested_head);
+        frame(&a.attested_at.to_le_bytes());
+        frame(&a.digest_schema.to_le_bytes());
+        frame(a.issuer_aid.as_bytes());
+        frame(tenant.as_bytes());
+        sk.sign(&Sha256::digest(&pre)).to_bytes().to_vec()
+    };
+
+    let mut over_empty = v1_chain_head_vector("");
+    over_empty.signature = v2_sign(&over_empty, "");
+    assert!(
+        seam_verify::verify_anchor(&over_empty, &pins).is_err(),
+        "a v2 signature over the empty tenant must be refused (#835 step 4)"
+    );
+
+    let mut over_acme = v1_chain_head_vector("acme");
+    over_acme.signature = v2_sign(&over_acme, "acme");
+    seam_verify::verify_anchor(&over_acme, &pins)
+        .expect("a v2 signature over its own tenant verifies");
+}

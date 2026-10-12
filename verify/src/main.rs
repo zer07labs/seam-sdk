@@ -73,14 +73,21 @@ fn usage() -> ! {
                        skipped.\n                      \
                        REPEATABLE: pass once per trusted issuer to verify a chain spanning a key ROTATION\n                      \
                        (an attestation passes iff it verifies against ANY pinned AID; one naming an issuer\n                      \
-                       outside the pinned set is a FAIL).\n\
+                       outside the pinned set is a FAIL).\n                      \
+                       TENANT BINDING (seam-runtime #835 step 4, with or without --strict): an attestation's\n                      \
+                       payload tenant must EQUAL its envelope's, and its signature must verify under the\n                      \
+                       one framing that tenant selects — v2 for a named tenant, v1 for the empty (system)\n                      \
+                       partition. A tenant attestation minted before step 3 (v1) is REFUSED: verify that\n                      \
+                       history from a v2 anchor onward.\n\
          \n    \
              --from-anchor <FILE>  ANCHORED START (spec clause (f)): seed the running head from an\n                      \
                        issuer-signed CHAIN_HEAD_ATTESTATION instead of genesis, and verify the window from\n                      \
-                       there. FILE is one anchor: a bare six-field JSON object (one element of\n                      \
+                       there. FILE is one anchor: a bare anchor JSON object (one element of\n                      \
                        GET /v1/anchors) or a full seam-event.v1 CHAIN_HEAD_ATTESTATION event line.\n                      \
                        Requires --issuer: the anchor is verified against the pinned AID before it is\n                      \
-                       trusted — an unsigned or wrong-issuer anchor is REFUSED, never silently seeded.\n\
+                       trusted — an unsigned or wrong-issuer anchor is REFUSED, never silently seeded.\n                      \
+                       It seeds exactly the tenant it names (its signed tenant); an anchor with no tenant\n                      \
+                       is v1 and seeds only the system partition (\"\"), never a tenant's chain.\n\
          \n    \
              --expect-anchor <FILE>  TRUNCATION CHECK (seam-sdk#140): FILE is a later anchor you hold\n                      \
                        INDEPENDENTLY of this stream (fetch one from GET /v1/anchors — this tool makes no\n                      \
@@ -181,8 +188,19 @@ fn load_anchor(
     };
     let raw = std::fs::read_to_string(anchor_path)
         .map_err(|e| io_error(&format!("{anchor_path}: {e}"), json))?;
-    let anchor = wire::Attestation::parse_document(&raw)
-        .map_err(|e| io_error(&format!("{anchor_path}: {e}"), json))?;
+    let anchor = wire::Attestation::parse_document(&raw).map_err(|e| {
+        // A full-event anchor whose payload tenant differs from its envelope's is a defect in the
+        // anchor itself (exit 2, like ANCHOR REJECTED), not an unreadable input (exit 1).
+        if e.starts_with(wire::ANCHOR_SELF_CONTRADICTS) {
+            fail(
+                &format!("{anchor_path}: {e}"),
+                json,
+                wire::ANCHOR_SELF_CONTRADICTS,
+            )
+        } else {
+            io_error(&format!("{anchor_path}: {e}"), json)
+        }
+    })?;
     if let Err(e) = verify::verify_anchor(&anchor, issuers) {
         let banner = if e.contains("VACUOUS") {
             "VACUOUS ANCHOR"
@@ -242,40 +260,32 @@ fn cmd_chain(
     events.sort_by_key(|e| e.seq);
 
     let report = match &anchor {
-        Some(a) => verify::chain_anchored(&events, a.attested_len, &a.attested_head),
+        Some(a) => verify::chain_anchored(&events, &a.tenant, a.attested_len, &a.attested_head),
         None => verify::chain(&events),
     };
 
     match report {
-        // `chain_anchored`'s own usage error (an anchor given over a window spanning more than one
-        // tenant, spec clause (f0)) is a caller mistake, not a verification failure — exit 1, not 2.
-        Err(e) if e.starts_with("USAGE ERROR:") => io_error(&e, json),
         Err(e) => fail(&e, json, "CHAIN VERIFICATION FAILED"),
         Ok(mut r) => {
             r.duplicates = duplicates;
-            // Spec clause (f0): an anchor was given for a tenant this window has no chained event for.
-            // `chain_by_tenant` itself does not refuse this (see `ChainReport::unconsumed_anchors`'s own
-            // doc comment) — it is this caller's decision, the same division `verify_anchor`/
-            // `chain_anchored` already have between validating an anchor and trusting it as a start.
-            // Not reachable through this CLI's own single-file `--from-anchor` today (its wrapper only
-            // ever attributes the anchor to a tenant proven present in the window), but the check is
-            // cheap, matches the documented contract, and holds as soon as that changes.
-            if !r.unconsumed_anchors.is_empty() {
-                let mut names: Vec<String> = r
-                    .unconsumed_anchors
-                    .iter()
-                    .map(|(t, len)| format!("{t:?} (attested_len {len})"))
-                    .collect();
-                names.sort();
-                return io_error(
+            // Spec clause (f0): an anchor was given for a tenant this window has no chained event for —
+            // including an untenanted (v1) anchor, which seeds only the `""` partition (#835 step 4), over
+            // a window holding only tenant chains. `chain_by_tenant` itself does not refuse this (see
+            // `ChainReport::unconsumed_anchors`'s own doc comment); this caller does, fail-closed (exit
+            // 2), as seam-runtime's own seam-verify does: the operator asked for a start the window does
+            // not contain, and verifying the window anyway would vouch for a start nobody chose.
+            if let Some((t, len)) = r.unconsumed_anchors.iter().next() {
+                return fail(
                     &format!(
-                        "USAGE ERROR: an anchor was given for {} tenant(s) this window has NO chained \
-                         event for: {}.\n  \
-                         An anchor with nothing to seed cannot be a starting point for verification.",
-                        r.unconsumed_anchors.len(),
-                        names.join(", ")
+                        "tenant {t:?}: NO VALID ATTESTATION — an anchor was given for this tenant \
+                         (attested_len {len}), but the window has no chained event for it, so nothing \
+                         was verified from that start.\n  \
+                         An anchor seeds exactly the tenant it names: a tenant anchor must be v2 over \
+                         that tenant, and an anchor with no tenant (v1) seeds only the system partition \
+                         \"\" — never a tenant's chain (#835 step 4)."
                     ),
                     json,
+                    "AUTHENTICITY VERIFICATION FAILED",
                 );
             }
             // Truncation check (seam-sdk#140): independent of authenticity below — it compares the
@@ -284,7 +294,6 @@ fn cmd_chain(
             if let Some(e) = &expect {
                 match verify::check_not_truncated(&r, e) {
                     Ok(()) => {}
-                    Err(err) if err.starts_with("USAGE ERROR:") => return io_error(&err, json),
                     Err(err) if err.starts_with("ANCHOR DIVERGENCE") => {
                         return fail(&err, json, "ANCHOR DIVERGENCE")
                     }
@@ -308,9 +317,9 @@ fn cmd_chain(
             //
             // A window spanning more than one tenant has no single running head to check attestations
             // against (§0's genesis-sentinel fallback on `r.heads`/`r.max_schema_by_link`) — it is
-            // fanned out per tenant instead, via `tenant_issuer_reports` below. `--from-anchor` cannot
-            // reach this branch: `chain_anchored` already refused a multi-tenant window as a usage error
-            // before this match was ever entered, so `r.tenants.len() > 1` here is always genesis mode.
+            // fanned out per tenant instead, via `tenant_issuer_reports` below. Under `--from-anchor`
+            // that is the anchored tenant from its anchor (`tc.base_len`/`tc.heads[0]`) and every other
+            // tenant from genesis — the anchor seeds exactly the tenant it names (#835 step 4).
             let multi_tenant = r.tenants.len() > 1;
             let issuer_report = if issuers.is_empty() || multi_tenant {
                 None
@@ -344,25 +353,6 @@ fn cmd_chain(
                     Err(e) => return fail(&e, json, "AUTHENTICITY VERIFICATION FAILED"),
                 }
             };
-            // U-RT-3 Phase 3's `--strict`-equivalent: a stream carrying a pre-Phase-2 attestation (no
-            // payload tenant to cross-check) is silently trusted on the envelope alone by default, and
-            // refused under --strict — the same posture as `r.unverifiable` above, extended to the one
-            // new kind of "this tool could not actually check that" this field introduces.
-            if strict {
-                let tenant_unbound: usize = match (&issuer_report, &tenant_issuer_reports) {
-                    (Some(ir), None) => ir.tenant_unbound,
-                    (None, Some(m)) => m.values().map(|ir| ir.tenant_unbound).sum(),
-                    _ => 0,
-                };
-                if tenant_unbound > 0 {
-                    let msg = format!(
-                        "{tenant_unbound} attestation(s) carry no payload tenant (pre-U-RT-3-Phase-2, \
-                         accepted on the envelope alone) — and --strict refuses to report a green \
-                         result over an attestation this tool could not cross-check against itself."
-                    );
-                    return fail(&msg, json, "REFUSED (--strict)");
-                }
-            }
             // Additive: a window spanning more than one tenant (`r.tenants` — see [`ChainReport`]'s own
             // doc comment on its genesis-sentinel top-level fields in that case) reports each tenant's
             // OWN links/head/authenticity here. Absent entirely for `r.tenants.len() <= 1` — the one
@@ -375,8 +365,8 @@ fn cmd_chain(
                         let auth = match tenant_issuer_reports.as_ref().and_then(|m| m.get(t)) {
                             Some(ir) => format!(
                                 ",\"authenticated\":true,\"attestations\":{},\"covered_prefix\":{},\
-                                 \"records_recomputed\":{},\"tenant_unbound\":{}",
-                                ir.attestations, ir.covered_prefix, ir.records_recomputed, ir.tenant_unbound,
+                                 \"records_recomputed\":{}",
+                                ir.attestations, ir.covered_prefix, ir.records_recomputed,
                             ),
                             None => String::new(),
                         };
@@ -418,12 +408,8 @@ fn cmd_chain(
                         };
                         format!(
                             ",\"authenticated\":true,\"attestations\":{},\"covered_prefix\":{},\
-                             \"records_recomputed\":{},\"tenant_unbound\":{}{}",
-                            ir.attestations,
-                            ir.covered_prefix,
-                            ir.records_recomputed,
-                            ir.tenant_unbound,
-                            anchor_extra,
+                             \"records_recomputed\":{}{}",
+                            ir.attestations, ir.covered_prefix, ir.records_recomputed, anchor_extra,
                         )
                     }
                     None => String::new(),
@@ -456,6 +442,9 @@ fn cmd_chain(
                         (Some(_), Some(_), _) => "WINDOW AUTHENTICATED (issuer-anchored start)",
                         (None, Some(_), _) =>
                             "CHAIN AUTHENTICATED (integrity + issuer-signed head)",
+                        (Some(_), None, Some(_)) => {
+                            "WINDOW AUTHENTICATED (issuer-anchored start, per tenant)"
+                        }
                         (None, None, Some(_)) => {
                             "CHAIN AUTHENTICATED (integrity + issuer-signed head, per tenant)"
                         }
@@ -508,13 +497,6 @@ fn cmd_chain(
                         "  records recomputed: {} (v2/v3 record-digest recompute)",
                         ir.records_recomputed
                     );
-                    if ir.tenant_unbound > 0 {
-                        println!(
-                            "  tenant_unbound    : {} (attestation predates U-RT-3 Phase 2 — accepted \
-                             on envelope alone; re-run with --strict to refuse rather than accept them)",
-                            ir.tenant_unbound
-                        );
-                    }
                     if let Some(a) = &anchor {
                         println!(
                             "  anchored start    : base_len {} / base_head {}",
@@ -560,13 +542,6 @@ fn cmd_chain(
                                  records recomputed {}",
                                 ir.attestations, ir.covered_prefix, ir.records_recomputed
                             );
-                            if ir.tenant_unbound > 0 {
-                                println!(
-                                    "      tenant_unbound {} (attestation predates U-RT-3 Phase 2 — \
-                                     accepted on envelope alone)",
-                                    ir.tenant_unbound
-                                );
-                            }
                         }
                     }
                 } else {

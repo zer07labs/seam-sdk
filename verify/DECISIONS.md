@@ -158,3 +158,40 @@ The Python/TS shims check only that the digest grant is present.
 **Not done.** `seam-event.v1.md` says a verifier that sees a sealed `resolved_status: retracted` should
 raise an anomaly. `context.json` now makes that visible, but neither the spec's six steps nor the oracle
 act on it, so this build does not either.
+
+## D-037 — strict chain-head attestation dispatch (seam-runtime #835 step 4), and four calls it forced
+
+The attestation's own `tenant` selects exactly one signed framing: empty → v1 only, non-empty → v2 only.
+This mirrors seam-runtime #1303 (`seam-trust-aitp::verify_chain_head_attestation` and
+`crates/seam-verify`). The owner principle is no backward compatibility, so there is no grace flag and
+no toggle. `tenant_unbound` and the untenanted anchor's sole-tenant fallback are removed, as in the
+runtime. Four choices went beyond a line-for-line mirror:
+
+1. *The payload==envelope tenant check moved ahead of the pin and the signature.* It used to run after
+   the signature, "so a mismatch is reported about a proven-genuine artifact". Under step 4 the payload
+   tenant is signed, so a relabelled or stripped tenant would otherwise surface as a generic signature
+   refusal. The runtime checks agreement first and reports `ATTESTATION TENANT MISMATCH`, so this build
+   now does too. Both orders exit 2; only the stated reason differed.
+2. *An anchor whose tenant has no chained event in the window is exit 2 (`NO VALID ATTESTATION`), not
+   exit 1 (usage).* Before step 4 this was unreachable through the CLI, because the anchor was always
+   attributed to a tenant present in the window. Now an untenanted anchor over a tenant window reaches
+   it. The runtime fails it closed with exit 2, and so does this build.
+3. *`--from-anchor` over a multi-tenant window is no longer a usage error.* The refusal existed only
+   because an untenanted anchor could not be attributed. Every anchor now names the tenant it seeds,
+   so the named tenant starts at its anchor and the others start at genesis, as in the runtime's
+   `a_tenant_with_no_anchor_verifies_from_genesis_while_another_is_anchored`. `seam_verify::chain_anchored`
+   takes the anchor's tenant for this. `bundle` still requires a window of exactly one tenant, because
+   an evidence bundle is scoped to one.
+4. *`--expect-anchor` follows the same attribution rule.* The runtime has no `--expect-anchor`; its
+   sole-tenant fallback existed here only to match `--from-anchor`'s, and goes with it. An untenanted
+   expect-anchor stands for `""`, and over a window with no `""` chain it reports TRUNCATED, the same
+   folding an absent tenant already got.
+
+A full-event `--from-anchor` now refuses a payload tenant that differs from its envelope
+(`ANCHOR SELF-CONTRADICTS`, exit 2), as the runtime's `to_trust_attestation_from_envelope` does. Before
+this, the SDK dropped the envelope tenant without checking it.
+
+`fixtures/evidence-bundle/` was re-exported by the runtime's exporter at the #1303 commit, because the
+0.44.0 export carried v1 tenant anchors that a step-4 verifier refuses. The runtime's internal oracle
+verifies every re-exported directory, and the runtime's `differential` test passes against this build
+(`SEAM_SDK_DIR` pointing at it).

@@ -6,11 +6,12 @@
 // attestation on the data plane — mirroring the runtime's A4 trio
 // (`seamd/tests/grpc.rs::grpc_verify_party_attestation_trio`).
 //
-// The live valid case pins the runtime's committed `chain_head_attestation` KAT (seed + precomputed
-// signature), so the test does not re-derive the signature framing. Loaded from
-// `conformance/vectors.json`'s `chain_head_attestation` entry — the SAME source `conformance.test.ts`
-// reads for the signature-verification unit test — so a runtime KAT regen updates one file and reddens
-// both tests, instead of leaving a hand-copied literal here silently stale.
+// The live valid case pins the runtime's committed **v2** chain-head KAT
+// (`conformance/chain_head_attestation_v2_vector.json`: seed + precomputed signature over its own tenant),
+// so the test does not re-derive the signature framing. It must be v2: the party is registered under a
+// tenant, and since seam-runtime #835 step 4 a tenant's attestation verifies under v2 only (the v1 KAT
+// relabelled to a tenant is refused). The server-free unit tests keep the shared v1 KAT from
+// `conformance/vectors.json` (empty tenant), the SAME source `conformance.test.ts` reads.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -29,31 +30,39 @@ import { governanceEnv, mintOperatorToken } from "./operator_token.js";
 
 const BIN = process.env.SEAM_GRPC_BIN;
 const SKIP = !BIN;
-// Any tenant id — registerParty takes none on the wire (the operator token's own `tenant` claim is what
-// the runtime binds to; see RegisterPartyRequest), so this pins AUTH, not a registration scope.
-const TENANT = "verify-counterparties";
-
-// ── The runtime chain_head_attestation KAT, from conformance/vectors.json ────────────────────────────
-const vectors = JSON.parse(
-  readFileSync(new URL("../../conformance/vectors.json", import.meta.url), "utf8"),
-);
-const VECTOR = vectors.chain_head_attestation;
+// ── The runtime chain_head_attestation KATs, from conformance/ ─────────────────────────────────────────
+const readConformance = (name: string) =>
+  JSON.parse(readFileSync(new URL(`../../conformance/${name}`, import.meta.url), "utf8"));
+const VECTOR = readConformance("vectors.json").chain_head_attestation;
+const V2_VECTOR = readConformance("chain_head_attestation_v2_vector.json");
+// The tenant the v2 KAT is signed over. registerParty takes no tenant on the wire (the operator token's
+// own `tenant` claim is what the runtime binds to; see RegisterPartyRequest), so the token is minted for
+// this tenant and the party lands in the partition the signed attestation names.
+const TENANT: string = V2_VECTOR.inputs.tenant;
 const KAT_SEED = Uint8Array.from(Buffer.from(VECTOR.inputs.issuer_seed_hex, "hex"));
-// `tenant` (wire tag 7) is UNSIGNED — setting it here never invalidates the KAT signature, which is
-// computed over the preimage without it. Defaults to "" (the untenanted/fleet partition), matching
-// every pre-#903 caller; the live test below overrides it to match the tenant its operator token
-// registered the party under.
-function katAttestation(opts?: { tenant?: string }): ChainHeadAttestation {
+
+function attestationFrom(v: typeof VECTOR, tenant: string): ChainHeadAttestation {
   return create(ChainHeadAttestationSchema, {
-    attestedLen: BigInt(VECTOR.inputs.attested_len),
-    attestedHead: Uint8Array.from(Buffer.from(VECTOR.inputs.attested_head_hex, "hex")),
-    attestedAt: BigInt(VECTOR.inputs.attested_at),
-    issuerAid: VECTOR.issuer_aid as string,
-    digestSchema: VECTOR.inputs.digest_schema,
-    tenant: opts?.tenant ?? "",
-    signature: Uint8Array.from(Buffer.from(VECTOR.signature_hex, "hex")),
+    attestedLen: BigInt(v.inputs.attested_len),
+    attestedHead: Uint8Array.from(Buffer.from(v.inputs.attested_head_hex, "hex")),
+    attestedAt: BigInt(v.inputs.attested_at),
+    issuerAid: v.issuer_aid as string,
+    digestSchema: v.inputs.digest_schema,
+    tenant,
+    signature: Uint8Array.from(Buffer.from(v.signature_hex, "hex")),
   });
 }
+// The v1 KAT, with the EMPTY tenant it was signed for (v1 never signs a tenant, so since seam-runtime
+// #835 step 4 it verifies only under ""). Used by the server-free unit tests.
+const katAttestation = (): ChainHeadAttestation => attestationFrom(VECTOR, "");
+// The v2 KAT: `tenant` (wire tag 7) is INSIDE the signature, so it is exactly the tenant the runtime
+// signed over — any other value breaks verification.
+const v2KatAttestation = (): ChainHeadAttestation => attestationFrom(V2_VECTOR, TENANT);
+
+test("the v1 and v2 KATs share one issuer (the live test registers one pubkey)", () => {
+  assert.equal(V2_VECTOR.inputs.issuer_seed_hex, VECTOR.inputs.issuer_seed_hex);
+  assert.equal(V2_VECTOR.issuer_aid, VECTOR.issuer_aid);
+});
 const katPubkey = () => ed25519.getPublicKey(KAT_SEED);
 
 // ── Unit: the wrapper contract, server-free ───────────────────────────────────────────────────────────
@@ -153,35 +162,28 @@ test(
       });
       await admin.registerParty("bank-A", katPubkey());
 
-      // Every call below carries `tenant: TENANT` on the attestation: registerParty bound "bank-A"
-      // under TENANT (the operator token's claim, since RegisterPartyRequest has no tenant field of
-      // its own), and verifyPartyAttestation looks the party up under the ATTESTATION's own (unsigned)
-      // tenant, not the caller's — the two must agree or a correctly-registered, untampered
-      // attestation still comes back false, having found no party in the (wrong) tenant partition it
-      // looked under.
+      // Every call below sends the v2 KAT, whose SIGNED tenant is TENANT: registerParty bound "bank-A"
+      // under TENANT (the operator token's claim, since RegisterPartyRequest has no tenant field of its
+      // own), and verifyPartyAttestation looks the party up under the ATTESTATION's own tenant — since
+      // seam-runtime #835 step 4 that is the signed tenant, verified under v2 only. A v1 attestation
+      // relabelled to TENANT is refused there, which is why this cannot use the v1 KAT.
 
       // 1. a registered party's untampered attestation verifies
-      assert.equal(
-        await data.verifyPartyAttestation("bank-A", katAttestation({ tenant: TENANT })),
-        true,
-      );
+      assert.equal(await data.verifyPartyAttestation("bank-A", v2KatAttestation()), true);
 
       // 2. a tampered signature must not verify
-      const badSig = katAttestation({ tenant: TENANT });
+      const badSig = v2KatAttestation();
       badSig.signature = Uint8Array.from(badSig.signature);
       badSig.signature[0] ^= 0x01;
       assert.equal(await data.verifyPartyAttestation("bank-A", badSig), false);
 
       // 3. a tampered field (part of the signed preimage) must not verify
-      const badField = katAttestation({ tenant: TENANT });
+      const badField = v2KatAttestation();
       badField.attestedLen += 1n;
       assert.equal(await data.verifyPartyAttestation("bank-A", badField), false);
 
       // 4. an unknown party never verifies
-      assert.equal(
-        await data.verifyPartyAttestation("bank-B", katAttestation({ tenant: TENANT })),
-        false,
-      );
+      assert.equal(await data.verifyPartyAttestation("bank-B", v2KatAttestation()), false);
     });
   },
 );

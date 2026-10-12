@@ -120,6 +120,13 @@ Two things a forger cannot fake:
   attested head is the running head at that position — so a fabricated chain (which carries no valid
   attestation) is **REFUSED**, and an authentic attestation spliced onto a different chain fails the
   position check. A stream with no attestation at all is refused, not passed: its absence is the tell.
+  **Each attestation is bound to its tenant** (seam-runtime #835 step 4): its payload `tenant` must
+  equal its envelope's — an empty payload tenant under a named envelope included — or it is refused as
+  `ATTESTATION TENANT MISMATCH`, with or without `--strict`; and its signature must verify under the one
+  framing that tenant selects, v2 (tenant inside the signature) for a named tenant and v1 for the empty
+  system partition, with no fallback. A tenant attestation minted before the runtime signed v2 (#835
+  step 3) is v1 and is therefore **refused**: verify that history from a v2 anchor onward
+  (`--from-anchor`, below).
 * **Recomputable record digests.** Every v2 and v3 `DECISION_SEALED` commits to its structural columns via
   `digest = SHA256(record-digest framing)`. `--issuer` recomputes it from the payload and compares — so
   a **payload rewrite** (flip an `outcome`, keep the triple) is caught even in an unattested tail, and a
@@ -184,16 +191,22 @@ WINDOW AUTHENTICATED (issuer-anchored start)
   head              : a01d…
 ```
 
-`anchor.json` is one `CHAIN_HEAD_ATTESTATION` — either a bare six-field object (byte-for-byte one
-element of the public `GET /v1/anchors` feed) or a full `seam-event.v1` event line carrying one (what
-an outbox consumer already holds). **An anchored start relocates the trust root**, so it is validated
-before anything is verified from it:
+`anchor.json` is one `CHAIN_HEAD_ATTESTATION` — either a bare anchor object (byte-for-byte one element
+of the public `GET /v1/anchors` feed) or a full `seam-event.v1` event line carrying one (what an outbox
+consumer already holds). **An anchored start relocates the trust root**, so it is validated before
+anything is verified from it:
 
 * the anchor's signature MUST verify against the **pinned** `--issuer` AID — an unsigned, forged, or
   wrong-issuer anchor is REFUSED (`ANCHOR REJECTED`), never silently seeded, and never falls back to
   genesis;
 * a **vacuous** anchor (`attested_len == 0`) is REFUSED (`VACUOUS ANCHOR`) — it claims nothing, so
-  accepting it would re-create genesis seeding through the back door.
+  accepting it would re-create genesis seeding through the back door;
+* the anchor seeds **exactly the tenant it names** — the tenant inside its v2 signature — and every
+  other tenant in the window is walked from genesis. An anchor with no tenant is a v1 signature and
+  seeds only the system partition (`""`), never a tenant's chain; over a window with no `""` chain it
+  is refused (`NO VALID ATTESTATION`). A full-event anchor whose payload tenant differs from its
+  envelope's is refused (`ANCHOR SELF-CONTRADICTS`). The same attribution applies to
+  `--expect-anchor`.
 
 A forger cannot mint an issuer-signed anchor over a tampered prefix, so an anchored verdict is no
 weaker than a genesis one *for the window it covers* — within-window truncation, insertion, and

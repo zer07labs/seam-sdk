@@ -81,6 +81,7 @@ test("chain-head attestation signature verifies, tamper does not (A14)", () => {
     attestedAt: i.attested_at,
     digestSchema: i.digest_schema,
     signature: Buffer.from(v.signature_hex, "hex"),
+    tenant: "",
   };
   assert.equal(verifyChainHeadAttestation(v.issuer_aid, att), true);
   assert.equal(

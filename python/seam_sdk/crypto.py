@@ -14,6 +14,7 @@ import uuid
 
 import json
 import time
+from typing import Any
 from typing import NamedTuple as _NamedTuple
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -910,17 +911,26 @@ def verify_chain_head_attestation(
     digest_schema: int,
     signature: bytes,
     *,
-    tenant: str = "",
+    tenant: str,
 ) -> bool:
     """Verify a chain-head attestation's Ed25519 signature against the PINNED issuer AID (A14). Returns
     ``True`` iff the signature checks out over the recomputed digest; ``False`` on any tamper. The key comes
     from ``issuer_aid`` (which the caller pinned out of band), never from the attestation itself.
 
-    ``tenant`` is the attestation's own payload ``tenant`` and selects the signed framing, mirroring
-    seam-runtime #835 step 1 exactly: an empty tenant verifies under **v1 only**; a non-empty tenant under
-    **v2, else v1**. The v1 fallback is required while the runtime still signs v1 with the tenant stamped
-    outside the signature (until #835 step 3); it is dropped at step 4. Pass the tenant whenever the
-    attestation carries one — omitting it verifies v1 only, so a v2 attestation would come back ``False``.
+    ``tenant`` is the attestation's own payload ``tenant`` and selects exactly one signed framing,
+    mirroring seam-runtime #835 step 4 (strict, no fallback): an empty tenant verifies under **v1 only**
+    (the system partition; a v2 signature over ``""`` is refused), and a non-empty tenant under **v2
+    only**, so the tenant is always inside the signature and relabelling it breaks verification. A v1
+    attestation carrying a non-empty tenant — what the runtime minted before #835 step 3 — returns
+    ``False``; there is no grace period and no toggle.
+
+    ``tenant`` is **required** (keyword-only, no default): pass the attestation's own ``tenant``, or call
+    :func:`verify_chain_head_attestation_message`, which takes every field — the tenant included — from
+    the ``ChainHeadAttestation`` message itself. ``tenant=""`` is still a valid, explicit answer: it names
+    the system partition and selects v1. There is deliberately no default, because a defaulted ``""``
+    let a caller who dropped the argument verify the v1 signature alone and never look at the tenant the
+    attestation carries on the wire, so a v1 attestation relabelled to a tenant came back ``True``.
+    Omitting it raises ``TypeError``.
     """
     # An out-of-range integer is tampered input, not a caller bug, and this function's whole contract
     # is that tampered input returns ``False``. ``struct.pack`` raises ``struct.error`` on it, and the
@@ -1017,7 +1027,32 @@ def verify_chain_head_attestation(
         except Exception:
             return False
 
-    return (bool(tenant) and under(tenant)) or under(None)
+    return under(tenant) if tenant else under(None)
+
+
+def verify_chain_head_attestation_message(issuer_aid: str, attestation: Any) -> bool:
+    """Verify a ``ChainHeadAttestation`` **message** (the ``seam.event.v1`` proto, or anything with its
+    fields) against the PINNED ``issuer_aid``, taking every signed field — ``tenant`` included — from the
+    artifact itself, so the framing is always the one its own tenant selects (seam-runtime #835 step 4).
+    Prefer it to :func:`verify_chain_head_attestation` whenever you hold the message: the keyword form
+    requires ``tenant`` too, but this one cannot be handed a tenant other than the artifact's.
+
+    The attestation must also NAME the pinned issuer: one naming another AID returns ``False`` before
+    any signature work (the pin is what makes the signature mean anything). Same contract otherwise —
+    ``False`` on any tamper, ``TypeError`` on a wrong-typed field."""
+    if not isinstance(issuer_aid, str):
+        raise TypeError(f"issuer_aid must be a str, not {type(issuer_aid).__name__}")
+    if attestation.issuer_aid != issuer_aid:
+        return False
+    return verify_chain_head_attestation(
+        issuer_aid,
+        attestation.attested_len,
+        attestation.attested_head,
+        attestation.attested_at,
+        attestation.digest_schema,
+        attestation.signature,
+        tenant=attestation.tenant,
+    )
 
 
 # ── call_sig v3 (`seam-authorize-call-v3`, seam-runtime #1125 / #1059) ───────────────────────────────

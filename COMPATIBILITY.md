@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:322`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:371`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -121,7 +121,7 @@ mismatch cannot ship.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1335-1357`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1384-1406`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -320,6 +320,24 @@ comment — `.github/workflows/ci.yml:539-540` runs `scripts/check-independence.
   `schema_version = 1` while carrying any digest-covered column (wire tags 10–13) is refused as a
   **DOWNGRADE** — v1 has no stream-recomputable digest, so relabelling a v3 record as v1 is the one
   direction the recompute cannot catch by construction.
+- **Tenant binding of attestations — strict since seam-runtime #835 step 4.** An attestation's payload
+  `tenant` must equal its envelope's, and its signature must verify under the one framing that tenant
+  selects: v2 (tenant signed) for a named tenant, v1 for the empty system partition, with no fallback,
+  grace flag or toggle. The same rule holds in Python `verify_chain_head_attestation` and TS
+  `verifyChainHeadAttestation`, where the tenant is a **required** caller argument (Python keyword-only
+  `tenant=`, TS `tenant` on the attestation object; leaving it off raises `TypeError`, and is a type
+  error in TS too). It used to default to `""`, which checked the v1 framing alone and let a v1
+  attestation relabelled to a tenant verify; with no default, that bypass is gone. Pass the
+  attestation's own tenant (`""` names the system partition), or hand over the message itself:
+  Python's `verify_chain_head_attestation_message(issuer_aid, attestation)` takes every field, the
+  tenant included, from the `ChainHeadAttestation` message, and in TS the generated message satisfies
+  the parameter and always carries `tenant`. **Consequence: offline verification of pre-step-3 history now fails.**
+  Every tenant attestation the runtime minted before #835 step 3 is v1, so any export, evidence bundle
+  window or `GET /v1/anchors` entry containing one is refused under `--issuer` (in-stream:
+  `ATTESTATION TENANT MISMATCH` or a signature refusal; as an anchor: `ANCHOR REJECTED`). Verify such a
+  tenant from a v2 anchor onward (`--from-anchor`). An untenanted anchor seeds only the `""` partition,
+  so the old sole-tenant fallback is gone too. The runtime itself never re-verifies stored attestations,
+  so nothing breaks at runtime.
 - **Erasure certificates** — from the issuer AID alone, no Seam credential and no network call.
 - **Evidence bundles** (`bundle <DIR> --issuer <AID>`, seam-sdk#225) — the six steps of
   `verify/docs/evidence-bundle.v1.md`: manifest hashes, the anchored window, the decision's inclusion,
@@ -502,7 +520,7 @@ the rule that was always written for them. Python got the same treatment: `_uint
 **Read the `now` column as the record-digest arm.** In the chain-head **attestation** arm every one
 of these refusals was observed as `false` rather than as a thrown error, because
 `verifyChainHeadAttestation` wrapped its whole body in a catch that returned `false`
-(`const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid }, framingTenant);`, `ts/src/crypto.ts:1152`). The
+(`const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid }, framingTenant);`, `ts/src/crypto.ts:1162`). The
 distinction mattered for the `true` row in particular, where the attestation arm showed no
 caller-visible change at all — `false` before, `false` after — even though what it was refusing had
 changed. **§10 closed that**: the type checks now run before the `try`, so a wrong type throws there
@@ -529,7 +547,7 @@ Python never had it. What Python had was three smaller defects in the same code:
 
 - `verify_chain_head_attestation` let that `struct.error` escape a function documented to return
   `False` on any tamper, so an out-of-range length **crashed** a caller instead of being rejected. It
-  now returns `False` (`python/seam_sdk/crypto.py:947-996`).
+  now returns `False` (`python/seam_sdk/crypto.py:957-1006`).
 - `attested_len`, `attested_at` and `digest_schema` are now required to be `int`. Previously
   `True` was digested as `1` (`bool` subclasses `int`) and `5.0` raised `struct.error` — a *third*
   answer from a function that should only ever give two. Both now raise `TypeError`.

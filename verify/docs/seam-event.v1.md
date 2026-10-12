@@ -1,16 +1,18 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ a12d415 (refreshed 2026-10-12).
-     Two movements since the prior default-branch pin (1872e48), both landed with the runtime 0.46.0 train
-     (seam-runtime#1323):
-     1. seam-runtime#835 step 1 (#1284): CHAIN_HEAD_ATTESTATION gains a v2 signed framing — the v1 frames
-        under the domain tag `seam.audit.chain-head-attestation.v2`, then `frame(tenant)`. Verifier rule
-        until step 4: empty tenant → v1 only; non-empty tenant → v2, else v1. This crate implements it
-        (seam-sdk#249); KAT vendored as `conformance/chain_head_attestation_v2_vector.json`.
-     2. seam-runtime#1293: AUDIT_ENTRY `action` is an open string set (four erasure/recompute values added;
-        this crate already treats `action` as opaque — only `chain_anchor` is matched); subject commitments
-        are keyed per tenant (`k_tenant`, replacing `k_deploy`); the audited recompute route
-        `POST /v1/erasure/subject-commitments`; the sink purge-by-commitment obligation; and the one-time drop
-        of digest fields on pre-#1293 AUTHORIZE_EVALUATED rows. None changes a byte this crate verifies.
-     Earlier movements, recorded by prior pins: EVENT_REDRIVEN (#1176), the system-partition
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 33a4e71 tracking feat/835-step4-refuse-v1-tenant (refreshed 2026-10-12).
+     Pinned AHEAD of the default branch, deliberately: seam-runtime#1303 (#835 step 4) changes this file, and
+     seam-sdk's verifier ships its step-4 counterpart (seam-sdk#255, #257) alongside it. The exception ends
+     itself when #1303 squash-merges (the file becomes byte-identical on both refs). Movements relative to
+     the prior default-branch pin (a12d415, the runtime 0.46.0 train):
+     1. seam-runtime#835 step 4: §CHAIN_HEAD_ATTESTATION's verifier rule is strict — empty tenant → v1 only
+        (a v2 signature over "" is refused), non-empty tenant → v2 only (the v1 fallback is gone). The reader
+        obligations now refuse an empty payload tenant under a named envelope (formerly "tenant-unbound"),
+        with or without strict verification; clause (a) requires the signature to verify under the one
+        framing the tenant selects; clause (f0) drops the untenanted anchor's sole-tenant fallback — an
+        untenanted anchor is v1 and seeds only the "" partition. This crate implements all of it.
+     #1303 now has runtime main merged in, so this copy also carries seam-runtime#1293's text verbatim, as
+     the prior pin a12d415 does; the movement above is the only difference.
+     Earlier movements, recorded by prior pins: #835 step 1's v2 framing (KAT vendored as
+     `conformance/chain_head_attestation_v2_vector.json`), EVENT_REDRIVEN (#1176), the system-partition
      CHAIN_HEAD_ATTESTATION (#1205/#1196), the #802/#804 commitment note, the `tenant_seq` cutoff and the
      tenant-tag producer rule (#903/#1084), tag 25 `tenant_seq` (#973) and AUTHORIZE_EVALUATED tag 11
      `subject_digests` (#715). -->
@@ -156,11 +158,12 @@ ChainHeadAttestation {                     // payload at SeamEvent tag 22
                           // prefix (2 = A14 v2, 3 = B3 v3) — the downgrade guard, bound into the
                           // signature. A bound, not a description: see below.
   signature:     bytes    // Ed25519 over the signed framing below
-  tenant:        string   // (tag 7, U-RT-3 Phase 2) which tenant's chain this attests. Empty on
-                          // attestations minted before this field existed. NOT YET part of the
-                          // signed framing (see below); an in-stream reader attributes
-                          // an attestation to a tenant via the enclosing envelope's own `tenant` until
-                          // U-RT-3 Phase 4 binds this field into the signature.
+  tenant:        string   // (tag 7, U-RT-3 Phase 2) which tenant's chain this attests; "" for the
+                          // system partition. Selects the signed framing (see below): non-empty ⇒
+                          // v2, which signs it (the runtime mints v2 since #835 step 3); "" ⇒ v1.
+                          // Since #835 step 4 a verifier accepts no other combination, so a
+                          // non-empty value is always a signed claim. An in-stream reader also
+                          // requires it to equal the enclosing envelope's `tenant` (see below).
 }
 ```
 
@@ -170,15 +173,17 @@ during **authenticity verification under a pinned issuer** (`seam-verify chain -
 (a) below). Without `--issuer` this field, like every other payload field authenticity inspects (b)–(d),
 is opaque bytes the tool never interprets — integrity checking binds an attestation to a tenant only via
 the enclosing envelope, exactly as it always has. Under `--issuer`: a reader MUST prefer the payload's
-own `tenant` when non-empty, and MUST refuse the attestation outright if it disagrees with the enclosing
-envelope's `tenant` — one of the two is a lie, and a reader that picks whichever field it happens to
-read first can be steered to the wrong tenant's coverage. A payload `tenant` empty while the envelope's
-is not (an attestation minted between U-RT-1 and Phase 2) is accepted on the envelope alone — its
-signature and head-at-position still bind it to a real chain — but MUST be counted and reported as
-tenant-unbound, and a caller that has opted into strict verification MUST refuse a chain carrying any.
+own `tenant`, and MUST refuse the attestation outright if it differs from the enclosing envelope's
+`tenant` — one of the two is a lie, and a reader that picks whichever field it happens to read first can
+be steered to the wrong tenant's coverage. **Since #835 step 4 this includes a payload `tenant` that is
+empty while the envelope's is not** (an attestation minted between U-RT-1 and Phase 2, formerly accepted
+as "tenant-unbound" and refused only under strict verification): it is refused unconditionally, because
+its signature (v1) never named the tenant whose chain it is attributed to.
 
 **Signed framing** (over the 32-byte SHA-256 **digest**, never the preimage). Two framings. **v1** —
-`tenant` is not signed; every attestation the runtime mints today is v1:
+`tenant` is not signed. The runtime mints v1 for the system partition (`tenant == ""`) only; it minted it
+for every partition before #835 step 3, and since step 4 a v1 signature is accepted only with an empty
+`tenant`:
 
 ```
 signature = Ed25519( SHA256(
@@ -188,7 +193,9 @@ signature = Ed25519( SHA256(
 ```
 
 **v2** (#835) — the v1 frames under a new domain tag, then `tenant`. Only ever minted over a non-empty
-`tenant`; the system partition (`tenant == ""`) stays v1:
+`tenant`; the system partition (`tenant == ""`) stays v1. **Since #835 step 3 every tenant attestation
+the runtime mints is v2**, so its `signature` bytes differ from what v1 would produce for the same fields
+and a v1-only verifier rejects it:
 
 ```
 signature = Ed25519( SHA256(
@@ -199,13 +206,17 @@ signature = Ed25519( SHA256(
 ```
 
 KAT: `chain_head_attestation_v2` in `crates/seam-client/tests/conformance_vectors_extended.json` (the
-shared v1 block in `conformance_vectors.json` is unchanged). **Verifier rule (#835 step 1, in force until
-step 4):** empty `tenant` → v1 only; non-empty `tenant` → v2, **else v1**. The v1 fallback is required:
-every attestation minted before the producer switches (step 3) is v1 with `tenant` outside the signature,
-so a verifier that demanded v2 for a non-empty `tenant` would reject all of them as forged. Step 4 drops
-the fallback (a v1 signature with a non-empty `tenant` is then refused) and is the step that actually
-binds the tenant. Rollout order: runtime verifier (step 1) → seam-sdk and seam-connectors verifiers
-(step 2) → runtime signs v2 (step 3) → step 4.
+shared v1 block in `conformance_vectors.json` is unchanged, and verifies with its empty `tenant`).
+**Verifier rule (#835 step 4 — strict, no fallback):** the attestation's own `tenant` selects exactly one
+framing. Empty `tenant` → **v1 only** (a v2 signature over `""` is refused; v2 is never minted over an
+empty tenant). Non-empty `tenant` → **v2 only**: a v1 signature carrying a non-empty `tenant` is refused,
+because its `tenant` sits outside the signature and could have been relabelled. There is no grace period
+and no toggle. **Consequence for history:** a tenant attestation minted before step 3 (v1, with or without
+a payload `tenant`) no longer verifies, so a window or bundle containing one fails authenticity; verify
+history from a v2 anchor onward. The party verify route (`VerifyPartyAttestation`) looks the party's key
+up under this same signed `tenant`, so its partition is never a caller-chosen selector. Rollout order:
+runtime verifier accepts v2 (step 1) → seam-sdk and seam-connectors verifiers (step 2) → runtime signs v2
+(step 3) → every verifier refuses v1 for a non-empty tenant (step 4).
 
 **Semantics — a true statement about a prefix.** An attestation asserts: *the entry at position
 `attested_len` carries checksum `attested_head`, and the issuer said so.* The chain may advance between the
@@ -243,7 +254,7 @@ that may be tenant-less on the wire. It exists because a whole-chain evidence bu
 partition and a verifier under `--issuer` requires a covering attestation for **every** partition in the
 window, `""` included — an unattested system partition is indistinguishable from a fabricated one. A reader
 treats it exactly as any tenant's: payload `""` agreeing with envelope `""` is agreement, **not** the
-tenant-unbound case above (so strict verification accepts it). The system partition is attested but **never
+refused empty-payload case above, and it verifies under v1. The system partition is attested but **never
 anchored** (`chain_anchor` is per tenant, `audit-anchor.md`) and has no `--from-anchor` scoped bundle.
 
 **Verification** (`seam-verify chain --issuer <AID>`): (a) every `CHAIN_HEAD_ATTESTATION` verifies against
@@ -251,7 +262,8 @@ the **pinned** issuer AID (a mismatch is refused before any signature work — d
 attestation's own `issuer_aid` would let a forgery verify against its forger), AND its `attested_head`
 equals the running head after `attested_len` chained links (an authentic attestation replayed into a
 fabricated chain dies on this position check) — **and, since U-RT-3 Phase 3, its payload `tenant` MUST
-agree with its envelope's, per "Reader obligations on `tenant`" above**; (b) for every `DECISION_SEALED`, recompute the record
+equal its envelope's, per "Reader obligations on `tenant`" above, and (since #835 step 4) its signature
+MUST verify under the one framing that `tenant` selects**; (b) for every `DECISION_SEALED`, recompute the record
 digest (spec §Record digest) from its payload and compare it to the event's `digest` (tag 19) — a
 mismatch is a **payload rewrite** (a structural column was changed after sealing; the chain link still
 hashes, but the payload no longer matches it); (c) **a `schema_version >= 2` `DECISION_SEALED` that lacks
@@ -318,10 +330,10 @@ above, supplied out of band — e.g. one element of the public `GET /v1/anchors`
   several anchors, **at most one per tenant**, each attributed to the tenant it names (its own payload
   `tenant` since Phase 2, or the envelope's when the anchor is loaded as a full event). An anchor naming
   a tenant absent from the window ⇒ REFUSE: the operator asked for a start the window does not contain,
-  and silently dropping it would verify a start nobody chose. An anchor minted before Phase 3 (no
-  `tenant` at all) falls back to the window's own sole tenant only when that fallback is unambiguous —
-  exactly one tenant present; two anchors naming the same tenant, or an untenanted anchor against a
-  multi-tenant window, is a usage error, refused loudly rather than guessed at silently.
+  and silently dropping it would verify a start nobody chose. Two anchors naming the same tenant are a
+  usage error. An anchor with no `tenant` (minted before Phase 3, or the system partition's) is a v1
+  signature and seeds **only** the `""` partition (#835 step 4): the former fallback to the window's
+  sole tenant is gone, since it seeded a tenant chain from a signature that never named that tenant.
 - **Note — accepted-restart points in the production chain (#1009).** A verifier or tracker that assumes
   one unbroken chain per `tenant` WILL see breaks in production history that are not forks or loss: the
   legacy global-chained prefix (`audit_entry.tenant_seq` NULL — the audit column, not the wire field), a tenant whose per-tenant chain re-roots at genesis

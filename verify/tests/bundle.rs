@@ -1,11 +1,16 @@
 //! `seam-verify bundle` against **real** `seam-evidence-bundle.v1` directories.
 //!
 //! `fixtures/evidence-bundle/` was written by the runtime's own export path
-//! (`seamd::Seam::export_evidence_bundle`, seam-runtime@e75528f, the 0.44.0 release on main) running
-//! the scenario of the runtime's `crates/seam-verify/tests/bundle.rs` `fixture()`: seal `d0`, attest
-//! (the anchor), seal the target `d1` with an inline context, seal `d2`, attest (the cover). Issuer
-//! seed 7×32. Every directory also verifies under the runtime's internal oracle
-//! (`seam-verify-internal bundle`), so a disagreement here is a disagreement between two verifiers.
+//! (`seamd::Seam::export_evidence_bundle`, seam-runtime@460d163 on `feat/835-step4-refuse-v1-tenant`,
+//! #1303 — which signs tenant attestations v2, #835 step 3) running the scenario of the runtime's
+//! `crates/seam-verify/tests/bundle.rs` `fixture()`: seal `d0`, attest (the anchor), seal the target
+//! `d1` with an inline context, seal `d2`, attest (the cover). Issuer seed 7×32. Re-exported for #835
+//! step 4: the previous export (seam-runtime@e75528f, 0.44.0) carried v1 tenant attestations, which a
+//! step-4 verifier refuses. The commitment, context and policy members are byte-identical to that
+//! export; the anchor, events, binding and manifest moved with the v2 signatures (and the record's
+//! freshly-encrypted `ciphertext_digest`). Every directory also verifies under the runtime's internal
+//! oracle (`seam-verify-internal bundle`) at that commit, so a disagreement here is a disagreement
+//! between two verifiers.
 //!
 //! * `full/` — `--disclose context,policy`: all seven files.
 //! * `minimal/` — no disclosures: context and policy withheld with the exporter's reason.
@@ -361,6 +366,135 @@ fn step_2_wrong_anchor_and_broken_window_are_refused() {
                     replace_and_rehash(d, "events.jsonl", kept.into_bytes());
                 }),
                 "step 2:",
+            ),
+        ],
+    );
+}
+
+// ── #835 step 4: the anchor seeds exactly the tenant it names, and a window is one tenant's ──────
+
+/// `anchor.json` re-signed by the fixture issuer (seed 7×32) over the same `(len, head, at, schema)`,
+/// as a v2 attestation over `tenant` — or, for `""`, as an untenanted v1 one (no `tenant` key). Both
+/// are genuine signatures by the pinned key, so step 2's ANCHOR REJECTED never fires: what is under
+/// test is which partition the anchor seeds.
+fn resigned_anchor(d: &Path, tenant: &str) -> Vec<u8> {
+    use base64::Engine;
+    use ed25519_dalek::Signer;
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let mut a = read_json(&d.join("anchor.json"));
+    let mut pre: Vec<u8> = Vec::new();
+    let mut frame = |part: &[u8]| {
+        pre.extend_from_slice(&(part.len() as u32).to_le_bytes());
+        pre.extend_from_slice(part);
+    };
+    frame(if tenant.is_empty() {
+        b"seam.audit.chain-head-attestation.v1"
+    } else {
+        b"seam.audit.chain-head-attestation.v2"
+    });
+    frame(&a["attested_len"].as_u64().unwrap().to_le_bytes());
+    frame(&b64.decode(a["attested_head"].as_str().unwrap()).unwrap());
+    frame(&a["attested_at"].as_u64().unwrap().to_le_bytes());
+    frame(&(a["digest_schema"].as_u64().unwrap() as u32).to_le_bytes());
+    frame(a["issuer_aid"].as_str().unwrap().as_bytes());
+    if !tenant.is_empty() {
+        frame(tenant.as_bytes());
+    }
+    let sig = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]).sign(&Sha256::digest(&pre));
+    a["signature"] = b64.encode(sig.to_bytes()).into();
+    let obj = a.as_object_mut().unwrap();
+    if tenant.is_empty() {
+        obj.remove("tenant");
+    } else {
+        obj.insert("tenant".into(), tenant.into());
+    }
+    serde_json::to_vec(&a).unwrap()
+}
+
+/// One chained `DECISION_SEALED` link for `tenant`, from genesis, with no payload — enough to put a
+/// chain for `tenant` in the window (only its link fields are checked at step 2's chain walk).
+fn genesis_link(seq: u64, tenant: &str) -> String {
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let genesis = [0u8; 32];
+    let digest = Sha256::digest(format!("other-{seq}").as_bytes());
+    let mut h = Sha256::new();
+    h.update(genesis);
+    h.update(digest);
+    serde_json::json!({
+        "schema_version": "seam-event.v1",
+        "event_id": format!("other#{seq}"),
+        "seq": seq,
+        "tenant": tenant,
+        "kind": "DECISION_SEALED",
+        "prev_checksum": b64.encode(genesis),
+        "digest": b64.encode(digest),
+        "checksum": b64.encode(h.finalize()),
+    })
+    .to_string()
+}
+
+#[test]
+fn step_2_an_anchor_seeds_only_its_own_tenant_and_a_window_is_one_tenants() {
+    assert_refused(
+        "full",
+        vec![
+            (
+                // Over the real window the named tenant has no anchor, so its chain walks from
+                // genesis and cannot link — refused inside the chain walk itself.
+                "v2 anchor over another tenant",
+                Box::new(|d: &Path| {
+                    let a = resigned_anchor(d, "other-tenant");
+                    replace_and_rehash(d, "anchor.json", a);
+                }),
+                "NON-GENESIS FIRST LINK",
+            ),
+            (
+                // An untenanted (v1) anchor over the same (len, head) seeds only "" (#835 step 4):
+                // the pre-step-4 sole-tenant fallback would have accepted this one.
+                "untenanted v1 anchor over the same head",
+                Box::new(|d: &Path| {
+                    let a = resigned_anchor(d, "");
+                    replace_and_rehash(d, "anchor.json", a);
+                }),
+                "NON-GENESIS FIRST LINK",
+            ),
+            (
+                // The window's only chain starts at genesis, so the walk succeeds and the anchor is
+                // left unconsumed — the guard that names the partition the anchor tried to seed.
+                "anchor for a tenant absent from a genesis window",
+                Box::new(|d: &Path| {
+                    let a = resigned_anchor(d, "other-tenant");
+                    replace_and_rehash(d, "anchor.json", a);
+                    let window = format!("{}\n", genesis_link(1, "design-partner"));
+                    replace_and_rehash(d, "events.jsonl", window.into_bytes());
+                }),
+                "the anchor seeds tenant \"other-tenant\"",
+            ),
+            (
+                "untenanted anchor over a genesis window",
+                Box::new(|d: &Path| {
+                    let a = resigned_anchor(d, "");
+                    replace_and_rehash(d, "anchor.json", a);
+                    let window = format!("{}\n", genesis_link(1, "design-partner"));
+                    replace_and_rehash(d, "events.jsonl", window.into_bytes());
+                }),
+                "the anchor seeds tenant \"\"",
+            ),
+            (
+                // A second tenant's genuine genesis chain spliced into the window: the anchored tenant
+                // still verifies, but a bundle's window is one tenant's.
+                "a second tenant in the window",
+                Box::new(|d: &Path| {
+                    let mut events = std::fs::read_to_string(d.join("events.jsonl")).unwrap();
+                    if !events.ends_with('\n') {
+                        events.push('\n');
+                    }
+                    events.push_str(&genesis_link(100, "other-tenant"));
+                    events.push('\n');
+                    replace_and_rehash(d, "events.jsonl", events.into_bytes());
+                }),
+                "the window's chained events span 2 tenants",
             ),
         ],
     );

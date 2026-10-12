@@ -156,6 +156,7 @@ test("verifyChainHeadAttestation: an out-of-range length is not accepted as its 
     attestedAt: BigInt(i.attested_at),
     digestSchema: i.digest_schema,
     signature: Buffer.from(v.signature_hex, "hex"),
+    tenant: "",
   };
 
   // The control: without this, every assertion below passes against a broken verifier.
@@ -285,6 +286,10 @@ const ATT = {
   attestedAt: BigInt(vectors.chain_head_attestation.inputs.attested_at),
   digestSchema: vectors.chain_head_attestation.inputs.digest_schema,
   signature: Buffer.from(vectors.chain_head_attestation.signature_hex, "hex"),
+  // The shared v1 KAT is the system partition's framing. Explicit, because `tenant` is required (#835
+  // step 4) — and a missing one throws TypeError, which would satisfy the type-error assertions below
+  // for the wrong reason.
+  tenant: "",
 };
 const AID = vectors.chain_head_attestation.issuer_aid;
 

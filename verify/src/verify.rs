@@ -312,47 +312,27 @@ pub fn chain_by_tenant(
 }
 
 /// Verify the hash chain from the stream alone, from an **anchored start** (spec clause (f)):
-/// `base_len`/`base_head` seed the running head in place of genesis. [`chain`] is the special case
-/// `base_len == 0, base_head == GENESIS`.
+/// `base_len`/`base_head` seed the running head of `anchor_tenant`'s chain in place of genesis; every
+/// other tenant in the window is walked from genesis. [`chain`] is the special case `base_len == 0,
+/// base_head == GENESIS`.
 ///
-/// **U-RT-1/U-RT-3 note.** This crate had exactly one running head before per-tenant chains existed,
-/// so this signature has no tenant to attribute an anchor to directly — it attributes `base_len`/
-/// `base_head` to the window's **sole** chained tenant (spec clause (f0)'s untenanted-anchor
-/// fallback), and refuses as a usage error if the window's chained events span more than one tenant
-/// (ambiguous — which tenant does this anchor seed?) or carry none at all (nothing to attribute it
-/// to; `verify_authenticity_anchored`'s zero-coverage refusal catches this downstream via its caller,
-/// same as it always did). See [`chain_by_tenant`] for the actual per-tenant walk this delegates to.
+/// **Attribution is the anchor's own signed tenant (#835 step 4).** `anchor_tenant` is the anchor's
+/// payload `tenant` — pass `&anchor.tenant` after [`verify_anchor`] accepted it. Since step 4 a
+/// non-empty tenant verifies under the v2 framing only, which signs it, so the tenant an anchor seeds
+/// is the one its issuer signed over. An untenanted anchor is a v1 signature, which never binds a
+/// tenant: it seeds **only** the `""` (system) partition. The pre-#835 fallback that attributed an
+/// untenanted anchor to the window's sole chained tenant is gone — it seeded a tenant chain from a
+/// signature that never named that tenant. An anchor whose tenant has no chained event in the window
+/// is left in [`ChainReport::unconsumed_anchors`] for the caller to refuse (spec clause (f0)).
 pub fn chain_anchored(
     events: &[Event],
+    anchor_tenant: &str,
     base_len: u64,
     base_head: &[u8],
 ) -> Result<ChainReport, String> {
     let mut anchors: BTreeMap<String, (u64, Vec<u8>)> = BTreeMap::new();
     if base_len != 0 {
-        let mut chained_tenants: Vec<&str> = events
-            .iter()
-            .filter(|e| e.is_link())
-            .map(|e| e.tenant.as_str())
-            .collect();
-        chained_tenants.sort_unstable();
-        chained_tenants.dedup();
-        match chained_tenants.as_slice() {
-            [] => {} // nothing to attribute the anchor to; the authenticity pass fails closed downstream
-            [only] => {
-                anchors.insert((*only).to_string(), (base_len, base_head.to_vec()));
-            }
-            multiple => {
-                return Err(format!(
-                    "USAGE ERROR: --from-anchor was given, but the window's chained events span {} \
-                     tenants ({}) and the anchor does not itself name one (spec clause f0) — exactly \
-                     one anchor per tenant is required, attributed by the anchor's own tenant. Split \
-                     the window per tenant, or verify from genesis and cross-check the anchor \
-                     separately.",
-                    multiple.len(),
-                    multiple.join(", ")
-                ));
-            }
-        }
+        anchors.insert(anchor_tenant.to_string(), (base_len, base_head.to_vec()));
     }
     chain_by_tenant(events, &anchors)
 }
@@ -360,7 +340,7 @@ pub fn chain_anchored(
 /// Verify the hash chain from the stream alone, from **genesis**. The common case; see
 /// [`chain_anchored`] for the general form spec clause (f) adds.
 pub fn chain(events: &[Event]) -> Result<ChainReport, String> {
-    chain_anchored(events, 0, &GENESIS)
+    chain_anchored(events, "", 0, &GENESIS)
 }
 
 // ---- the erasure certificate -----------------------------------------------------------------------
@@ -489,25 +469,25 @@ fn chain_head_attestation_payload(a: &Attestation, tenant: Option<&str>) -> [u8;
     h.finalize().into()
 }
 
-/// Does `sig` verify over `a` under the framing its payload `tenant` selects? The seam-runtime #835
-/// step-1 rule, mirrored exactly (`verify_chain_head_attestation` in `seam-trust-aitp`): an empty
-/// `tenant` verifies under **v1 only** — v2 is never minted over an empty tenant — and a non-empty
-/// `tenant` verifies under **v2, else v1**.
+/// Does `sig` verify over `a` under the ONE framing its payload `tenant` selects? The seam-runtime
+/// #835 step-4 rule, mirrored exactly (`verify_chain_head_attestation` in `seam-trust-aitp`): an empty
+/// `tenant` verifies under **v1 only** (the system partition — v2 is never minted over an empty
+/// tenant, and a v2 signature over `""` is refused), and a non-empty `tenant` under **v2 only**, so the
+/// tenant is always inside the signature and relabelling it breaks verification.
 ///
-/// The v1 fallback is not optional. Every attestation minted before the runtime starts signing v2
-/// (#835 step 3) is v1 with `tenant` stamped outside the signature, so demanding v2 for a non-empty
-/// tenant would report every one of them as forged. It goes in step 4, together with the runtime's.
+/// There is no fallback, grace period or toggle. A v1 attestation carrying a non-empty `tenant` —
+/// what the runtime minted for every tenant before #835 step 3 — is refused: its `tenant` sits outside
+/// the signature and could have been relabelled. History signed that way does not verify here; verify
+/// it from a v2 anchor onward.
 fn attestation_signature_verifies(
     vk: &ed25519_dalek::VerifyingKey,
     a: &Attestation,
     sig: &ed25519_dalek::Signature,
 ) -> bool {
     use ed25519_dalek::Verifier;
-    let under = |tenant: Option<&str>| {
-        vk.verify(&chain_head_attestation_payload(a, tenant), sig)
-            .is_ok()
-    };
-    (!a.tenant.is_empty() && under(Some(&a.tenant))) || under(None)
+    let framing = (!a.tenant.is_empty()).then_some(a.tenant.as_str());
+    vk.verify(&chain_head_attestation_payload(a, framing), sig)
+        .is_ok()
 }
 
 pub struct IssuerReport {
@@ -535,13 +515,6 @@ pub struct IssuerReport {
     /// their position is not checkable against a window that does not contain it, so they are skipped
     /// and reported here rather than silently dropped. Always `0` in genesis mode.
     pub below_window: usize,
-    /// U-RT-3 Phase 2/3. The number of valid attestations whose UNSIGNED payload `tenant` is empty
-    /// while their envelope `tenant` is not — a pre-Phase-2 attestation, accepted on the envelope
-    /// alone (there is nothing else to check it against), but counted: `--strict` refuses a stream
-    /// carrying any. An attestation whose payload `tenant` DISAGREES with its envelope outright fails
-    /// verification instead (see the attestation loop) — this field only ever counts the silent,
-    /// legacy-shaped case, never a caught mismatch.
-    pub tenant_unbound: usize,
 }
 
 /// Every v3 sub-digest is a SHA-256, so exactly this many bytes. A wire value of any other length
@@ -803,7 +776,6 @@ pub fn verify_authenticity_anchored(
     let mut below_window = 0usize;
     let mut covered_prefix = 0u64;
     let mut records_recomputed = 0usize;
-    let mut tenant_unbound = 0usize;
 
     // design-a: every v2/v3 DECISION_SEALED recomputes; a covered record with no ciphertext_digest is a
     // strip, and a v3 record missing tag 11 or 12 is a strip too — reported distinctly from a mismatch.
@@ -917,6 +889,28 @@ pub fn verify_authenticity_anchored(
         let Some(a) = e.attestation.as_ref() else {
             continue;
         };
+        // U-RT-3 Phase 3 — reader obligations on tenant, checked FIRST, before the pin and the
+        // signature, exactly where seam-runtime's own seam-verify checks it. Since #835 step 4 the
+        // payload tenant selects the one signed framing, so a relabelled or stripped tenant would also
+        // fail the signature — but checking agreement first names the actual defect (the artifact
+        // disagrees with itself) instead of a generic signature failure.
+        //
+        // The payload tenant must EQUAL the envelope's (#835 step 4). An empty payload tenant under a
+        // named envelope — an attestation minted before U-RT-3 Phase 2 — used to be accepted on the
+        // envelope's word and counted as "tenant-unbound"; it is now this same refusal, with or without
+        // `--strict`, because its v1 signature never named the tenant whose chain it is attributed to.
+        if a.tenant != e.tenant {
+            return Err(format!(
+                "ATTESTATION TENANT MISMATCH — a CHAIN_HEAD_ATTESTATION over len {} carries payload \
+                 tenant '{}', but its own envelope tenant is '{}'.\n  \
+                 The envelope is set by the transport, the payload tenant by the signer's own record \
+                 of which tenant it was attesting (and, since #835 step 4, signed); a genuine \
+                 attestation always agrees with itself. An empty payload tenant under a named \
+                 envelope (minted before U-RT-3 Phase 2) is this same refusal, with or without \
+                 --strict. Refused outright, never silently trusted on either field alone.",
+                a.attested_len, a.tenant, e.tenant
+            ));
+        }
         // The pin, before any signature work (as for the erasure cert): the attestation must NAME one of
         // the AIDs the caller pinned. An issuer outside the pinned set = FAIL, exactly as a single-pin
         // mismatch always was.
@@ -936,11 +930,13 @@ pub fn verify_authenticity_anchored(
             .map_err(|_| "attestation signature is not 64 bytes".to_string())?;
         if !attestation_signature_verifies(vk, a, &Signature::from_bytes(&sig)) {
             return Err(format!(
-                "a CHAIN_HEAD_ATTESTATION over len {} does not verify against the pinned issuer's key \
-                 under any signed framing this verifier knows (v1, v2). The attestation is forged, or its \
-                 (len, head, tenant) was altered after signing — or it was signed under a framing newer \
-                 than this verifier, in which case upgrade seam-verify before concluding forgery.",
-                a.attested_len
+                "a CHAIN_HEAD_ATTESTATION over len {} (tenant {:?}) does not verify against the pinned \
+                 issuer's key under the one framing its tenant selects (v1 for the empty tenant, v2 for \
+                 a named one — #835 step 4, no fallback). The attestation is forged, or its (len, head, \
+                 tenant) was altered after signing, or it is a v1 signature carrying a tenant (minted \
+                 before #835 step 3: verify from a v2 anchor onward) — or it was signed under a framing \
+                 newer than this verifier, in which case upgrade seam-verify before concluding forgery.",
+                a.attested_len, a.tenant
             ));
         }
         // spec clause (d), second sentence, checked FIRST and unconditionally — before any window
@@ -960,27 +956,6 @@ pub fn verify_authenticity_anchored(
                  that authenticates a stream.",
                 a.issuer_aid
             ));
-        }
-
-        // U-RT-3 Phase 3 — reader obligations on tenant. Checked after the signature (so a mismatch is
-        // reported about a proven-genuine artifact) and before position work, since it is a property of
-        // the attestation itself, not of where it sits in the chain.
-        if !a.tenant.is_empty() && a.tenant != e.tenant {
-            return Err(format!(
-                "ATTESTATION TENANT MISMATCH — a CHAIN_HEAD_ATTESTATION over len {} carries payload \
-                 tenant '{}', but its own envelope tenant is '{}'.\n  \
-                 The signature is authentic, so this is an issuer-signed attestation whose two tenant \
-                 fields disagree — the envelope is set by the transport, the payload tenant by the \
-                 signer's own record of which tenant it was attesting; a genuine attestation always \
-                 agrees with itself. Refused outright, never silently trusted on either field alone.",
-                a.attested_len, a.tenant, e.tenant
-            ));
-        }
-        if a.tenant.is_empty() && !e.tenant.is_empty() {
-            // Pre-Phase-2 attestation: no payload tenant to check, so the envelope alone is trusted —
-            // there is nothing else it could be verified against. `--strict` refuses a stream carrying
-            // any (spec clause added by U-RT-3 Phase 3), the same way it already refuses `unverifiable`.
-            tenant_unbound += 1;
         }
 
         attestations += 1;
@@ -1105,7 +1080,6 @@ pub fn verify_authenticity_anchored(
         records_recomputed,
         covering,
         below_window,
-        tenant_unbound,
     })
 }
 
@@ -1198,13 +1172,15 @@ pub fn verify_anchor(anchor: &Attestation, pinned_aids: &[String]) -> Result<(),
         .try_into()
         .map_err(|_| "anchor signature is not 64 bytes".to_string())?;
     if !attestation_signature_verifies(vk, anchor, &Signature::from_bytes(&sig)) {
-        return Err(
-            "the anchor's signature does not verify against the pinned issuer's key under any signed \
-             framing this verifier knows (v1, v2). It is forged, or its (len, head, tenant) was altered \
-             after signing — or it was signed under a framing newer than this verifier, in which case \
-             upgrade seam-verify before concluding forgery."
-                .to_string(),
-        );
+        return Err(format!(
+            "the anchor's signature (tenant {:?}) does not verify against the pinned issuer's key under \
+             the one framing its tenant selects (v1 for the empty tenant, v2 for a named one — #835 \
+             step 4, no fallback). It is forged, or its (len, head, tenant) was altered after signing, \
+             or it is a v1 signature carrying a tenant (minted before #835 step 3: use a v2 anchor) — \
+             or it was signed under a framing newer than this verifier, in which case upgrade \
+             seam-verify before concluding forgery.",
+            anchor.tenant
+        ));
     }
 
     // spec clause (f2): a vacuous anchor (attested_len == 0) claims the empty prefix — a conforming
@@ -1237,13 +1213,12 @@ pub fn verify_anchor(anchor: &Attestation, pinned_aids: &[String]) -> Result<(),
 /// [`verify_anchor`] BEFORE it reaches here, exactly as `chain_anchored`'s start anchor is.
 /// `expect` need not appear anywhere in `events` — the whole point is that it did not have to.
 ///
-/// **Tenant attribution** mirrors [`chain_anchored`]'s own untenanted-anchor fallback (spec
-/// clause (f0)): `expect.tenant` (U-RT-3 Phase 2, unsigned but checked for internal
-/// agreement everywhere else this crate reads it) names the tenant directly when non-empty; a
-/// legacy anchor with no payload tenant is attributed to `report`'s sole tenant, and refused as
-/// a usage error if the report spans more than one or none at all (ambiguous either way — same
-/// division of labour `chain_anchored` already draws between a caller mistake and a
-/// verification failure).
+/// **Tenant attribution** is the anchor's own signed tenant, exactly as for [`chain_anchored`]'s start
+/// anchor (#835 step 4): `expect.tenant` names the tenant directly, and since [`verify_anchor`]
+/// accepted it, a non-empty one is inside its v2 signature. An untenanted anchor is a v1 signature and
+/// is attributed to the `""` (system) partition only — the pre-#835 fallback to the window's sole
+/// tenant is gone, for the same reason it is gone from [`chain_anchored`]: it attributed a tenant's
+/// chain to a signature that never named that tenant.
 ///
 /// **The length comparison.** `report.tenants[tenant]`'s covered length is `base_len + links` —
 /// the absolute position its own chain walk actually reached, by construction identical to
@@ -1264,37 +1239,7 @@ pub fn verify_anchor(anchor: &Attestation, pinned_aids: &[String]) -> Result<(),
 /// failed, the same `below_window` posture `verify_authenticity_anchored` already has for that
 /// case — and an unanchored tenant's `base_len` is always `0`, so this is unreachable there.
 pub fn check_not_truncated(report: &ChainReport, expect: &Attestation) -> Result<(), String> {
-    let tenant: &str = if !expect.tenant.is_empty() {
-        &expect.tenant
-    } else {
-        let names: Vec<&String> = report.tenants.keys().collect();
-        match names.as_slice() {
-            [] => {
-                return Err(
-                    "USAGE ERROR: --expect-anchor names no tenant (a legacy, pre-Phase-2 \
-                     attestation) and the verified window has no chained event for any tenant \
-                     to attribute it to."
-                        .to_string(),
-                );
-            }
-            [one] => one.as_str(),
-            multiple => {
-                return Err(format!(
-                    "USAGE ERROR: --expect-anchor names no tenant (a legacy, pre-Phase-2 \
-                     attestation), but the verified window spans {} tenants ({}) — exactly one \
-                     anchor per tenant is required, attributed by the anchor's own tenant. \
-                     Split the window per tenant, or supply an anchor carrying its tenant field.",
-                    multiple.len(),
-                    multiple
-                        .iter()
-                        .map(|s| s.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
-            }
-        }
-    };
-
+    let tenant = expect.tenant.as_str();
     let tc = report.tenants.get(tenant);
     let covered = tc.map(|c| c.base_len + c.links as u64).unwrap_or(0);
     if expect.attested_len > covered {
@@ -1364,7 +1309,7 @@ mod tests {
                 "5169458689b92af81fbbfbd1bd07aff82cb68993919837232a1b54204a0e565e\
                  e58791b607c40a48dae6a9dbf8c6129e7028fdbd0e14095d7a4c0a99c775a90a",
             ),
-            // UNSIGNED (U-RT-3 Phase 2) — not part of the preimage this KAT pins, so unset here.
+            // Empty: this is the v1 KAT, and an empty tenant selects the v1 framing (step 4).
             tenant: String::new(),
         };
         let key = aid_to_key(issuer_aid).unwrap();
@@ -1393,7 +1338,7 @@ mod tests {
                 "5169458689b92af81fbbfbd1bd07aff82cb68993919837232a1b54204a0e565e\
                  e58791b607c40a48dae6a9dbf8c6129e7028fdbd0e14095d7a4c0a99c775a90a",
             ),
-            // UNSIGNED (U-RT-3 Phase 2) — not part of the preimage this KAT pins, so unset here.
+            // Empty: this is the v1 KAT, and an empty tenant selects the v1 framing (step 4).
             tenant: String::new(),
         };
         att.attested_len += 1; // one field off
@@ -1493,10 +1438,9 @@ mod tests {
         }
     }
 
-    /// The transition rule (#835 steps 1-3): a v1 signature with a non-empty tenant stamped outside it —
-    /// every production attestation today — still verifies, via the v1 fallback.
-    #[test]
-    fn a_v1_attestation_with_a_tenant_still_verifies_until_step_4() {
+    /// The shared v1 conformance vector (`conformance/vectors.json`'s `chain_head_attestation`), whose
+    /// tenant is empty — the system partition's framing.
+    fn v1_vector() -> (ed25519_dalek::VerifyingKey, Attestation) {
         let issuer_aid = "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw";
         let att = Attestation {
             attested_len: 1000,
@@ -1508,9 +1452,44 @@ mod tests {
                 "5169458689b92af81fbbfbd1bd07aff82cb68993919837232a1b54204a0e565e\
                  e58791b607c40a48dae6a9dbf8c6129e7028fdbd0e14095d7a4c0a99c775a90a",
             ),
-            tenant: "acme".into(),
+            tenant: String::new(),
         };
         let vk = ed25519_dalek::VerifyingKey::from_bytes(&aid_to_key(issuer_aid).unwrap()).unwrap();
+        (vk, att)
+    }
+
+    /// #835 step 4 (strict, mirroring the runtime's `conformance_drift` test): the v1 vector verifies
+    /// with its empty tenant, and relabelled to a non-empty tenant it is REFUSED — a v1 signature
+    /// carries the tenant outside the signature, so there is no fallback for it.
+    #[test]
+    fn the_v1_vector_is_refused_under_a_non_empty_tenant() {
+        let (vk, mut att) = v1_vector();
+        assert!(attestation_signature_verifies(&vk, &att, &sig_of(&att)));
+        att.tenant = "acme".into();
+        assert!(
+            !attestation_signature_verifies(&vk, &att, &sig_of(&att)),
+            "a v1 signature carrying a non-empty tenant must be refused (#835 step 4)"
+        );
+    }
+
+    /// #835 step 4: a v2 signature over the EMPTY tenant (never minted; hand-rolled here with the
+    /// vector's own seed, 07×32) is refused — an empty tenant selects v1 only. The v1 signature over
+    /// the same inputs verifies, so the refusal is the framing, not the key.
+    #[test]
+    fn a_v2_signature_over_the_empty_tenant_is_refused() {
+        use ed25519_dalek::Signer;
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
+        let (vk, mut att) = v1_vector();
+        assert_eq!(sk.verifying_key(), vk, "seed 07×32 is the vector's issuer");
+        att.signature = sk
+            .sign(&chain_head_attestation_payload(&att, Some("")))
+            .to_bytes()
+            .to_vec();
+        assert!(!attestation_signature_verifies(&vk, &att, &sig_of(&att)));
+        att.signature = sk
+            .sign(&chain_head_attestation_payload(&att, None))
+            .to_bytes()
+            .to_vec();
         assert!(attestation_signature_verifies(&vk, &att, &sig_of(&att)));
     }
 
