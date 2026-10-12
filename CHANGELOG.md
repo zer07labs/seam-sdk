@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.46.1 — 2026-10-12
+
 ### Added — chain-head attestation v2: the tenant inside the signature (seam-runtime #835 step 1, #144 part 2)
 - **`seam-verify`, Python `verify_chain_head_attestation` and TS `verifyChainHeadAttestation` verify the
   v2 framing** — the v1 frames under `seam.audit.chain-head-attestation.v2`, then `frame(tenant)` — so
