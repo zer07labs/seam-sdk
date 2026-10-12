@@ -113,8 +113,8 @@ jobs:
       - name: is the declared version installable?
         env:
           # ONE credential for both repositories: the checker reads `internal` AND `partner` with
-          # whichever of these two resolves. There is no partner-specific secret. Only the first
-          # is live today — the Cargo fallback answers 401 on both repositories (seam-sdk#251).
+          # whichever of these two resolves. There is no partner-specific secret. Both GitHub
+          # secrets are live; only Doppler's copy of the Cargo token is stale (seam-sdk#251).
           CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
           CARGO_REGISTRIES_ZER07LABS_TOKEN: ${{ secrets.CARGO_REGISTRIES_ZER07LABS_TOKEN }}
           # `gh` reads GH_TOKEN; REPO is passed explicitly rather than derived from the checkout's

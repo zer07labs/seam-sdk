@@ -24,8 +24,10 @@ the public contract, never on the runtime internals.
 > runtime's version and therefore **cannot express its own semver** — a breaking change here can ship
 > as a patch. That document carries the verified compatibility rows, the permanently known-bad
 > bands, which languages are actually published (two of five), the derived dependency floors, and —
-> importantly — what "independently verifiable" does **not** cover: the published verifier cannot
-> detect a truncated chain, and does not implement the commitment digest.
+> importantly — what "independently verifiable" does **not** cover: the published verifier detects a
+> truncated chain only when you supply a later anchor (`chain --issuer … --expect-anchor`), and checks the
+> commitment digest (`seam-commitment-digest:v2`) only inside an evidence bundle (`bundle`). It has no
+> standalone Commitment check.
 
 ## Architecture
 

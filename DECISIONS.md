@@ -1777,8 +1777,9 @@ obligation" did not apply: under the owner's pre-GA no-backward-compatibility po
 recreated, so no v1 record survives to be verified, and **v1 is deleted from all five shims, not
 dual-verified**. The six coordinated edits were made together, against the runtime's reference vector.
 
-`verify/` is **not** a sixth mirror — it does not implement the commitment digest at all, and
-`python/tests/test_framing_rationale_is_documented.py` now guards against a doc claiming otherwise.
+`verify/` was **not** a sixth mirror when this was recorded. *Superseded since seam-sdk#225:*
+`verify/` implements `seam-commitment-digest:v2` in `verify/src/commitment.rs`, as step 4 of `bundle`,
+and `python/tests/test_framing_rationale_is_documented.py` now asserts that it does.
 
 **Status:** RECORDED. Java and Kotlin gained the length-prefix rationale they lacked (Go, Python and
 TypeScript already had it), and a grep-guard keeps all five honest.

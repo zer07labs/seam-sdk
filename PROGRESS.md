@@ -3978,7 +3978,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:994`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1337`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -4592,7 +4592,7 @@ resolution) · `.github/workflows/publish.yml:747-810` (`promote-partner`) ·
     `deliberately-unpublished`).
   - A live `--report` run then exited 0 with the suppression `::warning::` and made no GitHub
     writes.
-- **Out of scope:** the dead Cargo fallback token is filed as #251.
+- **Out of scope:** #251. It first said the Cargo fallback token was dead, and was corrected the same day: only Doppler's copy is stale, and the GitHub secret is live.
 
 ## Finalization: whole-feature verify (2026-10-12)
 - **Round 1, GAPS. Nothing blocked the merge; six items:**
@@ -4602,7 +4602,8 @@ resolution) · `.github/workflows/publish.yml:747-810` (`promote-partner`) ·
   3. The partner coverage limit was not recorded.
   4. A mutant survived: the internal close notice was not pinned to OPEN.
   5. Untested cells: a live `--report` partner run, and partner suppression vs an internal drift.
-  6. The workflow comment implied the Cargo fallback works.
+  6. The workflow comment implied the Cargo fallback works. *(This finding was itself wrong, and
+     the original comment was right. See #251, corrected 2026-10-12.)*
 - **Fixes:**
   - curl output is decoded with `errors="replace"`, so a non-UTF-8 body is a named "not JSON"
     InfraError on both registries.

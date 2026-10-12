@@ -6,6 +6,12 @@
 > [seam-sdk#51](https://github.com/zer07labs/seam-sdk/pull/51).
 > One plan, one home — if you copy this into `seam-runtime`, delete it here and leave a pointer.
 > **Anchors were true on 2026-08-23; re-verify before editing.**
+>
+> **DONE (2026-08-26).** seam-runtime#423 closed. The spec shipped as `seam-commitment-digest.v1.md`
+> and became `seam-runtime/docs/specs/seam-commitment-digest.v2.md` in runtime 0.44.0. This page is
+> kept as a record. Its scope
+> note below is **superseded**: `verify/` now implements `seam-commitment-digest:v2` inside
+> `bundle` (seam-sdk#225).
 
 ---
 
@@ -90,5 +96,5 @@ cross-repo half automatically.
 - Five byte-identical ports as cross-language conformance evidence.
 - All five now assert every field in the tuple is bound, plus injectivity across field boundaries —
   so the properties the spec would state are already test-enforced on the consumer side.
-- Scope note: `seam-sdk/verify/` does **not** implement this digest. It is not a sixth mirror, and
-  any doc saying the published verifier checks commitment digests is wrong.
+- Scope note (as of 2026-08-23; **superseded** — see the header): `seam-sdk/verify/` did **not**
+  implement this digest then. Since seam-sdk#225 it does, as step 4 of `bundle`.

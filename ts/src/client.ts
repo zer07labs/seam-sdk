@@ -979,8 +979,10 @@ export class SeamClient {
    * must be in `[0.0, 1.0]`; out-of-range is the server's `INVALID_ARGUMENT` (MACP refuses it —
    * `macp-modes-0.5.0 src/mode/decision.rs:166-171`), deliberately not mirrored client-side.
    *
-   * `rationaleRef` is a `sha256:<hex>` context ref. It is accepted and recorded on the request
-   * path only — it is **NOT YET SEALED**.
+   * `rationaleRef` is a `sha256:<hex>` context ref. Since runtime 0.44.0 it is **sealed**: every
+   * accepted evaluation's `rationaleRef` (and whether a `confidence` was stated at all) is bound
+   * into the Commitment's explanation under `seam-explanation-digest:v1`, which
+   * `seam-commitment-digest:v2` covers. `verifyDecision` recomputes it locally.
    */
   async submitEvaluation(
     sessionId: string,

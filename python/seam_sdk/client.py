@@ -618,8 +618,10 @@ class SeamClient:
         (MACP refuses it — ``macp-modes-0.5.0 src/mode/decision.rs:166-171``), deliberately not
         mirrored client-side.
 
-        ``rationale_ref`` is a ``sha256:<hex>`` context ref. It is accepted and recorded on the
-        request path only — it is **NOT YET SEALED**.
+        ``rationale_ref`` is a ``sha256:<hex>`` context ref. Since runtime 0.44.0 it is **sealed**:
+        every accepted evaluation's ``rationale_ref`` (and whether a ``confidence`` was stated at
+        all) is bound into the Commitment's explanation under ``seam-explanation-digest:v1``, which
+        ``seam-commitment-digest:v2`` covers. ``verify_decision`` recomputes it locally.
         """
         req = pb.EvaluationRequest(
             session_id=session_id,
