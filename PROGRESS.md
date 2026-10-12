@@ -4613,3 +4613,11 @@ resolution) · `.github/workflows/publish.yml:747-810` (`promote-partner`) ·
   - The four new guards were mutation-checked; each mutant now fails the suite.
   - Recorded in ASSUMPTIONS.md; the workflow comment cites #251.
 - **Tests:** `pytest scripts/` gives 567 passed.
+- **Round 2, GAPS (one item):**
+  - All six round-1 gaps were confirmed closed.
+  - Two older diagnoses still echoed response content, now reachable from partner: the
+    non-object row `{row!r}` and the versions in the "NONE at" message.
+  - Fixed: the row diagnosis names only the type, and the versions list shows only values that
+    match `SAFE_VERSION` and counts the rest.
+  - A parametrised partner test covers both; reverting either fix fails it.
+  - `pytest scripts/`: 569 passed.

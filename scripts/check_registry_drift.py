@@ -508,7 +508,9 @@ def _seam_sdk_rows(rows: object) -> list[dict]:
     matched: list[dict] = []
     for row in rows:
         if not isinstance(row, dict):
-            raise InfraError(f"a registry row is a {type(row).__name__}, not an object: {row!r}")
+            # The type only, never the row: a response is not ours to print, and a string row is
+            # exactly the shape an echoed request header would take.
+            raise InfraError(f"a registry row is a {type(row).__name__}, not an object")
         name = NPM_SCOPE.sub("", str(row.get("name", "")))
         if name == PACKAGE_NAME:
             matched.append(row)
@@ -667,10 +669,17 @@ def fetch_registry(version: str, token: str, url: str = REGISTRY_URL) -> object:
     # never as a verdict.
     matched = _seam_sdk_rows(rows)
     if matched and not any(row.get("version") == version for row in matched):
-        present = sorted({str(row.get("version")) for row in matched})
+        # Only values that ARE versions are echoed. The versions are the diagnosis, but they are
+        # response content, and a field that does not look like a version is counted, not printed.
+        seen = {str(row.get("version")) for row in matched}
+        present = sorted(v for v in seen if SAFE_VERSION.match(v))
+        withheld = len(seen) - len(present)
+        listed = ", ".join(present[:5]) + (" and others" if len(present) > 5 else "")
+        if withheld:
+            listed = (listed + " and " if listed else "") + f"{withheld} non-version value(s)"
         raise InfraError(
             f"the response from {where} to {query} carries {len(matched)} `{PACKAGE_NAME}` rows — at "
-            f"{', '.join(present[:5])}{' and others' if len(present) > 5 else ''} — and NONE at "
+            f"{listed} — and NONE at "
             f"{version}. A query scoped to one version cannot answer with other versions, so the "
             "`version:` qualifier was not applied and this response is a window over everything. "
             "The absence of the asked-for version from it is not evidence of anything. "

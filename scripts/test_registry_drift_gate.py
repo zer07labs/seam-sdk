@@ -1802,6 +1802,31 @@ def test_an_unexpected_partner_exception_cannot_blind_an_internal_drift(tmp_path
     assert "Traceback" not in proc.stderr, proc.stderr
 
 
+@pytest.mark.parametrize(
+    ("body", "marker"),
+    [
+        (["X-Api-Key: " + STUB_TOKEN], "not an object"),
+        ([{"name": "seam-sdk", "version": "tok=" + STUB_TOKEN, "format": "python"}], "was not applied"),
+    ],
+    ids=["string-row", "version-field"],
+)
+def test_a_hostile_partner_body_is_diagnosed_without_being_echoed(
+    tmp_path: Path, body: object, marker: str
+) -> None:
+    """The two diagnoses that describe a malformed response — a non-object row, and rows at other
+    versions — name its shape, never its content. Partner reaches both now."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    full = {ROSTER[0]: published(ROSTER[0]), "0.7.78": published("0.7.78")}
+    bin_dir, _ = curl_stub(
+        tmp_path, full, partner_responses={ROSTER[0]: published(ROSTER[0]), "0.7.78": body}
+    )
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 2, out
+    assert marker in out and "partner" in out, out
+    assert STUB_TOKEN not in out, out
+
+
 def test_the_script_imports_only_the_standard_library() -> None:
     """The scheduled workflow runs no `pip install`, so a third-party import is a broken job.
 
