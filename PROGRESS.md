@@ -4623,3 +4623,78 @@ resolution) · `.github/workflows/publish.yml:747-810` (`promote-partner`) ·
   - A parametrised partner test covers both; reverting either fix fails it.
   - `pytest scripts/`: 569 passed.
 - **Round 3:** PASS. A 76-case hostile-body fuzz test, run on internal and partner and as both canary and target, never leaked the token. Ready to ship.
+
+# PROGRESS — `plans/partner-newest-release.md` (seam-sdk#253)
+
+**PR strategy: one PR.** Three phases on one script, its tests and docs. Phase 1 alone would print newest drifts
+without filing them.
+**Risk tiers:** P1 complex (a new network query shape and the exit composition) · P2 complex (issue writes and the
+single shared listing) · P3 simple.
+**Owner decisions (2026-10-12):** reuse `PARTNER_DRIFT_TITLE` (D4); check the newest version only (D6).
+**Repo map:** the same as `plans/partner-registry-drift.md` above. The added surfaces are internal's unscoped
+`?query=seam-sdk&sort=-version` listing and rows' `uploaded_at`.
+
+## Phase 1: newest-version discovery, verdict and exit, DONE (2026-10-12)
+- **Verdict:** PASS on round 2. Opus verifier: complex phase, a new network query shape and the exit composition.
+- **Round 1, GAPS:** all test-strength gaps; behaviour was correct and every acceptance item held.
+  - Unpinned: D2's "latest" stamp, the page edge's "lowest" version, and the skew boundary.
+  - The `--report` interim had only one test.
+  - The two grace and single-listing invariants never ran with the newest question checked.
+  - A declared git-clock fault exited 2 before printing a computed newest verdict.
+  - Undocumented: the offline `uploaded_at` requirement.
+  - All closed, and 18/18 mutants killed.
+- **Round 2:** PASS. One cosmetic nit, fixed after the verdict: on a git-clock fault where newest equals the
+  declared version, the newest line no longer claims "answered above". The mutant is killed.
+- **Files:** `scripts/check_registry_drift.py`, `scripts/test_registry_drift_gate.py`,
+  `plans/partner-newest-release.md`.
+- **Tests:** `pytest scripts/` gives 661 passed; ruff clean.
+- **Live read-only run:** exit 1 from 0.45.1's declared drift; `newest on internal: 0.45.0`; partner serves it;
+  6 GETs.
+- **Next:** Phase 2. Filing a newest drift under `PARTNER_DRIFT_TITLE`, one shared listing, per-question grace.
+  The Phase-1 `--report` tests that assert no create must flip.
+
+## Phase 2: reporting a newest-version lag, DONE (2026-10-12)
+- **Verdict:** PASS on round 2. Opus verifier: complex phase, it writes GitHub issues and shares one listing.
+- **Round 1, GAPS:** behaviour correct, every acceptance item held, and no double-filing was reachable.
+  - Three mutants survived: V's tag row, the `release-outcome` cross-link for V, and half of the close-notice
+    guard.
+  - Looser than an exact sequence: the D3-table newest-drift row.
+  - A wrong "iff" heartbeat comment.
+  - Untested: the git-clock no-file path and two outage paths.
+  - Missing: the plan's "as built" notes and a stray blank line.
+  - All closed; 13/13 of the verifier's mutants killed in round 2.
+- **Round 2:** PASS. One comment leftover ("heartbeat iff") fixed after the verdict.
+- **Files:** `scripts/check_registry_drift.py`, `scripts/test_registry_drift_gate.py`,
+  `plans/partner-newest-release.md`.
+- **Tests:** `pytest scripts/` gives 701 passed; ruff clean. No live `--report` run, because it writes GitHub.
+- **Next:** Phase 3, the docs, workflow comments and ASSUMPTIONS, including the 0.40.0/0.43.2 correction.
+
+## Phase 3: docs, workflow comments, assumptions, DONE (2026-10-12)
+- **Verdict:** PASS on round 1. Opus verifier: simple phase, docs only. Four optional nits, all applied: the
+  workflow GET count, the docstring's "anything else is exit 2", this entry, and an ASSUMPTIONS entry for the
+  no-file-from-a-broken-run calls.
+- **Files:** the `scripts/check_registry_drift.py` docstring and `SOFT_GRACE_MINUTES` comment;
+  `.github/workflows/registry-drift.yml`, comments only, with the parsed YAML equal to HEAD; `README.md`;
+  `CLAUDE.md`; `ASSUMPTIONS.md`; `plans/partner-newest-release.md`.
+- **Correction recorded:** 0.40.0, 0.41.0, 0.42.0, 0.43.0 and 0.43.2 never reached internal. A live check on
+  2026-10-12 found 0 rows each, while 0.40.1 and 0.43.3 have 3. ASSUMPTIONS' old promotion example was wrong.
+- **Tests:** `pytest scripts/` gives 701 passed; ruff clean; the citation gate gives 589 passed.
+- **Next:** finalization. One whole-feature Opus verify, a rebase onto main, then ship one PR closing #253.
+
+
+## Finalization (2026-10-12)
+- **Whole-feature Opus verify:** GAPS (tests and docs only; delivery complete). The live read-only run matched:
+  exit 1, newest 0.45.0 served by partner, 6 GETs, the token 0 times in output.
+- **Seam gap closed:** a declared partner lag beside a newest question on another version was never staged. The
+  mutant `newest_reaches … and subject != "partner"` survived the whole suite; it is now killed by
+  `test_a_declared_partner_lag_and_a_newest_drift_file_two_partner_issues_from_one_listing`. Also added, all under
+  `--report`:
+  - newest fault beside declared clean, and beside declared drift;
+  - newest grace tiers beside declared clean;
+  - newest warned beside declared drift;
+  - both partner lags suppressed;
+  - the close notice beside a declared partner lag.
+- **Doc fix:** the `_with_newest` docstring no longer claims a single exit-2 caller.
+- **Tests:** `pytest scripts/` gives 710 passed; ruff clean.
+- **Not exercisable locally:** `--report` against real GitHub. Covered by dispatching `registry-drift.yml` on the
+  branch before merge (see the PR).

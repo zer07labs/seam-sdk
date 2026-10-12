@@ -21,7 +21,7 @@ deliberately links nothing of Seam's.
   for `--report`): `python/.venv/bin/python scripts/check_registry_drift.py` (3.11+; the system
   `python3` is refused) — **exit 2 is infrastructure, never a verdict**; 1 is drift, 0 is
   clean-or-still-in-grace. It checks Cloudsmith `internal` AND `partner` (a partner lag is its own
-  issue title); offline, partner is checked only with `--partner-packages-json` beside
+  issue title), and partner against internal's newest release as well as main's declared version; offline, partner is checked only with `--partner-packages-json` beside
   `--packages-json`.
 - Python (use the venv — a system `pytest`/`ruff` fails to resolve the package): setup `pip install -e "./python[dev]"` ·
   lint `python/.venv/bin/ruff check python && python/.venv/bin/ruff format --check python` · test `cd python && .venv/bin/pytest -q`

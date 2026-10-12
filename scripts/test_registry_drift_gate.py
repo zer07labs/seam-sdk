@@ -196,15 +196,31 @@ def make_repo(
     return repo
 
 
-def rows(*specs: tuple[str, str, str]) -> list[dict]:
-    """Registry rows as `(name, version, format)` triples."""
-    return [{"name": n, "version": v, "format": f} for n, v, f in specs]
+def upload_stamp(when: datetime) -> str:
+    """`when` spelled exactly as Cloudsmith spells `uploaded_at` (observed 2026-10-12):
+    microseconds and a `Z`, e.g. `2026-10-11T04:43:28.896556Z`."""
+    return when.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
-def published(version: str) -> list[dict]:
+#: Every fixture row's `uploaded_at` unless it says otherwise: the same instant the fixture repo
+#: dates its version commit from, so a test that never thinks about the upload clock gets an age
+#: equal to the git age it already chose, and never a stamp in its future.
+UPLOADED = upload_stamp(LANDED)
+
+
+def rows(*specs: tuple[str, str, str], uploaded_at: str = UPLOADED) -> list[dict]:
+    """Registry rows as `(name, version, format)` triples, each carrying `uploaded_at` — the
+    field the newest-version question's clock is read from (seam-sdk#253)."""
+    return [
+        {"name": n, "version": v, "format": f, "uploaded_at": uploaded_at} for n, v, f in specs
+    ]
+
+
+def published(version: str, *, uploaded_at: str = UPLOADED) -> list[dict]:
     return rows(
         ("seam-sdk", version, "python"),
         ("@zer07labs/seam-sdk", version, "npm"),
+        uploaded_at=uploaded_at,
     )
 
 
@@ -810,6 +826,36 @@ def test_a_packages_path_that_is_not_readable_is_infrastructure(tmp_path: Path) 
 #: Distinctive on purpose: every failure path is grepped for it, so a leak has nowhere to hide.
 STUB_TOKEN = "s3cr3t-canary-token-value"
 
+#: Where each `curl_stub` records a request it must never receive: an UNSCOPED query to partner.
+#: The newest question asks partner only about one version (`fetch_registry(V, …)`); an unscoped
+#: partner read would be a second discovery against a second repository, and nothing in the plan
+#: answers that question. The stub refuses it (exit 97) AND writes it here, and the autouse
+#: fixture below fails any test whose stub saw one — so the refusal cannot be laundered by the
+#: script capturing the stub's exit as a newest fault and the test asserting a 2 it expected.
+_UNSCOPED_PARTNER_LOGS: list[Path] = []
+
+#: The stub's exit code for that refusal. Not a code real curl uses for anything this script names.
+UNSCOPED_PARTNER_REFUSAL = 97
+
+
+@pytest.fixture(autouse=True)
+def _partner_is_never_asked_an_unscoped_query():
+    """Fail any test during which partner received an unscoped query, whatever it asserted."""
+    _UNSCOPED_PARTNER_LOGS.clear()
+    yield
+    seen = [(p, p.read_text()) for p in _UNSCOPED_PARTNER_LOGS if p.exists() and p.read_text()]
+    _UNSCOPED_PARTNER_LOGS.clear()
+    assert not seen, f"partner was asked an unscoped query: {seen}"
+
+
+def _version_sort_key(row: object) -> tuple[int, tuple[int, ...]]:
+    """Descending-version order for the stub's unscoped answer. Plain versions by number, the way
+    `sort=-version` was observed to order them; anything else after every plain one."""
+    version = row.get("version") if isinstance(row, dict) else None
+    if isinstance(version, str) and re.fullmatch(r"[0-9]+(\.[0-9]+)*", version):
+        return (1, tuple(int(p) for p in version.split(".")))
+    return (0, ())
+
 
 
 def _write_payload(path: Path, payload: object) -> None:
@@ -830,8 +876,20 @@ def curl_stub(
     stderr_text: str | None = None,
     partner_responses: dict[str, object] | None = None,
     partner_fail_with: int | None = None,
+    unscoped: object | None = None,
 ) -> tuple[Path, Path]:
     """A `curl` first on PATH. Returns (bin dir, call-log path).
+
+    UNSCOPED queries (no `version:` — the newest question's `NEWEST_QUERY`, seam-sdk#253) are
+    answered, for internal only, with what a sorted registry holding exactly `responses` would
+    return: the union of every list payload in it, sorted by version descending, cut at the page
+    size. So a test written before the newest question existed gets a newest version consistent
+    with the per-version answers it already chose, and no test has to describe the same registry
+    twice. Non-list payloads (an HTML error page, raw bytes) are a statement about ONE request and
+    are left out of the union. `unscoped=` overrides the union with any payload at all — a list in
+    the wrong order, `[]`, bytes — for the tests that are about the unscoped answer itself.
+    Partner is NEVER asked an unscoped query: the stub refuses it, and the autouse fixture above
+    fails the test.
 
     `zer07labs/partner` MIRRORS `responses` unless `partner_responses` is given, and is routed by
     the `/zer07labs/partner/` path segment. Mirroring is the default because every test written
@@ -867,6 +925,20 @@ def curl_stub(
         partner_dir.mkdir(exist_ok=True)
         for version, payload in partner_responses.items():
             _write_payload(partner_dir / version, payload)
+    if unscoped is None:
+        union = [
+            row for payload in responses.values() if isinstance(payload, list) for row in payload
+        ]
+        # `sorted` is stable, so rows at one version keep the order the test wrote them in.
+        unscoped = sorted(union, key=_version_sort_key, reverse=True)[
+            : _SCRIPT_MODULE.PAGE_SIZE
+        ]
+    # A name no version can take, so it cannot collide with a per-version response file.
+    unscoped_file = tmp_path / "unscoped-response"
+    _write_payload(unscoped_file, unscoped)
+    violations = tmp_path / "curl-unscoped-partner"
+    violations.write_text("")
+    _UNSCOPED_PARTNER_LOGS.append(violations)
     argv_log = tmp_path / "curl-argv"
     argv_log.write_text("")
     lines = [
@@ -893,6 +965,17 @@ def curl_stub(
         ]
     lines += [
         'URL="${@: -1}"',
+        # Unscoped first, ahead of partner's own routing and `partner_fail_with`, so a partner
+        # unscoped query is recorded as the violation it is whatever else the test configured.
+        'case "$URL" in',
+        "  *version:*) ;;",
+        "  */zer07labs/partner/*)",
+        f"""    printf '%s\\n' "$URL" >> {violations}""",
+        f"    exit {UNSCOPED_PARTNER_REFUSAL} ;;",
+        "  *)",
+        f'    cat "{unscoped_file}"',
+        "    exit 0 ;;",
+        "esac",
         'VER="${URL##*version:}"',
         'VER="${VER%%&*}"',
         f'DIR="{responses_dir}"',
@@ -922,12 +1005,23 @@ def live_env(bin_dir: Path, *, token: str | None = STUB_TOKEN) -> dict[str, str]
     return env
 
 
+#: What `registries_queried` reports for the newest question's unscoped GET, in place of a
+#: version. Not a string any version can be, so it cannot be confused with one.
+NEWEST = "<newest>"
+
+
 def registries_queried(calls: Path) -> list[tuple[str, str]]:
-    """`(repository slug, version)` per request, in order — which registry was asked, not only what."""
+    """`(repository slug, version)` per request, in order — which registry was asked, not only what.
+    An unscoped request reads `(slug, NEWEST)`, and only if it is EXACTLY `NEWEST_QUERY`: any other
+    request without a `version:` is something this file has no name for, and fails here."""
     asked = []
     for line in calls.read_text().splitlines():
         url = line.split()[-1]
         slug = url.split("/packages/zer07labs/")[1].split("/")[0]
+        if "version:" not in url:
+            assert url.endswith("/" + _SCRIPT_MODULE.NEWEST_QUERY), f"unrecognised request: {url}"
+            asked.append((slug, NEWEST))
+            continue
         asked.append((slug, url.split("version:")[1].split("&")[0].strip()))
     return asked
 
@@ -942,8 +1036,12 @@ def versions_queried(calls: Path) -> list[str]:
 
 
 def test_the_happy_live_path_queries_one_canary_then_the_target(tmp_path: Path) -> None:
-    """Four GETs on the common path — canary then target, internal then partner — and a clean
-    verdict."""
+    """Five GETs on the common path — canary then target, internal then partner, then internal's
+    newest (seam-sdk#253) — and a clean verdict.
+
+    #253 acceptance 1: the newest version IS the declared one here, and partner was already asked
+    about it, so the newest question is answered without a sixth GET. The unscoped GET is still
+    made: the discovery is what can break, so it runs on every run."""
     repo = make_repo(tmp_path, version="0.7.78")
     bin_dir, calls = curl_stub(
         tmp_path, {ROSTER[0]: published(ROSTER[0]), "0.7.78": published("0.7.78")}
@@ -955,14 +1053,18 @@ def test_the_happy_live_path_queries_one_canary_then_the_target(tmp_path: Path) 
         ("internal", "0.7.78"),
         ("partner", ROSTER[0]),
         ("partner", "0.7.78"),
+        ("internal", NEWEST),
     ]
-    # And exactly four invocations, counted rather than inferred. `versions_queried` filters on
-    # `version:`, so a fifth request to some URL without that qualifier — a discovery call, a
-    # retry against a different endpoint — is invisible to the assertion above. The stub appends
-    # one line per invocation, so this counts them.
-    assert len(calls.read_text().splitlines()) == 4, (
-        f"the run made {len(calls.read_text().splitlines())} requests, not 4:\n{calls.read_text()}"
-    )
+    # And exactly five invocations, counted rather than inferred. `versions_queried` filters on
+    # `version:`, so a sixth request to some URL without that qualifier — a second discovery call,
+    # a retry against a different endpoint — is invisible to it. The stub appends one line per
+    # invocation, so this counts them.
+    logged = calls.read_text().splitlines()
+    assert len(logged) == 5, f"the run made {len(logged)} requests, not 5:\n{calls.read_text()}"
+    # The fifth URL, byte for byte: `registries_queried` recognises it by suffix, which a URL on
+    # the wrong repository with the right query would also satisfy.
+    assert logged[4].split()[-1] == _SCRIPT_MODULE.REGISTRY_URL + _SCRIPT_MODULE.NEWEST_QUERY
+    assert "newest on internal: 0.7.78 — the declared version, answered above" in proc.stdout
     assert "on internal and partner" in proc.stdout
     assert f"canary {ROSTER[0]}" in proc.stdout
     # `yank.yml` carries no timeout, so this is the one part of the request that is deliberately
@@ -1055,6 +1157,17 @@ def test_a_canary_equal_to_the_target_is_dropped_and_the_run_still_reaches_a_ver
         assert mine.count(target) == 1, f"{target} was queried as a {registry} canary as well: {asked}"
         assert mine[0] == backup, asked
     assert asked[0] == ("internal", backup), asked
+    # The whole sequence (seam-sdk#253): the newest on internal is the backup canary, which is not
+    # the declared version, so partner is asked about it once more — as the NEWEST, after the
+    # unscoped read, never as a second canary probe.
+    assert asked == [
+        ("internal", backup),
+        ("internal", target),
+        ("partner", backup),
+        ("partner", target),
+        ("internal", NEWEST),
+        ("partner", backup),
+    ], asked
 
 
 @pytest.mark.parametrize("truncated", [ROSTER[0], "0.7.78"], ids=["canary", "target"])
@@ -2964,8 +3077,13 @@ def gh_stub(
     *,
     fail_on: tuple[str, str] | None = None,
     runs: list[str] | None = None,
+    fail_create_titled: str | None = None,
 ) -> tuple[Path, Path]:
     """A `gh` first on PATH. Returns (bin dir, argv-log path).
+
+    `fail_create_titled` fails ONLY the `issue create` whose `--title` is exactly that, the way an
+    outage landing between two creates would — so "the first create succeeded, the second did
+    not" is observable rather than collapsed into `fail_on`'s every-create failure.
 
     `listing` rows are `(number, state, labels, title)` — exactly the four fields the script's own
     `--jq` projects, so the parser is exercised rather than bypassed.
@@ -3005,6 +3123,15 @@ def gh_stub(
         f"""printf 'CALL\\0' >> {log}""",
         f"""printf '%s\\0' "$@" >> {log}""",
     ]
+    if fail_create_titled is not None:
+        title_file = tmp_path / "gh-fail-title"
+        title_file.write_text(fail_create_titled, encoding="utf-8")
+        lines += [
+            f"""if [ "$1" = "issue" ] && [ "$2" = "create" ] && [ "$4" = "$(cat {title_file})" ]; then""",
+            """  echo 'gh: HTTP 503 — the GitHub API is unavailable' >&2""",
+            "  exit 1",
+            "fi",
+        ]
     if fail_on is not None:
         lines += [
             f"""if [ "$1" = "{fail_on[0]}" ] && [ "$2" = "{fail_on[1]}" ]; then""",
@@ -3708,9 +3835,10 @@ def test_a_partner_suppression_does_not_suppress_an_internal_drift(tmp_path: Pat
 
 
 def test_a_live_partner_lag_end_to_end_with_report(tmp_path: Path) -> None:
-    """The seam between the phases, with no offline dump: curl and gh stubs together. Four GETs in
-    order, then one listing, one create under the partner title, then the heartbeat — and the
-    token in no argv handed to gh and in no output."""
+    """The seam between the phases, with no offline dump: curl and gh stubs together. Five GETs in
+    order — the fifth is the newest question's unscoped read, answered without a partner GET
+    because the newest version is the declared one — then one listing, one create under the
+    partner title, then the heartbeat — and the token in no argv handed to gh and in no output."""
     repo = make_repo(tmp_path, version=DRIFTING, tag=True)
     bin_dir, curl_log = curl_stub(
         tmp_path,
@@ -3732,6 +3860,7 @@ def test_a_live_partner_lag_end_to_end_with_report(tmp_path: Path) -> None:
         ("internal", DRIFTING),
         ("partner", ROSTER[0]),
         ("partner", DRIFTING),
+        ("internal", NEWEST),
     ]
     calls = gh_calls(gh_log)
     assert [c[:2] for c in calls] == [["issue", "list"], ["issue", "create"], ["api", calls[2][1]]]
@@ -4975,3 +5104,1475 @@ def test_neither_grace_tier_reaches_the_heartbeat_either(tmp_path: Path) -> None
         )
         assert expect in proc.stdout, proc.stdout
         assert gh_calls(log) == [], gh_calls(log)
+
+
+# ── seam-sdk#253: partner serves the NEWEST release on internal ─────────────────────────────────
+#
+# The declared-version question cannot see a release `main` has already moved past: with 0.45.0 on
+# internal and `main` declaring 0.45.1, nothing above asks partner about 0.45.0. These pin the one
+# extra question — the newest version internal serves in both formats, and whether partner serves
+# it — through one unscoped GET whose answer is proved before it is used, on the upload clock, with
+# the D3 exit table, and with nothing from the response but plain versions reaching the output.
+
+#: A newest version ABOVE the declared one (`DRIFTING`). That is the only shape in which the newest
+#: question can disagree with a clean declared one: when internal serves the declared version, the
+#: newest is floored at it, so "newest lags while declared is clean" means newest > declared.
+AHEAD = "0.7.80"
+
+NEWEST_FAULT = "::error::the newest-version question could not be answered"
+
+
+def newest_stub(
+    tmp_path: Path,
+    *,
+    now: datetime,
+    declared_served: bool = True,
+    ahead_minutes_ago: float | None = None,
+    ahead_rows: list[dict] | None = None,
+    partner_ahead: object | None = None,
+    unscoped: object | None = None,
+) -> tuple[Path, Path]:
+    """Internal and partner both serve the canary, and — when `declared_served` — `DRIFTING`.
+    Internal ALSO serves `AHEAD` when `ahead_minutes_ago` (uploaded that long before `now`) or
+    `ahead_rows` is given; partner serves `AHEAD` only as `partner_ahead` says. The unscoped answer
+    is the stub's sorted union unless `unscoped` overrides it."""
+    internal: dict[str, object] = {ROSTER[0]: published(ROSTER[0])}
+    partner: dict[str, object] = {ROSTER[0]: published(ROSTER[0])}
+    if declared_served:
+        internal[DRIFTING] = published(DRIFTING)
+        partner[DRIFTING] = published(DRIFTING)
+    if ahead_rows is not None:
+        internal[AHEAD] = ahead_rows
+    elif ahead_minutes_ago is not None:
+        internal[AHEAD] = published(
+            AHEAD, uploaded_at=upload_stamp(now - timedelta(minutes=ahead_minutes_ago))
+        )
+    if partner_ahead is not None:
+        partner[AHEAD] = partner_ahead
+    return curl_stub(tmp_path, internal, partner_responses=partner, unscoped=unscoped)
+
+
+def test_the_newest_query_is_pinned_word_for_word() -> None:
+    """The request shape, against a LITERAL — a constant compared with itself pins nothing.
+
+    Observed live (2026-10-12): `sort=-bogus` is HTTP 400, but a wrong parameter NAME
+    (`ordering=-version`) is silently ignored and the server falls back to `-date`. So a typo here
+    would not fail; it would quietly change which release is "newest". `fetch_newest` also checks
+    the order it gets back — this pins what is asked, that proves what was answered.
+    """
+    assert _SCRIPT_MODULE.NEWEST_QUERY == "?query=seam-sdk&sort=-version&page_size=50"
+    assert (
+        _SCRIPT_MODULE.REGISTRY_URL + _SCRIPT_MODULE.NEWEST_QUERY
+        == "https://api.cloudsmith.io/v1/packages/zer07labs/internal/"
+        "?query=seam-sdk&sort=-version&page_size=50"
+    )
+    # Same `page_size` as the version-scoped query: the page-edge rule reads "full" against it.
+    assert f"page_size={_SCRIPT_MODULE.PAGE_SIZE}" in _SCRIPT_MODULE.NEWEST_QUERY
+
+
+def test_the_curl_stub_answers_unscoped_from_a_sorted_union_and_refuses_partner(
+    tmp_path: Path,
+) -> None:
+    """The instrument for this block, proved before anything is measured with it.
+
+    If the union were unsorted, every ordering test below would be testing the stub; if partner's
+    refusal were not recorded, a script asking partner an unscoped query would merely see a curl
+    failure, capture it as a newest fault, and pass any test that expected a 2."""
+    bin_dir, _ = curl_stub(
+        tmp_path,
+        {
+            ROSTER[0]: published(ROSTER[0]),
+            "0.7.9": published("0.7.9"),
+            "0.7.100": published("0.7.100"),
+            "html": "<html>not a list</html>",
+        },
+    )
+    base = _SCRIPT_MODULE.REGISTRY_URL + _SCRIPT_MODULE.NEWEST_QUERY
+    got = subprocess.run([str(bin_dir / "curl"), base], capture_output=True, text=True)
+    assert got.returncode == 0, got.stderr
+    versions = [row["version"] for row in json.loads(got.stdout)]
+    # Numeric, not lexical: 0.7.100 > 0.7.71 > 0.7.9.
+    assert versions == ["0.7.100", "0.7.100", ROSTER[0], ROSTER[0], "0.7.9", "0.7.9"], versions
+
+    partner = _SCRIPT_MODULE.PARTNER_REGISTRY_URL + _SCRIPT_MODULE.NEWEST_QUERY
+    refused = subprocess.run([str(bin_dir / "curl"), partner], capture_output=True, text=True)
+    assert refused.returncode == UNSCOPED_PARTNER_REFUSAL
+    log = tmp_path / "curl-unscoped-partner"
+    assert log.read_text().strip() == partner
+    # Cleared, because the autouse fixture would — correctly — fail this test for it otherwise.
+    log.write_text("")
+
+
+def test_a_newest_version_partner_serves_is_a_sixth_get_beside_a_declared_drift(
+    tmp_path: Path,
+) -> None:
+    """#253 acceptance 2, unsuppressed. `main` declares 0.7.79, internal never got it; the newest
+    on internal is 0.7.78 and partner serves it. Exit 1 is the DECLARED drift's, and the sixth GET
+    asks partner about 0.7.78 — the question nothing asked before."""
+    repo = make_repo(tmp_path, version="0.7.79")
+    bin_dir, calls = curl_stub(
+        tmp_path, {ROSTER[0]: published(ROSTER[0]), "0.7.78": published("0.7.78")}
+    )
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 1, out
+    assert registries_queried(calls) == [
+        ("internal", ROSTER[0]),
+        ("internal", "0.7.79"),
+        ("partner", ROSTER[0]),
+        ("partner", "0.7.79"),
+        ("internal", NEWEST),
+        ("partner", "0.7.78"),
+    ]
+    assert "DRIFT — seam-sdk 0.7.79 is not installable" in proc.stdout, proc.stdout
+    assert "newest on internal: 0.7.78, uploaded" in proc.stdout, proc.stdout
+    assert "partner serves 0.7.78: npm, python" in proc.stdout, proc.stdout
+    assert "NEWEST CLEAN — partner serves 0.7.78" in proc.stdout, proc.stdout
+    assert STUB_TOKEN not in out
+
+
+def test_a_suppressed_declared_drift_beside_a_clean_newest_is_zero(tmp_path: Path) -> None:
+    """#253 acceptance 2, suppressed. The declared drift's own suppression applies, and a newest
+    version partner serves adds nothing to vote with: exit 0, still six GETs."""
+    repo = make_repo(tmp_path, version="0.7.79")
+    bin_dir, calls = curl_stub(
+        tmp_path, {ROSTER[0]: published(ROSTER[0]), "0.7.78": published("0.7.78")}
+    )
+    _, gh_log = gh_stub(
+        tmp_path, [(7, "CLOSED", [SUPPRESSION_LABEL], DRIFT_TITLE.format(version="0.7.79"))]
+    )
+    proc = run(repo, None, tmp_path, extra=["--report"], env=report_env(bin_dir, token=STUB_TOKEN))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0, out
+    assert "SUPPRESSED by #7" in proc.stdout, proc.stdout
+    assert registries_queried(calls)[4:] == [("internal", NEWEST), ("partner", "0.7.78")]
+    assert len(registries_queried(calls)) == 6, registries_queried(calls)
+    assert gh_writes(gh_log) == [], gh_calls(gh_log)
+    assert STUB_TOKEN not in out
+
+
+@pytest.mark.parametrize(
+    ("uploaded_ago", "git_age", "expected", "marker"),
+    [
+        (30, 14400, 0, "NEWEST DEFERRED —"),
+        (200, 14400, 0, f"::warning::seam-sdk {AHEAD}, the newest version on internal"),
+        (14400, 10, 1, "NEWEST DRIFT —"),
+    ],
+    ids=["soft", "warn", "hard"],
+)
+def test_a_newest_lag_walks_the_ladder_on_the_upload_clock_never_git(
+    tmp_path: Path, uploaded_ago: int, git_age: int, expected: int, marker: str
+) -> None:
+    """#253 acceptance 3. Declared 0.7.78 is clean on both; internal also serves 0.7.80, partner
+    does not. Each case puts git's age on the OPPOSITE side of the ladder from the upload's — 30
+    minutes after upload but two weeks after the version commit, and the reverse — so a tier read
+    from git instead of `uploaded_at` lands on the wrong rung in every case."""
+    now = LANDED + timedelta(minutes=git_age)
+    repo = make_repo(tmp_path, version=DRIFTING)
+    bin_dir, calls = newest_stub(tmp_path, now=now, ahead_minutes_ago=uploaded_ago)
+    proc = run(repo, None, tmp_path, now=now, env=live_env(bin_dir))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == expected, out
+    assert marker in out, out
+    assert f"OK — the registry serves {DRIFTING} in both formats, on internal and partner." in out
+    assert f"newest on internal: {AHEAD}, uploaded {uploaded_ago} minutes ago" in proc.stdout
+    assert f"partner serves {AHEAD}: <nothing>" in proc.stdout
+    assert registries_queried(calls)[4:] == [("internal", NEWEST), ("partner", AHEAD)]
+    assert len(registries_queried(calls)) == 6, registries_queried(calls)
+    if expected == 1:
+        # State P for the NEWEST version, naming both it and the declared one.
+        assert "State P" in proc.stdout and f"promote-to-partner.sh {AHEAD}" in proc.stdout
+        assert f"Main declares {DRIFTING}" in proc.stdout
+    # D8: the age is printed, the stamp it came from never is.
+    stamp = upload_stamp(now - timedelta(minutes=uploaded_ago))
+    assert stamp not in out and stamp[:19] not in out, out
+    assert STUB_TOKEN not in out
+
+
+def _full_page_of_one_version() -> list[dict]:
+    return [
+        row
+        for _ in range(_SCRIPT_MODULE.PAGE_SIZE // 2)
+        for row in published(DRIFTING)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("case", "needle"),
+    [
+        ("empty", "carries no `seam-sdk` row"),
+        ("ascending", f"({ROSTER[0]} is followed by {DRIFTING})"),
+        ("full-page-of-one-version", f"{DRIFTING} is the lowest version on a full page"),
+        ("below-the-proving-canary", f"below the canary {ROSTER[0]}"),
+        ("below-a-served-declared-version", f"below {DRIFTING}, which internal served"),
+        ("uploaded-at-missing", "is a NoneType, not a timestamp string"),
+        ("uploaded-at-garbage", "is not an ISO-8601 timestamp (value withheld)"),
+        ("uploaded-at-impossible", "is not a real instant (value withheld)"),
+        ("uploaded-at-in-the-future", "minutes AFTER now"),
+    ],
+)
+def test_an_unprovable_newest_answer_is_two_with_the_declared_verdict_printed(
+    tmp_path: Path, case: str, needle: str
+) -> None:
+    """#253 acceptance 4. Every guard on the newest answer, driven red. Each exits 2 — the declared
+    question is clean (or, for the canary floor, still in grace), so there is no finding for the
+    fault to stand beside — and the declared verdict is printed first regardless.
+
+    The canary-floor case runs with the declared version ABSENT and young, so the declared floor
+    cannot fire in its place: each floor is observed alone, never through the other."""
+    now = LANDED + timedelta(days=10)
+    declared_served = True
+    kw: dict[str, object] = {}
+    garbage = "yesterday"
+    if case == "empty":
+        kw["unscoped"] = []
+    elif case == "ascending":
+        kw["unscoped"] = published(ROSTER[0]) + published(DRIFTING)
+    elif case == "full-page-of-one-version":
+        kw["unscoped"] = _full_page_of_one_version()
+    elif case == "below-the-proving-canary":
+        declared_served = False
+        now = LANDED + timedelta(minutes=10)
+        kw["unscoped"] = published("0.7.50")
+    elif case == "below-a-served-declared-version":
+        kw["unscoped"] = published("0.7.75") + published(ROSTER[0])
+    elif case == "uploaded-at-missing":
+        kw["ahead_rows"] = [
+            {k: v for k, v in row.items() if k != "uploaded_at"} for row in published(AHEAD)
+        ]
+    elif case == "uploaded-at-garbage":
+        kw["ahead_rows"] = published(AHEAD, uploaded_at=garbage)
+    elif case == "uploaded-at-impossible":
+        garbage = "2026-13-01T00:00:00.000000Z"
+        kw["ahead_rows"] = published(AHEAD, uploaded_at=garbage)
+    else:
+        garbage = upload_stamp(now + timedelta(minutes=60))
+        kw["ahead_rows"] = published(AHEAD, uploaded_at=garbage)
+    repo = make_repo(tmp_path, version=DRIFTING)
+    bin_dir, calls = newest_stub(tmp_path, now=now, declared_served=declared_served, **kw)
+    proc = run(repo, None, tmp_path, now=now, env=live_env(bin_dir))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 2, out
+    assert NEWEST_FAULT in proc.stderr and needle in proc.stderr, out
+    assert "newest on internal: COULD NOT BE READ" in proc.stdout, proc.stdout
+    if declared_served:
+        assert f"OK — the registry serves {DRIFTING} in both formats" in proc.stdout, proc.stdout
+    else:
+        assert "DEFERRED —" in proc.stdout, proc.stdout
+    if case.startswith("uploaded-at"):
+        # The clock is read before partner is asked, so a broken stamp costs no partner GET.
+        assert ("partner", AHEAD) not in registries_queried(calls), registries_queried(calls)
+        assert garbage not in out and garbage[:19] not in out, out
+    assert "Traceback" not in out and STUB_TOKEN not in out, out
+
+
+@pytest.mark.parametrize(
+    ("newest", "declared", "expected"),
+    [
+        ("drift", "clean", 1),
+        ("drift", "deferred", 1),
+        ("drift", "warned", 1),
+        ("drift", "drift", 1),
+        ("drift", "suppressed", 1),
+        ("fault", "drift", 1),
+        ("fault", "clean", 2),
+        ("fault", "deferred", 2),
+        ("fault", "warned", 2),
+        ("fault", "suppressed", 2),
+    ],
+)
+def test_the_d3_exit_table_row_by_row(
+    tmp_path: Path, newest: str, declared: str, expected: int
+) -> None:
+    """#253 acceptance 5. A newest drift is 1 beside ANY declared state, a suppressed one included
+    (the suppression is the declared version's, not the newest's). A newest fault keeps an
+    unsuppressed declared drift's 1 and prints the error beside it; with no such finding, the fault
+    is the news: 2."""
+    git_age = {"clean": 14400, "deferred": 10, "warned": 200, "drift": 14400, "suppressed": 14400}
+    now = LANDED + timedelta(minutes=git_age[declared])
+    repo = make_repo(tmp_path, version=DRIFTING)
+    bin_dir, calls = newest_stub(
+        tmp_path,
+        now=now,
+        declared_served=declared == "clean",
+        ahead_minutes_ago=14400,
+        unscoped=[] if newest == "fault" else None,
+    )
+    if declared == "suppressed":
+        _, gh_log = gh_stub(
+            tmp_path, [(7, "CLOSED", [SUPPRESSION_LABEL], DRIFT_TITLE.format(version=DRIFTING))]
+        )
+        env = report_env(bin_dir, token=STUB_TOKEN)
+        proc = run(repo, None, tmp_path, now=now, extra=["--report"], env=env)
+        assert "SUPPRESSED by #7" in proc.stdout, proc.stdout
+        # One listing, shared. The suppression is the DECLARED version's, so a newest drift is
+        # still filed — under AHEAD's partner title — and a newest fault files nothing. (Flipped
+        # in Phase 2 from "files nothing" for the newest-drift row.)
+        if newest == "drift":
+            assert_filed_newest_only(gh_log, AHEAD)
+        else:
+            assert gh_calls(gh_log) == [issue_list_argv(), heartbeat_argv()], gh_calls(gh_log)
+    else:
+        proc = run(repo, None, tmp_path, now=now, env=live_env(bin_dir))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == expected, out
+    declared_marker = {
+        "clean": "OK — the registry serves",
+        "deferred": "DEFERRED — npm, python missing",
+        "warned": f"::warning::seam-sdk {DRIFTING} is not on the registry",
+        "drift": "DRIFT — seam-sdk",
+        "suppressed": "DRIFT — seam-sdk",
+    }[declared]
+    assert declared_marker in out, out
+    if newest == "drift":
+        assert "NEWEST DRIFT —" in proc.stdout, proc.stdout
+        assert NEWEST_FAULT not in proc.stderr
+    else:
+        assert NEWEST_FAULT in proc.stderr, out
+        assert "NEWEST DRIFT" not in proc.stdout
+    assert STUB_TOKEN not in out
+
+
+@pytest.mark.parametrize("fault", ["canaries-empty", "http-failure"])
+def test_a_partner_fault_leaves_the_newest_question_not_checked(
+    tmp_path: Path, fault: str
+) -> None:
+    """#253 acceptance 6. The newest question asks partner, so a partner that could not be read
+    cannot answer it: NOT CHECKED, and neither the unscoped GET nor a partner GET at the newest
+    version is made. Exact sequences, so a newest GET anywhere in them is visible."""
+    repo = make_repo(tmp_path, version=DRIFTING)
+    full = {ROSTER[0]: published(ROSTER[0]), DRIFTING: published(DRIFTING), AHEAD: published(AHEAD)}
+    if fault == "canaries-empty":
+        bin_dir, calls = curl_stub(tmp_path, full, partner_responses={DRIFTING: published(DRIFTING)})
+        partner_asked = [("partner", c) for c in ROSTER]
+    else:
+        bin_dir, calls = curl_stub(tmp_path, full, partner_fail_with=22)
+        partner_asked = [("partner", ROSTER[0])]
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 2, out
+    assert registries_queried(calls) == [
+        ("internal", ROSTER[0]),
+        ("internal", DRIFTING),
+        *partner_asked,
+    ]
+    assert "newest on internal: NOT CHECKED (partner could not be read)" in proc.stdout
+    assert NEWEST_FAULT not in proc.stderr, "one dead partner credential reported twice"
+    assert STUB_TOKEN not in out
+
+
+def test_offline_without_a_partner_dump_leaves_the_newest_question_not_checked(
+    tmp_path: Path,
+) -> None:
+    """#253 acceptance 7a. Offline, partner is known only through its dump; without one there is
+    no partner to ask about any version."""
+    repo = make_repo(tmp_path, version=DRIFTING)
+    proc = run(repo, published(DRIFTING) + published(AHEAD), tmp_path)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert (
+        "newest on internal: NOT CHECKED (offline run without --partner-packages-json)"
+        in proc.stdout
+    )
+
+
+def test_offline_the_newest_version_does_not_depend_on_the_dumps_order(tmp_path: Path) -> None:
+    """#253 acceptance 7b. Offline there is no server sort to prove, so the newest version must be
+    the numeric max, whatever order the dump is in. Run end to end on the sorted dump and on its
+    reverse, and the newest line must be identical — and must be the numeric max, not the lexical
+    one (`0.7.100` > `0.7.80`)."""
+    internal = published("0.7.100") + published(AHEAD) + published(DRIFTING) + published("0.7.9")
+    lines = []
+    for order, dump in (("sorted", internal), ("reversed", list(reversed(internal)))):
+        (tmp_path / order).mkdir()
+        repo = make_repo(tmp_path / order, version=DRIFTING)
+        proc = run(
+            repo, dump, tmp_path / order, extra=_partner_dump(tmp_path / order, internal)
+        )
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        lines.append([ln for ln in proc.stdout.splitlines() if ln.startswith("newest on internal")])
+    assert lines[0] == lines[1], lines
+    assert lines[0][0].startswith("newest on internal: 0.7.100, uploaded"), lines
+
+
+def test_offline_non_plain_versions_are_set_aside_counted_and_never_printed(
+    tmp_path: Path,
+) -> None:
+    """#253 acceptance 7c. A pre-release and a field that is not a version at all are both
+    excluded from "newest" — the pre-release would otherwise win, `0.8.0-rc.1` beating 0.7.80 —
+    and both are counted, never echoed."""
+    internal = (
+        published(DRIFTING)
+        + published(AHEAD)
+        + rows(("seam-sdk", "0.8.0-rc.1", "python"), ("@zer07labs/seam-sdk", "0.8.0-rc.1", "npm"))
+        + rows(("seam-sdk", "tok=" + STUB_TOKEN, "python"))
+    )
+    repo = make_repo(tmp_path, version=DRIFTING)
+    proc = run(repo, internal, tmp_path, extra=_partner_dump(tmp_path, internal))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0, out
+    assert f"newest on internal: {AHEAD} (2 non-version value(s) set aside), uploaded" in out, out
+    assert "0.8.0-rc.1" not in out and STUB_TOKEN not in out, out
+
+
+def test_newest_complete_version_is_order_blind_and_wants_both_formats() -> None:
+    """The pure core, every clause at once: numeric max, both formats required, `exclude` honoured,
+    non-plain counted (a trailing newline included — `fullmatch`, not `match`), and the answer
+    invariant under every permutation tried."""
+    import itertools
+
+    fn = _SCRIPT_MODULE.newest_complete_version
+    data = (
+        published("0.7.9")
+        + rows(("seam-sdk", "0.7.200", "python"))  # half a release: never newest
+        + published("0.7.100")
+        + rows(("seam-sdk", "0.7.300\n", "python"), ("@zer07labs/seam-sdk", "0.7.300\n", "npm"))
+    )
+    for perm in itertools.islice(itertools.permutations(data), 0, 5040, 37):
+        assert fn(list(perm)) == ("0.7.100", 1)
+    assert fn(data, exclude="0.7.100") == ("0.7.9", 1)
+    assert fn(rows(("seam-sdk", "0.7.9", "python"))) == (None, 0)
+
+
+@pytest.mark.parametrize(
+    ("value", "accepted"),
+    [
+        ("2026-10-11T04:43:28.896556Z", True),  # exactly as observed on 2026-10-12
+        ("2026-10-11T04:43:28Z", True),
+        ("2026-10-11T06:43:28.896556+02:00", True),
+        ("2026-10-11T04:43:28.896556", False),  # naive: no instant at all
+        ("2026-10-11 04:43:28Z", False),
+        (" 2026-10-11T04:43:28Z", False),
+        ("2026-10-11T04:43:28Z\n", False),
+        ("2026-13-11T04:43:28Z", False),
+        (1760157808, False),
+        (None, False),
+    ],
+)
+def test_an_upload_stamp_is_parsed_strictly_and_never_echoed(value: object, accepted: bool) -> None:
+    """`_parse_upload_stamp` accepts the observed format and its offset spelling, refuses anything
+    else, and its refusal never carries the value — the field is response content (D8)."""
+    parse = _SCRIPT_MODULE._parse_upload_stamp
+    if accepted:
+        assert parse(value) == datetime(2026, 10, 11, 4, 43, 28, 896556 if "." in value else 0,
+                                        tzinfo=timezone.utc)
+        return
+    with pytest.raises(_SCRIPT_MODULE.InfraError) as raised:
+        parse(value)
+    message = str(raised.value)
+    if isinstance(value, str) and value.strip():
+        assert value.strip() not in message and value.strip()[:10] not in message, message
+    # Never chained to a ValueError whose message would quote the value.
+    assert raised.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    ("body", "code", "needle"),
+    [
+        (["X-Api-Key: " + STUB_TOKEN], 2, "not an object"),
+        (
+            [{"name": "seam-sdk", "version": "tok=" + STUB_TOKEN, "format": "python",
+              "uploaded_at": UPLOADED}] + published(DRIFTING) + published(ROSTER[0]),
+            0,
+            f"newest on internal: {DRIFTING} (1 non-version value(s) set aside)",
+        ),
+        (published(AHEAD, uploaded_at="X-Api-Key: " + STUB_TOKEN) + published(DRIFTING), 2,
+         "value withheld"),
+        (b"\xff X-Api-Key: " + STUB_TOKEN.encode() + b" \xfe", 2, "is not JSON"),
+    ],
+    ids=["string-row", "version-field", "uploaded-at", "non-utf8"],
+)
+def test_a_hostile_unscoped_body_is_diagnosed_without_being_echoed(
+    tmp_path: Path, body: object, code: int, needle: str
+) -> None:
+    """#253 acceptance 8, the unscoped fetch. The token planted in each place a response can carry
+    it — a string row, a version field, `uploaded_at`, a body that is not even UTF-8 — and in none
+    of them may it reach the output. Declared is clean, so a 2 here is the newest fault alone."""
+    repo = make_repo(tmp_path, version=DRIFTING)
+    bin_dir, _ = newest_stub(tmp_path, now=LANDED + timedelta(days=10), unscoped=body)
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == code, out
+    assert needle in out, out
+    assert STUB_TOKEN not in out, out
+    assert "Traceback" not in out and "UnicodeDecodeError" not in out, out
+
+
+@pytest.mark.parametrize(
+    ("body", "code", "needle"),
+    [
+        (["X-Api-Key: " + STUB_TOKEN], 2, "not an object"),
+        (
+            [{"name": "seam-sdk", "version": "tok=" + STUB_TOKEN, "format": "python"}],
+            2,
+            "1 non-version value(s)",
+        ),
+        # Partner's `uploaded_at` is never read — the clock is internal's — so a hostile one is
+        # inert: partner serves the version, and the run is clean with nothing echoed.
+        (published(AHEAD, uploaded_at="X-Api-Key: " + STUB_TOKEN), 0, f"NEWEST CLEAN — partner "
+         f"serves {AHEAD}"),
+        (b"\xff X-Api-Key: " + STUB_TOKEN.encode() + b" \xfe", 2, "the response from partner to"),
+    ],
+    ids=["string-row", "version-field", "uploaded-at", "non-utf8"],
+)
+def test_a_hostile_partner_body_at_the_newest_version_is_diagnosed_without_being_echoed(
+    tmp_path: Path, body: object, code: int, needle: str
+) -> None:
+    """#253 acceptance 8, the newest-partner fetch: the same four plantings, in partner's answer
+    about the newest version."""
+    now = LANDED + timedelta(days=10)
+    repo = make_repo(tmp_path, version=DRIFTING)
+    bin_dir, calls = newest_stub(tmp_path, now=now, ahead_minutes_ago=14400, partner_ahead=body)
+    proc = run(repo, None, tmp_path, now=now, env=live_env(bin_dir))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == code, out
+    assert needle in out, out
+    assert registries_queried(calls)[-1] == ("partner", AHEAD), registries_queried(calls)
+    assert STUB_TOKEN not in out, out
+    assert "Traceback" not in out and "UnicodeDecodeError" not in out, out
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["skipped", "clean", "deferred", "warned", "drift", "fault", "not-checked", "offline"],
+)
+def test_the_credential_never_appears_on_any_newest_path(tmp_path: Path, path: str) -> None:
+    """#253 acceptance 8, swept: every way the newest question can end, each grepped for the
+    token. The certificate line, the newest line and each tier's message are all new prints, and
+    the sweep over the declared question's paths above covers none of them."""
+    now = LANDED + timedelta(days=10)
+    repo = make_repo(tmp_path, version=DRIFTING)
+    extra: list[str] = []
+    marker = {
+        "skipped": "the declared version, answered above",
+        "clean": "NEWEST CLEAN —",
+        "deferred": "NEWEST DEFERRED —",
+        "warned": f"::warning::seam-sdk {AHEAD}, the newest version on internal",
+        "drift": "NEWEST DRIFT —",
+        "fault": "COULD NOT BE READ",
+        "not-checked": "NOT CHECKED (partner could not be read)",
+        "offline": "newest on internal: 0.7.80",
+    }[path]
+    if path == "skipped":
+        bin_dir, _ = newest_stub(tmp_path, now=now)
+    elif path == "clean":
+        bin_dir, _ = newest_stub(
+            tmp_path, now=now, ahead_minutes_ago=14400, partner_ahead=published(AHEAD)
+        )
+    elif path in ("deferred", "warned", "drift"):
+        ago = {"deferred": 30, "warned": 200, "drift": 14400}[path]
+        bin_dir, _ = newest_stub(tmp_path, now=now, ahead_minutes_ago=ago)
+    elif path == "fault":
+        bin_dir, _ = newest_stub(tmp_path, now=now, unscoped=[])
+    elif path == "not-checked":
+        bin_dir, _ = curl_stub(
+            tmp_path, {ROSTER[0]: published(ROSTER[0]), DRIFTING: published(DRIFTING)},
+            partner_fail_with=22,
+        )
+    else:
+        bin_dir, _ = curl_stub(tmp_path, {})
+        dump = published(DRIFTING) + published(AHEAD)
+        extra = ["--packages-json", str(tmp_path / "dump.json"), *_partner_dump(tmp_path, dump)]
+        (tmp_path / "dump.json").write_text(json.dumps(dump), "utf-8")
+    proc = run(repo, None, tmp_path, now=now, extra=extra, env=live_env(bin_dir))
+    out = proc.stdout + proc.stderr
+    assert marker in out, f"{path}: not exercising the branch it names\n{out}"
+    assert STUB_TOKEN not in out, f"{path}: the token leaked"
+
+
+def test_an_unexpected_newest_exception_is_captured_by_class_name_only(tmp_path: Path) -> None:
+    """The newest block's catch-all, driven for real: a pathologically nested unscoped body raises
+    RecursionError inside `json.loads`, not an InfraError. Captured, the declared verdict stands and
+    the line carries the class name and nothing else."""
+    repo = make_repo(tmp_path, version=DRIFTING)
+    nested = "[" * 200_000 + "]" * 200_000
+    bin_dir, _ = newest_stub(tmp_path, now=LANDED + timedelta(days=10), unscoped=nested)
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert f"OK — the registry serves {DRIFTING}" in proc.stdout, proc.stdout
+    assert re.search(
+        r"unexpected failure answering the newest-version question: RecursionError$",
+        proc.stderr,
+        re.MULTILINE,
+    ), proc.stderr
+    assert "Traceback" not in proc.stderr, proc.stderr
+
+
+def test_the_exit_composition_is_the_d3_table_as_a_unit() -> None:
+    """`_with_newest` alone, over every input it can see — the end-to-end table above reaches it
+    only through the cases that can be staged."""
+    compose = _SCRIPT_MODULE._with_newest
+    fault = _SCRIPT_MODULE.InfraError("x")
+    for code in (0, 1, 2):
+        assert compose(code, "drift", None) == 1
+        assert compose(code, None, fault) == (1 if code == 1 else 2)
+        for quiet in (None, "deferred", "warned"):
+            assert compose(code, quiet, None) == code
+
+
+# ── #253 Phase 1, verifier gaps: the clock, the page edge, skew, --report, git faults, offline ────
+
+
+@pytest.mark.parametrize("later", ["npm", "python"])
+def test_the_newest_clock_is_the_latest_required_upload_not_the_earliest(
+    tmp_path: Path, later: str
+) -> None:
+    """D2's "latest". The release is complete only when its LAST format lands, so that is when
+    `promote-partner` can start. One format uploaded 14400 minutes ago and the other 30: the tier
+    must be DEFERRED (30). The earliest would say DRIFT. Both orders, so "whichever row comes last"
+    cannot pass for "latest"."""
+    now = LANDED + timedelta(days=10)
+    early, late = upload_stamp(now - timedelta(minutes=14400)), upload_stamp(now - timedelta(minutes=30))
+    ahead = [
+        {"name": "seam-sdk", "version": AHEAD, "format": "python",
+         "uploaded_at": late if later == "python" else early},
+        {"name": "@zer07labs/seam-sdk", "version": AHEAD, "format": "npm",
+         "uploaded_at": late if later == "npm" else early},
+    ]
+    repo = make_repo(tmp_path, version=DRIFTING)
+    bin_dir, _ = newest_stub(tmp_path, now=now, ahead_rows=ahead)
+    proc = run(repo, None, tmp_path, now=now, env=live_env(bin_dir))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0, out
+    assert "NEWEST DEFERRED —" in proc.stdout and "NEWEST DRIFT" not in proc.stdout, out
+    assert f"newest on internal: {AHEAD}, uploaded 30 minutes ago" in proc.stdout, out
+
+
+def test_a_format_this_release_does_not_ship_never_feeds_the_clock(tmp_path: Path) -> None:
+    """The clock's format filter. A `cargo` row at the newest version uploaded 30 minutes ago is
+    not part of this release; the python and npm rows, 14400 minutes old, are. DRIFT, not DEFERRED.
+    """
+    now = LANDED + timedelta(days=10)
+    ahead = published(AHEAD, uploaded_at=upload_stamp(now - timedelta(minutes=14400))) + rows(
+        ("seam-sdk", AHEAD, "cargo"), uploaded_at=upload_stamp(now - timedelta(minutes=30))
+    )
+    repo = make_repo(tmp_path, version=DRIFTING)
+    bin_dir, _ = newest_stub(tmp_path, now=now, ahead_rows=ahead)
+    proc = run(repo, None, tmp_path, now=now, env=live_env(bin_dir))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 1, out
+    assert "NEWEST DRIFT —" in proc.stdout, out
+    assert f"newest on internal: {AHEAD}, uploaded 14400 minutes ago" in proc.stdout, out
+
+
+def test_the_page_edge_excludes_the_LOWEST_version_and_still_chooses_the_highest(
+    tmp_path: Path,
+) -> None:
+    """A full page holding two versions: `AHEAD` on top, `DRIFTING` filling the rest down to the
+    edge. The edge is the lowest — `DRIFTING`, which may continue onto the next page — and the
+    newest is `AHEAD`, which is whole. Excluding the HIGHEST instead would make the newest the
+    declared version and silently skip the question."""
+    page = published(AHEAD) + [
+        row for _ in range((_SCRIPT_MODULE.PAGE_SIZE - 2) // 2) for row in published(DRIFTING)
+    ]
+    assert len(page) == _SCRIPT_MODULE.PAGE_SIZE
+    repo = make_repo(tmp_path, version=DRIFTING)
+    bin_dir, calls = newest_stub(tmp_path, now=LANDED + timedelta(days=10), unscoped=page)
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 1, out
+    assert f"newest on internal: {AHEAD}, uploaded" in proc.stdout, out
+    assert registries_queried(calls)[-1] == ("partner", AHEAD), registries_queried(calls)
+
+
+def test_a_response_longer_than_the_page_is_still_a_page_with_an_edge(tmp_path: Path) -> None:
+    """`>=`, not `==`. A server that ignored `page_size` and sent 51 rows cut its answer at a size
+    nobody asked for, and its lowest version is no more trustworthy than at 50. Fifty-one rows of
+    one version has no candidate above the edge: exit 2."""
+    page = _full_page_of_one_version() + published(DRIFTING)[:1]
+    assert len(page) == _SCRIPT_MODULE.PAGE_SIZE + 1
+    repo = make_repo(tmp_path, version=DRIFTING)
+    bin_dir, _ = newest_stub(tmp_path, now=LANDED + timedelta(days=10), unscoped=page)
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 2, out
+    assert f"{DRIFTING} is the lowest version on a full page" in proc.stderr, out
+
+
+@pytest.mark.parametrize(
+    ("ahead_by", "expected"),
+    [(3, 0), (5, 0), (6, 2)],
+    ids=["jitter", "at-the-tolerance", "past-the-tolerance"],
+)
+def test_an_upload_stamp_slightly_in_the_future_is_jitter_and_further_is_a_fault(
+    tmp_path: Path, ahead_by: int, expected: int
+) -> None:
+    """The newest clock's skew guard, at its boundary. Up to `CLOCK_SKEW_TOLERANCE_MINUTES` (5) in
+    the future is NTP jitter: clamped to zero minutes, so a lag reads as DEFERRED. One minute past
+    it is a clock that cannot be trusted: exit 2, never a silent defer."""
+    assert _SCRIPT_MODULE.CLOCK_SKEW_TOLERANCE_MINUTES == 5
+    now = LANDED + timedelta(days=10)
+    repo = make_repo(tmp_path, version=DRIFTING)
+    bin_dir, _ = newest_stub(
+        tmp_path,
+        now=now,
+        ahead_rows=published(AHEAD, uploaded_at=upload_stamp(now + timedelta(minutes=ahead_by))),
+    )
+    proc = run(repo, None, tmp_path, now=now, env=live_env(bin_dir))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == expected, out
+    if expected == 0:
+        assert f"newest on internal: {AHEAD}, uploaded 0 minutes ago" in proc.stdout, out
+        assert "NEWEST DEFERRED —" in proc.stdout, out
+    else:
+        assert NEWEST_FAULT in proc.stderr and f"{ahead_by} minutes AFTER now" in proc.stderr, out
+
+
+def test_the_order_check_reads_every_row_not_only_seam_sdk_rows(tmp_path: Path) -> None:
+    """The judgement call, pinned: `sort=-version` orders the WHOLE response, so a row of another
+    package out of order is as much evidence the sort was ignored as a `seam-sdk` row would be.
+    Checking only `seam-sdk` rows would accept this page and answer from it."""
+    page = (
+        published(AHEAD)
+        + rows(("other-thing", "9.9.9", "python"))
+        + published(DRIFTING)
+        + published(ROSTER[0])
+    )
+    repo = make_repo(tmp_path, version=DRIFTING)
+    bin_dir, _ = newest_stub(tmp_path, now=LANDED + timedelta(days=10), unscoped=page)
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 2, out
+    assert f"({AHEAD} is followed by 9.9.9)" in proc.stderr, out
+
+
+def assert_filed_newest_only(log: Path, version: str) -> None:
+    """The exact `gh` sequence of a run whose ONLY GitHub business is filing a newest drift for
+    `version`: one listing, one create under V's partner title, the heartbeat. Nothing else."""
+    calls = gh_calls(log)
+    assert [c[:2] for c in calls] == [["issue", "list"], ["issue", "create"], ["api", calls[-1][1]]], calls
+    assert calls[0] == issue_list_argv(), calls[0]
+    assert calls[1][2:4] == ["--title", PARTNER_DRIFT_TITLE.format(version=version)], calls[1]
+    assert calls[1][-2:] == ["--repo", STUB_REPO] and len(calls[1]) == 8, calls[1]
+    assert calls[2] == heartbeat_argv(), calls[2]
+
+
+# ── --report: a newest finding is filed (Phase 2; these were Phase 1's "files nothing" tests) ──
+
+
+def test_with_report_a_newest_drift_beside_a_clean_declared_files_one_partner_issue(
+    tmp_path: Path,
+) -> None:
+    """Exit 1 for the newest drift, and its issue filed: one listing (shared with the clean
+    declared question), one create under the NEWEST version's partner title, the heartbeat.
+
+    Flipped in Phase 2 from "...files_nothing", which pinned [list, heartbeat] as the interim."""
+    now = LANDED + timedelta(days=10)
+    repo = make_repo(tmp_path, version=DRIFTING)
+    bin_dir, _ = newest_stub(tmp_path, now=now, ahead_minutes_ago=14400)
+    _, gh_log = gh_stub(tmp_path, [])
+    proc = run(repo, None, tmp_path, now=now, extra=["--report"],
+               env=report_env(bin_dir, token=STUB_TOKEN))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 1, out
+    assert "NEWEST DRIFT —" in proc.stdout, out
+    assert_filed_newest_only(gh_log, AHEAD)
+
+
+@pytest.mark.parametrize(
+    ("declared_minutes", "newest_ago", "expected"),
+    [
+        (10, 14400, 1),
+        (200, 14400, 1),
+        (10, 30, 0),
+        (10, 200, 0),
+        (200, 30, 0),
+        (200, 200, 0),
+    ],
+    ids=[
+        "declared-deferred+newest-drift",
+        "declared-warned+newest-drift",
+        "declared-deferred+newest-deferred",
+        "declared-deferred+newest-warned",
+        "declared-warned+newest-deferred",
+        "declared-warned+newest-warned",
+    ],
+)
+def test_with_report_a_declared_grace_tier_reaches_github_only_for_a_newest_drift(
+    tmp_path: Path, declared_minutes: int, newest_ago: int, expected: int
+) -> None:
+    """Grace is per question, live. With the declared version in a grace tier it contributes no
+    read; a newest version in ITS grace adds none either, so those runs make no `gh` call at all.
+    A newest DRIFT is a finding of its own and files it: exactly list, create, heartbeat.
+
+    Flipped in Phase 2 from "...reaches_no_github_whatever_the_newest_says", whose two
+    newest-drift cases pinned zero gh calls as the interim."""
+    now = LANDED + timedelta(minutes=declared_minutes)
+    repo = make_repo(tmp_path, version=DRIFTING)
+    bin_dir, _ = newest_stub(
+        tmp_path, now=now, declared_served=False, ahead_minutes_ago=newest_ago
+    )
+    _, gh_log = gh_stub(tmp_path, [])
+    proc = run(repo, None, tmp_path, now=now, extra=["--report"],
+               env=report_env(bin_dir, token=STUB_TOKEN))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == expected, out
+    assert f"newest on internal: {AHEAD}, uploaded {newest_ago} minutes ago" in proc.stdout, out
+    if newest_ago == 14400:
+        assert_filed_newest_only(gh_log, AHEAD)
+    else:
+        assert gh_calls(gh_log) == [], gh_calls(gh_log)
+
+
+# ── The two named invariants, re-run on paths where the newest question is CHECKED ─────────────
+
+
+@pytest.mark.parametrize("newest_ago", [30, 200, 14400], ids=["deferred", "warned", "drift"])
+@pytest.mark.parametrize(
+    ("age", "band", "marker"),
+    [(10, "soft", "DEFERRED"), (200, "warn", "::warning::")],
+)
+def test_neither_grace_tier_touches_github_with_the_newest_question_checked(
+    tmp_path: Path, age: int, band: str, marker: str, newest_ago: int
+) -> None:
+    """`test_neither_grace_tier_touches_github`, offline WITH a partner dump, so the newest
+    question is asked (0.7.77, which partner lacks) and lands on each of its own tiers. Grace on
+    the declared version contributes no `gh` call of any kind; a newest version in its own grace
+    adds none. A newest DRIFT files for itself — exactly list, create, heartbeat — and that is the
+    only way GitHub is reached (the drift case flipped in Phase 2 from zero calls)."""
+    now = LANDED + timedelta(minutes=age)
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    internal = published("0.7.77", uploaded_at=upload_stamp(now - timedelta(minutes=newest_ago)))
+    proc, log = report_run(
+        repo,
+        internal,
+        tmp_path,
+        listing=[],
+        now=now,
+        extra=_partner_dump(tmp_path, published("0.7.76")),
+    )
+    assert proc.returncode == (1 if newest_ago == 14400 else 0), proc.stdout + proc.stderr
+    assert marker in proc.stdout, f"the {band} tier did not announce itself:\n{proc.stdout}"
+    assert f"newest on internal: 0.7.77, uploaded {newest_ago} minutes ago" in proc.stdout
+    if newest_ago == 14400:
+        assert_filed_newest_only(log, "0.7.77")
+    else:
+        assert gh_calls(log) == [], f"the {band} tier called GitHub: {gh_calls(log)}"
+
+
+@pytest.mark.parametrize(
+    ("declared_served", "newest_served"),
+    [(False, True), (False, False), (True, True), (True, False)],
+    ids=["drift+newest-clean", "drift+newest-drift", "clean+newest-clean", "clean+newest-drift"],
+)
+def test_one_listing_answers_every_question_with_the_newest_question_checked(
+    tmp_path: Path, declared_served: bool, newest_served: bool
+) -> None:
+    """`test_one_listing_answers_every_question_the_run_asks`, offline WITH a partner dump, so a
+    third question — the newest version — is answered in the same run. Still exactly one
+    `gh issue list`, whichever way each question comes out."""
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    internal = published(AHEAD) + (published(DRIFTING) if declared_served else [])
+    partner = published(DRIFTING) + (published(AHEAD) if newest_served else [])
+    proc, log = report_run(
+        repo,
+        internal,
+        tmp_path,
+        listing=drift_listing(42, "OPEN", []),
+        extra=_partner_dump(tmp_path, partner),
+    )
+    out = proc.stdout + proc.stderr
+    assert f"newest on internal: {AHEAD}, uploaded" in proc.stdout, out
+    assert ("NEWEST DRIFT —" in proc.stdout) is (not newest_served), out
+    assert gh_verbs(log).count("issue list") == 1, gh_verbs(log)
+
+
+# ── A declared-clock fault must not swallow a newest answer already computed ───────────────────
+
+
+@pytest.mark.parametrize(
+    ("newest", "expected", "marker"),
+    [("drift", 1, "NEWEST DRIFT —"), ("clean", 2, "NEWEST CLEAN —"), ("fault", 2, NEWEST_FAULT)],
+)
+def test_a_git_clock_fault_still_prints_the_newest_answer_and_exits_by_d3(
+    tmp_path: Path, newest: str, expected: int, marker: str
+) -> None:
+    """A checkout without tags makes the DECLARED clock unreadable (exit 2) — but by then the
+    newest question has been answered on the upload clock, which git does not touch. Its answer
+    is printed, and the exit follows D3 with the declared question at 2: a newest drift is a real
+    finding and keeps 1; a clean or failed newest leaves the 2."""
+    now = LANDED + timedelta(days=10)
+    repo = make_repo(tmp_path, version=DRIFTING, filler_tags=0, tag=False)
+    if newest == "fault":
+        bin_dir, _ = newest_stub(tmp_path, now=now, unscoped=[])
+    else:
+        bin_dir, _ = newest_stub(
+            tmp_path,
+            now=now,
+            ahead_minutes_ago=14400,
+            partner_ahead=published(AHEAD) if newest == "clean" else None,
+        )
+    proc = run(repo, None, tmp_path, now=now, env=live_env(bin_dir))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == expected, out
+    assert "below TAG_FLOOR" in proc.stderr, out
+    assert marker in out, out
+    if newest != "fault":
+        assert f"newest on internal: {AHEAD}, uploaded 14400 minutes ago" in proc.stdout, out
+    assert "Traceback" not in out and STUB_TOKEN not in out, out
+
+
+def test_a_git_clock_fault_never_claims_the_declared_question_was_answered(tmp_path: Path) -> None:
+    """Newest IS the declared version (the skip), and git fails: the declared question has no
+    answer, so the newest line must not say "answered above" — it says it was not answered."""
+    now = LANDED + timedelta(days=10)
+    repo = make_repo(tmp_path, version=DRIFTING, filler_tags=0, tag=False)
+    bin_dir, _ = newest_stub(tmp_path, now=now)
+    proc = run(repo, None, tmp_path, now=now, env=live_env(bin_dir))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 2, out
+    assert "below TAG_FLOOR" in proc.stderr, out
+    assert f"newest on internal: {DRIFTING} — the declared version, not answered (git failed)" in (
+        proc.stdout
+    ), out
+    assert "answered above" not in out, out
+
+
+# ── Offline: the dump must carry `uploaded_at` for the newest question ──────────────────────────
+
+
+def test_an_offline_dump_without_uploaded_at_is_refused_naming_the_file(tmp_path: Path) -> None:
+    """Exit 2 — a clock that cannot be read is never a defer — and the refusal says WHICH file and
+    WHAT it needs, because offline the fix is the operator's: re-capture keeping the field."""
+    repo = make_repo(tmp_path, version=DRIFTING)
+    internal = [
+        {k: v for k, v in row.items() if k != "uploaded_at"}
+        for row in published(AHEAD) + published(DRIFTING)
+    ]
+    proc = run(repo, internal, tmp_path, extra=_partner_dump(tmp_path, published(DRIFTING)))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 2, out
+    dump = tmp_path / "packages.json"
+    assert f"--packages-json {dump} must keep each row's `uploaded_at`" in proc.stderr, out
+    assert f"OK — the registry serves {DRIFTING}" in proc.stdout, out
+
+
+def test_the_offline_help_says_the_newest_question_needs_uploaded_at() -> None:
+    """The help text is where an operator capturing a dump finds out what it must keep."""
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    # One block per option: argparse starts each at a line beginning `  --`, and continuation
+    # lines are indented further, so a mention of another flag inside a help text cannot end it.
+    blocks: dict[str, str] = {}
+    for line in proc.stdout.splitlines():
+        if line.startswith("  --"):
+            current = line.split()[0]
+            blocks[current] = line
+        elif line.startswith("   ") and blocks:
+            blocks[current] += " " + line.strip()
+    for flag in ("--packages-json", "--partner-packages-json"):
+        assert "uploaded_at" in blocks.get(flag, ""), f"{flag}: {blocks.get(flag)!r}"
+
+
+# ── #253 Phase 2: reporting a newest-version lag ───────────────────────────────────────────────
+#
+# A newest drift files, comments and reopens under `PARTNER_DRIFT_TITLE.format(V)` — the same
+# title the declared question would use for V, so there is one issue per missing version whichever
+# question finds it (D4). One listing per run, fetched lazily and shared; the heartbeat whenever
+# GitHub was read, except a gh failure on a drift path, which exits 2 first; a newest clean's close
+# notice only from a listing the declared question fetched.
+
+#: The suppression issue every "declared drift is suppressed" fixture carries.
+DECLARED_SUPPRESSED = (7, "CLOSED", [SUPPRESSION_LABEL], DRIFT_TITLE.format(version=DRIFTING))
+
+
+def newest_report_run(
+    tmp_path: Path,
+    *,
+    declared: str = "clean",
+    newest: str = "drift",
+    listing: list[tuple[int, str, list[str], str]] | None = None,
+    fail_on: tuple[str, str] | None = None,
+    fail_create_titled: str | None = None,
+    tag_newest: bool = False,
+    filler_tags: int = FILLER_TAGS,
+) -> tuple[subprocess.CompletedProcess[str], Path]:
+    """A live `--report` run with curl and gh stubbed in one bin dir.
+
+    `declared`: clean (served, two weeks old), drift / suppressed (absent, two weeks old; the
+    latter with `DECLARED_SUPPRESSED` in the listing), deferred / warned (absent, 10 / 200 minutes).
+    `newest`: drift (AHEAD on internal 14400 minutes ago, absent from partner), clean (partner
+    serves AHEAD), deferred (AHEAD uploaded 30 minutes ago, absent from partner)."""
+    git_age = {"clean": 14400, "drift": 14400, "suppressed": 14400, "deferred": 10, "warned": 200}
+    now = LANDED + timedelta(minutes=git_age[declared])
+    repo = make_repo(tmp_path, version=DRIFTING, tag=filler_tags > 0, filler_tags=filler_tags)
+    if tag_newest:
+        _git(repo, "tag", "-a", f"v{AHEAD}", "-m", f"v{AHEAD}", when=LANDED)
+    bin_dir, _ = newest_stub(
+        tmp_path,
+        now=now,
+        declared_served=declared == "clean",
+        ahead_minutes_ago=30 if newest == "deferred" else 14400,
+        partner_ahead=published(AHEAD) if newest == "clean" else None,
+    )
+    full_listing = list(listing or [])
+    if declared == "suppressed":
+        full_listing.append(DECLARED_SUPPRESSED)
+    _, gh_log = gh_stub(
+        tmp_path, full_listing, fail_on=fail_on, fail_create_titled=fail_create_titled
+    )
+    proc = run(
+        repo, None, tmp_path, now=now, extra=["--report"], env=report_env(bin_dir, token=STUB_TOKEN)
+    )
+    return proc, gh_log
+
+
+def newest_partner_listing(number: int, state: str, labels: list[str]):
+    return [(number, state, labels, PARTNER_DRIFT_TITLE.format(version=AHEAD))]
+
+
+def test_a_suppressed_declared_drift_beside_a_newest_lag_files_the_newest_issue(
+    tmp_path: Path,
+) -> None:
+    """#253 Phase 2 acceptance 1. The declared version's suppression is its own; the newest lag is
+    a separate version's finding: one listing, one create under V's partner title whose body names
+    V and D and carries State P for V, then the heartbeat, and exit 1."""
+    proc, log = newest_report_run(tmp_path, declared="suppressed", newest="drift")
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 1, out
+    assert "SUPPRESSED by #7" in proc.stdout, out
+    assert_filed_newest_only(log, AHEAD)
+    body = gh_flag(log, "issue create", "--body")
+    assert body.startswith(
+        f"`zer07labs/internal`'s newest release is **{AHEAD}**"
+    ), body
+    assert f"declares **{DRIFTING}**" in body, body
+    assert "found by the newest-version check" in body, body
+    assert f"| found by | the newest-version check (main declares `{DRIFTING}`) |" in body, body
+    assert f"State P — internal serves {AHEAD}" in body, body
+    assert f"./scripts/promote-to-partner.sh {AHEAD}" in body, body
+    assert "| time since it finished uploading to internal | 14400 minutes |" in body, body
+    assert STUB_TOKEN not in out
+
+
+def test_an_open_partner_issue_for_the_newest_version_gets_no_write(tmp_path: Path) -> None:
+    """#253 Phase 2 acceptance 2. The partner issue for V is open — filed earlier by the declared
+    question, when `main` still declared V. Same title, so it is recognised: no write, exit 1."""
+    proc, log = newest_report_run(tmp_path, listing=newest_partner_listing(11, "OPEN", []))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 1, out
+    assert gh_calls(log) == [issue_list_argv(), heartbeat_argv()], gh_calls(log)
+    assert "drift already reported on #11" in proc.stdout, out
+
+
+@pytest.mark.parametrize(
+    ("labels", "expected", "writes"),
+    [([SUPPRESSION_LABEL], 0, []), ([], 1, ["comment", "reopen"])],
+    ids=["closed-labelled", "closed-unlabelled"],
+)
+def test_a_closed_partner_issue_for_the_newest_version_walks_the_decision_table(
+    tmp_path: Path, labels: list[str], expected: int, writes: list[str]
+) -> None:
+    """#253 Phase 2 acceptance 3. Closed and labelled on V's partner title: suppressed, a
+    `::warning::` naming it, exit 0 (the suppression is V's, so the drift no longer votes). Closed
+    and unlabelled: comment THEN reopen, in that order, with the newest body, exit 1."""
+    proc, log = newest_report_run(tmp_path, listing=newest_partner_listing(11, "CLOSED", labels))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == expected, out
+    calls = gh_calls(log)
+    assert [c[1] for c in calls if c[0] == "issue" and c[1] != "list"] == writes, calls
+    assert calls[0] == issue_list_argv() and calls[-1] == heartbeat_argv(), calls
+    if labels:
+        assert f"::warning::drift on {AHEAD} is SUPPRESSED by #11" in proc.stdout, out
+        assert "Partner still does not serve" in proc.stdout, out
+    else:
+        assert [c[2] for c in calls if c[:2] in (["issue", "comment"], ["issue", "reopen"])] == [
+            "11",
+            "11",
+        ], calls
+        text = gh_flag(log, "issue comment", "--body")
+        assert "found by the newest-version check" in text and f"**{AHEAD}**" in text, text
+
+
+def test_a_declared_drift_and_a_newest_drift_share_one_listing_and_file_two_issues(
+    tmp_path: Path,
+) -> None:
+    """#253 Phase 2 acceptance 4. Two versions, two findings, two titles — one listing, read once
+    and shared, then the heartbeat once."""
+    proc, log = newest_report_run(tmp_path, declared="drift", newest="drift")
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 1, out
+    calls = gh_calls(log)
+    assert [c[:2] for c in calls] == [
+        ["issue", "list"],
+        ["issue", "create"],
+        ["issue", "create"],
+        ["api", calls[-1][1]],
+    ], calls
+    assert calls[0] == issue_list_argv() and calls[-1] == heartbeat_argv(), calls
+    assert [c[3] for c in calls[1:3]] == [
+        DRIFT_TITLE.format(version=DRIFTING),
+        PARTNER_DRIFT_TITLE.format(version=AHEAD),
+    ], calls
+
+
+@pytest.mark.parametrize("declared", ["deferred", "warned"])
+@pytest.mark.parametrize(
+    "open_partner_issue", [True, False], ids=["open-partner-issue-for-V", "no-issue"]
+)
+def test_a_declared_grace_tier_beside_a_newest_clean_makes_no_github_call(
+    tmp_path: Path, declared: str, open_partner_issue: bool
+) -> None:
+    """#253 Phase 2 acceptance 5, the clean half (the drift half is
+    `test_with_report_a_declared_grace_tier_reaches_github_only_for_a_newest_drift`). The declared
+    question is in grace and the newest is clean: zero `gh` calls — even with an OPEN partner issue
+    for V that a close notice could point at. A newest clean never lists for itself."""
+    listing = newest_partner_listing(11, "OPEN", []) if open_partner_issue else []
+    proc, log = newest_report_run(tmp_path, declared=declared, newest="clean", listing=listing)
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0, out
+    assert "NEWEST CLEAN —" in proc.stdout, out
+    assert gh_calls(log) == [], gh_calls(log)
+    assert "can be closed" not in proc.stdout, out
+
+
+def test_a_newest_clean_says_its_issue_can_be_closed_when_the_declared_question_listed(
+    tmp_path: Path,
+) -> None:
+    """The other side of the guard: the declared question is clean, so it listed — and from that
+    same listing an open partner issue for V gets the close notice. No write, one listing."""
+    proc, log = newest_report_run(
+        tmp_path, declared="clean", newest="clean", listing=newest_partner_listing(11, "OPEN", [])
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0, out
+    assert f"::notice::#11 reports {AHEAD} missing from partner" in proc.stdout, out
+    assert gh_calls(log) == [issue_list_argv(), heartbeat_argv()], gh_calls(log)
+
+
+@pytest.mark.parametrize("newest", ["drift", "suppressed", "clean", "deferred"])
+@pytest.mark.parametrize("declared", ["clean", "drift", "suppressed", "deferred"])
+def test_exactly_one_listing_and_one_heartbeat_iff_github_was_read(
+    tmp_path: Path, declared: str, newest: str
+) -> None:
+    """#253 Phase 2 acceptance 6, plus the heartbeat rule, over every combination of the two
+    questions' GitHub-relevant states. A run reads GitHub iff the declared question is clean or a
+    drift (suppressed included — it had to list to learn that) or the newest is a drift (likewise).
+    When it does: exactly one listing and exactly one heartbeat. When it does not: no call at all."""
+    listing = newest_partner_listing(12, "CLOSED", [SUPPRESSION_LABEL]) if newest == "suppressed" else []
+    proc, log = newest_report_run(
+        tmp_path,
+        declared=declared,
+        newest="drift" if newest == "suppressed" else newest,
+        listing=listing,
+    )
+    out = proc.stdout + proc.stderr
+    reads = declared in ("clean", "drift", "suppressed") or newest in ("drift", "suppressed")
+    verbs = gh_verbs(log)
+    assert verbs.count("issue list") == (1 if reads else 0), verbs
+    assert verbs.count(heartbeat_verb()) == (1 if reads else 0), verbs
+    if reads:
+        assert verbs[0] == "issue list" and verbs[-1] == heartbeat_verb(), verbs
+    expected = 1 if declared == "drift" or newest == "drift" else 0
+    assert proc.returncode == expected, out
+
+
+@pytest.mark.parametrize("outage", [("issue", "list"), ("issue", "create")], ids=["list", "create"])
+def test_a_github_outage_beside_a_newest_drift_is_two_with_both_verdicts_printed(
+    tmp_path: Path, outage: tuple[str, str]
+) -> None:
+    """#253 Phase 2 acceptance 7. GitHub fails while a newest drift is being delivered: exit 2 —
+    a finding that could not be delivered is infrastructure, the declared drift's rule — and both
+    verdicts are already in the log, because they are printed before anything is reported. The
+    listing is never retried by a second question."""
+    proc, log = newest_report_run(tmp_path, declared="clean", newest="drift", fail_on=outage)
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 2, out
+    assert f"OK — the registry serves {DRIFTING} in both formats" in proc.stdout, out
+    assert "NEWEST DRIFT —" in proc.stdout, out
+    assert "503" in proc.stderr, out
+    assert gh_verbs(log).count("issue list") == 1, gh_verbs(log)
+    # The clean declared question's own outage warning is printed too when it was the listing.
+    if outage == ("issue", "list"):
+        # Reworded when a newest drift is pending: it must not promise a green run it won't have.
+        assert "The newest-version drift above cannot be filed either" in proc.stdout, out
+        assert "only the advisory notice is missing" not in proc.stdout, out
+
+
+def test_a_listing_outage_with_only_clean_questions_stays_green(tmp_path: Path) -> None:
+    """The contrast to acceptance 7: nothing to deliver, so a listing outage is a warning and the
+    healthy run stays 0 — the declared clean path's rule, unchanged by the newest question."""
+    proc, log = newest_report_run(
+        tmp_path, declared="clean", newest="clean", fail_on=("issue", "list")
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert gh_verbs(log).count("issue list") == 1, gh_verbs(log)
+
+
+def test_no_token_reaches_gh_and_the_gh_verbs_are_unchanged(tmp_path: Path) -> None:
+    """#253 Phase 2 acceptance 8, on the widest reporting path: a declared drift filed, and a
+    newest drift commented and reopened. No argv handed to `gh` carries the registry token, nor
+    does any output; and every `gh` call is one of the verbs this check has always used — plus the
+    one allowlisted read (`gh_writes` refuses any other `gh api`)."""
+    proc, log = newest_report_run(
+        tmp_path, declared="drift", newest="drift", listing=newest_partner_listing(11, "CLOSED", [])
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 1, out
+    calls = gh_calls(log)
+    for call in calls:
+        assert not any(STUB_TOKEN in arg for arg in call), call
+    assert set(gh_writes(log)) <= {"issue create", "issue comment", "issue reopen"}, gh_writes(log)
+    assert gh_writes(log) == ["issue create", "issue comment", "issue reopen"], gh_writes(log)
+    assert STUB_TOKEN not in out
+
+
+def test_a_suppression_is_scoped_to_its_own_version_and_title(tmp_path: Path) -> None:
+    """Per-version suppression. Closed-and-labelled issues for every OTHER thing — the partner
+    title of the DECLARED version, and the internal title of V — say nothing about V on partner.
+    The newest drift is filed."""
+    listing = [
+        (21, "CLOSED", [SUPPRESSION_LABEL], PARTNER_DRIFT_TITLE.format(version=DRIFTING)),
+        (22, "CLOSED", [SUPPRESSION_LABEL], DRIFT_TITLE.format(version=AHEAD)),
+    ]
+    proc, log = newest_report_run(tmp_path, listing=listing)
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 1, out
+    assert "SUPPRESSED" not in proc.stdout, out
+    assert_filed_newest_only(log, AHEAD)
+
+
+def test_a_declared_partner_lag_body_says_the_declared_question_found_it(tmp_path: Path) -> None:
+    """D4's other half: the shared title means the BODY says which question found it, so an
+    issue filed by the declared question says so too."""
+    proc, log = _partner_lag_run(tmp_path, [])
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    body = gh_flag(log, "issue create", "--body")
+    assert "| found by | the declared-version check |" in body, body
+    assert "newest-version" not in body, body
+
+
+# ── #253 Phase 2, verifier gaps ────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(("tagged", "cell"), [(True, "present"), (False, "**absent**")])
+def test_the_newest_issue_states_the_newest_versions_own_tag(
+    tmp_path: Path, tagged: bool, cell: str
+) -> None:
+    """The newest body's tag row is V's, read from git for V — not the declared version's (which
+    is tagged here in both cases), and not a constant."""
+    proc, log = newest_report_run(tmp_path, tag_newest=tagged)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    body = gh_flag(log, "issue create", "--body")
+    assert f"| tag `v{AHEAD}` | {cell} |" in body, body
+
+
+@pytest.mark.parametrize(
+    ("notice_for", "linked"), [(AHEAD, True), (DRIFTING, False)], ids=["for-V", "only-for-D"]
+)
+def test_the_newest_issue_cross_links_release_outcome_for_V_only(
+    tmp_path: Path, notice_for: str, linked: bool
+) -> None:
+    """An open `release-outcome` issue for V is linked from V's issue — it is the sign V's
+    `registry-smoke` may have failed, exactly when State P says not to promote. One open only for
+    the DECLARED version is about a different release and is not linked."""
+    listing = [(9, "OPEN", [], RELEASE_NOTICE_TITLE.format(version=notice_for))]
+    proc, log = newest_report_run(tmp_path, listing=listing)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    body = gh_flag(log, "issue create", "--body")
+    assert ("`release-outcome` also reported this release: #9" in body) is linked, body
+
+
+def test_a_declared_drift_beside_a_newest_clean_still_gets_the_close_notice(
+    tmp_path: Path,
+) -> None:
+    """The close-notice guard's other half: the declared question reached GitHub through a DRIFT,
+    not a clean — its listing is just as much in hand, so the open partner issue for V gets the
+    notice from it. One listing, the declared create, the heartbeat; nothing for V."""
+    proc, log = newest_report_run(
+        tmp_path, declared="drift", newest="clean", listing=newest_partner_listing(11, "OPEN", [])
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 1, out
+    assert f"::notice::#11 reports {AHEAD} missing from partner" in proc.stdout, out
+    calls = gh_calls(log)
+    assert [c[:2] for c in calls] == [["issue", "list"], ["issue", "create"], ["api", calls[-1][1]]]
+    assert calls[1][3] == DRIFT_TITLE.format(version=DRIFTING), calls[1]
+
+
+def test_a_git_clock_fault_with_report_reaches_no_github_even_beside_a_newest_drift(
+    tmp_path: Path,
+) -> None:
+    """The git-clock fault path files nothing: the checkout cannot be read, and no write leaves a
+    run whose instrument is broken. The newest drift is printed and votes 1 — and `gh` is never
+    called, not even to list."""
+    proc, log = newest_report_run(tmp_path, newest="drift", filler_tags=0)
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 1, out
+    assert "below TAG_FLOOR" in proc.stderr and "NEWEST DRIFT —" in proc.stdout, out
+    assert gh_calls(log) == [], gh_calls(log)
+
+
+def test_a_listing_outage_beside_two_drifts_is_two_with_both_verdicts_and_no_retry(
+    tmp_path: Path,
+) -> None:
+    """Declared drift and newest drift, the listing fails: exit 2, both verdicts in the log, ONE
+    listing attempt (the failure is cached, never retried by the second question), no write, and
+    no heartbeat — the drift path's handler returns before it."""
+    proc, log = newest_report_run(
+        tmp_path, declared="drift", newest="drift", fail_on=("issue", "list")
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 2, out
+    assert f"DRIFT — seam-sdk {DRIFTING} is not installable" in proc.stdout, out
+    assert "NEWEST DRIFT —" in proc.stdout and "503" in proc.stderr, out
+    assert gh_calls(log) == [issue_list_argv()], gh_calls(log)
+
+
+def test_a_newest_create_failing_after_the_declared_create_is_two_and_keeps_the_first(
+    tmp_path: Path,
+) -> None:
+    """The declared issue is filed, then the outage lands on the newest create: exit 2 (a finding
+    went undelivered), the declared issue stands — exactly one create succeeded — the newest one
+    was attempted once and failed, and the heartbeat is not reached."""
+    v_title = PARTNER_DRIFT_TITLE.format(version=AHEAD)
+    proc, log = newest_report_run(
+        tmp_path, declared="drift", newest="drift", fail_create_titled=v_title
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 2, out
+    calls = gh_calls(log)
+    assert [c[:2] for c in calls] == [["issue", "list"], ["issue", "create"], ["issue", "create"]]
+    assert [c[3] for c in calls[1:]] == [DRIFT_TITLE.format(version=DRIFTING), v_title], calls
+    filed = [ln for ln in proc.stdout.splitlines() if ln.startswith("filed a new drift issue:")]
+    assert filed == [f"filed a new drift issue: {DRIFT_TITLE.format(version=DRIFTING)}"], filed
+    assert "503" in proc.stderr, out
+
+
+# ── Final verify: the seams between the declared and newest questions under --report ────────────
+#
+# Each phase's tests staged one question at a time. These stage BOTH, with --report, on the cells
+# the whole-feature verify found uncovered: a declared PARTNER lag beside a newest question on another
+# version (two partner titles from one listing), and a newest fault or grace tier beside a clean or
+# drifting declared question.
+
+SEAM_NOW = LANDED + timedelta(minutes=14400)
+
+
+def _seam_run(
+    tmp_path: Path,
+    *,
+    internal: dict,
+    partner: dict,
+    listing: list | tuple = (),
+    unscoped: object | None = None,
+) -> tuple[subprocess.CompletedProcess, Path]:
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    bin_dir, _ = curl_stub(tmp_path, internal, partner_responses=partner, unscoped=unscoped)
+    _, gh_log = gh_stub(tmp_path, list(listing))
+    proc = run(
+        repo,
+        None,
+        tmp_path,
+        now=SEAM_NOW,
+        extra=["--report"],
+        env=report_env(bin_dir, token=STUB_TOKEN),
+    )
+    return proc, gh_log
+
+
+def _ahead(minutes_ago: float) -> list[dict]:
+    return published(AHEAD, uploaded_at=upload_stamp(SEAM_NOW - timedelta(minutes=minutes_ago)))
+
+
+def _canary() -> dict:
+    return {ROSTER[0]: published(ROSTER[0])}
+
+
+def _creates(log: Path) -> list[str]:
+    return [c[3] for c in gh_calls(log) if c[:2] == ["issue", "create"]]
+
+
+def test_a_declared_partner_lag_and_a_newest_drift_file_two_partner_issues_from_one_listing(
+    tmp_path: Path,
+) -> None:
+    """Internal serves D and V; partner serves neither. Both questions are partner lags, on two
+    different versions and so two different titles: D's issue first, then V's, from ONE listing."""
+    internal = {**_canary(), DRIFTING: published(DRIFTING), AHEAD: _ahead(14400)}
+    proc, log = _seam_run(tmp_path, internal=internal, partner=_canary())
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 1, out
+    assert _creates(log) == [
+        PARTNER_DRIFT_TITLE.format(version=DRIFTING),
+        PARTNER_DRIFT_TITLE.format(version=AHEAD),
+    ], gh_calls(log)
+    assert gh_verbs(log).count("issue list") == 1, gh_calls(log)
+    assert gh_calls(log)[-1] == heartbeat_argv(), gh_calls(log)
+    assert STUB_TOKEN not in out
+
+
+def test_a_suppressed_declared_partner_lag_does_not_suppress_the_newest_versions_lag(
+    tmp_path: Path,
+) -> None:
+    """Suppression is per version: D's closed+labelled partner issue silences D, never V."""
+    internal = {**_canary(), DRIFTING: published(DRIFTING), AHEAD: _ahead(14400)}
+    listing = [(7, "CLOSED", [SUPPRESSION_LABEL], PARTNER_DRIFT_TITLE.format(version=DRIFTING))]
+    proc, log = _seam_run(tmp_path, internal=internal, partner=_canary(), listing=listing)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert_filed_newest_only(log, AHEAD)
+
+
+def test_both_partner_lags_suppressed_is_green_and_writes_nothing(tmp_path: Path) -> None:
+    internal = {**_canary(), DRIFTING: published(DRIFTING), AHEAD: _ahead(14400)}
+    listing = [
+        (7, "CLOSED", [SUPPRESSION_LABEL], PARTNER_DRIFT_TITLE.format(version=DRIFTING)),
+        (8, "CLOSED", [SUPPRESSION_LABEL], PARTNER_DRIFT_TITLE.format(version=AHEAD)),
+    ]
+    proc, log = _seam_run(tmp_path, internal=internal, partner=_canary(), listing=listing)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert gh_writes(log) == [], gh_calls(log)
+
+
+def test_a_declared_partner_lag_beside_a_newest_clean_still_gets_the_close_notice(
+    tmp_path: Path,
+) -> None:
+    internal = {**_canary(), DRIFTING: published(DRIFTING), AHEAD: _ahead(14400)}
+    partner = {**_canary(), AHEAD: published(AHEAD)}
+    listing = [(11, "OPEN", [], PARTNER_DRIFT_TITLE.format(version=AHEAD))]
+    proc, log = _seam_run(tmp_path, internal=internal, partner=partner, listing=listing)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert f"::notice::#11 reports {AHEAD} missing from partner" in proc.stdout
+    assert _creates(log) == [PARTNER_DRIFT_TITLE.format(version=DRIFTING)], gh_calls(log)
+
+
+def test_with_report_a_newest_fault_beside_a_clean_declared_is_two_after_one_listing(
+    tmp_path: Path,
+) -> None:
+    """The declared question is clean and reached GitHub (its close-notice listing); the newest
+    question could not be answered. Nothing to file — exit 2, after exactly list + heartbeat."""
+    internal = {**_canary(), DRIFTING: published(DRIFTING)}
+    proc, log = _seam_run(tmp_path, internal=internal, partner=dict(internal), unscoped=[])
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert gh_calls(log) == [issue_list_argv(), heartbeat_argv()], gh_calls(log)
+
+
+def test_with_report_a_newest_fault_beside_a_declared_drift_files_the_drift_and_exits_one(
+    tmp_path: Path,
+) -> None:
+    """D3: a fault never hides an unsuppressed drift — the declared drift is filed and stands at 1."""
+    proc, log = _seam_run(tmp_path, internal=_canary(), partner=_canary(), unscoped=[])
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert gh_calls(log)[0] == issue_list_argv(), gh_calls(log)
+    assert _creates(log) == [DRIFT_TITLE.format(version=DRIFTING)], gh_calls(log)
+    assert gh_calls(log)[-1] == heartbeat_argv(), gh_calls(log)
+
+
+@pytest.mark.parametrize("minutes_ago", [30, 200], ids=["deferred", "warned"])
+def test_with_report_a_newest_grace_tier_beside_a_clean_declared_files_nothing(
+    tmp_path: Path, minutes_ago: float
+) -> None:
+    internal = {**_canary(), DRIFTING: published(DRIFTING), AHEAD: _ahead(minutes_ago)}
+    partner = {**_canary(), DRIFTING: published(DRIFTING)}
+    proc, log = _seam_run(tmp_path, internal=internal, partner=partner)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert gh_calls(log) == [issue_list_argv(), heartbeat_argv()], gh_calls(log)
+
+
+def test_with_report_a_newest_warned_tier_beside_a_declared_drift_files_only_the_drift(
+    tmp_path: Path,
+) -> None:
+    proc, log = _seam_run(tmp_path, internal={**_canary(), AHEAD: _ahead(200)}, partner=_canary())
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert _creates(log) == [DRIFT_TITLE.format(version=DRIFTING)], gh_calls(log)
+

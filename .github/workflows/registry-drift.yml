@@ -7,8 +7,12 @@ name: registry drift
 # `promote-partner` job (seam-sdk#203). Each is proven by the canary roster before its target is
 # read. A version missing from internal is ONE internal issue, which records partner's state; a
 # version on internal and missing from partner is a promotion lag, filed under its own title
-# ("… is not on partner") with its own suppression scope. The credential resolved below reads both
-# — observed 2026-10-12 — so no partner-specific secret exists or is needed.
+# ("… is not on partner") with its own suppression scope. Partner is ALSO judged on internal's
+# newest complete release (seam-sdk#253) — one extra unscoped GET, plus a partner GET for that
+# version when it is not the declared one — so a declared version that never
+# shipped cannot hide a promotion lag on the one that did; that lag files under the same partner
+# title for its own version. The credential resolved below reads both — observed 2026-10-12 — so no
+# partner-specific secret exists or is needed.
 #
 # DELIBERATELY NOT A JOB IN ci.yml, for `framework-coinstall.yml:5-8`'s reason plus one of its own.
 # That file's argument is that the answer changes when a third party changes, not when this
