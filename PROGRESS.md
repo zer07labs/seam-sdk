@@ -4524,3 +4524,28 @@ green before any code changed.
   expected to be needed (unlike `VerifyAnchorRequest.tenant`'s deferral) since there's no
   non-wiring decision to record — both languages already carry it the moment it exists.
   Tracked in draft PR (this branch); left as a draft until BSR picks up the merged field.
+
+---
+
+# PROGRESS — `plans/partner-registry-drift.md` (seam-sdk#203 acceptance)
+
+**PR strategy: one PR.** Three phases on one script, its tests and docs; none is useful to ship alone.
+**Risk tiers:** P1 complex · P2 complex · P3 simple.
+**Repo map:** `scripts/check_registry_drift.py` (the check) · `scripts/test_registry_drift_gate.py`
+(its gate; curl/gh stubs first on PATH) · `.github/workflows/registry-drift.yml` (schedule, credential
+resolution) · `.github/workflows/publish.yml:747-810` (`promote-partner`) ·
+`.github/workflows/promote-partner-backfill.yml` + `scripts/promote-to-partner.sh` (remediation) ·
+`README.md` § registry drift · `CLAUDE.md` command line.
+
+## Phase 1: query and verdict for partner, DONE (2026-10-12)
+- **Verdict:** PASS on round 2. Opus verifier: complex phase, crosses the network boundary.
+- **Round 1, GAPS:** the `--report` guard for partner verdicts was untested (an `if False:`
+  mutation survived). Also open: a partner fault beside a grace-tier or suppressed internal
+  drift; non-`InfraError` capture; the loader naming the wrong flag; partner naming on the
+  not-JSON path. All closed with tests.
+- **Round 2:** PASS.
+- **Files:** `scripts/check_registry_drift.py`, `scripts/test_registry_drift_gate.py`,
+  `plans/partner-registry-drift.md`.
+- **Tests:** `pytest scripts/` gives 547 passed.
+- **Next:** Phase 2, reporting a partner lag under its own title, and restoring the heartbeat on
+  partner verdicts.

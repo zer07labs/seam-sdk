@@ -1318,3 +1318,31 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Status:** CONFIRMED (2026-10-05). Placement unchanged — it already satisfied the narrower
   rule above. Decided by Opus per `/reconcile`'s Autonomy ladder (low blast radius, auto-settled,
   not escalated); full reasoning logged in `DECISIONS.md`'s 2026-10-05 reconcile entry.
+
+## Offline runs check partner only when given a partner dump
+- **Plan:** plans/partner-registry-drift.md
+- **Assumed:** offline mode (`--packages-json`) is a local and test tool; the scheduled workflow never uses it, and a test pins that.
+- **Chose:** without `--partner-packages-json`, an offline run does not check partner and says so on two lines. The clean line never claims partner. This keeps 200+ existing offline tests meaningful without each one needing a partner fixture.
+- **Alternatives:** require both dumps offline. That is stricter, but it rewrites every offline test for no gain on the scheduled path.
+- **Blast radius if wrong:** low. A local run could be read as covering partner when it says it doesn't. Making the flag required is a one-line change.
+- **Status:** UNCONFIRMED
+
+## A partner fault never hides an internal finding
+- **Plan:** plans/partner-registry-drift.md
+- **Assumed:** partner is promoted from internal, so internal's state is the bigger finding.
+- **Chose:** internal is answered first and partner faults are captured.
+  - Internal drift with a partner fault: exit 1, with the fault printed beside it.
+  - Internal in grace with a partner fault: exit 2.
+  - Internal clean with a partner fault: exit 2.
+  - Internal drift suppressed, with a partner fault: exit 2.
+- **Alternatives:** any fault means exit 2, which the original plan had. That lets a revoked partner scope mute a real internal drift.
+- **Blast radius if wrong:** low. The exit-code mapping sits in one block of `main()`.
+- **Status:** UNCONFIRMED
+
+## One credential reads both registries; the Cargo fallback is dead
+- **Plan:** plans/partner-registry-drift.md
+- **Assumed:** `CLOUDSMITH_API_KEY` reads `zer07labs/partner`. Observed 2026-10-12: HTTP 200 with rows for every canary and for 0.45.0.
+- **Chose:** no new secret. The workflow's existing resolution serves both registries.
+- **Found, out of scope:** `CARGO_REGISTRIES_ZER07LABS_TOKEN`, the workflow's fallback, returns 401 on both repositories. If the primary key were ever unset, the fallback would exit 2 rather than read anything. It is pre-existing, and it fails loudly at exit 2, which is safe. Worth its own issue.
+- **Blast radius if wrong:** if the key lost partner read, every scheduled run would exit 2 naming partner. That is loud, never silent.
+- **Status:** UNCONFIRMED

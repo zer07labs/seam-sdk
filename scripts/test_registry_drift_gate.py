@@ -818,8 +818,16 @@ def curl_stub(
     *,
     fail_with: int | None = None,
     stderr_text: str | None = None,
+    partner_responses: dict[str, object] | None = None,
+    partner_fail_with: int | None = None,
 ) -> tuple[Path, Path]:
     """A `curl` first on PATH. Returns (bin dir, call-log path).
+
+    `zer07labs/partner` MIRRORS `responses` unless `partner_responses` is given, and is routed by
+    the `/zer07labs/partner/` path segment. Mirroring is the default because every test written
+    before the partner check is a statement about internal, and a partner that answered `[]` there
+    would turn each of them into a partner-canary exit 2 — testing nothing they claim to.
+    `partner_fail_with` makes ONLY partner requests exit with that code, the way `-f` would.
 
     Two logs are written, not one. `curl-calls` holds `"$*"` — argv joined by spaces, which is what
     almost every assertion here wants. Beside it, `curl-argv` holds `"$@"` one bracketed argument
@@ -845,6 +853,14 @@ def curl_stub(
         (responses_dir / version).write_text(
             payload if isinstance(payload, str) else json.dumps(payload), encoding="utf-8"
         )
+    partner_dir = responses_dir
+    if partner_responses is not None:
+        partner_dir = tmp_path / "partner-responses"
+        partner_dir.mkdir(exist_ok=True)
+        for version, payload in partner_responses.items():
+            (partner_dir / version).write_text(
+                payload if isinstance(payload, str) else json.dumps(payload), encoding="utf-8"
+            )
     argv_log = tmp_path / "curl-argv"
     argv_log.write_text("")
     lines = [
@@ -873,8 +889,14 @@ def curl_stub(
         'URL="${@: -1}"',
         'VER="${URL##*version:}"',
         'VER="${VER%%&*}"',
-        f'if [ -f "{responses_dir}/$VER" ]; then',
-        f'  cat "{responses_dir}/$VER"',
+        f'DIR="{responses_dir}"',
+        'case "$URL" in',
+        f'  */zer07labs/partner/*) DIR="{partner_dir}"'
+        + (f"; exit {partner_fail_with}" if partner_fail_with is not None else "")
+        + " ;;",
+        "esac",
+        'if [ -f "$DIR/$VER" ]; then',
+        '  cat "$DIR/$VER"',
         "else",
         "  echo '[]'",
         "fi",
@@ -894,6 +916,16 @@ def live_env(bin_dir: Path, *, token: str | None = STUB_TOKEN) -> dict[str, str]
     return env
 
 
+def registries_queried(calls: Path) -> list[tuple[str, str]]:
+    """`(repository slug, version)` per request, in order — which registry was asked, not only what."""
+    asked = []
+    for line in calls.read_text().splitlines():
+        url = line.split()[-1]
+        slug = url.split("/packages/zer07labs/")[1].split("/")[0]
+        asked.append((slug, url.split("version:")[1].split("&")[0].strip()))
+    return asked
+
+
 def versions_queried(calls: Path) -> list[str]:
     """The versions the stub was asked about, in order."""
     asked = []
@@ -904,21 +936,28 @@ def versions_queried(calls: Path) -> list[str]:
 
 
 def test_the_happy_live_path_queries_one_canary_then_the_target(tmp_path: Path) -> None:
-    """Two GETs on the common path, in that order, and a clean verdict."""
+    """Four GETs on the common path — canary then target, internal then partner — and a clean
+    verdict."""
     repo = make_repo(tmp_path, version="0.7.78")
     bin_dir, calls = curl_stub(
         tmp_path, {ROSTER[0]: published(ROSTER[0]), "0.7.78": published("0.7.78")}
     )
     proc = run(repo, None, tmp_path, env=live_env(bin_dir))
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert versions_queried(calls) == [ROSTER[0], "0.7.78"]
-    # And exactly two invocations, counted rather than inferred. `versions_queried` filters on
-    # `version:`, so a third request to some URL without that qualifier — a discovery call, a
+    assert registries_queried(calls) == [
+        ("internal", ROSTER[0]),
+        ("internal", "0.7.78"),
+        ("partner", ROSTER[0]),
+        ("partner", "0.7.78"),
+    ]
+    # And exactly four invocations, counted rather than inferred. `versions_queried` filters on
+    # `version:`, so a fifth request to some URL without that qualifier — a discovery call, a
     # retry against a different endpoint — is invisible to the assertion above. The stub appends
     # one line per invocation, so this counts them.
-    assert len(calls.read_text().splitlines()) == 2, (
-        f"the run made {len(calls.read_text().splitlines())} requests, not 2:\n{calls.read_text()}"
+    assert len(calls.read_text().splitlines()) == 4, (
+        f"the run made {len(calls.read_text().splitlines())} requests, not 4:\n{calls.read_text()}"
     )
+    assert "on internal and partner" in proc.stdout
     assert f"canary {ROSTER[0]}" in proc.stdout
     # `yank.yml` carries no timeout, so this is the one part of the request that is deliberately
     # NOT a mirror of it. A hung GET in a scheduled job is a silent multi-hour burn, and nothing
@@ -1003,9 +1042,13 @@ def test_a_canary_equal_to_the_target_is_dropped_and_the_run_still_reaches_a_ver
     assert proc.returncode == 1, (
         f"exit {proc.returncode} — the target's drift was muted\n{proc.stdout}{proc.stderr}"
     )
-    asked = versions_queried(calls)
-    assert asked.count(target) == 1, f"{target} was queried as a canary as well: {asked}"
-    assert asked[0] == backup, asked
+    # Per registry: the target is asked exactly once OF EACH, as a target, never as a canary.
+    asked = registries_queried(calls)
+    for registry in ("internal", "partner"):
+        mine = [v for r, v in asked if r == registry]
+        assert mine.count(target) == 1, f"{target} was queried as a {registry} canary as well: {asked}"
+        assert mine[0] == backup, asked
+    assert asked[0] == ("internal", backup), asked
 
 
 @pytest.mark.parametrize("truncated", [ROSTER[0], "0.7.78"], ids=["canary", "target"])
@@ -1501,6 +1544,212 @@ def test_a_roster_with_nothing_left_to_probe_names_the_constant(
     # And it must still point at the thing to edit.
     with pytest.raises(module.InfraError, match="CANARY_VERSIONS"):
         module.assert_live_instrument_healthy("0.7.78", "irrelevant")
+
+
+# ── seam-sdk#203: partner — the repository a design partner actually installs from ─────────────
+#
+# `internal` serving a release says nothing about whether a partner can install it: the two are
+# separate Cloudsmith repositories, and #203 is the record of `partner` lagging for twenty
+# releases while every check here stayed green. These pin that partner is asked, through its own
+# proven instrument, on the same clock — and that a partner fault never hides an internal finding.
+
+
+def test_partner_url_differs_from_internal_only_in_the_repository_slug() -> None:
+    """Same endpoint, same query; one path segment apart. Anything else is a different question."""
+    module = _load_script()
+    assert module.PARTNER_REGISTRY_URL != module.REGISTRY_URL
+    assert module.PARTNER_REGISTRY_URL == module.REGISTRY_URL.replace(
+        "/zer07labs/internal/", "/zer07labs/partner/"
+    )
+    assert module.PARTNER_REGISTRY_URL.endswith("/packages/zer07labs/partner/")
+    assert module.registry_name(module.PARTNER_REGISTRY_URL) == "partner"
+    assert module.registry_name(module.REGISTRY_URL) == "internal"
+
+
+@pytest.mark.parametrize(
+    ("age", "expected_code", "marker"),
+    [(30, 0, "DEFERRED"), (200, 0, "::warning::"), (361, 1, "DRIFT")],
+    ids=["soft", "warn", "hard"],
+)
+def test_a_partner_lag_walks_the_same_grace_ladder(
+    tmp_path: Path, age: int, expected_code: int, marker: str
+) -> None:
+    """Internal serves it, partner does not. One clock: `promote-partner` is in the same run."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    full = {ROSTER[0]: published(ROSTER[0]), "0.7.78": published("0.7.78")}
+    bin_dir, _ = curl_stub(
+        tmp_path, full, partner_responses={ROSTER[0]: published(ROSTER[0])}
+    )
+    proc = run(
+        repo, None, tmp_path, now=LANDED + timedelta(minutes=age), env=live_env(bin_dir)
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == expected_code, out
+    assert marker in out, out
+    assert "partner" in out
+    assert "partner serves: <nothing>" in proc.stdout
+    assert STUB_TOKEN not in out
+
+
+def test_a_partner_drift_names_state_p_and_both_promotion_tools(tmp_path: Path) -> None:
+    """The remediation must route to promotion — and warn against promoting a smoke-failed build."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    full = {ROSTER[0]: published(ROSTER[0]), "0.7.78": published("0.7.78")}
+    bin_dir, _ = curl_stub(
+        tmp_path,
+        full,
+        partner_responses={ROSTER[0]: published(ROSTER[0]), "0.7.78": rows(("seam-sdk", "0.7.78", "python"))},
+    )
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "State P" in proc.stdout
+    assert "promote-partner-backfill.yml" in proc.stdout
+    assert "./scripts/promote-to-partner.sh 0.7.78" in proc.stdout
+    assert "registry-smoke" in proc.stdout
+    # Half a promotion is still a lag, and the missing half is named.
+    assert "partner serves: python" in proc.stdout
+    assert "does not serve npm" in proc.stdout
+    # Not internal's states: the tag and the publish are fine.
+    assert "State B" not in proc.stdout and "State C" not in proc.stdout
+
+
+def test_internal_short_is_reported_as_internal_even_with_partner_short_too(tmp_path: Path) -> None:
+    """Partner is promoted FROM internal: one fault, reported once, at its source."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    bin_dir, _ = curl_stub(tmp_path, {ROSTER[0]: published(ROSTER[0])})
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "State B" in proc.stdout
+    assert "State P" not in proc.stdout
+    assert "partner serves: <nothing>" in proc.stdout
+
+
+@pytest.mark.parametrize("fault", ["canaries-empty", "http-failure"])
+def test_a_broken_partner_instrument_is_infrastructure_when_internal_is_clean(
+    tmp_path: Path, fault: str
+) -> None:
+    """Internal clean, partner unreadable: exit 2, and the message says WHICH registry."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    full = {ROSTER[0]: published(ROSTER[0]), "0.7.78": published("0.7.78")}
+    if fault == "canaries-empty":
+        bin_dir, calls = curl_stub(tmp_path, full, partner_responses={"0.7.78": published("0.7.78")})
+    else:
+        bin_dir, calls = curl_stub(tmp_path, full, partner_fail_with=22)
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "partner" in proc.stderr
+    assert "partner: COULD NOT BE READ" in proc.stdout
+    # The clean-internal line must not ALSO claim partner was merely skipped: it was tried.
+    assert "NOT checked" not in proc.stdout
+    assert STUB_TOKEN not in proc.stdout + proc.stderr
+    if fault == "canaries-empty":
+        # Canary first, per registry: partner's target is never read through a dead instrument.
+        assert ("partner", "0.7.78") not in registries_queried(calls), registries_queried(calls)
+
+
+@pytest.mark.parametrize(
+    ("age", "expected_code"), [(30, 2), (200, 2), (361, 1)], ids=["soft", "warn", "hard"]
+)
+def test_a_broken_partner_instrument_never_hides_an_internal_drift(
+    tmp_path: Path, age: int, expected_code: int
+) -> None:
+    """Internal short: a drift keeps its 1 with the partner fault beside it; inside the grace
+    tiers there is no finding yet, so the instrument fault is the news — 2."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    bin_dir, _ = curl_stub(tmp_path, {ROSTER[0]: published(ROSTER[0])}, partner_fail_with=22)
+    proc = run(
+        repo, None, tmp_path, now=LANDED + timedelta(minutes=age), env=live_env(bin_dir)
+    )
+    assert proc.returncode == expected_code, proc.stdout + proc.stderr
+    assert "::error::partner could not be read" in proc.stderr
+    if expected_code == 1:
+        assert "State B" in proc.stdout
+
+
+def test_offline_without_a_partner_dump_says_partner_was_not_checked(tmp_path: Path) -> None:
+    """Not checked is not clean. The clean line must say which registries it speaks for."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    proc = run(repo, published("0.7.78"), tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert "partner: NOT CHECKED" in proc.stdout
+    assert "Partner was NOT checked" in proc.stdout
+    assert "on internal and partner" not in proc.stdout
+
+
+@pytest.mark.parametrize(
+    ("partner", "expected_code", "needle"),
+    [
+        ("full", 0, "on internal and partner"),
+        ("short", 1, "State P"),
+        ("unrelated", 2, "--partner-packages-json"),
+    ],
+)
+def test_offline_with_a_partner_dump_checks_partner_by_the_offline_rule(
+    tmp_path: Path, partner: str, expected_code: int, needle: str
+) -> None:
+    """The offline instrument rule applies to the partner file too: no `seam-sdk` row at ANY
+    version is a broken capture, never an absence."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    payload = {
+        "full": published("0.7.78"),
+        "short": published("0.7.77"),
+        "unrelated": rows(("other-thing", "1.0.0", "python")),
+    }[partner]
+    pfile = tmp_path / "partner.json"
+    pfile.write_text(json.dumps(payload), "utf-8")
+    proc = run(
+        repo, published("0.7.78"), tmp_path, extra=["--partner-packages-json", str(pfile)]
+    )
+    assert proc.returncode == expected_code, proc.stdout + proc.stderr
+    assert needle in proc.stdout + proc.stderr
+
+
+@pytest.mark.parametrize("payload", ["[]", None], ids=["empty-list", "missing-file"])
+def test_an_empty_or_missing_partner_dump_is_infrastructure_named_by_its_own_flag(
+    tmp_path: Path, payload: str | None
+) -> None:
+    """`[]` is not a plausible unscoped capture; a missing file is not a capture at all. Both are
+    exit 2, and the message names the flag the operator actually passed."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    pfile = tmp_path / "partner.json"
+    if payload is not None:
+        pfile.write_text(payload, "utf-8")
+    proc = run(
+        repo, published("0.7.78"), tmp_path, extra=["--partner-packages-json", str(pfile)]
+    )
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert f"--partner-packages-json {pfile}" in proc.stderr, proc.stderr
+
+
+def test_a_non_json_partner_response_names_partner(tmp_path: Path) -> None:
+    """Every partner-side refusal must say partner — the operator otherwise debugs internal."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    full = {ROSTER[0]: published(ROSTER[0]), "0.7.78": published("0.7.78")}
+    bin_dir, _ = curl_stub(
+        tmp_path, full, partner_responses={ROSTER[0]: published(ROSTER[0]), "0.7.78": "<html>"}
+    )
+    proc = run(repo, None, tmp_path, env=live_env(bin_dir))
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "the response from partner to" in proc.stderr, proc.stderr
+    assert "is not JSON" in proc.stderr
+
+
+def test_a_partner_dump_without_an_internal_one_is_refused(tmp_path: Path) -> None:
+    """A saved partner answer beside a LIVE internal one compares two moments. Exit 2, no query."""
+    repo = make_repo(tmp_path, version="0.7.78")
+    bin_dir, calls = curl_stub(tmp_path, {ROSTER[0]: published(ROSTER[0])})
+    pfile = tmp_path / "partner.json"
+    pfile.write_text(json.dumps(published("0.7.78")), "utf-8")
+    proc = run(
+        repo,
+        None,
+        tmp_path,
+        extra=["--partner-packages-json", str(pfile)],
+        env=live_env(bin_dir),
+    )
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "needs --packages-json" in proc.stderr
+    assert calls.read_text() == ""
 
 
 # ── The script's own dependencies ─────────────────────────────────────────────────────────────
@@ -3142,6 +3391,75 @@ def test_neither_grace_tier_touches_github(
     assert proc.returncode == 0, proc.stderr
     assert marker in proc.stdout, f"the {band} tier did not announce itself:\n{proc.stdout}"
     assert gh_calls(log) == [], f"the {band} tier called GitHub: {gh_calls(log)}"
+
+
+def _partner_dump(tmp_path: Path, payload: object) -> list[str]:
+    pfile = tmp_path / "partner.json"
+    pfile.write_text(json.dumps(payload), "utf-8")
+    return ["--partner-packages-json", str(pfile)]
+
+
+def test_a_partner_verdict_never_files_under_the_internal_title(tmp_path: Path) -> None:
+    """A partner lag is not an internal drift. Filing `DRIFT_TITLE` for it would assert that the
+    release is not installable from internal — a state the registry is not in."""
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    proc, log = report_run(
+        repo,
+        published(DRIFTING),
+        tmp_path,
+        listing=[],
+        extra=_partner_dump(tmp_path, published("0.7.77")),
+    )
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "State P" in proc.stdout
+    internal_title = DRIFT_TITLE.format(version=DRIFTING)
+    for call in gh_calls(log):
+        assert internal_title not in call, f"a partner lag was filed as internal drift: {call}"
+
+
+@pytest.mark.parametrize("age", [30, 200], ids=["soft", "warn"])
+def test_a_partner_fault_inside_internal_grace_exits_2_and_touches_no_github(
+    tmp_path: Path, age: int
+) -> None:
+    """No finding yet, so the instrument fault is the news — and grace still means grace."""
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    proc, log = report_run(
+        repo,
+        published("0.7.77"),
+        tmp_path,
+        listing=[],
+        now=LANDED + timedelta(minutes=age),
+        extra=_partner_dump(tmp_path, rows(("other-thing", "1.0.0", "python"))),
+    )
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "::error::partner could not be read" in proc.stderr
+    assert gh_calls(log) == [], gh_calls(log)
+
+
+@pytest.mark.parametrize(
+    ("labels", "state", "expected"),
+    [(None, None, 1), ([SUPPRESSION_LABEL], "CLOSED", 2)],
+    ids=["filed", "suppressed"],
+)
+def test_a_partner_fault_beside_an_internal_drift(
+    tmp_path: Path, labels: list[str] | None, state: str | None, expected: int
+) -> None:
+    """Filed: the drift's 1 stands, the fault is printed beside it. Suppressed: there is no
+    finding left to stand beside, so the fault must not ride out on a green job — 2."""
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    listing = drift_listing(7, state, labels) if labels is not None else []
+    proc, log = report_run(
+        repo,
+        published("0.7.77"),
+        tmp_path,
+        listing=listing,
+        extra=_partner_dump(tmp_path, rows(("other-thing", "1.0.0", "python"))),
+    )
+    assert proc.returncode == expected, proc.stdout + proc.stderr
+    assert "::error::partner could not be read" in proc.stderr
+    assert "State B" in proc.stdout
+    if labels is None:
+        assert any(c[:2] == ["issue", "create"] for c in gh_calls(log)), gh_calls(log)
 
 
 def test_a_recovered_registry_says_the_issue_can_be_closed_and_closes_nothing(
