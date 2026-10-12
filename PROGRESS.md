@@ -4621,3 +4621,4 @@ resolution) · `.github/workflows/publish.yml:747-810` (`promote-partner`) ·
     match `SAFE_VERSION` and counts the rest.
   - A parametrised partner test covers both; reverting either fix fails it.
   - `pytest scripts/`: 569 passed.
+- **Round 3:** PASS. A 76-case hostile-body fuzz test, run on internal and partner and as both canary and target, never leaked the token. Ready to ship.
