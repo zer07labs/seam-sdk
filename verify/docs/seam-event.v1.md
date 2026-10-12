@@ -1,13 +1,21 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 1872e48 (refreshed 2026-10-11).
-     One movement since the prior default-branch pin (8a65349), landed with the runtime 0.45.0 train
-     (seam-runtime#1273):
-     1. seam-runtime#1176: EVENT_REDRIVEN (envelope tag 26, ADVISORY, unchained) — an operator re-drove an
-        existing outbox event by reference (`SeamEvents.RedriveEvents`); the wrapper carries the original row's
-        bytes verbatim. The outbox retention default becomes 8 days, never less. This crate lists the kind as
-        advisory and modelled; it never recurses into the wrapped bytes.
-     Earlier movements, recorded by prior pins: the system-partition CHAIN_HEAD_ATTESTATION (#1205/#1196), the
-     #802/#804 commitment note, the `tenant_seq` cutoff and the tenant-tag producer rule (#903/#1084), tag 25
-     `tenant_seq` (#973) and AUTHORIZE_EVALUATED tag 11 `subject_digests` (#715). -->
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 8cd3f76 tracking release/train-0.46.0 (refreshed 2026-10-12).
+     Pinned AHEAD of the default branch, deliberately and at the runtime coordinator's request: the 0.46.0
+     release train (seam-runtime#1323) changes this file and merges only after this pin is on seam-sdk main.
+     The exception ends itself when the train squash-merges (the file becomes byte-identical on both refs).
+     Two movements since the prior default-branch pin (1872e48):
+     1. seam-runtime#835 step 1 (#1284): CHAIN_HEAD_ATTESTATION gains a v2 signed framing — the v1 frames
+        under the domain tag `seam.audit.chain-head-attestation.v2`, then `frame(tenant)`. Verifier rule
+        until step 4: empty tenant → v1 only; non-empty tenant → v2, else v1. This crate's verifier is still
+        v1-only on main; it learns v2 in seam-sdk#249, which lands before the runtime signs v2 (step 3).
+     2. seam-runtime#1293: AUDIT_ENTRY `action` is an open string set (four erasure/recompute values added;
+        this crate already treats `action` as opaque — only `chain_anchor` is matched); subject commitments
+        are keyed per tenant (`k_tenant`, replacing `k_deploy`); the audited recompute route
+        `POST /v1/erasure/subject-commitments`; the sink purge-by-commitment obligation; and the one-time drop
+        of digest fields on pre-#1293 AUTHORIZE_EVALUATED rows. None changes a byte this crate verifies.
+     Earlier movements, recorded by prior pins: EVENT_REDRIVEN (#1176), the system-partition
+     CHAIN_HEAD_ATTESTATION (#1205/#1196), the #802/#804 commitment note, the `tenant_seq` cutoff and the
+     tenant-tag producer rule (#903/#1084), tag 25 `tenant_seq` (#973) and AUTHORIZE_EVALUATED tag 11
+     `subject_digests` (#715). -->
 
 # `seam-event.v1` — event-stream wire spec (language-neutral)
 
@@ -96,6 +104,18 @@ AuditEntry {                               // payload at SeamEvent tag 16
 }
 ```
 
+**`action` is an open string set; a consumer MUST treat an unknown value as opaque** (render it, never
+reject the row). #1293 adds four management values, all chained under the subject's tenant and all carrying
+**commitments in `subject`, never a raw data subject** (`subject` holds one commitment, or several joined
+by `,`):
+
+| `action` | Written when | Entry id (envelope `decision_id`) |
+|---|---|---|
+| `erasure_previewed` | an operator previews a GDPR erasure (`erasure:preview`), before the preview is returned | `erasure-preview:<tenant>@<millis>` |
+| `subject_commitments_recomputed` | an operator recomputes subject commitments (`erasure:preview`), before they are returned | `subject-recompute:<tenant>@<millis>` |
+| `subject_commitment_recompute_refused` | a recompute named a subject that is tombstoned in the tenant | `subject-recompute-refused:<tenant>@<millis>` |
+| `subject_commitment_tombstoned` | a GDPR erasure, before anything is destroyed (once per subject and tenant) | `subject-tombstone:<commitment>` |
+
 ### `ERASURE_CERTIFICATE` (additive, tag 18 — chained)
 
 The signed GDPR erasure attestation (enterprise 2.6): which decisions were crypto-shredded
@@ -159,10 +179,8 @@ is not (an attestation minted between U-RT-1 and Phase 2) is accepted on the env
 signature and head-at-position still bind it to a real chain — but MUST be counted and reported as
 tenant-unbound, and a caller that has opted into strict verification MUST refuse a chain carrying any.
 
-**Signed framing** (over the 32-byte SHA-256 **digest**, never the preimage). **Unchanged by U-RT-3
-Phase 2** — `tenant` rides the payload unsigned for now, so every attestation ever minted keeps
-verifying under every verifier that exists today; U-RT-3 Phase 4 is the phase that binds it in, behind
-its own cross-repo gate:
+**Signed framing** (over the 32-byte SHA-256 **digest**, never the preimage). Two framings. **v1** —
+`tenant` is not signed; every attestation the runtime mints today is v1:
 
 ```
 signature = Ed25519( SHA256(
@@ -170,6 +188,26 @@ signature = Ed25519( SHA256(
   ‖ frame(le64(attested_len)) ‖ frame(attested_head)
   ‖ frame(le64(attested_at)) ‖ frame(le32(digest_schema)) ‖ frame(issuer_aid) ) )
 ```
+
+**v2** (#835) — the v1 frames under a new domain tag, then `tenant`. Only ever minted over a non-empty
+`tenant`; the system partition (`tenant == ""`) stays v1:
+
+```
+signature = Ed25519( SHA256(
+    frame("seam.audit.chain-head-attestation.v2")
+  ‖ frame(le64(attested_len)) ‖ frame(attested_head)
+  ‖ frame(le64(attested_at)) ‖ frame(le32(digest_schema)) ‖ frame(issuer_aid)
+  ‖ frame(tenant) ) )
+```
+
+KAT: `chain_head_attestation_v2` in `crates/seam-client/tests/conformance_vectors_extended.json` (the
+shared v1 block in `conformance_vectors.json` is unchanged). **Verifier rule (#835 step 1, in force until
+step 4):** empty `tenant` → v1 only; non-empty `tenant` → v2, **else v1**. The v1 fallback is required:
+every attestation minted before the producer switches (step 3) is v1 with `tenant` outside the signature,
+so a verifier that demanded v2 for a non-empty `tenant` would reject all of them as forged. Step 4 drops
+the fallback (a v1 signature with a non-empty `tenant` is then refused) and is the step that actually
+binds the tenant. Rollout order: runtime verifier (step 1) → seam-sdk and seam-connectors verifiers
+(step 2) → runtime signs v2 (step 3) → step 4.
 
 **Semantics — a true statement about a prefix.** An attestation asserts: *the entry at position
 `attested_len` carries checksum `attested_head`, and the issuer said so.* The chain may advance between the
@@ -391,9 +429,9 @@ message AuthorizeEvaluated {           // envelope tag 23
 **`subject_digests` (tag 11, #715).** One keyed commitment per effective subject of the authorize call — the union of
 `AuthorizeRequest.subject` and `.subjects`, deduped, `subject` first, then request order, at most 16. Each element is the
 **same** commitment as `subject_digest` (same key, same `kid`, same per-tenant domain), so it is no weaker than tag 10: it cannot be tied to
-a subject without the deployment key (rotating the key severs every join) and carries no bare-hash oracle. The row stays
-append-only and un-shredable, as tag 10's is — what this field adds is that EVERY subject of a call is *recomputable in principle* by an
-operator holding the key, not only the first (the recompute facility is specified, not built — see the legacy-rows section below); `subject_digest` (10) stays populated with the first element for legacy
+a subject without the tenant's key and carries no bare-hash oracle. The row stays
+append-only, as tag 10's is — what this field adds is that EVERY subject of a call is recomputable by the runtime's audited recompute
+route (`POST /v1/erasure/subject-commitments`, see below), not only the first; `subject_digest` (10) stays populated with the first element for legacy
 consumers. **Reader rule:** when `subject_digests` is non-empty, `subject_digest` MUST equal element 0 and a consumer SHOULD reject a row where it does not (or where tag 11 is set and tag 10 is absent). **Un-updated consumers see tag 10 only — one of up to 16 subjects, silently** (connector sinks, the SDK JSON codecs, any learning reader); deploy consumers before the producer. Subjects are committed **byte-exact**: the producer neither trims, case-folds nor normalizes, so a recompute must use the exact bytes the caller sent; the runtime commits what it is *told* is a subject. Every `AUTHORIZE_EVALUATED` row — and therefore every commitment on it — exists only when the row is emitted (`emit_events`, sampling) and survives only for the outbox retention window. Absent (empty) on rows written before the field existed and on subject-less calls — it is omitted from the
 canonical JSON when empty. Every element is held to the commitment scheme (`hmac-sha256:…`). Adding it changes the
 `seam_event_descriptor` golden: the vendored copies (seam-connectors, the hub manifest) move in lockstep.
@@ -412,20 +450,23 @@ redaction never fires: gate on `when_kind`).
 `tool_input_digest`. Both are **keyed commitments**, not bare hashes:
 
 ```
-hmac-sha256:<kid>:<hex>     hex = HMAC-SHA256(k_deploy, put(domain) ‖ put(tenant) ‖ put(value))
+hmac-sha256:<kid>:<hex>     hex = HMAC-SHA256(k_tenant, put(domain) ‖ put(tenant) ‖ put(value))
 ```
 
 GDPR erasure walks *decision records*; an outbox row is un-shredable, so a raw end-user id here would
 be an un-erasable copy of it. A **bare** hash was never sufficient for that. An end-user identifier
 has a small, enumerable preimage space, so `sha256(subject)` is a set-membership oracle: anyone
 holding the row can confirm a guess at the identifier by brute force or a rainbow table, without
-breaking anything. Keying the construction removes that oracle — **wherever the deployment's issuer
-seed is secret**, which is every production deployment. Where the seed is public (a
-`SEAM_DEV_INSECURE` runtime) the key derived from it is public too, and these fields conceal nothing.
+breaking anything. Keying the construction removes that oracle.
 
-`k_deploy` is per-deployment: derived from the issuer seed under its own domain label, or supplied
-explicitly. `<kid>` is a 4-byte key-id derived from the key material itself, so a row always names
-the key it was written under and a rotation is legible rather than silent.
+**`k_tenant` is per tenant (#1293).** In production it is a random 256-bit key minted on the tenant's first
+use and stored wrapped under the tenant's #807 KEK; it is used only inside the runtime and never exported.
+A tenant KEK rotation re-wraps it without changing it, so a tenant's `<kid>` is stable for the tenant's
+lifetime. **A tenant crypto-shred (`shred-tenant`) destroys it**: every commitment ever emitted for that
+tenant — including every downstream copy — becomes permanently unlinkable. A production runtime refuses to
+derive commitment keys from its issuer seed; only a dev runtime does (`HMAC(seed, put(label) ‖ put(tenant))`,
+which conceals nothing where the seed is public, e.g. `SEAM_DEV_INSECURE`). `<kid>` is a 4-byte key-id derived
+from the key material itself, so a row always names the key it was written under.
 
 **The request side is unchanged.** `seam.api.v1`'s request `tool_input_digest` is still
 `sha256:<hex>` over the RFC 8785 (JCS) canonical input, and is still what `call_sig` covers. Only the
@@ -434,26 +475,40 @@ not be compared to each other.
 
 **What this preserves, and what it costs.**
 
-- **Correlation is preserved within one key.** Two rows sharing a `<kid>` and a commitment are the
-  same underlying value, so joins, dedup and counting work exactly as before. Correlation across a
-  key rotation is not preserved — that is what rotating is for.
-- **Recompute is no longer unilateral.** Confirming that a given subject produced a given row now
-  requires `k_deploy`. An operator holding the key can still do it; someone holding only the rows
-  cannot. That is precisely the exposure this closes and the convenience it costs.
-- **An in-band operator recompute facility is specified and is _not built_.** No management verb
-  recomputes a commitment for an erasure operator. What an operator can do **today** is nothing
-  in-band; the capability is described so it is not mistaken for shipped.
+- **Correlation is preserved within one tenant.** Two rows of a tenant sharing a commitment are the same
+  underlying value, so joins, dedup and counting work. Commitments never correlate across tenants (the
+  tenant is inside the MAC and the key is per tenant).
+- **Recompute is in-band and audited, never unilateral (#1293).** Confirming that a given subject
+  produced a given row requires `k_tenant`, which only the runtime holds. An erasure operator uses
+  `POST /v1/erasure/subject-commitments` (scope `erasure:preview`; body `{tenant, subjects[1..16]}`;
+  response `{tenant, kid, results:[{subject_index, commitment}]}` — raw subjects never echoed). Every
+  call chains a `subject_commitments_recomputed` `AUDIT_ENTRY` before it answers, and a subject that
+  has been erased in the tenant is **refused** (409, audited as `subject_commitment_recompute_refused`).
+  There is no export and no offline recompute. (gRPC parity is a later, additive `seam.api.v1` RPC.)
 
-**Legacy rows — read this before writing any query that spans the cutover.**
+**Erasure of a subject's commitments — the consumer obligation (#1293 D3).** A GDPR erasure
+(`POST /v1/erasure`) first chains a `subject_commitment_tombstoned` `AUDIT_ENTRY` carrying the subject's
+commitment, then crypto-shreds the subject's decision records. The runtime's own outbox rows age out
+within the retention window (≥ 8 days after relay consumption); the long-lived copies are in the sinks,
+and **a sink that retains `AUTHORIZE_EVALUATED` beyond the outbox window MUST support purge by
+commitment**: given a commitment from the recompute route (today: the erasure operator's runbook step;
+later: automated from the erasure certificate), delete or null every row of that tenant whose
+`subject_digest` or any `subject_digests` element equals it. A sink MAY additionally purge on the
+`subject_commitment_tombstoned` entry it receives on the stream. After a tenant crypto-shred no sink
+action is required for linkability (the key is gone), though a sink MAY drop the tenant's rows.
 
-- Rows written before the cutover carry the **old bare-hash** values and are **not backfilled**.
-  They remain brute-forceable permanently: an outbox row is append-only and un-shredable, so there
-  is nothing to rewrite them to. Treat any pre-cutover `subject_digest` as a disclosed identifier
-  under a dictionary or rainbow-table attack.
-- **Legacy rows no longer join to new rows.** For the same subject, a `subject_digest` written
-  before the cutover will never equal a commitment written after it. A query spanning the deploy
-  returns nothing rather than erroring — it fails silently. Partition at the cutover, and join on
-  `authorize_id`.
+**Pre-#1293 rows — read this before writing any query that spans the cutover.** No backward
+compatibility is kept:
+
+- Rows written before #484 carry **bare** `sha256:` values (brute-forceable permanently), and rows
+  written between #484 and #1293 carry commitments under the retired **deployment-wide** key, which
+  is derivable by anyone holding the issuer seed and which the runtime no longer holds. **Neither can
+  be recomputed** by the route above. The runtime's copies have aged out of the outbox; **a sink MUST
+  drop or null `subject_digest` / `subject_digests` / `tool_input_digest` on every
+  `AUTHORIZE_EVALUATED` row emitted before the #1293 deploy** (one-time), keeping `authorize_id` for
+  joins.
+- **Rows across the cutover never join on a commitment.** A query spanning the deploy returns nothing
+  rather than erroring. Join on `authorize_id`.
 - **The SDK handle-log join.** An SDK's local handle log records the *request-side*
   `tool_input_digest`, which this change does not touch, so it no longer equals the value on the
   corresponding outbox row. The documented join is on `authorize_id` and stays correct; an
