@@ -80,9 +80,13 @@ def test_v2_binds_the_tenant(tenant):
     assert not verify_chain_head_attestation(**_args(V2), tenant=tenant)
 
 
-def test_v2_signature_without_its_tenant_does_not_verify():
-    # Omitting `tenant` is the empty tenant: v1 only. A v2 attestation needs its tenant passed.
-    assert not verify_chain_head_attestation(**_args(V2))
+@pytest.mark.parametrize("v", [V2, V1], ids=["v2", "v1"])
+def test_omitting_the_tenant_is_a_type_error(v):
+    # `tenant` is required (#835 step 4): a defaulted "" let a caller who dropped it check the v1 framing
+    # alone, so a v1 attestation relabelled to a tenant verified. Omission is now a caller bug, raised —
+    # for the v1 vector too, whose right answer is the EXPLICIT tenant="".
+    with pytest.raises(TypeError, match="tenant"):
+        verify_chain_head_attestation(**_args(v))
 
 
 @pytest.mark.parametrize("field", ["attested_len", "attested_at", "digest_schema"])
@@ -94,7 +98,6 @@ def test_any_other_tamper_still_fails(field):
 
 def test_the_v1_vector_verifies_with_its_empty_tenant():
     # The shared v1 block is the system partition's framing, and is byte-identical forever.
-    assert verify_chain_head_attestation(**_args(V1))
     assert verify_chain_head_attestation(**_args(V1), tenant="")
 
 
@@ -122,11 +125,10 @@ def test_a_v2_signature_over_the_empty_tenant_is_refused():
     )
     v2_over_empty = key.sign(_chain_head_attestation_digest(*frames, ""))
     v1 = key.sign(_chain_head_attestation_digest(*frames, None))
-    assert not verify_chain_head_attestation(**{**a, "signature": v2_over_empty})
     assert not verify_chain_head_attestation(
         **{**a, "signature": v2_over_empty}, tenant=""
     )
-    assert verify_chain_head_attestation(**{**a, "signature": v1})
+    assert verify_chain_head_attestation(**{**a, "signature": v1}, tenant="")
 
 
 def test_tenant_must_be_a_str():
@@ -157,12 +159,9 @@ def test_the_message_form_reads_the_tenant_off_the_artifact():
 
     assert verify_msg(V2["issuer_aid"], _message(V2, V2["inputs"]["tenant"]))
     assert verify_msg(V1["issuer_aid"], _message(V1, ""))
-    # The bypass the keyword form leaves open (#835 step 4): a v1 attestation relabelled to a tenant.
-    # Calling the keyword form without `tenant=` ignores the wire tenant and says True ...
-    relabelled = _message(V1, "acme")
-    assert verify_chain_head_attestation(**_args(V1))
-    # ... the message form cannot be called that way, and refuses it.
-    assert not verify_msg(V1["issuer_aid"], relabelled)
+    # A v1 attestation relabelled to a tenant (#835 step 4): the message form reads "acme" off the
+    # artifact and refuses it.
+    assert not verify_msg(V1["issuer_aid"], _message(V1, "acme"))
     assert not verify_msg(V2["issuer_aid"], _message(V2, "acmf"))
 
 

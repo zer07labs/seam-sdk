@@ -108,6 +108,7 @@ def test_chain_head_attestation_signature_verifies():
         i["attested_at"],
         i["digest_schema"],
         bytes.fromhex(v["signature_hex"]),
+        tenant="",
     )
     assert ok is True
     # A tampered length must not verify (it is bound into the signed preimage).
@@ -119,6 +120,7 @@ def test_chain_head_attestation_signature_verifies():
             i["attested_at"],
             i["digest_schema"],
             bytes.fromhex(v["signature_hex"]),
+            tenant="",
         )
         is False
     )

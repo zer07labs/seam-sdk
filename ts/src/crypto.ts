@@ -1089,18 +1089,18 @@ function chainHeadAttestationDigest(
  * (pinned out of band), never from the attestation itself.
  *
  * `tenant` is the attestation's own payload tenant and selects exactly one signed framing, mirroring
- * seam-runtime #835 step 4 (strict, no fallback): empty (or absent) verifies under **v1 only** (the system
+ * seam-runtime #835 step 4 (strict, no fallback): empty verifies under **v1 only** (the system
  * partition; a v2 signature over `""` is refused), and non-empty under **v2 only**, so the tenant is always
  * inside the signature and relabelling it breaks verification. A v1 attestation carrying a non-empty tenant
  * — what the runtime minted before #835 step 3 — returns `false`; there is no grace period and no toggle.
  *
- * **Pass the attestation's OWN tenant — omitting it checks the v1 framing.** `tenant` is optional and
- * defaults to `""`, so an object built without it verifies the v1 signature alone and never looks at the
- * tenant the attestation carries on the wire: a v1 attestation relabelled to a tenant would then come back
- * `true`, the one bypass of the step-4 rule this signature leaves open (and a genuine v2 attestation comes
- * back `false`). The safe call is to pass the generated `ChainHeadAttestation` message itself
- * (`seam_event_pb`): it satisfies this parameter type and always carries `tenant`, so the framing is the
- * one its own tenant selects. Build the object by hand only if you copy `tenant` across too. */
+ * `tenant` is **required** — in the type, and at runtime for JavaScript callers, who bypass the type: an
+ * attestation object without a string `tenant` throws `TypeError`. Pass the attestation's own tenant; the
+ * generated `ChainHeadAttestation` message (`seam_event_pb`) satisfies this parameter and always carries it.
+ * `tenant: ""` is still a valid, explicit answer: the system partition, v1. There is deliberately no
+ * default, because a defaulted `""` let a caller who left `tenant` off verify the v1 signature alone and
+ * never look at the tenant the attestation carries on the wire, so a v1 attestation relabelled to a tenant
+ * came back `true`. */
 export function verifyChainHeadAttestation(
   issuerAid: string,
   a: {
@@ -1109,7 +1109,7 @@ export function verifyChainHeadAttestation(
     attestedAt: number | bigint;
     digestSchema: number;
     signature: Uint8Array;
-    tenant?: string;
+    tenant: string;
   },
 ): boolean {
   // TYPES first, OUTSIDE the try — the same rule, and for the same reason, as Python's twin.
@@ -1151,7 +1151,9 @@ export function verifyChainHeadAttestation(
   requireUintArgument("digestSchema", a.digestSchema);
   const attestedHead = requireBytes("attestedHead", a.attestedHead);
   const signature = requireBytes("signature", a.signature);
-  const tenant = a.tenant ?? "";
+  // Required, and refused when absent rather than read as "": a defaulted "" was the v1 bypass (#835
+  // step 4), and a JavaScript caller does not see the type that makes it required.
+  const tenant = a.tenant;
   if (typeof tenant !== "string") {
     throw new TypeError(`tenant must be a string, not ${tenant === null ? "null" : typeof tenant}`);
   }

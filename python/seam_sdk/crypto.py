@@ -911,7 +911,7 @@ def verify_chain_head_attestation(
     digest_schema: int,
     signature: bytes,
     *,
-    tenant: str = "",
+    tenant: str,
 ) -> bool:
     """Verify a chain-head attestation's Ed25519 signature against the PINNED issuer AID (A14). Returns
     ``True`` iff the signature checks out over the recomputed digest; ``False`` on any tamper. The key comes
@@ -924,13 +924,13 @@ def verify_chain_head_attestation(
     attestation carrying a non-empty tenant — what the runtime minted before #835 step 3 — returns
     ``False``; there is no grace period and no toggle.
 
-    **Pass the attestation's OWN tenant — omitting it checks the v1 framing.** ``tenant`` is a caller
-    argument defaulting to ``""``, so a caller who drops it verifies the v1 signature alone and never
-    looks at the tenant the attestation carries on the wire: a v1 attestation relabelled to a tenant
-    would then come back ``True``, which is the one bypass of the step-4 rule this signature leaves
-    open. (It also means a genuine v2 attestation comes back ``False``.) When you hold the
-    ``ChainHeadAttestation`` message itself, call :func:`verify_chain_head_attestation_message`
-    instead, which takes every field — the tenant included — from the artifact.
+    ``tenant`` is **required** (keyword-only, no default): pass the attestation's own ``tenant``, or call
+    :func:`verify_chain_head_attestation_message`, which takes every field — the tenant included — from
+    the ``ChainHeadAttestation`` message itself. ``tenant=""`` is still a valid, explicit answer: it names
+    the system partition and selects v1. There is deliberately no default, because a defaulted ``""``
+    let a caller who dropped the argument verify the v1 signature alone and never look at the tenant the
+    attestation carries on the wire, so a v1 attestation relabelled to a tenant came back ``True``.
+    Omitting it raises ``TypeError``.
     """
     # An out-of-range integer is tampered input, not a caller bug, and this function's whole contract
     # is that tampered input returns ``False``. ``struct.pack`` raises ``struct.error`` on it, and the
@@ -1034,8 +1034,8 @@ def verify_chain_head_attestation_message(issuer_aid: str, attestation: Any) -> 
     """Verify a ``ChainHeadAttestation`` **message** (the ``seam.event.v1`` proto, or anything with its
     fields) against the PINNED ``issuer_aid``, taking every signed field — ``tenant`` included — from the
     artifact itself, so the framing is always the one its own tenant selects (seam-runtime #835 step 4).
-    This is the form that cannot be called with the tenant left off; prefer it to
-    :func:`verify_chain_head_attestation` whenever you hold the message.
+    Prefer it to :func:`verify_chain_head_attestation` whenever you hold the message: the keyword form
+    requires ``tenant`` too, but this one cannot be handed a tenant other than the artifact's.
 
     The attestation must also NAME the pinned issuer: one naming another AID returns ``False`` before
     any signature work (the pin is what makes the signature mean anything). Same contract otherwise —

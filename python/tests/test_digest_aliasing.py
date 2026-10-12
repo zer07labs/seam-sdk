@@ -70,7 +70,7 @@ def test_an_out_of_range_slot_returns_false_rather_than_raising(
     """
     assert (
         crypto.verify_chain_head_attestation(
-            _AID, attested_len, _HEAD, attested_at, digest_schema, _SIG
+            _AID, attested_len, _HEAD, attested_at, digest_schema, _SIG, tenant=""
         )
         is False
     ), label
@@ -92,14 +92,18 @@ def test_the_range_boundary_is_inclusive_at_the_top_of_the_slot() -> None:
     )
     sig = sk.sign(digest)
     assert (
-        crypto.verify_chain_head_attestation(aid, U64 - 1, _HEAD, U64 - 1, U32 - 1, sig)
+        crypto.verify_chain_head_attestation(
+            aid, U64 - 1, _HEAD, U64 - 1, U32 - 1, sig, tenant=""
+        )
         is True
     ), "the largest legal value in every slot must still verify"
     # One past the top of the u64 slot, with the same signature: refused, and not by wrapping to a
     # value that would have verified. This is the alias TypeScript actually had, asserted negatively
     # here to pin that Python never grows it.
     assert (
-        crypto.verify_chain_head_attestation(aid, U64, _HEAD, U64 - 1, U32 - 1, sig)
+        crypto.verify_chain_head_attestation(
+            aid, U64, _HEAD, U64 - 1, U32 - 1, sig, tenant=""
+        )
         is False
     )
 
@@ -124,7 +128,7 @@ def test_a_wrong_type_still_raises_and_is_not_swallowed_as_false(
     a falsy answer.
     """
     with pytest.raises(TypeError):
-        crypto.verify_chain_head_attestation(*args)
+        crypto.verify_chain_head_attestation(*args, tenant="")
 
 
 def test_python_refuses_a_lone_surrogate_object_key() -> None:
@@ -172,7 +176,7 @@ def test_bool_and_float_are_refused_rather_than_narrowed_to_an_int(
     can write a caller against. Now there are two answers, plus ``TypeError`` for caller bugs.
     """
     with pytest.raises(TypeError):
-        crypto.verify_chain_head_attestation(*args)
+        crypto.verify_chain_head_attestation(*args, tenant="")
 
 
 @pytest.mark.parametrize(
@@ -261,7 +265,7 @@ def test_a_caller_bug_is_not_masked_by_tampered_input_in_another_slot(
     comment asserting the opposite of what the code did.
     """
     with pytest.raises(TypeError):
-        crypto.verify_chain_head_attestation(*args)
+        crypto.verify_chain_head_attestation(*args, tenant="")
 
 
 def test_out_of_range_alone_still_returns_false() -> None:
@@ -270,9 +274,18 @@ def test_out_of_range_alone_still_returns_false() -> None:
     Without this, the previous test is satisfied by a guard that raises on everything — which would
     break the documented `False`-on-any-tamper contract in the name of fixing it.
     """
-    assert crypto.verify_chain_head_attestation(_AID, U64, _HEAD, 0, 2, _SIG) is False
-    assert crypto.verify_chain_head_attestation(_AID, 5, _HEAD, U64, 2, _SIG) is False
-    assert crypto.verify_chain_head_attestation(_AID, 5, _HEAD, 0, U32, _SIG) is False
+    assert (
+        crypto.verify_chain_head_attestation(_AID, U64, _HEAD, 0, 2, _SIG, tenant="")
+        is False
+    )
+    assert (
+        crypto.verify_chain_head_attestation(_AID, 5, _HEAD, U64, 2, _SIG, tenant="")
+        is False
+    )
+    assert (
+        crypto.verify_chain_head_attestation(_AID, 5, _HEAD, 0, U32, _SIG, tenant="")
+        is False
+    )
 
 
 def test_any_byte_sequence_is_still_accepted_for_attested_head() -> None:
@@ -304,14 +317,15 @@ def test_any_byte_sequence_is_still_accepted_for_attested_head() -> None:
         ("array.array('B')", array.array("B", head)),
         ("ctypes buffer", (ctypes.c_char * 32).from_buffer_copy(head)),
     ]:
-        assert crypto.verify_chain_head_attestation(aid, 5, value, 0, 2, sig) is True, (
-            label
-        )
+        assert (
+            crypto.verify_chain_head_attestation(aid, 5, value, 0, 2, sig, tenant="")
+            is True
+        ), label
 
     # And the refusal the check was actually for still holds.
     for value in ("nope", 5, None, [1, 2, 3]):
         with pytest.raises(TypeError):
-            crypto.verify_chain_head_attestation(aid, 5, value, 0, 2, sig)
+            crypto.verify_chain_head_attestation(aid, 5, value, 0, 2, sig, tenant="")
 
 
 # ── The other side of the JCS type rule ──────────────────────────────────────────────────────────
@@ -409,6 +423,8 @@ _ATTESTATION_KAT = {
     "attested_at": _KAT["inputs"]["attested_at"],
     "digest_schema": _KAT["inputs"]["digest_schema"],
     "signature": bytes.fromhex(_KAT["signature_hex"]),
+    # The shared v1 KAT is the system partition's framing; `tenant` is required (#835 step 4).
+    "tenant": "",
 }
 
 

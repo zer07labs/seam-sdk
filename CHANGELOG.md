@@ -20,13 +20,16 @@ than trusting a summary here.
 > attestation dispatch is strict (seam-runtime #835 step 4): a tenant's attestation verifies under v2
 > only, so every v1 tenant attestation the runtime minted before step 3 is refused by `seam-verify
 > --issuer`, Python `verify_chain_head_attestation` and TS `verifyChainHeadAttestation`. Verify from a
-> v2 anchor onward. There is no grace flag and no toggle. Details under *Changed* below.
+> v2 anchor onward. There is no grace flag and no toggle. **The `tenant` argument is now required** in
+> both SDKs (Python keyword-only `tenant=`, TS `tenant` on the attestation object), so a call that
+> leaves it off raises `TypeError` instead of silently checking v1: pass the attestation's own tenant
+> (`""` only for the system partition), or use the message form. Details under *Changed* below.
 
 ### Changed — strict chain-head attestation dispatch (seam-runtime #835 step 4, #255) — BREAKING
 - **The attestation's own tenant selects exactly one framing.** Empty → v1 only (a v2 signature over
-  `""` is refused); non-empty → v2 only (the step-1 v1 fallback is gone). Python, TS and `seam-verify`
-  all apply it, mirroring seam-runtime #1303. A v1 attestation relabelled to a tenant, which used to
-  verify, now returns `False` / `false` / a refusal.
+  `""` is refused); non-empty → v2 only (the step-1 v1 fallback, shipped in 0.46.1, is gone). Python,
+  TS and `seam-verify` all apply it, mirroring seam-runtime #1303. A v1 attestation relabelled to a
+  tenant, which 0.46.1 still verified, now returns `False` / `false` / a refusal.
 - **`seam-verify chain --issuer`: the payload tenant must equal the envelope tenant.** An empty payload
   tenant under a named envelope (the old "tenant-unbound" legacy shape) is `ATTESTATION TENANT
   MISMATCH`, with or without `--strict`. The check now runs before the pin and signature, as in the
@@ -38,18 +41,24 @@ than trusting a summary here.
   usage error, exit 1). A window spanning several tenants is no longer a usage error under
   `--from-anchor`: the named tenant starts at its anchor, the rest from genesis. A full-event anchor
   whose payload tenant differs from its envelope's is refused (`ANCHOR SELF-CONTRADICTS`, exit 2).
+- **`tenant` is required — Python `verify_chain_head_attestation(..., *, tenant)` and TS
+  `verifyChainHeadAttestation(aid, { ..., tenant })`.** It defaulted to `""`, which let a caller who
+  dropped it verify the v1 framing alone and never look at the tenant on the wire, so a v1 attestation
+  relabelled to a tenant came back true. Leaving it off now raises `TypeError` in Python, is a type
+  error in TS, and throws `TypeError` at runtime for JavaScript callers. `tenant: ""` stays valid and
+  means the system partition (v1).
 - **Python `verify_chain_head_attestation_message(issuer_aid, attestation)` (new)** verifies a
   `ChainHeadAttestation` message taking every field — the tenant included — from the artifact, and
-  refuses one naming another issuer. The keyword form's `tenant=` still defaults to `""`, and **omitting
-  it checks the v1 framing only**: pass the attestation's own tenant, or use the message form. In TS,
-  pass the generated `ChainHeadAttestation` message to `verifyChainHeadAttestation` for the same effect.
+  refuses one naming another issuer. In TS, pass the generated `ChainHeadAttestation` message to
+  `verifyChainHeadAttestation` for the same effect.
 - `verify_party_attestation` / `verifyPartyAttestation` docs: the attestation's `tenant` is signed (v2)
   since step 4, so a v1 attestation relabelled to a tenant comes back false from a step-4 runtime.
 - **Library API:** `seam_verify::chain_anchored` takes the anchor's tenant
   (`chain_anchored(events, &anchor.tenant, len, head)`), and `IssuerReport` loses `tenant_unbound`.
 - **Re-vendored from seam-runtime `feat/835-step4-refuse-v1-tenant` @ 460d163:** the
   `verify/tests/goldens/{attested_chain,payload_rewrite,two_tenant_chain}.jsonl` goldens (v2 tenant
-  attestations) and `verify/docs/seam-event.v1.md` (pinned ahead, as the step-1 pin was). The
+  attestations; byte-identical at the branch's later 33a4e71), and `verify/docs/seam-event.v1.md`
+  (pinned ahead at 33a4e71, as the step-1 pin was). The
   `verify/fixtures/evidence-bundle/` bundles were re-exported by the runtime's own exporter at that
   commit, since the 0.44.0 export carried v1 tenant anchors.
 - **Conformance:** Python, TS and `verify/` each assert that the shared v1 vector, relabelled to a

@@ -45,8 +45,8 @@ test("the runtime's v2 signature verifies over its own tenant", () => {
   assert.equal(verifyChainHeadAttestation(V2.issuer_aid, { ...att(V2), tenant: V2.inputs.tenant }), true);
 });
 
-test("v2 binds the tenant: relabelled or emptied fails, and so does omitting it", () => {
-  for (const tenant of ["acmf", "", undefined]) {
+test("v2 binds the tenant: relabelled or emptied fails", () => {
+  for (const tenant of ["acmf", ""]) {
     assert.equal(verifyChainHeadAttestation(V2.issuer_aid, { ...att(V2), tenant }), false, String(tenant));
   }
 });
@@ -58,8 +58,21 @@ test("any other tamper still fails under v2", () => {
 });
 
 test("the v1 vector verifies with its empty tenant", () => {
-  assert.equal(verifyChainHeadAttestation(V1.issuer_aid, att(V1)), true);
   assert.equal(verifyChainHeadAttestation(V1.issuer_aid, { ...att(V1), tenant: "" }), true);
+});
+
+// `tenant` is required (#835 step 4): a defaulted "" let a caller who left it off check the v1 framing
+// alone, so a v1 attestation relabelled to a tenant verified. Refused in the type AND at runtime, since a
+// JavaScript caller never sees the type -- for the v1 vector too, whose right answer is an explicit "".
+test("omitting tenant is a type error, and a TypeError at runtime", () => {
+  for (const v of [V2, V1]) {
+    // @ts-expect-error -- `tenant` is required; this is the call the type must refuse.
+    assert.throws(() => verifyChainHeadAttestation(v.issuer_aid, att(v)), /tenant must be a string, not undefined/);
+    assert.throws(
+      () => verifyChainHeadAttestation(v.issuer_aid, { ...att(v), tenant: undefined } as never),
+      TypeError,
+    );
+  }
 });
 
 // #835 step 4, mirroring the runtime's `conformance_drift` test: a v1 signature carries the tenant outside
@@ -103,12 +116,11 @@ test("a v2 signature over the empty tenant is refused", () => {
   const seed = Buffer.from(V2.inputs.issuer_seed_hex, "hex");
   const v2OverEmpty = ed25519.sign(digest(V2, ""), seed);
   const v1 = ed25519.sign(digest(V2), seed);
-  assert.equal(verifyChainHeadAttestation(V2.issuer_aid, { ...att(V2), signature: v2OverEmpty }), false);
   assert.equal(
     verifyChainHeadAttestation(V2.issuer_aid, { ...att(V2), signature: v2OverEmpty, tenant: "" }),
     false,
   );
-  assert.equal(verifyChainHeadAttestation(V2.issuer_aid, { ...att(V2), signature: v1 }), true);
+  assert.equal(verifyChainHeadAttestation(V2.issuer_aid, { ...att(V2), signature: v1, tenant: "" }), true);
   // Sanity: the hand-rolled v2 digest is the runtime's, so the refusal above is not a framing typo.
   assert.equal(
     verifyChainHeadAttestation(V2.issuer_aid, {
@@ -128,8 +140,7 @@ test("a non-string tenant is a caller bug, not a failed verification", () => {
 });
 
 // The safe call shape (#835 step 4): pass the generated ChainHeadAttestation message itself, so `tenant`
-// comes from the artifact. An object built without `tenant` checks the v1 framing only -- the one bypass
-// the optional field leaves open -- which this pins so the docstring's warning cannot go stale.
+// comes from the artifact and can be neither left off nor copied across wrongly.
 test("the generated ChainHeadAttestation message carries its tenant into the framing", async () => {
   const { create } = await import("@bufbuild/protobuf");
   const { ChainHeadAttestationSchema } = await import("../gen/seam/event/v1/seam_event_pb.js");
@@ -146,6 +157,4 @@ test("the generated ChainHeadAttestation message carries its tenant into the fra
   assert.equal(verifyChainHeadAttestation(V2.issuer_aid, msg(V2, V2.inputs.tenant)), true);
   assert.equal(verifyChainHeadAttestation(V1.issuer_aid, msg(V1, "")), true);
   assert.equal(verifyChainHeadAttestation(V1.issuer_aid, msg(V1, "acme")), false, "relabelled v1 message");
-  // The bypass: the same v1 attestation as a hand-built object WITHOUT its tenant checks v1 only.
-  assert.equal(verifyChainHeadAttestation(V1.issuer_aid, att(V1)), true);
 });
