@@ -4623,3 +4623,32 @@ resolution) · `.github/workflows/publish.yml:747-810` (`promote-partner`) ·
   - A parametrised partner test covers both; reverting either fix fails it.
   - `pytest scripts/`: 569 passed.
 - **Round 3:** PASS. A 76-case hostile-body fuzz test, run on internal and partner and as both canary and target, never leaked the token. Ready to ship.
+
+# PROGRESS — `plans/partner-newest-release.md` (seam-sdk#253)
+
+**PR strategy: one PR.** Three phases on one script, its tests and docs. Phase 1 alone would print newest drifts
+without filing them.
+**Risk tiers:** P1 complex (a new network query shape and the exit composition) · P2 complex (issue writes and the
+single shared listing) · P3 simple.
+**Owner decisions (2026-10-12):** reuse `PARTNER_DRIFT_TITLE` (D4); check the newest version only (D6).
+**Repo map:** the same as `plans/partner-registry-drift.md` above. The added surfaces are internal's unscoped
+`?query=seam-sdk&sort=-version` listing and rows' `uploaded_at`.
+
+## Phase 1: newest-version discovery, verdict and exit, DONE (2026-10-12)
+- **Verdict:** PASS on round 2. Opus verifier: complex phase, a new network query shape and the exit composition.
+- **Round 1, GAPS:** all test-strength gaps; behaviour was correct and every acceptance item held.
+  - Unpinned: D2's "latest" stamp, the page edge's "lowest" version, and the skew boundary.
+  - The `--report` interim had only one test.
+  - The two grace and single-listing invariants never ran with the newest question checked.
+  - A declared git-clock fault exited 2 before printing a computed newest verdict.
+  - Undocumented: the offline `uploaded_at` requirement.
+  - All closed, and 18/18 mutants killed.
+- **Round 2:** PASS. One cosmetic nit, fixed after the verdict: on a git-clock fault where newest equals the
+  declared version, the newest line no longer claims "answered above". The mutant is killed.
+- **Files:** `scripts/check_registry_drift.py`, `scripts/test_registry_drift_gate.py`,
+  `plans/partner-newest-release.md`.
+- **Tests:** `pytest scripts/` gives 661 passed; ruff clean.
+- **Live read-only run:** exit 1 from 0.45.1's declared drift; `newest on internal: 0.45.0`; partner serves it;
+  6 GETs.
+- **Next:** Phase 2. Filing a newest drift under `PARTNER_DRIFT_TITLE`, one shared listing, per-question grace.
+  The Phase-1 `--report` tests that assert no create must flip.

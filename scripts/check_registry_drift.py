@@ -233,6 +233,31 @@ PARTNER_REGISTRY_URL = REGISTRY_URL.replace("/zer07labs/internal/", "/zer07labs/
 #: A response carrying exactly this many rows is treated as truncated — see `fetch_registry`.
 PAGE_SIZE = 50
 
+#: The ONE unscoped request this check makes (seam-sdk#253): every `seam-sdk` row on internal,
+#: newest version first, so the newest release can be found without knowing its number.
+#:
+#: Pinned word for word by `test_the_newest_query_is_pinned_word_for_word`, because of what was
+#: observed live on 2026-10-12: a wrong VALUE fails loudly (`sort=-bogus` is HTTP 400), but a wrong
+#: parameter NAME does not — `ordering=-version` is silently ignored and the server falls back to
+#: `-date`. A typo here would therefore not fail; it would quietly change which row comes first.
+#: That is also why `fetch_newest` checks the order of what came back rather than trusting the
+#: request: the test pins what is asked, the check proves what was answered.
+#:
+#: Full pages are the normal case here (internal held 231 rows that day), so the version-scoped
+#: truncation guard in `fetch_registry` must NOT apply to this response. `fetch_newest` has a rule
+#: of its own for the page edge instead.
+NEWEST_QUERY = f"?query={PACKAGE_NAME}&sort=-version&page_size={PAGE_SIZE}"
+
+#: Cloudsmith's `uploaded_at`, as observed on both repositories on 2026-10-12:
+#: `2026-10-11T04:43:28.896556Z`. Strict on purpose. The newest question's clock is read out of a
+#: RESPONSE rather than out of git, and a response is not ours to interpret generously: anything
+#: that is not exactly a timestamp is refused, and refused without being echoed (see
+#: `_parse_upload_stamp`). An offset is accepted alongside `Z` because it is the same instant
+#: spelled the other ISO-8601 way, and refusing it would make a harmless serializer change exit 2.
+UPLOAD_STAMP = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})"
+)
+
 #: `yank.yml` has no timeout; a hung GET in a scheduled job is a silent multi-hour burn.
 CURL_MAX_SECONDS = 60
 
@@ -587,8 +612,13 @@ def registry_name(url: str) -> str:
     return url.rstrip("/").rsplit("/", 1)[-1]
 
 
-def fetch_registry(version: str, token: str, url: str = REGISTRY_URL) -> object:
-    """GET the rows for one version from one Cloudsmith repository.
+def _curl_json(url: str, query: str, token: str) -> object:
+    """One GET, decoded and parsed. Every failure is an InfraError naming the registry and query.
+
+    Shared by `fetch_registry` (one version) and `fetch_newest` (unscoped). Only the transport and
+    the parse are shared: each caller keeps the guards that belong to ITS question on top, because
+    the two answers have opposite shapes — a full page is a refusal for one and normal for the
+    other.
 
     `curl`, not `urllib`, and that is not stylistic. This repo's hermeticity convention is stub
     executables first on `PATH` (`scripts/test_release_notice_gate.py:62-83`), with the rule "no
@@ -600,7 +630,6 @@ def fetch_registry(version: str, token: str, url: str = REGISTRY_URL) -> object:
     is not a list of packages parses to "no rows" — which reads as drift. Every HTTP failure has
     to arrive as a non-zero exit.
     """
-    query = _query_for(version)
     where = registry_name(url)
     try:
         proc = subprocess.run(
@@ -640,9 +669,17 @@ def fetch_registry(version: str, token: str, url: str = REGISTRY_URL) -> object:
             "This is infrastructure: an unanswered query says nothing about what is published."
         )
     try:
-        rows = json.loads(proc.stdout)
+        return json.loads(proc.stdout)
     except json.JSONDecodeError as exc:
         raise InfraError(f"the response from {where} to {query} is not JSON: {exc}") from exc
+
+
+def fetch_registry(version: str, token: str, url: str = REGISTRY_URL) -> object:
+    """GET the rows for one version from one Cloudsmith repository, through `_curl_json`, and
+    refuse an answer that cannot have been scoped to that version."""
+    query = _query_for(version)
+    where = registry_name(url)
+    rows = _curl_json(url, query, token)
     if isinstance(rows, list) and len(rows) == PAGE_SIZE:
         raise InfraError(
             f"the response from {where} to {query} carries exactly {PAGE_SIZE} rows, which is the "
@@ -729,6 +766,203 @@ def assert_live_instrument_healthy(target: str, token: str, url: str = REGISTRY_
     )
 
 
+# ── the newest version on internal (seam-sdk#253) ─────────────────────────────────────────────
+#
+# The declared-version question above cannot see a release that `main` has already moved past: if
+# 0.45.0 landed on internal and never reached partner, and `main` now declares 0.45.1, nothing
+# above ever asks partner about 0.45.0. So one more question is asked: what is the NEWEST version
+# internal serves in both formats, and does partner serve that one too?
+#
+# Only the newest, by the owner's decision (D6). A short-lived version that fails promotion and is
+# superseded inside the hard window is never newest-past-the-window, so it is never reported. That
+# residual is recorded rather than covered.
+
+
+def _plain(value: object) -> str | None:
+    """`value` if it is a plain digits-and-dots version, else None.
+
+    `fullmatch`, not `SAFE_VERSION.match`: `$` matches before a trailing newline, so `match`
+    accepts `"0.45.0\\n"`. Every value this returns may be PRINTED — D8 lets only versions out of a
+    response — so it has to be exactly a version and nothing else.
+    """
+    if isinstance(value, str) and SAFE_VERSION.fullmatch(value):
+        return value
+    return None
+
+
+def _version_key(version: str) -> tuple[int, ...]:
+    """Numeric order, the order `sort=-version` was observed to use. `0.10.0` > `0.9.0`."""
+    return tuple(int(part) for part in version.split("."))
+
+
+def newest_complete_version(rows: object, *, exclude: str | None = None) -> tuple[str | None, int]:
+    """The largest plain version whose `seam-sdk` rows carry every REQUIRED_FORMAT, and how many
+    distinct non-plain version values were set aside.
+
+    Pure, and deliberately ORDER-BLIND: it takes the max, so a shuffled offline dump gives the same
+    answer as a sorted one. The order of a LIVE response is a separate claim, checked separately in
+    `fetch_newest`, where it is a statement about the server rather than about the data.
+
+    "Complete" rather than "present" because half a release is not a release a partner could have
+    been given: a version with only its wheel uploaded is the declared question's business while it
+    is declared, and is no one's "newest".
+
+    Non-plain versions — a pre-release, an empty field, a field that is not a version at all — are
+    COUNTED, never returned and never printed. None were observed on 2026-10-12, so the count is
+    there to make the first one visible rather than to describe today.
+
+    `exclude` is the page-edge rule's hook: one version that may not be chosen. See `fetch_newest`.
+    """
+    formats: dict[str, set[str]] = {}
+    withheld: set[str] = set()
+    for row in _seam_sdk_rows(rows):
+        version = _plain(row.get("version"))
+        if version is None:
+            # Counted by a hashable stand-in, never kept for output: the value is response content.
+            withheld.add(repr(row.get("version")))
+            continue
+        if row.get("format") in REQUIRED_FORMATS:
+            formats.setdefault(version, set()).add(str(row.get("format")))
+    complete = [
+        v for v, found in formats.items() if set(REQUIRED_FORMATS) <= found and v != exclude
+    ]
+    return (max(complete, key=_version_key) if complete else None), len(withheld)
+
+
+def fetch_newest(token: str, *, proved_by: str, declared: str | None) -> tuple[str, object, int]:
+    """GET internal's newest `seam-sdk` rows and prove the answer before using it.
+
+    Returns `(newest complete version, the rows, non-plain count)`. The rows come back because the
+    newest question's clock is read out of them (`newest_upload_clock`) — the same response, so the
+    clock and the version cannot describe two different moments.
+
+    `proved_by` is the canary that proved INTERNAL's instrument this run; `declared` is main's
+    version when internal serves it in both formats, else None. Each guard below is an InfraError,
+    so a failure here is exit 2 and never a verdict. None of them can fire in the world observed on
+    2026-10-12; each is the cheapest statement that the world still is that one.
+
+    1. **Some `seam-sdk` row came back.** `[]` from an unscoped query is not "nothing is
+       published" — the canary just proved a published version exists. It is a broken query.
+    2. **The order is non-increasing.** `sort=-version` is what makes "the first page" mean "the
+       newest versions". A wrong parameter NAME is silently ignored by the server (observed:
+       `ordering=` falls back to `-date`), and a page sorted by date would still usually put the
+       newest version first — until a re-upload or a backfill of an old version lands, at which
+       point the "newest" is whatever was touched last. Checked over every row with a plain
+       version, whatever package it belongs to, because the sort is over the whole response.
+    3. **Page edge.** On a FULL page the lowest version on it may continue onto the next page, so
+       its rows here may be a subset — a version that looks complete may have been cut, and one
+       that looks incomplete may not be. That version is never chosen. A full page of ONE version
+       therefore has no candidate at all, which is correct: it says nothing about which version is
+       newest.
+    4. **At least the proving canary.** The canary is, by definition, published in both formats,
+       and it was read on this credential in this run. A "newest" below it means the response is
+       not the top of the list.
+    5. **At least the declared version, when internal serves it.** Same argument, with the
+       target's own answer from a few seconds ago as the floor.
+    """
+    raw = _curl_json(REGISTRY_URL, NEWEST_QUERY, token)
+    if not _seam_sdk_rows(raw):
+        raise InfraError(
+            f"the response from internal to {NEWEST_QUERY} carries no `{PACKAGE_NAME}` row. The "
+            f"canary {proved_by} was read from internal moments ago, so an unscoped query cannot "
+            "honestly answer with nothing. The query shape or the response is wrong."
+        )
+    assert isinstance(raw, list)  # `_seam_sdk_rows` refused anything else
+    plain = [v for v in (_plain(row.get("version")) for row in raw) if v is not None]
+    for higher, lower in zip(plain, plain[1:]):
+        if _version_key(lower) > _version_key(higher):
+            # Both are plain versions, so both may be printed — they ARE the diagnosis.
+            raise InfraError(
+                f"the response from internal to {NEWEST_QUERY} is not in descending version "
+                f"order ({higher} is followed by {lower}). `sort=-version` was not applied, so "
+                "the top of this page is not the newest release. A misspelt sort parameter is "
+                "silently ignored by Cloudsmith, which falls back to upload date."
+            )
+    # `>=`, not `==`: more rows than were asked for means `page_size` itself was ignored, and a
+    # response cut at some OTHER size is just as able to split its lowest version. Only a response
+    # shorter than the page is known to be the whole list.
+    edge = plain[-1] if len(raw) >= PAGE_SIZE and plain else None
+    newest, withheld = newest_complete_version(raw, exclude=edge)
+    if newest is None:
+        raise InfraError(
+            f"the response from internal to {NEWEST_QUERY} carries no plain version in both "
+            f"formats"
+            + (
+                f" above the page edge ({edge} is the lowest version on a full page, so its rows "
+                "may continue onto the next page and it is never chosen)"
+                if edge
+                else ""
+            )
+            + ". There is no newest release to ask partner about."
+        )
+    if _version_key(newest) < _version_key(proved_by):
+        raise InfraError(
+            f"the newest complete version in the response from internal to {NEWEST_QUERY} is "
+            f"{newest}, below the canary {proved_by} that proved internal this run. The response "
+            "is not the top of the list."
+        )
+    if declared is not None and _version_key(newest) < _version_key(declared):
+        raise InfraError(
+            f"the newest complete version in the response from internal to {NEWEST_QUERY} is "
+            f"{newest}, below {declared}, which internal served in both formats moments ago. The "
+            "response is not the top of the list."
+        )
+    return newest, raw, withheld
+
+
+def _parse_upload_stamp(value: object) -> datetime:
+    """One `uploaded_at`, as an aware UTC datetime. It NEVER prints the value it was given.
+
+    This is response content, and D8 lets no response field but a version reach the output: a
+    field echoed in an error is exactly how a body quoting the request header would reach a log.
+    So every refusal names the TYPE, or says "not a timestamp", and stops there — including the
+    `ValueError` from `fromisoformat` on a well-shaped impossible date (month 13), whose message
+    would quote the string, and which is therefore not chained.
+    """
+    if not isinstance(value, str):
+        raise InfraError(
+            f"an `uploaded_at` on internal is a {type(value).__name__}, not a timestamp string. "
+            "The newest version's clock cannot be read."
+        )
+    if not UPLOAD_STAMP.fullmatch(value):
+        raise InfraError(
+            "an `uploaded_at` on internal is not an ISO-8601 timestamp (value withheld). The "
+            "newest version's clock cannot be read."
+        )
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        parsed = None
+    if parsed is None:
+        raise InfraError(
+            "an `uploaded_at` on internal has the shape of a timestamp but is not a real instant "
+            "(value withheld). The newest version's clock cannot be read."
+        )
+    return parsed.astimezone(timezone.utc)
+
+
+def newest_upload_clock(rows: object, version: str) -> datetime:
+    """When the newest version finished landing on internal: the LATEST `uploaded_at` among its
+    rows in the required formats.
+
+    The latest, not the earliest: the release is complete only when its last format lands, and
+    `promote-partner` cannot start before that. Every such row must carry a readable stamp — one
+    unreadable stamp is a clock that cannot be trusted, not one to skip.
+
+    This clock and the declared question's are different on purpose. `main`'s git dates say when
+    `main` began claiming a version; they say nothing about a version `main` has moved past. The
+    upload is the event `promote-partner` follows, on the same soft and hard windows.
+    """
+    stamps = [
+        _parse_upload_stamp(row.get("uploaded_at"))
+        for row in _seam_sdk_rows(rows)
+        if row.get("version") == version and row.get("format") in REQUIRED_FORMATS
+    ]
+    if not stamps:
+        raise InfraError(f"no row for {version} on internal carries an `uploaded_at`")
+    return max(stamps)
+
+
 def _load_packages_json(path: Path, flag: str = "--packages-json") -> object:
     try:
         raw = path.read_text(encoding="utf-8")
@@ -786,6 +1020,35 @@ def _tier(age_minutes: float, soft: int, hard: int) -> str:
     if age_minutes < hard:
         return "warned"
     return "drift"
+
+
+def _with_newest(code: int, newest_verdict: str | None, newest_error: InfraError | None) -> int:
+    """Fold the newest-version question into the declared question's FINAL exit code (D3).
+
+        newest question        declared question                 exit
+        drift                  any                               1
+        fault                  unsuppressed drift (code 1)       1, with the ::error:: printed
+        fault                  clean, grace or suppressed        2
+        anything else          —                                 the declared code, unchanged
+
+    A fault keeps a declared drift's 1 for the same reason a partner fault does: the finding is
+    real whatever this question's instrument is doing, and turning it into a 2 would hide it. With
+    no finding beside it, an unanswerable question is infrastructure, and a green job would make it
+    a footnote. `code` 1 means an unsuppressed declared drift and nothing else — both declared
+    subjects reach 1 only through a drift tier, and a suppression has already set it to 0.
+
+    `code` 2 arrives from exactly ONE caller, deliberately: `main`'s declared-clock fault path,
+    where git could not date the declared version but the newest question had already been
+    answered on its own (upload) clock. There a newest drift → 1 (a real finding, which a 2 would
+    hide) and a newest fault or no finding → 2. Every other exit-2 path returns WITHOUT calling
+    this, because it fires before the newest question has run; one that newly reaches this with 2
+    must decide the same thing on purpose, not inherit it.
+    """
+    if newest_error is not None:
+        return 1 if code == 1 else 2
+    if newest_verdict == "drift":
+        return 1
+    return code
 
 
 def issue_repo() -> str:
@@ -1348,7 +1611,9 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help=(
             "a saved UNSCOPED `?query=seam-sdk` dump (no `version:` qualifier); it must "
-            "carry seam-sdk rows at some version. Omit to query the registry live."
+            "carry seam-sdk rows at some version. Omit to query the registry live. Its rows "
+            "must keep Cloudsmith's `uploaded_at`: with --partner-packages-json beside it, the "
+            "newest-version question is timed by that field and refuses (exit 2) without it."
         ),
     )
     parser.add_argument(
@@ -1357,7 +1622,8 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help=(
             "the same kind of dump, captured from `zer07labs/partner`. Offline only. Without it, "
-            "an offline run does NOT check partner, and says so."
+            "an offline run does NOT check partner, and says so. With it, the newest version in "
+            "--packages-json is checked against partner too, timed by that dump's `uploaded_at`."
         ),
     )
     parser.add_argument("--now", default=None, help="ISO 8601; defaults to real UTC now")
@@ -1455,6 +1721,167 @@ def main(argv: list[str] | None = None) -> int:
                 f"unexpected failure reading partner: {type(exc).__name__}"
             )
 
+        # ── the newest version on internal (seam-sdk#253) ───────────────────────────────────
+        #
+        # Asked AFTER both declared-version answers, and captured the same way partner's is: a
+        # fault here is about this question alone and must not pre-empt the declared verdict,
+        # which is printed whatever happens below. Which exit a captured error produces is decided
+        # at the end, against the declared question's final code (`_with_newest`).
+        #
+        # PRECONDITION: partner was read this run. The question is "does partner serve V", and a
+        # partner whose instrument just failed cannot answer it — so a partner fault makes this
+        # question NOT CHECKED, and neither the unscoped GET nor a partner GET at V is made. That
+        # also keeps one dead credential from being reported twice.
+        #
+        # SKIP when V is the declared version: partner was asked about exactly that version above,
+        # on the declared clock, and asking again would only print the same answer twice. The
+        # unscoped GET is still made and still guarded — the discovery is what can break, so it is
+        # exercised on every run, the same rule as the canary's.
+        newest: str | None = None
+        newest_withheld = 0
+        newest_partner_missing: set[str] | None = None
+        newest_age = 0.0
+        newest_error: InfraError | None = None
+        newest_unchecked: str | None = None
+        if partner_error is not None:
+            newest_unchecked = "partner could not be read"
+        elif partner_missing is None:
+            newest_unchecked = "offline run without --partner-packages-json"
+        else:
+            try:
+                if args.packages_json is not None:
+                    # Offline: the dump is the whole answer, so there is no order to check and no
+                    # page edge, and no canary to floor against. The max is order-blind.
+                    newest, newest_withheld = newest_complete_version(rows)
+                    if newest is None:
+                        raise InfraError(
+                            f"--packages-json {args.packages_json} carries no plain "
+                            f"`{PACKAGE_NAME}` version in both formats, so there is no newest "
+                            "release to ask partner about."
+                        )
+                    newest_rows: object = rows
+                else:
+                    served = set(REQUIRED_FORMATS) <= registry_formats(rows, version)
+                    newest, newest_rows, newest_withheld = fetch_newest(
+                        token, proved_by=proved_by, declared=version if served else None
+                    )
+                if newest != version:
+                    # The clock BEFORE the partner read: it is local, and an unreadable stamp is a
+                    # fault whatever partner says. Read on every non-skipped run, not only when
+                    # partner is short — otherwise a broken stamp would first be noticed on the
+                    # one run that needs it, as an exit 2 in place of the lag it was meant to time.
+                    try:
+                        uploaded = newest_upload_clock(newest_rows, newest)
+                    except InfraError as exc:
+                        if args.packages_json is None:
+                            raise
+                        # Offline, the likeliest cause is a dump saved without the field — a
+                        # hand-trimmed capture, or one from before this question existed — and
+                        # the fix is the operator's, so say which file and what it needs.
+                        raise InfraError(
+                            f"{exc} --packages-json {args.packages_json} must keep each row's "
+                            "`uploaded_at`, as Cloudsmith's list API returns it: with "
+                            "--partner-packages-json beside it, the newest-version question is "
+                            "timed by that field."
+                        ) from None
+                    newest_age = (now - uploaded).total_seconds() / 60.0
+                    if newest_age < -CLOCK_SKEW_TOLERANCE_MINUTES:
+                        # The stamp itself is withheld (D8); the size of the gap is the diagnosis.
+                        raise InfraError(
+                            f"{newest}'s latest `uploaded_at` on internal is "
+                            f"{-newest_age:.0f} minutes AFTER now ({now.isoformat()}), past "
+                            f"{CLOCK_SKEW_TOLERANCE_MINUTES} minutes of tolerable skew. Refusing "
+                            "to defer: a negative age is below every grace threshold, so this "
+                            "would otherwise suppress the newest-version question indefinitely."
+                        )
+                    newest_age = max(newest_age, 0.0)
+                    if args.packages_json is not None:
+                        partner_at = registry_formats(partner_rows, newest)
+                    else:
+                        partner_at = registry_formats(
+                            fetch_registry(newest, token, PARTNER_REGISTRY_URL), newest
+                        )
+                    newest_partner_missing = set(REQUIRED_FORMATS) - partner_at
+            except InfraError as exc:
+                newest_error = exc
+            except Exception as exc:  # noqa: BLE001 — same reasoning as partner's, above
+                # The class name only, never the message or repr: this block parses a response.
+                newest_error = InfraError(
+                    f"unexpected failure answering the newest-version question: "
+                    f"{type(exc).__name__}"
+                )
+
+    except InfraError as exc:
+        print(f"::error::{exc}", file=sys.stderr)
+        return 2
+
+    # ── the newest question's output, as two closures over the facts gathered above ─────────
+    #
+    # Closures rather than inline blocks because there are TWO places they must run: the normal
+    # path below, and the declared clock's own fault path. By the time git is read for the
+    # declared clock, the newest question has already been fully answered on its OWN clock (the
+    # upload), so a git fault must not swallow it — a computed newest finding is printed on every
+    # path that gets this far. Both read the enclosing variables at call time.
+    def print_newest_facts(declared_answered: bool = True) -> None:
+        # The newest question's facts. Only plain versions and minutes are printed here — never an
+        # `uploaded_at` (D8): the age is derived from it, the stamp itself stays inside the process.
+        if newest_unchecked is not None:
+            print(f"newest on internal: NOT CHECKED ({newest_unchecked})")
+        elif newest_error is not None:
+            print("newest on internal: COULD NOT BE READ (see the error below)")
+        else:
+            aside = (
+                f" ({newest_withheld} non-version value(s) set aside)" if newest_withheld else ""
+            )
+            if newest_partner_missing is None:
+                # The skip: newest IS the declared version, so its partner answer is the declared
+                # question's — which a git-clock fault leaves unanswered, and the line says so.
+                answered = "answered above" if declared_answered else "not answered (git failed)"
+                print(f"newest on internal: {newest}{aside} — the declared version, {answered}")
+            else:
+                print(f"newest on internal: {newest}{aside}, uploaded {newest_age:.0f} minutes ago")
+                newest_found = set(REQUIRED_FORMATS) - newest_partner_missing
+                # Not `partner serves:` — that prefix is the declared version's line, read as such.
+                print(f"partner serves {newest}: {', '.join(sorted(newest_found)) or '<nothing>'}")
+
+    def print_newest_verdict() -> str | None:
+        newest_verdict: str | None = None
+        if newest_error is not None:
+            print(
+                f"::error::the newest-version question could not be answered: {newest_error}",
+                file=sys.stderr,
+            )
+        elif newest_partner_missing is not None and newest_partner_missing:
+            newest_formats = ", ".join(sorted(newest_partner_missing))
+            newest_verdict = _tier(newest_age, args.soft_grace_minutes, args.hard_grace_minutes)
+            if newest_verdict == "deferred":
+                print(
+                    f"NEWEST DEFERRED — partner lacks {newest_formats} for {newest}, the newest "
+                    f"version on internal (main declares {version}), but it finished uploading only "
+                    f"{newest_age:.0f} minutes ago; `promote-partner` is plausibly still running. "
+                    f"Escalates at {args.hard_grace_minutes}m."
+                )
+            elif newest_verdict == "warned":
+                print(
+                    f"::warning::seam-sdk {newest}, the newest version on internal (main declares "
+                    f"{version}), is not on partner ({newest_formats} missing) {newest_age:.0f} "
+                    f"minutes after it finished uploading. Past the declared publish ceilings, not "
+                    f"yet escalated (hard={args.hard_grace_minutes}m)."
+                )
+            else:
+                print(
+                    f"NEWEST DRIFT — seam-sdk {newest}, the newest version on internal, is not on "
+                    f"partner {newest_age:.0f} minutes after it finished uploading, past the hard "
+                    f"window of {args.hard_grace_minutes}m. Main declares {version}, so the "
+                    f"declared-version check above never asks partner about {newest}.\n"
+                    + _partner_remediation(newest, newest_partner_missing)
+                )
+        elif newest_partner_missing is not None:
+            print(f"NEWEST CLEAN — partner serves {newest}, the newest version on internal, in both "
+                  f"formats.")
+        return newest_verdict
+
+    try:
         # The instrument is exercised BEFORE the clock is consulted. The rule that actually has
         # teeth is narrower than "before", and worth stating in the form a future editor can
         # check: NO PATH MAY REACH A VERDICT WITHOUT HAVING RUN THE QUERY. Moving these two lines
@@ -1483,8 +1910,15 @@ def main(argv: list[str] | None = None) -> int:
             )
         age_minutes = max(age_minutes, 0.0)
     except InfraError as exc:
+        # The DECLARED question cannot be answered — its clock is git's, and git failed — but the
+        # newest question was answered on the upload clock before git was ever read. Print it,
+        # then exit by the D3 table with the declared question standing at 2 (infrastructure):
+        # a newest DRIFT is a real finding and keeps its 1; anything else leaves the 2. Nothing is
+        # reported to GitHub from here, which Phase 1 would not have done for a newest drift
+        # anyway; the declared question has no verdict to report.
         print(f"::error::{exc}", file=sys.stderr)
-        return 2
+        print_newest_facts(declared_answered=False)
+        return _with_newest(2, print_newest_verdict(), newest_error)
 
     if proved_by:
         print(f"instrument proven by canary {proved_by} (both formats present)")
@@ -1500,6 +1934,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         partner_found = set(REQUIRED_FORMATS) - partner_missing
         print(f"partner serves: {', '.join(sorted(partner_found)) or '<nothing>'}")
+    print_newest_facts()
     print(f"most recent release attempt: {started.isoformat()} ({age_minutes:.0f} minutes ago)")
 
     # ── the verdict, printed BEFORE anything is reported ────────────────────────────────────
@@ -1582,6 +2017,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         verdict, code = "drift", 1
 
+    # ── the newest version's verdict, printed BEFORE anything is reported, like the declared one ──
+    #
+    # Its own tier on its own clock (the upload, not git), on the same soft and hard windows:
+    # `promote-partner` follows the upload in the same publish run either way. Only this question's
+    # DRIFT tier votes, and it votes at the end (`_with_newest`), after the declared question's
+    # reporting has decided whether that question's drift was suppressed.
+    newest_verdict = print_newest_verdict()
+
     if partner_error is not None:
         # Only reachable with internal SHORT (the clean-internal case returned above). Internal's
         # verdict stands and is printed; the partner fault is reported beside it, never instead of
@@ -1592,7 +2035,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     if not args.report:
-        return code
+        return _with_newest(code, newest_verdict, newest_error)
 
     # ── reporting ───────────────────────────────────────────────────────────────────────────
     #
@@ -1651,6 +2094,11 @@ def main(argv: list[str] | None = None) -> int:
     # beside, and an exit 0 would leave an unreadable partner as a footnote on a green job. 2.
     if partner_error is not None and code == 0:
         code = 2
+
+    # After the declared question's reporting, so its suppression has already been applied — the
+    # D3 table reads the declared question's FINAL code. Interim (seam-sdk#253 Phase 1): a newest
+    # drift is printed and votes 1 here, but nothing is filed for it yet.
+    code = _with_newest(code, newest_verdict, newest_error)
 
     # ── the watcher's own heartbeat ───────────────────────────────────────────────────────────
     #
