@@ -4549,3 +4549,21 @@ resolution) · `.github/workflows/publish.yml:747-810` (`promote-partner`) ·
 - **Tests:** `pytest scripts/` gives 547 passed.
 - **Next:** Phase 2, reporting a partner lag under its own title, and restoring the heartbeat on
   partner verdicts.
+
+## Phase 2: reporting for a partner lag, DONE (2026-10-12)
+- **Verdict:** PASS on round 2. Opus verifier: complex phase, it writes GitHub issues and adds a
+  title namespace.
+- **Round 1, GAPS:**
+  - Three mutations survived: the partner reopen comment's body, and the "not checked" and
+    "serves it" branches of the partner row.
+  - The partner grace tiers had no test with `--report`.
+  - The internal body said "not checked" when partner had been queried and errored.
+  - "Expected" was overclaimed in the partner row.
+  - A dead `or set()` fallback.
+  - No internal "can be closed" notice while partner lags.
+  - All closed with tests; each fix was mutation-checked by the verifier.
+- **Round 2:** PASS.
+- **Files:** `scripts/check_registry_drift.py`, `scripts/test_registry_drift_gate.py`,
+  `plans/partner-registry-drift.md`.
+- **Tests:** `pytest scripts/` gives 562 passed (drift gate 270). `ruff check` is clean.
+- **Next:** Phase 3, workflow comments and docs.

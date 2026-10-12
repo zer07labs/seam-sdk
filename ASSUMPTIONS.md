@@ -1346,3 +1346,15 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Found, out of scope:** `CARGO_REGISTRIES_ZER07LABS_TOKEN`, the workflow's fallback, returns 401 on both repositories. If the primary key were ever unset, the fallback would exit 2 rather than read anything. It is pre-existing, and it fails loudly at exit 2, which is safe. Worth its own issue.
 - **Blast radius if wrong:** if the key lost partner read, every scheduled run would exit 2 naming partner. That is loud, never silent.
 - **Status:** UNCONFIRMED
+
+## When both registries are short, one issue is filed: the internal one
+- **Plan:** plans/partner-registry-drift.md
+- **Assumed:** a version missing from internal is necessarily missing from partner, because promotion copies from internal. So internal is the root cause.
+- **Chose:**
+  - One internal issue, whose table records partner's observed state.
+  - A partner issue only when internal is complete.
+  - A partner-lag run notes that an open internal issue for the same version can be closed.
+  - Partner issues have their own title and their own suppression scope.
+- **Alternatives:** file both issues. That gives two reports of one fault, and suppressing one would be confused with suppressing the other.
+- **Blast radius if wrong:** low. Once internal is fixed, the next run files the partner issue if partner is still short.
+- **Status:** UNCONFIRMED

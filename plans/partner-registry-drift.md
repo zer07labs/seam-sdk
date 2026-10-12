@@ -115,7 +115,20 @@ file and docs. None of them is independently useful to ship.
      offline `--report` run without `--partner-packages-json` never prints it.
   7. One `fetch_issues` listing per run, so the drift path's `gh` call count is unchanged. The
      partner issue body cross-links an open `release-outcome` issue, as `report_drift` does.
-- **Status:** TODO
+- **As built, and where it diverged:**
+  - Phase 1's early return for partner verdicts is gone; the heartbeat now runs after a partner
+    drift too.
+  - The internal issue's partner row states only what the run observed: "not checked" (offline,
+    no dump), "**could not be read**" (queried and failed), "serves it", or "also missing …".
+    "Expected" is claimed only for formats internal is missing too; a format internal serves and
+    partner does not is named as a promotion lag of its own.
+  - Added beyond the plan: a partner-lag drift prints the "can be closed" notice for an open
+    INTERNAL issue on the same version (internal serving it is what made this a partner lag),
+    from the same listing. The deferred/warned partner tiers still print nothing and read
+    nothing from GitHub — the grace invariant outranks the notice.
+  - No `or set()` fallback on the partner call: the subject is partner only when partner was
+    read and is short, so an empty set cannot reach it.
+- **Status:** DONE
 
 ## Phase 3: workflow comments and docs
 - **Risk:** simple.

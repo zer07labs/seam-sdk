@@ -2863,6 +2863,7 @@ def test_the_scheduled_run_never_passes_a_saved_response() -> None:
 
 DRIFT_TITLE = _SCRIPT_MODULE.DRIFT_TITLE
 RELEASE_NOTICE_TITLE = _SCRIPT_MODULE.RELEASE_NOTICE_TITLE
+PARTNER_DRIFT_TITLE = _SCRIPT_MODULE.PARTNER_DRIFT_TITLE
 SUPPRESSION_LABEL = _SCRIPT_MODULE.SUPPRESSION_LABEL
 ISSUE_LIMIT = _SCRIPT_MODULE.ISSUE_LIMIT
 
@@ -3399,22 +3400,212 @@ def _partner_dump(tmp_path: Path, payload: object) -> list[str]:
     return ["--partner-packages-json", str(pfile)]
 
 
-def test_a_partner_verdict_never_files_under_the_internal_title(tmp_path: Path) -> None:
-    """A partner lag is not an internal drift. Filing `DRIFT_TITLE` for it would assert that the
-    release is not installable from internal — a state the registry is not in."""
+def _partner_lag_run(
+    tmp_path: Path, listing: list[tuple[int, str, list[str], str]], **kw: object
+) -> tuple[subprocess.CompletedProcess[str], Path]:
+    """Internal complete, partner empty for DRIFTING, past the hard window, with --report."""
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    return report_run(
+        repo,
+        published(DRIFTING),
+        tmp_path,
+        listing=listing,
+        extra=_partner_dump(tmp_path, published("0.7.77")),
+        **kw,
+    )
+
+
+def partner_listing(
+    number: int, state: str, labels: list[str]
+) -> list[tuple[int, str, list[str], str]]:
+    return [(number, state, labels, PARTNER_DRIFT_TITLE.format(version=DRIFTING))]
+
+
+def test_a_partner_lag_files_one_issue_under_its_own_title(tmp_path: Path) -> None:
+    """One listing, one create, PARTNER_DRIFT_TITLE — never DRIFT_TITLE, which would assert that
+    the release is not installable from internal, a state the registry is not in."""
+    proc, log = _partner_lag_run(tmp_path, [])
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    calls = gh_calls(log)
+    assert sum(1 for c in calls if c[:2] == ["issue", "list"]) == 1, calls
+    creates = [c for c in calls if c[:2] == ["issue", "create"]]
+    assert len(creates) == 1, calls
+    title = creates[0][creates[0].index("--title") + 1]
+    body = creates[0][creates[0].index("--body") + 1]
+    assert title == PARTNER_DRIFT_TITLE.format(version=DRIFTING)
+    for call in calls:
+        assert DRIFT_TITLE.format(version=DRIFTING) not in call, call
+    assert "State P" in body
+    assert "`zer07labs/partner`" in body
+    assert "promote-partner-backfill.yml" in body
+    assert "registry-smoke" in body
+    # Reporting is followed by the watcher's heartbeat on a partner verdict too: a partner lag
+    # that outlasts the schedule must not also silence the check on its own schedule.
+    assert [c for c in calls if c[0] == "api"] == [heartbeat_argv()], calls
+
+
+@pytest.mark.parametrize(
+    ("state", "labels", "expected_code", "writes"),
+    [
+        ("OPEN", [], 1, []),
+        ("CLOSED", [], 1, ["comment", "reopen"]),
+        ("CLOSED", [SUPPRESSION_LABEL], 0, []),
+    ],
+    ids=["open", "closed", "suppressed"],
+)
+def test_the_partner_issue_walks_the_same_decision_table(
+    tmp_path: Path, state: str, labels: list[str], expected_code: int, writes: list[str]
+) -> None:
+    proc, log = _partner_lag_run(tmp_path, partner_listing(11, state, labels))
+    assert proc.returncode == expected_code, proc.stdout + proc.stderr
+    assert [c[1] for c in gh_calls(log) if c[0] == "issue" and c[1] != "list"] == writes
+    if labels:
+        assert "::warning::" in proc.stdout and "#11" in proc.stdout
+        assert "Partner still does not serve" in proc.stdout
+    if "comment" in writes:
+        # The reopen comment is the partner body, not the internal one: an internal body here
+        # would tell the reader the release is not installable and send them to re-publish.
+        comment = next(c for c in gh_calls(log) if c[:2] == ["issue", "comment"])
+        text = comment[comment.index("--body") + 1]
+        assert "State P" in text and "`zer07labs/partner` (internal is complete)" in text, text
+        assert "the registry does not serve it" not in text, text
+
+
+@pytest.mark.parametrize("age", [30, 200], ids=["soft", "warn"])
+def test_a_partner_lag_inside_grace_touches_no_github(tmp_path: Path, age: int) -> None:
+    """The grace invariant holds for the partner subject too: with --report, a deferred or
+    warned partner lag reaches GitHub not at all — not even the listing."""
+    proc, log = _partner_lag_run(tmp_path, [], now=LANDED + timedelta(minutes=age))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert gh_calls(log) == [], gh_calls(log)
+
+
+def test_a_partner_lag_says_an_open_internal_issue_can_be_closed(tmp_path: Path) -> None:
+    """Internal serving the version is what makes this a partner lag, so an open internal issue
+    for it is stale. `report_clean` cannot say so — the verdict is not clean — so the partner
+    path does, from the same listing, and closes nothing."""
+    listing = drift_listing(4, "OPEN", [])
+    proc, log = _partner_lag_run(tmp_path, listing)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "::notice::#4" in proc.stdout and "can be closed" in proc.stdout, proc.stdout
+    calls = gh_calls(log)
+    assert sum(1 for c in calls if c[:2] == ["issue", "list"]) == 1, calls
+    assert not any(c[:2] in (["issue", "close"], ["issue", "edit"]) for c in calls), calls
+
+
+def test_an_internal_suppression_does_not_suppress_a_partner_lag(tmp_path: Path) -> None:
+    """Suppression is scoped to one title. Closing the INTERNAL issue for this version with the
+    label says nothing about partner, and must not mute it."""
+    listing = [
+        (5, "CLOSED", [SUPPRESSION_LABEL], DRIFT_TITLE.format(version=DRIFTING)),
+    ]
+    proc, log = _partner_lag_run(tmp_path, listing)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert any(c[:2] == ["issue", "create"] for c in gh_calls(log)), gh_calls(log)
+
+
+def test_a_partner_issue_cross_links_an_open_release_notice(tmp_path: Path) -> None:
+    """An open `release-outcome` issue is the signal that registry-smoke may have failed —
+    exactly when State P says not to promote. The body must point at it."""
+    listing = [(9, "OPEN", [], RELEASE_NOTICE_TITLE.format(version=DRIFTING))]
+    proc, log = _partner_lag_run(tmp_path, listing)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    create = next(c for c in gh_calls(log) if c[:2] == ["issue", "create"])
+    assert "#9" in create[create.index("--body") + 1]
+
+
+def test_internal_and_partner_both_short_file_one_internal_issue_naming_partner(
+    tmp_path: Path,
+) -> None:
+    """One fault, at its source. The internal body records partner's state; no partner issue."""
     repo = make_repo(tmp_path, version=DRIFTING, tag=True)
     proc, log = report_run(
         repo,
-        published(DRIFTING),
+        published("0.7.77"),
         tmp_path,
         listing=[],
         extra=_partner_dump(tmp_path, published("0.7.77")),
     )
     assert proc.returncode == 1, proc.stdout + proc.stderr
-    assert "State P" in proc.stdout
-    internal_title = DRIFT_TITLE.format(version=DRIFTING)
-    for call in gh_calls(log):
-        assert internal_title not in call, f"a partner lag was filed as internal drift: {call}"
+    creates = [c for c in gh_calls(log) if c[:2] == ["issue", "create"]]
+    assert len(creates) == 1, gh_calls(log)
+    assert creates[0][creates[0].index("--title") + 1] == DRIFT_TITLE.format(version=DRIFTING)
+    body = creates[0][creates[0].index("--body") + 1]
+    assert "| `zer07labs/partner` | also missing npm, python (promotion copies" in body, body
+
+
+@pytest.mark.parametrize(
+    ("internal", "partner", "cell"),
+    [
+        (published("0.7.77"), None, "| `zer07labs/partner` | not checked |"),
+        (published("0.7.77"), "serving", "| `zer07labs/partner` | serves it |"),
+        (
+            "python-only",
+            "empty",
+            "| `zer07labs/partner` | also missing npm, python — python is served by internal, "
+            "so that is a promotion lag too |",
+        ),
+    ],
+    ids=["not-checked", "serves-it", "own-lag"],
+)
+def test_the_internal_issue_states_partner_as_observed(
+    tmp_path: Path, internal: object, partner: str | None, cell: str
+) -> None:
+    """Every branch of the partner row in the INTERNAL issue, read back from the filed body.
+    "Expected" is claimed only for formats internal is missing too."""
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    if internal == "python-only":
+        internal = [*published("0.7.77"), *rows(("seam-sdk", DRIFTING, "python"))]
+    extra = None
+    if partner == "serving":
+        extra = _partner_dump(tmp_path, published(DRIFTING))
+    elif partner == "empty":
+        extra = _partner_dump(tmp_path, published("0.7.77"))
+    proc, log = report_run(repo, internal, tmp_path, listing=[], extra=extra)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    create = next(c for c in gh_calls(log) if c[:2] == ["issue", "create"])
+    assert create[create.index("--title") + 1] == DRIFT_TITLE.format(version=DRIFTING)
+    assert cell in create[create.index("--body") + 1], create
+
+
+@pytest.mark.parametrize(
+    ("partner_dump", "expect_notice"), [(True, True), (False, False)], ids=["checked", "unchecked"]
+)
+def test_a_recovered_partner_says_its_issue_can_be_closed_only_when_partner_was_read(
+    tmp_path: Path, partner_dump: bool, expect_notice: bool
+) -> None:
+    """An offline run with no partner dump knows nothing about partner. "Can be closed" from it
+    would be an unqueried registry reading as clean."""
+    repo = make_repo(tmp_path, version=DRIFTING, tag=True)
+    proc, log = report_run(
+        repo,
+        published(DRIFTING),
+        tmp_path,
+        listing=partner_listing(12, "OPEN", []),
+        extra=_partner_dump(tmp_path, published(DRIFTING)) if partner_dump else None,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert ("#12" in proc.stdout) is expect_notice, proc.stdout
+    assert gh_writes(log) == [], gh_calls(log)
+    assert sum(1 for c in gh_calls(log) if c[:2] == ["issue", "list"]) == 1, gh_calls(log)
+
+
+def test_no_title_is_a_prefix_of_another() -> None:
+    """Three exact-title matchers over three shapes. None may contain another, in either
+    direction, at any version — or one mechanism could find, comment on, or suppress another's
+    issue."""
+    titles = {
+        "internal": DRIFT_TITLE,
+        "partner": PARTNER_DRIFT_TITLE,
+        "release-outcome": RELEASE_NOTICE_TITLE,
+    }
+    for version in ("0.7.78", "0.45.0", "1.0.0"):
+        rendered = {k: t.format(version=version) for k, t in titles.items()}
+        assert len(set(rendered.values())) == 3, rendered
+        for a, ta in rendered.items():
+            for b, tb in rendered.items():
+                if a != b:
+                    assert not tb.startswith(ta) and ta not in tb, (a, b, ta, tb)
 
 
 @pytest.mark.parametrize("age", [30, 200], ids=["soft", "warn"])
@@ -3459,7 +3650,11 @@ def test_a_partner_fault_beside_an_internal_drift(
     assert "::error::partner could not be read" in proc.stderr
     assert "State B" in proc.stdout
     if labels is None:
-        assert any(c[:2] == ["issue", "create"] for c in gh_calls(log)), gh_calls(log)
+        create = next(c for c in gh_calls(log) if c[:2] == ["issue", "create"])
+        # Queried and failed is not "not checked": the body states what this run observed.
+        body = create[create.index("--body") + 1]
+        assert "| `zer07labs/partner` | **could not be read**" in body, body
+        assert "not checked" not in body, body
 
 
 def test_a_recovered_registry_says_the_issue_can_be_closed_and_closes_nothing(

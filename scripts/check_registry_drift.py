@@ -234,6 +234,14 @@ SAFE_VERSION = re.compile(r"^[0-9]+(\.[0-9]+)*$")
 #: so both existing at once is correct; both writing to one issue would not be.
 DRIFT_TITLE = "Registry drift: seam-sdk {version} is not installable"
 
+#: A promotion lag: internal serves the version, `partner` does not (seam-sdk#203). Its own title,
+#: so its own issue, its own suppression scope, and no collision with `DRIFT_TITLE` or
+#: `RELEASE_NOTICE_TITLE` — all three are matched by exact equality, and no one of them is a
+#: prefix of another, which `test_no_title_is_a_prefix_of_another` pins rather than this comment.
+#: Separate rather than folded into the internal issue because the two have different fixes and
+#: different owners: one is a publish that did not land, the other a copy that did not happen.
+PARTNER_DRIFT_TITLE = "Registry drift: seam-sdk {version} is not on partner"
+
 #: `release-outcome`'s title, rendered here ONLY to look for one to cross-link. Never written.
 #: `GITHUB_REF_NAME` carries the `v`, so the tag — not the bare version — is what it interpolates.
 RELEASE_NOTICE_TITLE = "Release v{version} did not publish"
@@ -873,12 +881,58 @@ def _exact(issues: list[dict], title: str) -> dict | None:
     return None
 
 
+def _partner_cell(
+    partner_missing: set[str] | None, missing: set[str], *, partner_unreadable: bool = False
+) -> str:
+    """Partner's state, for the INTERNAL issue's table. Never blank: blank reads as fine.
+
+    It states only what this run observed. A partner that was queried and failed is "could not be
+    read", never "not checked" — the second is reserved for an offline run that never asked. And
+    "expected" is claimed only for formats internal is missing too: a format internal SERVES and
+    partner does not is a promotion lag of its own, not a consequence of this issue.
+    """
+    if partner_unreadable:
+        return "**could not be read** this run (see the run log)"
+    if partner_missing is None:
+        return "not checked"
+    if not partner_missing:
+        return "serves it"
+    cell = f"also missing {', '.join(sorted(partner_missing))}"
+    own = partner_missing - missing
+    if not own:
+        return f"{cell} (promotion copies from internal, so expected)"
+    return f"{cell} — {', '.join(sorted(own))} is served by internal, so that is a promotion lag too"
+
+
 def _issue_body(
-    version: str, tagged: bool, missing: set[str], age_minutes: float, cross_link: dict | None
+    version: str,
+    tagged: bool,
+    missing: set[str],
+    age_minutes: float,
+    cross_link: dict | None,
+    *,
+    subject: str = "internal",
+    partner_missing: set[str] | None = None,
+    partner_unreadable: bool = False,
 ) -> str:
     formats = ", ".join(sorted(missing))
+    if subject == "partner":
+        lede = (
+            f"`python/pyproject.toml` declares **{version}**. `zer07labs/internal` serves it in "
+            f"both formats; `zer07labs/partner` — the repository design partners install from — "
+            f"does not."
+        )
+        where_row = "| registry | `zer07labs/partner` (internal is complete) |"
+        remediation = _partner_remediation(version, missing)
+    else:
+        lede = f"`python/pyproject.toml` declares **{version}**, and the registry does not serve it."
+        where_row = (
+            f"| `zer07labs/partner` | "
+            f"{_partner_cell(partner_missing, missing, partner_unreadable=partner_unreadable)} |"
+        )
+        remediation = _remediation(version, tagged, missing)
     lines = [
-        f"`python/pyproject.toml` declares **{version}**, and the registry does not serve it.",
+        lede,
         "",
         "| | |",
         "|---|---|",
@@ -886,9 +940,10 @@ def _issue_body(
         f"| missing formats | {formats} |",
         f"| packages | `{PACKAGE_NAME}` (python), `@zer07labs/{PACKAGE_NAME}` (npm) |",
         f"| tag `v{version}` | {'present' if tagged else '**absent**'} |",
+        where_row,
         f"| age of the release attempt | {age_minutes:.0f} minutes |",
         "",
-        _remediation(version, tagged, missing),
+        remediation,
         "",
     ]
     if cross_link:
@@ -918,7 +973,14 @@ def _issue_body(
 
 
 def report_drift(
-    version: str, tagged: bool, missing: set[str], age_minutes: float
+    version: str,
+    tagged: bool,
+    missing: set[str],
+    age_minutes: float,
+    *,
+    subject: str = "internal",
+    partner_missing: set[str] | None = None,
+    partner_unreadable: bool = False,
 ) -> bool:
     """File, comment, reopen — or recognise a suppression. Returns True if suppressed.
 
@@ -931,14 +993,42 @@ def report_drift(
     """
     repo = issue_repo()
     issues = fetch_issues(repo)
-    title = DRIFT_TITLE.format(version=version)
+    title = (PARTNER_DRIFT_TITLE if subject == "partner" else DRIFT_TITLE).format(version=version)
     existing = _exact(issues, title)
+    what = "Partner" if subject == "partner" else "The registry"
+
+    def body_for(cross_link: dict | None) -> str:
+        return _issue_body(
+            version,
+            tagged,
+            missing,
+            age_minutes,
+            cross_link,
+            subject=subject,
+            partner_missing=partner_missing,
+            partner_unreadable=partner_unreadable,
+        )
+
+    if subject == "partner":
+        # Internal serves this version — that is what made this a partner lag. An internal issue
+        # still open for it can be closed, and `report_clean` will not say so while partner lags,
+        # because this run's verdict is not clean. Same listing, no second read.
+        stale = _exact(issues, DRIFT_TITLE.format(version=version))
+        if stale and stale["state"] == "OPEN":
+            print(
+                f"::notice::#{stale['number']} reports drift on {version}, but internal now "
+                f"serves it in both formats. That issue can be closed. This check never closes "
+                f"one."
+            )
 
     if existing is None:
+        # The cross-link matters MORE for a partner lag, not less: `release-outcome` filing for
+        # this tag is the signal that `registry-smoke` may have failed, which is exactly when the
+        # State P remediation says not to promote.
         cross_link = _exact(issues, RELEASE_NOTICE_TITLE.format(version=version))
         if cross_link and cross_link["state"] != "OPEN":
             cross_link = None
-        body = _issue_body(version, tagged, missing, age_minutes, cross_link)
+        body = body_for(cross_link)
         _gh(["issue", "create", "--title", title, "--body", body], repo)
         print(f"filed a new drift issue: {title}")
         return False
@@ -954,7 +1044,7 @@ def report_drift(
         # visible in every run summary rather than only in stdout nobody opens.
         print(
             f"::warning::drift on {version} is SUPPRESSED by #{existing['number']}, which is "
-            f"closed and labelled `{SUPPRESSION_LABEL}`. The registry still does not serve "
+            f"closed and labelled `{SUPPRESSION_LABEL}`. {what} still does not serve "
             f"{', '.join(sorted(missing))}. Reopen or unlabel that issue to hear about this again."
         )
         return True
@@ -975,7 +1065,7 @@ def report_drift(
             "comment",
             str(existing["number"]),
             "--body",
-            _issue_body(version, tagged, missing, age_minutes, None),
+            body_for(None),
         ],
         repo,
     )
@@ -1169,7 +1259,7 @@ def warn_if_schedule_is_stale(now: datetime) -> None:
             f"This says nothing about the registry — the verdict above stands on its own."
         )
 
-def report_clean(version: str) -> None:
+def report_clean(version: str, *, partner_checked: bool) -> None:
     """No drift. If a drift issue for this version is open, say it can be closed — and stop there.
 
     The check never closes an issue itself. `release-outcome` is write-additive only and this stays
@@ -1177,10 +1267,22 @@ def report_clean(version: str) -> None:
     is much harder to trust than one that cannot.
     """
     repo = issue_repo()
-    existing = _exact(fetch_issues(repo), DRIFT_TITLE.format(version=version))
+    issues = fetch_issues(repo)
+    existing = _exact(issues, DRIFT_TITLE.format(version=version))
     if existing and existing["state"] == "OPEN":
         print(
             f"::notice::#{existing['number']} reports drift on {version}, but the registry now "
+            f"serves it in both formats. That issue can be closed. This check never closes one."
+        )
+    # Same listing, not a second one. And ONLY when partner was actually read this run: an
+    # offline run without a partner dump knows nothing about partner, and "can be closed" from it
+    # would be an unqueried registry reading as clean.
+    if not partner_checked:
+        return
+    lag = _exact(issues, PARTNER_DRIFT_TITLE.format(version=version))
+    if lag and lag["state"] == "OPEN":
+        print(
+            f"::notice::#{lag['number']} reports {version} missing from partner, but partner now "
             f"serves it in both formats. That issue can be closed. This check never closes one."
         )
 
@@ -1452,20 +1554,30 @@ def main(argv: list[str] | None = None) -> int:
     if not args.report:
         return code
 
-    if subject == "partner":
-        # Reporting a partner lag lands with its own issue title in the next phase. Until then a
-        # partner verdict is printed and exits by its code, and files NOTHING — never the internal
-        # title, which would assert a state the registry is not in.
-        return code
-
     # ── reporting ───────────────────────────────────────────────────────────────────────────
     #
     # `deferred` and `warned` reach GitHub not at all — not even the read. The middle tier exists
     # to say "something is wrong and a job could still be alive"; the moment it files anything it
     # has become a reporting tier, and the grace window stops being a grace window.
     try:
-        if verdict == "drift":
-            if report_drift(version, tagged, missing, age_minutes):
+        if verdict == "drift" and subject == "partner":
+            # Under PARTNER_DRIFT_TITLE, never DRIFT_TITLE: filing the internal title for a
+            # promotion lag would assert the release is not installable from internal, which is
+            # a state the registry is not in.
+            # `partner_missing` is non-empty here by construction: the subject only becomes
+            # partner when partner was read and is short. No `or set()` fallback — an empty set
+            # would file an issue whose "missing formats" row is blank, which reads as fine.
+            if report_drift(version, tagged, partner_missing, age_minutes, subject="partner"):
+                code = 0
+        elif verdict == "drift":
+            if report_drift(
+                version,
+                tagged,
+                missing,
+                age_minutes,
+                partner_missing=partner_missing,
+                partner_unreadable=partner_error is not None,
+            ):
                 code = 0
         elif verdict == "clean":
             # BEST EFFORT, AND ONLY HERE. Before reporting existed, a clean run touched nothing;
@@ -1481,7 +1593,9 @@ def main(argv: list[str] | None = None) -> int:
             # It is not silent: a broken credential still says so on every clean run, one
             # severity down, which is the earliest anyone could learn of it.
             try:
-                report_clean(version)
+                # `partner_error` is None here: a clean internal with a partner fault returned 2
+                # above. So "checked" is exactly "a partner answer was read".
+                report_clean(version, partner_checked=partner_missing is not None)
             except InfraError as exc:
                 print(
                     f"::warning::the registry is clean, but GitHub could not be reached to "
