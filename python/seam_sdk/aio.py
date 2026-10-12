@@ -32,6 +32,7 @@ from .client import (
     StepUsage,
     _check_idempotency_key,
     _now_ms,
+    _vote_messages,
     commitment_view,
     _u32,
 )
@@ -353,11 +354,12 @@ class SeamClient:
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.DecisionResponse:
         """Admit (the PoP handshake) → run a coordinated decision → seal, in one call.
-        See :meth:`seam_sdk.SeamClient.run_decision` for ``features`` and ``on_behalf_of``."""
+        See :meth:`seam_sdk.SeamClient.run_decision` for ``votes`` (per-vote ``reason``),
+        ``features`` and ``on_behalf_of``."""
         req = pb.RunDecisionRequest(
             session_id=session_id,
             participants=list(participants),
-            votes=[pb.Vote(agent=a, value=v) for a, v in votes],
+            votes=_vote_messages(votes),
             presentation=await self._presentation(agent, timeout),
             on_behalf_of=list(on_behalf_of),
         )

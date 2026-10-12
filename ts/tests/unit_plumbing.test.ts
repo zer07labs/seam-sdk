@@ -23,6 +23,7 @@ import {
   DEFAULT_TIMEOUT_MS,
   SeamClient,
   UnknownVerdictError,
+  type RunDecisionVote,
 } from "../src/client.js";
 import { jcsCanonicalize, requestSigPayload, toolInputDigest } from "../src/crypto.js";
 import { DEFAULT_ADMIN_TIMEOUT_MS, SeamAdminClient } from "../src/admin.js";
@@ -819,6 +820,36 @@ test("submitVote carries the vote reason (#207), and sends empty when omitted", 
   await client.submitVote("s1", "a", "p1", "yes");
   assert.equal(calls[0]!.input.reason, "exceeds the approved budget");
   assert.equal(calls[1]!.input.reason, "");
+});
+
+test("runDecision carries per-vote reasons (seam-aegis#119): pairs and triples mix, a pair sends empty", async () => {
+  const calls: Recorded[] = [];
+  const { handle } = fakeSeam();
+  const client = new SeamClient(fakeTransport(calls, handle));
+  await client.runDecision(new Agent(SEED), "s", ["a", "b", "c"], [
+    ["a", "APPROVE", "within the approved budget"],
+    ["b", "REJECT"],
+    ["c", "ABSTAIN", ""],
+  ]);
+  const rd = calls.find((c) => c.method === "RunDecision")!;
+  assert.deepEqual(rd.input.votes, [
+    { agent: "a", value: "APPROVE", reason: "within the approved budget" },
+    { agent: "b", value: "REJECT", reason: "" },
+    { agent: "c", value: "ABSTAIN", reason: "" },
+  ]);
+});
+
+test("runDecision refuses a malformed vote before any RPC", async () => {
+  const calls: Recorded[] = [];
+  const { handle } = fakeSeam();
+  const client = new SeamClient(fakeTransport(calls, handle));
+  for (const bad of [["a"], ["a", "v", "r", "x"]]) {
+    await assert.rejects(
+      client.runDecision(new Agent(SEED), "s", ["a"], [["a", "y"], bad as unknown as RunDecisionVote]),
+      (e: unknown) => e instanceof TypeError && /votes\[1\]/.test(String(e)),
+    );
+  }
+  assert.equal(calls.length, 0, "no RPC at all — not even the IssueChallenge handshake");
 });
 
 // ── #1176: redriveEvents (DLQ retry by reference) ─────────────────────────────────────────────────

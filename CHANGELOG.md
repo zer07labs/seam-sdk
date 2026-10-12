@@ -16,6 +16,16 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added
+- **Per-vote reason on the one-shot path** (seam-aegis#119, seam-runtime #804/#851): Python `run_decision` (sync
+  and aio) and TS `runDecision` accept `(agent, value, reason)` triples in `votes`, mixed freely with the existing
+  `(agent, value)` pairs, and send `Vote.reason`. A pair or an empty reason sends none, byte-identical to before.
+  The runtime requires a reason on every vote when the policy sets `rules.seam.capture_dissent`, and refuses the
+  whole decision otherwise. TS exports the `RunDecisionVote` type.
+  A malformed entry now raises `TypeError` before any RPC. Previously, Python failed while unpacking a 3-tuple and
+  TS silently dropped a third element. In Python each vote must be a sequence (tuple, list or similar), not a
+  generator or set.
+
 ## 0.45.1 — 2026-10-11
 
 ## 0.45.0 — 2026-10-11
