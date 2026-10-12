@@ -499,3 +499,83 @@ fn the_system_partition_is_attested_like_any_tenant() {
         "the refusal names the system partition:\n{out}"
     );
 }
+
+// ── (8) the v2 signed framing binds the tenant (seam-runtime #835 step 1) ─────────────────────────
+
+/// `seam.audit.chain-head-attestation.v2` — the v1 frames under the v2 domain tag, then `frame(tenant)`.
+/// Transcribed from the spec independently of `src/verify.rs`, like `att_digest` above.
+fn att_digest_v2(
+    len: u64,
+    head: &[u8],
+    at: u64,
+    schema: u32,
+    issuer_aid: &str,
+    tenant: &str,
+) -> [u8; 32] {
+    let mut h = Sha256::new();
+    let mut frame = |part: &[u8]| {
+        h.update((part.len() as u32).to_le_bytes());
+        h.update(part);
+    };
+    frame(b"seam.audit.chain-head-attestation.v2");
+    frame(&len.to_le_bytes());
+    frame(head);
+    frame(&at.to_le_bytes());
+    frame(&schema.to_le_bytes());
+    frame(issuer_aid.as_bytes());
+    frame(tenant.as_bytes());
+    h.finalize().into()
+}
+
+/// A single-tenant `acme` stream whose attestation is v2-signed over `signed_tenant` but labelled
+/// `acme` on the wire (envelope and payload).
+fn v2_stream(signed_tenant: &str) -> String {
+    use ed25519_dalek::Signer;
+    let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
+    let genesis = vec![0u8; 32];
+    let (l0, h0) = sealed_link(0, &genesis, "acme");
+    let (l1, h1) = sealed_link(1, &h0, "acme");
+    let mut att: serde_json::Value =
+        serde_json::from_str(&attestation_event(2, &h1, 2, &h1, &sk, ISSUER, 2, "acme")).unwrap();
+    let at = att["chain_head_attestation"]["attested_at"]
+        .as_u64()
+        .unwrap();
+    let sig = sk
+        .sign(&att_digest_v2(2, &h1, at, 2, ISSUER, signed_tenant))
+        .to_bytes();
+    att["chain_head_attestation"]["signature"] = serde_json::Value::String(b64e(&sig));
+    format!("{l0}\n{l1}\n{att}")
+}
+
+#[test]
+fn a_v2_attestation_authenticates_its_own_tenant() {
+    let (code, out) = run(
+        "v2-own-tenant",
+        &v2_stream("acme"),
+        &["--issuer", ISSUER, "--strict"],
+    );
+    assert_eq!(
+        code, VERIFIED,
+        "a v2 attestation over its own tenant must authenticate:\n{out}"
+    );
+}
+
+/// The point of v2: an attestation signed for `globex` and relabelled `acme` — consistently, envelope
+/// and payload, so the tenant-agreement check cannot catch it — fails on the signature itself. Under v1
+/// the tenant was outside the signature and this relabel was invisible.
+#[test]
+fn a_v2_attestation_relabelled_to_another_tenant_is_refused() {
+    let (code, out) = run("v2-relabelled", &v2_stream("globex"), &["--issuer", ISSUER]);
+    assert_eq!(
+        code, FAILED,
+        "a relabelled v2 attestation must be refused:\n{out}"
+    );
+    assert!(
+        out.contains("does not verify against the pinned issuer's key"),
+        "{out}"
+    );
+    assert!(
+        out.contains("newer than this verifier"),
+        "the refusal must leave room for a framing newer than this build, never assert forgery alone:\n{out}"
+    );
+}

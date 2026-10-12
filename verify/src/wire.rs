@@ -92,8 +92,9 @@ pub struct ChainHeadAttestationPb {
     pub digest_schema: u32,
     #[prost(bytes = "vec", tag = "6")]
     pub signature: Vec<u8>,
-    /// tag 7 — UNSIGNED echo of the attesting tenant, added by U-RT-3 Phase 2. Not part of the signed
-    /// preimage (Phase 4, not yet landed): this field is read-and-cross-checked against the envelope
+    /// tag 7 — the attesting tenant, added by U-RT-3 Phase 2. Signed only under the **v2** framing
+    /// (seam-runtime #835); a v1 attestation carries it outside the signature, and until #835 step 4 a v1
+    /// signature with a non-empty tenant still verifies — so it is cross-checked against the envelope
     /// `tenant`, never trusted on its own. See `verify_authenticity_anchored`'s tenant-agreement check.
     #[prost(string, tag = "7")]
     pub tenant: String,
@@ -523,7 +524,8 @@ pub struct Attestation {
     pub issuer_aid: String,
     pub digest_schema: u32,
     pub signature: Vec<u8>,
-    /// UNSIGNED echo of the attesting tenant (U-RT-3 Phase 2). Empty on a pre-Phase-2 attestation.
+    /// The attesting tenant (U-RT-3 Phase 2); empty on a pre-Phase-2 attestation. Selects the signed
+    /// framing: empty → v1 only, non-empty → v2, else v1 (seam-runtime #835 step 1).
     pub tenant: String,
 }
 

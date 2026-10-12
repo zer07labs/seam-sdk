@@ -657,7 +657,7 @@ ANCHORED = [
     (
         "COMPATIBILITY.md",
         "ts/src/crypto.ts",
-        "const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid });",
+        "const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid }, framingTenant);",
     ),
     (
         "COMPATIBILITY.md",
@@ -843,7 +843,7 @@ CLAIM_LINES = {
         'exp, ok := payload["exp"].(float64)',
     ): "It is the only one with a written rationale",
     ("PROGRESS.md", "python/seam_sdk/crypto.py", "def record_digest_v3("): (
-        "`verify/src/verify.rs:614`; the 6a/6b"
+        "`verify/src/verify.rs:648`; the 6a/6b"
     ),
     (
         "DECISIONS.md",
@@ -867,7 +867,7 @@ CLAIM_LINES = {
     (
         "COMPATIBILITY.md",
         "ts/src/crypto.ts",
-        "const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid });",
+        "const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid }, framingTenant);",
         # Was "blanket `catch { return false }`" until §10 stopped that being true: the type checks
         # now run before the `try`. Re-anchored to the corrected sentence rather than to the code,
         # because what this pins is WHICH CLAIM carries the citation, and the claim is now historical.

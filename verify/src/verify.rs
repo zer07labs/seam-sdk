@@ -454,26 +454,60 @@ pub fn erasure_certificate(pinned_aid: &str, c: &Cert) -> Result<(), String> {
 
 // ---- the chain-head attestation (A14 authenticity, design-b) ---------------------------------------
 
-/// The 32-byte digest a `CHAIN_HEAD_ATTESTATION` signs over — `seam.audit.chain-head-attestation.v1`.
+/// The v1 chain-head attestation domain tag: `tenant` is not signed.
+const CHAIN_HEAD_ATTESTATION_DOMAIN_V1: &[u8] = b"seam.audit.chain-head-attestation.v1";
+/// The v2 domain tag (seam-runtime #835): the v1 frames, then `frame(tenant)`.
+const CHAIN_HEAD_ATTESTATION_DOMAIN_V2: &[u8] = b"seam.audit.chain-head-attestation.v2";
+
+/// The 32-byte digest a `CHAIN_HEAD_ATTESTATION` signs over. `tenant: None` is the **v1** framing
+/// (`seam.audit.chain-head-attestation.v1`); `Some(tenant)` is **v2** (`…v2`, then `frame(tenant)`).
 ///
 /// Transcribed verbatim from `seam-event.v1.md` §CHAIN_HEAD_ATTESTATION. `frame(x) = u32le(len) ‖ x`, and
 /// the integers are framed **little-endian** (`le64`/`le32`) — the same length-prefixed discipline as the
 /// erasure payload, and the same two easy-to-miss details: the domain tag is length-prefixed (not
 /// NUL-terminated), and `attested_len`/`digest_schema` are the raw LE bytes wrapped in a frame, never a
-/// bare number. The signature is `Ed25519` over **this digest**, not over the preimage.
-fn chain_head_attestation_payload(a: &Attestation) -> [u8; 32] {
+/// bare number. The signature is `Ed25519` over **this digest**, not over the preimage. A new domain tag
+/// rather than a frame appended under the old one, so a tag always names exactly one framing.
+fn chain_head_attestation_payload(a: &Attestation, tenant: Option<&str>) -> [u8; 32] {
     let mut h = Sha256::new();
     let mut frame = |part: &[u8]| {
         h.update((part.len() as u32).to_le_bytes());
         h.update(part);
     };
-    frame(b"seam.audit.chain-head-attestation.v1");
+    frame(match tenant {
+        None => CHAIN_HEAD_ATTESTATION_DOMAIN_V1,
+        Some(_) => CHAIN_HEAD_ATTESTATION_DOMAIN_V2,
+    });
     frame(&a.attested_len.to_le_bytes());
     frame(&a.attested_head);
     frame(&a.attested_at.to_le_bytes());
     frame(&a.digest_schema.to_le_bytes());
     frame(a.issuer_aid.as_bytes());
+    if let Some(tenant) = tenant {
+        frame(tenant.as_bytes());
+    }
     h.finalize().into()
+}
+
+/// Does `sig` verify over `a` under the framing its payload `tenant` selects? The seam-runtime #835
+/// step-1 rule, mirrored exactly (`verify_chain_head_attestation` in `seam-trust-aitp`): an empty
+/// `tenant` verifies under **v1 only** — v2 is never minted over an empty tenant — and a non-empty
+/// `tenant` verifies under **v2, else v1**.
+///
+/// The v1 fallback is not optional. Every attestation minted before the runtime starts signing v2
+/// (#835 step 3) is v1 with `tenant` stamped outside the signature, so demanding v2 for a non-empty
+/// tenant would report every one of them as forged. It goes in step 4, together with the runtime's.
+fn attestation_signature_verifies(
+    vk: &ed25519_dalek::VerifyingKey,
+    a: &Attestation,
+    sig: &ed25519_dalek::Signature,
+) -> bool {
+    use ed25519_dalek::Verifier;
+    let under = |tenant: Option<&str>| {
+        vk.verify(&chain_head_attestation_payload(a, tenant), sig)
+            .is_ok()
+    };
+    (!a.tenant.is_empty() && under(Some(&a.tenant))) || under(None)
 }
 
 pub struct IssuerReport {
@@ -750,7 +784,7 @@ pub fn verify_authenticity_anchored(
     base_len: u64,
     base_head: &[u8],
 ) -> Result<IssuerReport, String> {
-    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+    use ed25519_dalek::{Signature, VerifyingKey};
 
     // `--issuer` is repeatable: a chain that spans an issuer-key ROTATION carries attestations from the
     // retired key AND the new one, and each must verify against SOME AID the caller pinned. Every pinned
@@ -900,17 +934,15 @@ pub fn verify_authenticity_anchored(
             .as_slice()
             .try_into()
             .map_err(|_| "attestation signature is not 64 bytes".to_string())?;
-        vk.verify(
-            &chain_head_attestation_payload(a),
-            &Signature::from_bytes(&sig),
-        )
-        .map_err(|_| {
-            format!(
-                "a CHAIN_HEAD_ATTESTATION over len {} does not verify against the pinned issuer's key. \
-                 The attestation is forged, or its (len, head) was altered after signing.",
+        if !attestation_signature_verifies(vk, a, &Signature::from_bytes(&sig)) {
+            return Err(format!(
+                "a CHAIN_HEAD_ATTESTATION over len {} does not verify against the pinned issuer's key \
+                 under any signed framing this verifier knows (v1, v2). The attestation is forged, or its \
+                 (len, head, tenant) was altered after signing — or it was signed under a framing newer \
+                 than this verifier, in which case upgrade seam-verify before concluding forgery.",
                 a.attested_len
-            )
-        })?;
+            ));
+        }
         // spec clause (d), second sentence, checked FIRST and unconditionally — before any window
         // classification — exactly as spec clause (f)'s position table orders it: an attestation whose
         // `attested_len` is 0 makes no claim (a conforming producer never signs the empty chain, spec
@@ -1140,7 +1172,7 @@ pub fn verify_authenticity_by_tenant(
 /// flow (before a `ChainReport` exists at all) and sharing a helper across that seam is not worth the
 /// coupling.
 pub fn verify_anchor(anchor: &Attestation, pinned_aids: &[String]) -> Result<(), String> {
-    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+    use ed25519_dalek::{Signature, VerifyingKey};
 
     let keys: Vec<(&str, VerifyingKey)> = pinned_aids
         .iter()
@@ -1165,15 +1197,15 @@ pub fn verify_anchor(anchor: &Attestation, pinned_aids: &[String]) -> Result<(),
         .as_slice()
         .try_into()
         .map_err(|_| "anchor signature is not 64 bytes".to_string())?;
-    vk.verify(
-        &chain_head_attestation_payload(anchor),
-        &Signature::from_bytes(&sig),
-    )
-    .map_err(|_| {
-        "the anchor's signature does not verify against the pinned issuer's key. It is forged, or its \
-         (len, head) was altered after signing."
-            .to_string()
-    })?;
+    if !attestation_signature_verifies(vk, anchor, &Signature::from_bytes(&sig)) {
+        return Err(
+            "the anchor's signature does not verify against the pinned issuer's key under any signed \
+             framing this verifier knows (v1, v2). It is forged, or its (len, head, tenant) was altered \
+             after signing — or it was signed under a framing newer than this verifier, in which case \
+             upgrade seam-verify before concluding forgery."
+                .to_string(),
+        );
+    }
 
     // spec clause (f2): a vacuous anchor (attested_len == 0) claims the empty prefix — a conforming
     // producer never signs it (spec clause (d)), so accepting it as a start would re-create genesis
@@ -1339,7 +1371,7 @@ mod tests {
         let vk = VerifyingKey::from_bytes(&key).unwrap();
         let sig: [u8; 64] = att.signature.as_slice().try_into().unwrap();
         vk.verify(
-            &chain_head_attestation_payload(&att),
+            &chain_head_attestation_payload(&att, None),
             &Signature::from_bytes(&sig),
         )
         .expect("the KAT signature must verify against our recomputed digest — framing is correct");
@@ -1370,11 +1402,127 @@ mod tests {
         let sig: [u8; 64] = att.signature.as_slice().try_into().unwrap();
         assert!(
             vk.verify(
-                &chain_head_attestation_payload(&att),
+                &chain_head_attestation_payload(&att, None),
                 &Signature::from_bytes(&sig)
             )
             .is_err(),
             "a tampered attested_len must not verify"
+        );
+    }
+
+    /// The vendored v2 KAT (`conformance/chain_head_attestation_v2_vector.json`, verbatim from
+    /// seam-runtime's `conformance_vectors_extended.json`, #835 step 1): the runtime's v2 signature must
+    /// verify over our v2 recompute, and the dispatch must pick v2 for its non-empty tenant.
+    fn v2_kat() -> (ed25519_dalek::VerifyingKey, Attestation) {
+        let raw = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../conformance/chain_head_attestation_v2_vector.json"
+        ))
+        .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let i = &v["inputs"];
+        assert_eq!(i["domain"], "seam.audit.chain-head-attestation.v2");
+        let order: Vec<&str> = v["frame_order"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x.as_str().unwrap())
+            .collect();
+        assert_eq!(
+            order,
+            [
+                "domain",
+                "attested_len",
+                "attested_head",
+                "attested_at",
+                "digest_schema",
+                "issuer_aid",
+                "tenant"
+            ],
+            "the runtime's frame order moved — chain_head_attestation_payload must follow it"
+        );
+        let issuer_aid = v["issuer_aid"].as_str().unwrap();
+        let att = Attestation {
+            attested_len: i["attested_len"].as_u64().unwrap(),
+            attested_head: hex_to_bytes(i["attested_head_hex"].as_str().unwrap()),
+            attested_at: i["attested_at"].as_u64().unwrap(),
+            issuer_aid: issuer_aid.to_string(),
+            digest_schema: i["digest_schema"].as_u64().unwrap() as u32,
+            signature: hex_to_bytes(v["signature_hex"].as_str().unwrap()),
+            tenant: i["tenant"].as_str().unwrap().to_string(),
+        };
+        let vk = ed25519_dalek::VerifyingKey::from_bytes(&aid_to_key(issuer_aid).unwrap()).unwrap();
+        (vk, att)
+    }
+
+    fn sig_of(a: &Attestation) -> ed25519_dalek::Signature {
+        ed25519_dalek::Signature::from_bytes(&a.signature.as_slice().try_into().unwrap())
+    }
+
+    #[test]
+    fn attestation_v2_payload_matches_the_runtime_kat() {
+        use ed25519_dalek::Verifier;
+        let (vk, att) = v2_kat();
+        vk.verify(
+            &chain_head_attestation_payload(&att, Some(&att.tenant)),
+            &sig_of(&att),
+        )
+        .expect("the v2 KAT signature must verify against our recomputed v2 digest");
+        assert!(attestation_signature_verifies(&vk, &att, &sig_of(&att)));
+    }
+
+    /// v2 binds the tenant: relabelling it — to another tenant, or to the empty tenant (v1 only) —
+    /// breaks the signature, as does any other field.
+    #[test]
+    fn attestation_v2_binds_the_tenant() {
+        let (vk, att) = v2_kat();
+        let tampers: [fn(&mut Attestation); 5] = [
+            |a| a.tenant = "acmf".into(),
+            |a| a.tenant = String::new(),
+            |a| a.attested_len += 1,
+            |a| a.digest_schema += 1,
+            |a| a.signature[0] ^= 1,
+        ];
+        for (i, tamper) in tampers.iter().enumerate() {
+            let mut t = att.clone();
+            tamper(&mut t);
+            assert!(
+                !attestation_signature_verifies(&vk, &t, &sig_of(&t)),
+                "tamper #{i} must fail"
+            );
+        }
+    }
+
+    /// The transition rule (#835 steps 1-3): a v1 signature with a non-empty tenant stamped outside it —
+    /// every production attestation today — still verifies, via the v1 fallback.
+    #[test]
+    fn a_v1_attestation_with_a_tenant_still_verifies_until_step_4() {
+        let issuer_aid = "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw";
+        let att = Attestation {
+            attested_len: 1000,
+            attested_head: vec![0xab; 32],
+            attested_at: 1_700_000_000_000,
+            issuer_aid: issuer_aid.to_string(),
+            digest_schema: 2,
+            signature: hex_to_bytes(
+                "5169458689b92af81fbbfbd1bd07aff82cb68993919837232a1b54204a0e565e\
+                 e58791b607c40a48dae6a9dbf8c6129e7028fdbd0e14095d7a4c0a99c775a90a",
+            ),
+            tenant: "acme".into(),
+        };
+        let vk = ed25519_dalek::VerifyingKey::from_bytes(&aid_to_key(issuer_aid).unwrap()).unwrap();
+        assert!(attestation_signature_verifies(&vk, &att, &sig_of(&att)));
+    }
+
+    #[test]
+    fn the_v1_and_v2_payloads_differ() {
+        let (_, att) = v2_kat();
+        let v1 = chain_head_attestation_payload(&att, None);
+        assert_ne!(v1, chain_head_attestation_payload(&att, Some("acme")));
+        assert_ne!(
+            v1,
+            chain_head_attestation_payload(&att, Some("")),
+            "the domain tag alone separates the framings"
         );
     }
 

@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:304`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:320`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -121,7 +121,7 @@ mismatch cannot ship.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1317-1339`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1333-1355`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -313,7 +313,7 @@ comment — `.github/workflows/ci.yml:539-540` runs `scripts/check-independence.
 - **Chain integrity** — the `seam-event.v1` hash chain, from the stream alone.
 - **Authenticity** — every `CHAIN_HEAD_ATTESTATION` verifies against a pinned issuer key and sits at
   the head it attests; every v2 **and v3** `DECISION_SEALED` digest is recomputed from its payload
-  (`verify/src/verify.rs:745`). Three refusals are reported **distinctly from a digest mismatch**,
+  (`verify/src/verify.rs:779`). Three refusals are reported **distinctly from a digest mismatch**,
   because a caller that treats them as one cannot tell "these bytes were altered" from "a field was
   removed": a v3 record missing `context_digest` or `participation_digest` is refused as a **STRIP**;
   a `schema_version` this build does not implement is refused, never skipped; and a record declaring
@@ -502,7 +502,7 @@ the rule that was always written for them. Python got the same treatment: `_uint
 **Read the `now` column as the record-digest arm.** In the chain-head **attestation** arm every one
 of these refusals was observed as `false` rather than as a thrown error, because
 `verifyChainHeadAttestation` wrapped its whole body in a catch that returned `false`
-(`const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid });`, `ts/src/crypto.ts:1130`). The
+(`const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid }, framingTenant);`, `ts/src/crypto.ts:1152`). The
 distinction mattered for the `true` row in particular, where the attestation arm showed no
 caller-visible change at all — `false` before, `false` after — even though what it was refusing had
 changed. **§10 closed that**: the type checks now run before the `try`, so a wrong type throws there
@@ -529,7 +529,7 @@ Python never had it. What Python had was three smaller defects in the same code:
 
 - `verify_chain_head_attestation` let that `struct.error` escape a function documented to return
   `False` on any tamper, so an out-of-range length **crashed** a caller instead of being rejected. It
-  now returns `False` (`python/seam_sdk/crypto.py:924-971`).
+  now returns `False` (`python/seam_sdk/crypto.py:947-996`).
 - `attested_len`, `attested_at` and `digest_schema` are now required to be `int`. Previously
   `True` was digested as `1` (`bool` subclasses `int`) and `5.0` raised `struct.error` — a *third*
   answer from a function that should only ever give two. Both now raise `TypeError`.

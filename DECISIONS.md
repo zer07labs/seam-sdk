@@ -1219,7 +1219,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:1317-1339` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:1333-1355` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -1558,7 +1558,7 @@ not as written.
 
 ### The v1 skip is a downgrade hole, closed structurally rather than documented
 - **Reviewer (Fable):** CONFIRM. Every load-bearing claim resolves. The guard keys on the four
-  columns and never on the version alone (`verify/src/verify.rs:771-781`); a genuine v1 record falls
+  columns and never on the version alone (`verify/src/verify.rs:805-815`); a genuine v1 record falls
   through to `continue` and is tested twice — `verify/tests/authenticity.rs:243`
   (`a_v1_record_is_link_verified_but_not_recomputed`, whose skipped-not-recomputed assertion is at
   `verify/tests/authenticity.rs:259-262`) and `verify/tests/authenticity.rs:982`
@@ -2041,7 +2041,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:1349` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:1365` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.

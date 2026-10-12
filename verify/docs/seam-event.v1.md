@@ -1,12 +1,10 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 8cd3f76 tracking release/train-0.46.0 (refreshed 2026-10-12).
-     Pinned AHEAD of the default branch, deliberately and at the runtime coordinator's request: the 0.46.0
-     release train (seam-runtime#1323) changes this file and merges only after this pin is on seam-sdk main.
-     The exception ends itself when the train squash-merges (the file becomes byte-identical on both refs).
-     Two movements since the prior default-branch pin (1872e48):
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ a12d415 (refreshed 2026-10-12).
+     Two movements since the prior default-branch pin (1872e48), both landed with the runtime 0.46.0 train
+     (seam-runtime#1323):
      1. seam-runtime#835 step 1 (#1284): CHAIN_HEAD_ATTESTATION gains a v2 signed framing — the v1 frames
         under the domain tag `seam.audit.chain-head-attestation.v2`, then `frame(tenant)`. Verifier rule
-        until step 4: empty tenant → v1 only; non-empty tenant → v2, else v1. This crate's verifier is still
-        v1-only on main; it learns v2 in seam-sdk#249, which lands before the runtime signs v2 (step 3).
+        until step 4: empty tenant → v1 only; non-empty tenant → v2, else v1. This crate implements it
+        (seam-sdk#249); KAT vendored as `conformance/chain_head_attestation_v2_vector.json`.
      2. seam-runtime#1293: AUDIT_ENTRY `action` is an open string set (four erasure/recompute values added;
         this crate already treats `action` as opaque — only `chain_anchor` is matched); subject commitments
         are keyed per tenant (`k_tenant`, replacing `k_deploy`); the audited recompute route
