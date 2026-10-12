@@ -584,6 +584,21 @@ function resolveCanonical(toolInput: unknown, canonical: Uint8Array | undefined)
   return canonical;
 }
 
+/** One `runDecision` ballot entry: `[agent, value]`, or `[agent, value, reason]` to state a reason. */
+export type RunDecisionVote = readonly [agent: string, value: string] | readonly [agent: string, value: string, reason: string];
+
+/** Shape only: an entry of any other length is a caller bug, refused before the wire with its index.
+ * The reason's content is the runtime's to judge, never checked here. */
+function voteMessages(votes: readonly RunDecisionVote[]): { agent: string; value: string; reason: string }[] {
+  return votes.map((vote, i) => {
+    if (!Array.isArray(vote) || (vote.length !== 2 && vote.length !== 3)) {
+      throw new TypeError(`votes[${i}] must be an [agent, value] pair or an [agent, value, reason] triple`);
+    }
+    const [agent, value, reason] = vote as readonly string[];
+    return { agent: agent!, value: value!, reason: reason ?? "" };
+  });
+}
+
 export class SeamClient {
   private readonly admission: Client<typeof SeamAdmission>;
   private readonly coord: Client<typeof SeamCoordination>;
@@ -861,12 +876,20 @@ export class SeamClient {
    * learning classifier keys `context_class` on. They **never** affect the sealed record — the decision seals
    * identically with or without them. Omitted ⇒ no features (non-breaking). Mirrors the Rust reference's
    * `run_decision_with_features`.
+   *
+   * `votes` holds `[agent, value]` pairs or `[agent, value, reason]` triples, mixed freely. `reason` is
+   * the voter's stated reason, sealed in that vote's envelope (`Vote.reason`, seam-runtime #804/#851)
+   * exactly as `submitVote`'s is. A pair, or an empty reason, sends none — byte-identical to a vote
+   * without one. The runtime bounds it (4096 bytes, redacted, classified) and REQUIRES it — non-empty
+   * after trimming whitespace — on every vote when the governing policy sets
+   * `rules.seam.capture_dissent`, refusing the whole decision otherwise; neither rule is mirrored here.
+   * A malformed entry rejects with a `TypeError` before any RPC, the handshake included.
    */
   async runDecision(
     agent: Agent,
     sessionId: string,
     participants: string[],
-    votes: [string, string][],
+    votes: readonly RunDecisionVote[],
     features?: Record<string, string>,
     onBehalfOf?: string[],
     opts?: UnaryCallOptions,
@@ -875,7 +898,7 @@ export class SeamClient {
       {
         sessionId,
         participants,
-        votes: votes.map(([a, value]) => ({ agent: a, value })),
+        votes: voteMessages(votes),
         presentation: await this.presentation(agent, opts),
         features: features ?? {},
         // Phase 0b: end-user data subjects. The engine never reads them; the kernel folds each into

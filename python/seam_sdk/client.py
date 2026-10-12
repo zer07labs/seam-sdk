@@ -54,6 +54,29 @@ from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as ev  # noqa: F401  (re-
 # stay importable from here (``from seam_sdk.client import SeamError``) for backward compatibility.
 
 
+def _vote_messages(votes) -> list:
+    """`run_decision`'s ballot: ``(agent, value)`` or ``(agent, value, reason)`` per vote, mixed.
+
+    Shape only. An entry of any other length is a caller bug in THIS process, refused before the
+    wire with the vote's index; the reason's content is the runtime's to judge, never checked here.
+    """
+    out = []
+    for i, vote in enumerate(votes):
+        # Any non-string sequence, as the old `for a, v in votes` unpacking accepted; a str/bytes of
+        # length 2 or 3 would otherwise unpack into characters and send a nonsense vote.
+        if (
+            isinstance(vote, (str, bytes))
+            or not isinstance(vote, Sequence)
+            or len(vote) not in (2, 3)
+        ):
+            raise TypeError(
+                f"votes[{i}] must be an (agent, value) pair or an (agent, value, reason) triple"
+            )
+        agent, value, *rest = vote
+        out.append(pb.Vote(agent=agent, value=value, reason=rest[0] if rest else ""))
+    return out
+
+
 def _now_ms() -> int:
     import time
 
@@ -476,11 +499,20 @@ class SeamClient:
         engine never reads them; the kernel folds each into the sealed record's participation as an
         inert ``subject:<i>`` declaration, which is what makes GDPR erasure find the record. The
         ``subject:`` prefix is reserved — supplying it here is the server's INVALID_ARGUMENT to raise.
+
+        ``votes`` is a sequence of ``(agent, value)`` pairs or ``(agent, value, reason)`` triples,
+        mixed freely. ``reason`` is the voter's stated reason, sealed in that vote's envelope
+        (``Vote.reason``, seam-runtime #804/#851) exactly as :meth:`submit_vote`'s is. A pair, or an
+        empty reason, sends no reason — byte-identical to a vote without one. The runtime bounds it
+        (4096 bytes, redacted, classified) and REQUIRES it — non-empty after trimming whitespace — on
+        every vote when the governing policy sets ``rules.seam.capture_dissent``, refusing the whole
+        decision otherwise; neither rule is mirrored here. A malformed entry (not a 2- or 3-element
+        non-string sequence) raises ``TypeError`` before any RPC.
         """
         req = pb.RunDecisionRequest(
             session_id=session_id,
             participants=list(participants),
-            votes=[pb.Vote(agent=a, value=v) for a, v in votes],
+            votes=_vote_messages(votes),
             presentation=self._presentation(agent, timeout),
             on_behalf_of=list(on_behalf_of),
         )

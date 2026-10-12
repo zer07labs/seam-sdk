@@ -309,6 +309,111 @@ def test_submit_vote_carries_the_reason(aio: bool) -> None:
     assert seen["SubmitVote"][0].reason == ""
 
 
+@pytest.mark.parametrize("aio", [False, True], ids=["sync", "aio"])
+def test_run_decision_carries_per_vote_reasons(aio: bool) -> None:
+    """seam-aegis#119: `Vote.reason` (#804/#851) on the one-shot path. Pairs and triples mix; a pair
+    and an empty reason both send the proto default, byte-identical to a vote without one."""
+    seen: dict = {}
+    agent = Agent(CRED_SEED)
+    if aio:
+        client = object.__new__(AioSeamClient)
+        client._coord = _AioRecorder(seen)
+
+        async def _pres(agent, timeout=None):
+            return pb.PinnedPresentation()
+
+        client._presentation = _pres
+
+        def run(votes):
+            return asyncio.run(client.run_decision(agent, "s", ["a", "b", "c"], votes))
+    else:
+        client = object.__new__(SeamClient)
+        client._coord = _Recorder(seen)
+        client._presentation = lambda agent, timeout=None: pb.PinnedPresentation()
+
+        def run(votes):
+            return client.run_decision(agent, "s", ["a", "b", "c"], votes)
+
+    run(
+        [
+            ("a", "APPROVE", "within the approved budget"),
+            ("b", "REJECT"),
+            ["c", "ABSTAIN", ""],
+        ]
+    )
+    votes = seen["RunDecision"][0].votes
+    assert [(v.agent, v.value, v.reason) for v in votes] == [
+        ("a", "APPROVE", "within the approved budget"),
+        ("b", "REJECT", ""),
+        ("c", "ABSTAIN", ""),
+    ]
+    # Pairs only: the bytes are exactly what the pre-reason helper sent.
+    run([("a", "APPROVE"), ("b", "REJECT")])
+    assert (
+        seen["RunDecision"][0].votes[0].SerializeToString()
+        == pb.Vote(agent="a", value="APPROVE").SerializeToString()
+    )
+
+
+@pytest.mark.parametrize("aio", [False, True], ids=["sync", "aio"])
+@pytest.mark.parametrize(
+    "bad",
+    [("a",), ("a", "v", "r", "x"), "av", b"av"],
+    ids=["one", "four", "str", "bytes"],
+)
+def test_run_decision_refuses_a_malformed_vote_before_any_rpc(bad, aio: bool) -> None:
+    """Shape only, and before the handshake: neither the presentation nor RunDecision is reached."""
+    seen: dict = {}
+    reached = []
+    if aio:
+        client = object.__new__(AioSeamClient)
+        client._coord = _AioRecorder(seen)
+
+        async def _apres(agent, timeout=None):
+            reached.append("presentation")
+            return pb.PinnedPresentation()
+
+        client._presentation = _apres
+
+        def call():
+            return asyncio.run(
+                client.run_decision(Agent(CRED_SEED), "s", ["a"], [("a", "y"), bad])
+            )
+    else:
+        client = object.__new__(SeamClient)
+        client._coord = _Recorder(seen)
+
+        def _pres(agent, timeout=None):
+            reached.append("presentation")
+            return pb.PinnedPresentation()
+
+        client._presentation = _pres
+
+        def call():
+            return client.run_decision(Agent(CRED_SEED), "s", ["a"], [("a", "y"), bad])
+
+    with pytest.raises(TypeError, match=r"votes\[1\]"):
+        call()
+    assert seen == {} and reached == []
+
+
+def test_run_decision_accepts_any_non_string_sequence_as_a_vote() -> None:
+    """A pair-like sequence that is neither tuple nor list (it worked before triples existed)."""
+    from collections import UserList
+
+    seen: dict = {}
+    client = object.__new__(SeamClient)
+    client._coord = _Recorder(seen)
+    client._presentation = lambda agent, timeout=None: pb.PinnedPresentation()
+    client.run_decision(
+        Agent(CRED_SEED), "s", ["a"], [UserList(["a", "y"]), UserList(["b", "n", "r"])]
+    )
+    assert [(v.agent, v.value, v.reason) for v in seen["RunDecision"][0].votes] == [
+        ("a", "y", ""),
+        ("b", "n", "r"),
+    ]
+
+
 # ── A client bound to an Agent (seam-sdk#202) ───────────────────────────────────────────────────
 # Bound: every target verb attaches the bound agent's credential with no ``credential=`` at all,
 # and an explicit ``credential=`` still wins. The unbound default is pinned by the two tests above.
