@@ -173,3 +173,14 @@ def test_the_message_form_enforces_the_pin():
     assert not verify_msg(other, _message(V2, V2["inputs"]["tenant"]))
     with pytest.raises(TypeError):
         verify_msg(b"aid", _message(V2, V2["inputs"]["tenant"]))
+    # A genuine signature over the pinned issuer, but the message names another one. Only the issuer
+    # equality refuses this: the signature itself still verifies under the pin.
+    relabelled = _message(V2, V2["inputs"]["tenant"])
+    relabelled.issuer_aid = other
+    assert not verify_msg(_args(V2)["issuer_aid"], relabelled)
+
+
+def test_the_message_form_is_exported():
+    import seam_sdk
+
+    assert "verify_chain_head_attestation_message" in seam_sdk.__all__

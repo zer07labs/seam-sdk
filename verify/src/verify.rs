@@ -1309,7 +1309,7 @@ mod tests {
                 "5169458689b92af81fbbfbd1bd07aff82cb68993919837232a1b54204a0e565e\
                  e58791b607c40a48dae6a9dbf8c6129e7028fdbd0e14095d7a4c0a99c775a90a",
             ),
-            // UNSIGNED (U-RT-3 Phase 2) — not part of the preimage this KAT pins, so unset here.
+            // Empty: this is the v1 KAT, and an empty tenant selects the v1 framing (step 4).
             tenant: String::new(),
         };
         let key = aid_to_key(issuer_aid).unwrap();
@@ -1338,7 +1338,7 @@ mod tests {
                 "5169458689b92af81fbbfbd1bd07aff82cb68993919837232a1b54204a0e565e\
                  e58791b607c40a48dae6a9dbf8c6129e7028fdbd0e14095d7a4c0a99c775a90a",
             ),
-            // UNSIGNED (U-RT-3 Phase 2) — not part of the preimage this KAT pins, so unset here.
+            // Empty: this is the v1 KAT, and an empty tenant selects the v1 framing (step 4).
             tenant: String::new(),
         };
         att.attested_len += 1; // one field off
