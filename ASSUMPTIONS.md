@@ -1343,7 +1343,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Plan:** plans/partner-registry-drift.md
 - **Assumed:** `CLOUDSMITH_API_KEY` reads `zer07labs/partner`. Observed 2026-10-12: HTTP 200 with rows for every canary and for 0.45.0.
 - **Chose:** no new secret. The workflow's existing resolution serves both registries.
-- **Found, out of scope, and CORRECTED 2026-10-12:** this entry first said `CARGO_REGISTRIES_ZER07LABS_TOKEN`, the workflow's fallback, was dead (401 on both repositories). That was measured with **Doppler's** copy (`shared-ci/prd`), and it was wrong about the GitHub org secret the workflows use: that secret published `seam-verify v0.3.0` on 2026-10-09 (run 37966348242). The GitHub fallback is live. Only Doppler's copy is stale, which is tracked in #251. Lesson: a Doppler copy is not evidence about a GitHub secret.
+- **Found, out of scope, and CORRECTED 2026-10-12:** this entry first said `CARGO_REGISTRIES_ZER07LABS_TOKEN`, the workflow's fallback, was dead (401 on both repositories). That was measured with **Doppler's** copy (`shared-ci/prd`), and it was wrong about the GitHub org secret the workflows use: that secret published `seam-verify v0.3.0` on 2026-10-09 (run 37966348242). The GitHub fallback is live. Only Doppler's copy was stale (#251). It was refreshed on 2026-10-12 at 20:58Z and verified read-only: HTTP 200 on internal, partner and the cargo index. Lesson: a Doppler copy is not evidence about a GitHub secret.
 - **Blast radius if wrong:** if the key lost partner read, every scheduled run would exit 2 naming partner. That is loud, never silent.
 - **Status:** UNCONFIRMED
 
