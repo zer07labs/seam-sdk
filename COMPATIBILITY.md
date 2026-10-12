@@ -359,9 +359,10 @@ five SDK crypto shims agree byte-for-byte. But **they are ports by one author fr
 independent implementations**, and a third verifier by the same author would add nothing.
 
 Real independence means someone working from **spec text alone**. The record digest has that
-(`seam-runtime/docs/specs/seam-event.v1.md:372,379,399`, byte-exact for v2 and historical v1). The
-commitment digest does not — its normative description is a doc comment in a private repo, tracked at
-[`seam-runtime#423`](https://github.com/zer07labs/seam-runtime/issues/423).
+(`seam-runtime/docs/specs/seam-event.v1.md:372,379,399`, byte-exact for v2 and historical v1). So
+does the commitment digest now: `seam-runtime/docs/specs/seam-commitment-digest.v2.md` is normative
+spec text ([`seam-runtime#423`](https://github.com/zer07labs/seam-runtime/issues/423), closed
+2026-08-26), and `verify/` is written from it.
 
 ---
 

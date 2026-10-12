@@ -287,11 +287,13 @@ def test_no_document_claims_the_verifier_detects_truncation() -> None:
 
 
 def test_the_commitment_digest_exclusion_is_stated() -> None:
-    """`verify/` does not implement `seam-commitment-digest:v1`, and the doc must not imply it does."""
+    """`verify/` checks `seam-commitment-digest:v2` only inside `bundle` (seam-sdk#225); there is no
+    standalone Commitment check, and the doc must say so rather than imply a general one."""
     text = COMPATIBILITY.read_text(encoding="utf-8").lower()
-    assert "commitment digest" in text, (
-        "COMPATIBILITY.md no longer says what the published verifier does NOT cover. The commitment "
-        "digest is implemented by the five crypto shims and NOT by verify/; a reader who assumes "
+    assert "a standalone commitment proof" in text, (
+        "COMPATIBILITY.md no longer says what the published verifier does NOT cover. verify/ "
+        "recomputes the commitment digest only as step 4 of `bundle`; a Commitment proof fetched "
+        "outside a bundle is checked by the five crypto shims, not by verify/. A reader who assumes "
         "otherwise overestimates what running the verifier proved."
     )
 

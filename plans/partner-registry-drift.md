@@ -13,8 +13,9 @@ That leaves the acceptance clause still open: *"the check fails if `partner` lag
   HTTP 200 with rows for **both** `internal` and `partner`. No new secret or permission is needed.
 - Every `CANARY_VERSIONS` entry (0.7.71, 0.7.50, 0.7.65, 0.7.75) is on `partner` in both formats, so
   the same roster can prove the partner instrument.
-- `CARGO_REGISTRIES_ZER07LABS_TOKEN`, the workflow's fallback, returns 401 on both registries. It
-  is pre-existing and out of scope; recorded in ASSUMPTIONS.md.
+- ~~`CARGO_REGISTRIES_ZER07LABS_TOKEN`, the workflow's fallback, returns 401 on both registries.~~
+  **Corrected 2026-10-12:** that was measured with Doppler's copy, which is stale (#251). The
+  GitHub org secret the workflow uses is live: it published `seam-verify v0.3.0` on 2026-10-09.
 
 **Semantics.** The check asks two questions about main's declared version, with one clock and one
 grace ladder:

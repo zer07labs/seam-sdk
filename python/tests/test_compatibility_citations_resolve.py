@@ -573,6 +573,11 @@ def test_sibling_citations_skip_cleanly_with_no_sibling_repos_checked_out(
 #: needs no maintenance when unrelated edits shift a file.
 ANCHORED = [
     ("COMPATIBILITY.md", "CHANGELOG.md", "No yank"),
+    # seam-sdk#179. Both citations below claim the cited line records that the OLDER 0.7.39–0.7.43
+    # band was spared. They sat 129–244 lines stale and green, because a bare number resolves
+    # whatever it lands on; the release bot's citation shift preserves a wrong target faithfully.
+    ("DECISIONS.md", "CHANGELOG.md", "**0.7.39–0.7.43 was NOT deleted**"),
+    ("PROGRESS.md", "CHANGELOG.md", "**0.7.39–0.7.43 was NOT deleted**"),
     # The `--write-manifest` delete-scoping comment. Anchored because this citation was WRONG for two
     # rounds and no check could tell: it pointed at the FIELD-manifest write, and each time the file
     # moved the number was faithfully remapped — which preserves a wrong target rather than finding
@@ -811,6 +816,17 @@ CITATION_SLACK = 3
 #: and that is fine: the candidate set is then both of that row's citations, which is still far
 #: narrower than every citation of the path in the document.
 CLAIM_LINES = {
+    # seam-sdk#179: each document's own claim line about the spared older band.
+    (
+        "DECISIONS.md",
+        "CHANGELOG.md",
+        "**0.7.39–0.7.43 was NOT deleted**",
+    ): "records that the *older*",
+    (
+        "PROGRESS.md",
+        "CHANGELOG.md",
+        "**0.7.39–0.7.43 was NOT deleted**",
+    ): "band was deliberately spared",
     (
         "COMPATIBILITY.md",
         "ts/src/client.ts",
@@ -1143,7 +1159,7 @@ def test_the_anchored_table_is_not_empty() -> None:
     in a file whose stated discipline is a third."""
     # Raise this when anchors are added. Lowering it is the loud, reviewable edit that deleting an
     # anchor is supposed to require — which is the entire purpose of the number.
-    _COMMITTED_ANCHOR_COUNT = 44
+    _COMMITTED_ANCHOR_COUNT = 46
     assert len(ANCHORED) >= _COMMITTED_ANCHOR_COUNT, (
         f"ANCHORED has shrunk to {len(ANCHORED)}, below the committed {_COMMITTED_ANCHOR_COUNT}; "
         "entries are being deleted"
