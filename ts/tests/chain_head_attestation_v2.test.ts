@@ -126,3 +126,26 @@ test("a non-string tenant is a caller bug, not a failed verification", () => {
     /tenant must be a string/,
   );
 });
+
+// The safe call shape (#835 step 4): pass the generated ChainHeadAttestation message itself, so `tenant`
+// comes from the artifact. An object built without `tenant` checks the v1 framing only -- the one bypass
+// the optional field leaves open -- which this pins so the docstring's warning cannot go stale.
+test("the generated ChainHeadAttestation message carries its tenant into the framing", async () => {
+  const { create } = await import("@bufbuild/protobuf");
+  const { ChainHeadAttestationSchema } = await import("../gen/seam/event/v1/seam_event_pb.js");
+  const msg = (v: typeof V2, tenant: string) =>
+    create(ChainHeadAttestationSchema, {
+      attestedLen: BigInt(v.inputs.attested_len),
+      attestedHead: Buffer.from(v.inputs.attested_head_hex, "hex"),
+      attestedAt: BigInt(v.inputs.attested_at),
+      issuerAid: v.issuer_aid,
+      digestSchema: v.inputs.digest_schema,
+      signature: Buffer.from(v.signature_hex, "hex"),
+      tenant,
+    });
+  assert.equal(verifyChainHeadAttestation(V2.issuer_aid, msg(V2, V2.inputs.tenant)), true);
+  assert.equal(verifyChainHeadAttestation(V1.issuer_aid, msg(V1, "")), true);
+  assert.equal(verifyChainHeadAttestation(V1.issuer_aid, msg(V1, "acme")), false, "relabelled v1 message");
+  // The bypass: the same v1 attestation as a hand-built object WITHOUT its tenant checks v1 only.
+  assert.equal(verifyChainHeadAttestation(V1.issuer_aid, att(V1)), true);
+});

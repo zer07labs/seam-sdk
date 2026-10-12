@@ -132,3 +132,44 @@ def test_a_v2_signature_over_the_empty_tenant_is_refused():
 def test_tenant_must_be_a_str():
     with pytest.raises(TypeError, match="tenant must be a str"):
         verify_chain_head_attestation(**_args(V2), tenant=b"acme")
+
+
+# ── verify_chain_head_attestation_message: the tenant comes from the artifact ───────────────────────
+
+
+def _message(v: dict, tenant: str):
+    from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as ev
+
+    a = _args(v)
+    return ev.ChainHeadAttestation(
+        attested_len=a["attested_len"],
+        attested_head=a["attested_head"],
+        attested_at=a["attested_at"],
+        issuer_aid=a["issuer_aid"],
+        digest_schema=a["digest_schema"],
+        signature=a["signature"],
+        tenant=tenant,
+    )
+
+
+def test_the_message_form_reads_the_tenant_off_the_artifact():
+    from seam_sdk import verify_chain_head_attestation_message as verify_msg
+
+    assert verify_msg(V2["issuer_aid"], _message(V2, V2["inputs"]["tenant"]))
+    assert verify_msg(V1["issuer_aid"], _message(V1, ""))
+    # The bypass the keyword form leaves open (#835 step 4): a v1 attestation relabelled to a tenant.
+    # Calling the keyword form without `tenant=` ignores the wire tenant and says True ...
+    relabelled = _message(V1, "acme")
+    assert verify_chain_head_attestation(**_args(V1))
+    # ... the message form cannot be called that way, and refuses it.
+    assert not verify_msg(V1["issuer_aid"], relabelled)
+    assert not verify_msg(V2["issuer_aid"], _message(V2, "acmf"))
+
+
+def test_the_message_form_enforces_the_pin():
+    from seam_sdk import verify_chain_head_attestation_message as verify_msg
+
+    other = "aid:pubkey:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg"
+    assert not verify_msg(other, _message(V2, V2["inputs"]["tenant"]))
+    with pytest.raises(TypeError):
+        verify_msg(b"aid", _message(V2, V2["inputs"]["tenant"]))

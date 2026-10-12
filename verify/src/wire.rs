@@ -291,8 +291,10 @@ pub struct ChainHeadAttestationJson {
     pub issuer_aid: String,
     pub digest_schema: u32,
     pub signature: String,
-    /// UNSIGNED, added by U-RT-3 Phase 2. `#[serde(default)]` is load-bearing: a pre-Phase-2 attestation
-    /// carries only the 6 fields above, and must still parse.
+    /// Added by U-RT-3 Phase 2; `""` for the system partition. Selects the signed framing (seam-runtime
+    /// #835 step 4): non-empty ⇒ v2 only, which signs it; empty ⇒ v1 only. `#[serde(default)]` is
+    /// load-bearing: a six-field attestation (no `tenant` key, e.g. a pre-Phase-2 one) must still parse
+    /// — it then verifies only as a v1 / system-partition attestation.
     #[serde(default)]
     pub tenant: String,
 }

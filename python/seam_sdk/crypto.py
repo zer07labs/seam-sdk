@@ -14,6 +14,7 @@ import uuid
 
 import json
 import time
+from typing import Any
 from typing import NamedTuple as _NamedTuple
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -921,8 +922,15 @@ def verify_chain_head_attestation(
     (the system partition; a v2 signature over ``""`` is refused), and a non-empty tenant under **v2
     only**, so the tenant is always inside the signature and relabelling it breaks verification. A v1
     attestation carrying a non-empty tenant — what the runtime minted before #835 step 3 — returns
-    ``False``; there is no grace period and no toggle. Pass the tenant whenever the attestation carries
-    one — omitting it verifies v1 only, so a v2 attestation would come back ``False``.
+    ``False``; there is no grace period and no toggle.
+
+    **Pass the attestation's OWN tenant — omitting it checks the v1 framing.** ``tenant`` is a caller
+    argument defaulting to ``""``, so a caller who drops it verifies the v1 signature alone and never
+    looks at the tenant the attestation carries on the wire: a v1 attestation relabelled to a tenant
+    would then come back ``True``, which is the one bypass of the step-4 rule this signature leaves
+    open. (It also means a genuine v2 attestation comes back ``False``.) When you hold the
+    ``ChainHeadAttestation`` message itself, call :func:`verify_chain_head_attestation_message`
+    instead, which takes every field — the tenant included — from the artifact.
     """
     # An out-of-range integer is tampered input, not a caller bug, and this function's whole contract
     # is that tampered input returns ``False``. ``struct.pack`` raises ``struct.error`` on it, and the
@@ -1020,6 +1028,31 @@ def verify_chain_head_attestation(
             return False
 
     return under(tenant) if tenant else under(None)
+
+
+def verify_chain_head_attestation_message(issuer_aid: str, attestation: Any) -> bool:
+    """Verify a ``ChainHeadAttestation`` **message** (the ``seam.event.v1`` proto, or anything with its
+    fields) against the PINNED ``issuer_aid``, taking every signed field — ``tenant`` included — from the
+    artifact itself, so the framing is always the one its own tenant selects (seam-runtime #835 step 4).
+    This is the form that cannot be called with the tenant left off; prefer it to
+    :func:`verify_chain_head_attestation` whenever you hold the message.
+
+    The attestation must also NAME the pinned issuer: one naming another AID returns ``False`` before
+    any signature work (the pin is what makes the signature mean anything). Same contract otherwise —
+    ``False`` on any tamper, ``TypeError`` on a wrong-typed field."""
+    if not isinstance(issuer_aid, str):
+        raise TypeError(f"issuer_aid must be a str, not {type(issuer_aid).__name__}")
+    if attestation.issuer_aid != issuer_aid:
+        return False
+    return verify_chain_head_attestation(
+        issuer_aid,
+        attestation.attested_len,
+        attestation.attested_head,
+        attestation.attested_at,
+        attestation.digest_schema,
+        attestation.signature,
+        tenant=attestation.tenant,
+    )
 
 
 # ── call_sig v3 (`seam-authorize-call-v3`, seam-runtime #1125 / #1059) ───────────────────────────────

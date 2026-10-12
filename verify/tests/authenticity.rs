@@ -8,7 +8,7 @@
 //!
 //! `attested_chain.jsonl` and `payload_rewrite.jsonl` carry the post-U-RT-3 shape: the
 //! `CHAIN_HEAD_ATTESTATION` event's envelope `tenant` agrees with the chain it continues, and its
-//! `chain_head_attestation` payload carries its own (unsigned) `tenant` echo.
+//! `chain_head_attestation` payload carries its own `tenant`, signed under the v2 framing (#835).
 //!
 //! The distinction Phase 3 (design-b) proves: integrity-only PASSES a self-consistent forged chain, but
 //! `--issuer` REFUSES it, because a forger cannot mint the issuer-signed head.

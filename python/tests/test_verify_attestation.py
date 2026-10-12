@@ -7,12 +7,13 @@ Two layers:
     / tampered / unknown attestation on the data plane), mirroring the runtime's own A4 trio
     (`seamd/tests/grpc.rs::grpc_verify_party_attestation_trio`).
 
-The live valid case pins the runtime's committed `chain_head_attestation` KAT (seed + precomputed
-signature) so the test does not re-derive the signature framing — a known-good signature from the runtime
-is the gold standard. Loaded from `conformance/vectors.json`'s `chain_head_attestation` entry — the SAME
-source `test_conformance.py::test_chain_head_attestation_signature_verifies` reads — so a runtime KAT
-regen updates one file and reddens both tests, instead of leaving a hand-copied literal here silently
-stale.
+The live valid case pins the runtime's committed **v2** chain-head KAT
+(`conformance/chain_head_attestation_v2_vector.json`: seed + precomputed signature over its own tenant),
+so the test does not re-derive the signature framing — a known-good signature from the runtime is the
+gold standard. It must be v2: the party is registered under a tenant, and since seam-runtime #835 step 4
+a tenant's attestation verifies under v2 only (the v1 KAT relabelled to a tenant is refused). The
+server-free unit tests keep the shared v1 KAT from `conformance/vectors.json` (empty tenant), the SAME
+source `test_conformance.py::test_chain_head_attestation_signature_verifies` reads.
 """
 
 from __future__ import annotations
@@ -30,18 +31,24 @@ from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
 from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as ev
 from seam_sdk import SeamAdminClient, SeamClient  # noqa: E402
 
-#: Any tenant id — `register_party` takes none on the wire (the operator token's own `tenant` claim is
-#: what the runtime binds to; see `RegisterPartyRequest`), so this pins AUTH, not a registration scope.
-_TENANT = "verify-counterparties"
+_CONFORMANCE = pathlib.Path(__file__).parents[2] / "conformance"
+_V2_VECTOR = json.loads(
+    (_CONFORMANCE / "chain_head_attestation_v2_vector.json").read_text()
+)
+
+#: The tenant the v2 KAT is signed over. `register_party` takes no tenant on the wire (the operator
+#: token's own `tenant` claim is what the runtime binds to; see `RegisterPartyRequest`), so the token is
+#: minted for this tenant and the party lands in the partition the signed attestation names.
+_TENANT = _V2_VECTOR["inputs"]["tenant"]
 
 # ── The runtime chain_head_attestation KAT, from conformance/vectors.json ────────────────────────────
 # The counterparty signs with the ed25519 key derived from this seed; the signature is over the
 # domain-separated, length-prefixed preimage in docs/specs/seam-event.v1.md §CHAIN_HEAD_ATTESTATION. We
 # register the derived pubkey and submit the attestation verbatim — the `issuer_aid` string is part of the
 # signed preimage, so it is passed exactly as the vector has it (short `aid:pubkey:` form).
-_VECTOR = json.loads(
-    (pathlib.Path(__file__).parents[2] / "conformance" / "vectors.json").read_text()
-)["chain_head_attestation"]
+_VECTOR = json.loads((_CONFORMANCE / "vectors.json").read_text())[
+    "chain_head_attestation"
+]
 _KAT_ISSUER_SEED = bytes.fromhex(_VECTOR["inputs"]["issuer_seed_hex"])
 _KAT_ATTESTATION = dict(
     attested_len=_VECTOR["inputs"]["attested_len"],
@@ -53,12 +60,33 @@ _KAT_ATTESTATION = dict(
 )
 
 
-def _kat_attestation(*, tenant: str = "") -> ev.ChainHeadAttestation:
-    # `tenant` (wire tag 7) is UNSIGNED — setting it here never invalidates the KAT signature, which
-    # is computed over the preimage without it. Defaults to "" (the untenanted/fleet partition),
-    # matching every pre-#903 caller; the live test below overrides it to match the tenant its
-    # operator token registered the party under.
-    return ev.ChainHeadAttestation(tenant=tenant, **_KAT_ATTESTATION)
+def _kat_attestation() -> ev.ChainHeadAttestation:
+    # The v1 KAT, with the EMPTY tenant it was signed for (v1 never signs a tenant, so since seam-runtime
+    # #835 step 4 it verifies only under ""). Used by the server-free unit tests.
+    return ev.ChainHeadAttestation(**_KAT_ATTESTATION)
+
+
+def _v2_kat_attestation() -> ev.ChainHeadAttestation:
+    # The v2 KAT: `tenant` (wire tag 7) is INSIDE the signature, so it is set to exactly the tenant the
+    # runtime signed over — any other value breaks verification.
+    i = _V2_VECTOR["inputs"]
+    return ev.ChainHeadAttestation(
+        attested_len=i["attested_len"],
+        attested_head=bytes.fromhex(i["attested_head_hex"]),
+        attested_at=i["attested_at"],
+        issuer_aid=_V2_VECTOR["issuer_aid"],
+        digest_schema=i["digest_schema"],
+        signature=bytes.fromhex(_V2_VECTOR["signature_hex"]),
+        tenant=i["tenant"],
+    )
+
+
+def test_the_v1_and_v2_kats_share_one_issuer():
+    # The live test registers ONE pubkey and verifies the v2 KAT against it.
+    assert (
+        _V2_VECTOR["inputs"]["issuer_seed_hex"] == _VECTOR["inputs"]["issuer_seed_hex"]
+    )
+    assert _V2_VECTOR["issuer_aid"] == _VECTOR["issuer_aid"]
 
 
 def _kat_pubkey() -> bytes:
@@ -145,32 +173,26 @@ def test_verify_party_attestation_trio_live(dual_plane):
 
     admin.register_party("bank-A", _kat_pubkey())
 
-    # Every call below carries `tenant=_TENANT` on the attestation: `register_party` bound "bank-A"
+    # Every call below sends the v2 KAT, whose SIGNED tenant is _TENANT: `register_party` bound "bank-A"
     # under _TENANT (the operator token's claim, since RegisterPartyRequest has no tenant field of its
-    # own), and `VerifyPartyAttestation` looks the party up under the ATTESTATION's own (unsigned)
-    # `tenant`, not the caller's — the two must agree or a correctly-registered, untampered attestation
-    # still comes back False, having found no party in the (wrong) tenant partition it looked under.
+    # own), and `VerifyPartyAttestation` looks the party up under the ATTESTATION's own `tenant` — since
+    # seam-runtime #835 step 4 that is the signed tenant, verified under v2 only. A v1 attestation
+    # relabelled to _TENANT is refused there, which is why this cannot use the v1 KAT.
 
     # 1. a registered party's untampered attestation verifies
-    assert (
-        data.verify_party_attestation("bank-A", _kat_attestation(tenant=_TENANT))
-        is True
-    )
+    assert data.verify_party_attestation("bank-A", _v2_kat_attestation()) is True
 
     # 2. a tampered signature must not verify
-    bad_sig = _kat_attestation(tenant=_TENANT)
+    bad_sig = _v2_kat_attestation()
     tampered = bytearray(bad_sig.signature)
     tampered[0] ^= 0x01
     bad_sig.signature = bytes(tampered)
     assert data.verify_party_attestation("bank-A", bad_sig) is False
 
     # 3. a tampered field (the length is part of the signed preimage) must not verify
-    bad_field = _kat_attestation(tenant=_TENANT)
+    bad_field = _v2_kat_attestation()
     bad_field.attested_len += 1
     assert data.verify_party_attestation("bank-A", bad_field) is False
 
     # 4. an unknown party never verifies
-    assert (
-        data.verify_party_attestation("bank-B", _kat_attestation(tenant=_TENANT))
-        is False
-    )
+    assert data.verify_party_attestation("bank-B", _v2_kat_attestation()) is False

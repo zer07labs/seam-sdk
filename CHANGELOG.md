@@ -38,6 +38,13 @@ than trusting a summary here.
   usage error, exit 1). A window spanning several tenants is no longer a usage error under
   `--from-anchor`: the named tenant starts at its anchor, the rest from genesis. A full-event anchor
   whose payload tenant differs from its envelope's is refused (`ANCHOR SELF-CONTRADICTS`, exit 2).
+- **Python `verify_chain_head_attestation_message(issuer_aid, attestation)` (new)** verifies a
+  `ChainHeadAttestation` message taking every field — the tenant included — from the artifact, and
+  refuses one naming another issuer. The keyword form's `tenant=` still defaults to `""`, and **omitting
+  it checks the v1 framing only**: pass the attestation's own tenant, or use the message form. In TS,
+  pass the generated `ChainHeadAttestation` message to `verifyChainHeadAttestation` for the same effect.
+- `verify_party_attestation` / `verifyPartyAttestation` docs: the attestation's `tenant` is signed (v2)
+  since step 4, so a v1 attestation relabelled to a tenant comes back false from a step-4 runtime.
 - **Library API:** `seam_verify::chain_anchored` takes the anchor's tenant
   (`chain_anchored(events, &anchor.tenant, len, head)`), and `IssuerReport` loses `tenant_unbound`.
 - **Re-vendored from seam-runtime `feat/835-step4-refuse-v1-tenant` @ 460d163:** the

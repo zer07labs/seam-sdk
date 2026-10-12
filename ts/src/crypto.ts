@@ -1093,8 +1093,14 @@ function chainHeadAttestationDigest(
  * partition; a v2 signature over `""` is refused), and non-empty under **v2 only**, so the tenant is always
  * inside the signature and relabelling it breaks verification. A v1 attestation carrying a non-empty tenant
  * — what the runtime minted before #835 step 3 — returns `false`; there is no grace period and no toggle.
- * Pass the tenant whenever the attestation carries one — omitting it verifies v1 only, so a v2 attestation
- * would come back `false`. */
+ *
+ * **Pass the attestation's OWN tenant — omitting it checks the v1 framing.** `tenant` is optional and
+ * defaults to `""`, so an object built without it verifies the v1 signature alone and never looks at the
+ * tenant the attestation carries on the wire: a v1 attestation relabelled to a tenant would then come back
+ * `true`, the one bypass of the step-4 rule this signature leaves open (and a genuine v2 attestation comes
+ * back `false`). The safe call is to pass the generated `ChainHeadAttestation` message itself
+ * (`seam_event_pb`): it satisfies this parameter type and always carries `tenant`, so the framing is the
+ * one its own tenant selects. Build the object by hand only if you copy `tenant` across too. */
 export function verifyChainHeadAttestation(
   issuerAid: string,
   a: {

@@ -895,8 +895,10 @@ class SeamClient:
         network mode). Returns ``True`` iff the attestation's Ed25519 signature checks out against the
         pubkey registered for ``party_id``; ``False`` for an unknown party or any tamper (a boolean
         verdict, never an exception) — mirroring :meth:`verify_party_anchor`, except that this
-        attestation's own ``tenant`` field (unsigned) scopes the lookup, whereas ``verify_party_anchor``
-        takes ``tenant`` as a request-level argument since ``Anchor`` carries no tenant of its own."""
+        attestation's own ``tenant`` field scopes the lookup, whereas ``verify_party_anchor`` takes
+        ``tenant`` as a request-level argument since ``Anchor`` carries no tenant of its own. Since
+        seam-runtime #835 step 4 that ``tenant`` is SIGNED: a non-empty one verifies under the v2 framing
+        only, so a v1 attestation relabelled to a tenant comes back ``False``."""
         return (
             await self._trust.VerifyPartyAttestation(
                 pb.VerifyAttestationRequest(party_id=party_id, attestation=attestation),
