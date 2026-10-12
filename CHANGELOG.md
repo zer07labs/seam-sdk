@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.46.0 — 2026-10-12
+
 ### Added
 - **Per-vote reason on the one-shot path** (seam-aegis#119, seam-runtime #804/#851): Python `run_decision` (sync
   and aio) and TS `runDecision` accept `(agent, value, reason)` triples in `votes`, mixed freely with the existing
