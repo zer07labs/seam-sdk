@@ -4652,3 +4652,19 @@ single shared listing) · P3 simple.
   6 GETs.
 - **Next:** Phase 2. Filing a newest drift under `PARTNER_DRIFT_TITLE`, one shared listing, per-question grace.
   The Phase-1 `--report` tests that assert no create must flip.
+
+## Phase 2: reporting a newest-version lag, DONE (2026-10-12)
+- **Verdict:** PASS on round 2. Opus verifier: complex phase, it writes GitHub issues and shares one listing.
+- **Round 1, GAPS:** behaviour correct, every acceptance item held, and no double-filing was reachable.
+  - Three mutants survived: V's tag row, the `release-outcome` cross-link for V, and half of the close-notice
+    guard.
+  - Looser than an exact sequence: the D3-table newest-drift row.
+  - A wrong "iff" heartbeat comment.
+  - Untested: the git-clock no-file path and two outage paths.
+  - Missing: the plan's "as built" notes and a stray blank line.
+  - All closed; 13/13 of the verifier's mutants killed in round 2.
+- **Round 2:** PASS. One comment leftover ("heartbeat iff") fixed after the verdict.
+- **Files:** `scripts/check_registry_drift.py`, `scripts/test_registry_drift_gate.py`,
+  `plans/partner-newest-release.md`.
+- **Tests:** `pytest scripts/` gives 701 passed; ruff clean. No live `--report` run, because it writes GitHub.
+- **Next:** Phase 3, the docs, workflow comments and ASSUMPTIONS, including the 0.40.0/0.43.2 correction.

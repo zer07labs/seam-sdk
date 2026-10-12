@@ -1213,15 +1213,39 @@ def _issue_body(
     subject: str = "internal",
     partner_missing: set[str] | None = None,
     partner_unreadable: bool = False,
+    question: str = "declared",
+    declared: str | None = None,
 ) -> str:
+    """The issue body. `question` says which of the run's questions found this (D4): one title per
+    missing version, `PARTNER_DRIFT_TITLE`, whichever question finds it — so the BODY is where a
+    reader learns whether `main` still declares this version or has moved past it, and those call
+    for different urgency. `declared` is main's version, named in a newest-question lede."""
     formats = ", ".join(sorted(missing))
-    if subject == "partner":
+    age_label = "age of the release attempt"
+    if subject == "partner" and question == "newest":
+        lede = (
+            f"`zer07labs/internal`'s newest release is **{version}**, and it serves it in both "
+            f"formats; `zer07labs/partner` — the repository design partners install from — does "
+            f"not. `python/pyproject.toml` declares **{declared}**, so the declared-version check "
+            f"never asks partner about {version}: this was found by the newest-version check."
+        )
+        where_row = (
+            "| registry | `zer07labs/partner` (internal is complete) |\n"
+            f"| found by | the newest-version check (main declares `{declared}`) |"
+        )
+        # The upload clock, not git: main's dates say nothing about a version it has moved past.
+        age_label = "time since it finished uploading to internal"
+        remediation = _partner_remediation(version, missing)
+    elif subject == "partner":
         lede = (
             f"`python/pyproject.toml` declares **{version}**. `zer07labs/internal` serves it in "
             f"both formats; `zer07labs/partner` — the repository design partners install from — "
             f"does not."
         )
-        where_row = "| registry | `zer07labs/partner` (internal is complete) |"
+        where_row = (
+            "| registry | `zer07labs/partner` (internal is complete) |\n"
+            "| found by | the declared-version check |"
+        )
         remediation = _partner_remediation(version, missing)
     else:
         lede = f"`python/pyproject.toml` declares **{version}**, and the registry does not serve it."
@@ -1240,7 +1264,7 @@ def _issue_body(
         f"| packages | `{PACKAGE_NAME}` (python), `@zer07labs/{PACKAGE_NAME}` (npm) |",
         f"| tag `v{version}` | {'present' if tagged else '**absent**'} |",
         where_row,
-        f"| age of the release attempt | {age_minutes:.0f} minutes |",
+        f"| {age_label} | {age_minutes:.0f} minutes |",
         "",
         remediation,
         "",
@@ -1277,11 +1301,20 @@ def report_drift(
     missing: set[str],
     age_minutes: float,
     *,
+    issues: list[dict],
+    repo: str,
     subject: str = "internal",
     partner_missing: set[str] | None = None,
     partner_unreadable: bool = False,
+    question: str = "declared",
+    declared: str | None = None,
 ) -> bool:
     """File, comment, reopen — or recognise a suppression. Returns True if suppressed.
+
+    `issues` is the run's ONE listing, fetched by `main` and handed to every question that reaches
+    GitHub (seam-sdk#253): a run can now file for two versions, and two listings could disagree
+    about a repository state that never existed at one moment. Every match below is exact title
+    equality, which is what makes one listing safe to share.
 
     The decision table, and note that only the last row changes the exit code:
 
@@ -1290,8 +1323,6 @@ def report_drift(
         closed, unlabelled              -> reopen + comment            exit 1
         closed, labelled                -> a ::warning:: naming it     exit 0
     """
-    repo = issue_repo()
-    issues = fetch_issues(repo)
     title = (PARTNER_DRIFT_TITLE if subject == "partner" else DRIFT_TITLE).format(version=version)
     existing = _exact(issues, title)
     what = "Partner" if subject == "partner" else "The registry"
@@ -1306,6 +1337,8 @@ def report_drift(
             subject=subject,
             partner_missing=partner_missing,
             partner_unreadable=partner_unreadable,
+            question=question,
+            declared=declared,
         )
 
     if subject == "partner":
@@ -1558,15 +1591,15 @@ def warn_if_schedule_is_stale(now: datetime) -> None:
             f"This says nothing about the registry — the verdict above stands on its own."
         )
 
-def report_clean(version: str, *, partner_checked: bool) -> None:
+def report_clean(version: str, issues: list[dict], *, partner_checked: bool) -> None:
     """No drift. If a drift issue for this version is open, say it can be closed — and stop there.
 
     The check never closes an issue itself. `release-outcome` is write-additive only and this stays
     the same shape: closing is a person's decision, and a reporter that can retract its own reports
     is much harder to trust than one that cannot.
+
+    `issues` is the run's one listing, fetched by `main`; this reads it and writes nothing.
     """
-    repo = issue_repo()
-    issues = fetch_issues(repo)
     existing = _exact(issues, DRIFT_TITLE.format(version=version))
     if existing and existing["state"] == "OPEN":
         print(
@@ -1582,6 +1615,22 @@ def report_clean(version: str, *, partner_checked: bool) -> None:
     if lag and lag["state"] == "OPEN":
         print(
             f"::notice::#{lag['number']} reports {version} missing from partner, but partner now "
+            f"serves it in both formats. That issue can be closed. This check never closes one."
+        )
+
+
+def report_newest_clean(newest: str, issues: list[dict]) -> None:
+    """Partner now serves the newest version: an open partner issue for it can be closed.
+
+    Advisory only, and given only a listing the run ALREADY holds because the declared question
+    reached GitHub. A newest clean never lists for itself: on the runs where the declared version
+    is in a grace tier, that read would be the grace window touching GitHub for a courtesy notice,
+    which is the exact erosion the grace invariant exists to stop.
+    """
+    lag = _exact(issues, PARTNER_DRIFT_TITLE.format(version=newest))
+    if lag and lag["state"] == "OPEN":
+        print(
+            f"::notice::#{lag['number']} reports {newest} missing from partner, but partner now "
             f"serves it in both formats. That issue can be closed. This check never closes one."
         )
 
@@ -1914,8 +1963,10 @@ def main(argv: list[str] | None = None) -> int:
         # newest question was answered on the upload clock before git was ever read. Print it,
         # then exit by the D3 table with the declared question standing at 2 (infrastructure):
         # a newest DRIFT is a real finding and keeps its 1; anything else leaves the 2. Nothing is
-        # reported to GitHub from here, which Phase 1 would not have done for a newest drift
-        # anyway; the declared question has no verdict to report.
+        # reported to GitHub from here, a newest drift included: this checkout cannot be read
+        # (the newest issue's own tag row would need it too), and no write leaves a run whose
+        # instrument is broken — the rule `test_no_infrastructure_failure_ever_reaches_github`
+        # holds. The finding is printed, the exit carries it, and the next healthy run files it.
         print(f"::error::{exc}", file=sys.stderr)
         print_newest_facts(declared_answered=False)
         return _with_newest(2, print_newest_verdict(), newest_error)
@@ -2041,7 +2092,35 @@ def main(argv: list[str] | None = None) -> int:
     #
     # `deferred` and `warned` reach GitHub not at all — not even the read. The middle tier exists
     # to say "something is wrong and a job could still be alive"; the moment it files anything it
-    # has become a reporting tier, and the grace window stops being a grace window.
+    # has become a reporting tier, and the grace window stops being a grace window. That holds PER
+    # QUESTION (seam-sdk#253): each question reaches GitHub only from its own drift (or, for the
+    # declared one, its clean) tier, and a question in grace contributes no read.
+    #
+    # ONE listing per run, fetched LAZILY — on the first question that reaches GitHub — cached,
+    # and handed to every later one. Two questions can now file in one run, and two listings
+    # could disagree about a repository that never existed at one moment. A FAILED fetch is cached
+    # too: a second question must not retry it, or one run could list twice.
+    #
+    # Lazy rather than up-front because of the newest clean's close notice: it may READ a listing
+    # the declared question fetched, and must never be the reason one is fetched. With a getter,
+    # that rule is one visible condition at the call site (`declared_reaches`), and dropping it is
+    # an observable extra read rather than a no-op.
+    listing_cache: list[tuple[list[dict], str] | InfraError] = []
+
+    def listing() -> tuple[list[dict], str]:
+        if not listing_cache:
+            try:
+                target = issue_repo()
+                listing_cache.append((fetch_issues(target), target))
+            except InfraError as exc:
+                listing_cache.append(exc)
+        got = listing_cache[0]
+        if isinstance(got, InfraError):
+            raise got
+        return got
+
+    declared_reaches = verdict in ("drift", "clean")
+    newest_reaches = newest_verdict == "drift"
     try:
         if verdict == "drift" and subject == "partner":
             # Under PARTNER_DRIFT_TITLE, never DRIFT_TITLE: filing the internal title for a
@@ -2050,14 +2129,26 @@ def main(argv: list[str] | None = None) -> int:
             # `partner_missing` is non-empty here by construction: the subject only becomes
             # partner when partner was read and is short. No `or set()` fallback — an empty set
             # would file an issue whose "missing formats" row is blank, which reads as fine.
-            if report_drift(version, tagged, partner_missing, age_minutes, subject="partner"):
+            issues, issue_target = listing()
+            if report_drift(
+                version,
+                tagged,
+                partner_missing,
+                age_minutes,
+                issues=issues,
+                repo=issue_target,
+                subject="partner",
+            ):
                 code = 0
         elif verdict == "drift":
+            issues, issue_target = listing()
             if report_drift(
                 version,
                 tagged,
                 missing,
                 age_minutes,
+                issues=issues,
+                repo=issue_target,
                 partner_missing=partner_missing,
                 partner_unreadable=partner_error is not None,
             ):
@@ -2071,21 +2162,70 @@ def main(argv: list[str] | None = None) -> int:
             #
             # Nothing is lost by softening it. This path has no report to lose — its entire
             # output is a courtesy `::notice::` that an already-open issue can now be closed. The
-            # drift path keeps exit 2, because there the report IS the product.
+            # drift paths keep exit 2, because there the report IS the product — including a
+            # newest drift below, which re-raises this same cached failure.
             #
             # It is not silent: a broken credential still says so on every clean run, one
             # severity down, which is the earliest anyone could learn of it.
             try:
+                issues, _ = listing()
                 # `partner_error` is None here: a clean internal with a partner fault returned 2
                 # above. So "checked" is exactly "a partner answer was read".
-                report_clean(version, partner_checked=partner_missing is not None)
+                report_clean(version, issues, partner_checked=partner_missing is not None)
             except InfraError as exc:
-                print(
-                    f"::warning::the registry is clean, but GitHub could not be reached to "
-                    f"check for an open drift issue: {exc}. The verdict above stands; only the "
-                    f"advisory notice is missing."
-                )
+                if newest_reaches:
+                    # The same cached failure is about to fail the newest drift's delivery, and
+                    # that is exit 2. Saying "only the advisory notice is missing" first would be
+                    # contradicted two lines later, so this says what will actually happen.
+                    print(
+                        f"::warning::the registry is clean, but GitHub could not be reached: "
+                        f"{exc}. The newest-version drift above cannot be filed either, so this "
+                        f"run will exit 2."
+                    )
+                else:
+                    print(
+                        f"::warning::the registry is clean, but GitHub could not be reached to "
+                        f"check for an open drift issue: {exc}. The verdict above stands; only the "
+                        f"advisory notice is missing."
+                    )
+
+        # The newest question, on the SAME listing. One issue per missing version whichever
+        # question finds it (D4): V's partner title is the one the declared question would have
+        # filed had `main` still declared V, so an issue it filed then is recognised now, and a
+        # suppression on it — closed and labelled, scoped to V alone — mutes this one too.
+        if newest_reaches:
+            # Non-empty by construction on a drift tier; both checks are for the type checker.
+            assert newest is not None and newest_partner_missing
+            issues, issue_target = listing()
+            if report_drift(
+                newest,
+                tag_present(args.repo, newest),
+                newest_partner_missing,
+                newest_age,
+                issues=issues,
+                repo=issue_target,
+                subject="partner",
+                question="newest",
+                declared=version,
+            ):
+                # Suppressed: no longer an unsuppressed drift, so it no longer votes (D3).
+                newest_verdict = "suppressed"
+        elif newest_partner_missing is not None and not newest_partner_missing and declared_reaches:
+            # The close notice, ONLY from a listing the declared question already reached GitHub
+            # for. `declared_reaches` is the guard: without it a newest clean beside a declared
+            # grace tier would fetch a listing for a courtesy notice — the grace window touching
+            # GitHub. Best effort like every clean path: a listing that failed is already warned.
+            assert newest is not None
+            try:
+                report_newest_clean(newest, listing()[0])
+            except InfraError:
+                pass
     except InfraError as exc:
+        # A failed listing or write (or the tag read for V) AFTER both verdicts were printed.
+        # Whatever was filed before it stands; the run is red because a finding was not
+        # delivered. A newest drift beside a gh outage is therefore 2, not 1 — the rule the
+        # declared drift has always followed, so an outage reads the same whichever question it
+        # interrupts, and "1" keeps meaning "a finding was delivered or is on record".
         print(f"::error::{exc}", file=sys.stderr)
         return 2
 
@@ -2095,20 +2235,24 @@ def main(argv: list[str] | None = None) -> int:
     if partner_error is not None and code == 0:
         code = 2
 
-    # After the declared question's reporting, so its suppression has already been applied — the
-    # D3 table reads the declared question's FINAL code. Interim (seam-sdk#253 Phase 1): a newest
-    # drift is printed and votes 1 here, but nothing is filed for it yet.
+    # After BOTH questions' reporting, so each suppression has already been applied — the D3
+    # table reads the declared question's FINAL code and the newest question's final verdict.
     code = _with_newest(code, newest_verdict, newest_error)
 
     # ── the watcher's own heartbeat ───────────────────────────────────────────────────────────
     #
-    # AFTER the verdict and after reporting, and only on the tiers that already talked to GitHub.
-    # `deferred` and `warned` must reach it not at all — including this read — or the grace window
-    # stops being a grace window, which is the invariant
+    # AFTER the verdicts and after reporting, once, and only on a run that read GitHub — the
+    # listing was attempted. A question in grace must reach it not at all — including this read —
+    # or the grace window stops being a grace window, which is the invariant
     # `test_neither_grace_tier_touches_github` exists to hold.
     #
+    # NOT "if and only if": a `gh` failure on a path that had a finding to deliver (either
+    # question's drift) returns 2 from the reporting handler above, before this line, exactly as
+    # the declared drift path always has. Only a failed listing wanted solely by a CLEAN declared
+    # question is softened, and that run still reaches the heartbeat.
+    #
     # `code` is deliberately not reassigned anywhere below this line.
-    if verdict in ("drift", "clean"):
+    if listing_cache:
         warn_if_schedule_is_stale(now)
     return code
 

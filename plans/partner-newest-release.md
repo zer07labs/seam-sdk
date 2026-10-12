@@ -156,7 +156,30 @@ print newest drifts without filing them.
   7. A gh outage gives exit 2, with both verdicts printed first.
   8. No token appears in gh argv, and the gh verbs are unchanged.
 - **Tests:** one per item. Mutation-check the single listing, the heartbeat condition and the close-notice guard.
-- **Status:** TODO
+- **As built, and where it diverged:**
+  - *The listing is lazy and cached.* `main` holds a `listing()` getter that fetches on the first
+    question to reach GitHub and caches the result, a failure included, so a second question
+    cannot retry it and list twice. Lazy rather than up-front because of the newest clean's close
+    notice: it may read a listing the declared question fetched and must never cause one. With an
+    up-front fetch the `declared_reaches` guard was redundant, so a mutant dropping it could not be
+    killed; with the getter, dropping it is an observable extra read.
+  - *The git-clock fault path files nothing*, a newest drift included. The checkout cannot be read
+    (the newest issue's own tag row needs it), and no write leaves a run whose instrument is
+    broken. The newest drift is printed and the exit carries it (1); the next healthy run files it.
+  - *Every partner issue body gains a "found by" row*, the declared-version check or the
+    newest-version check (D4). This is a wording change for issues and comments written from now
+    on; existing bodies are never edited.
+  - *The heartbeat is "only on a run that read GitHub", not "iff".* A `gh` failure on a path with
+    a finding to deliver (either question's drift) returns 2 from the reporting handler before the
+    heartbeat, as the declared drift path always has. Only a failed listing wanted solely by a
+    clean declared question is softened, and that run still reaches the heartbeat.
+  - *A newest drift beside a gh outage exits 2*, the rule a declared drift has followed since #203:
+    an undelivered finding is infrastructure, and both verdicts are printed before reporting. The
+    clean path's outage warning is reworded when a newest drift is pending, so it no longer says
+    "only the advisory notice is missing" on a run about to exit 2.
+  - Added beyond the plan: the newest issue's tag row is read from git for V, and its
+    `release-outcome` cross-link is V's; an open one only for D is not linked.
+- **Status:** DONE
 
 ## Phase 3: docs, workflow comments, assumptions
 - **Risk:** simple.

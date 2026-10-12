@@ -3077,8 +3077,13 @@ def gh_stub(
     *,
     fail_on: tuple[str, str] | None = None,
     runs: list[str] | None = None,
+    fail_create_titled: str | None = None,
 ) -> tuple[Path, Path]:
     """A `gh` first on PATH. Returns (bin dir, argv-log path).
+
+    `fail_create_titled` fails ONLY the `issue create` whose `--title` is exactly that, the way an
+    outage landing between two creates would — so "the first create succeeded, the second did
+    not" is observable rather than collapsed into `fail_on`'s every-create failure.
 
     `listing` rows are `(number, state, labels, title)` — exactly the four fields the script's own
     `--jq` projects, so the parser is exercised rather than bypassed.
@@ -3118,6 +3123,15 @@ def gh_stub(
         f"""printf 'CALL\\0' >> {log}""",
         f"""printf '%s\\0' "$@" >> {log}""",
     ]
+    if fail_create_titled is not None:
+        title_file = tmp_path / "gh-fail-title"
+        title_file.write_text(fail_create_titled, encoding="utf-8")
+        lines += [
+            f"""if [ "$1" = "issue" ] && [ "$2" = "create" ] && [ "$4" = "$(cat {title_file})" ]; then""",
+            """  echo 'gh: HTTP 503 — the GitHub API is unavailable' >&2""",
+            "  exit 1",
+            "fi",
+        ]
     if fail_on is not None:
         lines += [
             f"""if [ "$1" = "{fail_on[0]}" ] && [ "$2" = "{fail_on[1]}" ]; then""",
@@ -5391,8 +5405,13 @@ def test_the_d3_exit_table_row_by_row(
         env = report_env(bin_dir, token=STUB_TOKEN)
         proc = run(repo, None, tmp_path, now=now, extra=["--report"], env=env)
         assert "SUPPRESSED by #7" in proc.stdout, proc.stdout
-        # Phase 1 files nothing for the newest question: the only listing is the declared one's.
-        assert gh_writes(gh_log) == [], gh_calls(gh_log)
+        # One listing, shared. The suppression is the DECLARED version's, so a newest drift is
+        # still filed — under AHEAD's partner title — and a newest fault files nothing. (Flipped
+        # in Phase 2 from "files nothing" for the newest-drift row.)
+        if newest == "drift":
+            assert_filed_newest_only(gh_log, AHEAD)
+        else:
+            assert gh_calls(gh_log) == [issue_list_argv(), heartbeat_argv()], gh_calls(gh_log)
     else:
         proc = run(repo, None, tmp_path, now=now, env=live_env(bin_dir))
     out = proc.stdout + proc.stderr
@@ -5816,12 +5835,27 @@ def test_the_order_check_reads_every_row_not_only_seam_sdk_rows(tmp_path: Path) 
     assert f"({AHEAD} is followed by 9.9.9)" in proc.stderr, out
 
 
-# ── --report, Phase 1 interim: a newest finding is printed and votes, and is filed by nothing ──
+def assert_filed_newest_only(log: Path, version: str) -> None:
+    """The exact `gh` sequence of a run whose ONLY GitHub business is filing a newest drift for
+    `version`: one listing, one create under V's partner title, the heartbeat. Nothing else."""
+    calls = gh_calls(log)
+    assert [c[:2] for c in calls] == [["issue", "list"], ["issue", "create"], ["api", calls[-1][1]]], calls
+    assert calls[0] == issue_list_argv(), calls[0]
+    assert calls[1][2:4] == ["--title", PARTNER_DRIFT_TITLE.format(version=version)], calls[1]
+    assert calls[1][-2:] == ["--repo", STUB_REPO] and len(calls[1]) == 8, calls[1]
+    assert calls[2] == heartbeat_argv(), calls[2]
 
 
-def test_with_report_a_newest_drift_beside_a_clean_declared_files_nothing(tmp_path: Path) -> None:
-    """Exit 1 for the newest drift; on GitHub, exactly what a clean declared run does — one
-    listing, then the heartbeat — and no create, comment or reopen. Phase 2 adds the filing."""
+# ── --report: a newest finding is filed (Phase 2; these were Phase 1's "files nothing" tests) ──
+
+
+def test_with_report_a_newest_drift_beside_a_clean_declared_files_one_partner_issue(
+    tmp_path: Path,
+) -> None:
+    """Exit 1 for the newest drift, and its issue filed: one listing (shared with the clean
+    declared question), one create under the NEWEST version's partner title, the heartbeat.
+
+    Flipped in Phase 2 from "...files_nothing", which pinned [list, heartbeat] as the interim."""
     now = LANDED + timedelta(days=10)
     repo = make_repo(tmp_path, version=DRIFTING)
     bin_dir, _ = newest_stub(tmp_path, now=now, ahead_minutes_ago=14400)
@@ -5831,7 +5865,7 @@ def test_with_report_a_newest_drift_beside_a_clean_declared_files_nothing(tmp_pa
     out = proc.stdout + proc.stderr
     assert proc.returncode == 1, out
     assert "NEWEST DRIFT —" in proc.stdout, out
-    assert gh_calls(gh_log) == [issue_list_argv(), heartbeat_argv()], gh_calls(gh_log)
+    assert_filed_newest_only(gh_log, AHEAD)
 
 
 @pytest.mark.parametrize(
@@ -5853,12 +5887,15 @@ def test_with_report_a_newest_drift_beside_a_clean_declared_files_nothing(tmp_pa
         "declared-warned+newest-warned",
     ],
 )
-def test_with_report_a_declared_grace_tier_reaches_no_github_whatever_the_newest_says(
+def test_with_report_a_declared_grace_tier_reaches_github_only_for_a_newest_drift(
     tmp_path: Path, declared_minutes: int, newest_ago: int, expected: int
 ) -> None:
-    """Grace means grace, live: with the declared version in a grace tier, no `gh` call at all —
-    not the listing, not the heartbeat — whether the newest question is clean, in its own grace,
-    or a drift. A newest drift still votes 1; it is printed, and Phase 1 files nothing for it."""
+    """Grace is per question, live. With the declared version in a grace tier it contributes no
+    read; a newest version in ITS grace adds none either, so those runs make no `gh` call at all.
+    A newest DRIFT is a finding of its own and files it: exactly list, create, heartbeat.
+
+    Flipped in Phase 2 from "...reaches_no_github_whatever_the_newest_says", whose two
+    newest-drift cases pinned zero gh calls as the interim."""
     now = LANDED + timedelta(minutes=declared_minutes)
     repo = make_repo(tmp_path, version=DRIFTING)
     bin_dir, _ = newest_stub(
@@ -5870,7 +5907,10 @@ def test_with_report_a_declared_grace_tier_reaches_no_github_whatever_the_newest
     out = proc.stdout + proc.stderr
     assert proc.returncode == expected, out
     assert f"newest on internal: {AHEAD}, uploaded {newest_ago} minutes ago" in proc.stdout, out
-    assert gh_calls(gh_log) == [], gh_calls(gh_log)
+    if newest_ago == 14400:
+        assert_filed_newest_only(gh_log, AHEAD)
+    else:
+        assert gh_calls(gh_log) == [], gh_calls(gh_log)
 
 
 # ── The two named invariants, re-run on paths where the newest question is CHECKED ─────────────
@@ -5886,7 +5926,9 @@ def test_neither_grace_tier_touches_github_with_the_newest_question_checked(
 ) -> None:
     """`test_neither_grace_tier_touches_github`, offline WITH a partner dump, so the newest
     question is asked (0.7.77, which partner lacks) and lands on each of its own tiers. Grace on
-    the declared version still means no `gh` call of any kind."""
+    the declared version contributes no `gh` call of any kind; a newest version in its own grace
+    adds none. A newest DRIFT files for itself — exactly list, create, heartbeat — and that is the
+    only way GitHub is reached (the drift case flipped in Phase 2 from zero calls)."""
     now = LANDED + timedelta(minutes=age)
     repo = make_repo(tmp_path, version=DRIFTING, tag=True)
     internal = published("0.7.77", uploaded_at=upload_stamp(now - timedelta(minutes=newest_ago)))
@@ -5901,7 +5943,10 @@ def test_neither_grace_tier_touches_github_with_the_newest_question_checked(
     assert proc.returncode == (1 if newest_ago == 14400 else 0), proc.stdout + proc.stderr
     assert marker in proc.stdout, f"the {band} tier did not announce itself:\n{proc.stdout}"
     assert f"newest on internal: 0.7.77, uploaded {newest_ago} minutes ago" in proc.stdout
-    assert gh_calls(log) == [], f"the {band} tier called GitHub: {gh_calls(log)}"
+    if newest_ago == 14400:
+        assert_filed_newest_only(log, "0.7.77")
+    else:
+        assert gh_calls(log) == [], f"the {band} tier called GitHub: {gh_calls(log)}"
 
 
 @pytest.mark.parametrize(
@@ -6018,3 +6063,378 @@ def test_the_offline_help_says_the_newest_question_needs_uploaded_at() -> None:
             blocks[current] += " " + line.strip()
     for flag in ("--packages-json", "--partner-packages-json"):
         assert "uploaded_at" in blocks.get(flag, ""), f"{flag}: {blocks.get(flag)!r}"
+
+
+# ── #253 Phase 2: reporting a newest-version lag ───────────────────────────────────────────────
+#
+# A newest drift files, comments and reopens under `PARTNER_DRIFT_TITLE.format(V)` — the same
+# title the declared question would use for V, so there is one issue per missing version whichever
+# question finds it (D4). One listing per run, fetched lazily and shared; the heartbeat whenever
+# GitHub was read, except a gh failure on a drift path, which exits 2 first; a newest clean's close
+# notice only from a listing the declared question fetched.
+
+#: The suppression issue every "declared drift is suppressed" fixture carries.
+DECLARED_SUPPRESSED = (7, "CLOSED", [SUPPRESSION_LABEL], DRIFT_TITLE.format(version=DRIFTING))
+
+
+def newest_report_run(
+    tmp_path: Path,
+    *,
+    declared: str = "clean",
+    newest: str = "drift",
+    listing: list[tuple[int, str, list[str], str]] | None = None,
+    fail_on: tuple[str, str] | None = None,
+    fail_create_titled: str | None = None,
+    tag_newest: bool = False,
+    filler_tags: int = FILLER_TAGS,
+) -> tuple[subprocess.CompletedProcess[str], Path]:
+    """A live `--report` run with curl and gh stubbed in one bin dir.
+
+    `declared`: clean (served, two weeks old), drift / suppressed (absent, two weeks old; the
+    latter with `DECLARED_SUPPRESSED` in the listing), deferred / warned (absent, 10 / 200 minutes).
+    `newest`: drift (AHEAD on internal 14400 minutes ago, absent from partner), clean (partner
+    serves AHEAD), deferred (AHEAD uploaded 30 minutes ago, absent from partner)."""
+    git_age = {"clean": 14400, "drift": 14400, "suppressed": 14400, "deferred": 10, "warned": 200}
+    now = LANDED + timedelta(minutes=git_age[declared])
+    repo = make_repo(tmp_path, version=DRIFTING, tag=filler_tags > 0, filler_tags=filler_tags)
+    if tag_newest:
+        _git(repo, "tag", "-a", f"v{AHEAD}", "-m", f"v{AHEAD}", when=LANDED)
+    bin_dir, _ = newest_stub(
+        tmp_path,
+        now=now,
+        declared_served=declared == "clean",
+        ahead_minutes_ago=30 if newest == "deferred" else 14400,
+        partner_ahead=published(AHEAD) if newest == "clean" else None,
+    )
+    full_listing = list(listing or [])
+    if declared == "suppressed":
+        full_listing.append(DECLARED_SUPPRESSED)
+    _, gh_log = gh_stub(
+        tmp_path, full_listing, fail_on=fail_on, fail_create_titled=fail_create_titled
+    )
+    proc = run(
+        repo, None, tmp_path, now=now, extra=["--report"], env=report_env(bin_dir, token=STUB_TOKEN)
+    )
+    return proc, gh_log
+
+
+def newest_partner_listing(number: int, state: str, labels: list[str]):
+    return [(number, state, labels, PARTNER_DRIFT_TITLE.format(version=AHEAD))]
+
+
+def test_a_suppressed_declared_drift_beside_a_newest_lag_files_the_newest_issue(
+    tmp_path: Path,
+) -> None:
+    """#253 Phase 2 acceptance 1. The declared version's suppression is its own; the newest lag is
+    a separate version's finding: one listing, one create under V's partner title whose body names
+    V and D and carries State P for V, then the heartbeat, and exit 1."""
+    proc, log = newest_report_run(tmp_path, declared="suppressed", newest="drift")
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 1, out
+    assert "SUPPRESSED by #7" in proc.stdout, out
+    assert_filed_newest_only(log, AHEAD)
+    body = gh_flag(log, "issue create", "--body")
+    assert body.startswith(
+        f"`zer07labs/internal`'s newest release is **{AHEAD}**"
+    ), body
+    assert f"declares **{DRIFTING}**" in body, body
+    assert "found by the newest-version check" in body, body
+    assert f"| found by | the newest-version check (main declares `{DRIFTING}`) |" in body, body
+    assert f"State P — internal serves {AHEAD}" in body, body
+    assert f"./scripts/promote-to-partner.sh {AHEAD}" in body, body
+    assert "| time since it finished uploading to internal | 14400 minutes |" in body, body
+    assert STUB_TOKEN not in out
+
+
+def test_an_open_partner_issue_for_the_newest_version_gets_no_write(tmp_path: Path) -> None:
+    """#253 Phase 2 acceptance 2. The partner issue for V is open — filed earlier by the declared
+    question, when `main` still declared V. Same title, so it is recognised: no write, exit 1."""
+    proc, log = newest_report_run(tmp_path, listing=newest_partner_listing(11, "OPEN", []))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 1, out
+    assert gh_calls(log) == [issue_list_argv(), heartbeat_argv()], gh_calls(log)
+    assert "drift already reported on #11" in proc.stdout, out
+
+
+@pytest.mark.parametrize(
+    ("labels", "expected", "writes"),
+    [([SUPPRESSION_LABEL], 0, []), ([], 1, ["comment", "reopen"])],
+    ids=["closed-labelled", "closed-unlabelled"],
+)
+def test_a_closed_partner_issue_for_the_newest_version_walks_the_decision_table(
+    tmp_path: Path, labels: list[str], expected: int, writes: list[str]
+) -> None:
+    """#253 Phase 2 acceptance 3. Closed and labelled on V's partner title: suppressed, a
+    `::warning::` naming it, exit 0 (the suppression is V's, so the drift no longer votes). Closed
+    and unlabelled: comment THEN reopen, in that order, with the newest body, exit 1."""
+    proc, log = newest_report_run(tmp_path, listing=newest_partner_listing(11, "CLOSED", labels))
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == expected, out
+    calls = gh_calls(log)
+    assert [c[1] for c in calls if c[0] == "issue" and c[1] != "list"] == writes, calls
+    assert calls[0] == issue_list_argv() and calls[-1] == heartbeat_argv(), calls
+    if labels:
+        assert f"::warning::drift on {AHEAD} is SUPPRESSED by #11" in proc.stdout, out
+        assert "Partner still does not serve" in proc.stdout, out
+    else:
+        assert [c[2] for c in calls if c[:2] in (["issue", "comment"], ["issue", "reopen"])] == [
+            "11",
+            "11",
+        ], calls
+        text = gh_flag(log, "issue comment", "--body")
+        assert "found by the newest-version check" in text and f"**{AHEAD}**" in text, text
+
+
+def test_a_declared_drift_and_a_newest_drift_share_one_listing_and_file_two_issues(
+    tmp_path: Path,
+) -> None:
+    """#253 Phase 2 acceptance 4. Two versions, two findings, two titles — one listing, read once
+    and shared, then the heartbeat once."""
+    proc, log = newest_report_run(tmp_path, declared="drift", newest="drift")
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 1, out
+    calls = gh_calls(log)
+    assert [c[:2] for c in calls] == [
+        ["issue", "list"],
+        ["issue", "create"],
+        ["issue", "create"],
+        ["api", calls[-1][1]],
+    ], calls
+    assert calls[0] == issue_list_argv() and calls[-1] == heartbeat_argv(), calls
+    assert [c[3] for c in calls[1:3]] == [
+        DRIFT_TITLE.format(version=DRIFTING),
+        PARTNER_DRIFT_TITLE.format(version=AHEAD),
+    ], calls
+
+
+@pytest.mark.parametrize("declared", ["deferred", "warned"])
+@pytest.mark.parametrize(
+    "open_partner_issue", [True, False], ids=["open-partner-issue-for-V", "no-issue"]
+)
+def test_a_declared_grace_tier_beside_a_newest_clean_makes_no_github_call(
+    tmp_path: Path, declared: str, open_partner_issue: bool
+) -> None:
+    """#253 Phase 2 acceptance 5, the clean half (the drift half is
+    `test_with_report_a_declared_grace_tier_reaches_github_only_for_a_newest_drift`). The declared
+    question is in grace and the newest is clean: zero `gh` calls — even with an OPEN partner issue
+    for V that a close notice could point at. A newest clean never lists for itself."""
+    listing = newest_partner_listing(11, "OPEN", []) if open_partner_issue else []
+    proc, log = newest_report_run(tmp_path, declared=declared, newest="clean", listing=listing)
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0, out
+    assert "NEWEST CLEAN —" in proc.stdout, out
+    assert gh_calls(log) == [], gh_calls(log)
+    assert "can be closed" not in proc.stdout, out
+
+
+def test_a_newest_clean_says_its_issue_can_be_closed_when_the_declared_question_listed(
+    tmp_path: Path,
+) -> None:
+    """The other side of the guard: the declared question is clean, so it listed — and from that
+    same listing an open partner issue for V gets the close notice. No write, one listing."""
+    proc, log = newest_report_run(
+        tmp_path, declared="clean", newest="clean", listing=newest_partner_listing(11, "OPEN", [])
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0, out
+    assert f"::notice::#11 reports {AHEAD} missing from partner" in proc.stdout, out
+    assert gh_calls(log) == [issue_list_argv(), heartbeat_argv()], gh_calls(log)
+
+
+@pytest.mark.parametrize("newest", ["drift", "suppressed", "clean", "deferred"])
+@pytest.mark.parametrize("declared", ["clean", "drift", "suppressed", "deferred"])
+def test_exactly_one_listing_and_one_heartbeat_iff_github_was_read(
+    tmp_path: Path, declared: str, newest: str
+) -> None:
+    """#253 Phase 2 acceptance 6, plus the heartbeat rule, over every combination of the two
+    questions' GitHub-relevant states. A run reads GitHub iff the declared question is clean or a
+    drift (suppressed included — it had to list to learn that) or the newest is a drift (likewise).
+    When it does: exactly one listing and exactly one heartbeat. When it does not: no call at all."""
+    listing = newest_partner_listing(12, "CLOSED", [SUPPRESSION_LABEL]) if newest == "suppressed" else []
+    proc, log = newest_report_run(
+        tmp_path,
+        declared=declared,
+        newest="drift" if newest == "suppressed" else newest,
+        listing=listing,
+    )
+    out = proc.stdout + proc.stderr
+    reads = declared in ("clean", "drift", "suppressed") or newest in ("drift", "suppressed")
+    verbs = gh_verbs(log)
+    assert verbs.count("issue list") == (1 if reads else 0), verbs
+    assert verbs.count(heartbeat_verb()) == (1 if reads else 0), verbs
+    if reads:
+        assert verbs[0] == "issue list" and verbs[-1] == heartbeat_verb(), verbs
+    expected = 1 if declared == "drift" or newest == "drift" else 0
+    assert proc.returncode == expected, out
+
+
+@pytest.mark.parametrize("outage", [("issue", "list"), ("issue", "create")], ids=["list", "create"])
+def test_a_github_outage_beside_a_newest_drift_is_two_with_both_verdicts_printed(
+    tmp_path: Path, outage: tuple[str, str]
+) -> None:
+    """#253 Phase 2 acceptance 7. GitHub fails while a newest drift is being delivered: exit 2 —
+    a finding that could not be delivered is infrastructure, the declared drift's rule — and both
+    verdicts are already in the log, because they are printed before anything is reported. The
+    listing is never retried by a second question."""
+    proc, log = newest_report_run(tmp_path, declared="clean", newest="drift", fail_on=outage)
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 2, out
+    assert f"OK — the registry serves {DRIFTING} in both formats" in proc.stdout, out
+    assert "NEWEST DRIFT —" in proc.stdout, out
+    assert "503" in proc.stderr, out
+    assert gh_verbs(log).count("issue list") == 1, gh_verbs(log)
+    # The clean declared question's own outage warning is printed too when it was the listing.
+    if outage == ("issue", "list"):
+        # Reworded when a newest drift is pending: it must not promise a green run it won't have.
+        assert "The newest-version drift above cannot be filed either" in proc.stdout, out
+        assert "only the advisory notice is missing" not in proc.stdout, out
+
+
+def test_a_listing_outage_with_only_clean_questions_stays_green(tmp_path: Path) -> None:
+    """The contrast to acceptance 7: nothing to deliver, so a listing outage is a warning and the
+    healthy run stays 0 — the declared clean path's rule, unchanged by the newest question."""
+    proc, log = newest_report_run(
+        tmp_path, declared="clean", newest="clean", fail_on=("issue", "list")
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert gh_verbs(log).count("issue list") == 1, gh_verbs(log)
+
+
+def test_no_token_reaches_gh_and_the_gh_verbs_are_unchanged(tmp_path: Path) -> None:
+    """#253 Phase 2 acceptance 8, on the widest reporting path: a declared drift filed, and a
+    newest drift commented and reopened. No argv handed to `gh` carries the registry token, nor
+    does any output; and every `gh` call is one of the verbs this check has always used — plus the
+    one allowlisted read (`gh_writes` refuses any other `gh api`)."""
+    proc, log = newest_report_run(
+        tmp_path, declared="drift", newest="drift", listing=newest_partner_listing(11, "CLOSED", [])
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 1, out
+    calls = gh_calls(log)
+    for call in calls:
+        assert not any(STUB_TOKEN in arg for arg in call), call
+    assert set(gh_writes(log)) <= {"issue create", "issue comment", "issue reopen"}, gh_writes(log)
+    assert gh_writes(log) == ["issue create", "issue comment", "issue reopen"], gh_writes(log)
+    assert STUB_TOKEN not in out
+
+
+def test_a_suppression_is_scoped_to_its_own_version_and_title(tmp_path: Path) -> None:
+    """Per-version suppression. Closed-and-labelled issues for every OTHER thing — the partner
+    title of the DECLARED version, and the internal title of V — say nothing about V on partner.
+    The newest drift is filed."""
+    listing = [
+        (21, "CLOSED", [SUPPRESSION_LABEL], PARTNER_DRIFT_TITLE.format(version=DRIFTING)),
+        (22, "CLOSED", [SUPPRESSION_LABEL], DRIFT_TITLE.format(version=AHEAD)),
+    ]
+    proc, log = newest_report_run(tmp_path, listing=listing)
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 1, out
+    assert "SUPPRESSED" not in proc.stdout, out
+    assert_filed_newest_only(log, AHEAD)
+
+
+def test_a_declared_partner_lag_body_says_the_declared_question_found_it(tmp_path: Path) -> None:
+    """D4's other half: the shared title means the BODY says which question found it, so an
+    issue filed by the declared question says so too."""
+    proc, log = _partner_lag_run(tmp_path, [])
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    body = gh_flag(log, "issue create", "--body")
+    assert "| found by | the declared-version check |" in body, body
+    assert "newest-version" not in body, body
+
+
+# ── #253 Phase 2, verifier gaps ────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(("tagged", "cell"), [(True, "present"), (False, "**absent**")])
+def test_the_newest_issue_states_the_newest_versions_own_tag(
+    tmp_path: Path, tagged: bool, cell: str
+) -> None:
+    """The newest body's tag row is V's, read from git for V — not the declared version's (which
+    is tagged here in both cases), and not a constant."""
+    proc, log = newest_report_run(tmp_path, tag_newest=tagged)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    body = gh_flag(log, "issue create", "--body")
+    assert f"| tag `v{AHEAD}` | {cell} |" in body, body
+
+
+@pytest.mark.parametrize(
+    ("notice_for", "linked"), [(AHEAD, True), (DRIFTING, False)], ids=["for-V", "only-for-D"]
+)
+def test_the_newest_issue_cross_links_release_outcome_for_V_only(
+    tmp_path: Path, notice_for: str, linked: bool
+) -> None:
+    """An open `release-outcome` issue for V is linked from V's issue — it is the sign V's
+    `registry-smoke` may have failed, exactly when State P says not to promote. One open only for
+    the DECLARED version is about a different release and is not linked."""
+    listing = [(9, "OPEN", [], RELEASE_NOTICE_TITLE.format(version=notice_for))]
+    proc, log = newest_report_run(tmp_path, listing=listing)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    body = gh_flag(log, "issue create", "--body")
+    assert ("`release-outcome` also reported this release: #9" in body) is linked, body
+
+
+def test_a_declared_drift_beside_a_newest_clean_still_gets_the_close_notice(
+    tmp_path: Path,
+) -> None:
+    """The close-notice guard's other half: the declared question reached GitHub through a DRIFT,
+    not a clean — its listing is just as much in hand, so the open partner issue for V gets the
+    notice from it. One listing, the declared create, the heartbeat; nothing for V."""
+    proc, log = newest_report_run(
+        tmp_path, declared="drift", newest="clean", listing=newest_partner_listing(11, "OPEN", [])
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 1, out
+    assert f"::notice::#11 reports {AHEAD} missing from partner" in proc.stdout, out
+    calls = gh_calls(log)
+    assert [c[:2] for c in calls] == [["issue", "list"], ["issue", "create"], ["api", calls[-1][1]]]
+    assert calls[1][3] == DRIFT_TITLE.format(version=DRIFTING), calls[1]
+
+
+def test_a_git_clock_fault_with_report_reaches_no_github_even_beside_a_newest_drift(
+    tmp_path: Path,
+) -> None:
+    """The git-clock fault path files nothing: the checkout cannot be read, and no write leaves a
+    run whose instrument is broken. The newest drift is printed and votes 1 — and `gh` is never
+    called, not even to list."""
+    proc, log = newest_report_run(tmp_path, newest="drift", filler_tags=0)
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 1, out
+    assert "below TAG_FLOOR" in proc.stderr and "NEWEST DRIFT —" in proc.stdout, out
+    assert gh_calls(log) == [], gh_calls(log)
+
+
+def test_a_listing_outage_beside_two_drifts_is_two_with_both_verdicts_and_no_retry(
+    tmp_path: Path,
+) -> None:
+    """Declared drift and newest drift, the listing fails: exit 2, both verdicts in the log, ONE
+    listing attempt (the failure is cached, never retried by the second question), no write, and
+    no heartbeat — the drift path's handler returns before it."""
+    proc, log = newest_report_run(
+        tmp_path, declared="drift", newest="drift", fail_on=("issue", "list")
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 2, out
+    assert f"DRIFT — seam-sdk {DRIFTING} is not installable" in proc.stdout, out
+    assert "NEWEST DRIFT —" in proc.stdout and "503" in proc.stderr, out
+    assert gh_calls(log) == [issue_list_argv()], gh_calls(log)
+
+
+def test_a_newest_create_failing_after_the_declared_create_is_two_and_keeps_the_first(
+    tmp_path: Path,
+) -> None:
+    """The declared issue is filed, then the outage lands on the newest create: exit 2 (a finding
+    went undelivered), the declared issue stands — exactly one create succeeded — the newest one
+    was attempted once and failed, and the heartbeat is not reached."""
+    v_title = PARTNER_DRIFT_TITLE.format(version=AHEAD)
+    proc, log = newest_report_run(
+        tmp_path, declared="drift", newest="drift", fail_create_titled=v_title
+    )
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 2, out
+    calls = gh_calls(log)
+    assert [c[:2] for c in calls] == [["issue", "list"], ["issue", "create"], ["issue", "create"]]
+    assert [c[3] for c in calls[1:]] == [DRIFT_TITLE.format(version=DRIFTING), v_title], calls
+    filed = [ln for ln in proc.stdout.splitlines() if ln.startswith("filed a new drift issue:")]
+    assert filed == [f"filed a new drift issue: {DRIFT_TITLE.format(version=DRIFTING)}"], filed
+    assert "503" in proc.stderr, out
