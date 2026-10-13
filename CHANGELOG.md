@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.47.0 — 2026-10-13
+
 > **Breaking — offline verification of pre-#835-step-3 tenant history now fails.** Chain-head
 > attestation dispatch is strict (seam-runtime #835 step 4): a tenant's attestation verifies under v2
 > only, so every v1 tenant attestation the runtime minted before step 3 is refused by `seam-verify
