@@ -1,16 +1,16 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 33a4e71 tracking feat/835-step4-refuse-v1-tenant (refreshed 2026-10-12).
-     Pinned AHEAD of the default branch, deliberately: seam-runtime#1303 (#835 step 4) changes this file, and
-     seam-sdk's verifier ships its step-4 counterpart (seam-sdk#255, #257) alongside it. The exception ends
-     itself when #1303 squash-merges (the file becomes byte-identical on both refs). Movements relative to
-     the prior default-branch pin (a12d415, the runtime 0.46.0 train):
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 8d06722 (refreshed 2026-10-12).
+     One movement since the prior default-branch pin (a12d415, the runtime 0.46.0 train), landed with the
+     runtime 0.47.0 train: seam-runtime#1303, merged as 8d06722. Until it merged this copy was pinned ahead
+     of the default branch, tracking feat/835-step4-refuse-v1-tenant at 33a4e71, so that seam-sdk#257 could
+     ship the verifier's step-4 counterpart alongside it; the body has not changed since that pin.
      1. seam-runtime#835 step 4: §CHAIN_HEAD_ATTESTATION's verifier rule is strict — empty tenant → v1 only
         (a v2 signature over "" is refused), non-empty tenant → v2 only (the v1 fallback is gone). The reader
         obligations now refuse an empty payload tenant under a named envelope (formerly "tenant-unbound"),
         with or without strict verification; clause (a) requires the signature to verify under the one
         framing the tenant selects; clause (f0) drops the untenanted anchor's sole-tenant fallback — an
         untenanted anchor is v1 and seeds only the "" partition. This crate implements all of it.
-     #1303 now has runtime main merged in, so this copy also carries seam-runtime#1293's text verbatim, as
-     the prior pin a12d415 does; the movement above is the only difference.
+     The copy also carries seam-runtime#1293's text verbatim, as the prior pin a12d415 does; the movement
+     above is the only difference.
      Earlier movements, recorded by prior pins: #835 step 1's v2 framing (KAT vendored as
      `conformance/chain_head_attestation_v2_vector.json`), EVENT_REDRIVEN (#1176), the system-partition
      CHAIN_HEAD_ATTESTATION (#1205/#1196), the #802/#804 commitment note, the `tenant_seq` cutoff and the
