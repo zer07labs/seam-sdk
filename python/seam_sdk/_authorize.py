@@ -243,7 +243,7 @@ def build_authorize_request(
 
 # ── The per-request credential (`seam-request-call-v1`, #508) ──────────────────────────────────────
 # Opt-in identity for a subject-scoped call, carried in band alongside an already-obtained admission
-# ticket — see plans/request-credential.md. A caller that never passes ``credential=`` is unaffected;
+# ticket — see plans/archive/request-credential.md. A caller that never passes ``credential=`` is unaffected;
 # this module only ever produces metadata when asked.
 
 

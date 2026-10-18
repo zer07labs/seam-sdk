@@ -311,7 +311,7 @@ class _RawWithTrailing(_RawRpcError):
 
 def test_trailing_metadata_survives_the_mapping():
     raw = _RawWithTrailing(
-        grpc.StatusCode.FAILED_PRECONDITION,
+        grpc.StatusCode.PERMISSION_DENIED,
         "policy denied: unvoted governed round",
         trailing=(("x-seam-reason", "policy-denied"),),
     )
@@ -446,13 +446,14 @@ def test_trailing_metadata_survives_a_real_server_abort(aborting_server):
     """The second level, as this file's header requires: the table test above passes whether or not
     anything actually reads trailing metadata off a live channel. This one fails if it does not."""
     servicer, addr = aborting_server
-    servicer.abort_with = grpc.StatusCode.FAILED_PRECONDITION
+    # A policy refusal is PERMISSION_DENIED since the protocol pass (it was FAILED_PRECONDITION).
+    servicer.abort_with = grpc.StatusCode.PERMISSION_DENIED
     servicer.trailing = (
         ("x-seam-reason", "policy-denied"),
         ("grpc-status-details-bin", b"\x08\x09real-wire"),
     )
     with SeamClient.connect(addr) as client:
-        with pytest.raises(FailedPreconditionError) as excinfo:
+        with pytest.raises(PermissionDeniedError) as excinfo:
             client.authorize(Agent(SEED), "t", {})
 
     md = dict(excinfo.value.trailing_metadata())
@@ -523,14 +524,14 @@ def test_the_cause_chain_actually_reaches_the_raw_error():
     from seam_sdk.errors import _MappedStub
 
     raw = _RawWithTrailing(
-        grpc.StatusCode.FAILED_PRECONDITION, "policy denied: x", trailing=(("a", "b"),)
+        grpc.StatusCode.PERMISSION_DENIED, "policy denied: x", trailing=(("a", "b"),)
     )
 
     class _Stub:
         def Call(self, *a, **k):
             raise raw
 
-    with pytest.raises(FailedPreconditionError) as excinfo:
+    with pytest.raises(PermissionDeniedError) as excinfo:
         _MappedStub(_Stub()).Call()
 
     assert excinfo.value.__cause__ is raw, "the raw error must survive as __cause__"

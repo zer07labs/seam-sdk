@@ -38,6 +38,33 @@ def aid_from_pubkey(pubkey: bytes) -> str:
     return "aid:pubkey:ed25519:" + _b64url_nopad(pubkey)
 
 
+def derived_uuid(tag: str, data: bytes) -> uuid.UUID:
+    """The runtime's derived-UUID rule (seam-runtime ``docs/specs/authorize.v1.md``, P9).
+
+    ``h = SHA-256(tag || 0x00 || data)``; the id is ``h[0..16]`` with the RFC 9562 version-4 and
+    variant bits forced (``h[6] = (h[6] & 0x0f) | 0x40``, ``h[8] = (h[8] & 0x3f) | 0x80``). ``str()``
+    of the result is the lowercase hyphenated form the wire carries. One primitive serves every
+    derived id — the PoP ``message_id`` and the commitment TCT ``jti`` — so a new one is a call, not
+    a second transcription. Pinned by ``conformance/vectors.json``'s ``derived_uuid`` block.
+    """
+    h = bytearray(hashlib.sha256(tag.encode("ascii") + b"\x00" + data).digest()[:16])
+    h[6] = (h[6] & 0x0F) | 0x40
+    h[8] = (h[8] & 0x3F) | 0x80
+    return uuid.UUID(bytes=bytes(h))
+
+
+#: Domain tag of the PoP ``message_id`` derivation (P9).
+POP_MESSAGE_ID_TAG = "seam-pop-mid-v1"
+
+
+def pop_message_id(pop_nonce: str) -> uuid.UUID:
+    """The admission ``message_id``: ``derived_uuid("seam-pop-mid-v1", pop_nonce_ascii)``.
+
+    The input is the nonce's base64url ASCII text exactly as sent, not its decoded bytes.
+    """
+    return derived_uuid(POP_MESSAGE_ID_TAG, pop_nonce.encode("ascii"))
+
+
 def build_presentation(
     agent_seed: bytes, receiver_aid: str, pop_nonce: str, now_ms: int
 ) -> dict:
@@ -50,10 +77,8 @@ def build_presentation(
     pub = sk.public_key().public_bytes_raw()
     sender_aid = aid_from_pubkey(pub)
 
-    # message_id: deterministic from the nonce (no RNG); raw 16 bytes, not version-munged.
-    mid = uuid.UUID(
-        bytes=hashlib.sha256(b"seam-pop-mid" + pop_nonce.encode("ascii")).digest()[:16]
-    )
+    # message_id: derived from the nonce (no RNG) under the P9 rule — see `pop_message_id`.
+    mid = pop_message_id(pop_nonce)
     timestamp = now_ms // 1000
 
     proof_input = (
@@ -109,7 +134,7 @@ def explanation_digest(entries) -> bytes:
     confidence and a stated ``0.0`` are different bytes — that distinction is the point of this digest.
     Raises ``ValueError`` on an unknown kind or a non-canonical confidence (NaN, ±inf, outside
     ``[0.0, 1.0]``, or ``-0.0``) rather than hashing it. Normative:
-    ``seam-runtime/docs/specs/seam-commitment-digest.v2.md``."""
+    ``seam-runtime/docs/specs/seam-commitment-digest.v3.md``."""
     import math
 
     entries = list(entries)
@@ -167,28 +192,48 @@ def _commitment_explanation_digest(commitment: dict) -> bytes:
 
 
 def _seam_commitment_digest(commitment: dict) -> str:
-    """``seam-commitment-digest:v2`` (hex): SHA-256 over the length-prefixed domain tag and fields.
+    """``seam-commitment-digest:v3`` (hex): SHA-256 over the length-prefixed domain tag and fields.
 
-    Each field is prefixed with its 8-byte big-endian byte length (no separator), so the digest is
-    injective over ``(domain, id, action, authority, supersedes, auth_method, trust_basis, committer,
-    explanation_digest)`` — a ``\\0`` separator would let boundary-shifted fields collide. Field 8 is the
-    32 raw bytes of the explanation digest (see :func:`_commitment_explanation_digest`). v1 is deleted,
-    not dual-verified. Mirrors the runtime byte-for-byte.
+    Spec: seam-runtime ``docs/specs/seam-commitment-digest.v3.md``. Every field is ``F(x) = be64(len) ||
+    x`` (no separator), so the digest is injective over ``(domain, id, action, authority, supersedes,
+    auth_method, trust_basis, committer, explanation_digest)``. The length prefixes are load-bearing:
+    with a NUL separator instead, ``("a\\0b", "c")`` and ``("a", "b\\0c")`` would collide — identical
+    preimages, so one Commitment could verify under another's TCT — and these fields are arbitrary
+    text that may itself contain NUL. Never "simplify" them away. ``supersedes`` alone carries a presence
+    byte: ``0x00`` when absent (key missing or ``None``), ``0x01 || F(value)`` when present — so an
+    absent prior and a present empty one are different digests. Field 8 is the 32 raw bytes of the
+    explanation digest (see :func:`_commitment_explanation_digest`). v1 and v2 are deleted, not
+    dual-verified.
     """
-    h = hashlib.sha256()
-    for field in (
-        b"seam-commitment-digest:v2",
-        commitment["id"].encode(),
-        commitment["action"].encode(),
-        commitment["authority"].encode(),
-        (commitment.get("supersedes") or "").encode(),
-        commitment["auth_method"].encode(),
-        commitment["trust_basis"].encode(),
-        (commitment.get("committer") or "").encode(),
-        _commitment_explanation_digest(commitment),
-    ):
-        h.update(_be64_frame(field))
-    return h.hexdigest()
+    supersedes = commitment.get("supersedes")
+    out = [
+        _be64_frame(b"seam-commitment-digest:v3"),
+        _be64_frame(commitment["id"].encode()),
+        _be64_frame(commitment["action"].encode()),
+        _be64_frame(commitment["authority"].encode()),
+        b"\x00" if supersedes is None else b"\x01" + _be64_frame(supersedes.encode()),
+        _be64_frame(commitment["auth_method"].encode()),
+        _be64_frame(commitment["trust_basis"].encode()),
+        _be64_frame((commitment.get("committer") or "").encode()),
+        _be64_frame(_commitment_explanation_digest(commitment)),
+    ]
+    return hashlib.sha256(b"".join(out)).hexdigest()
+
+
+#: The ``ext`` key a Seam commitment self-attestation carries its statement under (RFC-AITP-0005).
+COMMITMENT_EXT_KEY = "com.zer07labs.seam"
+#: The only grant a commitment self-attestation TCT may carry.
+ATTESTATION_GRANT = "aitp.attestation"
+
+
+def _no_duplicate_keys(pairs: list) -> dict:
+    """``json.loads`` hook: refuse a duplicate object key rather than keep the last one silently."""
+    out: dict = {}
+    for k, v in pairs:
+        if k in out:
+            raise ValueError(f"duplicate JSON key {k!r}")
+        out[k] = v
+    return out
 
 
 def verify_tct(
@@ -196,10 +241,14 @@ def verify_tct(
 ) -> bool:
     """Independently verify a sealed commitment's rooted TCT — zero server trust, stock crypto only.
 
-    Verifies the EdDSA JWS against the issuer's key (recovered from its AID), checks the self-issued
-    claims (`typ`, `iss==sub==aud==issuer_aid`, `exp`), and that the bound `seam-commitment-digest:v2` grant
-    matches this exact commitment (tamper-evidence over the decided content, the committer, and the sealed
-    explanation). ``commitment`` carries ``committer`` and the ``explanation`` entries and/or the published
+    The TCT is an RFC-AITP-0005 self-attestation. Verifies the EdDSA JWS against the issuer's key
+    (recovered from its AID), the self-issued claims (`typ`, `iss==sub==aud==issuer_aid`, `exp`),
+    that `grants` is exactly `["aitp.attestation"]`, and that `ext` is exactly
+    `{"com.zer07labs.seam": {"type": "seam:commitment", "commitment_digest": <hex>}}` whose digest is
+    `seam-commitment-digest:v3` of this exact commitment (tamper-evidence over the decided content,
+    the committer, and the sealed explanation). A duplicate JSON key anywhere in the header or
+    payload, a statement carried in `grants` (the retired v2 shape), or an extra grant verifies
+    ``False``. ``commitment`` carries ``committer`` and the ``explanation`` entries and/or the published
     ``explanation_digest``; entries that disagree with the published digest, an unknown kind, or a
     non-canonical confidence verify ``False``.
     """
@@ -212,8 +261,12 @@ def verify_tct(
         Ed25519PublicKey.from_public_bytes(_aid_to_pubkey(issuer_aid)).verify(
             _b64url_decode(sig_b64), f"{header_b64}.{payload_b64}".encode("ascii")
         )
-        header = json.loads(_b64url_decode(header_b64))
-        payload = json.loads(_b64url_decode(payload_b64))
+        header = json.loads(
+            _b64url_decode(header_b64), object_pairs_hook=_no_duplicate_keys
+        )
+        payload = json.loads(
+            _b64url_decode(payload_b64), object_pairs_hook=_no_duplicate_keys
+        )
         if header.get("alg") != "EdDSA" or header.get("typ") != "aitp-tct+jwt":
             return False
         if not (
@@ -244,8 +297,19 @@ def verify_tct(
             exp
         ):  # RFC 7519: reject at/after expiry, truncating to whole seconds
             return False
-        want = "seam-commitment-digest:" + _seam_commitment_digest(commitment)
-        return want in payload.get("grants", [])
+        if payload.get("grants") != [ATTESTATION_GRANT]:
+            return False
+        ext = payload.get("ext")
+        if not isinstance(ext, dict) or list(ext) != [COMMITMENT_EXT_KEY]:
+            return False
+        stmt = ext[COMMITMENT_EXT_KEY]
+        if not isinstance(stmt, dict) or set(stmt) != {"type", "commitment_digest"}:
+            return False
+        if stmt["type"] != "seam:commitment":
+            return False
+        # Exact string compare: the runtime emits lowercase hex, and an uppercase spelling is a
+        # different statement, not a normalization opportunity.
+        return stmt["commitment_digest"] == _seam_commitment_digest(commitment)
     except Exception:
         return False
 
@@ -483,7 +547,7 @@ def call_sig(
 # ── The per-request credential (`seam-request-call-v1`, #508) ──────────────────────────────────────
 # A DIFFERENT domain tag from `seam-authorize-call-v2` above, deliberately, so a captured `Authorize`
 # call_sig is never spendable as a request credential and vice versa. See
-# `plans/request-credential.md` for the full contract; pinned by
+# `plans/archive/request-credential.md` for the full contract; pinned by
 # `conformance/request_sig_payload_vector.json`, generated from the runtime's Rust reference.
 REQUEST_SIG_CONTEXT = b"seam-request-call-v1"
 
@@ -542,7 +606,7 @@ def request_sig(
 
 # ── A14 authenticity framing (seam-event.v1) ─────────────────────────────────────────────────────────
 # frame(x) = u32le(len(x)) || x ; opt(x) = 0x00 if None else 0x01 || frame(x). Both transcribed from
-# `seam-event.v1.md`; they let a client verify a chain-head attestation or recompute a v2 record digest
+# `seam-event.v1.md`; they let a client verify a chain-head attestation or recompute a v4 record digest
 # in-language, from the published spec alone (the same framing the independent `verify/` tool uses).
 
 
@@ -550,63 +614,20 @@ def _frame(b: bytes) -> bytes:
     return struct.pack("<I", len(b)) + b
 
 
-def _opt(s: str | None) -> bytes:
-    return b"\x00" if s is None else b"\x01" + _frame(s.encode("utf-8"))
-
-
-def record_digest_v2(
-    decision_id: str,
-    tenant: str,
-    namespace: str,
-    ciphertext_digest: bytes,
-    sealed_at: int,
-    outcome: str,
-    mode: str | None,
-    policy_version: str | None,
-    supersedes: str | None,
-    schema_version: int = 2,
-) -> bytes:
-    """Recompute a v2 ``DECISION_SEALED`` record digest (``seam.audit.record-digest.v2``) from its on-wire
-    structural columns + ``ciphertext_digest`` (SHA256(ciphertext), tag 10). Compare to the event's wire
-    ``digest`` (tag 19) to catch a payload rewrite. Preimage order is NOT wire-tag order: ``outcome``
-    precedes the optional ``mode``/``policy_version``/``supersedes``; the ``opt`` presence byte is raw, so
-    ``None`` and ``""`` are distinct."""
-    # v3 has validated its integer slots since it was written; v2 never did, and ``struct.pack``
-    # covered for it on everything except ``bool`` — which subclasses ``int``, so ``sealed_at=True``
-    # digested as ``1``. Harmless while TypeScript did the same; a cross-language divergence in a
-    # signed value the moment TypeScript's ``uintSlot`` started refusing ``true``. Same rule, one
-    # function, three framings.
-    sealed_at = _uint_slot("sealed_at", sealed_at, 64)
-    schema_version = _uint_slot("schema_version", schema_version, 32)
-    pre = (
-        _frame(b"seam.audit.record-digest.v2")
-        + _frame(decision_id.encode())
-        + _frame(tenant.encode())
-        + _frame(namespace.encode())
-        + _frame(ciphertext_digest)
-        + _frame(struct.pack("<Q", sealed_at))
-        + _frame(outcome.encode())
-        + _opt(mode)
-        + _opt(policy_version)
-        + _opt(supersedes)
-        + _frame(struct.pack("<I", schema_version))
-    )
-    return hashlib.sha256(pre).digest()
-
-
-#: The three v3 sub-digests are fixed-width by the spec. A wrong-length value is refused rather than
+#: The four v4 sub-digests (tags 11/12/13/15) are fixed-width by the spec. A wrong-length value is refused rather than
 #: framed, because framing one would produce a garbage digest that a caller reports as a *rewrite* —
 #: mislabelling "this field is malformed" as "someone altered the record".
-_V3_DIGEST_LEN = 32
+_SUB_DIGEST_LEN = 32
 
 
 class RecordDigestStripError(ValueError):
-    """A ``schema_version = 3`` record is missing a field the v3 formula requires (wire tag 11 or 12).
+    """A v4 record is missing a field the formula requires (wire tag 11, 12, 14, 15, 16 or 17), or
+    carries a malformed sub-digest.
 
     **This is deliberately not a digest mismatch, and must never be reported as one.** The spec
-    (`seam-event.v1.md`, "Strip semantics for tags 11/12/13") makes `context_digest` and
-    `participation_digest` mandatory on a v3 payload and requires a consumer to *refuse* — never to
-    substitute an empty digest, and never to fall back to the v2 formula. Absent-when-required is a
+    (`seam-event.v1.md`, "Strip semantics for tags 11-17") makes those six fields mandatory on every
+    payload and requires a consumer to *refuse* — never to substitute an empty value; there is no
+    older formula to fall back to. Absent-when-required is a
     strip attack, and an operator has to be able to tell "someone removed a field" from "someone
     rewrote one", because the two have different responses.
 
@@ -625,7 +646,7 @@ class RecordDigestStripError(ValueError):
         super().__init__(message)
         #: The spec's field name, e.g. ``context_digest``.
         self.field = field
-        #: The ``DecisionSealed`` wire tag the field occupies — 11, 12 or 13.
+        #: The ``DecisionSealed`` wire tag the field occupies — 11 through 17.
         self.wire_tag = wire_tag
 
 
@@ -641,7 +662,7 @@ def _as_bytes(value: object) -> bytes | None:
     # NOTE there is no `isinstance(value, bytes)` fast path, and its absence is the point.
     # `bytes(value)` HONORS `__bytes__`, so a `bytes` subclass whose real buffer is 32 zeros but whose
     # `__bytes__` returns 32 `0xff`s would be hashed as the bytes it CLAIMS rather than the bytes it
-    # HOLDS — the same "ask the object what it would like to be hashed as" mistake `_v3_enc` avoids
+    # HOLDS — the same "ask the object what it would like to be hashed as" mistake `_rd_enc` avoids
     # for text. `memoryview(...).tobytes()` reads the C buffer, which no Python method can override.
     try:
         view = memoryview(value)  # type: ignore[arg-type]
@@ -661,14 +682,14 @@ def _as_bytes(value: object) -> bytes | None:
         view.release()
 
 
-def _v3_sub_digest(name: str, tag: int, value: object, optional: bool) -> bytes | None:
-    """One of the three v3 sub-digests (wire tags 11/12/13), validated as the spec requires: tags 11
-    and 12 are mandatory, tag 13 is genuinely optional, and all three must be exactly 32 bytes when
+def _sub_digest(name: str, tag: int, value: object, optional: bool) -> bytes | None:
+    """One of the four v4 sub-digests (wire tags 11/12/13/15), validated as the spec requires: tags 11,
+    12 and 15 are mandatory, tag 13 is genuinely optional, and all four must be exactly 32 bytes when
     present. ``optional`` selects which of those two contracts applies.
 
     Every refusal is a :class:`RecordDigestStripError`, whatever the proximate cause — absent, wrong
     type, wrong length. From the caller's side those are one condition: *this field is not a usable
-    32-byte digest, so no v3 digest exists.* Splitting them into different exception types would push
+    32-byte digest, so no v4 digest exists.* Splitting them into different exception types would push
     the work of re-joining them onto every caller, for no gain.
 
     The type check matters more in the TypeScript twin than here — there a 32-character string
@@ -676,13 +697,15 @@ def _v3_sub_digest(name: str, tag: int, value: object, optional: bool) -> bytes 
     one. Python would raise inside ``_frame`` instead, but as a bare ``TypeError`` naming neither the
     field nor the tag: a caller mistake reported as an internal one. Both are worth refusing by name.
     """
-    if value is None:
+    if value is None or (not optional and _as_bytes(value) == b""):
+        # A mandatory slot read off the wire arrives as b"" when absent (`len == 0` IS absence on
+        # tags 11/12/15), so the empty value is the same strip as None, reported as such.
         if optional:
             return None
         raise RecordDigestStripError(
-            f"a schema_version=3 record carries no {name} (wire tag {tag}), which the v3 formula "
-            f"requires. This is a STRIP, not a digest mismatch: refuse the record, do not substitute "
-            f"an empty digest and do not fall back to the v2 formula.",
+            f"a v4 record carries no {name} (wire tag {tag}), which the v4 formula requires. "
+            f"This is a STRIP, not a digest mismatch: refuse the record and do not substitute an "
+            f"empty digest.",
             name,
             tag,
         )
@@ -693,10 +716,10 @@ def _v3_sub_digest(name: str, tag: int, value: object, optional: bool) -> bytes 
             name,
             tag,
         )
-    if len(raw) != _V3_DIGEST_LEN:
+    if len(raw) != _SUB_DIGEST_LEN:
         raise RecordDigestStripError(
-            f"{name} (wire tag {tag}) is {len(raw)} bytes, not {_V3_DIGEST_LEN} — malformed, so no "
-            f"v3 digest can be computed from it. Reported as a refusal rather than hashed, because "
+            f"{name} (wire tag {tag}) is {len(raw)} bytes, not {_SUB_DIGEST_LEN} — malformed, so no "
+            f"v4 digest can be computed from it. Reported as a refusal rather than hashed, because "
             f"hashing it would surface a malformed field as though the record had been rewritten.",
             name,
             tag,
@@ -704,7 +727,7 @@ def _v3_sub_digest(name: str, tag: int, value: object, optional: bool) -> bytes 
     return raw
 
 
-def _v3_enc(s: str) -> bytes:
+def _rd_enc(s: str) -> bytes:
     """UTF-8 bytes of ``s``, read through the UNBOUND ``str.encode``.
 
     The Python analogue of the TypeScript twin's shadowed-``length`` hole: a ``str`` subclass may
@@ -712,20 +735,18 @@ def _v3_enc(s: str) -> bytes:
     what it would like to be hashed as. ``str.encode(value)`` asks the string. Same discipline as
     :func:`_as_bytes` — measure what you hash — applied to text.
 
-    Deliberately NOT routed through :func:`_opt`, which ``record_digest_v2`` shares and issue #56
-    freezes; the v3 optionals use :func:`_v3_opt_text` below instead. The duplication is the safety
-    property, as it is for the rest of the v3 formula.
+    The record-digest optionals use :func:`_rd_opt_text` below for the same reason.
     """
     return str.encode(s)
 
 
-def _v3_opt_text(x: str | None) -> bytes:
-    """``opt`` over text, encoded the same honest way. Same presence byte as :func:`_opt`."""
-    return b"\x00" if x is None else b"\x01" + _frame(_v3_enc(x))
+def _rd_opt_text(x: str | None) -> bytes:
+    """``opt`` over text, encoded the same honest way. ``opt(x) = 0x00`` when absent, ``0x01 || frame(x)`` when present."""
+    return b"\x00" if x is None else b"\x01" + _frame(_rd_enc(x))
 
 
-def _v3_text(name: str, value: object, optional: bool) -> str | None:
-    """A string slot of the v3 preimage, type-checked before it is encoded. Python's ``.encode()``
+def _rd_text(name: str, value: object, optional: bool) -> str | None:
+    """A string slot of the v4 preimage, type-checked before it is encoded. Python's ``.encode()``
     already refuses a non-string (``AttributeError``) and a lone surrogate (``UnicodeEncodeError``);
     naming the slot turns both into a diagnosis instead of a traceback, and keeps the refusal set
     identical to the TypeScript twin's, where neither refusal comes for free."""
@@ -739,18 +760,29 @@ def _v3_text(name: str, value: object, optional: bool) -> str | None:
     return value
 
 
+def _mandatory_text(name: str, tag: int, value: object) -> str:
+    """A mandatory v4 string slot (tags 14/16/17). Empty or ``None`` is a strip, never data: the spec
+    reads ``len == 0`` on these tags as absence, and absence is refused."""
+    if value is None or value == "":
+        raise RecordDigestStripError(
+            f"a v4 record carries no {name} (wire tag {tag}), which the v4 formula requires. "
+            f"This is a STRIP, not a digest mismatch: refuse the record.",
+            name,
+            tag,
+        )
+    return _rd_text(name, value, False)  # type: ignore[return-value]
+
+
 def _uint_slot(name: str, value: int, bits: int) -> int:
     """A fixed-width unsigned integer slot, range-checked before ``struct.pack`` refuses it less
     legibly. Python raises here either way; the TypeScript twin did NOT — ``DataView`` applies
     ToBigUint64/ToUint32 and wraps silently, so ``2**64 + 5`` wrote the same bytes as ``5``. Checking
     in both keeps the two implementations agreeing on which inputs have a digest at all.
 
-    This was ``_v3_uint`` and guarded only ``record_digest_v3``. The ``bool`` exclusion is why it had
-    to be shared: ``bool`` subclasses ``int``, so ``0 <= True < 1 << 64`` is simply true and a range
-    comparison alone digests ``sealed_at=True`` as ``1``. v3 refused that from the start; v2 and the
-    chain-head attestation did not, and once TypeScript's ``uintSlot`` began refusing ``true`` the two
-    languages disagreed about a signed value. Renamed and shared rather than copied: three copies of a
-    rule about which inputs have a digest is a divergence waiting for someone to fix only two."""
+    The ``bool`` exclusion is why it is shared: ``bool`` subclasses ``int``, so ``0 <= True < 1 << 64``
+    is simply true and a range comparison alone digests ``sealed_at=True`` as ``1``. Once TypeScript's
+    ``uintSlot`` began refusing ``true``, any framing that skipped this check disagreed across
+    languages about a signed value. One shared rule, not a copy per framing."""
     _require_int(name, value)
     if not 0 <= value < (1 << bits):
         raise ValueError(f"{name} is {value}, outside [0, 2^{bits})")
@@ -770,11 +802,53 @@ def _require_int(name: str, value: object) -> None:
 
 
 def _opt_bytes(b: bytes | None) -> bytes:
-    """``opt`` over raw bytes. Same presence byte as :func:`_opt`, which takes a `str`."""
+    """``opt`` over raw bytes. Same presence byte as :func:`_rd_opt_text`, which takes a `str`."""
     return b"\x00" if b is None else b"\x01" + _frame(b)
 
 
-def record_digest_v3(
+#: Domain tag of the v4 participants sub-digest (wire tag 15).
+PARTICIPANTS_DIGEST_DOMAIN_V4 = b"seam.audit.participants.v4"
+#: The only record-digest ``schema_version`` this SDK recomputes (P7).
+RECORD_DIGEST_SCHEMA_VERSION = 4
+
+
+class UnsupportedRecordDigestVersion(ValueError):
+    """A record's ``schema_version`` is not 4, so this SDK cannot verify it — **cannot-verify**, never a
+    pass and never a mismatch.
+
+    ``seam-event.v1.md`` §"Record digest" makes v4 the only formula and requires a verifier to *refuse*
+    every other ``schema_version`` as unknown: it must never skip one and never default to a formula it
+    was not asked for. v1-v3 were retired by the runtime's protocol pass (P7); a record sealed under
+    them is not verifiable by this SDK, by design. ``schema_version`` carries the value refused.
+    Subclasses ``ValueError`` so an existing ``except ValueError`` keeps catching it.
+    """
+
+    def __init__(self, schema_version: object) -> None:
+        super().__init__(
+            f"record digest schema_version {schema_version!r} cannot be verified: this SDK "
+            f"recomputes v{RECORD_DIGEST_SCHEMA_VERSION} only (v1-v3 were retired by P7)"
+        )
+        #: The ``schema_version`` that was refused.
+        self.schema_version = schema_version
+
+
+def participants_digest_v4(participants: list[str]) -> bytes:
+    """``participants_digest`` (wire tag 15) — ``seam.audit.participants.v4``.
+
+    ``SHA256(frame(domain) || le32(count) || frame(id) for each id in STORED order)``: no sorting, no
+    de-duplication, and the count is a bare ``le32``. The empty roster is a real 32-byte digest, never
+    an absent slot. Spec: ``seam-event.v1.md`` §"participants_digest".
+    """
+    if isinstance(participants, (str, bytes)):
+        raise TypeError("participants must be a list of str, not a single string")
+    ids = [_rd_text(f"participants[{i}]", x, False) for i, x in enumerate(participants)]
+    pre = _frame(PARTICIPANTS_DIGEST_DOMAIN_V4) + struct.pack("<I", len(ids))
+    for x in ids:
+        pre += _frame(_rd_enc(x))
+    return hashlib.sha256(pre).digest()
+
+
+def record_digest_v4(
     decision_id: str,
     tenant: str,
     namespace: str,
@@ -787,84 +861,98 @@ def record_digest_v3(
     context_digest: bytes,
     participation_digest: bytes,
     policy_rules_digest: bytes | None,
-    schema_version: int = 3,
+    classification: str,
+    participants_digest: bytes,
+    trust_basis_commitment: str,
+    auth_method: str,
+    schema_version: int = 4,
 ) -> bytes:
-    """Recompute a v3 ``DECISION_SEALED`` record digest (``seam.audit.record-digest.v3``).
+    """Recompute a ``DECISION_SEALED`` record digest (``seam.audit.record-digest.v4``) — the only formula.
 
-    v3 is v2 plus the three columns carrying the product's actual claims — what context the decision
-    consumed, who participated, and which policy rules gated the commitment. They arrive as **opaque
-    32-byte sub-digests on the wire** (tags 11/12/13); their internal formulas belong to the runtime
-    and to auditors, and are deliberately not reimplemented here. This function is a wire-input
-    recompute, exactly as :func:`record_digest_v2` is.
+    Transcribed from ``seam-event.v1.md`` §"Record digest (v4)"::
 
-    Three things the spec singles out as easy to get wrong, all of them load-bearing:
+        SHA256( frame(domain) ‖ frame(decision_id) ‖ frame(tenant) ‖ frame(namespace)
+              ‖ frame(ciphertext_digest) ‖ frame(le64(sealed_at)) ‖ frame(outcome)
+              ‖ opt(mode) ‖ opt(policy_version) ‖ opt(supersedes)
+              ‖ frame(context_digest) ‖ frame(participation_digest) ‖ opt(policy_rules_digest)
+              ‖ frame(classification) ‖ frame(participants_digest)
+              ‖ frame(trust_basis_commitment) ‖ frame(auth_method) ‖ frame(le32(schema_version)) )
 
-    * **Digest slots are offset by one from the proto tags.** ``context_digest`` is preimage slot 10
-      but wire tag 11. The new slots are *inserted before* ``schema_version``, never appended after
-      it — a verifier selects the whole formula by ``schema_version``, so position is fixed by the
-      spec rather than by append order.
-    * **Slots 10 and 11 are framed; slot 12 is opted.** The asymmetry is deliberate, not an
-      oversight: framing the two mandatory digests is precisely what stops "no participants" from
-      aliasing with "field stripped". ``policy_rules_digest`` is genuinely optional — absent means
-      no policy was bound, today's common case.
-    * **``None`` is not ``b""`` — and at THIS layer they are two different refusals, not two
-      different digests.** ``opt(None)`` is one byte and ``opt(b"")`` is five, so the presence byte
-      does keep them apart in the preimage. But the empty digest is outside these slots' value
-      domain entirely ({absent} ∪ {32 bytes}), so this function never hashes ``b""``: it refuses it.
-      Absence is spelled ``None`` here. A **wire** consumer must not pass ``b""`` through expecting
-      ``opt(Some(b""))`` — on the wire ``len == 0`` IS absence (a total mapping, per
-      ``seam-event.v1`` §"Presence on the wire"), so the caller maps it to ``None`` first. That
-      mapping is the streamed helpers' job; see :func:`seam_sdk.admin.verify_streamed_record_digest`.
-      (The "present-but-empty is data" rule is real, but it belongs to the *string* slots — ``mode``,
-      ``policy_version``, ``supersedes`` — where the empty string IS in the domain.)
+    The sub-digests (tags 11/12/13/15) are **opaque 32-byte wire inputs**; this is a wire-input
+    recompute. The argument order is the one seam-runtime's ``sdk-digest-parity`` gate calls with, so
+    do not reorder it.
 
-    Raises :class:`RecordDigestStripError` when ``context_digest`` or ``participation_digest`` is
-    absent or is not 32 bytes, and when a *present* ``policy_rules_digest`` is not 32 bytes. That is
-    a refusal, categorically distinct from the digest mismatch this function's *return value* is
-    compared for — see the class docstring.
+    * **Digest slots are offset by one from the proto tags**, and new slots sit before
+      ``schema_version``, which is always last.
+    * **``None`` is not ``b""``.** ``policy_rules_digest`` is genuinely optional (``opt``); absence is
+      spelled ``None`` here, and a wire consumer maps ``len == 0`` to ``None`` first (``seam-event.v1``
+      §"Presence on the wire"). ``mode``/``policy_version``/``supersedes`` are ``opt`` text, where
+      ``""`` is data.
+    * **Tags 11, 12, 14, 15, 16 and 17 are mandatory.** An absent (``None`` or empty) one raises
+      :class:`RecordDigestStripError` — a refusal, categorically distinct from the digest mismatch
+      this function's return value is compared for.
+
+    Raises :class:`UnsupportedRecordDigestVersion` for any ``schema_version`` other than 4.
     """
-    # Every slot is validated before a single byte is hashed. The rule is one sentence: this
-    # function refuses any input it cannot faithfully represent, rather than coercing it. Python
-    # refuses most of these on its own, but as bare `TypeError`/`AttributeError`/`struct.error` from
-    # somewhere inside the preimage — and the TypeScript twin refuses almost none of them without
-    # help. Validating explicitly is what makes the two agree on which inputs have a digest at all.
-    context_digest = _v3_sub_digest("context_digest", 11, context_digest, False)
-    participation_digest = _v3_sub_digest(
+    # The version gate comes first: a record of another version has no v4 digest at all, so nothing
+    # below (including a strip check) is meaningful for it.
+    if (
+        isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or schema_version != RECORD_DIGEST_SCHEMA_VERSION
+    ):
+        raise UnsupportedRecordDigestVersion(schema_version)
+    # Every slot is validated before a single byte is hashed: this function refuses any input it
+    # cannot faithfully represent, rather than coercing it, so Python and TypeScript agree on which
+    # inputs have a digest at all.
+    context_digest = _sub_digest("context_digest", 11, context_digest, False)
+    participation_digest = _sub_digest(
         "participation_digest", 12, participation_digest, False
     )
-    policy_rules_digest = _v3_sub_digest(
+    policy_rules_digest = _sub_digest(
         "policy_rules_digest", 13, policy_rules_digest, True
     )
+    participants_digest = _sub_digest(
+        "participants_digest", 15, participants_digest, False
+    )
+    classification = _mandatory_text("classification", 14, classification)
+    trust_basis_commitment = _mandatory_text(
+        "trust_basis_commitment", 16, trust_basis_commitment
+    )
+    auth_method = _mandatory_text("auth_method", 17, auth_method)
     ciphertext_bytes = _as_bytes(ciphertext_digest)
     if ciphertext_bytes is None:
         raise TypeError(
             f"ciphertext_digest (wire tag 10) must be bytes, not "
             f"{type(ciphertext_digest).__name__}"
         )
-    decision_id = _v3_text("decision_id", decision_id, False)
-    tenant = _v3_text("tenant", tenant, False)
-    namespace = _v3_text("namespace", namespace, False)
-    outcome = _v3_text("outcome", outcome, False)
-    mode = _v3_text("mode", mode, True)
-    policy_version = _v3_text("policy_version", policy_version, True)
-    supersedes = _v3_text("supersedes", supersedes, True)
+    decision_id = _rd_text("decision_id", decision_id, False)
+    tenant = _rd_text("tenant", tenant, False)
+    namespace = _rd_text("namespace", namespace, False)
+    outcome = _rd_text("outcome", outcome, False)
+    mode = _rd_text("mode", mode, True)
+    policy_version = _rd_text("policy_version", policy_version, True)
+    supersedes = _rd_text("supersedes", supersedes, True)
     sealed_at = _uint_slot("sealed_at", sealed_at, 64)
-    schema_version = _uint_slot("schema_version", schema_version, 32)
 
     pre = (
-        _frame(b"seam.audit.record-digest.v3")
-        + _frame(_v3_enc(decision_id))
-        + _frame(_v3_enc(tenant))
-        + _frame(_v3_enc(namespace))
+        _frame(b"seam.audit.record-digest.v4")
+        + _frame(_rd_enc(decision_id))
+        + _frame(_rd_enc(tenant))
+        + _frame(_rd_enc(namespace))
         + _frame(ciphertext_bytes)
         + _frame(struct.pack("<Q", sealed_at))
-        + _frame(_v3_enc(outcome))
-        + _v3_opt_text(mode)
-        + _v3_opt_text(policy_version)
-        + _v3_opt_text(supersedes)
+        + _frame(_rd_enc(outcome))
+        + _rd_opt_text(mode)
+        + _rd_opt_text(policy_version)
+        + _rd_opt_text(supersedes)
         + _frame(context_digest)
         + _frame(participation_digest)
         + _opt_bytes(policy_rules_digest)
+        + _frame(_rd_enc(classification))
+        + _frame(participants_digest)
+        + _frame(_rd_enc(trust_basis_commitment))
+        + _frame(_rd_enc(auth_method))
         + _frame(struct.pack("<I", schema_version))
     )
     return hashlib.sha256(pre).digest()
@@ -978,8 +1066,8 @@ def verify_chain_head_attestation(
     # `isinstance(attested_head, (bytes, bytearray, memoryview))`, which narrowed the argument from
     # any buffer-protocol object to those three: `array.array("B", ...)` verified `True` before and
     # raised after. `_as_bytes` is this module's one definition of "is this a byte sequence", it is
-    # what `record_digest_v3` uses, and it also settles the `memoryview` itemsize trap its own
-    # docstring describes — so a bare isinstance here would have left `record_digest_v3` and this
+    # what `record_digest_v4` uses, and it also settles the `memoryview` itemsize trap its own
+    # docstring describes — so a bare isinstance here would have left `record_digest_v4` and this
     # function disagreeing about what bytes are. Writing a second copy of a rule the module already
     # owns is the exact mistake this phase spent three verification rounds learning not to make, and
     # it was made again, here, in the fix for it.

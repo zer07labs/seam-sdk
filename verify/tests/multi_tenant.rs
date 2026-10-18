@@ -5,7 +5,7 @@
 //! `Cargo.toml`.
 //!
 //! `tests/goldens/two_tenant_chain.jsonl` is copied verbatim from the runtime
-//! (`seam-runtime/crates/seam-verify/tests/goldens/`, pinned at commit 2ea9f93, matching
+//! (`seam-runtime/crates/seam-verify/tests/goldens/`, pinned at the protocol-pass-2026-10 runtime pin e4c01ad, matching
 //! `docs/seam-event.v1.md`'s own pin): two tenants (`acme`, `globex`) interleaved, two
 //! `DECISION_SEALED` links and one issuer-signed `CHAIN_HEAD_ATTESTATION` each, both attestations
 //! agreeing with their own envelope tenant (the post-U-RT-3 Phase 2/3 shape).
@@ -21,7 +21,7 @@ const FAILED: i32 = 2;
 
 // The golden issuer (ed25519 seed 07×32) — same key `tests/authenticity.rs` and `tests/anchored.rs`
 // use; duplicated here rather than shared, in the spirit of this crate's deliberate
-// second-transcription discipline (see `record_digest_v3`'s doc comment).
+// second-transcription discipline (see `record_digest_v4`'s doc comment).
 const ISSUER: &str = "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw";
 
 fn b64d(s: &str) -> Vec<u8> {

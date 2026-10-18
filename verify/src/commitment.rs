@@ -1,11 +1,16 @@
-//! The Commitment and its rooted TCT: `seam-commitment-digest:v2`, `seam-explanation-digest:v1`, and
-//! the self-issued `aitp-tct+jwt` that carries the digest in its `grants`.
+//! The Commitment and its rooted TCT: `seam-commitment-digest:v3`, `seam-explanation-digest:v1`, and
+//! the self-attestation `aitp-tct+jwt` that carries the digest in its `ext` claim.
 //!
-//! Written from `seam-runtime/docs/specs/seam-commitment-digest.v2.md` (not vendored here; the
-//! evidence-bundle spec in `docs/evidence-bundle.v1.md` cites it) and pinned by that spec's two worked
-//! examples, by `conformance/commitment_digest_v2_vector.json` (a real TCT from the real signer) and
-//! by `conformance/vectors.json`'s `tct` block. The five SDK crypto shims implement the same framing;
-//! this is a sixth port, from the same text, linking none of them.
+//! Written from `seam-runtime/docs/specs/seam-commitment-digest.v3.md` (not vendored here; the
+//! evidence-bundle spec in `docs/evidence-bundle.v1.md` cites it) and pinned by
+//! `conformance/commitment_digest_v3_vector.json` (three cases, one a real TCT from the real signer)
+//! and by `conformance/vectors.json`'s `tct` block. The five SDK crypto shims implement the same
+//! framing; this is a sixth port, from the same text, linking none of them.
+//!
+//! **Where the digest travels.** The TCT is an AITP self-attestation: `grants` is exactly
+//! `["aitp.attestation"]` and the digest rides in `ext["com.zer07labs.seam"]`. The pinned spec's own
+//! "Where the digest travels" section still describes the retired two-grant form; the vectors are the
+//! source of truth for the token's shape, and they carry the `ext` form.
 //!
 //! Framing, unlike the record digest's: `F(x) = be64(len(x)) ‖ x` — **big-endian, 8-byte** lengths.
 //!
@@ -36,7 +41,7 @@ pub struct ExplanationEntry {
     pub rationale_ref: Option<String>,
 }
 
-/// A Commitment as the v2 framing reads it, plus its TCT.
+/// A Commitment as the v3 framing reads it, plus its TCT.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Commitment {
     pub id: String,
@@ -94,17 +99,32 @@ pub fn explanation_digest(entries: &[ExplanationEntry]) -> Result<[u8; 32], Stri
     Ok(h.finalize().into())
 }
 
-/// `seam-commitment-digest:v2`: SHA-256 over nine `F`-framed fields, in the spec's order. An absent
-/// `supersedes` is the empty string. Field 8 is the 32 RAW bytes of the explanation digest.
+/// The domain tag, field 0 of the commitment-digest preimage.
+pub const COMMITMENT_DIGEST_DOMAIN: &[u8] = b"seam-commitment-digest:v3";
+
+/// `seam-commitment-digest:v3`: SHA-256 over nine fields in the spec's order, each `F`-framed except
+/// field 4. `supersedes` carries a presence byte — absent is `0x00`, present is `0x01 ‖ F(value)` — so
+/// an absent prior and a present empty one are different digests. Field 8 is the 32 RAW bytes of the
+/// explanation digest.
 pub fn commitment_digest(c: &Commitment) -> Result<[u8; 32], String> {
     let explanation = explanation_digest(&c.explanation)?;
     let mut h = Sha256::new();
     for field in [
-        b"seam-commitment-digest:v2".as_slice(),
+        COMMITMENT_DIGEST_DOMAIN,
         c.id.as_bytes(),
         c.action.as_bytes(),
         c.authority.as_bytes(),
-        c.supersedes.as_deref().unwrap_or("").as_bytes(),
+    ] {
+        be64_frame(&mut h, field);
+    }
+    match &c.supersedes {
+        None => h.update([0u8]),
+        Some(s) => {
+            h.update([1u8]);
+            be64_frame(&mut h, s.as_bytes());
+        }
+    }
+    for field in [
         c.auth_method.as_bytes(),
         c.trust_basis.as_bytes(),
         c.committer.as_bytes(),
@@ -127,15 +147,96 @@ pub fn jwk_thumbprint(key: &[u8; 32]) -> String {
     b64.encode(Sha256::digest(jwk.as_bytes()))
 }
 
-/// Verify a Seam-minted, self-issued TCT against a **pinned** issuer AID, and that it roots exactly
-/// the Commitment whose digest is `digest`.
+/// The only grant a Seam commitment TCT carries: it is an AITP self-attestation, not a delegation.
+pub const ATTESTATION_GRANT: &str = "aitp.attestation";
+
+/// The `ext` namespace the commitment binding lives under.
+pub const EXT_NAMESPACE: &str = "com.zer07labs.seam";
+
+/// The `type` inside [`EXT_NAMESPACE`] that marks a commitment binding.
+pub const EXT_TYPE: &str = "seam:commitment";
+
+/// Parse JSON into a `Value`, REFUSING a duplicate object key at any depth.
+///
+/// `serde_json::Value` keeps the last of two equal keys silently. In a signed token that is a
+/// parser-differential hole: the signature covers both members, and a consumer that keeps the FIRST
+/// would read a different digest from the same bytes than this verifier does. So the token's claims
+/// are parsed strictly and a duplicate is a refusal, never a choice.
+fn parse_no_duplicate_keys(bytes: &[u8]) -> Result<serde_json::Value, String> {
+    use serde::de::{DeserializeSeed, Deserializer, Error, MapAccess, SeqAccess, Visitor};
+    use std::fmt;
+
+    struct Strict;
+    impl<'de> DeserializeSeed<'de> for Strict {
+        type Value = serde_json::Value;
+        fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
+            d.deserialize_any(self)
+        }
+    }
+    impl<'de> Visitor<'de> for Strict {
+        type Value = serde_json::Value;
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("a JSON value")
+        }
+        fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E> {
+            Ok(v.into())
+        }
+        fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> {
+            Ok(v.into())
+        }
+        fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> {
+            Ok(v.into())
+        }
+        fn visit_f64<E: Error>(self, v: f64) -> Result<Self::Value, E> {
+            serde_json::Number::from_f64(v)
+                .map(serde_json::Value::Number)
+                .ok_or_else(|| E::custom("a non-finite number"))
+        }
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> {
+            Ok(v.into())
+        }
+        fn visit_string<E>(self, v: String) -> Result<Self::Value, E> {
+            Ok(v.into())
+        }
+        fn visit_unit<E>(self) -> Result<Self::Value, E> {
+            Ok(serde_json::Value::Null)
+        }
+        fn visit_seq<A: SeqAccess<'de>>(self, mut a: A) -> Result<Self::Value, A::Error> {
+            let mut out = Vec::new();
+            while let Some(v) = a.next_element_seed(Strict)? {
+                out.push(v);
+            }
+            Ok(out.into())
+        }
+        fn visit_map<A: MapAccess<'de>>(self, mut a: A) -> Result<Self::Value, A::Error> {
+            let mut out = serde_json::Map::new();
+            while let Some(k) = a.next_key::<String>()? {
+                if out.contains_key(&k) {
+                    return Err(A::Error::custom(format!("duplicate key {k:?}")));
+                }
+                let v = a.next_value_seed(Strict)?;
+                out.insert(k, v);
+            }
+            Ok(out.into())
+        }
+    }
+
+    let mut de = serde_json::Deserializer::from_slice(bytes);
+    let v = Strict.deserialize(&mut de).map_err(|e| e.to_string())?;
+    de.end().map_err(|e| e.to_string())?;
+    Ok(v)
+}
+
+/// Verify a Seam-minted self-attestation TCT against a **pinned** issuer AID, and that it roots
+/// exactly the Commitment whose digest is `digest`.
 ///
 /// Checks, all fail-closed: exactly three non-empty compact-JWS segments, each strict unpadded
 /// base64url; header `typ == "aitp-tct+jwt"` and `alg == "EdDSA"`; the Ed25519 signature over
-/// `header.payload` under the pinned key; claims `ver == "aitp/0.2"`, `iss == aud == sub == pinned`;
-/// `iat <= now <= exp` (integer seconds); `cnf.jkt` is the thumbprint of the subject's key; and
-/// `grants` is exactly `["seam:commitment", "seam-commitment-digest:<hex>"]`, the two grants the spec
-/// says a Seam TCT carries, in that order.
+/// `header.payload` under the pinned key; claims parsed with duplicate keys REFUSED; `ver ==
+/// "aitp/0.2"`, `iss == aud == sub == pinned`; `iat <= now <= exp` (integer seconds); `cnf.jkt` is
+/// the thumbprint of the subject's key; `grants` is exactly `["aitp.attestation"]`; and `ext` is
+/// exactly `{"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":"<hex>"}}` — no other
+/// namespace, no other member — with `<hex>` the lowercase hex of `digest`.
 pub fn verify_tct(
     pinned_aid: &str,
     token: &str,
@@ -157,8 +258,8 @@ pub fn verify_tct(
         b64.decode(s)
             .map_err(|e| format!("the TCT's {what} segment is not base64url: {e}"))
     };
-    let header: serde_json::Value = serde_json::from_slice(&seg(h64, "header")?)
-        .map_err(|e| format!("the TCT header is not JSON: {e}"))?;
+    let header = parse_no_duplicate_keys(&seg(h64, "header")?)
+        .map_err(|e| format!("the TCT header is not strict JSON: {e}"))?;
     let payload_bytes = seg(p64, "payload")?;
     let sig: [u8; 64] = seg(s64, "signature")?
         .try_into()
@@ -176,8 +277,8 @@ pub fn verify_tct(
     vk.verify(signing_input, &Signature::from_bytes(&sig))
         .map_err(|_| "the TCT signature does not verify against the pinned issuer".to_string())?;
 
-    let claims: serde_json::Value = serde_json::from_slice(&payload_bytes)
-        .map_err(|e| format!("the TCT payload is not JSON: {e}"))?;
+    let claims = parse_no_duplicate_keys(&payload_bytes)
+        .map_err(|e| format!("the TCT payload is not strict JSON: {e}"))?;
     if !claims.is_object() {
         return Err("the TCT payload is not a JSON object".into());
     }
@@ -204,17 +305,33 @@ pub fn verify_tct(
     if claims.pointer("/cnf/jkt").and_then(|v| v.as_str()) != Some(jwk_thumbprint(&key).as_str()) {
         return Err("the TCT's cnf.jkt is not the thumbprint of the issuer key".into());
     }
-    let want = [
-        "seam:commitment".to_string(),
-        format!("seam-commitment-digest:{}", crate::verify::hex(digest)),
-    ];
-    let grants: Option<Vec<&str>> = claims
-        .get("grants")
-        .and_then(|g| g.as_array())
-        .map(|a| a.iter().filter_map(|x| x.as_str()).collect());
-    if grants.as_deref() != Some(&[want[0].as_str(), want[1].as_str()][..]) {
+    if claims.get("grants") != Some(&serde_json::json!([ATTESTATION_GRANT])) {
+        return Err(format!(
+            "the TCT's grants are not exactly [\"{ATTESTATION_GRANT}\"] (a commitment TCT is a \
+             self-attestation and carries no other grant)"
+        ));
+    }
+    let Some(ext) = claims.get("ext").and_then(|e| e.as_object()) else {
+        return Err("the TCT carries no ext object".into());
+    };
+    if ext.len() != 1 {
+        return Err(format!(
+            "the TCT's ext carries a namespace other than {EXT_NAMESPACE} (exactly one is allowed)"
+        ));
+    }
+    let Some(binding) = ext.get(EXT_NAMESPACE).and_then(|b| b.as_object()) else {
+        return Err(format!("the TCT's ext has no {EXT_NAMESPACE} object"));
+    };
+    if binding.len() != 2 || binding.get("type").and_then(|t| t.as_str()) != Some(EXT_TYPE) {
+        return Err(format!(
+            "the TCT's ext.{EXT_NAMESPACE} is not exactly {{\"type\":\"{EXT_TYPE}\",\
+             \"commitment_digest\":…}}"
+        ));
+    }
+    let want = crate::verify::hex(digest);
+    if binding.get("commitment_digest").and_then(|d| d.as_str()) != Some(want.as_str()) {
         return Err(
-            "the TCT's grants do not bind this Commitment's seam-commitment-digest:v2 (forged \
+            "the TCT's ext does not bind this Commitment's seam-commitment-digest:v3 (forged \
              token, or an edited field)"
                 .into(),
         );
@@ -239,10 +356,8 @@ mod tests {
         );
     }
 
-    /// Spec § Worked example — all fields empty.
-    #[test]
-    fn all_empty_commitment_matches_the_spec() {
-        let c = Commitment {
+    fn empty_commitment() -> Commitment {
+        Commitment {
             id: String::new(),
             action: String::new(),
             authority: String::new(),
@@ -252,10 +367,43 @@ mod tests {
             committer: String::new(),
             explanation: vec![],
             signed_artifact: String::new(),
-        };
+        }
+    }
+
+    /// `commitment_digest_v3_vector.json` case `all_empty`, inlined so a packaged crate tests it.
+    #[test]
+    fn all_empty_commitment_matches_the_vector() {
+        assert_eq!(
+            hex(&commitment_digest(&empty_commitment()).unwrap()),
+            "9238441205cd395f9507a5152e2c67f93fa83ca8d336d2ce7b8e01a385c3dd2e"
+        );
+    }
+
+    /// Case `empty_supersedes`: a present empty prior is `0x01 ‖ be64(0)`, never the absent `0x00`.
+    #[test]
+    fn empty_supersedes_is_not_absent_supersedes() {
+        let mut c = empty_commitment();
+        c.supersedes = Some(String::new());
         assert_eq!(
             hex(&commitment_digest(&c).unwrap()),
-            "78edca52ba1e88f13a78e5569742bfce0b51474ca840bf38a8dde414d5515784"
+            "b7f0e7a2a14e91f0d7dc1a56781a39f7601bce4df979f3b25a58aa9d86d3263c"
+        );
+    }
+
+    /// The domain literal the cross-language framing test greps for.
+    #[test]
+    fn the_domain_tag_is_v3() {
+        assert_eq!(COMMITMENT_DIGEST_DOMAIN, b"seam-commitment-digest:v3");
+    }
+
+    #[test]
+    fn a_duplicate_key_is_refused_at_any_depth() {
+        assert!(parse_no_duplicate_keys(br#"{"a":1,"a":1}"#).is_err());
+        assert!(parse_no_duplicate_keys(br#"{"x":{"y":[{"z":1,"z":2}]}}"#).is_err());
+        assert!(parse_no_duplicate_keys(br#"{"a":1} trailing"#).is_err());
+        assert_eq!(
+            parse_no_duplicate_keys(br#"{"a":[1,2.5,"s",null,true],"b":{}}"#).unwrap(),
+            serde_json::json!({"a":[1,2.5,"s",null,true],"b":{}})
         );
     }
 

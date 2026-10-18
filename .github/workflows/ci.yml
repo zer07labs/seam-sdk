@@ -245,7 +245,8 @@ jobs:
     runs-on: ubuntu-latest
     # Bounded because this job SPAWNS A SERVER. If the binary ever stops recognising a flag and
     # starts serving instead of exiting, an unbounded job waits on the 6-hour platform default.
-    timeout-minutes: 20
+    # 45 while SEAM_RUNTIME_BUILD_REF is set (protocol pass, #265); back to 20 at the un-pin.
+    timeout-minutes: 45
     permissions:
       packages: read
     env:
@@ -254,7 +255,7 @@ jobs:
       # merges (images.yml pushes only on main, so an unmerged branch has no image). First used for the
       # 0.44.0 train (seam-runtime#1269); pair it with a BUF_MODULE pin in the Makefile, and raise
       # timeout-minutes to 45 while it is set (a cold release build of seamd takes most of 20).
-      SEAM_RUNTIME_BUILD_REF: ""
+      SEAM_RUNTIME_BUILD_REF: e4c01ad336e73cc5a373218029809fa708624ee4  # protocol-pass-2026-10 (#265); "" at the un-pin
     steps:
       - uses: actions/checkout@v4
       - name: Mint a seam-deps-bot App token, scoped to seam-runtime

@@ -19,7 +19,7 @@ const USAGE: i32 = 1;
 
 // The golden issuer (ed25519 seed 07×32) — same key every other `tests/*.rs` file in this crate
 // uses; duplicated here rather than shared, in the spirit of this crate's deliberate
-// second-transcription discipline (see `record_digest_v3`'s doc comment).
+// second-transcription discipline (see `record_digest_v4`'s doc comment).
 const ISSUER: &str = "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw";
 
 fn b64e(b: &[u8]) -> String {

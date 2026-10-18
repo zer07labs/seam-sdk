@@ -368,8 +368,8 @@ architecture as the accidental arbiter — a normative rule that is not one. All
 outside `[-2^63, 2^63)` explicitly. Python and TypeScript need no such bound alone; they carry Go's
 constraint so the five agree, which is the same trade this whole decision is made of.
 3. **It is the only one with a written rationale.** The type assertion that *is* the rule
-   (`exp, ok := payload["exp"].(float64)`, `go/crypto/crypto.go:316`) and the truncation semantics
-   below it (`go/crypto/crypto.go:320-325`) are both argued in comments at the code; the other two
+   (`exp, ok := payload["exp"].(float64)`, `go/crypto/crypto.go:402`) and the truncation semantics
+   below it (`go/crypto/crypto.go:413-420`) are both argued in comments at the code; the other two
    rules were the shortest expression that worked in that language.
 
 The alternative considered and rejected was **union semantics** — accept anything any SDK accepts,
@@ -715,7 +715,7 @@ wrong answers rather than misses:
 - **In a table row the subject wins.** `PROGRESS.md`'s repo-map row for `python/seam_sdk/crypto.py`
   names `python/seam_sdk/admin.py:148` mid-sentence and then continues with four more bare
   references, all of which are crypto.py. Binding them to the nearer citation reports
-  `python/seam_sdk/crypto.py:771` as past-EOF — it is `_opt_bytes`, and the claim is true.
+  `python/seam_sdk/crypto.py:804` as past-EOF — it is `_opt_bytes`, and the claim is true.
 - **Inheritance must not cross a line.** `PROGRESS.md` writes `p1a:103-107` followed by bare
   companions, where `p1a` is a shorthand alias for a sibling-repo spec and not a path at all. A
   paragraph-scoped resolver walks past it and binds those references to whatever file the previous
@@ -1219,7 +1219,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:1386-1408` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:1426-1448` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -1545,7 +1545,7 @@ not as written.
 - **Correction to the entry's blast-radius claim:** "every such digest was wrong, so no correct
   caller breaks" is too strong. A proto3-JSON int64-as-string (`sealedAt: "123"`) coerced
   *correctly* through `BigInt` under the old TS behavior and is now refused. The refusal is loud, at
-  the first record, and names the fix (`ts/src/crypto.ts:910-915`) — and accepting strings reopens
+  the first record, and names the fix (`ts/src/crypto.ts:1002-1006`) — and accepting strings reopens
   `BigInt("")→0n` and `BigInt([5])→5n`. The choice stands; the justification does not extend to
   "nothing that used to work stops working."
   *(Citation corrected 2026-09-03. It named lines 509-522, which then held `v3Text` — the string slot
@@ -1557,16 +1557,23 @@ not as written.
 - **Verdict:** Confirm. **Status:** CONFIRMED.
 
 ### The v1 skip is a downgrade hole, closed structurally rather than documented
-- **Reviewer (Fable):** CONFIRM. Every load-bearing claim resolves. The guard keys on the four
-  columns and never on the version alone (`verify/src/verify.rs:805-815`); a genuine v1 record falls
-  through to `continue` and is tested twice — `verify/tests/authenticity.rs:243`
-  (`a_v1_record_is_link_verified_but_not_recomputed`, whose skipped-not-recomputed assertion is at
-  `verify/tests/authenticity.rs:259-262`) and `verify/tests/authenticity.rs:982`
-  (`a_genuine_v1_record_is_still_skipped_not_refused`). The per-column parametrization at
-  `verify/tests/authenticity.rs:944-947` exercises each column with the other three removed, and the
-  comment immediately above it records the decoy that forced it: "a decoy that guarded only on tag
-  10 passed an earlier version of this test, leaving the three v3 columns unchecked with a green
-  suite."
+- **Superseded by the protocol pass (seam-sdk#265, `verify/DECISIONS.md` D-038).** The runtime's
+  P7 retired record digests v1-v3 with no dual-verify, so there is no v1 skip left to guard: every
+  `schema_version` other than 4 is cannot-verify. A genuine v1 record is now refused as retired, not
+  link-verified (`verify/tests/authenticity.rs:243`, `a_v1_record_is_refused_as_retired_not_link_verified`).
+  A relabel-to-v1-v3 lands on the same refusal with its columns present or absent; that case is
+  `verify/tests/authenticity.rs:815`, `every_retired_schema_version_is_refused_never_skipped`.
+  With one formula there is nothing to
+  downgrade into, which is the structural close this entry argued for, taken to its end. The record
+  below is kept as history; the tests it named were deleted with v1-v3, so its references are no
+  longer line-anchored.
+- **Reviewer (Fable), historical:** CONFIRM. Every load-bearing claim resolved at the time. The guard
+  keyed on the four columns and never on the version alone; a genuine v1 record fell through to
+  `continue` and was tested twice (`a_v1_record_is_link_verified_but_not_recomputed` and
+  `a_genuine_v1_record_is_still_skipped_not_refused`). A per-column parametrization exercised each
+  column with the other three removed, and the comment above it recorded the decoy that forced it:
+  "a decoy that guarded only on tag 10 passed an earlier version of this test, leaving the three v3
+  columns unchecked with a green suite."
 
   **Correction, found while writing the entry above.** Three of those references were written as
   bare `:N` shorthand — `` `:878` ``, `` `:843-875` ``, `` `:841` `` — continuing the full path in
@@ -1581,8 +1588,9 @@ not as written.
   merely the range — repointing alone would have repaired the instance and left the class. The class
   itself is recorded on #73.
 
-  The spec sentence the decision rests on is quoted verbatim from `verify/docs/seam-event.v1.md`:
-  `ciphertext_digest` "is absent (no wire bytes) only on `schema_version = 1` payloads." That
+  The spec sentence the decision rested on ("is absent (no wire bytes) only on `schema_version = 1`
+  payloads") left the vendored spec with the protocol pass. What replaces it is quoted verbatim from
+  `verify/docs/seam-event.v1.md`: "Every payload **must** carry `ciphertext_digest`". That
   quote is checked by content rather than by line number — see *Citations into vendored files are
   quoted, never line-anchored* in this file for why this one carries no `:N`.
 - **Verdict:** Confirm. **Status:** CONFIRMED.
@@ -2041,7 +2049,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:1418` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:1458` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -2519,3 +2527,33 @@ stated trigger mechanism was wrong.
 a house rule (append at true EOF; in-place insertion only for amendments to entries below
 `DECISIONS.md:1980`). 0 changed in substance, 0 deferred, 1 settled without escalation. No
 follow-up code work needed before the next `/ship`.
+
+## 2026-10-18 — protocol pass 2026-10: scope, pins and the judgement calls (seam-sdk#265)
+
+- **Scope is the scoped plan's items 1-15; B7 (P-256) is out.** The brief said items 1-9. Item 7
+  requires `conformance/vectors.json` to be byte-identical to the runtime's, and that file now carries
+  the commitment v3 digest and the self-attestation JWS, so items 10 and 11 come with it. Items 12 and
+  13 are what a green PR against the branch needs, and 14-15 are docstrings. B7 needs nothing in this
+  SDK (the scoped plan's "Checked, not needed") and is a separate later pass.
+- **Runtime pin:** `protocol-pass-2026-10` @ `e4c01ad336e73cc5a373218029809fa708624ee4`. Proto, vectors and the
+  two vendored specs are unchanged between the pin and the branch head at the time of writing
+  (`008883e`); only `docs/specs/seam-commitment-digest.v3.md`, which this SDK does not vendor, moved.
+- **The TCT shape comes from the vectors, not the spec prose.** At the pin,
+  `seam-commitment-digest.v3.md` still describes the digest travelling in `grants`. The vector's JWS
+  carries `grants: ["aitp.attestation"]` and the digest in `ext["com.zer07labs.seam"]`, matching the
+  owner plan's B5. All six implementations follow the vector.
+- **The extended vectors file is `conformance/vectors_extended.json`**, the runtime's
+  `conformance_vectors_extended.json` vendored whole under the runtime's own shape (keyed by case name);
+  it replaces `record_digest_v3_extended.json`, and the readers changed shape with it.
+- **`contract/wire-framing.json` stays `supported: 3`**, in lockstep with the runtime, which still
+  dispatches `WIRE_FRAMING_VERSION: "3"` at the pin. The framing changes would justify 4 by that
+  file's own rules; a bump must happen on both sides at once, so it is left as a cross-repo item.
+- **Event field manifest +4 (`DecisionSealed` 14-17).** The gate refused the four new fields; they are
+  carried, not waived: both streamed recomputes (`verify_streamed_record_digest`, TS twin) bind them
+  under v4. The manifest was written after that, and the gate exits 0.
+- **Live session ids carry a suffix.** P4 refuses short session ids, so every live test id gained a
+  22+ character suffix. No client-side pre-validation was added: the helpers are opt-in, and the
+  runtime is the authority.
+- **CI pins.** `Makefile` `BUF_MODULE` → `buf.build/zer07labs/seam:train-0.48.0` and
+  `SEAM_RUNTIME_BUILD_REF` → the pin (timeout 45), precedent 0.45.0 (#237). Both revert at the un-pin.
+  The BSR label must be pushed from the runtime side; this repo does not push the runtime's module.

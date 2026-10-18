@@ -1,7 +1,7 @@
 {
   "format": "seam-evidence-bundle.v1",
   "scope": "decision",
-  "decision_id": "dec:d1",
+  "decision_id": "dec:design-partner:d1-0000000000000000000",
   "tenant": "design-partner",
   "exported_at": 2000,
   "issuer": {
@@ -11,7 +11,7 @@
   },
   "inclusion": {
     "decision_offset": 5,
-    "record_checksum": "iZLAvVsrT0+iElqMlQK/u4dcuxwVuLaRvyRXyammtX8=",
+    "record_checksum": "trO6FxUqSYEHT1vUqZTykxZL2ymFEqRsIb4bAzOCB8w=",
     "anchor_offset": 3,
     "anchor_attested_len": 2,
     "window_events": 4,
@@ -20,27 +20,27 @@
   },
   "files": {
     "events.jsonl": {
-      "sha256": "d00dfc39a9554c1ab9f3b2d377c4723faa6f32204654a57e22ffc0c97c60dbfa",
-      "bytes": 3466
+      "sha256": "61cc742e5c1414e27f3818a2368981a47aeec863683522492e07bd87dc372587",
+      "bytes": 4212
     },
     "anchor.json": {
-      "sha256": "6082f7fe87542b9c8ff08931f3aaff03b86112f64581d6cfebfc508bcdc16d86",
+      "sha256": "381ed4d09a2f88c4542d100a79cd6aa03e5dec931a6c1dbf73813ba0fd9232cc",
       "bytes": 317
     },
     "commitment.json": {
-      "sha256": "73e188a2e5f3a90203340868096ba3b689481fc2180466012c7cac9f8da6d73d",
-      "bytes": 2037
+      "sha256": "97545b77ac01cc713fd670ec48ce7666daf116742f9c36c54157b2320165befd",
+      "bytes": 2109
     },
     "binding.json": {
-      "sha256": "d0534e57c0d01367fb8c31489528563920ede3120c504e35a49571d54e5a2b1e",
-      "bytes": 421
+      "sha256": "3f28a125fe7b31085d8ab0607d2341168fa56f851c62dc849e41b147a9644a51",
+      "bytes": 456
     },
     "context.json": {
       "sha256": "44c33718c3d7e6ca7b7697e1c5be42dd5af4db34f7867d88e214940a51e488ae",
       "bytes": 445
     },
     "policy.json": {
-      "sha256": "2393d89814bb700367a478dfb8b81a9ba9f8f23c1b285cb4974bcaacebc9c41e",
+      "sha256": "5d6801ad100a0cc1d8177f65b3cf168f11a2807a859586fef3b488bf14b105ec",
       "bytes": 247
     }
   },

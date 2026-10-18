@@ -16,6 +16,46 @@ than trusting a summary here.
 
 ## Unreleased
 
+> **Breaking — requires the runtime release that carries seam-runtime `protocol-pass-2026-10`;
+> no compatibility with any earlier runtime.** Pinned and vendored from `protocol-pass-2026-10` @
+> `e4c01ad336e73cc5a373218029809fa708624ee4`. An earlier runtime refuses this SDK's PoP `message_id`, and this
+> SDK refuses an earlier runtime's v3 records as cannot-verify. Upgrade the runtime and the SDK together.
+
+### Changed — protocol pass 2026-10 (seam-sdk#265) — BREAKING
+- **PoP `message_id` is derived (P9), in all five SDKs.** `derived_uuid(tag, input)` =
+  `SHA-256(tag ‖ 0x00 ‖ input)[0..16]` with the RFC 9562 v4 version and variant bits forced;
+  `message_id = derived_uuid("seam-pop-mid-v1", pop_nonce)`. The un-tagged form is gone; there is no
+  dual `message_id`. KAT `kat-derived-uuid-001` (`27b131ae-bcc6-4466-ab32-1d0f896453b1`) and the
+  `message_id` vectors are in `conformance/vectors.json`.
+- **Record digest v4 only (P7).** `record_digest_v4` / `recordDigestV4` replace v2 and v3, which are
+  deleted. v4 adds `DecisionSealed` tags 14-17 (`classification`, `participants_digest`,
+  `trust_basis_commitment`, `auth_method`), all mandatory: an absent or empty one raises
+  `RecordDigestStripError` naming the field and wire tag. Any `schema_version` other than 4 raises
+  `UnsupportedRecordDigestVersion` (cannot-verify), never a false tamper verdict. `seam-verify` applies
+  the same rule. `conformance/record_digest_v3_extended.json` is replaced by
+  `conformance/vectors_extended.json`, vendored byte-identical from the runtime.
+- **Commitment digest v3 and the self-attestation TCT (B3/B5), in all five SDKs and `seam-verify`.**
+  `seam-commitment-digest:v3` length-prefixes every field and frames `supersedes` with a presence byte.
+  A sealed commitment's TCT is an AITP self-attestation: `grants == ["aitp.attestation"]`, the digest in
+  `ext["com.zer07labs.seam"]`, `iss == sub == aud`; a duplicate JSON key is refused. v2 is deleted.
+- **Errors carry Seam's error class (P11).** `SeamRpcError.reason`, `.macp_code` (only on a `PROTOCOL`
+  refusal, an open string so a future MACP code needs no SDK release) and `.retry_after` (seconds,
+  from `RetryInfo` on a load-shed), read from `grpc-status-details-bin` with no new dependency. TS:
+  `reason`, `macpCode`, `retryAfter`. **A policy refusal is now `PERMISSION_DENIED`**
+  (`PermissionDeniedError`), not `FAILED_PRECONDITION`; tell it apart from `SCOPE_DENIED` and
+  `FACT_ATTESTOR_REJECTED` by `reason`.
+- **`IssueChallenge` sends `IssueChallengeRequest` (P3)**, not `google.protobuf.Empty`.
+- **Session and decision ids (P4/P5).** New helpers `validate_session_id`, `is_valid_session_id`,
+  `decision_id_for_session`, `parse_decision_id`, `DecisionId` (TS: `validateSessionId`,
+  `isValidSessionId`, `decisionIdForSession`, `parseDecisionId`). A session id is a lowercase v4/v7 UUID
+  or a 22-128 byte token from `[A-Za-z0-9_-]`; a decision id is `dec:{tenant}:{session}`. The runtime
+  refuses any other session id; the helpers are opt-in, so the clients do not pre-validate.
+- **Policy documents:** the vendor rule key is `rules["x-com.zer07labs.seam"]` (was `rules.seam`), and
+  the runtime accepts policy `schema_version` 3 only. Docstrings updated.
+- `seam.event.v1`: the event field manifest gains the four `DecisionSealed` fields above (106 fields).
+- `verify/docs/seam-event.v1.md` and `evidence-bundle.v1.md` re-vendored @ `e4c01ad` tracking
+  `protocol-pass-2026-10`; `verify/fixtures/evidence-bundle/` re-captured from the pinned runtime.
+
 ## 0.47.0 — 2026-10-13
 
 > **Breaking — offline verification of pre-#835-step-3 tenant history now fails.** Chain-head

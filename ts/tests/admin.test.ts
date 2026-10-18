@@ -70,7 +70,7 @@ function admin(mgmtUrl: string, ...scopes: string[]): SeamAdminClient {
 async function sealOne(dataAddr: string): Promise<{ subject: string; decisionId: string }> {
   const client = SeamClient.connect(`http://${dataAddr}`);
   const agent = new Agent(new Uint8Array(32).fill(42));
-  const dec = await client.runDecision(agent, "ts-admin-seal", ["fraud-v3", "risk-v2"], [["fraud-v3", "BLOCK"], ["risk-v2", "BLOCK"]]);
+  const dec = await client.runDecision(agent, "ts-admin-seal-sid-0123456789abcdef", ["fraud-v3", "risk-v2"], [["fraud-v3", "BLOCK"], ["risk-v2", "BLOCK"]]);
   assert.equal(dec.outcome, "Resolved");
   return { subject: agent.aid, decisionId: dec.decisionId };
 }

@@ -41,9 +41,11 @@ def test_full_round_trip(server):
     client = SeamClient.connect(server)
     agent = Agent(bytes([42] * 32))  # the enrolled reference agent
 
+    # Session ids follow the runtime's P4 rule (a v4/v7 UUID, or a token of at least 22 chars from
+    # [A-Za-z0-9_-]); every live id in this file carries the same suffix to clear the floor.
     dec = client.run_decision(
         agent,
-        "py-int",
+        "py-int-sid-0123456789abcdef",
         ["fraud-v3", "risk-v2"],
         [("fraud-v3", "BLOCK"), ("risk-v2", "BLOCK")],
     )
@@ -66,10 +68,10 @@ def test_session_lifecycle_seals(server):
     client = SeamClient.connect(server)
     agent = Agent(bytes([42] * 32))
 
-    client.open_session(agent, "py-sess", ["lead", "peer"])
-    client.submit_proposal("py-sess", "lead", "p1", "BLOCK")
-    client.submit_vote("py-sess", "peer", "p1", "APPROVE")
-    step = client.submit_commit("py-sess", "c1", "BLOCK")
+    client.open_session(agent, "py-sess-sid-0123456789abcdef", ["lead", "peer"])
+    client.submit_proposal("py-sess-sid-0123456789abcdef", "lead", "p1", "BLOCK")
+    client.submit_vote("py-sess-sid-0123456789abcdef", "peer", "p1", "APPROVE")
+    step = client.submit_commit("py-sess-sid-0123456789abcdef", "c1", "BLOCK")
 
     assert step.state == "Resolved"
     assert step.decision_id
@@ -83,10 +85,12 @@ def test_features_do_not_affect_the_record(server):
     agent = Agent(bytes([42] * 32))
     votes = [("fraud-v3", "BLOCK"), ("risk-v2", "BLOCK")]
 
-    plain = client.run_decision(agent, "py-feat-off", ["fraud-v3", "risk-v2"], votes)
+    plain = client.run_decision(
+        agent, "py-feat-off-sid-0123456789abcdef", ["fraud-v3", "risk-v2"], votes
+    )
     feat = client.run_decision(
         agent,
-        "py-feat-on",
+        "py-feat-on-sid-0123456789abcdef",
         ["fraud-v3", "risk-v2"],
         votes,
         features={"amount_band": "high", "channel": "card-present"},
@@ -131,25 +135,34 @@ def test_budget_suspend_resume_loop(dual_plane):
 
     # Open with a 1000-token allowance (data plane).
     client.open_session(
-        agent, "py-budget", ["lead", "peer"], limits=BudgetLimits(tokens=1000)
+        agent,
+        "py-budget-sid-0123456789abcdef",
+        ["lead", "peer"],
+        limits=BudgetLimits(tokens=1000),
     )
     # The proposal reports the full allowance — applied, ledger now exhausted.
     client.submit_proposal(
-        "py-budget", "lead", "p1", "BLOCK", usage=StepUsage(tokens=1000, cost_micros=40)
+        "py-budget-sid-0123456789abcdef",
+        "lead",
+        "p1",
+        "BLOCK",
+        usage=StepUsage(tokens=1000, cost_micros=40),
     )
     # The next step breaches the hard token limit: refused + Suspended (not an error).
-    step = client.submit_vote("py-budget", "peer", "p1", "APPROVE")
+    step = client.submit_vote("py-budget-sid-0123456789abcdef", "peer", "p1", "APPROVE")
     assert step.state == "Suspended", step.state
 
     # The R9 approver raises the token dimension and resumes — now via SeamAdmin (mgmt plane), named.
     admin.resume_session(
-        "py-budget", approver="op:approver", raise_=BudgetLimits(tokens=5000)
+        "py-budget-sid-0123456789abcdef",
+        approver="op:approver",
+        raise_=BudgetLimits(tokens=5000),
     )
     # Re-submit (the breached vote was never applied): now within budget → continues (data plane).
-    step = client.submit_vote("py-budget", "peer", "p1", "APPROVE")
+    step = client.submit_vote("py-budget-sid-0123456789abcdef", "peer", "p1", "APPROVE")
     assert step.state != "Suspended", step.state
     # And the session seals.
-    step = client.submit_commit("py-budget", "c1", "BLOCK")
+    step = client.submit_commit("py-budget-sid-0123456789abcdef", "c1", "BLOCK")
     assert step.state == "Resolved"
     assert step.decision_id
 
@@ -260,7 +273,7 @@ def test_authorize_live_on_behalf_of_decision(server):
     agent = Agent(bytes([42] * 32))
     dec = client.run_decision(
         agent,
-        "py-obo",
+        "py-obo-sid-0123456789abcdef",
         ["fraud-v3", "risk-v2"],
         [("fraud-v3", "BLOCK"), ("risk-v2", "BLOCK")],
         on_behalf_of=["user:alice@example.com"],

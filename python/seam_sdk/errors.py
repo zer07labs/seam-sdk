@@ -227,36 +227,214 @@ class SeamRpcError(SeamError, grpc.RpcError):
         """
         return self._trailing_metadata
 
+    def _seam_error_info(self):
+        for type_url, value in _status_details(self._trailing_metadata):
+            if type_url != _ERROR_INFO_TYPE:
+                continue
+            try:
+                reason, domain, metadata = _decode_error_info(value)
+            except (ValueError, UnicodeDecodeError):
+                return None
+            if domain == SEAM_ERROR_DOMAIN:
+                return reason, metadata
+        return None
+
+    @property
+    def reason(self) -> str | None:
+        """Seam's error class — ``ErrorInfo.reason`` (domain ``seam.zer07labs.com``) from
+        ``grpc-status-details-bin`` — or ``None`` when the server sent no such detail.
+
+        ``PROTOCOL`` means MACP refused the call and :attr:`macp_code` names why; ``POLICY_DENIED``
+        (``PERMISSION_DENIED``) is the bound policy refusing a commitment; ``QUOTA_EXCEEDED``
+        (``RESOURCE_EXHAUSTED``) is load-shed, with :attr:`retry_after`. Branch on these, never on
+        message text.
+        """
+        info = self._seam_error_info()
+        return info[0] if info else None
+
+    @property
+    def macp_code(self) -> str | None:
+        """MACP's own error code (``ErrorInfo.metadata["macp_code"]``) on a ``PROTOCOL`` refusal, or
+        ``None``.
+
+        Returned as the **raw string**, not an enum: MACP grows codes on its own schedule, and a client
+        that cannot name a new code must still be able to log and route it. Present **only** when
+        :attr:`reason` is ``PROTOCOL`` — every other error class has no ``macp_code`` by contract
+        (seam-runtime ``docs/specs/error-model.md``), so a stray key on another reason is ignored rather
+        than surfaced as if it were one.
+        """
+        info = self._seam_error_info()
+        if not info or info[0] != PROTOCOL_REASON:
+            return None
+        return info[1].get("macp_code")
+
+    @property
+    def retry_after(self) -> float | None:
+        """The server's ``google.rpc.RetryInfo.retry_delay`` in seconds, or ``None`` when it sent none.
+
+        Carried on a load-shed refusal (``RESOURCE_EXHAUSTED``, reason ``QUOTA_EXCEEDED``). The SDK
+        **does not retry for you**: it surfaces the delay so the caller's own retry policy can honour
+        it. A load-shed admission challenge was never issued, so a retry asks for a fresh one.
+        """
+        for type_url, value in _status_details(self._trailing_metadata):
+            if type_url == _RETRY_INFO_TYPE:
+                try:
+                    return _decode_retry_delay(value)
+                except ValueError:
+                    return None
+        return None
+
+
+#: The ``ErrorInfo.domain`` every Seam refusal carries (seam-runtime ``docs/specs/error-model.md``).
+SEAM_ERROR_DOMAIN = "seam.zer07labs.com"
+#: The one ``ErrorInfo.reason`` that carries a ``macp_code`` — MACP's own protocol refusals.
+PROTOCOL_REASON = "PROTOCOL"
+
+_STATUS_DETAILS_KEY = "grpc-status-details-bin"
+_ERROR_INFO_TYPE = "type.googleapis.com/google.rpc.ErrorInfo"
+_RETRY_INFO_TYPE = "type.googleapis.com/google.rpc.RetryInfo"
+
+
+class _Truncated(ValueError):
+    pass
+
+
+def _varint(buf: bytes, i: int):
+    shift = 0
+    out = 0
+    while True:
+        if i >= len(buf) or shift > 63:
+            raise _Truncated()
+        b = buf[i]
+        i += 1
+        out |= (b & 0x7F) << shift
+        if not b & 0x80:
+            return out, i
+        shift += 7
+
+
+def _fields(buf: bytes):
+    """Yield ``(field_number, wire_type, value)`` over one protobuf message. Length-delimited values
+    are ``bytes``, varints are ``int``; fixed32/fixed64 are skipped over. Raises on a malformed buffer.
+
+    Hand-rolled on purpose: decoding ``google.rpc.Status`` with the real classes needs
+    ``googleapis-common-protos``, and this module may import the standard library and ``grpc`` only
+    (seam-sdk#54). Three message shapes are read — ``Status``, ``Any``, ``ErrorInfo``/``RetryInfo`` —
+    and nothing here is trusted beyond "a string the server sent".
+    """
+    i = 0
+    while i < len(buf):
+        key, i = _varint(buf, i)
+        num, wt = key >> 3, key & 7
+        if wt == 0:
+            v, i = _varint(buf, i)
+        elif wt == 2:
+            n, i = _varint(buf, i)
+            if i + n > len(buf):
+                raise _Truncated()
+            v, i = buf[i : i + n], i + n
+        elif wt == 1:
+            i += 8
+            v = None
+        elif wt == 5:
+            i += 4
+            v = None
+        else:
+            raise _Truncated()
+        if i > len(buf):
+            raise _Truncated()
+        yield num, wt, v
+
+
+def _status_details(trailing) -> list:
+    """The ``(type_url, value)`` pairs of ``google.rpc.Status.details`` in ``trailing``, or ``[]``.
+
+    A malformed or absent payload yields ``[]`` — the typed error must never be displaced by a failure
+    to read metadata about it, which is the same rule :func:`map_rpc_error` applies to the accessor.
+    """
+    if not trailing:
+        return []
+    raw = None
+    for k, v in trailing:
+        if isinstance(k, str) and k.lower() == _STATUS_DETAILS_KEY:
+            raw = v
+    if not isinstance(raw, (bytes, bytearray)):
+        return []
+    out = []
+    try:
+        for num, wt, v in _fields(bytes(raw)):
+            if num == 3 and wt == 2:
+                type_url, value = "", b""
+                for an, awt, av in _fields(v):
+                    if an == 1 and awt == 2:
+                        type_url = av.decode("utf-8")
+                    elif an == 2 and awt == 2:
+                        value = av
+                out.append((type_url, value))
+    except (ValueError, UnicodeDecodeError):
+        return []
+    return out
+
+
+def _decode_error_info(value: bytes):
+    reason, domain, metadata = "", "", {}
+    for num, wt, v in _fields(value):
+        if wt != 2:
+            continue
+        if num == 1:
+            reason = v.decode("utf-8")
+        elif num == 2:
+            domain = v.decode("utf-8")
+        elif num == 3:
+            mk, mv = "", ""
+            for en, ewt, ev in _fields(v):
+                if en == 1 and ewt == 2:
+                    mk = ev.decode("utf-8")
+                elif en == 2 and ewt == 2:
+                    mv = ev.decode("utf-8")
+            metadata[mk] = mv
+    return reason, domain, metadata
+
+
+def _decode_retry_delay(value: bytes):
+    for num, wt, v in _fields(value):
+        if num == 1 and wt == 2:
+            seconds, nanos = 0, 0
+            for dn, dwt, dv in _fields(v):
+                if dn == 1 and dwt == 0:
+                    seconds = dv - (1 << 64) if dv >= 1 << 63 else dv
+                elif dn == 2 and dwt == 0:
+                    nanos = dv - (1 << 64) if dv >= 1 << 63 else dv
+            return seconds + nanos / 1e9
+    return None
+
 
 class InvalidArgumentError(SeamRpcError):
     """`INVALID_ARGUMENT` — e.g. an empty erasure ``tenant`` or a wrong ``confirm_count``."""
 
 
 class FailedPreconditionError(SeamRpcError):
-    """`FAILED_PRECONDITION`.
+    """`FAILED_PRECONDITION` — the server's state does not admit the request yet.
 
-    **On a session commit this is not a transport fault and not a readiness problem, and it must
-    not be retried as-is.** Retrying the identical request fails identically — the state that has
-    to change is the caller's, not the server's.
-
-    It is also **not terminal**: a refused commit does not resolve the session, so the session is
-    still live and the correct behaviour is to do the missing thing and commit again.
-
-    Two ordinary causes are **indistinguishable by status code**:
-
-    * the bound policy's panel voted and the policy refused the commitment;
-    * the bound policy has a real ``voting.algorithm`` and the round received **no APPROVE or
-      REJECT ballot at all**, so the algorithm was never evaluated (seam-runtime#565). The remedy
-      is to cast ballots, then commit again.
-
-    The message text differentiates them — the second names the algorithm that was never evaluated
-    — but **the message is not a contract and must not be parsed.** If a caller needs to branch,
-    branch on its own knowledge of whether it voted, not on this error.
+    **A policy refusal of a session commit is no longer this error.** Until the protocol pass it was;
+    the runtime now answers a ``POLICY_DENIED`` with ``PERMISSION_DENIED``, the MACP error-code
+    registry's status (RFC-MACP-0006 §13) — see :class:`PermissionDeniedError`.
     """
 
 
 class PermissionDeniedError(SeamRpcError):
-    """`PERMISSION_DENIED` — e.g. a session scope-floor denial (distinct from `INVALID_ARGUMENT`)."""
+    """`PERMISSION_DENIED` — shared by four refusal classes, so **branch on** :attr:`reason`, **never
+    on the status or the message text**:
+
+    * ``POLICY_DENIED`` — the bound coordination policy refused the commitment (ballots, objections,
+      evaluation, or a round with no APPROVE/REJECT ballot at all, seam-runtime#565). Replay refusals
+      (policy unavailable, policy mismatch, replay diverged) are ``POLICY_DENIED`` too. **Not
+      terminal and not retryable as-is**: the session is still live; do the missing thing (cast
+      ballots, address objections) and commit again. No ``macp_code`` by contract.
+    * ``SCOPE_DENIED`` — the caller's credential lacks the scope for the action (the R8 floor).
+    * ``FACT_ATTESTOR_REJECTED`` — a fact's attestor is not accepted.
+    * ``PROTOCOL`` with :attr:`macp_code` ``FORBIDDEN`` — MACP refused the sender.
+    """
 
 
 class UnauthenticatedError(SeamRpcError):

@@ -25,12 +25,12 @@ categories = ["command-line-utilities", "cryptography"]
 # second copy to drift. Shipping the test to fail on a missing path would be worse still — the test's
 # whole value is that it refuses to skip, and a package where it always fails teaches consumers to
 # ignore it. The formula's distinguishing behaviour — None vs Some(""), tag 13 absent vs zeroed,
-# the tag-11/12 slot binding, and strip-vs-mismatch — is therefore ALSO covered by unit tests in
+# the tag 11/12/15/16/17 slot bindings, and strip-vs-mismatch — is therefore ALSO covered by unit tests in
 # `src/verify.rs`, which need nothing outside the package. Someone who installs this crate and
 # runs `cargo test` sees the formula defended, not merely present.
 #
 # `tests/commitment_vectors.rs` is excluded for the same reason (it reads
-# `../conformance/commitment_digest_v2_vector.json` and `vectors.json`); the commitment digest's own
+# `../conformance/commitment_digest_v3_vector.json` and `vectors.json`); the commitment digest's own
 # worked examples are unit tests in `src/commitment.rs`, which ship.
 exclude = ["tests/conformance.rs", "tests/commitment_vectors.rs"]
 

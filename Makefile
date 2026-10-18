@@ -16,7 +16,12 @@
 # `check-contract` makes "what surface does the active contract actually expose?" a verifiable fact rather
 # than an assumption — the SDK's equivalent of the runtime's published-surface gate.
 
-BUF_MODULE ?= buf.build/zer07labs/seam
+# PINNED for the protocol pass (seam-sdk#265; seam-runtime `protocol-pass-2026-10` @ e4c01ad):
+# the pass changes seam.proto (IssueChallengeRequest) and seam_event.proto (DecisionSealed tags 14-17)
+# before it merges, and the SDK must be green against it first. BSR label `train-0.48.0` is the
+# byte-identical push of crates/seam-api/proto at that commit. Un-pin (back to the bare module = BSR
+# main) after the runtime merges, together with SEAM_RUNTIME_BUILD_REF in ci.yml.
+BUF_MODULE ?= buf.build/zer07labs/seam:train-0.48.0
 RUNTIME    ?= ../seam-runtime
 
 .PHONY: generate generate-local check-contract clean lint probe-frameworks

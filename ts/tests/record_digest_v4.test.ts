@@ -1,13 +1,13 @@
-// `recordDigestV3` — the formula, its refusals, and the mistakes a second implementation makes.
+// `recordDigestV4` — the formula, its refusals, and the mistakes a second implementation makes.
 //
-// The three SDK implementations of `seam.audit.record-digest.v3` are clean-room transcriptions from
+// The SDK implementations of `seam.audit.record-digest.v4` are clean-room transcriptions from
 // `seam-event.v1.md`; that independence is the product claim, and it is only worth anything if each
 // one is tested against the spec's *distinctions* rather than against a digest it produced itself.
 // So the reproduction tests live in `conformance.test.ts` (machine-emitted vectors), and this file
 // carries what a vector cannot: that every input is bound, that the slot order is the spec's and not
 // an append, that a strip is refused distinctly from a mismatch, and that nothing normalizes.
 //
-// The centrepiece is `refDigestV3` below — an INDEPENDENT second transcription of the preimage,
+// The centrepiece is `refDigestV4` below — an INDEPENDENT second transcription of the preimage,
 // built from Node's `Buffer`/`node:crypto` rather than the implementation's `DataView`/noble
 // helpers. Two transcriptions that agree on 5 vectors and a mutation table are unlikely to be wrong
 // in the same direction; one transcription compared against itself is not evidence at all.
@@ -17,43 +17,45 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
-import { recordDigestV2, recordDigestV3, RecordDigestStripError } from "../src/crypto.js";
+import {
+  recordDigestV4,
+  RecordDigestStripError,
+  UnsupportedRecordDigestVersion,
+} from "../src/crypto.js";
 
-// The extended set, not `conformance/vectors.json`: the baseline this file mutates needs every
+// The extended set, not only `conformance/vectors.json`: the baseline this file mutates needs every
 // optional slot POPULATED, so that dropping one is a visible change. `vectors.json`'s two blocks
 // leave `policy_version` and `supersedes` null, which would make several mutations below no-ops.
-const extendedV3 = JSON.parse(
-  readFileSync(
-    new URL("../../conformance/record_digest_v3_extended.json", import.meta.url),
-    "utf8",
-  ),
+const extended = JSON.parse(
+  readFileSync(new URL("../../conformance/vectors_extended.json", import.meta.url), "utf8"),
 );
 
 // The runtime's own two blocks, in the same `{name, inputs, digest_hex}` shape, so the independent
-// transcription below runs over the cross-repo vectors as well as this repo's extended set. If
-// either block is missing, `vectors.json` and seam-runtime's emitter have stopped agreeing -- throw
-// rather than quietly transcription-check five SDK-authored cases and call that agreement.
+// transcription below runs over the cross-repo vectors as well as the extended set. If either block
+// is missing, `vectors.json` and seam-runtime's emitter have stopped agreeing -- throw rather than
+// quietly transcription-check the extended cases alone and call that agreement.
 const vectors = JSON.parse(
   readFileSync(new URL("../../conformance/vectors.json", import.meta.url), "utf8"),
 );
 
-const ALL_V3_CASES: { name: string; inputs: any; digest_hex: string }[] = [
-  ...["record_digest_v3", "record_digest_v3_absent_policy"].map((block) => {
+const ALL_V4_CASES: { name: string; inputs: any; digest_hex: string }[] = [
+  ...["record_digest_v4", "record_digest_v4_absent_policy"].map((block) => {
     const b = vectors[block];
     if (!b) throw new Error(`conformance/vectors.json has no '${block}' block`);
     return { name: block, inputs: b.inputs, digest_hex: b.digest_hex };
   }),
-  ...(extendedV3.cases as { name: string; inputs: any; digest_hex: string }[]),
+  ...["all_optionals_present", "optionals_none", "mode_empty_string"].map((name) => {
+    const c = extended[name];
+    if (!c) throw new Error(`conformance/vectors_extended.json has no '${name}' case`);
+    return { name, inputs: c.inputs, digest_hex: c.digest_hex };
+  }),
 ];
 
-type Args = Parameters<typeof recordDigestV3>[0];
+type Args = Parameters<typeof recordDigestV4>[0];
 
-const BASE_INPUTS = extendedV3.cases.find(
-  (c: any) => c.name === "all_optionals_present",
-)!.inputs;
+const BASE_INPUTS = extended.all_optionals_present.inputs;
 
-function baseArgs(): Args {
-  const i = BASE_INPUTS;
+function argsOf(i: any): Args {
   return {
     decisionId: i.decision_id,
     tenant: i.tenant,
@@ -66,10 +68,17 @@ function baseArgs(): Args {
     supersedes: i.supersedes,
     contextDigest: Buffer.from(i.context_digest_hex, "hex"),
     participationDigest: Buffer.from(i.participation_digest_hex, "hex"),
-    policyRulesDigest: Buffer.from(i.policy_rules_digest_hex, "hex"),
+    policyRulesDigest:
+      i.policy_rules_digest_hex === null ? null : Buffer.from(i.policy_rules_digest_hex, "hex"),
+    classification: i.classification,
+    participantsDigest: Buffer.from(i.participants_digest_hex, "hex"),
+    trustBasisCommitment: i.trust_basis_commitment,
+    authMethod: i.auth_method,
     schemaVersion: i.schema_version,
   };
 }
+
+const baseArgs = (): Args => argsOf(BASE_INPUTS);
 
 const hexOf = (b: Uint8Array) => Buffer.from(b).toString("hex");
 
@@ -85,68 +94,61 @@ const opBytes = (b: Uint8Array | null): Buffer =>
 const opStr = (s: string | null): Buffer =>
   s === null ? Buffer.from([0]) : opBytes(Buffer.from(s, "utf8"));
 
-/** The v3 preimage, transcribed a second time from the spec block with different primitives.
- * `order: "appended"` is the decoy: the same slots with the three new ones appended AFTER
- * `schema_version` instead of inserted before it — the shape a "v3 = v2 plus three fields"
+/** The v4 preimage, transcribed a second time from the spec block with different primitives.
+ * `order: "appended"` is the decoy: the same slots with the seven post-v2 ones appended AFTER
+ * `schema_version` instead of inserted before it — the shape a "v4 = v2 plus new fields"
  * implementation naturally produces, and which the spec explicitly forbids. */
-function refDigestV3(a: Args, order: "spec" | "appended" = "spec"): string {
+function refDigestV4(a: Args, order: "spec" | "appended" = "spec"): string {
   const sealed = Buffer.alloc(8);
   sealed.writeBigUInt64LE(BigInt(a.sealedAt), 0);
   const schema = Buffer.alloc(4);
-  schema.writeUInt32LE(a.schemaVersion ?? 3, 0);
+  schema.writeUInt32LE(Number(a.schemaVersion ?? 4), 0);
+  const utf8 = (s: string) => Buffer.from(s, "utf8");
 
   const shared = [
-    fr(Buffer.from("seam.audit.record-digest.v3", "utf8")),
-    fr(Buffer.from(a.decisionId, "utf8")),
-    fr(Buffer.from(a.tenant, "utf8")),
-    fr(Buffer.from(a.namespace, "utf8")),
+    fr(utf8("seam.audit.record-digest.v4")),
+    fr(utf8(a.decisionId)),
+    fr(utf8(a.tenant)),
+    fr(utf8(a.namespace)),
     fr(a.ciphertextDigest),
     fr(sealed),
-    fr(Buffer.from(a.outcome, "utf8")),
+    fr(utf8(a.outcome)),
     opStr(a.mode),
     opStr(a.policyVersion),
     opStr(a.supersedes),
   ];
-  const added = [fr(a.contextDigest), fr(a.participationDigest), opBytes(a.policyRulesDigest)];
+  const added = [
+    fr(a.contextDigest),
+    fr(a.participationDigest),
+    opBytes(a.policyRulesDigest),
+    fr(utf8(a.classification)),
+    fr(a.participantsDigest),
+    fr(utf8(a.trustBasisCommitment)),
+    fr(utf8(a.authMethod)),
+  ];
   const parts = order === "spec" ? [...shared, ...added, fr(schema)] : [...shared, fr(schema), ...added];
   return createHash("sha256").update(Buffer.concat(parts)).digest("hex");
 }
 
 test("the implementation agrees with an independent transcription on every vector case", () => {
-  for (const c of ALL_V3_CASES) {
-    const i = c.inputs;
-    const a: Args = {
-      ...baseArgs(),
-      decisionId: i.decision_id,
-      tenant: i.tenant,
-      namespace: i.namespace,
-      ciphertextDigest: Buffer.from(i.ciphertext_digest_hex, "hex"),
-      sealedAt: i.sealed_at,
-      outcome: i.outcome,
-      mode: i.mode,
-      policyVersion: i.policy_version,
-      supersedes: i.supersedes,
-      contextDigest: Buffer.from(i.context_digest_hex, "hex"),
-      participationDigest: Buffer.from(i.participation_digest_hex, "hex"),
-      policyRulesDigest:
-        i.policy_rules_digest_hex === null ? null : Buffer.from(i.policy_rules_digest_hex, "hex"),
-      schemaVersion: i.schema_version,
-    };
-    assert.equal(hexOf(recordDigestV3(a)), refDigestV3(a), `case ${c.name}`);
-    assert.equal(refDigestV3(a), c.digest_hex, `case ${c.name}: the reference disagrees with the vector`);
+  assert.equal(ALL_V4_CASES.length, 5);
+  for (const c of ALL_V4_CASES) {
+    const a = argsOf(c.inputs);
+    assert.equal(hexOf(recordDigestV4(a)), refDigestV4(a), `case ${c.name}`);
+    assert.equal(refDigestV4(a), c.digest_hex, `case ${c.name}: the reference disagrees with the vector`);
   }
 });
 
-test("the three new slots are inserted before schema_version, not appended after it", () => {
+test("the post-v2 slots are inserted before schema_version, not appended after it", () => {
   // The spec is explicit: "a verifier selects the whole formula by `schema_version`, so position is
-  // fixed by this spec rather than by append order." Both orders hash the same 13 slots, so only a
+  // fixed by this spec rather than by append order." Both orders hash the same 17 slots, so only a
   // direct comparison catches the wrong one — a vector alone would just say "mismatch" with no clue.
   const a = baseArgs();
-  assert.equal(hexOf(recordDigestV3(a)), refDigestV3(a, "spec"));
+  assert.equal(hexOf(recordDigestV4(a)), refDigestV4(a, "spec"));
   assert.notEqual(
-    hexOf(recordDigestV3(a)),
-    refDigestV3(a, "appended"),
-    "the implementation appends the v3 slots after schema_version",
+    hexOf(recordDigestV4(a)),
+    refDigestV4(a, "appended"),
+    "the implementation appends the post-v2 slots after schema_version",
   );
 });
 
@@ -154,7 +156,7 @@ test("the three new slots are inserted before schema_version, not appended after
 
 test("every input is bound into the digest", () => {
   const base = baseArgs();
-  const expected = hexOf(recordDigestV3(base));
+  const expected = hexOf(recordDigestV4(base));
 
   const flip = (b: Uint8Array): Uint8Array => {
     const c = Buffer.from(b);
@@ -175,20 +177,27 @@ test("every input is bound into the digest", () => {
     ["contextDigest", { contextDigest: flip(base.contextDigest) }],
     ["participationDigest", { participationDigest: flip(base.participationDigest) }],
     ["policyRulesDigest", { policyRulesDigest: flip(base.policyRulesDigest!) }],
-    ["schemaVersion", { schemaVersion: 7 }],
+    ["classification", { classification: base.classification + "-x" }],
+    ["participantsDigest", { participantsDigest: flip(base.participantsDigest) }],
+    ["trustBasisCommitment", { trustBasisCommitment: base.trustBasisCommitment + "-x" }],
+    ["authMethod", { authMethod: base.authMethod + "-x" }],
   ];
 
   // Completeness guard: a field added to the signature and forgotten here would leave an unbound
-  // slot with a green suite. The table must name every key the function accepts.
-  const covered = new Set(mutations.map(([k]) => k));
+  // slot with a green suite. The table must name every key the function accepts -- except
+  // `schemaVersion`, which is not a digest input to vary but the formula selector: any value but 4
+  // is refused outright (asserted below and in "a v1-v3 record is refused").
+  const covered = new Set<keyof Args>(mutations.map(([k]) => k));
+  covered.add("schemaVersion");
   for (const k of Object.keys(base) as (keyof Args)[]) {
     assert.ok(covered.has(k), `the mutation table does not cover '${String(k)}'`);
   }
   assert.equal(covered.size, Object.keys(base).length, "the mutation table names a field that no longer exists");
+  assert.throws(() => recordDigestV4({ ...base, schemaVersion: 7 }), UnsupportedRecordDigestVersion);
 
   for (const [field, change] of mutations) {
     assert.notEqual(
-      hexOf(recordDigestV3({ ...base, ...change })),
+      hexOf(recordDigestV4({ ...base, ...change })),
       expected,
       `changing ${String(field)} did not change the digest -- that slot is not bound`,
     );
@@ -201,22 +210,22 @@ test("swapping context_digest and participation_digest changes the digest", () =
   // makes the swap detectable — which is why the vectors keep them distinct.
   const base = baseArgs();
   const swapped = hexOf(
-    recordDigestV3({
+    recordDigestV4({
       ...base,
       contextDigest: base.participationDigest,
       participationDigest: base.contextDigest,
     }),
   );
-  assert.notEqual(swapped, hexOf(recordDigestV3(base)));
+  assert.notEqual(swapped, hexOf(recordDigestV4(base)));
 });
 
 test("policy_rules_digest: absent, present-and-zero, and present-and-set are three digests", () => {
   // `opt` is one byte when absent and 37 when present. An implementation that framed slot 12 (or
   // defaulted absent to 32 zero bytes) would collapse the first two.
   const base = baseArgs();
-  const absent = hexOf(recordDigestV3({ ...base, policyRulesDigest: null }));
-  const zeros = hexOf(recordDigestV3({ ...base, policyRulesDigest: new Uint8Array(32) }));
-  const set = hexOf(recordDigestV3(base));
+  const absent = hexOf(recordDigestV4({ ...base, policyRulesDigest: null }));
+  const zeros = hexOf(recordDigestV4({ ...base, policyRulesDigest: new Uint8Array(32) }));
+  const set = hexOf(recordDigestV4(base));
   assert.equal(new Set([absent, zeros, set]).size, 3, "absent, zeroed and set do not all differ");
 });
 
@@ -224,9 +233,9 @@ test("undefined is absent for the string optionals, exactly as null is", () => {
   // Decoded protobuf and hand-built JS objects disagree about which one means "not set"; both reach
   // this function, and treating `undefined` as the string "undefined" would be silent corruption.
   const base = baseArgs();
-  const nulls = hexOf(recordDigestV3({ ...base, mode: null, policyVersion: null, supersedes: null }));
+  const nulls = hexOf(recordDigestV4({ ...base, mode: null, policyVersion: null, supersedes: null }));
   const undef = hexOf(
-    recordDigestV3({
+    recordDigestV4({
       ...base,
       mode: undefined as unknown as null,
       policyVersion: undefined as unknown as null,
@@ -236,36 +245,40 @@ test("undefined is absent for the string optionals, exactly as null is", () => {
   assert.equal(undef, nulls);
 });
 
-test("schemaVersion defaults to 3, and sealedAt accepts number or bigint", () => {
+test("schemaVersion defaults to 4, and sealedAt accepts number or bigint", () => {
   const base = baseArgs();
   const { schemaVersion: _drop, ...withoutVersion } = base;
-  assert.equal(hexOf(recordDigestV3(withoutVersion as Args)), hexOf(recordDigestV3(base)));
+  assert.equal(hexOf(recordDigestV4(withoutVersion as Args)), hexOf(recordDigestV4(base)));
+  assert.equal(hexOf(recordDigestV4({ ...base, schemaVersion: 4n })), hexOf(recordDigestV4(base)));
   assert.equal(
-    hexOf(recordDigestV3({ ...base, sealedAt: BigInt(base.sealedAt as number) })),
-    hexOf(recordDigestV3(base)),
+    hexOf(recordDigestV4({ ...base, sealedAt: BigInt(base.sealedAt as number) })),
+    hexOf(recordDigestV4(base)),
   );
 });
 
-test("v2 and v3 do not collide on the columns they share", () => {
-  // The domain tag carries the version, so even a record whose v3-only slots were somehow empty
-  // cannot be verified under the wrong formula. This also pins that v3 did not accidentally reuse
-  // v2's domain string.
+test("a v1-v3 record is refused as unsupported, before any strip check", () => {
+  // v4 is the only formula (P7). A record of another version has no v4 digest at all, so it is
+  // "cannot verify" -- never recomputed under v4 (which would read as tamper), and never a strip
+  // even when it lacks the v4-only slots, because the version gate comes first.
   const base = baseArgs();
-  const v2 = hexOf(
-    recordDigestV2({
-      decisionId: base.decisionId,
-      tenant: base.tenant,
-      namespace: base.namespace,
-      ciphertextDigest: base.ciphertextDigest,
-      sealedAt: base.sealedAt,
-      outcome: base.outcome,
-      mode: base.mode,
-      policyVersion: base.policyVersion,
-      supersedes: base.supersedes,
-      schemaVersion: 3,
-    }),
-  );
-  assert.notEqual(v2, hexOf(recordDigestV3(base)));
+  for (const version of [0, 1, 2, 3, 5, 3n]) {
+    assert.throws(
+      () => recordDigestV4({ ...base, schemaVersion: version }),
+      (e: unknown) => e instanceof UnsupportedRecordDigestVersion && e.schemaVersion === version,
+      `schema_version ${String(version)} was not refused as unsupported`,
+    );
+    assert.throws(
+      () =>
+        recordDigestV4({
+          ...base,
+          schemaVersion: version,
+          classification: "",
+          participantsDigest: undefined as unknown as Uint8Array,
+        }),
+      UnsupportedRecordDigestVersion,
+      `schema_version ${String(version)} with stripped v4 slots reported a strip, not unsupported`,
+    );
+  }
 });
 
 // ── strings hash raw, with no normalization ──────────────────────────────────────────────────────
@@ -280,10 +293,21 @@ test("no Unicode normalization is applied to any string slot", () => {
   assert.notEqual(nfd, nfc);
   assert.equal(nfd.normalize("NFC"), nfc);
 
-  for (const slot of ["decisionId", "tenant", "namespace", "outcome", "mode", "policyVersion", "supersedes"] as const) {
+  for (const slot of [
+    "decisionId",
+    "tenant",
+    "namespace",
+    "outcome",
+    "mode",
+    "policyVersion",
+    "supersedes",
+    "classification",
+    "trustBasisCommitment",
+    "authMethod",
+  ] as const) {
     assert.notEqual(
-      hexOf(recordDigestV3({ ...base, [slot]: nfd })),
-      hexOf(recordDigestV3({ ...base, [slot]: nfc })),
+      hexOf(recordDigestV4({ ...base, [slot]: nfd })),
+      hexOf(recordDigestV4({ ...base, [slot]: nfc })),
       `${slot} appears to be normalized before hashing`,
     );
   }
@@ -295,10 +319,10 @@ test("strings are encoded as UTF-8, not UTF-16 or Latin-1", () => {
   // codepoint is what separates them; the ASCII fixtures cannot.
   const base = baseArgs();
   const text = "café-日本";
-  const got = hexOf(recordDigestV3({ ...base, mode: text }));
+  const got = hexOf(recordDigestV4({ ...base, mode: text }));
   for (const codec of ["latin1", "utf16le"] as const) {
     const wrong = hexOf(
-      recordDigestV3({ ...base, mode: Buffer.from(text, codec).toString("latin1") }),
+      recordDigestV4({ ...base, mode: Buffer.from(text, codec).toString("latin1") }),
     );
     assert.notEqual(got, wrong, `the ${codec} encoding of the same string produced the same digest`);
   }
@@ -310,20 +334,29 @@ test("strings are encoded as UTF-8, not UTF-16 or Latin-1", () => {
 // twins. Deliberately NOT the bare word "mismatch": these messages say "This is a STRIP, not a
 // digest mismatch", which uses the word to negate it. Matching the whole vocabulary would forbid
 // exactly the sentence that makes the distinction clearest to an operator. The Python twin pins the
-// same string (`test_record_digest_v3.py:159`).
+// same string (`test_record_digest_v4.py`).
 const MISMATCH_WORDING = /does not match/i;
 
 test("a stripped mandatory field is refused, not defaulted and not fallen back", () => {
   const base = baseArgs();
-  const stripped: [string, number, Partial<Args>][] = [
-    ["context_digest", 11, { contextDigest: undefined as unknown as Uint8Array }],
-    ["context_digest", 11, { contextDigest: null as unknown as Uint8Array }],
-    ["participation_digest", 12, { participationDigest: undefined as unknown as Uint8Array }],
-    ["participation_digest", 12, { participationDigest: null as unknown as Uint8Array }],
+  // Tags 11, 12, 14, 15, 16 and 17 are mandatory. Absent spelled `undefined`, `null`, or empty
+  // (`length === 0` is how the wire says absent) is one strip, never a digest over an empty slot.
+  const slots: [string, number, keyof Args, string | Uint8Array][] = [
+    ["context_digest", 11, "contextDigest", new Uint8Array(0)],
+    ["participation_digest", 12, "participationDigest", new Uint8Array(0)],
+    ["classification", 14, "classification", ""],
+    ["participants_digest", 15, "participantsDigest", new Uint8Array(0)],
+    ["trust_basis_commitment", 16, "trustBasisCommitment", ""],
+    ["auth_method", 17, "authMethod", ""],
   ];
+  const stripped: [string, number, Partial<Args>][] = slots.flatMap(([field, tag, key, empty]) =>
+    [undefined, null, empty].map(
+      (v) => [field, tag, { [key]: v } as Partial<Args>] as [string, number, Partial<Args>],
+    ),
+  );
   for (const [field, tag, change] of stripped) {
     assert.throws(
-      () => recordDigestV3({ ...base, ...change }),
+      () => recordDigestV4({ ...base, ...change }),
       (e: unknown) => {
         assert.ok(e instanceof RecordDigestStripError, `${field} did not raise the strip error type`);
         assert.equal(e.field, field);
@@ -351,13 +384,14 @@ test("a wrong-length sub-digest is refused rather than hashed", () => {
   const base = baseArgs();
   const cases: [string, number, Partial<Args>][] = [
     ["context_digest", 11, { contextDigest: new Uint8Array(31) }],
-    ["context_digest", 11, { contextDigest: new Uint8Array(0) }],
     ["participation_digest", 12, { participationDigest: new Uint8Array(33) }],
     ["policy_rules_digest", 13, { policyRulesDigest: new Uint8Array(16) }],
+    ["policy_rules_digest", 13, { policyRulesDigest: new Uint8Array(0) }],
+    ["participants_digest", 15, { participantsDigest: new Uint8Array(31) }],
   ];
   for (const [field, tag, change] of cases) {
     assert.throws(
-      () => recordDigestV3({ ...base, ...change }),
+      () => recordDigestV4({ ...base, ...change }),
       (e: unknown) => {
         assert.ok(e instanceof RecordDigestStripError);
         assert.equal(e.field, field);
@@ -376,13 +410,13 @@ test("an absent policy_rules_digest is legitimate and must NOT refuse", () => {
   // absent means no policy was bound, which is today's common case. A verifier that refused it would
   // reject almost every real record.
   const base = baseArgs();
-  assert.doesNotThrow(() => recordDigestV3({ ...base, policyRulesDigest: null }));
+  assert.doesNotThrow(() => recordDigestV4({ ...base, policyRulesDigest: null }));
   assert.doesNotThrow(() =>
-    recordDigestV3({ ...base, policyRulesDigest: undefined as unknown as null }),
+    recordDigestV4({ ...base, policyRulesDigest: undefined as unknown as null }),
   );
   assert.equal(
-    hexOf(recordDigestV3({ ...base, policyRulesDigest: undefined as unknown as null })),
-    hexOf(recordDigestV3({ ...base, policyRulesDigest: null })),
+    hexOf(recordDigestV4({ ...base, policyRulesDigest: undefined as unknown as null })),
+    hexOf(recordDigestV4({ ...base, policyRulesDigest: null })),
   );
 });
 
@@ -391,17 +425,17 @@ test("a refusal is structurally distinct from a mismatch", () => {
   // this function RETURNS (for the caller to compare), a strip is a value it never returns at all.
   // No caller can conflate them by accident, whatever it does with the message text.
   const base = baseArgs();
-  const rewritten = recordDigestV3({ ...base, outcome: "Denied" });
+  const rewritten = recordDigestV4({ ...base, outcome: "Denied" });
   assert.equal(rewritten.length, 32, "a rewritten record still yields a digest, to be compared");
   assert.throws(
-    () => recordDigestV3({ ...base, contextDigest: undefined as unknown as Uint8Array }),
+    () => recordDigestV4({ ...base, contextDigest: undefined as unknown as Uint8Array }),
     RecordDigestStripError,
   );
 });
 
 // ── inputs that would otherwise produce a silently-wrong digest ─────────────────────────────────
 
-test("a non-bytes sub-digest of the right length is refused, not coerced -- all three tags", () => {
+test("a non-bytes sub-digest of the right length is refused, not coerced -- all four tags", () => {
   // The one input that defeats a length-only guard: `Uint8Array.prototype.set` coerces each element
   // via ToNumber, so a 32-CHARACTER STRING becomes 32 NaN becomes 32 zero bytes. The result is not a
   // mismatch -- it is an ALIAS onto the digest a legitimate all-zeros sub-digest produces, and an
@@ -427,11 +461,12 @@ test("a non-bytes sub-digest of the right length is refused, not coerced -- all 
     ["context_digest", 11, "contextDigest"],
     ["participation_digest", 12, "participationDigest"],
     ["policy_rules_digest", 13, "policyRulesDigest"],
+    ["participants_digest", 15, "participantsDigest"],
   ];
   for (const [field, tag, key] of slots) {
     for (const [label, decoy] of decoys) {
       assert.throws(
-        () => recordDigestV3({ ...base, [key]: decoy } as Args),
+        () => recordDigestV4({ ...base, [key]: decoy } as Args),
         (e: unknown) => {
           assert.ok(
             e instanceof RecordDigestStripError,
@@ -450,9 +485,9 @@ test("a non-bytes sub-digest of the right length is refused, not coerced -- all 
   // The alias, demonstrated rather than described: this is the digest every decoy above would have
   // produced, and it is a digest a legitimate caller can also produce. Nothing downstream could tell
   // the two apart, which is why the refusal has to happen here.
-  const legitZeros = hexOf(recordDigestV3({ ...base, contextDigest: new Uint8Array(32) }));
+  const legitZeros = hexOf(recordDigestV4({ ...base, contextDigest: new Uint8Array(32) }));
   assert.equal(legitZeros.length, 64);
-  assert.notEqual(legitZeros, hexOf(recordDigestV3(base)));
+  assert.notEqual(legitZeros, hexOf(recordDigestV4(base)));
 });
 
 test("genuine byte views are accepted, whatever their exact class", () => {
@@ -460,7 +495,7 @@ test("genuine byte views are accepted, whatever their exact class", () => {
   // actually passes; a cross-realm `Uint8Array` -- from `node:vm` or a worker -- is genuine bytes but
   // fails `instanceof`, so the check is written over `ArrayBuffer.isView` + a one-byte element size.
   const base = baseArgs();
-  const expected = hexOf(recordDigestV3(base));
+  const expected = hexOf(recordDigestV4(base));
   const raw = Buffer.from(BASE_INPUTS.context_digest_hex, "hex");
 
   const equivalents: [string, Uint8Array][] = [
@@ -475,7 +510,7 @@ test("genuine byte views are accepted, whatever their exact class", () => {
   ];
   for (const [label, bytes] of equivalents) {
     assert.equal(
-      hexOf(recordDigestV3({ ...base, contextDigest: bytes })),
+      hexOf(recordDigestV4({ ...base, contextDigest: bytes })),
       expected,
       `${label} was not treated as the same 32 bytes`,
     );
@@ -493,19 +528,25 @@ test("an out-of-range or inexact integer is refused, not silently wrapped", () =
     ["sealedAt >= 2^64", { sealedAt: (1n << 64n) + 5n }],
     ["sealedAt fractional", { sealedAt: 1.5 }],
     ["sealedAt above 2^53 as a number", { sealedAt: 2 ** 60 }],
-    ["schemaVersion negative", { schemaVersion: -1 }],
-    ["schemaVersion >= 2^32", { schemaVersion: 2 ** 32 + 3 }],
-    ["schemaVersion fractional", { schemaVersion: 3.5 }],
   ];
   for (const [label, change] of bad) {
-    assert.throws(() => recordDigestV3({ ...base, ...change }), RangeError, `${label} was accepted`);
+    assert.throws(() => recordDigestV4({ ...base, ...change }), RangeError, `${label} was accepted`);
+  }
+  // `schemaVersion` is gated by value before any range check: anything but exactly 4 has no v4
+  // digest, so an out-of-range spelling is unsupported rather than wrapped.
+  for (const v of [-1, 2 ** 32 + 4, 4.5, (1n << 32n) + 4n]) {
+    assert.throws(
+      () => recordDigestV4({ ...base, schemaVersion: v }),
+      UnsupportedRecordDigestVersion,
+      `schemaVersion ${String(v)} was accepted`,
+    );
   }
 
   // The number and bigint spellings of the same value must agree -- the range check must not have
   // changed how a legitimate value is encoded.
   assert.equal(
-    hexOf(recordDigestV3({ ...base, sealedAt: 5 })),
-    hexOf(recordDigestV3({ ...base, sealedAt: 5n })),
+    hexOf(recordDigestV4({ ...base, sealedAt: 5 })),
+    hexOf(recordDigestV4({ ...base, sealedAt: 5n })),
   );
 });
 
@@ -517,7 +558,7 @@ test("a non-string in a string slot is refused, not stringified", () => {
   for (const slot of ["decisionId", "tenant", "namespace", "outcome"] as const) {
     for (const bad of [undefined, null, 5, {}]) {
       assert.throws(
-        () => recordDigestV3({ ...base, [slot]: bad } as unknown as Args),
+        () => recordDigestV4({ ...base, [slot]: bad } as unknown as Args),
         TypeError,
         `${slot} accepted ${String(bad)}`,
       );
@@ -526,16 +567,27 @@ test("a non-string in a string slot is refused, not stringified", () => {
   // The optional slots take null/undefined as ABSENT -- that is data, not a type error -- but still
   // refuse a non-string.
   for (const slot of ["mode", "policyVersion", "supersedes"] as const) {
-    assert.doesNotThrow(() => recordDigestV3({ ...base, [slot]: null }));
+    assert.doesNotThrow(() => recordDigestV4({ ...base, [slot]: null }));
     assert.throws(
-      () => recordDigestV3({ ...base, [slot]: 5 } as unknown as Args),
+      () => recordDigestV4({ ...base, [slot]: 5 } as unknown as Args),
       TypeError,
       `${slot} accepted a number`,
     );
   }
+  // The mandatory v4 text slots refuse a non-string the same way (absent/empty is a strip, tested
+  // above).
+  for (const slot of ["classification", "trustBasisCommitment", "authMethod"] as const) {
+    for (const bad of [5, {}, true]) {
+      assert.throws(
+        () => recordDigestV4({ ...base, [slot]: bad } as unknown as Args),
+        TypeError,
+        `${slot} accepted ${String(bad)}`,
+      );
+    }
+  }
   // And the ciphertext digest, which is bytes rather than text but coerces the same way.
   assert.throws(
-    () => recordDigestV3({ ...base, ciphertextDigest: "x".repeat(32) as unknown as Uint8Array }),
+    () => recordDigestV4({ ...base, ciphertextDigest: "x".repeat(32) as unknown as Uint8Array }),
     TypeError,
   );
 });
@@ -558,9 +610,12 @@ test("a lone surrogate in any string slot is refused, not encoded as U+FFFD", ()
     "mode",
     "policyVersion",
     "supersedes",
+    "classification",
+    "trustBasisCommitment",
+    "authMethod",
   ] as const) {
     assert.throws(
-      () => recordDigestV3({ ...base, [slot]: lone }),
+      () => recordDigestV4({ ...base, [slot]: lone }),
       /lone surrogate/,
       `${slot} accepted a lone surrogate`,
     );
@@ -568,7 +623,7 @@ test("a lone surrogate in any string slot is refused, not encoded as U+FFFD", ()
 
   // A well-formed astral pair (which IS valid Unicode) must still be accepted -- the guard must
   // reject unpaired surrogates, not every string that happens to contain surrogate code units.
-  assert.doesNotThrow(() => recordDigestV3({ ...base, mode: "ok-\u{1f512}-ok" }));
+  assert.doesNotThrow(() => recordDigestV4({ ...base, mode: "ok-\u{1f512}-ok" }));
 });
 
 // ── the class of defect, closed structurally ─────────────────────────────────────────────────────
@@ -600,6 +655,10 @@ const SLOT_KINDS: Record<keyof Args, Kind> = {
   contextDigest: "bytes",
   participationDigest: "bytes",
   policyRulesDigest: "bytes",
+  participantsDigest: "bytes",
+  classification: "text",
+  trustBasisCommitment: "text",
+  authMethod: "text",
   sealedAt: "uint",
   schemaVersion: "uint",
 };
@@ -640,7 +699,7 @@ const WRONG_KIND: Record<Kind, [string, unknown][]> = {
 
 test("no slot accepts a value outside its declared kind", () => {
   const base = baseArgs();
-  const baseline = hexOf(recordDigestV3(base));
+  const baseline = hexOf(recordDigestV4(base));
 
   // Completeness: a parameter added to the signature and not classified here would be silently
   // exempt from every check below -- which is precisely how tag 13 was missed the first time.
@@ -655,7 +714,7 @@ test("no slot accepts a value outside its declared kind", () => {
     for (const [label, value] of WRONG_KIND[kind]) {
       let digested: string | null = null;
       try {
-        digested = hexOf(recordDigestV3({ ...base, [slot]: value } as Args));
+        digested = hexOf(recordDigestV4({ ...base, [slot]: value } as Args));
       } catch {
         continue; // refused -- which is the only acceptable outcome
       }
@@ -694,12 +753,12 @@ test("a byte view cannot lie about its own length", () => {
     ["a subclass with a `length` getter", new LyingLength(0)],
   ];
 
-  // The three 32-byte slots: a spoof claiming 32 while holding 0 must be refused by the length check,
+  // The four 32-byte slots: a spoof claiming 32 while holding 0 must be refused by the length check,
   // now that the length check sees the truth.
-  for (const slot of ["contextDigest", "participationDigest", "policyRulesDigest"] as const) {
+  for (const slot of ["contextDigest", "participationDigest", "policyRulesDigest", "participantsDigest"] as const) {
     for (const [label, spoof] of spoofs) {
       assert.throws(
-        () => recordDigestV3({ ...base, [slot]: spoof }),
+        () => recordDigestV4({ ...base, [slot]: spoof }),
         `${slot} accepted ${label} -- the length prefix and the copied bytes now disagree`,
       );
     }
@@ -709,8 +768,8 @@ test("a byte view cannot lie about its own length", () => {
   // nothing to refuse it FOR: the spoof holds zero bytes, and zero bytes is what gets hashed. The
   // property that matters here is not rejection but honesty, so it is asserted as such.
   assert.equal(
-    hexOf(recordDigestV3({ ...base, ciphertextDigest: spoofs[0][1] })),
-    hexOf(recordDigestV3({ ...base, ciphertextDigest: new Uint8Array(0) })),
+    hexOf(recordDigestV4({ ...base, ciphertextDigest: spoofs[0][1] })),
+    hexOf(recordDigestV4({ ...base, ciphertextDigest: new Uint8Array(0) })),
     "a ciphertextDigest claiming 32 bytes while holding 0 did not hash as the 0 bytes it holds",
   );
 
@@ -722,8 +781,8 @@ test("a byte view cannot lie about its own length", () => {
   const trueBytes = Buffer.from(BASE_INPUTS.context_digest_hex, "hex");
   const understating = Object.defineProperty(new Uint8Array(trueBytes), "length", { value: 4 });
   assert.equal(
-    hexOf(recordDigestV3({ ...base, contextDigest: understating })),
-    hexOf(recordDigestV3(base)),
+    hexOf(recordDigestV4({ ...base, contextDigest: understating })),
+    hexOf(recordDigestV4(base)),
     "a shadowed `length` changed the digest -- the bytes are being read through the property",
   );
 
@@ -731,8 +790,8 @@ test("a byte view cannot lie about its own length", () => {
   // whose byteOffset/byteLength are perfectly ordinary must still work.
   const backing = new Uint8Array([...new Uint8Array(8), ...Buffer.from(BASE_INPUTS.context_digest_hex, "hex")]);
   assert.equal(
-    hexOf(recordDigestV3({ ...base, contextDigest: backing.subarray(8) })),
-    hexOf(recordDigestV3(base)),
+    hexOf(recordDigestV4({ ...base, contextDigest: backing.subarray(8) })),
+    hexOf(recordDigestV4(base)),
     "an offset subarray of the right bytes was not treated as those bytes",
   );
 });

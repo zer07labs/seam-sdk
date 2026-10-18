@@ -51,6 +51,46 @@ class ConformanceTest {
         assertEquals(want["pop_nonce"], got.popNonce)
     }
 
+    /** The presentation is exactly five fields — no field is added beyond what the server reads. */
+    @Test
+    fun presentationHasExactlyFiveFields() {
+        assertEquals(
+            setOf("sender_aid", "descriptor", "message_id", "timestamp", "pop_nonce"),
+            m(m(vectors, "admission"), "presentation").keys,
+        )
+        assertEquals(
+            5,
+            Presentation::class.java.declaredFields.count { !java.lang.reflect.Modifier.isStatic(it.modifiers) },
+        )
+    }
+
+    /** derived_uuid: every case reproduced from (tag, input), pinned to literals so a re-vendor shows. */
+    @Test
+    fun derivedUuidMatchesVectors() {
+        val d = m(vectors, "derived_uuid")
+        val want = mapOf(
+            "kat_derived_uuid_001" to "27b131ae-bcc6-4466-ab32-1d0f896453b1",
+            "pop_message_id" to "786ec92e-a43a-40b5-98d8-848ff365ea78",
+            "tct_jti" to "c7321ce4-62f1-4e38-ac23-212dc9e0055b",
+        )
+        for ((name, uuid) in want) {
+            val k = m(d, name)
+            assertEquals(uuid, k["uuid"], "$name: vector")
+            assertEquals(uuid, SeamCrypto.derivedUuid(k["tag"] as String, hexToBytes(k["input_hex"] as String)), name)
+        }
+    }
+
+    /** The admission message_id is derivedUuid("seam-pop-mid-v1", nonce ASCII). */
+    @Test
+    fun popMessageIdIsTheDerivedUuid() {
+        val k = m(m(vectors, "derived_uuid"), "pop_message_id")
+        val nonce = m(m(vectors, "admission"), "inputs")["pop_nonce"] as String
+        assertEquals(SeamCrypto.POP_MESSAGE_ID_TAG, k["tag"])
+        assertEquals(hex(nonce.toByteArray(Charsets.US_ASCII)), k["input_hex"])
+        assertEquals(k["uuid"], SeamCrypto.popMessageId(nonce))
+        assertEquals(k["uuid"], m(m(vectors, "admission"), "presentation")["message_id"])
+    }
+
     @Test
     fun aidDerivationMatches() {
         val adm = m(vectors, "admission")
@@ -110,15 +150,15 @@ class ConformanceTest {
 
     // -- Commitment-digest framing coverage (W5.4 / G4) ----------------------------------------
     //
-    // `seam-commitment-digest:v2` is implemented byte-for-byte in ALL FIVE SDK languages -- the
+    // `seam-commitment-digest:v3` is implemented byte-for-byte in ALL FIVE SDK languages -- the
     // widest fan-out of any framing in this repo. Its own reference vector is
-    // conformance/commitment_digest_v2_vector.json (see CommitmentDigestV2Test); the `tct` block of
+    // conformance/commitment_digest_v3_vector.json (see CommitmentDigestV3Test); the `tct` block of
     // conformance/vectors.json carries `explanation_digest_hex` / `commitment_digest_hex` too. Both
     // originate in seam-runtime, whose `sdk-digest-parity` job byte-diffs vectors.json against its
     // own emitter.
     //
     // What IS available is stronger than it looks. `verifyTct` recomputes the digest and compares
-    // it to the `seam-commitment-digest:` grant inside the runtime-signed JWS, so the vector
+    // it to the `commitment_digest` statement in the runtime-signed JWS's `ext`, so the vector
     // already carries a runtime-produced expected value. The gap was never coverage of the digest
     // -- it was coverage of the FIELD TUPLE: the pre-existing tests tampered `action` only, so
     // exactly one of the framing inputs was proven bound.

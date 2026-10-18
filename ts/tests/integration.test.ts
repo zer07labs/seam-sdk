@@ -74,7 +74,7 @@ test("full round trip: admit → decide → seal → read → verify", { skip: S
   await withServer(8098, async (addr) => {
     const client = SeamClient.connect(`http://${addr}`);
     const agent = demoAgent();
-    const dec = await client.runDecision(agent, "ts-1", ["fraud-v3", "risk-v2"], [["fraud-v3", "BLOCK"], ["risk-v2", "BLOCK"]]);
+    const dec = await client.runDecision(agent, "ts-1-sid-0123456789abcdef", ["fraud-v3", "risk-v2"], [["fraud-v3", "BLOCK"], ["risk-v2", "BLOCK"]]);
     assert.equal(dec.decidedValue, "BLOCK");
     assert.equal(dec.outcome, "Resolved");
     assert.equal((await client.getDecision(dec.decisionId)).outcome, "Resolved");
@@ -93,8 +93,8 @@ test("H4: request features never affect the sealed record", { skip: SKIP }, asyn
   await withServer(8095, async (addr) => {
     const client = SeamClient.connect(`http://${addr}`);
     const votes: [string, string][] = [["fraud-v3", "BLOCK"], ["risk-v2", "BLOCK"]];
-    const plain = await client.runDecision(demoAgent(), "ts-feat-off", ["fraud-v3", "risk-v2"], votes);
-    const feat = await client.runDecision(demoAgent(), "ts-feat-on", ["fraud-v3", "risk-v2"], votes, {
+    const plain = await client.runDecision(demoAgent(), "ts-feat-off-sid-0123456789abcdef", ["fraud-v3", "risk-v2"], votes);
+    const feat = await client.runDecision(demoAgent(), "ts-feat-on-sid-0123456789abcdef", ["fraud-v3", "risk-v2"], votes, {
       amount_band: "high",
       channel: "card-present",
     });
@@ -111,10 +111,10 @@ test("H4: request features never affect the sealed record", { skip: SKIP }, asyn
 test("session lifecycle: open → propose → vote → commit seals", { skip: SKIP }, async () => {
   await withServer(8097, async (addr) => {
     const client = SeamClient.connect(`http://${addr}`);
-    await client.openSession(demoAgent(), { sessionId: "ts-sess", participants: ["lead", "peer"] });
-    await client.submitProposal("ts-sess", "lead", "p1", "BLOCK");
-    await client.submitVote("ts-sess", "peer", "p1", "APPROVE");
-    const step = await client.submitCommit("ts-sess", "c1", "BLOCK");
+    await client.openSession(demoAgent(), { sessionId: "ts-sess-sid-0123456789abcdef", participants: ["lead", "peer"] });
+    await client.submitProposal("ts-sess-sid-0123456789abcdef", "lead", "p1", "BLOCK");
+    await client.submitVote("ts-sess-sid-0123456789abcdef", "peer", "p1", "APPROVE");
+    const step = await client.submitCommit("ts-sess-sid-0123456789abcdef", "c1", "BLOCK");
     assert.equal(step.state, "Resolved");
     assert.ok(step.decisionId);
   });
@@ -128,21 +128,21 @@ test("6.2 budget loop: hard breach suspends, mgmt-plane resume continues and sea
     const client = SeamClient.connect(`http://${dataAddr}`);
     const admin = SeamAdminClient.connect(mgmtUrl, { token: mintOperatorToken(["session:resume"]) });
     await client.openSession(demoAgent(), {
-      sessionId: "ts-budget",
+      sessionId: "ts-budget-sid-0123456789abcdef",
       participants: ["lead", "peer"],
       limits: { tokens: 1000n },
     });
     // The proposal reports the full allowance — applied, ledger now exhausted.
-    await client.submitProposal("ts-budget", "lead", "p1", "BLOCK", { tokens: 1000n, costMicros: 40n });
+    await client.submitProposal("ts-budget-sid-0123456789abcdef", "lead", "p1", "BLOCK", { tokens: 1000n, costMicros: 40n });
     // The next step breaches the hard token limit: Suspended (a resolved step, not a thrown error).
-    let step = await client.submitVote("ts-budget", "peer", "p1", "APPROVE");
+    let step = await client.submitVote("ts-budget-sid-0123456789abcdef", "peer", "p1", "APPROVE");
     assert.equal(step.state, "Suspended");
     // The R9 approver raises the token dimension and resumes — now via SeamAdmin (mgmt plane), named.
-    await admin.resumeSession("ts-budget", "op:approver", { raise: { tokens: 5000n } });
+    await admin.resumeSession("ts-budget-sid-0123456789abcdef", "op:approver", { raise: { tokens: 5000n } });
     // Re-submit (the breached vote was never applied): now within budget → continues, then seals.
-    step = await client.submitVote("ts-budget", "peer", "p1", "APPROVE");
+    step = await client.submitVote("ts-budget-sid-0123456789abcdef", "peer", "p1", "APPROVE");
     assert.notEqual(step.state, "Suspended");
-    step = await client.submitCommit("ts-budget", "c1", "BLOCK");
+    step = await client.submitCommit("ts-budget-sid-0123456789abcdef", "c1", "BLOCK");
     assert.equal(step.state, "Resolved");
     assert.ok(step.decisionId);
   });
