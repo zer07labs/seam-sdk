@@ -2542,17 +2542,17 @@ Ranked by blast radius, highest first:
 - **Verdict:** confirm. **Status:** CONFIRMED (2026-10-18). **Decided by:** Opus.
 
 ### A partner fault never hides an internal finding
-- **Evidence:** `scripts/check_registry_drift.py:1785-1795` captures partner faults. `:2027-2032`, `:2103-2110` and
-  `:2256-2260` map the four cases. Tests at `scripts/test_registry_drift_gate.py:1747,3875,3898`.
+- **Evidence:** `scripts/check_registry_drift.py:1785-1795` captures partner faults. `scripts/check_registry_drift.py:2027-2032`, `scripts/check_registry_drift.py:2103-2110` and
+  `scripts/check_registry_drift.py:2256-2260` map the four cases. Tests at `scripts/test_registry_drift_gate.py:1747,3875,3898`.
 - **Analysis:** exit 1 has to mean "a finding was delivered". Under "any fault ⇒ 2", one dead partner credential
   would blind every internal drift for as long as nobody rotated it. This rule matches how `_with_newest` treats a
   newest-question fault, so all three questions share one exit-code vocabulary. `plans/partner-registry-drift.md:48`
-  still states the original rule, but the plan's own deviation note at `:92-93` corrects it.
+  still states the original rule, but the plan's own deviation note at `plans/partner-registry-drift.md:92-93` corrects it.
 - **Verdict:** confirm. **Status:** CONFIRMED (2026-10-18). **Decided by:** Opus.
 
 ### When both registries are short, one issue is filed: the internal one
-- **Evidence:** `scripts/check_registry_drift.py:2025-2034` routes the subject. `_partner_cell` (`:1207-1229`) records
-  partner's observed state. `PARTNER_DRIFT_TITLE` (`:312`) gives partner issues their own suppression scope.
+- **Evidence:** `scripts/check_registry_drift.py:2025-2034` routes the subject. `_partner_cell` (`scripts/check_registry_drift.py:1207-1229`) records
+  partner's observed state. `PARTNER_DRIFT_TITLE` (`scripts/check_registry_drift.py:312`) gives partner issues their own suppression scope.
 - **Analysis:** the build is stronger than the assumption needs. It reports partner as it really is, rather than
   assuming "missing from internal means missing from partner", and it flags a format internal serves but partner lacks
   as a separate promotion lag. One narrow gap remains: under a *suppressed* internal drift, a partner own-lag on a
@@ -2561,7 +2561,7 @@ Ranked by blast radius, highest first:
 
 ### A newest-version finding is never filed from a broken run
 - **Evidence:** `scripts/check_registry_drift.py:1982-1995` handles a git-clock fault: it prints, exits by D3, and
-  makes no gh call. `:2240-2247` returns 2 when GitHub is down beside a newest drift.
+  makes no gh call. `scripts/check_registry_drift.py:2240-2247` returns 2 when GitHub is down beside a newest drift.
 - **Analysis:** a partial body would write the broken checkout's missing or wrong tag row into a durable issue. It
   would also break the invariant that no infrastructure fault reaches GitHub. The cost is about one cron period of
   delay, and the job stays red throughout. One wording nit: a comment in the outage handler words the exit-1 rule more
@@ -2571,7 +2571,7 @@ Ranked by blast radius, highest first:
 ### Internal's `sort=-version` ordering is checked, never trusted
 - **Evidence:** `NEWEST_QUERY` at `scripts/check_registry_drift.py:258-271` is pinned by
   `test_the_newest_query_is_pinned_word_for_word` (`scripts/test_registry_drift_gate.py:5155`). The ordering and
-  floor guards are in `fetch_newest` (`:885-901`), and every one of them raises `InfraError`, which means exit 2.
+  floor guards are in `fetch_newest` (`scripts/check_registry_drift.py:885-901`), and every one of them raises `InfraError`, which means exit 2.
 - **Analysis:** trusting the sort would let a misspelt parameter fall back to sorting by date and silently pick the
   latest upload. Paging every row makes the cost grow with history and proves nothing the canary and declared floors
   don't. The residual needs a server-side fault plus an out-of-order backfill, which is cheaper to accept than to close.
@@ -2579,7 +2579,7 @@ Ranked by blast radius, highest first:
 
 ### The newest question's clock is internal's `uploaded_at`
 - **Evidence:** `newest_upload_clock` at `scripts/check_registry_drift.py:966-985`. Strict parse in
-  `_parse_upload_stamp` (`:935-963`). The skew guard reuses `CLOCK_SKEW_TOLERANCE_MINUTES` (`:1841-1870`).
+  `_parse_upload_stamp` (`scripts/check_registry_drift.py:935-963`). The skew guard reuses `CLOCK_SKEW_TOLERANCE_MINUTES` (`scripts/check_registry_drift.py:1841-1870`).
 - **Analysis:** internal finishing its upload is exactly what promotion waits on. The clock comes from the same
   response as the newest version, with no dependency on tag depth or main's history. It can only file early, and the
   soft window absorbs that. A re-upload in place would delay a lag by at most one grace window, and this repo doesn't
@@ -2588,12 +2588,12 @@ Ranked by blast radius, highest first:
 
 ### Offline runs check partner only when given a partner dump
 - **Evidence:** `scripts/check_registry_drift.py:1732-1737` refuses a partner dump without an internal one.
-  `:1760-1777` and `:2007-2008` handle and print NOT CHECKED, and the clean line at `:2060-2066` never claims partner.
+  `scripts/check_registry_drift.py:1760-1777` and `scripts/check_registry_drift.py:2007-2008` handle and print NOT CHECKED, and the clean line at `scripts/check_registry_drift.py:2060-2066` never claims partner.
   `test_the_scheduled_run_never_passes_a_saved_response` (`scripts/test_registry_drift_gate.py:3016`) keeps the
   scheduled path online.
 - **Analysis:** only the scheduled path files issues, and it never runs offline. Requiring both dumps would put a
   partner fixture into every offline test and hide the tested not-checked branch. An offline exit 0 also skips the
-  newest question, and that is printed and pinned too (`:5464`).
+  newest question, and that is printed and pinned too (`scripts/test_registry_drift_gate.py:5464`).
 - **Verdict:** confirm. **Status:** CONFIRMED (2026-10-18). **Decided by:** Opus.
 
 ---
