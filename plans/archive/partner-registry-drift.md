@@ -1,5 +1,14 @@
 # Partner registry drift — seam-sdk#203 acceptance
 
+> **📦 ARCHIVED 2026-10-18 — DELIVERED, merged as PR #252 (`179a7fa`, closes #203).** Archived during `/sweep`
+> after a delivery verification against this tree. All three phases are DONE and reachable from `main`.
+> `scripts/check_registry_drift.py` reads `zer07labs/partner` with the one resolved token, and fails when partner lags
+> internal. Partner issues file under `PARTNER_DRIFT_TITLE` with their own suppression scope. Tracking issue
+> [seam-sdk#203](https://github.com/zer07labs/seam-sdk/issues/203) is **CLOSED**. This plan's five `ASSUMPTIONS.md`
+> entries were confirmed by `/reconcile` on 2026-10-18 (PR #267, `460c161`; `DECISIONS.md`'s 2026-10-18 entry). That
+> left none `UNCONFIRMED`. The last 10 scheduled `registry-drift.yml` runs before archiving
+> (2026-10-16 → 2026-10-18) all succeeded.
+
 **Issue:** [seam-sdk#203](https://github.com/zer07labs/seam-sdk/issues/203). Its first ask, promoting
 the current release to `partner`, was done before this plan by `publish.yml`'s `promote-partner`
 job, `promote-partner-backfill.yml` and `scripts/promote-to-partner.sh`. On 2026-10-12, live
