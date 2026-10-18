@@ -2636,9 +2636,10 @@ code follow-up is needed before the next `/ship`. Both plans now meet the archiv
 - **Live session ids carry a suffix.** P4 refuses short session ids, so every live test id gained a
   22+ character suffix. No client-side pre-validation was added: the helpers are opt-in, and the
   runtime is the authority.
-- **CI pins.** `Makefile` `BUF_MODULE` → `buf.build/zer07labs/seam:train-0.48.0` and
+- **CI pins.** `Makefile` `BUF_MODULE` → `buf.build/zer07labs/seam:git-e4c01ad336e73cc5a373218029809fa708624ee4` and
   `SEAM_RUNTIME_BUILD_REF` → the pin (timeout 45), precedent 0.45.0 (#237). Both revert at the un-pin.
-  The BSR label must be pushed from the runtime side; this repo does not push the runtime's module.
+  The label (runtime's `git-<sha>` convention, `main` untouched) was pushed 2026-10-18 from a
+  `git archive` of the pinned commit, owner-approved; BSR commit `a8b6fbf15b0146058940ab032886ff0c`.
 
 ## 2026-10-18 — reconcile the protocol pass assumptions (seam-sdk#265, 2 entries)
 
