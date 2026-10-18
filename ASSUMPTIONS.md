@@ -1416,3 +1416,25 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Alternatives:** check every version of at least 0.7.47. That means many GETs and per-version grace for a case that has not happened.
 - **Blast radius if wrong:** a short-lived version is missing on partner; the next version is still checked.
 - **Status:** CONFIRMED (owner)
+
+## A load-shed is surfaced, never retried, and that satisfies item 6a's backoff
+- **Plan:** plans/protocol-pass-2026-10.md (Phase 5, item 6a)
+- **Assumed:** the scoped plan's "handshake helpers handle RESOURCE_EXHAUSTED / 429 with `Retry-After`
+  by backing off, never by tight retry" is met by an SDK that never retries at all.
+- **Chose:** no retry loop. `ResourceExhaustedError` carries `retry_after` (TS `retryAfter`) from
+  `RetryInfo`, and the caller decides when to come back.
+- **Alternatives:** an in-SDK bounded backoff on the admission handshake honouring `retry_after`.
+- **Blast radius if wrong:** a caller that expected the SDK to wait and retry sees the error instead;
+  additive to fix later.
+- **Status:** CONFIRMED (2026-10-18, /reconcile; see DECISIONS.md, protocol pass reconcile).
+
+## Opt-in id helpers, not client-side refusal
+- **Plan:** plans/protocol-pass-2026-10.md (Phase 5, items 4-5)
+- **Assumed:** the session-id rule is the runtime's to enforce; the SDK offers it rather than imposes it.
+- **Chose:** `validate_session_id` and friends are exported helpers; `run_decision` / `open_session`
+  send whatever they are given, and the runtime's `INVALID_SESSION_ID` arrives as `InvalidArgumentError`
+  with `macp_code`.
+- **Alternatives:** validate before every call, which duplicates the rule on the hot path and drifts
+  if the runtime widens it.
+- **Blast radius if wrong:** a bad id costs one round trip instead of zero.
+- **Status:** CONFIRMED (2026-10-18, /reconcile; see DECISIONS.md, protocol pass reconcile).

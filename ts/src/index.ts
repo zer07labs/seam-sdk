@@ -8,6 +8,8 @@ export * from "./client.js";
 export * from "./admin.js";
 export * from "./crypto.js";
 export * from "./errors.js";
+// Session / decision ids — the runtime's P4 / P5 rules (Python's `seam_sdk.ids`).
+export * from "./ids.js";
 // Identity custody (seam-sdk#201): the schema-v1 bootstrap file — the same four names Python's
 // `seam_sdk` root exports. Listed, not star-exported, so the layout helper `identityFileBody` and the
 // module constants stay internal to `identity.ts` and its tests.

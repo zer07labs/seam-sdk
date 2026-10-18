@@ -15,6 +15,7 @@ import {
   CollectiveVerdict,
   CommitRequestSchema,
   EvaluationRequestSchema,
+  IssueChallengeRequestSchema,
   ObjectionRequestSchema,
   OpenSessionRequestSchema,
   ProposalRequestSchema,
@@ -104,10 +105,13 @@ export interface SeamClientOptions {
 /** {@link CredentialedCallOptions} plus `submitCommit`'s write-side override hint (#141) —
  * deliberately not folded into the base options either, for the same reason `credential` isn't. */
 export interface SubmitCommitOptions extends CredentialedCallOptions {
-  /** The commitment id this decision replaces. Forwarded on the request path only — the server's
-   * own internal R13 supersession always takes precedence over a client-supplied value if both are
-   * set, so this is a hint, not a guarantee. Omit rather than pass `""`: absence and an empty
-   * override read differently server-side. */
+  /** The prior decision this one replaces, **by its decision id** (`dec:{tenant}:{session}` — build it
+   * with `decisionIdForSession`). The runtime resolves it within this session's tenant, hashes the
+   * prior's sealed commitment, and seals `{session}/sha256:<hex>` into the record — so the served
+   * `Commitment.supersedes` is that stored form, not what was sent. A prior that is missing, in
+   * another tenant, not `Resolved`, or carries no MACP commitment is refused with one uniform
+   * `INVALID_ENVELOPE` (seam-runtime `docs/specs/seam-commitment-digest.v3.md` §supersedes). Omit it
+   * rather than passing `""`: absence and an empty value are different digests under v3. */
   supersedes?: string;
 }
 
@@ -663,7 +667,7 @@ export class SeamClient {
   }
 
   private async presentation(agent: Agent, opts?: UnaryCallOptions) {
-    const ch = await this.admission.issueChallenge({}, call(opts));
+    const ch = await this.admission.issueChallenge(create(IssueChallengeRequestSchema), call(opts));
     const body = buildPresentation(agent.seed, ch.receiverAid, ch.nonce, Date.now());
     return { presentationJson: new TextEncoder().encode(JSON.stringify(body)) };
   }
@@ -882,7 +886,8 @@ export class SeamClient {
    * exactly as `submitVote`'s is. A pair, or an empty reason, sends none — byte-identical to a vote
    * without one. The runtime bounds it (4096 bytes, redacted, classified) and REQUIRES it — non-empty
    * after trimming whitespace — on every vote when the governing policy sets
-   * `rules.seam.capture_dissent`, refusing the whole decision otherwise; neither rule is mirrored here.
+   * `rules["x-com.zer07labs.seam"].capture_dissent`, refusing the whole decision otherwise; neither rule is
+   * mirrored here.
    * A malformed entry rejects with a `TypeError` before any RPC, the handshake included.
    */
   async runDecision(
@@ -972,7 +977,8 @@ export class SeamClient {
   /** Cast a vote on a proposal. `opts.reason` is the voter's stated reason, sealed into the vote envelope
    * (seam-runtime #804). Omitted or empty means no reason, byte-identical to a vote without one. The
    * server bounds it (4096 bytes, injection-redacted, classified) and REQUIRES it when the governing
-   * policy sets `rules.seam.capture_dissent`; those checks are deliberately not mirrored here. */
+   * policy sets `rules["x-com.zer07labs.seam"].capture_dissent`; those checks are deliberately not
+   * mirrored here. */
   async submitVote(
     sessionId: string,
     voter: string,
@@ -1005,7 +1011,7 @@ export class SeamClient {
    * `rationaleRef` is a `sha256:<hex>` context ref. Since runtime 0.44.0 it is **sealed**: every
    * accepted evaluation's `rationaleRef` (and whether a `confidence` was stated at all) is bound
    * into the Commitment's explanation under `seam-explanation-digest:v1`, which
-   * `seam-commitment-digest:v2` covers. `verifyDecision` recomputes it locally.
+   * `seam-commitment-digest:v3` covers. `verifyDecision` recomputes it locally.
    */
   async submitEvaluation(
     sessionId: string,
@@ -1400,7 +1406,7 @@ const EXPLANATION_KIND_WORDS: Partial<Record<ExplanationKind, string>> = {
 };
 
 /**
- * The snake_case commitment {@link verifyTct} takes, from a served `Commitment` (seam-commitment-digest:v2).
+ * The snake_case commitment {@link verifyTct} takes, from a served `Commitment` (seam-commitment-digest:v3).
  *
  * Carries the committer and the sealed explanation — the entries AND the published digest — so
  * verification recomputes the explanation digest from the entries and requires it to equal the published
@@ -1408,7 +1414,8 @@ const EXPLANATION_KIND_WORDS: Partial<Record<ExplanationKind, string>> = {
  * always an array), so, as in the Python SDK's `commitment_view`, the entries are always treated as
  * supplied: an empty list with a non-empty published digest verifies `false`. An empty
  * `explanationDigest` (unset bytes) is "not published". Explicit presence is preserved: an absent
- * `confidence` / `rationaleRef` stays `null`, never `0` / `""`.
+ * `confidence` / `rationaleRef` stays `null`, never `0` / `""`, and an absent `supersedes` stays
+ * `undefined` while a present empty one stays `""` — v3 frames the two differently (a presence byte).
  */
 export function commitmentView(c: Commitment): CommitmentView {
   return {
@@ -1417,7 +1424,10 @@ export function commitmentView(c: Commitment): CommitmentView {
     authority: c.authority,
     auth_method: c.authMethod,
     trust_basis: c.trustBasis,
-    supersedes: c.supersedes || "",
+    // v3 frames absent and present-empty differently (a presence byte), so explicit presence must
+    // survive: `c.supersedes || ""` turned every unsuperseding commitment into a present-empty one
+    // and its TCT would never verify.
+    supersedes: c.supersedes,
     committer: c.committer,
     explanation_digest: c.explanationDigest,
     explanation: c.explanation.map((e) => ({

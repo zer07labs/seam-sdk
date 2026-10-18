@@ -179,66 +179,9 @@ def test_bool_and_float_are_refused_rather_than_narrowed_to_an_int(
         crypto.verify_chain_head_attestation(*args, tenant="")
 
 
-@pytest.mark.parametrize(
-    ("label", "kwargs"),
-    [
-        ("sealed_at=True", {"sealed_at": True}),
-        ("sealed_at=False", {"sealed_at": False}),
-        ("schema_version=True", {"sealed_at": 1, "schema_version": True}),
-        ("sealed_at=5.0", {"sealed_at": 5.0}),
-        ("sealed_at='5'", {"sealed_at": "5"}),
-    ],
-)
-def test_record_digest_v2_refuses_what_typescript_refuses(
-    label: str, kwargs: dict
-) -> None:
-    """The divergence the *first* cut of this phase created, in the sibling function.
-
-    Tightening `verify_chain_head_attestation` alone left `record_digest_v2(sealed_at=True)` digesting
-    as `1` — `bool` subclasses `int`, `struct.pack` packs it happily — while TypeScript's `uintSlot`
-    had just started refusing `true`. Both languages agreed *before* the phase (both digested it as
-    1) and disagreed *after*, which is worse than either consistent answer: the phase would have
-    closed three cross-language divergences by opening a fourth.
-
-    `record_digest_v3` refused all of this from the day it was written, via the same validator. What
-    changed is that v2 now shares it instead of trusting `struct.pack` to catch everything — which it
-    did, except for the one case where `bool` is an `int`.
-    """
-    base = dict(
-        decision_id="d",
-        tenant="t",
-        namespace="n",
-        ciphertext_digest=b"\x00" * 32,
-        outcome="OK",
-        mode=None,
-        policy_version=None,
-        supersedes=None,
-    )
-    with pytest.raises(TypeError):
-        crypto.record_digest_v2(**{**base, **kwargs})
-
-
-def test_record_digest_v2_still_produces_the_frozen_digest_for_a_legal_value() -> None:
-    """The control. Every refusal above is worthless if the accepted path moved by a byte.
-
-    Measured against `git show HEAD:python/seam_sdk/crypto.py` over 20,000 randomized in-range
-    inputs: 20,000 identical, 0 diverged. This pins one of them so the claim survives in the suite
-    rather than only in a commit message.
-    """
-    got = crypto.record_digest_v2(
-        decision_id="d",
-        tenant="t",
-        namespace="n",
-        ciphertext_digest=b"\x00" * 32,
-        sealed_at=1,
-        outcome="OK",
-        mode=None,
-        policy_version=None,
-        supersedes=None,
-    )
-    assert (
-        got.hex() == "c61843a5fd08efe3de27a0e2bc2666064b905f158cc315bbf6d44aa008508447"
-    )
+# The record-digest twin of the rule above (`sealed_at=True` refused, not digested as 1) lived here
+# for `record_digest_v2`. v2 and v3 are deleted; `record_digest_v4` routes every integer slot through
+# the same `_uint_slot`, and `test_record_digest_v4.py`'s kind-corpus pins the refusals.
 
 
 @pytest.mark.parametrize(
@@ -298,7 +241,7 @@ def test_any_byte_sequence_is_still_accepted_for_attested_head() -> None:
     one, to fix a bug they did not have.
 
     It now goes through `_as_bytes`, which is the module's single definition of "is this a byte
-    sequence" and is what `record_digest_v3` already used — so the two functions cannot disagree
+    sequence" and is what `record_digest_v4` already used — so the two functions cannot disagree
     about what bytes are, and the `memoryview` itemsize trap `_as_bytes` documents is handled in one
     place rather than endorsed in two.
     """
@@ -445,7 +388,7 @@ def test_a_wrong_typed_signature_raises_rather_than_reporting_a_failed_attestati
             crypto.verify_chain_head_attestation(**{**v, "signature": bad})
 
     # Any byte SEQUENCE is still accepted, through the module's one definition of that — the same
-    # `_as_bytes` `attested_head` and `record_digest_v3` use. Narrowing to `bytes` alone here would
+    # `_as_bytes` `attested_head` and `record_digest_v4` use. Narrowing to `bytes` alone here would
     # reintroduce, one argument over, the exact defect the `attested_head` check was fixed for.
     assert (
         crypto.verify_chain_head_attestation(

@@ -8,8 +8,8 @@ has a completely separate implementation of the same rule, and this file is what
 byte-identity to each other rather than each being self-consistent.
 
 `conformance/authorize_jcs_digest_vector.json` is a byte-identity contract with seam-runtime and is
-never edited from here. This is the same shape as `conformance/record_digest_v3_extended.json`: an
-SDK-owned superset for traps a runtime-owned fixture does not cover.
+never edited from here. This file is an SDK-owned superset for traps a runtime-owned fixture does
+not cover.
 
 WHY INTEGERS NEED THEIR OWN CASES
 ---------------------------------
