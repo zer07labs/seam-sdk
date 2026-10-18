@@ -4698,3 +4698,19 @@ single shared listing) · P3 simple.
 - **Tests:** `pytest scripts/` gives 710 passed; ruff clean.
 - **Not exercisable locally:** `--report` against real GitHub. Covered by dispatching `registry-drift.yml` on the
   branch before merge (see the PR).
+
+# PROGRESS — `plans/archive/request-credential.md` step 4 (seam-sdk#264)
+
+Single phase, run under `/drive`. The plan already existed (steps 1–3 shipped via PR #154), so no
+re-plan: step 4 was the only remaining work, and it is a test addition.
+
+## Phase 1: live deny-plane tests, Python + TypeScript, DONE (2026-10-18)
+
+- Added the `deny plane` block to `python/tests/test_integration.py` and `ts/tests/integration.test.ts`:
+  `seam-grpc` spawned with `SEAM_ENFORCE_SUBJECT=1` + `SEAM_GRPC_SUBJECT_HEADERS=deny`.
+- Ran green against a `seam-grpc` built from `seam-runtime` main (0.47.0): Python 1554 passed,
+  TypeScript 280 passed with `SEAM_GRPC_BIN` set.
+- Mutations (both languages, each restored): `allow` + `SEAM_ALLOW_UNVERIFIED_SUBJECT=1` fails the
+  forgery test (the header subject is honoured); the client signing `decisionId + "x"` fails the
+  credentialed-read test; `allow` without the hatch refuses to boot.
+- Plan archived (no `ASSUMPTIONS.md` entries were tagged to it).

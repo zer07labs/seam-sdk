@@ -1,9 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { connect as tcpConnect } from "node:net";
+import { connect as tcpConnect, createServer, type AddressInfo } from "node:net";
+import { Code, ConnectError, createClient } from "@connectrpc/connect";
+import { createGrpcTransport } from "@connectrpc/connect-node";
 import { Agent, IssuerMismatchError, SeamClient } from "../src/client.js";
 import { SeamAdminClient } from "../src/admin.js";
+import { requestSig } from "../src/crypto.js";
+import { UnauthenticatedError } from "../src/errors.js";
+import { SeamCoordination } from "../gen/seam/api/v1/seam_pb.js";
 import { governanceEnv, mintOperatorToken } from "./operator_token.js";
 
 const BIN = process.env.SEAM_GRPC_BIN;
@@ -145,5 +150,132 @@ test("6.2 budget loop: hard breach suspends, mgmt-plane resume continues and sea
     step = await client.submitCommit("ts-budget-sid-0123456789abcdef", "c1", "BLOCK");
     assert.equal(step.state, "Resolved");
     assert.ok(step.decisionId);
+  });
+});
+
+// ── The per-request credential against a deny plane (request-credential plan step 4, #264) ───────
+//
+// `SEAM_ENFORCE_SUBJECT=1` + `SEAM_GRPC_SUBJECT_HEADERS=deny` is the credential-only posture (#710,
+// #508): the gRPC plane strips `x-seam-subject` at its edge, so a subject-scoped read proves its caller
+// in band (`x-seam-ticket-bin` + `x-seam-call-sig-bin`) or has no subject at all. The runtime's own
+// end-to-end shape is `seam-runtime/integration/tests/subject_headers_deny.rs`. The refused cases are
+// the anti-vacuity control: without them this would keep passing against a plane that trusted the
+// header again. Always spawned (needs SEAM_GRPC_BIN): the posture is the thing under test.
+
+const GET_DECISION = "/seam.api.v1.SeamCoordination/GetDecision";
+const REPLAY_DECISION = "/seam.api.v1.SeamCoordination/ReplayDecision";
+
+/** An OS-allocated port — not a fixed one (see python/tests/live_server.py, #85). */
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = createServer();
+    srv.once("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const { port } = srv.address() as AddressInfo;
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
+async function withDenyPlane(fn: (baseUrl: string) => Promise<void>): Promise<void> {
+  const port = await freePort();
+  // The port must be OURS: if anything already accepts there, readiness below could not tell that
+  // stranger from this server (the #85 defect live_server.py closes for Python).
+  await assert.rejects(waitPort(port, 0), "port was already accepting before spawn");
+  let output = "";
+  const proc = spawn(BIN!, {
+    env: {
+      ...process.env,
+      ...governanceEnv(),
+      SEAM_GRPC_LISTEN: `127.0.0.1:${port}`,
+      SEAM_DEV_INSECURE: "1",
+      SEAM_ENFORCE_SUBJECT: "1",
+      SEAM_GRPC_SUBJECT_HEADERS: "deny",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  // Keep the server's own output (bounded), so a boot refusal names its cause instead of timing out.
+  const keep = (b: Buffer) => { output = (output + b.toString()).slice(-4000); };
+  proc.stdout!.on("data", keep);
+  proc.stderr!.on("data", keep);
+  try {
+    try {
+      await waitPort(port, 15000);
+    } catch {
+      throw new Error(`seam-grpc did not serve on ${port} (exit ${proc.exitCode}). Its output:\n${output}`);
+    }
+    await fn(`http://127.0.0.1:${port}`);
+  } finally {
+    proc.kill();
+  }
+}
+
+async function seal(client: SeamClient, agent: Agent, tag: string): Promise<string> {
+  // RunDecision proves identity from its body presentation, so it seals on a deny plane unaided.
+  const dec = await client.runDecision(agent, tag, ["fraud-v3", "risk-v2"], [["fraud-v3", "BLOCK"], ["risk-v2", "BLOCK"]]);
+  assert.equal(dec.outcome, "Resolved");
+  return dec.decisionId;
+}
+
+test("deny plane: a credentialed read succeeds, the same read without one is refused", { skip: !BIN }, async () => {
+  await withDenyPlane(async (baseUrl) => {
+    const client = SeamClient.connect(baseUrl);
+    const agent = demoAgent();
+    try {
+      const id = await seal(client, agent, "ts-deny-cred");
+      // WITH the credential: the reads succeed.
+      assert.equal((await client.getDecision(id, { credential: agent })).decisionId, id);
+      assert.equal((await client.replayDecision(id, { credential: agent })).chainVerified, true);
+      // WITHOUT it — same client, same calls: refused as an identity failure, typed.
+      await assert.rejects(client.getDecision(id), UnauthenticatedError);
+      await assert.rejects(client.replayDecision(id), UnauthenticatedError);
+      // A client bound to the agent (#202) attaches the credential without a per-call option.
+      const bound = SeamClient.connect(baseUrl, { agent });
+      try {
+        assert.equal((await bound.getDecision(id)).decisionId, id);
+      } finally {
+        bound.close();
+      }
+    } finally {
+      client.close();
+    }
+  });
+});
+
+test("deny plane: a header subject and a wrong-context signature are both refused", { skip: !BIN }, async () => {
+  // Built by hand, because the client always signs the call it is making: an asserted
+  // `x-seam-subject` header (stripped at the edge), and an honest signature — right key, right
+  // ticket — re-pointed at another resource or another verb.
+  await withDenyPlane(async (baseUrl) => {
+    const client = SeamClient.connect(baseUrl);
+    const agent = demoAgent();
+    try {
+      const first = await seal(client, agent, "ts-deny-a");
+      const second = await seal(client, agent, "ts-deny-b");
+      const ticket = await client.admit(agent);
+      const coord = createClient(SeamCoordination, createGrpcTransport({ baseUrl }));
+      const cred = (rpcName: string, resourceId: string) => ({
+        "x-seam-ticket-bin": Buffer.from(ticket).toString("base64"),
+        "x-seam-call-sig-bin": Buffer.from(requestSig(agent.seed, ticket, rpcName, resourceId, "")).toString("base64"),
+      });
+      const unauthenticated = (e: unknown) => e instanceof ConnectError && e.code === Code.Unauthenticated;
+
+      // Control: the hand-built credential is accepted when it names exactly this call — so the
+      // refusals below are about the binding, not about how the headers were assembled.
+      assert.equal((await coord.getDecision({ decisionId: first }, { headers: cred(GET_DECISION, first) })).decisionId, first);
+      assert.equal(
+        (await coord.replayDecision({ decisionId: first }, { headers: cred(REPLAY_DECISION, first) })).chainVerified,
+        true,
+      );
+
+      // The pre-#508 client: the subject asserted as a header and nothing else.
+      await assert.rejects(coord.getDecision({ decisionId: first }, { headers: { "x-seam-subject": agent.aid } }), unauthenticated);
+      // A signature for decision `second`, presented against `first`.
+      await assert.rejects(coord.getDecision({ decisionId: first }, { headers: cred(GET_DECISION, second) }), unauthenticated);
+      // A signature for GetDecision on `first`, presented on ReplayDecision of `first`.
+      await assert.rejects(coord.replayDecision({ decisionId: first }, { headers: cred(GET_DECISION, first) }), unauthenticated);
+    } finally {
+      client.close();
+    }
   });
 });
