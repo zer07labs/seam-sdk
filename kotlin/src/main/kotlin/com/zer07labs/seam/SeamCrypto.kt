@@ -1,8 +1,13 @@
 package com.zer07labs.seam
 
 import com.google.gson.Gson
+import com.google.gson.Strictness
 import com.google.gson.reflect.TypeToken
+import com.google.gson.stream.JsonReader
+import com.google.gson.stream.JsonToken
 import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.io.StringReader
 import java.math.BigInteger
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -47,8 +52,9 @@ data class ExplanationEntry(
 )
 
 /**
- * The commitment fields `seam-commitment-digest:v2` binds. [committer] is the verified AID that
- * committed (empty when absent). Field 8 (the explanation digest) is resolved from [explanation] and
+ * The commitment fields `seam-commitment-digest:v3` binds. [committer] is the verified AID that
+ * committed (empty when absent). [supersedes] is `null` when ABSENT, which v3 frames as `0x00` — a
+ * different digest from a present empty string (`0x01 ‖ F("")`). Field 8 (the explanation digest) is resolved from [explanation] and
  * [explanationDigest] (32 raw bytes) — see [SeamCrypto.verifyTct].
  */
 data class Commitment(
@@ -137,8 +143,19 @@ object SeamCrypto {
         throw IllegalArgumentException("unsupported AID form: $aid")
     }
 
-    private fun popMessageId(popNonce: String): String {
-        val h = sha256("seam-pop-mid".toByteArray(Charsets.UTF_8) + popNonce.toByteArray(Charsets.US_ASCII))
+    /** Domain tag of the PoP admission `message_id`: `derivedUuid(tag, nonce_ascii)`. */
+    const val POP_MESSAGE_ID_TAG = "seam-pop-mid-v1"
+
+    /**
+     * Deterministic, v4-shaped UUID: the first 16 bytes of `SHA-256(tag ‖ 0x00 ‖ input)` with the
+     * version nibble set to 4 and the variant bits to `10`, lowercase and hyphenated. The `0x00`
+     * separates tag from input, so no (tag, input) pair collides with another by shifting bytes
+     * across the boundary. Pinned by `derived_uuid` in `conformance/vectors.json`.
+     */
+    fun derivedUuid(tag: String, input: ByteArray): String {
+        val h = sha256(tag.toByteArray(Charsets.UTF_8) + byteArrayOf(0) + input)
+        h[6] = ((h[6].toInt() and 0x0f) or 0x40).toByte()
+        h[8] = ((h[8].toInt() and 0x3f) or 0x80).toByte()
         val sb = StringBuilder(36)
         for (i in 0 until 16) {
             if (i == 4 || i == 6 || i == 8 || i == 10) sb.append('-')
@@ -146,6 +163,10 @@ object SeamCrypto {
         }
         return sb.toString()
     }
+
+    /** The admission `message_id`: `derivedUuid("seam-pop-mid-v1", nonce_ascii)`. */
+    fun popMessageId(popNonce: String): String =
+        derivedUuid(POP_MESSAGE_ID_TAG, popNonce.toByteArray(Charsets.US_ASCII))
 
     /** Build the pinned-key admission presentation the Seam server verifies. */
     fun buildPresentation(agentSeed: ByteArray, receiverAid: String, popNonce: String, nowMs: Long): Presentation {
@@ -192,7 +213,7 @@ object SeamCrypto {
      *
      * Throws [IllegalArgumentException] on an unknown kind or a non-canonical confidence (NaN, ±inf,
      * outside `[0.0, 1.0]`, or `-0.0`) rather than hashing it. Normative:
-     * `seam-runtime/docs/specs/seam-commitment-digest.v2.md`.
+     * `seam-runtime/docs/specs/seam-commitment-digest.v3.md`.
      */
     fun explanationDigest(entries: List<ExplanationEntry>): ByteArray {
         val out = ByteArrayOutputStream()
@@ -245,11 +266,26 @@ object SeamCrypto {
         return computed
     }
 
+    /** Domain tag of the commitment digest. */
+    const val COMMITMENT_DIGEST_DOMAIN = "seam-commitment-digest:v3"
+
+    /** The one grant a commitment self-attestation carries. */
+    const val ATTESTATION_GRANT = "aitp.attestation"
+
+    /** The `ext` namespace the commitment statement rides under. */
+    const val COMMITMENT_EXT_NAMESPACE = "com.zer07labs.seam"
+
+    /** The statement `type` inside [COMMITMENT_EXT_NAMESPACE]. */
+    const val COMMITMENT_STATEMENT = "seam:commitment"
+
     /**
-     * `seam-commitment-digest:v2` (hex): SHA-256 over a **length-prefixed** framing of a domain tag
+     * `seam-commitment-digest:v3` (hex): SHA-256 over a **length-prefixed** framing of a domain tag
      * plus the commitment fields — each field preceded by its 8-byte big-endian length. Mirrors the
-     * runtime byte-for-byte, and mirrors the Go/Java/Python/TypeScript shims. v1 is deleted, not
-     * dual-verified. Normative: `seam-runtime/docs/specs/seam-commitment-digest.v2.md`.
+     * runtime byte-for-byte, and mirrors the Go/Java/Python/TypeScript shims. v2 is deleted, not
+     * dual-verified. Normative: `seam-runtime/docs/specs/seam-commitment-digest.v3.md`. v3's one
+     * framing change: `supersedes` carries a presence byte — `0x00` when absent (`null`), `0x01 ‖
+     * F(s)` when present — so "supersedes nothing" and "supersedes the empty id" are no longer the
+     * same digest.
      *
      * **The length prefixes are not decoration and must never be "simplified" to a separator.** The
      * fields are arbitrary text that may itself contain NUL — UTF-8 permits U+0000, and it survives
@@ -270,27 +306,35 @@ object SeamCrypto {
      * explanation digest binds *why*. `ConformanceTest` asserts every one of these is bound.
      */
     internal fun seamCommitmentDigest(c: Commitment): String {
+        val explanation = commitmentExplanationDigest(c)
         val h = ByteArrayOutputStream()
-        val fields = listOf(
-            "seam-commitment-digest:v2".toByteArray(Charsets.UTF_8),
-            c.id.toByteArray(Charsets.UTF_8),
-            c.action.toByteArray(Charsets.UTF_8),
-            c.authority.toByteArray(Charsets.UTF_8),
-            (c.supersedes ?: "").toByteArray(Charsets.UTF_8),
-            c.authMethod.toByteArray(Charsets.UTF_8),
-            c.trustBasis.toByteArray(Charsets.UTF_8),
-            c.committer.toByteArray(Charsets.UTF_8),
-            commitmentExplanationDigest(c),
-        )
-        for (f in fields) h.frame(f)
+        h.frame(COMMITMENT_DIGEST_DOMAIN.toByteArray(Charsets.UTF_8))
+        h.frame(c.id.toByteArray(Charsets.UTF_8))
+        h.frame(c.action.toByteArray(Charsets.UTF_8))
+        h.frame(c.authority.toByteArray(Charsets.UTF_8))
+        val supersedes = c.supersedes
+        if (supersedes == null) {
+            h.write(0x00)
+        } else {
+            h.write(0x01)
+            h.frame(supersedes.toByteArray(Charsets.UTF_8))
+        }
+        h.frame(c.authMethod.toByteArray(Charsets.UTF_8))
+        h.frame(c.trustBasis.toByteArray(Charsets.UTF_8))
+        h.frame(c.committer.toByteArray(Charsets.UTF_8))
+        h.frame(explanation)
         return sha256(h.toByteArray()).joinToString("") { "%02x".format(it.toInt() and 0xff) }
     }
 
     /**
      * Independently verify a sealed commitment's rooted TCT — zero server trust, stock crypto only:
-     * the EdDSA JWS against the issuer AID's key, the self-issued claims, and that the bound
-     * `seam-commitment-digest:v2` grant matches this exact commitment (the decided content, the
-     * committer, and the sealed explanation). Any malformed/forged input fails closed (returns false),
+     * the EdDSA JWS (`typ` `aitp-tct+jwt`) against the pinned issuer AID's key; the self-issued
+     * claims (`iss == sub == aud == issuerAid`); `exp`; that `grants` is exactly
+     * `["aitp.attestation"]`; and that `ext` is exactly
+     * `{"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":<hex>}}` with the hex equal
+     * to the recomputed `seam-commitment-digest:v3` of this exact commitment (the decided content, the
+     * committer, and the sealed explanation). A header or payload whose JSON repeats an object key at
+     * any depth is refused: Gson would keep one of the two, and another parser might keep the other. Any malformed/forged input fails closed (returns false),
      * never throws — including explanation entries that disagree with the published
      * `explanationDigest`, an unknown kind, or a non-canonical confidence.
      */
@@ -307,20 +351,66 @@ object SeamCrypto {
             if (!ed25519Verify(pub, "${parts[0]}.${parts[1]}".toByteArray(Charsets.US_ASCII), b64urlDecode(parts[2]))) {
                 return false
             }
-            val header: Map<String, Any?> = gson.fromJson(String(b64urlDecode(parts[0]), Charsets.UTF_8), mapType)
-            val payload: Map<String, Any?> = gson.fromJson(String(b64urlDecode(parts[1]), Charsets.UTF_8), mapType)
+            val headerJson = String(b64urlDecode(parts[0]), Charsets.UTF_8)
+            val payloadJson = String(b64urlDecode(parts[1]), Charsets.UTF_8)
+            if (hasDuplicateKey(headerJson) || hasDuplicateKey(payloadJson)) return false
+            val header: Map<String, Any?> = gson.fromJson(headerJson, mapType) ?: return false
+            val payload: Map<String, Any?> = gson.fromJson(payloadJson, mapType) ?: return false
             if (header["alg"] != "EdDSA" || header["typ"] != "aitp-tct+jwt") return false
             if (!(payload["iss"] == issuerAid && payload["sub"] == issuerAid && payload["aud"] == issuerAid)) {
                 return false
             }
             val exp = payload["exp"] as? Number ?: return false
             if (nowS >= exp.toLong()) return false // RFC 7519: reject at/after expiry
-            val want = "seam-commitment-digest:" + seamCommitmentDigest(commitment)
             val grants = payload["grants"] as? List<*> ?: return false
-            grants.any { it == want }
+            if (grants.size != 1 || grants[0] != ATTESTATION_GRANT) return false
+            val ext = payload["ext"] as? Map<*, *> ?: return false
+            if (ext.size != 1) return false
+            val stmt = ext[COMMITMENT_EXT_NAMESPACE] as? Map<*, *> ?: return false
+            if (stmt.size != 2 || stmt["type"] != COMMITMENT_STATEMENT) return false
+            val digest = stmt["commitment_digest"] as? String ?: return false
+            digest == seamCommitmentDigest(commitment)
         } catch (e: RuntimeException) {
             false
         }
+    }
+
+    /**
+     * True when [json] repeats an object key at any depth — or is not a single well-formed JSON
+     * value, which fails closed the same way.
+     */
+    internal fun hasDuplicateKey(json: String): Boolean =
+        try {
+            JsonReader(StringReader(json)).use { r ->
+                r.strictness = Strictness.STRICT
+                scanForDuplicate(r) || r.peek() != JsonToken.END_DOCUMENT
+            }
+        } catch (e: IOException) {
+            true
+        } catch (e: RuntimeException) {
+            true
+        }
+
+    private fun scanForDuplicate(r: JsonReader): Boolean {
+        when (r.peek()) {
+            JsonToken.BEGIN_OBJECT -> {
+                r.beginObject()
+                val seen = HashSet<String>()
+                while (r.hasNext()) {
+                    if (!seen.add(r.nextName()) || scanForDuplicate(r)) return true
+                }
+                r.endObject()
+            }
+            JsonToken.BEGIN_ARRAY -> {
+                r.beginArray()
+                while (r.hasNext()) {
+                    if (scanForDuplicate(r)) return true
+                }
+                r.endArray()
+            }
+            else -> r.skipValue()
+        }
+        return false
     }
 
     /**

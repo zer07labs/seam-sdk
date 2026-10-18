@@ -27,6 +27,10 @@ def test_pinned_key_presentation_is_byte_exact():
         i["now_ms"],
     )
     assert got == adm["presentation"]
+    # P8: the presentation carries exactly these five fields, no more.
+    assert sorted(got) == sorted(
+        ["sender_aid", "descriptor", "message_id", "timestamp", "pop_nonce"]
+    )
 
 
 def test_aid_derivation_matches():
@@ -74,25 +78,35 @@ def test_tct_verify_fails_closed():
         )
 
 
-def test_record_digest_v2_matches_reference():
-    """The v2 record-digest framing must reproduce the Rust reference byte-for-byte (A14 design-a)."""
-    from seam_sdk.crypto import record_digest_v2
+def test_derived_uuid_vectors():
+    """P9's one primitive, pinned by all three runtime-emitted vectors: the KAT, the PoP
+    `message_id`, and the TCT `jti`."""
+    from seam_sdk import derived_uuid
 
-    v = VECTORS["record_digest_v2"]
-    i = v["inputs"]
-    got = record_digest_v2(
-        i["decision_id"],
-        i["tenant"],
-        i["namespace"],
-        bytes.fromhex(i["ciphertext_digest_hex"]),
-        i["sealed_at"],
-        i["outcome"],
-        i["mode"],
-        i["policy_version"],
-        i["supersedes"],
-        i["schema_version"],
+    blk = VECTORS["derived_uuid"]
+    names = [k for k in blk if k != "rule"]
+    assert names == ["kat_derived_uuid_001", "pop_message_id", "tct_jti"], names
+    for name in names:
+        v = blk[name]
+        assert (
+            str(derived_uuid(v["tag"], bytes.fromhex(v["input_hex"]))) == v["uuid"]
+        ), name
+    assert blk["kat_derived_uuid_001"]["uuid"] == "27b131ae-bcc6-4466-ab32-1d0f896453b1"
+
+
+def test_pop_message_id_is_derived_from_the_nonce_text():
+    """The admission `message_id` is `derived_uuid("seam-pop-mid-v1", nonce ASCII)`: a function of
+    the nonce, so a replayed presentation carries the same id, and the presentation vector's own
+    `message_id` is reproduced (it is not random)."""
+    from seam_sdk import pop_message_id
+
+    v = VECTORS["derived_uuid"]["pop_message_id"]
+    nonce = bytes.fromhex(v["input_hex"]).decode("ascii")
+    assert str(pop_message_id(nonce)) == v["uuid"]
+    adm = VECTORS["admission"]
+    assert adm["presentation"]["message_id"] == str(
+        pop_message_id(adm["inputs"]["pop_nonce"])
     )
-    assert got.hex() == v["digest_hex"]
 
 
 def test_chain_head_attestation_signature_verifies():
@@ -216,69 +230,43 @@ def test_commitment_digest_is_injective_across_field_boundaries():
     )
 
 
-# ── record_digest_v3 (issue #56, B3 Phase 2) ─────────────────────────────────────────────────────
+# ── record_digest_v4 (P7) ─────────────────────────────────────────────────────────────────────────
 #
-# The v3 cases come from TWO files, and the split is deliberate:
+# The v4 cases come from TWO runtime files, both vendored byte-identical:
 #
-#   * `conformance/vectors.json` carries `record_digest_v3` and `record_digest_v3_absent_policy`,
-#     one `{inputs, digest_hex}` each. Those bytes are seam-runtime's — its `sdk-digest-parity` gate
-#     runs `diff -u` between that whole file and its own emitter's output, so the two repos agree on
-#     every byte, not merely on every digest. Reproducing them is what "four independent
-#     implementations agree" actually means, and it is the check that must never be skipped.
+#   * `conformance/vectors.json` carries `record_digest_v4` and `record_digest_v4_absent_policy`.
+#     seam-runtime's `sdk-digest-parity` gate diffs that whole file against its own emitter, and
+#     loads `seam_sdk/crypto.py` standalone to recompute both blocks.
+#   * `conformance/vectors_extended.json` carries three more v4 cases (every optional present, every
+#     optional absent, and `mode: ""` as distinct from `mode: null`), deliberately kept out of the
+#     byte-diffed file upstream. It also carries `chain_head_attestation_v2`, which is tested where
+#     that framing is.
 #
-#   * `conformance/record_digest_v3_extended.json` carries five more cases, emitted by THIS repo's
-#     implementation. Two fixtures cannot express `mode: ""` vs `mode: null`, and carry no decomposed
-#     non-ASCII — both traps the spec singles out. Adopting these upstream is proposed separately;
-#     until then they live here so the coverage exists somewhere rather than nowhere.
-#
-# So the tests below are of two kinds: reproduce every case from both files, AND prove the extended
-# file was not hand-edited.
+# v1 to v3 are deleted, not dual-verified: a v3 record is "cannot verify", never a guess.
 
-EXTENDED_V3 = json.loads(
-    (
-        pathlib.Path(__file__).parents[2]
-        / "conformance"
-        / "record_digest_v3_extended.json"
-    ).read_text()
-)
-
-#: block name in `vectors.json` → the name it takes once normalised into the extended shape.
-RUNTIME_V3_BLOCKS = {
-    "record_digest_v3": "runtime_bound_policy",
-    "record_digest_v3_absent_policy": "runtime_absent_policy",
-}
+_CONF = pathlib.Path(__file__).parents[2] / "conformance"
+EXTENDED = json.loads((_CONF / "vectors_extended.json").read_text())
+RUNTIME_V4_BLOCKS = ("record_digest_v4", "record_digest_v4_absent_policy")
+EXTENDED_V4_CASES = ("all_optionals_present", "optionals_none", "mode_empty_string")
 
 
-def _v3_cases():
+def _v4_cases():
     cases = []
-    for block, name in RUNTIME_V3_BLOCKS.items():
-        # A renamed or dropped runtime block is a BROKEN CROSS-REPO CONTRACT, not a thinner vector
-        # set — fail loudly here rather than quietly testing five SDK-authored cases and calling it
-        # parity.
-        assert block in VECTORS, (
-            f"conformance/vectors.json has no `{block}` block. That file is byte-diffed by "
-            "seam-runtime's sdk-digest-parity gate; a missing block means this repo and the "
-            "runtime have stopped agreeing on the vector set, not that a case was tidied away."
+    for block in RUNTIME_V4_BLOCKS:
+        # A renamed or dropped runtime block is a BROKEN CROSS-REPO CONTRACT, not a thinner set.
+        assert block in VECTORS, f"conformance/vectors.json has no `{block}` block"
+        cases.append({"name": block, **VECTORS[block]})
+    for name in EXTENDED_V4_CASES:
+        assert name in EXTENDED, (
+            f"conformance/vectors_extended.json has no `{name}` case"
         )
-        b = VECTORS[block]
-        cases.append(
-            {"name": name, "inputs": b["inputs"], "digest_hex": b["digest_hex"]}
-        )
-    extended = EXTENDED_V3["cases"]
-    # Guard-the-guard: an empty or renamed block would make every loop below vacuous.
-    assert extended, (
-        "record_digest_v3_extended.json carries zero cases — the vector proves nothing"
-    )
-    cases.extend(extended)
+        cases.append({"name": name, **EXTENDED[name]})
     return cases
 
 
-def _recompute(case):
-    from seam_sdk.crypto import record_digest_v3
-
-    i = case["inputs"]
+def _args(i):
     rules = i["policy_rules_digest_hex"]
-    return record_digest_v3(
+    return (
         i["decision_id"],
         i["tenant"],
         i["namespace"],
@@ -291,153 +279,158 @@ def _recompute(case):
         bytes.fromhex(i["context_digest_hex"]),
         bytes.fromhex(i["participation_digest_hex"]),
         None if rules is None else bytes.fromhex(rules),
+        i["classification"],
+        bytes.fromhex(i["participants_digest_hex"]),
+        i["trust_basis_commitment"],
+        i["auth_method"],
         i["schema_version"],
     )
 
 
-def test_record_digest_v3_matches_reference_all_cases():
-    for case in _v3_cases():
-        assert _recompute(case).hex() == case["digest_hex"], (
-            f"case {case['name']!r} disagrees"
+def _recompute(case):
+    from seam_sdk.crypto import record_digest_v4
+
+    return record_digest_v4(*_args(case["inputs"]))
+
+
+def test_record_digest_v4_matches_reference_all_cases():
+    for case in _v4_cases():
+        assert case["inputs"]["domain"] == "seam.audit.record-digest.v4"
+        assert _recompute(case).hex() == case["digest_hex"], case["name"]
+
+
+def test_participants_digest_v4_matches_every_case():
+    from seam_sdk import participants_digest_v4
+
+    for case in _v4_cases():
+        i = case["inputs"]
+        assert (
+            participants_digest_v4(i["participants"]).hex()
+            == i["participants_digest_hex"]
         )
 
 
-def test_the_v3_comparison_is_not_vacuous():
-    # A loop that compared a value to itself, or a `bytes.fromhex` that silently produced the same
-    # input for every case, would pass the test above forever. Corrupt one input and require the
-    # recompute to move.
-    case = dict(_v3_cases()[0])
-    case["inputs"] = dict(case["inputs"], tenant="not-acme")
-    assert _recompute(case).hex() != case["digest_hex"]
+def test_the_ciphertext_digest_is_sha256_of_the_ciphertext():
+    import hashlib
+
+    for case in _v4_cases():
+        i = case["inputs"]
+        assert (
+            hashlib.sha256(bytes.fromhex(i["ciphertext_hex"])).hexdigest()
+            == (i["ciphertext_digest_hex"])
+        )
 
 
-def test_the_v3_cases_cover_the_traps_they_exist_for():
-    """Each case is here for a named reason; assert the set has not been quietly trimmed."""
-    names = {c["name"] for c in _v3_cases()}
-    assert {
-        # seam-runtime's own two blocks — the cross-repo contract.
-        "runtime_bound_policy",
-        "runtime_absent_policy",
-        # this repo's extended set.
-        "all_optionals_present",
-        "policy_rules_absent",
-        "optionals_none",
-        "mode_empty_string",
-        "non_ascii_nfd",
-    } <= names, f"a v3 vector case was removed: have {sorted(names)}"
+def test_the_v4_comparison_is_not_vacuous():
+    """Every slot is bound: changing any one input moves the digest."""
+    base = VECTORS["record_digest_v4"]
+    i = base["inputs"]
+    changes = {
+        "decision_id": i["decision_id"] + "x",
+        "tenant": i["tenant"] + "x",
+        "namespace": i["namespace"] + "x",
+        "ciphertext_digest_hex": "00" * 32,
+        "sealed_at": i["sealed_at"] + 1,
+        "outcome": "Expired",
+        "mode": None,
+        "policy_version": "p",
+        "supersedes": "s",
+        "context_digest_hex": "00" * 32,
+        "participation_digest_hex": "00" * 32,
+        "policy_rules_digest_hex": None,
+        "classification": "Public",
+        "participants_digest_hex": "00" * 32,
+        "trust_basis_commitment": i["trust_basis_commitment"] + "x",
+        "auth_method": i["auth_method"] + "x",
+    }
+    for k, v in changes.items():
+        assert _recompute({"inputs": {**i, k: v}}).hex() != base["digest_hex"], k
 
 
 def test_absent_and_empty_mode_are_different_vectors():
-    # opt(None) is one byte, opt(Some("")) is five. Pinned cross-language here rather than only as a
-    # Python unit test, because it is a distinction a TS or Rust transcription can collapse on its
-    # own — `null` and `""` are easy to conflate at a JSON boundary.
-    by_name = {c["name"]: c for c in _v3_cases()}
-    none_case, empty_case = by_name["optionals_none"], by_name["mode_empty_string"]
-    assert none_case["inputs"]["mode"] is None and empty_case["inputs"]["mode"] == ""
-    assert none_case["digest_hex"] != empty_case["digest_hex"]
+    by = {c["name"]: c for c in _v4_cases()}
+    assert by["optionals_none"]["inputs"]["mode"] is None
+    assert by["mode_empty_string"]["inputs"]["mode"] == ""
+    assert by["optionals_none"]["digest_hex"] != by["mode_empty_string"]["digest_hex"]
 
 
-def test_the_two_mandatory_sub_digests_differ_in_every_case():
-    # Slots 10 and 11 are adjacent and are offset by one from their wire tags, so an implementation
-    # that wires them by tag number produces a swap. Equal fixtures would make that swap invisible —
-    # this asserts the vectors can actually catch it.
-    for case in _v3_cases():
-        i = case["inputs"]
-        assert i["context_digest_hex"] != i["participation_digest_hex"], case["name"]
+@pytest.mark.parametrize(
+    "slot, tag",
+    [
+        ("context_digest_hex", 11),
+        ("participation_digest_hex", 12),
+        ("classification", 14),
+        ("participants_digest_hex", 15),
+        ("trust_basis_commitment", 16),
+        ("auth_method", 17),
+    ],
+)
+def test_a_stripped_mandatory_slot_is_refused_as_a_strip(slot, tag):
+    """Tags 11, 12, 14, 15, 16 and 17 are mandatory. Absent (or `len == 0`, which is how the wire
+    says absent) is a STRIP, reported distinctly, never a quiet digest over an empty slot."""
+    from seam_sdk.crypto import RecordDigestStripError, record_digest_v4
+
+    i = VECTORS["record_digest_v4"]["inputs"]
+    empty = b"" if slot.endswith("_hex") else ""
+    for stripped in (None, empty):
+        args = list(_args(i))
+        args[_args_keys().index(slot)] = stripped
+        with pytest.raises(RecordDigestStripError) as excinfo:
+            record_digest_v4(*args)
+        assert excinfo.value.wire_tag == tag
 
 
-def test_at_least_one_case_is_not_ascii():
-    # The spec requires raw UTF-8 with no normalization and singles it out as the step
-    # implementations get wrong. An all-ASCII vector set cannot distinguish a conforming
-    # implementation from one that normalizes or uses the wrong codec.
-    assert any(
-        not str(v).isascii()
-        for case in _v3_cases()
-        for v in case["inputs"].values()
-        if isinstance(v, str)
-    ), (
-        "every v3 vector input is ASCII — the normalization trap is untested cross-language"
+def _args_keys():
+    return (
+        "decision_id",
+        "tenant",
+        "namespace",
+        "ciphertext_digest_hex",
+        "sealed_at",
+        "outcome",
+        "mode",
+        "policy_version",
+        "supersedes",
+        "context_digest_hex",
+        "participation_digest_hex",
+        "policy_rules_digest_hex",
+        "classification",
+        "participants_digest_hex",
+        "trust_basis_commitment",
+        "auth_method",
+        "schema_version",
     )
 
 
-def test_the_non_ascii_case_is_still_in_a_decomposed_form():
-    """Non-ASCII is necessary but nowhere near sufficient.
+@pytest.mark.parametrize("version", [1, 2, 3, 5, 0])
+def test_any_other_schema_version_cannot_verify(version):
+    """v4 is the only formula. A v3 record is refused as unsupported, never recomputed under v4
+    (which would read as tamper) and never under a retained v3 (which no longer exists)."""
+    from seam_sdk.crypto import UnsupportedRecordDigestVersion, record_digest_v4
 
-    `test_at_least_one_case_is_not_ascii` passes just as happily on NFC text — so if anything ever
-    normalized either the emitter's source literal or this file, that guard stays green while the
-    case quietly stops being able to fail a normalizing implementation. This asserts the property
-    the case actually claims, against the committed bytes rather than against the emitter.
-    """
+    args = list(_args(VECTORS["record_digest_v4"]["inputs"]))
+    args[-1] = version
+    with pytest.raises(UnsupportedRecordDigestVersion) as excinfo:
+        record_digest_v4(*args)
+    assert excinfo.value.schema_version == version
+
+
+def test_text_is_hashed_as_given_never_normalised():
+    """NFC and NFD spellings of the same text are different digests: the digest binds bytes."""
     import unicodedata
 
-    by_name = {c["name"]: c for c in _v3_cases()}
-    strings = [
-        v for v in by_name["non_ascii_nfd"]["inputs"].values() if isinstance(v, str)
-    ]
-    decomposed = [s for s in strings if unicodedata.normalize("NFC", s) != s]
-    assert decomposed, (
-        "the non_ascii_nfd vector carries no decomposed text any more — every string in it is "
-        "unchanged by NFC normalization, so an implementation that normalizes before hashing "
-        "would reproduce this case and the vector has stopped testing the spec rule it exists for."
-    )
+    i = VECTORS["record_digest_v4"]["inputs"]
+    nfc = unicodedata.normalize("NFC", "approuvé")
+    nfd = unicodedata.normalize("NFD", "approuvé")
+    assert nfc != nfd
+    a = _recompute({"inputs": {**i, "outcome": nfc}})
+    b = _recompute({"inputs": {**i, "outcome": nfd}})
+    assert a != b
 
 
-def test_the_case_loader_refuses_a_missing_runtime_block():
-    """The property every v3 test above rests on: the loader cannot quietly stop testing anything.
+def test_the_retired_formulas_are_gone():
+    import seam_sdk
+    import seam_sdk.crypto as c
 
-    A guard that has never been watched to fire is not a guard — it is a comment with a keyword in
-    it. So this doctors the loaded document and requires the refusal, per block: a version that
-    checked only the first would let the second disappear in silence, which is the exact hole the
-    Rust twin had before it was parametrized.
-    """
-    for block in RUNTIME_V3_BLOCKS:
-        saved = VECTORS.pop(block)
-        try:
-            with pytest.raises(AssertionError, match=block):
-                _v3_cases()
-        finally:
-            VECTORS[block] = saved
-
-
-def test_the_case_loader_refuses_an_emptied_extended_set():
-    # The other way the loop goes vacuous: the file is present and parses, but carries nothing.
-    saved = EXTENDED_V3["cases"]
-    EXTENDED_V3["cases"] = []
-    try:
-        with pytest.raises(AssertionError, match="zero cases"):
-            _v3_cases()
-    finally:
-        EXTENDED_V3["cases"] = saved
-
-
-def test_the_extended_v3_file_is_what_the_emitter_produces():
-    """The committed extended file must be byte-identical to a fresh run of the emitter.
-
-    This is the check that makes "vectors are never transcribed by hand" enforceable rather than
-    aspirational: edit a `digest_hex` in the file and this goes red, because the emitter recomputes
-    it. It also pins the RENDERING (indent, escaping, key order) — which is what makes adopting
-    these cases into `conformance/vectors.json` upstream a copy rather than a re-render.
-
-    `conformance/vectors.json` itself is deliberately NOT emitted here: those bytes are
-    seam-runtime's. What proves them is recomputation — `test_record_digest_v3_matches_reference_
-    all_cases` runs this repo's implementation against them like any other case.
-    """
-    import subprocess
-    import sys
-
-    repo = pathlib.Path(__file__).resolve().parents[2]
-    proc = subprocess.run(
-        [
-            sys.executable,
-            str(repo / "scripts" / "emit_record_digest_v3_vectors.py"),
-            "--check",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    assert proc.returncode == 0, (
-        "conformance/record_digest_v3_extended.json is not what "
-        "scripts/emit_record_digest_v3_vectors.py emits.\n"
-        f"{proc.stdout}\n{proc.stderr}"
-    )
+    for name in ("record_digest_v2", "record_digest_v3"):
+        assert not hasattr(c, name) and not hasattr(seam_sdk, name), name

@@ -4,7 +4,7 @@
     "inputs": {
       "agent_seed_hex": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
       "receiver_aid": "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
-      "pop_nonce": "c2VhbS1jb25mb3JtYW5jZS1ub25jZS0wMDE",
+      "pop_nonce": "c2VhbS1jb25mb3JtLTAwMQ",
       "now_ms": 1700000000000
     },
     "derived": {
@@ -16,17 +16,18 @@
       "descriptor": {
         "type": "pinned_key",
         "subject": "aid:pubkey:ed25519:GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
-        "proof": "V3s1256xmBO57MxFezGToW7qbx0ZBx2X6FS9sv-3AfrM4wDY_8MbcFWYY1zDtsw-iJljtYwW0UCxliihOki6CQ",
+        "proof": "-fZ0l1y0pblyrgWnOPzb0Fy0IOdKxOhJVvb0jsRN0PzOmy_KfJsciByTS5nAmFvzT92azxTSW6SjoYg9-Pw9Bg",
         "public_key": "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE"
       },
-      "message_id": "b216b10f-d1bc-2b19-c3b4-287ca50bdece",
+      "message_id": "786ec92e-a43a-40b5-98d8-848ff365ea78",
       "timestamp": 1700000000,
-      "pop_nonce": "c2VhbS1jb25mb3JtYW5jZS1ub25jZS0wMDE"
+      "pop_nonce": "c2VhbS1jb25mb3JtLTAwMQ"
     }
   },
   "tct": {
     "inputs": {
       "issuer_seed_hex": "0707070707070707070707070707070707070707070707070707070707070707",
+      "decision_id": "dec:acme:s-conformance-0000000",
       "commitment": {
         "id": "k-conformance",
         "action": "BLOCK",
@@ -66,9 +67,27 @@
       }
     },
     "explanation_digest_hex": "54803a97ad61731092761ae4bc54b611a6e3d88c1cef7bf58f7f0f65a25af973",
-    "commitment_digest_hex": "7015c10299e9a725136e7db04fab7e5383a20d6017e3a28cb86d3567a572d90a",
+    "commitment_digest_hex": "d9ac48bf866a2d970031389575cfed0e86e95947e5fa82b5a087812af9db46bc",
     "issuer_aid": "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
-    "signed_artifact_jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJhdWQiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJjbmYiOnsiamt0IjoiLS02SU01bDBPb3NMajl5V3NrSVNZaFVBM25fM0NVUlFrbXJZTVNoYV9jayJ9LCJleHAiOjQ4NTM2MDAwMDAsImdyYW50cyI6WyJzZWFtOmNvbW1pdG1lbnQiLCJzZWFtLWNvbW1pdG1lbnQtZGlnZXN0OjcwMTVjMTAyOTllOWE3MjUxMzZlN2RiMDRmYWI3ZTUzODNhMjBkNjAxN2UzYTI4Y2I4NmQzNTY3YTU3MmQ5MGEiXSwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJqdGkiOiIyMzQwMDIwZC1lMjJlLTY1ZTQtZWZkOS1iOTFkMmM1Y2I1NzMiLCJzdWIiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJ2ZXIiOiJhaXRwLzAuMiJ9.bnABhqPEp_lO0MhjMmdiVJDuno5nBNZJX1xVSx-Lpk2qp-tcSCA8VHdRn25C8KhFqFJnFxKDYICX0Vxd6m9lBA"
+    "signed_artifact_jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJhdWQiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJjbmYiOnsiamt0IjoiLS02SU01bDBPb3NMajl5V3NrSVNZaFVBM25fM0NVUlFrbXJZTVNoYV9jayJ9LCJleHAiOjQ4NTM2MDAwMDAsImV4dCI6eyJjb20uemVyMDdsYWJzLnNlYW0iOnsiY29tbWl0bWVudF9kaWdlc3QiOiJkOWFjNDhiZjg2NmEyZDk3MDAzMTM4OTU3NWNmZWQwZTg2ZTk1OTQ3ZTVmYTgyYjVhMDg3ODEyYWY5ZGI0NmJjIiwidHlwZSI6InNlYW06Y29tbWl0bWVudCJ9fSwiZ3JhbnRzIjpbImFpdHAuYXR0ZXN0YXRpb24iXSwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJqdGkiOiJjNzMyMWNlNC02MmYxLTRlMzgtYWMyMy0yMTJkYzllMDA1NWIiLCJzdWIiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJ2ZXIiOiJhaXRwLzAuMiJ9.dSEtzIN4OueJI8Q6nfJaNzhjzSaqilfeJUwJbofcpQzmjgohN-TA_ON_24F54stNdN9KylFHmriiwAb_0socBg"
+  },
+  "derived_uuid": {
+    "rule": "h = SHA-256(tag || 0x00 || input); uuid = h[0..16] with h[6] = (h[6] & 0x0f) | 0x40, h[8] = (h[8] & 0x3f) | 0x80; lowercase hyphenated",
+    "kat_derived_uuid_001": {
+      "tag": "aitp-kat-derived-uuid-v1",
+      "input_hex": "6b61742d646572697665642d757569642d3030312f696e707574",
+      "uuid": "27b131ae-bcc6-4466-ab32-1d0f896453b1"
+    },
+    "pop_message_id": {
+      "tag": "seam-pop-mid-v1",
+      "input_hex": "633256686253316a6232356d62334a744c5441774d51",
+      "uuid": "786ec92e-a43a-40b5-98d8-848ff365ea78"
+    },
+    "tct_jti": {
+      "tag": "seam-tct-jti-v1",
+      "input_hex": "0000001e6465633a61636d653a732d636f6e666f726d616e63652d303030303030300000018bcfe56800",
+      "uuid": "c7321ce4-62f1-4e38-ac23-212dc9e0055b"
+    }
   },
   "chain_head_attestation": {
     "inputs": {
@@ -82,26 +101,9 @@
     "issuer_aid": "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
     "signature_hex": "5169458689b92af81fbbfbd1bd07aff82cb68993919837232a1b54204a0e565ee58791b607c40a48dae6a9dbf8c6129e7028fdbd0e14095d7a4c0a99c775a90a"
   },
-  "record_digest_v2": {
+  "record_digest_v4": {
     "inputs": {
-      "domain": "seam.audit.record-digest.v2",
-      "decision_id": "dec:conformance",
-      "tenant": "acme",
-      "namespace": "fraud",
-      "ciphertext_hex": "636f6e666f726d616e63652d636970686572746578742d0001ff",
-      "ciphertext_digest_hex": "67d9f6952981d85f7a2cabb0d5468e6934dc63ec55b480f18339277afc7635a6",
-      "sealed_at": 1700000000000,
-      "outcome": "Resolved",
-      "mode": "decision.v1",
-      "policy_version": null,
-      "supersedes": null,
-      "schema_version": 2
-    },
-    "digest_hex": "3817863521537d347c112bb95d7960d3d9f3007ee041f59c87bcaaf88ac40785"
-  },
-  "record_digest_v3": {
-    "inputs": {
-      "domain": "seam.audit.record-digest.v3",
+      "domain": "seam.audit.record-digest.v4",
       "decision_id": "dec:conformance",
       "tenant": "acme",
       "namespace": "fraud",
@@ -115,13 +117,21 @@
       "context_digest_hex": "206f43bde4db008ca2c9b648cd6782252cfd8dbbbd70f63e63765601c6e653cd",
       "participation_digest_hex": "66c8ae346f5284cc62cf29e6681b16a98db7a3bba458a4d494273a267ba69c02",
       "policy_rules_digest_hex": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
-      "schema_version": 3
+      "classification": "Internal",
+      "participants": [
+        "fraud-v3",
+        "risk-v2"
+      ],
+      "participants_digest_hex": "58b8fac506c099ccb4af417df40f632c69e614fb03531e8e21570a90caf7fc4a",
+      "trust_basis_commitment": "hmac-sha256:0a1b2c3d:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "auth_method": "aitp-pinned-handshake",
+      "schema_version": 4
     },
-    "digest_hex": "52cc843bebed28ac65b75a67bb70102f3d932b3507de5696905bb6baa3530927"
+    "digest_hex": "5af04d4b472bbd9f7c258392ad95bab82b6562d1904c086abf9f761968fbb241"
   },
-  "record_digest_v3_absent_policy": {
+  "record_digest_v4_absent_policy": {
     "inputs": {
-      "domain": "seam.audit.record-digest.v3",
+      "domain": "seam.audit.record-digest.v4",
       "decision_id": "dec:conformance",
       "tenant": "acme",
       "namespace": "fraud",
@@ -135,8 +145,16 @@
       "context_digest_hex": "206f43bde4db008ca2c9b648cd6782252cfd8dbbbd70f63e63765601c6e653cd",
       "participation_digest_hex": "66c8ae346f5284cc62cf29e6681b16a98db7a3bba458a4d494273a267ba69c02",
       "policy_rules_digest_hex": null,
-      "schema_version": 3
+      "classification": "Internal",
+      "participants": [
+        "fraud-v3",
+        "risk-v2"
+      ],
+      "participants_digest_hex": "58b8fac506c099ccb4af417df40f632c69e614fb03531e8e21570a90caf7fc4a",
+      "trust_basis_commitment": "hmac-sha256:0a1b2c3d:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "auth_method": "aitp-pinned-handshake",
+      "schema_version": 4
     },
-    "digest_hex": "e910e32e7df4aedd1846cf6d66201026e329759dd495b9d81343624ff0e2bfeb"
+    "digest_hex": "1e1cafdf76786feecbd18a83a74bfd65a2364b555f388d083abda431eaed6f8c"
   }
 }

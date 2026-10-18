@@ -65,12 +65,12 @@ fn usage() -> ! {
                        be present — a plain SHA-256 chain over a public genesis can be rebuilt by a\n                      \
                        transport-controlling forger, but an issuer-signed head cannot be minted without\n                      \
                        the key. A stream with no attestation is REFUSED, not passed. Additionally, every\n                      \
-                       v2 and v3 DECISION_SEALED's digest is RECOMPUTED from its payload and compared to\n                      \
-                       the wire digest (catching a payload rewrite in an unattested tail); a record missing\n                      \
-                       its ciphertext_digest (a strip/downgrade) is REFUSED, as is a v3 record missing its\n                      \
-                       context_digest or participation_digest -- reported as a STRIP, distinctly from a\n                      \
-                       digest mismatch. A schema_version this build does not implement is REFUSED, never\n                      \
-                       skipped.\n                      \
+                       DECISION_SEALED's digest is RECOMPUTED under record digest v4 from its payload and\n                      \
+                       compared to the wire digest (catching a payload rewrite in an unattested tail); a\n                      \
+                       record missing a mandatory column (ciphertext_digest, context_digest,\n                      \
+                       participation_digest, classification, participants_digest, trust_basis_commitment\n                      \
+                       or auth_method) is REFUSED as a STRIP, distinctly from a digest mismatch. Any\n                      \
+                       schema_version other than 4 is REFUSED as cannot-verify, never skipped.\n                      \
                        REPEATABLE: pass once per trusted issuer to verify a chain spanning a key ROTATION\n                      \
                        (an attestation passes iff it verifies against ANY pinned AID; one naming an issuer\n                      \
                        outside the pinned set is a FAIL).\n                      \
@@ -110,7 +110,7 @@ fn usage() -> ! {
              issuer AID, in the spec's order, refusing at the first failure: (1) the manifest: format,\n    \
              pinned issuer, every listed file's sha256 and size; (2) the window, exactly as `chain\n    \
              events.jsonl --issuer AID --from-anchor anchor.json --strict`; (3) the decision's chained\n    \
-             DECISION_SEALED and its checksum; (4) the Commitment's TCT and seam-commitment-digest:v2;\n    \
+             DECISION_SEALED and its checksum; (4) the Commitment's TCT and seam-commitment-digest:v3;\n    \
              (5) the issuer's signed binding of that Commitment to the chain link; (6) the disclosed\n    \
              context.json and policy.json against the chained digests. Withheld items are printed.\n    \
              Exactly one --issuer: the bundle names its issuer, and that name is never trusted.\n\
@@ -494,7 +494,7 @@ fn cmd_chain(
                     println!("  attestations      : {} (issuer-signed)", ir.attestations);
                     println!("  covered prefix    : {} links", ir.covered_prefix);
                     println!(
-                        "  records recomputed: {} (v2/v3 record-digest recompute)",
+                        "  records recomputed: {} (v4 record-digest recompute)",
                         ir.records_recomputed
                     );
                     if let Some(a) = &anchor {

@@ -1,16 +1,3 @@
 {
-  "bindings": [
-    {
-      "ctx_ref": "sha256:26da1e340c8675676339ceb18d530d3d113faabb4fc20d08d2c86e6621a288f4",
-      "fidelity": "Digest",
-      "classification": "Internal",
-      "lineage_id": "sha256:26da1e340c8675676339ceb18d530d3d113faabb4fc20d08d2c86e6621a288f4",
-      "version": 0,
-      "derived_from": [],
-      "content_hash": null,
-      "receipt_hash": null,
-      "key_status": null,
-      "resolved_status": null
-    }
-  ]
+  "bindings": []
 }

@@ -107,12 +107,15 @@ ChainHeadAttestation/digest_schema
 ChainHeadAttestation/issuer_aid
 ChainHeadAttestation/signature
 ChainHeadAttestation/tenant
+DecisionSealed/auth_method
 DecisionSealed/ciphertext_digest
+DecisionSealed/classification
 DecisionSealed/context_digest
 DecisionSealed/decision_id
 DecisionSealed/mode
 DecisionSealed/namespace
 DecisionSealed/outcome
+DecisionSealed/participants_digest
 DecisionSealed/participation_digest
 DecisionSealed/policy_rules_digest
 DecisionSealed/policy_version
@@ -120,6 +123,7 @@ DecisionSealed/schema_version
 DecisionSealed/sealed_at
 DecisionSealed/supersedes
 DecisionSealed/tenant
+DecisionSealed/trust_basis_commitment
 ErasureCertificate/chain_head
 ErasureCertificate/erased
 ErasureCertificate/erased_at
