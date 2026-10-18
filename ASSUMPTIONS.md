@@ -1325,7 +1325,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Chose:** without `--partner-packages-json`, an offline run does not check partner and says so on two lines. The clean line never claims partner. This keeps 200+ existing offline tests meaningful without each one needing a partner fixture.
 - **Alternatives:** require both dumps offline. That is stricter, but it rewrites every offline test for no gain on the scheduled path.
 - **Blast radius if wrong:** low. A local run could be read as covering partner when it says it doesn't. Making the flag required is a one-line change.
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (2026-10-18). Decided by Opus (`/reconcile`, low blast radius); see `DECISIONS.md`, 2026-10-18 entry.
 
 ## A partner fault never hides an internal finding
 - **Plan:** plans/partner-registry-drift.md
@@ -1337,7 +1337,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   - Internal drift suppressed, with a partner fault: exit 2.
 - **Alternatives:** any fault means exit 2, which the original plan had. That lets a revoked partner scope mute a real internal drift.
 - **Blast radius if wrong:** low. The exit-code mapping sits in one block of `main()`.
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (2026-10-18). Decided by Opus (`/reconcile`, low blast radius); see `DECISIONS.md`, 2026-10-18 entry.
 
 ## One credential reads both registries
 - **Plan:** plans/partner-registry-drift.md
@@ -1345,7 +1345,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Chose:** no new secret. The workflow's existing resolution serves both registries.
 - **Found, out of scope, and CORRECTED 2026-10-12:** this entry first said `CARGO_REGISTRIES_ZER07LABS_TOKEN`, the workflow's fallback, was dead (401 on both repositories). That was measured with **Doppler's** copy (`shared-ci/prd`), and it was wrong about the GitHub org secret the workflows use: that secret published `seam-verify v0.3.0` on 2026-10-09 (run 37966348242). The GitHub fallback is live. Only Doppler's copy was stale (#251). It was refreshed on 2026-10-12 at 20:58Z and verified read-only: HTTP 200 on internal, partner and the cargo index. Lesson: a Doppler copy is not evidence about a GitHub secret.
 - **Blast radius if wrong:** if the key lost partner read, every scheduled run would exit 2 naming partner. That is loud, never silent.
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (2026-10-18). Decided by Opus (`/reconcile`, low blast radius); see `DECISIONS.md`, 2026-10-18 entry.
 
 ## When both registries are short, one issue is filed: the internal one
 - **Plan:** plans/partner-registry-drift.md
@@ -1357,7 +1357,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   - Partner issues have their own title and their own suppression scope.
 - **Alternatives:** file both issues. That gives two reports of one fault, and suppressing one would be confused with suppressing the other.
 - **Blast radius if wrong:** low. Once internal is fixed, the next run files the partner issue if partner is still short.
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (2026-10-18). Decided by Opus (`/reconcile`, low blast radius); see `DECISIONS.md`, 2026-10-18 entry.
 
 ## Partner is judged on main's declared version only
 - **Plan:** plans/partner-registry-drift.md
@@ -1380,7 +1380,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   - Any failure exits 2.
 - **Alternatives:** trust the sort, which a silently ignored parameter would turn into a confident wrong answer; or page through every row, which costs more GETs for no extra answer.
 - **Blast radius if wrong:** exit 2 (a loud infrastructure fault), never a wrong verdict.
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (2026-10-18). Decided by Opus (`/reconcile`, low blast radius); see `DECISIONS.md`, 2026-10-18 entry.
 
 ## The newest question's clock is internal's `uploaded_at`
 - **Plan:** plans/partner-newest-release.md (D2)
@@ -1388,7 +1388,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Chose:** that clock, on the same soft/hard minutes and the same skew guard. The stamp is parsed strictly and is never printed.
 - **Alternatives:** the git tag date of the newest version. That needs the tag in this checkout, and it measures the release, not the upload promotion waits on.
 - **Blast radius if wrong:** a lag is filed early or late within one grace window.
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (2026-10-18). Decided by Opus (`/reconcile`, low blast radius); see `DECISIONS.md`, 2026-10-18 entry.
 
 ## A newest-version lag shares the partner issue title
 - **Plan:** plans/partner-newest-release.md (D4). Owner decision, 2026-10-12.
@@ -1406,7 +1406,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   - A newest drift beside a GitHub outage exits 2, the rule #203 already applies to a declared drift: a finding that was not delivered is infrastructure.
 - **Alternatives:** file the newest drift anyway, with a partial body.
 - **Blast radius if wrong:** a newest lag is filed one run (2 h) later, once the fault clears.
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (2026-10-18). Decided by Opus (`/reconcile`, low blast radius); see `DECISIONS.md`, 2026-10-18 entry.
 
 ## Newest only, not every version
 - **Plan:** plans/partner-newest-release.md (D6). Owner decision, 2026-10-12.
