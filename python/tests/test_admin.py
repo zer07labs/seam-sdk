@@ -260,7 +260,7 @@ def _seal_one(data_addr: str) -> tuple[str, str]:
     agent = Agent(bytes([42] * 32))
     dec = client.run_decision(
         agent,
-        "admin-seal-sid-0123456789abcdef",
+        "admin-seal",
         ["fraud-v3", "risk-v2"],
         [("fraud-v3", "BLOCK"), ("risk-v2", "BLOCK")],
     )

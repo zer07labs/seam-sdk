@@ -109,7 +109,7 @@ CHAIN AUTHENTICATED (integrity + issuer-signed head)
   unverified content: 0 (every link's kind is modelled by this build)
   attestations      : 3 (issuer-signed)
   covered prefix    : 750 links
-  records recomputed: 764 (v4 record-digest recompute)
+  records recomputed: 764 (v2/v3 record-digest recompute)
   head              : 9f2c…
 ```
 
@@ -185,7 +185,7 @@ WINDOW AUTHENTICATED (issuer-anchored start)
   unverified content: 0 (every link's kind is modelled by this build)
   attestations      : 2 (issuer-signed)
   covered prefix    : 793 links
-  records recomputed: 41 (v4 record-digest recompute)
+  records recomputed: 41 (v2/v3 record-digest recompute)
   anchored start    : base_len 750 / base_head 9f2c…
   covering (len > base_len): 1 (these satisfy spec clause (f4))
   head              : a01d…
@@ -269,7 +269,7 @@ EVIDENCE BUNDLE VERIFIED (seam-evidence-bundle.v1)
   - manifest: seam-evidence-bundle.v1, issuer is the pinned AID, every listed file matches its SHA-256 and size
   - window authenticated from the issuer-signed anchor (base_len 2): 4 link(s), 1 covering attestation(s)
   - decision 'dec:d1' is a chained link of tenant 'design-partner' inside the authenticated window
-  - the Commitment's TCT verifies against the pinned issuer and binds its seam-commitment-digest:v3
+  - the Commitment's TCT verifies against the pinned issuer and binds its seam-commitment-digest:v2
   - the issuer's signed binding ties this Commitment to the decision's chain link
   - context.json recomputes the chained context_digest
   - SHA-256(policy.json) is the chained policy_rules_digest
@@ -286,9 +286,8 @@ The six steps run in the spec's order and the first failure refuses with exit 2,
    anchor.json --strict` runs: the anchor's signature, every link, every attestation, a covering one.
 3. **Inclusion** — exactly one chained `DECISION_SEALED` for the manifest's decision, in its tenant, whose
    checksum is `inclusion.record_checksum`.
-4. **Commitment** — the self-attestation TCT verifies against the pinned AID (`iss == sub == aud`,
-   grants exactly `["aitp.attestation"]`) and its `ext` binding carries the recomputed
-   `seam-commitment-digest:v3` (the sealed explanation included, so a re-worded reason fails), and
+4. **Commitment** — the TCT verifies against the pinned AID and its grant carries the recomputed
+   `seam-commitment-digest:v2` (the sealed explanation included, so a re-worded reason fails), and
    `supersedes` matches the chained record. A Commitment with no TCT (`identity: local-sealed`) is bound
    by step 5 alone, and the output says so.
 5. **Binding** — the `seam.evidence-binding.v1` signature verifies against the pinned AID, and it names

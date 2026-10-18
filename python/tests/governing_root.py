@@ -97,9 +97,7 @@ def policy_entry(
         "mode": mode,
         "description": description,
         "rules": dict(rules),
-        # 3 since the protocol pass (B10): the runtime refuses an older policy document outright, so
-        # every live decision would be denied. Matches the runtime's own demo governance.
-        "schema_version": 3,
+        "schema_version": 1,
     }
     return {**definition, "policy_sha256": hashlib.sha256(_jcs(definition)).hexdigest()}
 

@@ -1,7 +1,7 @@
 //! `chain --issuer <AID>` — AUTHENTICITY, driven against the runtime's committed golden streams.
 //!
 //! The goldens in `tests/goldens/` are copied verbatim from the runtime
-//! (`seam-runtime/crates/seam-verify/tests/goldens/`, pinned at the protocol-pass-2026-10 runtime pin e4c01ad, matching the
+//! (`seam-runtime/crates/seam-verify/tests/goldens/`, pinned at commit 2ea9f93, matching the
 //! `seam-event.v1` spec pin in `docs/seam-event.v1.md`); they are the SAME fixtures the runtime's own
 //! verifier is tested against, so agreement here is the independent verifier reaching parity on
 //! authenticity. Nothing of Seam's is linked (the whole point) — see Cargo.toml.
@@ -195,7 +195,7 @@ fn an_authentic_attestation_spliced_onto_another_chain_is_refused() {
     );
 }
 
-// ── design-a: record-digest-v4 recomputation (P7) ─────────────────────────────────────────────────────
+// ── design-a: digest-v2 recomputation (Phase 4) ───────────────────────────────────────────────────────
 
 #[test]
 fn a_payload_rewrite_is_caught_under_issuer_but_not_by_integrity() {
@@ -208,7 +208,7 @@ fn a_payload_rewrite_is_caught_under_issuer_but_not_by_integrity() {
         code, VERIFIED,
         "integrity alone does not catch a rewrite:\n{out}"
     );
-    // Under --issuer the recomputed digest-v4 no longer matches the wire digest → REFUSE.
+    // Under --issuer the recomputed digest-v2 no longer matches the wire digest → REFUSE.
     let (code, out) = run("rewrite-auth", &rw, &["--issuer", ISSUER]);
     assert_eq!(
         code, FAILED,
@@ -218,8 +218,8 @@ fn a_payload_rewrite_is_caught_under_issuer_but_not_by_integrity() {
 }
 
 #[test]
-fn a_record_with_a_stripped_ciphertext_digest_is_refused() {
-    // Strip tag 10 from a v4 DECISION_SEALED but leave the chain triple intact (a strip/downgrade attack:
+fn a_v2_record_with_a_stripped_ciphertext_digest_is_refused() {
+    // Strip tag 10 from a v2 DECISION_SEALED but leave the chain triple intact (a strip/downgrade attack:
     // the signed head still matches because tag 19 is copied unchanged). design-a refuses it rather than
     // treating "can't recompute" as a pass.
     let stripped = mutate_first_sealed(&golden("attested_chain.jsonl"), |p| {
@@ -234,36 +234,31 @@ fn a_record_with_a_stripped_ciphertext_digest_is_refused() {
     let (code, out) = run("strip-auth", &stripped, &["--issuer", ISSUER]);
     assert_eq!(
         code, FAILED,
-        "a v4 record missing ciphertext_digest must be refused:\n{out}"
+        "a v2 record missing ciphertext_digest must be refused:\n{out}"
     );
     assert!(out.contains("NO ciphertext_digest"), "{out}");
 }
 
 #[test]
-fn a_v1_record_is_refused_as_retired_not_link_verified() {
-    // Before P7 a v1 record (schema_version=1, no ciphertext_digest) was SKIPPED as link-only. P7
-    // retired v1-v3 with no dual-verify, so the same record is now a cannot-verify refusal: never a
-    // pass, and never misreported as a strip or a rewrite. The chain + attestation are untouched, so
-    // integrity-only still passes.
+fn a_v1_record_is_link_verified_but_not_recomputed() {
+    // A v1 record (schema_version=1, no ciphertext_digest) is not stream-recomputable; design-a SKIPS it —
+    // it must NOT trigger the strip refusal (that is v2-only) nor a false digest mismatch. Downgrade the
+    // first sealed record to v1 and drop its ciphertext_digest; the chain + attestation are untouched, so
+    // --issuer still passes, with one fewer record recomputed.
     let v1 = mutate_first_sealed(&golden("attested_chain.jsonl"), |p| {
         let o = p.as_object_mut().unwrap();
         o.insert("schema_version".into(), serde_json::json!(1));
         o.remove("ciphertext_digest");
     });
-    let (code, _out) = run("v1-int", &v1, &[]);
-    assert_eq!(code, VERIFIED, "integrity is untouched by the relabel");
-    let (code, out) = run("v1-retired", &v1, &["--issuer", ISSUER]);
+    let (code, out) = run("v1-skip", &v1, &["--issuer", ISSUER]);
     assert_eq!(
-        code, FAILED,
-        "a v1 record must be refused, not skipped:\n{out}"
+        code, VERIFIED,
+        "a v1 record must be link-only, never a false failure:\n{out}"
     );
+    // 3 v2 records → 2 after one is downgraded to v1.
     assert!(
-        out.contains("CANNOT VERIFY") && out.contains("RETIRED"),
-        "the refusal must say the version is retired:\n{out}"
-    );
-    assert!(
-        !out.contains("NO ciphertext_digest") && !out.contains("does NOT match its own digest"),
-        "a retired version must not be reported as a strip or a rewrite:\n{out}"
+        out.contains("records recomputed: 2"),
+        "the v1 record is skipped, not recomputed:\n{out}"
     );
 }
 
@@ -489,12 +484,12 @@ fn a_wrong_pinned_issuer_is_refused() {
     );
 }
 
-// ── v4 record digest (P7) ─────────────────────────────────────────────────────────────────────────
+// ── v3 record digest (B3) ─────────────────────────────────────────────────────────────────────────
 //
-// `tests/conformance.rs` proves the v4 formula matches the committed cross-repo vectors. This section
+// `tests/conformance.rs` proves the v3 formula matches the committed cross-repo vectors. This section
 // proves the BEHAVIOUR around it, which no vector can express: that a stripped field is refused and
-// reported distinctly from a rewritten one, that every schema_version other than 4 is refused rather
-// than skipped or misreported, and that the digest columns are part of an event's identity.
+// reported distinctly from a rewritten one, that an unknown schema_version is refused rather than
+// misreported, and that the three new columns are part of an event's identity.
 //
 // The digest here is transcribed from `seam-event.v1.md` a SECOND time, independently of
 // `src/verify.rs` and sharing no code with it. Two transcriptions that agree are evidence; one
@@ -505,11 +500,11 @@ fn sha(s: &str) -> Vec<u8> {
     Sha256::digest(s.as_bytes()).to_vec()
 }
 
-/// A fully-populated v4 payload. Every optional is present, so a mutation test can move any of them,
-/// and every 32-byte column holds a distinct value so a slot or tag swap cannot cancel out.
-fn v4_payload() -> serde_json::Value {
+/// A fully-populated v3 payload. Every optional is present, so a mutation test can move any of them,
+/// and `context_digest != participation_digest` so a slot or tag swap cannot cancel out.
+fn v3_payload() -> serde_json::Value {
     serde_json::json!({
-        "decision_id": "dec:v4",
+        "decision_id": "dec:v3",
         "tenant": "acme",
         "namespace": "fraud",
         "mode": "decision.v1",
@@ -517,23 +512,19 @@ fn v4_payload() -> serde_json::Value {
         "outcome": "Resolved",
         "supersedes": "dec:prior",
         "sealed_at": 1_700_000_000_000u64,
-        "schema_version": 4,
+        "schema_version": 3,
         "ciphertext_digest": b64e(&sha("ciphertext")),
         "context_digest": b64e(&sha("context")),
         "participation_digest": b64e(&sha("participation")),
         "policy_rules_digest": b64e(&sha("policy-rules")),
-        "classification": "Internal",
-        "participants_digest": b64e(&sha("participants")),
-        "trust_basis_commitment": format!("hmac-sha256:k1:{}", "cd".repeat(32)),
-        "auth_method": "aitp-pinned-handshake",
     })
 }
 
-/// `seam.audit.record-digest.v4`, transcribed from the spec independently of `src/verify.rs`.
+/// `seam.audit.record-digest.v3`, transcribed from the spec independently of `src/verify.rs`.
 /// Panics on a payload missing a mandatory field — this helper builds HONEST records; the dishonest
 /// ones in the tests below are made by mutating a payload AFTER its digest is computed, which is
 /// exactly the shape of a strip or a rewrite.
-fn v4_record_digest(p: &serde_json::Value) -> Vec<u8> {
+fn v3_record_digest(p: &serde_json::Value) -> Vec<u8> {
     let mut pre: Vec<u8> = Vec::new();
     let f = |b: &mut Vec<u8>, x: &[u8]| {
         b.extend_from_slice(&(x.len() as u32).to_le_bytes());
@@ -560,7 +551,7 @@ fn v4_record_digest(p: &serde_json::Value) -> Vec<u8> {
     let bytes = |k: &str| b64d(p[k].as_str().expect("mandatory bytes field"));
     let opt_bytes = |k: &str| p.get(k).and_then(|v| v.as_str()).map(b64d);
 
-    f(&mut pre, b"seam.audit.record-digest.v4");
+    f(&mut pre, b"seam.audit.record-digest.v3");
     f(&mut pre, text("decision_id").as_bytes());
     f(&mut pre, text("tenant").as_bytes());
     f(&mut pre, text("namespace").as_bytes());
@@ -573,10 +564,6 @@ fn v4_record_digest(p: &serde_json::Value) -> Vec<u8> {
     f(&mut pre, &bytes("context_digest"));
     f(&mut pre, &bytes("participation_digest"));
     ob(&mut pre, opt_bytes("policy_rules_digest"));
-    f(&mut pre, text("classification").as_bytes());
-    f(&mut pre, &bytes("participants_digest"));
-    f(&mut pre, text("trust_basis_commitment").as_bytes());
-    f(&mut pre, text("auth_method").as_bytes());
     f(
         &mut pre,
         &(p["schema_version"].as_u64().unwrap() as u32).to_le_bytes(),
@@ -587,12 +574,7 @@ fn v4_record_digest(p: &serde_json::Value) -> Vec<u8> {
 /// A chain of `DECISION_SEALED` events plus a signed head, from `(payload, digest)` pairs. Passing a
 /// digest computed from a DIFFERENT payload is how a strip or rewrite is staged: the chain triple
 /// stays internally consistent, so integrity still passes and only the recompute can catch it.
-///
-/// The attestation's ceiling is 4 — the only `schema_version` this build accepts, and what an honest
-/// producer stamps. Streams carrying a deliberately bogus `schema_version` are refused for THAT reason
-/// by the record loop; a ceiling inflated to cover the bogus value would only change which refusal
-/// fires.
-fn v4_stream(records: &[(serde_json::Value, Vec<u8>)]) -> String {
+fn v3_stream(records: &[(serde_json::Value, Vec<u8>)]) -> String {
     let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
     let mut head = vec![0u8; 32];
     let mut lines = Vec::new();
@@ -606,7 +588,7 @@ fn v4_stream(records: &[(serde_json::Value, Vec<u8>)]) -> String {
         lines.push(
             serde_json::json!({
                 "schema_version": "seam-event.v1",
-                "event_id": format!("v4#{seq}"),
+                "event_id": format!("v3#{seq}"),
                 "seq": seq,
                 "occurred_at": 1_700u64 + seq as u64,
                 "kind": "DECISION_SEALED",
@@ -620,24 +602,32 @@ fn v4_stream(records: &[(serde_json::Value, Vec<u8>)]) -> String {
         head = checksum;
     }
     let n = records.len() as u64;
+    // The ceiling is DERIVED from what this stream actually seals, exactly as an honest producer
+    // derives it from its own CURRENT_SCHEMA_VERSION — not hard-coded. `v3_stream` is used for mixed
+    // and deliberately-malformed streams alike, so any constant here would be wrong for some caller
+    // and would relocate the very landmine clause (e) exists to catch rather than remove it.
+    //
+    // Records carrying a deliberately bogus `schema_version` (the unknown-version and v1-relabel
+    // cases) are excluded from the max: those streams are refused for THAT reason, and letting a
+    // fabricated version inflate the ceiling would change which refusal fires.
     let ceiling = records
         .iter()
         .filter_map(|(p, _)| p["schema_version"].as_u64())
-        .filter(|v| *v == 4)
+        .filter(|v| (2..=3).contains(v))
         .max()
-        .unwrap_or(4) as u32;
+        .unwrap_or(2) as u32;
     let (att, _) = attestation_event(n, &head, n, &head, &sk, ISSUER, ceiling);
     lines.push(att);
     lines.join("\n")
 }
 
-/// One honest v4 record, then `f` applied to its payload WITHOUT recomputing the digest.
-fn v4_tampered(f: impl Fn(&mut serde_json::Value)) -> String {
-    let honest = v4_payload();
-    let digest = v4_record_digest(&honest);
+/// One honest v3 record, then `f` applied to its payload WITHOUT recomputing the digest.
+fn v3_tampered(f: impl Fn(&mut serde_json::Value)) -> String {
+    let honest = v3_payload();
+    let digest = v3_record_digest(&honest);
     let mut tampered = honest;
     f(&mut tampered);
-    v4_stream(&[(tampered, digest)])
+    v3_stream(&[(tampered, digest)])
 }
 
 /// A strip must be reported in the vocabulary of a strip, and NOT in the vocabulary of a mismatch.
@@ -663,51 +653,48 @@ fn assert_strip_not_mismatch(out: &str, field: &str, tag: u32) {
     );
 }
 
-/// The mandatory v4 columns a strip can remove, with their wire tags (tag 10 has its own wording and
-/// its own test above; tag 13 is legitimately absent).
-const MANDATORY_V4: [(&str, u32); 6] = [
-    ("context_digest", 11),
-    ("participation_digest", 12),
-    ("classification", 14),
-    ("participants_digest", 15),
-    ("trust_basis_commitment", 16),
-    ("auth_method", 17),
-];
-
 #[test]
-fn an_honest_v4_chain_authenticates_and_is_counted() {
-    let p = v4_payload();
-    let d = v4_record_digest(&p);
-    let (code, out) = run("v4-honest", &v4_stream(&[(p, d)]), &["--issuer", ISSUER]);
+fn an_honest_v3_chain_authenticates_and_is_counted() {
+    let p = v3_payload();
+    let d = v3_record_digest(&p);
+    let (code, out) = run("v3-honest", &v3_stream(&[(p, d)]), &["--issuer", ISSUER]);
     assert_eq!(code, VERIFIED, "{out}");
     assert!(
         out.contains("records recomputed: 1"),
-        "the v4 record must be RECOMPUTED, not merely not-refused — a record skipped by the version \
+        "the v3 record must be RECOMPUTED, not merely not-refused — a record skipped by the version \
          dispatch would also produce exit 0:\n{out}"
     );
 }
 
 #[test]
-fn stripping_a_mandatory_v4_column_is_refused_as_a_strip() {
-    for (field, tag) in MANDATORY_V4 {
-        let body = v4_tampered(|p| {
+fn stripping_a_mandatory_v3_digest_is_refused_as_a_strip() {
+    for (field, tag) in [("context_digest", 11u32), ("participation_digest", 12)] {
+        let body = v3_tampered(|p| {
             p.as_object_mut().unwrap().remove(field);
         });
-        let (code, out) = run("v4-strip", &body, &["--issuer", ISSUER]);
+        let (code, out) = run("v3-strip", &body, &["--issuer", ISSUER]);
         assert_eq!(code, FAILED, "stripping {field} must fail:\n{out}");
         assert_strip_not_mismatch(&out, field, tag);
     }
 }
 
 #[test]
-fn a_present_but_empty_v4_column_is_refused_as_a_strip() {
+fn a_present_but_empty_v3_digest_is_refused_as_a_strip() {
     // `"context_digest": ""` in the JSON projection means ABSENT, exactly as a zero-length field does
-    // on the wire (`seam-event.v1.md` §"Presence on the wire"): `len == 0` is absence *however the
-    // bytes arose*, and the JSON projection serializes omitted-when-empty and parses
-    // missing-as-empty. The string columns (14, 16, 17) follow the same rule.
-    for (field, tag) in MANDATORY_V4 {
-        let body = v4_tampered(|p| p[field] = serde_json::json!(""));
-        let (code, out) = run("v4-empty", &body, &["--issuer", ISSUER]);
+    // on the wire. This test asserted the opposite — that `""` is a distinct present-but-empty state
+    // and must be reported MALFORMED — until seam-runtime#435 pinned the rule
+    // (`seam-event.v1.md` §"Presence on the wire"): `len == 0` is absence *however the bytes arose*,
+    // and the JSON projection "serializes omitted-when-empty and parses missing-as-empty, so
+    // missing/`\"\"` ⇔ absent there too".
+    //
+    // The VERDICT is unchanged — the record still fails, and still fails as a strip rather than a
+    // rewrite, which is the property that actually protects an operator. Only the diagnostic moves,
+    // from MALFORMED to STRIP, and the spec explicitly sanctions that: telling "omitted" from
+    // "explicitly-encoded-empty" requires parsing raw wire bytes rather than a decoded message, and
+    // "both inputs verify identically either way; only the diagnostic differs."
+    for (field, tag) in [("context_digest", 11u32), ("participation_digest", 12)] {
+        let body = v3_tampered(|p| p[field] = serde_json::json!(""));
+        let (code, out) = run("v3-empty", &body, &["--issuer", ISSUER]);
         assert_eq!(code, FAILED, "an empty {field} must fail:\n{out}");
         assert_strip_not_mismatch(&out, field, tag);
     }
@@ -715,26 +702,28 @@ fn a_present_but_empty_v4_column_is_refused_as_a_strip() {
 
 #[test]
 fn an_empty_policy_rules_digest_verifies_green_because_absent_is_legitimate() {
-    // Tag 13 absent means no policy was bound — today's common case — so a record SEALED with no
-    // policy must still verify when the field arrives as `""` rather than omitted, because `""` and
-    // missing are one state.
+    // The counterpart, and the case that motivated the whole correction. Tag 13 absent means no
+    // policy was bound — today's common case — so a record SEALED with no policy must still verify
+    // when the field arrives as `""` rather than omitted, because `""` and missing are one state.
     //
-    // The record is sealed WITHOUT tag 13 (`opt(None)`, one byte) and then presented WITH `""`. If
-    // the verifier read `""` as `opt(Some(b""))` — five bytes — it would recompute a different digest
-    // and report a rewrite that never happened.
-    let mut honest = v4_payload();
+    // Note the record is sealed WITHOUT tag 13 (`opt(None)`, one byte) and then presented WITH `""`.
+    // That is the whole test: if the verifier read `""` as `opt(Some(b""))` — five bytes — it would
+    // recompute a different digest and report a rewrite that never happened. This verifier instead
+    // refused it outright as MALFORMED until the `len == 0` mapping landed, rejecting a record the
+    // contract calls valid and disagreeing with the Python and TS twins on identical bytes.
+    let mut honest = v3_payload();
     honest
         .as_object_mut()
         .unwrap()
         .remove("policy_rules_digest");
-    let digest = v4_record_digest(&honest);
+    let digest = v3_record_digest(&honest);
 
     let mut presented = honest;
     presented["policy_rules_digest"] = serde_json::json!("");
 
     let (code, out) = run(
-        "v4-empty-13",
-        &v4_stream(&[(presented, digest)]),
+        "v3-empty-13",
+        &v3_stream(&[(presented, digest)]),
         &["--issuer", ISSUER],
     );
     assert_eq!(
@@ -748,118 +737,120 @@ fn an_empty_policy_rules_digest_verifies_green_because_absent_is_legitimate() {
 }
 
 #[test]
-fn rewriting_a_v4_column_is_reported_as_a_mismatch_not_a_strip() {
+fn rewriting_a_v3_column_is_reported_as_a_mismatch_not_a_strip() {
     // The other direction of the same requirement. Without this, "always say STRIP" would pass the
-    // strip tests above. The four P7 columns are each rewritten too: a verifier that hashed them in
-    // the wrong slot, or not at all, would pass a rewrite of one of them.
-    let rewrites: [(&str, serde_json::Value); 5] = [
-        ("outcome", serde_json::json!("Denied")),
-        ("classification", serde_json::json!("Financial")),
-        (
-            "participants_digest",
-            serde_json::json!(b64e(&sha("another roster"))),
-        ),
-        (
-            "trust_basis_commitment",
-            serde_json::json!(format!("hmac-sha256:k1:{}", "ab".repeat(32))),
-        ),
-        ("auth_method", serde_json::json!("aitp-tct")),
-    ];
-    for (field, value) in rewrites {
-        let body = v4_tampered(|p| p[field] = value.clone());
-        let (code, out) = run("v4-rewrite", &body, &["--issuer", ISSUER]);
-        assert_eq!(code, FAILED, "rewriting {field}:\n{out}");
-        assert!(
-            out.contains("does NOT match its own digest"),
-            "{field}: {out}"
-        );
-        assert!(out.contains("v4 DECISION_SEALED"), "{field}: {out}");
-        assert!(
-            !out.contains("STRIP"),
-            "a REWRITE of {field} is being reported in the vocabulary of a STRIP:\n{out}"
-        );
-    }
+    // strip tests above.
+    let body = v3_tampered(|p| p["outcome"] = serde_json::json!("Denied"));
+    let (code, out) = run("v3-rewrite", &body, &["--issuer", ISSUER]);
+    assert_eq!(code, FAILED, "{out}");
+    assert!(out.contains("does NOT match its own digest"), "{out}");
+    assert!(out.contains("v3 DECISION_SEALED"), "{out}");
+    assert!(
+        !out.contains("STRIP"),
+        "a REWRITE is being reported in the vocabulary of a STRIP:\n{out}"
+    );
 }
 
 #[test]
 fn an_absent_policy_rules_digest_is_legitimate() {
     // Tag 13 absent means no policy was bound — today's common case. A verifier that refused it
     // would reject almost every real record, so this is the mirror of the strip tests.
-    let mut p = v4_payload();
+    let mut p = v3_payload();
     p.as_object_mut().unwrap().remove("policy_rules_digest");
-    let d = v4_record_digest(&p);
-    let (code, out) = run("v4-no-policy", &v4_stream(&[(p, d)]), &["--issuer", ISSUER]);
+    let d = v3_record_digest(&p);
+    let (code, out) = run("v3-no-policy", &v3_stream(&[(p, d)]), &["--issuer", ISSUER]);
     assert_eq!(code, VERIFIED, "{out}");
     assert!(out.contains("records recomputed: 1"), "{out}");
 }
 
 #[test]
-fn a_newer_schema_version_is_refused_and_not_misreported() {
-    // A record newer than the verifier must refuse as cannot-verify, never fall through to the v4
-    // formula and be reported as "a structural column was rewritten after sealing" — a false
-    // accusation of tampering that would send an operator looking for an attack that never happened.
-    let mut p = v4_payload();
-    p["schema_version"] = serde_json::json!(5);
-    let d = v4_record_digest(&p);
-    let (code, out) = run("v4-future", &v4_stream(&[(p, d)]), &["--issuer", ISSUER]);
+fn an_unknown_schema_version_is_refused_and_no_longer_misreported() {
+    // The regression this FIXES: before the version dispatch existed, a record newer than the
+    // verifier fell through to the v2 formula, mismatched (v3 binds three more slots), and was
+    // reported as "a structural column was rewritten after sealing" — a false accusation of tampering
+    // that would send an operator looking for an attack that never happened. Both halves are pinned:
+    // it refuses, AND it refuses with the right words.
+    let mut p = v3_payload();
+    p["schema_version"] = serde_json::json!(4);
+    let d = v3_record_digest(&p);
+    let (code, out) = run("v3-future", &v3_stream(&[(p, d)]), &["--issuer", ISSUER]);
     assert_eq!(code, FAILED, "{out}");
-    assert!(out.contains("CANNOT VERIFY"), "{out}");
     assert!(out.contains("NEWER THAN THIS VERIFIER"), "{out}");
     assert!(
         !out.contains("does NOT match its own digest"),
-        "an unknown version is being misreported as a payload rewrite:\n{out}"
+        "an unknown version is still being misreported as a payload rewrite:\n{out}"
     );
 }
 
 #[test]
-fn every_retired_schema_version_is_refused_never_skipped() {
-    // P7 retired v1-v3 with no dual-verify. Before it, v1 was SKIPPED as link-only, which made a
-    // relabel-to-v1 the one downgrade the recompute could not see and needed a guard of its own. With
-    // a single formula there is nothing to downgrade INTO: a genuine old record and a rewritten,
-    // relabelled one both land on the same refusal. Both shapes are driven per version, columns
-    // present (the relabel) and columns absent (a genuine pre-v4 record).
-    for version in [0u64, 1, 2, 3] {
-        for strip_columns in [false, true] {
-            let body = v4_tampered(move |p| {
-                p["outcome"] = serde_json::json!("Denied");
-                p["schema_version"] = serde_json::json!(version);
-                if strip_columns {
-                    let o = p.as_object_mut().unwrap();
-                    for (c, _) in MANDATORY_V4 {
-                        o.remove(c);
-                    }
-                    o.remove("ciphertext_digest");
-                    o.remove("policy_rules_digest");
-                }
-            });
-            let (code, out) = run("v4-retired", &body, &["--issuer", ISSUER]);
-            assert_eq!(
-                code, FAILED,
-                "a schema_version {version} record (columns stripped: {strip_columns}) must be \
-                 refused:\n{out}"
-            );
-            assert!(
-                out.contains("CANNOT VERIFY") && out.contains("RETIRED"),
-                "version {version} must be refused as retired, not as a strip or rewrite:\n{out}"
-            );
-            assert!(
-                out.contains("records recomputed") || !out.contains("CHAIN AUTHENTICATED"),
-                "{out}"
-            );
+fn a_mixed_v2_and_v3_chain_verifies_end_to_end() {
+    // Real streams span a version cutover: there is no dual-emit, so a chain simply contains v2
+    // records before the switch and v3 records after. Both must recompute under their OWN formula in
+    // one pass.
+    let v3 = v3_payload();
+    let v3_digest = v3_record_digest(&v3);
+
+    let mut v2 = v3_payload();
+    {
+        let o = v2.as_object_mut().unwrap();
+        o.insert("schema_version".into(), serde_json::json!(2));
+        o.insert("decision_id".into(), serde_json::json!("dec:v2"));
+        for k in [
+            "context_digest",
+            "participation_digest",
+            "policy_rules_digest",
+        ] {
+            o.remove(k);
         }
     }
+    // v2's digest, transcribed here too — same framing, v2 domain, and no B3 slots.
+    let v2_digest = {
+        let mut pre: Vec<u8> = Vec::new();
+        let f = |b: &mut Vec<u8>, x: &[u8]| {
+            b.extend_from_slice(&(x.len() as u32).to_le_bytes());
+            b.extend_from_slice(x);
+        };
+        let o = |b: &mut Vec<u8>, x: Option<&str>| match x {
+            None => b.push(0x00),
+            Some(s) => {
+                b.push(0x01);
+                b.extend_from_slice(&(s.len() as u32).to_le_bytes());
+                b.extend_from_slice(s.as_bytes());
+            }
+        };
+        f(&mut pre, b"seam.audit.record-digest.v2");
+        f(&mut pre, b"dec:v2");
+        f(&mut pre, b"acme");
+        f(&mut pre, b"fraud");
+        f(&mut pre, &b64d(v2["ciphertext_digest"].as_str().unwrap()));
+        f(&mut pre, &1_700_000_000_000u64.to_le_bytes());
+        f(&mut pre, b"Resolved");
+        o(&mut pre, Some("decision.v1"));
+        o(&mut pre, Some("policy-7"));
+        o(&mut pre, Some("dec:prior"));
+        f(&mut pre, &2u32.to_le_bytes());
+        Sha256::digest(&pre).to_vec()
+    };
+
+    let body = v3_stream(&[(v2, v2_digest), (v3, v3_digest)]);
+    let (code, out) = run("v3-mixed", &body, &["--issuer", ISSUER]);
+    assert_eq!(code, VERIFIED, "{out}");
+    assert!(
+        out.contains("records recomputed: 2"),
+        "both the v2 and the v3 record must recompute:\n{out}"
+    );
 }
 
 #[test]
-fn integrity_only_still_passes_a_stripped_v4_stream() {
+fn integrity_only_still_passes_a_stripped_v3_stream() {
     // The strip refusal is design-a work, scoped to `--issuer`, exactly as the tag-10 strip is. A
     // stream with no pinned issuer is internally consistent and must still verify — "no issuer key
     // therefore integrity-only" is a property of running without `--issuer`, not something a
     // stripped field is allowed to trigger.
-    let body = v4_tampered(|p| {
+    let body = v3_tampered(|p| {
         p.as_object_mut().unwrap().remove("context_digest");
     });
-    let (code, out) = run("v4-strip-integrity", &body, &[]);
+    let (code, out) = run("v3-strip-integrity", &body, &[]);
     assert_eq!(
         code, VERIFIED,
         "integrity-only must not have learned to refuse a strip:\n{out}"
@@ -867,104 +858,216 @@ fn integrity_only_still_passes_a_stripped_v4_stream() {
 }
 
 #[test]
-fn two_v4_records_differing_only_in_a_digest_column_are_not_one_event() {
-    // The one wire omission that fails SILENTLY. Event identity is the RE-ENCODED event — that is what
-    // lets the same event arriving as JSON on a webhook and as protobuf on a relay collapse into one
-    // chain link instead of looking like a forgery. If `with_identity` did not carry tags 11-17, two
-    // records differing ONLY in one of them would re-encode to identical bytes, and the second would
-    // be swallowed as an at-least-once duplicate.
+fn two_v3_records_differing_only_in_a_new_column_are_not_one_event() {
+    // The one v3 wire omission that fails SILENTLY. Event identity is the RE-ENCODED event — that is
+    // what lets the same event arriving as JSON on a webhook and as protobuf on a relay collapse into
+    // one chain link instead of looking like a forgery. If `with_identity` did not carry tags
+    // 11/12/13, two records differing ONLY in `participation_digest` would re-encode to identical
+    // bytes, and the second would be swallowed as an at-least-once duplicate.
     //
-    // The two lines below are identical in EVERY identity-bearing field, including the chain triple
-    // (seq, prev_checksum, digest, checksum); the substituted column is the only thing that can tell
-    // them apart. Two earlier versions of this test were vacuous because seq/prev or digest/checksum
-    // differed, so the payload column was never the discriminator.
+    // Isolating that required care, and two earlier versions of this test were VACUOUS — worth
+    // recording, because the trap is the same one the code has:
+    //   * chaining the two events normally made `seq` and `prev_checksum` differ, so the identities
+    //     differed no matter what the payload carried;
+    //   * giving them their own honest digests made `digest`/`checksum` differ — and those ARE in the
+    //     identity projection (`wire.rs`, `with_identity`), so again the payload column was never the
+    //     discriminator.
+    // Both stayed green with the columns dropped. The two lines below are therefore identical in
+    // EVERY identity-bearing field, including the chain triple; `participation_digest` is the only
+    // thing that can tell them apart.
     //
     // That is also the realistic shape: substitute a payload column, leave (prev, digest, checksum)
     // intact so the chain still hashes. With the columns in the identity, this is refused LOUDLY as an
     // impostor pair. Without them, the substituted record is deduped away, the honest one verifies,
     // and the stream comes back GREEN with the evidence quietly gone.
-    let substitutions: [(&str, serde_json::Value); 5] = [
-        (
-            "participation_digest",
-            serde_json::json!(b64e(&sha("a different participation"))),
-        ),
-        ("classification", serde_json::json!("Financial")),
-        (
-            "participants_digest",
-            serde_json::json!(b64e(&sha("a different roster"))),
-        ),
-        (
-            "trust_basis_commitment",
-            serde_json::json!(format!("hmac-sha256:k1:{}", "ef".repeat(32))),
-        ),
-        ("auth_method", serde_json::json!("aitp-tct")),
+    let honest = v3_payload();
+    let mut substituted = v3_payload();
+    substituted["participation_digest"] =
+        serde_json::json!(b64e(&sha("a different participation")));
+
+    let prev = vec![0u8; 32];
+    let digest = v3_record_digest(&honest);
+    let checksum = {
+        let mut h = Sha256::new();
+        h.update(&prev);
+        h.update(&digest);
+        h.finalize().to_vec()
+    };
+    let line = |payload: &serde_json::Value| {
+        serde_json::json!({
+            "schema_version": "seam-event.v1",
+            "event_id": "v3#0",
+            "seq": 0,
+            "occurred_at": 1_700,
+            "kind": "DECISION_SEALED",
+            "prev_checksum": b64e(&prev),
+            "digest": b64e(&digest),
+            "checksum": b64e(&checksum),
+            "payload": payload,
+        })
+        .to_string()
+    };
+
+    // An attestation over the one-link head, so that if the substituted record IS deduped away the
+    // remaining stream is perfectly valid and verifies GREEN — which is what makes exit 2 below
+    // evidence of the identity check rather than of some unrelated refusal.
+    let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
+    let (att, _) = attestation_event(1, &checksum, 1, &checksum, &sk, ISSUER, 3);
+    let body = format!("{}\n{}\n{}", line(&honest), line(&substituted), att);
+
+    let (code, out) = run("v3-identity", &body, &["--issuer", ISSUER]);
+    assert_eq!(
+        code, FAILED,
+        "two v3 records differing only in participation_digest collapsed into one event — the new \
+         columns are missing from the re-encoded identity, so a substituted record is deduped away \
+         and the stream reports GREEN with the evidence gone:\n{out}"
+    );
+    assert!(
+        out.contains("appears TWICE with DIFFERENT content"),
+        "the pair must be refused as impostors, which is the LOUD outcome; any other refusal means \
+         the payload difference was not visible to the identity projection:\n{out}"
+    );
+}
+
+#[test]
+fn a_covered_record_relabelled_as_v1_is_refused_as_a_downgrade() {
+    // The one downgrade direction the recompute cannot catch by construction. Every other
+    // schema_version is dispatched to a formula, so a rewritten column fails the comparison. But v1 is
+    // SKIPPED — link-only, because its historical digest is not stream-recomputable — so an attacker
+    // who rewrites a column and relabels the version lands in the exemption and no recompute ever
+    // runs. Before this guard, every case below verified GREEN.
+    //
+    // What closes it is the one thing a genuine v1 record cannot fake: v1 payloads carry none of the
+    // covered columns. Tag 10 arrived with v2 ("absent... only on schema_version = 1 payloads", per
+    // the spec) and tags 11/12/13 with v3.
+    //
+    // Each column is tested ALONE, with the other three removed. Testing them together would let the
+    // tag-10 check alone satisfy the whole test — proven: a decoy that guarded only on tag 10 passed
+    // an earlier version of this test, leaving the three v3 columns unchecked with a green suite.
+    const COLUMNS: [&str; 4] = [
+        "ciphertext_digest",
+        "context_digest",
+        "participation_digest",
+        "policy_rules_digest",
     ];
-    for (field, value) in substitutions {
-        let honest = v4_payload();
-        let mut substituted = v4_payload();
-        substituted[field] = value;
-
-        let prev = vec![0u8; 32];
-        let digest = v4_record_digest(&honest);
-        let checksum = {
-            let mut h = Sha256::new();
-            h.update(&prev);
-            h.update(&digest);
-            h.finalize().to_vec()
-        };
-        let line = |payload: &serde_json::Value| {
-            serde_json::json!({
-                "schema_version": "seam-event.v1",
-                "event_id": "v4#0",
-                "seq": 0,
-                "occurred_at": 1_700,
-                "kind": "DECISION_SEALED",
-                "prev_checksum": b64e(&prev),
-                "digest": b64e(&digest),
-                "checksum": b64e(&checksum),
-                "payload": payload,
-            })
-            .to_string()
-        };
-
-        // An attestation over the one-link head, so that if the substituted record IS deduped away
-        // the remaining stream is perfectly valid and verifies GREEN — which is what makes exit 2
-        // below evidence of the identity check rather than of some unrelated refusal.
-        let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
-        let (att, _) = attestation_event(1, &checksum, 1, &checksum, &sk, ISSUER, 4);
-        let body = format!("{}\n{}\n{}", line(&honest), line(&substituted), att);
-
-        let (code, out) = run("v4-identity", &body, &["--issuer", ISSUER]);
+    for kept in COLUMNS {
+        let body = v3_tampered(move |p| {
+            p["outcome"] = serde_json::json!("Denied"); // the rewrite...
+            p["schema_version"] = serde_json::json!(1); // ...and the relabel that hides it
+            let o = p.as_object_mut().unwrap();
+            for c in COLUMNS {
+                if c != kept {
+                    o.remove(c);
+                }
+            }
+        });
+        let (code, out) = run("v3-downgrade", &body, &["--issuer", ISSUER]);
         assert_eq!(
             code, FAILED,
-            "two v4 records differing only in {field} collapsed into one event — the column is \
-             missing from the re-encoded identity, so a substituted record is deduped away and the \
-             stream reports GREEN with the evidence gone:\n{out}"
+            "a rewritten record relabelled as v1, carrying only {kept}, was waved through the v1 \
+             skip:\n{out}"
         );
         assert!(
-            out.contains("appears TWICE with DIFFERENT content"),
-            "the pair must be refused as impostors ({field}); any other refusal means the payload \
-             difference was not visible to the identity projection:\n{out}"
+            out.contains("DOWNGRADE"),
+            "the refusal must name what this is (carrying {kept}):\n{out}"
+        );
+        assert!(
+            out.contains(kept),
+            "the refusal must name the column that gave it away ({kept}):\n{out}"
         );
     }
 }
 
-/// One `DECISION_SEALED` line chained after `prev`, and its checksum.
-fn sealed_line(seq: u64, prev: &[u8], payload: &serde_json::Value) -> (String, Vec<u8>) {
-    let d = v4_record_digest(payload);
-    let checksum = {
-        let mut h = Sha256::new();
-        h.update(prev);
-        h.update(&d);
-        h.finalize().to_vec()
-    };
-    let line = serde_json::json!({
-        "schema_version": "seam-event.v1", "event_id": format!("dec#{seq}"), "seq": seq,
-        "occurred_at": 1_700 + seq, "kind": "DECISION_SEALED", "prev_checksum": b64e(prev),
-        "digest": b64e(&d), "checksum": b64e(&checksum), "payload": payload,
+#[test]
+fn a_genuine_v1_record_is_still_skipped_not_refused() {
+    // The mirror, and the reason the guard keys on the COLUMNS rather than on the version alone. Real
+    // pre-A14 records exist in real chains; refusing them would break every historical stream and turn
+    // a verifier into something nobody can run over their archive.
+    let mut p = v3_payload();
+    {
+        let o = p.as_object_mut().unwrap();
+        o.insert("schema_version".into(), serde_json::json!(1));
+        for k in [
+            "ciphertext_digest",
+            "context_digest",
+            "participation_digest",
+            "policy_rules_digest",
+        ] {
+            o.remove(k);
+        }
+    }
+    let digest = Sha256::digest(b"historical-v1-digest").to_vec();
+    let (code, out) = run(
+        "v1-genuine",
+        &v3_stream(&[(p, digest)]),
+        &["--issuer", ISSUER],
+    );
+    assert_eq!(
+        code, VERIFIED,
+        "a genuine v1 record must still verify:\n{out}"
+    );
+    assert!(
+        out.contains("records recomputed: 0"),
+        "a v1 record is link-only — it must be SKIPPED, not counted as recomputed:\n{out}"
+    );
+}
+
+/// A V2 payload and its `seam.audit.record-digest.v2`, transcribed from the spec alongside the v3
+/// pair above. Needed by the clause-(e) tests, which are the only ones here that must build a
+/// prefix whose maximum `schema_version` is LOWER than a record sealed after it — the shape that
+/// separates a prefix-indexed ceiling check from an encounter-time running maximum.
+///
+/// Self-validating: v2 omits slots 10-12 (`context_digest`, `participation_digest`,
+/// `policy_rules_digest`) and carries its own domain tag, so a transcription error here does not
+/// pass quietly — the digest simply stops matching and the verifier reports a payload rewrite.
+fn v2_payload() -> serde_json::Value {
+    serde_json::json!({
+        "decision_id": "dec:v2",
+        "tenant": "acme",
+        "namespace": "fraud",
+        "mode": "decision.v1",
+        "policy_version": "policy-7",
+        "outcome": "Resolved",
+        "supersedes": "dec:prior",
+        "sealed_at": 1_700_000_000_000u64,
+        "schema_version": 2,
+        "ciphertext_digest": b64e(&sha("ciphertext")),
     })
-    .to_string();
-    (line, checksum)
+}
+
+fn v2_record_digest(p: &serde_json::Value) -> Vec<u8> {
+    let mut pre: Vec<u8> = Vec::new();
+    let f = |b: &mut Vec<u8>, x: &[u8]| {
+        b.extend_from_slice(&(x.len() as u32).to_le_bytes());
+        b.extend_from_slice(x);
+    };
+    let o = |b: &mut Vec<u8>, x: Option<&str>| match x {
+        None => b.push(0x00),
+        Some(s) => {
+            b.push(0x01);
+            b.extend_from_slice(&(s.len() as u32).to_le_bytes());
+            b.extend_from_slice(s.as_bytes());
+        }
+    };
+    let text = |k: &str| p[k].as_str().expect("mandatory text field").to_string();
+    let opt_text = |k: &str| p.get(k).and_then(|v| v.as_str()).map(str::to_string);
+    let bytes = |k: &str| b64d(p[k].as_str().expect("mandatory bytes field"));
+
+    f(&mut pre, b"seam.audit.record-digest.v2");
+    f(&mut pre, text("decision_id").as_bytes());
+    f(&mut pre, text("tenant").as_bytes());
+    f(&mut pre, text("namespace").as_bytes());
+    f(&mut pre, &bytes("ciphertext_digest"));
+    f(&mut pre, &p["sealed_at"].as_u64().unwrap().to_le_bytes());
+    f(&mut pre, text("outcome").as_bytes());
+    o(&mut pre, opt_text("mode").as_deref());
+    o(&mut pre, opt_text("policy_version").as_deref());
+    o(&mut pre, opt_text("supersedes").as_deref());
+    f(
+        &mut pre,
+        &(p["schema_version"].as_u64().unwrap() as u32).to_le_bytes(),
+    );
+    Sha256::digest(&pre).to_vec()
 }
 
 // ── spec clause (e): the attestation ceiling ─────────────────────────────────────────────────────
@@ -974,7 +1077,7 @@ fn sealed_line(seq: u64, prev: &[u8], payload: &serde_json::Value) -> (String, V
 // ceiling check that only refuses is half-tested, and the passing directions are the ones that
 // would quietly invalidate real production history if implemented wrong.
 
-/// The refusal itself: a V4 record under a signed ceiling of 3.
+/// The refusal itself: V3 records under a signed ceiling of 2.
 ///
 /// Every link hashes, every digest recomputes, and the signature is authentic — so nothing else in
 /// the verifier can catch this. That is the whole point of the clause: the only reachable violation
@@ -982,10 +1085,10 @@ fn sealed_line(seq: u64, prev: &[u8], payload: &serde_json::Value) -> (String, V
 /// producer does.
 #[test]
 fn an_attestation_below_the_prefix_ceiling_is_refused() {
-    let p = v4_payload();
-    let d = v4_record_digest(&p);
-    // Build the stream by hand so the ceiling can be forced to 3 over a V4 record — `v4_stream`
-    // derives an honest ceiling and cannot express this.
+    let p = v3_payload();
+    let d = v3_record_digest(&p);
+    // Build the stream by hand so the ceiling can be forced to 2 over a V3 record — `v3_stream`
+    // now derives an honest ceiling and cannot express this.
     let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
     let head0 = vec![0u8; 32];
     let checksum = {
@@ -1006,7 +1109,7 @@ fn an_attestation_below_the_prefix_ceiling_is_refused() {
         "payload": p,
     })
     .to_string();
-    let (att, _) = attestation_event(1, &checksum, 1, &checksum, &sk, ISSUER, 3);
+    let (att, _) = attestation_event(1, &checksum, 1, &checksum, &sk, ISSUER, 2);
     let (code, out) = run(
         "ceiling-below-max",
         &format!("{sealed}\n{att}"),
@@ -1014,7 +1117,7 @@ fn an_attestation_below_the_prefix_ceiling_is_refused() {
     );
     assert_eq!(code, FAILED, "a signed downgrade claim must REFUSE:\n{out}");
     assert!(
-        out.contains("digest_schema 3") && out.contains("schema_version 4"),
+        out.contains("digest_schema 2") && out.contains("schema_version 3"),
         "the refusal must name BOTH the claimed ceiling and the record that exceeds it, or an \
          operator cannot tell which record forced it:\n{out}"
     );
@@ -1034,52 +1137,68 @@ fn an_attestation_below_the_prefix_ceiling_is_refused() {
 /// ANTI-REGRESSION, and the reason the check indexes by `attested_len` rather than a running max.
 ///
 /// A stale attestation covers a SHORTER prefix than the chain's current length: the head is read,
-/// signed and appended without a lock, so the chain advances underneath it. Here a ceiling-3
-/// attestation covers a prefix holding no V4 record (one AUDIT_ENTRY), and a V4 record is sealed
-/// AFTER it. The attestation is still true about what it covers and must PASS.
+/// signed and appended without a lock, so the chain advances underneath it. Here a ceiling-2
+/// attestation covers a V2-only prefix, and a V3 record is sealed AFTER it. The attestation is
+/// still true about what it covers and must PASS.
 ///
-/// An encounter-time running max would compare it against the later V4 record and refuse — turning
+/// An encounter-time running max would compare it against the later V3 record and refuse — turning
 /// a race the design explicitly permits into a verification failure, and invalidating attestations
 /// that are correct.
 #[test]
 fn a_stale_attestation_over_an_earlier_prefix_still_passes() {
+    let v2 = v2_payload();
+    let d2 = v2_record_digest(&v2);
     let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
     let head0 = vec![0u8; 32];
-    let d0 = Sha256::digest(b"audit-0").to_vec();
     let c1 = {
         let mut h = Sha256::new();
         h.update(&head0);
-        h.update(&d0);
+        h.update(&d2);
         h.finalize().to_vec()
     };
-    let entry = serde_json::json!({
-        "schema_version": "seam-event.v1", "event_id": "aud#0", "seq": 0, "occurred_at": 1_700,
-        "kind": "AUDIT_ENTRY", "prev_checksum": b64e(&head0), "digest": b64e(&d0),
-        "checksum": b64e(&c1),
+    let sealed_v2 = serde_json::json!({
+        "schema_version": "seam-event.v1", "event_id": "dec#0", "seq": 0, "occurred_at": 1_700,
+        "kind": "DECISION_SEALED", "prev_checksum": b64e(&head0), "digest": b64e(&d2),
+        "checksum": b64e(&c1), "payload": v2,
     })
     .to_string();
-    // Ceiling 3 over the 1-link prefix — honest at the moment it was signed: nothing in it exceeds 3.
-    let (att, c2) = attestation_event(1, &c1, 1, &c1, &sk, ISSUER, 3);
-    // ...and only THEN does a V4 record arrive.
-    let (sealed_v4, _) = sealed_line(2, &c2, &v4_payload());
+    // Ceiling 2 over the 1-link V2-only prefix — honest at the moment it was signed.
+    let (att, c2) = attestation_event(1, &c1, 1, &c1, &sk, ISSUER, 2);
+    // ...and only THEN does a V3 record arrive.
+    let v3 = v3_payload();
+    let d3 = v3_record_digest(&v3);
+    let c3 = {
+        let mut h = Sha256::new();
+        h.update(&c2);
+        h.update(&d3);
+        h.finalize().to_vec()
+    };
+    let sealed_v3 = serde_json::json!({
+        "schema_version": "seam-event.v1", "event_id": "dec#2", "seq": 2, "occurred_at": 1_702,
+        "kind": "DECISION_SEALED", "prev_checksum": b64e(&c2), "digest": b64e(&d3),
+        "checksum": b64e(&c3), "payload": v3,
+    })
+    .to_string();
     let (code, out) = run(
         "ceiling-stale-ok",
-        &format!("{entry}\n{att}\n{sealed_v4}"),
+        &format!("{sealed_v2}\n{att}\n{sealed_v3}"),
         &["--issuer", ISSUER],
     );
     assert_eq!(
         code, VERIFIED,
-        "a ceiling-3 attestation over a prefix with no V4 record is TRUE about what it covers and \
-         must pass, even though a V4 record was sealed after it:\n{out}"
+        "a ceiling-2 attestation over a V2-ONLY prefix is TRUE about what it covers and must pass, \
+         even though a V3 record was sealed after it. Refusing here would invalidate every \
+         attestation signed before B3 the moment a V3 record lands:\n{out}"
     );
 }
 
-/// `>=`, not `==`: a ceiling that OVERSTATES is legitimate. A later build may attest a V4-only
-/// prefix at 5 — true, and refusing it would break that deployment during its quiet period.
+/// `>=`, not `==`: a ceiling that OVERSTATES is legitimate. A build stamping V3 attests a V2-only
+/// prefix at 3 whenever no V3 record has been sealed yet — true, and refusing it would break every
+/// post-B3 deployment during its quiet period.
 #[test]
 fn a_ceiling_above_the_prefix_maximum_is_legitimate() {
-    let v4 = v4_payload();
-    let d = v4_record_digest(&v4);
+    let v2 = v2_payload();
+    let d = v2_record_digest(&v2);
     let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
     let head0 = vec![0u8; 32];
     let checksum = {
@@ -1091,10 +1210,10 @@ fn a_ceiling_above_the_prefix_maximum_is_legitimate() {
     let sealed = serde_json::json!({
         "schema_version": "seam-event.v1", "event_id": "dec#0", "seq": 0, "occurred_at": 1_700,
         "kind": "DECISION_SEALED", "prev_checksum": b64e(&head0), "digest": b64e(&d),
-        "checksum": b64e(&checksum), "payload": v4,
+        "checksum": b64e(&checksum), "payload": v2,
     })
     .to_string();
-    let (att, _) = attestation_event(1, &checksum, 1, &checksum, &sk, ISSUER, 5);
+    let (att, _) = attestation_event(1, &checksum, 1, &checksum, &sk, ISSUER, 3);
     let (code, out) = run(
         "ceiling-above-ok",
         &format!("{sealed}\n{att}"),
@@ -1102,7 +1221,7 @@ fn a_ceiling_above_the_prefix_maximum_is_legitimate() {
     );
     assert_eq!(
         code, VERIFIED,
-        "digest_schema is a CEILING, not a description — 5 over a v4-only prefix is true:\n{out}"
+        "digest_schema is a CEILING, not a description — 3 over a v2-only prefix is true:\n{out}"
     );
 }
 
@@ -1147,12 +1266,12 @@ fn a_prefix_with_no_sealed_records_cannot_violate_the_ceiling() {
 /// the flip would be a visible, deliberate assertion change. This is that change.
 ///
 /// Still pinned alongside the refusal: the diagnosis must be the vacuity, never the ceiling — a
-/// verifier that indexed the chain's full length instead of `attested_len` would see ceiling 3
-/// against the v4 record this stream seals and misreport a SIGNED DOWNGRADE.
+/// verifier that indexed the chain's full length instead of `attested_len` would see ceiling 2
+/// against the v3 record this stream seals and misreport a SIGNED DOWNGRADE.
 #[test]
 fn a_vacuous_attestation_is_refused_outright() {
-    let p = v4_payload();
-    let d = v4_record_digest(&p);
+    let p = v3_payload();
+    let d = v3_record_digest(&p);
     let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
     let head0 = vec![0u8; 32];
     let checksum = {
@@ -1168,7 +1287,7 @@ fn a_vacuous_attestation_is_refused_outright() {
     })
     .to_string();
     // len 0 over GENESIS: vacuous but structurally well-formed and correctly signed.
-    let (att, _) = attestation_event(1, &checksum, 0, &head0, &sk, ISSUER, 3);
+    let (att, _) = attestation_event(1, &checksum, 0, &head0, &sk, ISSUER, 2);
     let (code, out) = run(
         "vacuous-attestation",
         &format!("{sealed}\n{att}"),
@@ -1198,8 +1317,8 @@ fn a_vacuous_attestation_is_refused_outright() {
 /// passes this stream; the second sentence is what refuses it.
 #[test]
 fn a_vacuous_attestation_is_refused_even_beside_a_valid_one() {
-    let p = v4_payload();
-    let d = v4_record_digest(&p);
+    let p = v3_payload();
+    let d = v3_record_digest(&p);
     let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
     let head0 = vec![0u8; 32];
     let checksum = {
@@ -1214,11 +1333,11 @@ fn a_vacuous_attestation_is_refused_even_beside_a_valid_one() {
         "checksum": b64e(&checksum), "payload": p,
     })
     .to_string();
-    // A GENUINE attestation over the real head first (len 1; ceiling 4 — the record is v4) …
-    let (good, c2) = attestation_event(1, &checksum, 1, &checksum, &sk, ISSUER, 4);
+    // A GENUINE attestation over the real head first (len 1; ceiling 3 — the record is v3) …
+    let (good, c2) = attestation_event(1, &checksum, 1, &checksum, &sk, ISSUER, 3);
     // … then the vacuous one, chained after it: len 0 over GENESIS, correctly signed by the SAME
     // trusted issuer.
-    let (vac, _) = attestation_event(2, &c2, 0, &head0, &sk, ISSUER, 4);
+    let (vac, _) = attestation_event(2, &c2, 0, &head0, &sk, ISSUER, 3);
     let (code, out) = run(
         "vacuous-beside-valid",
         &format!("{sealed}\n{good}\n{vac}"),
@@ -1247,8 +1366,8 @@ fn a_vacuous_attestation_is_refused_even_beside_a_valid_one() {
 /// process-level test would prove nothing.
 #[test]
 fn a_mismatched_prefix_max_slice_refuses_instead_of_skipping_the_check() {
-    let p = v4_payload();
-    let d = v4_record_digest(&p);
+    let p = v3_payload();
+    let d = v3_record_digest(&p);
     let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
     let head0 = vec![0u8; 32];
     let checksum = {
@@ -1263,7 +1382,7 @@ fn a_mismatched_prefix_max_slice_refuses_instead_of_skipping_the_check() {
         "checksum": b64e(&checksum), "payload": p,
     })
     .to_string();
-    let (att, _) = attestation_event(1, &checksum, 1, &checksum, &sk, ISSUER, 4);
+    let (att, _) = attestation_event(1, &checksum, 1, &checksum, &sk, ISSUER, 3);
     let body = format!("{sealed}\n{att}");
 
     let events: Vec<seam_verify::wire::Event> = body
@@ -1273,7 +1392,7 @@ fn a_mismatched_prefix_max_slice_refuses_instead_of_skipping_the_check() {
     let report = seam_verify::chain(&events).expect("chain");
     let issuers = vec![ISSUER.to_string()];
 
-    // Honest slices: this stream is legitimate (ceiling 4 over a v4 record) and must pass.
+    // Honest slices: this stream is legitimate (ceiling 3 over a v3 record) and must pass.
     assert!(
         seam_verify::verify_authenticity(
             &events,

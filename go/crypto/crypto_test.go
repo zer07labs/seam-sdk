@@ -34,93 +34,6 @@ type vectors struct {
 		IssuerAID            string `json:"issuer_aid"`
 		SignedArtifactJWS    string `json:"signed_artifact_jws"`
 	} `json:"tct"`
-	DerivedUUID map[string]json.RawMessage `json:"derived_uuid"`
-}
-
-type derivedUUIDCase struct {
-	Tag      string `json:"tag"`
-	InputHex string `json:"input_hex"`
-	UUID     string `json:"uuid"`
-}
-
-func derivedCase(t *testing.T, v vectors, name string) derivedUUIDCase {
-	t.Helper()
-	raw, ok := v.DerivedUUID[name]
-	if !ok {
-		t.Fatalf("vectors.json derived_uuid block has no %q", name)
-	}
-	var c derivedUUIDCase
-	if err := json.Unmarshal(raw, &c); err != nil {
-		t.Fatal(err)
-	}
-	return c
-}
-
-// The AITP known answer, the PoP message_id, and the TCT jti all come from ONE primitive.
-func TestDerivedUUIDVectors(t *testing.T) {
-	v := load(t)
-	want := map[string]string{
-		"kat_derived_uuid_001": "27b131ae-bcc6-4466-ab32-1d0f896453b1",
-		"pop_message_id":       "786ec92e-a43a-40b5-98d8-848ff365ea78",
-		"tct_jti":              "c7321ce4-62f1-4e38-ac23-212dc9e0055b",
-	}
-	for name, literal := range want {
-		t.Run(name, func(t *testing.T) {
-			c := derivedCase(t, v, name)
-			if c.UUID != literal {
-				t.Fatalf("vector drifted from the pinned literal: %s", c.UUID)
-			}
-			in, err := hex.DecodeString(c.InputHex)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := DerivedUUID(c.Tag, in); got != c.UUID {
-				t.Fatalf("DerivedUUID(%q): got %s want %s", c.Tag, got, c.UUID)
-			}
-		})
-	}
-}
-
-func TestPopMessageIDMatchesRuntimeVectors(t *testing.T) {
-	v := load(t)
-	c := derivedCase(t, v, "pop_message_id")
-	if c.Tag != PopMessageIDTag {
-		t.Fatalf("tag drifted: %q", c.Tag)
-	}
-	in, _ := hex.DecodeString(c.InputHex)
-	if string(in) != v.Admission.Inputs.PopNonce {
-		t.Fatal("the pop_message_id input must be the admission nonce's ASCII text")
-	}
-	if got := PopMessageID(v.Admission.Inputs.PopNonce); got != c.UUID || got != v.Admission.Presentation.MessageID {
-		t.Fatalf("PopMessageID: got %s want %s / %s", got, c.UUID, v.Admission.Presentation.MessageID)
-	}
-}
-
-// The presentation carries exactly five fields (the runtime decodes it with deny_unknown_fields).
-func TestPresentationHasExactlyFiveFields(t *testing.T) {
-	v := load(t)
-	seed, _ := hex.DecodeString(v.Admission.Inputs.AgentSeedHex)
-	p, err := BuildPresentation(seed, v.Admission.Inputs.ReceiverAID, v.Admission.Inputs.PopNonce, v.Admission.Inputs.NowMs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, _ := json.Marshal(p)
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatal(err)
-	}
-	keys := []string{}
-	for k := range m {
-		keys = append(keys, k)
-	}
-	if len(m) != 5 {
-		t.Fatalf("presentation has %d fields: %v", len(m), keys)
-	}
-	for _, k := range []string{"sender_aid", "descriptor", "message_id", "timestamp", "pop_nonce"} {
-		if _, ok := m[k]; !ok {
-			t.Fatalf("presentation lacks %q: %v", k, keys)
-		}
-	}
 }
 
 func load(t *testing.T) vectors {
@@ -173,7 +86,7 @@ func TestTCTVerifyValidAndTampered(t *testing.T) {
 	}
 }
 
-// The vector pins both digests explicitly, not only through the signed grant.
+// The v2 vector pins both digests explicitly, not only through the signed grant.
 func TestTCTVectorDigests(t *testing.T) {
 	v := load(t)
 	c := v.TCT.Inputs.Commitment
@@ -233,50 +146,25 @@ func TestTCTVerifyFailsClosed(t *testing.T) {
 // by the issuer seed — a local fixture generator for boundary cases the published vector cannot pin.
 func signTCT(t *testing.T, seedHex string, c Commitment, exp float64) (issuerAID, jws string) {
 	t.Helper()
-	issuerAID = issuerFromSeed(t, seedHex)
-	payload := attestationPayload(t, issuerAID, c)
-	payload["exp"] = exp
-	raw, _ := json.Marshal(payload)
-	return issuerAID, signRawTCT(t, seedHex, raw)
-}
-
-func issuerFromSeed(t *testing.T, seedHex string) string {
-	t.Helper()
-	seed, err := hex.DecodeString(seedHex)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return AIDFromPubkey(ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey))
-}
-
-// attestationPayload is the self-attestation TCT payload the runtime seals a commitment as.
-func attestationPayload(t *testing.T, issuerAID string, c Commitment) map[string]any {
-	t.Helper()
-	digest, err := seamCommitmentDigest(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return map[string]any{
-		"iss": issuerAID, "sub": issuerAID, "aud": issuerAID,
-		"exp":    4853600000,
-		"grants": []string{AttestationGrant},
-		"ext": map[string]any{CommitmentExtNamespace: map[string]any{
-			"type": CommitmentStatement, "commitment_digest": digest,
-		}},
-	}
-}
-
-// signRawTCT signs exactly the given payload bytes, so a test can hand-write JSON (e.g. a repeated key).
-func signRawTCT(t *testing.T, seedHex string, payload []byte) string {
-	t.Helper()
 	seed, err := hex.DecodeString(seedHex)
 	if err != nil {
 		t.Fatal(err)
 	}
 	priv := ed25519.NewKeyFromSeed(seed)
+	issuerAID = AIDFromPubkey(priv.Public().(ed25519.PublicKey))
 	header, _ := json.Marshal(map[string]any{"alg": "EdDSA", "typ": "aitp-tct+jwt"})
+	digest, err := seamCommitmentDigest(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"iss": issuerAID, "sub": issuerAID, "aud": issuerAID,
+		"exp":    exp,
+		"grants": []string{"seam-commitment-digest:" + digest},
+	})
 	signing := b64urlNoPad(header) + "." + b64urlNoPad(payload)
-	return signing + "." + b64urlNoPad(ed25519.Sign(priv, []byte(signing)))
+	sig := ed25519.Sign(priv, []byte(signing))
+	return issuerAID, signing + "." + b64urlNoPad(sig)
 }
 
 // TestTCTExpFractionalBoundary pins the reference truncation semantics shared by every shim: exp is
@@ -343,8 +231,7 @@ func TestCommitmentDigestBindsEveryField(t *testing.T) {
 		// The vector's commitment omits `supersedes`, so absent is the branch already exercised.
 		// This pins the PRESENT branch, which nothing covered: absent and present must differ, or
 		// a supersession could be stripped from a sealed record undetected.
-		{"supersedes (absent -> present)", func(c *Commitment) { s := "k-previous"; c.Supersedes = &s }},
-		{"supersedes (absent -> present empty)", func(c *Commitment) { s := ""; c.Supersedes = &s }},
+		{"supersedes (absent -> present)", func(c *Commitment) { c.Supersedes = "k-previous" }},
 		{"auth_method", func(c *Commitment) { c.AuthMethod += "-x" }},
 		{"trust_basis", func(c *Commitment) { c.TrustBasis += "-x" }},
 		{"committer", func(c *Commitment) { c.Committer += "-x" }},

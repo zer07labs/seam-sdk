@@ -21,10 +21,10 @@
 //! * the **`seam-event.v1` hash chain** — internal consistency of a stream, from the stream alone
 //!   ([`chain`]);
 //! * **authenticity** — every `CHAIN_HEAD_ATTESTATION` verifies against a pinned issuer key and sits
-//!   at the head it attests, and every `DECISION_SEALED` digest is recomputed from its payload
-//!   under record digest v4 ([`verify_authenticity`]). A record missing a mandatory column (tags
-//!   10-12, 14-17) is refused as a **strip**, reported distinctly from a digest mismatch; any
-//!   `schema_version` other than 4 is refused as cannot-verify, never skipped;
+//!   at the head it attests, and every v2 and v3 `DECISION_SEALED` digest is recomputed from its
+//!   payload ([`verify_authenticity`]). A v3 record missing `context_digest` or
+//!   `participation_digest` is refused as a **strip**, reported distinctly from a digest
+//!   mismatch; a `schema_version` this build does not implement is refused, never skipped;
 //! * **GDPR erasure certificates**, from the issuer AID alone ([`erasure_certificate`]).
 //! * **Truncation — conditionally, when the caller supplies a later anchor** ([`check_not_truncated`],
 //!   seam-sdk#140). A stream cut at the tail is internally consistent and verifies green **on its
@@ -41,7 +41,7 @@
 //!   ([`verify_bundle`]): the manifest's hashes, the anchored window (the same calls as
 //!   `chain --from-anchor --strict`), the decision's inclusion, the Commitment's TCT, the issuer's
 //!   signed binding of that Commitment to the chain link, and the disclosed context and policy.
-//! * **The commitment digest** (`seam-commitment-digest:v3`, with `seam-explanation-digest:v1`) and
+//! * **The commitment digest** (`seam-commitment-digest:v2`, with `seam-explanation-digest:v1`) and
 //!   the self-issued TCT that carries it ([`commitment`]) — implemented for the bundle's step 4, and
 //!   pinned by the spec's worked examples and the shared `conformance/` vectors.
 //!

@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:413`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:373`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -116,21 +116,12 @@ There is exactly one rule and it needs no table: **the SDK version equals the ru
 `ci.yml`'s `version-lockstep` job and `publish.yml`'s `version-check` job both enforce it, so a
 mismatch cannot ship.
 
-| SDK change | Requires runtime | Earlier runtimes | Pinned from |
-|---|---|---|---|
-| Protocol pass 2026-10 (seam-sdk#265) | the release that carries seam-runtime `protocol-pass-2026-10` | **none** — no compatibility | `protocol-pass-2026-10` @ `e4c01ad336e73cc5a373218029809fa708624ee4` |
-
-The protocol pass has no compatibility window in either direction: an earlier runtime refuses this
-SDK's derived PoP `message_id`, and this SDK treats an earlier runtime's v1-v3 records as
-cannot-verify (`UnsupportedRecordDigestVersion`). The vectors, the event and evidence-bundle specs and
-the proto are vendored byte-identical from the commit above.
-
 ---
 
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1426-1448`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1386-1408`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -520,17 +511,16 @@ values reached one digest. Measured against the pre-fix build, `recordDigestV2({
 `b566fdea56b8487bc5ebc26d1d6585339e9ab2a3a499247bd7230e4f20f05d7f`. That is a digest failing at the
 only thing a digest does.
 
-The guard is `uintSlot` (`ts/src/crypto.ts:1039`), which already governed the v3 record digest;
-`u64le`/`u32le` (`ts/src/crypto.ts:754`) now route through it, so v2 and the attestation framing get
+The guard is `uintSlot` (`ts/src/crypto.ts:945`), which already governed the v3 record digest;
+`u64le`/`u32le` (`ts/src/crypto.ts:635`) now route through it, so v2 and the attestation framing get
 the rule that was always written for them. Python got the same treatment: `_uint_slot`
-(`python/seam_sdk/crypto.py:776`) was `_v3_uint`, and `record_digest_v2` shared it (both v2 and v3
-are now deleted; `record_digest_v4` uses it). Every
+(`python/seam_sdk/crypto.py:741`) was `_v3_uint`, and `record_digest_v2` now shares it. Every
 "before" below was measured against the pre-fix build, not inferred.
 
 **Read the `now` column as the record-digest arm.** In the chain-head **attestation** arm every one
 of these refusals was observed as `false` rather than as a thrown error, because
 `verifyChainHeadAttestation` wrapped its whole body in a catch that returned `false`
-(`const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid }, framingTenant);`, `ts/src/crypto.ts:1318`). The
+(`const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid }, framingTenant);`, `ts/src/crypto.ts:1162`). The
 distinction mattered for the `true` row in particular, where the attestation arm showed no
 caller-visible change at all — `false` before, `false` after — even though what it was refusing had
 changed. **§10 closed that**: the type checks now run before the `try`, so a wrong type throws there
@@ -557,7 +547,7 @@ Python never had it. What Python had was three smaller defects in the same code:
 
 - `verify_chain_head_attestation` let that `struct.error` escape a function documented to return
   `False` on any tamper, so an out-of-range length **crashed** a caller instead of being rejected. It
-  now returns `False` (`python/seam_sdk/crypto.py:990-1116`).
+  now returns `False` (`python/seam_sdk/crypto.py:957-1006`).
 - `attested_len`, `attested_at` and `digest_schema` are now required to be `int`. Previously
   `True` was digested as `1` (`bool` subclasses `int`) and `5.0` raised `struct.error` — a *third*
   answer from a function that should only ever give two. Both now raise `TypeError`.
@@ -679,7 +669,7 @@ writes without thinking about it.
 
 The guard is a rule, not a denylist: an object is accepted iff its prototype is a root — `null`, or
 something whose own prototype is `null` (`function isPlainObject(v: object): boolean {`,
-`ts/src/crypto.ts:501`). An enumeration of
+`ts/src/crypto.ts:382`). An enumeration of
 `Date | Map | Set | ...` is only correct until the next exotic type. Testing the prototype chain's
 *depth* rather than `proto === Object.prototype` is also what keeps objects from other realms (`vm`
 contexts, iframes) working — they have their own `Object.prototype`, and an identity check would

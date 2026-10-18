@@ -26,7 +26,7 @@ the public contract, never on the runtime internals.
 > bands, which languages are actually published (two of five), the derived dependency floors, and —
 > importantly — what "independently verifiable" does **not** cover: the published verifier detects a
 > truncated chain only when you supply a later anchor (`chain --issuer … --expect-anchor`), and checks the
-> commitment digest (`seam-commitment-digest:v3`) only inside an evidence bundle (`bundle`). It has no
+> commitment digest (`seam-commitment-digest:v2`) only inside an evidence bundle (`bundle`). It has no
 > standalone Commitment check.
 
 ## Architecture
@@ -504,8 +504,7 @@ emits a `LEARNING_OUTCOME`, never mutates the sealed record).
 revocation-stampede-safe) returning a typed `AuthorizeResult` with the closed verdict set
 ALLOW / DENY / TRANSFORM / ESCALATE; an unrecognized verdict raises `UnknownVerdictError` (never an
 implicit allow), and a TRANSFORM without a transformed input raises `ProtocolViolationError`. The
-offline helpers `record_digest_v4` (with `RecordDigestStripError` and
-`UnsupportedRecordDigestVersion`) and
+offline helpers `record_digest_v2`, `record_digest_v3` (with `RecordDigestStripError`) and
 `verify_chain_head_attestation` are exported at top level for consumers verifying exported streams
 without the `verify/` binary.
 
@@ -546,7 +545,7 @@ runs `SeamAdminClient` in a thread.
 
 The admission/TCT crypto is byte-identical across all five languages — pure stock Ed25519/SHA-256/JOSE,
 conformance-tested against `conformance/vectors.json` (`admission` + `tct` sections). The wider crypto
-surface (JCS/call-sig framing for `authorize`, `record_digest_v4`, chain-head attestation verify) exists
+surface (JCS/call-sig framing for `authorize`, `record_digest_v2`, chain-head attestation verify) exists
 in **Python and TypeScript only** — its "every SDK MUST" vectors are scoped to languages with an
 authorize surface, and wiring them is a named precondition of any future Go/Java/Kotlin ergonomic
 client. Python (`python/`) is the reference each other language mirrors.

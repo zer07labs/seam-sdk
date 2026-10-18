@@ -62,9 +62,6 @@ earned and the tests go red before a release can ship.
 
 ## D-035 — the verifier implements `record_digest_v3`, and refuses a strip rather than guessing
 
-> Superseded in part by D-038: P7 retired v1-v3, so the v3 formula and the v1 DOWNGRADE guard are
-> gone. The strip-is-not-a-mismatch rule below stands, extended to tags 14-17.
-
 **Decision.** `seam-verify` recomputes v3 `DECISION_SEALED` digests as well as v2, and gains two
 refusals it did not have: a v3 record missing `context_digest` (tag 11) or `participation_digest`
 (tag 12) is refused as a **STRIP**, reported distinctly from a digest mismatch; and a record
@@ -198,35 +195,3 @@ this, the SDK dropped the envelope tenant without checking it.
 0.44.0 export carried v1 tenant anchors that a step-4 verifier refuses. The runtime's internal oracle
 verifies every re-exported directory, and the runtime's `differential` test passes against this build
 (`SEAM_SDK_DIR` pointing at it).
-
-## D-038 — record digest v4 only, and commitment digest v3 through a self-attestation TCT (seam-sdk#265)
-
-**Decision.** `seam-verify` recomputes `DECISION_SEALED` digests under `seam.audit.record-digest.v4`
-only, the runtime's P7 formula (tags 10-17). Every other `schema_version` is cannot-verify: 1-3 as
-RETIRED, anything above 4 as NEWER THAN THIS VERIFIER. Tags 11, 12, 14, 15, 16 and 17 are mandatory;
-absent or zero-length is a STRIP, reported apart from a mismatch, while a zero-length tag 13 is
-`opt(None)`. Step 4 of `bundle` recomputes `seam-commitment-digest:v3` (the `supersedes` presence
-byte) and accepts only the self-attestation TCT form: `typ` `aitp-tct+jwt`, EdDSA under the pinned
-key, `iss == sub == aud`, grants exactly `["aitp.attestation"]`, and `ext` exactly
-`{"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":<hex>}}`. A duplicate JSON
-key anywhere in the header or claims is refused.
-
-**Why no dual-verify.** The runtime retired v1-v3 with no compatibility window. Keeping the old
-arms here would let this verifier pass records the runtime itself no longer accepts. It would also
-keep D-035's relabel-to-v1 DOWNGRADE guard alive, and that guard existed only because v1 was
-skipped. With one formula, a relabel lands on the same refusal as a genuine old record.
-
-**Why duplicate keys are refused.** `serde_json::Value` keeps the last of two equal keys without
-saying so. A token carrying `commitment_digest` twice would then verify under whichever value the
-parser happened to keep, which may not be the value another verifier reads.
-
-**Consequence.** Streams and evidence bundles sealed before P7 do not verify under this build.
-
-**Fixtures.** `fixtures/evidence-bundle/` was re-exported at the runtime pin e4c01ad.
-`full/`, `minimal/` and `shredded/` were captured from the temp directories of the runtime's own
-`seamd --test evidence_bundle`. That test never discloses the policy, so `full/` adds the policy
-bytes recovered from the previous fixture (`schema_version` 1 → 3). Their SHA-256 equals the
-chained `policy_rules_digest`. The manifest gains the matching `files` entry and `disclosed` item;
-it is unsigned, so this edit forges nothing. `other-issuer/` is a real export from a postgres-backed
-`seam-grpc` under issuer seed 9×32, made with `seam-ops export-evidence`. Its policy is withheld, with
-the exporter's reason. All four verify under the runtime's internal oracle as well as here.

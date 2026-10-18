@@ -39,36 +39,6 @@ function uuidFromBytes(b: Uint8Array): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
 }
 
-/** The runtime's derived-UUID rule (seam-runtime `docs/specs/authorize.v1.md`, P9).
- *
- * `h = SHA-256(tag || 0x00 || data)`; the id is `h[0..16]` with the RFC 9562 version-4 and variant bits
- * forced (`h[6] = (h[6] & 0x0f) | 0x40`, `h[8] = (h[8] & 0x3f) | 0x80`), rendered as the lowercase
- * hyphenated form the wire carries. One primitive serves every derived id — the PoP `message_id` and the
- * commitment TCT `jti` — so a new one is a call, not a second transcription. Pinned by
- * `conformance/vectors.json`'s `derived_uuid` block. `tag` must be ASCII. */
-export function derivedUuid(tag: string, data: Uint8Array): string {
-  if (typeof tag !== "string" || !/^[\x00-\x7f]*$/.test(tag)) throw new TypeError("tag must be ASCII");
-  if (!(data instanceof Uint8Array)) throw new TypeError("data must be a Uint8Array");
-  const h = sha256(concat(enc.encode(tag), NUL, data)).slice(0, 16);
-  h[6] = (h[6] & 0x0f) | 0x40;
-  h[8] = (h[8] & 0x3f) | 0x80;
-  return uuidFromBytes(h);
-}
-
-/** Domain tag of the PoP `message_id` derivation (P9). */
-export const POP_MESSAGE_ID_TAG = "seam-pop-mid-v1";
-/** Domain tag of the commitment TCT `jti` derivation (P9). */
-export const TCT_JTI_TAG = "seam-tct-jti-v1";
-
-/** The admission `message_id`: `derivedUuid("seam-pop-mid-v1", pop_nonce_ascii)`.
- *
- * The input is the nonce's base64url ASCII text exactly as sent, not its decoded bytes. */
-export function popMessageId(popNonce: string): string {
-  if (typeof popNonce !== "string" || !/^[\x00-\x7f]*$/.test(popNonce))
-    throw new TypeError("pop_nonce must be ASCII");
-  return derivedUuid(POP_MESSAGE_ID_TAG, enc.encode(popNonce));
-}
-
 export interface Presentation {
   sender_aid: string;
   descriptor: { type: string; subject: string; proof: string; public_key: string };
@@ -125,8 +95,7 @@ export function buildPresentation(
 ): Presentation {
   const pub = ed25519.getPublicKey(agentSeed);
   const senderAid = aidFromPubkey(pub);
-  // message_id: derived from the nonce (no RNG) under the P9 rule — see `popMessageId`.
-  const messageId = popMessageId(popNonce);
+  const messageId = uuidFromBytes(sha256(concat(enc.encode("seam-pop-mid"), enc.encode(popNonce))));
   const timestamp = Math.floor(nowMs / 1000);
   // ASCII-decimal, matching message_id's text encoding
   const ts = enc.encode(String(timestamp));
@@ -188,7 +157,7 @@ function utf8Field(s: string, what: string): Uint8Array {
  * `CONF = 0x00 | 0x01 ‖ be64(IEEE-754 bits)`, `REF = 0x00 | 0x01 ‖ F(rationale_ref)`. Entries are hashed
  * in the given (sealed) order — never sorted or de-duplicated. An absent confidence and a stated `0.0` are
  * different bytes. Throws on an unknown kind or a non-canonical confidence (NaN, ±Infinity, outside
- * `[0, 1]`, or `-0.0`) rather than hashing it. Normative: `seam-runtime/docs/specs/seam-commitment-digest.v3.md`.
+ * `[0, 1]`, or `-0.0`) rather than hashing it. Normative: `seam-runtime/docs/specs/seam-commitment-digest.v2.md`.
  */
 export function explanationDigest(entries: readonly ExplanationEntryInput[]): Uint8Array {
   if (!Array.isArray(entries)) throw new TypeError("explanation must be an array");
@@ -254,103 +223,31 @@ function commitmentExplanationDigest(c: Commitment): Uint8Array {
   return computed;
 }
 
-/** `seam-commitment-digest:v3` (hex): SHA-256 over the length-prefixed domain tag and fields
- * `(id, action, authority, supersedes, auth_method, trust_basis, committer, explanation_digest)`.
- *
- * Every field is `F(x) = be64(len) || x` (no separator), so the digest is injective over the tuple. The
- * length prefixes are load-bearing: with a NUL separator instead, `("a\0b", "c")` and `("a", "b\0c")`
- * would collide — identical preimages, so one Commitment could verify under another's TCT — and these
- * fields are arbitrary text that may itself contain NUL. Never "simplify" them away. `supersedes` alone
- * carries a presence byte: `0x00` when absent (`undefined` or `null`), `0x01 || F(value)` when present —
- * so an absent prior and a present empty one are different digests. Field 8 is the 32 RAW bytes of the
- * explanation digest. v1 and v2 are deleted, not dual-verified. Mirrors the runtime byte-for-byte;
- * normative: `seam-runtime/docs/specs/seam-commitment-digest.v3.md`. */
+/** `seam-commitment-digest:v2` (hex): SHA-256 over the length-prefixed domain tag and fields
+ * `(id, action, authority, supersedes, auth_method, trust_basis, committer, explanation_digest)`, field 8
+ * being the 32 RAW bytes of the explanation digest. v1 is deleted, not dual-verified. Mirrors the runtime
+ * byte-for-byte; normative: `seam-runtime/docs/specs/seam-commitment-digest.v2.md`. */
 export function seamCommitmentDigest(c: Commitment): string {
-  const supersedes = c.supersedes;
-  const parts = [
-    frame(enc.encode("seam-commitment-digest:v3")),
-    frame(utf8Field(c.id, "id")),
-    frame(utf8Field(c.action, "action")),
-    frame(utf8Field(c.authority, "authority")),
-    supersedes === undefined || supersedes === null
-      ? new Uint8Array([0])
-      : concat(new Uint8Array([1]), frame(utf8Field(supersedes, "supersedes"))),
-    frame(utf8Field(c.auth_method, "auth_method")),
-    frame(utf8Field(c.trust_basis, "trust_basis")),
-    frame(utf8Field(c.committer || "", "committer")),
-    frame(commitmentExplanationDigest(c)),
+  const fields = [
+    enc.encode("seam-commitment-digest:v2"),
+    utf8Field(c.id, "id"),
+    utf8Field(c.action, "action"),
+    utf8Field(c.authority, "authority"),
+    utf8Field(c.supersedes ?? "", "supersedes"),
+    utf8Field(c.auth_method, "auth_method"),
+    utf8Field(c.trust_basis, "trust_basis"),
+    utf8Field(c.committer ?? "", "committer"),
+    commitmentExplanationDigest(c),
   ];
-  return Buffer.from(sha256(concat(...parts))).toString("hex");
-}
-
-/** The `ext` key a Seam commitment self-attestation carries its statement under (RFC-AITP-0005). */
-export const COMMITMENT_EXT_KEY = "com.zer07labs.seam";
-/** The only grant a commitment self-attestation TCT may carry. */
-export const ATTESTATION_GRANT = "aitp.attestation";
-
-/** True when any JSON object in `text` repeats a key. `JSON.parse` silently keeps the LAST duplicate,
- * so two parsers can read two different statements from one signed payload; this scan is what lets
- * {@link verifyTct} refuse such a payload, as Python's `object_pairs_hook` does. Keys are compared after
- * unescaping (`"a"` and `"a"` are the same key). Assumes `text` is valid JSON — the caller parses
- * it with `JSON.parse` as well, which refuses anything malformed. */
-function jsonHasDuplicateKey(text: string): boolean {
-  // One entry per open container: the keys seen so far for an object, `null` for an array.
-  const stack: (Set<string> | null)[] = [];
-  let expectKey = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (ch === '"') {
-      let j = i + 1;
-      while (j < text.length && text[j] !== '"') j += text[j] === "\\" ? 2 : 1;
-      if (j >= text.length) throw new SyntaxError("unterminated JSON string");
-      const top = stack[stack.length - 1];
-      if (expectKey && top) {
-        const key = JSON.parse(text.slice(i, j + 1)) as string;
-        if (top.has(key)) return true;
-        top.add(key);
-        expectKey = false;
-      }
-      i = j;
-    } else if (ch === "{") {
-      stack.push(new Set());
-      expectKey = true;
-    } else if (ch === "[") {
-      stack.push(null);
-      expectKey = false;
-    } else if (ch === "}" || ch === "]") {
-      stack.pop();
-      expectKey = false;
-    } else if (ch === ",") {
-      expectKey = !!stack[stack.length - 1];
-    } else if (ch === ":") {
-      expectKey = false;
-    }
-  }
-  return false;
-}
-
-/** `JSON.parse` that refuses a duplicate object key anywhere in the document. */
-function parseJsonNoDuplicates(text: string): unknown {
-  const value: unknown = JSON.parse(text);
-  if (jsonHasDuplicateKey(text)) throw new SyntaxError("duplicate JSON key");
-  return value;
-}
-
-function isJsonObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
+  return Buffer.from(sha256(concat(...fields.map(frame)))).toString("hex");
 }
 
 /** Independently verify a sealed commitment's rooted TCT — zero server trust, stock crypto only.
  *
- * The TCT is an RFC-AITP-0005 self-attestation. Checks the EdDSA JWS against the issuer AID's key, the
- * self-issued claims (`typ`, `iss==sub==aud==issuerAid`, `exp`), that `grants` is exactly
- * `["aitp.attestation"]`, and that `ext` is exactly
- * `{"com.zer07labs.seam": {"type": "seam:commitment", "commitment_digest": <hex>}}` whose digest is
- * `seam-commitment-digest:v3` of this exact commitment — its decided content, its committer and its
- * sealed explanation. A duplicate JSON key anywhere in the header or payload, a statement carried in
- * `grants` (the retired v2 shape), or an extra grant verifies `false`. Explanation entries that disagree
- * with the published digest, an unknown kind, or a non-canonical confidence verify `false`; this never
- * throws. */
+ * Checks the EdDSA JWS against the issuer AID's key, the self-issued claims, and that the
+ * `seam-commitment-digest:v2` grant matches this exact commitment — its decided content, its committer
+ * and its sealed explanation. Explanation entries that disagree with the published digest, an unknown
+ * kind, or a non-canonical confidence verify `false`; this never throws. */
 export function verifyTct(
   issuerAid: string,
   tctJws: string,
@@ -365,9 +262,8 @@ export function verifyTct(
     // zip215:false → RFC 8032 strictness, matching the Python/Rust verifiers (no non-canonical sigs).
     if (!ed25519.verify(b64urlDecode(s), enc.encode(`${h}.${p}`), aidToPubkey(issuerAid), { zip215: false }))
       return false;
-    const header = parseJsonNoDuplicates(Buffer.from(h, "base64url").toString());
-    const payload = parseJsonNoDuplicates(Buffer.from(p, "base64url").toString());
-    if (!isJsonObject(header) || !isJsonObject(payload)) return false;
+    const header = JSON.parse(Buffer.from(h, "base64url").toString());
+    const payload = JSON.parse(Buffer.from(p, "base64url").toString());
     if (header.alg !== "EdDSA" || header.typ !== "aitp-tct+jwt") return false;
     if (!(payload.iss === payload.sub && payload.sub === payload.aud && payload.aud === issuerAid))
       return false;
@@ -387,30 +283,15 @@ export function verifyTct(
     // Go's rule is normative because Java and Kotlin already implement it, making it the 3-of-5
     // majority; it is the only one with a written rationale; and it is the strictest, which is the
     // safe direction for a token verifier. See DECISIONS.md.
-    const exp = payload.exp;
-    if (typeof exp !== "number" || !Number.isFinite(exp)) return false;
+    if (typeof payload.exp !== "number" || !Number.isFinite(payload.exp)) return false;
     // Bounded to int64 because the normative rule is: Go's `int64(exp)` is implementation-defined
     // when the value does not fit, and `exp: 1e300` verified on arm64 (saturating to MaxInt64) while
     // amd64 refused the identical token. JavaScript has no such hazard — `Math.trunc` is total — so
     // this bound buys TypeScript nothing alone. It is here so all five SDKs answer the same thing.
     // 2^63 is exactly representable as a double, so the comparison is exact.
-    if (exp >= 9223372036854775808 || exp < -9223372036854775808) return false;
-    if (now >= Math.trunc(exp)) return false; // RFC 7519: reject at/after expiry
-    const grants = payload.grants;
-    if (!Array.isArray(grants) || grants.length !== 1 || grants[0] !== ATTESTATION_GRANT) return false;
-    const ext = payload.ext;
-    if (!isJsonObject(ext)) return false;
-    const extKeys = Object.keys(ext);
-    if (extKeys.length !== 1 || extKeys[0] !== COMMITMENT_EXT_KEY) return false;
-    const stmt = ext[COMMITMENT_EXT_KEY];
-    if (!isJsonObject(stmt)) return false;
-    const stmtKeys = Object.keys(stmt);
-    if (stmtKeys.length !== 2 || !stmtKeys.includes("type") || !stmtKeys.includes("commitment_digest"))
-      return false;
-    if (stmt.type !== "seam:commitment") return false;
-    // Exact string compare: the runtime emits lowercase hex, and an uppercase spelling is a different
-    // statement, not a normalization opportunity.
-    return stmt.commitment_digest === seamCommitmentDigest(commitment);
+    if (payload.exp >= 9223372036854775808 || payload.exp < -9223372036854775808) return false;
+    if (now >= Math.trunc(payload.exp)) return false; // RFC 7519: reject at/after expiry
+    return (payload.grants ?? []).includes("seam-commitment-digest:" + seamCommitmentDigest(commitment));
   } catch {
     return false;
   }
@@ -664,7 +545,7 @@ export function callSig(
 
 // ── The per-request credential (`seam-request-call-v1`, #508) ──────────────────────────────────────
 // A DIFFERENT domain tag from `seam-authorize-call-v2` above, deliberately, so a captured Authorize
-// callSig is never spendable as a request credential and vice versa. See `plans/archive/request-credential.md`
+// callSig is never spendable as a request credential and vice versa. See `plans/request-credential.md`
 // for the full contract; pinned by `conformance/request_sig_payload_vector.json`, generated from the
 // runtime's Rust reference.
 export const REQUEST_SIG_CONTEXT = "seam-request-call-v1";
@@ -734,7 +615,7 @@ export function requestSig(
 // frame(x) = u32le(len) || x ; opt(x) = 0x00 if null else 0x01 || frame(x). Transcribed from
 // `seam-event.v1.md`. NOTE the u32 LITTLE-endian length prefix here — distinct from `lenPrefix` above
 // (8-byte big-endian, the commitment-digest framing). These let a client verify a chain-head attestation
-// or recompute a v4 record digest in-language, from the published spec alone.
+// or recompute a v2 record digest in-language, from the published spec alone.
 
 function frameLE(b: Uint8Array): Uint8Array {
   const len = new Uint8Array(4);
@@ -762,22 +643,64 @@ function u32le(name: string, n: number | bigint): Uint8Array {
   return out;
 }
 
-// ── v4 record digest (P7) ────────────────────────────────────────────────────────────────────────
+/** Recompute a v2 `DECISION_SEALED` record digest (`seam.audit.record-digest.v2`) from its on-wire
+ * structural columns + `ciphertextDigest` (SHA256(ciphertext), tag 10) — compare to the wire `digest`
+ * (tag 19) to catch a payload rewrite (A14 design-a). Preimage order is NOT wire-tag order; the `opt`
+ * presence byte is raw, so `null` and `""` are distinct. */
+export function recordDigestV2(d: {
+  decisionId: string;
+  tenant: string;
+  namespace: string;
+  ciphertextDigest: Uint8Array;
+  sealedAt: number | bigint;
+  outcome: string;
+  mode: string | null;
+  policyVersion: string | null;
+  supersedes: string | null;
+  schemaVersion?: number;
+}): Uint8Array {
+  // Every slot below goes through the SAME guard v3 uses. It did not before, and the gap was not
+  // theoretical: `ciphertextDigest: "0".repeat(32)` and `new Array(32).fill(0)` each produced the
+  // identical digest to `new Uint8Array(32)`, because `Uint8Array.prototype.set` coerces every
+  // element through ToNumber and a non-numeric character becomes `NaN` becomes `0`. Two distinct
+  // inputs, one digest, in the v2 framing — while v3 refused all three and Python raised on them.
+  const ciphertextDigest = asBytes(d.ciphertextDigest);
+  if (ciphertextDigest === null) {
+    throw new TypeError(
+      `ciphertextDigest must be bytes, not a ${typeof d.ciphertextDigest} — refused rather than ` +
+        `coerced to zero bytes, which would ALIAS a legitimate caller's digest`,
+    );
+  }
+  const pre = concat(
+    frameLE(enc.encode("seam.audit.record-digest.v2")),
+    frameLE(enc.encode(textSlot("decisionId", d.decisionId, false)!)),
+    frameLE(enc.encode(textSlot("tenant", d.tenant, false)!)),
+    frameLE(enc.encode(textSlot("namespace", d.namespace, false)!)),
+    frameLE(ciphertextDigest),
+    frameLE(u64le("sealedAt", d.sealedAt)),
+    frameLE(enc.encode(textSlot("outcome", d.outcome, false)!)),
+    optLE(textSlot("mode", d.mode, true)),
+    optLE(textSlot("policyVersion", d.policyVersion, true)),
+    optLE(textSlot("supersedes", d.supersedes, true)),
+    frameLE(u32le("schemaVersion", d.schemaVersion ?? 2)),
+  );
+  return sha256(pre);
+}
 
-/** The four v4 sub-digests (tags 11/12/13/15) are fixed-width by the spec. A wrong-length value is
- * refused rather than framed, because framing one would produce a garbage digest that a caller reports
- * as a *rewrite* — mislabelling "this field is malformed" as "someone altered the record". */
-const SUB_DIGEST_LEN = 32;
+// ── v3 record digest (B3) ────────────────────────────────────────────────────────────────────────
+
+const V3_DIGEST_LEN = 32;
 
 /**
- * A v4 record is missing a field the formula requires (wire tag 11, 12, 14, 15, 16 or 17), or carries
- * a malformed sub-digest.
+ * A `schema_version = 3` record is missing a field the v3 formula requires (wire tag 11 or 12), or
+ * carries one that is not 32 bytes.
  *
  * **This is deliberately not a digest mismatch, and must never be reported as one.** The spec
- * (`seam-event.v1.md`, "Strip semantics for tags 11-17") makes those six fields mandatory on every
- * payload and requires a consumer to *refuse* — never to substitute an empty value; there is no older
- * formula to fall back to. Absent-when-required is a strip attack, and an operator has to be able to
- * tell "someone removed a field" from "someone rewrote one", because the two have different responses.
+ * (`seam-event.v1.md`, "Strip semantics for tags 11/12/13") makes `context_digest` and
+ * `participation_digest` mandatory on a v3 payload and requires a consumer to *refuse* — never to
+ * substitute an empty digest, and never to fall back to the v2 formula. Absent-when-required is a
+ * strip attack, and an operator has to be able to tell "someone removed a field" from "someone
+ * rewrote one", because the two have different responses.
  *
  * Throwing is what makes that distinction structural rather than advisory: a mismatch is an unequal
  * return value, a strip is a thrown error, and no caller can conflate them by accident.
@@ -793,7 +716,7 @@ export class RecordDigestStripError extends Error {
     message: string,
     /** The spec's field name, e.g. `context_digest`. */
     readonly field: string,
-    /** The `DecisionSealed` wire tag the field occupies — 11 through 17. */
+    /** The `DecisionSealed` wire tag the field occupies — 11, 12 or 13. */
     readonly wireTag: number,
   ) {
     super(message);
@@ -854,35 +777,32 @@ function asBytes(value: unknown): Uint8Array | null {
   }
 }
 
-/** One of the four v4 sub-digests (wire tags 11/12/13/15), validated as the spec requires: tags 11, 12
- * and 15 are mandatory, tag 13 is genuinely optional, and all four must be exactly 32 bytes when
+/** One of the three v3 sub-digests (wire tags 11/12/13), validated as the spec requires: tags 11 and
+ * 12 are mandatory, tag 13 is genuinely optional, and all three must be exactly 32 bytes when
  * present. `optional` selects which of those two contracts applies.
  *
  * Every refusal here is a `RecordDigestStripError`, whatever the proximate cause — absent, wrong
  * type, wrong length. From the caller's side those are one condition: *this field is not a usable
- * 32-byte digest, so no v4 digest exists*. Splitting them into different error types would push the
+ * 32-byte digest, so no v3 digest exists*. Splitting them into different error types would push the
  * work of re-joining them onto every caller, for no gain.
- *
- * A mandatory slot read off the wire arrives as an empty array when absent (`length === 0` IS absence
- * on tags 11/12/15), so the empty value is the same strip as `null`, reported as such.
  *
  * The type check is not defensive padding — it is the sharp edge. A 32-CHARACTER STRING has
  * `.length === 32`, so it passes a length-only gate, and `Uint8Array.prototype.set` then coerces each
  * character via ToNumber → NaN → 0. The result is a *well-formed digest over 32 zero bytes*, which
  * collides exactly with a legitimate all-zeros digest: not a mismatch a verifier would catch, but an
  * alias. That is the same class of collision the spec's framing rules exist to prevent. */
-function subDigest(
+function v3SubDigest(
   name: string,
   tag: number,
   value: unknown,
   optional: boolean,
 ): Uint8Array | null {
-  const empty = !optional && asBytes(value)?.length === 0;
-  if (value === null || value === undefined || empty) {
+  if (value === null || value === undefined) {
     if (optional) return null;
     throw new RecordDigestStripError(
-      `a v4 record carries no ${name} (wire tag ${tag}), which the v4 formula requires. This is a ` +
-        `STRIP, not a digest mismatch: refuse the record and do not substitute an empty digest.`,
+      `a schema_version=3 record carries no ${name} (wire tag ${tag}), which the v3 formula ` +
+        `requires. This is a STRIP, not a digest mismatch: refuse the record, do not substitute ` +
+        `an empty digest and do not fall back to the v2 formula.`,
       name,
       tag,
     );
@@ -897,10 +817,10 @@ function subDigest(
       tag,
     );
   }
-  if (bytes.length !== SUB_DIGEST_LEN) {
+  if (bytes.length !== V3_DIGEST_LEN) {
     throw new RecordDigestStripError(
-      `${name} (wire tag ${tag}) is ${bytes.length} bytes, not ${SUB_DIGEST_LEN} — malformed, so no ` +
-        `v4 digest can be computed from it. Reported as a refusal rather than hashed, because ` +
+      `${name} (wire tag ${tag}) is ${bytes.length} bytes, not ${V3_DIGEST_LEN} — malformed, so no ` +
+        `v3 digest can be computed from it. Reported as a refusal rather than hashed, because ` +
         `hashing it would surface a malformed field as though the record had been rewritten.`,
       name,
       tag,
@@ -909,7 +829,7 @@ function subDigest(
   return bytes;
 }
 
-/** A string slot of a digest preimage, validated before it is encoded.
+/** A string slot of the v3 preimage, validated before it is encoded.
  *
  * Two things `TextEncoder` would otherwise do silently, both of them producing a digest no other
  * Seam implementation can reproduce: encode a non-string (`undefined` → `"undefined"`, `null` →
@@ -917,8 +837,8 @@ function subDigest(
  * (`AttributeError`, `UnicodeEncodeError`); Rust cannot represent either. Refusing here is what
  * keeps the three implementations agreeing on which inputs have a digest at all.
  *
- * Was `v3Text`, and guarded only the v3 record digest — so the v2 record digest (since deleted, with
- * v3, by P7) had every one of these holes for as long as it existed. Measured then, on the v2 preimage:
+ * Was `v3Text`, and guarded only the v3 record digest — so `recordDigestV2` had every one of these
+ * holes for as long as it has existed. Measured before this change, on the v2 preimage:
  *
  *     recordDigestV2({… outcome: "\ud800"})  and  recordDigestV2({… outcome: "\ufffd"})
  *       both -> b0bd8fdf…965a56bd        (TextEncoder substitutes U+FFFD: an ALIAS)
@@ -946,20 +866,6 @@ function textSlot(name: string, value: unknown, optional: boolean): string | nul
     );
   }
   return value;
-}
-
-/** A mandatory v4 string slot (tags 14/16/17). Empty, `null` or `undefined` is a strip, never data:
- * the spec reads `length === 0` on these tags as absence, and absence is refused. */
-function mandatoryText(name: string, tag: number, value: unknown): string {
-  if (value === null || value === undefined || value === "") {
-    throw new RecordDigestStripError(
-      `a v4 record carries no ${name} (wire tag ${tag}), which the v4 formula requires. This is a ` +
-        `STRIP, not a digest mismatch: refuse the record.`,
-      name,
-      tag,
-    );
-  }
-  return textSlot(name, value, false)!;
 }
 
 /** A fixed-width unsigned integer slot, range-checked before `DataView` silently wraps it.
@@ -1015,7 +921,7 @@ function requireUintArgument(name: string, value: number | bigint): void {
 /** The normalized bytes, or a `TypeError` naming what arrived instead.
  *
  * Through {@link asBytes}, which is this module's one definition of "is this a byte sequence" and
- * what `recordDigestV4` uses. The first cut wrote `value instanceof Uint8Array` — in the same change
+ * what `recordDigestV3` uses. The first cut wrote `value instanceof Uint8Array` — in the same change
  * whose `isPlainObject` docstring argues at length that realm-fragile identity checks are the wrong
  * instrument. It was: `vm.runInNewContext("new Uint8Array(32)")` verified before and raised after,
  * because a cross-realm `Uint8Array` is not `instanceof` ours. `asBytes` tests the buffer-protocol
@@ -1056,87 +962,41 @@ function uintSlot(name: string, value: number | bigint, bits: 32 | 64): bigint {
   return v;
 }
 
-/** Domain tag of the v4 participants sub-digest (wire tag 15). */
-export const PARTICIPANTS_DIGEST_DOMAIN_V4 = "seam.audit.participants.v4";
-/** The only record-digest `schema_version` this SDK recomputes (P7). */
-export const RECORD_DIGEST_SCHEMA_VERSION = 4;
-
-/** A record's `schema_version` is not 4, so this SDK cannot verify it — **cannot-verify**, never a
- * pass and never a mismatch.
+/** Recompute a v3 `DECISION_SEALED` record digest (`seam.audit.record-digest.v3`).
  *
- * `seam-event.v1.md` §"Record digest" makes v4 the only formula and requires a verifier to *refuse*
- * every other `schema_version` as unknown: it must never skip one and never default to a formula it
- * was not asked for. v1-v3 were retired by the runtime's protocol pass (P7); a record sealed under them
- * is not verifiable by this SDK, by design. `schemaVersion` carries the value refused. */
-export class UnsupportedRecordDigestVersion extends Error {
-  override readonly name: string = "UnsupportedRecordDigestVersion";
-  constructor(
-    /** The `schema_version` that was refused. */
-    readonly schemaVersion: unknown,
-  ) {
-    super(
-      `record digest schema_version ${String(schemaVersion)} cannot be verified: this SDK ` +
-        `recomputes v${RECORD_DIGEST_SCHEMA_VERSION} only (v1-v3 were retired by P7)`,
-    );
-  }
-}
-
-/** `participants_digest` (wire tag 15) — `seam.audit.participants.v4`.
- *
- * `SHA256(frame(domain) || le32(count) || frame(id) for each id in STORED order)`: no sorting, no
- * de-duplication, and the count is a bare `le32`. The empty roster is a real 32-byte digest, never an
- * absent slot. Spec: `seam-event.v1.md` §"participants_digest". */
-export function participantsDigestV4(participants: readonly string[]): Uint8Array {
-  if (!Array.isArray(participants)) throw new TypeError("participants must be an array of strings");
-  const ids = participants.map((x, i) => textSlot(`participants[${i}]`, x, false)!);
-  return sha256(
-    concat(
-      frameLE(enc.encode(PARTICIPANTS_DIGEST_DOMAIN_V4)),
-      u32le("participants.length", ids.length),
-      ...ids.map((x) => frameLE(enc.encode(x))),
-    ),
-  );
-}
-
-/** Recompute a `DECISION_SEALED` record digest (`seam.audit.record-digest.v4`) — the only formula.
- *
- * Transcribed from `seam-event.v1.md` §"Record digest (v4)":
- *
- *     SHA256( frame(domain) ‖ frame(decision_id) ‖ frame(tenant) ‖ frame(namespace)
- *           ‖ frame(ciphertext_digest) ‖ frame(le64(sealed_at)) ‖ frame(outcome)
- *           ‖ opt(mode) ‖ opt(policy_version) ‖ opt(supersedes)
- *           ‖ frame(context_digest) ‖ frame(participation_digest) ‖ opt(policy_rules_digest)
- *           ‖ frame(classification) ‖ frame(participants_digest)
- *           ‖ frame(trust_basis_commitment) ‖ frame(auth_method) ‖ frame(le32(schema_version)) )
- *
- * The sub-digests (tags 11/12/13/15) arrive as **opaque 32-byte wire inputs**; their internal formulas
- * belong to the runtime and to auditors (except `participantsDigestV4`, which is public). This is a
- * wire-input recompute.
+ * v3 is v2 plus the three columns carrying the product's actual claims — what context the decision
+ * consumed, who participated, and which policy rules gated the commitment. They arrive as **opaque
+ * 32-byte sub-digests on the wire** (tags 11/12/13); their internal formulas belong to the runtime
+ * and to auditors, and are deliberately not reimplemented here. This is a wire-input recompute,
+ * exactly as `recordDigestV2` is.
  *
  * Three things the spec singles out as easy to get wrong, all of them load-bearing:
  *
- * - **Digest slots are offset by one from the proto tags**, and new slots sit before `schemaVersion`,
- *   which is always last — a verifier selects the whole formula by `schema_version`, so position is
- *   fixed by the spec rather than by append order.
- * - **Tags 11, 12, 14, 15, 16 and 17 are framed and mandatory; tag 13 is opted.** Framing the
- *   mandatory digests is precisely what stops "no participants" from aliasing with "field stripped".
- *   `policyRulesDigest` is genuinely optional — absent means no policy was bound.
- * - **`null` is not an empty `Uint8Array`.** The empty digest is outside these slots' value domain
- *   ({absent} ∪ {32 bytes}), so this function never hashes it. Absence of tag 13 is spelled `null`
- *   here; a **wire** consumer maps `length === 0` to `null` first (`seam-event.v1` §"Presence on the
- *   wire") — that is `verifyStreamedRecordDigest`'s job. On a mandatory tag, empty is a strip. (The
- *   "present-but-empty is data" rule belongs to the opt STRING slots — `mode`, `policyVersion`,
- *   `supersedes` — where the empty string IS in the domain.)
+ * - **Digest slots are offset by one from the proto tags.** `contextDigest` is preimage slot 10 but
+ *   wire tag 11. The new slots are *inserted before* `schemaVersion`, never appended after it — a
+ *   verifier selects the whole formula by `schema_version`, so position is fixed by the spec rather
+ *   than by append order.
+ * - **Slots 10 and 11 are framed; slot 12 is opted.** The asymmetry is deliberate: framing the two
+ *   mandatory digests is precisely what stops "no participants" from aliasing with "field
+ *   stripped". `policyRulesDigest` is genuinely optional — absent means no policy was bound.
+ * - **`null` is not an empty `Uint8Array` — and at THIS layer they are two different refusals, not
+ *   two different digests.** `opt(null)` is one byte and `opt(new Uint8Array())` five, so the
+ *   presence byte does keep them apart in the preimage. But the empty digest is outside these slots'
+ *   value domain ({absent} ∪ {32 bytes}), so this function never hashes it: it refuses it. Absence
+ *   is spelled `null` here. A **wire** consumer must not pass an empty array through — on the wire
+ *   `length === 0` IS absence (a total mapping, per `seam-event.v1` §"Presence on the wire"), so the
+ *   caller maps it to `null` first; that is `verifyStreamedRecordDigest`'s job. (The
+ *   "present-but-empty is data" rule is real, but belongs to the STRING slots — `mode`,
+ *   `policyVersion`, `supersedes` — where the empty string IS in the domain.)
  *
  * Strings hash as their **raw UTF-8 bytes with no normalization of any kind** — the spec names
  * normalization as the step "three of four implementations would implement differently, or skip".
  * `TextEncoder` is correct here precisely because it does not normalize; never call `.normalize()`
  * on an input.
  *
- * Throws {@link UnsupportedRecordDigestVersion} for any `schemaVersion` other than 4 (checked first),
- * and {@link RecordDigestStripError} when a mandatory field is absent or empty, or a sub-digest is not
- * 32 bytes. */
-export function recordDigestV4(d: {
+ * Throws {@link RecordDigestStripError} when `contextDigest` or `participationDigest` is absent or
+ * is not 32 bytes, and when a *present* `policyRulesDigest` is not 32 bytes. */
+export function recordDigestV3(d: {
   decisionId: string;
   tenant: string;
   namespace: string;
@@ -1149,30 +1009,17 @@ export function recordDigestV4(d: {
   contextDigest: Uint8Array;
   participationDigest: Uint8Array;
   policyRulesDigest: Uint8Array | null;
-  classification: string;
-  participantsDigest: Uint8Array;
-  trustBasisCommitment: string;
-  authMethod: string;
-  schemaVersion?: number | bigint;
+  schemaVersion?: number;
 }): Uint8Array {
-  // The version gate comes first: a record of another version has no v4 digest at all, so nothing
-  // below (including a strip check) is meaningful for it.
-  const version = d.schemaVersion === undefined ? RECORD_DIGEST_SCHEMA_VERSION : d.schemaVersion;
-  if (version !== RECORD_DIGEST_SCHEMA_VERSION && version !== BigInt(RECORD_DIGEST_SCHEMA_VERSION))
-    throw new UnsupportedRecordDigestVersion(version);
   // Every slot is validated before a single byte is hashed. The rule is one sentence: **this
   // function refuses any input it cannot faithfully represent, rather than coercing it.** JavaScript
   // will happily turn a 32-character string into 32 zero bytes, `undefined` into `"undefined"`, and
   // 2^64+5 into 5 — each of which yields a perfectly well-formed digest over a value nobody supplied,
   // and two of which ALIAS onto digests a legitimate input could also produce. An alias is worse than
   // a mismatch: a mismatch is caught downstream, an alias is not caught at all.
-  const contextDigest = subDigest("context_digest", 11, d.contextDigest, false)!;
-  const participationDigest = subDigest("participation_digest", 12, d.participationDigest, false)!;
-  const policyRulesDigest = subDigest("policy_rules_digest", 13, d.policyRulesDigest, true);
-  const participantsDigest = subDigest("participants_digest", 15, d.participantsDigest, false)!;
-  const classification = mandatoryText("classification", 14, d.classification);
-  const trustBasisCommitment = mandatoryText("trust_basis_commitment", 16, d.trustBasisCommitment);
-  const authMethod = mandatoryText("auth_method", 17, d.authMethod);
+  const contextDigest = v3SubDigest("context_digest", 11, d.contextDigest, false)!;
+  const participationDigest = v3SubDigest("participation_digest", 12, d.participationDigest, false)!;
+  const policyRulesDigest = v3SubDigest("policy_rules_digest", 13, d.policyRulesDigest, true);
   const ciphertextDigest = asBytes(d.ciphertextDigest);
   if (ciphertextDigest === null) {
     throw new TypeError(
@@ -1188,9 +1035,10 @@ export function recordDigestV4(d: {
   const policyVersion = textSlot("policyVersion", d.policyVersion, true);
   const supersedes = textSlot("supersedes", d.supersedes, true);
   const sealedAt = uintSlot("sealedAt", d.sealedAt, 64);
+  const schemaVersion = uintSlot("schemaVersion", d.schemaVersion ?? 3, 32);
 
   const pre = concat(
-    frameLE(enc.encode("seam.audit.record-digest.v4")),
+    frameLE(enc.encode("seam.audit.record-digest.v3")),
     frameLE(enc.encode(decisionId)),
     frameLE(enc.encode(tenant)),
     frameLE(enc.encode(namespace)),
@@ -1203,11 +1051,7 @@ export function recordDigestV4(d: {
     frameLE(contextDigest),
     frameLE(participationDigest),
     optBytesLE(policyRulesDigest),
-    frameLE(enc.encode(classification)),
-    frameLE(participantsDigest),
-    frameLE(enc.encode(trustBasisCommitment)),
-    frameLE(enc.encode(authMethod)),
-    frameLE(u32le("schemaVersion", RECORD_DIGEST_SCHEMA_VERSION)),
+    frameLE(u32le("schemaVersion", schemaVersion)),
   );
   return sha256(pre);
 }

@@ -1,13 +1,21 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ e4c01ad336e73cc5a373218029809fa708624ee4 tracking protocol-pass-2026-10 (vendored 2026-10-18).
-     Pinned ahead of the runtime's default branch, so that seam-sdk#265 (protocol pass 2026-10) can ship
-     the verifier's counterpart beside it. Movements since the prior pin (8d06722, the runtime 0.47.0 train):
-     1. P7 (e70497ff): record digest v4. DECISION_SEALED gains tags 14-17 (classification,
-        participants_digest, trust_basis_commitment, auth_method), all inside the preimage; v1-v3 are
-        retired with no dual-verify, so any schema_version other than 4 is cannot-verify. This crate
-        implements v4 only, and refuses a stripped mandatory column as a STRIP.
-     2. B3 (e6af873b): the commitment digest moves to seam-commitment-digest:v3.
-     3. P9, P12, P12b and the 2026-10-18 reconcile (9d45338d, 46abe810, 412aeb8d, 7da7c56d): text this
-        verifier does not act on beyond what items 1-2 cover. -->
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 8d06722 (refreshed 2026-10-12).
+     One movement since the prior default-branch pin (a12d415, the runtime 0.46.0 train), landed with the
+     runtime 0.47.0 train: seam-runtime#1303, merged as 8d06722. Until it merged this copy was pinned ahead
+     of the default branch, tracking feat/835-step4-refuse-v1-tenant at 33a4e71, so that seam-sdk#257 could
+     ship the verifier's step-4 counterpart alongside it; the body has not changed since that pin.
+     1. seam-runtime#835 step 4: §CHAIN_HEAD_ATTESTATION's verifier rule is strict — empty tenant → v1 only
+        (a v2 signature over "" is refused), non-empty tenant → v2 only (the v1 fallback is gone). The reader
+        obligations now refuse an empty payload tenant under a named envelope (formerly "tenant-unbound"),
+        with or without strict verification; clause (a) requires the signature to verify under the one
+        framing the tenant selects; clause (f0) drops the untenanted anchor's sole-tenant fallback — an
+        untenanted anchor is v1 and seeds only the "" partition. This crate implements all of it.
+     The copy also carries seam-runtime#1293's text verbatim, as the prior pin a12d415 does; the movement
+     above is the only difference.
+     Earlier movements, recorded by prior pins: #835 step 1's v2 framing (KAT vendored as
+     `conformance/chain_head_attestation_v2_vector.json`), EVENT_REDRIVEN (#1176), the system-partition
+     CHAIN_HEAD_ATTESTATION (#1205/#1196), the #802/#804 commitment note, the `tenant_seq` cutoff and the
+     tenant-tag producer rule (#903/#1084), tag 25 `tenant_seq` (#973) and AUTHORIZE_EVALUATED tag 11
+     `subject_digests` (#715). -->
 
 # `seam-event.v1` — event-stream wire spec (language-neutral)
 
@@ -147,8 +155,8 @@ ChainHeadAttestation {                     // payload at SeamEvent tag 22
   attested_at:   u64      // injected millis
   issuer_aid:    string   // the runtime issuer identity (same key as the TCT + erasure cert)
   digest_schema: u32      // CEILING: the highest record-digest formula that may appear in the attested
-                          // prefix (this build signs 4 = record digest v4) — the downgrade guard,
-                          // bound into the signature. A bound, not a description: see below.
+                          // prefix (2 = A14 v2, 3 = B3 v3) — the downgrade guard, bound into the
+                          // signature. A bound, not a description: see below.
   signature:     bytes    // Ed25519 over the signed framing below
   tenant:        string   // (tag 7, U-RT-3 Phase 2) which tenant's chain this attests; "" for the
                           // system partition. Selects the signed framing (see below): non-empty ⇒
@@ -215,17 +223,18 @@ runtime verifier accepts v2 (step 1) → seam-sdk and seam-connectors verifiers 
 head read and the append (no lock is held across read→sign→append), so a "stale" attestation is simply one
 over a shorter, still-covered prefix; a verifier checks the head **at that position**.
 
-**`digest_schema` is a ceiling, not a description — and it selects nothing.** The field asserts *every
-record in the attested prefix has `schema_version <= digest_schema`*; a producer sets it to the highest
-formula its build can stamp, which for this build is `4`. A ceiling only ever rises, and an attestation is
-never re-signed.
+**`digest_schema` is a ceiling, not a description — and it selects nothing.** Since B3 a chain is
+**mixed**: records sealed under v2 and v3 interleave in one chain, so no scalar can say which formula
+"the chain uses". The field instead asserts *every record in the attested prefix has `schema_version <=
+digest_schema`*. That statement is true of a 97×v2 prefix under `2` and of a mixed prefix under `3`,
+which is why **existing attestations remain true and are never re-signed** — a ceiling only ever rises.
+A producer sets it to the highest formula its build can stamp.
 
-A verifier **must not** read this field to choose a digest formula; it reads each record's own
-`schema_version`, and every value other than `4` is refused as unknown (§Record digest — the verifier is
-v4-only). The ceiling's job is narrower and is about the *signed artifact*: an attestation is handed to an
-external notary, so it must state the verification regime truthfully. A build that stamps v4 while signing
-a lower `digest_schema` would be issuing, under the issuer key, exactly the downgrade claim this field
-exists to prevent.
+A verifier **must not** read this field to choose a digest formula; it dispatches per record on the
+record's own `schema_version`, and an unknown version is refused rather than defaulted. The ceiling's job
+is narrower and is about the *signed artifact*: an attestation is handed to an external notary, so it
+must state the verification regime truthfully. A build that stamps v3 while signing `digest_schema = 2`
+would be issuing, under the issuer key, exactly the downgrade claim this field exists to prevent.
 
 **Triggers.** Emitted at **boot** (every restart leaves a signed head immediately, covering restart gaps),
 **every N chain entries** (`SEAM_CHAIN_ATTEST_EVERY`, default 1000; `0` disables — the every-N worker is
@@ -257,16 +266,15 @@ equal its envelope's, per "Reader obligations on `tenant`" above, and (since #83
 MUST verify under the one framing that `tenant` selects**; (b) for every `DECISION_SEALED`, recompute the record
 digest (spec §Record digest) from its payload and compare it to the event's `digest` (tag 19) — a
 mismatch is a **payload rewrite** (a structural column was changed after sealing; the chain link still
-hashes, but the payload no longer matches it); (c) **a `DECISION_SEALED` whose `schema_version` is not
-`4` ⇒ REFUSE (UNKNOWN SCHEMA VERSION)**, and **a v4 `DECISION_SEALED` that lacks a non-empty
-`ciphertext_digest` (tag 10) ⇒ REFUSE (MISSING COMMITMENT)**, or lacks any of its mandatory sub-digest
-and binding tags 11, 12, 14, 15, 16, 17 ⇒ REFUSE (MISSING SUB-DIGEST). Every record is *required* to carry
-them, so an absent one is a **strip / downgrade attack** — rewrite a field, drop its input, leave the
-`(prev,digest,checksum)` triple intact (the signed head cannot catch it: tag 19 is copied unchanged, so
-the head still matches and the signature verifies) — or a non-conforming producer. Both fail under
-`--issuer`; treating the strip as *cannot-recompute, not-a-failure* is exactly the hole design (a) exists
-to close. Nothing is skipped: there is no un-recomputable record class. Without `--issuer` none of (a)–(e)
-runs (a consumer with no issuer key legitimately checks integrity only); (d) **zero valid
+hashes, but the payload no longer matches it); (c) **a `schema_version >= 2` `DECISION_SEALED` that lacks
+a non-empty `ciphertext_digest` (tag 10) ⇒ REFUSE.** A v2 record is *required* to carry its commitment, so
+an absent tag 10 on a covered record is a **tag-10 strip / downgrade attack** — rewrite a field, drop the
+commitment, leave the `(prev,digest,checksum)` triple intact (the signed head cannot catch it: tag 19 is
+copied unchanged, so the head still matches and the signature verifies) — or a non-conforming producer.
+Both fail under `--issuer`; treating the strip as *cannot-recompute, not-a-failure* is exactly the hole
+design (a) exists to close. This is scoped to the covered class: v1 (`schema_version = 1`) records are not
+recomputable and never required a commitment, so they are skipped, not failed; and without `--issuer` none
+of (a)–(e) runs (a consumer with no issuer key legitimately checks integrity only); (d) **zero valid
 attestations under `--issuer` ⇒ REFUSE** — a forger cannot mint one, so their absence is the
 fabricated-chain tell, and a green-with-no-attestations would be a coverage hole reporting green.
 **An attestation whose `attested_len` is 0 ⇒ REFUSE, outright and unconditionally** — it makes no
@@ -276,7 +284,7 @@ this clause: a `CHAIN AUTHENTICATED` whose only warrant is a signature over noth
 coverage hole reporting green, this time with the issuer's signature on it. (e)
 **an attestation whose `digest_schema` is BELOW the highest `schema_version` of any `DECISION_SEALED` in
 its attested prefix ⇒ REFUSE** — it is a signed downgrade claim, and it is reported **distinctly** from a
-payload rewrite (b) and from a strip (c), because the three have different causes and different
+payload rewrite (b) and from a tag-10 strip (c), because the three have different causes and different
 remediations.
 
 This is the consumer half of the ceiling the paragraph above makes normative for producers; without it
@@ -285,16 +293,16 @@ framed into every record digest, which is bound into the checksum chain the atte
 a per-record downgrade already breaks a link under (b). What (e) adds is narrower and is the whole point
 of the field: it checks the **signed, externally-notarized artifact** against the chain it claims to
 cover. The artifact is what a third party is handed, and the case (b) cannot reach is a **rolled-back
-producer** — a build whose ceiling regressed below 4 signing an honest, unmodified chain that already
-contains v4 records. Every link hashes, every digest recomputes, and the issuer has
+producer** — a build whose `CURRENT_SCHEMA_VERSION` regressed to 2 signing an honest, unmodified chain
+that already contains v3 records. Every link hashes, every digest recomputes, and the issuer has
 nonetheless signed a false statement about the verification regime.
 
 Three properties of (e) are load-bearing and a verifier that gets any of them wrong is worse than one
 that omits the check:
 
-- **`>=`, never `==`.** The check is `digest_schema >= max(schema_version)` over the prefix. A ceiling
-  only ever rises and existing attestations are never re-signed, so an `==` reading would refuse a valid
-  attestation the moment a future formula raises the producer's ceiling.
+- **`>=`, never `==`.** A ceiling only ever rises, and existing attestations are never re-signed, so a
+  genuinely old `digest_schema = 2` attestation over a v2-only prefix stays valid **forever**. An `==`
+  reading would refuse the entire pre-B3 history.
 - **Over the attested PREFIX only** — the first `attested_len` chained links, not the whole chain. A
   stale attestation legitimately covers a shorter prefix than the chain's current length (see the
   read→sign→append note above), so comparing it against records sealed *after* it were signed would
@@ -360,8 +368,8 @@ above, supplied out of band — e.g. one element of the public `GET /v1/anchors`
   prefix; only an in-window attestation warrants the window.
 - **(f5) — clause (e), re-scoped.** The ceiling is checked over the window's covered links only,
   with the running maximum seeded at 0 — never seeded from the anchor's `digest_schema`, which is a
-  ceiling, not the prefix's actual maximum (seeding from it would refuse a valid in-window attestation
-  whose ceiling is below the anchor's, violating the `>=`-never-`==` property above). Records at or
+  ceiling, not the prefix's actual maximum (seeding from it would refuse a genuinely old in-window
+  attestation over an all-v2 span, violating the `>=`-never-`==` property above). Records at or
   below the anchor are not in the input; their regime is warranted solely by the anchor's own
   signed ceiling.
 - **(f6) — the verdict states its premise.** An anchored verdict MUST report the anchor's
@@ -397,9 +405,7 @@ this event emits at `phase = "opened"`, **before anything seals**, so no enforce
 The stream carries the companion one event later — `DecisionSealed.policy_rules_digest` (tag 13),
 joinable by `session_id`. Read that, not this, for what actually bound.
 
-Envelope: `event_id = "{tenant}:{session_id}#lc:{phase}@{opened_at_millis}"` (tenant-prefixed since
-P12b, like the `POLICY_DENIED` id: session ids are client-chosen, so two tenants opening the same
-session id in the same millisecond would otherwise collide under a global `event_id` dedup) — salted with the open timestamp
+Envelope: `event_id = "{session_id}#lc:{phase}@{opened_at_millis}"` — salted with the open timestamp
 because a session id can be RE-opened after sweep eviction, and delivery dedups by `event_id` (an
 unsalted id would pin a deduping consumer to the first open's stale payload). `classification` is
 **fixed `Internal`** (operational metadata — phase/mode/policy/timestamp; no subject, secret, or agent
@@ -456,9 +462,6 @@ redaction never fires: gate on `when_kind`).
 ```
 hmac-sha256:<kid>:<hex>     hex = HMAC-SHA256(k_tenant, put(domain) ‖ put(tenant) ‖ put(value))
 ```
-
-`put(x) = le32(len(x)) ‖ x` — a little-endian u32 byte-length prefix, then the raw bytes (identical to
-`frame(x)` in §"Record digest"). `<hex>` is the lowercase hex of the full 32-byte HMAC.
 
 GDPR erasure walks *decision records*; an outbox row is un-shredable, so a raw end-user id here would
 be an un-erasable copy of it. A **bare** hash was never sufficient for that. An end-user identifier
@@ -562,8 +565,7 @@ message PolicyDenied {                 // envelope tag 24
 }
 ```
 
-Envelope: `event_id = "{tenant}:{session_id}#pd#{seq}"` (tenant-prefixed since P5, because two
-tenants may use the same session id); `session_id` is **present** (unlike
+Envelope: `event_id = "{session_id}#pd#{seq}"`; `session_id` is **present** (unlike
 `AUTHORIZE_EVALUATED`, a refused commitment always has one, and it is the only handle a consumer has to
 correlate the refusal with the attempt); `decision_id` is **absent** (nothing sealed, so there is no
 decision to join to); `classification` is **fixed `Internal`** — gate redaction on `when_kind`.
@@ -661,16 +663,16 @@ BudgetBreach {                             // payload at SeamEvent tag 17
 `schema_version`, …) — never the `Encrypted<Commitment>` plaintext. A consumer that needs the
 commitment body holds the key; the stream never carries openable secrets.
 
-Every payload **must** carry `ciphertext_digest` (payload **tag 10**, since **A14**):
+Since `schema_version = 2` (**A14**) the payload **must** carry `ciphertext_digest` (payload **tag 10**):
 `SHA256(ciphertext)` — the one input to the record digest a stream consumer does not hold, collapsed to
 32 bytes. It discloses nothing (a hash of a high-entropy AEAD ciphertext) and lets a consumer recompute
-the record `digest` from what it received (see §Record digest). Payload tags 11-17 are likewise
-mandatory except the genuinely optional tag 13 (§Record digest (v4)).
+the record `digest` from what it received (see §Record digest). It is absent (no wire bytes) only on
+`schema_version = 1` payloads.
 
-**A stripped tag 10 is an attack, not a safe downgrade.** Dropping tag 10 while leaving the
+**A stripped tag 10 on a v2 record is an attack, not a safe downgrade.** Dropping tag 10 while leaving the
 `(prev_checksum, digest, checksum)` triple intact lets an adversary rewrite a structural column and evade
 the recompute — the signed head cannot catch it, because `digest` (tag 19) is copied unchanged. Under
-`--issuer` a verifier therefore **fails** a `DECISION_SEALED` that lacks a non-empty
+`--issuer` a verifier therefore **fails** a `schema_version >= 2` `DECISION_SEALED` that lacks a non-empty
 `ciphertext_digest` (see §Ordering & integrity Verification (c)); it does **not** treat the strip as a
 downgrade to integrity-only. The legitimate "no issuer key ⇒ integrity-only" story is unchanged — it is a
 property of running *without* `--issuer`, not of stripping a field the producer is required to emit.
@@ -764,9 +766,9 @@ The decision being scored is identified by the **envelope `decision_id`**, not a
   rewritten event within a tenant's chain, not merely a dropped one; an attacker stripping tags 19/20
   off a chained event is caught at that tenant's next link (`prev_checksum ≠ running_head`) —
   equivalent in power to dropping it, which a tail-strip aside is covered by the out-of-band anchor
-  (`audit-anchor.md`). The `digest` is computed per §Record digest below (v4) — it covers every
-  structural column a consumer acts on, `SHA256(ciphertext)`, and the sub-digests and bindings carried in
-  payload tags 11-17, so a consumer recomputes it from the wire; it discloses nothing a consumer does not already hold.
+  (`audit-anchor.md`). The `digest` is computed per §Record digest below — from `schema_version = 2` it
+  covers every structural column a consumer acts on plus `SHA256(ciphertext)`, so a consumer recomputes
+  it from the wire; it discloses nothing a consumer does not already hold.
 
 ### Per-tenant `tenant_seq` (additive, tag 25 — every kind, UNSEALED) — #973
 
@@ -871,26 +873,22 @@ retaining the current max-`seq` row so the `seq` allocator cannot regress.
 
 ## Record digest
 
-The `digest` field (tag 19) on a `DECISION_SEALED` event is the **record digest v4**. It is the only
-record-digest formula: a producer stamps `schema_version = 4` on every record, and a verifier recomputes v4
-only and **refuses** every other `schema_version` as unknown — it never skips one and never defaults to a
-formula it was not asked for. (v1-v3 were retired by P7, 2026-10; no record sealed under them is
-verifiable by this build, by design — production is recreated at the v4 cutover, not migrated.)
-
+The `digest` field (tag 19) on a `DECISION_SEALED` event is selected by the payload's `schema_version`.
 All framing is byte-exact and any-language-reproducible. `frame(x) = le32(len(x)) ‖ x` (a little-endian
 u32 length prefix, then the bytes). `opt(x) = 0x00` when the field is absent, `0x01 ‖ frame(x)` when
 present — so `None` and `Some("")` are distinct. `le64`/`le32` are little-endian fixed-width integers.
 
-### Record digest (v4) — `schema_version = 4` (P7)
+### Record digest (v3) — `schema_version = 3` (B3)
 
-v4 binds identity, the ciphertext, every structural column on the wire, **who participated and what
-context the decision consumed** (two rolled-up 32-byte sub-digests), the policy rules that gated the
-commitment, and — new in v4 — the record's **classification**, its flat **participants** roster, and its
-**trust basis** (as a keyed commitment plus the plain `auth_method`).
+v2 binds identity, the ciphertext, and every structural column on the wire. It does **not** bind the two
+columns carrying the product's actual claims: **who participated** and **what context the decision
+consumed**. Until B1/B2 those were a placeholder and an engine backfill, so digesting them would have
+bound noise. v3 binds them, as two rolled-up 32-byte sub-digests plus the policy rules that gated the
+commitment.
 
 ```
-digest_v4 = SHA256(
-    frame("seam.audit.record-digest.v4")          // domain + version, in-preimage
+digest_v3 = SHA256(
+    frame("seam.audit.record-digest.v3")          // domain + version, in-preimage
   ‖ frame(decision_id) ‖ frame(tenant) ‖ frame(namespace)
   ‖ frame(SHA256(ciphertext))                      // == the wire ciphertext_digest (payload tag 10)
   ‖ frame(le64(sealed_at))
@@ -898,58 +896,39 @@ digest_v4 = SHA256(
   ‖ frame(context_digest)                          // 32 bytes, below — wire tag 11
   ‖ frame(participation_digest)                    // 32 bytes, below — wire tag 12
   ‖ opt(policy_rules_digest)                       // 32 bytes when a policy was bound — wire tag 13
-  ‖ frame(classification)                          // canonical PascalCase string — wire tag 14
-  ‖ frame(participants_digest)                     // 32 bytes, below — wire tag 15
-  ‖ frame(trust_basis_commitment)                  // "hmac-sha256:<kid>:<hex>", ASCII — wire tag 16
-  ‖ frame(auth_method)                             // raw UTF-8 — wire tag 17
-  ‖ frame(le32(schema_version))                    // == 4, ALWAYS LAST
+  ‖ frame(le32(schema_version))                    // == 3
 )
 ```
 
-Slot indices are **0-based over the preimage above**, with slot 0 the domain tag: `context_digest` is
-slot 10, `participation_digest` 11, `policy_rules_digest` 12, `classification` 13, `participants_digest`
-14, `trust_basis_commitment` 15, `auth_method` 16 and `schema_version` 17. (These are digest-preimage
-positions, not proto field numbers — on `DecisionSealed` the columns from `context_digest` onward take
-wire tags 11-17, offset by one.) **`schema_version` is always the last slot**: new slots are inserted
-before it, never appended after it, and a verifier selects the whole formula by `schema_version`, so
-position is fixed by this spec rather than by append order.
+Slot indices below are **0-based over the preimage above**, with slot 0 the domain tag: so
+`context_digest` is slot 10, `participation_digest` 11, `policy_rules_digest` 12, `schema_version` 13.
+(These are digest-preimage positions, not proto field numbers — on `DecisionSealed` the three new
+columns take the free wire tags 11/12/13, which happen to be offset by one.)
 
-Every slot except `policy_rules_digest` (13) is **mandatory**: tags 10, 11, 12, 14, 15, 16 and 17 are
-never empty on a conforming payload. `outcome` is framed as its canonical string (`Resolved` /
-`Expired` / `Cancelled`); `mode`, `policy_version` and `supersedes` are `opt`-framed as their raw UTF-8
-string values (the mode id, the policy version, and the superseded commitment as
-`{session_id}/sha256:<hex>` — its RFC-MACP-0013 hash, verified at commit, see
-[`seam-commitment-digest.v3.md`](seam-commitment-digest.v3.md#supersedes)), `0x00` when absent;
-`classification` uses the same canonical PascalCase strings as inside `context_digest` below
-(`Public` / `Internal` / `Confidential` / `Financial` / `Pii` / `Phi`), never an ordinal.
-
-**Frozen string tables.** Three closed string sets are part of the digest contract, not just display
-names: the `Classification::as_str` names above (tag 14, and inside `context_digest`), the `AUTH_METHODS`
-vocabulary (`aitp-pinned-handshake`, `aitp-tct`, `aitp-pinned`, and the `none` sentinel; tag 17), and the
-`TrustLevel::as_str` names (`Untrusted` / `Sandboxed` / `Trusted` / `Privileged`, the level suffix of
-`trust_basis` inside the keyed tag 16). Renaming any entry changes the digests of every record sealed after
-the rename, so a rename is a contract change (new `schema_version`), never a refactor. Each table is pinned
-by a test in `seam-types`.
+Slots 1–9 are byte-identical to v2, and slot 0 differs only in its version suffix, and `schema_version` stays last. **The three
+new slots are inserted before `schema_version`, not appended after it** — a verifier selects the whole formula by
+`schema_version`, so position is fixed by this spec rather than by append order.
 
 **Strings hash as their raw UTF-8 bytes**, with no normalization of any kind — no Unicode NFC/NFD, no
 case folding, no trimming. This covers `ctx_ref`, `lineage_id`, mode ids, `agent_id`, `pinned_version`,
-participant ids, `auth_method`, the commitment string, and the enum strings below. Ingress already
-constrains most of these to a safe ASCII charset, but the digest does not rely on that and must not:
-normalization is a step three of four implementations would implement differently, or skip.
+and the enum strings below. Ingress already constrains most of these to a safe ASCII charset, but the
+digest does not rely on that and must not: normalization is a step three of four implementations would
+implement differently, or skip.
 
-**One framing rule, and exactly one exception, named.** In every sub-preimage below: *every field is
+**One framing rule, and exactly one exception, named.** In both sub-preimages below: *every field is
 framed, every optional is `opt`-encoded, and every list is preceded by a bare `le32` count* — including
 fixed-width fields such as the 32-byte `manifest_digest`. A list count is **4 bytes, not framed**. There
 are four independent implementations of this in three languages; a rule with exceptions is where they
 drift, so the single exception is called out where it occurs rather than left to be discovered: the
-`scope(...)` blob is pre-existing bytes the digest reuses verbatim, and *its* internal counts are framed.
-See `scope(...)` below. Nothing else frames a count.
+`scope(...)` blob is pre-existing bytes v3 reuses verbatim, and *its* internal counts are framed. See
+`scope(...)` below. Nothing else in v3 frames a count.
 
-**Sub-digest domain tags.** `context_digest` and `participation_digest` keep their `.v3` domain tags
-(`seam.audit.context-provenance.v3`, `seam.audit.participation.v3`): their grammar did not change in v4,
-and a domain tag names a grammar, not the release that introduced it. `participants_digest` is new in v4
-and is `seam.audit.participants.v4`. Every domain string in this system is
-`seam.audit.<thing>.<version>`.
+The two sub-digest domain tags below are `seam.audit.context-provenance.v3` and
+`seam.audit.participation.v3`, rather than the shorter `seam.ctx.v3` / `seam.part.v3` the B3 plan named.
+The change is deliberate: every other domain string in this system is `seam.audit.<thing>.<version>`, and
+a domain tag whose only job is to be unique and unmistakable should not be the one place the convention
+breaks. It is recorded here because it is a change to a decided one-way door, and a silent one would be
+worse than the inconsistency it fixes.
 
 #### `context_digest` — `seam.audit.context-provenance.v3`
 
@@ -993,8 +972,11 @@ ACDP P1a**: populated on a **remote** `acdp://` binding, absent (`0x00`) on a **
 on every record sealed before P1a. A local ref has no registry, no producer DID and no receipt, so absent
 is a true statement about that binding rather than a missing value.
 
-**An absent slot is a single `0x00` byte**, so a local binding and a remote one recompute under the one
-formula; a golden pins an absent-slot entry beside a populated one.
+**`schema_version` stays 3, and that is asserted rather than assumed.** An absent slot is the same single
+`0x00` byte it was while the slots were pure reservations, so a record sealed before P1a and one sealed
+after recompute under this one formula. The proof is a golden whose pre-P1a entry is byte-identical
+across the change, sitting beside a new populated entry. Without the reservation, `schema_version` would
+have stayed 3 while the encoding changed underneath it, and a verifier could not have told the two apart.
 
 The reservation was confirmed against the ACDP implementation this runtime pins, not inferred: a remote
 resolution yields exactly these four pieces of provenance, each a **scalar**, and a registry receipt is
@@ -1090,7 +1072,7 @@ Two semantics that keep a mutable registry value safe to seal:
   constructs, seals and digests exactly one, deliberately — `context_provenance_digest` refuses
   nothing, because a WORM record must not be re-judged by facts that arrived after it was sealed.
   It is the cross-language golden for the populated-D3 case
-  (`scripts/v4-digest-reference.py`, `D3_POPULATED_CONTEXT`). So a corpus containing one verifies
+  (`scripts/v3-digest-reference.py`, `D3_POPULATED_CONTEXT`). So a corpus containing one verifies
   clean today, and that is correct chain behaviour: the anomaly is a **semantic** verdict layered
   above the hash chain, never a chain failure.
 
@@ -1122,13 +1104,6 @@ signing key**, in a lowercase-with-underscore vocabulary of exactly six values �
 with a two-value trust class, `producer_signed` | `registry_attested` (§5 / §6), present only when a
 statement actually acted.
 
-**Three of the six are reserved, never served** (since acdp 0.15, B8; owner decision 2026-10-18):
-`revoked`, `unplaceable` and `key_unidentified`. Those cases now fail the resolve, so there is no
-verified content to carry them. They surface as errors instead: `CONTEXT_KEY_REVOKED`,
-`CONTEXT_REVOCATION_UNAVAILABLE` (transient lookup failure) or `CONTEXT_REVOCATION_UNKNOWN` (any other
-reason the check cannot answer). The values stay in the vocabulary, so a consumer must still parse
-them.
-
 **Neither is in any digest**, for the same reason and with the same structural guarantee as
 `retraction`: both live on a sibling `ResolvedContext`, never on `ContextBinding`, so neither can
 reach `context_provenance_digest`. What the revocation check *does* seal is `key_status` (tag 9),
@@ -1141,23 +1116,22 @@ absence of search results is not evidence of absence, and a registry that suppre
 produces exactly this answer. A consumer treating `not_revoked` as a clean bill of health has
 converted a statement about one moment and one registry into a global one.
 
-`unknown` is a **different fact again** and must not be read as `not_revoked`: it means the
-revocation check is disabled, so Seam did not ask at all. `not_revoked` says we asked and were shown
-nothing; `unknown` says we did not ask. Collapsing the two is a silent fail-open. A lookup that fails
-is never served as `unknown`: it refuses with `CONTEXT_REVOCATION_UNAVAILABLE` or
-`CONTEXT_REVOCATION_UNKNOWN`.
+`unknown` is a **different fact again** and must not be read as `not_revoked`: it means Seam did not
+get an answer at all — the check is off, or the lookup failed. `not_revoked` says we asked and were
+shown nothing; `unknown` says we do not know whether we asked successfully. Collapsing the two is a
+silent fail-open.
 
 ⚠️ **Staleness alone is NOT a cause of `unknown`, and an implementation that treats it as one is
 wrong.** A negative answer older than the staleness bound triggers **one synchronous re-source**
-inside the call's existing budget; if that re-source fails or runs out of budget, the resolve
-refuses (above). *Stale means re-ask, not degrade* — the alternative would leave nothing to repair the
+inside the call's existing budget; it yields `unknown` only if that re-source fails or runs out of
+budget. *Stale means re-ask, not degrade* — the alternative would leave nothing to repair the
 staleness, and the check would decay to permanently off. The staleness bound is a Seam parameter, not
 an RFC one: RFC-ACDP-0014 §11 says the window between compromise and consumer awareness *"is bounded
 by consumer polling policy, not by this RFC"*.
 
-⚠️ **A registry outage does not downgrade a known revocation.** A failed lookup never turns a
-**positive** already held into a weaker answer: `pre_compromise` is still served, and a revoked key
-still refuses with `CONTEXT_KEY_REVOKED`. §4 makes
+⚠️ **A registry outage does not downgrade a known revocation.** `unknown` replaces only a
+`not_revoked` that could not be re-established; a **positive** already held — `revoked`,
+`pre_compromise`, `unplaceable` — is permanent and is still served when the lookup fails. §4 makes
 revocation permanent, so forgetting one because a registry is unreachable would be the fail-open in
 the other direction. An implementation that collapses *every* verdict to `unknown` on a failed lookup
 is not conformant with what this field means.
@@ -1221,11 +1195,11 @@ scope(Bounded{tools, actions, mode_cap}) =
 **Every component is `frame`d, the counts included** — so a count occupies 8 bytes (`le32(4)` then four
 count bytes), not 4, and the variant tag occupies 5, not 1.
 
-**This is the one place in the record digest where a count is framed, and it is a deliberate exception, not the rule.**
+**This is the one place in v3 where a count is framed, and it is a deliberate exception, not the rule.**
 Everywhere else — the two outer counts, `derived_from`, `declared_modes` — a count is a bare 4-byte
-`le32`. The difference exists because these are not bytes the record digest encodes: they are the existing `put_scope`
+`le32`. The difference exists because these are not bytes v3 encodes: they are the existing `put_scope`
 output, reused verbatim so that the scope encoding has exactly one definition. Copying its convention
-outward, or the record digest's convention inward, both produce a digest that no other implementation reproduces. The
+outward, or v3's convention inward, both produce a digest that no other implementation reproduces. The
 other natural misreading is "a tag byte then a count" — also wrong, for the same reason: every component
 here goes through the same framing helper. `scope(Unrestricted)` is 5 bytes; an **empty** `Bounded` is 29. The empty
 bounded case is not hypothetical: every synthetic `subject:{i}` declaration carries exactly it, so any
@@ -1251,59 +1225,8 @@ would make erasure unenforceable at the sink. Publishing their digest does not. 
 applies to context content.
 
 **Erasure keeps working.** Crypto-shred destroys the record's DEK; it never touches the `participation`
-or `context_provenance` columns, nor the `participants`, `classification`, `auth_method` or
-`trust_basis_commitment` columns. So a shredded record still recomputes `digest_v4` identically and still
-proves its place in the chain. (A **tenant** shred destroys the tenant's commitment key: the stored
-`trust_basis_commitment` string still recomputes — boot re-verify frames the stored column and never
-re-derives it — but it can no longer be linked to any `trust_basis` value.)
-
-#### `participants_digest` — `seam.audit.participants.v4`
-
-```
-participants_digest = SHA256(
-    frame("seam.audit.participants.v4")
-  ‖ le32(len(participants))                       // count, BARE le32
-  ‖ for each id, in STORED ORDER: frame(id)
-)
-```
-
-`participants` is the record's flat id roster in **stored (admission) order** — no sorting, no
-de-duplication. It is **mandatory** on the wire (tag 15) even when the roster is empty: the empty roster
-is `SHA256(frame(domain) ‖ le32(0))`, never an absent slot or a zero sentinel. It is **unkeyed**: the
-roster holds agent/role names, not data subjects, and is outside the erasure predicate.
-
-#### `trust_basis_commitment` and `auth_method` — the trust basis
-
-`trust_basis` is an erasure-predicate value and the outbox cannot be shredded, so it is **never** on the
-wire, raw or as a bare hash (a bare hash of a small-preimage value is a set-membership oracle; #484,
-#1293). Tag 16 instead carries a **keyed commitment** to it, the same construction as
-`AUTHORIZE_EVALUATED`'s subject commitments (§AUTHORIZE_EVALUATED, *PII rule*):
-
-```
-trust_basis_commitment = "hmac-sha256:<kid>:<hex>"
-    hex = HMAC-SHA256(k_tenant, put("seam.audit.trust-basis.v4") ‖ put(tenant) ‖ put(trust_basis))
-```
-
-`put(x) = le32(len(x)) ‖ x` (the little-endian u32 byte-length prefix, then the raw UTF-8 bytes — the same
-framing as `frame(x)` above; defined with the *PII rule*).
-
-The record digest frames the **string** (ASCII), not the HMAC bytes, so a verifier recomputes the record
-digest from the wire without the key. A verifier cannot open the commitment, and is not meant to: it
-proves the sealed record's trust basis cannot be rewritten after the fact, while staying unlinkable once
-the tenant is shredded. The runtime stores the commitment in its own column and every recompute (boot
-re-verify included) frames the stored column — it is never re-derived, because the key may since have
-been rotated or shredded.
-
-`auth_method` (tag 17) is the plain authentication-method label (`aitp-tct`, …), framed as its raw
-UTF-8. It is not subject-bearing and is not keyed.
-
-**No trust decision.** A seal with no trust decision (an in-process embedder calling the kernel with
-`None`) stamps the sentinel `trust_basis = "none"` and `auth_method = "none"`, and the commitment is
-computed over the sentinel — so tags 14-17 are never empty and a trust-less seal stays distinguishable.
-
-**Fail closed on the key.** If the tenant's commitment key is unavailable (shredded, or an unwrap
-failure) the seal is **refused** with reason `commitment_key_unavailable` and no record is written. A
-producer never falls back to an unkeyed or empty commitment.
+or `context_provenance` columns. So a shredded record still recomputes `digest_v3` identically and still
+proves its place in the chain — exactly as it does under v2.
 
 #### `None` is not `Some("")` is not an empty list
 
@@ -1326,41 +1249,38 @@ The same holds at the top level: a record with `participation = []` has a perfec
 Each per-element preimage is arguably self-delimiting, so the outer `le32` count looks redundant. It is
 not, and the reason is on the record: the erasure-certificate **v1** framing omitted exactly this and
 collided — `erased=["a","b"], held=[]` hashed identically to `erased=["a"], held=["b"]`, because the
-concatenation could not tell where one list ended and the next began. The record digest counts every
-list, inner and outer, so no rearrangement of elements between lists can produce the same preimage.
+concatenation could not tell where one list ended and the next began. v3 counts every list, inner and
+outer, so no rearrangement of elements between lists can produce the same preimage.
 
-#### Strip semantics for tags 11-17
+#### Strip semantics for tags 11/12/13
 
-`context_digest` (11), `participation_digest` (12), `classification` (14), `participants_digest` (15),
-`trust_basis_commitment` (16) and `auth_method` (17) are **mandatory** on every payload. A consumer that
-receives a payload with any of them absent **must refuse to verify** — it must not substitute an empty
-value, and there is no older formula to fall back to. Absent-when-required is a strip
+`context_digest` (11) and `participation_digest` (12) are **mandatory** on a `schema_version = 3`
+payload. A consumer that receives a v3 payload with either absent **must refuse to verify** — it must not
+substitute an empty digest, and it must not fall back to the v2 formula. Absent-when-required is a strip
 attack, and it must be reported distinctly from a digest mismatch so an operator can tell "someone
 removed a field" from "someone rewrote one".
 
 `policy_rules_digest` is `SHA256(JCS(policy_definition))` over the policy actually bound to the
 session — JCS rather than file bytes, so the digest is representation-independent and an unchanged
 policy keeps its digest when policy delivery moves from local files to the control plane. As a
-`digest_v4` input it is opaque, so recomputation does not require re-deriving it; the formula is stated
+`digest_v3` input it is opaque, so recomputation does not require re-deriving it; the formula is stated
 so an auditor can independently check *what the slot attests*, which is the point of sealing it.
 
 It attests **which bytes the runtime applied**, not that those bytes were authentic. Authenticity is
 signed-control-plane-policy work, orthogonal and later. An unsigned policy's digest is exactly as
-seal-worthy as an unsigned decision payload's ciphertext hash, which the digest already seals.
+seal-worthy as an unsigned decision payload's ciphertext hash, which v2 already seals.
 
 `policy_rules_digest` (13) is genuinely optional: absent means no policy was bound to that commitment,
 which is today's common case. Absent ≠ `Some(empty)` — the `opt` presence byte distinguishes them
 in the preimage, and *Presence on the wire* below explains why `Some(empty)` never reaches the preimage
 in the first place.
 
-#### Presence on the wire — why tags 10–17 are not `optional`
+#### Presence on the wire — why tags 10–13 are not `optional`
 
-Five `DecisionSealed` fields carry a digest: `ciphertext_digest` (10), `context_digest` (11),
-`participation_digest` (12), `policy_rules_digest` (13), `participants_digest` (15); three more carry a
-mandatory string: `classification` (14), `trust_basis_commitment` (16), `auth_method` (17). None is
-declared `optional`, while `mode` (4), `policy_version` (5) and `supersedes` (7) all are. All eight feed
-either an `opt(...)` slot or a strip check, so what `len == 0` means on them is load-bearing, and this
-section pins it.
+Four `DecisionSealed` fields carry a digest: `ciphertext_digest` (10), `context_digest` (11),
+`participation_digest` (12), `policy_rules_digest` (13). None is declared `optional`, while `mode` (4),
+`policy_version` (5) and `supersedes` (7) all are. All four digest fields feed either an `opt(...)`
+slot or a strip check, so what `len == 0` means on them is load-bearing, and this section pins it.
 
 **Why the digest slots are singular.** A digest slot's value domain is *{absent} ∪ {exactly 32 bytes}* —
 the empty digest is not a value in it. Declaring the field singular makes that out-of-domain state
@@ -1381,9 +1301,8 @@ Together these give the rule `DecisionSealed` actually obeys — apply it when a
 > A `DecisionSealed` scalar is `optional` **iff** its preimage slot is `opt(...)` **and** the empty
 > value is inside its value domain — exactly when absence and emptiness are two preimages the wire must
 > keep apart. Every other field is singular: the always-`frame`d slots (tags 1–3, 6, 8–9) have no
-> absent state to track, the digest slots (tags 10–13, 15) exclude the empty value by domain, whether
-> their slot is `opt`ed (13) or not (10–12, 15), and the mandatory strings (tags 14, 16, 17) exclude it
-> because an empty one is a strip.
+> absent state to track, and the digest slots (tags 10–13) exclude the empty value by domain, whether
+> their slot is `opt`ed (13) or not (10–12).
 
 > **The rule is `DecisionSealed`'s, not the package's — do not read it as a convention.** The envelope
 > does not obey it: `SeamEvent` declares `digest` (19) and `checksum` (20) `optional bytes` while
@@ -1399,11 +1318,11 @@ Together these give the rule `DecisionSealed` actually obeys — apply it when a
 > byte, so absent-versus-empty can never yield two different digests that two conforming consumers each
 > believe.
 
-**Producers MUST NOT emit a zero-length tag 10, 11, 12, 13, 14, 15, 16 or 17.** The canonical encoder cannot: prost
+**Producers MUST NOT emit a zero-length tag 10, 11, 12 or 13.** The canonical encoder cannot: prost
 skips a singular scalar at its default, and the hand-written `DecisionSealedPb` it encodes through
 declares these fields singular — the cardinality the descriptor pin below holds to this contract.
 
-**Consumers MUST read a zero-length occurrence as absence** — on all eight tags, whether the field was
+**Consumers MUST read a zero-length occurrence as absence** — on all four tags, whether the field was
 omitted or explicitly encoded with length zero. The second half is the part worth pinning: proto3
 requires a decoder to *accept* an explicitly-encoded default value, so a non-conforming or hostile
 producer can place `0x6a 0x00` (tag 13, length 0) on the wire even though a conforming one never will.
@@ -1412,29 +1331,25 @@ handed, instead of resting on producers behaving:
 
 | tag | `len == 0` means | consequence |
 |-----|------------------|-------------|
-| 10 `ciphertext_digest` | absent | a tag-10 strip → **refuse** (MISSING COMMITMENT) |
-| 11 `context_digest` | absent | a strip → **refuse** (MISSING SUB-DIGEST), reported distinctly from a digest mismatch |
+| 10 `ciphertext_digest` | absent | on `schema_version >= 2`, a tag-10 strip → **refuse** (the tag-10 strip rule above) |
+| 11 `context_digest` | absent | on `schema_version = 3`, a strip → **refuse**, reported distinctly from a digest mismatch |
 | 12 `participation_digest` | absent | as tag 11 |
-| 13 `policy_rules_digest` | absent | `opt(None)` in the v4 preimage — a legitimate state, never a strip |
-| 14 `classification` | absent | as tag 11 |
-| 15 `participants_digest` | absent | as tag 11 (an empty roster is a 32-byte digest, never absent) |
-| 16 `trust_basis_commitment` | absent | as tag 11 (a trust-less seal carries the `"none"` sentinel's commitment) |
-| 17 `auth_method` | absent | as tag 11 (a trust-less seal carries `"none"`) |
+| 13 `policy_rules_digest` | absent | `opt(None)` in the v3 preimage — a legitimate state, never a strip |
 
-This is what keeps `Some(b"")` out of the `digest_v4` preimage: the `opt(policy_rules_digest)` slot is
+This is what keeps `Some(b"")` out of the `digest_v3` preimage: the `opt(policy_rules_digest)` slot is
 `opt(None)` or `opt(<32 bytes>)` and nothing else, which is why the conformance corpus ships exactly
-two record-digest vector blocks — `record_digest_v4` and `record_digest_v4_absent_policy` — rather
-than three. The JSON projection obeys the same rule by construction: all eight fields serialize
+two v3 record-digest vector blocks — `record_digest_v3` and `record_digest_v3_absent_policy` — rather
+than three. The JSON projection obeys the same rule by construction: all four fields serialize
 omitted-when-empty and parse missing-as-empty, so missing/`""` ⇔ absent there too.
 
-A consumer decoding through generated stubs therefore cannot ask a presence question of these eight
+A consumer decoding through generated stubs therefore cannot ask a presence question of these four
 fields (`HasField` and its equivalents are not generated for a proto3 scalar without explicit
 presence), and does not need to: `len == 0` **is** the presence answer, by this rule. A consumer that
 wants to tell "omitted" from "explicitly-encoded-empty" — to report a malformed producer rather than a
 strip — must parse raw wire bytes rather than a decoded message. Both inputs verify identically either
 way; only the diagnostic differs.
 
-**Flipping any of these eight to `optional` would be a semantic break, even though it is wire-compatible.**
+**Flipping any of these four to `optional` would be a semantic break, even though it is wire-compatible.**
 The bytes of a present, non-empty digest would not change, and this repo's `buf breaking` runs
 `WIRE_JSON` (`buf.yaml`), which permits the flip — which is why this section exists rather than a lint
 rule. What breaks is agreement between consumers: after the flip, a zero-length tag 13 frames as
@@ -1445,51 +1360,57 @@ per-tag in `fixtures/seam_event_descriptor.json`, which seam-store's
 hand-written canonical encoder, and which is registered as its own group in the cross-repo golden
 manifest — so the flip surfaces as a reviewed, coordinated re-pin, never a quiet one-line edit.
 
-#### What the record digest binds, and what the commitment digest binds
+#### What v3 still does not cover
 
-v4 binds `trust_basis` (via its keyed commitment, tag 16), `auth_method`, `classification` and
-`participants` directly in the record digest, so all four are now tamper-evident **from the wire**.
-Before v4 they sat outside the record digest, and the claim that they were "bound inside the commitment
-TCT" was only partly true. [`seam-commitment-digest:v3`](seam-commitment-digest.v3.md) frames
-`auth_method` and the **raw** `trust_basis`, so those two were and still are bound into the TCT.
-`classification` and `participants` are **not** framed by the commitment digest; v4 is the first thing
-that binds them. The commitment digest keeps framing the raw `trust_basis` by design: it sits inside the
-AEAD-encrypted, crypto-shreddable commitment ciphertext, and keying is needed only for the plaintext
-outbox, so only tag 16 is keyed.
+`trust_basis`, `classification`, and `participants` (the flat id list) remain outside the digest. They
+are bound inside the commitment TCT, which is why this is acceptable rather than an oversight — but it
+is a real residual and a v4 candidate, recorded here rather than left to be rediscovered.
 
 The commitment's `committer` (#802) and its sealed **explanation** (#804 — every accepted vote,
 evaluation, objection and quorum ballot with its reason, an evaluation's `rationale_ref`, and its
-confidence *or its absence*) need no slot here: both are part of the commitment plaintext, so they
+confidence *or its absence*) need no new slot here: both are part of the commitment plaintext, so they
 are inside the ciphertext that `ciphertext_digest` (tag 10) already commits to, and both are also bound
-into the TCT by [`seam-commitment-digest:v3`](seam-commitment-digest.v3.md). Neither is on this wire —
+into the TCT by [`seam-commitment-digest:v2`](seam-commitment-digest.v2.md). Neither is on this wire —
 the explanation carries free text and data-subject reasons, and crypto-shred erases it with the record.
+`schema_version` does not move.
 
-#### Worked vector
+### Record digest (v2) — `schema_version = 2` (A14) — **historical, permanent on read**
 
-Every input fixed; the independent reference is `scripts/v4-digest-reference.py`, and the Rust pins are
-`record_digest_v4_known_vector*` and `participants_digest_empty_is_count_zero` in `seam-store`.
+Since B3 Phase 3 the seal path stamps **v3**; v2 is no longer written. It is **not** deprecated and this
+section is never deleted: 97 production records are sealed under it, an RFC-3161 notary anchor timestamps
+their chain heads, and `seam-sdk/verify` — the independent, zero-Seam-crates verifier — must keep
+reproducing them forever. A verifier selects the formula from the record's own `schema_version`, so v2
+and v3 records interleave in one chain with no dual-emit and no rewrite.
 
-| input | value |
-|---|---|
-| `decision_id` / `tenant` / `namespace` | `d1` / `acme` / `ns` |
-| `ciphertext` | the 6 ASCII bytes `cipher` (the wire carries `SHA256` of them in tag 10) |
-| `sealed_at` | `7` |
-| `outcome`, `mode`, `policy_version`, `supersedes` | `Resolved`, absent, absent, absent |
-| `context_digest` | `94fdc1ad74b5e003811e5b4acfd0d9d3566e8e1e965b97e8ce94ae904f2e2ec7` — one binding: `ctx_ref` `sha256:aa`, `Digest`, `Internal`, no lineage, `version` 1, `derived_from` `["x","y"]`, all four receipt slots absent |
-| `participation_digest` | `521bb2054af761c4b2374702c8e5a2963416b3b48d4058fb22bc84c3efb49d85` — one decl: `agent_id` `p1`, no subject, modes `["m1","m2"]`, `scope(Unrestricted)`, empty `pinned_version`, 32 zero bytes `manifest_digest` |
-| `classification` | `Internal` |
-| `participants` | `["p1","p2"]` → `participants_digest` = `daffd522fc0760d9bb38e2bfb949d6eeb958f45efcfb212f7f3870df1105e06d` |
-| `trust_basis_commitment` | `hmac-sha256:k1:00` (framed as an opaque ASCII string; the vector does not exercise the HMAC) |
-| `auth_method` | `aitp-tct` |
-| `schema_version` | `4` |
+```
+digest_v2 = SHA256(
+    frame("seam.audit.record-digest.v2")          // domain + version, in-preimage
+  ‖ frame(decision_id) ‖ frame(tenant) ‖ frame(namespace)
+  ‖ frame(SHA256(ciphertext))                      // == the wire ciphertext_digest (payload tag 10)
+  ‖ frame(le64(sealed_at))
+  ‖ frame(outcome) ‖ opt(mode) ‖ opt(policy_version) ‖ opt(supersedes)
+  ‖ frame(le32(schema_version))                    // == 2
+)
+```
 
-| case | `digest_v4` |
-|---|---|
-| `policy_rules_digest` absent | `5af6b0852db68d6c5ba7a356db284f9877df0a084504f7c6aa62025a5cd4b7f1` |
-| `policy_rules_digest` = 32 × `0xAB` | `868153f64fd977fd461e32176b953fea58410221969433ca15952bdb41d0589f` |
+Coverage equals identity + `SHA256(ciphertext)` + **every structural column `DECISION_SEALED` carries on
+the wire** (`decision_id` … `schema_version`, payload tags 1–9). A consumer that holds the payload and
+`ciphertext_digest` (tag 10) recomputes `digest_v2` and compares it to `digest` (tag 19): a mismatch means
+a structural column (e.g. `outcome`) was rewritten after sealing — the link's `(prev,digest,checksum)`
+triple stays internally consistent, but the recomputed digest no longer matches. The length-prefixed,
+domain-tagged framing also removes the field-boundary collisions of v1 (`"ab","c"` vs `"a","bc"`).
 
-And `participants_digest([])` = `88693ab24c8d56e6a92f63cf57d094ae463264cf5c74b7ba31dbc905ea164997` (a bare
-`le32(0)` after the framed domain).
+### Record digest (v1, historical) — `schema_version = 1`
+
+```
+digest_v1 = SHA256(decision_id ‖ tenant ‖ namespace ‖ ciphertext ‖ le64(sealed_at))
+```
+
+Unframed concatenation over the **ciphertext** (which is off-wire), with no domain tag and no structural
+columns. It is **not** recomputable by a stream consumer and it collides across field boundaries — the two
+reasons A14 replaced it. This build emits v2 only; v1 is documented solely so a verifier can re-bind a
+`schema_version = 1` record from a pre-A14 fixture. There is **no dual-emit**: a verifier selects the
+formula by `schema_version` (`2 ⇒` v2, `1 ⇒` v1) — never silently green on a version it cannot recompute.
 
 > ### ⚠️ Pre-cutover events carry no `digest`/`checksum`, and a verifier CANNOT tell them from advisory ones
 >
@@ -1536,15 +1457,6 @@ The JSON projection is a field-for-field mapping of `SeamEvent` with `bytes` fie
 
 `schema_version` is `"seam-event.v1"`. Consumers MUST be **tolerant readers** (ignore unknown fields).
 A breaking change bumps to `seam-event.v2`; the runtime may emit both during a migration window.
-
-**The record-digest version is separate from the stream version.** A `DECISION_SEALED` payload's own
-`schema_version` (a `u32`, today `4`) selects the record-digest formula, and it moves independently of
-`"seam-event.v1"`: P7 (record digest v4, payload tags 14-17) was a contract break inside
-`seam-event.v1`. Tolerant reading does **not** extend to it: a verifier that meets a record
-`schema_version` it does not implement refuses (UNKNOWN SCHEMA VERSION) rather than skipping the record.
-A new record-digest formula retires the previous one outright — there is one formula per build, no
-dual-emit, and no read path for retired versions — and it is released as one coordinated contract change
-(runtime, `seam-sdk` verifier and vectors, and the golden manifest re-pin together).
 
 Consumers MUST likewise tolerate an unknown event **`kind`**: it MUST NOT stall or fail delivery of
 the stream. A delivery consumer skips it; a fail-loud consumer MAY instead divert it to a dead-letter

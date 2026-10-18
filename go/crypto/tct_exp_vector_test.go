@@ -20,12 +20,12 @@ import (
 type tctExpVector struct {
 	IssuerAID  string `json:"issuer_aid"`
 	Commitment struct {
-		ID         string  `json:"id"`
-		Action     string  `json:"action"`
-		Authority  string  `json:"authority"`
-		Supersedes *string `json:"supersedes"`
-		AuthMethod string  `json:"auth_method"`
-		TrustBasis string  `json:"trust_basis"`
+		ID         string `json:"id"`
+		Action     string `json:"action"`
+		Authority  string `json:"authority"`
+		Supersedes any    `json:"supersedes"`
+		AuthMethod string `json:"auth_method"`
+		TrustBasis string `json:"trust_basis"`
 	} `json:"commitment"`
 	Cases []struct {
 		Name   string `json:"name"`
@@ -61,11 +61,12 @@ func TestTCTExpVector(t *testing.T) {
 		t.Fatal("no case expects acceptance; a VerifyTCT stuck at false would pass this whole test")
 	}
 
+	supersedes, _ := v.Commitment.Supersedes.(string) // JSON null -> "", which is the framing's own encoding
 	c := Commitment{
 		ID:         v.Commitment.ID,
 		Action:     v.Commitment.Action,
 		Authority:  v.Commitment.Authority,
-		Supersedes: v.Commitment.Supersedes, // JSON null -> nil: ABSENT under v3's presence byte
+		Supersedes: supersedes,
 		AuthMethod: v.Commitment.AuthMethod,
 		TrustBasis: v.Commitment.TrustBasis,
 	}

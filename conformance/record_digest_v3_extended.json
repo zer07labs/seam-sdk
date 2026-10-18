@@ -1,0 +1,110 @@
+{
+  "$comment": "seam-sdk's EXTENDED record_digest_v3 conformance cases. Machine-emitted by scripts/emit_record_digest_v3_vectors.py -- no digest here was typed by hand. These are a SUPERSET of the two record_digest_v3 blocks in conformance/vectors.json, which is a byte-identity contract with seam-runtime and is not edited here. The extra cases pin traps a single fixture per block cannot express: empty-string vs absent optionals, and decomposed non-ASCII text. All three SDK implementations reproduce both files.",
+  "cases": [
+    {
+      "name": "all_optionals_present",
+      "inputs": {
+        "domain": "seam.audit.record-digest.v3",
+        "decision_id": "dec:conformance-v3",
+        "tenant": "acme",
+        "namespace": "fraud",
+        "ciphertext_hex": "636f6e666f726d616e63652d76332d63697068657274657874",
+        "ciphertext_digest_hex": "09123fe5c391e598ee5f1f3a91e133868b2127830e59310b9340fc7440432dfc",
+        "sealed_at": 1700000000000,
+        "outcome": "Resolved",
+        "mode": "decision.v1",
+        "policy_version": "policy-7",
+        "supersedes": "dec:prior",
+        "context_digest_hex": "64b2908f645c39d4c5b5675f84e7f35c3546df42dd1a49a500e5cc4a2854c598",
+        "participation_digest_hex": "5c43980e75143fc8089c7321a2505bc60a0d84cb0c854dad39028625ffa6a022",
+        "policy_rules_digest_hex": "48f4c46310156878f6c5b1a06ac8f461e9ef4eab864fc500b336982ab2d4718f",
+        "schema_version": 3
+      },
+      "digest_hex": "18e0b092128fefe446ec8720348dfe14f0aec612825a5113dc969a4d68b6315d"
+    },
+    {
+      "name": "policy_rules_absent",
+      "inputs": {
+        "domain": "seam.audit.record-digest.v3",
+        "decision_id": "dec:conformance-v3",
+        "tenant": "acme",
+        "namespace": "fraud",
+        "ciphertext_hex": "636f6e666f726d616e63652d76332d63697068657274657874",
+        "ciphertext_digest_hex": "09123fe5c391e598ee5f1f3a91e133868b2127830e59310b9340fc7440432dfc",
+        "sealed_at": 1700000000000,
+        "outcome": "Resolved",
+        "mode": "decision.v1",
+        "policy_version": "policy-7",
+        "supersedes": null,
+        "context_digest_hex": "64b2908f645c39d4c5b5675f84e7f35c3546df42dd1a49a500e5cc4a2854c598",
+        "participation_digest_hex": "5c43980e75143fc8089c7321a2505bc60a0d84cb0c854dad39028625ffa6a022",
+        "policy_rules_digest_hex": null,
+        "schema_version": 3
+      },
+      "digest_hex": "ca63bd039bb7c04982d3e02d70f7df584710042a621e8062c57436b8a3fc6bc0"
+    },
+    {
+      "name": "optionals_none",
+      "inputs": {
+        "domain": "seam.audit.record-digest.v3",
+        "decision_id": "dec:conformance-v3",
+        "tenant": "acme",
+        "namespace": "fraud",
+        "ciphertext_hex": "636f6e666f726d616e63652d76332d63697068657274657874",
+        "ciphertext_digest_hex": "09123fe5c391e598ee5f1f3a91e133868b2127830e59310b9340fc7440432dfc",
+        "sealed_at": 1700000000000,
+        "outcome": "Resolved",
+        "mode": null,
+        "policy_version": null,
+        "supersedes": null,
+        "context_digest_hex": "64b2908f645c39d4c5b5675f84e7f35c3546df42dd1a49a500e5cc4a2854c598",
+        "participation_digest_hex": "5c43980e75143fc8089c7321a2505bc60a0d84cb0c854dad39028625ffa6a022",
+        "policy_rules_digest_hex": null,
+        "schema_version": 3
+      },
+      "digest_hex": "0334bc302d12acedc45e1034ef3135cf3eab8d3e980eec50b77bc863d39b4cb5"
+    },
+    {
+      "name": "mode_empty_string",
+      "inputs": {
+        "domain": "seam.audit.record-digest.v3",
+        "decision_id": "dec:conformance-v3",
+        "tenant": "acme",
+        "namespace": "fraud",
+        "ciphertext_hex": "636f6e666f726d616e63652d76332d63697068657274657874",
+        "ciphertext_digest_hex": "09123fe5c391e598ee5f1f3a91e133868b2127830e59310b9340fc7440432dfc",
+        "sealed_at": 1700000000000,
+        "outcome": "Resolved",
+        "mode": "",
+        "policy_version": null,
+        "supersedes": null,
+        "context_digest_hex": "64b2908f645c39d4c5b5675f84e7f35c3546df42dd1a49a500e5cc4a2854c598",
+        "participation_digest_hex": "5c43980e75143fc8089c7321a2505bc60a0d84cb0c854dad39028625ffa6a022",
+        "policy_rules_digest_hex": null,
+        "schema_version": 3
+      },
+      "digest_hex": "dd4ef6d64947ef919932d23ba38ee2c452563552d2b76bba8251e7c8b8245b6a"
+    },
+    {
+      "name": "non_ascii_nfd",
+      "inputs": {
+        "domain": "seam.audit.record-digest.v3",
+        "decision_id": "dec:cafe\u0301-\u65e5\u672c",
+        "tenant": "acme",
+        "namespace": "fraud",
+        "ciphertext_hex": "636f6e666f726d616e63652d76332d63697068657274657874",
+        "ciphertext_digest_hex": "09123fe5c391e598ee5f1f3a91e133868b2127830e59310b9340fc7440432dfc",
+        "sealed_at": 1700000000000,
+        "outcome": "Resolved",
+        "mode": "cafe\u0301-\u65e5\u672c",
+        "policy_version": null,
+        "supersedes": null,
+        "context_digest_hex": "64b2908f645c39d4c5b5675f84e7f35c3546df42dd1a49a500e5cc4a2854c598",
+        "participation_digest_hex": "5c43980e75143fc8089c7321a2505bc60a0d84cb0c854dad39028625ffa6a022",
+        "policy_rules_digest_hex": "48f4c46310156878f6c5b1a06ac8f461e9ef4eab864fc500b336982ab2d4718f",
+        "schema_version": 3
+      },
+      "digest_hex": "0db2c4db27a7c6b8338928ac0a608f0dded353e16be77857d7ff4e09e370de4f"
+    }
+  ]
+}

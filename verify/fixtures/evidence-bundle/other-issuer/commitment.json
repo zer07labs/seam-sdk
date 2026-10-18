@@ -1,50 +1,50 @@
 {
   "id": "k1",
-  "action": "BLOCK",
+  "action": "APPROVE",
   "authority": "macp.mode.decision.v1",
   "auth_method": "aitp-pinned-handshake",
   "trust_basis": "aid:pubkey:ed25519:GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE:Trusted",
   "supersedes": null,
-  "signed_artifact": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJhdWQiOiJhaWQ6cHVia2V5Ol9SY2tPRnFneDF0ay0zak5ZQy1oMlpIOTZfZHJFOFdPMXdMcXlEWHA5aGciLCJjbmYiOnsiamt0IjoiYXRaUjYzdE5HM1cyR2hQcFZsZUtuZnJ3MU43TjZMQXFPZTVnckUyU0JSNCJ9LCJleHAiOjQ5NDU5NDE5NDcsImV4dCI6eyJjb20uemVyMDdsYWJzLnNlYW0iOnsiY29tbWl0bWVudF9kaWdlc3QiOiIwYmRlYTFjYWY2YmUyNjM1NjdkOGRhMDI1YTcxODA0NjQ5YTEwZDBlNTk4NzU2YjIxMGJmOTAzMzY1NTA3ZjA2IiwidHlwZSI6InNlYW06Y29tbWl0bWVudCJ9fSwiZ3JhbnRzIjpbImFpdHAuYXR0ZXN0YXRpb24iXSwiaWF0IjoxNzkyMzQxOTQ3LCJpc3MiOiJhaWQ6cHVia2V5Ol9SY2tPRnFneDF0ay0zak5ZQy1oMlpIOTZfZHJFOFdPMXdMcXlEWHA5aGciLCJqdGkiOiI1Yzk5MTY5ZS0zYzIzLTRjZGEtYmI3NC1jODA5ODA4MDUwN2QiLCJzdWIiOiJhaWQ6cHVia2V5Ol9SY2tPRnFneDF0ay0zak5ZQy1oMlpIOTZfZHJFOFdPMXdMcXlEWHA5aGciLCJ2ZXIiOiJhaXRwLzAuMiJ9.A9WyCRo9DindfUER-ka4b1vke1Q9dFJOMJy68dZKpELhuWAgtrlvb_aFFa6VvNRn70WrMJ9qZiEfYATEy6piAA",
+  "signed_artifact": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJhdWQiOiJhaWQ6cHVia2V5Ol9SY2tPRnFneDF0ay0zak5ZQy1oMlpIOTZfZHJFOFdPMXdMcXlEWHA5aGciLCJjbmYiOnsiamt0IjoiYXRaUjYzdE5HM1cyR2hQcFZsZUtuZnJ3MU43TjZMQXFPZTVnckUyU0JSNCJ9LCJleHAiOjMxNTM2MDAwMDEsImdyYW50cyI6WyJzZWFtOmNvbW1pdG1lbnQiLCJzZWFtLWNvbW1pdG1lbnQtZGlnZXN0OmNhNmI0NGI5ZmY1Y2YwNDVlNDhhOGExZWI0MGQ2NTYyNGFkZWE3NDk4YzRmMTVhOWRkMGY1NTQ2NGE1OGE4MjQiXSwiaWF0IjoxLCJpc3MiOiJhaWQ6cHVia2V5Ol9SY2tPRnFneDF0ay0zak5ZQy1oMlpIOTZfZHJFOFdPMXdMcXlEWHA5aGciLCJqdGkiOiJlZjhmZDJiZS0zNDliLTI2MWYtNjE5Yi1iMTBkMjhkZWRkMWMiLCJzdWIiOiJhaWQ6cHVia2V5Ol9SY2tPRnFneDF0ay0zak5ZQy1oMlpIOTZfZHJFOFdPMXdMcXlEWHA5aGciLCJ2ZXIiOiJhaXRwLzAuMiJ9.eCF6lrw3j23e1BLbfxa2QqLpnCZ-SS9vhQRiO_8NQ2HMh8jbeZFBHBmxxLACGKuvlTXN7VxIqrUHeKU05h0qBg",
   "committer": "aid:pubkey:ed25519:GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
   "explanation": [
     {
       "kind": "evaluation",
-      "participant": "fraud-v3",
+      "participant": "a",
       "proposal_id": "p1",
-      "value": "BLOCK",
+      "value": "APPROVE",
       "reason": "",
       "confidence": null,
       "rationale_ref": null
     },
     {
       "kind": "evaluation",
-      "participant": "risk-v2",
+      "participant": "b",
       "proposal_id": "p1",
-      "value": "BLOCK",
+      "value": "APPROVE",
       "reason": "",
       "confidence": null,
       "rationale_ref": null
     },
     {
       "kind": "vote",
-      "participant": "fraud-v3",
+      "participant": "a",
       "proposal_id": "p1",
-      "value": "REJECT",
+      "value": "APPROVE",
       "reason": "",
       "confidence": null,
       "rationale_ref": null
     },
     {
       "kind": "vote",
-      "participant": "risk-v2",
+      "participant": "b",
       "proposal_id": "p1",
-      "value": "REJECT",
+      "value": "APPROVE",
       "reason": "",
       "confidence": null,
       "rationale_ref": null
     }
   ],
   "issuer_aid": "aid:pubkey:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg",
-  "commitment_digest": "0bdea1caf6be263567d8da025a71804649a10d0e598756b210bf903365507f06"
+  "commitment_digest": "ca6b44b9ff5cf045e48a8a1eb40d65624adea7498c4f15a9dd0f55464a58a824"
 }
