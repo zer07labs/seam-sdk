@@ -24,6 +24,7 @@ from seam_sdk import (
     SeamAdminClient,
     SeamClient,
     StepUsage,
+    UnauthenticatedError,
 )
 
 
@@ -268,3 +269,118 @@ def test_authorize_live_on_behalf_of_decision(server):
     assert dec.outcome == "Resolved"
     rec = client.get_decision(dec.decision_id)
     assert rec.decision_id == dec.decision_id
+
+
+# ── The per-request credential against a deny plane (request-credential plan step 4, #264) ──────
+#
+# `SEAM_ENFORCE_SUBJECT=1` + `SEAM_GRPC_SUBJECT_HEADERS=deny` is the credential-only posture (#710,
+# #508): the gRPC plane strips `x-seam-subject` at its edge, so a subject-scoped read proves its
+# caller in band (`x-seam-ticket-bin` + `x-seam-call-sig-bin`) or it has no subject at all. The
+# runtime's own end-to-end shape is `seam-runtime/integration/tests/subject_headers_deny.rs`; this is
+# the same property driven through this SDK's client. The refused cases are the anti-vacuity
+# control: without them the suite would keep passing against a plane that trusted the header again.
+
+_GET_DECISION = "/seam.api.v1.SeamCoordination/GetDecision"
+_REPLAY_DECISION = "/seam.api.v1.SeamCoordination/ReplayDecision"
+
+
+@pytest.fixture
+def deny_plane(tmp_path):
+    """A spawned seam-grpc in the credential-only posture. Always spawned (never ``SEAM_GRPC_ADDR``):
+    the posture is the thing under test, and an external server's posture is not ours to assert."""
+    with spawn_server(
+        log_dir=tmp_path,
+        env_extra={
+            "SEAM_ENFORCE_SUBJECT": "1",
+            "SEAM_GRPC_SUBJECT_HEADERS": "deny",
+        },
+    ) as srv:
+        yield srv.data_addr
+
+
+def _seal(client: SeamClient, agent: Agent, tag: str) -> str:
+    # RunDecision proves identity from its body presentation, so it seals on a deny plane unaided.
+    dec = client.run_decision(
+        agent,
+        tag,
+        ["fraud-v3", "risk-v2"],
+        [("fraud-v3", "BLOCK"), ("risk-v2", "BLOCK")],
+    )
+    assert dec.outcome == "Resolved"
+    return dec.decision_id
+
+
+def test_deny_plane_credentialed_read_succeeds_and_bare_read_is_refused(deny_plane):
+    client = SeamClient.connect(deny_plane)
+    agent = Agent(bytes([42] * 32))
+    decision_id = _seal(client, agent, "py-deny-cred")
+
+    # WITH the credential: the reads succeed.
+    assert client.get_decision(decision_id, credential=agent).decision_id == decision_id
+    assert client.replay_decision(decision_id, credential=agent).chain_verified
+
+    # WITHOUT it — same client, same calls: refused as an identity failure, typed.
+    with pytest.raises(UnauthenticatedError):
+        client.get_decision(decision_id)
+    with pytest.raises(UnauthenticatedError):
+        client.replay_decision(decision_id)
+
+    # A client bound to the agent (#202) attaches the credential without a per-call argument.
+    bound = SeamClient.connect(deny_plane, agent=agent)
+    assert bound.get_decision(decision_id).decision_id == decision_id
+
+
+def test_deny_plane_refuses_a_header_subject_and_a_wrong_context_signature(
+    deny_plane, request
+):
+    """The two forgeries a deny plane exists to stop, built by hand because the client always signs
+    the call it is making: an asserted ``x-seam-subject`` header (stripped at the edge), and an honest
+    signature — right key, right ticket — re-pointed at another resource or another verb."""
+    import grpc
+
+    from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
+    from seam_sdk._gen.seam.api.v1 import seam_pb2_grpc as rpc
+    from seam_sdk.crypto import request_sig
+
+    client = SeamClient.connect(deny_plane)
+    agent = Agent(bytes([42] * 32))
+    first = _seal(client, agent, "py-deny-a")
+    second = _seal(client, agent, "py-deny-b")
+    ticket = client.admit(agent)
+    channel = grpc.insecure_channel(deny_plane)
+    request.addfinalizer(channel.close)
+    coord = rpc.SeamCoordinationStub(channel)
+
+    def cred(rpc_name: str, resource_id: str) -> list:
+        sig = request_sig(agent.seed, ticket, rpc_name, resource_id, "")
+        return [("x-seam-ticket-bin", ticket), ("x-seam-call-sig-bin", sig)]
+
+    def refusal(method, decision_id: str, metadata: list) -> grpc.StatusCode:
+        with pytest.raises(grpc.RpcError) as err:
+            method(
+                pb.DecisionRef(decision_id=decision_id), metadata=metadata, timeout=10
+            )
+        return err.value.code()
+
+    # Control: the hand-built credential is accepted when it names exactly this call — so the
+    # refusals below are about the binding, not about how the metadata was assembled.
+    ok = coord.GetDecision(
+        pb.DecisionRef(decision_id=first),
+        metadata=cred(_GET_DECISION, first),
+        timeout=10,
+    )
+    assert ok.decision_id == first
+
+    unauth = grpc.StatusCode.UNAUTHENTICATED
+    # The pre-#508 client: the subject asserted as a header and nothing else.
+    assert refusal(coord.GetDecision, first, [("x-seam-subject", agent.aid)]) == unauth
+    # A signature for decision `second`, presented against `first`.
+    assert refusal(coord.GetDecision, first, cred(_GET_DECISION, second)) == unauth
+    # A signature for GetDecision on `first`, presented on ReplayDecision of `first`.
+    assert refusal(coord.ReplayDecision, first, cred(_GET_DECISION, first)) == unauth
+    # And the honest ReplayDecision credential for the same decision is accepted.
+    assert coord.ReplayDecision(
+        pb.DecisionRef(decision_id=first),
+        metadata=cred(_REPLAY_DECISION, first),
+        timeout=10,
+    ).chain_verified

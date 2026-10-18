@@ -1,5 +1,14 @@
 # Carry the `seam-request-call-v1` per-request credential
 
+> **📦 ARCHIVED 2026-10-18 — DELIVERED.** Steps 1–3 shipped via PR #154 (Python + TypeScript; the
+> bound-agent default followed in #202); step 4, the live check against a `deny` plane, shipped for
+> issue [#264](https://github.com/zer07labs/seam-sdk/issues/264). Verified against this tree: the
+> primitive and its vector tests (`python/tests/test_request_sig_payload.py`,
+> `ts/tests/request_sig_payload.test.ts`), the wiring tests (`python/tests/test_credential_wiring.py`,
+> `ts/tests/unit_plumbing.test.ts`), and the live `deny plane` tests in
+> `python/tests/test_integration.py` / `ts/tests/integration.test.ts`, green against a `seam-grpc`
+> built from `seam-runtime` main. No `ASSUMPTIONS.md` entries were tagged to this plan.
+
 > **Owner:** `seam-sdk`. **Filed by:** `seam-runtime`, 2026-09-27, as #508 Phase 6, and adopted here
 > in the same change — so this is the single home; `seam-runtime/plans/cross-repo/seam-sdk-request-credential.md`
 > is the filed ask it came from, kept there as the runtime's record of what it handed over.
@@ -139,8 +148,7 @@ against the vector, not against a round trip.
 
 ## Status
 
-**Sequence steps 1–3 done; step 4 (the live `deny`-plane check) deferred.** The runtime half is
-complete under #508.
+**All four sequence steps done.** The runtime half is complete under #508.
 
 - **Step 1** (vector) and **step 2** (`request_sig_payload`/`request_sig`, pinned per language
   against the vector): done. `python/seam_sdk/crypto.py` and `ts/src/crypto.ts`; conformance tests
@@ -165,9 +173,21 @@ complete under #508.
   `ts/tests/unit_plumbing.test.ts` — server-free, over a recording fake transport/stub, asserting
   both that `credential=` omitted sends no metadata and that supplying it produces a ticket +
   signature that independently verifies against the credential's own Ed25519 key.
-- **Step 4** (a live check against a `deny` plane): **not started, and out of scope without a live
-  runtime to check against.** `seam-runtime/integration/tests/subject_headers_deny.rs` remains the
-  end-to-end shape to drive this against once one is available.
+- **Step 4** (a live check against a `deny` plane): **done, 2026-10-18 (issue
+  [#264](https://github.com/zer07labs/seam-sdk/issues/264)).** The live harness already spawns the
+  published `seamd:main` binary (`integration` job), so the "no live runtime" blocker was stale: one
+  spawn with `SEAM_ENFORCE_SUBJECT=1` + `SEAM_GRPC_SUBJECT_HEADERS=deny` is the credential-only
+  posture. Two live tests per language, in `python/tests/test_integration.py` and
+  `ts/tests/integration.test.ts` (the `deny plane` block), shaped on
+  `seam-runtime/integration/tests/subject_headers_deny.rs`'s gRPC twin: (1) a sealed decision reads
+  back via `GetDecision`/`ReplayDecision` WITH `credential=` (and via a client bound to the agent,
+  #202), and the same calls WITHOUT it raise the typed `UnauthenticatedError`; (2) with hand-built
+  metadata, an `x-seam-subject` header alone, a signature for another decision, and a signature for
+  another verb are each refused `UNAUTHENTICATED`, against a control that the honest hand-built
+  credential is accepted. Mutation-checked in both languages: a header-trusting plane
+  (`allow` + `SEAM_ALLOW_UNVERIFIED_SUBJECT=1`) fails (2); a client signing the wrong resource fails
+  (1); `allow` without the hatch refuses to boot. HTTP is out of scope: neither hand-written client
+  speaks the HTTP data plane.
 
 Nothing regresses for a caller that does not opt in: omitting `credential` sends no metadata, and
 behavior is byte-for-byte what it was before this work landed.
