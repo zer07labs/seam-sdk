@@ -18,7 +18,7 @@ than trusting a summary here.
 
 > **Breaking — requires the runtime release that carries seam-runtime `protocol-pass-2026-10`;
 > no compatibility with any earlier runtime.** Pinned and vendored from `protocol-pass-2026-10` @
-> `e4c01ad336e73cc5a373218029809fa708624ee4`. An earlier runtime refuses this SDK's PoP `message_id`, and this
+> `1ac5de5f8a50180bf0c4d6f4c0e9184f74fddc4c` (the contract freeze). An earlier runtime refuses this SDK's PoP `message_id`, and this
 > SDK refuses an earlier runtime's v3 records as cannot-verify. Upgrade the runtime and the SDK together.
 
 ### Changed — protocol pass 2026-10 (seam-sdk#265) — BREAKING
@@ -45,6 +45,16 @@ than trusting a summary here.
   (`PermissionDeniedError`), not `FAILED_PRECONDITION`; tell it apart from `SCOPE_DENIED` and
   `FACT_ATTESTOR_REJECTED` by `reason`.
 - **`IssueChallenge` sends `IssueChallengeRequest` (P3)**, not `google.protobuf.Empty`.
+- **A challenge refused at capacity is retryable (AITP 0.15.0).** `IssueChallenge` refused because the
+  runtime's nonce store is full arrives as `UnavailableError` with `reason` `CHALLENGE_REFUSED` and
+  `retry_after` (TS `retryAfter`) read from `RetryInfo`, which is now documented as read on any status.
+  Honour the delay and ask for a fresh challenge; it is not an identity failure. The SDK never retries.
+- **`context_digest` is `seam.audit.context-provenance.v4` (B11).** `ContextBinding` gains
+  `receipt_key_status` (tag 14; closed PascalCase `Current` | `Historical`, present exactly when
+  `receipt_hash` is), carried unchanged by `resolve_context` / `resolveContext`. New helpers
+  `context_digest_v4` / `contextDigestV4` (and `seam-verify`'s bundle check) frame it as the fifth
+  receipt slot and raise `ContextProvenanceError` on an unpaired or out-of-vocabulary value. v1-v3 are
+  not dispatched. The `record_digest_v4` vectors moved with the new `context_digest` input.
 - **Session and decision ids (P4/P5).** New helpers `validate_session_id`, `is_valid_session_id`,
   `decision_id_for_session`, `parse_decision_id`, `DecisionId` (TS: `validateSessionId`,
   `isValidSessionId`, `decisionIdForSession`, `parseDecisionId`). A session id is a lowercase v4/v7 UUID
@@ -53,7 +63,7 @@ than trusting a summary here.
 - **Policy documents:** the vendor rule key is `rules["x-com.zer07labs.seam"]` (was `rules.seam`), and
   the runtime accepts policy `schema_version` 3 only. Docstrings updated.
 - `seam.event.v1`: the event field manifest gains the four `DecisionSealed` fields above (106 fields).
-- `verify/docs/seam-event.v1.md` and `evidence-bundle.v1.md` re-vendored @ `e4c01ad` tracking
+- `verify/docs/seam-event.v1.md` and `evidence-bundle.v1.md` re-vendored @ `1ac5de5` tracking
   `protocol-pass-2026-10`; `verify/fixtures/evidence-bundle/` re-captured from the pinned runtime.
 
 ## 0.47.0 — 2026-10-13

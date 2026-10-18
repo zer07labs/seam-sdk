@@ -222,11 +222,30 @@ parser happened to keep, which may not be the value another verifier reads.
 
 **Consequence.** Streams and evidence bundles sealed before P7 do not verify under this build.
 
-**Fixtures.** `fixtures/evidence-bundle/` was re-exported at the runtime pin e4c01ad.
+**Fixtures.** `fixtures/evidence-bundle/` was re-exported at the runtime pin 1ac5de5 (the contract
+freeze; first exported at e4c01ad, whose context-provenance.v3 digests no longer verify).
 `full/`, `minimal/` and `shredded/` were captured from the temp directories of the runtime's own
-`seamd --test evidence_bundle`. That test never discloses the policy, so `full/` adds the policy
+`seam-verify-internal --test bundle`. That test never discloses the policy, so `full/` adds the policy
 bytes recovered from the previous fixture (`schema_version` 1 → 3). Their SHA-256 equals the
 chained `policy_rules_digest`. The manifest gains the matching `files` entry and `disclosed` item;
 it is unsigned, so this edit forges nothing. `other-issuer/` is a real export from a postgres-backed
 `seam-grpc` under issuer seed 9×32, made with `seam-ops export-evidence`. Its policy is withheld, with
 the exporter's reason. All four verify under the runtime's internal oracle as well as here.
+
+## D-039 — context-provenance.v4 only, and unpaired or unknown receipt key status is refused (seam-sdk#265)
+
+**Decision.** Step 6 of `bundle` recomputes `context_digest` under `seam.audit.context-provenance.v4`
+only (`src/bundle.rs` `context_digest`): the v3 grammar plus a fifth optional per-binding slot,
+`receipt_key_status`, after `resolved_status`. v1-v3 are not dispatched, for the same reason D-038
+has no dual-verify: record digest v4 seals only `.v4` at the contract freeze (runtime 1ac5de5).
+Before anything is hashed, every binding is checked: `receipt_key_status` must be present exactly when
+`receipt_hash` is, and must be `Current` or `Historical` (closed, PascalCase, never ACDP's lowercase
+JSON form). A binding that breaks either rule is refused with its index, never hashed as given.
+
+**Why refuse rather than hash.** `docs/evidence-bundle.v1.md` § `context.json` requires it, and the
+runtime refuses the same record at seal and on read. Hashing an unpaired binding would only ever
+produce a mismatch, which reports the wrong thing: a malformed disclosure, not a tampered one.
+
+**Pinned by** the spec's vector (`8e87a93f…`, five receipt slots absent) and the runtime's
+`V4_RECEIPT_CONTEXT` (`3475464e…`, all five populated) as unit tests in `src/bundle.rs`, and by the
+re-exported fixtures, which the runtime's oracle and this verifier both accept.

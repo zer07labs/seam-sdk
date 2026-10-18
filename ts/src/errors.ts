@@ -52,7 +52,9 @@ export class SeamRpcError extends ConnectError {
    *
    * `PROTOCOL` means MACP refused the call and {@link macpCode} names why; `POLICY_DENIED`
    * (`PERMISSION_DENIED`) is the bound policy refusing a commitment; `QUOTA_EXCEEDED`
-   * (`RESOURCE_EXHAUSTED`) is load-shed, with {@link retryAfter}. Branch on these, never on message
+   * (`RESOURCE_EXHAUSTED`) is load-shed, with {@link retryAfter}; `CHALLENGE_REFUSED` (`UNAVAILABLE`,
+   * an {@link UnavailableError}) is `IssueChallenge` refusing because the nonce store is at capacity —
+   * **retryable** after {@link retryAfter}, never an identity failure. Branch on these, never on message
    * text. Decoded fail-soft: a malformed detail reads as absent, never displacing the typed error. */
   get reason(): string | undefined {
     return seamErrorInfo(this)?.reason;
@@ -76,9 +78,11 @@ export class SeamRpcError extends ConnectError {
 
   /** The server's `google.rpc.RetryInfo.retry_delay` in seconds, or `undefined` when it sent none.
    *
-   * Carried on a load-shed refusal (`RESOURCE_EXHAUSTED`, reason `QUOTA_EXCEEDED`). The SDK **does not
-   * retry for you**: it surfaces the delay so the caller's own retry policy can honour it. A load-shed
-   * admission challenge was never issued, so a retry asks for a fresh one. */
+   * Carried on a load-shed refusal (`RESOURCE_EXHAUSTED`, reason `QUOTA_EXCEEDED`) and on a capacity
+   * refusal of `IssueChallenge` (`UNAVAILABLE`, reason `CHALLENGE_REFUSED`); read off whatever status
+   * carries it. The SDK **does not retry for you**: it surfaces the delay so the caller's own retry
+   * policy can honour it before re-issuing. A refused admission challenge was never issued, so a retry
+   * asks for a fresh one. */
   get retryAfter(): number | undefined {
     for (const d of statusDetails(this)) {
       if (d.type !== RETRY_INFO_TYPE) continue;
@@ -271,6 +275,11 @@ export class UnauthenticatedError extends SeamRpcError {}
 export class NotFoundError extends SeamRpcError {}
 export class AlreadyExistsError extends SeamRpcError {}
 export class ResourceExhaustedError extends SeamRpcError {}
+/** `UNAVAILABLE` — transport/server not reachable, or a capacity refusal the caller may retry. With
+ * `reason` `CHALLENGE_REFUSED` it is `IssueChallenge` refusing because the runtime's nonce store is at
+ * capacity (AITP 0.15.0; HTTP 503 on REST): **retryable** after `retryAfter`, with a fresh challenge.
+ * Not an identity failure and not a hard fault; the per-peer limit is `QUOTA_EXCEEDED` on
+ * {@link ResourceExhaustedError}. The SDK itself never retries. */
 export class UnavailableError extends SeamRpcError {}
 export class DeadlineExceededError extends SeamRpcError {}
 export class UnimplementedError extends SeamRpcError {}

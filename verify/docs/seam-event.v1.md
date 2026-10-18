@@ -1,4 +1,4 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ e4c01ad336e73cc5a373218029809fa708624ee4 tracking protocol-pass-2026-10 (vendored 2026-10-18).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 1ac5de5f8a50180bf0c4d6f4c0e9184f74fddc4c tracking protocol-pass-2026-10 (vendored 2026-10-18).
      Pinned ahead of the runtime's default branch, so that seam-sdk#265 (protocol pass 2026-10) can ship
      the verifier's counterpart beside it. Movements since the prior pin (8d06722, the runtime 0.47.0 train):
      1. P7 (e70497ff): record digest v4. DECISION_SEALED gains tags 14-17 (classification,
@@ -7,7 +7,11 @@
         implements v4 only, and refuses a stripped mandatory column as a STRIP.
      2. B3 (e6af873b): the commitment digest moves to seam-commitment-digest:v3.
      3. P9, P12, P12b and the 2026-10-18 reconcile (9d45338d, 46abe810, 412aeb8d, 7da7c56d): text this
-        verifier does not act on beyond what items 1-2 cover. -->
+        verifier does not act on beyond what items 1-2 cover.
+     4. Re-pinned to the contract freeze 1ac5de5 (29a68738): the context digest moves to
+        seam.audit.context-provenance.v4, a fifth optional per-binding slot `receipt_key_status`
+        (closed Current | Historical, present exactly when receipt_hash is). Implemented in
+        src/bundle.rs; v1-v3 are not dispatched. -->
 
 # `seam-event.v1` — event-stream wire spec (language-neutral)
 
@@ -945,23 +949,27 @@ drift, so the single exception is called out where it occurs rather than left to
 `scope(...)` blob is pre-existing bytes the digest reuses verbatim, and *its* internal counts are framed.
 See `scope(...)` below. Nothing else frames a count.
 
-**Sub-digest domain tags.** `context_digest` and `participation_digest` keep their `.v3` domain tags
-(`seam.audit.context-provenance.v3`, `seam.audit.participation.v3`): their grammar did not change in v4,
-and a domain tag names a grammar, not the release that introduced it. `participants_digest` is new in v4
+**Sub-digest domain tags.** `participation_digest` keeps its `.v3` domain tag
+(`seam.audit.participation.v3`): its grammar did not change in v4, and a domain tag names a grammar, not
+the release that introduced it. `context_digest` is `seam.audit.context-provenance.v4` since B11: its
+grammar gained a fifth receipt slot, `receipt_key_status` (owner decision 2026-10-18, ACDP conformance
+vector `rcpt-005/B`). `.v4` is the **only** context-provenance formula; `.v1`–`.v3` are not dispatched by
+any verifier (no backward compatibility — prod was recreated). `participants_digest` is new in v4
 and is `seam.audit.participants.v4`. Every domain string in this system is
 `seam.audit.<thing>.<version>`.
 
-#### `context_digest` — `seam.audit.context-provenance.v3`
+#### `context_digest` — `seam.audit.context-provenance.v4`
 
 ```
 context_digest = SHA256(
-    frame("seam.audit.context-provenance.v3")
+    frame("seam.audit.context-provenance.v4")
   ‖ le32(len(context_provenance))                  // OUTER count, BARE le32 — see the collision note
   ‖ for each binding, in STORED ORDER:
         frame(ctx_ref) ‖ frame(fidelity) ‖ frame(classification)
       ‖ opt(lineage_id) ‖ frame(le32(version))
       ‖ le32(len(derived_from)) ‖ for each: frame(derived_from[i])
       ‖ opt(content_hash) ‖ opt(receipt_hash) ‖ opt(key_status) ‖ opt(resolved_status)
+      ‖ opt(receipt_key_status)                    // .v4 — present EXACTLY when receipt_hash is
 )
 ```
 
@@ -971,7 +979,8 @@ context_digest = SHA256(
 middle of an enum, and three of the four implementations would not notice.
 
 **This PascalCase rule is scoped to closed, Seam-owned enums and does not generalize.** It applies to
-these two fields, and to `key_status` below, because each has a fixed variant list. It must **not** be
+these two fields, and to `key_status` and `receipt_key_status` below, because each has a fixed variant
+list. It must **not** be
 extended by analogy to `resolved_status`, which is an *open* ACDP enum with a lowercase wire form — see
 the payload table below.
 
@@ -988,9 +997,9 @@ produced it.
 The order is also the *open-time* order: the kernel seals the view's frozen bindings and never re-reads,
 so a mid-session registration can never enter this preimage.
 
-**The last four fields carry ACDP receipt provenance.** They were reserved by B3 and are **filled as of
-ACDP P1a**: populated on a **remote** `acdp://` binding, absent (`0x00`) on a **local** `sha256:` one and
-on every record sealed before P1a. A local ref has no registry, no producer DID and no receipt, so absent
+**The last five fields carry ACDP receipt provenance.** The first four were reserved by B3 and filled
+by ACDP P1a; the fifth, `receipt_key_status`, was appended by `.v4`. They are populated on a **remote**
+`acdp://` binding and absent (`0x00`) on a **local** `sha256:` one. A local ref has no registry, no producer DID and no receipt, so absent
 is a true statement about that binding rather than a missing value.
 
 **An absent slot is a single `0x00` byte**, so a local binding and a remote one recompute under the one
@@ -1000,9 +1009,16 @@ The reservation was confirmed against the ACDP implementation this runtime pins,
 resolution yields exactly these four pieces of provenance, each a **scalar**, and a registry receipt is
 **0-or-1 per binding by schema** — not a chain. A per-hop receipt chain is the one shape that would have
 forced a counted list here, and it does not exist: derivation ancestry resolves each ancestor as its own
-binding with its own four slots.
+binding with its own receipt slots.
 
-**The four payload encodings, pinned. One of them is a trap.**
+**`receipt_key_status` is paired with `receipt_hash`.** It is present **exactly when** `receipt_hash` is
+(ACDP reports a receipt key status only for a verified receipt). A record holding one without the other
+is **refused at seal**, errors on a store read, and is **refused by a verifier** before hashing — never
+hashed as given. It answers RFC-ACDP-0010 §8 step 1: a receipt verified under a registry key that is in
+the registry DID document's `verificationMethod` only (rotated out) is valid *history*, not a current
+registry attestation, and the sealed record must say which (`rcpt-005/B`).
+
+**The five payload encodings, pinned. One of them is a trap.**
 
 | slot | encoding | source |
 |---|---|---|
@@ -1010,6 +1026,7 @@ binding with its own four slots.
 | `receipt_hash` | ASCII `sha256:<64-lowercase-hex>` | ACDP's **`RegistryReceipt::preimage_hash()`** |
 | `key_status` | **closed**, PascalCase | `CurrentlyAuthorized` · `HistoricallyAuthorized` · `HistoricallyAuthorizedPreCompromise` |
 | `resolved_status` | **open**, ACDP's **lowercase** wire string, verbatim | the registry lifecycle status |
+| `receipt_key_status` | **closed**, PascalCase | `Current` · `Historical` — ACDP's `VerifiedContext::receipt_key_status()`; NOT ACDP's lowercase JSON form |
 
 - `key_status`'s third value, `HistoricallyAuthorizedPreCompromise`, became **producible** with ACDP
   P3 (RFC-ACDP-0014). Before P3 it was in the vocabulary and unreachable: the library's revocation
@@ -1475,7 +1492,7 @@ Every input fixed; the independent reference is `scripts/v4-digest-reference.py`
 | `ciphertext` | the 6 ASCII bytes `cipher` (the wire carries `SHA256` of them in tag 10) |
 | `sealed_at` | `7` |
 | `outcome`, `mode`, `policy_version`, `supersedes` | `Resolved`, absent, absent, absent |
-| `context_digest` | `94fdc1ad74b5e003811e5b4acfd0d9d3566e8e1e965b97e8ce94ae904f2e2ec7` — one binding: `ctx_ref` `sha256:aa`, `Digest`, `Internal`, no lineage, `version` 1, `derived_from` `["x","y"]`, all four receipt slots absent |
+| `context_digest` | `8e87a93fd65b0d756817d2dbe3d9346542a2ad8272cc525f2df23d4b73802f85` — one binding: `ctx_ref` `sha256:aa`, `Digest`, `Internal`, no lineage, `version` 1, `derived_from` `["x","y"]`, all five receipt slots absent (`.v4`) |
 | `participation_digest` | `521bb2054af761c4b2374702c8e5a2963416b3b48d4058fb22bc84c3efb49d85` — one decl: `agent_id` `p1`, no subject, modes `["m1","m2"]`, `scope(Unrestricted)`, empty `pinned_version`, 32 zero bytes `manifest_digest` |
 | `classification` | `Internal` |
 | `participants` | `["p1","p2"]` → `participants_digest` = `daffd522fc0760d9bb38e2bfb949d6eeb958f45efcfb212f7f3870df1105e06d` |
@@ -1485,8 +1502,8 @@ Every input fixed; the independent reference is `scripts/v4-digest-reference.py`
 
 | case | `digest_v4` |
 |---|---|
-| `policy_rules_digest` absent | `5af6b0852db68d6c5ba7a356db284f9877df0a084504f7c6aa62025a5cd4b7f1` |
-| `policy_rules_digest` = 32 × `0xAB` | `868153f64fd977fd461e32176b953fea58410221969433ca15952bdb41d0589f` |
+| `policy_rules_digest` absent | `2c4fd0f7223dd53215c40f763e540786cbb9d1a9b3dd4646836c73f9ad7813c3` |
+| `policy_rules_digest` = 32 × `0xAB` | `799e05b2b690b4a1bfb5ff57868aa69e62f518101d926181e5ec53f5b429dcdf` |
 
 And `participants_digest([])` = `88693ab24c8d56e6a92f63cf57d094ae463264cf5c74b7ba31dbc905ea164997` (a bare
 `le32(0)` after the framed domain).

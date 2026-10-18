@@ -246,8 +246,10 @@ class SeamRpcError(SeamError, grpc.RpcError):
 
         ``PROTOCOL`` means MACP refused the call and :attr:`macp_code` names why; ``POLICY_DENIED``
         (``PERMISSION_DENIED``) is the bound policy refusing a commitment; ``QUOTA_EXCEEDED``
-        (``RESOURCE_EXHAUSTED``) is load-shed, with :attr:`retry_after`. Branch on these, never on
-        message text.
+        (``RESOURCE_EXHAUSTED``) is load-shed, with :attr:`retry_after`; ``CHALLENGE_REFUSED``
+        (``UNAVAILABLE``, an :class:`UnavailableError`) is ``IssueChallenge`` refusing because the
+        runtime's nonce store is at capacity — **retryable** after :attr:`retry_after`, never an identity
+        failure and never a hard fault. Branch on these, never on message text.
         """
         info = self._seam_error_info()
         return info[0] if info else None
@@ -272,9 +274,11 @@ class SeamRpcError(SeamError, grpc.RpcError):
     def retry_after(self) -> float | None:
         """The server's ``google.rpc.RetryInfo.retry_delay`` in seconds, or ``None`` when it sent none.
 
-        Carried on a load-shed refusal (``RESOURCE_EXHAUSTED``, reason ``QUOTA_EXCEEDED``). The SDK
-        **does not retry for you**: it surfaces the delay so the caller's own retry policy can honour
-        it. A load-shed admission challenge was never issued, so a retry asks for a fresh one.
+        Carried on a load-shed refusal (``RESOURCE_EXHAUSTED``, reason ``QUOTA_EXCEEDED``) and on a
+        capacity refusal of ``IssueChallenge`` (``UNAVAILABLE``, reason ``CHALLENGE_REFUSED``); it is read
+        off whatever status carries it, not only ``RESOURCE_EXHAUSTED``. The SDK **does not retry for
+        you**: it surfaces the delay so the caller's own retry policy can honour it before re-issuing.
+        A refused admission challenge was never issued, so a retry asks for a fresh one.
         """
         for type_url, value in _status_details(self._trailing_metadata):
             if type_url == _RETRY_INFO_TYPE:
@@ -454,7 +458,14 @@ class ResourceExhaustedError(SeamRpcError):
 
 
 class UnavailableError(SeamRpcError):
-    """`UNAVAILABLE` — transport/server not reachable."""
+    """`UNAVAILABLE` — transport/server not reachable, or a capacity refusal the caller may retry.
+
+    With :attr:`reason` ``CHALLENGE_REFUSED`` it is ``IssueChallenge`` refusing because the runtime's
+    nonce store is at capacity (AITP 0.15.0; HTTP 503 on the REST surface). That is **retryable**:
+    wait :attr:`retry_after` (``google.rpc.RetryInfo``) and ask for a fresh challenge. It is not an
+    identity failure and not a hard fault — the per-peer limit is the different ``QUOTA_EXCEEDED`` on
+    :class:`ResourceExhaustedError`. The SDK itself never retries.
+    """
 
 
 class DeadlineExceededError(SeamRpcError):

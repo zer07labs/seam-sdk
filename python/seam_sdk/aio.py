@@ -832,12 +832,16 @@ class SeamClient:
         """Resolve context refs to their bindings.
 
         Returns the generated `ContextBinding` unchanged. Nothing is projected or renamed here, so
-        every field the contract carries arrives — including the ACDP receipt slots (`content_hash`,
-        `receipt_hash`, `key_status`, `resolved_status`), `retraction`, and the P3 key-revocation
-        pair (`revocation`, `revocation_trust_class`), all of which this SDK passes through without
-        interpreting. `key_status` (closed, PascalCase) and `resolved_status` (open,
-        lowercase) are byte-identical to what enters the `context_digest` preimage — do not
-        case-fold, normalise or map them.
+        every field the contract carries arrives — including the five ACDP receipt slots
+        (`content_hash`, `receipt_hash`, `key_status`, `resolved_status`, `receipt_key_status`),
+        `retraction`, and the P3 key-revocation pair (`revocation`, `revocation_trust_class`), all of
+        which this SDK passes through without interpreting. `key_status` and `receipt_key_status`
+        (closed, PascalCase) and `resolved_status` (open, lowercase) are byte-identical to what
+        enters the `context_digest` preimage — do not case-fold, normalise or map them.
+        `receipt_key_status` is present exactly when `receipt_hash` is: `Historical` means the receipt
+        was verified under a rotated-out registry key — valid history, NOT a current registry
+        attestation, and must not be presented as one. :func:`seam_sdk.context_digest_v4` recomputes
+        the sealed digest from these bindings and refuses an unpaired or out-of-vocabulary slot.
         """
         return list(
             (

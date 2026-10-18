@@ -114,7 +114,7 @@
       "mode": "decision.v1",
       "policy_version": null,
       "supersedes": null,
-      "context_digest_hex": "206f43bde4db008ca2c9b648cd6782252cfd8dbbbd70f63e63765601c6e653cd",
+      "context_digest_hex": "74b9b01c2fba7cd65f4a677e9a1be80b663f64421440a0e1c66a3f9dc05d7d69",
       "participation_digest_hex": "66c8ae346f5284cc62cf29e6681b16a98db7a3bba458a4d494273a267ba69c02",
       "policy_rules_digest_hex": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
       "classification": "Internal",
@@ -127,7 +127,7 @@
       "auth_method": "aitp-pinned-handshake",
       "schema_version": 4
     },
-    "digest_hex": "5af04d4b472bbd9f7c258392ad95bab82b6562d1904c086abf9f761968fbb241"
+    "digest_hex": "7f230b80d79b8af05be44507c7356032b4e93d32818dbf97ef530786bc4e6004"
   },
   "record_digest_v4_absent_policy": {
     "inputs": {
@@ -142,7 +142,7 @@
       "mode": "decision.v1",
       "policy_version": null,
       "supersedes": null,
-      "context_digest_hex": "206f43bde4db008ca2c9b648cd6782252cfd8dbbbd70f63e63765601c6e653cd",
+      "context_digest_hex": "74b9b01c2fba7cd65f4a677e9a1be80b663f64421440a0e1c66a3f9dc05d7d69",
       "participation_digest_hex": "66c8ae346f5284cc62cf29e6681b16a98db7a3bba458a4d494273a267ba69c02",
       "policy_rules_digest_hex": null,
       "classification": "Internal",
@@ -155,6 +155,6 @@
       "auth_method": "aitp-pinned-handshake",
       "schema_version": 4
     },
-    "digest_hex": "1e1cafdf76786feecbd18a83a74bfd65a2364b555f388d083abda431eaed6f8c"
+    "digest_hex": "cccd4e1c41ff7f2e67809058132690e7d5aeda08097436a9e5fe0ae985064c3a"
   }
 }

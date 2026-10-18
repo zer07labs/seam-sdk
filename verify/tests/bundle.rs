@@ -1,12 +1,13 @@
 //! `seam-verify bundle` against **real** `seam-evidence-bundle.v1` directories.
 //!
-//! `fixtures/evidence-bundle/` was written by the runtime's own exporter at seam-runtime@e4c01ad
-//! (branch `protocol-pass-2026-10`: record digest v4, `seam-commitment-digest:v3` under a
-//! self-attestation TCT), for seam-sdk#265. The previous export (seam-runtime@460d163) carried v3
-//! records and a v2 commitment digest, which this verifier refuses.
+//! `fixtures/evidence-bundle/` was written by the runtime's own exporter at seam-runtime@1ac5de5
+//! (branch `protocol-pass-2026-10`, the contract freeze: record digest v4 whose `context_digest` is
+//! `seam.audit.context-provenance.v4`, `seam-commitment-digest:v3` under a self-attestation TCT), for
+//! seam-sdk#265. The exports before it (seam-runtime@e4c01ad, context-provenance.v3; @460d163, v3
+//! records and a v2 commitment digest) are refused by this verifier.
 //!
 //! * `full/`, `minimal/`, `shredded/` — captured from the temp directories of the runtime's own
-//!   `seamd --test evidence_bundle` (issuer seed 7×32; target `d1` between `d0` and `d2`, an anchor
+//!   `seam-verify-internal --test bundle` (`crates/seam-verify/tests/bundle.rs`; issuer seed 7×32; target `d1` between `d0` and `d2`, an anchor
 //!   before it and a covering attestation after). That test discloses the context but never the
 //!   policy, so `full/` is its genuine (context-disclosed) export plus `policy.json`, with the
 //!   manifest edited to the `--disclose context,policy` shape: the policy file listed with its

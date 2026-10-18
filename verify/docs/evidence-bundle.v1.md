@@ -1,9 +1,11 @@
-<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ e4c01ad336e73cc5a373218029809fa708624ee4 tracking protocol-pass-2026-10 (vendored 2026-10-18).
+<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 1ac5de5f8a50180bf0c4d6f4c0e9184f74fddc4c tracking protocol-pass-2026-10 (vendored 2026-10-18).
      The normative text `seam-verify bundle` implements (seam-sdk#225), re-vendored for seam-sdk#265: step 2
      recomputes record digest v4 (tags 10-17), and commitment.json binds seam-commitment-digest:v3 through a
      self-attestation TCT. It links two sibling specs by relative path: `seam-event.v1.md` (vendored beside
      this file) and `seam-commitment-digest.v3.md` (NOT vendored; its commitment and explanation digests are
-     implemented in `src/commitment.rs` and pinned there by `conformance/commitment_digest_v3_vector.json`). -->
+     implemented in `src/commitment.rs` and pinned there by `conformance/commitment_digest_v3_vector.json`).
+     Re-pinned to the contract freeze 1ac5de5: context.json bindings carry `receipt_key_status`, and a
+     verifier refuses a bundle that breaks its pairing with receipt_hash or its closed vocabulary. -->
 
 # `seam-evidence-bundle.v1` — the self-contained evidence bundle
 
@@ -157,13 +159,16 @@ the chain: it ties the Commitment to a link, and the chain and its attestations 
 ```json
 { "bindings": [ { "ctx_ref": "…", "fidelity": "Digest", "classification": "Internal",
   "lineage_id": null, "version": 1, "derived_from": [], "content_hash": null,
-  "receipt_hash": null, "key_status": null, "resolved_status": null } ] }
+  "receipt_hash": null, "key_status": null, "resolved_status": null,
+  "receipt_key_status": null } ] }
 ```
 
 One object per binding, in the record's stored order, carrying exactly the fields the
-`context_digest` sub-preimage reads (domain `seam.audit.context-provenance.v3`, reused unchanged by
-record digest v4) ([`seam-event.v1.md` § `context_digest`](seam-event.v1.md#context_digest--seamauditcontext-provenancev3)),
-with the same string encodings. `null` is an absent `opt` slot. A verifier recomputes `context_digest`
+`context_digest` sub-preimage reads (domain `seam.audit.context-provenance.v4`, slot 10 of record
+digest v4) ([`seam-event.v1.md` § `context_digest`](seam-event.v1.md#context_digest--seamauditcontext-provenancev4)),
+with the same string encodings. `null` is an absent `opt` slot. `receipt_key_status` must be non-null
+exactly when `receipt_hash` is, and one of `Current` | `Historical`; a verifier refuses a bundle that
+breaks either rule. A verifier recomputes `context_digest`
 from these objects and compares it with the chained `DECISION_SEALED.context_digest`.
 
 The context's bodies are not included. A binding names a body by reference or digest.

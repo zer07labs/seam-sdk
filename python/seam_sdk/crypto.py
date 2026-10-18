@@ -1360,3 +1360,134 @@ def verify_enroll_pop(
         return True
     except Exception:
         return False
+
+
+# ── context_digest (wire tag 11) — seam.audit.context-provenance.v4 ─────────────────────────────────
+
+#: Domain tag of the v4 context-provenance sub-digest (wire tag 11). ``.v4`` is the only formula:
+#: ``.v1``-``.v3`` are not dispatched (``seam-event.v1.md`` §"Sub-digest domain tags").
+CONTEXT_PROVENANCE_DOMAIN_V4 = b"seam.audit.context-provenance.v4"
+#: The closed, PascalCase ``receipt_key_status`` vocabulary (``ContextBinding`` tag 14). ACDP's own JSON
+#: form is lowercase; Seam seals the variant name, so ``"historical"`` is refused, not case-folded.
+RECEIPT_KEY_STATUSES = ("Current", "Historical")
+
+
+class ContextProvenanceError(ValueError):
+    """A binding cannot enter the ``context-provenance.v4`` preimage — refused **before** hashing.
+
+    Raised when ``receipt_key_status`` and ``receipt_hash`` are not paired (the spec requires the first
+    to be present *exactly when* the second is) or when ``receipt_key_status`` is outside
+    :data:`RECEIPT_KEY_STATUSES`. The runtime refuses such a record at seal, so one reaching a verifier
+    was not produced by an honest seal: hashing it as given would hand back a digest for a record that
+    cannot exist. ``index`` is the binding's position in stored order; ``field`` names the slot.
+    Subclasses ``ValueError`` so an existing ``except ValueError`` keeps catching it.
+    """
+
+    def __init__(self, message: str, index: int, field: str) -> None:
+        super().__init__(message)
+        #: The binding's 0-based position in stored order.
+        self.index = index
+        #: The slot refused: ``receipt_key_status``.
+        self.field = field
+
+
+_CTX_TEXT = ("ctx_ref", "fidelity", "classification")
+_CTX_OPT_TAIL = (
+    "content_hash",
+    "receipt_hash",
+    "key_status",
+    "resolved_status",
+    "receipt_key_status",
+)
+
+
+def _ctx_get(binding: object, name: str, optional: bool) -> object:
+    """A slot from a mapping (spec field names) or a ``pb.ContextBinding``. On the message an unset
+    ``optional`` field reads as ``None`` through ``HasField`` — never as the proto default ``""``,
+    which would frame an absent slot as present-and-empty."""
+    if isinstance(binding, dict):
+        return binding.get(name) if optional else binding[name]
+    if optional and name != "derived_from":  # repeated: no presence bit
+        return getattr(binding, name) if binding.HasField(name) else None  # type: ignore[attr-defined]
+    return getattr(binding, name)
+
+
+def context_digest_v4(bindings) -> bytes:
+    """``context_digest`` (wire tag 11) — ``seam.audit.context-provenance.v4``.
+
+    Transcribed from ``seam-event.v1.md`` §"context_digest"::
+
+        SHA256( frame(domain) ‖ le32(len(bindings))
+              ‖ per binding, STORED order:
+                    frame(ctx_ref) ‖ frame(fidelity) ‖ frame(classification)
+                  ‖ opt(lineage_id) ‖ frame(le32(version))
+                  ‖ le32(len(derived_from)) ‖ frame(each)
+                  ‖ opt(content_hash) ‖ opt(receipt_hash) ‖ opt(key_status) ‖ opt(resolved_status)
+                  ‖ opt(receipt_key_status) )
+
+    ``bindings`` is a list of ``pb.ContextBinding`` or of dicts keyed by the spec's field names. Stored
+    order is hashed as given: nothing is sorted or de-duplicated, and no string is case-folded —
+    ``key_status``/``receipt_key_status`` are closed PascalCase and ``resolved_status`` is open
+    lowercase, all byte-identical to the preimage. ``retraction`` and the revocation pair are not in
+    the preimage.
+
+    Raises :class:`ContextProvenanceError` on an unpaired ``receipt_key_status``/``receipt_hash`` or an
+    out-of-vocabulary ``receipt_key_status``; every binding is checked before any byte is hashed.
+    """
+    if isinstance(bindings, (str, bytes, dict)):
+        raise TypeError(
+            "bindings must be a list of ContextBinding (or dicts), not a single value"
+        )
+    rows = []
+    for i, bd in enumerate(bindings):
+        text = [
+            _rd_text(f"bindings[{i}].{n}", _ctx_get(bd, n, False), False)
+            for n in _CTX_TEXT
+        ]
+        lineage = _rd_text(
+            f"bindings[{i}].lineage_id", _ctx_get(bd, "lineage_id", True), True
+        )
+        version = _uint_slot(
+            f"bindings[{i}].version", _ctx_get(bd, "version", False), 32
+        )
+        derived = _ctx_get(bd, "derived_from", True)
+        derived = [] if derived is None else list(derived)
+        derived = [
+            _rd_text(f"bindings[{i}].derived_from[{j}]", d, False)
+            for j, d in enumerate(derived)
+        ]
+        tail = [
+            _rd_text(f"bindings[{i}].{n}", _ctx_get(bd, n, True), True)
+            for n in _CTX_OPT_TAIL
+        ]
+        receipt_hash, receipt_key_status = tail[1], tail[4]
+        if (receipt_key_status is None) != (receipt_hash is None):
+            raise ContextProvenanceError(
+                f"bindings[{i}]: receipt_key_status is present exactly when receipt_hash is, and here "
+                f"{'receipt_hash' if receipt_key_status is None else 'receipt_key_status'} stands "
+                f"alone. The runtime refuses this at seal; refuse it rather than hash it.",
+                i,
+                "receipt_key_status",
+            )
+        if (
+            receipt_key_status is not None
+            and receipt_key_status not in RECEIPT_KEY_STATUSES
+        ):
+            raise ContextProvenanceError(
+                f"bindings[{i}]: receipt_key_status {receipt_key_status!r} is outside the closed "
+                f"vocabulary {RECEIPT_KEY_STATUSES} (PascalCase; ACDP's lowercase form is not it)",
+                i,
+                "receipt_key_status",
+            )
+        rows.append((text, lineage, version, derived, tail))
+    pre = _frame(CONTEXT_PROVENANCE_DOMAIN_V4) + struct.pack("<I", len(rows))
+    for text, lineage, version, derived, tail in rows:
+        for t in text:
+            pre += _frame(_rd_enc(t))
+        pre += _rd_opt_text(lineage) + _frame(struct.pack("<I", version))
+        pre += struct.pack("<I", len(derived))
+        for d in derived:
+            pre += _frame(_rd_enc(d))
+        for t in tail:
+            pre += _rd_opt_text(t)
+    return hashlib.sha256(pre).digest()

@@ -1219,7 +1219,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:1426-1448` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:1436-1458` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2049,7 +2049,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:1458` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:1468` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -2617,9 +2617,8 @@ code follow-up is needed before the next `/ship`. Both plans now meet the archiv
   the commitment v3 digest and the self-attestation JWS, so items 10 and 11 come with it. Items 12 and
   13 are what a green PR against the branch needs, and 14-15 are docstrings. B7 needs nothing in this
   SDK (the scoped plan's "Checked, not needed") and is a separate later pass.
-- **Runtime pin:** `protocol-pass-2026-10` @ `e4c01ad336e73cc5a373218029809fa708624ee4`. Proto, vectors and the
-  two vendored specs are unchanged between the pin and the branch head at the time of writing
-  (`008883e`); only `docs/specs/seam-commitment-digest.v3.md`, which this SDK does not vendor, moved.
+- **Runtime pin:** `protocol-pass-2026-10` @ `1ac5de5f8a50180bf0c4d6f4c0e9184f74fddc4c` (the contract freeze; first pinned at
+  `e4c01ad`, re-pinned in the reland — see the entry below).
 - **The TCT shape comes from the vectors, not the spec prose.** At the pin,
   `seam-commitment-digest.v3.md` still describes the digest travelling in `grants`. The vector's JWS
   carries `grants: ["aitp.attestation"]` and the digest in `ext["com.zer07labs.seam"]`, matching the
@@ -2636,10 +2635,29 @@ code follow-up is needed before the next `/ship`. Both plans now meet the archiv
 - **Live session ids carry a suffix.** P4 refuses short session ids, so every live test id gained a
   22+ character suffix. No client-side pre-validation was added: the helpers are opt-in, and the
   runtime is the authority.
-- **CI pins.** `Makefile` `BUF_MODULE` → `buf.build/zer07labs/seam:git-e4c01ad336e73cc5a373218029809fa708624ee4` and
+- **CI pins.** `Makefile` `BUF_MODULE` → `buf.build/zer07labs/seam:git-1ac5de5f8a50180bf0c4d6f4c0e9184f74fddc4c` and
   `SEAM_RUNTIME_BUILD_REF` → the pin (timeout 45), precedent 0.45.0 (#237). Both revert at the un-pin.
   The label (runtime's `git-<sha>` convention, `main` untouched) was pushed 2026-10-18 from a
-  `git archive` of the pinned commit, owner-approved; BSR commit `a8b6fbf15b0146058940ab032886ff0c`.
+  `git archive` of the pinned commit, owner-approved; BSR commit `82b16f2b` (the first pin's label,
+  `git-e4c01ad…`, was BSR commit `a8b6fbf15b0146058940ab032886ff0c`).
+
+## 2026-10-18 — reland #270 and re-pin to 1ac5de5 (seam-sdk#265)
+
+- **Why a reland.** #270 merged to `main` ahead of the runtime and was reverted (#271). This PR is the
+  revert of that revert plus the re-pin, held as a draft for the release window (B11 order).
+- **Pin frozen at `1ac5de5`.** Between `e4c01ad` and `1ac5de5` the proto gained
+  `ContextBinding.receipt_key_status = 14` and a comment on `IssueChallengeRequest`;
+  `seam_event.proto` and the hub goldens did not change. `conformance/vectors.json` and
+  `vectors_extended.json` moved (only `context_digest_hex` and `digest_hex`) and are re-copied
+  byte-identical; the other vendored vectors are byte-unchanged.
+- **`receipt_key_status` is carried and framed, not interpreted.** The contract gate refused it (exit 6);
+  the decision is in `contract/field-manifest.txt`. `context_digest_v4` / `contextDigestV4` are new:
+  the spec says SDKs treat sub-digests as opaque, but `seam-verify` already recomputed
+  `context_digest` for bundles, so Python and TS gain the same recompute for callers holding the
+  bindings. Pinned against the runtime reference's four vectors in both languages.
+- **Item 16 needs no new code.** `retry_after` already reads `RetryInfo` on any status, so an
+  `UNAVAILABLE` `CHALLENGE_REFUSED` surfaces its delay; tests and docstrings now pin that. Go, Java and
+  Kotlin have no admission or retry logic to change. The SDK still never retries (entry below).
 
 ## 2026-10-18 — reconcile the protocol pass assumptions (seam-sdk#265, 2 entries)
 

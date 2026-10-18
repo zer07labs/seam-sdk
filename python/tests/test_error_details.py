@@ -26,6 +26,8 @@ from seam_sdk.errors import (
     PermissionDeniedError,
     ResourceExhaustedError,
     SeamRpcError,
+    UnauthenticatedError,
+    UnavailableError,
     map_rpc_error,
 )
 
@@ -148,6 +150,21 @@ def test_load_shed_surfaces_retry_after_and_is_not_retried():
     assert isinstance(err, ResourceExhaustedError)
     assert err.reason == "QUOTA_EXCEEDED"
     assert err.retry_after == pytest.approx(2.5)
+    assert err.macp_code is None
+
+
+def test_a_challenge_capacity_refusal_is_unavailable_and_carries_retry_after():
+    """AITP 0.15.0 (plan item 16): a nonce store at capacity refuses `IssueChallenge` with UNAVAILABLE,
+    reason CHALLENGE_REFUSED, and a RetryInfo. RetryInfo is read on ANY status, not only
+    RESOURCE_EXHAUSTED, so the caller can honour it; it is never typed as an identity failure."""
+    err = _mapped(
+        grpc.StatusCode.UNAVAILABLE,
+        status(14, error_info("CHALLENGE_REFUSED"), retry_info(1, 250_000_000)),
+    )
+    assert isinstance(err, UnavailableError)
+    assert not isinstance(err, (UnauthenticatedError, PermissionDeniedError))
+    assert err.reason == "CHALLENGE_REFUSED"
+    assert err.retry_after == pytest.approx(1.25)
     assert err.macp_code is None
 
 

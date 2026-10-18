@@ -77,9 +77,21 @@
 #     Declaring them without interpreting them is what keeps that from happening by accident.
 #
 # Phase 9 of `plans/post-adoption-hardening-and-acdp-readiness.md` settled this rather than
-# reversing it: the fields are carried and never wired. `verify/` does not compute
-# `context_digest`, so there is nothing here to check a receipt slot against, and a projection
-# would create a second spelling of a wire commitment for no verification gain.
+# reversing it: the fields are carried and never wired, and a projection would create a second
+# spelling of a wire commitment for no verification gain.
+#
+# `ContextBinding/receipt_key_status` (tag 14, the fifth receipt slot; protocol pass, seam-runtime
+# 1ac5de5, ACDP `rcpt-005/B`) is CARRIED on the same terms. All five receipt slots are now also
+# framed by the digest helpers, and nothing else. This gate refused it first (exit 6, both languages);
+# the decision:
+#   * `resolve_context` / `resolveContext` return it on the generated type unchanged, and their
+#     docstrings say what `Historical` means (valid history, not a current registry attestation).
+#   * The SDK now computes `context_digest` (`seam.audit.context-provenance.v4`):
+#     `context_digest_v4` (Python), `contextDigestV4` (TS) and `verify/src/bundle.rs` all frame the
+#     five receipt slots verbatim and refuse a `receipt_key_status` that is unpaired with
+#     `receipt_hash` or outside `Current | Historical` — the one place a receipt slot is checked, and
+#     it is a structural refusal, not an interpretation. That supersedes the "does not compute
+#     `context_digest`" bullet above.
 #
 # TO REGENERATE (after deciding, not before):
 #     scripts/check-contract.sh --write-manifest
@@ -242,6 +254,7 @@ ContextBinding/fidelity
 ContextBinding/key_status
 ContextBinding/lineage_id
 ContextBinding/receipt_hash
+ContextBinding/receipt_key_status
 ContextBinding/resolved_status
 ContextBinding/retraction
 ContextBinding/revocation

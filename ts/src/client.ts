@@ -1305,12 +1305,16 @@ export class SeamClient {
    * Resolve context refs to their bindings.
    *
    * Returns the generated `ContextBinding` unchanged — nothing is projected or renamed, so every
-   * field the contract carries arrives, including the ACDP receipt slots (`contentHash`,
-   * `receiptHash`, `keyStatus`, `resolvedStatus`), `retraction`, and the P3 key-revocation pair
-   * (`revocation`, `revocationTrustClass`), all of which this SDK passes through without
-   * interpreting. `keyStatus` (closed, PascalCase) and `resolvedStatus` (open, lowercase)
-   * are byte-identical to what enters the `context_digest` preimage — do not case-fold, normalise
-   * or map them.
+   * field the contract carries arrives, including the five ACDP receipt slots (`contentHash`,
+   * `receiptHash`, `keyStatus`, `resolvedStatus`, `receiptKeyStatus`), `retraction`, and the P3
+   * key-revocation pair (`revocation`, `revocationTrustClass`), all of which this SDK passes through
+   * without interpreting. `keyStatus` and `receiptKeyStatus` (closed, PascalCase) and
+   * `resolvedStatus` (open, lowercase) are byte-identical to what enters the `context_digest`
+   * preimage — do not case-fold, normalise or map them. `receiptKeyStatus` is present exactly when
+   * `receiptHash` is: `Historical` means the receipt was verified under a rotated-out registry key —
+   * valid history, NOT a current registry attestation, and must not be presented as one.
+   * `contextDigestV4` (crypto.ts) recomputes the sealed digest from these bindings and refuses an unpaired
+   * or out-of-vocabulary slot.
    */
   async resolveContext(refs: string[], opts?: UnaryCallOptions): Promise<ContextBinding[]> {
     return (await this.context.resolveContext({ refs }, call(opts))).bindings;

@@ -23,6 +23,8 @@ import {
   PermissionDeniedError,
   ResourceExhaustedError,
   SeamRpcError,
+  UnauthenticatedError,
+  UnavailableError,
   toSeamError,
 } from "../src/errors.js";
 
@@ -155,6 +157,21 @@ test("a load-shed surfaces retryAfter (seconds)", () => {
     assert.ok(err instanceof ResourceExhaustedError);
     assert.equal(err.reason, "QUOTA_EXCEEDED");
     assert.ok(Math.abs(err.retryAfter! - 2.5) < 1e-9, `retryAfter ${err.retryAfter}`);
+    assert.equal(err.macpCode, undefined);
+  }
+});
+
+test("a challenge capacity refusal is UNAVAILABLE, retryable, and carries retryAfter", () => {
+  // AITP 0.15.0 (plan item 16): RetryInfo is read on ANY status, not only RESOURCE_EXHAUSTED, and the
+  // refusal is never typed as an identity failure.
+  for (const err of [
+    mapped(Code.Unavailable, statusOf(14, errorInfo("CHALLENGE_REFUSED"), retryInfo(1, 250_000_000))),
+    parsed(Code.Unavailable, errorInfo("CHALLENGE_REFUSED"), retryInfo(1, 250_000_000)),
+  ]) {
+    assert.ok(err instanceof UnavailableError);
+    assert.ok(!(err instanceof UnauthenticatedError) && !(err instanceof PermissionDeniedError));
+    assert.equal(err.reason, "CHALLENGE_REFUSED");
+    assert.ok(Math.abs(err.retryAfter! - 1.25) < 1e-9, `retryAfter ${err.retryAfter}`);
     assert.equal(err.macpCode, undefined);
   }
 });

@@ -1486,3 +1486,120 @@ export function enrollProofToRest(p: EnrollProof): { issued_at_ms: number; nonce
   }
   return { issued_at_ms: Number(p.issuedAtMs), nonce: p.nonce, signature: b64urlNoPad(p.signature) };
 }
+
+// ── context_digest (wire tag 11) — seam.audit.context-provenance.v4 ──────────────────────────────
+
+/** Domain tag of the v4 context-provenance sub-digest. `.v4` is the only formula: `.v1`-`.v3` are not
+ * dispatched (`seam-event.v1.md` §"Sub-digest domain tags"). */
+export const CONTEXT_PROVENANCE_DOMAIN_V4 = "seam.audit.context-provenance.v4";
+/** The closed, PascalCase `receiptKeyStatus` vocabulary (`ContextBinding` tag 14). ACDP's own JSON
+ * form is lowercase; Seam seals the variant name, so `"historical"` is refused, not case-folded. */
+export const RECEIPT_KEY_STATUSES = ["Current", "Historical"] as const;
+
+/** A binding cannot enter the `context-provenance.v4` preimage — refused **before** hashing.
+ *
+ * Thrown when `receiptKeyStatus` and `receiptHash` are not paired (the first is present *exactly
+ * when* the second is) or when `receiptKeyStatus` is outside {@link RECEIPT_KEY_STATUSES}. The runtime
+ * refuses such a record at seal, so hashing it as given would return a digest for a record that cannot
+ * exist. `index` is the binding's position in stored order; `field` names the slot. The Python twin is
+ * `ContextProvenanceError`, with the same two fields. */
+export class ContextProvenanceError extends Error {
+  constructor(
+    message: string,
+    readonly index: number,
+    readonly field: string,
+  ) {
+    super(message);
+    this.name = "ContextProvenanceError";
+  }
+}
+
+/** The slots of one binding, in the generated `ContextBinding`'s camelCase — a resolved binding is
+ * accepted as-is. An absent optional is `undefined` or `null`, never `""` (which is data). */
+export interface ContextProvenanceBinding {
+  ctxRef: string;
+  fidelity: string;
+  classification: string;
+  lineageId?: string | null;
+  version: number;
+  derivedFrom?: readonly string[];
+  contentHash?: string | null;
+  receiptHash?: string | null;
+  keyStatus?: string | null;
+  resolvedStatus?: string | null;
+  receiptKeyStatus?: string | null;
+}
+
+/** `context_digest` (wire tag 11) — `seam.audit.context-provenance.v4`.
+ *
+ * Transcribed from `seam-event.v1.md` §"context_digest":
+ *
+ *     SHA256( frame(domain) ‖ le32(len(bindings))
+ *           ‖ per binding, STORED order:
+ *                 frame(ctx_ref) ‖ frame(fidelity) ‖ frame(classification)
+ *               ‖ opt(lineage_id) ‖ frame(le32(version))
+ *               ‖ le32(len(derived_from)) ‖ frame(each)
+ *               ‖ opt(content_hash) ‖ opt(receipt_hash) ‖ opt(key_status) ‖ opt(resolved_status)
+ *               ‖ opt(receipt_key_status) )
+ *
+ * Stored order is hashed as given — nothing is sorted, de-duplicated or case-folded. `retraction` and
+ * the revocation pair are not in the preimage. Throws {@link ContextProvenanceError} on an unpaired or
+ * out-of-vocabulary `receiptKeyStatus`; every binding is checked before any byte is hashed. */
+export function contextDigestV4(bindings: readonly ContextProvenanceBinding[]): Uint8Array {
+  if (!Array.isArray(bindings)) throw new TypeError("bindings must be an array of ContextBinding");
+  const parts: Uint8Array[] = [
+    frameLE(enc.encode(CONTEXT_PROVENANCE_DOMAIN_V4)),
+    u32le("bindings.length", bindings.length),
+  ];
+  bindings.forEach((bd, i) => {
+    const at = (n: string) => `bindings[${i}].${n}`;
+    const text = [
+      textSlot(at("ctxRef"), bd.ctxRef, false)!,
+      textSlot(at("fidelity"), bd.fidelity, false)!,
+      textSlot(at("classification"), bd.classification, false)!,
+    ];
+    const lineage = textSlot(at("lineageId"), bd.lineageId, true);
+    const version = u32le(at("version"), bd.version);
+    const derivedIn: unknown = bd.derivedFrom ?? [];
+    if (!Array.isArray(derivedIn)) throw new TypeError(`${at("derivedFrom")} must be an array`);
+    const derived = derivedIn.map((d, j) => textSlot(`${at("derivedFrom")}[${j}]`, d, false)!);
+    const tail = [
+      textSlot(at("contentHash"), bd.contentHash, true),
+      textSlot(at("receiptHash"), bd.receiptHash, true),
+      textSlot(at("keyStatus"), bd.keyStatus, true),
+      textSlot(at("resolvedStatus"), bd.resolvedStatus, true),
+      textSlot(at("receiptKeyStatus"), bd.receiptKeyStatus, true),
+    ];
+    const receiptHash = tail[1];
+    const receiptKeyStatus = tail[4];
+    if ((receiptKeyStatus === null) !== (receiptHash === null)) {
+      throw new ContextProvenanceError(
+        `bindings[${i}]: receiptKeyStatus is present exactly when receiptHash is, and here ` +
+          `${receiptKeyStatus === null ? "receiptHash" : "receiptKeyStatus"} stands alone. The ` +
+          `runtime refuses this at seal; refuse it rather than hash it.`,
+        i,
+        "receipt_key_status",
+      );
+    }
+    if (
+      receiptKeyStatus !== null &&
+      !(RECEIPT_KEY_STATUSES as readonly string[]).includes(receiptKeyStatus)
+    ) {
+      throw new ContextProvenanceError(
+        `bindings[${i}]: receiptKeyStatus ${JSON.stringify(receiptKeyStatus)} is outside the closed ` +
+          `vocabulary ${RECEIPT_KEY_STATUSES.join(" | ")} (PascalCase; ACDP's lowercase form is not it)`,
+        i,
+        "receipt_key_status",
+      );
+    }
+    parts.push(
+      ...text.map((t) => frameLE(enc.encode(t))),
+      optLE(lineage),
+      frameLE(version),
+      u32le(at("derivedFrom.length"), derived.length),
+      ...derived.map((d) => frameLE(enc.encode(d))),
+      ...tail.map((t) => optLE(t)),
+    );
+  });
+  return sha256(concat(...parts));
+}

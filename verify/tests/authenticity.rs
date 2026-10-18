@@ -1,7 +1,7 @@
 //! `chain --issuer <AID>` — AUTHENTICITY, driven against the runtime's committed golden streams.
 //!
 //! The goldens in `tests/goldens/` are copied verbatim from the runtime
-//! (`seam-runtime/crates/seam-verify/tests/goldens/`, pinned at the protocol-pass-2026-10 runtime pin e4c01ad, matching the
+//! (`seam-runtime/crates/seam-verify/tests/goldens/`, pinned at the protocol-pass-2026-10 runtime pin 1ac5de5, matching the
 //! `seam-event.v1` spec pin in `docs/seam-event.v1.md`); they are the SAME fixtures the runtime's own
 //! verifier is tested against, so agreement here is the independent verifier reaching parity on
 //! authenticity. Nothing of Seam's is linked (the whole point) — see Cargo.toml.

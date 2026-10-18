@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:413`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:423`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -118,7 +118,7 @@ mismatch cannot ship.
 
 | SDK change | Requires runtime | Earlier runtimes | Pinned from |
 |---|---|---|---|
-| Protocol pass 2026-10 (seam-sdk#265) | the release that carries seam-runtime `protocol-pass-2026-10` | **none** — no compatibility | `protocol-pass-2026-10` @ `e4c01ad336e73cc5a373218029809fa708624ee4` |
+| Protocol pass 2026-10 (seam-sdk#265) | the release that carries seam-runtime `protocol-pass-2026-10` | **none** — no compatibility | `protocol-pass-2026-10` @ `1ac5de5f8a50180bf0c4d6f4c0e9184f74fddc4c` |
 
 The protocol pass has no compatibility window in either direction: an earlier runtime refuses this
 SDK's derived PoP `message_id`, and this SDK treats an earlier runtime's v1-v3 records as
@@ -130,7 +130,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1426-1448`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1436-1458`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
