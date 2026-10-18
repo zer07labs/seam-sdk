@@ -1,5 +1,13 @@
 # Partner serves the newest release on internal — seam-sdk#253
 
+> **📦 ARCHIVED 2026-10-18 — DELIVERED, merged as PR #259 (`05a084b`, closes #253).** Archived during `/sweep`
+> after a delivery verification against this tree. All three phases are DONE and reachable from `main`. Partner is
+> also judged on internal's newest complete release: `NEWEST_QUERY` and `fetch_newest`'s ordering and floor guards,
+> the `uploaded_at` clock, and no filing from a broken run. Tracking issue
+> [seam-sdk#253](https://github.com/zer07labs/seam-sdk/issues/253) is **CLOSED**. Its four `UNCONFIRMED`
+> `ASSUMPTIONS.md` entries were confirmed by `/reconcile` on 2026-10-18 (PR #267, `460c161`). The two owner
+> decisions (D4, D6) were already `CONFIRMED (owner)`.
+
 **Issue:** [seam-sdk#253](https://github.com/zer07labs/seam-sdk/issues/253). It follows #203 (PR #252, `179a7fa`) and closes the
 coverage limit recorded in `ASSUMPTIONS.md` ("Partner is judged on main's declared version only").
 

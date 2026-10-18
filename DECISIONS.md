@@ -2546,8 +2546,8 @@ Ranked by blast radius, highest first:
   `scripts/check_registry_drift.py:2256-2260` map the four cases. Tests at `scripts/test_registry_drift_gate.py:1747,3875,3898`.
 - **Analysis:** exit 1 has to mean "a finding was delivered". Under "any fault ⇒ 2", one dead partner credential
   would blind every internal drift for as long as nobody rotated it. This rule matches how `_with_newest` treats a
-  newest-question fault, so all three questions share one exit-code vocabulary. `plans/partner-registry-drift.md:48`
-  still states the original rule, but the plan's own deviation note at `plans/partner-registry-drift.md:92-93` corrects it.
+  newest-question fault, so all three questions share one exit-code vocabulary. `plans/archive/partner-registry-drift.md:57`
+  still states the original rule, but the plan's own deviation note at `plans/archive/partner-registry-drift.md:101-102` corrects it.
 - **Verdict:** confirm. **Status:** CONFIRMED (2026-10-18). **Decided by:** Opus.
 
 ### When both registries are short, one issue is filed: the internal one
