@@ -36,7 +36,7 @@ whatever the code already did, which is the vacuity this repo keeps a name for.
 For the same reason this script imports nothing from `seam_sdk`, including the commitment-digest
 framing it re-derives in `_commitment_digest`. The cost is a copy that could drift from
 `seam_sdk.crypto._seam_commitment_digest`; the protection is that the vector's `expect: true` cases
-are CONTROLS — if the framing drifted, the statement would stop matching and those cases would go red
+are CONTROLS — if the framing drifted, the grant would stop matching and those cases would go red
 before any `expect: false` case could start passing for the wrong reason. A consumer of this vector
 must therefore keep at least one `expect: true` case, or every refusal it asserts becomes free.
 
@@ -225,41 +225,31 @@ _EMPTY_EXPLANATION_DIGEST = hashlib.sha256(
 
 
 def _commitment_digest(c: dict) -> str:
-    """`seam-commitment-digest:v3`: every field `be64(len) || bytes`, except `supersedes`, which is a
-    presence byte (`0x00` absent, `0x01 || F(value)` present)."""
-
-    def f(b: bytes) -> bytes:
-        return len(b).to_bytes(8, "big") + b
-
-    sup = c["supersedes"]
-    return hashlib.sha256(
-        f(b"seam-commitment-digest:v3")
-        + f(c["id"].encode())
-        + f(c["action"].encode())
-        + f(c["authority"].encode())
-        + (b"\x00" if sup is None else b"\x01" + f(sup.encode()))
-        + f(c["auth_method"].encode())
-        + f(c["trust_basis"].encode())
-        + f(c["committer"].encode())
-        + f(_EMPTY_EXPLANATION_DIGEST)
-    ).hexdigest()
+    h = hashlib.sha256()
+    for field in (
+        b"seam-commitment-digest:v2",
+        c["id"].encode(),
+        c["action"].encode(),
+        c["authority"].encode(),
+        (c["supersedes"] or "").encode(),
+        c["auth_method"].encode(),
+        c["trust_basis"].encode(),
+        c["committer"].encode(),
+        _EMPTY_EXPLANATION_DIGEST,
+    ):
+        h.update(len(field).to_bytes(8, "big"))
+        h.update(field)
+    return h.hexdigest()
 
 
 def main() -> None:
     sk = Ed25519PrivateKey.from_private_bytes(SEED)
     aid = "aid:pubkey:ed25519:" + _b64(sk.public_key().public_bytes_raw())
-    # The RFC-AITP-0005 self-attestation shape: one grant, the statement under `ext`.
-    statement = {"type": "seam:commitment", "commitment_digest": _commitment_digest(COMMITMENT)}
+    grant = "seam-commitment-digest:" + _commitment_digest(COMMITMENT)
 
     cases = []
     for name, exp, now, why in CASES:
-        payload: dict = {
-            "iss": aid,
-            "sub": aid,
-            "aud": aid,
-            "grants": ["aitp.attestation"],
-            "ext": {"com.zer07labs.seam": statement},
-        }
+        payload: dict = {"iss": aid, "sub": aid, "aud": aid, "grants": [grant]}
         if exp is not ABSENT:
             payload["exp"] = exp
         h = _b64(
@@ -295,7 +285,7 @@ def main() -> None:
                     "TRUNCATED TOWARD ZERO to whole seconds, then expired iff `now_s >= trunc(exp)`.",
                     "",
                     "CONTRACT: an implementation MUST return `expect` for every case, using `now_s` as",
-                    "its clock. The signature is valid and the statement matches in EVERY case, so a",
+                    "its clock. The signature is valid and the grant matches in EVERY case, so a",
                     "`false` is always the `exp` rule and never anything else.",
                     "",
                     "Note the `now_s` values. Every type case pins `now_s = 0` on purpose: `exp: true`",

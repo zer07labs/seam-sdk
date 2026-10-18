@@ -86,12 +86,11 @@ BOTH_LANGUAGES = [
         "enforced=False is not one condition; under the third the natural reading is backwards",
     ),
     (
-        "never on the status or the message text",
+        "not a contract",
         PY_ERRORS,
         TS_ERRORS,
-        "PERMISSION_DENIED is shared by four refusal classes since the protocol pass (POLICY_DENIED "
-        "moved off FAILED_PRECONDITION); branch on the ErrorInfo reason, and the message must not "
-        "be parsed",
+        "FAILED_PRECONDITION's two causes differ only in message text (seam-runtime#565), and the "
+        "message must not be parsed",
     ),
 ]
 

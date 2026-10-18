@@ -666,13 +666,13 @@ ANCHORED = [
     ),
     ("COMPATIBILITY.md", "python/seam_sdk/crypto.py", "_uint_slot(name, value, bits)"),
     ("DECISIONS.md", "ts/src/crypto.ts", "must be a number or bigint, not "),
-    ("PROGRESS.md", "ts/src/crypto.ts", "export function recordDigestV4(d: {"),
-    # `record_digest_v4` (was v3) and `_opt_bytes`, cited from PROGRESS.md and DECISIONS.md respectively.
+    ("PROGRESS.md", "ts/src/crypto.ts", "export function recordDigestV3(d: {"),
+    # `record_digest_v3` and `_opt_bytes`, cited from PROGRESS.md and DECISIONS.md respectively.
     # A verification round mutated `PROGRESS.md`'s `python/seam_sdk/crypto.py` citation to line 1 and
     # the whole suite stayed green — while the TS twin in the *same sentence* was anchored and did go
     # red. That asymmetry is why these are here: the file had drifted 25 lines and only the guarded
     # half of the claim noticed.
-    ("PROGRESS.md", "python/seam_sdk/crypto.py", "def record_digest_v4("),
+    ("PROGRESS.md", "python/seam_sdk/crypto.py", "def record_digest_v3("),
     (
         "DECISIONS.md",
         "python/seam_sdk/crypto.py",
@@ -699,18 +699,25 @@ ANCHORED = [
     # them. Repointing alone would have fixed the instance and left the class: a full path earns
     # them the range check, and these entries earn them the content check that would have caught
     # the rot in the first place.
-    #
-    # The protocol pass (#265) deleted the v1 skip and the four tests these anchored; the entry now
-    # cites the two tests that replaced them, and the content check carries over to those.
     (
         "DECISIONS.md",
         "verify/tests/authenticity.rs",
-        "fn a_v1_record_is_refused_as_retired_not_link_verified",
+        "fn a_v1_record_is_link_verified_but_not_recomputed",
     ),
     (
         "DECISIONS.md",
         "verify/tests/authenticity.rs",
-        "fn every_retired_schema_version_is_refused_never_skipped",
+        "the v1 record is skipped, not recomputed",
+    ),
+    (
+        "DECISIONS.md",
+        "verify/tests/authenticity.rs",
+        "Each column is tested ALONE, with the other three removed",
+    ),
+    (
+        "DECISIONS.md",
+        "verify/tests/authenticity.rs",
+        "fn a_genuine_v1_record_is_still_skipped_not_refused",
     ),
     # PROGRESS.md's own two rotted anchors, Phase 6 of gate-blindness-hardening (measured at HEAD
     # before the fix): `collectiveOutcomeOf` had drifted 16 lines (cited `:202`, actually `:218`)
@@ -835,7 +842,7 @@ CLAIM_LINES = {
         "go/crypto/crypto.go",
         'exp, ok := payload["exp"].(float64)',
     ): "It is the only one with a written rationale",
-    ("PROGRESS.md", "python/seam_sdk/crypto.py", "def record_digest_v4("): (
+    ("PROGRESS.md", "python/seam_sdk/crypto.py", "def record_digest_v3("): (
         "`verify/src/verify.rs:648`; the 6a/6b"
     ),
     (
@@ -869,7 +876,7 @@ CLAIM_LINES = {
         "COMPATIBILITY.md",
         "python/seam_sdk/crypto.py",
         "def _uint_slot(name: str, value: int, bits: int) -> int:",
-    ): "was `_v3_uint`, and `record_digest_v2` shared it",
+    ): "was `_v3_uint`, and `record_digest_v2` now shares it",
     (
         "COMPATIBILITY.md",
         "python/seam_sdk/crypto.py",
@@ -918,13 +925,23 @@ CLAIM_LINES = {
     (
         "DECISIONS.md",
         "verify/tests/authenticity.rs",
-        "fn a_v1_record_is_refused_as_retired_not_link_verified",
-    ): "`a_v1_record_is_refused_as_retired_not_link_verified`).",
+        "fn a_v1_record_is_link_verified_but_not_recomputed",
+    ): "through to `continue` and is tested twice",
     (
         "DECISIONS.md",
         "verify/tests/authenticity.rs",
-        "fn every_retired_schema_version_is_refused_never_skipped",
-    ): "`every_retired_schema_version_is_refused_never_skipped`.",
+        "the v1 record is skipped, not recomputed",
+    ): "whose skipped-not-recomputed assertion is at",
+    (
+        "DECISIONS.md",
+        "verify/tests/authenticity.rs",
+        "fn a_genuine_v1_record_is_still_skipped_not_refused",
+    ): "(`a_genuine_v1_record_is_still_skipped_not_refused`)",
+    (
+        "DECISIONS.md",
+        "verify/tests/authenticity.rs",
+        "Each column is tested ALONE, with the other three removed",
+    ): "exercises each column with the other three removed",
     # PROGRESS.md — the four Phase 4 anchors.
     (
         "PROGRESS.md",
@@ -1142,9 +1159,7 @@ def test_the_anchored_table_is_not_empty() -> None:
     in a file whose stated discipline is a third."""
     # Raise this when anchors are added. Lowering it is the loud, reviewable edit that deleting an
     # anchor is supposed to require — which is the entire purpose of the number.
-    # 46 -> 44 in the protocol pass (#265): the four v1-skip anchors into `authenticity.rs` went with
-    # the tests they named (v1-v3 retired), replaced by two anchors on the tests that superseded them.
-    _COMMITTED_ANCHOR_COUNT = 44
+    _COMMITTED_ANCHOR_COUNT = 46
     assert len(ANCHORED) >= _COMMITTED_ANCHOR_COUNT, (
         f"ANCHORED has shrunk to {len(ANCHORED)}, below the committed {_COMMITTED_ANCHOR_COUNT}; "
         "entries are being deleted"
@@ -1235,7 +1250,7 @@ QUOTED = [
     (
         "DECISIONS.md",
         "verify/docs/seam-event.v1.md",
-        "Every payload **must** carry `ciphertext_digest`",
+        "is absent (no wire bytes) only on",
     ),
     # COMPATIBILITY.md §2's two sibling-repo rows. Both rotted while their citations stayed green,
     # which is the whole argument for this mechanism over `ANCHORED`:

@@ -66,9 +66,7 @@ function clientWithProof(
       authority: c.authority,
       authMethod: c.auth_method,
       trustBasis: c.trust_basis,
-      // v3 frames absent and present-empty differently (a presence byte): an unset `supersedes` must
-      // stay unset, as the proto's explicit presence carries it, not become "".
-      ...(c.supersedes !== null && c.supersedes !== undefined ? { supersedes: c.supersedes } : {}),
+      supersedes: c.supersedes ?? "",
       signedArtifact: signedArtifact ?? new TextEncoder().encode(t.signed_artifact_jws),
       committer: c.committer,
       explanationDigest: new Uint8Array(Buffer.from(t.explanation_digest_hex, "hex")),
@@ -82,7 +80,7 @@ function clientWithProof(
   return client;
 }
 
-test("verifyDecision: a served v3 commitment (committer + explanation + digest) verifies", async () => {
+test("verifyDecision: a served v2 commitment (committer + explanation + digest) verifies", async () => {
   const issuer = vectors.tct.issuer_aid as string;
   assert.equal(await clientWithProof(issuer).verifyDecision("dec-1", issuer), true);
   // Unset published digest (empty bytes) = "not published": the entries alone still bind field 8.

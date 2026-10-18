@@ -1,13 +1,8 @@
 package com.zer07labs.seam;
 
 import com.google.gson.Gson;
-import com.google.gson.Strictness;
 import com.google.gson.reflect.TypeToken;
-import com.google.gson.stream.JsonReader;
-import com.google.gson.stream.JsonToken;
 import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.StringReader;
 import java.lang.reflect.Type;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
@@ -18,12 +13,10 @@ import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters;
 import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters;
 import org.bouncycastle.crypto.signers.Ed25519Signer;
@@ -68,9 +61,8 @@ public final class SeamCrypto {
       String rationaleRef) {}
 
   /**
-   * The commitment fields {@code seam-commitment-digest:v3} binds. {@code committer} may be {@code
-   * null} (hashed as empty). {@code supersedes} is {@code null} when ABSENT, which v3 frames as
-   * {@code 0x00} — a different digest from a present empty string ({@code 0x01 ‖ F("")}). Field 8 resolves from {@code explanation} (the
+   * The commitment fields {@code seam-commitment-digest:v2} binds. {@code supersedes} and {@code
+   * committer} may be {@code null} (hashed as empty). Field 8 resolves from {@code explanation} (the
    * entries) and/or {@code explanationDigest} (the 32 published bytes) — see {@link #verifyTct}.
    */
   public record Commitment(
@@ -139,34 +131,16 @@ public final class SeamCrypto {
     throw new IllegalArgumentException("unsupported AID form: " + aid);
   }
 
-  /** Domain tag of the PoP admission {@code message_id}: {@code derivedUuid(tag, nonce_ascii)}. */
-  public static final String POP_MESSAGE_ID_TAG = "seam-pop-mid-v1";
-
-  /**
-   * Deterministic, v4-shaped UUID: the first 16 bytes of {@code SHA-256(tag ‖ 0x00 ‖ input)} with the
-   * version nibble set to 4 and the variant bits to {@code 10}, lowercase and hyphenated. The {@code
-   * 0x00} separates tag from input, so no (tag, input) pair collides with another by shifting bytes
-   * across the boundary. Pinned by {@code derived_uuid} in {@code conformance/vectors.json}.
-   */
-  public static String derivedUuid(String tag, byte[] input) {
-    ByteArrayOutputStream pre = new ByteArrayOutputStream();
-    pre.writeBytes(tag.getBytes(StandardCharsets.UTF_8));
-    pre.write(0);
-    pre.writeBytes(input);
-    byte[] h = sha256(pre.toByteArray());
-    h[6] = (byte) ((h[6] & 0x0f) | 0x40);
-    h[8] = (byte) ((h[8] & 0x3f) | 0x80);
+  /** Deterministic (no-RNG) message id: first 16 bytes of SHA-256("seam-pop-mid"||nonce) as a UUID. */
+  private static String popMessageId(String popNonce) {
+    byte[] h = sha256(concat("seam-pop-mid".getBytes(StandardCharsets.UTF_8),
+        popNonce.getBytes(StandardCharsets.US_ASCII)));
     StringBuilder sb = new StringBuilder(36);
     for (int i = 0; i < 16; i++) {
       if (i == 4 || i == 6 || i == 8 || i == 10) sb.append('-');
       sb.append(String.format("%02x", h[i] & 0xff));
     }
     return sb.toString();
-  }
-
-  /** The admission {@code message_id}: {@code derivedUuid("seam-pop-mid-v1", nonce_ascii)}. */
-  public static String popMessageId(String popNonce) {
-    return derivedUuid(POP_MESSAGE_ID_TAG, popNonce.getBytes(StandardCharsets.US_ASCII));
   }
 
   /** Build the pinned-key admission presentation the Seam server verifies. */
@@ -212,7 +186,7 @@ public final class SeamCrypto {
    *
    * @throws IllegalArgumentException on an unknown kind or a non-canonical confidence (NaN, ±inf,
    *     outside {@code [0.0, 1.0]}, or {@code -0.0}) — refused rather than hashed. Normative: {@code
-   *     seam-runtime/docs/specs/seam-commitment-digest.v3.md}.
+   *     seam-runtime/docs/specs/seam-commitment-digest.v2.md}.
    */
   public static byte[] explanationDigest(List<ExplanationEntry> entries) {
     ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -276,25 +250,11 @@ public final class SeamCrypto {
     return computed;
   }
 
-  /** Domain tag of the commitment digest. */
-  public static final String COMMITMENT_DIGEST_DOMAIN = "seam-commitment-digest:v3";
-
-  /** The one grant a commitment self-attestation carries. */
-  public static final String ATTESTATION_GRANT = "aitp.attestation";
-
-  /** The {@code ext} namespace the commitment statement rides under. */
-  public static final String COMMITMENT_EXT_NAMESPACE = "com.zer07labs.seam";
-
-  /** The statement {@code type} inside {@link #COMMITMENT_EXT_NAMESPACE}. */
-  public static final String COMMITMENT_STATEMENT = "seam:commitment";
-
   /**
-   * {@code seam-commitment-digest:v3} (hex): SHA-256 over a <b>length-prefixed</b> framing of a domain
+   * {@code seam-commitment-digest:v2} (hex): SHA-256 over a <b>length-prefixed</b> framing of a domain
    * tag plus the commitment fields — each field preceded by its 8-byte big-endian length. Mirrors the
-   * runtime byte-for-byte, and mirrors the Go/Kotlin/Python/TypeScript shims. v2 is deleted, not
-   * dual-verified. v3's one framing change: {@code supersedes} carries a presence byte — {@code 0x00}
-   * when absent ({@code null}), {@code 0x01 ‖ F(s)} when present — so "supersedes nothing" and
-   * "supersedes the empty id" are no longer the same digest.
+   * runtime byte-for-byte, and mirrors the Go/Kotlin/Python/TypeScript shims. v1 is deleted, not
+   * dual-verified.
    *
    * <p><b>The length prefixes are not decoration and must never be "simplified" to a separator.</b>
    * The fields are arbitrary text that may itself contain NUL — UTF-8 permits U+0000, and it
@@ -319,34 +279,27 @@ public final class SeamCrypto {
    *     #commitmentExplanationDigest}).
    */
   static String seamCommitmentDigest(Commitment c) {
-    byte[] explanation = commitmentExplanationDigest(c);
     ByteArrayOutputStream h = new ByteArrayOutputStream();
-    be64Frame(h, COMMITMENT_DIGEST_DOMAIN.getBytes(StandardCharsets.UTF_8));
-    be64Frame(h, nz(c.id()));
-    be64Frame(h, nz(c.action()));
-    be64Frame(h, nz(c.authority()));
-    if (c.supersedes() == null) {
-      h.write(0x00);
-    } else {
-      h.write(0x01);
-      be64Frame(h, c.supersedes().getBytes(StandardCharsets.UTF_8));
-    }
-    be64Frame(h, nz(c.authMethod()));
-    be64Frame(h, nz(c.trustBasis()));
-    be64Frame(h, nz(c.committer()));
-    be64Frame(h, explanation);
+    byte[][] fields = {
+      "seam-commitment-digest:v2".getBytes(StandardCharsets.UTF_8),
+      nz(c.id()),
+      nz(c.action()),
+      nz(c.authority()),
+      nz(c.supersedes()),
+      nz(c.authMethod()),
+      nz(c.trustBasis()),
+      nz(c.committer()),
+      commitmentExplanationDigest(c)
+    };
+    for (byte[] f : fields) be64Frame(h, f);
     return hex(sha256(h.toByteArray()));
   }
 
   /**
    * Independently verify a sealed commitment's rooted TCT — zero server trust, stock crypto only.
-   * Checks the EdDSA JWS ({@code typ} {@code aitp-tct+jwt}) against the pinned issuer AID's key; the
-   * self-issued claims ({@code iss == sub == aud == issuerAid}); {@code exp}; that {@code grants} is
-   * exactly {@code ["aitp.attestation"]}; and that {@code ext} is exactly {@code
-   * {"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":<hex>}}} with the hex equal to
-   * the recomputed {@code seam-commitment-digest:v3} of this exact commitment (decided content,
-   * committer, and sealed explanation). A header or payload whose JSON repeats an object key at any
-   * depth is refused: Gson would keep one of the two, and another parser might keep the other. Any malformed/forged input fails closed (returns {@code false}), never throws
+   * Checks the EdDSA JWS against the issuer AID's key, the self-issued claims, and that the {@code
+   * seam-commitment-digest:v2} grant matches this exact commitment (decided content, committer, and
+   * sealed explanation). Any malformed/forged input fails closed (returns {@code false}), never throws
    * — including explanation entries that disagree with the published digest, an unknown kind, or a
    * non-canonical confidence.
    */
@@ -365,12 +318,10 @@ public final class SeamCrypto {
           b64urlDecode(parts[2]))) {
         return false;
       }
-      String headerJson = new String(b64urlDecode(parts[0]), StandardCharsets.UTF_8);
-      String payloadJson = new String(b64urlDecode(parts[1]), StandardCharsets.UTF_8);
-      if (hasDuplicateKey(headerJson) || hasDuplicateKey(payloadJson)) return false;
-      Map<String, Object> header = GSON.fromJson(headerJson, MAP);
-      Map<String, Object> payload = GSON.fromJson(payloadJson, MAP);
-      if (header == null || payload == null) return false;
+      Map<String, Object> header =
+          GSON.fromJson(new String(b64urlDecode(parts[0]), StandardCharsets.UTF_8), MAP);
+      Map<String, Object> payload =
+          GSON.fromJson(new String(b64urlDecode(parts[1]), StandardCharsets.UTF_8), MAP);
       if (!"EdDSA".equals(header.get("alg")) || !"aitp-tct+jwt".equals(header.get("typ"))) {
         return false;
       }
@@ -381,61 +332,15 @@ public final class SeamCrypto {
       }
       Object exp = payload.get("exp");
       if (!(exp instanceof Number) || nowS >= ((Number) exp).longValue()) return false;
-      if (!(payload.get("grants") instanceof List<?> grants)
-          || grants.size() != 1
-          || !ATTESTATION_GRANT.equals(grants.get(0))) {
-        return false;
+      String want = "seam-commitment-digest:" + seamCommitmentDigest(c);
+      Object grants = payload.get("grants");
+      if (!(grants instanceof List<?> list)) return false;
+      for (Object g : list) {
+        if (want.equals(g)) return true;
       }
-      if (!(payload.get("ext") instanceof Map<?, ?> ext)
-          || ext.size() != 1
-          || !(ext.get(COMMITMENT_EXT_NAMESPACE) instanceof Map<?, ?> stmt)
-          || stmt.size() != 2
-          || !COMMITMENT_STATEMENT.equals(stmt.get("type"))
-          || !(stmt.get("commitment_digest") instanceof String digest)) {
-        return false;
-      }
-      return digest.equals(seamCommitmentDigest(c));
+      return false;
     } catch (RuntimeException e) {
       return false;
-    }
-  }
-
-  /**
-   * True when {@code json} repeats an object key at any depth — or is not a single well-formed JSON
-   * value, which fails closed the same way.
-   */
-  static boolean hasDuplicateKey(String json) {
-    try (JsonReader r = new JsonReader(new StringReader(json))) {
-      r.setStrictness(Strictness.STRICT);
-      return scanForDuplicate(r) || r.peek() != JsonToken.END_DOCUMENT;
-    } catch (IOException | RuntimeException e) {
-      return true;
-    }
-  }
-
-  private static boolean scanForDuplicate(JsonReader r) throws IOException {
-    switch (r.peek()) {
-      case BEGIN_OBJECT -> {
-        r.beginObject();
-        Set<String> seen = new HashSet<>();
-        while (r.hasNext()) {
-          if (!seen.add(r.nextName()) || scanForDuplicate(r)) return true;
-        }
-        r.endObject();
-        return false;
-      }
-      case BEGIN_ARRAY -> {
-        r.beginArray();
-        while (r.hasNext()) {
-          if (scanForDuplicate(r)) return true;
-        }
-        r.endArray();
-        return false;
-      }
-      default -> {
-        r.skipValue();
-        return false;
-      }
     }
   }
 
@@ -537,6 +442,13 @@ public final class SeamCrypto {
   // ── helpers ─────────────────────────────────────────────────────────────────────────────────
   private static byte[] nz(String s) {
     return (s == null ? "" : s).getBytes(StandardCharsets.UTF_8);
+  }
+
+  private static byte[] concat(byte[] a, byte[] b) {
+    byte[] out = new byte[a.length + b.length];
+    System.arraycopy(a, 0, out, 0, a.length);
+    System.arraycopy(b, 0, out, a.length, b.length);
+    return out;
   }
 
   private static String hex(byte[] b) {

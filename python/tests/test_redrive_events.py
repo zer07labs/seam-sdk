@@ -92,7 +92,7 @@ def test_redrive_round_trip_live(tmp_path):
         agent = Agent(bytes([42] * 32))
         dec = data.run_decision(
             agent,
-            "redrive-1-sid-0123456789abcdef",
+            "redrive-1",
             ["fraud-v3", "risk-v2"],
             [("fraud-v3", "BLOCK"), ("risk-v2", "BLOCK")],
         )

@@ -36,7 +36,7 @@ pub struct SeamEventPb {
     #[prost(bytes = "vec", tag = "12")]
     pub prev_checksum: Vec<u8>,
     /// tag 13 — the `DECISION_SEALED` payload. Read ONLY under `--issuer` (design-a, Phase 4), to
-    /// recompute the record's digest-v4 from its structural columns and catch a payload rewrite. A verifier
+    /// recompute the record's digest-v2 from its structural columns and catch a payload rewrite. A verifier
     /// otherwise has no business decoding a decision's payload — this is the deliberate, `--issuer`-gated
     /// widening the plan prices.
     #[prost(message, optional, tag = "13")]
@@ -165,10 +165,10 @@ pub struct AuthorizeEvaluatedPb {
     pub subject_digests: Vec<String>,
 }
 
-/// The `DECISION_SEALED` payload (envelope tag 13) — the structural columns the digest-v4 recompute covers,
+/// The `DECISION_SEALED` payload (envelope tag 13) — the structural columns the digest-v2 recompute covers,
 /// plus `ciphertext_digest` (tag 10, the one input a stream consumer does not otherwise hold). Transcribed
 /// from `seam-event.v1.md` §DECISION_SEALED + §Record digest. `mode`/`policy_version`/`supersedes` are
-/// `optional` — proto3 explicit presence — because the v4 framing distinguishes `None` from `Some("")`.
+/// `optional` — proto3 explicit presence — because the v2 framing distinguishes `None` from `Some("")`.
 #[derive(Clone, PartialEq, Message)]
 pub struct DecisionSealedPb {
     #[prost(string, tag = "1")]
@@ -189,11 +189,11 @@ pub struct DecisionSealedPb {
     pub sealed_at: u64,
     #[prost(uint32, tag = "9")]
     pub schema_version: u32,
-    /// tag 10 — `SHA256(ciphertext)`. Mandatory on v4. A record missing it is a strip/downgrade
-    /// attack, refused under `--issuer`.
+    /// tag 10 — `SHA256(ciphertext)`. Mandatory on v2; absent (empty) on v1. A v2 record missing it is a
+    /// strip/downgrade attack, refused under `--issuer`.
     #[prost(bytes = "vec", tag = "10")]
     pub ciphertext_digest: Vec<u8>,
-    /// tags 11/12/13 (B3) — 32-byte sub-digests. 11 and 12 are MANDATORY on `schema_version = 4`;
+    /// tags 11/12/13 (B3) — 32-byte sub-digests. 11 and 12 are MANDATORY on `schema_version = 3`;
     /// 13 is genuinely optional (absent means no policy was bound, today's common case).
     ///
     /// **SINGULAR, not `optional` — this said the opposite until seam-runtime#435 settled it.** The
@@ -217,21 +217,9 @@ pub struct DecisionSealedPb {
     /// See tag 11 for the cardinality rule these three share.
     #[prost(bytes = "vec", tag = "12")]
     pub participation_digest: Vec<u8>,
-    /// See tag 11. Absent (`len == 0`) is legitimate and frames as `opt(None)` in the v4 preimage.
+    /// See tag 11. Absent (`len == 0`) is legitimate and frames as `opt(None)` in the v3 preimage.
     #[prost(bytes = "vec", tag = "13")]
     pub policy_rules_digest: Vec<u8>,
-    /// tags 14-17 (P7, record digest v4) — all MANDATORY on `schema_version = 4`, and singular for
-    /// the same reason as tags 11-13: `len == 0` is absent, and absent is a strip. 14 is the
-    /// canonical PascalCase classification, 15 the 32-byte `participants_digest`, 16 the keyed
-    /// `trust_basis_commitment` string, 17 the plain `auth_method` label.
-    #[prost(string, tag = "14")]
-    pub classification: String,
-    #[prost(bytes = "vec", tag = "15")]
-    pub participants_digest: Vec<u8>,
-    #[prost(string, tag = "16")]
-    pub trust_basis_commitment: String,
-    #[prost(string, tag = "17")]
-    pub auth_method: String,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -397,16 +385,6 @@ pub struct DecisionSealedJson {
     pub participation_digest: Option<String>,
     #[serde(default)]
     pub policy_rules_digest: Option<String>,
-    /// Tags 14-17 (P7). Strings are carried as-is; `participants_digest` is base64 (STANDARD).
-    /// Missing and `""` both mean absent, as on the wire.
-    #[serde(default)]
-    pub classification: Option<String>,
-    #[serde(default)]
-    pub participants_digest: Option<String>,
-    #[serde(default)]
-    pub trust_basis_commitment: Option<String>,
-    #[serde(default)]
-    pub auth_method: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -445,7 +423,7 @@ pub struct Event {
     pub cert: Option<Cert>,
     /// The `CHAIN_HEAD_ATTESTATION` payload, when this event is one. `None` otherwise.
     pub attestation: Option<Attestation>,
-    /// The `DECISION_SEALED` payload — read only for the digest-v4 recompute under `--issuer`.
+    /// The `DECISION_SEALED` payload — read only for the digest-v2 recompute under `--issuer`.
     pub decision: Option<Decision>,
     /// The canonical bytes this event decoded from (or re-encodes to) — the dedup identity.
     pub bytes: Vec<u8>,
@@ -472,19 +450,13 @@ pub struct Decision {
     pub schema_version: u32,
     pub ciphertext_digest: Vec<u8>,
     /// Tags 11/12/13 (B3). Absence is carried by LENGTH, not by `Option`: empty means "not on the
-    /// wire", per the spec's total `len == 0` mapping (§"Presence on the wire"). `record_digest_v4`
-    /// still depends on absent-vs-present — absent on a v4 record is a strip and is refused, while a
+    /// wire", per the spec's total `len == 0` mapping (§"Presence on the wire"). `record_digest_v3`
+    /// still depends on absent-vs-present — absent on a v3 record is a strip and is refused, while a
     /// 32-byte digest of an empty participation list is a legitimate value — but the empty digest is
     /// out of these slots' domain entirely, so there is no third state for `Option` to represent.
     pub context_digest: Vec<u8>,
     pub participation_digest: Vec<u8>,
     pub policy_rules_digest: Vec<u8>,
-    /// Tags 14-17 (P7, v4). Absence is again carried by LENGTH: empty is "not on the wire", and on a
-    /// v4 record every one of the four is mandatory, so empty is a strip.
-    pub classification: String,
-    pub participants_digest: Vec<u8>,
-    pub trust_basis_commitment: String,
-    pub auth_method: String,
 }
 
 #[derive(Clone)]
@@ -703,7 +675,7 @@ impl Event {
                     // consumers read this rather than the wire — if the two projections disagreed
                     // about absence they would recompute different digests from the same record.
                     // The strip signal is NOT lost by collapsing them: empty IS the absent signal,
-                    // and `v4_required_digest` refuses it for tags 11/12/15.
+                    // and `v3_required` refuses it for tags 11/12.
                     context_digest: p
                         .context_digest
                         .as_deref()
@@ -722,15 +694,6 @@ impl Event {
                         .map(b64)
                         .transpose()?
                         .unwrap_or_default(),
-                    classification: p.classification.unwrap_or_default(),
-                    participants_digest: p
-                        .participants_digest
-                        .as_deref()
-                        .map(b64)
-                        .transpose()?
-                        .unwrap_or_default(),
-                    trust_basis_commitment: p.trust_basis_commitment.unwrap_or_default(),
-                    auth_method: p.auth_method.unwrap_or_default(),
                 })
             });
             let ev = Event {
@@ -841,10 +804,6 @@ impl Event {
                 context_digest: p.context_digest,
                 participation_digest: p.participation_digest,
                 policy_rules_digest: p.policy_rules_digest,
-                classification: p.classification,
-                participants_digest: p.participants_digest,
-                trust_basis_commitment: p.trust_basis_commitment,
-                auth_method: p.auth_method,
             }),
             bytes: raw,
         }
@@ -881,18 +840,13 @@ impl Event {
                 ciphertext_digest: d.ciphertext_digest.clone(),
                 // These MUST be carried. Identity is the re-encoded payload, and it is what collapses
                 // the same event arriving as JSON on a webhook and as protobuf on a relay into one
-                // chain link. Drop a digest column here and two v4 records differing ONLY in
+                // chain link. Drop the three new fields here and two v3 records differing ONLY in
                 // `participation_digest` re-encode to identical bytes — the dedup that exists to
                 // prevent a false forgery alarm would start erasing evidence instead. This is the one
-                // omission in the wire work that fails silently rather than loudly.
+                // omission in the v3 wire work that fails silently rather than loudly.
                 context_digest: d.context_digest.clone(),
                 participation_digest: d.participation_digest.clone(),
                 policy_rules_digest: d.policy_rules_digest.clone(),
-                // Tags 14-17 belong to the dedup identity for the same reason.
-                classification: d.classification.clone(),
-                participants_digest: d.participants_digest.clone(),
-                trust_basis_commitment: d.trust_basis_commitment.clone(),
-                auth_method: d.auth_method.clone(),
             }),
             // The FULL payload, not just `action`: identity narrowed to one field would dedup two audit
             // entries that differ only in subject/reason — two events collapsed into one, evidence gone.
@@ -1432,7 +1386,7 @@ mod tests {
         );
     }
 
-    /// The v4 digest columns (tags 11-17) must survive BOTH transports, land in the slots their tag names,
+    /// The v3 columns (tags 11/12/13) must survive BOTH transports, land in the slots their tag names,
     /// and canonicalize to the same identity.
     ///
     /// The slot assertions are the point. `context_digest` and `participation_digest` are adjacent,
@@ -1441,12 +1395,11 @@ mod tests {
     /// a direct check can see it — and a swap on the PROTOBUF arm in particular is invisible to every
     /// stream-level test in this crate, because those all synthesize the JSON projection.
     #[test]
-    fn the_v4_columns_survive_both_transports_and_land_in_the_slots_their_tags_name() {
+    fn the_v3_columns_survive_both_transports_and_land_in_the_slots_their_tags_name() {
         let ctx = vec![0x11u8; 32];
         let part = vec![0x22u8; 32];
         let rules = vec![0x33u8; 32];
         let cipher = vec![0x44u8; 32];
-        let roster = vec![0x55u8; 32];
 
         let pb = SeamEventPb {
             schema_version: "seam-event.v1".into(),
@@ -1457,7 +1410,7 @@ mod tests {
             namespace: "fraud".into(),
             kind: "DECISION_SEALED".into(),
             payload: Some(DecisionSealedPb {
-                decision_id: "dec:v4".into(),
+                decision_id: "dec:v3".into(),
                 tenant: "acme".into(),
                 namespace: "fraud".into(),
                 mode: None,
@@ -1465,15 +1418,11 @@ mod tests {
                 outcome: "Resolved".into(),
                 supersedes: None,
                 sealed_at: 1_700_000_000_000,
-                schema_version: 4,
+                schema_version: 3,
                 ciphertext_digest: cipher.clone(),
                 context_digest: ctx.clone(),
                 participation_digest: part.clone(),
                 policy_rules_digest: rules.clone(),
-                classification: "Internal".into(),
-                participants_digest: roster.clone(),
-                trust_basis_commitment: "hmac-sha256:k1:ab".into(),
-                auth_method: "aitp-pinned-handshake".into(),
             }),
             ..Default::default()
         };
@@ -1482,24 +1431,18 @@ mod tests {
         assert_eq!(d.context_digest, ctx, "tag 11");
         assert_eq!(d.participation_digest, part, "tag 12");
         assert_eq!(d.policy_rules_digest, rules, "tag 13");
-        assert_eq!(d.classification, "Internal", "tag 14");
-        assert_eq!(d.participants_digest, roster, "tag 15");
-        assert_eq!(d.trust_basis_commitment, "hmac-sha256:k1:ab", "tag 16");
-        assert_eq!(d.auth_method, "aitp-pinned-handshake", "tag 17");
 
         let json = format!(
             r#"{{"schema_version":"seam-event.v1","event_id":"d1#7","seq":7,"occurred_at":1700,
             "tenant":"acme","namespace":"fraud","kind":"DECISION_SEALED","prev_checksum":"",
-            "payload":{{"decision_id":"dec:v4","tenant":"acme","namespace":"fraud",
-            "outcome":"Resolved","sealed_at":1700000000000,"schema_version":4,
+            "payload":{{"decision_id":"dec:v3","tenant":"acme","namespace":"fraud",
+            "outcome":"Resolved","sealed_at":1700000000000,"schema_version":3,
             "ciphertext_digest":"{}","context_digest":"{}","participation_digest":"{}",
-            "policy_rules_digest":"{}","classification":"Internal","participants_digest":"{}",
-            "trust_basis_commitment":"hmac-sha256:k1:ab","auth_method":"aitp-pinned-handshake"}}}}"#,
+            "policy_rules_digest":"{}"}}}}"#,
             b64e(&cipher),
             b64e(&ctx),
             b64e(&part),
-            b64e(&rules),
-            b64e(&roster)
+            b64e(&rules)
         )
         .replace('\n', "");
         let from_json = Event::parse(&json).expect("JSON transport must parse");
@@ -1507,18 +1450,11 @@ mod tests {
         assert_eq!(j.context_digest, ctx, "tag 11 (JSON)");
         assert_eq!(j.participation_digest, part, "tag 12 (JSON)");
         assert_eq!(j.policy_rules_digest, rules, "tag 13 (JSON)");
-        assert_eq!(j.classification, "Internal", "tag 14 (JSON)");
-        assert_eq!(j.participants_digest, roster, "tag 15 (JSON)");
-        assert_eq!(
-            j.trust_basis_commitment, "hmac-sha256:k1:ab",
-            "tag 16 (JSON)"
-        );
-        assert_eq!(j.auth_method, "aitp-pinned-handshake", "tag 17 (JSON)");
 
         assert_eq!(
             from_pb.bytes, from_json.bytes,
-            "one v4 event, two transports — the canonical identity must collapse them, which it can \
-             only do if `with_identity` carries every digest column"
+            "one v3 event, two transports — the canonical identity must collapse them, which it can \
+             only do if `with_identity` carries the three new columns"
         );
     }
 
@@ -1534,13 +1470,13 @@ mod tests {
     /// old reading actually cost was worse than a diagnostic: it made a zero-length tag 13 — a
     /// legitimate absent policy — a MALFORMED refusal, failing records the contract calls valid.
     #[test]
-    fn the_v4_columns_read_a_missing_key_and_an_empty_one_as_the_same_absence() {
+    fn the_v3_columns_read_a_missing_key_and_an_empty_one_as_the_same_absence() {
         let parse = |field: &str| {
             Event::parse(&format!(
                 r#"{{"schema_version":"seam-event.v1","event_id":"d1#7","seq":7,
-                   "kind":"DECISION_SEALED","prev_checksum":"","payload":{{"decision_id":"dec:v4",
+                   "kind":"DECISION_SEALED","prev_checksum":"","payload":{{"decision_id":"dec:v3",
                    "tenant":"acme","namespace":"fraud","outcome":"Resolved","sealed_at":1,
-                   "schema_version":4{field}}}}}"#
+                   "schema_version":3{field}}}}}"#
             ))
             .expect("parse")
             .decision

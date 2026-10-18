@@ -13,9 +13,8 @@
 // `recordDigestV3` already refused all of this via `uintSlot` (then named `v3Uint`), and its
 // docstring already explained why — "an alias, not an error". The argument is about `DataView` and
 // IEEE doubles, neither of which knows which framing it is serving, so it always applied to v2 and
-// to the attestation framing too. This phase routed them through the same function rather than
-// writing a second copy of the rule. v2 and v3 are since deleted (P7); the record-digest assertions
-// below now run against `recordDigestV4`, which routes `sealedAt` through that same `uintSlot`.
+// to the attestation framing too. This phase routes them through the same function rather than
+// writing a second copy of the rule.
 //
 // The assertions below deliberately pin the ALIAS, not just the throw: a test that only checks
 // "out-of-range throws" would still pass against an implementation that had quietly started
@@ -29,12 +28,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 
-import {
-  jcsCanonicalize,
-  recordDigestV4,
-  UnsupportedRecordDigestVersion,
-  verifyChainHeadAttestation,
-} from "../src/crypto.js";
+import { jcsCanonicalize, recordDigestV2, verifyChainHeadAttestation } from "../src/crypto.js";
 
 // The runtime's committed KAT — the same source conformance.test.ts reads, so a runtime regen
 // updates one file and reddens both rather than leaving a hand-copied literal here silently stale.
@@ -54,93 +48,77 @@ const vectors = JSON.parse(
       digest_schema: number;
     };
   };
-  record_digest_v4: { inputs: Record<string, any>; digest_hex: string };
 };
 
 const hex = (u: Uint8Array) => Buffer.from(u).toString("hex");
 
-const V4 = vectors.record_digest_v4;
-const b = (h: string) => Buffer.from(h, "hex");
 const BASE = {
-  decisionId: V4.inputs.decision_id as string,
-  tenant: V4.inputs.tenant as string,
-  namespace: V4.inputs.namespace as string,
-  ciphertextDigest: b(V4.inputs.ciphertext_digest_hex),
-  outcome: V4.inputs.outcome as string,
-  mode: V4.inputs.mode as string | null,
-  policyVersion: V4.inputs.policy_version as string | null,
-  supersedes: V4.inputs.supersedes as string | null,
-  contextDigest: b(V4.inputs.context_digest_hex),
-  participationDigest: b(V4.inputs.participation_digest_hex),
-  policyRulesDigest: b(V4.inputs.policy_rules_digest_hex),
-  classification: V4.inputs.classification as string,
-  participantsDigest: b(V4.inputs.participants_digest_hex),
-  trustBasisCommitment: V4.inputs.trust_basis_commitment as string,
-  authMethod: V4.inputs.auth_method as string,
+  decisionId: "d",
+  tenant: "t",
+  namespace: "n",
+  ciphertextDigest: new Uint8Array(32),
+  outcome: "OK",
+  mode: null,
+  policyVersion: null,
+  supersedes: null,
 };
 
-// The control: the runtime's own KAT. If it moves, a range check changed a digest it still accepts —
-// which it must not: it narrows what is ACCEPTED, and touches no emitted byte of anything accepted.
-const SEALED_AT = BigInt(V4.inputs.sealed_at);
+// Measured against the pre-fix implementation. If either moves, this phase changed a digest — which
+// it must not: it narrows what is ACCEPTED, and touches no emitted byte of anything still accepted.
+const FROZEN_SEALED_AT_5 = "b566fdea56b8487bc5ebc26d1d6585339e9ab2a3a499247bd7230e4f20f05d7f";
 
-test("recordDigestV4: the u64 wrap that would alias 2^64+n onto n is refused", () => {
+test("recordDigestV2: the u64 wrap that aliased 2^64+5 onto 5 is refused", () => {
   assert.equal(
-    hex(recordDigestV4({ ...BASE, sealedAt: SEALED_AT })),
-    V4.digest_hex,
-    "an in-range value moved — a range check must not change any digest it still accepts",
+    hex(recordDigestV2({ ...BASE, sealedAt: 5n })),
+    FROZEN_SEALED_AT_5,
+    "an in-range value moved — this phase must not change any digest it still accepts",
   );
   assert.throws(
-    () => recordDigestV4({ ...BASE, sealedAt: (1n << 64n) + SEALED_AT }),
+    () => recordDigestV2({ ...BASE, sealedAt: (1n << 64n) + 5n }),
     RangeError,
-    "2^64+n reaches a digest; through a bare setBigUint64 it would be the SAME digest as n",
+    "2^64+5 still reaches a digest; before this phase it reached the SAME digest as 5",
   );
   // The boundary itself, from both sides.
-  assert.throws(() => recordDigestV4({ ...BASE, sealedAt: 1n << 64n }), RangeError);
-  assert.equal(typeof hex(recordDigestV4({ ...BASE, sealedAt: (1n << 64n) - 1n })), "string");
-  assert.throws(() => recordDigestV4({ ...BASE, sealedAt: -1n }), RangeError);
+  assert.throws(() => recordDigestV2({ ...BASE, sealedAt: 1n << 64n }), RangeError);
+  assert.equal(typeof hex(recordDigestV2({ ...BASE, sealedAt: (1n << 64n) - 1n })), "string");
+  assert.throws(() => recordDigestV2({ ...BASE, sealedAt: -1n }), RangeError);
 });
 
-test("recordDigestV4: number and bigint spellings of the same integer agree", () => {
+test("recordDigestV2: number and bigint spellings of the same integer agree", () => {
   assert.equal(
-    hex(recordDigestV4({ ...BASE, sealedAt: 5 })),
-    hex(recordDigestV4({ ...BASE, sealedAt: 5n })),
+    hex(recordDigestV2({ ...BASE, sealedAt: 5 })),
+    hex(recordDigestV2({ ...BASE, sealedAt: 5n })),
     "5 and 5n must be the same value, not two",
   );
   // -0 is a real JS value and String(-0) is "0"; it must not become a second spelling of zero.
   assert.equal(
-    hex(recordDigestV4({ ...BASE, sealedAt: -0 })),
-    hex(recordDigestV4({ ...BASE, sealedAt: 0 })),
+    hex(recordDigestV2({ ...BASE, sealedAt: -0 })),
+    hex(recordDigestV2({ ...BASE, sealedAt: 0 })),
   );
 });
 
-test("recordDigestV4: schemaVersion is a formula selector, not a u32 to wrap", () => {
-  // Under v2 the u32 slot was range-checked so 2+2^32 could not alias 2. Under v4 the gate is
-  // stronger: anything but exactly 4 is unsupported before a byte is framed, so no spelling of
-  // another value can reach the u32 slot at all.
-  assert.throws(
-    () => recordDigestV4({ ...BASE, sealedAt: 1n, schemaVersion: 4 + 2 ** 32 }),
-    UnsupportedRecordDigestVersion,
-  );
+test("recordDigestV2: the u32 wrap one slot over, on schemaVersion", () => {
+  assert.throws(() => recordDigestV2({ ...BASE, sealedAt: 1n, schemaVersion: 2 + 2 ** 32 }), RangeError);
   assert.equal(
-    hex(recordDigestV4({ ...BASE, sealedAt: 1n })),
-    hex(recordDigestV4({ ...BASE, sealedAt: 1n, schemaVersion: 4 })),
-    "the default schemaVersion is 4 and framed identically",
+    hex(recordDigestV2({ ...BASE, sealedAt: 1n })),
+    hex(recordDigestV2({ ...BASE, sealedAt: 1n, schemaVersion: 2 })),
+    "the default schemaVersion is still 2 and still framed identically",
   );
 });
 
-test("recordDigestV4: a number above 2^53 is refused", () => {
-  // Above 2^53 the value hashed is the nearest double rather than the integer the caller meant, so
-  // Python (exact ints) would disagree. bigint is how you say it.
-  assert.throws(() => recordDigestV4({ ...BASE, sealedAt: 2 ** 60 }), RangeError);
-  assert.equal(typeof hex(recordDigestV4({ ...BASE, sealedAt: 2n ** 60n })), "string");
+test("recordDigestV2: a number above 2^53 is refused, matching v3", () => {
+  // A deliberate NARROWING, not a byte change. Above 2^53 the value hashed is the nearest double
+  // rather than the integer the caller meant, so Python (exact ints) would disagree — the same
+  // cross-language argument that motivates the whole phase. bigint is how you say it.
+  assert.throws(() => recordDigestV2({ ...BASE, sealedAt: 2 ** 60 }), RangeError);
+  assert.equal(typeof hex(recordDigestV2({ ...BASE, sealedAt: 2n ** 60n })), "string");
 });
 
-test("recordDigestV4: proto3 JSON's stringified int64 and a boolean are refused, not coerced", () => {
+test("recordDigestV2: proto3 JSON's stringified int64 is refused, not coerced", () => {
   // `BigInt("5")` is `5n`, so a coerced string would ALIAS a legitimate caller's digest. proto3 JSON
   // renders int64 as a string, so anyone feeding this from JSON.parse of a protobuf payload lands
-  // here on their first record. `true` is Python's `bool`-is-an-`int` trap; both languages refuse it.
-  assert.throws(() => recordDigestV4({ ...BASE, sealedAt: "5" as unknown as bigint }), TypeError);
-  assert.throws(() => recordDigestV4({ ...BASE, sealedAt: true as unknown as bigint }), TypeError);
+  // here on their first record.
+  assert.throws(() => recordDigestV2({ ...BASE, sealedAt: "5" as unknown as bigint }), TypeError);
 });
 
 test("jcsCanonicalize: a lone surrogate is refused in a KEY, as it already was in a value", () => {

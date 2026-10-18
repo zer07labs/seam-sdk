@@ -41,32 +41,13 @@ func aidToPubkey(aid string) ([]byte, error) {
 	return nil, fmt.Errorf("unsupported AID form: %q", aid)
 }
 
-// DerivedUUID is the runtime's derived-UUID rule (seam-runtime docs/specs/authorize.v1.md, P9):
-//
-//	h  = SHA-256(tag || 0x00 || input)
-//	id = h[0..16] with h[6] = (h[6] & 0x0f) | 0x40 and h[8] = (h[8] & 0x3f) | 0x80
-//
-// returned in the lowercase hyphenated form the wire carries. One primitive serves every derived id —
-// the PoP message_id and the commitment TCT jti. Pinned by conformance/vectors.json's derived_uuid
-// block.
-func DerivedUUID(tag string, input []byte) string {
-	buf := make([]byte, 0, len(tag)+1+len(input))
-	buf = append(buf, tag...)
-	buf = append(buf, 0)
-	buf = append(buf, input...)
-	sum := sha256.Sum256(buf)
+// popMessageID is the deterministic (no-RNG) message id: the first 16 bytes of
+// SHA-256("seam-pop-mid" || pop_nonce), formatted as a hyphenated UUID (raw bytes, no version munging).
+func popMessageID(popNonce string) string {
+	sum := sha256.Sum256(append([]byte("seam-pop-mid"), []byte(popNonce)...))
 	b := sum[:16]
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
-
-// PopMessageIDTag is the domain tag of the PoP message_id derivation (P9).
-const PopMessageIDTag = "seam-pop-mid-v1"
-
-// PopMessageID is the admission message_id: DerivedUUID("seam-pop-mid-v1", pop_nonce_ascii). The input
-// is the nonce's base64url text exactly as sent, not its decoded bytes.
-func PopMessageID(popNonce string) string { return DerivedUUID(PopMessageIDTag, []byte(popNonce)) }
 
 // Descriptor is the pinned-key credential inside a presentation.
 type Descriptor struct {
@@ -88,14 +69,13 @@ type Presentation struct {
 // Commitment is the sealed-decision commitment whose rooted TCT is verified.
 //
 // Committer, and the Explanation entries and/or the published ExplanationDigest, are bound by
-// `seam-commitment-digest:v3` (see seamCommitmentDigest). A nil Explanation means the entries are not
+// `seam-commitment-digest:v2` (see seamCommitmentDigest). A nil Explanation means the entries are not
 // held (only the published digest, if any, is used); a non-nil empty slice is the empty explanation.
-// A nil Supersedes is ABSENT, which v3 frames differently from a present empty string.
 type Commitment struct {
 	ID                string             `json:"id"`
 	Action            string             `json:"action"`
 	Authority         string             `json:"authority"`
-	Supersedes        *string            `json:"supersedes"`
+	Supersedes        string             `json:"supersedes"`
 	AuthMethod        string             `json:"auth_method"`
 	TrustBasis        string             `json:"trust_basis"`
 	Committer         string             `json:"committer"`
@@ -127,7 +107,7 @@ func BuildPresentation(agentSeed []byte, receiverAID, popNonce string, nowMs int
 	priv := ed25519.NewKeyFromSeed(agentSeed)
 	pub := priv.Public().(ed25519.PublicKey)
 	senderAID := AIDFromPubkey(pub)
-	mid := PopMessageID(popNonce)
+	mid := popMessageID(popNonce)
 	timestamp := nowMs / 1000
 
 	nonceBytes, err := b64urlDecode(popNonce)
@@ -170,18 +150,10 @@ func BuildPresentation(agentSeed []byte, receiverAID, popNonce string, nowMs int
 var ExplanationKinds = []string{"vote", "evaluation", "objection", "ballot"}
 
 // ExplanationDomain and CommitmentDigestDomain are the two domain tags of the commitment binding.
-// Normative: seam-runtime docs/specs/seam-commitment-digest.v3.md.
+// Normative: seam-runtime docs/specs/seam-commitment-digest.v2.md.
 const (
 	ExplanationDomain      = "seam-explanation-digest:v1"
-	CommitmentDigestDomain = "seam-commitment-digest:v3"
-)
-
-// The self-attestation TCT statement (RFC-AITP-0005) a Seam commitment is sealed as: the only grant,
-// the ext namespace that carries the statement, and the statement's type.
-const (
-	AttestationGrant       = "aitp.attestation"
-	CommitmentExtNamespace = "com.zer07labs.seam"
-	CommitmentStatement    = "seam:commitment"
+	CommitmentDigestDomain = "seam-commitment-digest:v2"
 )
 
 // be64Frame appends F(x) = be64(len(x)) ‖ x.
@@ -262,94 +234,41 @@ func commitmentExplanationDigest(c Commitment) ([]byte, error) {
 	return d[:], nil
 }
 
-// seamCommitmentDigest is `seam-commitment-digest:v3` (hex): SHA-256 over
+// seamCommitmentDigest is `seam-commitment-digest:v2` (hex): SHA-256 over F(field) for
 //
-//	F(domain) ‖ F(id) ‖ F(action) ‖ F(authority) ‖ SUP ‖ F(auth_method) ‖ F(trust_basis) ‖
-//	F(committer) ‖ F(explanation_digest)
-//	SUP = 0x00 (supersedes absent) | 0x01 ‖ F(supersedes) (present)
+//	(domain, id, action, authority, supersedes, auth_method, trust_basis, committer, explanation_digest)
 //
 // with F(x) = be64(len(x)) ‖ x, so the digest is injective over the tuple (a `\0` separator would let
 // boundary-shifted fields collide). Field 8 is the 32 RAW bytes of the explanation digest (see
-// commitmentExplanationDigest). v1 and v2 are deleted, not dual-verified. Mirrors the runtime
-// byte-for-byte.
+// commitmentExplanationDigest). v1 is deleted, not dual-verified. Mirrors the runtime byte-for-byte.
 func seamCommitmentDigest(c Commitment) (string, error) {
 	ed, err := commitmentExplanationDigest(c)
 	if err != nil {
 		return "", err
 	}
+	h := sha256.New()
 	var out []byte
-	for _, f := range []string{CommitmentDigestDomain, c.ID, c.Action, c.Authority} {
-		out = be64Frame(out, []byte(f))
-	}
-	if c.Supersedes == nil {
-		out = append(out, 0x00)
-	} else {
-		out = append(out, 0x01)
-		out = be64Frame(out, []byte(*c.Supersedes))
-	}
-	for _, f := range [][]byte{[]byte(c.AuthMethod), []byte(c.TrustBasis), []byte(c.Committer), ed} {
+	for _, f := range [][]byte{
+		[]byte(CommitmentDigestDomain),
+		[]byte(c.ID),
+		[]byte(c.Action),
+		[]byte(c.Authority),
+		[]byte(c.Supersedes),
+		[]byte(c.AuthMethod),
+		[]byte(c.TrustBasis),
+		[]byte(c.Committer),
+		ed,
+	} {
 		out = be64Frame(out, f)
 	}
-	sum := sha256.Sum256(out)
-	return hex.EncodeToString(sum[:]), nil
-}
-
-// hasDuplicateKey reports whether any JSON object anywhere in raw repeats a key, or raw is not exactly
-// one well-formed JSON value. encoding/json keeps the LAST of two equal keys, so a token could carry a
-// statement another parser reads differently; the verifier refuses it instead of picking one.
-func hasDuplicateKey(raw []byte) bool {
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	var walk func() bool // false on a duplicate or malformed input
-	walk = func() bool {
-		tok, err := dec.Token()
-		if err != nil {
-			return false
-		}
-		switch tok {
-		case json.Delim('{'):
-			seen := map[string]bool{}
-			for dec.More() {
-				kt, err := dec.Token()
-				if err != nil {
-					return false
-				}
-				k, ok := kt.(string)
-				if !ok || seen[k] {
-					return false
-				}
-				seen[k] = true
-				if !walk() {
-					return false
-				}
-			}
-			_, err = dec.Token() // '}'
-			return err == nil
-		case json.Delim('['):
-			for dec.More() {
-				if !walk() {
-					return false
-				}
-			}
-			_, err = dec.Token() // ']'
-			return err == nil
-		}
-		return true
-	}
-	if !walk() {
-		return true
-	}
-	_, err := dec.Token()
-	return err == nil // trailing content after the value
+	h.Write(out)
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // VerifyTCT independently verifies a sealed commitment's rooted TCT — zero server trust, stock crypto.
 // It verifies the EdDSA JWS against the issuer's key (recovered from its AID), checks the self-issued
-// claims (`typ`, `iss==sub==aud==issuer_aid`, `exp`), and the RFC-AITP-0005 self-attestation shape:
-// `grants` is exactly ["aitp.attestation"], and `ext` is exactly
-// {"com.zer07labs.seam": {"type": "seam:commitment", "commitment_digest": "<64 lowercase hex>"}},
-// whose digest must equal `seam-commitment-digest:v3` of this exact commitment — the decided content,
-// the committer, and the sealed explanation. A repeated JSON key anywhere in the header or payload
-// refuses the token, and a digest carried in `grants` (the retired v2 shape) does not verify.
+// claims (`typ`, `iss==sub==aud==issuer_aid`, `exp`), and that the bound `seam-commitment-digest:v2`
+// grant matches this exact commitment — the decided content, the committer, and the sealed explanation.
 // Explanation entries that disagree with a published ExplanationDigest, an unknown kind, or a
 // non-canonical confidence verify false. Any malformed/forged input fails closed (returns false),
 // never panics.
@@ -375,9 +294,6 @@ func VerifyTCT(issuerAID, tctJWS string, c Commitment, nowS int64) bool {
 	}
 	payloadBytes, err := b64urlDecode(parts[1])
 	if err != nil {
-		return false
-	}
-	if hasDuplicateKey(headerBytes) || hasDuplicateKey(payloadBytes) {
 		return false
 	}
 	var header, payload map[string]any
@@ -423,20 +339,17 @@ func VerifyTCT(issuerAID, tctJWS string, c Commitment, nowS int64) bool {
 	if err != nil {
 		return false
 	}
+	want := "seam-commitment-digest:" + digest
 	grants, ok := payload["grants"].([]any)
-	if !ok || len(grants) != 1 || grants[0] != AttestationGrant {
+	if !ok {
 		return false
 	}
-	ext, ok := payload["ext"].(map[string]any)
-	if !ok || len(ext) != 1 {
-		return false
+	for _, g := range grants {
+		if s, ok := g.(string); ok && s == want {
+			return true
+		}
 	}
-	stmt, ok := ext[CommitmentExtNamespace].(map[string]any)
-	if !ok || len(stmt) != 2 || stmt["type"] != CommitmentStatement {
-		return false
-	}
-	got, ok := stmt["commitment_digest"].(string)
-	return ok && got == digest
+	return false
 }
 
 // CallSigV3Context is the domain tag of the `Authorize` per-call proof-of-possession, v3 (#197). v3

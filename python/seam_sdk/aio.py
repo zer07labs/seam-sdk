@@ -167,9 +167,7 @@ class SeamClient:
     async def _presentation(
         self, agent: Agent, timeout: float = DEFAULT_TIMEOUT_S
     ) -> pb.PinnedPresentation:
-        ch = await self._admission.IssueChallenge(
-            pb.IssueChallengeRequest(), timeout=timeout
-        )
+        ch = await self._admission.IssueChallenge(pb.Empty(), timeout=timeout)
         body = build_presentation(agent.seed, ch.receiver_aid, ch.nonce, _now_ms())
         return pb.PinnedPresentation(presentation_json=json.dumps(body).encode())
 
@@ -444,7 +442,7 @@ class SeamClient:
         """Cast a vote on a proposal. ``reason`` is the voter's stated reason, sealed into the vote
         envelope (seam-runtime #804). Empty means no reason, byte-identical to a vote without one. The
         server bounds it (4096 bytes, injection-redacted, classified) and REQUIRES it when the governing
-        policy sets ``rules["x-com.zer07labs.seam"].capture_dissent``; those checks are deliberately not mirrored here."""
+        policy sets ``rules.seam.capture_dissent``; those checks are deliberately not mirrored here."""
         req = pb.VoteRequest(
             session_id=session_id,
             voter=voter,
@@ -490,7 +488,7 @@ class SeamClient:
         ``rationale_ref`` is a ``sha256:<hex>`` context ref. Since runtime 0.44.0 it is **sealed**:
         every accepted evaluation's ``rationale_ref`` (and whether a ``confidence`` was stated at
         all) is bound into the Commitment's explanation under ``seam-explanation-digest:v1``, which
-        ``seam-commitment-digest:v3`` covers. ``verify_decision`` recomputes it locally.
+        ``seam-commitment-digest:v2`` covers. ``verify_decision`` recomputes it locally.
         """
         req = pb.EvaluationRequest(
             session_id=session_id,
@@ -562,14 +560,11 @@ class SeamClient:
     ) -> pb.SessionStep:
         """Submit a MACP commit, sealing ``commitment_id``'s decision.
 
-        ``supersedes`` names the prior decision this one replaces, **by its decision id**
-        (``dec:{tenant}:{session}`` — build it with :func:`seam_sdk.decision_id_for_session`). The
-        runtime resolves it within this session's tenant, hashes the prior's sealed commitment, and
-        seals ``{session}/sha256:<hex>`` into the record — so the served ``Commitment.supersedes`` is
-        that stored form, not what was sent. A prior that is missing, in another tenant, not
-        ``Resolved``, or carries no MACP commitment is refused with one uniform ``INVALID_ENVELOPE``
-        (seam-runtime ``docs/specs/seam-commitment-digest.v3.md`` §supersedes). Omit it rather than
-        passing ``""``: absence and an empty value are different digests under v3.
+        ``supersedes`` names the commitment id this decision replaces. It is accepted and
+        forwarded on the request path only — the server's own internal R13 supersession always
+        takes precedence over a client-supplied value if both are set, so this is a hint, not a
+        guarantee. Omit it rather than passing ``""``: absence and an empty override read
+        differently server-side.
         """
         req = pb.CommitRequest(
             session_id=session_id,

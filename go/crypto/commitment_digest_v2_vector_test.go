@@ -6,15 +6,14 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
-// conformance/commitment_digest_v3_vector.json is the runtime's reference vector for
-// `seam-commitment-digest:v3` + `seam-explanation-digest:v1`. A port is conforming iff it reproduces
+// conformance/commitment_digest_v2_vector.json is the runtime's reference vector for
+// `seam-commitment-digest:v2` + `seam-explanation-digest:v1`. A port is conforming iff it reproduces
 // every digest in it and verifies its signed_artifact against issuer_aid. The commitments are the REST
 // projection: byte fields as JSON number arrays, absent confidence/rationale_ref/supersedes as null.
-type v3Vector struct {
+type v2Vector struct {
 	CommitmentDigestDomain  string `json:"commitment_digest_domain"`
 	ExplanationDigestDomain string `json:"explanation_digest_domain"`
 	IssuerAID               string `json:"issuer_aid"`
@@ -49,13 +48,13 @@ func intsToBytes(t *testing.T, in []int) []byte {
 	return out
 }
 
-func loadV3(t *testing.T) v3Vector {
+func loadV2(t *testing.T) v2Vector {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "conformance", "commitment_digest_v3_vector.json"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "conformance", "commitment_digest_v2_vector.json"))
 	if err != nil {
 		t.Fatalf("read vector: %v", err)
 	}
-	var v v3Vector
+	var v v2Vector
 	if err := json.Unmarshal(raw, &v); err != nil {
 		t.Fatalf("parse vector: %v", err)
 	}
@@ -65,8 +64,8 @@ func loadV3(t *testing.T) v3Vector {
 	return v
 }
 
-func TestCommitmentDigestV3Vector(t *testing.T) {
-	v := loadV3(t)
+func TestCommitmentDigestV2Vector(t *testing.T) {
+	v := loadV2(t)
 	if v.CommitmentDigestDomain != CommitmentDigestDomain || v.ExplanationDigestDomain != ExplanationDomain {
 		t.Fatalf("domain tags drifted: %q / %q", v.CommitmentDigestDomain, v.ExplanationDigestDomain)
 	}
@@ -91,7 +90,10 @@ func TestCommitmentDigestV3Vector(t *testing.T) {
 			c := Commitment{
 				ID: vc.ID, Action: vc.Action, Authority: vc.Authority, AuthMethod: vc.AuthMethod,
 				TrustBasis: vc.TrustBasis, Committer: vc.Committer,
-				ExplanationDigest: published, Explanation: vc.Explanation, Supersedes: vc.Supersedes,
+				ExplanationDigest: published, Explanation: vc.Explanation,
+			}
+			if vc.Supersedes != nil {
+				c.Supersedes = *vc.Supersedes
 			}
 			// All three field-8 resolutions must agree: entries + published, entries only, published only.
 			only := c
@@ -138,7 +140,7 @@ func TestExplanationDigestEmptyMatchesSpec(t *testing.T) {
 	}
 	// The spec's worked example: all fields empty, no explanation held.
 	got, err := seamCommitmentDigest(Commitment{})
-	if err != nil || got != "9238441205cd395f9507a5152e2c67f93fa83ca8d336d2ce7b8e01a385c3dd2e" {
+	if err != nil || got != "78edca52ba1e88f13a78e5569742bfce0b51474ca840bf38a8dde414d5515784" {
 		t.Fatalf("all-empty worked example: got %s, %v", got, err)
 	}
 }
@@ -241,125 +243,5 @@ func TestVerifyTCTRefusesInconsistentExplanation(t *testing.T) {
 		if VerifyTCT(v.TCT.IssuerAID, v.TCT.SignedArtifactJWS, bad, now) {
 			t.Fatalf("%s must fail closed", name)
 		}
-	}
-}
-
-// v3's only framing change from v2: `supersedes` carries a presence byte, so absent and present-empty
-// are different digests (the vector's all_empty / empty_supersedes cases, reproduced directly).
-func TestEmptyVsAbsentSupersedesDiffer(t *testing.T) {
-	empty := ""
-	absent, err := seamCommitmentDigest(Commitment{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	present, err := seamCommitmentDigest(Commitment{Supersedes: &empty})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if absent == present {
-		t.Fatal("absent and present-empty supersedes must give different digests")
-	}
-	if present != "b7f0e7a2a14e91f0d7dc1a56781a39f7601bce4df979f3b25a58aa9d86d3263c" {
-		t.Fatalf("present-empty supersedes: got %s", present)
-	}
-}
-
-// The statement rides in ext["com.zer07labs.seam"]; a locally signed token of exactly that shape
-// verifies, which is what makes every refusal below about the shape and nothing else.
-func TestCommitmentTCTStatementInExt(t *testing.T) {
-	v := load(t)
-	c := v.TCT.Inputs.Commitment
-	iss := issuerFromSeed(t, v.TCT.Inputs.IssuerSeedHex)
-	raw, _ := json.Marshal(attestationPayload(t, iss, c))
-	if !VerifyTCT(iss, signRawTCT(t, v.TCT.Inputs.IssuerSeedHex, raw), c, 1_700_000_001) {
-		t.Fatal("a well-formed self-attestation must verify")
-	}
-}
-
-func TestCommitmentTCTShapeRefusals(t *testing.T) {
-	v := load(t)
-	c := v.TCT.Inputs.Commitment
-	seed := v.TCT.Inputs.IssuerSeedHex
-	iss := issuerFromSeed(t, seed)
-	digest, err := seamCommitmentDigest(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	stmt := func() map[string]any {
-		return map[string]any{"type": CommitmentStatement, "commitment_digest": digest}
-	}
-	withStmt := func(p map[string]any, s map[string]any) {
-		p["ext"] = map[string]any{CommitmentExtNamespace: s}
-	}
-	for name, mutate := range map[string]func(map[string]any){
-		"statement in grants (v2 shape)": func(p map[string]any) {
-			delete(p, "ext")
-			p["grants"] = []string{"seam:commitment", "seam-commitment-digest:" + digest}
-		},
-		"extra grant": func(p map[string]any) {
-			p["grants"] = []string{AttestationGrant, "seam-commitment-digest:" + digest}
-		},
-		"no grants":  func(p map[string]any) { delete(p, "grants") },
-		"iss != aud": func(p map[string]any) { p["aud"] = "aid:pubkey:ed25519:" + repeat("B", 43) },
-		"sub != iss": func(p map[string]any) { p["sub"] = "aid:pubkey:ed25519:" + repeat("B", 43) },
-		"ext absent": func(p map[string]any) { delete(p, "ext") },
-		"wrong type": func(p map[string]any) { s := stmt(); s["type"] = "seam:other"; withStmt(p, s) },
-		"extra statement field": func(p map[string]any) {
-			s := stmt()
-			s["x"] = "y"
-			withStmt(p, s)
-		},
-		"extra ext key": func(p map[string]any) {
-			p["ext"] = map[string]any{CommitmentExtNamespace: stmt(), "com.example": map[string]any{}}
-		},
-		"uppercase digest": func(p map[string]any) {
-			s := stmt()
-			s["commitment_digest"] = strings.ToUpper(digest)
-			withStmt(p, s)
-		},
-		"wrong digest": func(p map[string]any) {
-			s := stmt()
-			s["commitment_digest"] = repeat("0", 64)
-			withStmt(p, s)
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			p := attestationPayload(t, iss, c)
-			mutate(p)
-			raw, _ := json.Marshal(p)
-			if VerifyTCT(iss, signRawTCT(t, seed, raw), c, 1_700_000_001) {
-				t.Fatalf("%s must be refused", name)
-			}
-		})
-	}
-}
-
-// encoding/json keeps the LAST of two equal keys; a token whose JSON repeats a key must be refused
-// rather than read one way here and another way by a different parser.
-func TestCommitmentTCTDuplicateKeyRefused(t *testing.T) {
-	v := load(t)
-	c := v.TCT.Inputs.Commitment
-	seed := v.TCT.Inputs.IssuerSeedHex
-	iss := issuerFromSeed(t, seed)
-	digest, err := seamCommitmentDigest(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	head := `{"iss":"` + iss + `","sub":"` + iss + `","aud":"` + iss + `","exp":4853600000,"grants":["aitp.attestation"],`
-	good := `"ext":{"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":"` + digest + `"}}}`
-	if !VerifyTCT(iss, signRawTCT(t, seed, []byte(head+good)), c, 1_700_000_001) {
-		t.Fatal("the hand-written control payload must verify")
-	}
-	decoy := `{"type":"seam:commitment","commitment_digest":"` + repeat("0", 64) + `"}`
-	for name, body := range map[string]string{
-		"duplicate namespace key": `"ext":{"com.zer07labs.seam":` + decoy + `,"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":"` + digest + `"}}}`,
-		"duplicate statement key": `"ext":{"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":"` + repeat("0", 64) + `","commitment_digest":"` + digest + `"}}}`,
-		"duplicate ext":           `"ext":{"com.zer07labs.seam":` + decoy + `},` + good,
-	} {
-		t.Run(name, func(t *testing.T) {
-			if VerifyTCT(iss, signRawTCT(t, seed, []byte(head+body)), c, 1_700_000_001) {
-				t.Fatalf("%s must be refused", name)
-			}
-		})
 	}
 }

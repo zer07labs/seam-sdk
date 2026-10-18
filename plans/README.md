@@ -10,7 +10,6 @@ against a status table alone.
 
 | Plan | Status |
 |---|---|
-| `protocol-pass-2026-10.md` | **IN PROGRESS, 2026-10-18.** Issue [#265](https://github.com/zer07labs/seam-sdk/issues/265): pre-vendor the runtime `protocol-pass-2026-10` contract changes (derived `message_id`, record digest v4, `dec:` decision ids, `macp_code`, `IssueChallengeRequest`, commitment digest v3 + self-attestation TCT), pinned to runtime `e4c01ad3`. **Merge held** until the runtime branch merges or its release is about to be dispatched. |
 | `build-agent-ingress.md` | **PENDING** — narrowed 2026-08-24. The §A core scenes (Suspended→raise→resume, denied admission) and §C `StepUsage` wiring shipped in `seam-adapters` PR #42; what remains is the **§B MCP server** (seam-sdk [#40](https://github.com/zer07labs/seam-sdk/issues/40), deliberately unbuilt — no named customer) and the **§D public-access DoD**. See the refresh header in the plan. |
 | `consolidation-2026-08-14.md` | **RECORD + BACKLOG** — the 2026-08-14 full-repo review (plan triage, 6-track code review of seam-sdk + the runtime contract boundary), the fixes applied, and the residual backlog. Backlog swept 2026-08-24: four of five entries retired in place with citations; the survivors are §B/§D of `build-agent-ingress.md`. |
 

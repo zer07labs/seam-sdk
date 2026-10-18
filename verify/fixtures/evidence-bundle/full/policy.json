@@ -1,1 +1,1 @@
-{"description":"demo/test permissive policy (voting none)","mode":"macp.mode.decision.v1","policy_id":"pol-2026-06","rules":{"commitment":{"authority":"initiator_only","require_vote_quorum":false},"voting":{"algorithm":"none"}},"schema_version":3}
+{"description":"demo/test permissive policy (voting none)","mode":"macp.mode.decision.v1","policy_id":"pol-2026-06","rules":{"commitment":{"authority":"initiator_only","require_vote_quorum":false},"voting":{"algorithm":"none"}},"schema_version":1}

@@ -10,7 +10,7 @@
 //! 3. **Inclusion** — exactly one chained `DECISION_SEALED` for the manifest's decision, in its tenant,
 //!    whose `checksum` is `inclusion.record_checksum`.
 //! 4. **Commitment** — the TCT (when present) verifies against the pinned AID and binds this
-//!    Commitment's `seam-commitment-digest:v3`; `supersedes` matches the chained payload's.
+//!    Commitment's `seam-commitment-digest:v2`; `supersedes` matches the chained payload's.
 //! 5. **Binding** — the `seam.evidence-binding.v1` signature verifies against the pinned AID and names
 //!    this decision, tenant, link checksum and recomputed Commitment digest.
 //! 6. **Disclosures** — `context.json` recomputes the chained `context_digest`;
@@ -615,7 +615,7 @@ pub fn verify_bundle(dir: &Path, pinned: &str, now_secs: u64) -> Result<BundleRe
             tct_verified = Some(true);
             checks.push(
                 "the Commitment's TCT verifies against the pinned issuer and binds its \
-                 seam-commitment-digest:v3"
+                 seam-commitment-digest:v2"
                     .into(),
             );
         }

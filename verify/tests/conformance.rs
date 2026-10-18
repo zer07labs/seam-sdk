@@ -1,22 +1,20 @@
-//! `record_digest_v4` against the committed conformance vectors — through the REAL wire path.
+//! `record_digest_v3` against the committed conformance vectors — through the REAL wire path.
 //!
-//! `vectors.json` is byte-diffed by seam-runtime's `sdk-digest-parity` job, and `vectors_extended.json`
-//! is the runtime's `conformance_vectors_extended.json` vendored byte-identical, so both are a
-//! cross-repo contract rather than a local fixture. Several independent implementations of
-//! `seam.audit.record-digest.v4` exist (the SDKs, this verifier, and the runtime's own); the vectors
-//! are what stops them drifting.
+//! These vectors are machine-emitted by `scripts/emit_record_digest_v3_vectors.py` and byte-diffed by
+//! seam-runtime's `sdk-digest-parity` job, so they are a cross-repo contract rather than a local
+//! fixture. Four independent implementations of `seam.audit.record-digest.v3` exist (Python,
+//! TypeScript, this verifier, and the runtime's own); the vectors are what stops them drifting.
 //!
 //! **Deliberately end-to-end, not a unit test of the digest function.** Each case is assembled into a
 //! chained `DECISION_SEALED` JSON event and run through the shipped CLI. That covers three things a
 //! direct call could not:
 //!
-//! * the **wire mapping** — tags 11-17 landing in the right `Decision` fields. The vectors keep
-//!   `context_digest`, `participation_digest` and `participants_digest` pairwise distinct in every
-//!   case precisely so a swapped tag mapping in `wire.rs` cannot cancel out against a swapped
-//!   preimage slot;
+//! * the **wire mapping** — tags 11/12/13 landing in the right `Decision` fields. The vectors keep
+//!   `context_digest != participation_digest` in every case precisely so a swapped tag-11/tag-12
+//!   mapping in `wire.rs` cannot cancel out against a swapped preimage slot;
 //! * **base64 decode and presence** — `None` (key absent) vs `Some("")` vs a real 32-byte value;
-//! * the **version dispatch** — that a `schema_version = 4` record actually reaches the v4 formula
-//!   and is counted as recomputed, rather than refused or skipped.
+//! * the **version dispatch** — that a `schema_version = 3` record actually reaches the v3 formula
+//!   rather than the v2 one.
 //!
 //! It also means this file needs no access to the crate's private digest functions, so proving the
 //! contract does not require widening the published API surface to do it.
@@ -72,83 +70,52 @@ fn vectors() -> Value {
 }
 
 fn extended() -> Value {
-    conformance_file("vectors_extended.json")
+    conformance_file("record_digest_v3_extended.json")
 }
 
-/// seam-runtime's own v4 blocks in `vectors.json`, and the name each takes once normalised.
+/// seam-runtime's own v3 blocks in `vectors.json`, and the name each takes once normalised.
 ///
 /// These two are the CROSS-REPO contract: `sdk-digest-parity` byte-diffs the whole of `vectors.json`
 /// against seam-runtime's emitter, so agreeing on them is what "independent implementations agree"
 /// actually means here.
-const RUNTIME_V4_BLOCKS: [(&str, &str); 2] = [
-    ("record_digest_v4", "runtime_bound_policy"),
-    ("record_digest_v4_absent_policy", "runtime_absent_policy"),
+const RUNTIME_V3_BLOCKS: [(&str, &str); 2] = [
+    ("record_digest_v3", "runtime_bound_policy"),
+    ("record_digest_v3_absent_policy", "runtime_absent_policy"),
 ];
 
-/// The `record_digest_v4` cases in `vectors_extended.json`. Each is a top-level block there, beside
-/// the `chain_head_attestation_v2` block this file does not read.
-const EXTENDED_V4_BLOCKS: [&str; 3] = [
-    "all_optionals_present",
-    "optionals_none",
-    "mode_empty_string",
-];
-
-/// The v4 cases from both files, or a loud failure.
+/// The v3 cases from both files, or a loud failure.
 ///
 /// A conformance test that SKIPS when its fixtures go missing is worse than no test at all: it
 /// reports green while proving nothing, and the day someone renames the block is the day the
 /// cross-repo contract stops being checked without anyone noticing. So this panics, and
 /// `the_case_loader_fails_loudly_when_the_block_is_missing` proves it panics.
-fn v4_cases(v: &Value, ext: &Value) -> Vec<Value> {
+fn v3_cases(v: &Value, ext: &Value) -> Vec<Value> {
     let mut cases: Vec<Value> = Vec::new();
-    let blocks = RUNTIME_V4_BLOCKS
-        .iter()
-        .map(|(b, n)| (v, "vectors.json", *b, *n))
-        .chain(
-            EXTENDED_V4_BLOCKS
-                .iter()
-                .map(|b| (ext, "vectors_extended.json", *b, *b)),
-        );
-    for (doc, file, block, name) in blocks {
-        let b = doc.get(block).unwrap_or_else(|| {
+    for (block, name) in RUNTIME_V3_BLOCKS {
+        let b = v.get(block).unwrap_or_else(|| {
             panic!(
-                "conformance/{file} has no `{block}` block.\n  \
-                 Refusing to pass: that file is byte-identical with seam-runtime's own vectors, so a \
-                 missing block means this repo and the runtime have stopped agreeing on the vector \
-                 set — not that a case was tidied away."
+                "conformance/vectors.json has no `{block}` block.\n  \
+                 Refusing to pass: that file is byte-diffed by seam-runtime's sdk-digest-parity \
+                 gate, so a missing block means this repo and the runtime have stopped agreeing on \
+                 the vector set — not that a case was tidied away."
             )
         });
-        let inputs = b
-            .get("inputs")
-            .unwrap_or_else(|| panic!("`{block}` must carry `inputs`"));
-        assert_eq!(
-            inputs["domain"], "seam.audit.record-digest.v4",
-            "`{block}` is not a v4 case"
-        );
         cases.push(json!({
             "name": name,
-            "inputs": inputs,
+            "inputs": b.get("inputs").unwrap_or_else(|| panic!("`{block}` must carry `inputs`")),
             "digest_hex": b.get("digest_hex").unwrap_or_else(|| panic!("`{block}` must carry `digest_hex`")),
         }));
     }
+    let extra = ext
+        .get("cases")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("record_digest_v3_extended.json must carry a `cases` array"));
+    assert!(
+        !extra.is_empty(),
+        "record_digest_v3_extended.json carries zero cases — nothing below would assert anything"
+    );
+    cases.extend(extra.iter().cloned());
     cases
-}
-
-/// `participants_digest` from the roster, transcribed from the spec independently of the vector's
-/// own `participants_digest_hex`: SHA-256 over `frame("seam.audit.participants.v4") ‖ le32(count) ‖
-/// frame(id)...` in stored order.
-fn participants_digest(ids: &[Value]) -> Vec<u8> {
-    let mut pre: Vec<u8> = Vec::new();
-    let frame = |b: &mut Vec<u8>, x: &[u8]| {
-        b.extend_from_slice(&(x.len() as u32).to_le_bytes());
-        b.extend_from_slice(x);
-    };
-    frame(&mut pre, b"seam.audit.participants.v4");
-    pre.extend_from_slice(&(ids.len() as u32).to_le_bytes());
-    for id in ids {
-        frame(&mut pre, id.as_str().expect("participant id").as_bytes());
-    }
-    Sha256::digest(&pre).to_vec()
 }
 
 /// The JSON payload object for one vector case.
@@ -160,15 +127,7 @@ fn participants_digest(ids: &[Value]) -> Vec<u8> {
 /// real producer emits, so absence is spelled as absence.
 fn payload_of(inputs: &Value) -> Value {
     let mut p = Map::new();
-    for key in [
-        "decision_id",
-        "tenant",
-        "namespace",
-        "outcome",
-        "classification",
-        "trust_basis_commitment",
-        "auth_method",
-    ] {
+    for key in ["decision_id", "tenant", "namespace", "outcome"] {
         p.insert(key.into(), inputs[key].clone());
     }
     p.insert("sealed_at".into(), inputs["sealed_at"].clone());
@@ -183,7 +142,6 @@ fn payload_of(inputs: &Value) -> Value {
         ("context_digest", "context_digest_hex"),
         ("participation_digest", "participation_digest_hex"),
         ("policy_rules_digest", "policy_rules_digest_hex"),
-        ("participants_digest", "participants_digest_hex"),
     ] {
         if let Some(h) = inputs[hex_key].as_str() {
             p.insert(key.into(), json!(b64e(&unhex(h))));
@@ -202,7 +160,7 @@ fn sealed_line(seq: u64, prev: &[u8], digest: &[u8], payload: &Value) -> (String
     };
     let ev = json!({
         "schema_version": "seam-event.v1",
-        "event_id": format!("v4#{seq}"),
+        "event_id": format!("v3#{seq}"),
         "seq": seq,
         "occurred_at": 1_700_000_000_000u64 + seq,
         "kind": "DECISION_SEALED",
@@ -219,7 +177,7 @@ fn sealed_line(seq: u64, prev: &[u8], digest: &[u8], payload: &Value) -> (String
 ///
 /// `digest_schema` is a PARAMETER because spec clause (e) makes it load-bearing — it must be >= the
 /// highest `schema_version` in the attested prefix. Hard-coded to `2`, this helper signed a false
-/// ceiling over every conformance case above the ceiling, and the whole suite asserted GREEN on streams the spec
+/// ceiling over every V3 conformance case, and the whole suite asserted GREEN on streams the spec
 /// says must be REFUSED.
 fn attestation_line(
     seq: u64,
@@ -289,17 +247,17 @@ fn run_stream(name: &str, records: &[(Value, Vec<u8>)]) -> (i32, String) {
     }
     let n = records.len() as u64;
     // Derived from what the stream actually seals, as an honest producer derives it — never a
-    // constant. Only 4 is accepted, so a fabricated `schema_version` cannot inflate the ceiling and
-    // change which refusal fires.
+    // constant. Deliberately-bogus versions (the unknown-version cases) are excluded so a fabricated
+    // `schema_version` cannot inflate the ceiling and change which refusal fires.
     let ceiling = records
         .iter()
         .filter_map(|(p, _)| p["schema_version"].as_u64())
-        .filter(|v| *v == 4)
+        .filter(|v| (2..=3).contains(v))
         .max()
-        .unwrap_or(4) as u32;
+        .unwrap_or(2) as u32;
     lines.push(attestation_line(n, &head, n, &head, &sk, ceiling));
 
-    let path = std::env::temp_dir().join(format!("v4-conf-{name}-{}.jsonl", std::process::id()));
+    let path = std::env::temp_dir().join(format!("v3-conf-{name}-{}.jsonl", std::process::id()));
     std::fs::write(&path, lines.join("\n")).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_seam-verify"))
         .args(["chain", path.to_str().unwrap(), "--issuer", ISSUER])
@@ -312,7 +270,7 @@ fn run_stream(name: &str, records: &[(Value, Vec<u8>)]) -> (i32, String) {
 }
 
 fn records() -> Vec<(Value, Vec<u8>)> {
-    v4_cases(&vectors(), &extended())
+    v3_cases(&vectors(), &extended())
         .iter()
         .map(|c| {
             (
@@ -326,17 +284,12 @@ fn records() -> Vec<(Value, Vec<u8>)> {
 // ── the contract ─────────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn every_v4_conformance_case_recomputes_through_the_wire() {
+fn every_v3_conformance_case_recomputes_through_the_wire() {
     let recs = records();
-    assert_eq!(
-        recs.len(),
-        5,
-        "two runtime blocks plus three extended cases"
-    );
     let (code, out) = run_stream("all", &recs);
     assert_eq!(
         code, VERIFIED,
-        "the committed v4 vectors must verify:\n{out}"
+        "the committed v3 vectors must verify:\n{out}"
     );
     assert!(
         out.contains(&format!("records recomputed: {}", recs.len())),
@@ -346,23 +299,8 @@ fn every_v4_conformance_case_recomputes_through_the_wire() {
 }
 
 #[test]
-fn every_participants_digest_follows_from_its_roster() {
-    // Tag 15 is opaque on the wire, so the verifier never recomputes it — but the vector's value must
-    // still be the spec formula over the roster, or every case above is hashing an unrelated blob.
-    for c in v4_cases(&vectors(), &extended()) {
-        let i = &c["inputs"];
-        assert_eq!(
-            participants_digest(i["participants"].as_array().expect("participants")),
-            unhex(i["participants_digest_hex"].as_str().unwrap()),
-            "{}: participants_digest_hex is not the v4 roster digest",
-            c["name"]
-        );
-    }
-}
-
-#[test]
 fn the_conformance_loop_is_falsifiable() {
-    // Guard the guard. If the v4 arm were wired to skip, or to compare something to itself, the test
+    // Guard the guard. If the v3 arm were wired to skip, or to compare something to itself, the test
     // above would pass with the formula arbitrarily wrong. Perturbing one input byte must break it.
     let mut recs = records();
     let p = &mut recs[0].0;
@@ -378,30 +316,25 @@ fn the_conformance_loop_is_falsifiable() {
 }
 
 #[test]
-fn a_swapped_digest_mapping_cannot_cancel() {
-    // The decoy that catches a wire-layer swap. Reading tag 12 into slot 11 and tag 11 into slot 12
+fn a_swapped_tag_11_12_mapping_cannot_cancel() {
+    // The decoy that catches a wire-layer swap. Reading tag 12 into slot 10 and tag 11 into slot 11
     // produces a perfectly well-formed preimage, so it is invisible UNLESS the two values differ —
     // which is why the emitter keeps them distinct in every case, asserted here rather than assumed.
-    // The same holds for the v4 opaque digest at tag 15 and for the two v4 strings at tags 16/17.
-    for (a, b) in [
-        ("context_digest", "participation_digest"),
-        ("participation_digest", "participants_digest"),
-        ("context_digest", "participants_digest"),
-        ("trust_basis_commitment", "auth_method"),
-    ] {
-        let mut recs = records();
-        for (p, _) in recs.iter_mut() {
-            assert_ne!(
-                p[a], p[b],
-                "a vector case sets {a} == {b}, so a slot swap would cancel"
-            );
-            let (x, y) = (p[a].clone(), p[b].clone());
-            p[a] = y;
-            p[b] = x;
-        }
-        let (code, out) = run_stream("swapped", &recs);
-        assert_eq!(code, FAILED, "swapping {a} and {b} must fail:\n{out}");
+    let mut recs = records();
+    for (p, _) in recs.iter_mut() {
+        assert_ne!(
+            p["context_digest"], p["participation_digest"],
+            "a vector case sets context_digest == participation_digest, so a slot swap would cancel"
+        );
+        let (c, q) = (
+            p["context_digest"].clone(),
+            p["participation_digest"].clone(),
+        );
+        p["context_digest"] = q;
+        p["participation_digest"] = c;
     }
+    let (code, out) = run_stream("swapped", &recs);
+    assert_eq!(code, FAILED, "swapping tags 11 and 12 must fail:\n{out}");
 }
 
 #[test]
@@ -410,25 +343,21 @@ fn the_case_loader_fails_loudly_when_the_block_is_missing() {
     // running the loader against a doctored document rather than by reading the code.
     // Every runtime block, one at a time — a guard that only covers the first would let the second
     // disappear silently, which is exactly the class of hole this file exists to close.
-    for (block, _) in RUNTIME_V4_BLOCKS {
+    for (block, _) in RUNTIME_V3_BLOCKS {
         let mut doctored = vectors();
         doctored.as_object_mut().unwrap().remove(block);
-        let missing = std::panic::catch_unwind(|| v4_cases(&doctored, &extended()));
+        let missing = std::panic::catch_unwind(|| v3_cases(&doctored, &extended()));
         assert!(
             missing.is_err(),
             "a vectors file with no `{block}` block was accepted — this test would then pass while \
              proving nothing"
         );
     }
-    for block in EXTENDED_V4_BLOCKS {
-        let mut doctored = extended();
-        doctored.as_object_mut().unwrap().remove(block);
-        let missing = std::panic::catch_unwind(|| v4_cases(&vectors(), &doctored));
-        assert!(
-            missing.is_err(),
-            "an extended file with no `{block}` block was accepted"
-        );
-    }
+
+    let mut emptied = extended();
+    emptied["cases"] = json!([]);
+    let empty = std::panic::catch_unwind(|| v3_cases(&vectors(), &emptied));
+    assert!(empty.is_err(), "an EMPTY extended cases array was accepted");
 }
 
 // ── #835 step 4: the chain-head attestation framing is strict per tenant ─────────────────────────

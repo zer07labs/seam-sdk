@@ -380,9 +380,8 @@ def test_the_committed_manifest_is_not_empty_and_names_every_message() -> None:
     the manifest is non-empty go quiet on exactly the checkout least able to notice.
     """
     fields = _event_fields(COMMITTED)
-    # 106 since the protocol pass: DecisionSealed tags 14-17 (record digest v4).
-    assert len(fields) == 106, (
-        f"expected 106 declared event fields, found {len(fields)}"
+    assert len(fields) == 102, (
+        f"expected 102 declared event fields, found {len(fields)}"
     )
     messages = {line.split("/")[0] for line in fields}
     assert messages == {

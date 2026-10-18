@@ -10,11 +10,9 @@ over the generated transport is a follow-up.
 Pinned against `conformance/vectors.json` (generated from the Rust reference):
 
 - **`admission`** — the pinned-key admission presentation (Ed25519 proof-of-possession, AID
-  derivation, deterministic message id `derivedUuid("seam-pop-mid-v1", nonce)`).
+  derivation, deterministic message id).
 - **`tct`** — independent verification of a sealed commitment's rooted TCT (EdDSA JWS, self-issued
-  claims, truncated-seconds `exp`, the single `aitp.attestation` grant, and the
-  `ext["com.zer07labs.seam"]` statement binding `seam-commitment-digest:v3` over the committer and the
-  sealed explanation).
+  claims, truncated-seconds `exp`, `seam-commitment-digest:v2` grant binding over the committer and the sealed explanation).
 
 Also, outside `vectors.json`:
 
