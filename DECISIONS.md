@@ -2639,3 +2639,23 @@ code follow-up is needed before the next `/ship`. Both plans now meet the archiv
 - **CI pins.** `Makefile` `BUF_MODULE` → `buf.build/zer07labs/seam:train-0.48.0` and
   `SEAM_RUNTIME_BUILD_REF` → the pin (timeout 45), precedent 0.45.0 (#237). Both revert at the un-pin.
   The BSR label must be pushed from the runtime side; this repo does not push the runtime's module.
+
+## 2026-10-18 — reconcile the protocol pass assumptions (seam-sdk#265, 2 entries)
+
+Both are reversible additive choices inside the SDK; neither is a one-way door, so Opus decided them.
+
+### A load-shed is surfaced, never retried
+- **Evidence:** no SDK verb retries anywhere (`python/seam_sdk/errors.py` maps `RESOURCE_EXHAUSTED` to
+  `ResourceExhaustedError` with `retry_after`; TS `retryAfter`), pinned by `python/tests/test_error_details.py`
+  and `ts/tests/error_details.test.ts`.
+- **Analysis:** an SDK-internal backoff would hide load from the caller's own budget and deadline logic and
+  would be the only retry loop in five SDKs. Carrying `RetryInfo` is the part only the SDK can do; when to come
+  back is the caller's call. A bounded helper can be added later without breaking anyone.
+- **Verdict:** confirm. **Decided by:** Opus.
+
+### Opt-in id helpers, not client-side refusal
+- **Evidence:** the runtime refuses a bad id with `INVALID_SESSION_ID` (observed live while lengthening the test
+  ids), which arrives as `InvalidArgumentError` with `macp_code`.
+- **Analysis:** pre-validating on every call duplicates the runtime's rule on the hot path and goes stale the day
+  the runtime widens it; the cost of not doing it is one round trip on a caller bug.
+- **Verdict:** confirm. **Decided by:** Opus.

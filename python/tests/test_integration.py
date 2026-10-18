@@ -326,7 +326,7 @@ def _seal(client: SeamClient, agent: Agent, tag: str) -> str:
 def test_deny_plane_credentialed_read_succeeds_and_bare_read_is_refused(deny_plane):
     client = SeamClient.connect(deny_plane)
     agent = Agent(bytes([42] * 32))
-    decision_id = _seal(client, agent, "py-deny-cred")
+    decision_id = _seal(client, agent, "py-deny-cred-sid-0123456789abcdef")
 
     # WITH the credential: the reads succeed.
     assert client.get_decision(decision_id, credential=agent).decision_id == decision_id
@@ -357,8 +357,8 @@ def test_deny_plane_refuses_a_header_subject_and_a_wrong_context_signature(
 
     client = SeamClient.connect(deny_plane)
     agent = Agent(bytes([42] * 32))
-    first = _seal(client, agent, "py-deny-a")
-    second = _seal(client, agent, "py-deny-b")
+    first = _seal(client, agent, "py-deny-a-sid-0123456789abcdef")
+    second = _seal(client, agent, "py-deny-b-sid-0123456789abcdef")
     ticket = client.admit(agent)
     channel = grpc.insecure_channel(deny_plane)
     request.addfinalizer(channel.close)

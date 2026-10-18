@@ -1426,7 +1426,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Alternatives:** an in-SDK bounded backoff on the admission handshake honouring `retry_after`.
 - **Blast radius if wrong:** a caller that expected the SDK to wait and retry sees the error instead;
   additive to fix later.
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (2026-10-18, /reconcile; see DECISIONS.md, protocol pass reconcile).
 
 ## Opt-in id helpers, not client-side refusal
 - **Plan:** plans/protocol-pass-2026-10.md (Phase 5, items 4-5)
@@ -1437,4 +1437,4 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Alternatives:** validate before every call, which duplicates the rule on the hot path and drifts
   if the runtime widens it.
 - **Blast radius if wrong:** a bad id costs one round trip instead of zero.
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (2026-10-18, /reconcile; see DECISIONS.md, protocol pass reconcile).

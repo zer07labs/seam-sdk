@@ -222,7 +222,7 @@ test("deny plane: a credentialed read succeeds, the same read without one is ref
     const client = SeamClient.connect(baseUrl);
     const agent = demoAgent();
     try {
-      const id = await seal(client, agent, "ts-deny-cred");
+      const id = await seal(client, agent, "ts-deny-cred-sid-0123456789abcdef");
       // WITH the credential: the reads succeed.
       assert.equal((await client.getDecision(id, { credential: agent })).decisionId, id);
       assert.equal((await client.replayDecision(id, { credential: agent })).chainVerified, true);
@@ -250,8 +250,8 @@ test("deny plane: a header subject and a wrong-context signature are both refuse
     const client = SeamClient.connect(baseUrl);
     const agent = demoAgent();
     try {
-      const first = await seal(client, agent, "ts-deny-a");
-      const second = await seal(client, agent, "ts-deny-b");
+      const first = await seal(client, agent, "ts-deny-a-sid-0123456789abcdef");
+      const second = await seal(client, agent, "ts-deny-b-sid-0123456789abcdef");
       const ticket = await client.admit(agent);
       const coord = createClient(SeamCoordination, createGrpcTransport({ baseUrl }));
       const cred = (rpcName: string, resourceId: string) => ({
