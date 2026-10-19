@@ -499,9 +499,9 @@ pub struct IssuerReport {
     /// The longest `attested_len` of any valid attestation — **absolute**, i.e. not relative to
     /// `base_len`, unlike `heads`/`max_schema_by_link` indexing.
     pub covered_prefix: u64,
-    /// The number of v2/v3 `DECISION_SEALED` records whose record digest recomputed and matched the wire
-    /// `digest` (design-a). v1 records are link-only (not recomputable) and not counted; a version this
-    /// build does not implement is refused outright rather than left uncounted.
+    /// The number of `DECISION_SEALED` records whose v4 record digest recomputed and matched the wire
+    /// `digest` (design-a). Every other `schema_version` is refused outright rather than left
+    /// uncounted.
     pub records_recomputed: usize,
     /// **Spec clause (f4).** The number of valid attestations whose `attested_len` is strictly greater
     /// than `base_len` — the ones that actually warrant the window, as opposed to the anchor (which
@@ -517,160 +517,134 @@ pub struct IssuerReport {
     pub below_window: usize,
 }
 
-/// Every v3 sub-digest is a SHA-256, so exactly this many bytes. A wire value of any other length
-/// is malformed, not a shorter digest.
-const V3_DIGEST_LEN: usize = 32;
+/// The only record-digest formula this build implements (P7). Every other `schema_version` is
+/// refused as unknown — never skipped, never recomputed under a formula it was not sealed with.
+pub const RECORD_DIGEST_SCHEMA: u32 = 4;
 
-/// The 32-byte record digest a v2 `DECISION_SEALED` commits to — `seam.audit.record-digest.v2`.
-///
-/// Transcribed verbatim from `seam-event.v1.md` §Record digest (v2). `frame(x) = u32le(len) ‖ x`;
-/// `opt(x) = 0x00` when absent, `0x01 ‖ frame(x)` when present — so `None` and `Some("")` are DISTINCT (a
-/// naive empty-string collapse is a real bug), and the presence byte is RAW (never itself framed).
-/// `ciphertext_digest` is `SHA256(ciphertext)` framed directly (the stream carries the digest, never the
-/// ciphertext — the recompute never re-hashes plaintext). The preimage order is NOT the wire tag order:
-/// `outcome` precedes the optional `mode`/`policy_version`/`supersedes`.
-fn record_digest_v2(d: &Decision) -> [u8; 32] {
-    let mut buf: Vec<u8> = Vec::new();
-    let frame = |buf: &mut Vec<u8>, part: &[u8]| {
-        buf.extend_from_slice(&(part.len() as u32).to_le_bytes());
-        buf.extend_from_slice(part);
-    };
-    let opt = |buf: &mut Vec<u8>, x: Option<&str>| match x {
-        None => buf.push(0x00),
-        Some(s) => {
-            buf.push(0x01);
-            buf.extend_from_slice(&(s.len() as u32).to_le_bytes());
-            buf.extend_from_slice(s.as_bytes());
-        }
-    };
-    frame(&mut buf, b"seam.audit.record-digest.v2");
-    frame(&mut buf, d.decision_id.as_bytes());
-    frame(&mut buf, d.tenant.as_bytes());
-    frame(&mut buf, d.namespace.as_bytes());
-    frame(&mut buf, &d.ciphertext_digest);
-    frame(&mut buf, &d.sealed_at.to_le_bytes());
-    frame(&mut buf, d.outcome.as_bytes());
-    opt(&mut buf, d.mode.as_deref());
-    opt(&mut buf, d.policy_version.as_deref());
-    opt(&mut buf, d.supersedes.as_deref());
-    frame(&mut buf, &d.schema_version.to_le_bytes());
-    Sha256::digest(&buf).into()
-}
+/// Every v4 sub-digest (tags 11, 12, 13 and 15) is a SHA-256, so exactly this many bytes. A wire
+/// value of any other length is malformed, not a shorter digest.
+const V4_DIGEST_LEN: usize = 32;
 
-/// A mandatory v3 sub-digest (wire tag 11 or 12): present, and exactly 32 bytes.
+/// A mandatory v4 digest slot (wire tag 11, 12 or 15): present, and exactly 32 bytes.
 ///
 /// Absent is a **strip**, and the spec is explicit that it must be reported *distinctly* from a
 /// digest mismatch — "someone removed a field" and "someone rewrote one" are different events with
-/// different responses, and a verifier that blurs them costs an operator the one clue that
-/// distinguishes them. Wrong-length is refused rather than hashed for the same reason: hashing a
+/// different responses. Wrong-length is refused rather than hashed for the same reason: hashing a
 /// malformed field would produce a well-formed digest that fails the comparison, surfacing a
 /// MALFORMED record as though it had been REWRITTEN.
-fn v3_required<'a>(
+fn v4_required_digest<'a>(
     name: &str,
     tag: u32,
     value: &'a [u8],
     decision_id: &str,
 ) -> Result<&'a [u8], String> {
     // `len == 0` IS absence here — a total mapping over any bytes a decoder can be handed, including
-    // an explicitly-encoded zero-length field (spec §"Presence on the wire"). A conforming producer
-    // never emits one; proto3 still obliges us to accept and classify it, and the classification is
-    // "absent", which on tags 11/12 means STRIP.
-    match if value.is_empty() { None } else { Some(value) } {
-        None => Err(format!(
-            "a v3 DECISION_SEALED ({decision_id}) carries NO {name} (wire tag {tag}).\n  \
-             The v3 record-digest formula requires it. This is a STRIP, not a digest mismatch: the \
-             record is REFUSED — not defaulted to an empty digest, and not recomputed under the v2 \
-             formula. Falling back to v2 is what a downgrade attack wants; defaulting to empty is \
-             what makes 'nobody participated' indistinguishable from 'somebody deleted the field'."
-        )),
-        Some(b) if b.len() != V3_DIGEST_LEN => Err(format!(
-            "a v3 DECISION_SEALED ({decision_id}) carries a MALFORMED {name} (wire tag {tag}): {} \
-             bytes, not {V3_DIGEST_LEN}.\n  \
+    // an explicitly-encoded zero-length field (spec §"Presence on the wire").
+    if value.is_empty() {
+        return Err(strip_message(name, tag, decision_id));
+    }
+    if value.len() != V4_DIGEST_LEN {
+        return Err(format!(
+            "a v4 DECISION_SEALED ({decision_id}) carries a MALFORMED {name} (wire tag {tag}): {} \
+             bytes, not {V4_DIGEST_LEN}.\n  \
              Refused rather than hashed. Hashing it would yield a well-formed digest that fails the \
              comparison, reporting a malformed field as though the record had been rewritten.",
-            b.len()
-        )),
-        Some(b) => Ok(b),
+            value.len()
+        ));
     }
+    Ok(value)
 }
 
-/// The optional v3 sub-digest (wire tag 13). Absent is LEGITIMATE — it means no policy was bound to
-/// that commitment, today's common case — so absence is data here, carried into the preimage by the
-/// `opt` presence byte rather than refused. Present-but-wrong-length is still malformed.
-fn v3_optional<'a>(
+/// A mandatory v4 string slot (wire tag 14, 16 or 17): present, i.e. non-empty. The spec makes every
+/// one of them mandatory on a conforming payload (a trust-less seal stamps the `"none"` sentinel
+/// rather than leaving a slot empty), so empty is a strip, refused distinctly from a mismatch.
+fn v4_required_str<'a>(
+    name: &str,
+    tag: u32,
+    value: &'a str,
+    decision_id: &str,
+) -> Result<&'a str, String> {
+    if value.is_empty() {
+        return Err(strip_message(name, tag, decision_id));
+    }
+    Ok(value)
+}
+
+fn strip_message(name: &str, tag: u32, decision_id: &str) -> String {
+    format!(
+        "a v4 DECISION_SEALED ({decision_id}) carries NO {name} (wire tag {tag}).\n  \
+         The v4 record-digest formula requires it. This is a STRIP, not a digest mismatch: the \
+         record is REFUSED — not defaulted to an empty value, and there is no older formula to fall \
+         back to. Defaulting to empty is what makes 'nobody participated' indistinguishable from \
+         'somebody deleted the field'."
+    )
+}
+
+/// The optional v4 sub-digest (wire tag 13). Absent is LEGITIMATE — it means no policy was bound to
+/// that commitment — so absence is data here, carried into the preimage by the `opt` presence byte
+/// rather than refused. Present-but-wrong-length is still malformed.
+fn v4_optional_digest<'a>(
     name: &str,
     tag: u32,
     value: &'a [u8],
     decision_id: &str,
 ) -> Result<Option<&'a [u8]>, String> {
-    // Same total `len == 0` rule as `v3_required`, but here absence is a legitimate value rather than
-    // a strip: it frames as `opt(None)`. An explicitly-encoded `0x6a 0x00` from a non-conforming
-    // producer therefore verifies GREEN, identically to an omitted field — it must NOT be refused as
-    // malformed, which is what treating it as `Some(b"")` did.
-    match if value.is_empty() { None } else { Some(value) } {
-        None => Ok(None),
-        Some(b) if b.len() != V3_DIGEST_LEN => Err(format!(
-            "a v3 DECISION_SEALED ({decision_id}) carries a MALFORMED {name} (wire tag {tag}): \
-             present but {} bytes, not {V3_DIGEST_LEN}.\n  \
+    // Same total `len == 0` rule as `v4_required_digest`, but here absence frames as `opt(None)`: an
+    // explicitly-encoded zero-length tag 13 verifies identically to an omitted one.
+    match value.len() {
+        0 => Ok(None),
+        V4_DIGEST_LEN => Ok(Some(value)),
+        n => Err(format!(
+            "a v4 DECISION_SEALED ({decision_id}) carries a MALFORMED {name} (wire tag {tag}): \
+             present but {n} bytes, not {V4_DIGEST_LEN}.\n  \
              Absent is legitimate (no policy was bound); present-and-wrong-length is not, and is \
-             refused rather than hashed.",
-            b.len()
+             refused rather than hashed."
         )),
-        Some(b) => Ok(Some(b)),
     }
 }
 
-/// The 32-byte record digest a v3 `DECISION_SEALED` commits to — `seam.audit.record-digest.v3`.
+/// The 32-byte record digest a v4 `DECISION_SEALED` commits to — `seam.audit.record-digest.v4`.
 ///
-/// Transcribed from `seam-event.v1.md` §Record digest (v3). v3 is v2 plus the three columns carrying
-/// the product's actual claims: what context the decision consumed, who participated, and which
-/// policy rules gated the commitment. They arrive as **opaque 32-byte sub-digests on the wire**
-/// (tags 11/12/13); their internal formulas belong to the runtime and to auditors, and are
-/// deliberately not reimplemented here — this is a wire-input recompute, exactly as
-/// [`record_digest_v2`] is.
+/// Transcribed from `seam-event.v1.md` §Record digest (v4). `frame(x) = le32(len) ‖ x`;
+/// `opt(x) = 0x00` when absent, `0x01 ‖ frame(x)` when present — so `None` and `Some("")` are
+/// DISTINCT, and the presence byte is RAW (never itself framed).
 ///
-/// Three things the spec singles out as easy to get wrong:
+/// ```text
+/// frame("seam.audit.record-digest.v4")
+/// ‖ frame(decision_id) ‖ frame(tenant) ‖ frame(namespace)
+/// ‖ frame(ciphertext_digest) ‖ frame(le64(sealed_at))
+/// ‖ frame(outcome) ‖ opt(mode) ‖ opt(policy_version) ‖ opt(supersedes)
+/// ‖ frame(context_digest) ‖ frame(participation_digest) ‖ opt(policy_rules_digest)
+/// ‖ frame(classification) ‖ frame(participants_digest)
+/// ‖ frame(trust_basis_commitment) ‖ frame(auth_method)
+/// ‖ frame(le32(schema_version))
+/// ```
 ///
-/// * **Digest slots are offset by one from the proto tags.** `context_digest` is preimage slot 10 but
-///   wire tag 11. The new slots are *inserted before* `schema_version`, never appended after it — a
-///   verifier selects the whole formula by `schema_version`, so position is fixed by the spec rather
-///   than by append order.
-/// * **Slots 10 and 11 are framed; slot 12 is `opt`ed.** The asymmetry is deliberate: framing the two
-///   mandatory digests is precisely what stops "no participants" from aliasing with "field stripped".
-/// * **`None` is not `Some(&[])`.** `opt(None)` is one byte, `opt(Some(&[]))` is five.
-///
-/// The `frame`/`opt` closures are duplicated from [`record_digest_v2`] rather than shared, on
-/// purpose: v2's bytes are frozen forever, and a shared helper would put them behind a refactor
-/// surface. Duplication is the safety property here.
-fn record_digest_v3(d: &Decision) -> Result<[u8; 32], String> {
-    let context_digest = v3_required("context_digest", 11, &d.context_digest, &d.decision_id)?;
-    let participation_digest = v3_required(
-        "participation_digest",
-        12,
-        &d.participation_digest,
-        &d.decision_id,
-    )?;
-    let policy_rules_digest = v3_optional(
-        "policy_rules_digest",
-        13,
-        &d.policy_rules_digest,
-        &d.decision_id,
-    )?;
+/// The sub-digests and the trust-basis commitment arrive **opaque on the wire** (tags 11-17); their
+/// internal formulas belong to the runtime and to auditors and are deliberately not reimplemented
+/// here — this is a wire-input recompute. `trust_basis_commitment` is framed as its ASCII string,
+/// never the HMAC bytes, so no key is needed. `schema_version` is always the last slot. Strips of
+/// the mandatory slots leave through the error channel, distinct from a mismatch.
+pub fn record_digest_v4(d: &Decision) -> Result<[u8; 32], String> {
+    let id = d.decision_id.as_str();
+    let context_digest = v4_required_digest("context_digest", 11, &d.context_digest, id)?;
+    let participation_digest =
+        v4_required_digest("participation_digest", 12, &d.participation_digest, id)?;
+    let policy_rules_digest =
+        v4_optional_digest("policy_rules_digest", 13, &d.policy_rules_digest, id)?;
+    let classification = v4_required_str("classification", 14, &d.classification, id)?;
+    let participants_digest =
+        v4_required_digest("participants_digest", 15, &d.participants_digest, id)?;
+    let trust_basis_commitment =
+        v4_required_str("trust_basis_commitment", 16, &d.trust_basis_commitment, id)?;
+    let auth_method = v4_required_str("auth_method", 17, &d.auth_method, id)?;
 
     let mut buf: Vec<u8> = Vec::new();
     let frame = |buf: &mut Vec<u8>, part: &[u8]| {
         buf.extend_from_slice(&(part.len() as u32).to_le_bytes());
         buf.extend_from_slice(part);
     };
-    let opt = |buf: &mut Vec<u8>, x: Option<&str>| match x {
-        None => buf.push(0x00),
-        Some(s) => {
-            buf.push(0x01);
-            buf.extend_from_slice(&(s.len() as u32).to_le_bytes());
-            buf.extend_from_slice(s.as_bytes());
-        }
-    };
-    let opt_bytes = |buf: &mut Vec<u8>, x: Option<&[u8]>| match x {
+    let opt = |buf: &mut Vec<u8>, x: Option<&[u8]>| match x {
         None => buf.push(0x00),
         Some(b) => {
             buf.push(0x01);
@@ -678,19 +652,23 @@ fn record_digest_v3(d: &Decision) -> Result<[u8; 32], String> {
             buf.extend_from_slice(b);
         }
     };
-    frame(&mut buf, b"seam.audit.record-digest.v3");
+    frame(&mut buf, b"seam.audit.record-digest.v4");
     frame(&mut buf, d.decision_id.as_bytes());
     frame(&mut buf, d.tenant.as_bytes());
     frame(&mut buf, d.namespace.as_bytes());
     frame(&mut buf, &d.ciphertext_digest);
     frame(&mut buf, &d.sealed_at.to_le_bytes());
     frame(&mut buf, d.outcome.as_bytes());
-    opt(&mut buf, d.mode.as_deref());
-    opt(&mut buf, d.policy_version.as_deref());
-    opt(&mut buf, d.supersedes.as_deref());
+    opt(&mut buf, d.mode.as_deref().map(str::as_bytes));
+    opt(&mut buf, d.policy_version.as_deref().map(str::as_bytes));
+    opt(&mut buf, d.supersedes.as_deref().map(str::as_bytes));
     frame(&mut buf, context_digest);
     frame(&mut buf, participation_digest);
-    opt_bytes(&mut buf, policy_rules_digest);
+    opt(&mut buf, policy_rules_digest);
+    frame(&mut buf, classification.as_bytes());
+    frame(&mut buf, participants_digest);
+    frame(&mut buf, trust_basis_commitment.as_bytes());
+    frame(&mut buf, auth_method.as_bytes());
     frame(&mut buf, &d.schema_version.to_le_bytes());
     Ok(Sha256::digest(&buf).into())
 }
@@ -739,16 +717,16 @@ fn record_digest_v3(d: &Decision) -> Result<[u8; 32], String> {
 /// first). Every attestation present must pass signature verification; a single failure aborts with
 /// `Err` (a forged one in the mix is an attack, even if others pass).
 ///
-/// # design-a — every v2/v3 record self-verifies (Phase 4 / B3)
+/// # design-a — every record self-verifies (record digest v4, P7)
 ///
 /// The attestation (design-b) covers a *prefix* and only exists if the runtime emitted one; a payload
-/// rewrite in an unattested tail would slip past it. So under `--issuer` this ALSO recomputes each v2
-/// `DECISION_SEALED`'s digest from its structural columns (spec §Record digest) and compares it to the
-/// wire `digest` (tag 19): a mismatch is a **payload rewrite** (a column changed after sealing; the link's
-/// triple still hashes, but the digest no longer matches the payload). And a v2 record that lacks a
-/// non-empty `ciphertext_digest` (tag 10) is REFUSED — a **tag-10 strip / downgrade**, the exact hole
-/// "cannot recompute ⇒ not a failure" would leave open. v1 records are not recomputable and are skipped,
-/// never failed (selected by `schema_version`, never silently green on a version we cannot recompute).
+/// rewrite in an unattested tail would slip past it. So under `--issuer` this ALSO recomputes each
+/// `DECISION_SEALED`'s v4 digest from its structural columns (spec §Record digest) and compares it to
+/// the wire `digest` (tag 19): a mismatch is a **payload rewrite** (a column changed after sealing; the
+/// link's triple still hashes, but the digest no longer matches the payload). A record missing a
+/// mandatory column (tag 10, 11, 12, 14, 15, 16 or 17) is REFUSED as a **strip**, distinct from a
+/// mismatch. Any `schema_version` other than 4 is REFUSED as cannot-verify — never skipped, and never
+/// recomputed under another formula.
 pub fn verify_authenticity_anchored(
     events: &[Event],
     heads: &[Vec<u8>],
@@ -777,76 +755,41 @@ pub fn verify_authenticity_anchored(
     let mut covered_prefix = 0u64;
     let mut records_recomputed = 0usize;
 
-    // design-a: every v2/v3 DECISION_SEALED recomputes; a covered record with no ciphertext_digest is a
-    // strip, and a v3 record missing tag 11 or 12 is a strip too — reported distinctly from a mismatch.
+    // design-a: every DECISION_SEALED recomputes under v4. A version other than 4 is refused; a v4
+    // record missing a mandatory column is a strip — reported distinctly from a mismatch.
     for e in events {
         let Some(d) = e.decision.as_ref() else {
             continue;
         };
-        if d.schema_version < 2 {
-            // v1 is link-only: its historical digest is not stream-recomputable, so it is skipped
-            // rather than failed. That skip is a hole an attacker can climb into — rewrite a column
-            // AND set schema_version to 1, and the record is waved through — so the exit is guarded by
-            // the one thing a genuine v1 record cannot fake.
-            //
-            // The spec is unambiguous about what a v1 payload looks like: `ciphertext_digest` "is
-            // absent (no wire bytes) only on `schema_version = 1` payloads", and tags 11/12/13 arrived
-            // with v3. A payload that declares v1 while CARRYING one of those columns is therefore not
-            // a v1 record at all — it is a covered record wearing v1's exemption, which is the same
-            // strip/downgrade shape as dropping tag 10 and gets the same answer.
-            //
-            // Note this is the ONE downgrade direction that has to be caught structurally: every other
-            // version is dispatched to a formula and fails the comparison. A downgrade INTO the skip
-            // is invisible to the recompute by construction, because the whole point of the skip is
-            // that no recompute happens.
-            let smuggled = [
-                ("ciphertext_digest", 10, !d.ciphertext_digest.is_empty()),
-                ("context_digest", 11, !d.context_digest.is_empty()),
-                (
-                    "participation_digest",
-                    12,
-                    !d.participation_digest.is_empty(),
-                ),
-                ("policy_rules_digest", 13, !d.policy_rules_digest.is_empty()),
-            ];
-            if let Some((name, tag, _)) = smuggled.iter().find(|(_, _, present)| *present) {
-                return Err(format!(
-                    "a DECISION_SEALED ({}) declares schema_version {} but carries {name} (wire tag \
-                     {tag}), which only exists on schema_version >= 2.\n  \
-                     A genuine v1 record has none of these columns. Declaring v1 is what exempts a \
-                     record from the digest recompute, so a covered record wearing v1's version number \
-                     is a DOWNGRADE — rewrite a column, relabel the version, and the recompute never \
-                     runs. Refused rather than skipped.",
-                    d.decision_id, d.schema_version
-                ));
-            }
-            continue;
-        }
-        // A version this build does not implement is REFUSED, never skipped.
+        // A version other than 4 is REFUSED, never skipped (spec §Record digest: "a verifier
+        // recomputes v4 only and refuses every other schema_version as unknown").
         //
-        // Before B3 this arm did not exist, and it was not merely a missing feature: a v3 record fell
-        // through to the v2 formula, mismatched (v3 binds three more slots), and was reported as "a
-        // structural column was rewritten after sealing". That is a false accusation with a real
-        // cost — an operator would go looking for a tamper that never happened. Skipping instead
-        // would be worse: "I cannot check this, so it passes" is precisely the shape of a downgrade.
-        // The only honest answer to an unknown version is to say so and fail.
-        if d.schema_version > 3 {
+        // There is deliberately no older formula and no link-only exemption any more. Before P7 a v1
+        // record was skipped as "not recomputable", and that skip was a hole the verifier had to guard
+        // structurally (relabel a covered record to v1 and the recompute never ran). With one formula
+        // there is nothing to downgrade INTO: a relabel to 1, 2 or 3 lands here and fails, and a newer
+        // version is refused rather than misreported as a rewrite. "I cannot check this, so it passes"
+        // is precisely the shape of a downgrade, so the only honest answer is to say so and fail.
+        if d.schema_version != RECORD_DIGEST_SCHEMA {
+            let relation = if d.schema_version > RECORD_DIGEST_SCHEMA {
+                "NEWER THAN THIS VERIFIER"
+            } else {
+                "RETIRED (v1-v3 were retired by P7)"
+            };
             return Err(format!(
-                "a DECISION_SEALED ({}) declares schema_version {}, which is NEWER THAN THIS \
-                 VERIFIER.\n  \
-                 This build implements the v2 and v3 record-digest formulas; it cannot prove a record \
-                 matches a digest computed under a formula it does not have. Refused rather than \
-                 skipped — treating an unknown version as cannot-recompute-so-pass is how a downgrade \
-                 gets through. Upgrade seam-verify to a build that implements schema_version {}.",
-                d.decision_id, d.schema_version, d.schema_version
+                "CANNOT VERIFY: a DECISION_SEALED ({}) declares schema_version {}, which is {relation}.\n  \
+                 This build implements only the v{RECORD_DIGEST_SCHEMA} record-digest formula; it cannot \
+                 prove a record matches a digest computed under a formula it does not have. Refused \
+                 rather than skipped — treating an unknown version as cannot-recompute-so-pass is how a \
+                 downgrade gets through.",
+                d.decision_id, d.schema_version
             ));
         }
         if d.ciphertext_digest.is_empty() {
             return Err(format!(
                 "a v{} DECISION_SEALED ({}) carries NO ciphertext_digest (tag 10).\n  \
-                 Every covered record (schema_version >= 2) is required to commit its SHA256(ciphertext); \
-                 an absent tag 10 on a covered \
-                 record is a strip/downgrade attack (rewrite a field, drop the commitment, leave the \
+                 Every record is required to commit its SHA256(ciphertext); an absent tag 10 is a \
+                 strip/downgrade attack (rewrite a field, drop the commitment, leave the \
                  (prev,digest,checksum) triple intact so the signed head still matches) — refused, not \
                  treated as cannot-recompute-so-pass.",
                 d.schema_version, d.decision_id
@@ -858,18 +801,9 @@ pub fn verify_authenticity_anchored(
         let Some(wire_digest) = e.digest.as_ref() else {
             continue;
         };
-        // The formula is selected by `schema_version`, never guessed and never tried in turn: a
-        // verifier that fell back from v3 to v2 on mismatch would hand an attacker a downgrade for
-        // free. The `?` below is what keeps a STRIP distinct from a MISMATCH — a strip leaves through
-        // the error channel with its own wording, a mismatch is the inequality tested underneath.
-        let recomputed = match d.schema_version {
-            2 => record_digest_v2(d),
-            3 => record_digest_v3(d)?,
-            // Unreachable: `< 2` continued above and `> 3` returned above. Written as a refusal
-            // rather than `unreachable!()` so that widening the bounds without adding an arm fails
-            // loudly instead of panicking a CLI in an auditor's hands.
-            v => return Err(format!("no record-digest formula for schema_version {v}")),
-        };
+        // The `?` is what keeps a STRIP distinct from a MISMATCH — a strip leaves through the error
+        // channel with its own wording, a mismatch is the inequality tested underneath.
+        let recomputed = record_digest_v4(d)?;
         if wire_digest.as_slice() != recomputed {
             return Err(format!(
                 "a v{} DECISION_SEALED ({}) does NOT match its own digest.\n  \
@@ -1026,13 +960,13 @@ pub fn verify_authenticity_anchored(
         // Indexed by `rel`, NOT a running max over everything seen so far, and never seeded from the
         // anchor's own `digest_schema` (clause (f5) — that field is a CEILING on the prefix below the
         // window, not the window's actual max; seeding from it would refuse a genuinely old in-window
-        // attestation over an all-v2 span). A stale attestation legitimately covers a SHORTER prefix
+        // attestation over an all-v4 span). A stale attestation legitimately covers a SHORTER prefix
         // than the window's current length (the head is read, signed, and appended without a lock, so
         // the chain advances underneath it) — comparing it against records sealed after it was signed
         // would refuse a valid attestation for a race the design explicitly permits.
         //
-        // `>=`, never `==`: a ceiling only ever rises and attestations are never re-signed, so a
-        // genuinely old `digest_schema = 2` attestation over a v2-only span stays valid forever.
+        // `>=`, never `==`: a ceiling only ever rises and attestations are never re-signed, so an
+        // attestation's ceiling may legitimately sit above every record it covers.
         // FAIL-CLOSED on a short slice, never `unwrap_or(0)` — see [`verify_authenticity`]'s doc for
         // why (reachable by an embedder passing mismatched vectors, not by this crate's own CLI).
         let Some(max_covered) = max_schema_by_link.get(rel).copied() else {
@@ -1141,8 +1075,8 @@ pub fn verify_authenticity_by_tenant(
 /// forbids as an input.
 ///
 /// This is deliberately a small, self-contained duplicate of the pin+signature+vacuous checks inside
-/// [`verify_authenticity_anchored`]'s attestation loop, in the spirit of this crate's `record_digest_v2`
-/// / `record_digest_v3` duplication: the anchor check runs at a different point in the caller's control
+/// [`verify_authenticity_anchored`]'s attestation loop, in the spirit of this crate's preference
+/// for duplication over a shared helper across a control-flow seam: the anchor check runs at a different point in the caller's control
 /// flow (before a `ChainReport` exists at all) and sharing a helper across that seam is not worth the
 /// coupling.
 pub fn verify_anchor(anchor: &Attestation, pinned_aids: &[String]) -> Result<(), String> {
@@ -1505,14 +1439,10 @@ mod tests {
         );
     }
 
-    /// Pin `record_digest_v2`'s framing byte-for-byte against the runtime's committed `record_digest_v2`
-    /// KAT (seam-client/tests/conformance_vectors.json). A single wrong `frame`/`opt`/`le`/order produces a
-    /// total-mismatch digest — so this catches any drift and independently proves (nothing of Seam's is
-    /// linked) that design-a's recompute is exactly the runtime's. `policy_version`/`supersedes` are `None`
-    /// here, exercising the `opt` absent-byte; `mode` is `Some`, exercising the present branch.
-    #[test]
-    fn record_digest_v2_matches_the_runtime_kat() {
-        let d = Decision {
+    /// The `record_digest_v4` inputs of the runtime's committed KAT (seam-client
+    /// `conformance_vectors.json`, block `record_digest_v4`), as a `Decision`.
+    fn v4_kat_decision() -> Decision {
+        Decision {
             decision_id: "dec:conformance".into(),
             tenant: "acme".into(),
             namespace: "fraud".into(),
@@ -1521,103 +1451,127 @@ mod tests {
             outcome: "Resolved".into(),
             supersedes: None,
             sealed_at: 1_700_000_000_000,
-            schema_version: 2,
+            schema_version: 4,
             ciphertext_digest: hex_to_bytes(
                 "67d9f6952981d85f7a2cabb0d5468e6934dc63ec55b480f18339277afc7635a6",
             ),
-            // v2 carries none of the B3 columns. Present only because the struct gained the fields;
-            // no v2 input or expectation in this test changed.
-            context_digest: Vec::new(),
-            participation_digest: Vec::new(),
-            policy_rules_digest: Vec::new(),
-        };
-        assert_eq!(
-            hex(&record_digest_v2(&d)),
-            "3817863521537d347c112bb95d7960d3d9f3007ee041f59c87bcaaf88ac40785",
-            "the digest-v2 framing must match the runtime KAT byte-for-byte"
-        );
-    }
-
-    /// A fully-populated v3 `Decision`, for the unit tests below.
-    fn v3_decision() -> Decision {
-        Decision {
-            decision_id: "dec:v3".into(),
-            tenant: "acme".into(),
-            namespace: "fraud".into(),
-            mode: Some("decision.v1".into()),
-            policy_version: Some("policy-7".into()),
-            outcome: "Resolved".into(),
-            supersedes: Some("dec:prior".into()),
-            sealed_at: 1_700_000_000_000,
-            schema_version: 3,
-            ciphertext_digest: vec![0x44; 32],
-            context_digest: vec![0x11; 32],
-            participation_digest: vec![0x22; 32],
-            policy_rules_digest: vec![0x33; 32],
+            context_digest: hex_to_bytes(
+                "206f43bde4db008ca2c9b648cd6782252cfd8dbbbd70f63e63765601c6e653cd",
+            ),
+            participation_digest: hex_to_bytes(
+                "66c8ae346f5284cc62cf29e6681b16a98db7a3bba458a4d494273a267ba69c02",
+            ),
+            policy_rules_digest: vec![0x5a; 32],
+            classification: "Internal".into(),
+            participants_digest: hex_to_bytes(
+                "58b8fac506c099ccb4af417df40f632c69e614fb03531e8e21570a90caf7fc4a",
+            ),
+            trust_basis_commitment:
+                "hmac-sha256:0a1b2c3d:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+                    .into(),
+            auth_method: "aitp-pinned-handshake".into(),
         }
     }
 
-    /// The v3 distinctions, as unit tests rather than only as vectors.
+    /// Pin `record_digest_v4`'s framing byte-for-byte against the runtime's committed KATs, both the
+    /// policy-bound block and `record_digest_v4_absent_policy` (tag 13 absent → `opt(None)`).
     ///
-    /// `tests/conformance.rs` covers these through the committed cross-repo vectors, but it is in
-    /// `Cargo.toml`'s package `exclude` — it reads `../conformance/vectors.json`, which a standalone
-    /// published tarball does not have. Without these, the published crate would ship a v3
-    /// implementation whose distinguishing behaviour nothing in the package tests. Someone who
-    /// `cargo install`s this and runs `cargo test` should be able to see the formula defended.
+    /// `tests/conformance.rs` reads the same vectors from `../conformance/vectors.json`, but it is in
+    /// `Cargo.toml`'s package `exclude`; these copies are what a standalone published crate tests.
     #[test]
-    fn record_digest_v3_distinguishes_none_from_empty_string() {
-        let base = v3_decision();
+    fn record_digest_v4_matches_the_runtime_kats() {
+        let d = v4_kat_decision();
+        assert_eq!(
+            hex(&record_digest_v4(&d).unwrap()),
+            "5af04d4b472bbd9f7c258392ad95bab82b6562d1904c086abf9f761968fbb241",
+            "the digest-v4 framing must match the runtime KAT byte-for-byte"
+        );
+        let mut absent = d.clone();
+        absent.policy_rules_digest = Vec::new();
+        assert_eq!(
+            hex(&record_digest_v4(&absent).unwrap()),
+            "1e1cafdf76786feecbd18a83a74bfd65a2364b555f388d083abda431eaed6f8c",
+            "an absent policy_rules_digest must frame as opt(None)"
+        );
+    }
+
+    /// The KAT's `participants_digest_hex` is the spec's `seam.audit.participants.v4` over its
+    /// `participants` roster. The verifier never recomputes it (tag 15 is opaque on the wire), but an
+    /// auditor can — this pins that the formula the spec states is the one the vector carries.
+    #[test]
+    fn the_kat_participants_digest_follows_the_spec_formula() {
+        let frame = |buf: &mut Vec<u8>, x: &[u8]| {
+            buf.extend_from_slice(&(x.len() as u32).to_le_bytes());
+            buf.extend_from_slice(x);
+        };
+        let digest = |ids: &[&str]| -> [u8; 32] {
+            let mut buf = Vec::new();
+            frame(&mut buf, b"seam.audit.participants.v4");
+            buf.extend_from_slice(&(ids.len() as u32).to_le_bytes());
+            for id in ids {
+                frame(&mut buf, id.as_bytes());
+            }
+            Sha256::digest(&buf).into()
+        };
+        assert_eq!(
+            digest(&["fraud-v3", "risk-v2"]).to_vec(),
+            v4_kat_decision().participants_digest
+        );
+        // Stored order, never sorted: the reverse roster is a different digest.
+        assert_ne!(
+            digest(&["risk-v2", "fraud-v3"]),
+            digest(&["fraud-v3", "risk-v2"])
+        );
+    }
+
+    /// `opt(None)` is one byte and `opt(Some(""))` is five — a present-but-empty mode is DATA.
+    #[test]
+    fn record_digest_v4_distinguishes_none_from_empty_string() {
+        let base = v4_kat_decision();
         let mut none = base.clone();
         none.mode = None;
         let mut empty = base.clone();
         empty.mode = Some(String::new());
         assert_ne!(
-            record_digest_v3(&none).unwrap(),
-            record_digest_v3(&empty).unwrap(),
-            "`opt(None)` is one byte and `opt(Some(\"\"))` is five — a present-but-empty mode is DATA"
+            record_digest_v4(&none).unwrap(),
+            record_digest_v4(&empty).unwrap()
         );
     }
 
     /// An explicitly-encoded ZERO-LENGTH tag 13 must verify GREEN, identically to an omitted one.
     ///
-    /// This is the case a hostile producer can actually send. A conforming encoder never emits it —
-    /// prost skips a singular scalar at its default — but proto3 *obliges a decoder to accept* an
-    /// explicitly-encoded default, so `0x6a 0x00` can be handed to this verifier. `seam-event.v1.md`
-    /// §"Presence on the wire" therefore states the consumer rule as a TOTAL mapping over every byte
-    /// sequence a decoder can be handed: on tags 10-13, `len == 0` means absent **however the bytes
-    /// arose**. For tag 13 absent is legitimate (no policy bound) and frames as `opt(None)`.
-    ///
-    /// This test is in two halves on purpose. The first asserts what the DECODER actually produces
-    /// from those bytes — without it the second half would be asserting a premise rather than a
-    /// behaviour, and would keep passing if the wire types changed underneath it.
+    /// A conforming encoder never emits it, but proto3 obliges a decoder to accept an
+    /// explicitly-encoded default, so `0x6a 0x00` can be handed to this verifier. On tags 10-17
+    /// `len == 0` means absent however the bytes arose (spec §"Presence on the wire"); for tag 13
+    /// absent is legitimate and frames as `opt(None)`. The first half asserts what the DECODER
+    /// produces, so the second half asserts a behaviour rather than a premise.
     #[test]
     fn an_explicitly_encoded_zero_length_policy_rules_digest_is_absent_not_malformed() {
         use prost::Message;
 
+        let d = v4_kat_decision();
         let pb = crate::wire::DecisionSealedPb {
-            decision_id: "dec:v3".into(),
-            tenant: "acme".into(),
-            namespace: "fraud".into(),
-            mode: Some("decision.v1".into()),
-            policy_version: Some("policy-7".into()),
-            outcome: "Resolved".into(),
-            supersedes: Some("dec:prior".into()),
-            sealed_at: 1_700_000_000_000,
-            schema_version: 3,
-            ciphertext_digest: vec![0x44; 32],
-            context_digest: vec![0x11; 32],
-            participation_digest: vec![0x22; 32],
+            decision_id: d.decision_id.clone(),
+            tenant: d.tenant.clone(),
+            namespace: d.namespace.clone(),
+            mode: d.mode.clone(),
+            policy_version: d.policy_version.clone(),
+            outcome: d.outcome.clone(),
+            supersedes: d.supersedes.clone(),
+            sealed_at: d.sealed_at,
+            schema_version: 4,
+            ciphertext_digest: d.ciphertext_digest.clone(),
+            context_digest: d.context_digest.clone(),
+            participation_digest: d.participation_digest.clone(),
             policy_rules_digest: Vec::new(),
+            classification: d.classification.clone(),
+            participants_digest: d.participants_digest.clone(),
+            trust_basis_commitment: d.trust_basis_commitment.clone(),
+            auth_method: d.auth_method.clone(),
         };
 
         let mut bytes = Vec::new();
         pb.encode(&mut bytes).expect("encode");
-        // A conforming encoder emits nothing for tag 13 here...
-        assert!(
-            !bytes.windows(2).any(|w| w == [0x6a, 0x00]),
-            "the encoder must not put a zero-length tag 13 on the wire"
-        );
-        // ...but a non-conforming one can append it, and proto3 says we must accept it.
         bytes.extend_from_slice(&[0x6a, 0x00]);
         let decoded = crate::wire::DecisionSealedPb::decode(&bytes[..]).expect("decode");
         assert!(
@@ -1625,98 +1579,114 @@ mod tests {
             "the crafted bytes must decode to an empty tag 13 — otherwise this test proves nothing"
         );
 
-        // The verdict must be identical to the omitted case, not a MALFORMED refusal.
-        let mut crafted = v3_decision();
+        let mut crafted = d.clone();
         crafted.policy_rules_digest = decoded.policy_rules_digest;
-        let mut omitted = v3_decision();
+        let mut omitted = d;
         omitted.policy_rules_digest = Vec::new();
-
-        let c = record_digest_v3(&crafted)
-            .expect("an explicitly-encoded zero-length tag 13 is ABSENT, not malformed");
-        let o = record_digest_v3(&omitted).expect("an omitted tag 13 is absent");
-        assert_eq!(c, o, "`len == 0` is absence however the bytes arose");
+        assert_eq!(
+            record_digest_v4(&crafted).expect("a zero-length tag 13 is ABSENT, not malformed"),
+            record_digest_v4(&omitted).unwrap()
+        );
     }
 
-    /// The same rule, in the direction that must NOT change: tags 11/12 are mandatory on v3, so a
-    /// zero-length occurrence is a STRIP and is still refused.
+    /// Tag 13 is `opt`ed, so absent must NOT equal a 32-zero-byte digest.
     #[test]
-    fn an_explicitly_encoded_zero_length_mandatory_digest_is_still_refused() {
-        for (name, set) in [("context_digest", 0usize), ("participation_digest", 1usize)] {
-            let mut d = v3_decision();
-            if set == 0 {
-                d.context_digest = Vec::new();
-            } else {
-                d.participation_digest = Vec::new();
-            }
-            let err = record_digest_v3(&d)
-                .expect_err("a zero-length mandatory digest must be refused, never hashed");
-            assert!(err.contains(name), "the refusal must name {name}: {err}");
-        }
-    }
-
-    /// Tag 13 is `opt`ed, so absent and present must differ — and absent must NOT equal a 32-zero-byte
-    /// digest, which is what an implementation that framed the slot (or defaulted absence) would produce.
-    #[test]
-    fn record_digest_v3_distinguishes_an_absent_policy_rules_digest_from_a_present_one() {
-        let base = v3_decision();
+    fn record_digest_v4_distinguishes_an_absent_policy_rules_digest_from_a_zeroed_one() {
+        let base = v4_kat_decision();
         let mut absent = base.clone();
         absent.policy_rules_digest = Vec::new();
         let mut zeros = base.clone();
         zeros.policy_rules_digest = vec![0u8; 32];
-
-        let a = record_digest_v3(&absent).unwrap();
-        let z = record_digest_v3(&zeros).unwrap();
-        let s = record_digest_v3(&base).unwrap();
-        assert_ne!(a, z, "absent must not equal a zeroed digest");
-        assert_ne!(a, s);
-        assert_ne!(z, s);
+        assert_ne!(
+            record_digest_v4(&absent).unwrap(),
+            record_digest_v4(&zeros).unwrap()
+        );
     }
 
-    /// The two mandatory sub-digests occupy adjacent, identically-framed, identically-sized slots, so a
-    /// swap produces a perfectly well-formed preimage. Only distinct values make it detectable.
+    /// Identically-framed adjacent slots are interchangeable under a swap unless their values bind to
+    /// position. Each pair below is swapped and must change the digest.
     #[test]
-    fn record_digest_v3_binds_context_and_participation_to_their_own_slots() {
-        let base = v3_decision();
+    fn record_digest_v4_binds_each_column_to_its_own_slot() {
+        let base = v4_kat_decision();
         let mut swapped = base.clone();
         std::mem::swap(
             &mut swapped.context_digest,
             &mut swapped.participation_digest,
         );
         assert_ne!(
-            record_digest_v3(&base).unwrap(),
-            record_digest_v3(&swapped).unwrap(),
-            "swapping tags 11 and 12 did not change the digest — the two slots are interchangeable"
+            record_digest_v4(&base).unwrap(),
+            record_digest_v4(&swapped).unwrap()
+        );
+        let mut swapped = base.clone();
+        std::mem::swap(
+            &mut swapped.participation_digest,
+            &mut swapped.participants_digest,
+        );
+        assert_ne!(
+            record_digest_v4(&base).unwrap(),
+            record_digest_v4(&swapped).unwrap()
+        );
+        let mut swapped = base.clone();
+        std::mem::swap(
+            &mut swapped.trust_basis_commitment,
+            &mut swapped.auth_method,
+        );
+        assert_ne!(
+            record_digest_v4(&base).unwrap(),
+            record_digest_v4(&swapped).unwrap()
         );
     }
 
-    /// A strip is an `Err`, a mismatch is an unequal `Ok` — the distinction is structural, so no caller
-    /// can conflate them however it treats the message text. Both refusals must also NAME the field and
-    /// its wire tag, and must NOT borrow the vocabulary of a mismatch.
+    /// Each of the four v4 columns is bound: changing any one changes the digest.
     #[test]
-    fn a_stripped_or_malformed_v3_sub_digest_is_refused_not_hashed() {
-        let base = v3_decision();
-        for (field, tag, mutate) in [
-            (
-                "context_digest",
-                11,
-                (|d: &mut Decision| d.context_digest = Vec::new()) as fn(&mut Decision),
-            ),
-            ("participation_digest", 12, |d: &mut Decision| {
+    fn record_digest_v4_binds_the_four_new_columns() {
+        let base = v4_kat_decision();
+        let b = record_digest_v4(&base).unwrap();
+        let mut d = base.clone();
+        d.classification = "Financial".into();
+        assert_ne!(record_digest_v4(&d).unwrap(), b);
+        let mut d = base.clone();
+        d.participants_digest = vec![0x01; 32];
+        assert_ne!(record_digest_v4(&d).unwrap(), b);
+        let mut d = base.clone();
+        d.trust_basis_commitment.push('0');
+        assert_ne!(record_digest_v4(&d).unwrap(), b);
+        let mut d = base;
+        d.auth_method = "aitp-tct".into();
+        assert_ne!(record_digest_v4(&d).unwrap(), b);
+    }
+
+    /// A strip is an `Err`, a mismatch is an unequal `Ok` — the distinction is structural. Every
+    /// refusal must NAME the field and its wire tag, and must NOT borrow a mismatch's vocabulary.
+    #[test]
+    fn a_stripped_or_malformed_v4_column_is_refused_not_hashed() {
+        let base = v4_kat_decision();
+        type Mutate = fn(&mut Decision);
+        let cases: [(&str, u32, Mutate); 9] = [
+            ("context_digest", 11, |d| d.context_digest = Vec::new()),
+            ("participation_digest", 12, |d| {
                 d.participation_digest = Vec::new()
             }),
-            ("context_digest", 11, |d: &mut Decision| {
-                d.context_digest = vec![0x11; 31]
-            }),
-            ("participation_digest", 12, |d: &mut Decision| {
-                d.participation_digest = Vec::new()
-            }),
-            ("policy_rules_digest", 13, |d: &mut Decision| {
+            ("context_digest", 11, |d| d.context_digest = vec![0x11; 31]),
+            ("policy_rules_digest", 13, |d| {
                 d.policy_rules_digest = vec![0x33; 33]
             }),
-        ] {
+            ("classification", 14, |d| d.classification = String::new()),
+            ("participants_digest", 15, |d| {
+                d.participants_digest = Vec::new()
+            }),
+            ("participants_digest", 15, |d| {
+                d.participants_digest = vec![0x01; 16]
+            }),
+            ("trust_basis_commitment", 16, |d| {
+                d.trust_basis_commitment = String::new()
+            }),
+            ("auth_method", 17, |d| d.auth_method = String::new()),
+        ];
+        for (field, tag, mutate) in cases {
             let mut d = base.clone();
             mutate(&mut d);
-            let err = record_digest_v3(&d).expect_err(&format!("{field} must be refused"));
+            let err = record_digest_v4(&d).expect_err(&format!("{field} must be refused"));
             assert!(
                 err.contains(field),
                 "the refusal must name the field: {err}"
@@ -1730,53 +1700,11 @@ mod tests {
                 "a strip/malformed field is being described as a mismatch: {err}"
             );
         }
-        // And the mirror: a rewritten column still RETURNS a digest, for the caller to compare.
         let mut rewritten = base.clone();
         rewritten.outcome = "Denied".into();
         assert_ne!(
-            record_digest_v3(&rewritten).unwrap(),
-            record_digest_v3(&base).unwrap()
-        );
-    }
-
-    /// v2 and v3 must not collide on the columns they share — the domain tag carries the version, so
-    /// even the same structural columns cannot verify under the wrong formula.
-    #[test]
-    fn record_digest_v3_does_not_collide_with_v2() {
-        let d = v3_decision();
-        let mut as_v2 = d.clone();
-        as_v2.schema_version = 3; // same version field; only the FORMULA differs
-        assert_ne!(
-            record_digest_v3(&d).unwrap().to_vec(),
-            record_digest_v2(&as_v2).to_vec(),
-            "the v3 domain tag is not separating the two formulas"
-        );
-    }
-
-    /// `None` and `Some("")` must NOT collapse — the `opt` presence byte makes them distinct preimages.
-    #[test]
-    fn record_digest_v2_distinguishes_none_from_empty_string() {
-        let base = Decision {
-            decision_id: "d".into(),
-            tenant: "t".into(),
-            namespace: "n".into(),
-            mode: None,
-            policy_version: None,
-            outcome: "Resolved".into(),
-            supersedes: None,
-            sealed_at: 1,
-            schema_version: 2,
-            ciphertext_digest: vec![0u8; 32],
-            context_digest: Vec::new(),
-            participation_digest: Vec::new(),
-            policy_rules_digest: Vec::new(),
-        };
-        let mut with_empty = base.clone();
-        with_empty.mode = Some(String::new());
-        assert_ne!(
-            record_digest_v2(&base),
-            record_digest_v2(&with_empty),
-            "mode: None must differ from mode: Some(\"\")"
+            record_digest_v4(&rewritten).unwrap(),
+            record_digest_v4(&base).unwrap()
         );
     }
 

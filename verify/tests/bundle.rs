@@ -1,22 +1,31 @@
 //! `seam-verify bundle` against **real** `seam-evidence-bundle.v1` directories.
 //!
-//! `fixtures/evidence-bundle/` was written by the runtime's own export path
-//! (`seamd::Seam::export_evidence_bundle`, seam-runtime@460d163 on `feat/835-step4-refuse-v1-tenant`,
-//! #1303 — which signs tenant attestations v2, #835 step 3) running the scenario of the runtime's
-//! `crates/seam-verify/tests/bundle.rs` `fixture()`: seal `d0`, attest (the anchor), seal the target
-//! `d1` with an inline context, seal `d2`, attest (the cover). Issuer seed 7×32. Re-exported for #835
-//! step 4: the previous export (seam-runtime@e75528f, 0.44.0) carried v1 tenant attestations, which a
-//! step-4 verifier refuses. The commitment, context and policy members are byte-identical to that
-//! export; the anchor, events, binding and manifest moved with the v2 signatures (and the record's
-//! freshly-encrypted `ciphertext_digest`). Every directory also verifies under the runtime's internal
-//! oracle (`seam-verify-internal bundle`) at that commit, so a disagreement here is a disagreement
-//! between two verifiers.
+//! `fixtures/evidence-bundle/` was written by the runtime's own exporter at seam-runtime@1ac5de5
+//! (branch `protocol-pass-2026-10`, the contract freeze: record digest v4 whose `context_digest` is
+//! `seam.audit.context-provenance.v4`, `seam-commitment-digest:v3` under a self-attestation TCT), for
+//! seam-sdk#265. The exports before it (seam-runtime@e4c01ad, context-provenance.v3; @460d163, v3
+//! records and a v2 commitment digest) are refused by this verifier.
 //!
-//! * `full/` — `--disclose context,policy`: all seven files.
-//! * `minimal/` — no disclosures: context and policy withheld with the exporter's reason.
-//! * `shredded/` — the target's key destroyed before export: commitment and binding withheld.
-//! * `other-issuer/` — the same scenario under issuer seed 9×32: a genuine bundle from a key you did
-//!   not pin.
+//! * `full/`, `minimal/`, `shredded/` — captured from the temp directories of the runtime's own
+//!   `seam-verify-internal --test bundle` (`crates/seam-verify/tests/bundle.rs`; issuer seed 7×32; target `d1` between `d0` and `d2`, an anchor
+//!   before it and a covering attestation after). That test discloses the context but never the
+//!   policy, so `full/` is its genuine (context-disclosed) export plus `policy.json`, with the
+//!   manifest edited to the `--disclose context,policy` shape: the policy file listed with its
+//!   SHA-256 and size, `policy` moved from `withheld` to `disclosed`. The manifest carries no
+//!   signature, so that edit forges nothing. `policy.json` is not invented. It is the previous
+//!   fixture's bytes with `schema_version` 1 → 3, and its SHA-256 is exactly the `policy_rules_digest`
+//!   chained in the target's `DECISION_SEALED` record (5d6801ad…05ec), so the chain itself proves
+//!   these are the runtime's bytes. `minimal/` is the no-context export; `shredded/` has the target's
+//!   key destroyed before export, so its commitment and binding are withheld.
+//! * `other-issuer/` — a real foreign-issuer export: a postgres-backed `seam-grpc` at the same pin
+//!   under `SEAM_ISSUER_SEED` 9×32, two decisions driven through this repo's Python SDK, a restart for
+//!   the boot attestation that covers them, then
+//!   `seam-ops export-evidence --decision … --bundle … --disclose context,policy`. Its policy is
+//!   withheld with the exporter's own reason, because that server's governing document does not carry
+//!   the policy. The tests use it only for its foreign signatures (manifest pin, anchor, binding).
+//!
+//! Every directory also verifies under the runtime's internal oracle (`seam-verify-internal`'s
+//! `seam-verify bundle`) at that commit, so a disagreement here is a disagreement between two verifiers.
 //!
 //! No byte here is hand-invented. Every negative starts from one of those directories and makes ONE
 //! edit; where the edit is to a member, the manifest is re-hashed so the refusal under test is the
@@ -35,6 +44,12 @@ const FAILED: i32 = 2;
 const ISSUER: &str = "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw";
 /// Issuer seed 9×32 — `other-issuer/`.
 const OTHER: &str = "aid:pubkey:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg";
+
+/// The exported decision, and `d2`, the decision sealed after it inside the same window.
+const D1: &str = "dec:design-partner:d1-0000000000000000000";
+const D2: &str = "dec:design-partner:d2-0000000000000000000";
+/// `d0` under the same id pattern. It is sealed before the anchor, so no window line carries it.
+const D0: &str = "dec:design-partner:d0-0000000000000000000";
 
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -106,7 +121,7 @@ fn a_full_runtime_bundle_verifies_every_step() {
     assert_eq!(code, VERIFIED, "{out}");
     for want in [
         "EVIDENCE BUNDLE VERIFIED (seam-evidence-bundle.v1)",
-        "decision  : dec:d1",
+        &format!("decision  : {D1}"),
         "window authenticated from the issuer-signed anchor (base_len 2)",
         "is a chained link of tenant 'design-partner'",
         "TCT verifies against the pinned issuer",
@@ -131,7 +146,7 @@ fn json_output_reports_the_verdict_and_the_withheld_items() {
     assert_eq!(code, VERIFIED, "{out}");
     let v: serde_json::Value = serde_json::from_str(out.lines().next().unwrap()).unwrap();
     assert_eq!(v["verified"], true);
-    assert_eq!(v["decision_id"], "dec:d1");
+    assert_eq!(v["decision_id"], D1);
     assert_eq!(v["tct"], "verified");
     assert_eq!(v["base_len"], 2);
     let withheld: Vec<&str> = v["withheld"]
@@ -168,7 +183,7 @@ fn a_shredded_record_verifies_its_link_and_says_why_the_commitment_is_missing() 
 #[test]
 fn the_library_and_the_cli_agree() {
     let r = seam_verify::verify_bundle(&fixture("full"), ISSUER, 1_800_000_000).unwrap();
-    assert_eq!(r.decision_id, "dec:d1");
+    assert_eq!(r.decision_id, D1);
     assert_eq!(r.tenant, "design-partner");
     assert_eq!(r.anchor_len, 2);
     assert_eq!(r.tct_verified, Some(true));
@@ -359,7 +374,7 @@ fn step_2_wrong_anchor_and_broken_window_are_refused() {
                     let events = std::fs::read_to_string(d.join("events.jsonl")).unwrap();
                     let kept: String = events
                         .lines()
-                        .filter(|l| !l.contains("\"decision_id\":\"dec:d1\""))
+                        .filter(|l| !l.contains(&format!("\"decision_id\":\"{D1}\"")))
                         .map(|l| format!("{l}\n"))
                         .collect();
                     assert_ne!(kept, events, "the edit must drop a line");
@@ -507,13 +522,13 @@ fn step_3_inclusion_tampers_are_refused() {
         vec![
             (
                 "manifest names another decision in the window",
-                Box::new(|d: &Path| edit_manifest(d, |m| m["decision_id"] = "dec:d2".into())),
+                Box::new(|d: &Path| edit_manifest(d, |m| m["decision_id"] = D2.into())),
                 "is not the decision link's checksum",
             ),
             (
                 "manifest names a decision not in the window",
-                Box::new(|d: &Path| edit_manifest(d, |m| m["decision_id"] = "dec:d0".into())),
-                "carries no chained DECISION_SEALED for 'dec:d0'",
+                Box::new(|d: &Path| edit_manifest(d, |m| m["decision_id"] = D0.into())),
+                "carries no chained DECISION_SEALED for 'dec:design-partner:d0-0000000000000000000'",
             ),
             (
                 "manifest names another tenant",
@@ -596,7 +611,7 @@ fn step_5_binding_tampers_are_refused() {
             (
                 "binding names another decision",
                 Box::new(|d: &Path| {
-                    edit_and_rehash(d, "binding.json", |v| v["decision_id"] = "dec:d2".into())
+                    edit_and_rehash(d, "binding.json", |v| v["decision_id"] = D2.into())
                 }),
                 "step 5: binding.json: the signature does not verify",
             ),

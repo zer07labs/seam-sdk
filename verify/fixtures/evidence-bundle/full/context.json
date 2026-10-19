@@ -10,7 +10,8 @@
       "content_hash": null,
       "receipt_hash": null,
       "key_status": null,
-      "resolved_status": null
+      "resolved_status": null,
+      "receipt_key_status": null
     }
   ]
 }

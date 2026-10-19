@@ -28,9 +28,9 @@ from . import client as _client  # noqa: TC001 — referenced by the `raise_` an
 from .errors import _MappedStub, map_rpc_error
 from .crypto import (  # noqa: E402
     EnrollProof,
+    UnsupportedRecordDigestVersion,
     _uint_slot,
-    record_digest_v2,
-    record_digest_v3,
+    record_digest_v4,
     validate_enroll_pop_nonce,
 )
 
@@ -77,92 +77,72 @@ KNOWN_KINDS = frozenset(
 def verify_streamed_record_digest(event: ev.SeamEvent) -> bool:
     """Recompute a streamed ``DECISION_SEALED``'s record digest from its payload and compare it to the wire
     ``digest`` (tag 19) — live authenticity for a single record, the in-client counterpart of
-    ``seam-verify chain --issuer``'s design-a. Handles ``schema_version`` 2 and 3. Returns ``True`` iff they
-    match; ``False`` for a rewritten payload or a record stripped of its ``ciphertext_digest`` (tag 10).
+    ``seam-verify chain --issuer``'s design-a. Recomputes **v4 only** (``seam.audit.record-digest.v4``).
+    Returns ``True`` iff they match; ``False`` for a rewritten payload or a record stripped of its
+    ``ciphertext_digest`` (tag 10).
 
-    Raises :class:`ValueError` for anything not stream-recomputable: a non-``DECISION_SEALED`` event, a v1
-    record (the historical digest is not recomputable from the wire), a schema version NEWER than v3 (a
-    future framing this SDK does not know; recomputing it with a known domain tag would report a spurious
-    ``False`` on a genuine record), or an event with no wire digest.
+    Raises :class:`~seam_sdk.crypto.UnsupportedRecordDigestVersion` — a ``ValueError`` subclass meaning
+    **cannot-verify** — for any ``schema_version`` other than 4. v1-v3 were retired by the runtime's
+    protocol pass (P7); recomputing a record of another version under the v4 tag would report a spurious
+    ``False`` on a genuine record, and defaulting to an older formula is what the spec forbids. Raises
+    plain :class:`ValueError` for a non-``DECISION_SEALED`` event or an event with no wire digest.
 
     Raises :class:`~seam_sdk.crypto.RecordDigestStripError` — a ``ValueError`` subclass, and deliberately
-    **not** a ``False`` — when a v3 record is missing ``context_digest`` (tag 11) or ``participation_digest``
-    (tag 12). The spec requires a strip to be reported distinctly from a digest mismatch; that distinction
-    is enforced in :func:`~seam_sdk.crypto.record_digest_v3`, and this helper's job is to hand it the wire
-    values unaltered rather than to re-implement the check beside it.
+    **not** a ``False`` — when the record is missing a mandatory field: ``context_digest`` (11),
+    ``participation_digest`` (12), ``classification`` (14), ``participants_digest`` (15),
+    ``trust_basis_commitment`` (16) or ``auth_method`` (17). The spec requires a strip to be reported
+    distinctly from a digest mismatch; that distinction is enforced in
+    :func:`~seam_sdk.crypto.record_digest_v4`, and this helper's job is to hand it the wire values
+    unaltered rather than to re-implement the check beside it.
 
-    **Presence on tags 10-13 is length, not ``HasField``.** All four digest fields are singular proto3
-    ``bytes``, so no presence bit is generated and ``HasField`` raises on them. ``seam-event.v1.md``
-    §"Presence on the wire" pins the consumer rule as a total mapping — ``len == 0`` means absent however
-    the bytes arose, including an explicitly-encoded zero-length field from a non-conforming producer,
-    which proto3 obliges a decoder to accept. ``mode``/``policy_version``/``supersedes`` (tags 4/5/7) are
-    the opposite case: they *are* ``optional``, because the empty string is a real value there, so those
-    keep ``HasField`` and ``None`` stays distinct from ``""``.
+    **Presence on tags 10-17 is length, not ``HasField``.** All eight are singular proto3 fields, so no
+    presence bit is generated. ``seam-event.v1.md`` §"Presence on the wire" pins the consumer rule as a
+    total mapping — ``len == 0`` means absent however the bytes arose. ``mode``/``policy_version``/
+    ``supersedes`` (tags 4/5/7) are the opposite case: they *are* ``optional``, because the empty string is
+    a real value there, so those keep ``HasField`` and ``None`` stays distinct from ``""``.
 
     The tag-13 mapping is the one that would silently corrupt a verdict if skipped: an absent
-    ``policy_rules_digest`` is a legitimate state framing as ``opt(None)`` (one byte), while the decoded
-    empty value passed through as-is would frame ``opt(Some(b""))`` (five bytes) and report a mismatch on a
-    genuine record. Tags 11/12 need no mapping — passing the empty value through is precisely what raises
-    the strip error."""
+    ``policy_rules_digest`` frames as ``opt(None)`` (one byte), while the decoded empty value passed
+    through as-is would frame ``opt(Some(b""))`` (five bytes) and report a mismatch on a genuine record.
+    The mandatory tags need no mapping — passing the empty value through is precisely what raises the
+    strip error."""
     if event.kind != "DECISION_SEALED":
         raise ValueError(f"not a DECISION_SEALED event: {event.kind}")
     p = event.payload
-    if p.schema_version < 2:
-        raise ValueError(
-            f"v{p.schema_version} record is not stream-recomputable by this SDK (only v2 and v3)"
-        )
-    if p.schema_version > 3:
-        raise ValueError(
-            f"v{p.schema_version} record is not stream-recomputable by this SDK "
-            f"(knows v2 and v3); upgrade the SDK"
-        )
+    if p.schema_version != 4:
+        raise UnsupportedRecordDigestVersion(p.schema_version)
     if not event.HasField("digest"):
         raise ValueError("event carries no wire digest to compare against")
     if not p.ciphertext_digest:
-        # A tag-10 strip. Spec §Ordering & integrity Verification (c) makes this a REFUSE for every
-        # schema_version >= 2 — i.e. the record fails, which for a helper answering "does this verify?"
-        # is exactly `False`. Unlike tags 11/12, the spec attaches no distinct-reporting requirement to
-        # tag 10, so this stays the boolean it has always been rather than becoming an exception.
-        #
-        # This check precedes the v3 arm, so a v3 record stripped of tags 10 AND 11/12 reports `False`
-        # rather than the strip raise — an adversary who strips both gets the quieter diagnostic. That
-        # is deliberate and not a hole: the record still FAILS either way, and tag 10's rule is the
-        # older and broader one (every v2+ record), so it is the right thing to answer first.
+        # A tag-10 strip. Spec §Ordering & integrity Verification (c) makes this a REFUSE — i.e. the
+        # record fails, which for a helper answering "does this verify?" is exactly `False`. Unlike
+        # tags 11-17, the spec attaches no distinct-reporting requirement to tag 10, so this stays a
+        # boolean. It precedes the strip checks, so a record stripped of tag 10 AND a mandatory tag
+        # reports `False` rather than the strip raise: the record still FAILS either way.
         return False
     mode = p.mode if p.HasField("mode") else None
     policy_version = p.policy_version if p.HasField("policy_version") else None
     supersedes = p.supersedes if p.HasField("supersedes") else None
-
-    if p.schema_version == 3:
-        policy_rules = bytes(p.policy_rules_digest)
-        recomputed = record_digest_v3(
-            p.decision_id,
-            p.tenant,
-            p.namespace,
-            bytes(p.ciphertext_digest),
-            p.sealed_at,
-            p.outcome,
-            mode,
-            policy_version,
-            supersedes,
-            bytes(p.context_digest),
-            bytes(p.participation_digest),
-            policy_rules if policy_rules else None,  # len == 0 ⇒ absent ⇒ opt(None)
-            p.schema_version,
-        )
-    else:
-        recomputed = record_digest_v2(
-            p.decision_id,
-            p.tenant,
-            p.namespace,
-            bytes(p.ciphertext_digest),
-            p.sealed_at,
-            p.outcome,
-            mode,
-            policy_version,
-            supersedes,
-            p.schema_version,
-        )
+    policy_rules = bytes(p.policy_rules_digest)
+    recomputed = record_digest_v4(
+        p.decision_id,
+        p.tenant,
+        p.namespace,
+        bytes(p.ciphertext_digest),
+        p.sealed_at,
+        p.outcome,
+        mode,
+        policy_version,
+        supersedes,
+        bytes(p.context_digest),
+        bytes(p.participation_digest),
+        policy_rules if policy_rules else None,  # len == 0 ⇒ absent ⇒ opt(None)
+        p.classification,
+        bytes(p.participants_digest),
+        p.trust_basis_commitment,
+        p.auth_method,
+        p.schema_version,
+    )
     return recomputed == bytes(event.digest)
 
 

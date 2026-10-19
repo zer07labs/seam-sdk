@@ -46,32 +46,240 @@ export class SeamRpcError extends ConnectError {
   static [Symbol.hasInstance](v: unknown): boolean {
     return typeof v === "object" && v !== null && this.prototype.isPrototypeOf(v);
   }
+
+  /** Seam's error class — `ErrorInfo.reason` (domain `seam.zer07labs.com`) from
+   * `grpc-status-details-bin` — or `undefined` when the server sent no such detail.
+   *
+   * `PROTOCOL` means MACP refused the call and {@link macpCode} names why; `POLICY_DENIED`
+   * (`PERMISSION_DENIED`) is the bound policy refusing a commitment; `QUOTA_EXCEEDED`
+   * (`RESOURCE_EXHAUSTED`) is load-shed, with {@link retryAfter}; `CHALLENGE_REFUSED` (`UNAVAILABLE`,
+   * an {@link UnavailableError}) is `IssueChallenge` refusing because the nonce store is at capacity —
+   * **retryable** after {@link retryAfter}, never an identity failure. Branch on these, never on message
+   * text. Decoded fail-soft: a malformed detail reads as absent, never displacing the typed error. */
+  get reason(): string | undefined {
+    return seamErrorInfo(this)?.reason;
+  }
+
+  /** MACP's own error code (`ErrorInfo.metadata["macp_code"]`) on a `PROTOCOL` refusal, or
+   * `undefined`.
+   *
+   * Returned as the **raw string**, not an enum: MACP grows codes on its own schedule, and a client
+   * that cannot name a new code must still be able to log and route it. Present **only** when
+   * {@link reason} is `PROTOCOL` — every other error class has no `macp_code` by contract (seam-runtime
+   * `docs/specs/error-model.md`), so a stray key on another reason is ignored rather than surfaced as if
+   * it were one. */
+  get macpCode(): string | undefined {
+    const info = seamErrorInfo(this);
+    if (!info || info.reason !== PROTOCOL_REASON) return undefined;
+    return Object.prototype.hasOwnProperty.call(info.metadata, "macp_code")
+      ? info.metadata.macp_code
+      : undefined;
+  }
+
+  /** The server's `google.rpc.RetryInfo.retry_delay` in seconds, or `undefined` when it sent none.
+   *
+   * Carried on a load-shed refusal (`RESOURCE_EXHAUSTED`, reason `QUOTA_EXCEEDED`) and on a capacity
+   * refusal of `IssueChallenge` (`UNAVAILABLE`, reason `CHALLENGE_REFUSED`); read off whatever status
+   * carries it. The SDK **does not retry for you**: it surfaces the delay so the caller's own retry
+   * policy can honour it before re-issuing. A refused admission challenge was never issued, so a retry
+   * asks for a fresh one. */
+  get retryAfter(): number | undefined {
+    for (const d of statusDetails(this)) {
+      if (d.type !== RETRY_INFO_TYPE) continue;
+      try {
+        return decodeRetryDelay(d.value);
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
+  }
+}
+
+/** The `ErrorInfo.domain` every Seam refusal carries (seam-runtime `docs/specs/error-model.md`). */
+export const SEAM_ERROR_DOMAIN = "seam.zer07labs.com";
+/** The one `ErrorInfo.reason` that carries a `macp_code` — MACP's own protocol refusals. */
+export const PROTOCOL_REASON = "PROTOCOL";
+
+const STATUS_DETAILS_KEY = "grpc-status-details-bin";
+const ERROR_INFO_TYPE = "google.rpc.ErrorInfo";
+const RETRY_INFO_TYPE = "google.rpc.RetryInfo";
+const utf8 = new TextDecoder("utf-8", { fatal: true });
+
+type Field = { num: number; wt: number; v: bigint | Uint8Array | undefined };
+
+function varint(buf: Uint8Array, i: number): [bigint, number] {
+  let out = 0n;
+  let shift = 0n;
+  for (;;) {
+    if (i >= buf.length || shift > 63n) throw new RangeError("truncated varint");
+    const b = buf[i++];
+    out |= BigInt(b & 0x7f) << shift;
+    if (!(b & 0x80)) return [out, i];
+    shift += 7n;
+  }
+}
+
+/** The `(field_number, wire_type, value)` triples of one protobuf message. Length-delimited values are
+ * bytes, varints are bigints; fixed32/fixed64 are skipped. Throws on a malformed buffer.
+ *
+ * Hand-rolled on purpose, as in the Python twin: decoding `google.rpc.Status` with real classes needs
+ * the googleapis protos, and three tiny shapes are all that is read — `Status`/`Any`, `ErrorInfo`,
+ * `RetryInfo` — with nothing trusted beyond "a string the server sent". */
+function fields(buf: Uint8Array): Field[] {
+  const out: Field[] = [];
+  let i = 0;
+  while (i < buf.length) {
+    const [key, j] = varint(buf, i);
+    i = j;
+    const num = Number(key >> 3n);
+    const wt = Number(key & 7n);
+    let v: bigint | Uint8Array | undefined;
+    if (wt === 0) {
+      [v, i] = varint(buf, i);
+    } else if (wt === 2) {
+      const [n, k] = varint(buf, i);
+      if (BigInt(k) + n > BigInt(buf.length)) throw new RangeError("truncated field");
+      v = buf.subarray(k, k + Number(n));
+      i = k + Number(n);
+    } else if (wt === 1) {
+      i += 8;
+    } else if (wt === 5) {
+      i += 4;
+    } else {
+      throw new RangeError(`unsupported wire type ${wt}`);
+    }
+    if (i > buf.length) throw new RangeError("truncated field");
+    out.push({ num, wt, v });
+  }
+  return out;
+}
+
+/** The `google.rpc.Status.details` of an error as `(type, value)` pairs, `type` being the fully
+ * qualified message name (`google.rpc.ErrorInfo`), or `[]`.
+ *
+ * Connect's gRPC transport has already parsed `grpc-status-details-bin` into `details`; that is read
+ * first. A `ConnectError` built elsewhere (or by another transport) may carry only the raw trailer in
+ * `metadata`, so that is decoded as the fallback. Fail-soft throughout: a malformed payload yields
+ * `[]` — the typed error must never be displaced by a failure to read metadata about it. */
+function statusDetails(e: ConnectError): { type: string; value: Uint8Array }[] {
+  const parsed: { type: string; value: Uint8Array }[] = [];
+  for (const d of e.details ?? []) {
+    const t = (d as { type?: unknown }).type;
+    const v = (d as { value?: unknown }).value;
+    if (typeof t === "string" && v instanceof Uint8Array)
+      parsed.push({ type: t.substring(t.lastIndexOf("/") + 1), value: v });
+  }
+  if (parsed.length > 0) return parsed;
+  const raw = e.metadata?.get(STATUS_DETAILS_KEY);
+  if (!raw) return [];
+  try {
+    const bytes = new Uint8Array(Buffer.from(raw, "base64"));
+    const out: { type: string; value: Uint8Array }[] = [];
+    for (const f of fields(bytes)) {
+      if (f.num !== 3 || f.wt !== 2) continue;
+      let typeUrl = "";
+      let value: Uint8Array = new Uint8Array(0);
+      for (const a of fields(f.v as Uint8Array)) {
+        if (a.num === 1 && a.wt === 2) typeUrl = utf8.decode(a.v as Uint8Array);
+        else if (a.num === 2 && a.wt === 2) value = a.v as Uint8Array;
+      }
+      out.push({ type: typeUrl.substring(typeUrl.lastIndexOf("/") + 1), value });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function decodeErrorInfo(value: Uint8Array): {
+  reason: string;
+  domain: string;
+  metadata: Record<string, string>;
+} {
+  let reason = "";
+  let domain = "";
+  const metadata: Record<string, string> = Object.create(null);
+  for (const f of fields(value)) {
+    if (f.wt !== 2) continue;
+    const v = f.v as Uint8Array;
+    if (f.num === 1) reason = utf8.decode(v);
+    else if (f.num === 2) domain = utf8.decode(v);
+    else if (f.num === 3) {
+      let mk = "";
+      let mv = "";
+      for (const e of fields(v)) {
+        if (e.num === 1 && e.wt === 2) mk = utf8.decode(e.v as Uint8Array);
+        else if (e.num === 2 && e.wt === 2) mv = utf8.decode(e.v as Uint8Array);
+      }
+      metadata[mk] = mv;
+    }
+  }
+  return { reason, domain, metadata };
+}
+
+function seamErrorInfo(
+  e: ConnectError,
+): { reason: string; metadata: Record<string, string> } | undefined {
+  for (const d of statusDetails(e)) {
+    if (d.type !== ERROR_INFO_TYPE) continue;
+    let info;
+    try {
+      info = decodeErrorInfo(d.value);
+    } catch {
+      return undefined;
+    }
+    if (info.domain === SEAM_ERROR_DOMAIN) return { reason: info.reason, metadata: info.metadata };
+  }
+  return undefined;
+}
+
+function signed64(v: bigint): bigint {
+  return v >= 1n << 63n ? v - (1n << 64n) : v;
+}
+
+function decodeRetryDelay(value: Uint8Array): number | undefined {
+  for (const f of fields(value)) {
+    if (f.num !== 1 || f.wt !== 2) continue;
+    let seconds = 0n;
+    let nanos = 0n;
+    for (const d of fields(f.v as Uint8Array)) {
+      if (d.num === 1 && d.wt === 0) seconds = signed64(d.v as bigint);
+      else if (d.num === 2 && d.wt === 0) nanos = signed64(d.v as bigint);
+    }
+    return Number(seconds) + Number(nanos) / 1e9;
+  }
+  return undefined;
 }
 
 export class InvalidArgumentError extends SeamRpcError {}
-/** `FAILED_PRECONDITION`.
+/** `FAILED_PRECONDITION` — the server's state does not admit the request yet.
  *
- * **On a session commit this is not a transport fault and not a readiness problem, and it must not
- * be retried as-is.** Retrying the identical request fails identically — the state that has to
- * change is the caller's, not the server's.
- *
- * It is also **not terminal**: a refused commit does not resolve the session, so the session is
- * still live and the correct behaviour is to do the missing thing and commit again.
- *
- * Two ordinary causes are **indistinguishable by status code**: the bound policy's panel voted and
- * the policy refused the commitment, and — since seam-runtime#565 — a bound policy with a real
- * `voting.algorithm` whose round received **no APPROVE or REJECT ballot at all**, so the algorithm
- * was never evaluated. The remedy for the second is to cast ballots, then commit again.
- *
- * The message text differentiates them — the second names the algorithm that was never evaluated —
- * but **the message is not a contract and must not be parsed.** If a caller needs to branch, branch
- * on its own knowledge of whether it voted, not on this error. */
+ * **A policy refusal of a session commit is no longer this error.** Until the protocol pass it was;
+ * the runtime now answers a `POLICY_DENIED` with `PERMISSION_DENIED`, the MACP error-code registry's
+ * status (RFC-MACP-0006 §13) — see {@link PermissionDeniedError}. */
 export class FailedPreconditionError extends SeamRpcError {}
+/** `PERMISSION_DENIED` — shared by four refusal classes, so **branch on** `reason`, **never on the
+ * status or the message text**:
+ *
+ * - `POLICY_DENIED` — the bound coordination policy refused the commitment (ballots, objections,
+ *   evaluation, or a round with no APPROVE/REJECT ballot at all, seam-runtime#565). Replay refusals
+ *   (policy unavailable, policy mismatch, replay diverged) are `POLICY_DENIED` too. **Not terminal
+ *   and not retryable as-is**: the session is still live; do the missing thing (cast ballots,
+ *   address objections) and commit again. No `macpCode` by contract.
+ * - `SCOPE_DENIED` — the caller's credential lacks the scope for the action (the R8 floor).
+ * - `FACT_ATTESTOR_REJECTED` — a fact's attestor is not accepted.
+ * - `PROTOCOL` with `macpCode` `FORBIDDEN` — MACP refused the sender. */
 export class PermissionDeniedError extends SeamRpcError {}
 export class UnauthenticatedError extends SeamRpcError {}
 export class NotFoundError extends SeamRpcError {}
 export class AlreadyExistsError extends SeamRpcError {}
 export class ResourceExhaustedError extends SeamRpcError {}
+/** `UNAVAILABLE` — transport/server not reachable, or a capacity refusal the caller may retry. With
+ * `reason` `CHALLENGE_REFUSED` it is `IssueChallenge` refusing because the runtime's nonce store is at
+ * capacity (AITP 0.15.0; HTTP 503 on REST): **retryable** after `retryAfter`, with a fresh challenge.
+ * Not an identity failure and not a hard fault; the per-peer limit is `QUOTA_EXCEEDED` on
+ * {@link ResourceExhaustedError}. The SDK itself never retries. */
 export class UnavailableError extends SeamRpcError {}
 export class DeadlineExceededError extends SeamRpcError {}
 export class UnimplementedError extends SeamRpcError {}

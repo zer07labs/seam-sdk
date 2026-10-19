@@ -1,9 +1,11 @@
-<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 8a65349 (vendored 2026-10-10).
-     The normative text `seam-verify bundle` implements (seam-sdk#225); it landed with the runtime 0.44.0
-     train (seam-runtime#1269, #806). It links two sibling specs by relative path: `seam-event.v1.md`
-     (vendored beside this file) and `seam-commitment-digest.v2.md` (NOT vendored; its commitment and
-     explanation digests are implemented in `src/commitment.rs` and pinned there by the spec's own worked
-     examples and by `conformance/commitment_digest_v2_vector.json`). -->
+<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 32f8196 (refreshed 2026-10-19; landed with the runtime 0.48.0 train, seam-runtime#1365).
+     The normative text `seam-verify bundle` implements (seam-sdk#225), re-vendored for seam-sdk#265: step 2
+     recomputes record digest v4 (tags 10-17), and commitment.json binds seam-commitment-digest:v3 through a
+     self-attestation TCT. It links two sibling specs by relative path: `seam-event.v1.md` (vendored beside
+     this file) and `seam-commitment-digest.v3.md` (NOT vendored; its commitment and explanation digests are
+     implemented in `src/commitment.rs` and pinned there by `conformance/commitment_digest_v3_vector.json`).
+     Re-pinned to the contract freeze 1ac5de5: context.json bindings carry `receipt_key_status`, and a
+     verifier refuses a bundle that breaks its pairing with receipt_hash or its closed vocabulary. -->
 
 # `seam-evidence-bundle.v1` — the self-contained evidence bundle
 
@@ -21,7 +23,10 @@ independently, that party can check, offline:
 
 It builds on the decision-scoped window of `seam-event.v1` (#421 sub-step B) and adds no wire change:
 no `seam.api.v1` field, no `seam-event.v1` field, and no change to any record digest, checksum or
-attestation.
+attestation. The chain it carries is sealed under **record digest v4** (P7,
+[`seam-event.v1.md` § Record digest (v4)](seam-event.v1.md#record-digest-v4--schema_version--4-p7)): the
+chain step recomputes `digest_v4` for the decision and every other `DECISION_SEALED` in the window, and
+refuses any whose `schema_version` is not 4. A bundle exported before P7 does not verify.
 
 ## Producing one
 
@@ -56,7 +61,7 @@ unlinked from the chain, and a binding without its Commitment proves nothing.
 {
   "format": "seam-evidence-bundle.v1",
   "scope": "decision",
-  "decision_id": "dec:…",
+  "decision_id": "dec:{tenant}:{session_id}",
   "tenant": "…",
   "exported_at": 1700000000000,
   "issuer": { "aid": "aid:pubkey:…", "ed25519_public_key": "<64 hex>", "pin": "…" },
@@ -93,9 +98,9 @@ convenience.
 ```
 
 `id`, `action`, `authority`, `auth_method`, `trust_basis`, `supersedes`, `committer` and
-`explanation` are the `Commitment` exactly as the [`seam-commitment-digest:v2`](seam-commitment-digest.v2.md)
-framing reads them (`supersedes` is `null` when absent; `explanation` is in sealed order, each entry's
-`kind` is the lowercase digest word, and `confidence` / `rationale_ref` are `null` when absent — never
+`explanation` are the `Commitment` exactly as the [`seam-commitment-digest:v3`](seam-commitment-digest.v3.md)
+framing reads them (`supersedes` is `null` when absent and `{session_id}/sha256:<hex>` when present;
+`explanation` is in sealed order, each entry's `kind` is the lowercase digest word, and `confidence` / `rationale_ref` are `null` when absent — never
 `0.0`). A verifier recomputes the `seam-explanation-digest:v1` from the entries, so a re-worded entry
 fails the TCT. `signed_artifact` is the TCT. It is empty
 only for a record sealed under `identity: local-sealed`, which has no TCT; such a Commitment is bound
@@ -115,7 +120,7 @@ key that signs the chain-head attestations:
 ```
 
 `record_checksum` is the `checksum` of the decision's `DECISION_SEALED` link. `commitment_digest` is
-the raw 32-byte `seam-commitment-digest:v2`, rendered as lowercase hex. The signature is Ed25519 over
+the raw 32-byte `seam-commitment-digest:v3`, rendered as lowercase hex. The signature is Ed25519 over
 the 32-byte digest:
 
 ```
@@ -141,7 +146,10 @@ binding_digest = ce1b699d3e67cfd8c16a3c0686eb22e1ea525b926d9d3a44a393ed838aa84ce
 ```
 
 This is pinned by `evidence_binding_payload_golden` in `crates/seam-trust-aitp/src/lib.rs`, and was
-reproduced independently from this text in Python.
+reproduced independently from this text in Python. The example's `decision_id` is a framing vector,
+not a well-formed id: since P5 a decision id is `dec:{tenant}:{session_id}` (`DecisionId::for_session`,
+`crates/seam-types/src/ids.rs`), and `binding.json` carries that string. The binding frames
+`decision_id` as opaque UTF-8, so the vector is unaffected.
 
 The binding is a statement the issuer makes at export time and cannot later deny. It does not replace
 the chain: it ties the Commitment to a link, and the chain and its attestations prove the link.
@@ -151,12 +159,16 @@ the chain: it ties the Commitment to a link, and the chain and its attestations 
 ```json
 { "bindings": [ { "ctx_ref": "…", "fidelity": "Digest", "classification": "Internal",
   "lineage_id": null, "version": 1, "derived_from": [], "content_hash": null,
-  "receipt_hash": null, "key_status": null, "resolved_status": null } ] }
+  "receipt_hash": null, "key_status": null, "resolved_status": null,
+  "receipt_key_status": null } ] }
 ```
 
-One object per binding, in the record's stored order, carrying exactly the fields the v3
-`context_digest` preimage reads ([`seam-event.v1.md` § `context_digest`](seam-event.v1.md#context_digest--seamauditcontext-provenancev3)),
-with the same string encodings. `null` is an absent `opt` slot. A verifier recomputes `context_digest`
+One object per binding, in the record's stored order, carrying exactly the fields the
+`context_digest` sub-preimage reads (domain `seam.audit.context-provenance.v4`, slot 10 of record
+digest v4) ([`seam-event.v1.md` § `context_digest`](seam-event.v1.md#context_digest--seamauditcontext-provenancev4)),
+with the same string encodings. `null` is an absent `opt` slot. `receipt_key_status` must be non-null
+exactly when `receipt_hash` is, and one of `Current` | `Historical`; a verifier refuses a bundle that
+breaks either rule. A verifier recomputes `context_digest`
 from these objects and compares it with the chained `DECISION_SEALED.context_digest`.
 
 The context's bodies are not included. A binding names a body by reference or digest.
@@ -180,6 +192,11 @@ what the adverse party is told.
 | `policy` | without `--disclose policy`, no policy bound, or the bound bytes are no longer loadable | As stated in the reason. |
 | `commitment`, `binding` | the record is crypto-shredded, tiered to cold storage, or missing | A shredded record's plaintext is unrecoverable, though its link still verifies. A cold record must be replayed from its archive bundle first. |
 
+The record's `trust_basis` is never in a bundle and is not a `withheld` item: it is an erasure-predicate
+value, and the chain carries only its keyed commitment (`DECISION_SEALED.trust_basis_commitment`, tag 16),
+which the chain step frames into `digest_v4` as an opaque string. The same step binds `classification`,
+`auth_method` and `participants_digest` (tags 14, 17, 15) from the wire; no extra file is needed for them.
+
 ## Verifying
 
 `seam-verify bundle <DIR> --issuer <AID>` runs these steps in order and refuses (exit 2) at the first
@@ -190,12 +207,17 @@ failure:
    listed. `commitment.json` and `binding.json` are both listed or both absent. `disclosed` agrees
    with `files`.
 2. **Chain.** `seam-verify chain events.jsonl --issuer <AID> --from-anchor anchor.json --strict`
-   passes: the anchor is signed by the pinned issuer, every link holds from the anchored head, and
-   a covering attestation authenticates the window.
+   passes: the anchor is signed by the pinned issuer, every link holds from the anchored head, every
+   `DECISION_SEALED` recomputes under record digest v4 (tags 10-17), and a covering attestation
+   authenticates the window.
 3. **Inclusion.** The window holds exactly one chained `DECISION_SEALED` for `decision_id`, in
    `tenant`, and its `checksum` is `inclusion.record_checksum`.
 4. **Commitment.** If `signed_artifact` is present, the TCT verifies against the pinned AID and its
    grant carries this Commitment's digest. The Commitment's `supersedes` equals the chained payload's.
+   (Informative, not checked by `seam-verify`: an auditor holding the record can recompute the TCT
+   `jti` — `id` = `decision_id`, the record id, not `Commitment.id`; `seal_ms` = `sealed_at` in ms,
+   never the TCT's `iat` — see [authorize.v1, *TCT `jti`*](authorize.v1.md#admission-checks-p8-w3-a1a4-p9-w3-a5).
+   AITP verifiers do not, per RFC-AITP-0005 §2.2.)
 5. **Binding.** The signature verifies against the pinned AID. `decision_id`, `tenant` and
    `record_checksum` are the decision link's, and `commitment_digest` is the recomputed digest of
    `commitment.json`.

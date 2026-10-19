@@ -24,7 +24,7 @@ import pytest
 
 REPO = pathlib.Path(__file__).parents[2]
 
-#: The implementations of `seam-commitment-digest:v2`, and where each is expected to explain itself:
+#: The implementations of `seam-commitment-digest:v3`, and where each is expected to explain itself:
 #: the five SDK shims, and since seam-sdk#225 the published verifier, whose `bundle` step 4 recomputes
 #: the digest to check a bundle's TCT (`verify/src/commitment.rs`).
 SHIMS = {
@@ -58,16 +58,19 @@ def test_the_shim_implements_the_commitment_digest(language: str) -> None:
     """Guard the guard: if a shim stops implementing the digest, the assertions below would pass
     vacuously. This is what makes the rationale check mean something."""
     source = SHIMS[language].read_text(encoding="utf-8")
-    assert "seam-commitment-digest:v2" in source, (
+    assert "seam-commitment-digest:v3" in source, (
         f"{language} no longer references the commitment-digest domain tag — either it stopped "
         f"implementing the framing (update SHIMS) or the domain was renamed without updating this "
         f"guard"
     )
     # v1 is DELETED, not dual-verified (seam-runtime#1255, pre-GA no-backward-compatibility). A
     # quoted v1 tag in code means a fallback crept back in; prose mentioning v1 is fine.
-    assert '"seam-commitment-digest:v1"' not in source, (
-        f"{language} still carries the v1 domain tag as a literal — v1 is deleted, not dual-verified"
-    )
+    # v2 joined it in the protocol pass (seam-commitment-digest.v3.md).
+    for retired in ("v1", "v2"):
+        assert f'"seam-commitment-digest:{retired}"' not in source, (
+            f"{language} still carries the {retired} domain tag as a literal — it is deleted, not "
+            f"dual-verified"
+        )
 
 
 @pytest.mark.parametrize("language", sorted(SHIMS))

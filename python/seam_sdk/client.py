@@ -283,7 +283,7 @@ class SeamClient:
     def _presentation(
         self, agent: Agent, timeout: float = DEFAULT_TIMEOUT_S
     ) -> pb.PinnedPresentation:
-        ch = self._admission.IssueChallenge(pb.Empty(), timeout=timeout)
+        ch = self._admission.IssueChallenge(pb.IssueChallengeRequest(), timeout=timeout)
         body = build_presentation(agent.seed, ch.receiver_aid, ch.nonce, _now_ms())
         return pb.PinnedPresentation(presentation_json=json.dumps(body).encode())
 
@@ -505,7 +505,7 @@ class SeamClient:
         (``Vote.reason``, seam-runtime #804/#851) exactly as :meth:`submit_vote`'s is. A pair, or an
         empty reason, sends no reason — byte-identical to a vote without one. The runtime bounds it
         (4096 bytes, redacted, classified) and REQUIRES it — non-empty after trimming whitespace — on
-        every vote when the governing policy sets ``rules.seam.capture_dissent``, refusing the whole
+        every vote when the governing policy sets ``rules["x-com.zer07labs.seam"].capture_dissent``, refusing the whole
         decision otherwise; neither rule is mirrored here. A malformed entry (not a 2- or 3-element
         non-string sequence) raises ``TypeError`` before any RPC.
         """
@@ -607,7 +607,7 @@ class SeamClient:
         """Cast a vote on a proposal. ``reason`` is the voter's stated reason, sealed into the vote
         envelope (seam-runtime #804). Empty means no reason, byte-identical to a vote without one. The
         server bounds it (4096 bytes, injection-redacted, classified) and REQUIRES it when the governing
-        policy sets ``rules.seam.capture_dissent``; those checks are deliberately not mirrored here."""
+        policy sets ``rules["x-com.zer07labs.seam"].capture_dissent``; those checks are deliberately not mirrored here."""
         req = pb.VoteRequest(
             session_id=session_id,
             voter=voter,
@@ -653,7 +653,7 @@ class SeamClient:
         ``rationale_ref`` is a ``sha256:<hex>`` context ref. Since runtime 0.44.0 it is **sealed**:
         every accepted evaluation's ``rationale_ref`` (and whether a ``confidence`` was stated at
         all) is bound into the Commitment's explanation under ``seam-explanation-digest:v1``, which
-        ``seam-commitment-digest:v2`` covers. ``verify_decision`` recomputes it locally.
+        ``seam-commitment-digest:v3`` covers. ``verify_decision`` recomputes it locally.
         """
         req = pb.EvaluationRequest(
             session_id=session_id,
@@ -725,11 +725,14 @@ class SeamClient:
     ) -> pb.SessionStep:
         """Submit a MACP commit, sealing ``commitment_id``'s decision.
 
-        ``supersedes`` names the commitment id this decision replaces. It is accepted and
-        forwarded on the request path only — the server's own internal R13 supersession always
-        takes precedence over a client-supplied value if both are set, so this is a hint, not a
-        guarantee. Omit it rather than passing ``""``: absence and an empty override read
-        differently server-side.
+        ``supersedes`` names the prior decision this one replaces, **by its decision id**
+        (``dec:{tenant}:{session}`` — build it with :func:`seam_sdk.decision_id_for_session`). The
+        runtime resolves it within this session's tenant, hashes the prior's sealed commitment, and
+        seals ``{session}/sha256:<hex>`` into the record — so the served ``Commitment.supersedes`` is
+        that stored form, not what was sent. A prior that is missing, in another tenant, not
+        ``Resolved``, or carries no MACP commitment is refused with one uniform ``INVALID_ENVELOPE``
+        (seam-runtime ``docs/specs/seam-commitment-digest.v3.md`` §supersedes). Omit it rather than
+        passing ``""``: absence and an empty value are different digests under v3.
         """
         req = pb.CommitRequest(
             session_id=session_id,
@@ -1010,12 +1013,16 @@ class SeamClient:
         """Resolve context refs to their bindings.
 
         Returns the generated `ContextBinding` unchanged. Nothing is projected or renamed here, so
-        every field the contract carries arrives — including the ACDP receipt slots (`content_hash`,
-        `receipt_hash`, `key_status`, `resolved_status`), `retraction`, and the P3 key-revocation
-        pair (`revocation`, `revocation_trust_class`), all of which this SDK passes through without
-        interpreting. `key_status` (closed, PascalCase) and `resolved_status` (open,
-        lowercase) are byte-identical to what enters the `context_digest` preimage — do not
-        case-fold, normalise or map them.
+        every field the contract carries arrives — including the five ACDP receipt slots
+        (`content_hash`, `receipt_hash`, `key_status`, `resolved_status`, `receipt_key_status`),
+        `retraction`, and the P3 key-revocation pair (`revocation`, `revocation_trust_class`), all of
+        which this SDK passes through without interpreting. `key_status` and `receipt_key_status`
+        (closed, PascalCase) and `resolved_status` (open, lowercase) are byte-identical to what
+        enters the `context_digest` preimage — do not case-fold, normalise or map them.
+        `receipt_key_status` is present exactly when `receipt_hash` is: `Historical` means the receipt
+        was verified under a rotated-out registry key — valid history, NOT a current registry
+        attestation, and must not be presented as one. :func:`seam_sdk.context_digest_v4` recomputes
+        the sealed digest from these bindings and refuses an unpaired or out-of-vocabulary slot.
         """
         return list(
             self._context.ResolveContext(
@@ -1148,7 +1155,7 @@ def commitment_view(c: "pb.Commitment") -> dict:
     """The dict :func:`~seam_sdk.crypto.verify_tct` takes, from a served ``Commitment``.
 
     Carries the committer and the sealed explanation (entries AND the published digest), so
-    verification checks the entries against the digest before binding it (seam-commitment-digest:v2).
+    verification checks the entries against the digest before binding it (seam-commitment-digest:v3).
     Explicit presence is preserved: an absent ``confidence`` / ``rationale_ref`` stays ``None``."""
     return {
         "id": c.id,
@@ -1156,7 +1163,10 @@ def commitment_view(c: "pb.Commitment") -> dict:
         "authority": c.authority,
         "auth_method": c.auth_method,
         "trust_basis": c.trust_basis,
-        "supersedes": c.supersedes or "",
+        # v3 frames absent and present-empty differently (a presence byte), so explicit presence
+        # must survive: `c.supersedes or ""` turned every unsuperseding commitment into a
+        # present-empty one and its TCT would never verify.
+        "supersedes": c.supersedes if c.HasField("supersedes") else None,
         "committer": c.committer,
         # proto3 bytes cannot say "absent": empty means not published, and the entries decide.
         "explanation_digest": bytes(c.explanation_digest) or None,

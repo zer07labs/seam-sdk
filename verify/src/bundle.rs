@@ -10,7 +10,7 @@
 //! 3. **Inclusion** — exactly one chained `DECISION_SEALED` for the manifest's decision, in its tenant,
 //!    whose `checksum` is `inclusion.record_checksum`.
 //! 4. **Commitment** — the TCT (when present) verifies against the pinned AID and binds this
-//!    Commitment's `seam-commitment-digest:v2`; `supersedes` matches the chained payload's.
+//!    Commitment's `seam-commitment-digest:v3`; `supersedes` matches the chained payload's.
 //! 5. **Binding** — the `seam.evidence-binding.v1` signature verifies against the pinned AID and names
 //!    this decision, tenant, link checksum and recomputed Commitment digest.
 //! 6. **Disclosures** — `context.json` recomputes the chained `context_digest`;
@@ -124,7 +124,7 @@ fn hex_decode(s: &str) -> Option<Vec<u8>> {
 }
 
 /// `frame(x) = le32(len(x)) ‖ x` — the chain-head attestation's framing, which the binding and the
-/// v3 context digest reuse.
+/// v4 context digest reuse.
 fn frame(h: &mut Sha256, x: &[u8]) {
     h.update((x.len() as u32).to_le_bytes());
     h.update(x);
@@ -163,8 +163,17 @@ pub fn evidence_binding_digest(
     h.finalize().into()
 }
 
-/// The v3 `context_digest` (`seam.audit.context-provenance.v3`, `docs/seam-event.v1.md`
-/// § `context_digest`) over `context.json`'s `bindings`, in the order given.
+/// The closed `receipt_key_status` vocabulary (`docs/seam-event.v1.md` § `context_digest`): ACDP's
+/// `VerifiedContext::receipt_key_status()` in PascalCase — NOT ACDP's lowercase JSON form.
+pub const RECEIPT_KEY_STATUSES: [&str; 2] = ["Current", "Historical"];
+
+/// The v4 `context_digest` (`seam.audit.context-provenance.v4`, `docs/seam-event.v1.md`
+/// § `context_digest`) over `context.json`'s `bindings`, in the order given. v1-v3 are not
+/// dispatched: a record digest v4 seals only `.v4`.
+///
+/// `receipt_key_status` is paired with `receipt_hash` — present exactly when it is — and closed over
+/// [`RECEIPT_KEY_STATUSES`]. A binding that breaks either rule is refused before anything is hashed
+/// (`docs/evidence-bundle.v1.md` § `context.json`), never hashed as given.
 pub fn context_digest(ctx: &serde_json::Value) -> Result<[u8; 32], String> {
     let bindings = ctx
         .get("bindings")
@@ -183,8 +192,26 @@ pub fn context_digest(ctx: &serde_json::Value) -> Result<[u8; 32], String> {
             Some(_) => Err(format!("context.json: '{k}' is not a string or null")),
         }
     };
+    for (i, b) in bindings.iter().enumerate() {
+        let receipt = o(b, "receipt_hash")?;
+        let rks = o(b, "receipt_key_status")?;
+        if receipt.is_some() != rks.is_some() {
+            return Err(format!(
+                "context.json: binding {i}: receipt_key_status must be present exactly when \
+                 receipt_hash is (unpaired receipt slots)"
+            ));
+        }
+        if let Some(v) = rks.as_deref() {
+            if !RECEIPT_KEY_STATUSES.contains(&v) {
+                return Err(format!(
+                    "context.json: binding {i}: receipt_key_status {v:?} is not one of \
+                     Current | Historical"
+                ));
+            }
+        }
+    }
     let mut h = Sha256::new();
-    frame(&mut h, b"seam.audit.context-provenance.v3");
+    frame(&mut h, b"seam.audit.context-provenance.v4");
     h.update((bindings.len() as u32).to_le_bytes());
     for b in bindings {
         frame(&mut h, s(b, "ctx_ref")?.as_bytes());
@@ -213,6 +240,7 @@ pub fn context_digest(ctx: &serde_json::Value) -> Result<[u8; 32], String> {
             "receipt_hash",
             "key_status",
             "resolved_status",
+            "receipt_key_status",
         ] {
             opt(&mut h, o(b, k)?.as_deref().map(str::as_bytes));
         }
@@ -615,7 +643,7 @@ pub fn verify_bundle(dir: &Path, pinned: &str, now_secs: u64) -> Result<BundleRe
             tct_verified = Some(true);
             checks.push(
                 "the Commitment's TCT verifies against the pinned issuer and binds its \
-                 seam-commitment-digest:v2"
+                 seam-commitment-digest:v3"
                     .into(),
             );
         }
@@ -802,5 +830,78 @@ mod tests {
             evidence_binding_digest("dec:s1a", "cme", &[0xab; 32], &[0xcd; 32], 1, "a"),
             evidence_binding_digest("dec:s1", "acme", &[0xab; 32], &[0xcd; 32], 1, "a"),
         );
+    }
+
+    fn ctx(b: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({ "bindings": [b] })
+    }
+
+    /// `docs/seam-event.v1.md` vector table: one local binding, all five receipt slots absent (`.v4`).
+    #[test]
+    fn context_digest_matches_the_spec_vector() {
+        let c = ctx(serde_json::json!({
+            "ctx_ref": "sha256:aa", "fidelity": "Digest", "classification": "Internal",
+            "lineage_id": null, "version": 1, "derived_from": ["x", "y"],
+            "content_hash": null, "receipt_hash": null, "key_status": null,
+            "resolved_status": null, "receipt_key_status": null,
+        }));
+        assert_eq!(
+            verify::hex(&context_digest(&c).unwrap()),
+            "8e87a93fd65b0d756817d2dbe3d9346542a2ad8272cc525f2df23d4b73802f85"
+        );
+    }
+
+    fn receipt_binding() -> serde_json::Value {
+        serde_json::json!({
+            "ctx_ref": "acdp://reg.example.com/ctx-1", "fidelity": "Reference",
+            "classification": "Confidential", "lineage_id": null, "version": 2,
+            "derived_from": [], "content_hash": "sha256:aa", "receipt_hash": "sha256:bb",
+            "key_status": "CurrentlyAuthorized", "resolved_status": "active",
+            "receipt_key_status": "Historical",
+        })
+    }
+
+    /// The runtime's `V4_RECEIPT_CONTEXT` (`scripts/v4-digest-reference.py`): a remote binding with a
+    /// receipt verified under a rotated-out key, so all five receipt slots are populated.
+    #[test]
+    fn context_digest_matches_the_v4_receipt_vector() {
+        assert_eq!(
+            verify::hex(&context_digest(&ctx(receipt_binding())).unwrap()),
+            "3475464e934ac07ea03e6afbcda58f05446517c7df876b11e1a3260db035bf15"
+        );
+        // The fifth slot is inside the preimage: Current and Historical digest differently.
+        let mut b = receipt_binding();
+        b["receipt_key_status"] = serde_json::json!("Current");
+        assert_ne!(
+            context_digest(&ctx(b)).unwrap(),
+            context_digest(&ctx(receipt_binding())).unwrap()
+        );
+    }
+
+    #[test]
+    fn unpaired_receipt_slots_are_refused_before_hashing() {
+        let mut b = receipt_binding();
+        b["receipt_key_status"] = serde_json::Value::Null;
+        let e = context_digest(&ctx(b)).unwrap_err();
+        assert!(e.contains("unpaired"), "{e}");
+        let mut b = receipt_binding();
+        b.as_object_mut().unwrap().remove("receipt_key_status");
+        assert!(context_digest(&ctx(b)).unwrap_err().contains("unpaired"));
+        let mut b = receipt_binding();
+        b["receipt_hash"] = serde_json::Value::Null;
+        assert!(context_digest(&ctx(b)).unwrap_err().contains("unpaired"));
+    }
+
+    #[test]
+    fn receipt_key_status_outside_the_closed_vocabulary_is_refused() {
+        for bad in ["historical", "CURRENT", "Revoked", ""] {
+            let mut b = receipt_binding();
+            b["receipt_key_status"] = serde_json::json!(bad);
+            let e = context_digest(&ctx(b)).unwrap_err();
+            assert!(e.contains("Current | Historical"), "{bad:?}: {e}");
+        }
+        let mut b = receipt_binding();
+        b["receipt_key_status"] = serde_json::json!(1);
+        assert!(context_digest(&ctx(b)).is_err());
     }
 }

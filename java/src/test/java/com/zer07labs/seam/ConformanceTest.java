@@ -121,6 +121,47 @@ class ConformanceTest {
     assertEquals(want.get("pop_nonce"), got.popNonce());
   }
 
+  /** The presentation is exactly five fields — no field is added beyond what the server reads. */
+  @Test
+  void presentationHasExactlyFiveFields() throws Exception {
+    assertEquals(
+        java.util.Set.of("sender_aid", "descriptor", "message_id", "timestamp", "pop_nonce"),
+        m(m(vectors(), "admission"), "presentation").keySet());
+    assertEquals(5, SeamCrypto.Presentation.class.getRecordComponents().length);
+  }
+
+  /** derived_uuid: every case reproduced from (tag, input), pinned to literals so a re-vendor shows. */
+  @Test
+  void derivedUuidMatchesVectors() throws Exception {
+    Map<String, Object> d = m(vectors(), "derived_uuid");
+    Map<String, String> want =
+        Map.of(
+            "kat_derived_uuid_001", "27b131ae-bcc6-4466-ab32-1d0f896453b1",
+            "pop_message_id", "786ec92e-a43a-40b5-98d8-848ff365ea78",
+            "tct_jti", "c7321ce4-62f1-4e38-ac23-212dc9e0055b");
+    for (Map.Entry<String, String> w : want.entrySet()) {
+      Map<String, Object> k = m(d, w.getKey());
+      assertEquals(w.getValue(), k.get("uuid"), w.getKey() + ": vector");
+      assertEquals(
+          w.getValue(),
+          SeamCrypto.derivedUuid((String) k.get("tag"), hexToBytes((String) k.get("input_hex"))),
+          w.getKey());
+    }
+  }
+
+  /** The admission message_id is derivedUuid("seam-pop-mid-v1", nonce ASCII). */
+  @Test
+  void popMessageIdIsTheDerivedUuid() throws Exception {
+    Map<String, Object> v = vectors();
+    Map<String, Object> k = m(m(v, "derived_uuid"), "pop_message_id");
+    String nonce = (String) m(m(v, "admission"), "inputs").get("pop_nonce");
+    assertEquals(SeamCrypto.POP_MESSAGE_ID_TAG, k.get("tag"));
+    assertEquals(
+        hex(nonce.getBytes(java.nio.charset.StandardCharsets.US_ASCII)), k.get("input_hex"));
+    assertEquals(k.get("uuid"), SeamCrypto.popMessageId(nonce));
+    assertEquals(k.get("uuid"), m(m(v, "admission"), "presentation").get("message_id"));
+  }
+
   @Test
   void aidDerivationMatches() throws Exception {
     Map<String, Object> adm = m(vectors(), "admission");
@@ -131,9 +172,9 @@ class ConformanceTest {
     assertEquals(m(adm, "derived").get("sender_aid"), p.senderAid());
   }
 
-  /** The `tct` block's digests are reproduced exactly (seam-commitment-digest:v2 KAT). */
+  /** The `tct` block's digests are reproduced exactly (seam-commitment-digest:v3 KAT). */
   @Test
-  void tctCommitmentDigestV2IsByteExact() throws Exception {
+  void tctCommitmentDigestV3IsByteExact() throws Exception {
     Map<String, Object> t = m(vectors(), "tct");
     SeamCrypto.Commitment c = commitment(m(m(t, "inputs"), "commitment"));
     assertEquals(
@@ -178,14 +219,14 @@ class ConformanceTest {
 
   // -- Commitment-digest framing coverage (W5.4 / G4) --------------------------------------------
   //
-  // `seam-commitment-digest:v2` is implemented byte-for-byte in ALL FIVE SDK languages -- the widest
+  // `seam-commitment-digest:v3` is implemented byte-for-byte in ALL FIVE SDK languages -- the widest
   // fan-out of any framing in this repo. Its standalone vector is
-  // conformance/commitment_digest_v2_vector.json (CommitmentDigestV2Test); the `tct` block of
+  // conformance/commitment_digest_v3_vector.json (CommitmentDigestV3Test); the `tct` block of
   // conformance/vectors.json carries the same framing. Neither is edited on this side:
   // seam-runtime's `sdk-digest-parity` job byte-diffs them against its own emitter.
   //
   // What the `tct` block adds is stronger than it looks. `verifyTct` recomputes the digest and compares it
-  // to the `seam-commitment-digest:` grant inside the runtime-signed JWS, so the vector already
+  // to the `commitment_digest` statement inside the runtime-signed JWS's `ext`, so the vector already
   // carries a runtime-produced expected value. The gap was never coverage of the digest -- it was
   // coverage of the FIELD TUPLE: the pre-existing tests tampered `action` only, so exactly one of
   // the framing inputs was proven bound.

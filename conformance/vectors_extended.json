@@ -1,0 +1,109 @@
+{
+  "_comment": "Extended cases: record_digest_v4 (#433, P7) and chain_head_attestation_v2 (#835 step 1). Deliberately NOT in conformance_vectors.json: that file is byte-diffed against seam-sdk's vectors.json by sdk-digest-parity, and these need no cross-repo lockstep.",
+  "all_optionals_present": {
+    "inputs": {
+      "domain": "seam.audit.record-digest.v4",
+      "decision_id": "dec:conformance",
+      "tenant": "acme",
+      "namespace": "fraud",
+      "ciphertext_hex": "636f6e666f726d616e63652d636970686572746578742d0001ff",
+      "ciphertext_digest_hex": "67d9f6952981d85f7a2cabb0d5468e6934dc63ec55b480f18339277afc7635a6",
+      "sealed_at": 1700000000000,
+      "outcome": "Resolved",
+      "mode": "decision.v1",
+      "policy_version": "pol-7",
+      "supersedes": "cmt:prior",
+      "context_digest_hex": "74b9b01c2fba7cd65f4a677e9a1be80b663f64421440a0e1c66a3f9dc05d7d69",
+      "participation_digest_hex": "66c8ae346f5284cc62cf29e6681b16a98db7a3bba458a4d494273a267ba69c02",
+      "policy_rules_digest_hex": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+      "classification": "Internal",
+      "participants": [
+        "fraud-v3",
+        "risk-v2"
+      ],
+      "participants_digest_hex": "58b8fac506c099ccb4af417df40f632c69e614fb03531e8e21570a90caf7fc4a",
+      "trust_basis_commitment": "hmac-sha256:0a1b2c3d:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "auth_method": "aitp-pinned-handshake",
+      "schema_version": 4
+    },
+    "digest_hex": "706eb073af51b3cacb965494a6e70fe0283cc0a8b4e22580f491721d35e4e8c0"
+  },
+  "optionals_none": {
+    "inputs": {
+      "domain": "seam.audit.record-digest.v4",
+      "decision_id": "dec:conformance",
+      "tenant": "acme",
+      "namespace": "fraud",
+      "ciphertext_hex": "636f6e666f726d616e63652d636970686572746578742d0001ff",
+      "ciphertext_digest_hex": "67d9f6952981d85f7a2cabb0d5468e6934dc63ec55b480f18339277afc7635a6",
+      "sealed_at": 1700000000000,
+      "outcome": "Resolved",
+      "mode": null,
+      "policy_version": null,
+      "supersedes": null,
+      "context_digest_hex": "74b9b01c2fba7cd65f4a677e9a1be80b663f64421440a0e1c66a3f9dc05d7d69",
+      "participation_digest_hex": "66c8ae346f5284cc62cf29e6681b16a98db7a3bba458a4d494273a267ba69c02",
+      "policy_rules_digest_hex": null,
+      "classification": "Internal",
+      "participants": [
+        "fraud-v3",
+        "risk-v2"
+      ],
+      "participants_digest_hex": "58b8fac506c099ccb4af417df40f632c69e614fb03531e8e21570a90caf7fc4a",
+      "trust_basis_commitment": "hmac-sha256:0a1b2c3d:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "auth_method": "aitp-pinned-handshake",
+      "schema_version": 4
+    },
+    "digest_hex": "d4bf11beaeacab2d1187f68c7a3221ddab7c30eecf44c85323b354aaf433f919"
+  },
+  "mode_empty_string": {
+    "inputs": {
+      "domain": "seam.audit.record-digest.v4",
+      "decision_id": "dec:conformance",
+      "tenant": "acme",
+      "namespace": "fraud",
+      "ciphertext_hex": "636f6e666f726d616e63652d636970686572746578742d0001ff",
+      "ciphertext_digest_hex": "67d9f6952981d85f7a2cabb0d5468e6934dc63ec55b480f18339277afc7635a6",
+      "sealed_at": 1700000000000,
+      "outcome": "Resolved",
+      "mode": "",
+      "policy_version": null,
+      "supersedes": null,
+      "context_digest_hex": "74b9b01c2fba7cd65f4a677e9a1be80b663f64421440a0e1c66a3f9dc05d7d69",
+      "participation_digest_hex": "66c8ae346f5284cc62cf29e6681b16a98db7a3bba458a4d494273a267ba69c02",
+      "policy_rules_digest_hex": null,
+      "classification": "Internal",
+      "participants": [
+        "fraud-v3",
+        "risk-v2"
+      ],
+      "participants_digest_hex": "58b8fac506c099ccb4af417df40f632c69e614fb03531e8e21570a90caf7fc4a",
+      "trust_basis_commitment": "hmac-sha256:0a1b2c3d:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "auth_method": "aitp-pinned-handshake",
+      "schema_version": 4
+    },
+    "digest_hex": "fbf306ec59603c2bc6c58351eb1264c92d4076743e44af7065e7a4e872227ed8"
+  },
+  "chain_head_attestation_v2": {
+    "inputs": {
+      "issuer_seed_hex": "0707070707070707070707070707070707070707070707070707070707070707",
+      "domain": "seam.audit.chain-head-attestation.v2",
+      "attested_len": 1000,
+      "attested_head_hex": "abababababababababababababababababababababababababababababababab",
+      "attested_at": 1700000000000,
+      "digest_schema": 2,
+      "tenant": "acme"
+    },
+    "frame_order": [
+      "domain",
+      "attested_len",
+      "attested_head",
+      "attested_at",
+      "digest_schema",
+      "issuer_aid",
+      "tenant"
+    ],
+    "issuer_aid": "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
+    "signature_hex": "82569f05d55b22d93f7b19f02c0cca5501583deeefb1a1d58f52a2d797fc71182e12b9ca61a141e06c4e5d3d6f889a146cf4c8cbee90e7571095c8ef38095d0a"
+  }
+}
