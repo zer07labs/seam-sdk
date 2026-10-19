@@ -2691,3 +2691,14 @@ Both are reversible additive choices inside the SDK; neither is a one-way door, 
 - **Order:** agreed with the runtime coordinator (4' → 5 → 6): runtime CI tested this branch's pinned head `97eb017b`
   through `SEAM_SDK_REF`, then the runtime merged, then this un-pin. The SDK release (0.48.0) is cut by
   `release-on-runtime.yml` only after this merges. **Decided by:** owner (pre-approved).
+
+## 2026-10-19 — Go ships the 0.48.0 train as `go/v0.48.1`, and `go/v0.48.0` is retracted
+
+- **What happened:** the runtime's seam-release dispatch arrived before #272 merged. `release-on-runtime.yml`
+  tagged `v0.48.0` and `go/v0.48.0` at `0953410`, which predates the protocol pass. The publish refused at
+  `ci-ok`, so `v0.48.0` was re-cut on #272's merge `9690e25` and published (#276). `go/v0.48.0` could not
+  move: proxy.golang.org and sum.golang.org already held it (`h1:CL6PaoCR…`), and a moved tag would give every
+  Go consumer a checksum-mismatch error.
+- **Options:** a Go-only `go/v0.48.1` with `retract v0.48.0`; waiting for the next runtime train; retracting only.
+- **Verdict:** `go/v0.48.1` on main, with `retract v0.48.0` in `go/go.mod`. Go is one patch ahead of the
+  runtime for this train only. The next runtime release tags `go/v{runtime}` as usual. **Decided by:** owner.

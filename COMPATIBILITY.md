@@ -62,8 +62,8 @@ boundary above, that means an SDK ≥ 0.33.2 needs a runtime image built from se
 
 | Consumer | Constraint on `seam-sdk` | Verified at |
 |---|---|---|
-| `seam-adapters` (`seam-agent-core[sdk]`) | `seam-sdk>=0.46.0,<0.47` | `seam-adapters/core/pyproject.toml:77` |
-| `seam-aegis` | `seam-agent-core[sdk]>=0.16,<0.17` (reaches this SDK transitively) | `seam-aegis/pyproject.toml:85` |
+| `seam-adapters` (`seam-agent-core[sdk]`) | `seam-sdk>=0.48.0,<0.49` | `seam-adapters/core/pyproject.toml:79` |
+| `seam-aegis` | `seam-agent-core[sdk]>=0.17,<0.18` (reaches this SDK transitively) | `seam-aegis/pyproject.toml:94` |
 
 **One caveat on the first row: the lockfile number is not a real resolution.**
 `seam-adapters/uv.lock:4217` resolved `seam-sdk` **0.17.0** when this row was first verified. That
@@ -202,7 +202,7 @@ this by trying.
 |---|---|---|---|
 | **Python** (`seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:381`) | Yes | **Published + supported** |
 | **TypeScript** (`@zer07labs/seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:199`, `ts/package.json:12`) | Yes | **Published + supported** |
-| **Go** | Module proxy, from the `go/vX.Y.Z` tag (`.github/workflows/release-on-runtime.yml:253`) | Tag only — no in-tree version | Resolvable, crypto shim only |
+| **Go** | Module proxy, from the `go/vX.Y.Z` tag (`.github/workflows/release-on-runtime.yml:253`) | Tag only — no in-tree version | Resolvable, crypto shim only. **0.48.0 is retracted:** Go's runtime-0.48.0 module is `go/v0.48.1` (`go/go.mod` `retract`) |
 | **Java** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |
 | **Kotlin** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |
 
