@@ -118,7 +118,7 @@ mismatch cannot ship.
 
 | SDK change | Requires runtime | Earlier runtimes | Pinned from |
 |---|---|---|---|
-| Protocol pass 2026-10 (seam-sdk#265) | the release that carries seam-runtime `protocol-pass-2026-10` | **none** — no compatibility | `protocol-pass-2026-10` @ `1ac5de5f8a50180bf0c4d6f4c0e9184f74fddc4c` |
+| Protocol pass 2026-10 (seam-sdk#265) | seam-runtime 0.48.0 (seam-runtime#1365, carries `protocol-pass-2026-10`) | **none** — no compatibility | runtime `main` @ `32f8196` (contract byte-identical to the freeze `1ac5de5`) |
 
 The protocol pass has no compatibility window in either direction: an earlier runtime refuses this
 SDK's derived PoP `message_id`, and this SDK treats an earlier runtime's v1-v3 records as

@@ -2678,3 +2678,16 @@ Both are reversible additive choices inside the SDK; neither is a one-way door, 
 - **Analysis:** pre-validating on every call duplicates the runtime's rule on the hot path and goes stale the day
   the runtime widens it; the cost of not doing it is one round trip on a caller bug.
 - **Verdict:** confirm. **Decided by:** Opus.
+
+## 2026-10-19 — un-pin the protocol pass (seam-sdk#265, B11 step 6)
+
+- **Trigger:** seam-runtime#1365 (release train 0.48.0, protocol pass 2026-10) squash-merged as `32f8196`; its
+  post-merge CI moved BSR `main` to commit `5442d8c273164707bd1fbf9076d33873`.
+- **Evidence:** `git diff 1ac5de5f 32f8196` over `crates/seam-api/proto`, both vendored specs, both conformance
+  vector files and `crates/seam-verify/tests/goldens` is empty, so the freeze and runtime `main` are the same contract.
+- **Change:** `Makefile` `BUF_MODULE` back to the bare module; `.github/workflows/ci.yml` `SEAM_RUNTIME_BUILD_REF`
+  back to `""` and the integration timeout back to 20; both `verify/docs` pin headers re-pointed to `32f8196`
+  (precedent #244). The `git-<sha>` BSR labels pushed for the pins stay; they are inert.
+- **Order:** agreed with the runtime coordinator (4' → 5 → 6): runtime CI tested this branch's pinned head `97eb017b`
+  through `SEAM_SDK_REF`, then the runtime merged, then this un-pin. The SDK release (0.48.0) is cut by
+  `release-on-runtime.yml` only after this merges. **Decided by:** owner (pre-approved).

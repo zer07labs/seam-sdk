@@ -1,4 +1,4 @@
-<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 1ac5de5f8a50180bf0c4d6f4c0e9184f74fddc4c tracking protocol-pass-2026-10 (vendored 2026-10-18).
+<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 32f8196 (refreshed 2026-10-19; landed with the runtime 0.48.0 train, seam-runtime#1365).
      The normative text `seam-verify bundle` implements (seam-sdk#225), re-vendored for seam-sdk#265: step 2
      recomputes record digest v4 (tags 10-17), and commitment.json binds seam-commitment-digest:v3 through a
      self-attestation TCT. It links two sibling specs by relative path: `seam-event.v1.md` (vendored beside

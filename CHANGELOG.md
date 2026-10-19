@@ -16,9 +16,9 @@ than trusting a summary here.
 
 ## Unreleased
 
-> **Breaking — requires the runtime release that carries seam-runtime `protocol-pass-2026-10`;
+> **Breaking — requires seam-runtime 0.48.0 (seam-runtime#1365, which carries `protocol-pass-2026-10`);
 > no compatibility with any earlier runtime.** Pinned and vendored from `protocol-pass-2026-10` @
-> `1ac5de5f8a50180bf0c4d6f4c0e9184f74fddc4c` (the contract freeze). An earlier runtime refuses this SDK's PoP `message_id`, and this
+> `1ac5de5f8a50180bf0c4d6f4c0e9184f74fddc4c` (the contract freeze), byte-identical at runtime `main` `32f8196`, which this SDK now builds against (BSR main, un-pinned). An earlier runtime refuses this SDK's PoP `message_id`, and this
 > SDK refuses an earlier runtime's v3 records as cannot-verify. Upgrade the runtime and the SDK together.
 
 ### Changed — protocol pass 2026-10 (seam-sdk#265) — BREAKING
@@ -63,8 +63,8 @@ than trusting a summary here.
 - **Policy documents:** the vendor rule key is `rules["x-com.zer07labs.seam"]` (was `rules.seam`), and
   the runtime accepts policy `schema_version` 3 only. Docstrings updated.
 - `seam.event.v1`: the event field manifest gains the four `DecisionSealed` fields above (106 fields).
-- `verify/docs/seam-event.v1.md` and `evidence-bundle.v1.md` re-vendored @ `1ac5de5` tracking
-  `protocol-pass-2026-10`; `verify/fixtures/evidence-bundle/` re-captured from the pinned runtime.
+- `verify/docs/seam-event.v1.md` and `evidence-bundle.v1.md` re-vendored, pinned @ runtime `main` `32f8196`
+  (byte-identical to the freeze `1ac5de5`); `verify/fixtures/evidence-bundle/` re-captured from the pinned runtime.
 
 ## 0.47.0 — 2026-10-13
 

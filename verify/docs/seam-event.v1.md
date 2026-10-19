@@ -1,6 +1,6 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 1ac5de5f8a50180bf0c4d6f4c0e9184f74fddc4c tracking protocol-pass-2026-10 (vendored 2026-10-18).
-     Pinned ahead of the runtime's default branch, so that seam-sdk#265 (protocol pass 2026-10) can ship
-     the verifier's counterpart beside it. Movements since the prior pin (8d06722, the runtime 0.47.0 train):
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 32f8196 (refreshed 2026-10-19).
+     Movements since the prior default-branch pin (8d06722, the runtime 0.47.0 train), landed with the
+     runtime 0.48.0 train (seam-runtime#1365, protocol pass 2026-10, seam-sdk#265):
      1. P7 (e70497ff): record digest v4. DECISION_SEALED gains tags 14-17 (classification,
         participants_digest, trust_basis_commitment, auth_method), all inside the preimage; v1-v3 are
         retired with no dual-verify, so any schema_version other than 4 is cannot-verify. This crate
