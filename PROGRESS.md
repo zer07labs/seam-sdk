@@ -1,3 +1,59 @@
+# PROGRESS — plans/post-onboarding-sdk-asks.md
+
+Checkpoint trail and repo map for #275 (B-SDK-REFRESH) and #274 (B-CORE-FACTS). The plan is
+`plans/post-onboarding-sdk-asks.md`. Anchors were taken at `f1d112d`.
+
+## Repo map
+
+- `python/seam_sdk/client.py`: sync client.
+  - `authorize` refresh-once retry is at :389-392, `_refresh_ticket` at :416, `_ticket_for` at :450, `_credential_md` at :458.
+  - The credentialed verbs run from :396 to :1110.
+  - The `DEFAULT_TIMEOUT_S` note at :85-107 claims "never retries".
+- `python/seam_sdk/aio.py`: async twin.
+  - Retry at :273-276, `_refresh_ticket` at :297, `_credential_md` at :326.
+  - The docstring at :3-4 claims "never retries".
+- `python/seam_sdk/_authorize.py`: `TicketCache` at :73-99, `credential_metadata` at :250-271 (the `x-seam-ticket-bin` / `x-seam-call-sig-bin` headers).
+- `python/seam_sdk/errors.py`: `UnauthenticatedError` at :444, the status mapping at :487, and the "never retries" docstring at :467.
+- `ts/src/errors.ts`: the "never retries" docstring at :282.
+- `python/seam_sdk/identity.py`:
+  - `LoadedIdentity` at :37-54.
+  - `load_identity_file` at :57-105. It decodes the seed at :87.
+  - `create_identity_file` at :108-187.
+  - Schema v1 has no `aid`.
+- `python/seam_sdk/__init__.py`: public exports, identity at :65-98.
+- `python/tests/test_credential_wiring.py`: `_Recorder` / `_AioRecorder` at :47/:65, every-verb credential tests.
+- `python/tests/test_authorize.py`: real-gRPC `FakeSeam` at :46 (Admission and Authorization only), `fail_next_unauthenticated`, refresh tests at :295 and :307.
+- `python/tests/test_ticket_lifecycle.py`: coalescing and `busy_server` at :38 (Admission and Authorization servicers only, :46-47), mass revocation at :78 and :122.
+- `python/tests/test_identity_file.py`: round trip, 0600, symlink, env pointer, malformed parametrize at :155.
+- `python/tests/test_client_parity.py`: checks that sync and aio expose the same public verb set.
+- `python/tests/test_integration.py`: live deny-plane credentialed read at :326.
+- `ts/src/client.ts`:
+  - `authorize` retry at :770-776, `refreshTicket` at :817, `credentialHeaders` at :841-862.
+  - The verbs run from :869 to :1385.
+  - The note at :60-75 claims "never retries".
+- `ts/src/identity.ts`: `loadIdentityFile` at :84, `createIdentityFile` at :173.
+- `ts/src/index.ts`: TS public exports.
+- `ts/tests/unit_plumbing.test.ts`: refresh tests at :549/:581, the fake's `UnauthenticatedError` at :244, `deferRejections` at :248.
+- `ts/tests/identity_file.test.ts` plus `ts/tests/fixtures/identity_v1_python.json`: the exact key list is at :103, the cross-language byte test at :226.
+- `go/identity/identity.go` plus `identity_test.go`: `LoadIdentityFile` at :66, `CreateIdentityFile` at :128. No client exists (`go/crypto/agent.go:105`).
+- `java/src/main/java/com/zer07labs/seam/IdentityFile.java` plus `IdentityFileTest.java`: `load` at :84, `loadResolved` at :94, `create` at :176.
+- `kotlin/src/main/kotlin/com/zer07labs/seam/IdentityFile.kt` plus `IdentityFileTest.kt`: `load` at :67, `create` at :138.
+- `README.md`:
+  - :502-504 is the `authorize` refresh note.
+  - :544-545 are the shim rows.
+- `COMPATIBILITY.md`: :206-224 holds the shims-not-clients note and the identity/credential table.
+- `CHANGELOG.md`: `## Unreleased` at :17.
+- `DECISIONS.md`: :2660 is the 2026-10-18 entry "SDK never retries" / "Go/Java/Kotlin have no retry logic".
+- `ASSUMPTIONS.md`: :1423 says "never retries at all".
+
+PR strategy: one PR for all four phases, closing #275 and #274 — the org's Actions-budget rule asks for one PR per change set, every phase is reversible, and the phases still land as separate commits for review.
+Risk tiers: all four phases are complex (P1 lays the helper P2 builds on; P2 retries network writes; P3 changes the on-disk format; P4 adds public API), so each one gates alone.
+Execution: each phase is written by a dedicated Opus executor agent on `feat/post-onboarding-sdk-asks`, keeping the main thread lean; a separate fresh Opus agent verifies each phase.
+
+## Phase log
+
+---
+
 # PROGRESS — `plans/post-adoption-hardening-and-acdp-readiness.md`
 
 Checkpoint trail and repo map for the post-adoption hardening / ACDP P1a readiness workstream.
