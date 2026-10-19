@@ -98,6 +98,7 @@ def _now_ms() -> int:
 #     ``get_commitment_proof`` (so ``verify_decision``), ``get_escalation`` — and ``report_outcome``
 #     have the same SIX-call bound when they carry a credential (``credential=`` or a bound agent):
 #     they refresh a rejected ticket once and resend once, exactly as ``authorize`` does (#275).
+#     So do the seven ``submit_*`` steps (D-SUBMIT-RETRY): the resend re-signs the same request.
 #   * ``run_decision`` and ``open_session`` each begin with the challenge→Admit handshake.
 #
 # So a caller that needs a hard overall bound must impose its own outer clock; the adapters'
@@ -110,10 +111,45 @@ def _now_ms() -> int:
 # consumer that needs it already imposes. Recorded in ASSUMPTIONS.md.
 #
 # The SDK never retries beyond that single ticket refresh, and only ``authorize``, the credentialed
-# reads and ``report_outcome`` take it — the other credentialed writes make exactly one call (#275).
-# Adapters own every other retry. A deadline breach surfaces as ``DeadlineExceededError``, distinct
-# from a DENY verdict, and is never retried.
+# reads, ``report_outcome`` and the seven ``submit_*`` steps take it (the same SIX-call bound) —
+# ``open_session``, ``cancel_session`` and ``expire_session`` make exactly one call (#275,
+# D-WRITES-EXCLUDED). Adapters own every other retry. A deadline breach surfaces as
+# ``DeadlineExceededError``, distinct from a DENY verdict, and is never retried.
 DEFAULT_TIMEOUT_S = 2.0
+
+
+# The one shared paragraph every ``submit_*`` docstring carries (sync and aio), appended by
+# :func:`_submit_retry_doc` so the seven copies cannot drift. D-SUBMIT-RETRY, #275; the runtime
+# behaviour it describes is in plans/post-onboarding-sdk-asks.md (Context, facts 6-8).
+_SUBMIT_RETRY_NOTE = """
+        **Refresh-once (#275).** With a credential (``credential=`` or a bound agent), a rejected
+        ticket is refreshed once and this SAME request is re-signed under the new ticket and resent
+        once; a second ``UNAUTHENTICATED`` raises :class:`UnauthenticatedError`. Resending an
+        identical body is safe: the runtime refuses a reused signature as ``UNAUTHENTICATED`` and
+        dedupes a byte-identical step, with no second effect and no second budget debit. So an
+        application resend after a lost response, refreshed here, also lands at most once.
+
+        * ``usage`` is NOT part of a step's identity: a resend differing only in ``usage`` is
+          deduped and its ``usage`` silently dropped (not debited). A changed ``reason``, proposal
+          id or value is a new message.
+        * ``SessionStep`` cannot say "deduped". A duplicate of a NON-resolving step returns
+          ``decision_id``, ``collective_outcome`` and ``policy_enforcement`` all unset. A resend
+          after a step that SEALED the session returns the sealed ``decision_id`` but NO
+          ``collective_outcome`` (``policy_enforcement`` only if the session is attestable) — so
+          after a retried write, read :meth:`get_decision` for the outcome.
+        * A resend after the session was swept, or while an Expire/Cancel seal is pending,
+          raises :class:`FailedPreconditionError` (``session_not_open``) instead of returning the
+          sealed id.
+        * A resend whose ``reason`` trips the runtime's boundary guard adds one more
+          ``boundary.data_flagged`` audit row; the step itself is still applied once.
+        """
+
+
+def _submit_retry_doc(fn: _T) -> _T:
+    """Append :data:`_SUBMIT_RETRY_NOTE` to a ``submit_*`` docstring (sync and aio)."""
+    doc = fn.__doc__ or ""  # type: ignore[attr-defined]
+    fn.__doc__ = doc.rstrip() + "\n" + _SUBMIT_RETRY_NOTE  # type: ignore[attr-defined]
+    return fn
 
 
 class Agent:
@@ -482,8 +518,8 @@ class SeamClient:
         *,
         timeout: float,
     ) -> Optional[list]:
-        """The gRPC ``metadata=`` value for a subject-scoped call that does NOT retry (the write verbs
-        other than ``report_outcome``, D-WRITES-EXCLUDED / plans/post-onboarding-sdk-asks.md). Resolves
+        """The gRPC ``metadata=`` value for a subject-scoped call that does NOT retry (``open_session``,
+        ``cancel_session``, ``expire_session``: D-WRITES-EXCLUDED / plans/post-onboarding-sdk-asks.md). Resolves
         the signer as :meth:`_signer` does and returns ``None`` without one. Reuses the same
         cached/admitted ticket :meth:`authorize` would for this agent; never mints a second one."""
         signer = self._signer(credential)
@@ -525,7 +561,9 @@ class SeamClient:
           ``DEADLINE_EXCEEDED``, …) propagates on the first attempt with no refresh.
         * **``retry=False`` is "invalidate, then raise"**: the rejected ticket is dropped from the cache
           if it is still the cached one (so the NEXT call re-admits instead of reusing it until 80% of
-          its TTL), and the error propagates. No Phase 1 call site uses it.
+          its TTL), and the error propagates. No call site uses it today: it is the flip-back path
+          for the ``submit_*`` steps (D-SUBMIT-RETRY) — set their ``retry=`` to ``False`` and they
+          invalidate-then-raise, with no API change.
 
         A rejection the refresh cannot fix (an out-of-scope id, a missing subject — the runtime makes
         those indistinguishable from a dead ticket on purpose) therefore costs one re-admit and one
@@ -650,6 +688,7 @@ class SeamClient:
         )
         return self._coord.OpenSession(req, timeout=timeout, metadata=md)
 
+    @_submit_retry_doc
     def submit_proposal(
         self,
         session_id: str,
@@ -669,15 +708,17 @@ class SeamClient:
         )
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        md = self._credential_md(
+        return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/SubmitProposal",
             "",
             req,
+            lambda md: self._coord.SubmitProposal(req, timeout=timeout, metadata=md),
             timeout=timeout,
+            retry=True,  # D-SUBMIT-RETRY (#275): see _SUBMIT_RETRY_NOTE
         )
-        return self._coord.SubmitProposal(req, timeout=timeout, metadata=md)
 
+    @_submit_retry_doc
     def submit_vote(
         self,
         session_id: str,
@@ -703,15 +744,17 @@ class SeamClient:
         )
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        md = self._credential_md(
+        return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/SubmitVote",
             "",
             req,
+            lambda md: self._coord.SubmitVote(req, timeout=timeout, metadata=md),
             timeout=timeout,
+            retry=True,  # D-SUBMIT-RETRY (#275): see _SUBMIT_RETRY_NOTE
         )
-        return self._coord.SubmitVote(req, timeout=timeout, metadata=md)
 
+    @_submit_retry_doc
     def submit_evaluation(
         self,
         session_id: str,
@@ -754,15 +797,17 @@ class SeamClient:
             req.rationale_ref = rationale_ref
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        md = self._credential_md(
+        return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/SubmitEvaluation",
             "",
             req,
+            lambda md: self._coord.SubmitEvaluation(req, timeout=timeout, metadata=md),
             timeout=timeout,
+            retry=True,  # D-SUBMIT-RETRY (#275): see _SUBMIT_RETRY_NOTE
         )
-        return self._coord.SubmitEvaluation(req, timeout=timeout, metadata=md)
 
+    @_submit_retry_doc
     def submit_objection(
         self,
         session_id: str,
@@ -789,15 +834,17 @@ class SeamClient:
         )
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        md = self._credential_md(
+        return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/SubmitObjection",
             "",
             req,
+            lambda md: self._coord.SubmitObjection(req, timeout=timeout, metadata=md),
             timeout=timeout,
+            retry=True,  # D-SUBMIT-RETRY (#275): see _SUBMIT_RETRY_NOTE
         )
-        return self._coord.SubmitObjection(req, timeout=timeout, metadata=md)
 
+    @_submit_retry_doc
     def submit_commit(
         self,
         session_id: str,
@@ -829,14 +876,15 @@ class SeamClient:
             req.supersedes = supersedes
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        md = self._credential_md(
+        return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/SubmitCommit",
             "",
             req,
+            lambda md: self._coord.SubmitCommit(req, timeout=timeout, metadata=md),
             timeout=timeout,
+            retry=True,  # D-SUBMIT-RETRY (#275): see _SUBMIT_RETRY_NOTE
         )
-        return self._coord.SubmitCommit(req, timeout=timeout, metadata=md)
 
     # ── Quorum-mode-only steps (`macp.mode.quorum.v1`) ─────────────────────────────────────────
     # request → ballot × N → submit_commit (reused unchanged). Both verbs are rejected with a typed
@@ -844,6 +892,7 @@ class SeamClient:
     # make and is deliberately NOT mirrored here: a client-side copy of a server-side rule is a
     # second grammar to keep in sync, and the first thing to drift.
 
+    @_submit_retry_doc
     def submit_approval_request(
         self,
         session_id: str,
@@ -870,15 +919,19 @@ class SeamClient:
         )
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        md = self._credential_md(
+        return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/SubmitApprovalRequest",
             "",
             req,
+            lambda md: self._coord.SubmitApprovalRequest(
+                req, timeout=timeout, metadata=md
+            ),
             timeout=timeout,
+            retry=True,  # D-SUBMIT-RETRY (#275): see _SUBMIT_RETRY_NOTE
         )
-        return self._coord.SubmitApprovalRequest(req, timeout=timeout, metadata=md)
 
+    @_submit_retry_doc
     def submit_ballot(
         self,
         session_id: str,
@@ -907,14 +960,15 @@ class SeamClient:
         )
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        md = self._credential_md(
+        return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/SubmitBallot",
             "",
             req,
+            lambda md: self._coord.SubmitBallot(req, timeout=timeout, metadata=md),
             timeout=timeout,
+            retry=True,  # D-SUBMIT-RETRY (#275): see _SUBMIT_RETRY_NOTE
         )
-        return self._coord.SubmitBallot(req, timeout=timeout, metadata=md)
 
     def resume_session(
         self,

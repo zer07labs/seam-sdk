@@ -195,6 +195,34 @@ class FakeSeam(
         self._check_credential("ReportOutcome", request, context)
         return pb.ReportOutcomeResponse(recorded=True)
 
+    # The seven session steps (#275 Phase 2, D-SUBMIT-RETRY). One shape: refuse like Authorize would,
+    # else a live step. What the RUNTIME does with a resend is not modelled here (see
+    # test_integration.py); this fake only proves what the SDK sends.
+    def _step(self, verb: str, request, context):
+        self._check_credential(verb, request, context)
+        return pb.SessionStep(state="Open")
+
+    def SubmitProposal(self, request, context):  # noqa: N802
+        return self._step("SubmitProposal", request, context)
+
+    def SubmitVote(self, request, context):  # noqa: N802
+        return self._step("SubmitVote", request, context)
+
+    def SubmitEvaluation(self, request, context):  # noqa: N802
+        return self._step("SubmitEvaluation", request, context)
+
+    def SubmitObjection(self, request, context):  # noqa: N802
+        return self._step("SubmitObjection", request, context)
+
+    def SubmitCommit(self, request, context):  # noqa: N802
+        return self._step("SubmitCommit", request, context)
+
+    def SubmitApprovalRequest(self, request, context):  # noqa: N802
+        return self._step("SubmitApprovalRequest", request, context)
+
+    def SubmitBallot(self, request, context):  # noqa: N802
+        return self._step("SubmitBallot", request, context)
+
 
 class HangingSeam(
     rpc.SeamAdmissionServicer,

@@ -59,6 +59,13 @@ Execution: each phase is written by a dedicated Opus executor agent on `feat/pos
 - **Minor verifier notes, folded into Phase 2:** TS tests for an explicit credential on a bound client and for retry:false; the aio mixed-coalescing test should assert each result.
 - **Next:** Phase 2.
 
+### Phase 2 — Refresh-once on the seven `submit_*` steps · 2026-10-19
+- **Verdict:** PASS in 1 round. Verifier: Opus (fresh agent). Four follow-ups closed before commit: a ticket-changed check in 4(d), DECISIONS wording on the evidence, historical PROGRESS citations restored, and a FAILED_PRECONDITION docstring line. Next: Phase 3.
+- **Files:** python/seam_sdk/{client,aio}.py, ts/src/client.ts, python/tests/{test_credential_refresh,test_authorize,test_ticket_lifecycle,test_integration}.py, ts/tests/{unit_plumbing,integration}.test.ts, README, COMPATIBILITY, CHANGELOG, DECISIONS (D-SUBMIT-RETRY), PROGRESS (citations remapped into the shifted sources).
+- **Live:** criterion 4 run against a `seam-grpc` built from seam-runtime `origin/main` in the credential-only posture (Python 12 passed / 1 skipped; TS 8 passed). The sweeper case is skipped with its reason: the 30 min session TTL has no override.
+- **Phase 1 verifier notes:** closed (TS explicit-credential and retry:false tests; aio mixed test asserts each result).
+- **Next:** Phase 3.
+
 ---
 
 # PROGRESS — `plans/post-adoption-hardening-and-acdp-readiness.md`
@@ -126,13 +133,13 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | Path | Purpose / relevance |
 |---|---|
 | `python/seam_sdk/_collective.py:99` | `collective_outcome_of(resp: Union["pb.DecisionResponse", "pb.SessionStep"])` — fail-closed decode. **Phase 3 DONE**: widened to the union. `:1-30` documents why raw field access is unsafe (optional presence + `UNSPECIFIED` == 0 ⇒ a naive negative test allows on every unknown value). |
-| `ts/src/client.ts:367` | `collectiveOutcomeOf(resp: DecisionResponse | SessionStep)` — the TS twin. **Phase 3 DONE.** It needed a real union: protobuf-es brands messages, so passing a `SessionStep` is a *compile error* today (reproduced: `TS2345`, `$typeName` mismatch). `:169-174` `UnknownCollectiveVerdictError(rawValue, decisionId: string)` — **required** `string`, so `:229`'s `resp.decisionId` became `resp.decisionId ?? ""`; a verifier mutation removing that coalesce reddens a test, so it is load-bearing, not decoration. |
+| `ts/src/client.ts:371` | `collectiveOutcomeOf(resp: DecisionResponse | SessionStep)` — the TS twin. **Phase 3 DONE.** It needed a real union: protobuf-es brands messages, so passing a `SessionStep` is a *compile error* today (reproduced: `TS2345`, `$typeName` mismatch). `:169-174` `UnknownCollectiveVerdictError(rawValue, decisionId: string)` — **required** `string`, so `:229`'s `resp.decisionId` became `resp.decisionId ?? ""`; a verifier mutation removing that coalesce reddens a test, so it is load-bearing, not decoration. |
 | `ts/gen/seam/api/v1/seam_pb.ts` | Branded `SessionStep = Message<"seam.api.v1.SessionStep"> & {…}` — the reason Phase 3's TS half is a hard block, not a typing nicety. Also carries `collectiveOutcome?` on the same branded type. Cited by symbol, not by line: this is a generated, gitignored file, and a line number into it is correct only until the next `make generate`. |
 | `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi` | `SessionStep.collective_outcome` in the Python stubs — generated, never surfaced. Cited by symbol for the same reason as the row above; it carried `:289,297` until round 3, in direct violation of that rule and of `test_no_document_line_anchors_into_a_generated_file`, which it evaded **only** because a comma-list matches `CITATION` not at all. The rule was stated one row up and broken the next. |
-| `python/seam_sdk/client.py:799`, `ts/src/client.ts:1187` | `submit_commit` / `submitCommit` return a `SessionStep` — the caller Phase 3 exists for. |
+| `python/seam_sdk/client.py:848`, `ts/src/client.ts:1293` | `submit_commit` / `submitCommit` return a `SessionStep` — the caller Phase 3 exists for. |
 | `python/tests/test_collective_outcome.py`, `ts/tests/collective_outcome.test.ts` | `DecisionResponse` cases only. **Phase 3** adds the `SessionStep` cases (absent ⇒ none; `UNSPECIFIED` ⇒ raise; unknown ⇒ raise; non-commit step ⇒ none). Drive red first. |
-| `python/seam_sdk/client.py:715` + `python/seam_sdk/client.py:764` · `python/seam_sdk/aio.py:522` + `python/seam_sdk/aio.py:571` · `ts/src/client.ts:1115` + `ts/src/client.ts:1157` | `submit_evaluation` / `submit_objection` — **already delivered** by `c49d005`. Do not re-plan. Written as six separate citations rather than three comma-lists, because a comma-list matches `CITATION` **not at all**: `` `…:723,759` `` was wrong twice in a row — once before this phase and once *inside the commit whose message claims it shifted every citation below `:239`* — and nothing ever said so. |
-| `python/seam_sdk/client.py:749-750` · `python/seam_sdk/aio.py:556-557` · `ts/src/client.ts:1137` | `confidence` presence mapping — `None` ⇒ field-absent, never `0.0`. Correct in both languages; pinned by `python/tests/test_evaluation_confidence.py:55,64,87,100` and `ts/tests/evaluation.test.ts:59,70,85,93`. |
+| `python/seam_sdk/client.py:758` + `python/seam_sdk/client.py:811` · `python/seam_sdk/aio.py:528` + `python/seam_sdk/aio.py:581` · `ts/src/client.ts:1180` + `ts/src/client.ts:1241` | `submit_evaluation` / `submit_objection` — **already delivered** by `c49d005`. Do not re-plan. Written as six separate citations rather than three comma-lists, because a comma-list matches `CITATION` **not at all**: `` `…:723,759` `` was wrong twice in a row — once before this phase and once *inside the commit whose message claims it shifted every citation below `:239`* — and nothing ever said so. |
+| `python/seam_sdk/client.py:794-795` · `python/seam_sdk/aio.py:564-565` · `ts/src/client.ts:1202` | `confidence` presence mapping — `None` ⇒ field-absent, never `0.0`. Correct in both languages; pinned by `python/tests/test_evaluation_confidence.py:55,64,87,100` and `ts/tests/evaluation.test.ts:59,70,85,93`. |
 > **Read every row below as *as at plan time*, 2026-08-31, unless the row says otherwise.** Some
 > were updated mid-run and some were not, which is worse than either — an unstamped map invites a
 > reader to treat a stale row as current. The rows known to have moved since are corrected inline.
@@ -701,7 +708,7 @@ ERROR: a breaking change and must be handled, never silently rewritten away.
   `ContextBinding` field present — all eleven, `content_hash` / `receipt_hash` / `key_status` /
   `resolved_status` / `retraction` among them.
 - **No wrapper change was needed, exactly as the plan predicted** — verified rather than assumed:
-  `resolve_context` (`python/seam_sdk/client.py:1096`) and `resolveContext` (`ts/src/client.ts:1342`)
+  `resolve_context` (`python/seam_sdk/client.py:1166`) and `resolveContext` (`ts/src/client.ts:1574`)
   return the generated `ContextBinding` straight through, so the five fields reach callers with no
   SDK work. What both *did* carry was a docstring enumerating four of the eleven fields as if that
   were the set; both now say what they actually return, and both carry the vocabulary warning.
@@ -4041,7 +4048,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1482`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1494`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually

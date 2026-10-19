@@ -69,13 +69,15 @@ import {
 //   * The credentialed reads — `sessionStatus`, `getDecision`, `replayDecision`,
 //     `getCommitmentProof` (so `verifyDecision`), `getEscalation` — and `reportOutcome` have the same
 //     SIX-call bound when they carry a credential (`credential` or a bound agent): they refresh a
-//     rejected ticket once and resend once, exactly as `authorize` does (#275).
+//     rejected ticket once and resend once, exactly as `authorize` does (#275). So do the seven
+//     `submit*` steps (D-SUBMIT-RETRY): the resend re-signs the same request.
 //   * `runDecision` and `openSession` each begin with the challenge→Admit handshake (3x).
 //
 // A caller that needs a hard overall bound must impose its own outer clock (the adapters' `Gate`
 // does exactly that). The SDK never retries beyond that single ticket refresh, and only `authorize`,
-// the credentialed reads and `reportOutcome` take it — the other credentialed writes make exactly
-// one call (#275). Adapters own every other retry. A deadline breach surfaces as a typed
+// the credentialed reads, `reportOutcome` and the seven `submit*` steps take it — `openSession`,
+// `cancelSession` and `expireSession` make exactly one call (#275, D-WRITES-EXCLUDED). Adapters own
+// every other retry. A deadline breach surfaces as a typed
 // `DeadlineExceededError`, distinct from a DENY verdict, and is never retried. Mirrors the Python
 // SDK's `DEFAULT_TIMEOUT_S = 2.0`.
 export const DEFAULT_TIMEOUT_MS = 2_000;
@@ -873,8 +875,9 @@ export class SeamClient {
    *
    * `-bin`-suffixed gRPC metadata is base64 on the wire (the HTTP/2 header value is always text);
    * unlike Python's grpc library, connect-node does not do that encoding for us, so
-   * {@link signedHeaders} does it. This is the NO-retry path, for the write verbs other than
-   * `reportOutcome`; the reads and `reportOutcome` go through {@link credentialedCall}. */
+   * {@link signedHeaders} does it. This is the NO-retry path, for `openSession`, `cancelSession` and
+   * `expireSession` (D-WRITES-EXCLUDED); every other credentialed verb goes through
+   * {@link credentialedCall}. */
   private async credentialHeaders<Desc extends DescMessage>(
     credential: Agent | undefined,
     rpcFullName: string,
@@ -921,7 +924,9 @@ export class SeamClient {
    *   refresh's own challenge/`Admit` (a load-shed included), never looped. Any other status
    *   propagates on the first attempt with no refresh.
    * - **`retry: false` is "invalidate, then throw"**: the rejected ticket is dropped if it is still
-   *   the cached one, and the error propagates. No call site uses it yet.
+   *   the cached one, and the error propagates. No call site uses it today: it is the flip-back path
+   *   for the `submit*` steps (D-SUBMIT-RETRY) — pass `false` there and they invalidate-then-throw,
+   *   with no API change.
    *
    * A rejection a new ticket cannot fix (an out-of-scope id — the runtime makes it indistinguishable
    * from a dead ticket on purpose) costs one re-admit and one resend before it throws: at most six
@@ -1054,6 +1059,26 @@ export class SeamClient {
     return this.coord.openSession(init, { ...call(opts), headers });
   }
 
+  /**
+   * Propose an option for the session to decide.
+   *
+   * **Refresh-once (#275).** With a credential (`credential` or a bound agent), a rejected ticket is
+   * refreshed once and this SAME request is re-signed under the new ticket and resent once; a second
+   * `UNAUTHENTICATED` throws `UnauthenticatedError`. Resending an identical body is safe: the runtime
+   * refuses a reused signature as `UNAUTHENTICATED` and dedupes a byte-identical step, with no second
+   * effect and no second budget debit, so an application resend after a lost response, refreshed
+   * here, also lands at most once.
+   * - `usage` is NOT part of a step's identity: a resend differing only in `usage` is deduped and its
+   *   `usage` silently dropped (not debited). A changed `reason`, proposal id or value is a new message.
+   * - `SessionStep` cannot say "deduped". A duplicate of a NON-resolving step returns `decisionId`,
+   *   `collectiveOutcome` and `policyEnforcement` all unset. A resend after a step that SEALED the
+   *   session returns the sealed `decisionId` but NO `collectiveOutcome` (`policyEnforcement` only if
+   *   the session is attestable), so after a retried write read {@link getDecision} for the outcome.
+   * - A resend after the session was swept, or while an Expire/Cancel seal is pending, throws
+   *   `FailedPreconditionError` (`session_not_open`) instead of returning the sealed id.
+   * - A resend whose `reason` trips the runtime's boundary guard adds one more
+   *   `boundary.data_flagged` audit row; the step itself is still applied once.
+   */
   async submitProposal(
     sessionId: string,
     proposer: string,
@@ -1063,21 +1088,42 @@ export class SeamClient {
     opts?: CredentialedCallOptions,
   ) {
     const init = { sessionId, proposer, proposalId, option, usage };
-    const headers = await this.credentialHeaders(
+    // Refresh-once over the SAME `init` (#275, D-SUBMIT-RETRY); see this verb's doc.
+    return this.credentialedCall(
       opts?.credential,
       "/seam.api.v1.SeamCoordination/SubmitProposal",
       "",
       opts,
+      (headers) => this.coord.submitProposal(init, { ...call(opts), headers }),
       { schema: ProposalRequestSchema, init },
+      true,
     );
-    return this.coord.submitProposal(init, { ...call(opts), headers });
   }
 
-  /** Cast a vote on a proposal. `opts.reason` is the voter's stated reason, sealed into the vote envelope
+  /**
+   * Cast a vote on a proposal. `opts.reason` is the voter's stated reason, sealed into the vote envelope
    * (seam-runtime #804). Omitted or empty means no reason, byte-identical to a vote without one. The
    * server bounds it (4096 bytes, injection-redacted, classified) and REQUIRES it when the governing
    * policy sets `rules["x-com.zer07labs.seam"].capture_dissent`; those checks are deliberately not
-   * mirrored here. */
+   * mirrored here.
+   *
+   * **Refresh-once (#275).** With a credential (`credential` or a bound agent), a rejected ticket is
+   * refreshed once and this SAME request is re-signed under the new ticket and resent once; a second
+   * `UNAUTHENTICATED` throws `UnauthenticatedError`. Resending an identical body is safe: the runtime
+   * refuses a reused signature as `UNAUTHENTICATED` and dedupes a byte-identical step, with no second
+   * effect and no second budget debit, so an application resend after a lost response, refreshed
+   * here, also lands at most once.
+   * - `usage` is NOT part of a step's identity: a resend differing only in `usage` is deduped and its
+   *   `usage` silently dropped (not debited). A changed `reason`, proposal id or value is a new message.
+   * - `SessionStep` cannot say "deduped". A duplicate of a NON-resolving step returns `decisionId`,
+   *   `collectiveOutcome` and `policyEnforcement` all unset. A resend after a step that SEALED the
+   *   session returns the sealed `decisionId` but NO `collectiveOutcome` (`policyEnforcement` only if
+   *   the session is attestable), so after a retried write read {@link getDecision} for the outcome.
+   * - A resend after the session was swept, or while an Expire/Cancel seal is pending, throws
+   *   `FailedPreconditionError` (`session_not_open`) instead of returning the sealed id.
+   * - A resend whose `reason` trips the runtime's boundary guard adds one more
+   *   `boundary.data_flagged` audit row; the step itself is still applied once.
+   */
   async submitVote(
     sessionId: string,
     voter: string,
@@ -1087,14 +1133,16 @@ export class SeamClient {
     opts?: { reason?: string } & CredentialedCallOptions,
   ) {
     const init = { sessionId, voter, proposalId, value, usage, reason: opts?.reason ?? "" };
-    const headers = await this.credentialHeaders(
+    // Refresh-once over the SAME `init` (#275, D-SUBMIT-RETRY); see this verb's doc.
+    return this.credentialedCall(
       opts?.credential,
       "/seam.api.v1.SeamCoordination/SubmitVote",
       "",
       opts,
+      (headers) => this.coord.submitVote(init, { ...call(opts), headers }),
       { schema: VoteRequestSchema, init },
+      true,
     );
-    return this.coord.submitVote(init, { ...call(opts), headers });
   }
 
   /**
@@ -1111,6 +1159,23 @@ export class SeamClient {
    * accepted evaluation's `rationaleRef` (and whether a `confidence` was stated at all) is bound
    * into the Commitment's explanation under `seam-explanation-digest:v1`, which
    * `seam-commitment-digest:v3` covers. `verifyDecision` recomputes it locally.
+   *
+   * **Refresh-once (#275).** With a credential (`credential` or a bound agent), a rejected ticket is
+   * refreshed once and this SAME request is re-signed under the new ticket and resent once; a second
+   * `UNAUTHENTICATED` throws `UnauthenticatedError`. Resending an identical body is safe: the runtime
+   * refuses a reused signature as `UNAUTHENTICATED` and dedupes a byte-identical step, with no second
+   * effect and no second budget debit, so an application resend after a lost response, refreshed
+   * here, also lands at most once.
+   * - `usage` is NOT part of a step's identity: a resend differing only in `usage` is deduped and its
+   *   `usage` silently dropped (not debited). A changed `reason`, proposal id or value is a new message.
+   * - `SessionStep` cannot say "deduped". A duplicate of a NON-resolving step returns `decisionId`,
+   *   `collectiveOutcome` and `policyEnforcement` all unset. A resend after a step that SEALED the
+   *   session returns the sealed `decisionId` but NO `collectiveOutcome` (`policyEnforcement` only if
+   *   the session is attestable), so after a retried write read {@link getDecision} for the outcome.
+   * - A resend after the session was swept, or while an Expire/Cancel seal is pending, throws
+   *   `FailedPreconditionError` (`session_not_open`) instead of returning the sealed id.
+   * - A resend whose `reason` trips the runtime's boundary guard adds one more
+   *   `boundary.data_flagged` audit row; the step itself is still applied once.
    */
   async submitEvaluation(
     sessionId: string,
@@ -1138,14 +1203,16 @@ export class SeamClient {
       ...(opts?.rationaleRef !== undefined ? { rationaleRef: opts.rationaleRef } : {}),
       usage: opts?.usage,
     };
-    const headers = await this.credentialHeaders(
+    // Refresh-once over the SAME `init` (#275, D-SUBMIT-RETRY); see this verb's doc.
+    return this.credentialedCall(
       opts?.credential,
       "/seam.api.v1.SeamCoordination/SubmitEvaluation",
       "",
       opts,
+      (headers) => this.coord.submitEvaluation(init, { ...call(opts), headers }),
       { schema: EvaluationRequestSchema, init },
+      true,
     );
-    return this.coord.submitEvaluation(init, { ...call(opts), headers });
   }
 
   /**
@@ -1153,6 +1220,23 @@ export class SeamClient {
    *
    * `severity` is one of `low | medium | high | critical`; empty defaults to `medium` (the MACP
    * default, applied server-side).
+   *
+   * **Refresh-once (#275).** With a credential (`credential` or a bound agent), a rejected ticket is
+   * refreshed once and this SAME request is re-signed under the new ticket and resent once; a second
+   * `UNAUTHENTICATED` throws `UnauthenticatedError`. Resending an identical body is safe: the runtime
+   * refuses a reused signature as `UNAUTHENTICATED` and dedupes a byte-identical step, with no second
+   * effect and no second budget debit, so an application resend after a lost response, refreshed
+   * here, also lands at most once.
+   * - `usage` is NOT part of a step's identity: a resend differing only in `usage` is deduped and its
+   *   `usage` silently dropped (not debited). A changed `reason`, proposal id or value is a new message.
+   * - `SessionStep` cannot say "deduped". A duplicate of a NON-resolving step returns `decisionId`,
+   *   `collectiveOutcome` and `policyEnforcement` all unset. A resend after a step that SEALED the
+   *   session returns the sealed `decisionId` but NO `collectiveOutcome` (`policyEnforcement` only if
+   *   the session is attestable), so after a retried write read {@link getDecision} for the outcome.
+   * - A resend after the session was swept, or while an Expire/Cancel seal is pending, throws
+   *   `FailedPreconditionError` (`session_not_open`) instead of returning the sealed id.
+   * - A resend whose `reason` trips the runtime's boundary guard adds one more
+   *   `boundary.data_flagged` audit row; the step itself is still applied once.
    */
   async submitObjection(
     sessionId: string,
@@ -1174,16 +1258,38 @@ export class SeamClient {
       severity: opts?.severity ?? "",
       usage: opts?.usage,
     };
-    const headers = await this.credentialHeaders(
+    // Refresh-once over the SAME `init` (#275, D-SUBMIT-RETRY); see this verb's doc.
+    return this.credentialedCall(
       opts?.credential,
       "/seam.api.v1.SeamCoordination/SubmitObjection",
       "",
       opts,
+      (headers) => this.coord.submitObjection(init, { ...call(opts), headers }),
       { schema: ObjectionRequestSchema, init },
+      true,
     );
-    return this.coord.submitObjection(init, { ...call(opts), headers });
   }
 
+  /**
+   * Submit a MACP commit, sealing `commitmentId`'s decision.
+   *
+   * **Refresh-once (#275).** With a credential (`credential` or a bound agent), a rejected ticket is
+   * refreshed once and this SAME request is re-signed under the new ticket and resent once; a second
+   * `UNAUTHENTICATED` throws `UnauthenticatedError`. Resending an identical body is safe: the runtime
+   * refuses a reused signature as `UNAUTHENTICATED` and dedupes a byte-identical step, with no second
+   * effect and no second budget debit, so an application resend after a lost response, refreshed
+   * here, also lands at most once.
+   * - `usage` is NOT part of a step's identity: a resend differing only in `usage` is deduped and its
+   *   `usage` silently dropped (not debited). A changed `reason`, proposal id or value is a new message.
+   * - `SessionStep` cannot say "deduped". A duplicate of a NON-resolving step returns `decisionId`,
+   *   `collectiveOutcome` and `policyEnforcement` all unset. A resend after a step that SEALED the
+   *   session returns the sealed `decisionId` but NO `collectiveOutcome` (`policyEnforcement` only if
+   *   the session is attestable), so after a retried write read {@link getDecision} for the outcome.
+   * - A resend after the session was swept, or while an Expire/Cancel seal is pending, throws
+   *   `FailedPreconditionError` (`session_not_open`) instead of returning the sealed id.
+   * - A resend whose `reason` trips the runtime's boundary guard adds one more
+   *   `boundary.data_flagged` audit row; the step itself is still applied once.
+   */
   async submitCommit(
     sessionId: string,
     commitmentId: string,
@@ -1200,14 +1306,16 @@ export class SeamClient {
       // `submitEvaluation`'s `confidence`/`rationaleRef` above for why this isn't `?? ""`.
       ...(opts?.supersedes !== undefined ? { supersedes: opts.supersedes } : {}),
     };
-    const headers = await this.credentialHeaders(
+    // Refresh-once over the SAME `init` (#275, D-SUBMIT-RETRY); see this verb's doc.
+    return this.credentialedCall(
       opts?.credential,
       "/seam.api.v1.SeamCoordination/SubmitCommit",
       "",
       opts,
+      (headers) => this.coord.submitCommit(init, { ...call(opts), headers }),
       { schema: CommitRequestSchema, init },
+      true,
     );
-    return this.coord.submitCommit(init, { ...call(opts), headers });
   }
 
   // ── Quorum-mode-only steps (`macp.mode.quorum.v1`) ────────────────────────────────────────────
@@ -1216,10 +1324,29 @@ export class SeamClient {
   // make and is deliberately NOT mirrored here: a client-side copy of a server-side rule is a
   // second grammar to keep in sync, and the first thing to drift.
 
-  /** Open an N-of-M approval round. Only the session initiator may submit one (enforced by the
+  /**
+   * Open an N-of-M approval round. Only the session initiator may submit one (enforced by the
    * mode engine, not the contract). `requiredApprovals` is the N: how many APPROVE ballots close
    * the round. Range-checked as a `uint32` here so an out-of-range value names this argument
-   * rather than surfacing from the generated setter. */
+   * rather than surfacing from the generated setter.
+   *
+   * **Refresh-once (#275).** With a credential (`credential` or a bound agent), a rejected ticket is
+   * refreshed once and this SAME request is re-signed under the new ticket and resent once; a second
+   * `UNAUTHENTICATED` throws `UnauthenticatedError`. Resending an identical body is safe: the runtime
+   * refuses a reused signature as `UNAUTHENTICATED` and dedupes a byte-identical step, with no second
+   * effect and no second budget debit, so an application resend after a lost response, refreshed
+   * here, also lands at most once.
+   * - `usage` is NOT part of a step's identity: a resend differing only in `usage` is deduped and its
+   *   `usage` silently dropped (not debited). A changed `reason`, proposal id or value is a new message.
+   * - `SessionStep` cannot say "deduped". A duplicate of a NON-resolving step returns `decisionId`,
+   *   `collectiveOutcome` and `policyEnforcement` all unset. A resend after a step that SEALED the
+   *   session returns the sealed `decisionId` but NO `collectiveOutcome` (`policyEnforcement` only if
+   *   the session is attestable), so after a retried write read {@link getDecision} for the outcome.
+   * - A resend after the session was swept, or while an Expire/Cancel seal is pending, throws
+   *   `FailedPreconditionError` (`session_not_open`) instead of returning the sealed id.
+   * - A resend whose `reason` trips the runtime's boundary guard adds one more
+   *   `boundary.data_flagged` audit row; the step itself is still applied once.
+   */
   async submitApprovalRequest(
     sessionId: string,
     requester: string,
@@ -1237,20 +1364,41 @@ export class SeamClient {
       requiredApprovals: u32(requiredApprovals, "requiredApprovals"),
       usage,
     };
-    const headers = await this.credentialHeaders(
+    // Refresh-once over the SAME `init` (#275, D-SUBMIT-RETRY); see this verb's doc.
+    return this.credentialedCall(
       opts?.credential,
       "/seam.api.v1.SeamCoordination/SubmitApprovalRequest",
       "",
       opts,
+      (headers) => this.coord.submitApprovalRequest(init, { ...call(opts), headers }),
       { schema: ApprovalRequestRequestSchema, init },
+      true,
     );
-    return this.coord.submitApprovalRequest(init, { ...call(opts), headers });
   }
 
-  /** Cast one ballot against an open approval request. One RPC covers approve/reject/abstain: the
+  /**
+   * Cast one ballot against an open approval request. One RPC covers approve/reject/abstain: the
    * three upstream MACP payloads are structurally identical, and `choice` is what selects the wire
    * envelope. `BALLOT_CHOICE_UNSPECIFIED` is not a vote — passing it is the server's
-   * INVALID_ARGUMENT to raise. */
+   * INVALID_ARGUMENT to raise.
+   *
+   * **Refresh-once (#275).** With a credential (`credential` or a bound agent), a rejected ticket is
+   * refreshed once and this SAME request is re-signed under the new ticket and resent once; a second
+   * `UNAUTHENTICATED` throws `UnauthenticatedError`. Resending an identical body is safe: the runtime
+   * refuses a reused signature as `UNAUTHENTICATED` and dedupes a byte-identical step, with no second
+   * effect and no second budget debit, so an application resend after a lost response, refreshed
+   * here, also lands at most once.
+   * - `usage` is NOT part of a step's identity: a resend differing only in `usage` is deduped and its
+   *   `usage` silently dropped (not debited). A changed `reason`, proposal id or value is a new message.
+   * - `SessionStep` cannot say "deduped". A duplicate of a NON-resolving step returns `decisionId`,
+   *   `collectiveOutcome` and `policyEnforcement` all unset. A resend after a step that SEALED the
+   *   session returns the sealed `decisionId` but NO `collectiveOutcome` (`policyEnforcement` only if
+   *   the session is attestable), so after a retried write read {@link getDecision} for the outcome.
+   * - A resend after the session was swept, or while an Expire/Cancel seal is pending, throws
+   *   `FailedPreconditionError` (`session_not_open`) instead of returning the sealed id.
+   * - A resend whose `reason` trips the runtime's boundary guard adds one more
+   *   `boundary.data_flagged` audit row; the step itself is still applied once.
+   */
   async submitBallot(
     sessionId: string,
     voter: string,
@@ -1261,14 +1409,16 @@ export class SeamClient {
     opts?: CredentialedCallOptions,
   ) {
     const init = { sessionId, voter, requestId, choice, reason, usage };
-    const headers = await this.credentialHeaders(
+    // Refresh-once over the SAME `init` (#275, D-SUBMIT-RETRY); see this verb's doc.
+    return this.credentialedCall(
       opts?.credential,
       "/seam.api.v1.SeamCoordination/SubmitBallot",
       "",
       opts,
+      (headers) => this.coord.submitBallot(init, { ...call(opts), headers }),
       { schema: BallotRequestSchema, init },
+      true,
     );
-    return this.coord.submitBallot(init, { ...call(opts), headers });
   }
 
   /** @deprecated Resume moved to the **management** plane (rt-D): this data-plane RPC now returns

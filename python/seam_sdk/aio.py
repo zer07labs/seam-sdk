@@ -2,7 +2,7 @@
 
 Every public method mirrors the sync client's signature plus ``timeout`` (propagated as the gRPC
 deadline; the SDK never retries beyond a single ticket refresh, taken by ``authorize``, the credentialed
-reads and ``report_outcome`` — #275, see ``client.DEFAULT_TIMEOUT_S``). The advisory-ticket
+reads, ``report_outcome`` and the seven ``submit_*`` steps — #275, see ``client.DEFAULT_TIMEOUT_S``). The advisory-ticket
 lifecycle shares the sync client's transport-agnostic core (:mod:`seam_sdk._authorize`), guarded here
 by an ``asyncio.Lock`` — cancellation mid-``authorize`` can never corrupt the cache, because cache
 mutations are synchronous and happen only after their RPC await has fully returned.
@@ -33,6 +33,7 @@ from .client import (
     StepUsage,
     _check_idempotency_key,
     _now_ms,
+    _submit_retry_doc,
     _vote_messages,
     commitment_view,
     _u32,
@@ -457,6 +458,7 @@ class SeamClient:
         )
         return await self._coord.OpenSession(req, timeout=timeout, metadata=md)
 
+    @_submit_retry_doc
     async def submit_proposal(
         self,
         session_id: str,
@@ -476,15 +478,17 @@ class SeamClient:
         )
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        md = await self._credential_md(
+        return await self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/SubmitProposal",
             "",
             req,
+            lambda md: self._coord.SubmitProposal(req, timeout=timeout, metadata=md),
             timeout=timeout,
+            retry=True,  # D-SUBMIT-RETRY (#275): see _SUBMIT_RETRY_NOTE
         )
-        return await self._coord.SubmitProposal(req, timeout=timeout, metadata=md)
 
+    @_submit_retry_doc
     async def submit_vote(
         self,
         session_id: str,
@@ -510,15 +514,17 @@ class SeamClient:
         )
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        md = await self._credential_md(
+        return await self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/SubmitVote",
             "",
             req,
+            lambda md: self._coord.SubmitVote(req, timeout=timeout, metadata=md),
             timeout=timeout,
+            retry=True,  # D-SUBMIT-RETRY (#275): see _SUBMIT_RETRY_NOTE
         )
-        return await self._coord.SubmitVote(req, timeout=timeout, metadata=md)
 
+    @_submit_retry_doc
     async def submit_evaluation(
         self,
         session_id: str,
@@ -561,15 +567,17 @@ class SeamClient:
             req.rationale_ref = rationale_ref
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        md = await self._credential_md(
+        return await self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/SubmitEvaluation",
             "",
             req,
+            lambda md: self._coord.SubmitEvaluation(req, timeout=timeout, metadata=md),
             timeout=timeout,
+            retry=True,  # D-SUBMIT-RETRY (#275): see _SUBMIT_RETRY_NOTE
         )
-        return await self._coord.SubmitEvaluation(req, timeout=timeout, metadata=md)
 
+    @_submit_retry_doc
     async def submit_objection(
         self,
         session_id: str,
@@ -596,15 +604,17 @@ class SeamClient:
         )
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        md = await self._credential_md(
+        return await self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/SubmitObjection",
             "",
             req,
+            lambda md: self._coord.SubmitObjection(req, timeout=timeout, metadata=md),
             timeout=timeout,
+            retry=True,  # D-SUBMIT-RETRY (#275): see _SUBMIT_RETRY_NOTE
         )
-        return await self._coord.SubmitObjection(req, timeout=timeout, metadata=md)
 
+    @_submit_retry_doc
     async def submit_commit(
         self,
         session_id: str,
@@ -636,20 +646,22 @@ class SeamClient:
             req.supersedes = supersedes
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        md = await self._credential_md(
+        return await self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/SubmitCommit",
             "",
             req,
+            lambda md: self._coord.SubmitCommit(req, timeout=timeout, metadata=md),
             timeout=timeout,
+            retry=True,  # D-SUBMIT-RETRY (#275): see _SUBMIT_RETRY_NOTE
         )
-        return await self._coord.SubmitCommit(req, timeout=timeout, metadata=md)
 
     # ── Quorum-mode-only steps (`macp.mode.quorum.v1`) ─────────────────────────────────────────
     # The async mirror of the sync client's pair. These two move in lockstep with `client.py` —
     # `test_sync_async_parity` asserts the two method inventories are equal as sets, because a
     # verb landing on one client and not the other is this package's standing drift hazard.
 
+    @_submit_retry_doc
     async def submit_approval_request(
         self,
         session_id: str,
@@ -676,17 +688,19 @@ class SeamClient:
         )
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        md = await self._credential_md(
+        return await self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/SubmitApprovalRequest",
             "",
             req,
+            lambda md: self._coord.SubmitApprovalRequest(
+                req, timeout=timeout, metadata=md
+            ),
             timeout=timeout,
-        )
-        return await self._coord.SubmitApprovalRequest(
-            req, timeout=timeout, metadata=md
+            retry=True,  # D-SUBMIT-RETRY (#275): see _SUBMIT_RETRY_NOTE
         )
 
+    @_submit_retry_doc
     async def submit_ballot(
         self,
         session_id: str,
@@ -715,14 +729,15 @@ class SeamClient:
         )
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        md = await self._credential_md(
+        return await self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/SubmitBallot",
             "",
             req,
+            lambda md: self._coord.SubmitBallot(req, timeout=timeout, metadata=md),
             timeout=timeout,
+            retry=True,  # D-SUBMIT-RETRY (#275): see _SUBMIT_RETRY_NOTE
         )
-        return await self._coord.SubmitBallot(req, timeout=timeout, metadata=md)
 
     async def resume_session(
         self,

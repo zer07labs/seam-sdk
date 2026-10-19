@@ -28,6 +28,7 @@ import {
 import { jcsCanonicalize, requestSigPayload, toolInputDigest } from "../src/crypto.js";
 import { DEFAULT_ADMIN_TIMEOUT_MS, SeamAdminClient } from "../src/admin.js";
 import {
+  FailedPreconditionError,
   InvalidArgumentError,
   NotFoundError,
   ProtocolViolationError,
@@ -880,10 +881,21 @@ test("redriveEvents sends tenant/fromSeq, and toSeq/eventId only when given; ref
   assert.equal(calls.length, 3);
 });
 
-// ── Refresh-once on the credentialed reads and reportOutcome (#275) ──────────────────────────────
+// ── Refresh-once on the credentialed reads, reportOutcome and the seven submit* steps (#275) ─────
 // Mirrors python/tests/test_credential_refresh.py. Baseline: a pre-seeded live ticket, so "one
-// extra admit" is exactly two admission RPCs (IssueChallenge + Admit).
+// extra admit" is exactly two admission RPCs (IssueChallenge + Admit). Phase 1 added the reads and
+// reportOutcome; Phase 2 (D-SUBMIT-RETRY) the seven steps. What the RUNTIME does with a step resend
+// (dedupe, the sealed early return, no second debit) is proven live, in integration.test.ts.
 
+const SUBMITS = [
+  "SubmitProposal",
+  "SubmitVote",
+  "SubmitEvaluation",
+  "SubmitObjection",
+  "SubmitCommit",
+  "SubmitApprovalRequest",
+  "SubmitBallot",
+] as const;
 const REFRESHING = [
   "SessionStatus",
   "GetDecision",
@@ -891,7 +903,9 @@ const REFRESHING = [
   "GetCommitmentProof",
   "GetEscalation",
   "ReportOutcome",
+  ...SUBMITS,
 ] as const;
+const EXCLUDED = ["OpenSession", "CancelSession", "ExpireSession"] as const;
 const REFRESH_WRITES = Object.keys(CREDENTIAL_CALLS).filter(
   (n) => !(REFRESHING as readonly string[]).includes(n),
 );
@@ -927,7 +941,7 @@ const admissionCount = (calls: Recorded[]) => calls.filter((c) => ADMISSION_RPCS
 const ticketHex = (call: Recorded) =>
   Buffer.from((call.headers as Record<string, string>)["x-seam-ticket-bin"]!, "base64").toString("hex");
 
-test("#275: each credentialed read and reportOutcome refreshes a rejected ticket once and recovers", async () => {
+test("#275: each credentialed read, reportOutcome and submit* step refreshes a rejected ticket once and recovers", async () => {
   const cred = new Agent(new Uint8Array(32).fill(3));
   for (const name of REFRESHING) {
     const calls: Recorded[] = [];
@@ -1044,8 +1058,9 @@ test("#275: a refused refresh admission propagates typed, once, and nothing is r
   assert.equal(calls.filter((c) => c.method === "IssueChallenge").length, 1, "refresh looped");
 });
 
-test("#275: the ten writes are unchanged — one send on UNAUTHENTICATED, no re-admit", async () => {
-  assert.equal(REFRESH_WRITES.length, 10);
+test("#275: the three excluded writes are unchanged — one send on UNAUTHENTICATED, no re-admit", async () => {
+  // D-WRITES-EXCLUDED, narrowed from ten in Phase 2: everything not retried is exactly these three.
+  assert.deepEqual([...REFRESH_WRITES].sort(), [...EXCLUDED].sort());
   const cred = new Agent(new Uint8Array(32).fill(3));
   for (const name of REFRESH_WRITES) {
     const calls: Recorded[] = [];
@@ -1060,13 +1075,198 @@ test("#275: the ten writes are unchanged — one send on UNAUTHENTICATED, no re-
   }
 });
 
+// ── Phase 2 (D-SUBMIT-RETRY): the seven steps ───────────────────────────────────────────────────
+
+/** Each step's request schema, to compare the two attempts' serialized bytes. */
+const SUBMIT_SCHEMAS = {
+  SubmitProposal: ProposalRequestSchema,
+  SubmitVote: VoteRequestSchema,
+  SubmitEvaluation: EvaluationRequestSchema,
+  SubmitObjection: ObjectionRequestSchema,
+  SubmitCommit: CommitRequestSchema,
+  SubmitApprovalRequest: ApprovalRequestRequestSchema,
+  SubmitBallot: BallotRequestSchema,
+} as const;
+
+test("#275 P2: each submit* resends a byte-identical body under a different call signature", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  for (const name of SUBMITS) {
+    const schema = SUBMIT_SCHEMAS[name];
+    const calls: Recorded[] = [];
+    const wire = refreshWire();
+    wire.state.reject[name] = 1;
+    const client = new SeamClient(fakeTransport(calls, wire.handle));
+    seedCredentialTicket(client, cred.aid);
+    await CREDENTIAL_CALLS[name]!.invoke(client, cred);
+    const [a, b] = calls.filter((c) => c.method === name) as [Recorded, Recorded];
+    const bytes = (r: Recorded) =>
+      Buffer.from(
+        toBinary(schema as DescMessage, create(schema as DescMessage, r.input as never)),
+      ).toString("hex");
+    assert.equal(bytes(a), bytes(b), `${name}: the body changed on the resend`);
+    const sig = (r: Recorded) => (r.headers as Record<string, string>)["x-seam-call-sig-bin"];
+    assert.notEqual(sig(a), sig(b), `${name}: the resend reused the rejected signature`);
+  }
+});
+
+test("#275 P2: submitVote carries usage unchanged on the resend", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  const calls: Recorded[] = [];
+  const wire = refreshWire();
+  wire.state.reject.SubmitVote = 1;
+  const client = new SeamClient(fakeTransport(calls, wire.handle));
+  seedCredentialTicket(client, cred.aid);
+  await client.submitVote("s1", "a", "p1", "APPROVE", { tokens: 600n, costMicros: 7n }, { credential: cred });
+  const [a, b] = calls.filter((c) => c.method === "SubmitVote") as [Recorded, Recorded];
+  assert.deepEqual(a.input.usage, b.input.usage);
+  assert.equal((b.input.usage as { tokens: bigint }).tokens, 600n);
+});
+
+test("#275 P2: a refused refresh admission on a submit* step propagates typed and nothing is resent", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  for (const name of SUBMITS) {
+    const calls: Recorded[] = [];
+    const wire = refreshWire();
+    wire.state.reject[name] = 1;
+    wire.state.fail.IssueChallenge = new UnavailableError("CHALLENGE_REFUSED", Code.Unavailable);
+    const client = new SeamClient(fakeTransport(calls, wire.handle));
+    seedCredentialTicket(client, cred.aid);
+    await assert.rejects(CREDENTIAL_CALLS[name]!.invoke(client, cred), UnavailableError);
+    assert.equal(calls.filter((c) => c.method === name).length, 1, `${name}: resent after a failed refresh`);
+    assert.equal(calls.filter((c) => c.method === "IssueChallenge").length, 1, `${name}: refresh looped`);
+  }
+});
+
+test("#275 P2: the runtime's sealed answer to a resend is passed through as success, untouched", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  const calls: Recorded[] = [];
+  const wire = refreshWire();
+  wire.state.reject.SubmitVote = 1;
+  const handle: UnaryHandler = (method, input, headers) => {
+    const out = wire.handle(method, input, headers);
+    return method === "SubmitVote" ? { state: "Cancelled", decisionId: "dec-sealed" } : out;
+  };
+  const client = new SeamClient(fakeTransport(calls, handle));
+  seedCredentialTicket(client, cred.aid);
+  const step = await client.submitVote("s1", "a", "p1", "APPROVE", undefined, { credential: cred });
+  assert.equal(step.decisionId, "dec-sealed");
+  assert.equal(step.collectiveOutcome, undefined);
+  assert.equal(step.policyEnforcement, undefined);
+  assert.equal(calls.filter((c) => c.method === "SubmitVote").length, 2);
+});
+
+test("#275 P2: FAILED_PRECONDITION on the resend (a swept session) propagates typed, not retried", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  const calls: Recorded[] = [];
+  const wire = refreshWire();
+  wire.state.reject.SubmitVote = 1;
+  let sends = 0;
+  const handle: UnaryHandler = (method, input, headers) => {
+    if (method === "SubmitVote" && ++sends === 2) {
+      throw new FailedPreconditionError(
+        "session s1 expired (sealed by the session sweeper)",
+        Code.FailedPrecondition,
+      );
+    }
+    return wire.handle(method, input, headers);
+  };
+  const client = new SeamClient(fakeTransport(calls, handle));
+  seedCredentialTicket(client, cred.aid);
+  await assert.rejects(
+    client.submitVote("s1", "a", "p1", "APPROVE", undefined, { credential: cred }),
+    (e: unknown) => e instanceof FailedPreconditionError && /session sweeper/.test((e as Error).message),
+  );
+  assert.equal(sends, 2);
+});
+
+test("#275 P2: 32 concurrent rejected submit* steps coalesce to ONE re-admit", async () => {
+  const N = 32;
+  const calls: Recorded[] = [];
+  const seam = credentialedSeam();
+  const client = new SeamClient(fakeTransport(calls, seam.handle));
+  const agent = new Agent(SEED);
+  await client.admit(agent);
+  assert.equal(seam.state.admits, 1);
+
+  seam.state.revoked.add(1);
+  seam.state.deferRejections = true;
+  const all = Array.from({ length: N }, (_, i) => CREDENTIAL_CALLS[SUBMITS[i % SUBMITS.length]!]!.invoke(client, agent));
+  await waitPending(seam.state, N);
+  seam.state.deferRejections = false;
+  for (const rej of seam.state.pending.splice(0)) rej();
+
+  const out = (await Promise.all(all)) as { state: string }[];
+  assert.ok(out.every((r) => r.state === "Open"));
+  assert.equal(seam.state.admits - 1, 1, `${N} rejected steps caused ${seam.state.admits - 1} re-admits`);
+  for (const name of SUBMITS) {
+    const sent = calls.filter((c) => c.method === name);
+    assert.equal(sent.length % 2, 0, `${name}: every rejected step was resent exactly once`);
+  }
+});
+
+// ── Phase 1 verifier notes ─────────────────────────────────────────────────────────────────────
+
+test("#275: an explicit credential on a bound client refreshes the SIGNER's ticket, not the bound agent's", async () => {
+  const bound = new Agent(new Uint8Array(32).fill(5));
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  const calls: Recorded[] = [];
+  const wire = refreshWire();
+  wire.state.reject.SessionStatus = 1;
+  const client = new SeamClient(fakeTransport(calls, wire.handle), undefined, { agent: bound });
+  seedCredentialTicket(client, bound.aid);
+  seedCredentialTicket(client, cred.aid);
+  await client.sessionStatus("s1", { credential: cred });
+  const tickets = (client as unknown as { tickets: Map<string, { ticket: Uint8Array }> }).tickets;
+  assert.deepEqual([...tickets.get(cred.aid)!.ticket], [101], "the signer's ticket is the one refreshed");
+  assert.deepEqual([...tickets.get(bound.aid)!.ticket], [...CREDENTIAL_TICKET], "the bound agent's ticket is untouched");
+});
+
+test("#275: retry=false invalidates the rejected ticket, then throws — one send, no admission", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  const calls: Recorded[] = [];
+  const wire = refreshWire();
+  wire.state.reject.SessionStatus = 1;
+  const client = new SeamClient(fakeTransport(calls, wire.handle));
+  seedCredentialTicket(client, cred.aid);
+  const inner = client as unknown as {
+    tickets: Map<string, unknown>;
+    coord: { sessionStatus: (i: unknown, o: unknown) => Promise<unknown> };
+    credentialedCall: (
+      credential: Agent,
+      rpc: string,
+      resourceId: string,
+      opts: undefined,
+      send: (headers: Record<string, string> | undefined) => Promise<unknown>,
+      body: undefined,
+      retry: boolean,
+    ) => Promise<unknown>;
+  };
+  await assert.rejects(
+    inner.credentialedCall.call(
+      client,
+      cred,
+      "/seam.api.v1.SeamCoordination/SessionStatus",
+      "s1",
+      undefined,
+      (headers) => inner.coord.sessionStatus({ sessionId: "s1" }, { headers }),
+      undefined,
+      false,
+    ),
+    UnauthenticatedError,
+  );
+  assert.equal(calls.filter((c) => c.method === "SessionStatus").length, 1);
+  assert.equal(admissionCount(calls), 0);
+  assert.equal(inner.tickets.has(cred.aid), false, "the rejected ticket was invalidated");
+});
+
 /** fakeSeam plus credentialed coordination reads that reject a revoked ticket (read from the
  * `x-seam-ticket-bin` header) exactly as its Authorize does — deferral included. */
 function credentialedSeam() {
   const seam = fakeSeam();
   const base = seam.handle;
   const handle: UnaryHandler = (method, input, headers) => {
-    if (method !== "SessionStatus" && method !== "GetDecision") return base(method, input, headers);
+    const step = (SUBMITS as readonly string[]).includes(method);
+    if (method !== "SessionStatus" && method !== "GetDecision" && !step) return base(method, input, headers);
     const h = headers as Record<string, string> | undefined;
     const t = h ? Buffer.from(h["x-seam-ticket-bin"]!, "base64")[0]! : -1;
     if (t < 0 || seam.state.revoked.has(t)) {
@@ -1074,6 +1274,7 @@ function credentialedSeam() {
       if (!seam.state.deferRejections) throw err();
       return new Promise((_res, rej) => seam.state.pending.push(() => rej(err())));
     }
+    if (step) return { state: "Open" };
     return method === "SessionStatus" ? { state: "Open" } : { decisionId: input.decisionId };
   };
   return { state: seam.state, handle };

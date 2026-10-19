@@ -393,7 +393,7 @@ language but not the other.
 
 ### Phase 2: Refresh-once on the seven `submit_*` verbs (Python sync and aio, TS)
 
-- **Status:** TODO
+- **Status:** DONE (2026-10-19). Criterion 4(d) resends the resolving commit, not a vote, because decision-mode votes do not resolve. The swept-session live test is skipped because the runtime's 30-minute TTL is fixed; a unit test covers the SDK side. The live dedupe evidence is for vote and commit.
 - **Risk:** complex
 - **Delivers:** the rest of #275.
   - These seven verbs route through `_credentialed_call` with `retry=True`: `submit_proposal`,

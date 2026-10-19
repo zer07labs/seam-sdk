@@ -203,6 +203,13 @@ def test_mixed_authorize_and_read_rejections_coalesce_to_one_readmit_aio(busy_se
                 )
             )
             assert len(results) == CONCURRENCY
+            # Each result SUCCEEDED, not merely returned: a count alone would pass if gather had
+            # been handed exceptions or empty responses (Phase 1 verifier note).
+            for i, r in enumerate(results):
+                if i % 2:
+                    assert r.state == "Open", f"read {i} did not recover: {r!r}"
+                else:
+                    assert r.allowed, f"authorize {i} did not recover: {r!r}"
 
     asyncio.run(scenario())
     assert servicer.rejections == CONCURRENCY, "the mixed race was not staged"

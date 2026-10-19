@@ -23,10 +23,22 @@ than trusting a summary here.
   (`credential=` or a bound agent), now treat an `UNAUTHENTICATED` the way `authorize` always has:
   refresh the signer's ticket once (coalesced per AID, so a revocation costs one re-admit however many
   calls it rejects), re-sign the same request under the new ticket, and resend once. A second
-  rejection raises `UnauthenticatedError`. A call with no credential is never retried. The ten other
-  credentialed writes are unchanged: one call. Observable as at most one extra admission handshake and
+  rejection raises `UnauthenticatedError`. A call with no credential is never retried. The seven
+  `submit_*` steps follow in the next entry. Observable as at most one extra admission handshake and
   one extra RPC on a rejected ticket, inside the same per-RPC deadline. Go, Java and Kotlin have no
   client and are unaffected.
+- **The seven `submit_*` steps refresh a rejected ticket once too (#275, D-SUBMIT-RETRY), Python (sync
+  and aio) and TypeScript.** `submit_proposal`, `submit_vote`, `submit_evaluation`, `submit_objection`,
+  `submit_commit`, `submit_approval_request` and `submit_ballot` (TS `submit*`) now refresh the signer's
+  ticket once on `UNAUTHENTICATED`, re-sign the SAME request under the new ticket and resend once; a
+  second rejection raises `UnauthenticatedError`. Before, they made one call and kept the dead ticket
+  cached until its 80% refresh point, so every write failed for up to ~240 s while reads self-healed.
+  The resend is safe because a refused credential has no effect and the runtime dedupes a byte-identical
+  step. Two observable consequences, documented on every `submit_*`: a resend after a step that sealed
+  the session returns the sealed `decision_id` with `collective_outcome` unset (read `get_decision`),
+  and `usage` is not part of a step's identity, so a resend differing only in `usage` is deduped and
+  not debited. `open_session`, `cancel_session` and `expire_session` are unchanged: exactly one call
+  (D-WRITES-EXCLUDED).
 
 ## 0.48.0 — 2026-10-19
 

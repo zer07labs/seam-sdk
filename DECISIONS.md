@@ -1219,7 +1219,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:1450-1472` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:1462-1484` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2049,7 +2049,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:1482` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:1494` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -2756,3 +2756,71 @@ Kotlin have no client and no ticket cache, so there is nothing to extend there.
 - **Blast radius:** a caller of these three still handles a rejected ticket itself. Adding a retry later is
   additive.
 - **Status:** DECIDED (plan, owner); implemented in Phase 1 by leaving these verbs on the one-shot path.
+
+## 2026-10-19 — refresh-once on the seven `submit_*` steps (#275, post-onboarding Phase 2)
+
+Plan: `plans/post-onboarding-sdk-asks.md` (Phase 2). Python (sync and aio) and TS, through the Phase 1 helper
+(`_credentialed_call` / `credentialedCall`) with `retry=True`. Go, Java and Kotlin have no client.
+
+### D-SUBMIT-RETRY — the seven `submit_*` steps refresh a rejected ticket once and resend the same body
+- **Chose:** on `UNAUTHENTICATED`, `submit_proposal`, `submit_vote`, `submit_evaluation`, `submit_objection`,
+  `submit_commit`, `submit_approval_request` and `submit_ballot` refresh the signer's ticket (the same coalesced
+  per-AID refresh as D-READ-RETRY), re-sign the **same request object** under the new ticket, and resend
+  exactly once. Safety rests on four runtime facts (plan, *What the runtime guarantees*):
+  1. a refused credential has no effect — the credential layer refuses before the handler, so no engine step,
+     audit append, outbox row or debit is reachable (fact 1);
+  2. the replay digest is burned in that same layer, so a resend must be re-signed under a different ticket —
+     which the refresh guarantees (fact 2);
+  3. credentialed writes are single-use, so an application's own resend of a write that already landed is
+     refused as `request_replayed`, which surfaces as the uniform `UNAUTHENTICATED` (fact 6);
+  4. the engine dedupes a step by content — `message_id = SHA-256(session‖sender‖type‖payload)`, and `usage`
+     is not in the payload — so the refreshed resend of that write applies nothing (fact 7).
+
+  Within one SDK call the retry cannot double-apply (1). Across calls, the laundering path — lost response →
+  app resend → `request_replayed` → refresh → resend → engine dedupe — ends where the spec's own prescribed
+  client retry (`authorize.v1.md`, "retry a write under a fresh ticket") ends: success, no second effect.
+  Proven live against `seam-grpc` in the credential-only posture:
+  `test_submit_retry_lands_once_and_resends_are_deduped` and `test_submit_retry_debits_the_vote_exactly_once`
+  (`python/tests/test_integration.py`) and their two TS twins (`ts/tests/integration.test.ts`). The proof is
+  the **exactly-once debit**: one vote is sent three times (the third with a different `usage`) at 600 tokens
+  each, and the same flow resolves under a 1000-token hard limit but suspends under a 600-token one — a
+  second debit would have tripped the 1000 gate. The commit's `approve_count == 1` is NOT independent
+  evidence: the mode allows one vote per voter, so it would read 1 even if the resends had been applied.
+  Dedupe is therefore proven live for **`submit_vote` and `submit_commit` only** (the commit's identical resend
+  is refused as a replay, refreshed, and returns the sealed id). The other five verbs rely on the same engine
+  path — `Precheck::Duplicate` in `macp_modes` — which is **unverified at source** here.
+- **Two observable consequences, documented on every `submit_*`** (shared paragraph `_SUBMIT_RETRY_NOTE` in
+  Python, inline in TS), in the README and in `COMPATIBILITY.md`:
+  - `SessionStep` has no disposition, so "deduped" cannot be told from "applied". A duplicate of a
+    **non-resolving** step returns `decision_id`, `policy_enforcement` and `collective_outcome` all unset. A
+    resend after the session **sealed** (resolved, cancelled or expired by a client call) takes the sealed
+    early return: the sealed `decision_id`, **no `collective_outcome`**, `policy_enforcement` only if the
+    session is `sealed_attestable`. After a retried write, read `get_decision` for the outcome. Pinned live by
+    the resolving-commit resend in `test_submit_retry_lands_once_and_resends_are_deduped` and by
+    `test_submit_retry_after_client_seal_returns_sealed_id` (the session cancelled between rejection and
+    resend); the SDK's pass-through by the unit twin of that name.
+  - A deduped resend whose `reason` trips the boundary guard appends one more `boundary.data_flagged` audit
+    row. That is already true of an application's own resend; not a correctness issue.
+- **A swept session** (or one with an Expire/Cancel seal pending) refuses the resend `FAILED_PRECONDITION`
+  (`session_not_open`); it propagates typed and is not retried
+  (`test_submit_retry_failed_precondition_propagates_typed_and_is_not_retried`). The live twin
+  `test_submit_retry_after_sweeper_expiry_raises_failed_precondition` is **skipped with its reason**: the session
+  TTL is the runtime's fixed 30 min, with no override, so no session can be swept between a rejection and its
+  resend.
+- **Alternatives:** (a) **invalidate, then raise** — not materially safer: the caller's own retry crosses the
+  identical path to the identical dedupe. It stays reachable as `retry=False` (the flip-back point is the
+  explicit `retry=True` at each call site). (b) **No retry and no invalidate** — the dead ticket stays cached
+  until 80% of its TTL (up to ~240 s on the 300 s default), so every write fails that long while the reads
+  self-heal. (c) **Detect `request_replayed` client-side** and answer it differently — impossible: every
+  ticket failure carries one byte-identical message (fact 3), by design.
+- **Blast radius:** a rejected step costs at most one extra admission handshake and one extra RPC, each under
+  the caller's deadline. A caller that relied on the first `UNAUTHENTICATED` from a step now sees it only on
+  the second. A caller that resends a step after a lost response now gets success (deduped) instead of
+  `UNAUTHENTICATED`, and must read `get_decision` rather than trust `collective_outcome` on that response.
+- **Status:** DECIDED (plan, owner); implemented in Phase 2.
+
+### D-WRITES-EXCLUDED — narrowed to its three verbs
+- The Phase 1 guard `test_the_ten_writes_still_make_exactly_one_call` is now
+  `test_the_three_excluded_writes_still_make_exactly_one_call` (Python, sync and aio) and its TS twin asserts
+  the non-retrying set **is** `{OpenSession, CancelSession, ExpireSession}`. The reasoning in the Phase 1
+  entry stands unchanged.

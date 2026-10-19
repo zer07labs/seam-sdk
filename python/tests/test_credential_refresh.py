@@ -1,5 +1,5 @@
-"""Refresh-once on the credentialed reads and ``report_outcome`` (#275, plans/post-onboarding-sdk-asks.md
-Phase 1), in BOTH Python clients.
+"""Refresh-once on the credentialed reads, ``report_outcome`` (#275, plans/post-onboarding-sdk-asks.md
+Phase 1) and the seven ``submit_*`` steps (Phase 2, D-SUBMIT-RETRY), in BOTH Python clients.
 
 Two layers, both needed:
 
@@ -7,12 +7,15 @@ Two layers, both needed:
   records every call (name, request, metadata) and refuses chosen verbs ``UNAUTHENTICATED`` a set
   number of times. A live ticket is pre-seeded into the per-AID cache, so the baseline makes NO
   admission and "one extra admit" is exactly two admission RPCs (``IssueChallenge`` + ``Admit``).
-  This layer covers all 16 credentialed verbs: the six that now retry, and the ten writes that must
-  not (that guard narrows in Phase 2).
-* **Real gRPC** — :class:`test_authorize.FakeSeam`'s coordination handlers (``SessionStatus``,
-  ``GetDecision``, ``ReportOutcome``) refuse on real ticket state over a real channel, so the typed
-  error mapping is exercised end to end, and the concurrency criteria (N=32 coalescing, aio
-  cancellation mid-refresh) are staged on real transports rather than on a recorder.
+  This layer covers all 16 credentialed verbs: the thirteen that retry, and the three writes that
+  must not (D-WRITES-EXCLUDED).
+* **Real gRPC** — :class:`test_authorize.FakeSeam`'s coordination handlers refuse on real ticket
+  state over a real channel, so the typed error mapping is exercised end to end, and the concurrency
+  criteria (N=32 coalescing, aio cancellation mid-refresh) are staged on real transports rather than
+  on a recorder.
+
+What the RUNTIME does with a ``submit_*`` resend (engine dedupe, the sealed early return, the budget
+not debited twice) is not modelled by these fakes; ``test_integration.py`` proves it live.
 """
 
 from __future__ import annotations
@@ -27,7 +30,7 @@ import pytest
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from seam_sdk import Agent, IssuerMismatchError, SeamClient
+from seam_sdk import Agent, IssuerMismatchError, SeamClient, StepUsage
 from seam_sdk._authorize import TicketCache
 from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
 from seam_sdk._gen.seam.api.v1 import seam_pb2_grpc as rpc
@@ -35,6 +38,7 @@ from seam_sdk.aio import SeamClient as AioSeamClient
 from seam_sdk.crypto import request_sig_payload, tool_input_digest
 from seam_sdk.errors import (
     DeadlineExceededError,
+    FailedPreconditionError,
     NotFoundError,
     PermissionDeniedError,
     UnauthenticatedError,
@@ -44,9 +48,10 @@ from seam_sdk.errors import (
 from test_authorize import FakeSeam
 from test_credential_wiring import CALLS, CRED_SEED, OTHER_CRED_SEED
 
-# The six verbs Phase 1 retries, and the ten writes it must leave alone. Asserted to partition the
-# shared 16-verb table, so a verb added there without a decision here fails loudly.
-RETRYING = (
+# The six verbs Phase 1 retries, the seven steps Phase 2 retries, and the three writes that never
+# do. Asserted to partition the shared 16-verb table, so a verb added there without a decision here
+# fails loudly.
+READS_AND_OUTCOME = (
     "SessionStatus",
     "GetDecision",
     "ReplayDecision",
@@ -54,8 +59,7 @@ RETRYING = (
     "GetEscalation",
     "ReportOutcome",
 )
-WRITES = (
-    "OpenSession",
+SUBMITS = (
     "SubmitProposal",
     "SubmitVote",
     "SubmitEvaluation",
@@ -63,11 +67,11 @@ WRITES = (
     "SubmitCommit",
     "SubmitApprovalRequest",
     "SubmitBallot",
-    "CancelSession",
-    "ExpireSession",
 )
-assert set(RETRYING) | set(WRITES) == set(CALLS) and not set(RETRYING) & set(WRITES)
-assert len(WRITES) == 10
+EXCLUDED = ("OpenSession", "CancelSession", "ExpireSession")
+RETRYING = READS_AND_OUTCOME + SUBMITS
+assert set(RETRYING) | set(EXCLUDED) == set(CALLS) and not set(RETRYING) & set(EXCLUDED)
+assert (len(READS_AND_OUTCOME), len(SUBMITS), len(EXCLUDED)) == (6, 7, 3)
 
 OLD = b"old-ticket"
 ADMISSION = ("IssueChallenge", "Admit")
@@ -93,7 +97,8 @@ def _cached(client, agent: Agent):
 
 class _Wire:
     """One recorder behind every stub. ``reject[name]`` refuses that verb ``UNAUTHENTICATED`` that many
-    times; ``errors[name]`` raises the given typed error on every call of that verb."""
+    times; ``errors[name]`` raises the given typed error on every call of that verb; ``serve[name]``
+    replaces the canned success response (how a test scripts what the runtime answered)."""
 
     def __init__(self) -> None:
         self.calls: list = []  # (name, request, metadata-or-None)
@@ -101,6 +106,7 @@ class _Wire:
         self.errors: dict = {}
         self.admits = 0
         self.responses: dict = {}
+        self.serve: dict = {}
         self._lock = threading.Lock()
 
     def handle(self, name: str, req, kw: dict):
@@ -121,7 +127,9 @@ class _Wire:
                 raise UnauthenticatedError(
                     grpc.StatusCode.UNAUTHENTICATED, "unauthenticated"
                 )
-            if name == "ReportOutcome":
+            if name in self.serve:
+                resp = self.serve[name]
+            elif name == "ReportOutcome":
                 resp = pb.ReportOutcomeResponse(recorded=True)
             elif name == "GetCommitmentProof":
                 resp = pb.CommitmentProof(issuer_aid="aid:served")
@@ -384,25 +392,27 @@ def test_a_non_unauthenticated_error_is_never_retried(h, err, code):
     assert _cached(client, cred) == OLD, "a non-auth failure must not touch the ticket"
 
 
-def test_a_failed_refresh_admit_propagates_typed_and_is_not_looped(h):
+@pytest.mark.parametrize("verb", ("SessionStatus",) + SUBMITS)
+def test_a_failed_refresh_admit_propagates_typed_and_is_not_looped(h, verb):
     """The refresh's own challenge is load-shed (``CHALLENGE_REFUSED`` is ``UNAVAILABLE``). That
-    surfaces typed — never retried (DECISIONS.md 2026-10-18) — and the resend never happens."""
+    surfaces typed — never retried (DECISIONS.md 2026-10-18) — and the resend never happens. For a
+    ``submit_*`` step that matters twice over: no resend means no second chance to apply."""
     wire = _Wire()
     cred = Agent(CRED_SEED)
     client = h.client(wire)
     _seed(client, cred)
-    wire.reject["SessionStatus"] = 1
+    wire.reject[verb] = 1
     wire.errors["IssueChallenge"] = UnavailableError(
         grpc.StatusCode.UNAVAILABLE, "CHALLENGE_REFUSED"
     )
 
     with pytest.raises(UnavailableError) as info:
-        _invoke(h, client, "SessionStatus", cred)
+        _invoke(h, client, verb, cred)
 
     assert isinstance(info.value.__context__, UnauthenticatedError), (
         "the rejection that triggered the refresh stays reachable"
     )
-    assert len(wire.of("SessionStatus")) == 1, "no resend after a failed refresh"
+    assert len(wire.of(verb)) == 1, "no resend after a failed refresh"
     assert len(wire.of("IssueChallenge")) == 1, (
         "the refresh is attempted once, never looped"
     )
@@ -411,10 +421,11 @@ def test_a_failed_refresh_admit_propagates_typed_and_is_not_looped(h):
     )
 
 
-@pytest.mark.parametrize("verb", WRITES)
-def test_the_ten_writes_still_make_exactly_one_call(h, verb):
-    """Criterion 10 — the guard Phase 2 narrows to the three D-WRITES-EXCLUDED verbs. Unchanged also
-    means the cached ticket is left alone and no admission is made for the credential."""
+@pytest.mark.parametrize("verb", EXCLUDED)
+def test_the_three_excluded_writes_still_make_exactly_one_call(h, verb):
+    """Phase 2 criterion 3 (the Phase 1 guard, narrowed): ``open_session``, ``cancel_session`` and
+    ``expire_session`` stay one-shot (D-WRITES-EXCLUDED). Unchanged also means the cached ticket is
+    left alone and no admission is made for the credential."""
     wire = _Wire()
     cred = Agent(CRED_SEED)
     client = h.client(wire)
@@ -427,6 +438,121 @@ def test_the_ten_writes_still_make_exactly_one_call(h, verb):
     assert len(wire.of(verb)) == 1, f"{verb} was retried"
     assert wire.admits == 0, f"{verb} re-admitted"
     assert _cached(client, cred) == OLD
+
+
+# ── Phase 2: what the SDK does with the runtime's answer to a submit_* resend ────────────────────
+
+
+def test_submit_retry_after_client_seal_returns_sealed_id(h):
+    """The session was sealed by a client call (here: cancelled) between the rejection and the retry.
+    The runtime answers the resend from its sealed early return — ``Ok``, the sealed ``decision_id``,
+    no ``collective_outcome`` — and the SDK must hand that back as a success, untouched: not raise,
+    not retry again, not synthesize an outcome. (What the runtime answers is proven live in
+    ``test_integration.py``; here the fake scripts it, so only the SDK's pass-through is asserted.)"""
+    wire = _Wire()
+    cred = Agent(CRED_SEED)
+    client = h.client(wire)
+    _seed(client, cred)
+    wire.reject["SubmitVote"] = 1
+    wire.serve["SubmitVote"] = pb.SessionStep(
+        state="Cancelled", decision_id="dec-sealed"
+    )
+
+    step = _invoke(h, client, "SubmitVote", cred)
+
+    assert step.decision_id == "dec-sealed"
+    assert step.state == "Cancelled"
+    assert not step.HasField("collective_outcome")
+    assert not step.HasField("policy_enforcement")
+    assert len(wire.of("SubmitVote")) == 2 and wire.admission_rpcs() == 2
+
+
+def test_submit_retry_failed_precondition_propagates_typed_and_is_not_retried(h):
+    """The sweeper (or a pending Expire/Cancel seal) closed the session between the rejection and the
+    retry: the runtime refuses the resend ``FAILED_PRECONDITION`` (``session_not_open``). The SDK
+    surfaces it typed and does NOT treat it as a reason to try again."""
+    wire = _Wire()
+    cred = Agent(CRED_SEED)
+    client = h.client(wire)
+    _seed(client, cred)
+    msg = "session s1 expired (sealed by the session sweeper)"
+
+    real = wire.handle
+
+    def handle(name, req, kw):
+        if name == "SubmitVote" and len(wire.of("SubmitVote")) == 1:
+            wire.calls.append((name, req, kw.get("metadata")))
+            raise FailedPreconditionError(grpc.StatusCode.FAILED_PRECONDITION, msg)
+        return real(name, req, kw)
+
+    wire.handle = handle
+    wire.reject["SubmitVote"] = 1
+
+    with pytest.raises(FailedPreconditionError, match="sealed by the session sweeper"):
+        _invoke(h, client, "SubmitVote", cred)
+    assert len(wire.of("SubmitVote")) == 2, "one rejection, one resend, nothing more"
+
+
+def test_a_duplicate_step_is_passed_through_as_all_unset(h):
+    """A resend of a non-resolving step the engine already applied comes back with ``decision_id``,
+    ``policy_enforcement`` and ``collective_outcome`` all unset — indistinguishable from "applied,
+    not resolved" (``SessionStep`` has no disposition). The SDK returns it as-is."""
+    wire = _Wire()
+    cred = Agent(CRED_SEED)
+    client = h.client(wire)
+    _seed(client, cred)
+    wire.reject["SubmitProposal"] = 1
+    wire.serve["SubmitProposal"] = pb.SessionStep(state="Open")
+
+    step = _invoke(h, client, "SubmitProposal", cred)
+
+    assert step == pb.SessionStep(state="Open")
+
+
+def test_usage_is_carried_byte_identical_on_the_resend(h):
+    """The SDK resends the SAME request, ``usage`` included — it never re-reads or re-derives a field.
+    (That a caller's OWN resend with a different ``usage`` is still deduped and not debited is the
+    runtime's doing — ``usage`` is outside the hashed payload — and is proven live.)"""
+    wire = _Wire()
+    cred = Agent(CRED_SEED)
+    client = h.client(wire)
+    _seed(client, cred)
+    wire.reject["SubmitVote"] = 1
+
+    h.run(
+        client.submit_vote(
+            "s1",
+            "a",
+            "p1",
+            "APPROVE",
+            usage=StepUsage(tokens=600, cost_micros=7),
+            credential=cred,
+        )
+    )
+
+    (_, req1, md1), (_, req2, md2) = wire.of("SubmitVote")
+    assert req1.SerializeToString() == req2.SerializeToString()
+    assert (req2.usage.tokens, req2.usage.cost_micros) == (600, 7)
+    assert dict(md1)["x-seam-call-sig-bin"] != dict(md2)["x-seam-call-sig-bin"]
+
+
+@pytest.mark.parametrize("aio", [False, True], ids=["sync", "aio"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "submit_proposal",
+        "submit_vote",
+        "submit_evaluation",
+        "submit_objection",
+        "submit_commit",
+        "submit_approval_request",
+        "submit_ballot",
+    ],
+)
+def test_every_submit_docstring_carries_the_resend_caveat(name, aio):
+    doc = getattr(AioSeamClient if aio else SeamClient, name).__doc__
+    assert "collective_outcome" in doc and "get_decision" in doc and "usage" in doc
+    assert "boundary.data_flagged" in doc
 
 
 def test_retry_false_invalidates_the_rejected_ticket_then_raises(h):
@@ -495,6 +621,9 @@ GRPC_VERBS = {
         "d1", True, idempotency_key="review-77", credential=cred
     ),
 }
+# Phase 2: the seven steps over a real channel (FakeSeam's Submit* handlers).
+GRPC_SUBMITS = {verb: CALLS[verb]["invoke"] for verb in SUBMITS}
+GRPC_VERBS.update(GRPC_SUBMITS)
 
 
 @pytest.mark.parametrize("verb", sorted(GRPC_VERBS))
@@ -631,6 +760,55 @@ def test_grpc_n_concurrent_rejected_reads_coalesce_to_one_readmit_aio(coord_serv
 
     asyncio.run(scenario())
     _assert_one_readmit(servicer)
+
+
+def _submit_call(i: int):
+    """The i-th of N concurrent steps, round-robin over the seven verbs, so one refresh is shared
+    across every step kind at once."""
+    return GRPC_SUBMITS[SUBMITS[i % len(SUBMITS)]]
+
+
+def test_grpc_n_concurrent_rejected_submits_coalesce_to_one_readmit_sync(coord_server):
+    servicer, addr = coord_server
+    cred = Agent(CRED_SEED)
+    with SeamClient.connect(addr) as client:
+        client.admit(cred)
+        servicer.reject_barrier = threading.Barrier(N)
+        servicer.revoke_all()
+        gate = threading.Barrier(N)
+
+        def call(i):
+            gate.wait()
+            return _submit_call(i)(client, cred)
+
+        with futures.ThreadPoolExecutor(max_workers=N) as pool:
+            results = list(pool.map(call, range(N)))
+    assert all(r.state == "Open" for r in results)
+    _assert_one_readmit(servicer)
+    for verb in SUBMITS:
+        sent = servicer.coord_seen[verb]
+        # Every rejected step was resent exactly once, over the SAME body, under a new ticket.
+        assert len(sent) == 2 * sum(1 for i in range(N) if SUBMITS[i % 7] == verb)
+        assert len({body for body, _ in sent}) == 1
+
+
+def test_grpc_n_concurrent_rejected_submits_coalesce_to_one_readmit_aio(coord_server):
+    servicer, addr = coord_server
+    cred = Agent(CRED_SEED)
+
+    async def scenario():
+        async with AioSeamClient.connect(addr) as client:
+            await client.admit(cred)
+            servicer.reject_barrier = threading.Barrier(N)
+            servicer.revoke_all()
+            results = await asyncio.gather(
+                *(_submit_call(i)(client, cred) for i in range(N))
+            )
+            assert all(r.state == "Open" for r in results)
+
+    asyncio.run(scenario())
+    _assert_one_readmit(servicer)
+    assert sum(servicer.coord_calls[v] for v in SUBMITS) == 2 * N
 
 
 def test_grpc_aio_cancel_mid_refresh_leaves_the_cache_empty_then_recovers(coord_server):
