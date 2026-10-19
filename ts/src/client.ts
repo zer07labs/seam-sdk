@@ -66,12 +66,18 @@ import {
 //   * `authorize` may make up to SIX: an admit (challenge + Admit = 2) when the ticket is cold or
 //     stale, the Authorize itself (1), and — on `UNAUTHENTICATED` — a refresh (another 2) plus one
 //     retried Authorize (1). So the worst case is 6x the value passed, not the 1x it reads as.
+//   * The credentialed reads — `sessionStatus`, `getDecision`, `replayDecision`,
+//     `getCommitmentProof` (so `verifyDecision`), `getEscalation` — and `reportOutcome` have the same
+//     SIX-call bound when they carry a credential (`credential` or a bound agent): they refresh a
+//     rejected ticket once and resend once, exactly as `authorize` does (#275).
 //   * `runDecision` and `openSession` each begin with the challenge→Admit handshake (3x).
 //
 // A caller that needs a hard overall bound must impose its own outer clock (the adapters' `Gate`
-// does exactly that). The SDK never retries beyond the single ticket refresh — adapters own retry
-// semantics. A deadline breach surfaces as a typed `DeadlineExceededError`, distinct from a DENY
-// verdict. Mirrors the Python SDK's `DEFAULT_TIMEOUT_S = 2.0`.
+// does exactly that). The SDK never retries beyond that single ticket refresh, and only `authorize`,
+// the credentialed reads and `reportOutcome` take it — the other credentialed writes make exactly
+// one call (#275). Adapters own every other retry. A deadline breach surfaces as a typed
+// `DeadlineExceededError`, distinct from a DENY verdict, and is never retried. Mirrors the Python
+// SDK's `DEFAULT_TIMEOUT_S = 2.0`.
 export const DEFAULT_TIMEOUT_MS = 2_000;
 
 /** Per-call options accepted by every unary method. `timeoutMs` overrides the plane's default
@@ -118,6 +124,33 @@ export interface SubmitCommitOptions extends CredentialedCallOptions {
 const call = (opts?: UnaryCallOptions) => ({
   timeoutMs: opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
 });
+
+/** The `seam-request-call-v1` body digest of a bodied verb's exact (schema, init) — the same pair the
+ * RPC serializes — or `""` for a bodyless read, whose id rides in `resourceId` instead. */
+function bodyDigestOf<Desc extends DescMessage>(body?: {
+  schema: Desc;
+  init: MessageInitShape<Desc>;
+}): string {
+  return body === undefined
+    ? ""
+    : toolInputDigest(toBinary(body.schema, create(body.schema, body.init)));
+}
+
+/** The two credential headers for one attempt, signed over `ticket`. `-bin` metadata is base64 on the
+ * wire; connect-node does not encode it for us, so it happens here. */
+function signedHeaders(
+  signer: Agent,
+  ticket: Uint8Array,
+  rpcFullName: string,
+  resourceId: string,
+  bodyDigest: string,
+): Record<string, string> {
+  const sig = requestSig(signer.seed, ticket, rpcFullName, resourceId, bodyDigest);
+  return {
+    "x-seam-ticket-bin": Buffer.from(ticket).toString("base64"),
+    "x-seam-call-sig-bin": Buffer.from(sig).toString("base64"),
+  };
+}
 
 function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
   return a.length === b.length && a.every((v, i) => v === b[i]);
@@ -839,7 +872,9 @@ export class SeamClient {
    * could disagree with what actually reaches the wire.
    *
    * `-bin`-suffixed gRPC metadata is base64 on the wire (the HTTP/2 header value is always text);
-   * unlike Python's grpc library, connect-node does not do that encoding for us, so it happens here. */
+   * unlike Python's grpc library, connect-node does not do that encoding for us, so
+   * {@link signedHeaders} does it. This is the NO-retry path, for the write verbs other than
+   * `reportOutcome`; the reads and `reportOutcome` go through {@link credentialedCall}. */
   private async credentialHeaders<Desc extends DescMessage>(
     credential: Agent | undefined,
     rpcFullName: string,
@@ -847,30 +882,94 @@ export class SeamClient {
     opts: UnaryCallOptions | undefined,
     body?: { schema: Desc; init: MessageInitShape<Desc> },
   ): Promise<Record<string, string> | undefined> {
-    credential ??= this.agent;
-    if (!credential) return undefined;
-    const cached = this.tickets.get(credential.aid);
-    const ticket =
-      cached && Date.now() < cached.refreshAtMs ? cached.ticket : await this.admit(credential, opts);
-    const bodyDigest =
-      body === undefined ? "" : toolInputDigest(toBinary(body.schema, create(body.schema, body.init)));
-    const sig = requestSig(credential.seed, ticket, rpcFullName, resourceId, bodyDigest);
-    return {
-      "x-seam-ticket-bin": Buffer.from(ticket).toString("base64"),
-      "x-seam-call-sig-bin": Buffer.from(sig).toString("base64"),
-    };
+    const signer = this.signer(credential);
+    if (!signer) return undefined;
+    const ticket = await this.ticketFor(signer, opts);
+    return signedHeaders(signer, ticket, rpcFullName, resourceId, bodyDigestOf(body));
+  }
+
+  /** Who signs a subject-scoped call: an explicit `credential` wins, else the bound agent, else
+   * nobody (no credential is sent). The one resolve step both credentialed paths share. */
+  private signer(credential: Agent | undefined): Agent | undefined {
+    return credential ?? this.agent;
+  }
+
+  /** The cached ticket for `agent` if it is still fresh, else a (coalesced) admit. Split out of header
+   * building so the refresh path can hand {@link refreshTicket} the ticket that actually failed. */
+  private async ticketFor(agent: Agent, opts?: UnaryCallOptions): Promise<Uint8Array> {
+    const cached = this.tickets.get(agent.aid);
+    return cached && Date.now() < cached.refreshAtMs ? cached.ticket : this.admit(agent, opts);
+  }
+
+  /**
+   * Send one subject-scoped call, refreshing a rejected ticket ONCE and resending ONCE (#275) — the
+   * twin of the Python clients' `_credentialed_call`, and the one place the rule lives here.
+   *
+   * `send(headers)` performs the RPC; it runs once, or twice when the first attempt is refused
+   * `UNAUTHENTICATED`.
+   *
+   * - **No signer, no retry.** Without `credential` and without a bound agent there is no ticket to
+   *   refresh, so `send(undefined)` runs once and its error propagates.
+   * - **Refresh through {@link refreshTicket}**, the coalesced path `authorize` uses: N concurrent
+   *   rejections on one AID — reads and `authorize` mixed — cost ONE re-admit (adopt-if-different,
+   *   plus `admit`'s in-flight map). The refresh is keyed to the SIGNER, never to a bound agent that
+   *   an explicit `credential` overrode.
+   * - **Re-sign over the same body.** The signature frames the ticket bytes, so the resend is
+   *   re-signed; the body digest is computed once from the one `init` both attempts send, so the two
+   *   serialized requests are byte-identical.
+   * - **Exactly once.** A second `UNAUTHENTICATED` propagates typed; so does a failure of the
+   *   refresh's own challenge/`Admit` (a load-shed included), never looped. Any other status
+   *   propagates on the first attempt with no refresh.
+   * - **`retry: false` is "invalidate, then throw"**: the rejected ticket is dropped if it is still
+   *   the cached one, and the error propagates. No call site uses it yet.
+   *
+   * A rejection a new ticket cannot fix (an out-of-scope id — the runtime makes it indistinguishable
+   * from a dead ticket on purpose) costs one re-admit and one resend before it throws: at most six
+   * wire calls, the bound `authorize` already has. No negative cache is kept.
+   */
+  private async credentialedCall<T, Desc extends DescMessage = DescMessage>(
+    credential: Agent | undefined,
+    rpcFullName: string,
+    resourceId: string,
+    opts: UnaryCallOptions | undefined,
+    send: (headers: Record<string, string> | undefined) => Promise<T>,
+    body?: { schema: Desc; init: MessageInitShape<Desc> },
+    retry = true,
+  ): Promise<T> {
+    const signer = this.signer(credential);
+    if (!signer) return send(undefined);
+    const bodyDigest = bodyDigestOf(body);
+    let ticket = await this.ticketFor(signer, opts);
+    try {
+      return await send(signedHeaders(signer, ticket, rpcFullName, resourceId, bodyDigest));
+    } catch (e) {
+      if (!(e instanceof UnauthenticatedError)) throw e;
+      if (!retry) {
+        this.invalidateTicket(signer, ticket);
+        throw e;
+      }
+      ticket = await this.refreshTicket(signer, ticket, opts);
+    }
+    return send(signedHeaders(signer, ticket, rpcFullName, resourceId, bodyDigest));
+  }
+
+  /** Drop `failed` from the cache only if it is still the cached ticket — never a ticket a
+   * concurrent caller has since refreshed in (the same rule as {@link refreshTicket}'s adopt). */
+  private invalidateTicket(agent: Agent, failed: Uint8Array): void {
+    const cached = this.tickets.get(agent.aid);
+    if (cached && bytesEqual(cached.ticket, failed)) this.tickets.delete(agent.aid);
   }
 
   /** Read back one ESCALATE verdict by the `authorizeId` its `authorize()` result returned
    * (#517). NOT_FOUND for an ALLOW/DENY/TRANSFORM id, or one outside this caller's scope. */
   async getEscalation(authorizeId: string, opts?: CredentialedCallOptions) {
-    const headers = await this.credentialHeaders(
+    return this.credentialedCall(
       opts?.credential,
       "/seam.api.v1.SeamAuthorization/GetEscalation",
       authorizeId,
       opts,
+      (headers) => this.authz.getEscalation({ authorizeId }, { ...call(opts), headers }),
     );
-    return this.authz.getEscalation({ authorizeId }, { ...call(opts), headers });
   }
 
   /**
@@ -1212,44 +1311,44 @@ export class SeamClient {
     return this.coord.expireSession(init, { ...call(opts), headers });
   }
   async sessionStatus(sessionId: string, opts?: CredentialedCallOptions) {
-    const headers = await this.credentialHeaders(
+    return this.credentialedCall(
       opts?.credential,
       "/seam.api.v1.SeamCoordination/SessionStatus",
       sessionId,
       opts,
+      (headers) => this.coord.sessionStatus({ sessionId }, { ...call(opts), headers }),
     );
-    return this.coord.sessionStatus({ sessionId }, { ...call(opts), headers });
   }
 
   async getDecision(decisionId: string, opts?: CredentialedCallOptions) {
-    const headers = await this.credentialHeaders(
+    return this.credentialedCall(
       opts?.credential,
       "/seam.api.v1.SeamCoordination/GetDecision",
       decisionId,
       opts,
+      (headers) => this.coord.getDecision({ decisionId }, { ...call(opts), headers }),
     );
-    return this.coord.getDecision({ decisionId }, { ...call(opts), headers });
   }
   async replayDecision(decisionId: string, opts?: CredentialedCallOptions) {
-    const headers = await this.credentialHeaders(
+    return this.credentialedCall(
       opts?.credential,
       "/seam.api.v1.SeamCoordination/ReplayDecision",
       decisionId,
       opts,
+      (headers) => this.coord.replayDecision({ decisionId }, { ...call(opts), headers }),
     );
-    return this.coord.replayDecision({ decisionId }, { ...call(opts), headers });
   }
   issuerAid(opts?: UnaryCallOptions) {
     return this.trust.issuerAid({}, call(opts)).then((r) => r.issuerAid);
   }
   async getCommitmentProof(decisionId: string, opts?: CredentialedCallOptions) {
-    const headers = await this.credentialHeaders(
+    return this.credentialedCall(
       opts?.credential,
       "/seam.api.v1.SeamCoordination/GetCommitmentProof",
       decisionId,
       opts,
+      (headers) => this.coord.getCommitmentProof({ decisionId }, { ...call(opts), headers }),
     );
-    return this.coord.getCommitmentProof({ decisionId }, { ...call(opts), headers });
   }
 
   /** Report a delayed correctness outcome for a sealed decision (advisory, Plan R). The sealed record is
@@ -1265,7 +1364,10 @@ export class SeamClient {
    *
    * The key lives in a required options object rather than a positional argument on purpose: the old
    * third positional was `verifiedBy`, and a string there must not silently become the key.
-   * `credential` opts in to the in-band request credential (#508), digest over the whole message. */
+   * `credential` opts in to the in-band request credential (#508), digest over the whole message.
+   * With a credential (explicit or the bound agent), an `UNAUTHENTICATED` refreshes the ticket once
+   * and re-signs and resends the SAME request once (#275); a second rejection throws
+   * `UnauthenticatedError`. */
   async reportOutcome(
     decisionId: string,
     correct: boolean,
@@ -1277,14 +1379,17 @@ export class SeamClient {
       verifiedBy: opts.verifiedBy,
       idempotencyKey: checkIdempotencyKey(opts.idempotencyKey),
     };
-    const headers = await this.credentialHeaders(
+    // Refresh-once over the SAME `init` (#275): idempotent on the signed key, exempt from the replay
+    // guard, so a resend of a report that already landed is a no-op.
+    const resp = await this.credentialedCall(
       opts.credential,
       "/seam.api.v1.SeamCoordination/ReportOutcome",
       "",
       opts,
+      (headers) => this.coord.reportOutcome(init, { ...call(opts), headers }),
       { schema: ReportOutcomeRequestSchema, init },
     );
-    return (await this.coord.reportOutcome(init, { ...call(opts), headers })).recorded;
+    return resp.recorded;
   }
 
   // ── Context binding (data plane) ──────────────────────────────────────────────────────────────

@@ -442,7 +442,16 @@ class PermissionDeniedError(SeamRpcError):
 
 
 class UnauthenticatedError(SeamRpcError):
-    """`UNAUTHENTICATED` — a missing or invalid management operator token."""
+    """`UNAUTHENTICATED` — a missing or invalid management operator token, or a refused admission
+    ticket / request credential on the data plane.
+
+    On the data plane the SDK has already refreshed the ticket once before you see this from
+    ``authorize``, a credentialed read (``session_status``, ``get_decision``, ``replay_decision``,
+    ``get_commitment_proof``/``verify_decision``, ``get_escalation``) or ``report_outcome`` (#275):
+    raised from those, it is the SECOND rejection. Every other credentialed write raises it on the
+    first. The runtime gives every ticket failure, and some scope refusals, one byte-identical
+    message, so do not branch on the text.
+    """
 
 
 class NotFoundError(SeamRpcError):
@@ -464,7 +473,9 @@ class UnavailableError(SeamRpcError):
     nonce store is at capacity (AITP 0.15.0; HTTP 503 on the REST surface). That is **retryable**:
     wait :attr:`retry_after` (``google.rpc.RetryInfo``) and ask for a fresh challenge. It is not an
     identity failure and not a hard fault — the per-peer limit is the different ``QUOTA_EXCEEDED`` on
-    :class:`ResourceExhaustedError`. The SDK itself never retries.
+    :class:`ResourceExhaustedError`. The SDK itself never retries a load-shed — including when it is
+    the refresh ``Admit`` of a credentialed call's one ticket refresh (#275): that failure propagates
+    typed, never looped.
     """
 
 

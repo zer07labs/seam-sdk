@@ -16,6 +16,18 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Changed
+- **Credentialed reads and `report_outcome` refresh a rejected ticket once (#275), Python (sync and
+  aio) and TypeScript.** `get_escalation`, `session_status`, `get_decision`, `replay_decision`,
+  `get_commitment_proof` (and so `verify_decision`) and `report_outcome`, when they carry a credential
+  (`credential=` or a bound agent), now treat an `UNAUTHENTICATED` the way `authorize` always has:
+  refresh the signer's ticket once (coalesced per AID, so a revocation costs one re-admit however many
+  calls it rejects), re-sign the same request under the new ticket, and resend once. A second
+  rejection raises `UnauthenticatedError`. A call with no credential is never retried. The ten other
+  credentialed writes are unchanged: one call. Observable as at most one extra admission handshake and
+  one extra RPC on a rejected ticket, inside the same per-RPC deadline. Go, Java and Kotlin have no
+  client and are unaffected.
+
 ## 0.48.0 — 2026-10-19
 
 > **Breaking — requires seam-runtime 0.48.0 (seam-runtime#1365, which carries `protocol-pass-2026-10`);

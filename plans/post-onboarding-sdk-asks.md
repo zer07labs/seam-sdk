@@ -258,7 +258,7 @@ language but not the other.
 
 ### Phase 1: Refresh-once on credentialed reads and `report_outcome` (Python sync and aio, TS)
 
-- **Status:** TODO
+- **Status:** DONE (2026-10-19). Matches the plan. `retry=False` is implemented as invalidate-then-raise, ready for the Phase 2 flip-back path. Moving the CHANGELOG entry shifted `CHANGELOG.md:N` citations, including inside old DECISIONS entries; this is the release tooling's own shift.
 - **Risk:** complex
 - **Delivers:** the read half of #275. These verbs each recover from one rejected ticket through the
   existing coalesced `_refresh_ticket` / `refreshTicket`, retrying exactly once:

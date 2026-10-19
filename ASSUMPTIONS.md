@@ -1438,3 +1438,28 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   if the runtime widens it.
 - **Blast radius if wrong:** a bad id costs one round trip instead of zero.
 - **Status:** CONFIRMED (2026-10-18, /reconcile; see DECISIONS.md, protocol pass reconcile).
+
+## Supersedes "an SDK that never retries at all" (`ASSUMPTIONS.md:1423`)
+- **Plan:** plans/post-onboarding-sdk-asks.md (Phase 1, #275)
+- **Assumed:** the item-6a backoff assumption still holds for what it was about, the **load-shed**: the SDK never
+  retries `RESOURCE_EXHAUSTED` or `UNAVAILABLE`, including when either one fails the refresh's own admission.
+  Its wording "never retries at all" no longer does. `authorize`, the five credentialed reads and
+  `report_outcome` refresh a rejected ticket once and resend once (DECISIONS.md, 2026-10-19 #275 entry).
+- **Chose:** a new entry; the old one is left as written.
+- **Alternatives:** edit the old entry, which this file does not do.
+- **Blast radius if wrong:** none in code; the risk is a reader who stops at the old wording.
+- **Status:** CONFIRMED (follows from D-READ-RETRY, which the plan records as DECIDED).
+
+## A coalesced refresh can hand a caller a ticket that is already dead, and it fails typed rather than refreshing again
+- **Plan:** plans/post-onboarding-sdk-asks.md (Phase 1, #275)
+- **Assumed:** when a read adopts a ticket that another caller has just refreshed in, and that ticket is also
+  revoked, failing the single resend with `UnauthenticatedError` is acceptable. The read does not refresh a
+  second time. This is the same trade `authorize` makes (`refreshTicket`'s docstring). It relies on the runtime
+  not revoking a ticket again within one refresh round trip, except in a real revocation storm. In that case
+  surfacing the failure is the correct outcome.
+- **Chose:** one refresh per call, never two; the coalescing is shared with `authorize`.
+- **Alternatives:** allow a second refresh when the adopted ticket fails. That reopens the stampede on the same
+  failure that causes it.
+- **Blast radius if wrong:** under repeated revocation, some reads fail typed where a second refresh would have
+  succeeded. The caller can retry.
+- **Status:** UNCONFIRMED

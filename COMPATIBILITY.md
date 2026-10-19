@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:425`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:437`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -130,7 +130,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1438-1460`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1450-1472`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -218,10 +218,18 @@ or TypeScript.
 | Generate an agent (#201) | `Agent.generate()` | `Agent.generate()` | `crypto.GenerateAgent()` | `Agent.generate()` | `Agent.generate()` |
 | Create / load the bootstrap file (#201) | `create_identity_file` / `load_identity_file` | `createIdentityFile` / `loadIdentityFile` | `identity.CreateIdentityFile` / `LoadIdentityFile` | `IdentityFile.create` / `load` | `IdentityFile.create` / `load` |
 | Bound-agent default credential (#202) | `SeamClient(channel, agent=)` | `SeamClient` `{ agent }` | `crypto.RequestCredentials{Agent}` | `new RequestCredentials(agent, tickets)` | `RequestCredentials(agent, tickets)` |
+| Refresh a rejected ticket once on the credentialed reads and `report_outcome` (#275) | yes (sync + aio) | yes | N/A, no client | N/A, no client | N/A, no client |
 
 Go, Java and Kotlin have no client to bind an agent to, so their #202 default lives on a
 transport-agnostic `RequestCredentials`: the same explicit-wins-else-bound-else-nothing rule, with the
 admission ticket supplied by the caller's own transport.
+
+The #275 row is the same story. A rejected ticket is refreshed by whoever owns the ticket cache, and in
+Go, Java and Kotlin that is the caller's transport. In Python and TypeScript, `authorize`, the five
+credentialed reads (`get_escalation`, `session_status`, `get_decision`, `replay_decision`,
+`get_commitment_proof`, so `verify_decision` too) and `report_outcome` refresh once and resend once.
+With no credential and no bound agent there is no ticket, so there is no retry. The other credentialed
+writes still make exactly one call.
 
 The practical consequence: **a new RPC verb costs the three shims nothing**, and a change to a crypto
 **framing** costs them everything. That is the axis 0.7.17 broke on.
@@ -491,8 +499,8 @@ so it cannot reach the taxonomy. Use `canonicalize_tool_input()`
 
 ### `canonical=` hands you the derivation, and the responsibility with it
 
-`authorize(canonical=…)` (`python/seam_sdk/client.py:331`, `python/seam_sdk/aio.py:213`; `opts.canonical`
-in TypeScript, `ts/src/client.ts:692`) is additive and keyword-only. The SDK does **not** verify the
+`authorize(canonical=…)` (`python/seam_sdk/client.py:339`, `python/seam_sdk/aio.py:216`; `opts.canonical`
+in TypeScript, `ts/src/client.ts:725`) is additive and keyword-only. The SDK does **not** verify the
 bytes — re-deriving to check would reinstate the second derivation the parameter exists to remove.
 So two things become possible that were not:
 
@@ -691,7 +699,7 @@ covered `{}` — so it did not mean what you thought. Convert at the boundary:
 `date.toISOString()`, `Object.fromEntries(map)`, `[...set]`. The error names the type and the
 conversion.
 
-**This reaches you through `authorize()`, not only through the helper.** `ts/src/client.ts:572` calls
+**This reaches you through `authorize()`, not only through the helper.** `ts/src/client.ts:605` calls
 `jcsCanonicalize(toolInput ?? {})` directly, so `authorize({ toolInput: { deadline: new Date() } })`
 now throws where it previously signed a digest over `{"deadline":{}}`. That is the case worth
 checking in your own code, because it is the one where the aliased digest was being *signed*.

@@ -45,6 +45,9 @@ def busy_server():
     servicer = FakeSeam()
     rpc.add_SeamAdmissionServicer_to_server(servicer, server)
     rpc.add_SeamAuthorizationServicer_to_server(servicer, server)
+    rpc.add_SeamCoordinationServicer_to_server(
+        servicer, server
+    )  # #275's credentialed reads
     port = server.add_insecure_port("127.0.0.1:0")
     server.start()
     yield servicer, f"127.0.0.1:{port}"
@@ -144,6 +147,68 @@ def test_mass_revocation_produces_exactly_one_readmit_aio(busy_server):
     readmits = servicer.admits - 1
     assert readmits == 1, (
         f"{CONCURRENCY} concurrent aio callers caused {readmits} re-admits"
+    )
+
+
+def test_mixed_authorize_and_read_rejections_coalesce_to_one_readmit_sync(busy_server):
+    """#275: the credentialed reads share ``authorize``'s per-AID refresh, not a parallel one. Half
+    the callers ``authorize`` and half read ``session_status`` under the SAME agent; one revocation
+    rejects them all, and the whole mix pays exactly one re-admit. A read path with its own refresh
+    would score two here."""
+    servicer, addr = busy_server
+    with SeamClient.connect(addr) as client:
+        agent = Agent(SEED)
+        client.authorize(agent, "t", {})
+        assert servicer.admits == 1
+
+        servicer.reject_barrier = threading.Barrier(CONCURRENCY)
+        servicer.revoke_all()
+        gate = threading.Barrier(CONCURRENCY)
+
+        def call(i):
+            gate.wait()
+            if i % 2:
+                return client.session_status("s1", credential=agent).state == "Open"
+            return client.authorize(agent, "t", {"k": i}).allowed
+
+        with futures.ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
+            results = list(pool.map(call, range(CONCURRENCY)))
+
+    assert all(results)
+    assert servicer.coord_calls["SessionStatus"] == CONCURRENCY, (
+        "each read: rejected + retried"
+    )
+    assert servicer.rejections == CONCURRENCY, "the mixed race was not staged"
+    readmits = servicer.admits - 1
+    assert readmits == 1, (
+        f"a mixed authorize/read revocation caused {readmits} re-admits"
+    )
+
+
+def test_mixed_authorize_and_read_rejections_coalesce_to_one_readmit_aio(busy_server):
+    servicer, addr = busy_server
+
+    async def scenario():
+        async with AioSeamClient.connect(addr) as client:
+            agent = Agent(SEED)
+            await client.authorize(agent, "t", {})
+            servicer.reject_barrier = threading.Barrier(CONCURRENCY)
+            servicer.revoke_all()
+            results = await asyncio.gather(
+                *(
+                    client.session_status("s1", credential=agent)
+                    if i % 2
+                    else client.authorize(agent, "t", {"k": i})
+                    for i in range(CONCURRENCY)
+                )
+            )
+            assert len(results) == CONCURRENCY
+
+    asyncio.run(scenario())
+    assert servicer.rejections == CONCURRENCY, "the mixed race was not staged"
+    readmits = servicer.admits - 1
+    assert readmits == 1, (
+        f"a mixed aio authorize/read revocation caused {readmits} re-admits"
     )
 
 

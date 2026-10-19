@@ -29,9 +29,11 @@ import { jcsCanonicalize, requestSigPayload, toolInputDigest } from "../src/cryp
 import { DEFAULT_ADMIN_TIMEOUT_MS, SeamAdminClient } from "../src/admin.js";
 import {
   InvalidArgumentError,
+  NotFoundError,
   ProtocolViolationError,
   SeamRpcError,
   UnauthenticatedError,
+  UnavailableError,
 } from "../src/errors.js";
 import {
   ApprovalRequestRequestSchema,
@@ -61,6 +63,7 @@ interface Recorded {
 type UnaryHandler = (
   method: string,
   input: Record<string, unknown>,
+  headers?: HeadersInit,
 ) => unknown | Promise<unknown>;
 type StreamHandler = (
   method: string,
@@ -91,7 +94,7 @@ function fakeTransport(
         signal,
         headers,
       });
-      const out = await handle(method.name, input as Record<string, unknown>);
+      const out = await handle(method.name, input as Record<string, unknown>, headers);
       return {
         stream: false,
         service: method.parent,
@@ -875,4 +878,249 @@ test("redriveEvents sends tenant/fromSeq, and toSeq/eventId only when given; ref
 
   await assert.rejects(admin.redriveEvents("", 7n), (e: unknown) => e instanceof InvalidArgumentError);
   assert.equal(calls.length, 3);
+});
+
+// ── Refresh-once on the credentialed reads and reportOutcome (#275) ──────────────────────────────
+// Mirrors python/tests/test_credential_refresh.py. Baseline: a pre-seeded live ticket, so "one
+// extra admit" is exactly two admission RPCs (IssueChallenge + Admit).
+
+const REFRESHING = [
+  "SessionStatus",
+  "GetDecision",
+  "ReplayDecision",
+  "GetCommitmentProof",
+  "GetEscalation",
+  "ReportOutcome",
+] as const;
+const REFRESH_WRITES = Object.keys(CREDENTIAL_CALLS).filter(
+  (n) => !(REFRESHING as readonly string[]).includes(n),
+);
+
+/** A scripted wire for the credential path: `reject[method]` refuses that verb UNAUTHENTICATED that
+ * many times; `fail[method]` throws the given error on every call of it. Admit mints `[100 + n]`. */
+function refreshWire() {
+  const state = {
+    admits: 0,
+    reject: {} as Record<string, number>,
+    fail: {} as Record<string, Error>,
+  };
+  const handle: UnaryHandler = (method) => {
+    const err = state.fail[method];
+    if (err) throw err;
+    if (method === "IssueChallenge") return { receiverAid: "aid:pubkey:ed25519:recv", nonce: "n1" };
+    if (method === "Admit") {
+      state.admits += 1;
+      return { ticket: new Uint8Array([100 + state.admits]), expiresAtMs: BigInt(Date.now() + 60_000) };
+    }
+    if ((state.reject[method] ?? 0) > 0) {
+      state.reject[method]! -= 1;
+      throw new UnauthenticatedError("ticket rejected", Code.Unauthenticated);
+    }
+    if (method === "ReportOutcome") return { recorded: true };
+    return {};
+  };
+  return { state, handle };
+}
+
+const ADMISSION_RPCS = new Set(["IssueChallenge", "Admit"]);
+const admissionCount = (calls: Recorded[]) => calls.filter((c) => ADMISSION_RPCS.has(c.method)).length;
+const ticketHex = (call: Recorded) =>
+  Buffer.from((call.headers as Record<string, string>)["x-seam-ticket-bin"]!, "base64").toString("hex");
+
+test("#275: each credentialed read and reportOutcome refreshes a rejected ticket once and recovers", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  for (const name of REFRESHING) {
+    const calls: Recorded[] = [];
+    const wire = refreshWire();
+    wire.state.reject[name] = 1;
+    const client = new SeamClient(fakeTransport(calls, wire.handle));
+    seedCredentialTicket(client, cred.aid);
+    const out = await CREDENTIAL_CALLS[name]!.invoke(client, cred);
+    if (name === "ReportOutcome") assert.equal(out, true);
+    const sent = calls.filter((c) => c.method === name);
+    assert.equal(sent.length, 2, `${name}: exactly one retry`);
+    assert.equal(admissionCount(calls), 2, `${name}: exactly one extra admit`);
+    assert.equal(ticketHex(sent[0]!), Buffer.from(CREDENTIAL_TICKET).toString("hex"));
+    assert.equal(ticketHex(sent[1]!), "65", `${name}: the retry must carry the NEW ticket`);
+  }
+});
+
+test("#275: a second rejection propagates UnauthenticatedError after exactly two sends", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  for (const name of REFRESHING) {
+    const calls: Recorded[] = [];
+    const wire = refreshWire();
+    wire.state.reject[name] = 2;
+    const client = new SeamClient(fakeTransport(calls, wire.handle));
+    seedCredentialTicket(client, cred.aid);
+    await assert.rejects(CREDENTIAL_CALLS[name]!.invoke(client, cred), UnauthenticatedError);
+    assert.equal(calls.filter((c) => c.method === name).length, 2, `${name}: looped`);
+    assert.equal(admissionCount(calls), 2);
+  }
+});
+
+test("#275: no credential, no bound agent — one send, no admission, no retry", async () => {
+  for (const name of REFRESHING) {
+    const calls: Recorded[] = [];
+    const wire = refreshWire();
+    wire.state.reject[name] = 1;
+    const client = new SeamClient(fakeTransport(calls, wire.handle));
+    await assert.rejects(CREDENTIAL_CALLS[name]!.invoke(client, undefined), UnauthenticatedError);
+    assert.equal(calls.filter((c) => c.method === name).length, 1, name);
+    assert.equal(admissionCount(calls), 0, name);
+  }
+});
+
+test("#275: the retry is re-signed under the new ticket over the identical body", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  const pubkey = ed25519.getPublicKey(cred.seed);
+  for (const name of REFRESHING) {
+    const spec = CREDENTIAL_CALLS[name]!;
+    const calls: Recorded[] = [];
+    const wire = refreshWire();
+    wire.state.reject[name] = 1;
+    const client = new SeamClient(fakeTransport(calls, wire.handle));
+    seedCredentialTicket(client, cred.aid);
+    await spec.invoke(client, cred);
+    const [first, retry] = calls.filter((c) => c.method === name) as [Recorded, Recorded];
+    const digest = expectedBodyDigest(spec, retry.input);
+    assert.equal(expectedBodyDigest(spec, first.input), digest, `${name}: body changed on retry`);
+    const sig = Buffer.from((retry.headers as Record<string, string>)["x-seam-call-sig-bin"]!, "base64");
+    const res = spec.resourceId ?? "";
+    assert.ok(ed25519.verify(sig, requestSigPayload(new Uint8Array([101]), spec.rpc, res, digest), pubkey));
+    assert.equal(
+      ed25519.verify(sig, requestSigPayload(CREDENTIAL_TICKET, spec.rpc, res, digest), pubkey),
+      false,
+      `${name}: the retry's signature still binds the OLD ticket`,
+    );
+  }
+});
+
+test("#275: reportOutcome resends the byte-identical request (idempotency key included)", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  const calls: Recorded[] = [];
+  const wire = refreshWire();
+  wire.state.reject.ReportOutcome = 1;
+  const client = new SeamClient(fakeTransport(calls, wire.handle));
+  seedCredentialTicket(client, cred.aid);
+  assert.equal(
+    await client.reportOutcome("d1", false, { idempotencyKey: "review-77", credential: cred }),
+    true,
+  );
+  const [a, b] = calls.filter((c) => c.method === "ReportOutcome") as [Recorded, Recorded];
+  const bytes = (r: Recorded) =>
+    Buffer.from(
+      toBinary(
+        ReportOutcomeRequestSchema,
+        create(ReportOutcomeRequestSchema, r.input as MessageInitShape<typeof ReportOutcomeRequestSchema>),
+      ),
+    ).toString("hex");
+  assert.equal(bytes(a), bytes(b));
+  assert.equal(b.input.idempotencyKey, "review-77");
+});
+
+test("#275: a non-UNAUTHENTICATED error is never retried and never touches the ticket", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  const calls: Recorded[] = [];
+  const wire = refreshWire();
+  wire.state.fail.GetDecision = new NotFoundError("no such decision", Code.NotFound);
+  const client = new SeamClient(fakeTransport(calls, wire.handle));
+  seedCredentialTicket(client, cred.aid);
+  await assert.rejects(client.getDecision("d1", { credential: cred }), NotFoundError);
+  assert.equal(calls.filter((c) => c.method === "GetDecision").length, 1);
+  assert.equal(admissionCount(calls), 0);
+});
+
+test("#275: a refused refresh admission propagates typed, once, and nothing is resent", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  const calls: Recorded[] = [];
+  const wire = refreshWire();
+  wire.state.reject.SessionStatus = 1;
+  wire.state.fail.IssueChallenge = new UnavailableError("CHALLENGE_REFUSED", Code.Unavailable);
+  const client = new SeamClient(fakeTransport(calls, wire.handle));
+  seedCredentialTicket(client, cred.aid);
+  await assert.rejects(client.sessionStatus("s1", { credential: cred }), UnavailableError);
+  assert.equal(calls.filter((c) => c.method === "SessionStatus").length, 1);
+  assert.equal(calls.filter((c) => c.method === "IssueChallenge").length, 1, "refresh looped");
+});
+
+test("#275: the ten writes are unchanged — one send on UNAUTHENTICATED, no re-admit", async () => {
+  assert.equal(REFRESH_WRITES.length, 10);
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  for (const name of REFRESH_WRITES) {
+    const calls: Recorded[] = [];
+    const wire = refreshWire();
+    wire.state.reject[name] = 1;
+    const client = new SeamClient(fakeTransport(calls, wire.handle));
+    seedCredentialTicket(client, cred.aid);
+    await assert.rejects(CREDENTIAL_CALLS[name]!.invoke(client, cred), UnauthenticatedError);
+    assert.equal(calls.filter((c) => c.method === name).length, 1, `${name} was retried`);
+    // openSession presents the unrelated acting agent (IssueChallenge only); none may Admit.
+    assert.equal(wire.state.admits, 0, `${name} re-admitted`);
+  }
+});
+
+/** fakeSeam plus credentialed coordination reads that reject a revoked ticket (read from the
+ * `x-seam-ticket-bin` header) exactly as its Authorize does — deferral included. */
+function credentialedSeam() {
+  const seam = fakeSeam();
+  const base = seam.handle;
+  const handle: UnaryHandler = (method, input, headers) => {
+    if (method !== "SessionStatus" && method !== "GetDecision") return base(method, input, headers);
+    const h = headers as Record<string, string> | undefined;
+    const t = h ? Buffer.from(h["x-seam-ticket-bin"]!, "base64")[0]! : -1;
+    if (t < 0 || seam.state.revoked.has(t)) {
+      const err = () => new UnauthenticatedError("ticket revoked", Code.Unauthenticated);
+      if (!seam.state.deferRejections) throw err();
+      return new Promise((_res, rej) => seam.state.pending.push(() => rej(err())));
+    }
+    return method === "SessionStatus" ? { state: "Open" } : { decisionId: input.decisionId };
+  };
+  return { state: seam.state, handle };
+}
+
+async function waitPending(state: { pending: unknown[] }, n: number): Promise<void> {
+  while (state.pending.length < n) await new Promise((r) => setTimeout(r, 1));
+}
+
+test("#275: 32 concurrent rejected reads coalesce to ONE re-admit", async () => {
+  const N = 32;
+  const calls: Recorded[] = [];
+  const seam = credentialedSeam();
+  const client = new SeamClient(fakeTransport(calls, seam.handle));
+  const agent = new Agent(SEED);
+  await client.admit(agent);
+  assert.equal(seam.state.admits, 1);
+
+  seam.state.revoked.add(1);
+  seam.state.deferRejections = true;
+  const all = Array.from({ length: N }, (_, i) => client.getDecision(`d${i}`, { credential: agent }));
+  await waitPending(seam.state, N);
+  seam.state.deferRejections = false;
+  for (const rej of seam.state.pending.splice(0)) rej();
+
+  const out = await Promise.all(all);
+  assert.deepEqual(out.map((r) => r.decisionId), Array.from({ length: N }, (_, i) => `d${i}`));
+  assert.equal(seam.state.admits - 1, 1, `${N} rejected reads caused ${seam.state.admits - 1} re-admits`);
+});
+
+test("#275: a concurrent authorize and sessionStatus rejection share ONE re-admit", async () => {
+  const calls: Recorded[] = [];
+  const seam = credentialedSeam();
+  const client = new SeamClient(fakeTransport(calls, seam.handle));
+  const agent = new Agent(SEED);
+  await client.authorize(agent, "t", {});
+  assert.equal(seam.state.admits, 1);
+
+  seam.state.revoked.add(1);
+  seam.state.deferRejections = true;
+  const a = client.authorize(agent, "t", { k: 1 });
+  const s = client.sessionStatus("s1", { credential: agent });
+  await waitPending(seam.state, 2);
+  seam.state.deferRejections = false;
+  for (const rej of seam.state.pending.splice(0)) rej();
+
+  assert.ok((await a).allowed);
+  assert.equal((await s).state, "Open");
+  assert.equal(seam.state.admits, 2, "authorize and the read each paid their own re-admit");
 });

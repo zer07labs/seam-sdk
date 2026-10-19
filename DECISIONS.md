@@ -1219,7 +1219,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:1438-1460` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:1450-1472` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2049,7 +2049,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:1470` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:1482` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -2702,3 +2702,57 @@ Both are reversible additive choices inside the SDK; neither is a one-way door, 
 - **Options:** a Go-only `go/v0.48.1` with `retract v0.48.0`; waiting for the next runtime train; retracting only.
 - **Verdict:** `go/v0.48.1` on main, with `retract v0.48.0` in `go/go.mod`. Go is one patch ahead of the
   runtime for this train only. The next runtime release tags `go/v{runtime}` as usual. **Decided by:** owner.
+
+## 2026-10-19 — refresh-once on the credentialed reads and `report_outcome` (#275, post-onboarding Phase 1)
+
+Plan: `plans/post-onboarding-sdk-asks.md` (Phase 1, B-SDK-REFRESH). Python (sync and aio) and TS. Go, Java and
+Kotlin have no client and no ticket cache, so there is nothing to extend there.
+
+### Supersedes the "never retries" line at `DECISIONS.md:2660`
+- **What changes:** the 2026-10-18 entry says "The SDK still never retries". That was already loose, since
+  `authorize` has always refreshed a rejected ticket once. From #275 the same single refresh also covers the
+  five credentialed reads and `report_outcome`. What still holds without exception: a **load-shed**
+  (`RESOURCE_EXHAUSTED`, `UNAVAILABLE` `CHALLENGE_REFUSED`) is never retried. That includes when it is the
+  refresh's own admission, which propagates typed. No other status is retried, and no call is ever sent
+  more than twice.
+- **The old entry is left as written** (append-only); this entry is the current rule.
+
+### D-READ-RETRY — refresh once, resend once, for the five reads and `report_outcome`
+- **Chose:** on `UNAUTHENTICATED`, `get_escalation`, `session_status`, `get_decision`, `replay_decision`,
+  `get_commitment_proof` (so `verify_decision`) and `report_outcome` refresh the signer's ticket through
+  `authorize`'s coalescing `_refresh_ticket` / `refreshTicket` (adopt a ticket another caller already
+  refreshed in, else invalidate and re-admit). They then re-sign the same request under the new ticket and
+  resend exactly once. The shared helper is `_credentialed_call` (Python, sync and aio) / `credentialedCall` (TS).
+  A rejected read and a rejected `authorize` on one AID share one re-admit (pinned by
+  `test_mixed_authorize_and_read_rejections_coalesce_to_one_readmit_{sync,aio}` and the TS twin).
+  `report_outcome` qualifies because it is idempotent by contract (`idempotency_key`) and exempt from the
+  replay guard. The resent body is byte-identical (pinned by `test_report_outcome_resends_a_byte_identical_body`).
+- **Alternatives:** (a) leave the reads one-shot and make every caller wrap them. That is the friction #275
+  reported. (b) A read-local refresh that does not share `authorize`'s per-AID lock. That would give two re-admits
+  per revocation where one suffices, which is the stampede the 2026-10 refresh fix removed.
+- **Blast radius:** at most one extra admission handshake and one extra RPC per rejected call, each under the
+  caller's per-RPC deadline, so the worst case is six deadline-bounded calls (the `authorize` bound). The
+  change is observable: a caller that counted on the first `UNAUTHENTICATED` now sees it only on the second
+  rejection. It is reversible behind the helper's `retry` flag.
+- **Status:** DECIDED (plan, owner); implemented in Phase 1.
+
+### D-NO-CRED-NO-RETRY — no resolved credential, no refresh
+- **Chose:** with no `credential=` and no bound agent, nothing is signed and there is no ticket, so the call is
+  sent once and its `UNAUTHENTICATED` propagates. No admission is attempted (pinned by
+  `test_no_credential_means_no_refresh_and_no_retry` and `test_grpc_no_credential_is_one_call_zero_admits`).
+- **Alternatives:** admit some identity to recover. There is none to admit as, and a deny plane refuses the bare
+  read for exactly this reason.
+- **Blast radius:** none beyond today's behaviour for unbound calls.
+- **Status:** DECIDED (plan, owner); implemented in Phase 1.
+
+### D-WRITES-EXCLUDED — `open_session`, `cancel_session`, `expire_session` get no retry
+- **Chose:** these three stay one-shot. Nobody asked for a retry. `open_session`'s `UNAUTHENTICATED` may come
+  from its single-use presentation, which a ticket refresh does not fix. A repeated terminal transition has no
+  dedupe evidence. In Phase 1 the seven `submit_*` verbs are also still one-shot, because D-SUBMIT-RETRY is
+  Phase 2. The guard `test_the_ten_writes_still_make_exactly_one_call` (Python, sync and aio) and its TS twin
+  pin all ten at one call. Phase 2 narrows that guard to these three.
+- **Alternatives:** retry every credentialed write. That would resend a terminal transition without
+  idempotency evidence.
+- **Blast radius:** a caller of these three still handles a rejected ticket itself. Adding a retry later is
+  additive.
+- **Status:** DECIDED (plan, owner); implemented in Phase 1 by leaving these verbs on the one-shot path.

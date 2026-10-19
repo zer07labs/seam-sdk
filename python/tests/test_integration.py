@@ -342,6 +342,18 @@ def test_deny_plane_credentialed_read_succeeds_and_bare_read_is_refused(deny_pla
     bound = SeamClient.connect(deny_plane, agent=agent)
     assert bound.get_decision(decision_id).decision_id == decision_id
 
+    # #275: a ticket the runtime rejects is refreshed once, transparently. Corrupt the cached
+    # ticket's last byte (the cache still holds it as live, so the next read sends it); the runtime
+    # refuses it UNAUTHENTICATED, the client re-admits and re-signs, and the read succeeds.
+    cache = client._tickets[agent.aid]
+    live = cache._ticket
+    assert live
+    cache._ticket = live[:-1] + bytes([live[-1] ^ 0xFF])
+    assert client.get_decision(decision_id, credential=agent).decision_id == decision_id
+    assert cache._ticket not in (None, live[:-1] + bytes([live[-1] ^ 0xFF])), (
+        "re-admitted"
+    )
+
 
 def test_deny_plane_refuses_a_header_subject_and_a_wrong_context_signature(
     deny_plane, request

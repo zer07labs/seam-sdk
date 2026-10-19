@@ -501,7 +501,10 @@ emits a `LEARNING_OUTCOME`, never mutates the sealed record).
 
 **`authorize` — the 1-RTT advisory tool-call gate.** Both clients expose the pre-tool-call
 `Authorize` verb: a ticketed call (admission handshake amortized across calls, refreshed at 80% TTL,
-revocation-stampede-safe) returning a typed `AuthorizeResult` with the closed verdict set
+revocation-stampede-safe, and on an `UNAUTHENTICATED` refreshed once and resent once — the same
+single refresh the credentialed reads `get_escalation`, `session_status`, `get_decision`,
+`replay_decision`, `get_commitment_proof` (so `verify_decision`) and `report_outcome` take when they
+carry a credential, #275; the other credentialed writes make exactly one call) returning a typed `AuthorizeResult` with the closed verdict set
 ALLOW / DENY / TRANSFORM / ESCALATE; an unrecognized verdict raises `UnknownVerdictError` (never an
 implicit allow), and a TRANSFORM without a transformed input raises `ProtocolViolationError`. The
 offline helpers `record_digest_v4` (with `RecordDigestStripError` and

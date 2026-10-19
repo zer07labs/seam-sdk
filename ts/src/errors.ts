@@ -271,6 +271,12 @@ export class FailedPreconditionError extends SeamRpcError {}
  * - `FACT_ATTESTOR_REJECTED` — a fact's attestor is not accepted.
  * - `PROTOCOL` with `macpCode` `FORBIDDEN` — MACP refused the sender. */
 export class PermissionDeniedError extends SeamRpcError {}
+/** `UNAUTHENTICATED` — a refused admission ticket / request credential, or a missing or invalid
+ * management operator token. Thrown from `authorize`, a credentialed read (`sessionStatus`,
+ * `getDecision`, `replayDecision`, `getCommitmentProof`/`verifyDecision`, `getEscalation`) or
+ * `reportOutcome`, it is the SECOND rejection: the SDK already refreshed the ticket once (#275). Every
+ * other credentialed write throws it on the first. Do not branch on the message: the runtime gives
+ * every ticket failure, and some scope refusals, one byte-identical text. */
 export class UnauthenticatedError extends SeamRpcError {}
 export class NotFoundError extends SeamRpcError {}
 export class AlreadyExistsError extends SeamRpcError {}
@@ -279,7 +285,8 @@ export class ResourceExhaustedError extends SeamRpcError {}
  * `reason` `CHALLENGE_REFUSED` it is `IssueChallenge` refusing because the runtime's nonce store is at
  * capacity (AITP 0.15.0; HTTP 503 on REST): **retryable** after `retryAfter`, with a fresh challenge.
  * Not an identity failure and not a hard fault; the per-peer limit is `QUOTA_EXCEEDED` on
- * {@link ResourceExhaustedError}. The SDK itself never retries. */
+ * {@link ResourceExhaustedError}. The SDK itself never retries a load-shed — including when it is
+ * the refresh `Admit` of a credentialed call's one ticket refresh (#275): it propagates typed. */
 export class UnavailableError extends SeamRpcError {}
 export class DeadlineExceededError extends SeamRpcError {}
 export class UnimplementedError extends SeamRpcError {}
