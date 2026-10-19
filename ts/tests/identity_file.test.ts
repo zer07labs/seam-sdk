@@ -21,7 +21,11 @@ import { ENV_POINTER, identityFileBody } from "../src/identity.js";
 
 const posix = process.platform !== "win32";
 const FIELDS = { agentId: "ap-clerk", tenant: "acme", endpoint: "seam.example:443" };
-const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "identity_v1_python.json");
+const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
+// The pre-#274 layout (no `aid`): the legacy case.
+const FIXTURE = join(FIXTURES, "identity_v1_python.json");
+// Written by Python's writer from FIXTURE_SEED_HEX (seam-sdk#274): records `aid` as the last key.
+const AID_FIXTURE = join(FIXTURES, "identity_v1_aid_python.json");
 // Derived by Python for the fixture's seed: `load_identity_file(FIXTURE).aid`.
 const FIXTURE_AID = "aid:pubkey:ed25519:9x_uM2PCzXE8pt6di2RwwKCkod7W5kctdLdoIVtKep4";
 const FIXTURE_SEED_HEX = "ddc1524b29efe5bc1b9e9ea141b2a4740ba3e4d52f781afa3c1ffb3a3970580c";
@@ -100,9 +104,50 @@ test("file is schema v1 with the adapters field names", () => {
   const dir = tmpDir();
   const { path } = createIdentityFile(join(dir, "id.json"), FIELDS);
   const data = JSON.parse(fs.readFileSync(path, "utf8"));
-  assert.deepEqual(Object.keys(data), ["version", "seed_hex", "agent_id", "tenant", "endpoint"]);
+  assert.deepEqual(Object.keys(data), ["version", "seed_hex", "agent_id", "tenant", "endpoint", "aid"]);
   assert.equal(data.version, 1);
   assert.equal(data.seed_hex.length, 64);
+});
+
+test("a created file records the returned aid", () => {
+  const dir = tmpDir();
+  const { path, aid } = createIdentityFile(join(dir, "id.json"), FIELDS);
+  const data = JSON.parse(fs.readFileSync(path, "utf8"));
+  assert.equal(data.aid, aid);
+  assert.equal(new Agent(Buffer.from(data.seed_hex, "hex")).aid, aid);
+});
+
+function withAid(aid: unknown): Record<string, unknown> {
+  return { version: 1, seed_hex: FIXTURE_SEED_HEX, agent_id: "a", tenant: "t", endpoint: "e:1", aid };
+}
+
+for (const [name, aid, message] of [
+  ["mismatch", new Agent(Uint8Array.from({ length: 32 }, (_, i) => i)).aid, "recorded aid does not match seed_hex"],
+  ["short", FIXTURE_AID.slice(0, -1), "aid is malformed"],
+  ["long", FIXTURE_AID + "A", "aid is malformed"],
+  ["wrong-alg", FIXTURE_AID.replace("ed25519", "ed448"), "aid is malformed"],
+  ["non-b64url", FIXTURE_AID.slice(0, -1) + "=", "aid is malformed"],
+  ["empty", "", "aid is malformed"],
+  ["null", null, "aid is malformed"],
+  ["number", 42, "aid is malformed"],
+  ["list", [FIXTURE_AID], "aid is malformed"],
+] as const) {
+  test(`a bad recorded aid is refused: ${name}`, () => {
+    const dir = tmpDir();
+    const p = join(dir, "bad.json");
+    fs.writeFileSync(p, JSON.stringify(withAid(aid)));
+    assert.throws(
+      () => loadIdentityFile(p),
+      (e: unknown) => e instanceof IdentityFileError && e.message === message,
+    );
+  });
+}
+
+test("a matching recorded aid loads", () => {
+  const dir = tmpDir();
+  const p = join(dir, "ok.json");
+  fs.writeFileSync(p, JSON.stringify(withAid(FIXTURE_AID)));
+  assert.equal(loadIdentityFile(p).aid, FIXTURE_AID);
 });
 
 test("mode is 0600 under umask 0", { skip: !posix && "POSIX file modes" }, () => {
@@ -215,19 +260,28 @@ test("missing file is loud", () => {
 
 // ── Cross-language ───────────────────────────────────────────────────────────────────────────────
 
-test("a file written by Python's create_identity_file loads with Python's AID", () => {
+test("a legacy file written by Python (no aid) loads with Python's AID", () => {
+  assert.ok(!("aid" in JSON.parse(fs.readFileSync(FIXTURE, "utf8"))));
   const loaded = loadIdentityFile(FIXTURE);
   assert.equal(loaded.aid, FIXTURE_AID);
   assert.equal(hex(loaded.agent.seed), FIXTURE_SEED_HEX);
   assert.deepEqual([loaded.agentId, loaded.tenant, loaded.endpoint], ["ap-clerk", "acmé", "seam.example:443"]);
 });
 
+test("a file written by Python with a recorded aid loads with that aid", () => {
+  const loaded = loadIdentityFile(AID_FIXTURE);
+  assert.equal(loaded.aid, FIXTURE_AID);
+  assert.equal(JSON.parse(fs.readFileSync(AID_FIXTURE, "utf8")).aid, FIXTURE_AID);
+  assert.equal(hex(loaded.agent.seed), FIXTURE_SEED_HEX);
+});
+
 test("the TS writer lays the file out byte-for-byte as Python does", () => {
-  // Same seed + fields as the fixture -> the same bytes, including Python's ensure_ascii escape of "é".
+  // Same seed + fields as the fixture -> the same bytes, including Python's ensure_ascii escape of "é"
+  // and the recorded `aid` as the last key.
   const body = identityFileBody(Buffer.from(FIXTURE_SEED_HEX, "hex"), {
     agentId: "ap-clerk",
     tenant: "acmé",
     endpoint: "seam.example:443",
   });
-  assert.deepEqual(Buffer.from(body), fs.readFileSync(FIXTURE));
+  assert.deepEqual(Buffer.from(body), fs.readFileSync(AID_FIXTURE));
 });

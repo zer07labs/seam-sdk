@@ -1,7 +1,13 @@
 // Package identity is identity custody for the Seam Go SDK (seam-sdk#201): create and load the
 // schema-v1 bootstrap file. It mirrors Python's `seam_sdk/identity.py`, which owns the schema:
 //
-//	{"version": 1, "seed_hex": "<64 hex>", "agent_id": "...", "tenant": "...", "endpoint": "host:port"}
+//	{"version": 1, "seed_hex": "<64 hex>", "agent_id": "...", "tenant": "...", "endpoint": "host:port",
+//	 "aid": "aid:pubkey:ed25519:<43 b64url>"}
+//
+// aid is optional (seam-sdk#274, D-AID-RECORD): CreateIdentityFile records the derived AID as the last
+// key, and the schema version stays 1. A file without it loads unchanged. When it is present,
+// LoadIdentityFile verifies it against the AID derived from seed_hex and refuses a wrong shape or a
+// mismatch. Every loader since #201 ignores unknown keys, so such a file also loads in older releases.
 //
 // Unknown extra keys are ignored on load. One JSON file plus one env pointer (SEAM_BOOTSTRAP_FILE).
 //
@@ -18,6 +24,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/zer07labs/seam-sdk/go/crypto"
@@ -28,6 +35,9 @@ const EnvPointer = "SEAM_BOOTSTRAP_FILE"
 
 // SchemaVersion is the only bootstrap schema this SDK reads and writes.
 const SchemaVersion = 1
+
+// aidShape is the shape of a recorded aid: the Ed25519 AID form, 32 bytes as unpadded b64url.
+var aidShape = regexp.MustCompile(`^aid:pubkey:ed25519:[A-Za-z0-9_-]{43}$`)
 
 // IdentityFileError is returned when the bootstrap file is missing, malformed, fails validation, or
 // cannot be created. Always loud. Unwrap reaches the underlying OS/JSON error, when there is one.
@@ -63,6 +73,10 @@ func (l *LoadedIdentity) String() string {
 func (l *LoadedIdentity) GoString() string { return l.String() }
 
 // LoadIdentityFile loads the process identity from path, or from $SEAM_BOOTSTRAP_FILE when path is "".
+//
+// A recorded aid is verified, not trusted: it must have the AID shape (else "aid is malformed") and
+// equal the AID derived from seed_hex (else "recorded aid does not match seed_hex"). A file without aid
+// loads as before.
 func LoadIdentityFile(path string) (*LoadedIdentity, error) {
 	resolved := path
 	if resolved == "" {
@@ -109,16 +123,25 @@ func LoadIdentityFile(path string) (*LoadedIdentity, error) {
 	if len(missing) > 0 {
 		return nil, fail(nil, "bootstrap file missing required field(s): %s", strings.Join(missing, ", "))
 	}
+	rawAid, hasAid := data["aid"]
+	recordedAid, isString := rawAid.(string)
+	if hasAid && (!isString || !aidShape.MatchString(recordedAid)) {
+		return nil, fail(nil, "aid is malformed")
+	}
 	agent, err := crypto.NewAgent(seed)
 	if err != nil {
 		return nil, fail(err, "%v", err)
+	}
+	if hasAid && recordedAid != agent.AID() {
+		return nil, fail(nil, "recorded aid does not match seed_hex")
 	}
 	return &LoadedIdentity{Agent: agent, AgentID: fields["agent_id"], Tenant: fields["tenant"], Endpoint: fields["endpoint"]}, nil
 }
 
 // CreateIdentityFile generates a new agent identity and writes it to path as a schema-v1 bootstrap
 // file. It returns (path, aid); the seed is never returned — load the file with LoadIdentityFile in the
-// process that will use it.
+// process that will use it. The file also records that aid as its last key, so the public identity can
+// be read back without the seed.
 //
 // The write is atomic and never clobbers. The bytes go to a sibling temp file opened
 // O_CREAT|O_EXCL|O_NOFOLLOW with mode 0600 (re-applied with fchmod so the umask cannot widen it), are
@@ -136,14 +159,16 @@ func CreateIdentityFile(path, agentID, tenant, endpoint string) (string, string,
 		return "", "", fail(err, "%v", err)
 	}
 	seed := agent.Seed()
-	// A struct, not a map, so the key order is the schema's: version, seed_hex, agent_id, tenant, endpoint.
+	// A struct, not a map, so the key order is the schema's: version, seed_hex, agent_id, tenant,
+	// endpoint, aid.
 	body, err := json.MarshalIndent(struct {
 		Version  int    `json:"version"`
 		SeedHex  string `json:"seed_hex"`
 		AgentID  string `json:"agent_id"`
 		Tenant   string `json:"tenant"`
 		Endpoint string `json:"endpoint"`
-	}{SchemaVersion, hex.EncodeToString(seed), agentID, tenant, endpoint}, "", "  ")
+		AID      string `json:"aid"`
+	}{SchemaVersion, hex.EncodeToString(seed), agentID, tenant, endpoint, agent.AID()}, "", "  ")
 	if err != nil {
 		return "", "", fail(err, "%v", err)
 	}

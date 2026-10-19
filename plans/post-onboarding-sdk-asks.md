@@ -509,7 +509,7 @@ language but not the other.
 
 ### Phase 3: Record the AID in the bootstrap file and verify it on load (all five languages)
 
-- **Status:** TODO
+- **Status:** DONE (2026-10-19). Criterion 4 runs the f1d112d loader from a vendored, blob-hash-pinned copy (`python/tests/fixtures/identity_f1d112d.py.txt`) instead of `git show`, so it runs in CI's shallow checkout. README has no identity section, so it is unchanged. The seam-adapters#262 notice is posted after merge.
 - **Risk:** complex
 - **Delivers:**
   - A bootstrap file that carries its own public identity, so Phase 4 can return the AID without

@@ -5,7 +5,14 @@ it is the lower layer, so a partner calling the SDK directly and the adapters' `
 and write the same bytes. Schema v1, as first defined by ``seam_agent_core/identity.py`` and kept
 field-for-field compatible with it so existing partner files still load::
 
-    {"version": 1, "seed_hex": "<64 hex>", "agent_id": "...", "tenant": "...", "endpoint": "host:port"}
+    {"version": 1, "seed_hex": "<64 hex>", "agent_id": "...", "tenant": "...", "endpoint": "host:port",
+     "aid": "aid:pubkey:ed25519:<43 b64url>"}
+
+``aid`` is optional (seam-sdk#274, D-AID-RECORD): :func:`create_identity_file` records the derived AID
+as the last key, and the schema version stays 1. A file without it (every file written before) loads
+unchanged. When it is present, :func:`load_identity_file` verifies it against the AID derived from
+``seed_hex`` and refuses the file on a wrong shape or a mismatch. Every loader since #201 ignores
+unknown keys, so a file that records ``aid`` also loads in older releases.
 
 Unknown extra keys are ignored on load, as before.
 
@@ -18,6 +25,7 @@ from __future__ import annotations
 import errno
 import json
 import os
+import re
 import secrets
 from dataclasses import dataclass
 from typing import Optional, Tuple, Union
@@ -26,6 +34,9 @@ from .client import Agent
 
 ENV_POINTER = "SEAM_BOOTSTRAP_FILE"
 SCHEMA_VERSION = 1
+
+# The shape of a recorded ``aid``: the Ed25519 AID form (``crypto.py``), 32 bytes as unpadded b64url.
+_AID_RE = re.compile(r"aid:pubkey:ed25519:[A-Za-z0-9_-]{43}")
 
 PathLike = Union[str, "os.PathLike[str]"]
 
@@ -55,7 +66,12 @@ class LoadedIdentity:
 
 
 def load_identity_file(path: Optional[PathLike] = None) -> LoadedIdentity:
-    """Load the process identity from ``path`` or ``$SEAM_BOOTSTRAP_FILE`` (schema v1)."""
+    """Load the process identity from ``path`` or ``$SEAM_BOOTSTRAP_FILE`` (schema v1).
+
+    A recorded ``aid`` is verified, not trusted: it must have the AID shape (else ``"aid is
+    malformed"``) and equal the AID derived from ``seed_hex`` (else ``"recorded aid does not match
+    seed_hex"``). A file without ``aid`` loads as before.
+    """
     resolved = os.fspath(path) if path is not None else os.environ.get(ENV_POINTER, "")
     if not resolved:
         raise IdentityFileError(
@@ -97,8 +113,16 @@ def load_identity_file(path: Optional[PathLike] = None) -> LoadedIdentity:
         raise IdentityFileError(
             f"bootstrap file missing required field(s): {', '.join(missing)}"
         )
+    recorded_aid = data.get("aid")
+    if "aid" in data and (
+        not isinstance(recorded_aid, str) or not _AID_RE.fullmatch(recorded_aid)
+    ):
+        raise IdentityFileError("aid is malformed")
+    agent = Agent(seed)
+    if recorded_aid is not None and recorded_aid != agent.aid:
+        raise IdentityFileError("recorded aid does not match seed_hex")
     return LoadedIdentity(
-        agent=Agent(seed),
+        agent=agent,
         agent_id=str(data["agent_id"]),
         tenant=str(data["tenant"]),
         endpoint=str(data["endpoint"]),
@@ -111,7 +135,8 @@ def create_identity_file(
     """Generate a new agent identity and write it to ``path`` as a schema-v1 bootstrap file.
 
     Returns ``(path, aid)``. The seed is never returned: load the file with
-    :func:`load_identity_file` in the process that will use it.
+    :func:`load_identity_file` in the process that will use it. The file also records that ``aid``
+    as its last key, so the public identity can be read back without the seed.
 
     The write is atomic and never clobbers. The bytes go to a sibling temp file opened
     ``O_CREAT|O_EXCL|O_NOFOLLOW`` with mode ``0600`` (re-applied with ``fchmod`` so the umask cannot
@@ -129,18 +154,8 @@ def create_identity_file(
 
     final = os.fspath(path)
     agent = Agent.generate()
-    body = (
-        json.dumps(
-            {
-                "version": SCHEMA_VERSION,
-                "seed_hex": agent.seed.hex(),
-                "agent_id": agent_id,
-                "tenant": tenant,
-                "endpoint": endpoint,
-            },
-            indent=2,
-        ).encode("utf-8")
-        + b"\n"
+    body = _identity_file_body(
+        agent, agent_id=agent_id, tenant=tenant, endpoint=endpoint
     )
 
     directory = os.path.dirname(os.path.abspath(final))
@@ -185,6 +200,26 @@ def create_identity_file(
             pass
     _fsync_dir(directory)
     return final, agent.aid
+
+
+def _identity_file_body(
+    agent: Agent, *, agent_id: str, tenant: str, endpoint: str
+) -> bytes:
+    # Key order is the schema's, ``aid`` last; TS's ``identityFileBody`` pins these exact bytes.
+    return (
+        json.dumps(
+            {
+                "version": SCHEMA_VERSION,
+                "seed_hex": agent.seed.hex(),
+                "agent_id": agent_id,
+                "tenant": tenant,
+                "endpoint": endpoint,
+                "aid": agent.aid,
+            },
+            indent=2,
+        ).encode("utf-8")
+        + b"\n"
+    )
 
 
 def _fsync_dir(directory: str) -> None:

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 import json
 import os
 import stat
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -14,6 +18,7 @@ from seam_sdk import (
     create_identity_file,
     load_identity_file,
 )
+from seam_sdk import identity as identity_mod
 from seam_sdk.identity import ENV_POINTER
 
 posix_only = pytest.mark.skipif(
@@ -21,6 +26,23 @@ posix_only = pytest.mark.skipif(
 )
 
 FIELDS = dict(agent_id="ap-clerk", tenant="acme", endpoint="seam.example:443")
+
+REPO = Path(__file__).resolve().parents[2]
+FIXTURES = REPO / "ts" / "tests" / "fixtures"
+#: Written by this module's writer (seam-sdk#274); TS pins the same bytes.
+AID_FIXTURE = FIXTURES / "identity_v1_aid_python.json"
+#: The pre-#274 layout (no ``aid``): the legacy case.
+LEGACY_FIXTURE = FIXTURES / "identity_v1_python.json"
+FIXTURE_SEED_HEX = "ddc1524b29efe5bc1b9e9ea141b2a4740ba3e4d52f781afa3c1ffb3a3970580c"
+FIXTURE_AID = "aid:pubkey:ed25519:9x_uM2PCzXE8pt6di2RwwKCkod7W5kctdLdoIVtKep4"
+FIXTURE_FIELDS = dict(
+    agent_id="ap-clerk", tenant="acm\u00e9", endpoint="seam.example:443"
+)
+#: The loader at f1d112d (0.48.1, before the ``aid`` key), vendored byte-exact, and its git blob id.
+PRE_AID_LOADER = (
+    Path(__file__).resolve().parent / "fixtures" / "identity_f1d112d.py.txt"
+)
+PRE_AID_LOADER_BLOB = "37998824140deb805190a8e4328876b7cc0f9eac"
 
 
 def test_generate_is_32_fresh_csprng_bytes():
@@ -57,8 +79,131 @@ def test_repr_of_a_loaded_identity_does_not_print_the_seed(tmp_path):
 def test_file_is_schema_v1_with_the_adapters_field_names(tmp_path):
     path, _ = create_identity_file(tmp_path / "id.json", **FIELDS)
     data = json.loads(open(path).read())
-    assert list(data) == ["version", "seed_hex", "agent_id", "tenant", "endpoint"]
+    assert list(data) == [
+        "version",
+        "seed_hex",
+        "agent_id",
+        "tenant",
+        "endpoint",
+        "aid",
+    ]
     assert data["version"] == 1 and len(data["seed_hex"]) == 64
+
+
+def test_created_file_records_the_returned_aid(tmp_path):
+    path, aid = create_identity_file(tmp_path / "id.json", **FIELDS)
+    data = json.loads(open(path).read())
+    assert data["aid"] == aid == Agent(bytes.fromhex(data["seed_hex"])).aid
+
+
+def test_the_writer_lays_out_the_aid_fixture_byte_for_byte(tmp_path, monkeypatch):
+    # The real writer, with the seed pinned: the bytes TS's identityFileBody also reproduces.
+    seed = bytes.fromhex(FIXTURE_SEED_HEX)
+    monkeypatch.setattr(
+        identity_mod.Agent, "generate", classmethod(lambda cls: cls(seed))
+    )
+    path, aid = create_identity_file(tmp_path / "id.json", **FIXTURE_FIELDS)
+    assert aid == FIXTURE_AID
+    assert open(path, "rb").read() == AID_FIXTURE.read_bytes()
+
+
+def test_the_aid_fixture_loads_with_its_recorded_aid():
+    loaded = load_identity_file(AID_FIXTURE)
+    assert loaded.aid == FIXTURE_AID == json.loads(AID_FIXTURE.read_text())["aid"]
+    assert loaded.agent.seed.hex() == FIXTURE_SEED_HEX
+
+
+def test_a_legacy_file_without_aid_loads_unchanged():
+    assert "aid" not in json.loads(LEGACY_FIXTURE.read_text())
+    loaded = load_identity_file(LEGACY_FIXTURE)
+    assert loaded.aid == FIXTURE_AID
+    assert (loaded.agent_id, loaded.tenant, loaded.endpoint) == (
+        "ap-clerk",
+        "acm\u00e9",
+        "seam.example:443",
+    )
+
+
+def _with_aid(aid: object) -> dict:
+    return {
+        "version": 1,
+        "seed_hex": FIXTURE_SEED_HEX,
+        "agent_id": "a",
+        "tenant": "t",
+        "endpoint": "e:1",
+        "aid": aid,
+    }
+
+
+@pytest.mark.parametrize(
+    "aid, message",
+    [
+        (Agent(bytes(range(32))).aid, "recorded aid does not match seed_hex"),
+        (FIXTURE_AID[:-1], "aid is malformed"),
+        (FIXTURE_AID + "A", "aid is malformed"),
+        (FIXTURE_AID.replace("ed25519", "ed448"), "aid is malformed"),
+        (FIXTURE_AID[:-1] + "=", "aid is malformed"),
+        ("", "aid is malformed"),
+        (None, "aid is malformed"),
+        (42, "aid is malformed"),
+        ([FIXTURE_AID], "aid is malformed"),
+    ],
+    ids=[
+        "mismatch",
+        "short",
+        "long",
+        "wrong-alg",
+        "non-b64url",
+        "empty",
+        "null",
+        "number",
+        "list",
+    ],
+)
+def test_a_bad_recorded_aid_is_refused(tmp_path, aid, message):
+    p = tmp_path / "bad.json"
+    p.write_text(json.dumps(_with_aid(aid)))
+    with pytest.raises(IdentityFileError) as e:
+        load_identity_file(p)
+    assert str(e.value) == message
+
+
+def test_a_matching_recorded_aid_loads(tmp_path):
+    p = tmp_path / "ok.json"
+    p.write_text(json.dumps(_with_aid(FIXTURE_AID)))
+    assert load_identity_file(p).aid == FIXTURE_AID
+
+
+@pytest.fixture
+def pre_aid_loader(tmp_path):
+    """``load_identity_file`` as released before #274 (0.48.1), vendored byte-exact (criterion 4).
+
+    The copy is ``git show f1d112d:python/seam_sdk/identity.py``, pinned by its git blob id so it runs in a
+    shallow CI clone and cannot drift. ``.txt`` keeps ruff and pytest off it.
+    """
+    src = PRE_AID_LOADER.read_bytes()
+    blob = hashlib.sha1(b"blob %d\0" % len(src) + src).hexdigest()
+    assert blob == PRE_AID_LOADER_BLOB, (
+        f"{PRE_AID_LOADER.name} is not the f1d112d loader"
+    )
+    path = tmp_path / "identity_f1d112d.py"
+    path.write_bytes(src)
+    # A submodule of the installed package, so its `from .client import Agent` resolves.
+    name = "seam_sdk._identity_f1d112d"
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+        yield module
+    finally:
+        sys.modules.pop(name, None)
+
+
+def test_a_file_that_records_aid_loads_in_the_pre_aid_release(pre_aid_loader):
+    loaded = pre_aid_loader.load_identity_file(AID_FIXTURE)
+    assert loaded.agent.aid == json.loads(AID_FIXTURE.read_text())["aid"]
+    assert loaded.agent.seed.hex() == FIXTURE_SEED_HEX
 
 
 @posix_only

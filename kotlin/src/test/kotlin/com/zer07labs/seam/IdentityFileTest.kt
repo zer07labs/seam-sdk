@@ -22,6 +22,8 @@ import org.junit.jupiter.api.io.TempDir
 private const val AGENT_ID = "ap-clerk"
 private const val TENANT = "acme"
 private const val ENDPOINT = "seam.example:443"
+private const val FIXTURE_SEED_HEX = "ddc1524b29efe5bc1b9e9ea141b2a4740ba3e4d52f781afa3c1ffb3a3970580c"
+private const val FIXTURE_AID = "aid:pubkey:ed25519:9x_uM2PCzXE8pt6di2RwwKCkod7W5kctdLdoIVtKep4"
 
 /** Child-JVM entry point for [IdentityFileTest.modeIs0600UnderUmask0]. */
 object UmaskProbe {
@@ -80,7 +82,10 @@ class IdentityFileTest {
     fun fileIsSchemaV1WithTheAdaptersFieldNames(@TempDir dir: Path) {
         val p = create(dir.resolve("id.json")).path
         val data = JsonParser.parseString(Files.readString(p)).asJsonObject
-        assertEquals(listOf("version", "seed_hex", "agent_id", "tenant", "endpoint"), data.keySet().toList())
+        assertEquals(
+            listOf("version", "seed_hex", "agent_id", "tenant", "endpoint", "aid"),
+            data.keySet().toList(),
+        )
         assertEquals(1, data.get("version").asInt)
         assertEquals(64, data.get("seed_hex").asString.length)
     }
@@ -196,5 +201,77 @@ class IdentityFileTest {
     fun missingFileIsLoud(@TempDir dir: Path) {
         val e = assertThrows<IdentityFileError> { IdentityFile.load(dir.resolve("nope.json")) }
         assertTrue(e.message!!.contains("not found"), e.message)
+    }
+
+    // seam-sdk#274 (D-AID-RECORD): a created file records its AID; a recorded aid is verified on load.
+
+    @Test
+    fun createdFileRecordsTheReturnedAid(@TempDir dir: Path) {
+        val c = create(dir.resolve("id.json"))
+        val data = JsonParser.parseString(Files.readString(c.path)).asJsonObject
+        assertEquals(c.aid, data.get("aid").asString)
+        assertEquals(c.aid, Agent(HexFormat.of().parseHex(seedHexOf(c.path))).aid)
+    }
+
+    private fun writeWithAid(dir: Path, name: String, aidJson: String): Path {
+        val p = dir.resolve("$name.json")
+        Files.writeString(
+            p,
+            """{"version": 1, "seed_hex": "$FIXTURE_SEED_HEX", "agent_id": "a", "tenant": "t", """ +
+                """"endpoint": "e:1", "aid": $aidJson}""",
+        )
+        return p
+    }
+
+    @Test
+    fun aBadRecordedAidIsRefused(@TempDir dir: Path) {
+        val other = Agent(ByteArray(32) { it.toByte() }).aid
+        val trimmed = FIXTURE_AID.dropLast(1)
+        val cases = listOf(
+            Triple("mismatch", "\"$other\"", "recorded aid does not match seed_hex"),
+            Triple("short", "\"$trimmed\"", "aid is malformed"),
+            Triple("long", "\"${FIXTURE_AID}A\"", "aid is malformed"),
+            Triple("wrong-alg", "\"${FIXTURE_AID.replace("ed25519", "ed448")}\"", "aid is malformed"),
+            Triple("non-b64url", "\"$trimmed=\"", "aid is malformed"),
+            Triple("empty", "\"\"", "aid is malformed"),
+            Triple("null", "null", "aid is malformed"),
+            Triple("number", "42", "aid is malformed"),
+            Triple("list", "[\"$FIXTURE_AID\"]", "aid is malformed"),
+        )
+        for ((name, aidJson, want) in cases) {
+            val p = writeWithAid(dir, name, aidJson)
+            val e = assertThrows<IdentityFileError> { IdentityFile.load(p) }
+            assertEquals(want, e.message, name)
+        }
+    }
+
+    @Test
+    fun aMatchingRecordedAidLoads(@TempDir dir: Path) {
+        val p = writeWithAid(dir, "ok", "\"$FIXTURE_AID\"")
+        assertEquals(FIXTURE_AID, IdentityFile.load(p).aid)
+    }
+
+    @Test
+    fun theSharedAidFixtureLoadsWithItsRecordedAid() {
+        // Written by Python's create_identity_file (seam-sdk#274); the TS suite pins its bytes.
+        val p = Path.of("..", "ts", "tests", "fixtures", "identity_v1_aid_python.json")
+        assertEquals(FIXTURE_AID, JsonParser.parseString(Files.readString(p)).asJsonObject.get("aid").asString)
+        val loaded = IdentityFile.load(p)
+        assertEquals(FIXTURE_AID, loaded.aid)
+        assertEquals(FIXTURE_SEED_HEX, HexFormat.of().formatHex(loaded.agent.seed()))
+        assertEquals("ap-clerk", loaded.agentId)
+        assertEquals("acm\u00e9", loaded.tenant)
+        assertEquals("seam.example:443", loaded.endpoint)
+    }
+
+    @Test
+    fun aLegacyFileWithoutAidLoadsUnchanged(@TempDir dir: Path) {
+        val p = dir.resolve("legacy.json")
+        Files.writeString(
+            p,
+            """{"version": 1, "seed_hex": "$FIXTURE_SEED_HEX", "agent_id": "ap-clerk", "tenant": "acme", """ +
+                """"endpoint": "seam.example:443"}""",
+        )
+        assertEquals(FIXTURE_AID, IdentityFile.load(p).aid)
     }
 }

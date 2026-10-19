@@ -3,7 +3,13 @@
 // One JSON file plus one env pointer (`SEAM_BOOTSTRAP_FILE`). Python's `seam_sdk/identity.py` owns the
 // schema; this module mirrors it so a file written by any SDK loads in every other:
 //
-//   {"version": 1, "seed_hex": "<64 hex>", "agent_id": "...", "tenant": "...", "endpoint": "host:port"}
+//   {"version": 1, "seed_hex": "<64 hex>", "agent_id": "...", "tenant": "...", "endpoint": "host:port",
+//    "aid": "aid:pubkey:ed25519:<43 b64url>"}
+//
+// `aid` is optional (seam-sdk#274, D-AID-RECORD): `createIdentityFile` records the derived AID as the
+// last key, and the schema version stays 1. A file without it loads unchanged. When it is present,
+// `loadIdentityFile` verifies it against the AID derived from `seed_hex` and refuses a wrong shape or a
+// mismatch. Every loader since #201 ignores unknown keys, so such a file also loads in older releases.
 //
 // Unknown extra keys are ignored on load. The file layout is byte-for-byte Python's
 // `json.dumps(..., indent=2) + "\n"` (ASCII-escaped), so the files are interchangeable.
@@ -21,6 +27,9 @@ import { Agent } from "./client.js";
 export const ENV_POINTER = "SEAM_BOOTSTRAP_FILE";
 /** The only bootstrap schema this SDK reads and writes. */
 export const SCHEMA_VERSION = 1;
+
+// The shape of a recorded `aid`: the Ed25519 AID form, 32 bytes as unpadded b64url.
+const AID_RE = /^aid:pubkey:ed25519:[A-Za-z0-9_-]{43}$/;
 
 /** The bootstrap file is missing, malformed, fails validation, or cannot be created. Always loud.
  * `cause` carries the underlying fs/JSON error, when there is one. */
@@ -80,7 +89,11 @@ function pyRepr(v: unknown): string {
   return v === undefined ? "None" : JSON.stringify(v);
 }
 
-/** Load the process identity from `path`, or from `$SEAM_BOOTSTRAP_FILE` when `path` is omitted. */
+/** Load the process identity from `path`, or from `$SEAM_BOOTSTRAP_FILE` when `path` is omitted.
+ *
+ * A recorded `aid` is verified, not trusted: it must have the AID shape (else `"aid is malformed"`) and
+ * equal the AID derived from `seed_hex` (else `"recorded aid does not match seed_hex"`). A file without
+ * `aid` loads as before. */
 export function loadIdentityFile(path?: string): LoadedIdentity {
   const resolved = path ?? process.env[ENV_POINTER] ?? "";
   if (!resolved) {
@@ -129,8 +142,16 @@ export function loadIdentityFile(path?: string): LoadedIdentity {
   if (missing.length > 0) {
     throw new IdentityFileError(`bootstrap file missing required field(s): ${missing.join(", ")}`);
   }
+  const hasAid = Object.prototype.hasOwnProperty.call(obj, "aid");
+  if (hasAid && (typeof obj.aid !== "string" || !AID_RE.test(obj.aid))) {
+    throw new IdentityFileError("aid is malformed");
+  }
+  const agent = new Agent(seed);
+  if (hasAid && obj.aid !== agent.aid) {
+    throw new IdentityFileError("recorded aid does not match seed_hex");
+  }
   return new LoadedIdentity(
-    new Agent(seed),
+    agent,
     obj.agent_id as string,
     obj.tenant as string,
     obj.endpoint as string,
@@ -138,7 +159,8 @@ export function loadIdentityFile(path?: string): LoadedIdentity {
 }
 
 /** The schema-v1 file bytes, laid out exactly as Python's `json.dumps(obj, indent=2) + "\n"`
- * (default `ensure_ascii=True`: every code unit outside printable ASCII is `\uXXXX`-escaped). */
+ * (default `ensure_ascii=True`: every code unit outside printable ASCII is `\uXXXX`-escaped), with the
+ * seed's derived `aid` as the last key. */
 export function identityFileBody(
   seed: Uint8Array,
   fields: { agentId: string; tenant: string; endpoint: string },
@@ -150,6 +172,7 @@ export function identityFileBody(
       agent_id: fields.agentId,
       tenant: fields.tenant,
       endpoint: fields.endpoint,
+      aid: new Agent(seed).aid,
     },
     null,
     2,
@@ -161,7 +184,8 @@ export function identityFileBody(
  * Generate a new agent identity and write it to `path` as a schema-v1 bootstrap file.
  *
  * Returns `{ path, aid }`. The seed is never returned: load the file with {@link loadIdentityFile} in
- * the process that will use it.
+ * the process that will use it. The file also records that `aid` as its last key, so the public
+ * identity can be read back without the seed.
  *
  * The write is atomic and never clobbers. The bytes go to a sibling temp file opened
  * `O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW` with mode `0600` (re-applied with `fchmod` so the umask cannot

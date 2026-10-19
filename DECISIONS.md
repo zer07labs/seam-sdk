@@ -1219,7 +1219,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:1462-1484` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:1470-1492` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2049,7 +2049,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:1494` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:1502` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -2824,3 +2824,30 @@ Plan: `plans/post-onboarding-sdk-asks.md` (Phase 2). Python (sync and aio) and T
   `test_the_three_excluded_writes_still_make_exactly_one_call` (Python, sync and aio) and its TS twin asserts
   the non-retrying set **is** `{OpenSession, CancelSession, ExpireSession}`. The reasoning in the Phase 1
   entry stands unchanged.
+
+## 2026-10-19 — the bootstrap file records its `aid` (#274, post-onboarding Phase 3)
+
+Plan: `plans/post-onboarding-sdk-asks.md` (Phase 3, B-CORE-FACTS SDK half). All five languages.
+
+### D-AID-RECORD — new files carry `"aid"`; a recorded `aid` is verified only when present
+- **Chose:** every writer (`create_identity_file`, `createIdentityFile`, `identity.CreateIdentityFile`,
+  `IdentityFile.create` in Java and Kotlin) appends the derived AID as the last key, `"aid"`, and keeps
+  `version: 1`. Every full loader, after its existing checks (version, `seed_hex`, required fields), refuses a
+  present `aid` that is not a string matching `^aid:pubkey:ed25519:[A-Za-z0-9_-]{43}$` (`"aid is malformed"`;
+  that covers empty, `null`, numbers and lists) or that differs from the seed-derived AID (`"recorded aid does
+  not match seed_hex"`). A file without `aid` loads unchanged and is never rewritten. Python and TS pin the
+  exact bytes against `ts/tests/fixtures/identity_v1_aid_python.json` (Python's real writer with the seed
+  pinned; TS's `identityFileBody`); Go, Java and Kotlin pin key order and the `aid` value, since their
+  serializers differ in whitespace and escaping. Backward compatibility is checked, not argued:
+  `test_a_file_that_records_aid_loads_in_the_pre_aid_release` loads the `f1d112d` `python/seam_sdk/identity.py`
+  as `seam_sdk._identity_f1d112d` and reads the new fixture through it. The loader is vendored byte-exact as
+  `python/tests/fixtures/identity_f1d112d.py.txt` and pinned by its git blob id, so the test also runs in CI's
+  shallow clone.
+- **Alternatives:** (a) a version-2 schema — breaks every older loader for an additive fact. (b) a
+  `public_key_hex` key — the AID *is* the encoded public key and is what consumers display, so `aid` needs no
+  crypto to read back. (c) a sidecar `.pub` file — a second custody artefact. (d) backfilling existing files —
+  rewriting a secret file is a custody operation for its own issue (Open question 4).
+- **Blast radius:** on disk this is a one-way door, but additive and ignorable: every loader since #201 ignores
+  unknown keys. Observable: a created file has six keys, not five, and a hand-edited or mismatched `aid` is now
+  refused by the full loader. seam-adapters (#262) is told the schema gained an optional key.
+- **Status:** DECIDED (plan, owner); implemented in Phase 3.

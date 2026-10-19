@@ -46,8 +46,14 @@ data class LoadedIdentity(val agent: Agent, val agentId: String, val tenant: Str
  * `seam_sdk/identity.py`, which owns the schema:
  *
  * ```
- * {"version": 1, "seed_hex": "<64 hex>", "agent_id": "...", "tenant": "...", "endpoint": "host:port"}
+ * {"version": 1, "seed_hex": "<64 hex>", "agent_id": "...", "tenant": "...", "endpoint": "host:port",
+ *  "aid": "aid:pubkey:ed25519:<43 b64url>"}
  * ```
+ *
+ * `aid` is optional (seam-sdk#274, D-AID-RECORD): [create] records the derived AID as the last key, and
+ * the schema version stays 1. A file without it loads unchanged. When it is present, [load] verifies it
+ * against the AID derived from `seed_hex` and refuses a wrong shape or a mismatch. Every loader since
+ * #201 ignores unknown keys, so such a file also loads in older releases.
  *
  * Unknown extra keys are ignored on load. One JSON file plus one env pointer ([ENV_POINTER]). The seed
  * leaves this object in exactly one direction: from disk into an [Agent] on load.
@@ -57,10 +63,17 @@ object IdentityFile {
     const val SCHEMA_VERSION = 1
 
     private val rng = SecureRandom()
+
+    // The shape of a recorded aid: the Ed25519 AID form, 32 bytes as unpadded b64url.
+    private val aidShape = Regex("aid:pubkey:ed25519:[A-Za-z0-9_-]{43}")
     private val ownerRw = PosixFilePermissions.fromString("rw-------")
 
     /**
      * Load the process identity from [path], or from `$SEAM_BOOTSTRAP_FILE` when [path] is `null`.
+     *
+     * A recorded `aid` is verified, not trusted: it must have the AID shape (else `"aid is malformed"`)
+     * and equal the AID derived from `seed_hex` (else `"recorded aid does not match seed_hex"`). A file
+     * without `aid` loads as before.
      *
      * @throws IdentityFileError on any refusal
      */
@@ -107,7 +120,16 @@ object IdentityFile {
         if (missing.isNotEmpty()) {
             throw IdentityFileError("bootstrap file missing required field(s): ${missing.joinToString(", ")}")
         }
-        return LoadedIdentity(Agent(seed), fields["agent_id"]!!, fields["tenant"]!!, fields["endpoint"]!!)
+        val hasAid = data.has("aid")
+        val recordedAid = stringOrNull(data.get("aid"))
+        if (hasAid && (recordedAid == null || !aidShape.matches(recordedAid))) {
+            throw IdentityFileError("aid is malformed")
+        }
+        val agent = Agent(seed)
+        if (hasAid && recordedAid != agent.aid) {
+            throw IdentityFileError("recorded aid does not match seed_hex")
+        }
+        return LoadedIdentity(agent, fields["agent_id"]!!, fields["tenant"]!!, fields["endpoint"]!!)
     }
 
     private fun stringOrNull(e: JsonElement?): String? =
@@ -119,6 +141,8 @@ object IdentityFile {
     /**
      * Generate a new agent identity and write it to [path] as a schema-v1 bootstrap file. Returns
      * `(path, aid)`; the seed is never returned — load the file with [load] in the process that will use it.
+     * The file also records that `aid` as its last key, so the public identity can be read back without
+     * the seed.
      *
      * The write is atomic and never clobbers. The bytes go to a sibling temp file created with
      * `CREATE_NEW` (O_CREAT|O_EXCL) and `NOFOLLOW_LINKS` at mode 0600 — set at creation and re-applied
@@ -146,6 +170,7 @@ object IdentityFile {
             "agent_id" to agentId,
             "tenant" to tenant,
             "endpoint" to endpoint,
+            "aid" to agent.aid,
         )
         val body = (GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create().toJson(doc) + "\n")
             .toByteArray(Charsets.UTF_8)

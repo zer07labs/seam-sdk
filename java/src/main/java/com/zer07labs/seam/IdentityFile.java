@@ -30,14 +30,22 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * Identity custody (seam-sdk#201): create and load the schema-v1 bootstrap file. Mirrors Python's
  * {@code seam_sdk/identity.py}, which owns the schema:
  *
- * <pre>{"version": 1, "seed_hex": "&lt;64 hex&gt;", "agent_id": "...", "tenant": "...", "endpoint": "host:port"}</pre>
+ * <pre>{"version": 1, "seed_hex": "&lt;64 hex&gt;", "agent_id": "...", "tenant": "...", "endpoint": "host:port",
+ *  "aid": "aid:pubkey:ed25519:&lt;43 b64url&gt;"}</pre>
  *
- * Unknown extra keys are ignored on load. One JSON file plus one env pointer ({@value #ENV_POINTER}).
+ * <p>{@code aid} is optional (seam-sdk#274, D-AID-RECORD): {@link #create} records the derived AID as
+ * the last key, and the schema version stays 1. A file without it loads unchanged. When it is present,
+ * {@link #load} verifies it against the AID derived from {@code seed_hex} and refuses a wrong shape or
+ * a mismatch. Every loader since #201 ignores unknown keys, so such a file also loads in older
+ * releases.
+ *
+ * <p>Unknown extra keys are ignored on load. One JSON file plus one env pointer ({@value #ENV_POINTER}).
  * The seed leaves this class in exactly one direction: from disk into an {@link Agent} on load.
  */
 public final class IdentityFile {
@@ -47,6 +55,8 @@ public final class IdentityFile {
   public static final int SCHEMA_VERSION = 1;
 
   private static final SecureRandom RNG = new SecureRandom();
+  // The shape of a recorded aid: the Ed25519 AID form, 32 bytes as unpadded b64url.
+  private static final Pattern AID_SHAPE = Pattern.compile("aid:pubkey:ed25519:[A-Za-z0-9_-]{43}");
   private static final Set<PosixFilePermission> OWNER_RW = PosixFilePermissions.fromString("rw-------");
 
   /** What {@link #create} returns: the path written and the new agent's AID — never the seed. */
@@ -80,7 +90,13 @@ public final class IdentityFile {
     return load(null);
   }
 
-  /** Load the process identity from {@code path}, or {@code $SEAM_BOOTSTRAP_FILE} when null. */
+  /**
+   * Load the process identity from {@code path}, or {@code $SEAM_BOOTSTRAP_FILE} when null.
+   *
+   * <p>A recorded {@code aid} is verified, not trusted: it must have the AID shape (else {@code "aid
+   * is malformed"}) and equal the AID derived from {@code seed_hex} (else {@code "recorded aid does
+   * not match seed_hex"}). A file without {@code aid} loads as before.
+   */
   public static LoadedIdentity load(Path path) {
     Path resolved = path;
     if (resolved == null) {
@@ -145,8 +161,17 @@ public final class IdentityFile {
       throw new IdentityFileError(
           "bootstrap file missing required field(s): " + String.join(", ", missing));
     }
+    boolean hasAid = data.has("aid");
+    String recordedAid = stringOrNull(data.get("aid"));
+    if (hasAid && (recordedAid == null || !AID_SHAPE.matcher(recordedAid).matches())) {
+      throw new IdentityFileError("aid is malformed");
+    }
+    Agent agent = new Agent(seed);
+    if (hasAid && !recordedAid.equals(agent.aid())) {
+      throw new IdentityFileError("recorded aid does not match seed_hex");
+    }
     return new LoadedIdentity(
-        new Agent(seed), fields.get("agent_id"), fields.get("tenant"), fields.get("endpoint"));
+        agent, fields.get("agent_id"), fields.get("tenant"), fields.get("endpoint"));
   }
 
   private static String stringOrNull(JsonElement e) {
@@ -156,7 +181,8 @@ public final class IdentityFile {
   /**
    * Generate a new agent identity and write it to {@code path} as a schema-v1 bootstrap file. Returns
    * {@code (path, aid)}; the seed is never returned — load the file with {@link #load} in the process
-   * that will use it.
+   * that will use it. The file also records that {@code aid} as its last key, so the public identity
+   * can be read back without the seed.
    *
    * <p>The write is atomic and never clobbers. The bytes go to a sibling temp file created with {@code
    * CREATE_NEW} (O_CREAT|O_EXCL) and {@code NOFOLLOW_LINKS} at mode 0600 — the mode is set at creation
@@ -187,6 +213,7 @@ public final class IdentityFile {
     doc.put("agent_id", agentId);
     doc.put("tenant", tenant);
     doc.put("endpoint", endpoint);
+    doc.put("aid", agent.aid());
     byte[] body =
         (new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create().toJson(doc) + "\n")
             .getBytes(StandardCharsets.UTF_8);

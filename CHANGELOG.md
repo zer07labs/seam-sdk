@@ -39,6 +39,14 @@ than trusting a summary here.
   and `usage` is not part of a step's identity, so a resend differing only in `usage` is deduped and
   not debited. `open_session`, `cancel_session` and `expire_session` are unchanged: exactly one call
   (D-WRITES-EXCLUDED).
+- **New bootstrap files record their `aid`, and a recorded `aid` is verified on load (#274,
+  D-AID-RECORD), in all five SDKs.** `create_identity_file` (TS `createIdentityFile`, Go
+  `identity.CreateIdentityFile`, Java/Kotlin `IdentityFile.create`) now writes the derived AID as a
+  sixth, last key, `"aid"`; the schema version stays 1. When a file carries `aid`, the full loader
+  refuses it unless it has the AID shape (`"aid is malformed"`) and equals the AID derived from
+  `seed_hex` (`"recorded aid does not match seed_hex"`). A file without `aid` loads exactly as before
+  and is never rewritten. Every loader since #201 ignores unknown keys, so a new file also loads in
+  older releases. The cross-language fixture is `ts/tests/fixtures/identity_v1_aid_python.json`.
 
 ## 0.48.0 — 2026-10-19
 

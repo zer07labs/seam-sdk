@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "seed_hex": "ddc1524b29efe5bc1b9e9ea141b2a4740ba3e4d52f781afa3c1ffb3a3970580c",
+  "agent_id": "ap-clerk",
+  "tenant": "acm\u00e9",
+  "endpoint": "seam.example:443",
+  "aid": "aid:pubkey:ed25519:9x_uM2PCzXE8pt6di2RwwKCkod7W5kctdLdoIVtKep4"
+}

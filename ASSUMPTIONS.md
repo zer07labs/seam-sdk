@@ -1463,3 +1463,19 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Blast radius if wrong:** under repeated revocation, some reads fail typed where a second refresh would have
   succeeded. The caller can retry.
 - **Status:** UNCONFIRMED
+
+## The pre-`aid` loader check runs in CI from a vendored copy, not `git show`
+- **Plan:** plans/post-onboarding-sdk-asks.md (Phase 3, #274, criterion 4)
+- **Assumed (first draft):** the `git show f1d112d:…` route was enough, skipping where history is absent. It
+  was not: the `python (ruff · pytest)` job checks out with the default `fetch-depth: 1`, so it would always
+  have skipped in CI.
+- **Chose:** vendor the f1d112d loader byte-exact as `python/tests/fixtures/identity_f1d112d.py.txt` (`.txt`
+  keeps ruff and pytest off it). `test_a_file_that_records_aid_loads_in_the_pre_aid_release` pins it by its
+  git blob id (`37998824140deb805190a8e4328876b7cc0f9eac`, computed without git) and loads it as
+  `seam_sdk._identity_f1d112d`. There is no skip path. `ci.yml` is unchanged.
+- **Alternatives:** (a) `fetch-depth: 0` on the python job (a CI-file change outside the phase). (b) a pinned
+  0.48.1 wheel in a throwaway venv, which needs the network.
+- **Blast radius if wrong:** none for Python, which is now checked on every CI run. The other four languages
+  are not run against their f1d112d loaders. They rely on reading the parser, which ignores unknown keys at
+  f1d112d (verified by the Phase 3 verifier: Java/Kotlin `data.get`, Go `map[string]any`, TS `obj[k]`).
+- **Status:** CONFIRMED (2026-10-19). Resolved by vendoring.
