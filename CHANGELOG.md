@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.48.0 — 2026-10-19
+
 ## 0.47.0 — 2026-10-13
 
 > **Breaking — offline verification of pre-#835-step-3 tenant history now fails.** Chain-head
