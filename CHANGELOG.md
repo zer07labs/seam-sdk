@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.48.0 — 2026-10-19
+
 > **Breaking — requires seam-runtime 0.48.0 (seam-runtime#1365, which carries `protocol-pass-2026-10`);
 > no compatibility with any earlier runtime.** Pinned and vendored from `protocol-pass-2026-10` @
 > `1ac5de5f8a50180bf0c4d6f4c0e9184f74fddc4c` (the contract freeze), byte-identical at runtime `main` `32f8196`, which this SDK now builds against (BSR main, un-pinned). An earlier runtime refuses this SDK's PoP `message_id`, and this
