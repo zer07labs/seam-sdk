@@ -21,7 +21,7 @@ than trusting a summary here.
 > **Breaking — requires seam-runtime 0.48.0 (seam-runtime#1365, which carries `protocol-pass-2026-10`);
 > no compatibility with any earlier runtime.** Pinned and vendored from `protocol-pass-2026-10` @
 > `1ac5de5f8a50180bf0c4d6f4c0e9184f74fddc4c` (the contract freeze), byte-identical at runtime `main` `32f8196`, which this SDK now builds against (BSR main, un-pinned). An earlier runtime refuses this SDK's PoP `message_id`, and this
-> SDK refuses an earlier runtime's v3 records as cannot-verify. Upgrade the runtime and the SDK together.
+> SDK refuses an earlier runtime's v3 records as cannot-verify. Upgrade the runtime and the SDK together. **Go:** take `go/v0.48.1`. `go/v0.48.0` was tagged before this pass merged and is retracted.
 
 ### Changed — protocol pass 2026-10 (seam-sdk#265) — BREAKING
 - **PoP `message_id` is derived (P9), in all five SDKs.** `derived_uuid(tag, input)` =
