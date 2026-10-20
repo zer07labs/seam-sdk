@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.49.0 — 2026-10-20
+
 ### Added
 - **Read a bootstrap file's public facts without a signing key (#274, D-FACTS-API), in all five SDKs.**
   `load_identity_facts` (TS `loadIdentityFacts`, Go `identity.LoadIdentityFacts`, Java/Kotlin
