@@ -11,7 +11,7 @@
   },
   "inclusion": {
     "decision_offset": 5,
-    "record_checksum": "keXT81w3Ble5GqKBGzvIiOUrtH8HakVLDLcmLQ0fvm0=",
+    "record_checksum": "PakgPUuM+51tingM/YUTk4bItWgxOH3ZVgXkYl5IEhM=",
     "anchor_offset": 3,
     "anchor_attested_len": 2,
     "window_events": 4,
@@ -20,11 +20,11 @@
   },
   "files": {
     "events.jsonl": {
-      "sha256": "7a28ab356f40051dd04e39fcddfdf4e2853183d16e3f20b352fbce5de68ac80d",
+      "sha256": "6191e0c4c0dc25e351dc02cb95c36bb1ae098d656cda94b7cd62cde954b4580e",
       "bytes": 4212
     },
     "anchor.json": {
-      "sha256": "ceb64b7cce63d9409a4111b4b3d372ba6b2efcfc549b07fe892c14f577e32b4f",
+      "sha256": "094491cfad005d3064335755af337ff71c9faac5086e4b202afef393d07a7dd7",
       "bytes": 317
     }
   },
