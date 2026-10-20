@@ -2903,3 +2903,37 @@ Plan: `plans/post-onboarding-sdk-asks.md` (Phase 4, B-CORE-FACTS SDK half). All 
   against the vendored f1d112d loader.
 - **Status:** DECIDED (plan, owner); implemented in Phase 4.
 
+
+## 2026-10-19 — reconcile the post-onboarding coalesced-refresh assumption (#275, 1 entry)
+
+A reversible, SDK-internal retry bound; not a one-way door, so Opus decided it.
+**Decided by:** Opus (/reconcile, reversible tier).
+
+### A coalesced refresh can hand a caller an already-dead ticket; it fails typed rather than refreshing again
+- **Assumption:** when a credentialed call adopts a ticket another caller just refreshed in and that ticket is
+  also rejected, the single resend fails with `UnauthenticatedError`; there is no second refresh
+  (`ASSUMPTIONS.md`, "A coalesced refresh can hand a caller a ticket that is already dead").
+- **Evidence:** `python/seam_sdk/client.py` `_refresh_ticket` (adopt-if-different under the per-AID lock) and
+  `_credentialed_call` (refresh once, resend once); the `aio.py` twins; `ts/src/client.ts` `refreshTicket` /
+  `credentialedCall` (adopt-if-different plus `admit`'s in-flight map). Pinned by
+  `python/tests/test_credential_refresh.py` (`test_a_second_rejection_propagates_typed`, the four
+  `test_grpc_n_concurrent_rejected_*_coalesce_to_one_readmit_*` tests).
+- **Analysis:**
+  - *Refresh storms.* The adopted ticket being dead means revocation is still in progress, i.e. the admission
+    endpoint is under the most load it will see. A second refresh per caller turns N callers into up to 2N
+    admit attempts on exactly that endpoint; even coalesced, it doubles the serialized lock-hold chain. The
+    current bound (one admit attempt per caller, at most six wire calls per verb, identical to `authorize`) is
+    the property worth keeping.
+  - *Retry amplification.* Callers routinely wrap SDK calls in their own retry. An inner 2-refresh loop under
+    an outer N-retry loop multiplies admits; a single inner refresh keeps the product predictable.
+  - *Recovery.* The adopter's failed resend leaves the dead ticket cached, so its next call sends once more on
+    it, is rejected, and `_refresh_ticket` now finds `current == failed` and re-admits fresh. Recovery is
+    automatic on the next call at the cost of one extra rejected send; no caller-side invalidation is needed.
+  - *Frequency.* The failure needs a second revocation inside one refresh round trip, which outside a genuine
+    revocation storm does not happen; inside one, surfacing typed is the correct signal.
+  - *Reversibility.* Moving to a bounded second refresh later would only turn some typed failures into
+    successes: no signature, type or exported name changes, so it is additive and non-breaking. Tightening
+    back after loosening would not be, which favours starting at the tighter bound.
+- **Verdict:** confirm as written. No code change. A bounded second refresh stays available as an additive
+  change if production evidence shows adopters failing outside revocation storms.
+- **Status:** CONFIRMED (2026-10-19).

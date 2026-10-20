@@ -1462,7 +1462,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   failure that causes it.
 - **Blast radius if wrong:** under repeated revocation, some reads fail typed where a second refresh would have
   succeeded. The caller can retry.
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (2026-10-19, /reconcile; see DECISIONS.md, post-onboarding reconcile).
 
 ## The pre-`aid` loader check runs in CI from a vendored copy, not `git show`
 - **Plan:** plans/post-onboarding-sdk-asks.md (Phase 3, #274, criterion 4)
