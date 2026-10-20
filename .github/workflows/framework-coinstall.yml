@@ -42,10 +42,10 @@ permissions:
 jobs:
   probe:
     name: resolve every framework in COMPATIBILITY.md §4a
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: actions/setup-python@v5
         with:
           # 3.11+ for tomllib, which the probe uses to read the floors out of pyproject.toml

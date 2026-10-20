@@ -37,7 +37,7 @@ REPO = Path(__file__).resolve().parents[1]
 RELEASE = REPO / ".github" / "workflows" / "release-on-runtime.yml"
 
 GATE = "The runtime's wire framing must be one this SDK implements"
-CHECKOUT = "actions/checkout"
+CHECKOUT = ("actions/checkout", "useblacksmith/checkout")
 STAMP = "Bump both packages to the runtime version"
 RETITLE = "Retitle CHANGELOG.md's Unreleased heading to this version"
 TAG = "Commit + tag (triggers publish.yml)"
@@ -62,7 +62,7 @@ def _gate_index() -> int:
 
 
 def _checkout_index() -> int:
-    return _index(lambda s: CHECKOUT in str(s.get("uses", "")), "actions/checkout")
+    return _index(lambda s: str(s.get("uses", "")).startswith(CHECKOUT), "actions/checkout")
 
 
 def test_the_framing_gate_runs_after_checkout() -> None:

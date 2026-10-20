@@ -64,7 +64,7 @@ jobs:
     name: CI is green for this commit
     # Tag-triggered only: a manual run has no vX.Y.Z ref to check (see workflow_dispatch above).
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: resolve ci-ok's conclusion for ${{ github.sha }}
         env:
@@ -151,11 +151,11 @@ jobs:
     name: tag matches the in-tree versions
     # Tag-triggered only: a manual run has no vX.Y.Z ref to check (see workflow_dispatch above).
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       # fetch-depth: 0 — the ancestry assertion below needs real history. A shallow clone has no
       # merge base to test against and would fail every tag spuriously.
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
         with:
           fetch-depth: 0
       - name: assert vTAG == ts/package.json == python version
@@ -190,9 +190,9 @@ jobs:
     name: npm → Cloudsmith
     if: github.event_name == 'push'
     needs: [version-check, ci-green]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -283,9 +283,9 @@ jobs:
     name: python wheel → Cloudsmith
     if: github.event_name == 'push'
     needs: [version-check, ci-green]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -526,7 +526,7 @@ jobs:
   publish-verify:
     name: seam-verify → Cloudsmith
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       # Job-level, because the dry-run needs it too (see the step comment below). Cloudsmith's
       # cargo:token provider expects a literal "Bearer " prefix on the value.
@@ -535,7 +535,7 @@ jobs:
       run:
         working-directory: verify
     steps:
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: dtolnay/rust-toolchain@stable
 
       # THE INDEPENDENCE PROOF IS THE PRODUCT, so it gates the publish rather than merely running
@@ -588,9 +588,9 @@ jobs:
     name: install from Cloudsmith and run the vectors
     if: github.event_name == 'push'
     needs: [npm, python]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -769,10 +769,10 @@ jobs:
     name: partner-facing packages → Cloudsmith partner
     if: github.event_name == 'push'
     needs: [npm, python, registry-smoke]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -823,7 +823,7 @@ jobs:
     name: report a release that did not publish
     if: always() && github.event_name == 'push'
     needs: [ci-green, version-check, npm, python, registry-smoke]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     permissions:
       contents: read

@@ -37,7 +37,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Resolve the target version
         id: v
@@ -54,7 +54,7 @@ jobs:
           app-id: ${{ secrets.SEAM_BOT_APP_ID }}
           private-key: ${{ secrets.SEAM_BOT_PRIVATE_KEY }}
 
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
         with:
           token: ${{ steps.app.outputs.token }}
 

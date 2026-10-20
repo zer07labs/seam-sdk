@@ -25,7 +25,7 @@ on:
 
 jobs:
   yank:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: find and delete the version's python+npm packages
         env:

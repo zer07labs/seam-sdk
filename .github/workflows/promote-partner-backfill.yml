@@ -40,14 +40,14 @@ permissions:
 jobs:
   backfill:
     name: promote published versions → partner
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     # Generous on purpose: a copy waits for Cloudsmith to synchronise the package, which runs tens
     # of seconds per artifact, and a `since` backfill is dozens of artifacts. If it does time out,
     # re-run it — the script checks the destination before every copy, so a resumed run repeats
     # nothing and the partial progress is kept.
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
