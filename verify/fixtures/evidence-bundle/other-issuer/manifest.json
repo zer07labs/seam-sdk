@@ -1,55 +1,56 @@
 {
   "format": "seam-evidence-bundle.v1",
   "scope": "decision",
-  "decision_id": "dec:design-partner:sdk265-oi-d1-0123456789abcdef",
+  "decision_id": "dec:design-partner:d1-0000000000000000000",
   "tenant": "design-partner",
-  "exported_at": 1792360245997,
+  "exported_at": 2000,
   "issuer": {
     "aid": "aid:pubkey:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg",
     "ed25519_public_key": "fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f618",
     "pin": "Trust comes from pinning this AID out of band (GET /v1/trust/issuer-aid, the anchors your notary holds), never from this file."
   },
   "inclusion": {
-    "decision_offset": 6,
-    "record_checksum": "G9YzhUrt9uS2RwNuKa59DNzZdbPCB1Y5ZXbYyAt++p0=",
+    "decision_offset": 5,
+    "record_checksum": "9UgFhDaNHkuu6VU56sGCqCfVPk4eiinVAZNuNL3B7Fg=",
     "anchor_offset": 3,
-    "anchor_attested_len": 1,
-    "window_events": 6,
-    "window_links": 5,
+    "anchor_attested_len": 2,
+    "window_events": 4,
+    "window_links": 4,
     "window_attestations": 2
   },
   "files": {
     "events.jsonl": {
-      "sha256": "48119494fd731e9d6c2b4546f26f3d65bee54d56596fecb38a400efb279cc761",
-      "bytes": 5648
+      "sha256": "242efef22d37b02169da4f618b090887e85d344cd6b6a6da80b95b35d2ccf576",
+      "bytes": 4212
     },
     "anchor.json": {
-      "sha256": "4d5da8c4e6faccedee64d1d4f99e2005adc693d9fb63355fb0bfcfabbbde66cc",
-      "bytes": 326
+      "sha256": "64dfd26d4e1c4d8d7d2670b20975a373fe037ea86366e5fb73f0adb6b1afc4c0",
+      "bytes": 317
     },
     "commitment.json": {
-      "sha256": "f50917469310e507c4883a25b5e4d69e4b9c405dc2f69508ed9b77a0f3beeab0",
-      "bytes": 2139
+      "sha256": "51081db47974a85dd8c2a2bed0a4e9cd7fb81ee8fa02a151a217e25bd8d097ba",
+      "bytes": 2109
     },
     "binding.json": {
-      "sha256": "44b2a832983cd935187fe992873f47e7aaf594cf28ab8c115fa455f1bf5176a5",
-      "bytes": 472
+      "sha256": "2656e6f8dd7a927e5e84f8900ae691cc41e06821e99991b7fcbed5dcfb0e8e2e",
+      "bytes": 456
     },
     "context.json": {
-      "sha256": "59851ab3bee1252be6d91008dbf9901010ecd9ab82a269db13660dcd1200fcbe",
-      "bytes": 21
+      "sha256": "766861bc4916b4b00885352e87da85fa92aa9f558685009dd0e4758629d76618",
+      "bytes": 479
+    },
+    "policy.json": {
+      "sha256": "5d6801ad100a0cc1d8177f65b3cf168f11a2807a859586fef3b488bf14b105ec",
+      "bytes": 247
     }
   },
   "disclosed": [
     "commitment",
     "binding",
-    "context"
+    "context",
+    "policy"
   ],
   "withheld": [
-    {
-      "item": "policy",
-      "reason": "'pol-2026-06' is not in the tenant's governing policies — the bound bytes are not recoverable here"
-    },
     {
       "item": "participation",
       "reason": "participation[].subject is the GDPR erasure predicate; only participation_digest is chained and published"

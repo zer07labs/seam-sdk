@@ -249,3 +249,29 @@ produce a mismatch, which reports the wrong thing: a malformed disclosure, not a
 **Pinned by** the spec's vector (`8e87a93f…`, five receipt slots absent) and the runtime's
 `V4_RECEIPT_CONTEXT` (`3475464e…`, all five populated) as unit tests in `src/bundle.rs`, and by the
 re-exported fixtures, which the runtime's oracle and this verifier both accept.
+
+## D-040 — the commitment TCT's `ver` is `aitp/0.3` only (AITP 0.17.0)
+
+**Decision.** `verify_tct` accepts `ver == "aitp/0.3"` and nothing else (`src/commitment.rs`
+`TCT_VER`). AITP 0.17.0 (spec bf00e75, fixture env-011) moved the literal from `aitp/0.2` with no
+dual-accept, and the runtime mints `aitp/0.3` from that release on. Every commitment digest is
+byte-identical; only the signed TCT changes. Same owner principle as D-037 and D-038: no backward
+compatibility, so no grace flag.
+
+**Consequence.** An evidence bundle or record whose commitment TCT was signed before the runtime's
+AITP 0.17.0 deploy does not verify under this build. That is a history boundary by design.
+
+**Fixtures.** Everything that carries a runtime-signed TCT was re-taken at seam-runtime a853f89
+(branch `aitp-0.17.0`), byte-vendored, nothing hand-signed:
+`conformance/commitment_digest_v3_vector.json` (only `cases[2].signed_artifact` changed),
+`conformance/vectors.json` (only `tct.signed_artifact_jws`), and `fixtures/evidence-bundle/`.
+In the bundles the DECISION_SEALED events embed the TCT, so `events.jsonl`, `anchor.json`,
+`binding.json` and `manifest.json` move with it, while `context.json` is byte-identical.
+`full/`, `minimal/` and `shredded/` come from the runtime's `fixture()`/`export()` in
+`crates/seam-verify/tests/bundle.rs`, and `full/` re-applies D-038's `--disclose context,policy`
+manifest edit over the unchanged `policy.json`. `other-issuer/` changed provenance: it is no longer a
+postgres-backed `seam-grpc` + `seam-ops export-evidence` run, but the runtime's own export path
+(`Seam::export_evidence_bundle` → `write_to_dir`) run in-process over the same `fixture()` under seed
+9×32 (same AID). Its governing document carries the policy, so policy is now disclosed rather than
+withheld. No test depended on that withholding. All four verify under the runtime's internal oracle at
+a853f89.

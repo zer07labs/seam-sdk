@@ -19,12 +19,11 @@
 //!   chained in the target's `DECISION_SEALED` record (5d6801ad…05ec), so the chain itself proves
 //!   these are the runtime's bytes. `minimal/` is the no-context export; `shredded/` has the target's
 //!   key destroyed before export, so its commitment and binding are withheld.
-//! * `other-issuer/` — a real foreign-issuer export: a postgres-backed `seam-grpc` at the same pin
-//!   under `SEAM_ISSUER_SEED` 9×32, two decisions driven through this repo's Python SDK, a restart for
-//!   the boot attestation that covers them, then
-//!   `seam-ops export-evidence --decision … --bundle … --disclose context,policy`. Its policy is
-//!   withheld with the exporter's own reason, because that server's governing document does not carry
-//!   the policy. The tests use it only for its foreign signatures (manifest pin, anchor, binding).
+//! * `other-issuer/` — a real foreign-issuer export: the runtime's own export path
+//!   (`Seam::export_evidence_bundle` → `write_to_dir`) run in-process at the same pin over the same
+//!   `fixture()` history, under `Seam::new([9u8; 32])` with `disclose_context` and `disclose_policy`.
+//!   Its governing document carries the policy, so policy is disclosed; only participation is
+//!   withheld. The tests use it only for its foreign signatures (manifest pin, anchor, binding).
 //!
 //! Every directory also verifies under the runtime's internal oracle (`seam-verify-internal`'s
 //! `seam-verify bundle`) at that commit, so a disagreement here is a disagreement between two verifiers.
