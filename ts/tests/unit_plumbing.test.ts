@@ -6,6 +6,9 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { create, toBinary } from "@bufbuild/protobuf";
 import type {
   DescMessage,
@@ -27,6 +30,7 @@ import {
 } from "../src/client.js";
 import { jcsCanonicalize, requestSigPayload, toolInputDigest } from "../src/crypto.js";
 import { DEFAULT_ADMIN_TIMEOUT_MS, SeamAdminClient } from "../src/admin.js";
+import { createIdentityFile, loadIdentityFacts, loadIdentityFile } from "../src/identity.js";
 import {
   FailedPreconditionError,
   InvalidArgumentError,
@@ -1219,6 +1223,40 @@ test("#275: an explicit credential on a bound client refreshes the SIGNER's tick
   const tickets = (client as unknown as { tickets: Map<string, { ticket: Uint8Array }> }).tickets;
   assert.deepEqual([...tickets.get(cred.aid)!.ticket], [101], "the signer's ticket is the one refreshed");
   assert.deepEqual([...tickets.get(bound.aid)!.ticket], [...CREDENTIAL_TICKET], "the bound agent's ticket is untouched");
+});
+
+test("#274 × #275: the bootstrap file's recorded aid is the key a bound client's refresh admits as and re-caches under", async () => {
+  // createIdentityFile → loadIdentityFacts gives a seed-free consumer the AID; the full loader's
+  // agent, bound to a client, must refresh a rejected ticket under exactly that AID.
+  const dir = mkdtempSync(join(tmpdir(), "seam-seam-"));
+  try {
+    const { path, aid } = createIdentityFile(join(dir, "id.json"), {
+      agentId: "ap-clerk",
+      tenant: "acme",
+      endpoint: "x:1",
+    });
+    const facts = loadIdentityFacts(path);
+    const loaded = loadIdentityFile(path);
+    assert.equal(facts.aid, aid);
+    assert.equal(loaded.aid, aid);
+    for (const name of ["GetDecision", "SubmitVote"] as const) {
+      const calls: Recorded[] = [];
+      const wire = refreshWire();
+      wire.state.reject[name] = 1;
+      const client = new SeamClient(fakeTransport(calls, wire.handle), undefined, { agent: loaded.agent });
+      seedCredentialTicket(client, facts.aid);
+      await CREDENTIAL_CALLS[name]!.invoke(client, undefined);
+      assert.equal(calls.filter((c) => c.method === name).length, 2, `${name}: one retry`);
+      const admit = calls.find((c) => c.method === "Admit")!;
+      const presentation = JSON.parse(new TextDecoder().decode(admit.input.presentationJson as Uint8Array));
+      assert.equal(presentation.sender_aid, facts.aid, `${name}: the refresh admitted as the file's AID`);
+      const tickets = (client as unknown as { tickets: Map<string, { ticket: Uint8Array }> }).tickets;
+      assert.deepEqual([...tickets.keys()], [facts.aid]);
+      assert.deepEqual([...tickets.get(facts.aid)!.ticket], [101]);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("#275: retry=false invalidates the rejected ticket, then throws — one send, no admission", async () => {

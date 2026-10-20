@@ -52,6 +52,13 @@ Execution: each phase is written by a dedicated Opus executor agent on `feat/pos
 
 ## Phase log
 
+### Finalization · 2026-10-19
+- **Gate (clean, after `make generate`):** pytest 1985 passed / 30 skipped (3 of the skips are `test_packaging`, which errors under `SEAM_REQUIRE_WHEEL_BUILD=1` locally only: the project venv has no pip, so the builder falls back to the system pip3 and builds `UNKNOWN-0.0.0`; in a pip-equipped venv with `SEAM_REQUIRE_WHEEL_BUILD=1` all 10 pass); ruff clean; TS 362 passed / 15 skipped; Go vet/test/gofmt clean; Java and Kotlin green; check-contract exit 0; sibling quotes 3/3; scripts/test_*.py guards all green.
+- **Wheel smoke:** built `seam_sdk-0.48.0` wheel, installed in a fresh venv, imports, derives, and `load_identity_facts` reads `identity_v1_aid_python.json`.
+- **verify/:** fmt and clippy clean; `cargo test` cannot link on this workstation (macOS SDK 27 tapi), untouched by this branch.
+- **Seam tests added:** create → facts → full loader → bound client's refresh admits as and re-caches under the file's AID (`test_credential_refresh.py`, sync + aio, a read and a submit; `unit_plumbing.test.ts`, the same).
+- **Docs:** plan status DONE; README Java/Kotlin rows name `loadFacts`.
+
 ### Phase 4 — Seed-free identity-facts loader (5 languages) · 2026-10-19
 - **Verdict:** PASS in 1 round. Verifier: **Fable**, because the phase is critical: it adds public API in five languages.
 - **Follow-ups closed before commit:** both assumptions CONFIRMED; Go `0x` seed case added; seedDecoder hook made volatile; the derive path zeroes the seed.

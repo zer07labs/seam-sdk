@@ -21,6 +21,7 @@ not debited twice) is not modelled by these fakes; ``test_integration.py`` prove
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import time
 from concurrent import futures
@@ -30,7 +31,15 @@ import pytest
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from seam_sdk import Agent, IssuerMismatchError, SeamClient, StepUsage
+from seam_sdk import (
+    Agent,
+    IssuerMismatchError,
+    SeamClient,
+    StepUsage,
+    create_identity_file,
+    load_identity_facts,
+    load_identity_file,
+)
 from seam_sdk._authorize import TicketCache
 from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
 from seam_sdk._gen.seam.api.v1 import seam_pb2_grpc as rpc
@@ -283,6 +292,35 @@ def test_a_bound_client_retries_with_its_bound_agent(h):
 
     assert len(wire.of("GetDecision")) == 2
     assert _cached(client, bound) == b"new-ticket-1"
+
+
+@pytest.mark.parametrize("verb", ["GetDecision", "SubmitVote"])
+def test_the_bootstrap_files_recorded_aid_keys_the_refreshed_ticket(h, tmp_path, verb):
+    # The seam between #274 and #275: the AID a seed-free consumer reads from the bootstrap file
+    # (create_identity_file → load_identity_facts) is the very key the client's refresh-once
+    # retry admits as and re-caches under, for the agent the full loader hands back.
+    path, created_aid = create_identity_file(
+        tmp_path / "id.json", agent_id="ap-clerk", tenant="acme", endpoint="x:1"
+    )
+    facts = load_identity_facts(path)
+    loaded = load_identity_file(path)
+    assert facts.aid == created_aid == loaded.agent.aid
+
+    wire = _Wire()
+    client = h.client(wire, agent=loaded.agent)
+    _seed(client, loaded.agent)
+    wire.reject[verb] = 1
+
+    _invoke(h, client, verb, None)
+
+    assert len(wire.of(verb)) == 2
+    (_, admit_req, _) = wire.of("Admit")[0]
+    presentation = json.loads(admit_req.presentation_json)
+    assert presentation["sender_aid"] == facts.aid, (
+        "the refresh admitted as the file's AID"
+    )
+    assert list(client._tickets) == [facts.aid]
+    assert client._tickets[facts.aid].get(_now_ms()) == b"new-ticket-1"
 
 
 def test_an_explicit_credential_on_a_bound_client_refreshes_the_signer_only(h):

@@ -15,7 +15,7 @@
 
 ## Status
 
-PLANNED 2026-10-19. Revised after review round 1 (see **Plan review**). All four phases are TODO.
+DONE 2026-10-19. All four phases are DONE and committed on `feat/post-onboarding-sdk-asks`; finalization (full gate, the #274 × #275 seam tests, docs sweep) is complete. Pending after merge: the seam-adapters#262 notice (Phase 3). Planned 2026-10-19 and revised after review round 1 (see **Plan review**).
 - Every decision is settled, including D-SUBMIT-RETRY and D-AID-RECORD (see **Decisions** and
   **Open questions**).
 - No phase is held.
