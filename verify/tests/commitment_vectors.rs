@@ -186,7 +186,7 @@ fn claims(grants: &str, ext: &str) -> String {
     let v = load("commitment_digest_v3_vector.json");
     let aid = v["issuer_aid"].as_str().unwrap();
     format!(
-        r#"{{"aud":"{aid}","cnf":{{"jkt":"--6IM5l0OosLj9yWskISYhUA3n_3CURQkmrYMSha_ck"}},"exp":4913600000,"ext":{ext},"grants":{grants},"iat":1760000000,"iss":"{aid}","jti":"j","sub":"{aid}","ver":"aitp/0.2"}}"#
+        r#"{{"aud":"{aid}","cnf":{{"jkt":"--6IM5l0OosLj9yWskISYhUA3n_3CURQkmrYMSha_ck"}},"exp":4913600000,"ext":{ext},"grants":{grants},"iat":1760000000,"iss":"{aid}","jti":"j","sub":"{aid}","ver":"aitp/0.3"}}"#
     )
 }
 
@@ -310,8 +310,8 @@ fn every_tct_rule_is_enforced() {
             "a duplicate top-level claim",
             HEADER.into(),
             claims(GRANTS, &ext).replacen(
-                r#""ver":"aitp/0.2""#,
-                r#""ver":"aitp/0.2","ver":"aitp/0.2""#,
+                r#""ver":"aitp/0.3""#,
+                r#""ver":"aitp/0.3","ver":"aitp/0.3""#,
                 1,
             ),
         ),

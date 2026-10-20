@@ -25,8 +25,10 @@ use sha2::{Digest, Sha256};
 /// The `kind` words the explanation digest frames — lowercase ASCII, exactly; never the proto enum name.
 pub const EXPLANATION_KINDS: &[&str] = &["vote", "evaluation", "objection", "ballot"];
 
-/// The TCT protocol version a Seam-minted TCT carries (`aitp/0.2`).
-pub const TCT_VER: &str = "aitp/0.2";
+/// The TCT protocol version a Seam-minted TCT carries (`aitp/0.3`, AITP 0.17.0). Strict: AITP
+/// 0.17.0 cut over with no dual-accept, so an `aitp/0.2` TCT — any record sealed before the
+/// runtime's 0.17.0 deploy — is refused. That is a history boundary by design.
+pub const TCT_VER: &str = "aitp/0.3";
 
 /// One sealed explanation entry, in the shape the digest reads it.
 #[derive(Clone, Debug, PartialEq)]
@@ -233,7 +235,7 @@ fn parse_no_duplicate_keys(bytes: &[u8]) -> Result<serde_json::Value, String> {
 /// Checks, all fail-closed: exactly three non-empty compact-JWS segments, each strict unpadded
 /// base64url; header `typ == "aitp-tct+jwt"` and `alg == "EdDSA"`; the Ed25519 signature over
 /// `header.payload` under the pinned key; claims parsed with duplicate keys REFUSED; `ver ==
-/// "aitp/0.2"`, `iss == aud == sub == pinned`; `iat <= now <= exp` (integer seconds); `cnf.jkt` is
+/// "aitp/0.3"`, `iss == aud == sub == pinned`; `iat <= now <= exp` (integer seconds); `cnf.jkt` is
 /// the thumbprint of the subject's key; `grants` is exactly `["aitp.attestation"]`; and `ext` is
 /// exactly `{"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":"<hex>"}}` — no other
 /// namespace, no other member — with `<hex>` the lowercase hex of `digest`.
