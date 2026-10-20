@@ -87,14 +87,14 @@ on:
 jobs:
   drift:
     name: is main's declared version installable?
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     permissions:
       contents: read      # the checkout
       issues: write       # file, comment on and reopen the one drift issue per version
       actions: read       # this workflow's own run history, for the staleness heartbeat
     steps:
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@v1
         with:
           # BOTH, explicitly. `fetch-depth: 0` is widely believed to bring tags with it, but that
           # is `actions/checkout` behaviour rather than a contract — and a tag-less checkout here
