@@ -43,11 +43,21 @@ def _pubkey_of_aid(aid: str) -> bytes:
     return base64.urlsafe_b64decode(b64 + "=" * (-len(b64) % 4))
 
 
-class FakeSeam(rpc.SeamAdmissionServicer, rpc.SeamAuthorizationServicer):
+class FakeSeam(
+    rpc.SeamAdmissionServicer,
+    rpc.SeamAuthorizationServicer,
+    rpc.SeamCoordinationServicer,
+):
     """A minimal admission + authorization server that verifies tickets and call_sigs for real.
 
     Tickets are ``b"tkt:" + <8-byte counter>``; the server remembers which tickets it minted and
     can be told to reject them (``revoke_all``) to drive the UNAUTHENTICATED retry path.
+
+    It also answers three credentialed coordination verbs — ``SessionStatus``, ``GetDecision`` and
+    ``ReportOutcome`` (#275) — under the SAME ticket rules as ``Authorize``: the
+    ``x-seam-ticket-bin`` header must hold a live minted ticket, ``fail_next_unauthenticated`` and
+    ``reject_barrier`` apply to them too, and a call with no credential header is refused. A fixture
+    must register ``add_SeamCoordinationServicer_to_server`` for them to be reachable.
     """
 
     def __init__(self, ttl_ms: int = 300_000):
@@ -70,6 +80,16 @@ class FakeSeam(rpc.SeamAdmissionServicer, rpc.SeamAuthorizationServicer):
         #: rather than passing on a serialized run that proved nothing.
         self.reject_barrier: threading.Barrier | None = None
         self.last_request: pb.AuthorizeRequest | None = None
+        #: Per-verb call counts for the coordination handlers, and per call the serialized request
+        #: plus the ticket header it carried (``None`` when no credential was sent).
+        self.coord_calls: dict = {}
+        self.coord_seen: dict = {}
+        #: When set, ``Admit`` sets ``admit_entered`` and then blocks until this event is set — the
+        #: hook that lets a test cancel a client mid-refresh deterministically.
+        self.admit_hold: threading.Event | None = None
+        self.admit_entered = threading.Event()
+        #: When set, ``Admit`` aborts with this status (a refused refresh).
+        self.admit_fail: grpc.StatusCode | None = None
         self._lock = threading.Lock()
 
     def revoke_all(self) -> None:
@@ -90,10 +110,16 @@ class FakeSeam(rpc.SeamAdmissionServicer, rpc.SeamAuthorizationServicer):
         return pb.Challenge(nonce="bm9uY2U", receiver_aid="aid:pubkey:receiver")
 
     def Admit(self, request, context):  # noqa: N802
+        if self.admit_fail is not None:
+            context.abort(self.admit_fail, "admission refused")
         with self._lock:
             self.admits += 1
             ticket = b"tkt:" + self.admits.to_bytes(8, "big")
             self.valid_tickets.add(ticket)
+            hold = self.admit_hold
+        if hold is not None:
+            self.admit_entered.set()
+            hold.wait(timeout=15)
         # The fake trusts the presentation (crypto conformance is pinned elsewhere); it exists to
         # count round-trips and mint verifiable tickets.
         return pb.AdmissionTicket(
@@ -130,6 +156,73 @@ class FakeSeam(rpc.SeamAdmissionServicer, rpc.SeamAuthorizationServicer):
             policy_version="policy-v1",
         )
 
+    # ── SeamCoordination (the credentialed verbs #275 retries) ──
+    def _check_credential(self, verb: str, request, context) -> None:
+        """Count the call, then refuse it ``UNAUTHENTICATED`` exactly as ``Authorize`` would: a
+        scripted rejection, a missing credential, or a ticket that is not live."""
+        ticket = dict(context.invocation_metadata()).get("x-seam-ticket-bin")
+        with self._lock:
+            self.coord_calls[verb] = self.coord_calls.get(verb, 0) + 1
+            self.coord_seen.setdefault(verb, []).append(
+                (request.SerializeToString(), ticket)
+            )
+            if self.fail_next_unauthenticated > 0:
+                self.fail_next_unauthenticated -= 1
+                reason = "ticket rejected"
+            elif ticket is None:
+                reason = "missing credential"
+            elif ticket not in self.valid_tickets:
+                reason = "unknown ticket"
+            else:
+                reason = ""
+            if reason:
+                self.rejections += 1
+            barrier = self.reject_barrier
+        if reason:  # outside the lock, for the reason given in Authorize
+            if barrier is not None:
+                barrier.wait(timeout=15)
+            context.abort(grpc.StatusCode.UNAUTHENTICATED, reason)
+
+    def SessionStatus(self, request, context):  # noqa: N802
+        self._check_credential("SessionStatus", request, context)
+        return pb.SessionStatusResponse(state="Open")
+
+    def GetDecision(self, request, context):  # noqa: N802
+        self._check_credential("GetDecision", request, context)
+        return pb.DecisionRecordView(decision_id=request.decision_id)
+
+    def ReportOutcome(self, request, context):  # noqa: N802
+        self._check_credential("ReportOutcome", request, context)
+        return pb.ReportOutcomeResponse(recorded=True)
+
+    # The seven session steps (#275 Phase 2, D-SUBMIT-RETRY). One shape: refuse like Authorize would,
+    # else a live step. What the RUNTIME does with a resend is not modelled here (see
+    # test_integration.py); this fake only proves what the SDK sends.
+    def _step(self, verb: str, request, context):
+        self._check_credential(verb, request, context)
+        return pb.SessionStep(state="Open")
+
+    def SubmitProposal(self, request, context):  # noqa: N802
+        return self._step("SubmitProposal", request, context)
+
+    def SubmitVote(self, request, context):  # noqa: N802
+        return self._step("SubmitVote", request, context)
+
+    def SubmitEvaluation(self, request, context):  # noqa: N802
+        return self._step("SubmitEvaluation", request, context)
+
+    def SubmitObjection(self, request, context):  # noqa: N802
+        return self._step("SubmitObjection", request, context)
+
+    def SubmitCommit(self, request, context):  # noqa: N802
+        return self._step("SubmitCommit", request, context)
+
+    def SubmitApprovalRequest(self, request, context):  # noqa: N802
+        return self._step("SubmitApprovalRequest", request, context)
+
+    def SubmitBallot(self, request, context):  # noqa: N802
+        return self._step("SubmitBallot", request, context)
+
 
 class HangingSeam(
     rpc.SeamAdmissionServicer,
@@ -157,6 +250,7 @@ def fake_server():
     servicer = FakeSeam()
     rpc.add_SeamAdmissionServicer_to_server(servicer, server)
     rpc.add_SeamAuthorizationServicer_to_server(servicer, server)
+    rpc.add_SeamCoordinationServicer_to_server(servicer, server)
     port = server.add_insecure_port("127.0.0.1:0")
     server.start()
     yield servicer, f"127.0.0.1:{port}"

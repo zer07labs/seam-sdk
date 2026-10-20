@@ -1219,7 +1219,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:1438-1460` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:1487-1509` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2049,7 +2049,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:1470` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:1519` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -2702,3 +2702,238 @@ Both are reversible additive choices inside the SDK; neither is a one-way door, 
 - **Options:** a Go-only `go/v0.48.1` with `retract v0.48.0`; waiting for the next runtime train; retracting only.
 - **Verdict:** `go/v0.48.1` on main, with `retract v0.48.0` in `go/go.mod`. Go is one patch ahead of the
   runtime for this train only. The next runtime release tags `go/v{runtime}` as usual. **Decided by:** owner.
+
+## 2026-10-19 — refresh-once on the credentialed reads and `report_outcome` (#275, post-onboarding Phase 1)
+
+Plan: `plans/post-onboarding-sdk-asks.md` (Phase 1, B-SDK-REFRESH). Python (sync and aio) and TS. Go, Java and
+Kotlin have no client and no ticket cache, so there is nothing to extend there.
+
+### Supersedes the "never retries" line at `DECISIONS.md:2660`
+- **What changes:** the 2026-10-18 entry says "The SDK still never retries". That was already loose, since
+  `authorize` has always refreshed a rejected ticket once. From #275 the same single refresh also covers the
+  five credentialed reads and `report_outcome`. What still holds without exception: a **load-shed**
+  (`RESOURCE_EXHAUSTED`, `UNAVAILABLE` `CHALLENGE_REFUSED`) is never retried. That includes when it is the
+  refresh's own admission, which propagates typed. No other status is retried, and no call is ever sent
+  more than twice.
+- **The old entry is left as written** (append-only); this entry is the current rule.
+
+### D-READ-RETRY — refresh once, resend once, for the five reads and `report_outcome`
+- **Chose:** on `UNAUTHENTICATED`, `get_escalation`, `session_status`, `get_decision`, `replay_decision`,
+  `get_commitment_proof` (so `verify_decision`) and `report_outcome` refresh the signer's ticket through
+  `authorize`'s coalescing `_refresh_ticket` / `refreshTicket` (adopt a ticket another caller already
+  refreshed in, else invalidate and re-admit). They then re-sign the same request under the new ticket and
+  resend exactly once. The shared helper is `_credentialed_call` (Python, sync and aio) / `credentialedCall` (TS).
+  A rejected read and a rejected `authorize` on one AID share one re-admit (pinned by
+  `test_mixed_authorize_and_read_rejections_coalesce_to_one_readmit_{sync,aio}` and the TS twin).
+  `report_outcome` qualifies because it is idempotent by contract (`idempotency_key`) and exempt from the
+  replay guard. The resent body is byte-identical (pinned by `test_report_outcome_resends_a_byte_identical_body`).
+- **Alternatives:** (a) leave the reads one-shot and make every caller wrap them. That is the friction #275
+  reported. (b) A read-local refresh that does not share `authorize`'s per-AID lock. That would give two re-admits
+  per revocation where one suffices, which is the stampede the 2026-10 refresh fix removed.
+- **Blast radius:** at most one extra admission handshake and one extra RPC per rejected call, each under the
+  caller's per-RPC deadline, so the worst case is six deadline-bounded calls (the `authorize` bound). The
+  change is observable: a caller that counted on the first `UNAUTHENTICATED` now sees it only on the second
+  rejection. It is reversible behind the helper's `retry` flag.
+- **Status:** DECIDED (plan, owner); implemented in Phase 1.
+
+### D-NO-CRED-NO-RETRY — no resolved credential, no refresh
+- **Chose:** with no `credential=` and no bound agent, nothing is signed and there is no ticket, so the call is
+  sent once and its `UNAUTHENTICATED` propagates. No admission is attempted (pinned by
+  `test_no_credential_means_no_refresh_and_no_retry` and `test_grpc_no_credential_is_one_call_zero_admits`).
+- **Alternatives:** admit some identity to recover. There is none to admit as, and a deny plane refuses the bare
+  read for exactly this reason.
+- **Blast radius:** none beyond today's behaviour for unbound calls.
+- **Status:** DECIDED (plan, owner); implemented in Phase 1.
+
+### D-WRITES-EXCLUDED — `open_session`, `cancel_session`, `expire_session` get no retry
+- **Chose:** these three stay one-shot. Nobody asked for a retry. `open_session`'s `UNAUTHENTICATED` may come
+  from its single-use presentation, which a ticket refresh does not fix. A repeated terminal transition has no
+  dedupe evidence. In Phase 1 the seven `submit_*` verbs are also still one-shot, because D-SUBMIT-RETRY is
+  Phase 2. The guard `test_the_ten_writes_still_make_exactly_one_call` (Python, sync and aio) and its TS twin
+  pin all ten at one call. Phase 2 narrows that guard to these three.
+- **Alternatives:** retry every credentialed write. That would resend a terminal transition without
+  idempotency evidence.
+- **Blast radius:** a caller of these three still handles a rejected ticket itself. Adding a retry later is
+  additive.
+- **Status:** DECIDED (plan, owner); implemented in Phase 1 by leaving these verbs on the one-shot path.
+
+## 2026-10-19 — refresh-once on the seven `submit_*` steps (#275, post-onboarding Phase 2)
+
+Plan: `plans/post-onboarding-sdk-asks.md` (Phase 2). Python (sync and aio) and TS, through the Phase 1 helper
+(`_credentialed_call` / `credentialedCall`) with `retry=True`. Go, Java and Kotlin have no client.
+
+### D-SUBMIT-RETRY — the seven `submit_*` steps refresh a rejected ticket once and resend the same body
+- **Chose:** on `UNAUTHENTICATED`, `submit_proposal`, `submit_vote`, `submit_evaluation`, `submit_objection`,
+  `submit_commit`, `submit_approval_request` and `submit_ballot` refresh the signer's ticket (the same coalesced
+  per-AID refresh as D-READ-RETRY), re-sign the **same request object** under the new ticket, and resend
+  exactly once. Safety rests on four runtime facts (plan, *What the runtime guarantees*):
+  1. a refused credential has no effect — the credential layer refuses before the handler, so no engine step,
+     audit append, outbox row or debit is reachable (fact 1);
+  2. the replay digest is burned in that same layer, so a resend must be re-signed under a different ticket —
+     which the refresh guarantees (fact 2);
+  3. credentialed writes are single-use, so an application's own resend of a write that already landed is
+     refused as `request_replayed`, which surfaces as the uniform `UNAUTHENTICATED` (fact 6);
+  4. the engine dedupes a step by content — `message_id = SHA-256(session‖sender‖type‖payload)`, and `usage`
+     is not in the payload — so the refreshed resend of that write applies nothing (fact 7).
+
+  Within one SDK call the retry cannot double-apply (1). Across calls, the laundering path — lost response →
+  app resend → `request_replayed` → refresh → resend → engine dedupe — ends where the spec's own prescribed
+  client retry (`authorize.v1.md`, "retry a write under a fresh ticket") ends: success, no second effect.
+  Proven live against `seam-grpc` in the credential-only posture:
+  `test_submit_retry_lands_once_and_resends_are_deduped` and `test_submit_retry_debits_the_vote_exactly_once`
+  (`python/tests/test_integration.py`) and their two TS twins (`ts/tests/integration.test.ts`). The proof is
+  the **exactly-once debit**: one vote is sent three times (the third with a different `usage`) at 600 tokens
+  each, and the same flow resolves under a 1000-token hard limit but suspends under a 600-token one — a
+  second debit would have tripped the 1000 gate. The commit's `approve_count == 1` is NOT independent
+  evidence: the mode allows one vote per voter, so it would read 1 even if the resends had been applied.
+  Dedupe is therefore proven live for **`submit_vote` and `submit_commit` only** (the commit's identical resend
+  is refused as a replay, refreshed, and returns the sealed id). The other five verbs rely on the same engine
+  path — `Precheck::Duplicate` in `macp_modes` — which is **unverified at source** here.
+- **Two observable consequences, documented on every `submit_*`** (shared paragraph `_SUBMIT_RETRY_NOTE` in
+  Python, inline in TS), in the README and in `COMPATIBILITY.md`:
+  - `SessionStep` has no disposition, so "deduped" cannot be told from "applied". A duplicate of a
+    **non-resolving** step returns `decision_id`, `policy_enforcement` and `collective_outcome` all unset. A
+    resend after the session **sealed** (resolved, cancelled or expired by a client call) takes the sealed
+    early return: the sealed `decision_id`, **no `collective_outcome`**, `policy_enforcement` only if the
+    session is `sealed_attestable`. After a retried write, read `get_decision` for the outcome. Pinned live by
+    the resolving-commit resend in `test_submit_retry_lands_once_and_resends_are_deduped` and by
+    `test_submit_retry_after_client_seal_returns_sealed_id` (the session cancelled between rejection and
+    resend); the SDK's pass-through by the unit twin of that name.
+  - A deduped resend whose `reason` trips the boundary guard appends one more `boundary.data_flagged` audit
+    row. That is already true of an application's own resend; not a correctness issue.
+- **A swept session** (or one with an Expire/Cancel seal pending) refuses the resend `FAILED_PRECONDITION`
+  (`session_not_open`); it propagates typed and is not retried
+  (`test_submit_retry_failed_precondition_propagates_typed_and_is_not_retried`). The live twin
+  `test_submit_retry_after_sweeper_expiry_raises_failed_precondition` is **skipped with its reason**: the session
+  TTL is the runtime's fixed 30 min, with no override, so no session can be swept between a rejection and its
+  resend.
+- **Alternatives:** (a) **invalidate, then raise** — not materially safer: the caller's own retry crosses the
+  identical path to the identical dedupe. It stays reachable as `retry=False` (the flip-back point is the
+  explicit `retry=True` at each call site). (b) **No retry and no invalidate** — the dead ticket stays cached
+  until 80% of its TTL (up to ~240 s on the 300 s default), so every write fails that long while the reads
+  self-heal. (c) **Detect `request_replayed` client-side** and answer it differently — impossible: every
+  ticket failure carries one byte-identical message (fact 3), by design.
+- **Blast radius:** a rejected step costs at most one extra admission handshake and one extra RPC, each under
+  the caller's deadline. A caller that relied on the first `UNAUTHENTICATED` from a step now sees it only on
+  the second. A caller that resends a step after a lost response now gets success (deduped) instead of
+  `UNAUTHENTICATED`, and must read `get_decision` rather than trust `collective_outcome` on that response.
+- **Status:** DECIDED (plan, owner); implemented in Phase 2.
+
+### D-WRITES-EXCLUDED — narrowed to its three verbs
+- The Phase 1 guard `test_the_ten_writes_still_make_exactly_one_call` is now
+  `test_the_three_excluded_writes_still_make_exactly_one_call` (Python, sync and aio) and its TS twin asserts
+  the non-retrying set **is** `{OpenSession, CancelSession, ExpireSession}`. The reasoning in the Phase 1
+  entry stands unchanged.
+
+## 2026-10-19 — the bootstrap file records its `aid` (#274, post-onboarding Phase 3)
+
+Plan: `plans/post-onboarding-sdk-asks.md` (Phase 3, B-CORE-FACTS SDK half). All five languages.
+
+### D-AID-RECORD — new files carry `"aid"`; a recorded `aid` is verified only when present
+- **Chose:** every writer (`create_identity_file`, `createIdentityFile`, `identity.CreateIdentityFile`,
+  `IdentityFile.create` in Java and Kotlin) appends the derived AID as the last key, `"aid"`, and keeps
+  `version: 1`. Every full loader, after its existing checks (version, `seed_hex`, required fields), refuses a
+  present `aid` that is not a string matching `^aid:pubkey:ed25519:[A-Za-z0-9_-]{43}$` (`"aid is malformed"`;
+  that covers empty, `null`, numbers and lists) or that differs from the seed-derived AID (`"recorded aid does
+  not match seed_hex"`). A file without `aid` loads unchanged and is never rewritten. Python and TS pin the
+  exact bytes against `ts/tests/fixtures/identity_v1_aid_python.json` (Python's real writer with the seed
+  pinned; TS's `identityFileBody`); Go, Java and Kotlin pin key order and the `aid` value, since their
+  serializers differ in whitespace and escaping. Backward compatibility is checked, not argued:
+  `test_a_file_that_records_aid_loads_in_the_pre_aid_release` loads the `f1d112d` `python/seam_sdk/identity.py`
+  as `seam_sdk._identity_f1d112d` and reads the new fixture through it. The loader is vendored byte-exact as
+  `python/tests/fixtures/identity_f1d112d.py.txt` and pinned by its git blob id, so the test also runs in CI's
+  shallow clone.
+- **Alternatives:** (a) a version-2 schema — breaks every older loader for an additive fact. (b) a
+  `public_key_hex` key — the AID *is* the encoded public key and is what consumers display, so `aid` needs no
+  crypto to read back. (c) a sidecar `.pub` file — a second custody artefact. (d) backfilling existing files —
+  rewriting a secret file is a custody operation for its own issue (Open question 4).
+- **Blast radius:** on disk this is a one-way door, but additive and ignorable: every loader since #201 ignores
+  unknown keys. Observable: a created file has six keys, not five, and a hand-edited or mismatched `aid` is now
+  refused by the full loader. seam-adapters (#262) is told the schema gained an optional key.
+- **Status:** DECIDED (plan, owner); implemented in Phase 3.
+
+## 2026-10-19 — read a bootstrap file's facts without a signing key (#274, post-onboarding Phase 4)
+
+Plan: `plans/post-onboarding-sdk-asks.md` (Phase 4, B-CORE-FACTS SDK half). All five languages.
+
+### D-FACTS-API — a second loader returning a capability-free value type
+- **Chose:** a separate loader, `load_identity_facts` (TS `loadIdentityFacts`, Go `identity.LoadIdentityFacts`,
+  Java/Kotlin `IdentityFile.loadFacts`), returning `IdentityFacts` with exactly four string fields: `agent_id`,
+  `tenant`, `endpoint`, `aid` (each language's naming idiom). It never constructs an `Agent`. On a file that
+  records `aid` it returns that value as the file's **claim**, shape-checked but not verified, and the seed is
+  never hex-decoded. The full loader remains the verifier. Every docstring says so, and a test pins that a
+  mismatched `aid` is returned by the facts loader and refused by the full loader.
+- **Alternatives:** (a) a `public_only=True` flag on the full loader, which gives one function two return types.
+  (b) Make `LoadedIdentity.agent` lazy, which keeps a signing path reachable from the value. (c) Verify the
+  recorded `aid` in the facts loader too, which needs the seed decoded and the public key computed on every
+  call, so the facts loader is no longer seed-free on new files.
+- **Blast radius:** additive, with new names on every public surface (Python `__all__`, the TS root export
+  list, Go's `identity` package, Java's nested record, Kotlin's top-level data class). A consumer that displays
+  facts can show a hand-edited `aid`. One that will sign must load with the full loader, which refuses it.
+- **Status:** DECIDED (plan, owner); implemented in Phase 4.
+
+### D-LEGACY-AID — a file without `aid` gets one derived transiently
+- **Chose:** for a pre-#274 file the facts loader decodes the seed, derives the Ed25519 public key, and returns
+  only `aid_from_pubkey(pub)`. The key never leaves the call and no `Agent` is built. So `aid` is a required
+  string on `IdentityFacts`, never optional.
+- **Alternatives:** (a) return `aid=None` for legacy files, which pushes a crypto step onto every consumer.
+  (b) Refuse legacy files, which breaks every file written before #274. (c) Backfill `aid` into the file on
+  read, which rewrites a secret file and is a custody operation (Open question 4).
+- **Blast radius:** the seed is decoded for legacy files only. The no-decode test covers files that record
+  `aid`; the same test shows a legacy file does decode.
+- **Status:** DECIDED (plan, owner); implemented in Phase 4.
+
+### D-FACTS-CHECKS — one shared validator, same checks, same order, same messages
+- **Chose:** each language has one private validator (`_read_and_validate`, `readAndValidate`) that both
+  loaders call. It resolves, reads and parses the file and requires an object. It then checks `version`, then
+  `seed_hex` (a string of length 64, else the "64 hex chars" message; then `^[0-9a-fA-F]{64}$`, else
+  `"seed_hex is not valid hex"`). Then it checks the required fields and shape-checks a present `aid`. It
+  returns `seed_hex` as an opaque string, so only the full loader, and the facts loader on a legacy file, decode
+  it, through one hookable decoder per language (Python `_decode_seed`, TS `seedCodec.decodeSeed`, Go
+  `decodeSeed`, Java/Kotlin `IdentityFile.seedDecoder`). A parametrized test per language asserts both loaders
+  refuse each bad file with the identical message.
+- **Alternatives:** (a) a lighter facts validator, which lets a file load for display that the signer refuses.
+  (b) Decode the seed in the validator, which breaks no-decode for files that record `aid`.
+- **Blast radius:** one observable change, in Python only. A 64-character seed containing whitespace (e.g.
+  `"00"*31 + "  "`) was refused with the "64 hex chars" message, because `bytes.fromhex` skips whitespace and
+  decoded it to 31 bytes. It is now refused with `"seed_hex is not valid hex"`. The file is refused either way.
+  TS, Go, Java and Kotlin already said "not valid hex". The plan's own example, `"00 "*21 + "0"`, already
+  failed with "not valid hex" before this change, since the trailing lone digit makes `fromhex` raise. Both
+  inputs are tested, and `test_a_whitespace_seed_changed_message_and_only_message` pins the old message
+  against the vendored f1d112d loader.
+- **Status:** DECIDED (plan, owner); implemented in Phase 4.
+
+
+## 2026-10-19 — reconcile the post-onboarding coalesced-refresh assumption (#275, 1 entry)
+
+A reversible, SDK-internal retry bound; not a one-way door, so Opus decided it.
+**Decided by:** Opus (/reconcile, reversible tier).
+
+### A coalesced refresh can hand a caller an already-dead ticket; it fails typed rather than refreshing again
+- **Assumption:** when a credentialed call adopts a ticket another caller just refreshed in and that ticket is
+  also rejected, the single resend fails with `UnauthenticatedError`; there is no second refresh
+  (`ASSUMPTIONS.md`, "A coalesced refresh can hand a caller a ticket that is already dead").
+- **Evidence:** `python/seam_sdk/client.py` `_refresh_ticket` (adopt-if-different under the per-AID lock) and
+  `_credentialed_call` (refresh once, resend once); the `aio.py` twins; `ts/src/client.ts` `refreshTicket` /
+  `credentialedCall` (adopt-if-different plus `admit`'s in-flight map). Pinned by
+  `python/tests/test_credential_refresh.py` (`test_a_second_rejection_propagates_typed`, the four
+  `test_grpc_n_concurrent_rejected_*_coalesce_to_one_readmit_*` tests).
+- **Analysis:**
+  - *Refresh storms.* The adopted ticket being dead means revocation is still in progress, i.e. the admission
+    endpoint is under the most load it will see. A second refresh per caller turns N callers into up to 2N
+    admit attempts on exactly that endpoint; even coalesced, it doubles the serialized lock-hold chain. The
+    current bound (one admit attempt per caller, at most six wire calls per verb, identical to `authorize`) is
+    the property worth keeping.
+  - *Retry amplification.* Callers routinely wrap SDK calls in their own retry. An inner 2-refresh loop under
+    an outer N-retry loop multiplies admits; a single inner refresh keeps the product predictable.
+  - *Recovery.* The adopter's failed resend leaves the dead ticket cached, so its next call sends once more on
+    it, is rejected, and `_refresh_ticket` now finds `current == failed` and re-admits fresh. Recovery is
+    automatic on the next call at the cost of one extra rejected send; no caller-side invalidation is needed.
+  - *Frequency.* The failure needs a second revocation inside one refresh round trip, which outside a genuine
+    revocation storm does not happen; inside one, surfacing typed is the correct signal.
+  - *Reversibility.* Moving to a bounded second refresh later would only turn some typed failures into
+    successes: no signature, type or exported name changes, so it is additive and non-breaking. Tightening
+    back after loosening would not be, which favours starting at the tighter bound.
+- **Verdict:** confirm as written. No code change. A bounded second refresh stays available as an additive
+  change if production evidence shows adopters failing outside revocation storms.
+- **Status:** CONFIRMED (2026-10-19).

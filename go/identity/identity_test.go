@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -105,7 +107,7 @@ func TestFileIsSchemaV1WithTheAdaptersFieldNames(t *testing.T) {
 		var skip any
 		_ = dec.Decode(&skip)
 	}
-	if strings.Join(keys, ",") != "version,seed_hex,agent_id,tenant,endpoint" {
+	if strings.Join(keys, ",") != "version,seed_hex,agent_id,tenant,endpoint,aid" {
 		t.Fatalf("keys: %v", keys)
 	}
 	var data map[string]any
@@ -235,4 +237,290 @@ func TestMalformedFilesAreLoud(t *testing.T) {
 func TestMissingFileIsLoud(t *testing.T) {
 	_, err := LoadIdentityFile(filepath.Join(t.TempDir(), "nope.json"))
 	asIdentityErr(t, err, "not found")
+}
+
+// seam-sdk#274 (D-AID-RECORD): a created file records its AID; a recorded aid is verified on load.
+
+const (
+	fixtureSeedHex = "ddc1524b29efe5bc1b9e9ea141b2a4740ba3e4d52f781afa3c1ffb3a3970580c"
+	fixtureAID     = "aid:pubkey:ed25519:9x_uM2PCzXE8pt6di2RwwKCkod7W5kctdLdoIVtKep4"
+)
+
+func TestCreatedFileRecordsTheReturnedAID(t *testing.T) {
+	path, aid := mustCreate(t, filepath.Join(t.TempDir(), "id.json"))
+	raw, _ := os.ReadFile(path)
+	var data map[string]any
+	if err := json.Unmarshal(raw, &data); err != nil {
+		t.Fatal(err)
+	}
+	seed, _ := hex.DecodeString(data["seed_hex"].(string))
+	derived, _ := crypto.NewAgent(seed)
+	if data["aid"] != aid || derived.AID() != aid {
+		t.Fatalf("recorded aid %v, returned %s, derived %s", data["aid"], aid, derived.AID())
+	}
+}
+
+func writeWithAID(t *testing.T, aid any) string {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"version": 1, "seed_hex": fixtureSeedHex, "agent_id": "a", "tenant": "t", "endpoint": "e:1", "aid": aid,
+	})
+	p := filepath.Join(t.TempDir(), "id.json")
+	if err := os.WriteFile(p, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestABadRecordedAIDIsRefused(t *testing.T) {
+	other := make([]byte, 32)
+	for i := range other {
+		other[i] = byte(i)
+	}
+	otherAgent, _ := crypto.NewAgent(other)
+	for _, c := range []struct {
+		name string
+		aid  any
+		want string
+	}{
+		{"mismatch", otherAgent.AID(), "recorded aid does not match seed_hex"},
+		{"short", fixtureAID[:len(fixtureAID)-1], "aid is malformed"},
+		{"long", fixtureAID + "A", "aid is malformed"},
+		{"wrong-alg", strings.Replace(fixtureAID, "ed25519", "ed448", 1), "aid is malformed"},
+		{"non-b64url", fixtureAID[:len(fixtureAID)-1] + "=", "aid is malformed"},
+		{"empty", "", "aid is malformed"},
+		{"null", nil, "aid is malformed"},
+		{"number", 42, "aid is malformed"},
+		{"list", []string{fixtureAID}, "aid is malformed"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := LoadIdentityFile(writeWithAID(t, c.aid))
+			var ie *IdentityFileError
+			if !errors.As(err, &ie) || ie.Error() != c.want {
+				t.Fatalf("want IdentityFileError %q, got %T: %v", c.want, err, err)
+			}
+		})
+	}
+}
+
+func TestAMatchingRecordedAIDLoads(t *testing.T) {
+	loaded, err := LoadIdentityFile(writeWithAID(t, fixtureAID))
+	if err != nil || loaded.AID() != fixtureAID {
+		t.Fatalf("load: %v", err)
+	}
+}
+
+func TestTheSharedAIDFixtureLoadsWithItsRecordedAID(t *testing.T) {
+	// Written by Python's create_identity_file (seam-sdk#274); the TS suite pins its bytes.
+	p := filepath.Join("..", "..", "ts", "tests", "fixtures", "identity_v1_aid_python.json")
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var data map[string]any
+	if err := json.Unmarshal(raw, &data); err != nil || data["aid"] != fixtureAID {
+		t.Fatalf("fixture aid: %v %v", data["aid"], err)
+	}
+	loaded, err := LoadIdentityFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.AID() != fixtureAID || hex.EncodeToString(loaded.Agent.Seed()) != fixtureSeedHex {
+		t.Fatalf("aid %s", loaded.AID())
+	}
+	if loaded.AgentID != "ap-clerk" || loaded.Tenant != "acm\u00e9" || loaded.Endpoint != "seam.example:443" {
+		t.Fatalf("fields: %+v", loaded)
+	}
+}
+
+func TestALegacyFileWithoutAIDLoadsUnchanged(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "legacy.json")
+	raw := `{"version": 1, "seed_hex": "` + fixtureSeedHex + `", "agent_id": "ap-clerk", "tenant": "acme", "endpoint": "seam.example:443"}`
+	_ = os.WriteFile(p, []byte(raw), 0o600)
+	loaded, err := LoadIdentityFile(p)
+	if err != nil || loaded.AID() != fixtureAID {
+		t.Fatalf("legacy load: %v", err)
+	}
+}
+
+// ── seam-sdk#274 (D-FACTS-API, D-LEGACY-AID, D-FACTS-CHECKS): the seed-free facts loader ─────────────
+
+var (
+	legacyFixture = filepath.Join("..", "..", "ts", "tests", "fixtures", "identity_v1_python.json")
+	aidFixture    = filepath.Join("..", "..", "ts", "tests", "fixtures", "identity_v1_aid_python.json")
+	hex64         = regexp.MustCompile(`[0-9a-fA-F]{64}`)
+)
+
+func factsOf(agentID, tenant, endpoint, aid string) [4]string {
+	return [4]string{agentID, tenant, endpoint, aid}
+}
+
+func TestIdentityFactsCarryNoSigningCapability(t *testing.T) {
+	// Criterion 1: exactly the four public string fields.
+	typ := reflect.TypeOf(IdentityFacts{})
+	var names []string
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		if f.Type.Kind() != reflect.String {
+			t.Fatalf("field %s is %s, not a string", f.Name, f.Type)
+		}
+		names = append(names, f.Name)
+	}
+	if !reflect.DeepEqual(names, []string{"AgentID", "Tenant", "Endpoint", "AID"}) {
+		t.Fatalf("fields: %v", names)
+	}
+	for _, p := range []string{legacyFixture, aidFixture} {
+		facts, err := LoadIdentityFacts(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, rendered := range []string{facts.String(), fmt.Sprintf("%v", facts), fmt.Sprintf("%+v", *facts), fmt.Sprintf("%#v", facts)} {
+			if hex64.MatchString(rendered) || !strings.Contains(rendered, fixtureAID) {
+				t.Fatalf("rendered: %s", rendered)
+			}
+		}
+	}
+}
+
+func withDecoder(t *testing.T, fn func(string) ([]byte, error)) *int {
+	t.Helper()
+	calls := 0
+	saved := decodeSeed
+	decodeSeed = func(s string) ([]byte, error) { calls++; return fn(s) }
+	t.Cleanup(func() { decodeSeed = saved })
+	return &calls
+}
+
+func TestAFileThatRecordsAIDIsServedWithoutDecodingTheSeed(t *testing.T) {
+	// Criterion 2: the hooked decoder refuses; the facts loader never calls it on a Phase-3 file.
+	calls := withDecoder(t, func(string) ([]byte, error) { return nil, errors.New("seed decoded") })
+	facts, err := LoadIdentityFacts(aidFixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := factsOf(facts.AgentID, facts.Tenant, facts.Endpoint, facts.AID); got != factsOf("ap-clerk", "acm\u00e9", "seam.example:443", fixtureAID) {
+		t.Fatalf("facts: %v", got)
+	}
+	if *calls != 0 {
+		t.Fatalf("decoder called %d times", *calls)
+	}
+	if _, err := LoadIdentityFile(aidFixture); err == nil || errors.Unwrap(err).Error() != "seed decoded" || *calls != 1 {
+		t.Fatalf("full loader must decode: %v (calls %d)", err, *calls)
+	}
+	// A legacy file has no recorded aid, so deriving one necessarily decodes the seed.
+	if _, err := LoadIdentityFacts(legacyFixture); err == nil || errors.Unwrap(err).Error() != "seed decoded" || *calls != 2 {
+		t.Fatalf("legacy facts must decode: %v (calls %d)", err, *calls)
+	}
+}
+
+func TestIdentityFactsAgreeWithTheFullLoaderOnEveryField(t *testing.T) {
+	// Criterion 4: legacy, recorded-aid, freshly created and adapters-shaped files.
+	created, _ := mustCreate(t, filepath.Join(t.TempDir(), "created.json"))
+	seed := make([]byte, 32)
+	for i := range seed {
+		seed[i] = byte(i)
+	}
+	partner := filepath.Join(t.TempDir(), "partner.json")
+	_ = os.WriteFile(partner, []byte(fmt.Sprintf(`{"version": 1, "seed_hex": %q, "agent_id": "qa-confirm", "tenant": "t1", "endpoint": "localhost:50051", "comment": "extra keys are ignored"}`, hex.EncodeToString(seed))), 0o600)
+	for _, p := range []string{legacyFixture, aidFixture, created, partner} {
+		facts, err := LoadIdentityFacts(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		full, err := LoadIdentityFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if factsOf(facts.AgentID, facts.Tenant, facts.Endpoint, facts.AID) != factsOf(full.AgentID, full.Tenant, full.Endpoint, full.AID()) {
+			t.Fatalf("%s: facts %v, full %v", p, facts, full)
+		}
+	}
+	if f, _ := LoadIdentityFacts(legacyFixture); f.AID != fixtureAID {
+		t.Fatalf("legacy aid %s", f.AID)
+	}
+}
+
+func TestIdentityFactsReadTheEnvPointer(t *testing.T) {
+	path, aid := mustCreate(t, filepath.Join(t.TempDir(), "id.json"))
+	t.Setenv(EnvPointer, path)
+	if f, err := LoadIdentityFacts(""); err != nil || f.AID != aid {
+		t.Fatalf("env facts: %v", err)
+	}
+	t.Setenv(EnvPointer, "")
+	assertSameRefusal(t, "", "")
+}
+
+func TestAMismatchedRecordedAIDIsAClaimToFactsAndARefusalToTheFullLoader(t *testing.T) {
+	other := make([]byte, 32)
+	for i := range other {
+		other[i] = byte(i)
+	}
+	otherAgent, _ := crypto.NewAgent(other)
+	p := writeWithAID(t, otherAgent.AID())
+	if f, err := LoadIdentityFacts(p); err != nil || f.AID != otherAgent.AID() {
+		t.Fatalf("facts: %v", err)
+	}
+	_, err := LoadIdentityFile(p)
+	var ie *IdentityFileError
+	if !errors.As(err, &ie) || ie.Error() != "recorded aid does not match seed_hex" {
+		t.Fatalf("full: %v", err)
+	}
+}
+
+// assertSameRefusal loads path with both loaders and requires the same IdentityFileError message; want
+// "" skips the exact-message check.
+func assertSameRefusal(t *testing.T, path, want string) {
+	t.Helper()
+	_, fullErr := LoadIdentityFile(path)
+	_, factsErr := LoadIdentityFacts(path)
+	var a, b *IdentityFileError
+	if !errors.As(fullErr, &a) || !errors.As(factsErr, &b) {
+		t.Fatalf("want two IdentityFileErrors, got %v / %v", fullErr, factsErr)
+	}
+	if a.Error() != b.Error() {
+		t.Fatalf("messages differ: full %q, facts %q", a.Error(), b.Error())
+	}
+	if want != "" && a.Error() != want {
+		t.Fatalf("message %q, want %q", a.Error(), want)
+	}
+}
+
+func TestBothLoadersRefuseABadFileIdentically(t *testing.T) {
+	// Criterion 3 (D-FACTS-CHECKS).
+	const seedLen = "seed_hex must be exactly 64 hex chars (a 32-byte Ed25519 seed)"
+	seed := strings.Repeat("ab", 32)
+	withAid := func(aid string) string {
+		return `{"version": 1, "seed_hex": "` + fixtureSeedHex + `", "agent_id": "a", "tenant": "t", "endpoint": "e:1", "aid": ` + aid + `}`
+	}
+	for _, c := range []struct{ name, body, want string }{
+		{"wrong-version", `{"version": 2}`, "bootstrap schema version 2 unsupported (want 1)"},
+		{"short-seed", `{"version": 1, "seed_hex": "ab"}`, seedLen},
+		{"absent-seed", `{"version": 1}`, seedLen},
+		{"number-seed", `{"version": 1, "seed_hex": 7}`, seedLen},
+		{"non-hex-seed", `{"version": 1, "seed_hex": "` + strings.Repeat("zz", 32) + `"}`, "seed_hex is not valid hex"},
+		{"ws-seed-plan", `{"version": 1, "seed_hex": "` + strings.Repeat("00 ", 21) + `0"}`, "seed_hex is not valid hex"},
+		{"0x-seed", `{"version": 1, "seed_hex": "0x` + strings.Repeat("00", 31) + `"}`, "seed_hex is not valid hex"},
+		{"ws-seed-decodes", `{"version": 1, "seed_hex": "` + strings.Repeat("00", 31) + `  "}`, "seed_hex is not valid hex"},
+		{"bad-seed-and-missing-fields", `{"version": 1, "seed_hex": "` + strings.Repeat("zz", 32) + `"}`, "seed_hex is not valid hex"},
+		{"missing-endpoint", `{"version": 1, "seed_hex": "` + seed + `", "agent_id": "a", "tenant": "t"}`, "bootstrap file missing required field(s): endpoint"},
+		{"missing-all-fields", `{"version": 1, "seed_hex": "` + seed + `"}`, "bootstrap file missing required field(s): agent_id, tenant, endpoint"},
+		{"malformed-aid", withAid(`"` + fixtureAID[:len(fixtureAID)-1] + `"`), "aid is malformed"},
+		{"empty-aid", withAid(`""`), "aid is malformed"},
+		{"null-aid", withAid(`null`), "aid is malformed"},
+		{"number-aid", withAid(`42`), "aid is malformed"},
+		{"list", `[1, 2]`, ""},
+		{"not-json", `{not json`, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "bad.json")
+			if err := os.WriteFile(p, []byte(c.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			assertSameRefusal(t, p, c.want)
+		})
+	}
+	t.Run("missing-file", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "nope.json")
+		assertSameRefusal(t, p, "bootstrap file not found: "+p)
+	})
 }

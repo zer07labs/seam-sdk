@@ -25,20 +25,33 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.regex.Pattern;
+import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters;
 
 /**
  * Identity custody (seam-sdk#201): create and load the schema-v1 bootstrap file. Mirrors Python's
  * {@code seam_sdk/identity.py}, which owns the schema:
  *
- * <pre>{"version": 1, "seed_hex": "&lt;64 hex&gt;", "agent_id": "...", "tenant": "...", "endpoint": "host:port"}</pre>
+ * <pre>{"version": 1, "seed_hex": "&lt;64 hex&gt;", "agent_id": "...", "tenant": "...", "endpoint": "host:port",
+ *  "aid": "aid:pubkey:ed25519:&lt;43 b64url&gt;"}</pre>
  *
- * Unknown extra keys are ignored on load. One JSON file plus one env pointer ({@value #ENV_POINTER}).
- * The seed leaves this class in exactly one direction: from disk into an {@link Agent} on load.
+ * <p>{@code aid} is optional (seam-sdk#274, D-AID-RECORD): {@link #create} records the derived AID as
+ * the last key, and the schema version stays 1. A file without it loads unchanged. When it is present,
+ * {@link #load} verifies it against the AID derived from {@code seed_hex} and refuses a wrong shape or
+ * a mismatch. Every loader since #201 ignores unknown keys, so such a file also loads in older
+ * releases.
+ *
+ * <p>Unknown extra keys are ignored on load. One JSON file plus one env pointer ({@value #ENV_POINTER}).
+ * The seed leaves this class in exactly one direction: from disk into an {@link Agent} on load. {@link
+ * #loadFacts} (seam-sdk#274) reads the same file's public facts and returns no signing capability at
+ * all. Both loaders run one shared validator, so they refuse the same bad file with the same message.
  */
 public final class IdentityFile {
   private IdentityFile() {}
@@ -47,6 +60,17 @@ public final class IdentityFile {
   public static final int SCHEMA_VERSION = 1;
 
   private static final SecureRandom RNG = new SecureRandom();
+  // The shape of a recorded aid: the Ed25519 AID form, 32 bytes as unpadded b64url.
+  private static final Pattern AID_SHAPE = Pattern.compile("aid:pubkey:ed25519:[A-Za-z0-9_-]{43}");
+  // A seed is exactly 64 ASCII hex digits: no whitespace, no sign, no 0x.
+  private static final Pattern SEED_SHAPE = Pattern.compile("[0-9a-fA-F]{64}");
+
+  /**
+   * The one place a seed is hex-decoded on load. Package-private and mutable only so tests can prove
+   * {@link #loadFacts} never calls it on a file that records {@code aid}; its input has passed the
+   * shared validator.
+   */
+  static volatile Function<String, byte[]> seedDecoder = hex -> HexFormat.of().parseHex(hex);
   private static final Set<PosixFilePermission> OWNER_RW = PosixFilePermissions.fromString("rw-------");
 
   /** What {@link #create} returns: the path written and the new agent's AID — never the seed. */
@@ -75,12 +99,45 @@ public final class IdentityFile {
     }
   }
 
+  /**
+   * The public facts of a bootstrap file: no seed, no {@link Agent}, no signing capability. Returned by
+   * {@link #loadFacts}.
+   *
+   * <p>The four fields are the file's <b>claims</b>; the verifier is {@link #load}. In particular
+   * {@code aid} is the file's recorded {@code aid} when it has one, unverified against the seed.
+   */
+  public record IdentityFacts(String agentId, String tenant, String endpoint, String aid) {
+    @Override
+    public String toString() {
+      return "IdentityFacts(agentId="
+          + agentId
+          + ", tenant="
+          + tenant
+          + ", endpoint="
+          + endpoint
+          + ", aid="
+          + aid
+          + ")";
+    }
+  }
+
+  // What the shared validator hands both loaders: seed_hex as an opaque, shape-checked string, and the
+  // recorded aid (null when the file has none).
+  private record Validated(
+      String seedHex, String agentId, String tenant, String endpoint, String aid) {}
+
   /** Load the process identity from {@code $SEAM_BOOTSTRAP_FILE}. */
   public static LoadedIdentity load() {
     return load(null);
   }
 
-  /** Load the process identity from {@code path}, or {@code $SEAM_BOOTSTRAP_FILE} when null. */
+  /**
+   * Load the process identity from {@code path}, or {@code $SEAM_BOOTSTRAP_FILE} when null.
+   *
+   * <p>A recorded {@code aid} is verified, not trusted: it must have the AID shape (else {@code "aid
+   * is malformed"}) and equal the AID derived from {@code seed_hex} (else {@code "recorded aid does
+   * not match seed_hex"}). A file without {@code aid} loads as before.
+   */
   public static LoadedIdentity load(Path path) {
     Path resolved = path;
     if (resolved == null) {
@@ -92,6 +149,82 @@ public final class IdentityFile {
 
   // Package-private seam so tests can exercise the env fallback without mutating the process env.
   static LoadedIdentity loadResolved(Path resolved) {
+    Validated v = readAndValidate(resolved);
+    Agent agent = new Agent(decodeSeed(v.seedHex()));
+    if (v.aid() != null && !v.aid().equals(agent.aid())) {
+      throw new IdentityFileError("recorded aid does not match seed_hex");
+    }
+    return new LoadedIdentity(agent, v.agentId(), v.tenant(), v.endpoint());
+  }
+
+  /** Read the public facts of the bootstrap file at {@code $SEAM_BOOTSTRAP_FILE}. */
+  public static IdentityFacts loadFacts() {
+    return loadFacts(null);
+  }
+
+  /**
+   * Read the public facts of the bootstrap file at {@code path}, or {@code $SEAM_BOOTSTRAP_FILE} when
+   * null (seam-sdk#274).
+   *
+   * <p>For a consumer that shows who an agent is but never signs as it. It runs the <b>same checks, in
+   * the same order, with the same messages</b> as {@link #load} (one shared validator), so a file one
+   * refuses the other refuses identically. It never constructs an {@link Agent} and returns no seed, no
+   * key and no signing capability.
+   *
+   * <p>{@code aid} is always set:
+   *
+   * <ul>
+   *   <li><b>The file records {@code aid}</b> (every file written since #274): it is returned as the
+   *       file's <b>claim</b>, shape-checked but <b>not</b> verified against {@code seed_hex}, and the
+   *       seed is never hex-decoded. A hand-edited {@code aid} that does not match its seed is returned
+   *       here, and refused by {@link #load}, which is the verifier.
+   *   <li><b>A legacy file without {@code aid}</b>: it is derived transiently from the seed. The public
+   *       key is computed and encoded; only the string is returned.
+   * </ul>
+   *
+   * <p>"Seed-free" therefore means no signing capability returned, and no seed decode on a file that
+   * records {@code aid}. It does not mean the seed is never read: parsing the JSON reads it as text.
+   *
+   * @throws IdentityFileError on any refusal
+   */
+  public static IdentityFacts loadFacts(Path path) {
+    Path resolved = path;
+    if (resolved == null) {
+      String env = System.getenv(ENV_POINTER);
+      if (env != null && !env.isEmpty()) resolved = Path.of(env);
+    }
+    return loadFactsResolved(resolved);
+  }
+
+  // Package-private seam, as loadResolved.
+  static IdentityFacts loadFactsResolved(Path resolved) {
+    Validated v = readAndValidate(resolved);
+    String aid = v.aid();
+    if (aid == null) {
+      byte[] seed = decodeSeed(v.seedHex());
+      try {
+        aid =
+            SeamCrypto.aidFromPubkey(
+                new Ed25519PrivateKeyParameters(seed, 0).generatePublicKey().getEncoded());
+      } finally {
+        // Best-effort hygiene: the key parameters hold their own copy, which is not reachable here.
+        Arrays.fill(seed, (byte) 0);
+      }
+    }
+    return new IdentityFacts(v.agentId(), v.tenant(), v.endpoint(), aid);
+  }
+
+  private static byte[] decodeSeed(String seedHex) {
+    try {
+      return seedDecoder.apply(seedHex);
+    } catch (IllegalArgumentException e) {
+      throw new IdentityFileError("seed_hex is not valid hex", e);
+    }
+  }
+
+  // The one validator both loaders run (D-FACTS-CHECKS): same checks, same order, same messages. No
+  // seed bytes are produced here.
+  private static Validated readAndValidate(Path resolved) {
     if (resolved == null) {
       throw new IdentityFileError(
           "no bootstrap file: pass a path or set $"
@@ -127,11 +260,8 @@ public final class IdentityFile {
     if (seedHex == null || seedHex.length() != 64) {
       throw new IdentityFileError("seed_hex must be exactly 64 hex chars (a 32-byte Ed25519 seed)");
     }
-    byte[] seed;
-    try {
-      seed = HexFormat.of().parseHex(seedHex);
-    } catch (IllegalArgumentException e) {
-      throw new IdentityFileError("seed_hex is not valid hex", e);
+    if (!SEED_SHAPE.matcher(seedHex).matches()) {
+      throw new IdentityFileError("seed_hex is not valid hex");
     }
 
     Map<String, String> fields = new LinkedHashMap<>();
@@ -145,8 +275,13 @@ public final class IdentityFile {
       throw new IdentityFileError(
           "bootstrap file missing required field(s): " + String.join(", ", missing));
     }
-    return new LoadedIdentity(
-        new Agent(seed), fields.get("agent_id"), fields.get("tenant"), fields.get("endpoint"));
+    boolean hasAid = data.has("aid");
+    String recordedAid = stringOrNull(data.get("aid"));
+    if (hasAid && (recordedAid == null || !AID_SHAPE.matcher(recordedAid).matches())) {
+      throw new IdentityFileError("aid is malformed");
+    }
+    return new Validated(
+        seedHex, fields.get("agent_id"), fields.get("tenant"), fields.get("endpoint"), recordedAid);
   }
 
   private static String stringOrNull(JsonElement e) {
@@ -156,7 +291,8 @@ public final class IdentityFile {
   /**
    * Generate a new agent identity and write it to {@code path} as a schema-v1 bootstrap file. Returns
    * {@code (path, aid)}; the seed is never returned — load the file with {@link #load} in the process
-   * that will use it.
+   * that will use it. The file also records that {@code aid} as its last key, so the public identity
+   * can be read back without the seed.
    *
    * <p>The write is atomic and never clobbers. The bytes go to a sibling temp file created with {@code
    * CREATE_NEW} (O_CREAT|O_EXCL) and {@code NOFOLLOW_LINKS} at mode 0600 — the mode is set at creation
@@ -187,6 +323,7 @@ public final class IdentityFile {
     doc.put("agent_id", agentId);
     doc.put("tenant", tenant);
     doc.put("endpoint", endpoint);
+    doc.put("aid", agent.aid());
     byte[] body =
         (new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create().toJson(doc) + "\n")
             .getBytes(StandardCharsets.UTF_8);

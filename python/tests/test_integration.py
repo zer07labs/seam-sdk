@@ -342,6 +342,18 @@ def test_deny_plane_credentialed_read_succeeds_and_bare_read_is_refused(deny_pla
     bound = SeamClient.connect(deny_plane, agent=agent)
     assert bound.get_decision(decision_id).decision_id == decision_id
 
+    # #275: a ticket the runtime rejects is refreshed once, transparently. Corrupt the cached
+    # ticket's last byte (the cache still holds it as live, so the next read sends it); the runtime
+    # refuses it UNAUTHENTICATED, the client re-admits and re-signs, and the read succeeds.
+    cache = client._tickets[agent.aid]
+    live = cache._ticket
+    assert live
+    cache._ticket = live[:-1] + bytes([live[-1] ^ 0xFF])
+    assert client.get_decision(decision_id, credential=agent).decision_id == decision_id
+    assert cache._ticket not in (None, live[:-1] + bytes([live[-1] ^ 0xFF])), (
+        "re-admitted"
+    )
+
 
 def test_deny_plane_refuses_a_header_subject_and_a_wrong_context_signature(
     deny_plane, request
@@ -397,3 +409,184 @@ def test_deny_plane_refuses_a_header_subject_and_a_wrong_context_signature(
         metadata=cred(_REPLAY_DECISION, first),
         timeout=10,
     ).chain_verified
+
+
+# ── #275 Phase 2 (D-SUBMIT-RETRY): a submit_* refreshed and resent, against the real engine ─────
+#
+# What the fakes cannot prove: that a resend under a fresh ticket is applied AT MOST ONCE. The
+# engine dedupes by content (message_id = SHA-256(session‖sender‖type‖payload)), `usage` is outside
+# that payload, and a resend after the seal is answered from the sealed early return.
+# `session_status` exposes neither the tally nor the budget, so both are read from their effects:
+# the tally from the resolving commit's `collective_outcome.approve_count`, and the debit from the
+# hard budget gate (a step is refused + Suspended when spend is AT/OVER a hard limit).
+
+_VOTE_TOKENS = 600
+
+
+def _corrupt_cached_ticket(client: SeamClient, agent: Agent) -> bytes:
+    """Flip the last byte of the cached live ticket, so the next call sends a ticket the runtime
+    refuses UNAUTHENTICATED while the cache still believes it is live."""
+    cache = client._tickets[agent.aid]
+    live = cache._ticket
+    assert live
+    cache._ticket = live[:-1] + bytes([live[-1] ^ 0xFF])
+    return cache._ticket
+
+
+def _vote_then_resend_twice(client: SeamClient, agent: Agent, sid: str, tokens: int):
+    """Open (hard token limit ``tokens``) → propose → criterion 4(a) the vote under a corrupted ticket
+    → 4(b) the same vote resent → 4(c) resent again with a different ``usage``. Returns the three
+    vote steps."""
+    client.open_session(
+        agent,
+        sid,
+        ["lead", "peer"],
+        limits=BudgetLimits(tokens=tokens),
+        credential=agent,
+    )
+    client.submit_proposal(sid, "lead", "p1", "BLOCK", credential=agent)
+
+    corrupted = _corrupt_cached_ticket(client, agent)
+    usage = StepUsage(tokens=_VOTE_TOKENS, cost_micros=10)
+    first = client.submit_vote(
+        sid, "peer", "p1", "APPROVE", usage=usage, credential=agent
+    )
+    after_a = client._tickets[agent.aid]._ticket
+    assert after_a != corrupted, "4(a): the refresh re-admitted"
+    # 4(b): an app-level resend under the SAME (now fresh) cached ticket: identical bytes, so the
+    # runtime refuses it as request_replayed (uniform UNAUTHENTICATED); the SDK refreshes and
+    # resends; the engine sees a Duplicate and applies nothing.
+    same = client.submit_vote(
+        sid, "peer", "p1", "APPROVE", usage=usage, credential=agent
+    )
+    after_b = client._tickets[agent.aid]._ticket
+    assert after_b != after_a, (
+        "4(b) anti-vacuity: the identical resend must have been refused as a replay and refreshed"
+    )
+    # 4(c): the same vote with a different usage — still the same message, still not debited.
+    other = client.submit_vote(
+        sid,
+        "peer",
+        "p1",
+        "APPROVE",
+        usage=StepUsage(tokens=_VOTE_TOKENS * 3, cost_micros=99),
+        credential=agent,
+    )
+    # A different usage is a different BODY, so a different signature: no replay, no refresh — the
+    # dedupe here is the engine's alone.
+    assert client._tickets[agent.aid]._ticket == after_b
+    return first, same, other
+
+
+def _unset(step) -> bool:
+    return not step.decision_id and not any(
+        step.HasField(f) for f in ("policy_enforcement", "collective_outcome")
+    )
+
+
+def test_submit_retry_lands_once_and_resends_are_deduped(deny_plane):
+    """Criterion 4(a)-(d) on one session with a 1000-token hard limit and a 600-token vote: a second
+    debit would put spend at 1200 and the commit would come back Suspended. It resolves instead, and
+    its tally holds ONE approve. Then the resolving commit itself is resent."""
+    client = SeamClient.connect(deny_plane)
+    agent = Agent(bytes([42] * 32))
+    sid = "py-submit-retry-sid-0123456789abcdef"
+    first, same, other = _vote_then_resend_twice(client, agent, sid, 1000)
+
+    for step in (first, same, other):
+        assert step.state not in ("Resolved", "Suspended", "Cancelled", "Expired"), step
+        assert _unset(step), (
+            f"a non-resolving step (or its duplicate) is all-unset: {step}"
+        )
+
+    commit = client.submit_commit(sid, "c1", "BLOCK", credential=agent)
+    assert commit.state == "Resolved", (
+        f"{commit.state}: the vote was debited more than once (spend reached the hard limit)"
+    )
+    assert commit.decision_id and commit.HasField("collective_outcome")
+    assert commit.collective_outcome.approve_count == 1, (
+        "4(a)-(c): three sends of one vote must tally once"
+    )
+
+    # 4(d): the RESOLVING step resent — the same decision_id, no collective_outcome.
+    before_d = client._tickets[agent.aid]._ticket
+    resent = client.submit_commit(sid, "c1", "BLOCK", credential=agent)
+    assert client._tickets[agent.aid]._ticket != before_d, (
+        "4(d) anti-vacuity: the identical commit must have been refused as a replay and refreshed"
+    )
+    assert resent.decision_id == commit.decision_id
+    assert not resent.HasField("collective_outcome")
+    if resent.HasField("policy_enforcement"):
+        # Present only when the first response carried it AND the session is sealed_attestable.
+        assert commit.HasField("policy_enforcement")
+        assert resent.policy_enforcement == commit.policy_enforcement
+    elif not commit.HasField("policy_enforcement"):
+        assert not resent.HasField("policy_enforcement")
+    assert (
+        client.get_decision(commit.decision_id, credential=agent).decision_id
+        == commit.decision_id
+    ), "get_decision still returns the sealed record"
+
+
+def test_submit_retry_debits_the_vote_exactly_once(deny_plane):
+    """The other half of "debited once": with the hard limit AT the vote's 600 tokens, one debit
+    alone exhausts the budget, so the commit is refused + Suspended. Together with the test above
+    (1000-token limit → Resolved) that pins the debit to exactly one."""
+    client = SeamClient.connect(deny_plane)
+    agent = Agent(bytes([42] * 32))
+    sid = "py-submit-debit-sid-0123456789abcdef"
+    _vote_then_resend_twice(client, agent, sid, _VOTE_TOKENS)
+
+    commit = client.submit_commit(sid, "c1", "BLOCK", credential=agent)
+    assert commit.state == "Suspended", f"{commit.state}: the vote was never debited"
+
+
+def test_submit_retry_after_client_seal_returns_sealed_id(deny_plane):
+    """The session is cancelled between the rejection and the retry. The resend is answered from the
+    sealed early return: Ok, the CANCEL's decision_id, collective_outcome unset — not an error."""
+    client = SeamClient.connect(deny_plane)
+    canceller = SeamClient.connect(
+        deny_plane
+    )  # its own ticket cache: its call is independent
+    agent = Agent(bytes([42] * 32))
+    sid = "py-submit-sealed-sid-0123456789abcdef"
+    client.open_session(agent, sid, ["lead", "peer"], credential=agent)
+    client.submit_proposal(sid, "lead", "p1", "BLOCK", credential=agent)
+
+    _corrupt_cached_ticket(client, agent)
+    sealed: dict = {}
+    admission = client._admission
+
+    class _CancelOnRefresh:
+        """Cancels the session from the other client the moment the refresh starts — strictly after
+        the rejection, strictly before the resend."""
+
+        def __getattr__(self, name):
+            method = getattr(admission, name)
+            if name != "IssueChallenge" or sealed:
+                return method
+
+            def call(*a, **kw):
+                sealed["id"] = canceller.cancel_session(
+                    sid, credential=agent
+                ).decision_id
+                return method(*a, **kw)
+
+            return call
+
+    client._admission = _CancelOnRefresh()
+    step = client.submit_vote(sid, "peer", "p1", "APPROVE", credential=agent)
+
+    assert sealed.get("id"), "the refresh never ran, so the race was not staged"
+    assert step.decision_id == sealed["id"]
+    assert not step.HasField("collective_outcome")
+
+
+def test_submit_retry_after_sweeper_expiry_raises_failed_precondition():
+    pytest.skip(
+        "cannot force a sweep in time: the session TTL is the runtime's fixed 30 min "
+        "(seam_coord_macp::SESSION_TTL_MS) with no per-session or env override, so no session can "
+        "be swept between a rejection and its resend. The SDK half (FAILED_PRECONDITION propagates "
+        "typed and is not retried) is test_credential_refresh."
+        "test_submit_retry_failed_precondition_propagates_typed_and_is_not_retried."
+    )

@@ -18,6 +18,9 @@ import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -80,7 +83,7 @@ class IdentityFileTest {
     Path p = create(dir.resolve("id.json")).path();
     JsonObject data = JsonParser.parseString(Files.readString(p)).getAsJsonObject();
     assertEquals(
-        List.of("version", "seed_hex", "agent_id", "tenant", "endpoint"),
+        List.of("version", "seed_hex", "agent_id", "tenant", "endpoint", "aid"),
         new ArrayList<>(data.keySet()));
     assertEquals(1, data.get("version").getAsInt());
     assertEquals(64, data.get("seed_hex").getAsString().length());
@@ -227,10 +230,239 @@ class IdentityFileTest {
     assertTrue(e.getMessage().contains("not found"), e.getMessage());
   }
 
+  // seam-sdk#274 (D-AID-RECORD): a created file records its AID; a recorded aid is verified on load.
+
+  private static final String FIXTURE_SEED_HEX =
+      "ddc1524b29efe5bc1b9e9ea141b2a4740ba3e4d52f781afa3c1ffb3a3970580c";
+  private static final String FIXTURE_AID =
+      "aid:pubkey:ed25519:9x_uM2PCzXE8pt6di2RwwKCkod7W5kctdLdoIVtKep4";
+
+  @Test
+  void createdFileRecordsTheReturnedAid(@TempDir Path dir) throws Exception {
+    IdentityFile.Created c = create(dir.resolve("id.json"));
+    JsonObject data = JsonParser.parseString(Files.readString(c.path())).getAsJsonObject();
+    assertEquals(c.aid(), data.get("aid").getAsString());
+    assertEquals(c.aid(), new Agent(HexFormat.of().parseHex(seedHexOf(c.path()))).aid());
+  }
+
+  private static Path writeWithAid(Path dir, String name, String aidJson) throws Exception {
+    Path p = dir.resolve(name + ".json");
+    Files.writeString(
+        p,
+        "{\"version\": 1, \"seed_hex\": \""
+            + FIXTURE_SEED_HEX
+            + "\", \"agent_id\": \"a\", \"tenant\": \"t\", \"endpoint\": \"e:1\", \"aid\": "
+            + aidJson
+            + "}");
+    return p;
+  }
+
+  @Test
+  void aBadRecordedAidIsRefused(@TempDir Path dir) throws Exception {
+    byte[] other = new byte[32];
+    for (int i = 0; i < 32; i++) other[i] = (byte) i;
+    String trimmed = FIXTURE_AID.substring(0, FIXTURE_AID.length() - 1);
+    String[][] cases = {
+      {"mismatch", "\"" + new Agent(other).aid() + "\"", "recorded aid does not match seed_hex"},
+      {"short", "\"" + trimmed + "\"", "aid is malformed"},
+      {"long", "\"" + FIXTURE_AID + "A\"", "aid is malformed"},
+      {"wrong-alg", "\"" + FIXTURE_AID.replace("ed25519", "ed448") + "\"", "aid is malformed"},
+      {"non-b64url", "\"" + trimmed + "=\"", "aid is malformed"},
+      {"empty", "\"\"", "aid is malformed"},
+      {"null", "null", "aid is malformed"},
+      {"number", "42", "aid is malformed"},
+      {"list", "[\"" + FIXTURE_AID + "\"]", "aid is malformed"},
+    };
+    for (String[] c : cases) {
+      Path p = writeWithAid(dir, c[0], c[1]);
+      IdentityFileError e = assertThrows(IdentityFileError.class, () -> IdentityFile.load(p));
+      assertEquals(c[2], e.getMessage(), c[0]);
+    }
+  }
+
+  @Test
+  void aMatchingRecordedAidLoads(@TempDir Path dir) throws Exception {
+    Path p = writeWithAid(dir, "ok", "\"" + FIXTURE_AID + "\"");
+    assertEquals(FIXTURE_AID, IdentityFile.load(p).aid());
+  }
+
+  @Test
+  void theSharedAidFixtureLoadsWithItsRecordedAid() throws Exception {
+    // Written by Python's create_identity_file (seam-sdk#274); the TS suite pins its bytes.
+    Path p = Path.of("..", "ts", "tests", "fixtures", "identity_v1_aid_python.json");
+    JsonObject data = JsonParser.parseString(Files.readString(p)).getAsJsonObject();
+    assertEquals(FIXTURE_AID, data.get("aid").getAsString());
+    IdentityFile.LoadedIdentity loaded = IdentityFile.load(p);
+    assertEquals(FIXTURE_AID, loaded.aid());
+    assertEquals(FIXTURE_SEED_HEX, HexFormat.of().formatHex(loaded.agent().seed()));
+    assertEquals("ap-clerk", loaded.agentId());
+    assertEquals("acm\u00e9", loaded.tenant());
+    assertEquals("seam.example:443", loaded.endpoint());
+  }
+
+  @Test
+  void aLegacyFileWithoutAidLoadsUnchanged(@TempDir Path dir) throws Exception {
+    Path p = dir.resolve("legacy.json");
+    Files.writeString(
+        p,
+        "{\"version\": 1, \"seed_hex\": \""
+            + FIXTURE_SEED_HEX
+            + "\", \"agent_id\": \"ap-clerk\", \"tenant\": \"acme\", \"endpoint\": \"seam.example:443\"}");
+    assertEquals(FIXTURE_AID, IdentityFile.load(p).aid());
+  }
+
   private static String seedHexOf(Path p) throws Exception {
     return JsonParser.parseString(Files.readString(p))
         .getAsJsonObject()
         .get("seed_hex")
         .getAsString();
+  }
+
+  // seam-sdk#274 (D-FACTS-API, D-LEGACY-AID, D-FACTS-CHECKS): the seed-free facts loader.
+
+  private static final Path LEGACY_FIXTURE =
+      Path.of("..", "ts", "tests", "fixtures", "identity_v1_python.json");
+  private static final Path AID_FIXTURE =
+      Path.of("..", "ts", "tests", "fixtures", "identity_v1_aid_python.json");
+  private static final Pattern HEX64 = Pattern.compile("[0-9a-fA-F]{64}");
+
+  private static List<String> factsOf(IdentityFile.IdentityFacts f) {
+    return List.of(f.agentId(), f.tenant(), f.endpoint(), f.aid());
+  }
+
+  private static List<String> factsOf(IdentityFile.LoadedIdentity l) {
+    return List.of(l.agentId(), l.tenant(), l.endpoint(), l.aid());
+  }
+
+  @Test
+  void identityFactsCarryNoSigningCapability() throws Exception {
+    // Criterion 1: exactly the four string components; the rendering carries no seed.
+    var components = IdentityFile.IdentityFacts.class.getRecordComponents();
+    List<String> names = new ArrayList<>();
+    for (var c : components) {
+      assertEquals(String.class, c.getType(), c.getName());
+      names.add(c.getName());
+    }
+    assertEquals(List.of("agentId", "tenant", "endpoint", "aid"), names);
+    for (Path p : List.of(LEGACY_FIXTURE, AID_FIXTURE)) {
+      String rendered = IdentityFile.loadFacts(p).toString();
+      assertFalse(HEX64.matcher(rendered).find(), rendered);
+      assertTrue(rendered.contains(FIXTURE_AID), rendered);
+    }
+  }
+
+  @Test
+  void aFileThatRecordsAidIsServedWithoutDecodingTheSeed() {
+    // Criterion 2: the hooked decoder refuses; loadFacts never calls it on a file that records aid.
+    Function<String, byte[]> saved = IdentityFile.seedDecoder;
+    AtomicInteger calls = new AtomicInteger();
+    IdentityFile.seedDecoder =
+        hex -> {
+          calls.incrementAndGet();
+          throw new IllegalStateException("seed decoded");
+        };
+    try {
+      assertEquals(
+          List.of("ap-clerk", "acmé", "seam.example:443", FIXTURE_AID),
+          factsOf(IdentityFile.loadFacts(AID_FIXTURE)));
+      assertEquals(0, calls.get());
+      IllegalStateException full =
+          assertThrows(IllegalStateException.class, () -> IdentityFile.load(AID_FIXTURE));
+      assertEquals("seed decoded", full.getMessage());
+      assertEquals(1, calls.get());
+      // A legacy file has no recorded aid, so deriving one necessarily decodes the seed.
+      assertThrows(IllegalStateException.class, () -> IdentityFile.loadFacts(LEGACY_FIXTURE));
+      assertEquals(2, calls.get());
+    } finally {
+      IdentityFile.seedDecoder = saved;
+    }
+  }
+
+  @Test
+  void identityFactsAgreeWithTheFullLoaderOnEveryField(@TempDir Path dir) throws Exception {
+    // Criterion 4: legacy, recorded-aid, freshly created and adapters-shaped files.
+    byte[] seed = new byte[32];
+    for (int i = 0; i < 32; i++) seed[i] = (byte) i;
+    Path partner = dir.resolve("partner.json");
+    Files.writeString(
+        partner,
+        "{\"version\": 1, \"seed_hex\": \""
+            + HexFormat.of().formatHex(seed)
+            + "\", \"agent_id\": \"qa-confirm\", \"tenant\": \"t1\", \"endpoint\": \"localhost:50051\","
+            + " \"comment\": \"extra keys are ignored\"}");
+    Path created = create(dir.resolve("created.json")).path();
+    for (Path p : List.of(LEGACY_FIXTURE, AID_FIXTURE, created, partner)) {
+      assertEquals(factsOf(IdentityFile.load(p)), factsOf(IdentityFile.loadFacts(p)), p.toString());
+    }
+    assertEquals(FIXTURE_AID, IdentityFile.loadFacts(LEGACY_FIXTURE).aid());
+  }
+
+  @Test
+  void identityFactsFallBackToTheEnvPointer(@TempDir Path dir) {
+    assumeTrue(System.getenv(IdentityFile.ENV_POINTER) == null, "SEAM_BOOTSTRAP_FILE is set");
+    assertSameRefusal(null, null);
+    IdentityFile.Created c = create(dir.resolve("id.json"));
+    assertEquals(c.aid(), IdentityFile.loadFactsResolved(c.path()).aid());
+  }
+
+  @Test
+  void aMismatchedRecordedAidIsAClaimToFactsAndARefusalToTheFullLoader(@TempDir Path dir)
+      throws Exception {
+    byte[] other = new byte[32];
+    for (int i = 0; i < 32; i++) other[i] = (byte) i;
+    String otherAid = new Agent(other).aid();
+    Path p = writeWithAid(dir, "mismatch", "\"" + otherAid + "\"");
+    assertEquals(otherAid, IdentityFile.loadFacts(p).aid());
+    IdentityFileError e = assertThrows(IdentityFileError.class, () -> IdentityFile.load(p));
+    assertEquals("recorded aid does not match seed_hex", e.getMessage());
+  }
+
+  // Both loaders refuse with the same message; want null skips the exact-message check.
+  private static void assertSameRefusal(Path p, String want) {
+    IdentityFileError full = assertThrows(IdentityFileError.class, () -> IdentityFile.load(p));
+    IdentityFileError facts =
+        assertThrows(IdentityFileError.class, () -> IdentityFile.loadFacts(p));
+    assertEquals(full.getMessage(), facts.getMessage(), String.valueOf(p));
+    if (want != null) assertEquals(want, full.getMessage(), String.valueOf(p));
+  }
+
+  @Test
+  void bothLoadersRefuseABadFileIdentically(@TempDir Path dir) throws Exception {
+    // Criterion 3 (D-FACTS-CHECKS).
+    String seedLen = "seed_hex must be exactly 64 hex chars (a 32-byte Ed25519 seed)";
+    String notHex = "seed_hex is not valid hex";
+    String seed = "ab".repeat(32);
+    String trimmed = FIXTURE_AID.substring(0, FIXTURE_AID.length() - 1);
+    String[][] cases = {
+      {"{\"version\": 2}", "bootstrap schema version 2 unsupported (want 1)"},
+      {"{\"version\": 1, \"seed_hex\": \"ab\"}", seedLen},
+      {"{\"version\": 1}", seedLen},
+      {"{\"version\": 1, \"seed_hex\": 7}", seedLen},
+      {"{\"version\": 1, \"seed_hex\": \"" + "zz".repeat(32) + "\"}", notHex},
+      {"{\"version\": 1, \"seed_hex\": \"" + "00 ".repeat(21) + "0\"}", notHex},
+      {"{\"version\": 1, \"seed_hex\": \"" + "00".repeat(31) + "  \"}", notHex},
+      {"{\"version\": 1, \"seed_hex\": \"0x" + "00".repeat(31) + "\"}", notHex},
+      {
+        "{\"version\": 1, \"seed_hex\": \"" + seed + "\", \"agent_id\": \"a\", \"tenant\": \"t\"}",
+        "bootstrap file missing required field(s): endpoint"
+      },
+      {
+        "{\"version\": 1, \"seed_hex\": \"" + seed + "\"}",
+        "bootstrap file missing required field(s): agent_id, tenant, endpoint"
+      },
+      {"[1, 2]", null},
+      {"{not json", null},
+    };
+    int i = 0;
+    for (String[] c : cases) {
+      Path p = dir.resolve("bad" + i++ + ".json");
+      Files.writeString(p, c[0]);
+      assertSameRefusal(p, c[1]);
+    }
+    for (String aid : List.of("\"" + trimmed + "\"", "\"\"", "null", "42")) {
+      assertSameRefusal(writeWithAid(dir, "aid" + i++, aid), "aid is malformed");
+    }
+    Path missing = dir.resolve("nope.json");
+    assertSameRefusal(missing, "bootstrap file not found: " + missing);
   }
 }

@@ -16,6 +16,55 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added
+- **Read a bootstrap file's public facts without a signing key (#274, D-FACTS-API), in all five SDKs.**
+  `load_identity_facts` (TS `loadIdentityFacts`, Go `identity.LoadIdentityFacts`, Java/Kotlin
+  `IdentityFile.loadFacts`) returns `IdentityFacts`: `agent_id`, `tenant`, `endpoint` and `aid`, and
+  nothing else. It never constructs an `Agent` and returns no seed, key or signing capability. On a file
+  that records `aid` it returns that value as the file's claim, shape-checked but not verified, and
+  never decodes the seed. On a legacy file it derives the AID transiently from the public key
+  (D-LEGACY-AID). It runs the same validator as the full loader, so both refuse the same bad file with
+  the same message (D-FACTS-CHECKS). The full loader stays the verifier: a hand-edited `aid` that does
+  not match its seed is returned by the facts loader and refused by the full loader.
+
+### Changed
+- **Credentialed reads and `report_outcome` refresh a rejected ticket once (#275), Python (sync and
+  aio) and TypeScript.** `get_escalation`, `session_status`, `get_decision`, `replay_decision`,
+  `get_commitment_proof` (and so `verify_decision`) and `report_outcome`, when they carry a credential
+  (`credential=` or a bound agent), now treat an `UNAUTHENTICATED` the way `authorize` always has:
+  refresh the signer's ticket once (coalesced per AID, so a revocation costs one re-admit however many
+  calls it rejects), re-sign the same request under the new ticket, and resend once. A second
+  rejection raises `UnauthenticatedError`. A call with no credential is never retried. The seven
+  `submit_*` steps follow in the next entry. Observable as at most one extra admission handshake and
+  one extra RPC on a rejected ticket, inside the same per-RPC deadline. Go, Java and Kotlin have no
+  client and are unaffected.
+- **The seven `submit_*` steps refresh a rejected ticket once too (#275, D-SUBMIT-RETRY), Python (sync
+  and aio) and TypeScript.** `submit_proposal`, `submit_vote`, `submit_evaluation`, `submit_objection`,
+  `submit_commit`, `submit_approval_request` and `submit_ballot` (TS `submit*`) now refresh the signer's
+  ticket once on `UNAUTHENTICATED`, re-sign the SAME request under the new ticket and resend once; a
+  second rejection raises `UnauthenticatedError`. Before, they made one call and kept the dead ticket
+  cached until its 80% refresh point, so every write failed for up to ~240 s while reads self-healed.
+  The resend is safe because a refused credential has no effect and the runtime dedupes a byte-identical
+  step. Two observable consequences, documented on every `submit_*`: a resend after a step that sealed
+  the session returns the sealed `decision_id` with `collective_outcome` unset (read `get_decision`),
+  and `usage` is not part of a step's identity, so a resend differing only in `usage` is deduped and
+  not debited. `open_session`, `cancel_session` and `expire_session` are unchanged: exactly one call
+  (D-WRITES-EXCLUDED).
+- **New bootstrap files record their `aid`, and a recorded `aid` is verified on load (#274,
+  D-AID-RECORD), in all five SDKs.** `create_identity_file` (TS `createIdentityFile`, Go
+  `identity.CreateIdentityFile`, Java/Kotlin `IdentityFile.create`) now writes the derived AID as a
+  sixth, last key, `"aid"`; the schema version stays 1. When a file carries `aid`, the full loader
+  refuses it unless it has the AID shape (`"aid is malformed"`) and equals the AID derived from
+  `seed_hex` (`"recorded aid does not match seed_hex"`). A file without `aid` loads exactly as before
+  and is never rewritten. Every loader since #201 ignores unknown keys, so a new file also loads in
+  older releases. The cross-language fixture is `ts/tests/fixtures/identity_v1_aid_python.json`.
+- **Python's loader names a whitespace-padded seed for what it is (#274, D-FACTS-CHECKS).** A
+  64-character `seed_hex` containing whitespace, for example `"00"*31 + "  "`, used to be refused by
+  `load_identity_file` with `"seed_hex must be exactly 64 hex chars (a 32-byte Ed25519 seed)"`, because
+  `bytes.fromhex` skips whitespace and decoded it to 31 bytes. It is now refused with `"seed_hex is not
+  valid hex"`, which TS, Go, Java and Kotlin already said. The file is refused either way; only the
+  message changed. A seed is now shape-checked against `^[0-9a-fA-F]{64}$` before anything decodes it.
+
 ## 0.48.0 — 2026-10-19
 
 > **Breaking — requires seam-runtime 0.48.0 (seam-runtime#1365, which carries `protocol-pass-2026-10`);

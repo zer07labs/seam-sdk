@@ -279,3 +279,92 @@ test("deny plane: a header subject and a wrong-context signature are both refuse
     }
   });
 });
+
+// ── #275 Phase 2 (D-SUBMIT-RETRY): a submit* refreshed and resent, against the real engine ──────
+// Mirrors python/tests/test_integration.py. sessionStatus exposes neither tally nor budget, so the
+// tally is read from the resolving commit's collectiveOutcome.approveCount, and the debit from the
+// hard budget gate (a step at/over a hard limit is refused + Suspended).
+
+const VOTE_TOKENS = 600n;
+type TicketMap = Map<string, { ticket: Uint8Array; refreshAtMs: number }>;
+const ticketsOf = (c: SeamClient) => (c as unknown as { tickets: TicketMap }).tickets;
+
+async function voteThenResendTwice(client: SeamClient, agent: Agent, sid: string, tokens: bigint) {
+  const credential = { credential: agent };
+  await client.openSession(agent, {
+    sessionId: sid,
+    participants: ["lead", "peer"],
+    limits: { tokens },
+    credential: agent,
+  });
+  await client.submitProposal(sid, "lead", "p1", "BLOCK", undefined, credential);
+
+  // 4(a): corrupt the cached live ticket's last byte; the vote is refused, refreshed, resent.
+  const entry = ticketsOf(client).get(agent.aid)!;
+  const corrupted = Uint8Array.from(entry.ticket);
+  corrupted[corrupted.length - 1]! ^= 0xff;
+  entry.ticket = corrupted;
+  const usage = { tokens: VOTE_TOKENS, costMicros: 10n };
+  const first = await client.submitVote(sid, "peer", "p1", "APPROVE", usage, credential);
+  const afterA = ticketsOf(client).get(agent.aid)!.ticket;
+  assert.notDeepEqual([...afterA], [...corrupted], "4(a): the refresh re-admitted");
+  // 4(b): the same vote resent under the same ticket — refused as a replay, refreshed, deduped.
+  const same = await client.submitVote(sid, "peer", "p1", "APPROVE", usage, credential);
+  const afterB = ticketsOf(client).get(agent.aid)!.ticket;
+  assert.notDeepEqual([...afterB], [...afterA], "4(b) anti-vacuity: the identical resend was refreshed");
+  // 4(c): a different usage — a different body, so no replay; the engine dedupes it alone.
+  const other = await client.submitVote(sid, "peer", "p1", "APPROVE", { tokens: VOTE_TOKENS * 3n, costMicros: 99n }, credential);
+  assert.deepEqual([...ticketsOf(client).get(agent.aid)!.ticket], [...afterB]);
+  return [first, same, other];
+}
+
+test("#275 P2 deny plane: a refreshed submitVote lands once; resends are deduped; a resolving resend returns the sealed id", { skip: !BIN }, async () => {
+  await withDenyPlane(async (baseUrl) => {
+    const client = SeamClient.connect(baseUrl);
+    const agent = demoAgent();
+    const sid = "ts-submit-retry-sid-0123456789abcdef";
+    try {
+      for (const step of await voteThenResendTwice(client, agent, sid, 1000n)) {
+        assert.ok(!["Resolved", "Suspended", "Cancelled", "Expired"].includes(step.state), step.state);
+        assert.equal(step.decisionId ?? "", "");
+        assert.equal(step.collectiveOutcome, undefined);
+        assert.equal(step.policyEnforcement, undefined);
+      }
+      const commit = await client.submitCommit(sid, "c1", "BLOCK", undefined, { credential: agent });
+      assert.equal(commit.state, "Resolved", "the vote was debited more than once");
+      assert.ok(commit.decisionId && commit.collectiveOutcome);
+      assert.equal(commit.collectiveOutcome.approveCount, 1, "three sends of one vote tally once");
+
+      // 4(d): the resolving step resent.
+      const beforeD = Uint8Array.from(ticketsOf(client).get(agent.aid)!.ticket);
+      const resent = await client.submitCommit(sid, "c1", "BLOCK", undefined, { credential: agent });
+      assert.notDeepEqual(
+        [...ticketsOf(client).get(agent.aid)!.ticket],
+        [...beforeD],
+        "4(d) anti-vacuity: the identical commit was refused as a replay and refreshed",
+      );
+      assert.equal(resent.decisionId, commit.decisionId);
+      assert.equal(resent.collectiveOutcome, undefined);
+      if (resent.policyEnforcement) assert.deepEqual(resent.policyEnforcement, commit.policyEnforcement);
+      else if (!commit.policyEnforcement) assert.equal(resent.policyEnforcement, undefined);
+      assert.equal((await client.getDecision(commit.decisionId!, { credential: agent })).decisionId, commit.decisionId);
+    } finally {
+      client.close();
+    }
+  });
+});
+
+test("#275 P2 deny plane: the refreshed vote is debited (exactly once, with the test above)", { skip: !BIN }, async () => {
+  await withDenyPlane(async (baseUrl) => {
+    const client = SeamClient.connect(baseUrl);
+    const agent = demoAgent();
+    const sid = "ts-submit-debit-sid-0123456789abcdef";
+    try {
+      await voteThenResendTwice(client, agent, sid, VOTE_TOKENS);
+      const commit = await client.submitCommit(sid, "c1", "BLOCK", undefined, { credential: agent });
+      assert.equal(commit.state, "Suspended", "the vote was never debited");
+    } finally {
+      client.close();
+    }
+  });
+});

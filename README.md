@@ -501,7 +501,13 @@ emits a `LEARNING_OUTCOME`, never mutates the sealed record).
 
 **`authorize` — the 1-RTT advisory tool-call gate.** Both clients expose the pre-tool-call
 `Authorize` verb: a ticketed call (admission handshake amortized across calls, refreshed at 80% TTL,
-revocation-stampede-safe) returning a typed `AuthorizeResult` with the closed verdict set
+revocation-stampede-safe, and on an `UNAUTHENTICATED` refreshed once and resent once — the same
+single refresh the credentialed reads `get_escalation`, `session_status`, `get_decision`,
+`replay_decision`, `get_commitment_proof` (so `verify_decision`), `report_outcome` and the seven
+`submit_*` steps take when they carry a credential, #275; `open_session`, `cancel_session` and
+`expire_session` make exactly one call. A `submit_*` resend after a step that sealed the session returns
+the sealed `decision_id` with no `collective_outcome`, so read `get_decision` for the outcome, and
+`usage` is not part of a step's identity) returning a typed `AuthorizeResult` with the closed verdict set
 ALLOW / DENY / TRANSFORM / ESCALATE; an unrecognized verdict raises `UnknownVerdictError` (never an
 implicit allow), and a TRANSFORM without a transformed input raises `ProtocolViolationError`. The
 offline helpers `record_digest_v4` (with `RecordDigestStripError` and
@@ -538,11 +544,11 @@ runs `SeamAdminClient` in a thread.
 
 | Language | Transport (generated) | Crypto shim + ergonomic client |
 |---|---|---|
-| **Python** | ✅ | ✅ **complete** — one-shot + **sessions & budgets** + **features** + **management plane** (`SeamAdminClient`: erasure/governance) + context/trust/outcome + identity file (#201); round-trips live |
-| **TypeScript** | ✅ | ✅ **complete** — one-shot + **sessions & budgets** + **features** + **management plane** (`SeamAdminClient`: erasure/governance) + context/trust/outcome + identity file (#201); round-trips live |
-| Go | ✅ | ✅ **shim** — conformance-tested (Ed25519 PoP, AID, TCT verify, request credential) + identity file (`go/identity`); ergonomic client over gen transport is a follow-up |
-| Java | ✅ | ✅ **shim** — conformance-tested (Bouncy Castle) + `Agent`, `IdentityFile`, `RequestCredentials`; client is a follow-up |
-| Kotlin | ✅ | ✅ **shim** — conformance-tested (Bouncy Castle) + `Agent`, `IdentityFile`, `RequestCredentials`; client is a follow-up |
+| **Python** | ✅ | ✅ **complete** — one-shot + **sessions & budgets** + **features** + **management plane** (`SeamAdminClient`: erasure/governance) + context/trust/outcome + identity file (#201) + seed-free identity facts (#274); round-trips live |
+| **TypeScript** | ✅ | ✅ **complete** — one-shot + **sessions & budgets** + **features** + **management plane** (`SeamAdminClient`: erasure/governance) + context/trust/outcome + identity file (#201) + seed-free identity facts (#274); round-trips live |
+| Go | ✅ | ✅ **shim** — conformance-tested (Ed25519 PoP, AID, TCT verify, request credential) + identity file and seed-free facts (`go/identity`); ergonomic client over gen transport is a follow-up |
+| Java | ✅ | ✅ **shim** — conformance-tested (Bouncy Castle) + `Agent`, `IdentityFile` (incl. seed-free `loadFacts`, #274), `RequestCredentials`; client is a follow-up |
+| Kotlin | ✅ | ✅ **shim** — conformance-tested (Bouncy Castle) + `Agent`, `IdentityFile` (incl. seed-free `loadFacts`, #274), `RequestCredentials`; client is a follow-up |
 
 The admission/TCT crypto is byte-identical across all five languages — pure stock Ed25519/SHA-256/JOSE,
 conformance-tested against `conformance/vectors.json` (`admission` + `tct` sections). The wider crypto

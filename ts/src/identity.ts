@@ -3,24 +3,40 @@
 // One JSON file plus one env pointer (`SEAM_BOOTSTRAP_FILE`). Python's `seam_sdk/identity.py` owns the
 // schema; this module mirrors it so a file written by any SDK loads in every other:
 //
-//   {"version": 1, "seed_hex": "<64 hex>", "agent_id": "...", "tenant": "...", "endpoint": "host:port"}
+//   {"version": 1, "seed_hex": "<64 hex>", "agent_id": "...", "tenant": "...", "endpoint": "host:port",
+//    "aid": "aid:pubkey:ed25519:<43 b64url>"}
+//
+// `aid` is optional (seam-sdk#274, D-AID-RECORD): `createIdentityFile` records the derived AID as the
+// last key, and the schema version stays 1. A file without it loads unchanged. When it is present,
+// `loadIdentityFile` verifies it against the AID derived from `seed_hex` and refuses a wrong shape or a
+// mismatch. Every loader since #201 ignores unknown keys, so such a file also loads in older releases.
 //
 // Unknown extra keys are ignored on load. The file layout is byte-for-byte Python's
 // `json.dumps(..., indent=2) + "\n"` (ASCII-escaped), so the files are interchangeable.
 //
 // The seed leaves this module in exactly one direction: from disk into an `Agent` on load.
 // `createIdentityFile` generates it, writes it, and returns `{ path, aid }` — never the seed.
+// `loadIdentityFacts` (seam-sdk#274) reads the same file's public facts and returns no signing capability
+// at all. Both loaders run one shared validator, so they refuse the same bad file with the same message.
 
 import * as fs from "node:fs";
 import * as nodePath from "node:path";
 import { inspect } from "node:util";
 
+import { ed25519 } from "@noble/curves/ed25519";
+
 import { Agent } from "./client.js";
+import { aidFromPubkey } from "./crypto.js";
 
 /** Names the bootstrap file when {@link loadIdentityFile} is given no path. */
 export const ENV_POINTER = "SEAM_BOOTSTRAP_FILE";
 /** The only bootstrap schema this SDK reads and writes. */
 export const SCHEMA_VERSION = 1;
+
+// The shape of a recorded `aid`: the Ed25519 AID form, 32 bytes as unpadded b64url.
+const AID_RE = /^aid:pubkey:ed25519:[A-Za-z0-9_-]{43}$/;
+// A seed is exactly 64 ASCII hex digits: no whitespace, no sign, no `0x`.
+const SEED_HEX_RE = /^[0-9a-fA-F]{64}$/;
 
 /** The bootstrap file is missing, malformed, fails validation, or cannot be created. Always loud.
  * `cause` carries the underlying fs/JSON error, when there is one. */
@@ -67,6 +83,47 @@ export class LoadedIdentity {
   }
 }
 
+/** The public facts of a bootstrap file: no seed, no `Agent`, no signing capability. Returned by
+ * {@link loadIdentityFacts}.
+ *
+ * The four fields are the file's **claims**; the verifier is {@link loadIdentityFile}. In particular
+ * `aid` is the file's recorded `aid` when it has one, unverified against the seed. */
+export class IdentityFacts {
+  constructor(
+    /** Registry identity for scope lookup (may equal the AID). */
+    readonly agentId: string,
+    readonly tenant: string,
+    /** The data-plane endpoint this process talks to. */
+    readonly endpoint: string,
+    readonly aid: string,
+  ) {
+    Object.freeze(this);
+  }
+
+  toString(): string {
+    return (
+      `IdentityFacts(agentId=${JSON.stringify(this.agentId)}, tenant=${JSON.stringify(this.tenant)}, ` +
+      `endpoint=${JSON.stringify(this.endpoint)}, aid=${JSON.stringify(this.aid)})`
+    );
+  }
+
+  toJSON(): { agentId: string; tenant: string; endpoint: string; aid: string } {
+    return { agentId: this.agentId, tenant: this.tenant, endpoint: this.endpoint, aid: this.aid };
+  }
+
+  [inspect.custom](): string {
+    return this.toString();
+  }
+}
+
+/** @internal The one place a seed is hex-decoded on load, behind an object so a test can spy on it
+ * (ESM bindings cannot be patched). Not exported from the package root. */
+export const seedCodec = {
+  decodeSeed(seedHex: string): Uint8Array {
+    return Uint8Array.from(Buffer.from(seedHex, "hex"));
+  },
+};
+
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -80,8 +137,65 @@ function pyRepr(v: unknown): string {
   return v === undefined ? "None" : JSON.stringify(v);
 }
 
-/** Load the process identity from `path`, or from `$SEAM_BOOTSTRAP_FILE` when `path` is omitted. */
+/** Load the process identity from `path`, or from `$SEAM_BOOTSTRAP_FILE` when `path` is omitted.
+ *
+ * A recorded `aid` is verified, not trusted: it must have the AID shape (else `"aid is malformed"`) and
+ * equal the AID derived from `seed_hex` (else `"recorded aid does not match seed_hex"`). A file without
+ * `aid` loads as before. */
 export function loadIdentityFile(path?: string): LoadedIdentity {
+  const obj = readAndValidate(path);
+  const agent = new Agent(seedCodec.decodeSeed(obj.seed_hex as string));
+  if (Object.prototype.hasOwnProperty.call(obj, "aid") && obj.aid !== agent.aid) {
+    throw new IdentityFileError("recorded aid does not match seed_hex");
+  }
+  return new LoadedIdentity(
+    agent,
+    obj.agent_id as string,
+    obj.tenant as string,
+    obj.endpoint as string,
+  );
+}
+
+/** Read the public facts of the bootstrap file at `path`, or `$SEAM_BOOTSTRAP_FILE` when `path` is
+ * omitted (seam-sdk#274).
+ *
+ * For a consumer that shows who an agent is but never signs as it. It runs the **same checks, in the
+ * same order, with the same messages** as {@link loadIdentityFile} (one shared validator), so a file one
+ * refuses the other refuses identically. It never constructs an `Agent` and returns no seed, no key and
+ * no signing capability.
+ *
+ * `aid` is always a string:
+ * - **The file records `aid`** (every file written since #274): it is returned as the file's **claim**,
+ *   shape-checked but **not** verified against `seed_hex`, and the seed is never hex-decoded. A
+ *   hand-edited `aid` that does not match its seed is returned here, and refused by
+ *   {@link loadIdentityFile}, which is the verifier.
+ * - **A legacy file without `aid`**: it is derived transiently from the seed. The public key is
+ *   computed and encoded; only the string is returned.
+ *
+ * "Seed-free" therefore means no signing capability returned, and no seed decode on a file that records
+ * `aid`. It does not mean the seed is never read: parsing the JSON reads it as text. */
+export function loadIdentityFacts(path?: string): IdentityFacts {
+  const obj = readAndValidate(path);
+  const aid = Object.prototype.hasOwnProperty.call(obj, "aid")
+    ? (obj.aid as string)
+    : deriveAid(obj.seed_hex as string);
+  return new IdentityFacts(obj.agent_id as string, obj.tenant as string, obj.endpoint as string, aid);
+}
+
+// The AID of a legacy file's seed, without an Agent. Best-effort hygiene: the decoded seed is zeroed
+// once the public key is computed (JS cannot guarantee no other copy exists).
+function deriveAid(seedHex: string): string {
+  const seed = seedCodec.decodeSeed(seedHex);
+  try {
+    return aidFromPubkey(ed25519.getPublicKey(seed));
+  } finally {
+    seed.fill(0);
+  }
+}
+
+// The one validator both loaders run (D-FACTS-CHECKS): same checks, same order, same messages.
+// `seed_hex` comes back as an opaque, shape-checked string; no bytes are produced here.
+function readAndValidate(path?: string): Record<string, unknown> {
   const resolved = path ?? process.env[ENV_POINTER] ?? "";
   if (!resolved) {
     throw new IdentityFileError(
@@ -117,10 +231,9 @@ export function loadIdentityFile(path?: string): LoadedIdentity {
   if (typeof seedHex !== "string" || seedHex.length !== 64) {
     throw new IdentityFileError("seed_hex must be exactly 64 hex chars (a 32-byte Ed25519 seed)");
   }
-  if (!/^[0-9a-fA-F]{64}$/.test(seedHex)) {
+  if (!SEED_HEX_RE.test(seedHex)) {
     throw new IdentityFileError("seed_hex is not valid hex");
   }
-  const seed = Uint8Array.from(Buffer.from(seedHex, "hex"));
 
   // A required field must be a non-empty string (as the Go SDK does; every writer emits strings).
   const missing = (["agent_id", "tenant", "endpoint"] as const).filter(
@@ -129,16 +242,16 @@ export function loadIdentityFile(path?: string): LoadedIdentity {
   if (missing.length > 0) {
     throw new IdentityFileError(`bootstrap file missing required field(s): ${missing.join(", ")}`);
   }
-  return new LoadedIdentity(
-    new Agent(seed),
-    obj.agent_id as string,
-    obj.tenant as string,
-    obj.endpoint as string,
-  );
+  const hasAid = Object.prototype.hasOwnProperty.call(obj, "aid");
+  if (hasAid && (typeof obj.aid !== "string" || !AID_RE.test(obj.aid))) {
+    throw new IdentityFileError("aid is malformed");
+  }
+  return obj;
 }
 
 /** The schema-v1 file bytes, laid out exactly as Python's `json.dumps(obj, indent=2) + "\n"`
- * (default `ensure_ascii=True`: every code unit outside printable ASCII is `\uXXXX`-escaped). */
+ * (default `ensure_ascii=True`: every code unit outside printable ASCII is `\uXXXX`-escaped), with the
+ * seed's derived `aid` as the last key. */
 export function identityFileBody(
   seed: Uint8Array,
   fields: { agentId: string; tenant: string; endpoint: string },
@@ -150,6 +263,7 @@ export function identityFileBody(
       agent_id: fields.agentId,
       tenant: fields.tenant,
       endpoint: fields.endpoint,
+      aid: new Agent(seed).aid,
     },
     null,
     2,
@@ -161,7 +275,8 @@ export function identityFileBody(
  * Generate a new agent identity and write it to `path` as a schema-v1 bootstrap file.
  *
  * Returns `{ path, aid }`. The seed is never returned: load the file with {@link loadIdentityFile} in
- * the process that will use it.
+ * the process that will use it. The file also records that `aid` as its last key, so the public
+ * identity can be read back without the seed.
  *
  * The write is atomic and never clobbers. The bytes go to a sibling temp file opened
  * `O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW` with mode `0600` (re-applied with `fchmod` so the umask cannot

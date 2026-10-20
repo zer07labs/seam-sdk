@@ -12,7 +12,7 @@ import secrets
 import threading
 import warnings
 from dataclasses import dataclass
-from typing import Dict, Mapping, Optional, Sequence
+from typing import Callable, Dict, Mapping, Optional, Sequence, TypeVar
 
 import grpc
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -48,6 +48,8 @@ from .errors import (  # noqa: F401  (SeamError re-exported)
 from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
 from seam_sdk._gen.seam.api.v1 import seam_pb2_grpc as rpc
 from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as ev  # noqa: F401  (re-exported)
+
+_T = TypeVar("_T")
 
 
 # ``SeamError`` and ``IssuerMismatchError`` are defined in :mod:`seam_sdk.errors` and imported above; they
@@ -87,11 +89,16 @@ def _now_ms() -> int:
 # consequence callers must size around, so it is stated here rather than discovered.
 #
 # Every public method takes ``timeout`` (seconds) and propagates it as the gRPC deadline on each
-# wire call it makes. Most methods make exactly one, so per-RPC and overall coincide. Three do not:
+# wire call it makes. Most methods make exactly one, so per-RPC and overall coincide. These do not:
 #
 #   * ``authorize`` may make up to SIX: an admit (challenge + Admit = 2) when the ticket is cold or
 #     stale, the Authorize itself (1), and — on ``UNAUTHENTICATED`` — a refresh (another 2) plus one
 #     retried Authorize (1). So the worst case is 6x the value passed, not the 1x it reads as.
+#   * The credentialed reads — ``session_status``, ``get_decision``, ``replay_decision``,
+#     ``get_commitment_proof`` (so ``verify_decision``), ``get_escalation`` — and ``report_outcome``
+#     have the same SIX-call bound when they carry a credential (``credential=`` or a bound agent):
+#     they refresh a rejected ticket once and resend once, exactly as ``authorize`` does (#275).
+#     So do the seven ``submit_*`` steps (D-SUBMIT-RETRY): the resend re-signs the same request.
 #   * ``run_decision`` and ``open_session`` each begin with the challenge→Admit handshake.
 #
 # So a caller that needs a hard overall bound must impose its own outer clock; the adapters'
@@ -103,9 +110,46 @@ def _now_ms() -> int:
 # refresh, which is a contract change for every existing caller in exchange for a bound the one
 # consumer that needs it already imposes. Recorded in ASSUMPTIONS.md.
 #
-# The SDK never retries beyond that single ticket refresh — adapters own retry semantics. A
-# deadline breach surfaces as ``DeadlineExceededError``, distinct from a DENY verdict.
+# The SDK never retries beyond that single ticket refresh, and only ``authorize``, the credentialed
+# reads, ``report_outcome`` and the seven ``submit_*`` steps take it (the same SIX-call bound) —
+# ``open_session``, ``cancel_session`` and ``expire_session`` make exactly one call (#275,
+# D-WRITES-EXCLUDED). Adapters own every other retry. A deadline breach surfaces as
+# ``DeadlineExceededError``, distinct from a DENY verdict, and is never retried.
 DEFAULT_TIMEOUT_S = 2.0
+
+
+# The one shared paragraph every ``submit_*`` docstring carries (sync and aio), appended by
+# :func:`_submit_retry_doc` so the seven copies cannot drift. D-SUBMIT-RETRY, #275; the runtime
+# behaviour it describes is in plans/post-onboarding-sdk-asks.md (Context, facts 6-8).
+_SUBMIT_RETRY_NOTE = """
+        **Refresh-once (#275).** With a credential (``credential=`` or a bound agent), a rejected
+        ticket is refreshed once and this SAME request is re-signed under the new ticket and resent
+        once; a second ``UNAUTHENTICATED`` raises :class:`UnauthenticatedError`. Resending an
+        identical body is safe: the runtime refuses a reused signature as ``UNAUTHENTICATED`` and
+        dedupes a byte-identical step, with no second effect and no second budget debit. So an
+        application resend after a lost response, refreshed here, also lands at most once.
+
+        * ``usage`` is NOT part of a step's identity: a resend differing only in ``usage`` is
+          deduped and its ``usage`` silently dropped (not debited). A changed ``reason``, proposal
+          id or value is a new message.
+        * ``SessionStep`` cannot say "deduped". A duplicate of a NON-resolving step returns
+          ``decision_id``, ``collective_outcome`` and ``policy_enforcement`` all unset. A resend
+          after a step that SEALED the session returns the sealed ``decision_id`` but NO
+          ``collective_outcome`` (``policy_enforcement`` only if the session is attestable) — so
+          after a retried write, read :meth:`get_decision` for the outcome.
+        * A resend after the session was swept, or while an Expire/Cancel seal is pending,
+          raises :class:`FailedPreconditionError` (``session_not_open``) instead of returning the
+          sealed id.
+        * A resend whose ``reason`` trips the runtime's boundary guard adds one more
+          ``boundary.data_flagged`` audit row; the step itself is still applied once.
+        """
+
+
+def _submit_retry_doc(fn: _T) -> _T:
+    """Append :data:`_SUBMIT_RETRY_NOTE` to a ``submit_*`` docstring (sync and aio)."""
+    doc = fn.__doc__ or ""  # type: ignore[attr-defined]
+    fn.__doc__ = doc.rstrip() + "\n" + _SUBMIT_RETRY_NOTE  # type: ignore[attr-defined]
+    return fn
 
 
 class Agent:
@@ -402,15 +446,19 @@ class SeamClient:
     ) -> pb.EscalationView:
         """Read back one ESCALATE verdict by the ``authorize_id`` its ``AuthorizeResponse`` returned
         (#517). NOT_FOUND for an ALLOW/DENY/TRANSFORM id, or one outside this caller's scope.
-        ``credential`` carries the caller's identity in band (#508) — see :meth:`get_decision`."""
-        md = self._credential_md(
+        ``credential`` carries the caller's identity in band (#508) — see :meth:`get_decision`,
+        including its refresh-once-on-``UNAUTHENTICATED`` rule (#275)."""
+        return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamAuthorization/GetEscalation",
             authorize_id,
+            None,
+            lambda md: self._authz.GetEscalation(
+                pb.EscalationRef(authorize_id=authorize_id),
+                timeout=timeout,
+                metadata=md,
+            ),
             timeout=timeout,
-        )
-        return self._authz.GetEscalation(
-            pb.EscalationRef(authorize_id=authorize_id), timeout=timeout, metadata=md
         )
 
     def _refresh_ticket(self, agent: Agent, failed: bytes, timeout: float) -> bytes:
@@ -455,6 +503,12 @@ class SeamClient:
                 ticket = self._admit_locked(agent, cache, timeout)
             return ticket
 
+    def _signer(self, credential: Optional[Agent]) -> Optional[Agent]:
+        """Who signs a subject-scoped call: an explicit ``credential`` wins; otherwise the client's
+        bound agent (seam-sdk#202); with neither, ``None`` — no credential is sent, opt-in per call on
+        an unbound client, as since #508. The one resolve step both credentialed paths share."""
+        return credential if credential is not None else self._agent
+
     def _credential_md(
         self,
         credential: Optional[Agent],
@@ -464,18 +518,88 @@ class SeamClient:
         *,
         timeout: float,
     ) -> Optional[list]:
-        """The gRPC ``metadata=`` value for a subject-scoped call. An explicit ``credential`` wins;
-        otherwise the client's bound agent (seam-sdk#202) is used; with neither it is ``None`` and no
-        credential is sent — opt-in per call on an unbound client, as since #508. Reuses the same
+        """The gRPC ``metadata=`` value for a subject-scoped call that does NOT retry (``open_session``,
+        ``cancel_session``, ``expire_session``: D-WRITES-EXCLUDED / plans/post-onboarding-sdk-asks.md). Resolves
+        the signer as :meth:`_signer` does and returns ``None`` without one. Reuses the same
         cached/admitted ticket :meth:`authorize` would for this agent; never mints a second one."""
-        if credential is None:
-            credential = self._agent
-        if credential is None:
+        signer = self._signer(credential)
+        if signer is None:
             return None
-        ticket = self._ticket_for(credential, timeout)
+        ticket = self._ticket_for(signer, timeout)
         return credential_metadata(
-            credential.seed, ticket, rpc_full_name, resource_id, body
+            signer.seed, ticket, rpc_full_name, resource_id, body
         )
+
+    def _credentialed_call(
+        self,
+        credential: Optional[Agent],
+        rpc_full_name: str,
+        resource_id: str,
+        body,
+        send: Callable[[Optional[list]], _T],
+        *,
+        timeout: float,
+        retry: bool = True,
+    ) -> _T:
+        """Send one subject-scoped call, refreshing a rejected ticket ONCE and resending ONCE (#275).
+
+        ``send(metadata)`` performs the RPC; it is called once, or twice when the first attempt is
+        refused ``UNAUTHENTICATED``. The rule, in the one place it lives for this client:
+
+        * **No signer, no retry** (D-NO-CRED-NO-RETRY). Without ``credential=`` and without a bound
+          agent there is no ticket to refresh, so ``send(None)`` runs once and its error propagates.
+        * **Refresh through** :meth:`_refresh_ticket`, the coalesced path :meth:`authorize` uses, so
+          N concurrent rejections on one AID — reads and ``authorize`` mixed — cost ONE re-admit
+          (adopt-if-different under the per-AID lock). The refresh is keyed to the SIGNER: an explicit
+          ``credential=`` on a bound client refreshes the credential's ticket, never the bound one's.
+        * **Re-sign over the same ``body`` object.** The ``x-seam-call-sig-bin`` frames the ticket
+          bytes, so a resend under a new ticket must be re-signed; the body is the identical message,
+          so both attempts carry byte-identical serialized requests.
+        * **Exactly once.** A second ``UNAUTHENTICATED`` propagates typed. A failure of the refresh's
+          own challenge/``Admit`` (``UNAVAILABLE``/``CHALLENGE_REFUSED`` included) propagates typed
+          and is never looped. Any other status (``NOT_FOUND``, ``PERMISSION_DENIED``,
+          ``DEADLINE_EXCEEDED``, …) propagates on the first attempt with no refresh.
+        * **``retry=False`` is "invalidate, then raise"**: the rejected ticket is dropped from the cache
+          if it is still the cached one (so the NEXT call re-admits instead of reusing it until 80% of
+          its TTL), and the error propagates. No call site uses it today: it is the flip-back path
+          for the ``submit_*`` steps (D-SUBMIT-RETRY) — set their ``retry=`` to ``False`` and they
+          invalidate-then-raise, with no API change.
+
+        A rejection the refresh cannot fix (an out-of-scope id, a missing subject — the runtime makes
+        those indistinguishable from a dead ticket on purpose) therefore costs one re-admit and one
+        resend before it raises: at most six wire calls, the same bound as :meth:`authorize`. No
+        negative cache is kept, so a caller polling an out-of-scope id re-admits on every call.
+        """
+        signer = self._signer(credential)
+        if signer is None:
+            return send(None)
+        ticket = self._ticket_for(signer, timeout)
+        try:
+            return send(
+                credential_metadata(
+                    signer.seed, ticket, rpc_full_name, resource_id, body
+                )
+            )
+        except UnauthenticatedError:
+            if not retry:
+                self._invalidate_ticket(signer, ticket)
+                raise
+            # Inside the handler on purpose: a failure of the refresh itself carries the rejection
+            # that caused it as ``__context__``.
+            ticket = self._refresh_ticket(signer, ticket, timeout)
+        # Outside it: the resend's own failure is the error, not a chained "during handling of".
+        return send(
+            credential_metadata(signer.seed, ticket, rpc_full_name, resource_id, body)
+        )
+
+    def _invalidate_ticket(self, agent: Agent, failed: bytes) -> None:
+        """Drop ``failed`` from the cache if it is still the cached ticket — compare-and-invalidate
+        under the per-AID lock, so a ticket another caller has since refreshed in is never thrown
+        away (the same rule as :meth:`_refresh_ticket`'s adopt-if-different)."""
+        cache, lock = self._cache_and_lock(agent.aid)
+        with lock:
+            if cache.get(_now_ms()) == failed:
+                cache.invalidate()
 
     def run_decision(
         self,
@@ -564,6 +688,7 @@ class SeamClient:
         )
         return self._coord.OpenSession(req, timeout=timeout, metadata=md)
 
+    @_submit_retry_doc
     def submit_proposal(
         self,
         session_id: str,
@@ -583,15 +708,17 @@ class SeamClient:
         )
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        md = self._credential_md(
+        return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/SubmitProposal",
             "",
             req,
+            lambda md: self._coord.SubmitProposal(req, timeout=timeout, metadata=md),
             timeout=timeout,
+            retry=True,  # D-SUBMIT-RETRY (#275): see _SUBMIT_RETRY_NOTE
         )
-        return self._coord.SubmitProposal(req, timeout=timeout, metadata=md)
 
+    @_submit_retry_doc
     def submit_vote(
         self,
         session_id: str,
@@ -617,15 +744,17 @@ class SeamClient:
         )
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        md = self._credential_md(
+        return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/SubmitVote",
             "",
             req,
+            lambda md: self._coord.SubmitVote(req, timeout=timeout, metadata=md),
             timeout=timeout,
+            retry=True,  # D-SUBMIT-RETRY (#275): see _SUBMIT_RETRY_NOTE
         )
-        return self._coord.SubmitVote(req, timeout=timeout, metadata=md)
 
+    @_submit_retry_doc
     def submit_evaluation(
         self,
         session_id: str,
@@ -668,15 +797,17 @@ class SeamClient:
             req.rationale_ref = rationale_ref
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        md = self._credential_md(
+        return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/SubmitEvaluation",
             "",
             req,
+            lambda md: self._coord.SubmitEvaluation(req, timeout=timeout, metadata=md),
             timeout=timeout,
+            retry=True,  # D-SUBMIT-RETRY (#275): see _SUBMIT_RETRY_NOTE
         )
-        return self._coord.SubmitEvaluation(req, timeout=timeout, metadata=md)
 
+    @_submit_retry_doc
     def submit_objection(
         self,
         session_id: str,
@@ -703,15 +834,17 @@ class SeamClient:
         )
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        md = self._credential_md(
+        return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/SubmitObjection",
             "",
             req,
+            lambda md: self._coord.SubmitObjection(req, timeout=timeout, metadata=md),
             timeout=timeout,
+            retry=True,  # D-SUBMIT-RETRY (#275): see _SUBMIT_RETRY_NOTE
         )
-        return self._coord.SubmitObjection(req, timeout=timeout, metadata=md)
 
+    @_submit_retry_doc
     def submit_commit(
         self,
         session_id: str,
@@ -743,14 +876,15 @@ class SeamClient:
             req.supersedes = supersedes
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        md = self._credential_md(
+        return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/SubmitCommit",
             "",
             req,
+            lambda md: self._coord.SubmitCommit(req, timeout=timeout, metadata=md),
             timeout=timeout,
+            retry=True,  # D-SUBMIT-RETRY (#275): see _SUBMIT_RETRY_NOTE
         )
-        return self._coord.SubmitCommit(req, timeout=timeout, metadata=md)
 
     # ── Quorum-mode-only steps (`macp.mode.quorum.v1`) ─────────────────────────────────────────
     # request → ballot × N → submit_commit (reused unchanged). Both verbs are rejected with a typed
@@ -758,6 +892,7 @@ class SeamClient:
     # make and is deliberately NOT mirrored here: a client-side copy of a server-side rule is a
     # second grammar to keep in sync, and the first thing to drift.
 
+    @_submit_retry_doc
     def submit_approval_request(
         self,
         session_id: str,
@@ -784,15 +919,19 @@ class SeamClient:
         )
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        md = self._credential_md(
+        return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/SubmitApprovalRequest",
             "",
             req,
+            lambda md: self._coord.SubmitApprovalRequest(
+                req, timeout=timeout, metadata=md
+            ),
             timeout=timeout,
+            retry=True,  # D-SUBMIT-RETRY (#275): see _SUBMIT_RETRY_NOTE
         )
-        return self._coord.SubmitApprovalRequest(req, timeout=timeout, metadata=md)
 
+    @_submit_retry_doc
     def submit_ballot(
         self,
         session_id: str,
@@ -821,14 +960,15 @@ class SeamClient:
         )
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
-        md = self._credential_md(
+        return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/SubmitBallot",
             "",
             req,
+            lambda md: self._coord.SubmitBallot(req, timeout=timeout, metadata=md),
             timeout=timeout,
+            retry=True,  # D-SUBMIT-RETRY (#275): see _SUBMIT_RETRY_NOTE
         )
-        return self._coord.SubmitBallot(req, timeout=timeout, metadata=md)
 
     def resume_session(
         self,
@@ -896,14 +1036,15 @@ class SeamClient:
         credential: Optional[Agent] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.SessionStatusResponse:
-        md = self._credential_md(
+        return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/SessionStatus",
             session_id,
+            None,
+            lambda md: self._coord.SessionStatus(
+                pb.SessionRef(session_id=session_id), timeout=timeout, metadata=md
+            ),
             timeout=timeout,
-        )
-        return self._coord.SessionStatus(
-            pb.SessionRef(session_id=session_id), timeout=timeout, metadata=md
         )
 
     def get_decision(
@@ -917,15 +1058,23 @@ class SeamClient:
         posture on a deployment that strips ``x-seam-subject`` at its edge. Reuses the same
         cached/admitted ticket :meth:`authorize` would for this agent. Omitted, it defaults to the
         agent the client is bound to (``SeamClient(channel, agent=...)``, seam-sdk#202); on an unbound
-        client no credential is sent."""
-        md = self._credential_md(
+        client no credential is sent.
+
+        With a credential, an ``UNAUTHENTICATED`` refreshes the signer's ticket once and resends once
+        (#275) — the same rule for every credentialed read (``session_status``, ``replay_decision``,
+        ``get_commitment_proof``, ``get_escalation``) and ``report_outcome``. A second rejection
+        raises :class:`~seam_sdk.errors.UnauthenticatedError`. The runtime answers a scope refusal
+        (an out-of-scope or absent id) with the same ``UNAUTHENTICATED`` as a dead ticket, so such a
+        call also pays one re-admit before it raises; without a credential nothing is retried."""
+        return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/GetDecision",
             decision_id,
+            None,
+            lambda md: self._coord.GetDecision(
+                pb.DecisionRef(decision_id=decision_id), timeout=timeout, metadata=md
+            ),
             timeout=timeout,
-        )
-        return self._coord.GetDecision(
-            pb.DecisionRef(decision_id=decision_id), timeout=timeout, metadata=md
         )
 
     def replay_decision(
@@ -935,14 +1084,15 @@ class SeamClient:
         credential: Optional[Agent] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.ReplayView:
-        md = self._credential_md(
+        return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/ReplayDecision",
             decision_id,
+            None,
+            lambda md: self._coord.ReplayDecision(
+                pb.DecisionRef(decision_id=decision_id), timeout=timeout, metadata=md
+            ),
             timeout=timeout,
-        )
-        return self._coord.ReplayDecision(
-            pb.DecisionRef(decision_id=decision_id), timeout=timeout, metadata=md
         )
 
     def report_outcome(
@@ -969,7 +1119,10 @@ class SeamClient:
         personal data out of it.
 
         ``credential`` opts in to the in-band request credential (#508). The digest covers the whole
-        request message; this is what makes the verb callable on a header-denied plane."""
+        request message; this is what makes the verb callable on a header-denied plane. With a
+        credential (explicit or the bound agent), an ``UNAUTHENTICATED`` refreshes the ticket once and
+        re-signs and resends the SAME request once (#275) — safe because the key above makes a resend
+        of a report that already landed a no-op. A second rejection raises ``UnauthenticatedError``."""
         req = pb.ReportOutcomeRequest(
             decision_id=decision_id,
             correct=correct,
@@ -977,14 +1130,17 @@ class SeamClient:
         )
         if verified_by is not None:
             req.verified_by = verified_by
-        md = self._credential_md(
+        # Refresh-once (#275): ReportOutcome is idempotent on its signed ``idempotency_key`` and exempt
+        # from the runtime's write replay guard, so the resend re-signs the SAME ``req`` — if the
+        # first attempt had landed, the resend is a no-op returning the original response.
+        return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/ReportOutcome",
             "",
             req,
+            lambda md: self._coord.ReportOutcome(req, timeout=timeout, metadata=md),
             timeout=timeout,
-        )
-        return self._coord.ReportOutcome(req, timeout=timeout, metadata=md).recorded
+        ).recorded
 
     # ── Context binding (data plane) ─────────────────────────────────────────────────────────────
 
@@ -1097,14 +1253,15 @@ class SeamClient:
         credential: Optional[Agent] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.CommitmentProof:
-        md = self._credential_md(
+        return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/GetCommitmentProof",
             decision_id,
+            None,
+            lambda md: self._coord.GetCommitmentProof(
+                pb.DecisionRef(decision_id=decision_id), timeout=timeout, metadata=md
+            ),
             timeout=timeout,
-        )
-        return self._coord.GetCommitmentProof(
-            pb.DecisionRef(decision_id=decision_id), timeout=timeout, metadata=md
         )
 
     def verify_decision(
