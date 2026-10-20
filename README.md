@@ -544,9 +544,9 @@ runs `SeamAdminClient` in a thread.
 
 | Language | Transport (generated) | Crypto shim + ergonomic client |
 |---|---|---|
-| **Python** | ✅ | ✅ **complete** — one-shot + **sessions & budgets** + **features** + **management plane** (`SeamAdminClient`: erasure/governance) + context/trust/outcome + identity file (#201); round-trips live |
-| **TypeScript** | ✅ | ✅ **complete** — one-shot + **sessions & budgets** + **features** + **management plane** (`SeamAdminClient`: erasure/governance) + context/trust/outcome + identity file (#201); round-trips live |
-| Go | ✅ | ✅ **shim** — conformance-tested (Ed25519 PoP, AID, TCT verify, request credential) + identity file (`go/identity`); ergonomic client over gen transport is a follow-up |
+| **Python** | ✅ | ✅ **complete** — one-shot + **sessions & budgets** + **features** + **management plane** (`SeamAdminClient`: erasure/governance) + context/trust/outcome + identity file (#201) + seed-free identity facts (#274); round-trips live |
+| **TypeScript** | ✅ | ✅ **complete** — one-shot + **sessions & budgets** + **features** + **management plane** (`SeamAdminClient`: erasure/governance) + context/trust/outcome + identity file (#201) + seed-free identity facts (#274); round-trips live |
+| Go | ✅ | ✅ **shim** — conformance-tested (Ed25519 PoP, AID, TCT verify, request credential) + identity file and seed-free facts (`go/identity`); ergonomic client over gen transport is a follow-up |
 | Java | ✅ | ✅ **shim** — conformance-tested (Bouncy Castle) + `Agent`, `IdentityFile`, `RequestCredentials`; client is a follow-up |
 | Kotlin | ✅ | ✅ **shim** — conformance-tested (Bouncy Castle) + `Agent`, `IdentityFile`, `RequestCredentials`; client is a follow-up |
 

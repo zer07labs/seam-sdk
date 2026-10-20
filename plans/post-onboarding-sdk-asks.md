@@ -599,7 +599,7 @@ language but not the other.
 
 ### Phase 4: A seed-free identity-facts loader (all five languages)
 
-- **Status:** TODO
+- **Status:** DONE (2026-10-19). The plan's whitespace example was wrong (`"00 "*21+"0"` already failed as "not valid hex"); the input whose message changed is `"00"*31+"  "`, pinned against the vendored f1d112d loader. TS spies through the internal `seedCodec` (`node --test`, not vitest). The Java and Kotlin decoder hook is a volatile, non-public static. The derive path zeroes the decoded seed where the language allows.
 - **Risk:** complex
 - **Delivers:** #274.
   - A new loader in each language, `load_identity_facts(path=None) -> IdentityFacts` and its four

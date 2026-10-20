@@ -1219,7 +1219,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:1470-1492` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:1487-1509` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2049,7 +2049,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:1502` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:1519` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -2851,3 +2851,55 @@ Plan: `plans/post-onboarding-sdk-asks.md` (Phase 3, B-CORE-FACTS SDK half). All 
   unknown keys. Observable: a created file has six keys, not five, and a hand-edited or mismatched `aid` is now
   refused by the full loader. seam-adapters (#262) is told the schema gained an optional key.
 - **Status:** DECIDED (plan, owner); implemented in Phase 3.
+
+## 2026-10-19 — read a bootstrap file's facts without a signing key (#274, post-onboarding Phase 4)
+
+Plan: `plans/post-onboarding-sdk-asks.md` (Phase 4, B-CORE-FACTS SDK half). All five languages.
+
+### D-FACTS-API — a second loader returning a capability-free value type
+- **Chose:** a separate loader, `load_identity_facts` (TS `loadIdentityFacts`, Go `identity.LoadIdentityFacts`,
+  Java/Kotlin `IdentityFile.loadFacts`), returning `IdentityFacts` with exactly four string fields: `agent_id`,
+  `tenant`, `endpoint`, `aid` (each language's naming idiom). It never constructs an `Agent`. On a file that
+  records `aid` it returns that value as the file's **claim**, shape-checked but not verified, and the seed is
+  never hex-decoded. The full loader remains the verifier. Every docstring says so, and a test pins that a
+  mismatched `aid` is returned by the facts loader and refused by the full loader.
+- **Alternatives:** (a) a `public_only=True` flag on the full loader, which gives one function two return types.
+  (b) Make `LoadedIdentity.agent` lazy, which keeps a signing path reachable from the value. (c) Verify the
+  recorded `aid` in the facts loader too, which needs the seed decoded and the public key computed on every
+  call, so the facts loader is no longer seed-free on new files.
+- **Blast radius:** additive, with new names on every public surface (Python `__all__`, the TS root export
+  list, Go's `identity` package, Java's nested record, Kotlin's top-level data class). A consumer that displays
+  facts can show a hand-edited `aid`. One that will sign must load with the full loader, which refuses it.
+- **Status:** DECIDED (plan, owner); implemented in Phase 4.
+
+### D-LEGACY-AID — a file without `aid` gets one derived transiently
+- **Chose:** for a pre-#274 file the facts loader decodes the seed, derives the Ed25519 public key, and returns
+  only `aid_from_pubkey(pub)`. The key never leaves the call and no `Agent` is built. So `aid` is a required
+  string on `IdentityFacts`, never optional.
+- **Alternatives:** (a) return `aid=None` for legacy files, which pushes a crypto step onto every consumer.
+  (b) Refuse legacy files, which breaks every file written before #274. (c) Backfill `aid` into the file on
+  read, which rewrites a secret file and is a custody operation (Open question 4).
+- **Blast radius:** the seed is decoded for legacy files only. The no-decode test covers files that record
+  `aid`; the same test shows a legacy file does decode.
+- **Status:** DECIDED (plan, owner); implemented in Phase 4.
+
+### D-FACTS-CHECKS — one shared validator, same checks, same order, same messages
+- **Chose:** each language has one private validator (`_read_and_validate`, `readAndValidate`) that both
+  loaders call. It resolves, reads and parses the file and requires an object. It then checks `version`, then
+  `seed_hex` (a string of length 64, else the "64 hex chars" message; then `^[0-9a-fA-F]{64}$`, else
+  `"seed_hex is not valid hex"`). Then it checks the required fields and shape-checks a present `aid`. It
+  returns `seed_hex` as an opaque string, so only the full loader, and the facts loader on a legacy file, decode
+  it, through one hookable decoder per language (Python `_decode_seed`, TS `seedCodec.decodeSeed`, Go
+  `decodeSeed`, Java/Kotlin `IdentityFile.seedDecoder`). A parametrized test per language asserts both loaders
+  refuse each bad file with the identical message.
+- **Alternatives:** (a) a lighter facts validator, which lets a file load for display that the signer refuses.
+  (b) Decode the seed in the validator, which breaks no-decode for files that record `aid`.
+- **Blast radius:** one observable change, in Python only. A 64-character seed containing whitespace (e.g.
+  `"00"*31 + "  "`) was refused with the "64 hex chars" message, because `bytes.fromhex` skips whitespace and
+  decoded it to 31 bytes. It is now refused with `"seed_hex is not valid hex"`. The file is refused either way.
+  TS, Go, Java and Kotlin already said "not valid hex". The plan's own example, `"00 "*21 + "0"`, already
+  failed with "not valid hex" before this change, since the trailing lone digit makes `fromhex` raise. Both
+  inputs are tested, and `test_a_whitespace_seed_changed_message_and_only_message` pins the old message
+  against the vendored f1d112d loader.
+- **Status:** DECIDED (plan, owner); implemented in Phase 4.
+

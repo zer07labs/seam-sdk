@@ -16,6 +16,17 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added
+- **Read a bootstrap file's public facts without a signing key (#274, D-FACTS-API), in all five SDKs.**
+  `load_identity_facts` (TS `loadIdentityFacts`, Go `identity.LoadIdentityFacts`, Java/Kotlin
+  `IdentityFile.loadFacts`) returns `IdentityFacts`: `agent_id`, `tenant`, `endpoint` and `aid`, and
+  nothing else. It never constructs an `Agent` and returns no seed, key or signing capability. On a file
+  that records `aid` it returns that value as the file's claim, shape-checked but not verified, and
+  never decodes the seed. On a legacy file it derives the AID transiently from the public key
+  (D-LEGACY-AID). It runs the same validator as the full loader, so both refuse the same bad file with
+  the same message (D-FACTS-CHECKS). The full loader stays the verifier: a hand-edited `aid` that does
+  not match its seed is returned by the facts loader and refused by the full loader.
+
 ### Changed
 - **Credentialed reads and `report_outcome` refresh a rejected ticket once (#275), Python (sync and
   aio) and TypeScript.** `get_escalation`, `session_status`, `get_decision`, `replay_decision`,
@@ -47,6 +58,12 @@ than trusting a summary here.
   `seed_hex` (`"recorded aid does not match seed_hex"`). A file without `aid` loads exactly as before
   and is never rewritten. Every loader since #201 ignores unknown keys, so a new file also loads in
   older releases. The cross-language fixture is `ts/tests/fixtures/identity_v1_aid_python.json`.
+- **Python's loader names a whitespace-padded seed for what it is (#274, D-FACTS-CHECKS).** A
+  64-character `seed_hex` containing whitespace, for example `"00"*31 + "  "`, used to be refused by
+  `load_identity_file` with `"seed_hex must be exactly 64 hex chars (a 32-byte Ed25519 seed)"`, because
+  `bytes.fromhex` skips whitespace and decoded it to 31 bytes. It is now refused with `"seed_hex is not
+  valid hex"`, which TS, Go, Java and Kotlin already said. The file is refused either way; only the
+  message changed. A seed is now shape-checked against `^[0-9a-fA-F]{64}$` before anything decodes it.
 
 ## 0.48.0 — 2026-10-19
 

@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:457`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:474`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -130,7 +130,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1470-1492`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1487-1509`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -218,6 +218,7 @@ or TypeScript.
 | Generate an agent (#201) | `Agent.generate()` | `Agent.generate()` | `crypto.GenerateAgent()` | `Agent.generate()` | `Agent.generate()` |
 | Create / load the bootstrap file (#201) | `create_identity_file` / `load_identity_file` | `createIdentityFile` / `loadIdentityFile` | `identity.CreateIdentityFile` / `LoadIdentityFile` | `IdentityFile.create` / `load` | `IdentityFile.create` / `load` |
 | Record `aid` on create, verify a recorded `aid` on load (#274, schema still v1) | yes | yes | yes | yes | yes |
+| Read bootstrap facts without a signing key (#274) | `load_identity_facts` → `IdentityFacts` | `loadIdentityFacts` → `IdentityFacts` | `identity.LoadIdentityFacts` → `*IdentityFacts` | `IdentityFile.loadFacts` → `IdentityFile.IdentityFacts` | `IdentityFile.loadFacts` → `IdentityFacts` |
 | Bound-agent default credential (#202) | `SeamClient(channel, agent=)` | `SeamClient` `{ agent }` | `crypto.RequestCredentials{Agent}` | `new RequestCredentials(agent, tickets)` | `RequestCredentials(agent, tickets)` |
 | Refresh a rejected ticket once on the credentialed reads, `report_outcome` and the seven `submit_*` steps (#275) | yes (sync + aio) | yes | N/A, no client | N/A, no client | N/A, no client |
 

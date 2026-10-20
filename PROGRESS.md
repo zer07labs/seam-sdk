@@ -52,6 +52,12 @@ Execution: each phase is written by a dedicated Opus executor agent on `feat/pos
 
 ## Phase log
 
+### Phase 4 — Seed-free identity-facts loader (5 languages) · 2026-10-19
+- **Verdict:** PASS in 1 round. Verifier: **Fable**, because the phase is critical: it adds public API in five languages.
+- **Follow-ups closed before commit:** both assumptions CONFIRMED; Go `0x` seed case added; seedDecoder hook made volatile; the derive path zeroes the seed.
+- **Gate:** pytest 1981 passed; ruff clean; TS 361 passed; Go, Java and Kotlin green; check-contract exit 0.
+- **Next:** finalization (§4).
+
 ### Phase 3 — Record the AID in the bootstrap file and verify it on load (5 languages) · 2026-10-19
 - **Verdict:** PASS in 2 rounds. Verifier: Opus (fresh agent each round).
   - Round 1, GAPS: the criterion-4 test would skip in CI's shallow clone (fixed by vendoring the f1d112d loader with a blob-hash pin); no #262 notice yet (deferred to after merge); Go/Java/Kotlin did not load the shared fixture (added).
@@ -4056,7 +4062,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1502`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1519`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -4543,12 +4549,12 @@ green before any code changed.
   this — "rather than refusing outright" was wrong, fixed before merge). (2) the release's
   `retitle_changelog.sh` run shifted `CHANGELOG.md`'s "No yank" paragraph from line 1054 to 1056
   (a +2 insert right after `## Unreleased`), pushing `COMPATIBILITY.md:123` and
-  `DECISIONS.md:1222`'s `CHANGELOG.md:1360-1377` citations past the citation test's slack
-  tolerance; repointed both to `CHANGELOG.md:1362-1379`. Tested: `check_vendored_spec.py` OK via both
+  `DECISIONS.md:1222`'s `CHANGELOG.md:1377-1394` citations past the citation test's slack
+  tolerance; repointed both to `CHANGELOG.md:1379-1396`. Tested: `check_vendored_spec.py` OK via both
   `--from local` and `--from gh`; `test_compatibility_citations_resolve.py` 489 passed/0 failed
   standalone (was 4 failed). Verifier also flagged two pre-existing, gate-invisible citations
   elsewhere that the same +2 shift widened further — `DECISIONS.md:2035` cites
-  `CHANGELOG.md:1262` and `PROGRESS.md:3981` cites `CHANGELOG.md:1147`, both already ~130-250
+  `CHANGELOG.md:1279` and `PROGRESS.md:3981` cites `CHANGELOG.md:1164`, both already ~130-250
   lines stale before this release — out of scope for this release-unblock hotfix; filed as a
   follow-up issue rather than folded in here.
   **Rebased `feat/verify-anchor-tenant` onto this commit during `/sweep`'s ship pass.** Four
@@ -4558,7 +4564,7 @@ green before any code changed.
   `CHANGELOG.md`/`COMPATIBILITY.md`/`DECISIONS.md`: the feature branch's own new
   `## Unreleased` entry (16 lines) was kept above this hotfix's `## 0.33.3` header, which
   shifted "No yank" from this entry's `1056` to `1072` and recomputed the two citations above
-  (`CHANGELOG.md:1362-1379`) to `CHANGELOG.md:1378-1395` — verified against the exact
+  (`CHANGELOG.md:1379-1396`) to `CHANGELOG.md:1395-1412` — verified against the exact
   paragraph-boundary text at both the old and new line numbers before trusting the new range,
   not just the arithmetic. A dedicated ship-gate verifier independently re-derived this same
   shift from the diff and confirmed it exact.

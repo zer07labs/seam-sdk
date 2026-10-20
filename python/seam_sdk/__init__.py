@@ -63,9 +63,11 @@ from .ids import (
     validate_session_id,
 )
 from .identity import (
+    IdentityFacts,
     IdentityFileError,
     LoadedIdentity,
     create_identity_file,
+    load_identity_facts,
     load_identity_file,
 )
 from .errors import (
@@ -94,7 +96,9 @@ __all__ = [
     "Agent",
     "create_identity_file",
     "load_identity_file",
+    "load_identity_facts",
     "LoadedIdentity",
+    "IdentityFacts",
     "IdentityFileError",
     "SeamClient",
     "SeamAdminClient",

@@ -13,9 +13,12 @@
 //
 // The seed leaves this package in exactly one direction: from disk into a crypto.Agent on load.
 // CreateIdentityFile generates it, writes it, and returns (path, aid) — never the seed.
+// LoadIdentityFacts (seam-sdk#274) reads the same file's public facts and returns no signing capability
+// at all. Both loaders run one shared validator, so they refuse the same bad file with the same message.
 package identity
 
 import (
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -38,6 +41,13 @@ const SchemaVersion = 1
 
 // aidShape is the shape of a recorded aid: the Ed25519 AID form, 32 bytes as unpadded b64url.
 var aidShape = regexp.MustCompile(`^aid:pubkey:ed25519:[A-Za-z0-9_-]{43}$`)
+
+// seedShape is a seed: exactly 64 ASCII hex digits, no whitespace, no sign, no 0x.
+var seedShape = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
+
+// decodeSeed is the one place a seed is hex-decoded on load. A variable so tests can prove the facts
+// loader never calls it on a file that records aid; seedHex has passed the shared validator.
+var decodeSeed = func(seedHex string) ([]byte, error) { return hex.DecodeString(seedHex) }
 
 // IdentityFileError is returned when the bootstrap file is missing, malformed, fails validation, or
 // cannot be created. Always loud. Unwrap reaches the underlying OS/JSON error, when there is one.
@@ -72,12 +82,99 @@ func (l *LoadedIdentity) String() string {
 // GoString keeps %#v from walking into Agent's fields.
 func (l *LoadedIdentity) GoString() string { return l.String() }
 
+// IdentityFacts is the public facts of a bootstrap file: no seed, no crypto.Agent, no signing
+// capability. Returned by LoadIdentityFacts.
+//
+// The four fields are the file's claims; the verifier is LoadIdentityFile. In particular AID is the
+// file's recorded aid when it has one, unverified against the seed.
+type IdentityFacts struct {
+	AgentID  string // registry identity for scope lookup (may equal the AID)
+	Tenant   string
+	Endpoint string // the data-plane endpoint this process talks to
+	AID      string
+}
+
+func (f *IdentityFacts) String() string {
+	return fmt.Sprintf("IdentityFacts(agent_id=%q, tenant=%q, endpoint=%q, aid=%q)", f.AgentID, f.Tenant, f.Endpoint, f.AID)
+}
+
+// GoString keeps %#v to the same four fields.
+func (f *IdentityFacts) GoString() string { return f.String() }
+
+// validated is what the shared validator hands both loaders: seed_hex as an opaque, shape-checked
+// string, and the recorded aid when the file has one.
+type validated struct {
+	seedHex                   string
+	agentID, tenant, endpoint string
+	aid                       string
+	hasAid                    bool
+}
+
 // LoadIdentityFile loads the process identity from path, or from $SEAM_BOOTSTRAP_FILE when path is "".
 //
 // A recorded aid is verified, not trusted: it must have the AID shape (else "aid is malformed") and
 // equal the AID derived from seed_hex (else "recorded aid does not match seed_hex"). A file without aid
 // loads as before.
 func LoadIdentityFile(path string) (*LoadedIdentity, error) {
+	v, err := readAndValidate(path)
+	if err != nil {
+		return nil, err
+	}
+	seed, err := decodeSeed(v.seedHex)
+	if err != nil {
+		return nil, fail(err, "seed_hex is not valid hex")
+	}
+	agent, err := crypto.NewAgent(seed)
+	if err != nil {
+		return nil, fail(err, "%v", err)
+	}
+	if v.hasAid && v.aid != agent.AID() {
+		return nil, fail(nil, "recorded aid does not match seed_hex")
+	}
+	return &LoadedIdentity{Agent: agent, AgentID: v.agentID, Tenant: v.tenant, Endpoint: v.endpoint}, nil
+}
+
+// LoadIdentityFacts reads the public facts of the bootstrap file at path, or $SEAM_BOOTSTRAP_FILE when
+// path is "" (seam-sdk#274).
+//
+// For a consumer that shows who an agent is but never signs as it. It runs the same checks, in the
+// same order, with the same messages as LoadIdentityFile (one shared validator), so a file one refuses
+// the other refuses identically. It never constructs a crypto.Agent and returns no seed, no key and no
+// signing capability.
+//
+// AID is always set:
+//   - The file records aid (every file written since #274): it is returned as the file's claim,
+//     shape-checked but not verified against seed_hex, and the seed is never hex-decoded. A hand-edited
+//     aid that does not match its seed is returned here, and refused by LoadIdentityFile, which is the
+//     verifier.
+//   - A legacy file without aid: it is derived transiently from the seed. The public key is computed
+//     and encoded; only the string is returned.
+//
+// "Seed-free" therefore means no signing capability returned, and no seed decode on a file that records
+// aid. It does not mean the seed is never read: parsing the JSON reads it as text.
+func LoadIdentityFacts(path string) (*IdentityFacts, error) {
+	v, err := readAndValidate(path)
+	if err != nil {
+		return nil, err
+	}
+	aid := v.aid
+	if !v.hasAid {
+		seed, err := decodeSeed(v.seedHex)
+		if err != nil {
+			return nil, fail(err, "seed_hex is not valid hex")
+		}
+		priv := ed25519.NewKeyFromSeed(seed)
+		aid = crypto.AIDFromPubkey(priv.Public().(ed25519.PublicKey))
+		// Best-effort hygiene: zero the decoded seed and the derived private key (which embeds it).
+		clear(seed)
+		clear(priv)
+	}
+	return &IdentityFacts{AgentID: v.agentID, Tenant: v.tenant, Endpoint: v.endpoint, AID: aid}, nil
+}
+
+// readAndValidate is the one validator both loaders run (D-FACTS-CHECKS): same checks, same order, same
+// messages. No seed bytes are produced here.
+func readAndValidate(path string) (*validated, error) {
 	resolved := path
 	if resolved == "" {
 		resolved = os.Getenv(EnvPointer)
@@ -107,9 +204,8 @@ func LoadIdentityFile(path string) (*LoadedIdentity, error) {
 	if len(seedHex) != 64 {
 		return nil, fail(nil, "seed_hex must be exactly 64 hex chars (a 32-byte Ed25519 seed)")
 	}
-	seed, err := hex.DecodeString(seedHex)
-	if err != nil {
-		return nil, fail(err, "seed_hex is not valid hex")
+	if !seedShape.MatchString(seedHex) {
+		return nil, fail(nil, "seed_hex is not valid hex")
 	}
 	fields := map[string]string{}
 	var missing []string
@@ -128,14 +224,10 @@ func LoadIdentityFile(path string) (*LoadedIdentity, error) {
 	if hasAid && (!isString || !aidShape.MatchString(recordedAid)) {
 		return nil, fail(nil, "aid is malformed")
 	}
-	agent, err := crypto.NewAgent(seed)
-	if err != nil {
-		return nil, fail(err, "%v", err)
-	}
-	if hasAid && recordedAid != agent.AID() {
-		return nil, fail(nil, "recorded aid does not match seed_hex")
-	}
-	return &LoadedIdentity{Agent: agent, AgentID: fields["agent_id"], Tenant: fields["tenant"], Endpoint: fields["endpoint"]}, nil
+	return &validated{
+		seedHex: seedHex, agentID: fields["agent_id"], tenant: fields["tenant"], endpoint: fields["endpoint"],
+		aid: recordedAid, hasAid: hasAid,
+	}, nil
 }
 
 // CreateIdentityFile generates a new agent identity and writes it to path as a schema-v1 bootstrap

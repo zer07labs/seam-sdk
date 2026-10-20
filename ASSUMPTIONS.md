@@ -1479,3 +1479,27 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   are not run against their f1d112d loaders. They rely on reading the parser, which ignores unknown keys at
   f1d112d (verified by the Phase 3 verifier: Java/Kotlin `data.get`, Go `map[string]any`, TS `obj[k]`).
 - **Status:** CONFIRMED (2026-10-19). Resolved by vendoring.
+
+## Patching `Agent` is a Python-only proof; the other four languages prove "no Agent" structurally
+- **Plan:** plans/post-onboarding-sdk-asks.md (Phase 4, #274, criterion 1)
+- **Assumed:** criterion 1's "with `Agent` patched to raise, the facts loader still succeeds" is checked in
+  Python only (`test_identity_facts_never_construct_an_agent`). TS's ESM bindings, Go's `crypto.NewAgent` and
+  the JVM `Agent` constructor cannot be swapped from a test without a production seam added just for the test.
+  In those languages the proof is that the facts type has exactly four string fields, nothing in its rendering
+  contains a 64-hex run, and the hooked decoder is never called on a file that records `aid` (no seed bytes,
+  so no `Agent`).
+- **Blast radius if wrong:** a future edit could build an `Agent` inside a non-Python facts loader on a legacy
+  file without a test failing. It still could not return one, because the return type has no field to hold it.
+- **Status:** CONFIRMED (2026-10-19). The plan's AC1 itself scopes the `Agent` patch to Python; the Phase 4
+  verifier accepted the structural proof for the other four.
+
+## TS's no-decode spy is `node:test`'s `mock.method`, not `vi.spyOn`
+- **Plan:** plans/post-onboarding-sdk-asks.md (Phase 4, #274, criterion 2)
+- **Assumed:** the plan names `vi.spyOn`, but `ts/` runs `node:test`, not vitest. The decoder is reached
+  through an exported, `@internal` object (`seedCodec`, not re-exported from the package root) so
+  `mock.method(seedCodec, "decodeSeed")` can observe it. An ESM function binding cannot be spied.
+- **Blast radius if wrong:** none at runtime. `seedCodec` is not reachable by package consumers: the package
+  `exports` map has only `"."`, and the root export list does not name it. It is documented as internal.
+- **Status:** CONFIRMED (2026-10-19). `ts/package.json:46` runs `node --test`, so `vi.spyOn` was a plan
+  misnomer; `seedCodec` is unreachable (exports map is `"."` only, `ts/src/index.ts` omits it).
+

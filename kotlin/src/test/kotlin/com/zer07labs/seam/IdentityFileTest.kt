@@ -274,4 +274,131 @@ class IdentityFileTest {
         )
         assertEquals(FIXTURE_AID, IdentityFile.load(p).aid)
     }
+
+    // seam-sdk#274 (D-FACTS-API, D-LEGACY-AID, D-FACTS-CHECKS): the seed-free facts loader.
+
+    private val legacyFixture = Path.of("..", "ts", "tests", "fixtures", "identity_v1_python.json")
+    private val aidFixture = Path.of("..", "ts", "tests", "fixtures", "identity_v1_aid_python.json")
+    private val hex64 = Regex("[0-9a-fA-F]{64}")
+
+    private fun factsOf(f: IdentityFacts) = listOf(f.agentId, f.tenant, f.endpoint, f.aid)
+
+    private fun factsOf(l: LoadedIdentity) = listOf(l.agentId, l.tenant, l.endpoint, l.aid)
+
+    @Test
+    fun identityFactsCarryNoSigningCapability() {
+        // Criterion 1: exactly the four String properties; the rendering carries no seed.
+        val ctor = IdentityFacts::class.java.declaredConstructors.single()
+        assertEquals(List(4) { String::class.java }, ctor.parameterTypes.toList())
+        assertEquals(
+            listOf("agentId", "tenant", "endpoint", "aid"),
+            IdentityFacts::class.java.declaredFields.filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }
+                .map { it.name },
+        )
+        for (p in listOf(legacyFixture, aidFixture)) {
+            val rendered = IdentityFile.loadFacts(p).toString()
+            assertFalse(hex64.containsMatchIn(rendered), rendered)
+            assertTrue(rendered.contains(FIXTURE_AID), rendered)
+        }
+    }
+
+    @Test
+    fun aFileThatRecordsAidIsServedWithoutDecodingTheSeed() {
+        // Criterion 2: the hooked decoder refuses; loadFacts never calls it on a file that records aid.
+        val saved = IdentityFile.seedDecoder
+        var calls = 0
+        IdentityFile.seedDecoder = { calls++; throw IllegalStateException("seed decoded") }
+        try {
+            assertEquals(
+                listOf("ap-clerk", "acmé", "seam.example:443", FIXTURE_AID),
+                factsOf(IdentityFile.loadFacts(aidFixture)),
+            )
+            assertEquals(0, calls)
+            val full = assertThrows<IllegalStateException> { IdentityFile.load(aidFixture) }
+            assertEquals("seed decoded", full.message)
+            assertEquals(1, calls)
+            // A legacy file has no recorded aid, so deriving one necessarily decodes the seed.
+            assertThrows<IllegalStateException> { IdentityFile.loadFacts(legacyFixture) }
+            assertEquals(2, calls)
+        } finally {
+            IdentityFile.seedDecoder = saved
+        }
+    }
+
+    @Test
+    fun identityFactsAgreeWithTheFullLoaderOnEveryField(@TempDir dir: Path) {
+        // Criterion 4: legacy, recorded-aid, freshly created and adapters-shaped files.
+        val seed = ByteArray(32) { it.toByte() }
+        val partner = dir.resolve("partner.json")
+        Files.writeString(
+            partner,
+            """{"version": 1, "seed_hex": "${HexFormat.of().formatHex(seed)}", "agent_id": "qa-confirm", """ +
+                """"tenant": "t1", "endpoint": "localhost:50051", "comment": "extra keys are ignored"}""",
+        )
+        val created = create(dir.resolve("created.json")).path
+        for (p in listOf(legacyFixture, aidFixture, created, partner)) {
+            assertEquals(factsOf(IdentityFile.load(p)), factsOf(IdentityFile.loadFacts(p)), p.toString())
+        }
+        assertEquals(FIXTURE_AID, IdentityFile.loadFacts(legacyFixture).aid)
+    }
+
+    @Test
+    fun identityFactsFallBackToTheEnvPointer(@TempDir dir: Path) {
+        assumeTrue(System.getenv(IdentityFile.ENV_POINTER) == null, "SEAM_BOOTSTRAP_FILE is set")
+        assertSameRefusal(null, null)
+        val c = create(dir.resolve("id.json"))
+        assertEquals(c.aid, IdentityFile.loadFactsResolved(c.path).aid)
+    }
+
+    @Test
+    fun aMismatchedRecordedAidIsAClaimToFactsAndARefusalToTheFullLoader(@TempDir dir: Path) {
+        val other = Agent(ByteArray(32) { it.toByte() }).aid
+        val p = writeWithAid(dir, "mismatch", "\"$other\"")
+        assertEquals(other, IdentityFile.loadFacts(p).aid)
+        val e = assertThrows<IdentityFileError> { IdentityFile.load(p) }
+        assertEquals("recorded aid does not match seed_hex", e.message)
+    }
+
+    // Both loaders refuse with the same message; want null skips the exact-message check.
+    private fun assertSameRefusal(p: Path?, want: String?) {
+        val full = assertThrows<IdentityFileError> { IdentityFile.load(p) }
+        val facts = assertThrows<IdentityFileError> { IdentityFile.loadFacts(p) }
+        assertEquals(full.message, facts.message, p.toString())
+        if (want != null) assertEquals(want, full.message, p.toString())
+    }
+
+    @Test
+    fun bothLoadersRefuseABadFileIdentically(@TempDir dir: Path) {
+        // Criterion 3 (D-FACTS-CHECKS).
+        val seedLen = "seed_hex must be exactly 64 hex chars (a 32-byte Ed25519 seed)"
+        val notHex = "seed_hex is not valid hex"
+        val seed = "ab".repeat(32)
+        val cases = listOf(
+            """{"version": 2}""" to "bootstrap schema version 2 unsupported (want 1)",
+            """{"version": 1, "seed_hex": "ab"}""" to seedLen,
+            """{"version": 1}""" to seedLen,
+            """{"version": 1, "seed_hex": 7}""" to seedLen,
+            """{"version": 1, "seed_hex": "${"zz".repeat(32)}"}""" to notHex,
+            """{"version": 1, "seed_hex": "${"00 ".repeat(21)}0"}""" to notHex,
+            """{"version": 1, "seed_hex": "${"00".repeat(31)}  "}""" to notHex,
+            """{"version": 1, "seed_hex": "0x${"00".repeat(31)}"}""" to notHex,
+            """{"version": 1, "seed_hex": "$seed", "agent_id": "a", "tenant": "t"}""" to
+                "bootstrap file missing required field(s): endpoint",
+            """{"version": 1, "seed_hex": "$seed"}""" to
+                "bootstrap file missing required field(s): agent_id, tenant, endpoint",
+            "[1, 2]" to null,
+            "{not json" to null,
+        )
+        var i = 0
+        for ((body, want) in cases) {
+            val p = dir.resolve("bad${i++}.json")
+            Files.writeString(p, body)
+            assertSameRefusal(p, want)
+        }
+        for (aid in listOf("\"${FIXTURE_AID.dropLast(1)}\"", "\"\"", "null", "42")) {
+            assertSameRefusal(writeWithAid(dir, "aid${i++}", aid), "aid is malformed")
+        }
+        val missing = dir.resolve("nope.json")
+        assertSameRefusal(missing, "bootstrap file not found: $missing")
+    }
 }

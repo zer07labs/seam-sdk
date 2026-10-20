@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import importlib.util
 import json
 import os
+import re
 import stat
 import sys
 from pathlib import Path
 
 import pytest
 
+import seam_sdk
 from seam_sdk import (
     Agent,
+    IdentityFacts,
     IdentityFileError,
     create_identity_file,
+    load_identity_facts,
     load_identity_file,
 )
 from seam_sdk import identity as identity_mod
@@ -307,3 +312,245 @@ def test_malformed_files_are_loud(tmp_path, data, match):
 def test_missing_file_is_loud(tmp_path):
     with pytest.raises(IdentityFileError, match="not found"):
         load_identity_file(tmp_path / "nope.json")
+
+
+# ── seam-sdk#274 (D-FACTS-API, D-LEGACY-AID, D-FACTS-CHECKS): the seed-free facts loader ─────────────
+
+FACT_FIELDS = ("agent_id", "tenant", "endpoint", "aid")
+#: The plan's example of a 64-char seed with whitespace. A lone trailing digit, so ``bytes.fromhex``
+#: already refused it as "not valid hex" before the shared validator; its message is unchanged.
+WS_SEED_PLAN = "00 " * 21 + "0"
+#: A 64-char seed with whitespace that ``bytes.fromhex`` accepts (it skips whitespace) as 31 bytes. The
+#: pre-#274 loader refused it as "seed_hex must be exactly 64 hex chars…"; the shared validator refuses
+#: it earlier as "seed_hex is not valid hex" — the stated message change.
+WS_SEED_DECODES = "00" * 31 + "  "
+
+
+def _facts_of(loaded) -> tuple:
+    return tuple(getattr(loaded, f) for f in FACT_FIELDS)
+
+
+def test_identity_facts_are_exported():
+    # Criterion 5.
+    assert "load_identity_facts" in seam_sdk.__all__
+    assert "IdentityFacts" in seam_sdk.__all__
+    assert seam_sdk.load_identity_facts is load_identity_facts
+    assert seam_sdk.IdentityFacts is IdentityFacts
+
+
+def test_identity_facts_carry_no_signing_capability():
+    # Criterion 1: exactly the four public fields; nothing that holds or derives a key.
+    facts = load_identity_facts(AID_FIXTURE)
+    assert isinstance(facts, IdentityFacts)
+    assert tuple(f.name for f in dataclasses.fields(IdentityFacts)) == FACT_FIELDS
+    for name in (
+        "seed",
+        "seed_hex",
+        "agent",
+        "private_key",
+        "signing_key",
+        "sign",
+        "key",
+    ):
+        assert not hasattr(facts, name), name
+    assert not any(isinstance(getattr(facts, f), Agent) for f in FACT_FIELDS)
+    assert all(isinstance(getattr(facts, f), str) for f in FACT_FIELDS)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        facts.aid = "x"  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    "fixture", [LEGACY_FIXTURE, AID_FIXTURE], ids=["legacy", "aid"]
+)
+def test_identity_facts_repr_names_only_the_four_fields(fixture):
+    rendered = repr(load_identity_facts(fixture))
+    assert not re.search(r"[0-9a-fA-F]{64}", rendered), rendered
+    assert FIXTURE_SEED_HEX not in rendered
+    assert re.fullmatch(
+        r"IdentityFacts\(agent_id=.*, tenant=.*, endpoint=.*, aid=.*\)", rendered
+    ), rendered
+
+
+@pytest.mark.parametrize(
+    "fixture", [LEGACY_FIXTURE, AID_FIXTURE], ids=["legacy", "aid"]
+)
+def test_identity_facts_never_construct_an_agent(monkeypatch, fixture):
+    # Criterion 1: with Agent unconstructible, the facts loader still succeeds — on a legacy file
+    # (transient derivation) and on a file that records aid.
+    class _NoAgent:
+        def __init__(self, *a, **k):
+            raise AssertionError("load_identity_facts constructed an Agent")
+
+    monkeypatch.setattr(identity_mod, "Agent", _NoAgent)
+    facts = load_identity_facts(fixture)
+    assert facts.aid == FIXTURE_AID
+    with pytest.raises(AssertionError, match="constructed an Agent"):
+        load_identity_file(fixture)
+
+
+def test_a_file_that_records_aid_is_served_without_decoding_the_seed(monkeypatch):
+    # Criterion 2: on a Phase-3 file the seed is never hex-decoded; the full loader must decode it.
+    def _refuse(seed_hex):
+        raise AssertionError("seed decoded")
+
+    monkeypatch.setattr(identity_mod, "_decode_seed", _refuse)
+    facts = load_identity_facts(AID_FIXTURE)
+    assert _facts_of(facts) == (*FIXTURE_FIELDS.values(), FIXTURE_AID)
+    with pytest.raises(AssertionError, match="seed decoded"):
+        load_identity_file(AID_FIXTURE)
+    # A legacy file has no recorded aid, so deriving one necessarily decodes the seed.
+    with pytest.raises(AssertionError, match="seed decoded"):
+        load_identity_facts(LEGACY_FIXTURE)
+
+
+def _agreement_files(tmp_path) -> list:
+    created, _ = create_identity_file(tmp_path / "created.json", **FIELDS)
+    partner = tmp_path / "partner.json"
+    partner.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "seed_hex": bytes(range(32)).hex(),
+                "agent_id": "qa-confirm",
+                "tenant": "t1",
+                "endpoint": "localhost:50051",
+                "comment": "extra keys are ignored",
+            }
+        )
+    )
+    return [LEGACY_FIXTURE, AID_FIXTURE, Path(created), partner]
+
+
+def test_identity_facts_agree_with_the_full_loader_on_every_field(tmp_path):
+    # Criterion 4: legacy, recorded-aid, freshly created and adapters-shaped files.
+    for path in _agreement_files(tmp_path):
+        assert _facts_of(load_identity_facts(path)) == _facts_of(
+            load_identity_file(path)
+        ), path
+    assert load_identity_facts(LEGACY_FIXTURE).aid == FIXTURE_AID
+    assert load_identity_facts(AID_FIXTURE).tenant == "acm\u00e9"
+
+
+def test_identity_facts_read_the_env_pointer(tmp_path, monkeypatch):
+    path, aid = create_identity_file(tmp_path / "id.json", **FIELDS)
+    monkeypatch.setenv(ENV_POINTER, path)
+    assert load_identity_facts().aid == aid
+    monkeypatch.delenv(ENV_POINTER)
+    with pytest.raises(IdentityFileError) as facts_err:
+        load_identity_facts()
+    with pytest.raises(IdentityFileError) as full_err:
+        load_identity_file()
+    assert str(facts_err.value) == str(full_err.value)
+    assert ENV_POINTER in str(facts_err.value)
+
+
+def test_a_mismatched_recorded_aid_is_a_claim_to_facts_and_a_refusal_to_the_full_loader(
+    tmp_path,
+):
+    other = Agent(bytes(range(32))).aid
+    p = tmp_path / "claim.json"
+    p.write_text(json.dumps(_with_aid(other)))
+    assert load_identity_facts(p).aid == other
+    with pytest.raises(IdentityFileError, match="recorded aid does not match seed_hex"):
+        load_identity_file(p)
+
+
+_SEED = "ab" * 32
+_REFUSALS = [
+    # (id, file body as a JSON value or raw text, exact message or None to check equality only)
+    (
+        "wrong-version",
+        {"version": 2},
+        "bootstrap schema version 2 unsupported (want 1)",
+    ),
+    (
+        "no-version",
+        {"seed_hex": _SEED},
+        "bootstrap schema version None unsupported (want 1)",
+    ),
+    ("short-seed", {"version": 1, "seed_hex": "ab"}, identity_mod._SEED_LEN_MESSAGE),
+    ("absent-seed", {"version": 1}, identity_mod._SEED_LEN_MESSAGE),
+    ("number-seed", {"version": 1, "seed_hex": 7}, identity_mod._SEED_LEN_MESSAGE),
+    (
+        "non-hex-seed",
+        {"version": 1, "seed_hex": "zz" * 32},
+        "seed_hex is not valid hex",
+    ),
+    (
+        "ws-seed-plan",
+        {"version": 1, "seed_hex": WS_SEED_PLAN},
+        "seed_hex is not valid hex",
+    ),
+    (
+        "ws-seed-decodes",
+        {"version": 1, "seed_hex": WS_SEED_DECODES},
+        "seed_hex is not valid hex",
+    ),
+    (
+        "0x-seed",
+        {"version": 1, "seed_hex": "0x" + "ab" * 31},
+        "seed_hex is not valid hex",
+    ),
+    (
+        "bad-seed-and-missing-fields",
+        {"version": 1, "seed_hex": "zz" * 32},
+        "seed_hex is not valid hex",
+    ),
+    (
+        "missing-endpoint",
+        {"version": 1, "seed_hex": _SEED, "agent_id": "a", "tenant": "t"},
+        "bootstrap file missing required field(s): endpoint",
+    ),
+    (
+        "missing-all-fields",
+        {"version": 1, "seed_hex": _SEED},
+        "bootstrap file missing required field(s): agent_id, tenant, endpoint",
+    ),
+    ("malformed-aid", _with_aid(FIXTURE_AID[:-1]), "aid is malformed"),
+    ("empty-aid", _with_aid(""), "aid is malformed"),
+    ("null-aid", _with_aid(None), "aid is malformed"),
+    ("number-aid", _with_aid(42), "aid is malformed"),
+    ("list", [1, 2], None),
+    ("not-json", "{not json", None),
+]
+
+
+@pytest.mark.parametrize(
+    "body, message", [r[1:] for r in _REFUSALS], ids=[r[0] for r in _REFUSALS]
+)
+def test_both_loaders_refuse_a_bad_file_identically(tmp_path, body, message):
+    # Criterion 3 (D-FACTS-CHECKS): one validator, so the same refusal with the same message.
+    p = tmp_path / "bad.json"
+    p.write_text(body if isinstance(body, str) else json.dumps(body))
+    with pytest.raises(IdentityFileError) as full_err:
+        load_identity_file(p)
+    with pytest.raises(IdentityFileError) as facts_err:
+        load_identity_facts(p)
+    assert str(facts_err.value) == str(full_err.value)
+    if message is not None:
+        assert str(full_err.value) == message
+
+
+def test_both_loaders_refuse_a_missing_file_identically(tmp_path):
+    p = tmp_path / "nope.json"
+    with pytest.raises(IdentityFileError) as full_err:
+        load_identity_file(p)
+    with pytest.raises(IdentityFileError) as facts_err:
+        load_identity_facts(p)
+    assert (
+        str(facts_err.value) == str(full_err.value) == f"bootstrap file not found: {p}"
+    )
+
+
+def test_a_whitespace_seed_changed_message_and_only_message(tmp_path, pre_aid_loader):
+    # The stated change: the pre-#274 loader decoded WS_SEED_DECODES to 31 bytes and refused it on
+    # length; the shared validator refuses it on shape. Both are IdentityFileError (a ValueError).
+    p = tmp_path / "ws.json"
+    p.write_text(json.dumps({"version": 1, "seed_hex": WS_SEED_DECODES, **FIELDS}))
+    assert len(WS_SEED_DECODES) == len(WS_SEED_PLAN) == 64
+    with pytest.raises(ValueError) as before:
+        pre_aid_loader.load_identity_file(p)
+    assert str(before.value) == identity_mod._SEED_LEN_MESSAGE
+    with pytest.raises(IdentityFileError) as after:
+        load_identity_file(p)
+    assert str(after.value) == "seed_hex is not valid hex"
