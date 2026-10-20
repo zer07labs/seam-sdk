@@ -12,6 +12,7 @@ docstring for the #85 failure this replaced; do not reintroduce a fixed port or 
 """
 
 import os
+import time
 
 import pytest
 
@@ -433,6 +434,15 @@ def _corrupt_cached_ticket(client: SeamClient, agent: Agent) -> bytes:
     return cache._ticket
 
 
+def _past_the_mint_ms() -> None:
+    """Let the runtime's clock leave the millisecond the cached ticket was minted in. A ticket's
+    claims carry only ``expires_at_ms`` (no nonce) and its issuer signature is deterministic, so a
+    re-admit inside that same millisecond mints the SAME bytes — and an identical resend under an
+    identical ticket is refused as a replay again. A loopback server is fast enough to do that; a
+    real network round trip is not. Called before each deliberate identical resend."""
+    time.sleep(0.002)
+
+
 def _vote_then_resend_twice(client: SeamClient, agent: Agent, sid: str, tokens: int):
     """Open (hard token limit ``tokens``) → propose → criterion 4(a) the vote under a corrupted ticket
     → 4(b) the same vote resent → 4(c) resent again with a different ``usage``. Returns the three
@@ -456,6 +466,7 @@ def _vote_then_resend_twice(client: SeamClient, agent: Agent, sid: str, tokens: 
     # 4(b): an app-level resend under the SAME (now fresh) cached ticket: identical bytes, so the
     # runtime refuses it as request_replayed (uniform UNAUTHENTICATED); the SDK refreshes and
     # resends; the engine sees a Duplicate and applies nothing.
+    _past_the_mint_ms()
     same = client.submit_vote(
         sid, "peer", "p1", "APPROVE", usage=usage, credential=agent
     )
@@ -510,6 +521,7 @@ def test_submit_retry_lands_once_and_resends_are_deduped(deny_plane):
 
     # 4(d): the RESOLVING step resent — the same decision_id, no collective_outcome.
     before_d = client._tickets[agent.aid]._ticket
+    _past_the_mint_ms()
     resent = client.submit_commit(sid, "c1", "BLOCK", credential=agent)
     assert client._tickets[agent.aid]._ticket != before_d, (
         "4(d) anti-vacuity: the identical commit must have been refused as a replay and refreshed"
