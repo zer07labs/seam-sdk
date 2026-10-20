@@ -16,6 +16,17 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Changed
+- **BREAKING (verifier): the commitment TCT's `ver` is `aitp/0.3` only (AITP 0.17.0, D-040).**
+  `seam-verify` refuses an `aitp/0.2` TCT: AITP 0.17.0 cut over with no dual-accept, and the runtime
+  mints `aitp/0.3` from that release. Commitment digests are unchanged. Records sealed before the
+  runtime's AITP 0.17.0 deploy no longer verify under `seam-verify` (a history boundary by design).
+  The Go/Python/TS/Java/Kotlin TCT verifiers do not check `ver` and are unaffected; the vendored
+  vectors (`conformance/vectors.json`, `conformance/commitment_digest_v3_vector.json`) and the
+  evidence-bundle fixtures are re-taken from the runtime.
+
+## 0.49.0 — 2026-10-20
+
 ### Added
 - **Read a bootstrap file's public facts without a signing key (#274, D-FACTS-API), in all five SDKs.**
   `load_identity_facts` (TS `loadIdentityFacts`, Go `identity.LoadIdentityFacts`, Java/Kotlin
@@ -28,13 +39,6 @@ than trusting a summary here.
   not match its seed is returned by the facts loader and refused by the full loader.
 
 ### Changed
-- **BREAKING (verifier): the commitment TCT's `ver` is `aitp/0.3` only (AITP 0.17.0, D-040).**
-  `seam-verify` refuses an `aitp/0.2` TCT: AITP 0.17.0 cut over with no dual-accept, and the runtime
-  mints `aitp/0.3` from that release. Commitment digests are unchanged. Records sealed before the
-  runtime's AITP 0.17.0 deploy no longer verify under `seam-verify` (a history boundary by design).
-  The Go/Python/TS/Java/Kotlin TCT verifiers do not check `ver` and are unaffected; the vendored
-  vectors (`conformance/vectors.json`, `conformance/commitment_digest_v3_vector.json`) and the
-  evidence-bundle fixtures are re-taken from the runtime.
 - **Credentialed reads and `report_outcome` refresh a rejected ticket once (#275), Python (sync and
   aio) and TypeScript.** `get_escalation`, `session_status`, `get_decision`, `replay_decision`,
   `get_commitment_proof` (and so `verify_decision`) and `report_outcome`, when they carry a credential
