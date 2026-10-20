@@ -288,6 +288,11 @@ test("deny plane: a header subject and a wrong-context signature are both refuse
 const VOTE_TOKENS = 600n;
 type TicketMap = Map<string, { ticket: Uint8Array; refreshAtMs: number }>;
 const ticketsOf = (c: SeamClient) => (c as unknown as { tickets: TicketMap }).tickets;
+// A ticket's claims carry only expires_at_ms (no nonce) and its issuer signature is deterministic, so a
+// re-admit inside the millisecond the cached ticket was minted in mints the SAME bytes, and an identical
+// resend under it is refused as a replay again. Loopback is fast enough for that; a real network is not.
+// Awaited before each deliberate identical resend.
+const pastTheMintMs = () => new Promise((resolve) => setTimeout(resolve, 2));
 
 async function voteThenResendTwice(client: SeamClient, agent: Agent, sid: string, tokens: bigint) {
   const credential = { credential: agent };
@@ -309,6 +314,7 @@ async function voteThenResendTwice(client: SeamClient, agent: Agent, sid: string
   const afterA = ticketsOf(client).get(agent.aid)!.ticket;
   assert.notDeepEqual([...afterA], [...corrupted], "4(a): the refresh re-admitted");
   // 4(b): the same vote resent under the same ticket — refused as a replay, refreshed, deduped.
+  await pastTheMintMs();
   const same = await client.submitVote(sid, "peer", "p1", "APPROVE", usage, credential);
   const afterB = ticketsOf(client).get(agent.aid)!.ticket;
   assert.notDeepEqual([...afterB], [...afterA], "4(b) anti-vacuity: the identical resend was refreshed");
@@ -337,6 +343,7 @@ test("#275 P2 deny plane: a refreshed submitVote lands once; resends are deduped
 
       // 4(d): the resolving step resent.
       const beforeD = Uint8Array.from(ticketsOf(client).get(agent.aid)!.ticket);
+      await pastTheMintMs();
       const resent = await client.submitCommit(sid, "c1", "BLOCK", undefined, { credential: agent });
       assert.notDeepEqual(
         [...ticketsOf(client).get(agent.aid)!.ticket],
