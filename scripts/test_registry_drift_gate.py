@@ -2861,7 +2861,10 @@ def test_the_job_runs_where_its_shell_actually_works() -> None:
     see which interpreter GitHub would hand it. The same goes for an explicit `shell:` override.
     """
     runner = _job()["runs-on"]
-    assert isinstance(runner, str) and runner.startswith("ubuntu-"), (
+    assert isinstance(runner, str) and (
+        runner.startswith("ubuntu-")
+        or (runner.startswith("blacksmith-") and "-ubuntu-" in runner)
+    ), (
         f"the job runs on {runner!r}. Every guard in this file executes the step under bash; on a "
         f"Windows runner the default shell is PowerShell and `set -euo pipefail` is not a "
         f"statement it has."
