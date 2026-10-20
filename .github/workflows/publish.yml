@@ -155,7 +155,7 @@ jobs:
     steps:
       # fetch-depth: 0 — the ancestry assertion below needs real history. A shallow clone has no
       # merge base to test against and would fail every tag spuriously.
-      - uses: useblacksmith/checkout@v1
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
         with:
           fetch-depth: 0
       - name: assert vTAG == ts/package.json == python version
@@ -192,7 +192,7 @@ jobs:
     needs: [version-check, ci-green]
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -285,7 +285,7 @@ jobs:
     needs: [version-check, ci-green]
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -535,7 +535,7 @@ jobs:
       run:
         working-directory: verify
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: dtolnay/rust-toolchain@stable
 
       # THE INDEPENDENCE PROOF IS THE PRODUCT, so it gates the publish rather than merely running
@@ -590,7 +590,7 @@ jobs:
     needs: [npm, python]
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -772,7 +772,7 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"

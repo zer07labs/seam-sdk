@@ -26,7 +26,7 @@ jobs:
     # "One version everywhere": ts/package.json and python/pyproject.toml must always be the same version
     # (they are released together, following the runtime). Fail a PR that lets them drift.
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - name: python version must equal typescript version
         run: |
           TS=$(node -p "require('./ts/package.json').version")
@@ -95,7 +95,7 @@ jobs:
     if: needs.preflight.outputs.have_buf_token == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -171,7 +171,7 @@ jobs:
     if: needs.preflight.outputs.have_buf_token == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -256,7 +256,7 @@ jobs:
       # timeout-minutes to 45 while it is set (a cold release build of seamd takes most of 20).
       SEAM_RUNTIME_BUILD_REF: ""
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - name: Mint a seam-deps-bot App token, scoped to seam-runtime
         if: env.SEAM_RUNTIME_BUILD_REF != ''
         id: app
@@ -268,7 +268,7 @@ jobs:
           repositories: seam-runtime
       - name: check out seam-runtime at the pinned ref
         if: env.SEAM_RUNTIME_BUILD_REF != ''
-        uses: useblacksmith/checkout@v1
+        uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
         with:
           repository: zer07labs/seam-runtime
           ref: ${{ env.SEAM_RUNTIME_BUILD_REF }}
@@ -483,7 +483,7 @@ jobs:
     name: go (test)
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: actions/setup-go@v5
         with:
           go-version: "1.22"
@@ -495,7 +495,7 @@ jobs:
     name: java (gradle test)
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -509,7 +509,7 @@ jobs:
     name: kotlin (gradle test)
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -523,7 +523,7 @@ jobs:
     name: verify (the independent verifier)
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -577,7 +577,7 @@ jobs:
     name: verify (builds at its declared MSRV)
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
 
       # Read the floor from the manifest rather than hard-coding it here. Every other floor in this
       # repo is DERIVED (the protobuf floor from the emitted stubs, the grpcio floor from the stub
@@ -660,7 +660,7 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -688,7 +688,7 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -721,7 +721,7 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: actions/setup-python@v5
         with:
           # Pinned rather than ambient: `sys.stdlib_module_names` (used by the import-light guard)
