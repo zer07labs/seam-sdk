@@ -16,6 +16,15 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added
+- **`SessionLifecycle.pins` on the event stream (runtime 0.50.0, seam-runtime#1380).** A
+  `SESSION_LIFECYCLE` "opened" event carries one `AgentPin { agent_id, version }` per admitted
+  participant. The clients hand `StreamEvents` payloads through as the generated messages, so it
+  reaches callers unchanged; `contract/event-field-manifest.txt` records it and
+  `verify/docs/seam-event.v1.md` is re-pinned at runtime `320a998`. The verifier does not act on it.
+- **`seam-verify` 0.4.0** is the first published verifier carrying the `aitp/0.3` TCT cutover
+  (D-040, entry under 0.50.0). 0.3.0 and 0.1.0 refuse bundles sealed by runtime ≥ 0.48.0.
+
 ## 0.50.0 — 2026-10-21
 
 ### Changed
