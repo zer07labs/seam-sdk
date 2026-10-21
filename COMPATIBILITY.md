@@ -116,6 +116,14 @@ There is exactly one rule and it needs no table: **the SDK version equals the ru
 `ci.yml`'s `version-lockstep` job and `publish.yml`'s `version-check` job both enforce it, so a
 mismatch cannot ship.
 
+**The one exception: SDK v0.50.1 pairs with runtime 0.50.0.** SDK v0.50.0 was tagged at `8c8e2b2`
+but never published: that commit failed the CI gate (runtime 0.50.0 added
+`SessionLifecycle.pins` to `seam.event.v1` before this repo's event-field manifest carried it), so
+`publish.yml`'s "CI is green for this commit" refused (#282). A public tag is not re-cut, so the
+fix (seam-sdk#283, `864aea6`) ships as v0.50.1 instead, and the `v0.50.0` / `go/v0.50.0` tags stay
+where they are, unpublished. The runtime's next release train must be 0.51.0 or later, because
+0.50.1 is taken here.
+
 | SDK change | Requires runtime | Earlier runtimes | Pinned from |
 |---|---|---|---|
 | Protocol pass 2026-10 (seam-sdk#265) | seam-runtime 0.48.0 (seam-runtime#1365, carries `protocol-pass-2026-10`) | **none** — no compatibility | runtime `main` @ `32f8196` (contract byte-identical to the freeze `1ac5de5`) |
