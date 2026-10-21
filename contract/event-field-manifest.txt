@@ -78,6 +78,8 @@
 # One line per field: `<Message>/<field_name>`, proto spelling (snake_case), sorted, no tags, no
 # types. A `map` field is ONE entry on its owner, never a key/value pair. 90 fields, 11 messages.
 #
+AgentPin/agent_id
+AgentPin/version
 AuditEntryEvent/action
 AuditEntryEvent/actor
 AuditEntryEvent/reason
@@ -183,4 +185,5 @@ SeamEvent/tenant_seq
 SessionLifecycle/mode
 SessionLifecycle/opened_at_millis
 SessionLifecycle/phase
+SessionLifecycle/pins
 SessionLifecycle/policy_version

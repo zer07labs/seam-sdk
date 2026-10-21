@@ -1,17 +1,15 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 32f8196 (refreshed 2026-10-19).
-     Movements since the prior default-branch pin (8d06722, the runtime 0.47.0 train), landed with the
-     runtime 0.48.0 train (seam-runtime#1365, protocol pass 2026-10, seam-sdk#265):
-     1. P7 (e70497ff): record digest v4. DECISION_SEALED gains tags 14-17 (classification,
-        participants_digest, trust_basis_commitment, auth_method), all inside the preimage; v1-v3 are
-        retired with no dual-verify, so any schema_version other than 4 is cannot-verify. This crate
-        implements v4 only, and refuses a stripped mandatory column as a STRIP.
-     2. B3 (e6af873b): the commitment digest moves to seam-commitment-digest:v3.
-     3. P9, P12, P12b and the 2026-10-18 reconcile (9d45338d, 46abe810, 412aeb8d, 7da7c56d): text this
-        verifier does not act on beyond what items 1-2 cover.
-     4. Re-pinned to the contract freeze 1ac5de5 (29a68738): the context digest moves to
-        seam.audit.context-provenance.v4, a fifth optional per-binding slot `receipt_key_status`
-        (closed Current | Historical, present exactly when receipt_hash is). Implemented in
-        src/bundle.rs; v1-v3 are not dispatched. -->
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 320a998 (refreshed 2026-10-20).
+     Movements since the prior default-branch pin (32f8196, the runtime 0.48.0 train), landed with the
+     runtime 0.50.0 train (seam-runtime#1380, #1359):
+     1. SESSION_LIFECYCLE "opened" carries `pins` (repeated AgentPin { agent_id, version }): one entry
+        per admitted participant, in admission order, at the registry version admission pinned, plus
+        the in-flight accounting rule and the restart gap. Operational metadata outside every digest
+        this crate checks; the verifier does not act on it. The SDKs carry it as a passthrough of the
+        generated SessionLifecycle message (contract/event-field-manifest.txt).
+     Earlier movements (32f8196, runtime 0.48.0 train, seam-runtime#1365, seam-sdk#265): record digest
+     v4 (DECISION_SEALED tags 14-17; v1-v3 cannot-verify), commitment digest
+     seam-commitment-digest:v3, and context digest seam.audit.context-provenance.v4 with the optional
+     `receipt_key_status` slot. -->
 
 # `seam-event.v1` — event-stream wire spec (language-neutral)
 
@@ -391,8 +389,26 @@ message SessionLifecycle {           // envelope tag 21
   string mode = 2;                   // the canonical MACP mode id the session opened in
   string policy_version = 3;         // the policy the binding named at open — STAGED, not "bound"
   uint64 opened_at_millis = 4;       // the caller-injected session clock at open
+  repeated AgentPin pins = 5;        // #1359 — per admitted participant, in admission order ("opened" only)
+}
+
+message AgentPin {
+  string agent_id = 1;               // the registry agent id
+  string version = 2;                // the registry version admission pinned (never re-pinned mid-session)
 }
 ```
+
+JSON: `session_lifecycle.pins: [{"agent_id": "...", "version": "..."}]`, **omitted when empty**.
+
+**In-flight accounting (B-INFLIGHT, #1359).** A consumer derives the live sessions per `(tenant, agent,
+version)` from the stream alone: a `SESSION_LIFECYCLE` `"opened"` adds one per pin; the session's
+`DECISION_SEALED` (same envelope `tenant` + `session_id`) removes it. Every terminal state seals —
+`Resolved`, `Cancelled`, and a TTL-elapsed session is sealed `Expired` before eviction (a session is
+never evicted unsealed). One-shot decisions emit no `"opened"`; their seal arrives immediately. There
+is no caught-up marker on the stream: a follow-tail consumer declares itself caught up at the head it
+reads. **Restart gap:** live sessions are process-resident, so a runtime restart drops any still-open
+session without a seal; such an `"opened"` is never followed by its `DECISION_SEALED`, and a consumer
+must age it out against its own TTL bound.
 
 **`policy_version` is STAGED, not proof of enforcement.** It names what the binding staged at open,
 exactly as the identically named field on `seam.api.v1.DecisionResponse` does. A populated value is
@@ -406,8 +422,8 @@ P12b, like the `POLICY_DENIED` id: session ids are client-chosen, so two tenants
 session id in the same millisecond would otherwise collide under a global `event_id` dedup) — salted with the open timestamp
 because a session id can be RE-opened after sweep eviction, and delivery dedups by `event_id` (an
 unsalted id would pin a deduping consumer to the first open's stale payload). `classification` is
-**fixed `Internal`** (operational metadata — phase/mode/policy/timestamp; no subject, secret, or agent
-content — so classification-gated redaction rules never fire on this kind: gate on `when_kind`).
+**fixed `Internal`** (operational metadata — phase/mode/policy/timestamp and registry agent pins; no subject, secret,
+or agent content — so classification-gated redaction rules never fire on this kind: gate on `when_kind`).
 
 ### `AUTHORIZE_EVALUATED` (additive, tag 23 — advisory, not chained)
 
