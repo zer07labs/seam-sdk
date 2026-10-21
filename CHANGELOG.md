@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.50.0 — 2026-10-21
+
 ### Changed
 - **BREAKING (verifier): the commitment TCT's `ver` is `aitp/0.3` only (AITP 0.17.0, D-040).**
   `seam-verify` refuses an `aitp/0.2` TCT: AITP 0.17.0 cut over with no dual-accept, and the runtime
