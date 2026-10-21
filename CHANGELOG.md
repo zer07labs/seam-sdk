@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.50.1 — 2026-10-21
+
 ### Added
 - **`SessionLifecycle.pins` on the event stream (runtime 0.50.0, seam-runtime#1380).** A
   `SESSION_LIFECYCLE` "opened" event carries one `AgentPin { agent_id, version }` per admitted
