@@ -62,7 +62,7 @@ boundary above, that means an SDK ≥ 0.33.2 needs a runtime image built from se
 
 | Consumer | Constraint on `seam-sdk` | Verified at |
 |---|---|---|
-| `seam-adapters` (`seam-agent-core[sdk]`) | `seam-sdk>=0.48.0,<0.49` | `seam-adapters/core/pyproject.toml:79` |
+| `seam-adapters` (`seam-agent-core[sdk]`) | `seam-sdk>=0.50.1,<0.51` | `seam-adapters/core/pyproject.toml:85` |
 | `seam-aegis` | `seam-agent-core[sdk]>=0.17,<0.18` (reaches this SDK transitively) | `seam-aegis/pyproject.toml:94` |
 
 **One caveat on the first row: the lockfile number is not a real resolution.**
@@ -116,13 +116,19 @@ There is exactly one rule and it needs no table: **the SDK version equals the ru
 `ci.yml`'s `version-lockstep` job and `publish.yml`'s `version-check` job both enforce it, so a
 mismatch cannot ship.
 
-**The one exception: SDK v0.50.1 pairs with runtime 0.50.0.** SDK v0.50.0 was tagged at `8c8e2b2`
+**One exception: SDK v0.50.1 pairs with runtime 0.50.0.** SDK v0.50.0 was tagged at `8c8e2b2`
 but never published: that commit failed the CI gate (runtime 0.50.0 added
 `SessionLifecycle.pins` to `seam.event.v1` before this repo's event-field manifest carried it), so
 `publish.yml`'s "CI is green for this commit" refused (#282). A public tag is not re-cut, so the
 fix (seam-sdk#283, `864aea6`) ships as v0.50.1 instead, and the `v0.50.0` / `go/v0.50.0` tags stay
 where they are, unpublished. The runtime's next release train must be 0.51.0 or later, because
 0.50.1 is taken here.
+
+**SDK v0.51.0 was also tagged and never published.** Its tag commit `b115c70` failed the CI gate's
+`sibling-quotes` job: seam-adapters had raised its `seam-sdk` pin to `>=0.50.1,<0.51` while this
+file still quoted `>=0.48.0,<0.49`, so `publish.yml` refused. No 0.51.0 runtime pairing is offered;
+the next published SDK follows the next runtime dispatch (0.54.0), and the `v0.51.0` tags stay
+where they are, unpublished.
 
 | SDK change | Requires runtime | Earlier runtimes | Pinned from |
 |---|---|---|---|
