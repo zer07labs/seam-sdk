@@ -130,6 +130,12 @@ file still quoted `>=0.48.0,<0.49`, so `publish.yml` refused. No 0.51.0 runtime 
 the next published SDK follows the next runtime dispatch (0.54.0), and the `v0.51.0` tags stay
 where they are, unpublished.
 
+**SDK v0.54.3 pairs with runtime 0.54.2.** It is dispatched directly, with no runtime release, to ship
+the opt-in `SESSION_UNAVAILABLE` retry (D79, seam-sdk#288) that runtime 0.53.0+ (seam-runtime#1407)
+makes useful. Runtime `main` held only helm chores since 0.54.2, and an empty runtime release would
+auto-deploy prd for nothing (leader decision D91). 0.54.3 is taken here, so the runtime's next
+release train is 0.55.0. Pin `seam-sdk 0.54.3` beside seamd 0.54.2.
+
 | SDK change | Requires runtime | Earlier runtimes | Pinned from |
 |---|---|---|---|
 | Protocol pass 2026-10 (seam-sdk#265) | seam-runtime 0.48.0 (seam-runtime#1365, carries `protocol-pass-2026-10`) | **none** — no compatibility | runtime `main` @ `32f8196` (contract byte-identical to the freeze `1ac5de5`) |
