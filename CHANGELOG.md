@@ -29,7 +29,8 @@ on both verbs.
   a round trip: a runtime older than the field ignores it, and there an empty binding would consume.
   It is never discovered from the server, because the binding exists to check that server. The
   verifier decodes tag 27 into an event's identity, as it does `tenant_seq`; it is unsealed and
-  never verified. Go, Java and Kotlin carry the generated fields.
+  never verified. Go, Java and Kotlin carry the generated fields. `verify/docs/seam-event.v1.md`
+  and the verifier goldens are re-vendored (`dev/` ids, `stream_id`).
 
 ## 0.55.0 — 2026-10-24
 

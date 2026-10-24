@@ -1,5 +1,11 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 320a998 (refreshed 2026-10-20).
-     Movements since the prior default-branch pin (32f8196, the runtime 0.48.0 train), landed with the
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ ae40c52 tracking feat/w11-p7-p12-contract-train (refreshed 2026-10-24).
+     Pre-vendored ahead of the runtime 0.57.0 train (k8s P7, seam-sdk#266); re-pin to main when it lands.
+     Movement since 320a998: §"Delivery stream `stream_id`" — SeamEvent.stream_id = 27 (every kind,
+     UNSEALED: in no digest, checksum or signature), `{stream_id}/` event_id prefix from the history
+     boundary on, StreamEventsRequest.stream_id = 4 / ReportConsumedRequest.stream_id = 2 refused
+     FAILED_PRECONDITION `stream_id_mismatch` when empty or foreign, no discovery RPC. The verifier
+     carries it in event identity only; the admin helpers require it.
+     Prior pin 320a998 (refreshed 2026-10-20). Movements since 32f8196, the runtime 0.48.0 train, landed with the
      runtime 0.50.0 train (seam-runtime#1380, #1359):
      1. SESSION_LIFECYCLE "opened" carries `pins` (repeated AgentPin { agent_id, version }): one entry
         per admitted participant, in admission order, at the registry version admission pinned, plus
@@ -34,8 +40,8 @@ bytes are. The kernel never names a connector; connectors never link the kernel.
 ```
 SeamEvent {
   schema_version:  string   // "seam-event.v1"
-  event_id:        string   // unique, stable per event (idempotency key for consumers)
-  seq:             u64       // monotonic over the runtime's single ordered outbox — the ordering key
+  event_id:        string   // unique, stable per event (idempotency key for consumers); `{stream_id}/{local}` since k8s P7 — see §Delivery stream
+  seq:             u64       // monotonic over ONE stream's single ordered outbox — the ordering key WITHIN a stream; `(stream_id, seq)` across streams
   occurred_at:     u64       // millis; injected at emit, never wall-clock-read on the binding path
   tenant:          string    // tenant_id (every event is tenant-tagged — invariant 10)
   namespace:       string    // namespace_id
@@ -49,6 +55,7 @@ SeamEvent {
   checksum:        bytes?    // §A — the head this entry produces = H(prev_checksum ‖ digest) (tag 20)
   tenant_seq:      u64?      // #973 — per-tenant outbox counter, gap-free per `tenant`, UNSEALED; see §Per-tenant `tenant_seq` (tag 25)
   payload:         bytes     // kind-specific body (central seam-guard redaction on the outbox is NOT YET WIRED — see the Redaction note below)
+  stream_id:       string    // k8s P7 — the runtime cell's delivery stream (`SEAM_STREAM_ID`); empty on legacy rows; UNSEALED; see §Delivery stream (tag 27)
 }
 
 enum EventKind {
@@ -637,7 +644,7 @@ reader — the relay first — would read it as a replay. So the wrapper is an o
 its own fresh `seq`/`tenant_seq`, and the original travels inside it untouched (every digest, checksum
 and signature in it still verifies; it is never re-encoded).
 
-Envelope: `event_id = "{original_event_id}#rd#{seq}"` (unique per re-drive); `tenant`, `namespace`,
+Envelope: `event_id = "{original_event_id}#rd#{seq}"` (unique per re-drive; since k8s P7 `{stream_id}/{original_local}#rd#{seq}` — one prefix, never two, see §Delivery stream); `tenant`, `namespace`,
 `classification`, `session_id` and `decision_id` are **copied from the inner event**, so tenant
 partitioning and classification-gated redaction treat the wrapper exactly as they treat what it carries
 (`classification` therefore **varies** — a re-driven `ERASURE_CERTIFICATE` is `Pii`). **Advisory**: no
@@ -754,7 +761,9 @@ The decision being scored is identified by the **envelope `decision_id`**, not a
 ## Ordering & integrity
 
 - **Ordering** is by `seq`, monotonic over the runtime's **single ordered outbox stream** — delivery
-  and cursoring stay global. `tenant`/`namespace` are tags consumers **filter** on, not separate
+  and cursoring stay global *within one delivery stream* (one runtime cell, one database). Across cells
+  `seq` restarts and is not comparable: key on `(stream_id, seq)` — see
+  [Delivery stream](#delivery-stream-stream_id-additive-tag-27--every-kind-unsealed--k8s-p7). `tenant`/`namespace` are tags consumers **filter** on, not separate
   *delivery* streams in v1. Consumers track one cursor (at-least-once delivery; `event_id` dedups).
   _Per-`(tenant,namespace)` sub-streams with independent cursors are a forward-compatible v2
   enhancement._ **The hash chain itself is a different axis and is per-`tenant` since U-RT-1** — see
@@ -844,9 +853,51 @@ same lock as the global `seq`. `optional` because **`0` is a real value** (a ten
   4. `tenant_seq` absent **at or after** the `tenant_seq` cutoff is a producer defect.
   5. A gap is evidence of loss *in transit or retention*; for chained kinds confirm against the tenant's
      `CHAIN_HEAD_ATTESTATION.attested_len` before treating it as data loss.
-- **Does not** give ordering across tenants (use `seq`), does not backfill, and a database restored from an
+- **Does not** give ordering across tenants (use `seq`), is scoped to one delivery stream (key it
+  `(stream_id, tenant)` when a consumer reads several cells), does not backfill, and a database restored from an
   older snapshot re-issues counters already shipped (same hazard as `seq`, `docs/runbooks/outbox-seq-reset.md`);
   rule 3 reports it as a duplicate/regression. **Tag 25 is permanent** once consumers vendor the descriptor.
+
+### Delivery stream `stream_id` (additive, tag 27 — every kind, UNSEALED) — k8s P7
+
+`string stream_id = 27`. One consumer may read several runtime cells (prd, partner, aws-stg); each cell's
+outbox `seq` (and `tenant_seq`) starts at 0 on its own database. `stream_id` names the cell's **delivery
+stream**, so `(stream_id, seq)` is the identity a multi-cell consumer keys on.
+
+- **Configured, persisted, write-once.** The runtime reads `SEAM_STREAM_ID` at boot (it must match
+  `^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`; required outside `SEAM_DEV_INSECURE`, where it defaults to `dev`).
+  The first boot records it in `deployment_stream` (migration `0042`); every later boot with a different
+  value **refuses to start**. A database belongs to exactly one stream for life.
+- **Per-stream scope.** `seq`, `tenant_seq`, the relay watermark (`outbox_relay_watermark`, keyed by
+  `stream_id`) and the StreamEvents cursor are all scoped to one stream. Nothing is ordered across streams.
+- **Prefix rule.** Every event appended from the boundary on carries `stream_id` and an `event_id` of
+  `{stream_id}/{local}`, where `{local}` is the kind's id as documented in its section. The one exception
+  in shape is `EVENT_REDRIVEN`: its id is `{stream_id}/{original_local}#rd#{seq}` — the original's own
+  prefix is stripped first, so the id carries one prefix, never two. A stream id cannot contain `/`, so
+  the first `/` always ends the prefix: ids from two streams can never collide, and a consumer's
+  `event_id` dedup stays correct across cells. **Legacy rows are untouched**: they keep their
+  bare id and an empty `stream_id`; nothing is rewritten.
+- **UNSEALED.** `stream_id` and the prefix are in **no digest, checksum or signature** (the chain is
+  per-tenant within a database and never spans streams). `seam-verify` therefore accepts bare, prefixed and
+  mixed windows unchanged; a chained id is compared whole.
+- **History boundary.** `deployment_stream.boundary_seq` is NULL until the first stream-stamped append,
+  which sets it — in its own transaction — to its own outbox `seq`; it is set once and never moves.
+  **Guarantee: every row with `seq >= boundary_seq` carries `stream_id`.** It is enforced by the database
+  from `0042` on: `outbox.stream_id` has the CHECK `outbox_stream_id_set` (NOT NULL, added NOT VALID, so
+  legacy rows stay readable but every new INSERT is checked). A pre-P7 binary does not set the column, so
+  during a rolling deploy **old replicas fail their appends** (clients retry onto a new replica) instead of
+  writing legacy rows above the boundary. The runtime logs `seam_stream_id` and `boundary_seq` (or `unset`)
+  at info on boot. Consumers pin the boundary as `SEAM_STREAM_ID_CUTOFF_SEQ`: below it, a missing
+  `stream_id` is legacy; at or after it, a missing `stream_id` is a producer defect.
+- **Mismatch refusal.** `StreamEvents` (`StreamEventsRequest.stream_id = 4`) and `ReportEventsConsumed`
+  (`ReportConsumedRequest.stream_id = 2`) must name this deployment's stream. An empty or different value is
+  refused with `FAILED_PRECONDITION` `stream_id_mismatch` — `StreamEvents` before any event is read,
+  `ReportEventsConsumed` before anything advances. The refusal **does not echo** the deployment's stream.
+- **No discovery RPC.** A consumer is configured with the stream it reads (the same value as the cell's
+  `SEAM_STREAM_ID`); there is deliberately no RPC that names it.
+- **Kafka.** `seam-relay` sets the `seam-stream-id` record header to the event's `stream_id`, so a
+  multi-cell topic can be partitioned or filtered without decoding the payload.
+- **Tag 27 is permanent** once consumers vendor the descriptor.
 
 ## Tenant tag — a producer rule (invariant 10)
 
