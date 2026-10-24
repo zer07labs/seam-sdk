@@ -147,3 +147,9 @@ func TestTicketErrorPropagates(t *testing.T) {
 		t.Fatal("a bound agent with no TicketSource must fail loudly, not send nothing")
 	}
 }
+
+func TestSessionUnavailableReasonIsTheRuntimeLiteral(t *testing.T) {
+	if SessionUnavailableReason != "SESSION_UNAVAILABLE" {
+		t.Fatalf("SessionUnavailableReason = %q", SessionUnavailableReason)
+	}
+}

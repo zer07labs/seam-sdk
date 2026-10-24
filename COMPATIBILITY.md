@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:506`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:524`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -134,6 +134,7 @@ where they are, unpublished.
 |---|---|---|---|
 | Protocol pass 2026-10 (seam-sdk#265) | seam-runtime 0.48.0 (seam-runtime#1365, carries `protocol-pass-2026-10`) | **none** — no compatibility | runtime `main` @ `32f8196` (contract byte-identical to the freeze `1ac5de5`) |
 | AITP 0.17.0: commitment TCT `ver` is `aitp/0.3` only (`seam-verify`, D-040) | seam-runtime 0.49.0 (seam-runtime#1373; release train seam-runtime#1375) | **none** — `seam-verify` refuses an earlier runtime's `aitp/0.2` TCTs | runtime `main` @ `b5e779d` (seam-runtime#1373; signed bytes identical to `a853f89`) |
+| `SESSION_UNAVAILABLE` classification + opt-in `with_session_retry` (D79) | seam-runtime 0.53.0 (seam-runtime#1407, k8s P6: N replicas over a shared session store) | **compatible** — an earlier runtime, and any single-replica runtime, never returns the reason, so the helper never retries and the client never drops a ticket for it | runtime `main` @ `7d22b50b` (seam-runtime#1407) |
 
 The protocol pass has no compatibility window in either direction: an earlier runtime refuses this
 SDK's derived PoP `message_id`, and this SDK treats an earlier runtime's v1-v3 records as
@@ -145,7 +146,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1519-1541`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1536-1558`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -236,6 +237,8 @@ or TypeScript.
 | Read bootstrap facts without a signing key (#274) | `load_identity_facts` → `IdentityFacts` | `loadIdentityFacts` → `IdentityFacts` | `identity.LoadIdentityFacts` → `*IdentityFacts` | `IdentityFile.loadFacts` → `IdentityFile.IdentityFacts` | `IdentityFile.loadFacts` → `IdentityFacts` |
 | Bound-agent default credential (#202) | `SeamClient(channel, agent=)` | `SeamClient` `{ agent }` | `crypto.RequestCredentials{Agent}` | `new RequestCredentials(agent, tickets)` | `RequestCredentials(agent, tickets)` |
 | Refresh a rejected ticket once on the credentialed reads, `report_outcome` and the seven `submit_*` steps (#275) | yes (sync + aio) | yes | N/A, no client | N/A, no client | N/A, no client |
+| `SESSION_UNAVAILABLE` reason constant (D79) | `SESSION_UNAVAILABLE_REASON` | `SESSION_UNAVAILABLE_REASON` | `crypto.SessionUnavailableReason` | `RequestCredentials.SESSION_UNAVAILABLE_REASON` | `RequestCredentials.SESSION_UNAVAILABLE_REASON` |
+| Classify it, and an opt-in retry loop (D79) | `is_retryable` / `is_session_unavailable`, `with_session_retry` (+ `_async`) | `isRetryable` / `isSessionUnavailable`, `withSessionRetry` | N/A, no client | N/A, no client | N/A, no client |
 
 Go, Java and Kotlin have no client to bind an agent to, so their #202 default lives on a
 transport-agnostic `RequestCredentials`: the same explicit-wins-else-bound-else-nothing rule, with the
@@ -249,6 +252,17 @@ credentialed reads (`get_escalation`, `session_status`, `get_decision`, `replay_
 ticket, so there is no retry. `open_session`, `cancel_session` and `expire_session` still make exactly
 one call (D-WRITES-EXCLUDED). A `submit_*` resend after a step that sealed the session returns the
 sealed `decision_id` with `collective_outcome` unset, so read `get_decision` for the outcome.
+
+The D79 rows are opt-in. The SDK still never retries `SESSION_UNAVAILABLE` on its own; a caller wraps
+the calls it chooses in `with_session_retry`, which re-invokes them with the server's `RetryInfo` plus
+full jitter over a capped exponential, inside a 40s budget that outlasts the runtime's 30s lease TTL.
+Each attempt is a fresh SDK call, so it re-signs. That matters because the runtime burns a
+credentialed write's proof at admission, before it takes the session lease, and the request signature
+is deterministic: so on `SESSION_UNAVAILABLE` for any credentialed write but `report_outcome` the
+Python and TypeScript clients drop the cached ticket, and the next attempt re-admits and signs fresh
+bytes. A caller who never sees the reason sees no change. In Go, Java and Kotlin the caller's transport
+owns the ticket, so it must do that drop itself before resending, or the resend is refused
+`UNAUTHENTICATED` `request_replayed`.
 
 The #274 row is additive on disk (D-AID-RECORD): a new file carries `"aid"` as its last key, an older
 release ignores it as an unknown key, and a file without it loads unchanged everywhere.
@@ -521,8 +535,8 @@ so it cannot reach the taxonomy. Use `canonicalize_tool_input()`
 
 ### `canonical=` hands you the derivation, and the responsibility with it
 
-`authorize(canonical=…)` (`python/seam_sdk/client.py:375`, `python/seam_sdk/aio.py:218`; `opts.canonical`
-in TypeScript, `ts/src/client.ts:777`) is additive and keyword-only. The SDK does **not** verify the
+`authorize(canonical=…)` (`python/seam_sdk/client.py:399`, `python/seam_sdk/aio.py:225`; `opts.canonical`
+in TypeScript, `ts/src/client.ts:800`) is additive and keyword-only. The SDK does **not** verify the
 bytes — re-deriving to check would reinstate the second derivation the parameter exists to remove.
 So two things become possible that were not:
 
@@ -721,7 +735,7 @@ covered `{}` — so it did not mean what you thought. Convert at the boundary:
 `date.toISOString()`, `Object.fromEntries(map)`, `[...set]`. The error names the type and the
 conversion.
 
-**This reaches you through `authorize()`, not only through the helper.** `ts/src/client.ts:609` calls
+**This reaches you through `authorize()`, not only through the helper.** `ts/src/client.ts:632` calls
 `jcsCanonicalize(toolInput ?? {})` directly, so `authorize({ toolInput: { deadline: new Date() } })`
 now throws where it previously signed a digest over `{"deadline":{}}`. That is the case worth
 checking in your own code, because it is the one where the aliased digest was being *signed*.

@@ -37,7 +37,9 @@ from .errors import (  # noqa: F401  (SeamError re-exported)
     IssuerMismatchError,
     SeamError,
     UnauthenticatedError,
+    UnavailableError,
     _MappedStub,
+    is_session_unavailable,
 )
 
 # The generated transport stubs are ROOTED subpackages (`scripts/root_gen.py` rewrites the
@@ -50,6 +52,28 @@ from seam_sdk._gen.seam.api.v1 import seam_pb2_grpc as rpc
 from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as ev  # noqa: F401  (re-exported)
 
 _T = TypeVar("_T")
+
+# The credentialed writes the runtime's seen-proof cache burns at admission (seam-runtime
+# ``authorize.rs`` ``replay_guarded``: every credentialed write but ``ReportOutcome``). It burns
+# BEFORE the session lease is taken, so a ``SESSION_UNAVAILABLE`` refusal has already spent the
+# signature: re-signing the same body under the same ticket yields the same bytes, refused
+# ``request_replayed``. :meth:`SeamClient._forget_burned_ticket` drops that ticket so a retry
+# re-admits and signs fresh bytes.
+_REPLAY_GUARDED = frozenset(
+    "/seam.api.v1.SeamCoordination/" + verb
+    for verb in (
+        "OpenSession",
+        "SubmitProposal",
+        "SubmitEvaluation",
+        "SubmitObjection",
+        "SubmitVote",
+        "SubmitCommit",
+        "SubmitApprovalRequest",
+        "SubmitBallot",
+        "CancelSession",
+        "ExpireSession",
+    )
+)
 
 
 # ``SeamError`` and ``IssuerMismatchError`` are defined in :mod:`seam_sdk.errors` and imported above; they
@@ -113,7 +137,7 @@ def _now_ms() -> int:
 # The SDK never retries beyond that single ticket refresh, and only ``authorize``, the credentialed
 # reads, ``report_outcome`` and the seven ``submit_*`` steps take it (the same SIX-call bound) —
 # ``open_session``, ``cancel_session`` and ``expire_session`` make exactly one call (#275,
-# D-WRITES-EXCLUDED). Adapters own every other retry. A deadline breach surfaces as
+# D-WRITES-EXCLUDED). Adapters own every other retry (opt-in: ``with_session_retry``). A deadline breach surfaces as
 # ``DeadlineExceededError``, distinct from a DENY verdict, and is never retried.
 DEFAULT_TIMEOUT_S = 2.0
 
@@ -509,26 +533,42 @@ class SeamClient:
         an unbound client, as since #508. The one resolve step both credentialed paths share."""
         return credential if credential is not None else self._agent
 
-    def _credential_md(
+    def _signed_once(
         self,
         credential: Optional[Agent],
         rpc_full_name: str,
         resource_id: str,
-        body=None,
+        body,
+        send: Callable[[Optional[list]], _T],
         *,
         timeout: float,
-    ) -> Optional[list]:
-        """The gRPC ``metadata=`` value for a subject-scoped call that does NOT retry (``open_session``,
-        ``cancel_session``, ``expire_session``: D-WRITES-EXCLUDED / plans/post-onboarding-sdk-asks.md). Resolves
-        the signer as :meth:`_signer` does and returns ``None`` without one. Reuses the same
+    ) -> _T:
+        """Send a subject-scoped call that does NOT retry (``open_session``, ``cancel_session``,
+        ``expire_session``: D-WRITES-EXCLUDED / plans/post-onboarding-sdk-asks.md). Resolves the
+        signer as :meth:`_signer` does and sends ``send(None)`` without one. Reuses the same
         cached/admitted ticket :meth:`authorize` would for this agent; never mints a second one."""
         signer = self._signer(credential)
         if signer is None:
-            return None
+            return send(None)
         ticket = self._ticket_for(signer, timeout)
-        return credential_metadata(
-            signer.seed, ticket, rpc_full_name, resource_id, body
-        )
+        try:
+            return send(
+                credential_metadata(
+                    signer.seed, ticket, rpc_full_name, resource_id, body
+                )
+            )
+        except UnavailableError as e:
+            self._forget_burned_ticket(signer, ticket, rpc_full_name, e)
+            raise
+
+    def _forget_burned_ticket(
+        self, signer: Agent, ticket: bytes, rpc_full_name: str, exc: BaseException
+    ) -> None:
+        """On ``SESSION_UNAVAILABLE`` for a :data:`_REPLAY_GUARDED` write, drop ``ticket`` (see
+        there): the runtime burned this call's proof, so the next attempt must re-admit to sign
+        new bytes. Every other error, and every read, leaves the cache alone."""
+        if rpc_full_name in _REPLAY_GUARDED and is_session_unavailable(exc):
+            self._invalidate_ticket(signer, ticket)
 
     def _credentialed_call(
         self,
@@ -580,6 +620,9 @@ class SeamClient:
                     signer.seed, ticket, rpc_full_name, resource_id, body
                 )
             )
+        except UnavailableError as e:
+            self._forget_burned_ticket(signer, ticket, rpc_full_name, e)
+            raise
         except UnauthenticatedError:
             if not retry:
                 self._invalidate_ticket(signer, ticket)
@@ -588,9 +631,15 @@ class SeamClient:
             # that caused it as ``__context__``.
             ticket = self._refresh_ticket(signer, ticket, timeout)
         # Outside it: the resend's own failure is the error, not a chained "during handling of".
-        return send(
-            credential_metadata(signer.seed, ticket, rpc_full_name, resource_id, body)
-        )
+        try:
+            return send(
+                credential_metadata(
+                    signer.seed, ticket, rpc_full_name, resource_id, body
+                )
+            )
+        except UnavailableError as e:
+            self._forget_burned_ticket(signer, ticket, rpc_full_name, e)
+            raise
 
     def _invalidate_ticket(self, agent: Agent, failed: bytes) -> None:
         """Drop ``failed`` from the cache if it is still the cached ticket — compare-and-invalidate
@@ -679,14 +728,14 @@ class SeamClient:
         )
         if limits is not None:
             req.limits.CopyFrom(limits.to_pb())
-        md = self._credential_md(
+        return self._signed_once(
             credential,
             "/seam.api.v1.SeamCoordination/OpenSession",
             "",
             req,
+            lambda md: self._coord.OpenSession(req, timeout=timeout, metadata=md),
             timeout=timeout,
         )
-        return self._coord.OpenSession(req, timeout=timeout, metadata=md)
 
     @_submit_retry_doc
     def submit_proposal(
@@ -1003,14 +1052,14 @@ class SeamClient:
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.TerminalResponse:
         req = pb.SessionRef(session_id=session_id)
-        md = self._credential_md(
+        return self._signed_once(
             credential,
             "/seam.api.v1.SeamCoordination/CancelSession",
             "",
             req,
+            lambda md: self._coord.CancelSession(req, timeout=timeout, metadata=md),
             timeout=timeout,
         )
-        return self._coord.CancelSession(req, timeout=timeout, metadata=md)
 
     def expire_session(
         self,
@@ -1020,14 +1069,14 @@ class SeamClient:
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.TerminalResponse:
         req = pb.SessionRef(session_id=session_id)
-        md = self._credential_md(
+        return self._signed_once(
             credential,
             "/seam.api.v1.SeamCoordination/ExpireSession",
             "",
             req,
+            lambda md: self._coord.ExpireSession(req, timeout=timeout, metadata=md),
             timeout=timeout,
         )
-        return self._coord.ExpireSession(req, timeout=timeout, metadata=md)
 
     def session_status(
         self,

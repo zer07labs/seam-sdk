@@ -293,6 +293,11 @@ class SeamRpcError(SeamError, grpc.RpcError):
 SEAM_ERROR_DOMAIN = "seam.zer07labs.com"
 #: The one ``ErrorInfo.reason`` that carries a ``macp_code`` — MACP's own protocol refusals.
 PROTOCOL_REASON = "PROTOCOL"
+#: ``UNAVAILABLE`` (HTTP 503) with ``RetryInfo``: another runtime replica holds the live session's
+#: lease, or the shared live-session store is briefly unreachable (seam-runtime k8s P6,
+#: ``docs/specs/error-model.md``). The same call is safe to re-issue after the delay — the step
+#: either never ran or its session write was dropped. A single-replica runtime never returns it.
+SESSION_UNAVAILABLE_REASON = "SESSION_UNAVAILABLE"
 
 _STATUS_DETAILS_KEY = "grpc-status-details-bin"
 _ERROR_INFO_TYPE = "type.googleapis.com/google.rpc.ErrorInfo"
@@ -477,6 +482,25 @@ class UnavailableError(SeamRpcError):
     the refresh ``Admit`` of a credentialed call's one ticket refresh (#275): that failure propagates
     typed, never looped.
     """
+
+
+def is_session_unavailable(exc: BaseException) -> bool:
+    """True when ``exc`` is the runtime's ``SESSION_UNAVAILABLE`` refusal: an
+    :class:`UnavailableError` whose :attr:`~SeamRpcError.reason` is
+    :data:`SESSION_UNAVAILABLE_REASON`. Any other ``UNAVAILABLE`` — a dead transport,
+    ``CHALLENGE_REFUSED`` — is False."""
+    return (
+        isinstance(exc, UnavailableError) and exc.reason == SESSION_UNAVAILABLE_REASON
+    )
+
+
+def is_retryable(exc: BaseException) -> bool:
+    """True when re-invoking the same SDK call, unchanged, is safe and is the remedy. Today that is
+    exactly :func:`is_session_unavailable`. Deliberately narrow: the runtime's other retryable
+    refusals each need a different recovery first (``CHALLENGE_REFUSED`` a fresh challenge, a fact
+    conflict a re-read chain head), so a blind re-invoke is not their remedy. Classification only:
+    the SDK still never retries on its own; :func:`seam_sdk.with_session_retry` is the opt-in loop."""
+    return is_session_unavailable(exc)
 
 
 class DeadlineExceededError(SeamRpcError):

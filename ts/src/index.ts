@@ -8,6 +8,8 @@ export * from "./client.js";
 export * from "./admin.js";
 export * from "./crypto.js";
 export * from "./errors.js";
+// Opt-in `SESSION_UNAVAILABLE` retry (Python's `seam_sdk.with_session_retry`).
+export * from "./retry.js";
 // Session / decision ids — the runtime's P4 / P5 rules (Python's `seam_sdk.ids`).
 export * from "./ids.js";
 // Identity custody (seam-sdk#201, #274): the schema-v1 bootstrap file — the same six names Python's

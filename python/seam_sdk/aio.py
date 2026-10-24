@@ -37,9 +37,16 @@ from .client import (
     _vote_messages,
     commitment_view,
     _u32,
+    _REPLAY_GUARDED,
 )
 from .crypto import build_presentation, verify_tct
-from .errors import IssuerMismatchError, UnauthenticatedError, map_rpc_error
+from .errors import (
+    IssuerMismatchError,
+    UnauthenticatedError,
+    UnavailableError,
+    is_session_unavailable,
+    map_rpc_error,
+)
 
 from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
 from seam_sdk._gen.seam.api.v1 import seam_pb2_grpc as rpc
@@ -335,23 +342,37 @@ class SeamClient:
         agent, else ``None``."""
         return credential if credential is not None else self._agent
 
-    async def _credential_md(
+    async def _signed_once(
         self,
         credential: Optional[Agent],
         rpc_full_name: str,
         resource_id: str,
-        body=None,
+        body,
+        send: Callable[[Optional[list]], Awaitable[_T]],
         *,
         timeout: float,
-    ) -> Optional[list]:
-        """The async twin of :meth:`seam_sdk.SeamClient._credential_md` (the no-retry path)."""
+    ) -> _T:
+        """The async twin of :meth:`seam_sdk.SeamClient._signed_once` (the no-retry path)."""
         signer = self._signer(credential)
         if signer is None:
-            return None
+            return await send(None)
         ticket = await self._ticket_for(signer, timeout)
-        return credential_metadata(
-            signer.seed, ticket, rpc_full_name, resource_id, body
-        )
+        try:
+            return await send(
+                credential_metadata(
+                    signer.seed, ticket, rpc_full_name, resource_id, body
+                )
+            )
+        except UnavailableError as e:
+            await self._forget_burned_ticket(signer, ticket, rpc_full_name, e)
+            raise
+
+    async def _forget_burned_ticket(
+        self, signer: Agent, ticket: bytes, rpc_full_name: str, exc: BaseException
+    ) -> None:
+        """The twin of :meth:`seam_sdk.SeamClient._forget_burned_ticket`."""
+        if rpc_full_name in _REPLAY_GUARDED and is_session_unavailable(exc):
+            await self._invalidate_ticket(signer, ticket)
 
     async def _credentialed_call(
         self,
@@ -383,14 +404,23 @@ class SeamClient:
                     signer.seed, ticket, rpc_full_name, resource_id, body
                 )
             )
+        except UnavailableError as e:
+            await self._forget_burned_ticket(signer, ticket, rpc_full_name, e)
+            raise
         except UnauthenticatedError:
             if not retry:
                 await self._invalidate_ticket(signer, ticket)
                 raise
             ticket = await self._refresh_ticket(signer, ticket, timeout)
-        return await send(
-            credential_metadata(signer.seed, ticket, rpc_full_name, resource_id, body)
-        )
+        try:
+            return await send(
+                credential_metadata(
+                    signer.seed, ticket, rpc_full_name, resource_id, body
+                )
+            )
+        except UnavailableError as e:
+            await self._forget_burned_ticket(signer, ticket, rpc_full_name, e)
+            raise
 
     async def _invalidate_ticket(self, agent: Agent, failed: bytes) -> None:
         """The twin of :meth:`seam_sdk.SeamClient._invalidate_ticket` (compare-and-invalidate)."""
@@ -449,14 +479,14 @@ class SeamClient:
         )
         if limits is not None:
             req.limits.CopyFrom(limits.to_pb())
-        md = await self._credential_md(
+        return await self._signed_once(
             credential,
             "/seam.api.v1.SeamCoordination/OpenSession",
             "",
             req,
+            lambda md: self._coord.OpenSession(req, timeout=timeout, metadata=md),
             timeout=timeout,
         )
-        return await self._coord.OpenSession(req, timeout=timeout, metadata=md)
 
     @_submit_retry_doc
     async def submit_proposal(
@@ -769,14 +799,14 @@ class SeamClient:
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.TerminalResponse:
         req = pb.SessionRef(session_id=session_id)
-        md = await self._credential_md(
+        return await self._signed_once(
             credential,
             "/seam.api.v1.SeamCoordination/CancelSession",
             "",
             req,
+            lambda md: self._coord.CancelSession(req, timeout=timeout, metadata=md),
             timeout=timeout,
         )
-        return await self._coord.CancelSession(req, timeout=timeout, metadata=md)
 
     async def expire_session(
         self,
@@ -786,14 +816,14 @@ class SeamClient:
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.TerminalResponse:
         req = pb.SessionRef(session_id=session_id)
-        md = await self._credential_md(
+        return await self._signed_once(
             credential,
             "/seam.api.v1.SeamCoordination/ExpireSession",
             "",
             req,
+            lambda md: self._coord.ExpireSession(req, timeout=timeout, metadata=md),
             timeout=timeout,
         )
-        return await self._coord.ExpireSession(req, timeout=timeout, metadata=md)
 
     async def session_status(
         self,
