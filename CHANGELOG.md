@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.54.3 — 2026-10-24
+
 ### Added
 - **`SESSION_UNAVAILABLE`: classification and an opt-in retry loop (D79; runtime 0.53.0,
   seam-runtime#1407).** A multi-replica runtime refuses a session-scoped verb `UNAVAILABLE` with
