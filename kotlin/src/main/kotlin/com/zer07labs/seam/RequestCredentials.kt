@@ -14,7 +14,7 @@ fun interface TicketSource {
  *
  * The Kotlin SDK is a crypto shim with no client and no verb methods (COMPATIBILITY.md §4), so the
  * bound-agent default lives here, transport-agnostic, rather than on a client. It is the same rule as
- * Python's `SeamClient(channel, agent=...)._credential_md` and TS's `credential ??= this.agent`: an
+ * Python's `SeamClient(channel, agent=...)._signer` and TS's `credential ??= this.agent`: an
  * explicit credential wins; otherwise the bound agent; with neither, nothing is sent. A caller building
  * its own client over the generated stubs holds one instance and calls [metadata] per subject-scoped verb.
  *
@@ -49,5 +49,16 @@ class RequestCredentials(val agent: Agent? = null, private val tickets: TicketSo
 
         /** gRPC metadata key for the raw 64-byte request signature. */
         const val CALL_SIG_KEY = "x-seam-call-sig-bin"
+
+        /**
+         * The `ErrorInfo.reason` (domain seam.zer07labs.com) of an UNAVAILABLE (HTTP 503) refusal: another
+         * runtime replica holds the live session's lease, or the shared session store is unreachable
+         * (seam-runtime k8s P6). RetryInfo carries the holder's remaining lease (at most the 30s lease TTL), or
+         * 1s while the store is down; a single-replica runtime never returns it. It is retryable, but the
+         * runtime has already burned the credential's proof for every credentialed write except ReportOutcome,
+         * and the signature is deterministic: drop the cached admission ticket, re-admit, and re-sign before
+         * resending, or the resend is refused UNAUTHENTICATED `request_replayed`.
+         */
+        const val SESSION_UNAVAILABLE_REASON = "SESSION_UNAVAILABLE"
     }
 }

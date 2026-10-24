@@ -16,6 +16,23 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added
+- **`SESSION_UNAVAILABLE`: classification and an opt-in retry loop (D79; runtime 0.53.0,
+  seam-runtime#1407).** A multi-replica runtime refuses a session-scoped verb `UNAVAILABLE` with
+  reason `SESSION_UNAVAILABLE` and `RetryInfo` while another replica holds the session's lease.
+  Python and TypeScript add `SESSION_UNAVAILABLE_REASON`, `is_session_unavailable` / `is_retryable`
+  (`isSessionUnavailable` / `isRetryable`) and `with_session_retry` (+ `with_session_retry_async`;
+  TS `withSessionRetry`): `RetryInfo` plus full jitter over a capped exponential, 40s budget,
+  re-invoking the call so every attempt re-signs. Go, Java and Kotlin add the reason constant. Only
+  this reason is retryable; every other `UNAVAILABLE` is unchanged.
+
+### Changed
+- **On `SESSION_UNAVAILABLE` for a credentialed write other than `report_outcome`, the Python and
+  TypeScript clients drop the cached admission ticket** before the error propagates. The runtime has
+  already burned that call's proof, so the next attempt has to re-admit to sign fresh bytes rather
+  than be refused `request_replayed`. The SDK still never retries on its own, and nothing changes for
+  a caller who never receives the reason. See COMPATIBILITY.md §4.
+
 ## 0.54.2 — 2026-10-24
 
 ## 0.54.1 — 2026-10-23

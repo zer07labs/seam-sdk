@@ -89,7 +89,15 @@ from .errors import (
     UnimplementedError,
     UnknownCollectiveVerdictError,
     UnknownVerdictError,
+    SESSION_UNAVAILABLE_REASON,
+    is_retryable,
+    is_session_unavailable,
     map_rpc_error,
+)
+from .retry import (
+    DEFAULT_RETRY_BUDGET_S,
+    with_session_retry,
+    with_session_retry_async,
 )
 
 __all__ = [
@@ -160,6 +168,13 @@ __all__ = [
     "SeamError",
     "CanonicalizationError",
     "map_rpc_error",
+    # SESSION_UNAVAILABLE (seam-runtime k8s P6) — classification plus the opt-in retry helper
+    "SESSION_UNAVAILABLE_REASON",
+    "is_retryable",
+    "is_session_unavailable",
+    "DEFAULT_RETRY_BUDGET_S",
+    "with_session_retry",
+    "with_session_retry_async",
     "IssuerMismatchError",
     "SeamRpcError",
     "InvalidArgumentError",

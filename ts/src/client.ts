@@ -55,7 +55,29 @@ import {
   InvalidArgumentError,
   ProtocolViolationError,
   UnauthenticatedError,
+  UnavailableError,
+  isSessionUnavailable,
 } from "./errors.js";
+
+// The credentialed writes the runtime's seen-proof cache burns at admission (seam-runtime
+// `authorize.rs` `replay_guarded`: every credentialed write but `ReportOutcome`). It burns BEFORE the
+// session lease is taken, so a `SESSION_UNAVAILABLE` refusal has already spent the signature:
+// re-signing the same body under the same ticket yields the same bytes, refused `request_replayed`.
+// `forgetBurnedTicket` drops that ticket so a retry re-admits and signs fresh bytes.
+const REPLAY_GUARDED: ReadonlySet<string> = new Set(
+  [
+    "OpenSession",
+    "SubmitProposal",
+    "SubmitEvaluation",
+    "SubmitObjection",
+    "SubmitVote",
+    "SubmitCommit",
+    "SubmitApprovalRequest",
+    "SubmitBallot",
+    "CancelSession",
+    "ExpireSession",
+  ].map((verb) => `/seam.api.v1.SeamCoordination/${verb}`),
+);
 
 // `timeoutMs` is PER-RPC, not an overall budget for the call. Decided, not accidental — and it has a
 // consequence callers must size around, so it is stated here rather than discovered.
@@ -77,7 +99,7 @@ import {
 // does exactly that). The SDK never retries beyond that single ticket refresh, and only `authorize`,
 // the credentialed reads, `reportOutcome` and the seven `submit*` steps take it — `openSession`,
 // `cancelSession` and `expireSession` make exactly one call (#275, D-WRITES-EXCLUDED). Adapters own
-// every other retry. A deadline breach surfaces as a typed
+// every other retry (opt-in: `withSessionRetry`). A deadline breach surfaces as a typed
 // `DeadlineExceededError`, distinct from a DENY verdict, and is never retried. Mirrors the Python
 // SDK's `DEFAULT_TIMEOUT_S = 2.0`.
 export const DEFAULT_TIMEOUT_MS = 2_000;
@@ -877,18 +899,33 @@ export class SeamClient {
    * unlike Python's grpc library, connect-node does not do that encoding for us, so
    * {@link signedHeaders} does it. This is the NO-retry path, for `openSession`, `cancelSession` and
    * `expireSession` (D-WRITES-EXCLUDED); every other credentialed verb goes through
-   * {@link credentialedCall}. */
-  private async credentialHeaders<Desc extends DescMessage>(
+   * {@link credentialedCall}. `send(headers)` performs the RPC, once. */
+  private async signedOnce<T, Desc extends DescMessage>(
     credential: Agent | undefined,
     rpcFullName: string,
     resourceId: string,
     opts: UnaryCallOptions | undefined,
+    send: (headers: Record<string, string> | undefined) => Promise<T>,
     body?: { schema: Desc; init: MessageInitShape<Desc> },
-  ): Promise<Record<string, string> | undefined> {
+  ): Promise<T> {
     const signer = this.signer(credential);
-    if (!signer) return undefined;
+    if (!signer) return send(undefined);
     const ticket = await this.ticketFor(signer, opts);
-    return signedHeaders(signer, ticket, rpcFullName, resourceId, bodyDigestOf(body));
+    try {
+      return await send(signedHeaders(signer, ticket, rpcFullName, resourceId, bodyDigestOf(body)));
+    } catch (e) {
+      this.forgetBurnedTicket(signer, ticket, rpcFullName, e);
+      throw e;
+    }
+  }
+
+  /** On `SESSION_UNAVAILABLE` for a {@link REPLAY_GUARDED} write, drop `ticket` (see there): the
+   * runtime burned this call's proof, so the next attempt must re-admit to sign new bytes. Every other
+   * error, and every read, leaves the cache alone. */
+  private forgetBurnedTicket(agent: Agent, ticket: Uint8Array, rpcFullName: string, e: unknown): void {
+    if (e instanceof UnavailableError && REPLAY_GUARDED.has(rpcFullName) && isSessionUnavailable(e)) {
+      this.invalidateTicket(agent, ticket);
+    }
   }
 
   /** Who signs a subject-scoped call: an explicit `credential` wins, else the bound agent, else
@@ -948,6 +985,7 @@ export class SeamClient {
     try {
       return await send(signedHeaders(signer, ticket, rpcFullName, resourceId, bodyDigest));
     } catch (e) {
+      this.forgetBurnedTicket(signer, ticket, rpcFullName, e);
       if (!(e instanceof UnauthenticatedError)) throw e;
       if (!retry) {
         this.invalidateTicket(signer, ticket);
@@ -955,7 +993,12 @@ export class SeamClient {
       }
       ticket = await this.refreshTicket(signer, ticket, opts);
     }
-    return send(signedHeaders(signer, ticket, rpcFullName, resourceId, bodyDigest));
+    try {
+      return await send(signedHeaders(signer, ticket, rpcFullName, resourceId, bodyDigest));
+    } catch (e) {
+      this.forgetBurnedTicket(signer, ticket, rpcFullName, e);
+      throw e;
+    }
   }
 
   /** Drop `failed` from the cache only if it is still the cached ticket — never a ticket a
@@ -1049,14 +1092,14 @@ export class SeamClient {
       limits: opts.limits,
       onBehalfOf: opts.onBehalfOf ?? [],
     };
-    const headers = await this.credentialHeaders(
+    return this.signedOnce(
       opts.credential,
       "/seam.api.v1.SeamCoordination/OpenSession",
       "",
       opts,
+      (headers) => this.coord.openSession(init, { ...call(opts), headers }),
       { schema: OpenSessionRequestSchema, init },
     );
-    return this.coord.openSession(init, { ...call(opts), headers });
   }
 
   /**
@@ -1440,25 +1483,25 @@ export class SeamClient {
 
   async cancelSession(sessionId: string, opts?: CredentialedCallOptions) {
     const init = { sessionId };
-    const headers = await this.credentialHeaders(
+    return this.signedOnce(
       opts?.credential,
       "/seam.api.v1.SeamCoordination/CancelSession",
       "",
       opts,
+      (headers) => this.coord.cancelSession(init, { ...call(opts), headers }),
       { schema: SessionRefSchema, init },
     );
-    return this.coord.cancelSession(init, { ...call(opts), headers });
   }
   async expireSession(sessionId: string, opts?: CredentialedCallOptions) {
     const init = { sessionId };
-    const headers = await this.credentialHeaders(
+    return this.signedOnce(
       opts?.credential,
       "/seam.api.v1.SeamCoordination/ExpireSession",
       "",
       opts,
+      (headers) => this.coord.expireSession(init, { ...call(opts), headers }),
       { schema: SessionRefSchema, init },
     );
-    return this.coord.expireSession(init, { ...call(opts), headers });
   }
   async sessionStatus(sessionId: string, opts?: CredentialedCallOptions) {
     return this.credentialedCall(

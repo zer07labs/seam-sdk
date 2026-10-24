@@ -118,4 +118,9 @@ class RequestCredentialsTest {
     // Opt-in per call still works on an unbound instance, as before #202.
     assertEquals(2, unbound.metadata(agentOf(3), GET_DECISION, "dec:1", null).size());
   }
+
+  @Test
+  void sessionUnavailableReasonIsTheRuntimeLiteral() {
+    assertEquals("SESSION_UNAVAILABLE", RequestCredentials.SESSION_UNAVAILABLE_REASON);
+  }
 }

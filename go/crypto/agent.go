@@ -63,6 +63,15 @@ func (a *Agent) Format(f fmt.State, _ rune) { _, _ = f.Write([]byte(a.String()))
 // Authorize call_sig tag, so a captured call_sig is never spendable as a request credential.
 const RequestSigContext = "seam-request-call-v1"
 
+// SessionUnavailableReason is the ErrorInfo.reason (domain seam.zer07labs.com) of an UNAVAILABLE (HTTP 503) refusal: another
+// runtime replica holds the live session's lease, or the shared session store is unreachable
+// (seam-runtime k8s P6). RetryInfo carries the holder's remaining lease (at most the 30s lease TTL), or
+// 1s while the store is down; a single-replica runtime never returns it. It is retryable, but the
+// runtime has already burned the credential's proof for every credentialed write except ReportOutcome,
+// and the signature is deterministic: drop the cached admission ticket, re-admit, and re-sign before
+// resending, or the resend is refused UNAUTHENTICATED request_replayed.
+const SessionUnavailableReason = "SESSION_UNAVAILABLE"
+
 // RequestSigPayload is the exact byte string RequestSig signs:
 //
 //	frame(context) | frame(ticket) | frame(rpc_full_name) | frame(resource_id) | frame(body_digest)
@@ -109,7 +118,7 @@ type TicketSource func(agent *Agent) ([]byte, error)
 //
 // The Go module is a crypto shim with no client and no verb methods (see COMPATIBILITY.md §4), so the
 // bound-agent default lives here, transport-agnostic, rather than on a client: it is the same rule as
-// Python's `SeamClient(channel, agent=...)._credential_md` and TS's `credential ??= this.agent`. A caller
+// Python's `SeamClient(channel, agent=...)._signer` and TS's `credential ??= this.agent`. A caller
 // building its own client over the generated stubs holds one RequestCredentials and calls Metadata for
 // each subject-scoped verb.
 type RequestCredentials struct {

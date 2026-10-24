@@ -100,6 +100,12 @@ export class SeamRpcError extends ConnectError {
 export const SEAM_ERROR_DOMAIN = "seam.zer07labs.com";
 /** The one `ErrorInfo.reason` that carries a `macp_code` — MACP's own protocol refusals. */
 export const PROTOCOL_REASON = "PROTOCOL";
+/** `ErrorInfo.reason` of an `UNAVAILABLE` (HTTP 503) refusal of a session-scoped verb because another
+ * runtime replica holds the live session's lease, or the shared session store is unreachable
+ * (seam-runtime k8s P6). `retryAfter` carries the holder's remaining lease (at most the 30s lease
+ * TTL), or 1s while the store is down. A single-replica runtime never returns it. **Retryable** —
+ * see {@link isSessionUnavailable} and {@link withSessionRetry}. */
+export const SESSION_UNAVAILABLE_REASON = "SESSION_UNAVAILABLE";
 
 const STATUS_DETAILS_KEY = "grpc-status-details-bin";
 const ERROR_INFO_TYPE = "google.rpc.ErrorInfo";
@@ -288,6 +294,20 @@ export class ResourceExhaustedError extends SeamRpcError {}
  * {@link ResourceExhaustedError}. The SDK itself never retries a load-shed — including when it is
  * the refresh `Admit` of a credentialed call's one ticket refresh (#275): it propagates typed. */
 export class UnavailableError extends SeamRpcError {}
+
+/** True for the runtime's `SESSION_UNAVAILABLE` refusal (see {@link SESSION_UNAVAILABLE_REASON}). */
+export function isSessionUnavailable(e: unknown): boolean {
+  return e instanceof UnavailableError && e.reason === SESSION_UNAVAILABLE_REASON;
+}
+
+/** True when re-invoking the same SDK call, unchanged, is safe and is the remedy. Today that is exactly
+ * {@link isSessionUnavailable}. Deliberately narrow: the runtime's other retryable refusals each need a
+ * different recovery first (`CHALLENGE_REFUSED` a fresh challenge, a fact conflict a re-read chain
+ * head), so a blind re-invoke is not their remedy. Classification only: the SDK still never retries
+ * on its own; {@link withSessionRetry} is the opt-in loop. */
+export function isRetryable(e: unknown): boolean {
+  return isSessionUnavailable(e);
+}
 export class DeadlineExceededError extends SeamRpcError {}
 export class UnimplementedError extends SeamRpcError {}
 export class InternalError extends SeamRpcError {}

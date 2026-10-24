@@ -39,7 +39,10 @@ import {
   SeamRpcError,
   UnauthenticatedError,
   UnavailableError,
+  isSessionUnavailable,
 } from "../src/errors.js";
+import { withSessionRetry } from "../src/retry.js";
+import { refusal, sessionUnavailable } from "./session_unavailable.js";
 import {
   ApprovalRequestRequestSchema,
   AuthorizeVerdict,
@@ -303,7 +306,7 @@ function minimalHandle(method: string): unknown {
   return {};
 }
 
-/** Seeds the credential's OWN ticket cache directly — `credentialHeaders` reuses whatever
+/** Seeds the credential's OWN ticket cache directly — `signedOnce` reuses whatever
  * `authorize()`/`admit()` would for this agent, so this is the network-free way to give it one. */
 function seedCredentialTicket(client: SeamClient, aid: string): void {
   (
@@ -1362,4 +1365,73 @@ test("#275: a concurrent authorize and sessionStatus rejection share ONE re-admi
   assert.ok((await a).allowed);
   assert.equal((await s).state, "Open");
   assert.equal(seam.state.admits, 2, "authorize and the read each paid their own re-admit");
+});
+
+// ── SESSION_UNAVAILABLE: a burned proof's ticket is dropped, nothing else changes ────────────────
+
+const ticketsOf = (client: SeamClient) =>
+  (client as unknown as { tickets: Map<string, { ticket: Uint8Array }> }).tickets;
+
+test("SESSION_UNAVAILABLE on a replay-guarded write drops the burned ticket, with no retry and no admit", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  for (const name of [...SUBMITS, ...EXCLUDED]) {
+    const calls: Recorded[] = [];
+    const wire = refreshWire();
+    wire.state.fail[name] = sessionUnavailable(1);
+    const client = new SeamClient(fakeTransport(calls, wire.handle));
+    seedCredentialTicket(client, cred.aid);
+    await assert.rejects(CREDENTIAL_CALLS[name]!.invoke(client, cred), (e) => isSessionUnavailable(e));
+    assert.equal(calls.filter((c) => c.method === name).length, 1, `${name}: the SDK never retries it`);
+    assert.equal(wire.state.admits, 0, name);
+    assert.equal(ticketsOf(client).has(cred.aid), false, `${name}: the burned ticket was dropped`);
+  }
+});
+
+test("SESSION_UNAVAILABLE on a read or reportOutcome keeps the ticket", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  for (const name of REFRESHING.filter((n) => !(SUBMITS as readonly string[]).includes(n))) {
+    const wire = refreshWire();
+    wire.state.fail[name] = sessionUnavailable(1);
+    const client = new SeamClient(fakeTransport([], wire.handle));
+    seedCredentialTicket(client, cred.aid);
+    await assert.rejects(CREDENTIAL_CALLS[name]!.invoke(client, cred), UnavailableError);
+    assert.equal(ticketsOf(client).has(cred.aid), true, name);
+  }
+});
+
+test("any other UNAVAILABLE on a guarded write leaves the ticket as before", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  for (const name of [...SUBMITS, ...EXCLUDED]) {
+    for (const err of [refusal(Code.Unavailable, undefined), refusal(Code.Unavailable, "CHALLENGE_REFUSED", 1)]) {
+      const wire = refreshWire();
+      wire.state.fail[name] = err;
+      const client = new SeamClient(fakeTransport([], wire.handle));
+      seedCredentialTicket(client, cred.aid);
+      await assert.rejects(CREDENTIAL_CALLS[name]!.invoke(client, cred), (e) => e === err);
+      assert.equal(ticketsOf(client).has(cred.aid), true, name);
+    }
+  }
+});
+
+test("withSessionRetry re-signs every attempt under a fresh ticket over the same body", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  const calls: Recorded[] = [];
+  const wire = refreshWire();
+  let busy = 2;
+  const handle: UnaryHandler = (method, input, headers) => {
+    if (method === "SubmitVote" && busy > 0) {
+      busy -= 1;
+      throw sessionUnavailable(1);
+    }
+    return wire.handle(method, input, headers);
+  };
+  const client = new SeamClient(fakeTransport(calls, handle));
+  seedCredentialTicket(client, cred.aid);
+  await withSessionRetry(() => CREDENTIAL_CALLS["SubmitVote"]!.invoke(client, cred), { sleep: async () => {} });
+  const sent = calls.filter((c) => c.method === "SubmitVote");
+  assert.equal(sent.length, 3);
+  assert.deepEqual(sent.map(ticketHex), [Buffer.from(CREDENTIAL_TICKET).toString("hex"), "65", "66"]);
+  const sigs = sent.map((c) => (c.headers as Record<string, string>)["x-seam-call-sig-bin"]);
+  assert.equal(new Set(sigs).size, 3);
+  assert.equal(new Set(sent.map((c) => JSON.stringify(c.input, (_, v) => (typeof v === "bigint" ? String(v) : v)))).size, 1);
 });
