@@ -68,6 +68,17 @@ const legalHoldCall = (opts?: { tenant?: string } & UnaryCallOptions) =>
     ? call(opts)
     : { ...call(opts), headers: { "x-seam-tenant": opts.tenant } };
 
+// Refuse an empty delivery-stream binding before it is sent (k8s P7). The runtime refuses it too, but a
+// runtime older than the field ignores it, and there an empty binding would consume.
+function requireStreamId(verb: string, streamId: string): void {
+  if (!streamId) {
+    throw new InvalidArgumentError(
+      `${verb}: streamId is required — pass this relay's configured SEAM_STREAM_ID (it is never discovered from the server it exists to check)`,
+      Code.InvalidArgument,
+    );
+  }
+}
+
 /** The `seam-event.v1` kinds the SDK knows about. A consumer MAY branch on these, but MUST still tolerate
  * an unknown kind — the wire is a tolerant reader (new kinds are additive): pass anything not in this set
  * through opaque, never erroring on it. */
@@ -460,6 +471,12 @@ export class SeamAdminClient {
    *     they arrive — cursor-based, never acks. Resume from the last `seq + 1n` and dedup by `eventId`.
    *     The stream ends cleanly when the server drains on shutdown.
    *
+   * `streamId` is REQUIRED: the delivery stream this relay is bound to, its configured `SEAM_STREAM_ID`
+   * (k8s P7). The runtime refuses a stream that is not its own, empty included, with
+   * `FAILED_PRECONDITION` (`stream_id_mismatch`) before reading any event, so a relay pointed at the
+   * wrong cell fails instead of consuming. It is never discovered from the server it exists to check;
+   * an empty value throws a client-side {@link InvalidArgumentError} without a round trip.
+   *
    * `ack` is drain-only (the proto contract): combining `ack: true` with `follow: true` throws a
    * client-side {@link InvalidArgumentError} eagerly — a live tail never acks, and silently dropping
    * either flag would corrupt the relay watermark.
@@ -473,14 +490,16 @@ export class SeamAdminClient {
    * Set it only for a bounded drain (`follow: false`), where "this should have finished by now" is a
    * meaningful statement.
    */
-  streamEvents(opts?: {
+  streamEvents(opts: {
+    streamId: string;
     fromSeq?: bigint;
     follow?: boolean;
     ack?: boolean;
     signal?: AbortSignal;
     timeoutMs?: number;
   }): AsyncIterable<SeamEvent> {
-    if (opts?.ack && opts?.follow) {
+    requireStreamId("streamEvents", opts.streamId);
+    if (opts.ack && opts.follow) {
       throw new InvalidArgumentError(
         "streamEvents: ack is drain-only — a live tail (follow: true) never acks; drop one of the two flags",
         Code.InvalidArgument,
@@ -491,11 +510,12 @@ export class SeamAdminClient {
       try {
         for await (const ev of events.streamEvents(
           {
-            fromSeq: opts?.fromSeq ?? 0n,
-            follow: opts?.follow ?? false,
-            ack: opts?.ack ?? false,
+            streamId: opts.streamId,
+            fromSeq: opts.fromSeq ?? 0n,
+            follow: opts.follow ?? false,
+            ack: opts.ack ?? false,
           },
-          { signal: opts?.signal, timeoutMs: opts?.timeoutMs },
+          { signal: opts.signal, timeoutMs: opts.timeoutMs },
         )) {
           yield ev;
         }
@@ -513,13 +533,21 @@ export class SeamAdminClient {
    * only rows *below* it, so it can never delete a row the relay still needs. A lower re-report is a
    * durable no-op (the watermark is monotone); a value past the outbox head is clamped by the runtime.
    * Requires the destructive `events:consume` operator scope.
+   *
+   * `streamId` is REQUIRED: the stream `consumedCursor` is an offset of (k8s P7). Only that stream's
+   * watermark advances; a stream that is not the runtime's own, empty included, is
+   * `FAILED_PRECONDITION` (`stream_id_mismatch`) and advances nothing. Empty throws here.
    */
   async reportEventsConsumed(
     consumedCursor: bigint,
-    opts?: UnaryCallOptions,
+    opts: UnaryCallOptions & { streamId: string },
   ): Promise<void> {
+    requireStreamId("reportEventsConsumed", opts.streamId);
     try {
-      await this.events.reportEventsConsumed({ consumedCursor }, call(opts));
+      await this.events.reportEventsConsumed(
+        { consumedCursor, streamId: opts.streamId },
+        call(opts),
+      );
     } catch (e) {
       throw toSeamError(e);
     }

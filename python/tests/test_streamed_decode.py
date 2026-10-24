@@ -12,6 +12,7 @@ import pathlib
 
 import pytest
 
+from governing_root import STREAM_ID
 from live_server import spawn_server
 
 from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as evpb
@@ -255,7 +256,7 @@ def test_streamed_events_carry_a14_payloads_live(dual_plane):
     lifecycle = None
     sealed = None
     kinds_seen = set()
-    for ev in admin.stream_events(follow=False, ack=False):
+    for ev in admin.stream_events(stream_id=STREAM_ID, follow=False, ack=False):
         kinds_seen.add(
             ev.kind
         )  # every kind decodes; an unknown one would still iterate, never error

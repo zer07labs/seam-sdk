@@ -173,6 +173,16 @@ def _tenant_metadata(tenant: Optional[str]) -> dict:
     return {"metadata": (("x-seam-tenant", tenant),)}
 
 
+def _require_stream_id(stream_id: str) -> None:
+    """Refuse an empty delivery-stream binding before it is sent (k8s P7). The runtime refuses it too,
+    but a runtime older than the field ignores it, and there an empty binding would consume."""
+    if not stream_id:
+        raise ValueError(
+            "stream_id is required: pass this relay's configured SEAM_STREAM_ID "
+            "(it is never discovered from the server it exists to check)"
+        )
+
+
 class _BearerAuthInterceptor(
     grpc.UnaryUnaryClientInterceptor, grpc.UnaryStreamClientInterceptor
 ):
@@ -594,6 +604,7 @@ class SeamAdminClient:
     def stream_events(
         self,
         *,
+        stream_id: str,
         from_seq: int = 0,
         follow: bool = False,
         ack: bool = False,
@@ -608,6 +619,12 @@ class SeamAdminClient:
           events as they arrive — cursor-based, never acks. Resume from the last ``seq + 1`` and dedup
           by ``event_id``. The stream ends cleanly when the server drains on shutdown.
 
+        ``stream_id`` is REQUIRED: the delivery stream this relay is bound to, its configured
+        ``SEAM_STREAM_ID`` (k8s P7). The runtime refuses a stream that is not its own, empty included,
+        with ``FAILED_PRECONDITION`` (``stream_id_mismatch``) before reading any event, so a relay
+        pointed at the wrong cell fails instead of consuming. It is never discovered from the server it
+        exists to check; an empty value raises :class:`ValueError` here without a round trip.
+
         ``ack`` is **drain-only** by contract; ``ack=True`` with ``follow=True`` raises
         :class:`ValueError` here rather than sending a request the proto declares meaningless.
 
@@ -621,16 +638,23 @@ class SeamAdminClient:
         gap between events, so any finite value silently kills a healthy live tail the moment it
         outlives the number. Set it only for a bounded drain (``follow=False``), where "this should
         have finished by now" is a meaningful statement."""
+        _require_stream_id(stream_id)
         if ack and follow:
             raise ValueError(
                 "ack is drain-only: ack=True cannot be combined with follow=True "
                 "(a live tail is cursor-based and never acks)"
             )
-        req = pb.StreamEventsRequest(from_seq=from_seq, ack=ack, follow=follow)
+        req = pb.StreamEventsRequest(
+            stream_id=stream_id, from_seq=from_seq, ack=ack, follow=follow
+        )
         return EventStream(lambda: self._events.StreamEvents(req, timeout=timeout))
 
     def report_events_consumed(
-        self, consumed_cursor: int, *, timeout: float = DEFAULT_ADMIN_TIMEOUT_S
+        self,
+        consumed_cursor: int,
+        *,
+        stream_id: str,
+        timeout: float = DEFAULT_ADMIN_TIMEOUT_S,
     ) -> None:
         """Report the relay's durably-consumed outbox cursor so the runtime can bound its outbox (R1).
 
@@ -638,10 +662,18 @@ class SeamAdminClient:
         (its contiguous-delivery resume offset). The runtime advances a monotone GC watermark from it and
         prunes only rows *below* it, so it can never delete a row the relay still needs. A lower re-report
         is a durable no-op (the watermark is monotone); a value past the outbox head is clamped by the
-        runtime. Requires the destructive ``events:consume`` operator scope."""
+        runtime. Requires the destructive ``events:consume`` operator scope.
+
+        ``stream_id`` is REQUIRED: the stream ``consumed_cursor`` is an offset of (k8s P7). Only that
+        stream's watermark advances; a stream that is not the runtime's own, empty included, is
+        ``FAILED_PRECONDITION`` (``stream_id_mismatch``) and advances nothing. Empty raises
+        :class:`ValueError` here."""
+        _require_stream_id(stream_id)
         try:
             self._events.ReportEventsConsumed(
-                pb.ReportConsumedRequest(consumed_cursor=consumed_cursor),
+                pb.ReportConsumedRequest(
+                    consumed_cursor=consumed_cursor, stream_id=stream_id
+                ),
                 timeout=timeout,
             )
         except grpc.RpcError as e:

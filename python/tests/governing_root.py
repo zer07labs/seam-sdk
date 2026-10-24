@@ -116,6 +116,12 @@ PERMISSIVE_RULES = {
 DEMO_AID = "aid:pubkey:ed25519:GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE"
 
 
+#: The delivery stream every spawned test runtime is booted as (k8s P7, ``SEAM_STREAM_ID``). Carried in
+#: this env with the governance because every spawn already inherits it, Python and TS alike; a runtime
+#: older than the field ignores it. ts/tests/operator_token.ts ``STREAM_ID`` mirrors it.
+STREAM_ID = "sdk-test"
+
+
 def demo_aid() -> str:
     return DEMO_AID
 
@@ -211,6 +217,7 @@ def write_governance(
         "SEAM_CONFIG_ROOT_URL": f"{base}/root.json",
         "SEAM_CONFIG_ROOT_PUBKEY": _pub(ROOT_SEED),
         "SEAM_CONFIG_TENANT_URL_TEMPLATE": f"{base}/tenant-{{tenant}}.json",
+        "SEAM_STREAM_ID": STREAM_ID,
     }
 
 

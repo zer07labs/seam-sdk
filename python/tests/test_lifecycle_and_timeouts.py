@@ -151,7 +151,9 @@ ADMIN_CALLS = {
     "release_legal_hold": lambda a: a.release_legal_hold("d", timeout=0.1),
     "enforce_retention": lambda a: a.enforce_retention(1, 2, 3, timeout=0.1),
     "audit_trail": lambda a: a.audit_trail(timeout=0.1),
-    "report_events_consumed": lambda a: a.report_events_consumed(0, timeout=0.1),
+    "report_events_consumed": lambda a: a.report_events_consumed(
+        0, stream_id="s1", timeout=0.1
+    ),
 }
 
 

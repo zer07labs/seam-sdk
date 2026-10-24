@@ -17,6 +17,7 @@ import {
   governanceEnv,
   mintOperatorToken,
   tamperSignature,
+  STREAM_ID,
 } from "./operator_token.js";
 
 const BIN = process.env.SEAM_GRPC_BIN;
@@ -159,7 +160,7 @@ test("streamEvents (drain) yields the DECISION_SEALED event", { skip: SKIP }, as
   await withPlanes(8207, 8208, async (dataAddr, mgmtUrl) => {
     const { decisionId } = await sealOne(dataAddr);
     const events = [];
-    for await (const ev of admin(mgmtUrl, "audit:read").streamEvents({ follow: false })) events.push(ev);
+    for await (const ev of admin(mgmtUrl, "audit:read").streamEvents({ streamId: STREAM_ID, follow: false })) events.push(ev);
     assert.ok(events.length > 0, "expected at least the DECISION_SEALED event");
     const sealed = events.filter((e) => e.kind === "DECISION_SEALED");
     assert.ok(sealed.length > 0, `kinds seen: ${events.map((e) => e.kind).join(",")}`);

@@ -397,6 +397,7 @@ ReplayView/chain_verified
 ReplayView/decided_value
 ReplayView/terminal
 ReportConsumedRequest/consumed_cursor
+ReportConsumedRequest/stream_id
 ReportOutcomeRequest/correct
 ReportOutcomeRequest/decision_id
 ReportOutcomeRequest/idempotency_key
@@ -437,6 +438,7 @@ StepUsage/tokens
 StreamEventsRequest/ack
 StreamEventsRequest/follow
 StreamEventsRequest/from_seq
+StreamEventsRequest/stream_id
 TenantView/aid
 TenantView/namespace
 TenantView/tenant

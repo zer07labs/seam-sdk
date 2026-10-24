@@ -1260,7 +1260,8 @@ QUOTED = [
     (
         "COMPATIBILITY.md",
         "seam-adapters/core/pyproject.toml",
-        "seam-sdk>=0.50.1,<0.51",
+        # Bumped 0.50.1 -> 0.54.3 on 2026-10-24 by seam-adapters 0.20.0 (#267).
+        "seam-sdk>=0.54.3,<0.55",
     ),
     (
         "COMPATIBILITY.md",

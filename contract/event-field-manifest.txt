@@ -180,6 +180,7 @@ SeamEvent/schema_version
 SeamEvent/seq
 SeamEvent/session_id
 SeamEvent/session_lifecycle
+SeamEvent/stream_id
 SeamEvent/tenant
 SeamEvent/tenant_seq
 SessionLifecycle/mode
