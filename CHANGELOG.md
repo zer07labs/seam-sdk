@@ -34,6 +34,8 @@ than trusting a summary here.
 - **New dependencies:** the Go module requires grpc-go 1.66.3, and Java/Kotlin add grpc-java 1.66.0
   (`grpc-api`, `grpc-protobuf`). Both are floors.
 
+## 0.57.1 — 2026-10-25
+
 ## 0.57.0 — 2026-10-25
 
 **Breaking for event relays:** `stream_events` / `report_events_consumed` (TS `streamEvents` /
