@@ -84,6 +84,7 @@ def test_bad_arguments_are_refused_before_the_wire(recording_events, args, kwarg
 
 
 def test_redrive_round_trip_live(tmp_path):
+    from governing_root import STREAM_ID
     from live_server import spawn_server
     from operator_token import mint_operator_token
 
@@ -101,7 +102,7 @@ def test_redrive_round_trip_live(tmp_path):
         )
         sealed = [
             e
-            for e in audit.stream_events(follow=False)
+            for e in audit.stream_events(stream_id=STREAM_ID, follow=False)
             if e.kind == "DECISION_SEALED" and e.decision_id == dec.decision_id
         ]
         assert len(sealed) == 1
@@ -123,7 +124,7 @@ def test_redrive_round_trip_live(tmp_path):
 
         wrappers = [
             e
-            for e in audit.stream_events(follow=False)
+            for e in audit.stream_events(stream_id=STREAM_ID, follow=False)
             if e.kind == "EVENT_REDRIVEN" and e.seq == outcome.redrive_seq
         ]
         assert len(wrappers) == 1

@@ -16,6 +16,22 @@ than trusting a summary here.
 
 ## Unreleased
 
+**Breaking for event relays:** `stream_events` / `report_events_consumed` (TS `streamEvents` /
+`reportEventsConsumed`) now require a `stream_id` (`streamId`). Pass the relay's configured
+`SEAM_STREAM_ID`. Runtime 0.57.0 refuses an empty or foreign stream, and so refuses every earlier SDK
+on both verbs.
+
+### Added
+- **`stream_id`: the per-cell delivery stream (k8s P7; seam-runtime OQ-1).** `SeamEvent.stream_id`
+  (tag 27), `StreamEventsRequest.stream_id` (tag 4) and `ReportConsumedRequest.stream_id` (tag 2).
+  `seq` is gap-free within a stream, and `event_id` starts with `{stream_id}/`. The admin helpers
+  take it as a required keyword (Python) / option (TS), and refuse an empty one client-side without
+  a round trip: a runtime older than the field ignores it, and there an empty binding would consume.
+  It is never discovered from the server, because the binding exists to check that server. The
+  verifier decodes tag 27 into an event's identity, as it does `tenant_seq`; it is unsealed and
+  never verified. Go, Java and Kotlin carry the generated fields. `verify/docs/seam-event.v1.md`
+  and the verifier goldens are re-vendored (`dev/` ids, `stream_id`).
+
 ## 0.56.0 — 2026-10-24
 
 ## 0.55.0 — 2026-10-24

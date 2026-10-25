@@ -75,6 +75,12 @@ pub struct SeamEventPb {
     /// real value and absence means "predates the counter".
     #[prost(uint64, optional, tag = "25")]
     pub tenant_seq: Option<u64>,
+    /// tag 27 — the delivery stream the event was appended to (k8s P7, spec §stream). UNSEALED like tag
+    /// 25, so it is never verified here; decoded because it is canonical identity like tag 25. Plain
+    /// proto3 `string`: empty and absent are one value, which is what an event written before the
+    /// field carries.
+    #[prost(string, tag = "27")]
+    pub stream_id: String,
 }
 
 /// The `CHAIN_HEAD_ATTESTATION` payload (tag 22), transcribed from `seam-event.v1.md` §CHAIN_HEAD_ATTESTATION.
@@ -293,6 +299,8 @@ pub struct SeamEventJson {
     pub policy_denied: Option<PolicyDeniedJson>,
     #[serde(default)]
     pub tenant_seq: Option<u64>,
+    #[serde(default)]
+    pub stream_id: String,
 }
 
 #[derive(Deserialize)]
@@ -442,6 +450,8 @@ pub struct Event {
     pub denial: Option<PolicyDeniedPb>,
     /// The per-tenant outbox counter — unsealed; carried only for the dedup identity.
     pub tenant_seq: Option<u64>,
+    /// The delivery stream (k8s P7) — unsealed; carried only for the dedup identity, as `tenant_seq` is.
+    pub stream_id: String,
     pub cert: Option<Cert>,
     /// The `CHAIN_HEAD_ATTESTATION` payload, when this event is one. `None` otherwise.
     pub attestation: Option<Attestation>,
@@ -768,6 +778,7 @@ impl Event {
                     reason: d.reason,
                 }),
                 tenant_seq: j.tenant_seq,
+                stream_id: j.stream_id,
                 cert: cert.transpose()?,
                 attestation: attestation.transpose()?,
                 decision: decision.transpose()?,
@@ -809,6 +820,7 @@ impl Event {
             authorize: pb.authorize_evaluated,
             denial: pb.policy_denied,
             tenant_seq: pb.tenant_seq,
+            stream_id: pb.stream_id,
             cert: pb.erasure_certificate.map(|c| Cert {
                 subject: c.subject,
                 erased: c.erased,
@@ -908,6 +920,7 @@ impl Event {
             // only in `reason` would then re-encode to identical bytes.
             policy_denied: self.denial.clone(),
             tenant_seq: self.tenant_seq,
+            stream_id: self.stream_id.clone(),
             erasure_certificate: self.cert.as_ref().map(|c| ErasureCertificatePb {
                 subject: c.subject.clone(),
                 erased: c.erased.clone(),
@@ -1290,6 +1303,7 @@ mod tests {
                     reason: reason.into(),
                 }),
                 tenant_seq: None,
+                stream_id: String::new(),
                 cert: None,
                 attestation: None,
                 decision: None,
@@ -1429,6 +1443,58 @@ mod tests {
         assert_ne!(
             base, &other_subjects.bytes,
             "subject_digests must reach the canonical bytes"
+        );
+    }
+    /// `stream_id` (envelope tag 27, k8s P7) is unsealed like `tenant_seq` and canonical identity like
+    /// it: one event reaches the same bytes over both transports, two events that differ only in their
+    /// stream are two events, and an event written before the field (absent) is the empty stream.
+    #[test]
+    fn stream_id_is_identity_on_both_transports() {
+        let mk_pb = |stream_id: &str| SeamEventPb {
+            schema_version: "seam-event.v1".into(),
+            event_id: "prd/az03#az#9".into(),
+            seq: 9,
+            occurred_at: 1_700,
+            tenant: "acme".into(),
+            namespace: "fraud".into(),
+            kind: "POLICY_DENIED".into(),
+            policy_denied: Some(PolicyDeniedPb {
+                policy_version: "p1".into(),
+                mode: "macp.mode.decision.v1".into(),
+                reason: "over limit".into(),
+            }),
+            tenant_seq: Some(4),
+            stream_id: stream_id.into(),
+            ..Default::default()
+        };
+        let parse = |pb: &SeamEventPb| Event::parse(&b64e(&pb.encode_to_vec())).expect("pb parses");
+
+        let from_pb = parse(&mk_pb("prd"));
+        assert_eq!(from_pb.stream_id, "prd", "tag 27 must be decoded");
+
+        let json = r#"{"schema_version":"seam-event.v1","event_id":"prd/az03#az#9","seq":9,
+            "occurred_at":1700,"tenant":"acme","namespace":"fraud","kind":"POLICY_DENIED",
+            "prev_checksum":"","tenant_seq":4,"stream_id":"prd","policy_denied":{
+            "policy_version":"p1","mode":"macp.mode.decision.v1","reason":"over limit"}}"#
+            .replace('\n', "");
+        let from_json = Event::parse(&json).expect("JSON transport must parse");
+        assert_eq!(
+            from_pb.bytes, from_json.bytes,
+            "one event, two transports — stream_id must reach the same identity"
+        );
+
+        assert_ne!(
+            from_pb.bytes,
+            parse(&mk_pb("partner")).bytes,
+            "stream_id must reach the canonical bytes"
+        );
+        let legacy = json.replace(r#""stream_id":"prd","#, "");
+        assert_eq!(
+            parse(&mk_pb("")).bytes,
+            Event::parse(&legacy)
+                .expect("a pre-field JSON event parses")
+                .bytes,
+            "absent and empty are one value on both transports"
         );
     }
 

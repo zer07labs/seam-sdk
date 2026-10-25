@@ -166,7 +166,7 @@ const ADMIN_CALLS: Record<
   releaseLegalHold: (a, o) => a.releaseLegalHold("d", o),
   enforceRetention: (a, o) => a.enforceRetention(1n, 2n, 3n, undefined, o),
   auditTrail: (a, o) => a.auditTrail(o),
-  reportEventsConsumed: (a, o) => a.reportEventsConsumed(1n, o),
+  reportEventsConsumed: (a, o) => a.reportEventsConsumed(1n, { ...o, streamId: "s1" }),
   redriveEvents: (a, o) => a.redriveEvents("acme", 1n, o),
 };
 
@@ -680,9 +680,28 @@ test("an unrecognized verdict (incl. UNSPECIFIED) throws UnknownVerdictError, ne
 test("streamEvents throws eagerly on ack+follow (ack is drain-only per the proto)", () => {
   const admin = new SeamAdminClient(fakeTransport([], () => ({})));
   assert.throws(
-    () => admin.streamEvents({ ack: true, follow: true }),
+    () => admin.streamEvents({ streamId: "s1", ack: true, follow: true }),
     (e: unknown) => e instanceof InvalidArgumentError && (e as InvalidArgumentError).code === Code.InvalidArgument,
   );
+});
+
+test("streamEvents and reportEventsConsumed send the bound streamId (k8s P7)", async () => {
+  const calls: Recorded[] = [];
+  const admin = new SeamAdminClient(fakeTransport(calls, () => ({}), async function* () {}));
+  for await (const _ of admin.streamEvents({ streamId: "prd", fromSeq: 7n, follow: true })) void _;
+  await admin.reportEventsConsumed(42n, { streamId: "prd" });
+  assert.deepEqual(calls[0]!.input, { streamId: "prd", fromSeq: 7n, follow: true, ack: false });
+  assert.deepEqual(calls[1]!.input, { consumedCursor: 42n, streamId: "prd" });
+});
+
+test("an empty streamId throws before any RPC — an older runtime would ignore it and consume", async () => {
+  const calls: Recorded[] = [];
+  const admin = new SeamAdminClient(fakeTransport(calls, () => ({}), async function* () {}));
+  const invalid = (e: unknown) =>
+    e instanceof InvalidArgumentError && (e as InvalidArgumentError).code === Code.InvalidArgument;
+  assert.throws(() => admin.streamEvents({ streamId: "" }), invalid);
+  await assert.rejects(admin.reportEventsConsumed(1n, { streamId: "" }), invalid);
+  assert.equal(calls.length, 0);
 });
 
 test("streamEvents defaults to NO deadline and passes an override through", async () => {
@@ -691,9 +710,9 @@ test("streamEvents defaults to NO deadline and passes an override through", asyn
   const admin = new SeamAdminClient(
     fakeTransport(calls, () => ({}), async function* () {}),
   );
-  for await (const _ of admin.streamEvents()) void _;
+  for await (const _ of admin.streamEvents({ streamId: "s1" })) void _;
   assert.equal(calls[0]!.timeoutMs, undefined, "a finite default would kill a healthy live tail");
-  for await (const _ of admin.streamEvents({ timeoutMs: 500 })) void _;
+  for await (const _ of admin.streamEvents({ streamId: "s1", timeoutMs: 500 })) void _;
   assert.equal(calls[1]!.timeoutMs, 500);
 });
 
@@ -714,7 +733,7 @@ test("streamEvents: aborting the passed AbortSignal terminates a follow-tail", a
   let seen = 0;
   await assert.rejects(
     (async () => {
-      for await (const _ of admin.streamEvents({ follow: true, signal: ctl.signal })) {
+      for await (const _ of admin.streamEvents({ streamId: "s1", follow: true, signal: ctl.signal })) {
         if (++seen === 3) ctl.abort();
       }
     })(),

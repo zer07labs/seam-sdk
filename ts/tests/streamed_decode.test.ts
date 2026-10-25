@@ -22,7 +22,7 @@ import {
   KNOWN_KINDS,
   verifyStreamedRecordDigest,
 } from "../src/admin.js";
-import { governanceEnv, mintOperatorToken } from "./operator_token.js";
+import { STREAM_ID, governanceEnv, mintOperatorToken } from "./operator_token.js";
 import { RecordDigestStripError, UnsupportedRecordDigestVersion } from "../src/crypto.js";
 
 const vectors = JSON.parse(
@@ -282,7 +282,7 @@ test(
       let lifecycle: SeamEvent | undefined;
       let sealed: SeamEvent | undefined;
       const kindsSeen = new Set<string>();
-      for await (const ev of admin.streamEvents({ follow: false, ack: false })) {
+      for await (const ev of admin.streamEvents({ streamId: STREAM_ID, follow: false, ack: false })) {
         kindsSeen.add(ev.kind); // an unknown kind would still iterate, never throw
         if (ev.kind === "SESSION_LIFECYCLE") lifecycle = ev;
         else if (ev.kind === "DECISION_SEALED" && ev.payload?.decisionId === dec.decisionId)

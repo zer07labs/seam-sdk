@@ -13,6 +13,7 @@ from concurrent import futures
 import grpc
 import pytest
 
+from governing_root import STREAM_ID
 from live_server import spawn_server
 
 from seam_sdk import (
@@ -366,7 +367,9 @@ def test_stream_events_drains_decision_sealed(tmp_path):
         _, decision_id = _seal_one(f"127.0.0.1:{data_port}")
         admin = _admin(f"127.0.0.1:{mgmt_port}", "audit:read")
 
-        events = list(admin.stream_events(from_seq=0, follow=False))
+        events = list(
+            admin.stream_events(stream_id=STREAM_ID, from_seq=0, follow=False)
+        )
         assert events, "expected at least the DECISION_SEALED event"
         sealed = [e for e in events if e.kind == "DECISION_SEALED"]
         assert sealed, f"kinds seen: {[e.kind for e in events]}"

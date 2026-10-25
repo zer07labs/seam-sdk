@@ -62,6 +62,10 @@ export function tamperSignature(token: string): string {
  * already carries SEAM_CONFIG_ROOT_URL (CI exports one); otherwise the default root + demo tenant
  * document are written to a temp dir by python/tests/governing_root.py, the single writer of these
  * documents, so the two suites cannot drift. */
+// The delivery stream `governanceEnv()` boots every test runtime as (k8s P7). Mirrors
+// python/tests/governing_root.py `STREAM_ID`.
+export const STREAM_ID = "sdk-test";
+
 export function governanceEnv(): NodeJS.ProcessEnv {
   if (process.env.SEAM_CONFIG_ROOT_URL) return {};
   const script = fileURLToPath(new URL("../../python/tests/governing_root.py", import.meta.url));

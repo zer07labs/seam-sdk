@@ -5,7 +5,7 @@
 //! `Cargo.toml`.
 //!
 //! `tests/goldens/two_tenant_chain.jsonl` is copied verbatim from the runtime
-//! (`seam-runtime/crates/seam-verify/tests/goldens/`, pinned at the protocol-pass-2026-10 runtime pin 1ac5de5, matching
+//! (`seam-runtime/crates/seam-verify/tests/goldens/`, re-vendored at the runtime 0.57.0 pin 2de71b5d (k8s P7: `dev/` ids and `stream_id`), matching
 //! `docs/seam-event.v1.md`'s own pin): two tenants (`acme`, `globex`) interleaved, two
 //! `DECISION_SEALED` links and one issuer-signed `CHAIN_HEAD_ATTESTATION` each, both attestations
 //! agreeing with their own envelope tenant (the post-U-RT-3 Phase 2/3 shape).
