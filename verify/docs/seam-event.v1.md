@@ -1,5 +1,5 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ ae40c52 tracking feat/w11-p7-p12-contract-train (refreshed 2026-10-24).
-     Pre-vendored ahead of the runtime 0.57.0 train (k8s P7, seam-sdk#266); re-pin to main when it lands.
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 2de71b5 (refreshed 2026-10-25).
+     The runtime 0.57.0 train (k8s P7, seam-runtime#1470, seam-sdk#266); pre-vendored from ae40c52.
      Movement since 320a998: §"Delivery stream `stream_id`" — SeamEvent.stream_id = 27 (every kind,
      UNSEALED: in no digest, checksum or signature), `{stream_id}/` event_id prefix from the history
      boundary on, StreamEventsRequest.stream_id = 4 / ReportConsumedRequest.stream_id = 2 refused
