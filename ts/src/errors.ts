@@ -60,6 +60,19 @@ export class SeamRpcError extends ConnectError {
     return seamErrorInfo(this)?.reason;
   }
 
+  /** `ErrorInfo.metadata` of the Seam-domain error detail, as a fresh object, or `undefined` when the
+   * server sent no such detail.
+   *
+   * This is where a refusal's structured facts travel. `WRONG_CELL` ({@link WRONG_CELL_REASON}) carries
+   * `cell`, `root_snapshot_id` and `root_generated_at`; `PROTOCOL` carries `macp_code` (also
+   * {@link macpCode}). Keys are whatever the server sent, unfiltered: the runtime grows them on its own
+   * schedule, and a client that cannot name a key must still be able to log it. A copy, so mutating it
+   * changes nothing on the error. */
+  get errorMetadata(): Record<string, string> | undefined {
+    const info = seamErrorInfo(this);
+    return info ? { ...info.metadata } : undefined;
+  }
+
   /** MACP's own error code (`ErrorInfo.metadata["macp_code"]`) on a `PROTOCOL` refusal, or
    * `undefined`.
    *
@@ -106,6 +119,12 @@ export const PROTOCOL_REASON = "PROTOCOL";
  * TTL), or 1s while the store is down. A single-replica runtime never returns it. **Retryable** —
  * see {@link isSessionUnavailable} and {@link withSessionRetry}. */
 export const SESSION_UNAVAILABLE_REASON = "SESSION_UNAVAILABLE";
+/** `ErrorInfo.reason` of a `FAILED_PRECONDITION` refusal: the call reached a cell that does not hold the
+ * caller's tenant (seam-runtime k8s P15, D123; runtime 0.58.0). {@link SeamRpcError.errorMetadata}
+ * names the `cell` that answered and the fleet root it routed by (`root_snapshot_id`,
+ * `root_generated_at`). **Never retryable:** the same call to the same endpoint reaches the same cell;
+ * the remedy is the routing (a stale router root, or a wrong `x-seam-tenant`), not a retry. */
+export const WRONG_CELL_REASON = "WRONG_CELL";
 
 const STATUS_DETAILS_KEY = "grpc-status-details-bin";
 const ERROR_INFO_TYPE = "google.rpc.ErrorInfo";
@@ -298,6 +317,12 @@ export class UnavailableError extends SeamRpcError {}
 /** True for the runtime's `SESSION_UNAVAILABLE` refusal (see {@link SESSION_UNAVAILABLE_REASON}). */
 export function isSessionUnavailable(e: unknown): boolean {
   return e instanceof UnavailableError && e.reason === SESSION_UNAVAILABLE_REASON;
+}
+
+/** True when `e` is the runtime's `WRONG_CELL` refusal: a {@link FailedPreconditionError} whose
+ * `reason` is {@link WRONG_CELL_REASON}. Never {@link isRetryable}. */
+export function isWrongCell(e: unknown): boolean {
+  return e instanceof FailedPreconditionError && e.reason === WRONG_CELL_REASON;
 }
 
 /** True when re-invoking the same SDK call, unchanged, is safe and is the remedy. Today that is exactly

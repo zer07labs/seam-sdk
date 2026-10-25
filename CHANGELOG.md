@@ -16,6 +16,24 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added
+- **`x-seam-tenant` on every data-plane call, and `WRONG_CELL` (seam-runtime k8s P15, D123;
+  seam-sdk#294).** `seam-cell-router` routes each `seam.api.v1` call to the caller's cell, and before
+  authentication IssueChallenge and Admit carry no tenant. Python `SeamClient.connect(tenant=)` (sync +
+  aio) and TS `SeamClient.connect(url, { tenant })` send it on every call, through one interceptor
+  (`TenantInterceptor` / `AioTenantInterceptor`, TS `tenantHeaderInterceptor`, for a channel you build
+  yourself). Go `routing.WithTenant` and Java/Kotlin `TenantRouting.interceptor` do the same on the
+  caller's own gRPC channel. Omitted, no header is sent: direct-to-cell clients are byte-unchanged. An
+  empty tenant is refused before anything is sent, and a call that already names the header keeps its
+  value.
+- **ErrorInfo metadata on errors.** `error_metadata` (TS `errorMetadata`) returns the Seam-domain
+  `ErrorInfo.metadata`. `WRONG_CELL_REASON` and `is_wrong_cell` / `isWrongCell` read runtime 0.58.0's
+  `FAILED_PRECONDITION` `WRONG_CELL` and its `cell` / `root_snapshot_id` / `root_generated_at`. It is
+  never `is_retryable`. Go `routing.SeamErrorInfo` / `IsWrongCell`, Java/Kotlin `TenantRouting.errorInfo`
+  / `isWrongCell`.
+- **New dependencies:** the Go module requires grpc-go 1.66.3, and Java/Kotlin add grpc-java 1.66.0
+  (`grpc-api`, `grpc-protobuf`). Both are floors.
+
 ## 0.57.1 — 2026-10-25
 
 ## 0.57.0 — 2026-10-25

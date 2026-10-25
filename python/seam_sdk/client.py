@@ -41,6 +41,7 @@ from .errors import (  # noqa: F401  (SeamError re-exported)
     _MappedStub,
     is_session_unavailable,
 )
+from .tenant import TenantInterceptor
 
 # The generated transport stubs are ROOTED subpackages (`scripts/root_gen.py` rewrites the
 # raw buf output), so they import like any other module — no sys.path injection, no global
@@ -320,15 +321,23 @@ class SeamClient:
         *,
         credentials: Optional[grpc.ChannelCredentials] = None,
         agent: Optional[Agent] = None,
+        tenant: Optional[str] = None,
     ) -> "SeamClient":
         """Connect to a Seam data-plane endpoint. Plaintext by default (the dev/loopback path); pass
         ``credentials=grpc.ssl_channel_credentials()`` (or a configured creds object) to use TLS.
-        ``agent`` binds the client to that identity — see :meth:`__init__`."""
+        ``agent`` binds the client to that identity — see :meth:`__init__`. ``tenant`` (this caller's
+        enrolled tenant id) is sent as ``x-seam-tenant`` on every call, ``IssueChallenge`` and
+        ``Admit`` included, so a ``seam-cell-router`` in front can route it (k8s P15, D123) — see
+        :mod:`seam_sdk.tenant`. Omitted, no header is sent: right for a direct-to-cell endpoint."""
+        # Built before the channel, so a refused tenant leaves nothing open behind it.
+        interceptor = TenantInterceptor(tenant) if tenant is not None else None
         channel = (
             grpc.secure_channel(target, credentials)
             if credentials is not None
             else grpc.insecure_channel(target)
         )
+        if interceptor is not None:
+            channel = grpc.intercept_channel(channel, interceptor)
         return cls(channel, agent=agent)
 
     def close(self) -> None:

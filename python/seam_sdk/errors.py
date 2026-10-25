@@ -255,6 +255,20 @@ class SeamRpcError(SeamError, grpc.RpcError):
         return info[0] if info else None
 
     @property
+    def error_metadata(self) -> dict[str, str] | None:
+        """``ErrorInfo.metadata`` of the Seam-domain error detail, as a fresh ``dict``, or ``None``
+        when the server sent no such detail.
+
+        This is where a refusal's structured facts travel. ``WRONG_CELL``
+        (:data:`WRONG_CELL_REASON`) carries ``cell``, ``root_snapshot_id`` and ``root_generated_at``;
+        ``PROTOCOL`` carries ``macp_code`` (also :attr:`macp_code`). Keys are whatever the server
+        sent, unfiltered: the runtime grows them on its own schedule, and a client that cannot name
+        a key must still be able to log it. A copy, so mutating it changes nothing on the error.
+        """
+        info = self._seam_error_info()
+        return dict(info[1]) if info else None
+
+    @property
     def macp_code(self) -> str | None:
         """MACP's own error code (``ErrorInfo.metadata["macp_code"]``) on a ``PROTOCOL`` refusal, or
         ``None``.
@@ -298,6 +312,12 @@ PROTOCOL_REASON = "PROTOCOL"
 #: ``docs/specs/error-model.md``). The same call is safe to re-issue after the delay — the step
 #: either never ran or its session write was dropped. A single-replica runtime never returns it.
 SESSION_UNAVAILABLE_REASON = "SESSION_UNAVAILABLE"
+#: ``FAILED_PRECONDITION``: the call reached a cell that does not hold the caller's tenant
+#: (seam-runtime k8s P15, D123; runtime 0.58.0). :attr:`SeamRpcError.error_metadata` names the
+#: ``cell`` that answered and the fleet root it routed by (``root_snapshot_id``,
+#: ``root_generated_at``). **Never retryable:** the same call to the same endpoint reaches the same
+#: cell; the remedy is the routing (a stale router root, or a wrong ``x-seam-tenant``), not a retry.
+WRONG_CELL_REASON = "WRONG_CELL"
 
 _STATUS_DETAILS_KEY = "grpc-status-details-bin"
 _ERROR_INFO_TYPE = "type.googleapis.com/google.rpc.ErrorInfo"
@@ -492,6 +512,13 @@ def is_session_unavailable(exc: BaseException) -> bool:
     return (
         isinstance(exc, UnavailableError) and exc.reason == SESSION_UNAVAILABLE_REASON
     )
+
+
+def is_wrong_cell(exc: BaseException) -> bool:
+    """True when ``exc`` is the runtime's ``WRONG_CELL`` refusal: a
+    :class:`FailedPreconditionError` whose :attr:`~SeamRpcError.reason` is
+    :data:`WRONG_CELL_REASON`. Never :func:`is_retryable`."""
+    return isinstance(exc, FailedPreconditionError) and exc.reason == WRONG_CELL_REASON
 
 
 def is_retryable(exc: BaseException) -> bool:

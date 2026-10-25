@@ -47,6 +47,7 @@ from .errors import (
     is_session_unavailable,
     map_rpc_error,
 )
+from .tenant import AioTenantInterceptor
 
 from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
 from seam_sdk._gen.seam.api.v1 import seam_pb2_grpc as rpc
@@ -153,14 +154,17 @@ class SeamClient:
         *,
         credentials: Optional[grpc.ChannelCredentials] = None,
         agent: Optional[Agent] = None,
+        tenant: Optional[str] = None,
     ) -> "SeamClient":
         """Connect to a Seam data-plane endpoint. Plaintext by default (the dev/loopback path); pass
         ``credentials=grpc.ssl_channel_credentials()`` (or a configured creds object) to use TLS.
-        ``agent`` binds the client to that identity — see :meth:`__init__`."""
+        ``agent`` binds the client to that identity — see :meth:`__init__`. ``tenant`` is sent as
+        ``x-seam-tenant`` on every call, exactly as on the sync client (k8s P15, D123)."""
+        interceptors = [AioTenantInterceptor(tenant)] if tenant is not None else None
         channel = (
-            grpc.aio.secure_channel(target, credentials)
+            grpc.aio.secure_channel(target, credentials, interceptors=interceptors)
             if credentials is not None
-            else grpc.aio.insecure_channel(target)
+            else grpc.aio.insecure_channel(target, interceptors=interceptors)
         )
         return cls(channel, agent=agent)
 

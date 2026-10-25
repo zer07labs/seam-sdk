@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:550`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:568`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -153,7 +153,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1562-1584`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1580-1602`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -233,8 +233,10 @@ this by trying.
 transport and no verb methods — they implement AID derivation, the pinned-key presentation, TCT
 verification, the commitment digest, the `Authorize` call_sig and enrolment proof (`pop`, raw and REST
 form) framings, identity custody (`Agent` generation + the schema-v1 bootstrap file, #201) and the
-`seam-request-call-v1` request credential, and nothing else. If you need to *call* Seam, that is Python
-or TypeScript.
+`seam-request-call-v1` request credential, plus the `x-seam-tenant` routing interceptor and `WRONG_CELL`
+reader (D123), and nothing else. If you need to *call* Seam, that is Python or TypeScript. The routing
+helpers are why the Go module and the Java and Kotlin builds now depend on gRPC: grpc-go 1.66.3 and
+grpc-java 1.66.0, both as floors that a caller's newer gRPC replaces.
 
 | Identity / credential surface | Python | TypeScript | Go | Java | Kotlin |
 |---|---|---|---|---|---|
@@ -245,6 +247,8 @@ or TypeScript.
 | Bound-agent default credential (#202) | `SeamClient(channel, agent=)` | `SeamClient` `{ agent }` | `crypto.RequestCredentials{Agent}` | `new RequestCredentials(agent, tickets)` | `RequestCredentials(agent, tickets)` |
 | Refresh a rejected ticket once on the credentialed reads, `report_outcome` and the seven `submit_*` steps (#275) | yes (sync + aio) | yes | N/A, no client | N/A, no client | N/A, no client |
 | `SESSION_UNAVAILABLE` reason constant (D79) | `SESSION_UNAVAILABLE_REASON` | `SESSION_UNAVAILABLE_REASON` | `crypto.SessionUnavailableReason` | `RequestCredentials.SESSION_UNAVAILABLE_REASON` | `RequestCredentials.SESSION_UNAVAILABLE_REASON` |
+| Send `x-seam-tenant` on every call, IssueChallenge and Admit included (k8s P15, D123) | `SeamClient.connect(tenant=)` (sync + aio); `TenantInterceptor` / `AioTenantInterceptor` | `SeamClient.connect(url, { tenant })`; `tenantHeaderInterceptor` | `routing.WithTenant` (`UnaryInterceptor` / `StreamInterceptor`) | `TenantRouting.interceptor` | `TenantRouting.interceptor` |
+| Read ErrorInfo metadata; `WRONG_CELL` (D123, runtime 0.58.0), never retryable | `error_metadata`, `WRONG_CELL_REASON`, `is_wrong_cell` | `errorMetadata`, `WRONG_CELL_REASON`, `isWrongCell` | `routing.SeamErrorInfo`, `routing.WrongCellReason`, `routing.IsWrongCell` | `TenantRouting.errorInfo`, `WRONG_CELL_REASON`, `isWrongCell` | `TenantRouting.errorInfo`, `WRONG_CELL_REASON`, `isWrongCell` |
 | Classify it, and an opt-in retry loop (D79) | `is_retryable` / `is_session_unavailable`, `with_session_retry` (+ `_async`) | `isRetryable` / `isSessionUnavailable`, `withSessionRetry` | N/A, no client | N/A, no client | N/A, no client |
 
 Go, Java and Kotlin have no client to bind an agent to, so their #202 default lives on a
@@ -270,6 +274,15 @@ Python and TypeScript clients drop the cached ticket, and the next attempt re-ad
 bytes. A caller who never sees the reason sees no change. In Go, Java and Kotlin the caller's transport
 owns the ticket, so it must do that drop itself before resending, or the resend is refused
 `UNAUTHENTICATED` `request_replayed`.
+
+The D123 rows are opt-in and change nothing for a client that does not use them. With no tenant set, no
+header is sent, which is right for an endpoint connected straight to its cell (Railway prd and
+partner). With one set, it rides every data-plane call. A call that already names the header keeps its
+own value, and an empty tenant is refused before anything is sent. It is a routing hint, never
+authority: the cell derives the tenant from identity and refuses a misrouted call `WRONG_CELL`. A retry
+reaches the same cell, so the remedy is the routing, not a retry. The management-plane admin clients
+are not tenant-bound and do not take the option. Their legal-hold verbs keep sending their own
+per-call `x-seam-tenant` for the placer-named tenant (runtime #1037).
 
 The #274 row is additive on disk (D-AID-RECORD): a new file carries `"aid"` as its last key, an older
 release ignores it as an unknown key, and a file without it loads unchanged everywhere.
@@ -542,8 +555,8 @@ so it cannot reach the taxonomy. Use `canonicalize_tool_input()`
 
 ### `canonical=` hands you the derivation, and the responsibility with it
 
-`authorize(canonical=…)` (`python/seam_sdk/client.py:399`, `python/seam_sdk/aio.py:225`; `opts.canonical`
-in TypeScript, `ts/src/client.ts:800`) is additive and keyword-only. The SDK does **not** verify the
+`authorize(canonical=…)` (`python/seam_sdk/client.py:408`, `python/seam_sdk/aio.py:229`; `opts.canonical`
+in TypeScript, `ts/src/client.ts:809`) is additive and keyword-only. The SDK does **not** verify the
 bytes — re-deriving to check would reinstate the second derivation the parameter exists to remove.
 So two things become possible that were not:
 
@@ -742,7 +755,7 @@ covered `{}` — so it did not mean what you thought. Convert at the boundary:
 `date.toISOString()`, `Object.fromEntries(map)`, `[...set]`. The error names the type and the
 conversion.
 
-**This reaches you through `authorize()`, not only through the helper.** `ts/src/client.ts:632` calls
+**This reaches you through `authorize()`, not only through the helper.** `ts/src/client.ts:639` calls
 `jcsCanonicalize(toolInput ?? {})` directly, so `authorize({ toolInput: { deadline: new Date() } })`
 now throws where it previously signed a digest over `{"deadline":{}}`. That is the case worth
 checking in your own code, because it is the one where the aliased digest was being *signed*.
