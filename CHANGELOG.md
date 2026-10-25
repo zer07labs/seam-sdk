@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.58.0 — 2026-10-25
+
 ### Added
 - **`x-seam-tenant` on every data-plane call, and `WRONG_CELL` (seam-runtime k8s P15, D123;
   seam-sdk#294).** `seam-cell-router` routes each `seam.api.v1` call to the caller's cell, and before
