@@ -32,6 +32,8 @@ on both verbs.
   never verified. Go, Java and Kotlin carry the generated fields. `verify/docs/seam-event.v1.md`
   and the verifier goldens are re-vendored (`dev/` ids, `stream_id`).
 
+## 0.56.0 — 2026-10-24
+
 ## 0.55.0 — 2026-10-24
 
 ## 0.54.3 — 2026-10-24
