@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.57.1 — 2026-10-25
+
 ## 0.57.0 — 2026-10-25
 
 **Breaking for event relays:** `stream_events` / `report_events_consumed` (TS `streamEvents` /
