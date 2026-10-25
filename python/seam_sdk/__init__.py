@@ -90,10 +90,13 @@ from .errors import (
     UnknownCollectiveVerdictError,
     UnknownVerdictError,
     SESSION_UNAVAILABLE_REASON,
+    WRONG_CELL_REASON,
     is_retryable,
     is_session_unavailable,
+    is_wrong_cell,
     map_rpc_error,
 )
+from .tenant import TENANT_HEADER, AioTenantInterceptor, TenantInterceptor
 from .retry import (
     DEFAULT_RETRY_BUDGET_S,
     with_session_retry,
@@ -175,6 +178,12 @@ __all__ = [
     "DEFAULT_RETRY_BUDGET_S",
     "with_session_retry",
     "with_session_retry_async",
+    # Cell routing (seam-runtime k8s P15, D123) — the x-seam-tenant hint and WRONG_CELL
+    "TENANT_HEADER",
+    "TenantInterceptor",
+    "AioTenantInterceptor",
+    "WRONG_CELL_REASON",
+    "is_wrong_cell",
     "IssuerMismatchError",
     "SeamRpcError",
     "InvalidArgumentError",

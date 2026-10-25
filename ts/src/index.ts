@@ -8,6 +8,8 @@ export * from "./client.js";
 export * from "./admin.js";
 export * from "./crypto.js";
 export * from "./errors.js";
+// Cell routing (seam-runtime k8s P15, D123): the `x-seam-tenant` hint (Python's `seam_sdk.tenant`).
+export * from "./tenant.js";
 // Opt-in `SESSION_UNAVAILABLE` retry (Python's `seam_sdk.with_session_retry`).
 export * from "./retry.js";
 // Session / decision ids — the runtime's P4 / P5 rules (Python's `seam_sdk.ids`).

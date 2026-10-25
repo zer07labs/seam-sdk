@@ -36,6 +36,7 @@ import {
 } from "../gen/seam/api/v1/seam_pb.js";
 // ChainHeadAttestation moved to the canonical seam.event.v1 package.
 import { type ChainHeadAttestation } from "../gen/seam/event/v1/seam_event_pb.js";
+import { tenantHeaderInterceptor } from "./tenant.js";
 import {
   aidFromPubkey,
   buildPresentation,
@@ -130,6 +131,12 @@ export interface SeamClientOptions {
    * agent's `seam-request-call-v1` credential unless the call passes its own `credential`. Unbound
    * (the default), the credential stays opt-in per call. */
   agent?: Agent;
+  /** This caller's enrolled tenant id, sent as `x-seam-tenant` on every call — IssueChallenge and Admit
+   * included — so a `seam-cell-router` in front can route it (k8s P15, D123). Applied by
+   * {@link SeamClient.connect}; over a transport you build yourself, add
+   * {@link tenantHeaderInterceptor} to its `interceptors` instead. Omitted, no header is sent: right for
+   * a direct-to-cell endpoint. */
+  tenant?: string;
 }
 
 /** {@link CredentialedCallOptions} plus `submitCommit`'s write-side override hint (#141) —
@@ -695,13 +702,15 @@ export class SeamClient {
 
   /** Connect to a Seam gRPC endpoint (e.g. `http://127.0.0.1:8090`, or `https://…` for TLS). */
   static connect(baseUrl: string, options?: SeamClientOptions): SeamClient {
+    // Built before the session, so a refused tenant leaves nothing open behind it.
+    const tenant = options?.tenant !== undefined ? [tenantHeaderInterceptor(options.tenant)] : [];
     // An explicit session manager (rather than the transport's internal one) is the only public
     // path connect-node offers to tear the HTTP/2 session down — it is what makes close() real.
     const session = new Http2SessionManager(baseUrl);
     return new SeamClient(
       createGrpcTransport({
         baseUrl,
-        interceptors: [errorMappingInterceptor()],
+        interceptors: [...tenant, errorMappingInterceptor()],
         sessionManager: session,
       }),
       session,
