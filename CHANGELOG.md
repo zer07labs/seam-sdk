@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.57.0 — 2026-10-25
+
 **Breaking for event relays:** `stream_events` / `report_events_consumed` (TS `streamEvents` /
 `reportEventsConsumed`) now require a `stream_id` (`streamId`). Pass the relay's configured
 `SEAM_STREAM_ID`. Runtime 0.57.0 refuses an empty or foreign stream, and so refuses every earlier SDK
