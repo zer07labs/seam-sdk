@@ -318,6 +318,16 @@ SESSION_UNAVAILABLE_REASON = "SESSION_UNAVAILABLE"
 #: ``root_generated_at``). **Never retryable:** the same call to the same endpoint reaches the same
 #: cell; the remedy is the routing (a stale router root, or a wrong ``x-seam-tenant``), not a retry.
 WRONG_CELL_REASON = "WRONG_CELL"
+#: ``FAILED_PRECONDITION`` with ``RetryInfo``: the caller's tenant is moving between cells
+#: (seam-runtime k8s P16, ``docs/design/cells.md`` §7; runtime 0.59.0). New opens, authorizes and
+#: one-shot decisions are refused while the source cell drains and seals; live sessions finish.
+#: :attr:`SeamRpcError.error_metadata` names the ``move_id`` and the ``target_cell``, and
+#: :attr:`SeamRpcError.retry_after` the delay (5s today). **Retryable:** the refusal lands before
+#: any write, so the same call is safe to re-issue after the delay. Once the control plane flips the
+#: tenant, a routed client reaches the target cell; a client pinned to the source cell gets
+#: :data:`WRONG_CELL` instead, which is not retryable. A move outlasts its live sessions, so wrap
+#: it with a ``budget_s`` sized for the drain, not the default.
+TENANT_MOVING_REASON = "TENANT_MOVING"
 
 _STATUS_DETAILS_KEY = "grpc-status-details-bin"
 _ERROR_INFO_TYPE = "type.googleapis.com/google.rpc.ErrorInfo"
@@ -521,13 +531,22 @@ def is_wrong_cell(exc: BaseException) -> bool:
     return isinstance(exc, FailedPreconditionError) and exc.reason == WRONG_CELL_REASON
 
 
+def is_tenant_moving(exc: BaseException) -> bool:
+    """True when ``exc`` is the runtime's ``TENANT_MOVING`` refusal: a
+    :class:`FailedPreconditionError` whose :attr:`~SeamRpcError.reason` is
+    :data:`TENANT_MOVING_REASON`. :func:`is_retryable`, unlike :func:`is_wrong_cell`."""
+    return (
+        isinstance(exc, FailedPreconditionError) and exc.reason == TENANT_MOVING_REASON
+    )
+
+
 def is_retryable(exc: BaseException) -> bool:
     """True when re-invoking the same SDK call, unchanged, is safe and is the remedy. Today that is
-    exactly :func:`is_session_unavailable`. Deliberately narrow: the runtime's other retryable
+    exactly :func:`is_session_unavailable` or :func:`is_tenant_moving`. Deliberately narrow: the runtime's other retryable
     refusals each need a different recovery first (``CHALLENGE_REFUSED`` a fresh challenge, a fact
     conflict a re-read chain head), so a blind re-invoke is not their remedy. Classification only:
     the SDK still never retries on its own; :func:`seam_sdk.with_session_retry` is the opt-in loop."""
-    return is_session_unavailable(exc)
+    return is_session_unavailable(exc) or is_tenant_moving(exc)
 
 
 class DeadlineExceededError(SeamRpcError):

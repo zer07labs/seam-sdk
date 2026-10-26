@@ -152,3 +152,20 @@ func TestOnlyASeamDomainFailedPreconditionWrongCellCounts(t *testing.T) {
 		t.Error("a non-status error has no ErrorInfo")
 	}
 }
+
+func TestTenantMovingIsRecognisedAndIsNotWrongCell(t *testing.T) {
+	md := map[string]string{"move_id": "mv-1", "target_cell": "aws-stg-b"}
+	err := refusal(t, codes.FailedPrecondition, TenantMovingReason, SeamErrorDomain, md)
+	if !IsTenantMoving(err) || IsWrongCell(err) {
+		t.Fatal("TENANT_MOVING misclassified")
+	}
+	if got := SeamErrorInfo(err).GetMetadata(); !reflect.DeepEqual(got, md) {
+		t.Fatalf("metadata %v", got)
+	}
+	if IsTenantMoving(refusal(t, codes.FailedPrecondition, WrongCellReason, SeamErrorDomain, nil)) {
+		t.Fatal("WRONG_CELL read as TENANT_MOVING")
+	}
+	if IsTenantMoving(refusal(t, codes.Unavailable, TenantMovingReason, SeamErrorDomain, nil)) {
+		t.Fatal("a non-FAILED_PRECONDITION read as TENANT_MOVING")
+	}
+}

@@ -144,4 +144,17 @@ class TenantRoutingTest {
         assertFalse(TenantRouting.isWrongCell(RuntimeException("boom")))
         assertNull(TenantRouting.errorInfo(RuntimeException("boom")))
     }
+
+    @Test
+    fun `TENANT_MOVING is recognised and is not WRONG_CELL`() {
+        val fp = Status.Code.FAILED_PRECONDITION
+        val d = TenantRouting.SEAM_ERROR_DOMAIN
+        val md = mapOf("move_id" to "mv-1", "target_cell" to "aws-stg-b")
+        val e = refusal(fp, TenantRouting.TENANT_MOVING_REASON, d, md)
+        assertTrue(TenantRouting.isTenantMoving(e))
+        assertFalse(TenantRouting.isWrongCell(e))
+        assertEquals(md, TenantRouting.errorInfo(e)!!.metadataMap)
+        assertFalse(TenantRouting.isTenantMoving(refusal(fp, "WRONG_CELL", d, emptyMap())))
+        assertFalse(TenantRouting.isTenantMoving(refusal(Status.Code.UNAVAILABLE, "TENANT_MOVING", d, emptyMap())))
+    }
 }

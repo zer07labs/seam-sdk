@@ -16,13 +16,17 @@ import { ChallengeSchema } from "../gen/seam/api/v1/seam_pb.js";
 import { Agent, SeamClient } from "../src/client.js";
 import {
   FailedPreconditionError,
+  TENANT_MOVING_REASON,
   WRONG_CELL_REASON,
   isRetryable,
+  isTenantMoving,
   isWrongCell,
   toSeamError,
   type SeamRpcError,
 } from "../src/errors.js";
 import { TENANT_HEADER, tenantHeaderInterceptor } from "../src/tenant.js";
+import { withSessionRetry } from "../src/retry.js";
+import { tenantMoving } from "./session_unavailable.js";
 
 const te = new TextEncoder();
 
@@ -151,4 +155,32 @@ test("another FAILED_PRECONDITION reason is not WRONG_CELL", () => {
   const err = refused(Code.FailedPrecondition, "stream_id_mismatch", {});
   assert.deepEqual(err.errorMetadata, {});
   assert.equal(isWrongCell(err), false);
+});
+
+// ── TENANT_MOVING (k8s P16) ───────────────────────────────────────────────────────────────────────
+
+test("TENANT_MOVING is typed, carries the move, and is retryable unlike WRONG_CELL", () => {
+  const err = refused(Code.FailedPrecondition, TENANT_MOVING_REASON, { move_id: "mv-1", target_cell: "aws-stg-b" });
+  assert.ok(err instanceof FailedPreconditionError);
+  assert.equal(err.reason, "TENANT_MOVING");
+  assert.deepEqual(err.errorMetadata, { move_id: "mv-1", target_cell: "aws-stg-b" });
+  assert.ok(isTenantMoving(err) && isRetryable(err));
+  assert.equal(isWrongCell(err), false);
+  assert.equal(isTenantMoving(refused(Code.FailedPrecondition, WRONG_CELL_REASON, WRONG_CELL_META)), false);
+});
+
+test("withSessionRetry waits TENANT_MOVING's hinted delay and retries", async () => {
+  let calls = 0;
+  const slept: number[] = [];
+  const result = await withSessionRetry(
+    async () => {
+      calls += 1;
+      if (calls < 3) throw tenantMoving(5);
+      return "ok";
+    },
+    { sleep: async (ms: number) => void slept.push(ms), random: () => 0 },
+  );
+  assert.equal(result, "ok");
+  assert.equal(calls, 3);
+  assert.deepEqual(slept, [5000, 5000]);
 });

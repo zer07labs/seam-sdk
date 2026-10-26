@@ -41,10 +41,12 @@ from .client import (
 )
 from .crypto import build_presentation, verify_tct
 from .errors import (
+    FailedPreconditionError,
     IssuerMismatchError,
     UnauthenticatedError,
     UnavailableError,
     is_session_unavailable,
+    is_tenant_moving,
     map_rpc_error,
 )
 from .tenant import AioTenantInterceptor
@@ -367,7 +369,7 @@ class SeamClient:
                     signer.seed, ticket, rpc_full_name, resource_id, body
                 )
             )
-        except UnavailableError as e:
+        except (UnavailableError, FailedPreconditionError) as e:
             await self._forget_burned_ticket(signer, ticket, rpc_full_name, e)
             raise
 
@@ -375,7 +377,9 @@ class SeamClient:
         self, signer: Agent, ticket: bytes, rpc_full_name: str, exc: BaseException
     ) -> None:
         """The twin of :meth:`seam_sdk.SeamClient._forget_burned_ticket`."""
-        if rpc_full_name in _REPLAY_GUARDED and is_session_unavailable(exc):
+        if rpc_full_name in _REPLAY_GUARDED and (
+            is_session_unavailable(exc) or is_tenant_moving(exc)
+        ):
             await self._invalidate_ticket(signer, ticket)
 
     async def _credentialed_call(
@@ -408,7 +412,7 @@ class SeamClient:
                     signer.seed, ticket, rpc_full_name, resource_id, body
                 )
             )
-        except UnavailableError as e:
+        except (UnavailableError, FailedPreconditionError) as e:
             await self._forget_burned_ticket(signer, ticket, rpc_full_name, e)
             raise
         except UnauthenticatedError:
@@ -422,7 +426,7 @@ class SeamClient:
                     signer.seed, ticket, rpc_full_name, resource_id, body
                 )
             )
-        except UnavailableError as e:
+        except (UnavailableError, FailedPreconditionError) as e:
             await self._forget_burned_ticket(signer, ticket, rpc_full_name, e)
             raise
 

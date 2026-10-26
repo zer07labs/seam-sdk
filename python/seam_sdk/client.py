@@ -34,12 +34,14 @@ from .crypto import (
     verify_tct,
 )
 from .errors import (  # noqa: F401  (SeamError re-exported)
+    FailedPreconditionError,
     IssuerMismatchError,
     SeamError,
     UnauthenticatedError,
     UnavailableError,
     _MappedStub,
     is_session_unavailable,
+    is_tenant_moving,
 )
 from .tenant import TenantInterceptor
 
@@ -56,7 +58,8 @@ _T = TypeVar("_T")
 
 # The credentialed writes the runtime's seen-proof cache burns at admission (seam-runtime
 # ``authorize.rs`` ``replay_guarded``: every credentialed write but ``ReportOutcome``). It burns
-# BEFORE the session lease is taken, so a ``SESSION_UNAVAILABLE`` refusal has already spent the
+# BEFORE the session lease is taken and before the tenant-move check (seamd ``session.rs``
+# ``refuse_moving``), so a ``SESSION_UNAVAILABLE`` or ``TENANT_MOVING`` refusal has already spent the
 # signature: re-signing the same body under the same ticket yields the same bytes, refused
 # ``request_replayed``. :meth:`SeamClient._forget_burned_ticket` drops that ticket so a retry
 # re-admits and signs fresh bytes.
@@ -566,17 +569,19 @@ class SeamClient:
                     signer.seed, ticket, rpc_full_name, resource_id, body
                 )
             )
-        except UnavailableError as e:
+        except (UnavailableError, FailedPreconditionError) as e:
             self._forget_burned_ticket(signer, ticket, rpc_full_name, e)
             raise
 
     def _forget_burned_ticket(
         self, signer: Agent, ticket: bytes, rpc_full_name: str, exc: BaseException
     ) -> None:
-        """On ``SESSION_UNAVAILABLE`` for a :data:`_REPLAY_GUARDED` write, drop ``ticket`` (see
-        there): the runtime burned this call's proof, so the next attempt must re-admit to sign
-        new bytes. Every other error, and every read, leaves the cache alone."""
-        if rpc_full_name in _REPLAY_GUARDED and is_session_unavailable(exc):
+        """On ``SESSION_UNAVAILABLE`` or ``TENANT_MOVING`` for a :data:`_REPLAY_GUARDED` write, drop
+        ``ticket`` (see there): the runtime burned this call's proof, so the next attempt must
+        re-admit to sign new bytes. Every other error, and every read, leaves the cache alone."""
+        if rpc_full_name in _REPLAY_GUARDED and (
+            is_session_unavailable(exc) or is_tenant_moving(exc)
+        ):
             self._invalidate_ticket(signer, ticket)
 
     def _credentialed_call(
@@ -629,7 +634,7 @@ class SeamClient:
                     signer.seed, ticket, rpc_full_name, resource_id, body
                 )
             )
-        except UnavailableError as e:
+        except (UnavailableError, FailedPreconditionError) as e:
             self._forget_burned_ticket(signer, ticket, rpc_full_name, e)
             raise
         except UnauthenticatedError:
@@ -646,7 +651,7 @@ class SeamClient:
                     signer.seed, ticket, rpc_full_name, resource_id, body
                 )
             )
-        except UnavailableError as e:
+        except (UnavailableError, FailedPreconditionError) as e:
             self._forget_burned_ticket(signer, ticket, rpc_full_name, e)
             raise
 

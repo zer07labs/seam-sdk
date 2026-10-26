@@ -38,6 +38,14 @@ object TenantRouting {
      */
     const val WRONG_CELL_REASON = "WRONG_CELL"
 
+    /**
+     * The ErrorInfo reason of a FAILED_PRECONDITION refusal with RetryInfo: the caller's tenant is moving
+     * between cells (runtime 0.59.0, k8s P16). Its metadata names the `move_id` and the `target_cell`.
+     * Retryable after the RetryInfo delay: the refusal lands before any write. Once the tenant flips,
+     * the source cell answers WRONG_CELL instead.
+     */
+    const val TENANT_MOVING_REASON = "TENANT_MOVING"
+
     private val KEY: Metadata.Key<String> = Metadata.Key.of(TENANT_HEADER, Metadata.ASCII_STRING_MARSHALLER)
 
     /**
@@ -89,4 +97,9 @@ object TenantRouting {
     fun isWrongCell(t: Throwable): Boolean =
         Status.fromThrowable(t).code == Status.Code.FAILED_PRECONDITION &&
             errorInfo(t)?.reason == WRONG_CELL_REASON
+
+    /** Whether [t] is the runtime's TENANT_MOVING refusal. Retry it after the RetryInfo delay. */
+    fun isTenantMoving(t: Throwable): Boolean =
+        Status.fromThrowable(t).code == Status.Code.FAILED_PRECONDITION &&
+            errorInfo(t)?.reason == TENANT_MOVING_REASON
 }

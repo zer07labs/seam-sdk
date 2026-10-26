@@ -56,13 +56,14 @@ import {
   InvalidArgumentError,
   ProtocolViolationError,
   UnauthenticatedError,
-  UnavailableError,
   isSessionUnavailable,
+  isTenantMoving,
 } from "./errors.js";
 
 // The credentialed writes the runtime's seen-proof cache burns at admission (seam-runtime
 // `authorize.rs` `replay_guarded`: every credentialed write but `ReportOutcome`). It burns BEFORE the
-// session lease is taken, so a `SESSION_UNAVAILABLE` refusal has already spent the signature:
+// session lease is taken and before the tenant-move check (seamd `session.rs` `refuse_moving`), so a
+// `SESSION_UNAVAILABLE` or `TENANT_MOVING` refusal has already spent the signature:
 // re-signing the same body under the same ticket yields the same bytes, refused `request_replayed`.
 // `forgetBurnedTicket` drops that ticket so a retry re-admits and signs fresh bytes.
 const REPLAY_GUARDED: ReadonlySet<string> = new Set(
@@ -928,11 +929,11 @@ export class SeamClient {
     }
   }
 
-  /** On `SESSION_UNAVAILABLE` for a {@link REPLAY_GUARDED} write, drop `ticket` (see there): the
-   * runtime burned this call's proof, so the next attempt must re-admit to sign new bytes. Every other
+  /** On `SESSION_UNAVAILABLE` or `TENANT_MOVING` for a {@link REPLAY_GUARDED} write, drop `ticket` (see
+   * there): the runtime burned this call's proof, so the next attempt must re-admit to sign new bytes. Every other
    * error, and every read, leaves the cache alone. */
   private forgetBurnedTicket(agent: Agent, ticket: Uint8Array, rpcFullName: string, e: unknown): void {
-    if (e instanceof UnavailableError && REPLAY_GUARDED.has(rpcFullName) && isSessionUnavailable(e)) {
+    if (REPLAY_GUARDED.has(rpcFullName) && (isSessionUnavailable(e) || isTenantMoving(e))) {
       this.invalidateTicket(agent, ticket);
     }
   }

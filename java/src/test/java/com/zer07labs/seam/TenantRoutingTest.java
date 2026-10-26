@@ -169,4 +169,16 @@ class TenantRoutingTest {
         assertFalse(TenantRouting.isWrongCell(new RuntimeException("boom")));
         assertTrue(TenantRouting.errorInfo(new RuntimeException("boom")).isEmpty());
     }
+
+    @Test
+    void tenantMovingIsRecognisedAndIsNotWrongCell() {
+        int fp = Status.Code.FAILED_PRECONDITION.value();
+        Map<String, String> md = Map.of("move_id", "mv-1", "target_cell", "aws-stg-b");
+        StatusRuntimeException e = refusal(fp, TenantRouting.TENANT_MOVING_REASON, TenantRouting.SEAM_ERROR_DOMAIN, md);
+        assertTrue(TenantRouting.isTenantMoving(e));
+        assertFalse(TenantRouting.isWrongCell(e));
+        assertEquals(md, TenantRouting.errorInfo(e).orElseThrow().getMetadataMap());
+        assertFalse(TenantRouting.isTenantMoving(refusal(fp, "WRONG_CELL", TenantRouting.SEAM_ERROR_DOMAIN, Map.of())));
+        assertFalse(TenantRouting.isTenantMoving(refusal(Status.Code.UNAVAILABLE.value(), "TENANT_MOVING", TenantRouting.SEAM_ERROR_DOMAIN, Map.of())));
+    }
 }
