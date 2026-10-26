@@ -125,6 +125,16 @@ export const SESSION_UNAVAILABLE_REASON = "SESSION_UNAVAILABLE";
  * `root_generated_at`). **Never retryable:** the same call to the same endpoint reaches the same cell;
  * the remedy is the routing (a stale router root, or a wrong `x-seam-tenant`), not a retry. */
 export const WRONG_CELL_REASON = "WRONG_CELL";
+/** `ErrorInfo.reason` of a `FAILED_PRECONDITION` refusal with `RetryInfo`: the caller's tenant is
+ * moving between cells (seam-runtime k8s P16, `docs/design/cells.md` §7; runtime 0.59.0). New opens,
+ * authorizes and one-shot decisions are refused while the source cell drains and seals; live sessions
+ * finish. {@link SeamRpcError.errorMetadata} names the `move_id` and the `target_cell`, and `retryAfter`
+ * the delay (5s today). **Retryable:** the refusal lands before any write, so the same call is safe to
+ * re-issue after the delay. Once the control plane flips the tenant, a routed client reaches the target
+ * cell; a client pinned to the source cell gets {@link WRONG_CELL_REASON} instead, which is not
+ * retryable. A move outlasts its live sessions, so give {@link withSessionRetry} a `budgetMs` sized
+ * for the drain, not the default. */
+export const TENANT_MOVING_REASON = "TENANT_MOVING";
 
 const STATUS_DETAILS_KEY = "grpc-status-details-bin";
 const ERROR_INFO_TYPE = "google.rpc.ErrorInfo";
@@ -325,13 +335,19 @@ export function isWrongCell(e: unknown): boolean {
   return e instanceof FailedPreconditionError && e.reason === WRONG_CELL_REASON;
 }
 
+/** True when `e` is the runtime's `TENANT_MOVING` refusal: a {@link FailedPreconditionError} whose
+ * `reason` is {@link TENANT_MOVING_REASON}. {@link isRetryable}, unlike {@link isWrongCell}. */
+export function isTenantMoving(e: unknown): boolean {
+  return e instanceof FailedPreconditionError && e.reason === TENANT_MOVING_REASON;
+}
+
 /** True when re-invoking the same SDK call, unchanged, is safe and is the remedy. Today that is exactly
- * {@link isSessionUnavailable}. Deliberately narrow: the runtime's other retryable refusals each need a
+ * {@link isSessionUnavailable} or {@link isTenantMoving}. Deliberately narrow: the runtime's other retryable refusals each need a
  * different recovery first (`CHALLENGE_REFUSED` a fresh challenge, a fact conflict a re-read chain
  * head), so a blind re-invoke is not their remedy. Classification only: the SDK still never retries
  * on its own; {@link withSessionRetry} is the opt-in loop. */
 export function isRetryable(e: unknown): boolean {
-  return isSessionUnavailable(e);
+  return isSessionUnavailable(e) || isTenantMoving(e);
 }
 export class DeadlineExceededError extends SeamRpcError {}
 export class UnimplementedError extends SeamRpcError {}

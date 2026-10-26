@@ -16,6 +16,25 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added
+- **`TENANT_MOVING` is retryable (seam-runtime k8s P16, runtime 0.59.0; seam-sdk#297).** A tenant
+  moving between cells gets `FAILED_PRECONDITION` reason `TENANT_MOVING`, with a 5s `RetryInfo` and
+  `move_id` / `target_cell` metadata, on new opens, authorizes and one-shot decisions. Python
+  `TENANT_MOVING_REASON` / `is_tenant_moving` and TS `TENANT_MOVING_REASON` / `isTenantMoving` add it to
+  `is_retryable` / `isRetryable`, so `with_session_retry` / `withSessionRetry` waits the hint and
+  re-issues. A move drains its live sessions first, so give the helper a budget sized for that, not the
+  40s default. Go `routing.IsTenantMoving` and Java/Kotlin `TenantRouting.isTenantMoving` classify it.
+  `WRONG_CELL` stays never-retryable; once the tenant flips, the source cell answers `WRONG_CELL`.
+
+### Fixed
+- **A `TENANT_MOVING` on a replay-guarded write drops its ticket.** The runtime refuses after admission
+  has burned the call's proof (seamd `session.rs` `refuse_moving`), so the retry would re-sign the same
+  bytes and be refused `request_replayed`. That is the `SESSION_UNAVAILABLE` rule, now applied to both.
+- **`make generate` retries a transient BSR failure.** The BSR's `Failure: internal` failed main and
+  tag CI on the v0.58.0 release commit and refused a clean release (#296). `scripts/buf_generate.sh`
+  retries `internal` / `unavailable` / `deadline_exceeded` up to 3 times, and fails any other error,
+  such as `unauthenticated` or a bad module, on the first attempt.
+
 ## 0.59.0 — 2026-10-26
 
 ## 0.58.1 — 2026-10-26

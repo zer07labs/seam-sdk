@@ -40,9 +40,10 @@ import {
   UnauthenticatedError,
   UnavailableError,
   isSessionUnavailable,
+  isTenantMoving,
 } from "../src/errors.js";
 import { withSessionRetry } from "../src/retry.js";
-import { refusal, sessionUnavailable } from "./session_unavailable.js";
+import { refusal, sessionUnavailable, tenantMoving } from "./session_unavailable.js";
 import {
   ApprovalRequestRequestSchema,
   AuthorizeVerdict,
@@ -1429,6 +1430,48 @@ test("any other UNAVAILABLE on a guarded write leaves the ticket as before", asy
       await assert.rejects(CREDENTIAL_CALLS[name]!.invoke(client, cred), (e) => e === err);
       assert.equal(ticketsOf(client).has(cred.aid), true, name);
     }
+  }
+});
+
+// ── TENANT_MOVING (k8s P16): refused after admission burned the proof, so the same rule applies ──
+
+test("TENANT_MOVING on a replay-guarded write drops the burned ticket, with no retry and no admit", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  for (const name of [...SUBMITS, ...EXCLUDED]) {
+    const calls: Recorded[] = [];
+    const wire = refreshWire();
+    wire.state.fail[name] = tenantMoving();
+    const client = new SeamClient(fakeTransport(calls, wire.handle));
+    seedCredentialTicket(client, cred.aid);
+    await assert.rejects(CREDENTIAL_CALLS[name]!.invoke(client, cred), (e) => isTenantMoving(e));
+    assert.equal(calls.filter((c) => c.method === name).length, 1, `${name}: the SDK never retries it`);
+    assert.equal(wire.state.admits, 0, name);
+    assert.equal(ticketsOf(client).has(cred.aid), false, `${name}: the burned ticket was dropped`);
+  }
+});
+
+test("TENANT_MOVING on a read or reportOutcome keeps the ticket", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  for (const name of REFRESHING.filter((n) => !(SUBMITS as readonly string[]).includes(n))) {
+    const wire = refreshWire();
+    wire.state.fail[name] = tenantMoving();
+    const client = new SeamClient(fakeTransport([], wire.handle));
+    seedCredentialTicket(client, cred.aid);
+    await assert.rejects(CREDENTIAL_CALLS[name]!.invoke(client, cred), FailedPreconditionError);
+    assert.equal(ticketsOf(client).has(cred.aid), true, name);
+  }
+});
+
+test("WRONG_CELL on a guarded write leaves the ticket as before", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  for (const name of [...SUBMITS, ...EXCLUDED]) {
+    const err = refusal(Code.FailedPrecondition, "WRONG_CELL");
+    const wire = refreshWire();
+    wire.state.fail[name] = err;
+    const client = new SeamClient(fakeTransport([], wire.handle));
+    seedCredentialTicket(client, cred.aid);
+    await assert.rejects(CREDENTIAL_CALLS[name]!.invoke(client, cred), (e) => e === err);
+    assert.equal(ticketsOf(client).has(cred.aid), true, name);
   }
 });
 

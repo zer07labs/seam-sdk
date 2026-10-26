@@ -2,7 +2,7 @@
 // delivers them: `details` already parsed. Shared by `session_retry.test.ts` and `unit_plumbing.test.ts`.
 
 import { Code, ConnectError } from "@connectrpc/connect";
-import { SESSION_UNAVAILABLE_REASON, toSeamError } from "../src/errors.js";
+import { SESSION_UNAVAILABLE_REASON, TENANT_MOVING_REASON, toSeamError } from "../src/errors.js";
 
 const te = new TextEncoder();
 
@@ -37,3 +37,6 @@ export function refusal(code: Code, reason: string | undefined, retrySeconds = 0
 
 export const sessionUnavailable = (retrySeconds = 0) =>
   refusal(Code.Unavailable, SESSION_UNAVAILABLE_REASON, retrySeconds);
+
+/** The runtime's `TENANT_MOVING` refusal (k8s P16): `FAILED_PRECONDITION` + `RetryInfo`. */
+export const tenantMoving = (retrySeconds = 5) => refusal(Code.FailedPrecondition, TENANT_MOVING_REASON, retrySeconds);

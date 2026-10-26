@@ -795,6 +795,11 @@ jobs:
         # crates". Runs the real script against a stubbed Cloudsmith whose `copy` duplicates on re-copy
         # exactly as the live API does, so the destination check cannot be quietly removed.
         run: python -m pytest scripts/test_promote_partner_gate.py -q
+      # `make generate` retries a transient BSR failure (the `Failure: internal` that refused v0.58.0
+      # on a clean tree, #296) and nothing else. Run against a stubbed `buf`, so "retries a 5xx" and
+      # "fails a real refusal on the first attempt" are both executed, not read.
+      - name: generation retries a BSR blip and never a real refusal
+        run: python -m pytest scripts/test_buf_generate_gate.py -q
       # Also runs inside the `python` job. Duplicated on purpose: there it proves the guard passes,
       # here it proves the guard needs nothing but a checkout — which is the actual claim
       # seam-adapters relies on (seam-sdk#54).

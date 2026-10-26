@@ -63,7 +63,9 @@ WORKFLOWS = sorted(
 #
 # So the scan is now per SHELL COMMAND, not per line: parse the workflow, walk every `run:` value,
 # split it on the separators a shell uses, and look at the head of each segment.
-BUF_GENERATE = re.compile(r"^buf\s+generate\b")
+#: Raw `buf generate`, or the retry wrapper `make generate` calls it through
+#: (`scripts/buf_generate.sh`): the wrapper skips `root_gen.py` exactly as the raw command does.
+BUF_GENERATE = re.compile(r"^(?:buf\s+generate\b|(?:\./)?scripts/buf_generate\.sh\b)")
 
 #: `\n`, `;`, `&&`, `||`, `|` and `&` — everything that starts a new command in a `run:` block.
 SHELL_SEPARATORS = re.compile(r"[\n;&|]+")
@@ -137,7 +139,9 @@ def test_the_makefile_target_still_does_the_rooting_this_guard_assumes():
     """
     makefile = (Path(__file__).resolve().parents[2] / "Makefile").read_text()
     generate = makefile.split("\ngenerate:", 1)[1].split("\n\n", 1)[0]
-    assert "buf generate" in generate
+    assert "scripts/buf_generate.sh" in generate, (
+        "`make generate` no longer runs buf through scripts/buf_generate.sh — the BSR retry is gone"
+    )
     assert "root_gen.py" in generate, (
         "`make generate` no longer runs scripts/root_gen.py — either the rooting moved, in which "
         "case this whole guard needs rewriting, or the target just lost the step that makes the "
@@ -175,6 +179,10 @@ _MUST_BE_CAUGHT = [
         "jobs:\n  a:\n    steps:\n      - run: make generate || buf generate x\n",
     ),
     ("backgrounded with &", "jobs:\n  a:\n    steps:\n      - run: buf generate x &\n"),
+    (
+        "the retry wrapper, called directly",
+        "jobs:\n  a:\n    steps:\n      - run: ./scripts/buf_generate.sh buf.build/x\n",
+    ),
     (
         "block scalar, own line",
         "jobs:\n  a:\n    steps:\n      - run: |\n          buf generate x\n",

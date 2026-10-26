@@ -10,6 +10,8 @@ The delay before attempt ``n+1`` is the server's ``RetryInfo`` (the lease holder
 or 1s while the store is down) plus full jitter over a capped exponential: ``retry_after +
 U(0, min(max_delay_s, base_delay_s * 2**n))``. The default 40s budget outlasts the runtime's 30s
 lease TTL (``seamd/src/live_fence.rs`` ``LEASE_TTL``), so one lapsed lease is always waited out.
+It does NOT outlast a tenant move (``TENANT_MOVING``, also :func:`is_retryable`; 5s ``RetryInfo``):
+the source cell drains until its live sessions finish, so pass a ``budget_s`` sized for that drain.
 The budget bounds the time spent waiting, not the calls themselves: each attempt keeps its own
 per-RPC ``timeout``. When the next delay would overrun the budget, the last error is raised as-is.
 

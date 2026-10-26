@@ -47,6 +47,14 @@ public final class TenantRouting {
      */
     public static final String WRONG_CELL_REASON = "WRONG_CELL";
 
+    /**
+     * The ErrorInfo reason of a FAILED_PRECONDITION refusal with RetryInfo: the caller's tenant is moving
+     * between cells (runtime 0.59.0, k8s P16). Its metadata names the {@code move_id} and the
+     * {@code target_cell}. Retryable after the RetryInfo delay: the refusal lands before any write. Once
+     * the tenant flips, the source cell answers WRONG_CELL instead.
+     */
+    public static final String TENANT_MOVING_REASON = "TENANT_MOVING";
+
     private static final Metadata.Key<String> KEY =
             Metadata.Key.of(TENANT_HEADER, Metadata.ASCII_STRING_MARSHALLER);
 
@@ -101,5 +109,11 @@ public final class TenantRouting {
     public static boolean isWrongCell(Throwable t) {
         return Status.fromThrowable(t).getCode() == Status.Code.FAILED_PRECONDITION
                 && errorInfo(t).map(i -> WRONG_CELL_REASON.equals(i.getReason())).orElse(false);
+    }
+
+    /** Whether {@code t} is the runtime's TENANT_MOVING refusal. Retry it after the RetryInfo delay. */
+    public static boolean isTenantMoving(Throwable t) {
+        return Status.fromThrowable(t).getCode() == Status.Code.FAILED_PRECONDITION
+                && errorInfo(t).map(i -> TENANT_MOVING_REASON.equals(i.getReason())).orElse(false);
     }
 }

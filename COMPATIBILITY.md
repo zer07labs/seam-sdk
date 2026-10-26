@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:574`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:593`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -130,6 +130,11 @@ file still quoted `>=0.48.0,<0.49`, so `publish.yml` refused. No 0.51.0 runtime 
 the next published SDK follows the next runtime dispatch (0.54.0), and the `v0.51.0` tags stay
 where they are, unpublished.
 
+**SDK v0.56.0 was also tagged and never published.** Its tag commit `ef84980` failed the CI gate's
+`sibling-quotes` job against a stale `>=0.50.1,<0.51` quote, so `publish.yml` refused (#291, #292).
+v0.57.0 published from the next dispatch and supersedes it. No 0.56.0 runtime pairing is offered, and
+the `v0.56.0` tags stay where they are, unpublished.
+
 **SDK v0.54.3 pairs with runtime 0.54.2.** It is dispatched directly, with no runtime release, to ship
 the opt-in `SESSION_UNAVAILABLE` retry (D79, seam-sdk#288) that runtime 0.53.0+ (seam-runtime#1407)
 makes useful. Runtime `main` held only helm chores since 0.54.2, and an empty runtime release would
@@ -141,6 +146,7 @@ release train is 0.55.0. Pin `seam-sdk 0.54.3` beside seamd 0.54.2.
 | Protocol pass 2026-10 (seam-sdk#265) | seam-runtime 0.48.0 (seam-runtime#1365, carries `protocol-pass-2026-10`) | **none** — no compatibility | runtime `main` @ `32f8196` (contract byte-identical to the freeze `1ac5de5`) |
 | AITP 0.17.0: commitment TCT `ver` is `aitp/0.3` only (`seam-verify`, D-040) | seam-runtime 0.49.0 (seam-runtime#1373; release train seam-runtime#1375) | **none** — `seam-verify` refuses an earlier runtime's `aitp/0.2` TCTs | runtime `main` @ `b5e779d` (seam-runtime#1373; signed bytes identical to `a853f89`) |
 | `SESSION_UNAVAILABLE` classification + opt-in `with_session_retry` (D79) | seam-runtime 0.53.0 (seam-runtime#1407, k8s P6: N replicas over a shared session store) | **compatible** — an earlier runtime, and any single-replica runtime, never returns the reason, so the helper never retries and the client never drops a ticket for it | runtime `main` @ `7d22b50b` (seam-runtime#1407) |
+| `TENANT_MOVING` classification, retryable; a replay-guarded write's burned ticket dropped (seam-sdk#297) | seam-runtime 0.59.0 (seam-runtime#1513, k8s P16 tenant moves) | **compatible** — an earlier runtime never returns the reason, so nothing is retried and no ticket is dropped for it | runtime `main` @ `4cff3de4` (seam-runtime#1513) |
 | `stream_id` on `StreamEvents` / `ReportEventsConsumed` / `SeamEvent` — **required** on both admin helpers (k8s P7) | seam-runtime 0.57.0 (k8s P7, OQ-1) | **compatible** — an earlier runtime ignores the unknown field. **The inverse is not:** runtime 0.57.0 refuses an SDK below 0.57.0 on both verbs with `FAILED_PRECONDITION` (`stream_id_mismatch`), because that SDK sends no stream | runtime `main` @ `2de71b5d` (seam-runtime#1470; BSR `7c8872847e3e45b09baa4b811305601c`; spec §Delivery stream and goldens vendored from it) |
 
 The protocol pass has no compatibility window in either direction: an earlier runtime refuses this
@@ -153,7 +159,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1586-1608`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1605-1627`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -233,8 +239,8 @@ this by trying.
 transport and no verb methods — they implement AID derivation, the pinned-key presentation, TCT
 verification, the commitment digest, the `Authorize` call_sig and enrolment proof (`pop`, raw and REST
 form) framings, identity custody (`Agent` generation + the schema-v1 bootstrap file, #201) and the
-`seam-request-call-v1` request credential, plus the `x-seam-tenant` routing interceptor and `WRONG_CELL`
-reader (D123), and nothing else. If you need to *call* Seam, that is Python or TypeScript. The routing
+`seam-request-call-v1` request credential, plus the `x-seam-tenant` routing interceptor and the
+`WRONG_CELL` / `TENANT_MOVING` readers (D123, P16), and nothing else. If you need to *call* Seam, that is Python or TypeScript. The routing
 helpers are why the Go module and the Java and Kotlin builds now depend on gRPC: grpc-go 1.66.3 and
 grpc-java 1.66.0, both as floors that a caller's newer gRPC replaces.
 
@@ -249,6 +255,7 @@ grpc-java 1.66.0, both as floors that a caller's newer gRPC replaces.
 | `SESSION_UNAVAILABLE` reason constant (D79) | `SESSION_UNAVAILABLE_REASON` | `SESSION_UNAVAILABLE_REASON` | `crypto.SessionUnavailableReason` | `RequestCredentials.SESSION_UNAVAILABLE_REASON` | `RequestCredentials.SESSION_UNAVAILABLE_REASON` |
 | Send `x-seam-tenant` on every call, IssueChallenge and Admit included (k8s P15, D123) | `SeamClient.connect(tenant=)` (sync + aio); `TenantInterceptor` / `AioTenantInterceptor` | `SeamClient.connect(url, { tenant })`; `tenantHeaderInterceptor` | `routing.WithTenant` (`UnaryInterceptor` / `StreamInterceptor`) | `TenantRouting.interceptor` | `TenantRouting.interceptor` |
 | Read ErrorInfo metadata; `WRONG_CELL` (D123, runtime 0.58.0), never retryable | `error_metadata`, `WRONG_CELL_REASON`, `is_wrong_cell` | `errorMetadata`, `WRONG_CELL_REASON`, `isWrongCell` | `routing.SeamErrorInfo`, `routing.WrongCellReason`, `routing.IsWrongCell` | `TenantRouting.errorInfo`, `WRONG_CELL_REASON`, `isWrongCell` | `TenantRouting.errorInfo`, `WRONG_CELL_REASON`, `isWrongCell` |
+| `TENANT_MOVING` (k8s P16, runtime 0.59.0), retryable after `RetryInfo`; `move_id` / `target_cell` in the metadata | `TENANT_MOVING_REASON`, `is_tenant_moving`; `is_retryable` and `with_session_retry` include it | `TENANT_MOVING_REASON`, `isTenantMoving`; `isRetryable` and `withSessionRetry` include it | `routing.TenantMovingReason`, `routing.IsTenantMoving` | `TENANT_MOVING_REASON`, `isTenantMoving` | `TENANT_MOVING_REASON`, `isTenantMoving` |
 | Classify it, and an opt-in retry loop (D79) | `is_retryable` / `is_session_unavailable`, `with_session_retry` (+ `_async`) | `isRetryable` / `isSessionUnavailable`, `withSessionRetry` | N/A, no client | N/A, no client | N/A, no client |
 
 Go, Java and Kotlin have no client to bind an agent to, so their #202 default lives on a

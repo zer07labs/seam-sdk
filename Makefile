@@ -22,11 +22,11 @@ RUNTIME    ?= ../seam-runtime
 .PHONY: generate generate-local check-contract clean lint probe-frameworks
 
 generate:
-	buf generate $(BUF_MODULE)
+	./scripts/buf_generate.sh $(BUF_MODULE)
 	python3 scripts/root_gen.py
 
 generate-local:
-	buf generate $(RUNTIME)
+	./scripts/buf_generate.sh $(RUNTIME)
 	python3 scripts/root_gen.py
 
 # Assert the active stubs carry the surface the hand-written clients call, probing the Python and TS
