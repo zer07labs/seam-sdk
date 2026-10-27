@@ -33,6 +33,17 @@ from .crypto import (  # noqa: E402
     record_digest_v4,
     validate_enroll_pop_nonce,
 )
+from .dpop import (
+    DEFAULT_OPERATOR_AUD,
+    Clock,
+    DpopError,
+    DpopKeyError,
+    OperatorDpopKey,
+    _peek_token_claims,
+    _token_cnf_jkt,
+    mgmt_dpop_grpc_htu,
+    mgmt_dpop_proof,
+)
 
 # Management-plane calls get their own, larger default deadline — but they DO get one.
 #
@@ -211,6 +222,130 @@ class _BearerAuthInterceptor(
         return continuation(self._with_auth(details), request)
 
 
+class _DpopAuthInterceptor(
+    grpc.UnaryUnaryClientInterceptor, grpc.UnaryStreamClientInterceptor
+):
+    """Attach ``authorization: DPoP <token>`` and a fresh ``dpop`` proof to every call (seam-sdk#290).
+
+    The proof is signed per invocation, over the exact request message, so every attempt — including an
+    SDK-level retry, which re-enters here — carries a proof the runtime has not yet burned. An interceptor
+    and not ``CallCredentials``: credentials cannot see the request message (``seam_bd`` needs it) and
+    require TLS, which the loopback path does not use."""
+
+    def __init__(
+        self, token: str, key: OperatorDpopKey, aud: str, clock: Optional[Clock]
+    ):
+        self._token = token
+        self._key = key
+        self._aud = aud
+        self._clock = clock
+        self._auth = ("authorization", f"DPoP {token}")
+
+    def _with_proof(
+        self, details: grpc.ClientCallDetails, request
+    ) -> _ClientCallDetails:
+        method = details.method
+        if isinstance(method, bytes):
+            method = method.decode("ascii")
+        # The stub serialises with this same method, and no management request carries a map field, so
+        # these are the bytes on the wire.
+        proof = mgmt_dpop_proof(
+            self._key,
+            self._token,
+            htm="POST",
+            htu=mgmt_dpop_grpc_htu(method, self._aud),
+            body=request.SerializeToString(),
+            iat=None if self._clock is None else self._clock(),
+        )
+        metadata = list(details.metadata or [])
+        metadata.append(self._auth)
+        metadata.append(("dpop", proof))
+        return _ClientCallDetails(
+            details.method,
+            details.timeout,
+            metadata,
+            details.credentials,
+            details.wait_for_ready,
+            details.compression,
+        )
+
+    def intercept_unary_unary(self, continuation, details, request):
+        return continuation(self._with_proof(details, request), request)
+
+    def intercept_unary_stream(self, continuation, details, request):
+        return continuation(self._with_proof(details, request), request)
+
+
+def _resolve_operator_aud(explicit: Optional[str], claims: dict) -> str:
+    """The ``htu`` authority: the explicit ``aud`` wins, then the token's single-string ``aud``, then
+    ``seam-runtime``. A list ``aud`` is refused rather than guessed: the wrong authority is a 401."""
+    if explicit is not None:
+        aud = explicit
+    elif "aud" not in claims:
+        aud = DEFAULT_OPERATOR_AUD
+    elif isinstance(claims["aud"], str):
+        aud = claims["aud"]
+    else:
+        raise DpopKeyError(
+            "the operator token's aud is not a single string; pass aud= with the runtime's "
+            "SEAM_RUNTIME_AUD (default 'seam-runtime')"
+        )
+    mgmt_dpop_grpc_htu(
+        "/", aud
+    )  # refuses an aud that cannot form an htu, before any call
+    return aud
+
+
+def _management_auth(
+    token: Optional[str],
+    dpop_key: Optional[OperatorDpopKey],
+    aud: Optional[str],
+    clock: Optional[Clock],
+):
+    """The interceptor ``connect`` installs, or ``None``. Every misuse that is GUARANTEED to fail at the
+    runtime fails here instead, by name, before a channel exists."""
+    if dpop_key is None:
+        if aud is not None or clock is not None:
+            raise DpopError("aud= and clock= apply only with dpop_key=")
+        if not token:
+            return None
+        try:
+            bound = "cnf" in _peek_token_claims(token)
+        except DpopError:
+            bound = False  # an opaque Bearer token (dev, tests): the runtime judges it
+        if bound:
+            raise DpopKeyError(
+                "this operator token is DPoP-bound (it carries cnf); pass the key revealed with it as "
+                "dpop_key= — sent as Bearer it is refused with scheme_mismatch"
+            )
+        return _BearerAuthInterceptor(token)
+    if not isinstance(dpop_key, OperatorDpopKey):
+        raise DpopError(
+            "dpop_key must be an OperatorDpopKey (OperatorDpopKey.from_jwk(...))"
+        )
+    if not token:
+        raise DpopKeyError("dpop_key= needs token=, the operator token it is bound to")
+    if clock is not None:
+        # Probe once, so `lambda: time.time()` (a float) fails here rather than on every call.
+        sample = clock() if callable(clock) else None
+        if not isinstance(sample, int) or isinstance(sample, bool) or sample < 0:
+            raise DpopError("clock must be a callable returning integer seconds")
+    claims = _peek_token_claims(token)
+    jkt = _token_cnf_jkt(claims)
+    if jkt is None:
+        raise DpopKeyError(
+            "this operator token is not DPoP-bound (no cnf.jkt); omit dpop_key= and send it as Bearer"
+        )
+    if jkt != dpop_key.jkt:
+        raise DpopKeyError(
+            f"the token is bound to key {jkt}, but dpop_key is {dpop_key.jkt}; load the JWK revealed "
+            "with this token"
+        )
+    return _DpopAuthInterceptor(
+        token, dpop_key, _resolve_operator_aud(aud, claims), clock
+    )
+
+
 class EventStream:
     """One ``StreamEvents`` call: iterable like the generator it replaced, plus deliberate cancellation.
 
@@ -281,20 +416,40 @@ class SeamAdminClient:
         *,
         token: Optional[str] = None,
         credentials: Optional[grpc.ChannelCredentials] = None,
+        dpop_key: Optional[OperatorDpopKey] = None,
+        aud: Optional[str] = None,
+        clock: Optional[Clock] = None,
     ) -> "SeamAdminClient":
         """Connect to a Seam **management** endpoint (``SEAM_GRPC_MGMT_LISTEN``, distinct from the data
         plane). ``token`` is a control-plane-minted **operator token**; when set, every call carries
         ``authorization: Bearer <token>``. Omit it only against a dev-open server (``SEAM_DEV_INSECURE`` with
         no ``operator_keys`` root installed). Plaintext by default; pass
         ``credentials=grpc.ssl_channel_credentials()`` for TLS (recommended whenever a real operator token is
-        in play, so it isn't sent over cleartext)."""
+        in play, so it isn't sent over cleartext).
+
+        **DPoP-bound tokens** (runtime 0.54.0+). A token minted with a key binding — the management
+        console reveals it once together with a private JWK — must be paired with that key::
+
+            key = OperatorDpopKey.from_jwk(revealed_jwk_json)
+            admin = SeamAdminClient.connect(target, token=token, dpop_key=key)
+
+        Every call then carries ``authorization: DPoP <token>`` and a fresh ``dpop`` proof signed over
+        that call's request. ``aud`` is the runtime's ``SEAM_RUNTIME_AUD``; it defaults to the token's
+        own ``aud`` claim, else ``"seam-runtime"``. The proof's ``iat`` must be within 60 s of the
+        runtime's clock. ``clock`` (``() -> int`` seconds) overrides the local clock, for tests only.
+
+        Raises :class:`~seam_sdk.dpop.DpopKeyError` — before any connection — for a pairing the runtime
+        is guaranteed to refuse: ``dpop_key`` without ``token``, a token with no ``cnf.jkt``, a key that is
+        not the one the token is bound to, a bound token without ``dpop_key``, or a token whose ``aud``
+        is a list (pass ``aud=``)."""
+        auth = _management_auth(token, dpop_key, aud, clock)
         channel = (
             grpc.secure_channel(target, credentials)
             if credentials is not None
             else grpc.insecure_channel(target)
         )
-        if token:
-            channel = grpc.intercept_channel(channel, _BearerAuthInterceptor(token))
+        if auth is not None:
+            channel = grpc.intercept_channel(channel, auth)
         return cls(channel)
 
     # ── GDPR erasure (preview → confirm → erase) ─────────────────────────────────────────────────

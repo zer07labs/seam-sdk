@@ -208,7 +208,15 @@ chars). Both are injectable for tests only.
 
 ### Phase 2: Python `SeamAdminClient` speaks DPoP
 
-- **Status:** TODO
+- **Status:** DONE (2026-10-27)
+- **Divergences (recorded at implementation):**
+  - `connect` also takes `clock=` (the hook the edge cases below ask for). It is probed once at `connect`,
+    so a float clock (`lambda: time.time()`) fails there rather than on every call.
+  - `aud=` or `clock=` without `dpop_key=` raises `DpopError`. Both parameters are meaningless on the
+    Bearer path.
+  - The Bearer path still accepts an opaque, non-JWS token (dev/test tokens). Only a token that decodes
+    *and* carries `cnf` is refused there.
+  - The token-claims peek helper landed in Phase 1, not here.
 - **Risk:** complex
 - **Delivers:** `SeamAdminClient.connect(target, *, token=None, dpop_key=None, aud=None, credentials=None)`.
   With `dpop_key`, every `SeamAdmin` and `SeamEvents` call carries `authorization: DPoP` plus a fresh proof.

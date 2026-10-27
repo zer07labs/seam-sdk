@@ -4855,3 +4855,14 @@ at `584823a`; runtime `origin/main` `a9ddb982`.
 - **Files:** `docs/specs/mgmt-dpop.md` (vendored @ 7ea99e96), `scripts/check_vendored_spec.py`, `conformance/mgmt_dpop_vector.json`, `python/seam_sdk/dpop.py`, `python/seam_sdk/__init__.py`, `python/tests/test_mgmt_dpop.py` (92 tests), and `python/tests/test_compatibility_citations_resolve.py` (the vendored set, plus the `seam-console-ui/` and `seam-control-plane/` sibling prefixes).
 - **Tested:** Python suite 2245 passed / 30 skipped; `scripts/` suite 720 passed; ruff clean; a one-byte mutation of the vendored spec fails the pin gate.
 - **Next:** Phase 2.
+
+## Phase 2 — DONE (2026-10-27)
+- **Verdict:** PASS in round 1. Verifier: Opus; complex, because it crosses the gRPC boundary.
+- **Non-blocking items closed before commit:**
+  - `_peek_token_claims` now catches `RecursionError`, so a pathological Bearer token no longer crashes `connect`;
+  - `clock` is probed for an int at `connect`;
+  - new tests: a bytes method name, 16 concurrent calls each with their own proof, a pathological Bearer token;
+  - plan divergences recorded.
+- **Files:** `python/seam_sdk/admin.py` (`_DpopAuthInterceptor`, `_resolve_operator_aud`, `_management_auth`, the `connect` parameters), `python/seam_sdk/dpop.py`, `python/tests/test_mgmt_dpop_interceptor.py` (30 tests).
+- **Tested:** full Python suite green; ruff clean; `test_admin.py` untouched and passing.
+- **Next:** Phase 3.

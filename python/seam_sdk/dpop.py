@@ -355,7 +355,7 @@ def _peek_token_claims(token: str) -> dict[str, Any]:
         payload = json.loads(
             base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4))
         )
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError):
         raise DpopKeyError("the operator token's payload is not JSON") from None
     if not isinstance(payload, dict):
         raise DpopKeyError("the operator token's payload is not a JSON object")
