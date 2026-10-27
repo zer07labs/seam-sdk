@@ -1,5 +1,10 @@
 # Consolidation — 2026-08-14 full review of seam-sdk + the runtime contract boundary
 
+> **📦 ARCHIVED 2026-10-27.** A record, not a live plan. Its residual backlog was swept on 2026-08-24, and the
+> only survivors, `build-agent-ingress.md` §B and §D, closed on 2026-10-27: §B was superseded by `seam-mcp`
+> (seam-mcp#27), and §D was settled by owner decision that partner-gated distribution is intended. Both
+> plans are archived together.
+
 The record of the 2026-08-14 sweep: plan triage (every claim re-verified against code in
 `seam-sdk`, `seam-runtime`, and `seam-adapters` — never against a status table), a six-track
 deep review, and the fix wave it produced. Companion to the plan archive notes in

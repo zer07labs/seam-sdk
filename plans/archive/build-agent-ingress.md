@@ -1,5 +1,17 @@
 # Build Plan — Agent ingress: the door
 
+> **📦 ARCHIVED 2026-10-27 — CLOSED by owner decision; delivered where it was meant to be.**
+> - **§A** (example scenes) and **§C** (`StepUsage` wiring) shipped in `seam-adapters` PR #42 (`9a05a04`).
+> - **§B** (the MCP server) was superseded by the `seam-mcp` repo: seam-sdk#40 was transferred to
+>   zer07labs/seam-mcp#27, which is closed (folded into post-onboarding P4c in `onboard`).
+> - **§D** (a stranger with no private access can evaluate): **the DoD is amended by owner decision.**
+>   Partner-gated distribution is the intended model: private BSR module, Cloudsmith `internal`/`partner`,
+>   and a private `seamd` image behind partner credentials. The partner compose, quickstart and nightly
+>   quickstart CI in `seam-adapters/compose/` meet the amended DoD. A public evaluation path would be a
+>   new product decision, not residue of this plan. See `DECISIONS.md`, 2026-10-27.
+>
+> The text below is kept as the record of what was planned.
+
 > **🔄 REFRESHED 2026-08-14 — PENDING (verified against code; the earlier "delivered" claim was
 > wrong).** What actually shipped, all in the sibling `seam-adapters` repo (v0.1.0, six packages,
 > private Cloudsmith index):

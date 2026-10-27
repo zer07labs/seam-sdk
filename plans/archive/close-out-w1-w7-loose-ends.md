@@ -18,7 +18,7 @@
 > [#418](https://github.com/zer07labs/seam-runtime/issues/418)–[#423](https://github.com/zer07labs/seam-runtime/issues/423)
 > remain open. Phase 2 retired only the backlog entries that were actually done; §B (the MCP server,
 > [#40](https://github.com/zer07labs/seam-sdk/issues/40)) and §D (the public-access DoD) survive in
-> [`build-agent-ingress.md`](../build-agent-ingress.md).
+> [`build-agent-ingress.md`](build-agent-ingress.md).
 >
 > Each phase's own `Status:` field below is authoritative — this banner summarises them,
 > never substitutes for them.

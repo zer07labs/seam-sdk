@@ -2937,3 +2937,18 @@ A reversible, SDK-internal retry bound; not a one-way door, so Opus decided it.
 - **Verdict:** confirm as written. No code change. A bounded second refresh stays available as an additive
   change if production evidence shows adopters failing outside revocation storms.
 - **Status:** CONFIRMED (2026-10-19).
+
+## 2026-10-27 — partner-gated distribution is intended; `build-agent-ingress` closes (sweep)
+
+- **Question:** `plans/build-agent-ingress.md` §D required that "a stranger, with no access to any private
+  repo" could evaluate Seam end to end. Every path today needs partner credentials: a private BSR module,
+  Cloudsmith `internal`/`partner`, and a private `seamd` image. Build a public evaluation path, or amend the DoD?
+- **Decision:** amend the DoD. **Partner-gated distribution is the intended model.** The partner compose,
+  quickstart and nightly quickstart CI in `seam-adapters/compose/` satisfy the amended DoD. A public
+  evaluation path, if ever wanted, is a new product decision with its own plan, not residue of this one.
+- **Also settled:** §B (the MCP server) is superseded by the `seam-mcp` repo. seam-sdk#40 was transferred
+  to zer07labs/seam-mcp#27, now closed. With §A and §C already shipped (`seam-adapters` PR #42), the plan
+  is archived, and so is `consolidation-2026-08-14.md`, whose only surviving backlog was §B and §D.
+- **Decided by:** owner (interactive, /sweep 2026-10-27). Reversible: reopening a public path means
+  writing a new plan, and nothing here deletes or blocks one.
+- **Status:** CONFIRMED (owner).
