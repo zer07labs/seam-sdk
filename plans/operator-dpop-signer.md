@@ -13,7 +13,7 @@
 
 ## Status
 
-IN PROGRESS. Planned 2026-10-27; Phases 1-6 DONE (see the per-phase Status lines).
+IN PROGRESS. Planned 2026-10-27; Phases 1-7 DONE (see the per-phase Status lines).
 
 ## Context
 
@@ -475,7 +475,13 @@ chars). Both are injectable for tests only.
 
 ### Phase 7: Java `MgmtDpop`
 
-- **Status:** TODO (implemented; awaiting its gate)
+- **Status:** DONE (2026-10-27). PASS, round 1. Minor notes fixed: a leading BOM is refused; `halfClose`
+  before `start` throws `IllegalStateException`; the clock is probed before the token, in Python's order.
+  Recorded, not changed:
+  - the real call starts under the delayed call's monitor (grpc-core's `DelayedClientCall` releases it
+    first). This is re-entrant and safe on grpc-java's transports; a custom transport has no such guarantee;
+  - the synthetic `onClose` (cancel or empty halfClose) runs on the caller's thread;
+  - the real call, and so its deadline and Context cancellation, exists only from `sendMessage` on.
 - **Divergences (recorded at implementation):**
   - **Errors:** `DpopException extends IllegalArgumentException`; `DpopKeyException extends
     DpopException`. This mirrors Python's `DpopError`/`DpopKeyError` split.
@@ -524,7 +530,12 @@ chars). Both are injectable for tests only.
 
 ### Phase 8: Kotlin `MgmtDpop`
 
-- **Status:** TODO
+- **Status:** TODO (implemented; awaiting its gate)
+- **Divergences (recorded at implementation):** none in behaviour from Phase 7. Kotlin idioms only:
+  - default arguments with `@JvmOverloads`, in place of Java's overloads;
+  - `clock: (() -> Long)?` in place of `LongSupplier`;
+  - `DpopKeyException` is the only subclass of the `open` `DpopException`.
+  - Mutation check (signing the body plus 1 byte) failed 8 of the 24 `MgmtDpopTest` cases. Restored, green.
 - **Risk:** complex
 - **Delivers:** the Kotlin twin of Phase 7: `object MgmtDpop`, `MgmtDpop.Key`, and the same interceptor
   semantics.

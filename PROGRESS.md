@@ -4936,3 +4936,16 @@ at `584823a`; runtime `origin/main` `a9ddb982`.
 - **Suites:** `go vet` and `go test -race ./...` pass. Under go1.22.12, vet and `test -c` pass; linking the tests aborts on this macOS (dyld LC_UUID), which is environmental.
 - **Files:** `go/mgmtdpop/{mgmtdpop,interceptor,mgmtdpop_test,interceptor_test}.go`, `go/README.md`.
 - **Next:** Phase 7 (Java) is under verify; Phase 8 (Kotlin) is implemented.
+
+## Phase 7 — DONE (2026-10-27)
+- **Verdict:** PASS, round 1. Verifier: Opus; complex, because it is a transport boundary and a new public Java surface.
+- **Differential fuzz:** about 40k cases against Python, also under `-Duser.language=tr`. 0 diffs in httpHtu, grpcHtu or proof refusals.
+- **Minor notes, fixed:**
+  - G1: a leading BOM is refused;
+  - G4: `halfClose` before `start` throws `IllegalStateException`;
+  - G6: the clock is probed before the token, in Python's order.
+- **Recorded in the plan, not changed:** G2 and G3, the monitor held over `real.start` and the synthetic `onClose` on the caller's thread; G5, the deadline starts at `sendMessage`.
+- **Mutation:** signing the bytes plus 1 byte failed 8 of 24 tests (re-run by the verifier). Restored byte-exact.
+- **Suites:** Java on JDK 17, MgmtDpopTest 25 passing and the whole suite green.
+- **Files:** `java/src/main/java/com/zer07labs/seam/MgmtDpop.java`, `java/src/test/java/com/zer07labs/seam/MgmtDpopTest.java`.
+- **Next:** the Phase 8 gate (Kotlin, with the same fixes ported) and Phase 9.
