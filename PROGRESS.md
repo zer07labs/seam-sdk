@@ -5038,3 +5038,16 @@ at `584823a`; runtime `origin/main` `a9ddb982`.
   - each SDK's README snippet runs against a local server: Python TLS, TS http2, and Go/JVM in-process;
   - the redaction tests drive the aws-stg smoke against a TLS echo server;
   - only the live aws-stg listener is untested here, and that is the handoff.
+
+## /ship gate — Fable, round 1 (GAPS), 2026-10-27
+- Fable was used because the diff is a new public auth API that holds private key material.
+- **Gaps and fixes:**
+  - TS `fromJwk` quoted V8's JSON error, and V8's message carries nearby source text, which can include
+    part of `d`. The parser message is no longer quoted.
+  - The JVM `Key` seed was not transient, so the SDK's own Gson serialised it. Now `transient` in Java and
+    `@Transient` in Kotlin.
+  - TS `OperatorDpopKey.sign` shipped in the published `.d.ts`. It is now a module-private function: hidden
+    before release, reversible, and the same as Java, Kotlin and Go.
+  - The Go `Key` doc now notes the by-value-in-an-unexported-field caveat.
+- Each fix has a test that fails if it is undone (both the TS message test and the Java Gson test were
+  mutation-checked).

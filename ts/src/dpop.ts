@@ -84,6 +84,9 @@ function json(obj: object): Uint8Array {
  * `{"kty":"OKP","crv":"Ed25519","x":...,"d":...}` — with {@link OperatorDpopKey.fromJwk}. Keep that JWK as
  * secret as the token. The private half lives in a private field: `toString`, `util.inspect` and
  * `JSON.stringify` show only the thumbprint. */
+/** Signs with a key's private seed. Module-private, so the seed's only use is never part of the published API. */
+let signWith: (key: OperatorDpopKey, message: Uint8Array) => Uint8Array;
+
 export class OperatorDpopKey {
   readonly #seed: Uint8Array;
   /** The public key, unpadded base64url — the JWK's `x`. */
@@ -116,7 +119,8 @@ export class OperatorDpopKey {
         obj = JSON.parse(jwk);
       } catch (e) {
         if (e instanceof RangeError) throw new DpopKeyError("JWK is not valid JSON: nested too deeply");
-        throw new DpopKeyError(`JWK is not valid JSON: ${(e as Error).message}`);
+        // Never quote the parser's message: V8's carries the text around the error, which can be part of `d`.
+        throw new DpopKeyError("JWK is not valid JSON");
       }
     }
     if (typeof obj !== "object" || obj === null || Array.isArray(obj)) {
@@ -144,9 +148,8 @@ export class OperatorDpopKey {
     return { kty: "OKP", crv: "Ed25519", x: this.x };
   }
 
-  /** @internal */
-  sign(message: Uint8Array): Uint8Array {
-    return ed25519.sign(message, this.#seed);
+  static {
+    signWith = (key, message) => ed25519.sign(message, key.#seed);
   }
 
   toString(): string {
@@ -227,7 +230,7 @@ export function mgmtDpopProof(key: OperatorDpopKey, token: string, input: MgmtDp
     seam_bd: sha256b64url(body),
   };
   const signingInput = `${b64url(json(header))}.${b64url(json(claims))}`;
-  const proof = `${signingInput}.${b64url(key.sign(enc.encode(signingInput)))}`;
+  const proof = `${signingInput}.${b64url(signWith(key, enc.encode(signingInput)))}`;
   if (proof.length > MGMT_DPOP_MAX_PROOF_BYTES) {
     throw new DpopError(
       `the proof is ${proof.length} bytes; the runtime refuses one over ${MGMT_DPOP_MAX_PROOF_BYTES}`,

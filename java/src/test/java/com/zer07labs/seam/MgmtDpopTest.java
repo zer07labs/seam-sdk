@@ -639,4 +639,11 @@ class MgmtDpopTest {
         ClientCalls.blockingUnaryCall(readmeSnippet(channel), ENROLL, CallOptions.DEFAULT, new byte[] {1});
         checkProof(received.get(0), System.getenv("SEAM_OPERATOR_TOKEN"), "seam-runtime");
     }
+
+    @Test
+    void gsonNeverSerialisesTheSeed() throws Exception {
+        String json = new Gson().toJson(goldenKey(vector()));
+        assertFalse(json.contains("seed"), json);
+        assertFalse(json.contains("66,66"), json);
+    }
 }

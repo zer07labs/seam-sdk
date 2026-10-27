@@ -93,8 +93,9 @@ type PublicJWK struct {
 	X   string `json:"x"`
 }
 
-// Key is the Ed25519 key an operator token is bound to. Its private half is unexported and never
-// formatted: String, GoString and fmt's %v/%+v/%#v print only the thumbprint.
+// Key is the Ed25519 key an operator token is bound to. Its private half is unexported: String,
+// GoString, MarshalJSON and fmt's %v/%+v/%#v print only the thumbprint. Hold it as *Key: fmt cannot call
+// those methods on a Key stored by value in an unexported field of another struct, and would print it raw.
 type Key struct {
 	priv ed25519.PrivateKey
 	x    string

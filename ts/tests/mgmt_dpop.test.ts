@@ -260,3 +260,21 @@ test("peek refuses a non-JWS and a malformed cnf", () => {
     assert.throws(() => tokenCnfJkt({ cnf }), DpopKeyError);
   }
 });
+
+test("a malformed JWK's error never quotes the JWK text", () => {
+  const d = Buffer.alloc(32, 0x42).toString("base64url");
+  for (const bad of [`{"kty":"OKP","crv":"Ed25519","d":"${d}","x":undefined}`, `["${d}",u]`, `{"d":"${d}"`]) {
+    try {
+      OperatorDpopKey.fromJwk(bad);
+      assert.fail("accepted a malformed JWK");
+    } catch (e) {
+      assert.ok(e instanceof DpopKeyError);
+      for (let i = 0; i + 4 <= d.length; i++) assert.ok(!e.message.includes(d.slice(i, i + 4)), e.message);
+    }
+  }
+});
+
+test("the key exposes no signing method", () => {
+  const k = OperatorDpopKey.fromSeed(new Uint8Array(32).fill(0x42));
+  assert.equal("sign" in k, false);
+});

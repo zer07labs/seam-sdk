@@ -108,7 +108,10 @@ object MgmtDpop {
     // ── the key ─────────────────────────────────────────────────────────────────────────────────
 
     /** The Ed25519 key an operator token is bound to. [toString] prints only the thumbprint. */
-    class Key private constructor(private val seed: ByteArray) {
+    class Key private constructor(
+        // @Transient: a reflective serialiser (this SDK ships Gson) must never emit the private seed.
+        @Transient private val seed: ByteArray,
+    ) {
         /** The public key, unpadded base64url: the JWK's x. */
         val x: String = b64(Ed25519PrivateKeyParameters(seed, 0).generatePublicKey().encoded)
 

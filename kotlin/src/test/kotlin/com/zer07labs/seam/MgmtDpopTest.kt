@@ -538,4 +538,11 @@ class MgmtDpopTest {
         ClientCalls.blockingUnaryCall(readmeSnippet(channel), enroll, CallOptions.DEFAULT, byteArrayOf(1))
         checkProof(received[0], System.getenv("SEAM_OPERATOR_TOKEN"), "seam-runtime")
     }
+
+    @Test
+    fun gsonNeverSerialisesTheSeed() {
+        val json = Gson().toJson(goldenKey(vector()))
+        assertFalse(json.contains("seed"), json)
+        assertFalse(json.contains("66,66"), json)
+    }
 }

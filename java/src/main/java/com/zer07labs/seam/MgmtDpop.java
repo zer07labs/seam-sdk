@@ -141,7 +141,8 @@ public final class MgmtDpop {
      * {@link #toString} prints only the thumbprint.
      */
     public static final class Key {
-        private final byte[] seed;
+        // transient: a reflective serialiser (this SDK ships Gson) must never emit the private seed.
+        private final transient byte[] seed;
         private final String x;
         private final String jkt;
 
