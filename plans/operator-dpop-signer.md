@@ -276,7 +276,14 @@ chars). Both are injectable for tests only.
 
 ### Phase 3: Python live, against a real runtime
 
-- **Status:** TODO
+- **Status:** DONE (2026-10-27)
+- **Divergences (recorded at implementation):**
+  - **Replay case:** builds its proof with the public primitive and sends it twice on a raw stub, instead
+    of capturing an SDK proof through a hook. This proves the same property (the runtime burns a proof
+    once): the first send must succeed. The interceptor's re-signing is pinned separately, by five calls on
+    one client.
+  - **Live-suite registry:** the file is registered in `test_live_fixtures_are_isolated.py` (`LIVE_SUITES`;
+    the anti-vacuity floor goes 6 → 7) as well as in the CI step.
 - **Risk:** complex
 - **Delivers:** live proof against `seam-grpc` that a bound token plus SDK proofs is accepted, and that each
   defined misuse is refused.

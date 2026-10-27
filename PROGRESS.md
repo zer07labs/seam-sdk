@@ -4866,3 +4866,18 @@ at `584823a`; runtime `origin/main` `a9ddb982`.
 - **Files:** `python/seam_sdk/admin.py` (`_DpopAuthInterceptor`, `_resolve_operator_aud`, `_management_auth`, the `connect` parameters), `python/seam_sdk/dpop.py`, `python/tests/test_mgmt_dpop_interceptor.py` (30 tests).
 - **Tested:** full Python suite green; ruff clean; `test_admin.py` untouched and passing.
 - **Next:** Phase 3.
+
+## Phase 3 — DONE (2026-10-27)
+- **Verdict:** PASS after 2 rounds. Verifier: Opus; complex, because it crosses the process boundary to a real runtime.
+- **Round 1 (GAPS):**
+  - the AC3 mutation result was not recorded here;
+  - a docstring cited the not-yet-written Phase 9 script;
+  - (cosmetic) raw-stub channels were never closed.
+- **Live run:** `seam-grpc` built locally from seam-runtime @ 15f5ebb6 (origin/main), into the scratchpad. With `SEAM_GRPC_BIN` set, all 9 cases pass:
+  - accepted: `ListTenants`, `EnrollTenant`, a `StreamEvents` drain, and 5 calls on one client;
+  - refused, each carrying the fixed message: a bound token as Bearer, a token bound to another key, a replayed proof, `iat` −120 s, and a `seam_bd` over other bytes.
+  - The live `test_admin.py` also passes.
+- **AC3 mutation (recorded):** with `admin.py`'s interceptor changed to sign `request.SerializeToString() + b"x"`, all 4 live accept cases failed with `UnauthenticatedError`. Restored, green.
+- **Files:** `python/tests/operator_token.py` (`cnf_jkt=`), `python/tests/test_mgmt_dpop_live.py`, `python/tests/test_live_fixtures_are_isolated.py`, `.github/workflows/ci.yml` (integration step).
+- **AC4:** to confirm from the PR's integration-job log.
+- **Next:** Phase 4.

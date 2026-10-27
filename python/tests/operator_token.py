@@ -34,6 +34,7 @@ def mint_operator_token(
     aud: str = "seam-runtime",
     ttl_secs: int = 600,
     tenant: str | None = None,
+    cnf_jkt: str | None = None,
 ) -> str:
     """A valid compact-JWS operator token carrying ``scopes``, signed by the golden operator key. Verifies
     against a runtime that installed the sibling snapshot fixture. ``aud`` defaults to the runtime audience;
@@ -42,7 +43,11 @@ def mint_operator_token(
     ``tenant``, when given, binds the token to that tenant (U-RT-6) — required since seam-runtime #903
     Phase 1 for any operator calling ``register_party``/``remove_party``, which now refuse a fleet-wide
     (no-tenant-claim) operator (seam-runtime's own `scoped_auth_grpc.rs::mint_with_tenant`). Omitted (the
-    default) for a fleet-wide token, byte-identical to the pre-#903 shape."""
+    default) for a fleet-wide token, byte-identical to the pre-#903 shape.
+
+    ``cnf_jkt``, when given, binds the token to that DPoP key thumbprint (``cnf: {jkt}``, RFC 9449 §6) —
+    the shape the control plane mints for a console operator (seam-sdk#290). Omitted (the default), the
+    token is unbound and byte-identical to before."""
     iat = int(time.time())
     header = json.dumps(
         {"alg": "EdDSA", "typ": "JWT", "kid": _PUBKEY_HEX}, separators=(",", ":")
@@ -59,6 +64,8 @@ def mint_operator_token(
     }
     if tenant is not None:
         claims["tenant"] = tenant
+    if cnf_jkt is not None:
+        claims["cnf"] = {"jkt": cnf_jkt}
     payload = json.dumps(claims, separators=(",", ":"))
     signing = f"{_b64url(header.encode())}.{_b64url(payload.encode())}"
     sig = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(_SEED_HEX)).sign(
