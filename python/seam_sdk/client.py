@@ -148,7 +148,7 @@ DEFAULT_TIMEOUT_S = 2.0
 
 # The one shared paragraph every ``submit_*`` docstring carries (sync and aio), appended by
 # :func:`_submit_retry_doc` so the seven copies cannot drift. D-SUBMIT-RETRY, #275; the runtime
-# behaviour it describes is in plans/post-onboarding-sdk-asks.md (Context, facts 6-8).
+# behaviour it describes is in plans/archive/post-onboarding-sdk-asks.md (Context, facts 6-8).
 _SUBMIT_RETRY_NOTE = """
         **Refresh-once (#275).** With a credential (``credential=`` or a bound agent), a rejected
         ticket is refreshed once and this SAME request is re-signed under the new ticket and resent
@@ -556,7 +556,7 @@ class SeamClient:
         timeout: float,
     ) -> _T:
         """Send a subject-scoped call that does NOT retry (``open_session``, ``cancel_session``,
-        ``expire_session``: D-WRITES-EXCLUDED / plans/post-onboarding-sdk-asks.md). Resolves the
+        ``expire_session``: D-WRITES-EXCLUDED / plans/archive/post-onboarding-sdk-asks.md). Resolves the
         signer as :meth:`_signer` does and sends ``send(None)`` without one. Reuses the same
         cached/admitted ticket :meth:`authorize` would for this agent; never mints a second one."""
         signer = self._signer(credential)

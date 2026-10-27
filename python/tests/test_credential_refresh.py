@@ -1,4 +1,4 @@
-"""Refresh-once on the credentialed reads, ``report_outcome`` (#275, plans/post-onboarding-sdk-asks.md
+"""Refresh-once on the credentialed reads, ``report_outcome`` (#275, plans/archive/post-onboarding-sdk-asks.md
 Phase 1) and the seven ``submit_*`` steps (Phase 2, D-SUBMIT-RETRY), in BOTH Python clients.
 
 Two layers, both needed:

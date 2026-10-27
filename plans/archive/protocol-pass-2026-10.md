@@ -1,5 +1,11 @@
 # Protocol pass 2026-10 — pre-vendor the runtime contract changes
 
+> **📦 ARCHIVED 2026-10-27 — DELIVERED.** All six phases DONE. The original PR #270 merged ahead of the
+> runtime's B11 order and was reverted (#271). It relanded as PR #272 (`9690e25`, 2026-10-19), which is
+> reachable from `origin/main`, and closed issue [#265](https://github.com/zer07labs/seam-sdk/issues/265).
+> The merge hold below has lifted and is kept as history. Both `ASSUMPTIONS.md` entries tagged to this
+> plan (Phase 5, items 4–5 and 6a) are CONFIRMED (2026-10-18, /reconcile).
+
 > **Issue:** [#265](https://github.com/zer07labs/seam-sdk/issues/265).
 > **Owner plan:** `seam-runtime/plans/protocol-absorption-2026-10.md` on branch `protocol-pass-2026-10`.
 > **Scoped plan this copies:** `seam-runtime/plans/cross-repo/seam-sdk-protocol-pass.md` on the same branch.

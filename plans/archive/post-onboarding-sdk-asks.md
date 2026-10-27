@@ -1,5 +1,11 @@
 # Post-onboarding SDK asks: ticket refresh beyond `authorize`, and a seed-free identity-facts loader
 
+> **📦 ARCHIVED 2026-10-27 — DELIVERED.** All four phases DONE, merged as PR #278 (`b12053f`,
+> 2026-10-20), which is reachable from `origin/main`. Issues [#274](https://github.com/zer07labs/seam-sdk/issues/274)
+> and [#275](https://github.com/zer07labs/seam-sdk/issues/275) are closed. The post-merge Phase 3 item,
+> the core counterpart zer07labs/seam-adapters#262, is closed. All five `ASSUMPTIONS.md` entries tagged
+> to this plan are CONFIRMED (2026-10-19).
+
 > **Issues:** [#275](https://github.com/zer07labs/seam-sdk/issues/275) (B-SDK-REFRESH) and
 > [#274](https://github.com/zer07labs/seam-sdk/issues/274) (B-CORE-FACTS, SDK half). Both are
 > **non-blocking** for seam-mcp.
