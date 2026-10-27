@@ -13,7 +13,7 @@
 
 ## Status
 
-IN PROGRESS. Planned 2026-10-27; Phases 1-10 DONE (Phase 9's live run awaits the owner) (see the per-phase Status lines).
+COMPLETE (2026-10-27): all 10 phases DONE, finalized, and both assumptions reconciled. One item awaits the owner: AWAITING-HUMAN `scripts/handoff/2026-10-27-mgmt-dpop-aws-stg.sh` (the live aws-stg run for acceptance criterion 2; see PROGRESS.md Phase 9).
 
 ## Context
 

@@ -5017,3 +5017,24 @@ at `584823a`; runtime `origin/main` `a9ddb982`.
   `python/tests/test_readme_dpop_snippets.py`, `ts/tests/readme_dpop.test.ts`, `go/mgmtdpop/readme_test.go`,
   and both `MgmtDpopTest` files.
 - **Next:** finalization (§4).
+
+## Finalization (§4) — 2026-10-27
+- **Whole-feature verify (Opus), round 1 (GAPS):**
+  - nothing tied `conformance/mgmt_dpop_vector.json`'s `golden` group to the vendored spec's Golden vector
+    table, so a re-vendored spec with a changed vector would leave all five KATs green;
+  - the plan's top-level status was stale.
+  It also noted two things left as they are, with reasons:
+  - aud and binding messages are worded per client shape (Python/TS name `dpop_key`; the interceptor-only
+    SDKs say "pass aud explicitly"); the refused inputs are the same, except for the next item;
+  - Go treats `aud ""` as "not given" (Go's zero-value idiom, with no null to use), where the other four
+    refuse an explicit empty aud. Documented on `UnaryInterceptor` and `DialOptions` and in go/README.md.
+  - Round 2 (GAPS): the "same inputs" sentence overstated the case (the empty aud), and `DialOptions` did not
+    document it. Both were corrected. The spec's "burn key" row is a runtime-side derivation, which no SDK
+    computes, so the tie test leaves it out.
+- **Fix:** `python/tests/test_mgmt_dpop_vector_matches_spec.py` pins every golden input and output, plus the
+  proof, to the spec table (mutation-checked: a one-character change to `ath` fails it). The plan status now
+  reads COMPLETE, with the one AWAITING-HUMAN item named.
+- **Integration coverage across phases:**
+  - each SDK's README snippet runs against a local server: Python TLS, TS http2, and Go/JVM in-process;
+  - the redaction tests drive the aws-stg smoke against a TLS echo server;
+  - only the live aws-stg listener is untested here, and that is the handoff.

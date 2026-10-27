@@ -183,7 +183,8 @@ func StreamInterceptor(key *Key, token, aud string, opts ...InterceptorOption) (
 	}, nil
 }
 
-// DialOptions returns the dial options that install both interceptors.
+// DialOptions returns the dial options that install both interceptors. aud "" takes the token's aud,
+// else DefaultOperatorAud (the other SDKs mean "not given" by null and refuse an empty aud).
 func DialOptions(key *Key, token, aud string, opts ...InterceptorOption) ([]grpc.DialOption, error) {
 	unary, err := UnaryInterceptor(key, token, aud, opts...)
 	if err != nil {
