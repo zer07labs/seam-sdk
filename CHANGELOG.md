@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.60.0 — 2026-10-27
+
 ### Added
 - **`TENANT_MOVING` is retryable (seam-runtime k8s P16, runtime 0.59.0; seam-sdk#297).** A tenant
   moving between cells gets `FAILED_PRECONDITION` reason `TENANT_MOVING`, with a 5s `RetryInfo` and
