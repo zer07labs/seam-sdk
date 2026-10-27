@@ -375,7 +375,14 @@ chars). Both are injectable for tests only.
 
 ### Phase 5: TypeScript admin client speaks DPoP, plus live tests
 
-- **Status:** TODO
+- **Status:** DONE (2026-10-27; see the divergences below)
+- **Divergences (recorded at implementation):**
+  - `connect()` takes `{ token, dpopKey, aud, clock }`, the same set as Phase 2's Python. `aud` or `clock`
+    without `dpopKey` throws `DpopError`, as in Python. A JS `null` reads as absent, like Python's `None`.
+  - The interceptor lives in `ts/src/dpop_interceptor.ts`, which `index.ts` does not re-export, so the
+    stream-count refusal (`onlyMessage`) can be tested directly without widening the public surface.
+  - The live cases are subtests of one `withPlanes(8221, 8222)` boot. These ports are clear of every other
+    live suite, because `node --test` runs files in parallel.
 - **Risk:** complex
 - **Delivers:** `connect(baseUrl, { token, dpopKey, aud })` in `ts/src/admin.ts`, with a `dpopAuth`
   interceptor replacing `bearerAuth` when `dpopKey` is given. Includes live tests against a loopback runtime (D6).

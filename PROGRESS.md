@@ -4893,3 +4893,22 @@ at `584823a`; runtime `origin/main` `a9ddb982`.
 - **Suites:** TS 469 offline; Python 2307.
 - **Files:** `ts/src/dpop.ts`, `ts/src/index.ts`, `ts/tests/mgmt_dpop.test.ts`, `python/seam_sdk/dpop.py` (explicit `htu` grammar), `python/seam_sdk/__init__.py`, `python/tests/test_mgmt_dpop.py`, `conformance/mgmt_dpop_vector.json`.
 - **Next:** Phase 5.
+
+## Phase 5 — DONE (2026-10-27)
+- **Verdict:** PASS after 2 rounds. Verifier: Opus; complex, because it is a transport boundary.
+- **Round 1 (GAPS); the code matched Python on every check, the gaps were in the tests:**
+  - the live case shared ports 8209/8210 with `verify_attestation`;
+  - the six live cases were folded into one test;
+  - no tests for zero or two stream messages, a mid-stream cancel, or re-signing on retry;
+  - the `clock: () => true` case was dropped;
+  - JS `null` did not behave like Python's `None`;
+  - the plan was not updated.
+- **Fix:**
+  - the interceptor moved to the internal `ts/src/dpop_interceptor.ts`, which is not re-exported;
+  - the live case runs on ports 8221/8222 with nine subtests;
+  - the four missing tests are added;
+  - `?? undefined` normalisation for the four options.
+- **Mutation:** signing the bytes plus a trailing `1` failed 7 interceptor tests and the live case. Restored, green.
+- **Suites:** TS 473 offline, 498 live (0 skipped); build OK; `unit_plumbing.test.ts` unchanged.
+- **Files:** `ts/src/admin.ts`, `ts/src/dpop_interceptor.ts`, `ts/tests/operator_token.ts` (`cnfJkt`), `ts/tests/mgmt_dpop_interceptor.test.ts`, `ts/tests/admin.test.ts`.
+- **Next:** Phase 6.

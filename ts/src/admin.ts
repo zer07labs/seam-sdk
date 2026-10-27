@@ -37,6 +37,16 @@ import {
 } from "../gen/seam/event/v1/seam_event_pb.js";
 import { errorMappingInterceptor, InvalidArgumentError, toSeamError } from "./errors.js";
 import {
+  DEFAULT_OPERATOR_AUD,
+  DpopError,
+  DpopKeyError,
+  OperatorDpopKey,
+  mgmtDpopGrpcHtu,
+  peekTokenClaims,
+  tokenCnfJkt,
+} from "./dpop.js";
+import { dpopAuth } from "./dpop_interceptor.js";
+import {
   recordDigestV4,
   UnsupportedRecordDigestVersion,
   validateEnrollPopNonce,
@@ -180,6 +190,81 @@ function bearerAuth(token: string): Interceptor {
   };
 }
 
+/** Options for {@link SeamAdminClient.connect}. */
+export interface AdminConnectOptions {
+  /** A control-plane-minted operator token. */
+  token?: string;
+  /** The key a DPoP-bound token was minted for — the JWK the console revealed with it, loaded with
+   * {@link OperatorDpopKey.fromJwk}. Required for a bound token, refused for an unbound one. */
+  dpopKey?: OperatorDpopKey;
+  /** The runtime's `SEAM_RUNTIME_AUD`. Defaults to the token's own `aud` claim, else `"seam-runtime"`. */
+  aud?: string;
+  /** Integer seconds; overrides the local clock for each proof's `iat`. Tests only. */
+  clock?: () => number;
+}
+
+function resolveOperatorAud(explicit: string | undefined, claims: Record<string, unknown>): string {
+  let aud: string;
+  if (explicit !== undefined) aud = explicit;
+  else if (!Object.prototype.hasOwnProperty.call(claims, "aud")) aud = DEFAULT_OPERATOR_AUD;
+  else if (typeof claims.aud === "string") aud = claims.aud;
+  else {
+    throw new DpopKeyError(
+      "the operator token's aud is not a single string; pass aud with the runtime's SEAM_RUNTIME_AUD (default 'seam-runtime')",
+    );
+  }
+  mgmtDpopGrpcHtu("/", aud); // refuses an aud that cannot form an htu, before any call
+  return aud;
+}
+
+/** The auth interceptor `connect` installs, or `undefined`. Every pairing the runtime is GUARANTEED to
+ * refuse throws here instead, by name, before a transport exists. */
+function managementAuth(opts: AdminConnectOptions): Interceptor | undefined {
+  // `null` reads as absent, like Python's `None`, for callers outside the type system.
+  const token = opts.token ?? undefined;
+  const dpopKey = opts.dpopKey ?? undefined;
+  const aud = opts.aud ?? undefined;
+  const clock = opts.clock ?? undefined;
+  if (dpopKey === undefined) {
+    if (aud !== undefined || clock !== undefined) throw new DpopError("aud and clock apply only with dpopKey");
+    if (!token) return undefined;
+    let bound = false;
+    try {
+      bound = Object.prototype.hasOwnProperty.call(peekTokenClaims(token), "cnf");
+    } catch (e) {
+      if (!(e instanceof DpopError)) throw e; // an opaque Bearer token (dev, tests): the runtime judges it
+    }
+    if (bound) {
+      throw new DpopKeyError(
+        "this operator token is DPoP-bound (it carries cnf); pass the key revealed with it as dpopKey — sent as Bearer it is refused with scheme_mismatch",
+      );
+    }
+    return bearerAuth(token);
+  }
+  if (!(dpopKey instanceof OperatorDpopKey)) {
+    throw new DpopError("dpopKey must be an OperatorDpopKey (OperatorDpopKey.fromJwk(...))");
+  }
+  if (!token) throw new DpopKeyError("dpopKey needs token, the operator token it is bound to");
+  if (clock !== undefined) {
+    // Probe once, so a fractional clock (`() => Date.now() / 1000`) fails here rather than on every call.
+    const sample = typeof clock === "function" ? clock() : undefined;
+    if (!Number.isSafeInteger(sample) || (sample as number) < 0) {
+      throw new DpopError("clock must be a function returning integer seconds");
+    }
+  }
+  const claims = peekTokenClaims(token);
+  const jkt = tokenCnfJkt(claims);
+  if (jkt === undefined) {
+    throw new DpopKeyError("this operator token is not DPoP-bound (no cnf.jkt); omit dpopKey and send it as Bearer");
+  }
+  if (jkt !== dpopKey.jkt) {
+    throw new DpopKeyError(
+      `the token is bound to key ${jkt}, but dpopKey is ${dpopKey.jkt}; load the JWK revealed with this token`,
+    );
+  }
+  return dpopAuth(token, dpopKey, resolveOperatorAud(aud, claims), clock);
+}
+
 export class SeamAdminClient {
   private readonly admin: Client<typeof SeamAdmin>;
   private readonly events: Client<typeof SeamEvents>;
@@ -200,10 +285,25 @@ export class SeamAdminClient {
    * use `https://…` for TLS). `token` is a control-plane-minted **operator token**; when set, every call
    * carries `authorization: Bearer <token>`. Omit it only against a dev-open server (`SEAM_DEV_INSECURE`
    * with no `operator_keys` root installed).
+   *
+   * **DPoP-bound tokens** (runtime 0.54.0+). A token minted with a key binding — the management console
+   * reveals it once together with a private JWK — must be paired with that key:
+   *
+   * ```ts
+   * const dpopKey = OperatorDpopKey.fromJwk(revealedJwkJson);
+   * const admin = SeamAdminClient.connect(baseUrl, { token, dpopKey });
+   * ```
+   *
+   * Every call then carries `authorization: DPoP <token>` and a fresh `dpop` proof signed over that
+   * call's request. The proof's `iat` must be within 60 s of the runtime's clock. Throws
+   * {@link DpopKeyError} — before any connection — for a pairing the runtime is guaranteed to refuse:
+   * `dpopKey` without `token`, a token with no `cnf.jkt`, a key that is not the one the token is bound
+   * to, a bound token without `dpopKey`, or a token whose `aud` is a list (pass `aud`).
    */
-  static connect(baseUrl: string, opts?: { token?: string }): SeamAdminClient {
+  static connect(baseUrl: string, opts: AdminConnectOptions = {}): SeamAdminClient {
     const interceptors: Interceptor[] = [errorMappingInterceptor()];
-    if (opts?.token) interceptors.push(bearerAuth(opts.token));
+    const auth = managementAuth(opts);
+    if (auth !== undefined) interceptors.push(auth);
     const session = new Http2SessionManager(baseUrl);
     return new SeamAdminClient(
       createGrpcTransport({ baseUrl, interceptors, sessionManager: session }),

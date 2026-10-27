@@ -29,10 +29,11 @@ function b64url(b: Uint8Array): string {
  * `opts.tenant`, when given, binds the token to that tenant (U-RT-6) — required since seam-runtime
  * #903 Phase 1 for any operator calling `registerParty`/`removeParty`, which now refuse a fleet-wide
  * (no-tenant-claim) operator (seam-runtime's own `scoped_auth_grpc.rs::mint_with_tenant`). Omitted
- * (the default) mints a fleet-wide token, byte-identical to the pre-#903 shape. */
+ * (the default) mints a fleet-wide token, byte-identical to the pre-#903 shape. `opts.cnfJkt` binds the
+ * token to that DPoP key thumbprint. */
 export function mintOperatorToken(
   scopes: string[],
-  opts?: { aud?: string; ttlSecs?: number; tenant?: string },
+  opts?: { aud?: string; ttlSecs?: number; tenant?: string; cnfJkt?: string },
 ): string {
   const iat = Math.floor(Date.now() / 1000);
   const aud = opts?.aud ?? "seam-runtime";
@@ -42,6 +43,9 @@ export function mintOperatorToken(
   // destructive request (seam-runtime testing.rs `demo_operator_bearer`).
   const claims: Record<string, unknown> = { sub: "op-test", scopes, aud, iat, exp, jti: randomUUID() };
   if (opts?.tenant !== undefined) claims.tenant = opts.tenant;
+  // A DPoP binding (`cnf: {jkt}`, RFC 9449 §6) — the shape the control plane mints for a console operator
+  // (seam-sdk#290). Omitted (the default), the token is unbound and byte-identical to before.
+  if (opts?.cnfJkt !== undefined) claims.cnf = { jkt: opts.cnfJkt };
   const payload = JSON.stringify(claims);
   const signing = `${b64url(enc.encode(header))}.${b64url(enc.encode(payload))}`;
   const sig = ed25519.sign(enc.encode(signing), Buffer.from(SEED_HEX, "hex"));
