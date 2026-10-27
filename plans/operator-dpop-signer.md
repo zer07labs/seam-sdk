@@ -13,7 +13,7 @@
 
 ## Status
 
-TODO. Planned 2026-10-27.
+IN PROGRESS. Planned 2026-10-27; Phases 1-6 DONE (see the per-phase Status lines).
 
 ## Context
 
@@ -419,7 +419,26 @@ chars). Both are injectable for tests only.
 
 ### Phase 6: Go `mgmtdpop` package
 
-- **Status:** TODO
+- **Status:** DONE (2026-10-27; see the divergences below)
+- **Divergences (recorded at implementation):**
+  - **Codec:** the request bytes are encoded by the codec grpc-go will use for that call, resolved from
+    the call options exactly as grpc-go's `setCallInfoCodec`/`getCodec` do: the last `ForceCodec`/
+    `ForceCodecV2` wins; otherwise the content subtype (default `proto`) names the codec, a V1 registration
+    before a V2 one. This replaces the planned `encoding.GetCodec("proto")`, which is nil on grpc ≥ 1.66
+    because proto registers as a CodecV2. An unknown subtype, or the deprecated `CallCustomCodec`, is
+    refused locally.
+  - **`aud`:** `""` means "use the token's aud", because Go has no null. A token `aud` that is present
+    but not a string (null included) is refused with `ErrKey`, as in Python and TS.
+  - **Interceptor options:** `WithClock` is an `InterceptorOption`, separate from the proof's `Option`, so
+    a fixed jti can never be installed on an interceptor.
+  - **Lazy stream:** a context cancelled before `SendMsg` returns a gRPC status (`codes.Canceled`). Until
+    that `SendMsg` returns, `RecvMsg`/`Header`/`CloseSend` return `ErrStreamNotStarted` rather than wait.
+    Generated stubs call them in that order.
+  - **Key formatting:** value receivers, so a `Key` printed by value is covered too.
+  - **JSON:** numbers decode as `json.Number`, so a valid `1e400` is accepted as in Python and TS.
+  - **Not testable locally:** Go 1.22 cannot link test binaries on this macOS (a dyld LC_UUID abort,
+    which also hits the existing `routing` package). `GOTOOLCHAIN=go1.22.12 go vet` and `go test -c` pass,
+    and CI runs the tests on Linux.
 - **Risk:** complex
 - **Delivers:** `go/mgmtdpop` with:
   - `ParseJWK(json []byte) (*Key, error)` and `KeyFromSeed`;
@@ -456,7 +475,22 @@ chars). Both are injectable for tests only.
 
 ### Phase 7: Java `MgmtDpop`
 
-- **Status:** TODO
+- **Status:** TODO (implemented; awaiting its gate)
+- **Divergences (recorded at implementation):**
+  - **Errors:** `DpopException extends IllegalArgumentException`; `DpopKeyException extends
+    DpopException`. This mirrors Python's `DpopError`/`DpopKeyError` split.
+  - **JSON is parsed strictly** (Gson `Strictness.STRICT` through the `JsonElement` adapter, then
+    end-of-document). `JsonParser.parseString` is lenient, and would accept unquoted names, single quotes,
+    comments and trailing data that every other SDK refuses.
+  - **`aud`:** `null` means "use the token's aud", as in Python; `""` is refused, as in Python. A token
+    `aud` that is present but not a string (JSON null included) is refused with `DpopKeyException`.
+  - **`interceptor(key, token, aud, LongSupplier clock)`** overload, the twin of Python's `clock=`.
+  - **Delayed call:**
+    - `halfClose` with no message closes the listener `INTERNAL` ("exactly one request message")
+      without opening the real call;
+    - `sendMessage` after `cancel` is a no-op;
+    - an oversized message throws `DpopException` from `sendMessage`, before anything reaches the wire;
+    - `sendMessage` before `start` throws `IllegalStateException`.
 - **Risk:** complex
 - **Delivers:** `com.zer07labs.seam.MgmtDpop`:
   - `Key.fromJwk(String)` and `Key.fromSeed(byte[])`;

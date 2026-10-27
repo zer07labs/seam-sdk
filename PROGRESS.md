@@ -4912,3 +4912,27 @@ at `584823a`; runtime `origin/main` `a9ddb982`.
 - **Suites:** TS 473 offline, 498 live (0 skipped); build OK; `unit_plumbing.test.ts` unchanged.
 - **Files:** `ts/src/admin.ts`, `ts/src/dpop_interceptor.ts`, `ts/tests/operator_token.ts` (`cnfJkt`), `ts/tests/mgmt_dpop_interceptor.test.ts`, `ts/tests/admin.test.ts`.
 - **Next:** Phase 6.
+
+## Phase 6 — DONE (2026-10-27)
+- **Verdict:** PASS after 2 rounds. Verifier: Opus; complex, because it is a transport boundary and a new public Go package.
+- **Round 1 (GAPS):**
+  - `Key` printed by value leaked its seed;
+  - a token with `aud: null` was accepted;
+  - a pre-send cancel returned the raw `ctx.Err`;
+  - the codec did not mirror grpc's selection;
+  - `1e400` was refused, and trailing data was not checked;
+  - the plan was not updated.
+- **Fix:**
+  - value-receiver `String`/`GoString`/`Format`;
+  - aud null or number is refused with `ErrKey`;
+  - `status.FromContextError`;
+  - `marshalFor` mirrors grpc 1.66.3's `setCallInfoCodec` (confirmed against `rpc_util.go`/`codec.go`);
+  - `UseNumber` plus an EOF check;
+  - divergences recorded in the plan.
+- **Round 2 notes, fixed:**
+  - the `ErrStreamNotStarted` doc now says a racing RecvMsg waits on SendMsg;
+  - the plan's top-level Status was updated.
+- **Not done:** extra codec-precedence tests (V1-over-V2, last-wins, `WithDefaultCallOptions`). The behaviour matches grpc and fails safe; recorded only.
+- **Suites:** `go vet` and `go test -race ./...` pass. Under go1.22.12, vet and `test -c` pass; linking the tests aborts on this macOS (dyld LC_UUID), which is environmental.
+- **Files:** `go/mgmtdpop/{mgmtdpop,interceptor,mgmtdpop_test,interceptor_test}.go`, `go/README.md`.
+- **Next:** Phase 7 (Java) is under verify; Phase 8 (Kotlin) is implemented.
