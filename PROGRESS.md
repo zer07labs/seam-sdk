@@ -4881,3 +4881,15 @@ at `584823a`; runtime `origin/main` `a9ddb982`.
 - **Files:** `python/tests/operator_token.py` (`cnf_jkt=`), `python/tests/test_mgmt_dpop_live.py`, `python/tests/test_live_fixtures_are_isolated.py`, `.github/workflows/ci.yml` (integration step).
 - **AC4:** to confirm from the PR's integration-job log.
 - **Next:** Phase 4.
+
+## Phase 4 — DONE (2026-10-27)
+- **Verdict:** PASS after 2 rounds. Verifier: Opus; complex, because the second SDK fixes the cross-language byte contract.
+- **Round 1 (GAPS), from Python-vs-TS differential fuzzing (20k URLs, 4k gRPC cases, 420 proofs):**
+  - a port of more than ~4,300 digits tripped Python's `int()` limit and raised a raw `ValueError`; TS disagreed;
+  - `iat ≥ 2^53`: Python accepted it, TS refused it;
+  - nothing documented that callers must send the request to exactly the URL the `htu` came from.
+- **Fix:** a port is 1-5 digits; `MGMT_DPOP_MAX_IAT` = 2^53 − 1 in both SDKs, pinned in the vector (`iat_max`, two new `http_htu_rejects`); the send-exactly-this-URL rule is in both docstrings.
+- **Round 2:** 50,262 URLs and 25 iat values gave 0 differences and 0 raw exceptions.
+- **Suites:** TS 469 offline; Python 2307.
+- **Files:** `ts/src/dpop.ts`, `ts/src/index.ts`, `ts/tests/mgmt_dpop.test.ts`, `python/seam_sdk/dpop.py` (explicit `htu` grammar), `python/seam_sdk/__init__.py`, `python/tests/test_mgmt_dpop.py`, `conformance/mgmt_dpop_vector.json`.
+- **Next:** Phase 5.

@@ -329,7 +329,31 @@ chars). Both are injectable for tests only.
 
 ### Phase 4: TypeScript primitive and KAT
 
-- **Status:** TODO
+- **Status:** DONE (2026-10-27; see the divergences below)
+- **Divergences (recorded at implementation):**
+  - **One explicit HTTP `htu` grammar for all five SDKs.** Porting Python's `urlsplit`-based
+    `mgmt_dpop_http_htu` showed that it inherits library quirks no other language reproduces. One was a
+    real bug: `https://[::1/a` escaped as a raw `ValueError`, not `DpopError`. Every SDK now implements the
+    same explicit grammar instead:
+    - `scheme "://" authority [path] ["?" query] ["#" fragment]`, over visible ASCII;
+    - `authority` is `host [":" port]`, with the host a reg-name or a bracketed IPv6 literal;
+    - the port is all digits and at most 65535; an empty port is dropped, and leading zeros compare
+      numerically;
+    - userinfo is refused.
+    The Python function was rewritten to it in this phase. `http_htu` gains 7 edge cases and
+    `http_htu_rejects` gains 11, which every SDK runs. `URL`/`net/url`/`java.net.URI` are rejected for
+    the same reason: each normalises paths differently.
+  - **Exports:** TS exports are listed explicitly in `index.ts` (as the identity block is), so
+    `peekTokenClaims`/`tokenCnfJkt` stay off the package root.
+  - **Key privacy:** the seed is a `#private` field. `toString`, `util.inspect` and `toJSON` show only
+    the `jkt`.
+  - **Two bounds shared by every SDK** (found by round-1 differential fuzzing):
+    - A port is 1-5 digits. An unbounded digit string tripped Python's `int()` limit, raising a raw
+      `ValueError`, and the two SDKs disagreed.
+    - `iat` is at most `MGMT_DPOP_MAX_IAT` = 2^53 − 1. TS refused larger values and Python accepted them.
+    - Both are pinned in the vector (`http_htu_rejects`, `iat_max`).
+  - **Documented:** callers must send the request to exactly the URL the `htu` was derived from. A client
+    that normalises paths (`fetch`/`URL` collapse dot-segments) would send a path the `htu` does not name.
 - **Risk:** complex
 - **Delivers:** `ts/src/dpop.ts` with `OperatorDpopKey`, `mgmtDpopProof` and `mgmtDpopHttpHeaders`,
   re-exported through `ts/src/index.ts` (`export *`, `:8-9`).

@@ -25,13 +25,13 @@ import secrets
 import time
 from collections.abc import Callable, Mapping
 from typing import Any
-from urllib.parse import urlsplit
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 __all__ = [
     "DEFAULT_OPERATOR_AUD",
     "MGMT_DPOP_MAX_BODY_BYTES",
+    "MGMT_DPOP_MAX_IAT",
     "MGMT_DPOP_MAX_JTI_BYTES",
     "MGMT_DPOP_MAX_PROOF_BYTES",
     "DpopError",
@@ -53,6 +53,8 @@ MGMT_DPOP_MAX_PROOF_BYTES = 8 * 1024
 MGMT_DPOP_MAX_BODY_BYTES = 1024 * 1024
 #: The runtime refuses a longer ``jti``.
 MGMT_DPOP_MAX_JTI_BYTES = 256
+#: The largest ``iat`` every SDK accepts: 2**53 - 1, the largest integer a JavaScript number holds exactly.
+MGMT_DPOP_MAX_IAT = 2**53 - 1
 
 _B64URL = re.compile(r"^[A-Za-z0-9_-]*\Z")
 # Printable ASCII. A token is a header value, so space is excluded there; jti and htu allow it.
@@ -246,7 +248,11 @@ def mgmt_dpop_proof(
         )
     if iat is None:
         iat = int(time.time())
-    if isinstance(iat, bool) or not isinstance(iat, int) or iat < 0:
+    if (
+        isinstance(iat, bool)
+        or not isinstance(iat, int)
+        or not 0 <= iat <= MGMT_DPOP_MAX_IAT
+    ):
         raise DpopError("iat must be a non-negative integer number of seconds")
     if jti is None:
         jti = new_mgmt_dpop_jti()
@@ -297,28 +303,62 @@ def mgmt_dpop_http_htu(url: str) -> str:
 
     The scheme becomes ``https`` (the runtime treats ``http`` and ``https`` alike, since TLS may end at an
     edge), the host is lower-cased, a default port (``:443`` for https, ``:80`` for http) is dropped, and
-    the query and fragment are dropped. The path is kept exactly. A URL carrying userinfo is refused.
+    the query and fragment are dropped. The path is kept exactly; an empty one becomes ``/``. A URL
+    carrying userinfo is refused.
+
+    This is an explicit grammar, not a URL library, so that every SDK derives the same ``htu`` from the
+    same string (``conformance/mgmt_dpop_vector.json`` ``http_htu``):
+    ``scheme "://" authority [path] ["?" query] ["#" fragment]``, where ``authority`` is
+    ``host [":" port]``, ``host`` is a reg-name or a bracketed IPv6 literal, and ``port`` is 1-5 digits.
+
+    Send the request to exactly this URL. A client that normalises paths (dot-segments such as ``/a/../b``,
+    or percent-encoding) sends a path the ``htu`` does not name, and the runtime refuses the proof.
     """
-    if not isinstance(url, str) or not _PRINTABLE.match(url):
-        raise DpopError("url must be a non-empty printable-ASCII string")
-    parts = urlsplit(url)
-    scheme = parts.scheme.lower()
-    if scheme not in ("http", "https"):
-        raise DpopError("url must be an http or https URL")
-    if "@" in parts.netloc:
+    if not isinstance(url, str) or not _TOKEN_CHARS.match(url):
+        raise DpopError("url must be a non-empty visible-ASCII string (no spaces)")
+    scheme, sep, rest = url.partition("://")
+    scheme = scheme.lower()
+    if not sep or scheme not in ("http", "https"):
+        raise DpopError("url must be an absolute http:// or https:// URL")
+    cut = min((i for i in (rest.find(c) for c in "/?#") if i >= 0), default=len(rest))
+    authority, tail = rest[:cut], rest[cut:]
+    path = tail[
+        : min((i for i in (tail.find(c) for c in "?#") if i >= 0), default=len(tail))
+    ]
+    if "@" in authority:
         raise DpopError("url must not carry userinfo")
-    try:
-        host, port = parts.hostname, parts.port
-    except ValueError as e:
-        raise DpopError(f"url has an invalid port: {e}") from None
+    if authority.startswith("["):
+        close = authority.find("]")
+        if close < 2:
+            raise DpopError("url has a malformed IPv6 literal")
+        host, after = authority[: close + 1], authority[close + 1 :]
+        if after and not after.startswith(":"):
+            raise DpopError("url has a malformed IPv6 literal")
+        port_text = after[1:] if after else ""
+    else:
+        host, colon, port_text = authority.partition(":")
+        if ":" in port_text:
+            raise DpopError(
+                "url has more than one ':' in its authority; bracket an IPv6 literal"
+            )
     if not host:
         raise DpopError("url has no host")
-    if ":" in host:  # IPv6 literal: urlsplit strips the brackets
-        host = f"[{host}]"
+    host = host.lower()
+    port = None
+    if port_text:
+        # 1-5 digits first, so `int()` never sees an unbounded string.
+        if (
+            len(port_text) > 5
+            or not port_text.isdigit()
+            or not port_text.isascii()
+            or int(port_text) > 65535
+        ):
+            raise DpopError("url has an invalid port")
+        port = int(port_text)
     authority = host
     if port is not None and port != (443 if scheme == "https" else 80):
         authority = f"{host}:{port}"
-    return f"https://{authority}{parts.path or '/'}"
+    return f"https://{authority}{path or '/'}"
 
 
 def mgmt_dpop_http_headers(

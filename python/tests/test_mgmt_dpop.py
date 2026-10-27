@@ -302,6 +302,7 @@ _OK = dict(htm="POST", htu="grpc://x/y.Z/W", body=b"", iat=1, jti="j")
         ("iat", -1),
         ("iat", True),
         ("iat", 1.5),
+        ("iat", 2**53),
         ("jti", ""),
         ("jti", "é"),
         ("jti", "j" * (MGMT_DPOP_MAX_JTI_BYTES + 1)),
@@ -316,6 +317,13 @@ def test_the_body_cap_is_inclusive() -> None:
     mgmt_dpop_proof(
         _golden_key(), "a.b.c", **{**_OK, "body": b"\x00" * MGMT_DPOP_MAX_BODY_BYTES}
     )
+
+
+def test_max_iat_is_the_shared_bound() -> None:
+    from seam_sdk import MGMT_DPOP_MAX_IAT
+
+    assert MGMT_DPOP_MAX_IAT == _v()["iat_max"]
+    mgmt_dpop_proof(_golden_key(), "a.b.c", **{**_OK, "iat": MGMT_DPOP_MAX_IAT})
 
 
 def test_max_length_jti_is_accepted() -> None:

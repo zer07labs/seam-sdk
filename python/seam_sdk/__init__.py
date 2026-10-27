@@ -101,6 +101,7 @@ from .errors import (
 from .dpop import (
     DEFAULT_OPERATOR_AUD,
     MGMT_DPOP_MAX_BODY_BYTES,
+    MGMT_DPOP_MAX_IAT,
     MGMT_DPOP_MAX_JTI_BYTES,
     MGMT_DPOP_MAX_PROOF_BYTES,
     DpopError,
@@ -123,6 +124,7 @@ __all__ = [
     "Agent",
     "DEFAULT_OPERATOR_AUD",
     "MGMT_DPOP_MAX_BODY_BYTES",
+    "MGMT_DPOP_MAX_IAT",
     "MGMT_DPOP_MAX_JTI_BYTES",
     "MGMT_DPOP_MAX_PROOF_BYTES",
     "DpopError",
