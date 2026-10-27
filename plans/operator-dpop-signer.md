@@ -13,7 +13,7 @@
 
 ## Status
 
-IN PROGRESS. Planned 2026-10-27; Phases 1-7 DONE (see the per-phase Status lines).
+IN PROGRESS. Planned 2026-10-27; Phases 1-8 DONE (see the per-phase Status lines).
 
 ## Context
 
@@ -530,12 +530,20 @@ chars). Both are injectable for tests only.
 
 ### Phase 8: Kotlin `MgmtDpop`
 
-- **Status:** TODO (implemented; awaiting its gate)
-- **Divergences (recorded at implementation):** none in behaviour from Phase 7. Kotlin idioms only:
+- **Status:** DONE (2026-10-27). One verify round: all three AC confirmed, and 39,754 fuzz cases show
+  identical behaviour to Java.
+  - Its notes:
+    - `Key.sign` is `@JvmSynthetic`, so Java source cannot call it;
+    - the private constructor's synthetic accessor is likewise not callable from Java source.
+  - **Recorded divergence for Java callers:** the Kotlin API is non-null typed, so a null argument from Java
+    throws Kotlin's `NullPointerException` (naming the parameter), not `DpopException`. Java callers use the
+    Java SDK, which checks nulls explicitly.
+- **Divergences (recorded at implementation):** none in behaviour from Phase 7 for Kotlin callers. Kotlin
+  idioms only:
   - default arguments with `@JvmOverloads`, in place of Java's overloads;
   - `clock: (() -> Long)?` in place of `LongSupplier`;
   - `DpopKeyException` is the only subclass of the `open` `DpopException`.
-  - Mutation check (signing the body plus 1 byte) failed 8 of the 24 `MgmtDpopTest` cases. Restored, green.
+  - Mutation check (signing the body plus 1 byte) failed 8 of 24 `MgmtDpopTest` cases at implementation (11 of 25 in the verifier's re-run, after the extra tests). Restored, green.
 - **Risk:** complex
 - **Delivers:** the Kotlin twin of Phase 7: `object MgmtDpop`, `MgmtDpop.Key`, and the same interceptor
   semantics.

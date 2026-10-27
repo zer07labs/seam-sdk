@@ -4949,3 +4949,16 @@ at `584823a`; runtime `origin/main` `a9ddb982`.
 - **Suites:** Java on JDK 17, MgmtDpopTest 25 passing and the whole suite green.
 - **Files:** `java/src/main/java/com/zer07labs/seam/MgmtDpop.java`, `java/src/test/java/com/zer07labs/seam/MgmtDpopTest.java`.
 - **Next:** the Phase 8 gate (Kotlin, with the same fixes ported) and Phase 9.
+
+## Phase 8 — DONE (2026-10-27)
+- **Verdict:** PASS on the acceptance criteria, 1 round. Verifier: Opus; complex, because it is a transport boundary.
+  The "GAPS" it raised were record-only Java-interop notes:
+  - Kotlin vs Java: identical results on 39,754 fuzz cases;
+  - every refusal, aud rule, the clock order and the delayed call match line for line.
+- **Notes:**
+  - `Key.sign` is now `@JvmSynthetic`; `internal` alone was a public bytecode method;
+  - a Java caller passing null gets Kotlin's NPE, not `DpopException`. Recorded in the plan; Java callers use the Java SDK.
+- **Mutation:** signing the bytes plus 1 byte failed 11 of 25 tests (verifier re-run). Restored byte-exact.
+- **Suites:** Kotlin on JDK 17, MgmtDpopTest 25 passing and the whole suite green.
+- **Files:** `kotlin/src/main/kotlin/com/zer07labs/seam/MgmtDpop.kt`, `kotlin/src/test/kotlin/com/zer07labs/seam/MgmtDpopTest.kt`.
+- **Next:** Phase 9 (handoff built, under gate).
