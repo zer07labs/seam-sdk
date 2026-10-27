@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:595`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:615`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -147,6 +147,7 @@ release train is 0.55.0. Pin `seam-sdk 0.54.3` beside seamd 0.54.2.
 | AITP 0.17.0: commitment TCT `ver` is `aitp/0.3` only (`seam-verify`, D-040) | seam-runtime 0.49.0 (seam-runtime#1373; release train seam-runtime#1375) | **none** — `seam-verify` refuses an earlier runtime's `aitp/0.2` TCTs | runtime `main` @ `b5e779d` (seam-runtime#1373; signed bytes identical to `a853f89`) |
 | `SESSION_UNAVAILABLE` classification + opt-in `with_session_retry` (D79) | seam-runtime 0.53.0 (seam-runtime#1407, k8s P6: N replicas over a shared session store) | **compatible** — an earlier runtime, and any single-replica runtime, never returns the reason, so the helper never retries and the client never drops a ticket for it | runtime `main` @ `7d22b50b` (seam-runtime#1407) |
 | `TENANT_MOVING` classification, retryable; a replay-guarded write's burned ticket dropped (seam-sdk#297) | seam-runtime 0.59.0 (seam-runtime#1513, k8s P16 tenant moves) | **compatible** — an earlier runtime never returns the reason, so nothing is retried and no ticket is dropped for it | runtime `main` @ `4cff3de4` (seam-runtime#1513) |
+| Bound (DPoP) operator tokens: Python `dpop_key=`, TS `dpopKey`, Go `mgmtdpop`, Java/Kotlin `MgmtDpop` (seam-sdk#290) | seam-runtime 0.54.0 (seam-runtime#1428, the management plane accepts a DPoP-bound token). The required posture, which refuses an unbound token on a non-loopback listener with no client CA, is 0.55.0 (seam-runtime#1463) | **compatible, opt-in.** Without a key nothing changes: an unbound token is still sent as Bearer. A runtime below 0.54.0 refuses the `DPoP` scheme, so mint unbound tokens for it | runtime `main` @ `7aa16cae` (seam-runtime#1428) and `47f89f3b` (seam-runtime#1463); spec vendored as `docs/specs/mgmt-dpop.md`, bytes pinned by `conformance/mgmt_dpop_vector.json` |
 | `stream_id` on `StreamEvents` / `ReportEventsConsumed` / `SeamEvent` — **required** on both admin helpers (k8s P7) | seam-runtime 0.57.0 (k8s P7, OQ-1) | **compatible** — an earlier runtime ignores the unknown field. **The inverse is not:** runtime 0.57.0 refuses an SDK below 0.57.0 on both verbs with `FAILED_PRECONDITION` (`stream_id_mismatch`), because that SDK sends no stream | runtime `main` @ `2de71b5d` (seam-runtime#1470; BSR `7c8872847e3e45b09baa4b811305601c`; spec §Delivery stream and goldens vendored from it) |
 
 The protocol pass has no compatibility window in either direction: an earlier runtime refuses this
@@ -159,7 +160,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1607-1629`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1627-1649`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was

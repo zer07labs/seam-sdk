@@ -83,7 +83,8 @@ public final class MgmtDpop {
 
     /**
      * The key, or the token it is meant to be bound to, cannot work: a malformed JWK, an x that is not d's
-     * public key, or a cnf.jkt naming another key.
+     * public key, a token of valid characters that is not a compact JWS or carries no cnf.jkt, a cnf.jkt
+     * naming another key, a missing token, or a token whose aud is a list.
      */
     public static final class DpopKeyException extends DpopException {
         public DpopKeyException(String message) {
@@ -390,7 +391,7 @@ public final class MgmtDpop {
      */
     public static String httpHtu(String url) {
         if (url == null || !TOKEN_CHARS.matcher(url).matches()) {
-            throw new DpopException("url must be a non-empty visible-ASCII string (no spaces)");
+            throw new DpopException("url must be a non-empty visible-ASCII string (no spaces): percent-encode any other character, and send the request to that same encoded URL");
         }
         int sep = url.indexOf("://");
         String scheme = sep < 0 ? "" : url.substring(0, sep).toLowerCase(Locale.ROOT);

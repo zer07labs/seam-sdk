@@ -71,7 +71,9 @@ class DpopError(ValueError):
 
 class DpopKeyError(DpopError):
     """The key, or the token it is meant to be bound to, cannot work: a malformed JWK, a JWK whose
-    ``x`` is not the public half of its ``d``, or a token whose ``cnf.jkt`` names a different key."""
+    ``x`` is not the public half of its ``d``, a token of valid characters that is not a compact JWS or
+    carries no ``cnf.jkt``, a ``cnf.jkt`` naming a different key, a missing token, or a token whose ``aud``
+    is a list."""
 
 
 def _b64url(b: bytes) -> str:
@@ -315,7 +317,9 @@ def mgmt_dpop_http_htu(url: str) -> str:
     or percent-encoding) sends a path the ``htu`` does not name, and the runtime refuses the proof.
     """
     if not isinstance(url, str) or not _TOKEN_CHARS.match(url):
-        raise DpopError("url must be a non-empty visible-ASCII string (no spaces)")
+        raise DpopError(
+            "url must be a non-empty visible-ASCII string (no spaces): percent-encode any other character, and send the request to that same encoded URL"
+        )
     scheme, sep, rest = url.partition("://")
     scheme = scheme.lower()
     if not sep or scheme not in ("http", "https"):

@@ -523,4 +523,19 @@ class MgmtDpopTest {
         val call = signed(bound).newCall(enroll, CallOptions.DEFAULT)
         assertThrows(IllegalStateException::class.java) { call.halfClose() }
     }
+
+    /** The README's Kotlin snippet, verbatim between the markers (python/tests/test_readme_dpop_snippets.py). */
+    private fun readmeSnippet(channel: Channel): Channel {
+        // README:dpop:begin
+        val key = MgmtDpop.Key.fromJwk(System.getenv("SEAM_OPERATOR_DPOP_JWK"))
+        val signed = ClientInterceptors.intercept(channel, MgmtDpop.interceptor(key, System.getenv("SEAM_OPERATOR_TOKEN")))
+        // README:dpop:end
+        return signed
+    }
+
+    @Test
+    fun theReadmeSnippetSigns() {
+        ClientCalls.blockingUnaryCall(readmeSnippet(channel), enroll, CallOptions.DEFAULT, byteArrayOf(1))
+        checkProof(received[0], System.getenv("SEAM_OPERATOR_TOKEN"), "seam-runtime")
+    }
 }

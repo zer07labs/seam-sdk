@@ -13,7 +13,7 @@
 
 ## Status
 
-IN PROGRESS. Planned 2026-10-27; Phases 1-9 DONE (Phase 9's live run awaits the owner) (see the per-phase Status lines).
+IN PROGRESS. Planned 2026-10-27; Phases 1-10 DONE (Phase 9's live run awaits the owner) (see the per-phase Status lines).
 
 ## Context
 
@@ -653,7 +653,17 @@ chars). Both are injectable for tests only.
 
 ### Phase 10: docs, compatibility and changelog
 
-- **Status:** TODO
+- **Status:** DONE (2026-10-27). PASS after 3 rounds. Divergences:
+  - The four compiled languages keep their snippet verbatim between `README:dpop:begin`/`end` markers in a
+    test source their own suite runs (`ts/tests/readme_dpop.test.ts`, `go/mgmtdpop/readme_test.go`, both
+    `MgmtDpopTest` files). `python/tests/test_readme_dpop_snippets.py` checks each README block equals its
+    region, ignoring indentation and `//` comment-only lines. The Python block is executed as written.
+  - The JVM snippets read the environment, so both `build.gradle.kts` files set the two variables in
+    `tasks.test` to the public golden key and a token bound to it.
+  - Round 1 corrected two README claims: Python does not refuse a client-streaming call (none exists), and
+    only Python and TS refuse a bound token sent without its key.
+  - /reconcile ran in the same change: the URL refusal now says to percent-encode, and the `DpopKeyError`
+    docstrings list every cause.
 - **Risk:** simple
 - **Delivers:**
   - `README.md`'s admin-auth section (`:448-472`) gains "Bound (DPoP) operator tokens". It shows, per

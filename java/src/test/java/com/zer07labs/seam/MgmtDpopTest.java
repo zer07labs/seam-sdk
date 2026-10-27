@@ -623,4 +623,20 @@ class MgmtDpopTest {
         ClientCall<byte[], byte[]> call = signed(bound, null).newCall(ENROLL, CallOptions.DEFAULT);
         assertThrows(IllegalStateException.class, call::halfClose);
     }
+
+    /** The README's Java snippet, verbatim between the markers (python/tests/test_readme_dpop_snippets.py). */
+    private static Channel readmeSnippet(Channel channel) {
+        // README:dpop:begin
+        MgmtDpop.Key key = MgmtDpop.Key.fromJwk(System.getenv("SEAM_OPERATOR_DPOP_JWK"));
+        Channel signed = ClientInterceptors.intercept(
+                channel, MgmtDpop.interceptor(key, System.getenv("SEAM_OPERATOR_TOKEN"), null));
+        // README:dpop:end
+        return signed;
+    }
+
+    @Test
+    void theReadmeSnippetSigns() throws Exception {
+        ClientCalls.blockingUnaryCall(readmeSnippet(channel), ENROLL, CallOptions.DEFAULT, new byte[] {1});
+        checkProof(received.get(0), System.getenv("SEAM_OPERATOR_TOKEN"), "seam-runtime");
+    }
 }

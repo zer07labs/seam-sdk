@@ -40,7 +40,8 @@ export class DpopError extends Error {
 }
 
 /** The key, or the token it is meant to be bound to, cannot work: a malformed JWK, a JWK whose `x` is
- * not the public half of its `d`, or a token whose `cnf.jkt` names a different key. */
+ * not the public half of its `d`, a token of valid characters that is not a compact JWS or carries no
+ * `cnf.jkt`, a `cnf.jkt` naming a different key, a missing token, or a token whose `aud` is a list. */
 export class DpopKeyError extends DpopError {
   constructor(message: string) {
     super(message);
@@ -268,7 +269,7 @@ function firstOf(s: string, chars: string): number {
  * collapse), and a path the `htu` does not name makes the runtime refuse the proof. */
 export function mgmtDpopHttpHtu(url: string): string {
   if (typeof url !== "string" || !TOKEN_CHARS.test(url)) {
-    throw new DpopError("url must be a non-empty visible-ASCII string (no spaces)");
+    throw new DpopError("url must be a non-empty visible-ASCII string (no spaces): percent-encode any other character, and send the request to that same encoded URL");
   }
   const sepAt = url.indexOf("://");
   const scheme = sepAt < 0 ? "" : url.slice(0, sepAt).toLowerCase();

@@ -38,14 +38,18 @@ byte for byte by `conformance/mgmt_dpop_vector.json`, the same vector the other 
 
 ```go
 // The console's one-time reveal: the private JWK, exactly as shown. Load it from your secret store,
-// never from source control; the Key prints only its thumbprint.
+// never from source control; the Key prints only its thumbprint. A typo in the reveal fails here,
+// by name (errors.Is(err, mgmtdpop.ErrKey)).
 key, err := mgmtdpop.ParseJWK([]byte(os.Getenv("SEAM_OPERATOR_DPOP_JWK")))
-if err != nil { return err } // a typo in the reveal fails here, by name (errors.Is(err, mgmtdpop.ErrKey))
-
+if err != nil {
+	return err
+}
 // aud "" means the token's own aud, else "seam-runtime". Misuse fails here, before any call:
 // an unbound token, a token bound to another key, or a list aud with no override.
 opts, err := mgmtdpop.DialOptions(key, os.Getenv("SEAM_OPERATOR_TOKEN"), "")
-if err != nil { return err }
+if err != nil {
+	return err
+}
 cc, err := grpc.NewClient(target, append(opts, grpc.WithTransportCredentials(creds))...)
 ```
 

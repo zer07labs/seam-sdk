@@ -488,6 +488,114 @@ raises `RecordDigestStripError` rather than returning a mismatch — a strip and
 different events); `KNOWN_KINDS` lists the event kinds the SDK types (unknown kinds always pass through
 opaque). Sealing a decision emits a `DECISION_SEALED` event — asserted live in both SDKs.
 
+### Bound (DPoP) operator tokens
+
+An operator token minted with a **key binding** (runtime ≥ 0.54.0; its claims carry `cnf.jkt`) is refused as
+Bearer. Every management call must carry `authorization: DPoP <token>` and a fresh RFC 9449 proof, signed by
+the Ed25519 key the token is bound to, over that call's exact request bytes. aws-stg's management plane
+requires it (runtime ≥ 0.55.0 refuses an unbound token on a non-loopback listener without a client CA). All
+five SDKs sign these proofs. One shared vector, `conformance/mgmt_dpop_vector.json`, pins them byte for byte.
+The grammar is `docs/specs/mgmt-dpop.md`, a pinned copy of the runtime's.
+
+**The key comes from the management console's one-time reveal.** When you mint a token with DPoP on, the
+console shows the token and, next to it, a private JWK, **once**:
+
+```json
+{"kty":"OKP","crv":"Ed25519","x":"IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI","d":"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI"}
+```
+
+That is the **public test vector's key** (seed `0x42` × 32), shown only for its shape. Never use it. Treat
+your reveal like the token, or more carefully:
+- Copy the JSON exactly as shown into your secret manager, or into an environment variable read at start-up.
+- Never commit it, and never write it to a log. Each SDK's key object prints only its thumbprint (`jkt`).
+- It cannot be shown again. If it is lost, mint a new token.
+
+`d` is the private half, and `x` is checked against it on load, so a mistyped reveal fails at load, by name.
+
+**Python**:
+
+```python
+import os
+
+import grpc
+from seam_sdk import OperatorDpopKey, SeamAdminClient
+
+key = OperatorDpopKey.from_jwk(os.environ["SEAM_OPERATOR_DPOP_JWK"])
+admin = SeamAdminClient.connect(
+    os.environ["SEAM_MGMT_TARGET"],
+    token=os.environ["SEAM_OPERATOR_TOKEN"],
+    dpop_key=key,
+    credentials=grpc.ssl_channel_credentials(),
+)
+tenants = admin.list_tenants()
+```
+
+**TypeScript** (`OperatorDpopKey` and `SeamAdminClient` from `@zer07labs/seam-sdk`):
+
+```ts
+const dpopKey = OperatorDpopKey.fromJwk(process.env.SEAM_OPERATOR_DPOP_JWK!);
+const admin = SeamAdminClient.connect(process.env.SEAM_MGMT_URL!, {
+  token: process.env.SEAM_OPERATOR_TOKEN!,
+  dpopKey,
+});
+const tenants = await admin.listTenants();
+```
+
+**Go** (`github.com/zer07labs/seam-sdk/go/mgmtdpop`). `creds` is your TLS transport credentials:
+
+```go
+key, err := mgmtdpop.ParseJWK([]byte(os.Getenv("SEAM_OPERATOR_DPOP_JWK")))
+if err != nil {
+	return err
+}
+opts, err := mgmtdpop.DialOptions(key, os.Getenv("SEAM_OPERATOR_TOKEN"), "")
+if err != nil {
+	return err
+}
+cc, err := grpc.NewClient(target, append(opts, grpc.WithTransportCredentials(creds))...)
+```
+
+**Java** (`com.zer07labs.seam.MgmtDpop`). `channel` is your TLS channel to the management listener:
+
+```java
+MgmtDpop.Key key = MgmtDpop.Key.fromJwk(System.getenv("SEAM_OPERATOR_DPOP_JWK"));
+Channel signed = ClientInterceptors.intercept(
+        channel, MgmtDpop.interceptor(key, System.getenv("SEAM_OPERATOR_TOKEN"), null));
+```
+
+**Kotlin** (`com.zer07labs.seam.MgmtDpop`):
+
+```kotlin
+val key = MgmtDpop.Key.fromJwk(System.getenv("SEAM_OPERATOR_DPOP_JWK"))
+val signed = ClientInterceptors.intercept(channel, MgmtDpop.interceptor(key, System.getenv("SEAM_OPERATOR_TOKEN")))
+```
+
+Python and TS sign through `SeamAdminClient`. Go, Java and Kotlin have no management client, so they install
+an interceptor on the channel your generated `SeamAdmin` stubs use, like `routing` / `TenantRouting`.
+
+**Mistakes fail when you connect, not on the first call.** These pairings are refused before any call,
+because the runtime would refuse every call with the same opaque 401:
+- a key without a token, and (Python and TS, which also send unbound tokens) a bound token without its key;
+- an unbound token with a key;
+- a key that is not the one the token names;
+- a token whose `aud` is a list (pass `aud` explicitly).
+
+`aud` defaults to the token's own `aud`, else `seam-runtime`. It must equal the runtime's `SEAM_RUNTIME_AUD`.
+
+**Other rules:**
+- **Clock.** The runtime accepts a proof whose `iat` is within **60 s** of its own clock. A host that has
+  drifted further gets `UNAUTHENTICATED` on every call, so check the host clock (NTP) first.
+- **Retries.** The runtime burns each proof on first use, so every attempt is signed anew. Retry by making
+  the call again. Never use a transport retry policy that resends a call's metadata.
+- **Streams.** A server-streaming call's one request is signed. A proof binds exactly one request message, so
+  Go, Java and Kotlin refuse a client-streaming call, and TS refuses any call that sends other than one
+  message. No management RPC streams requests, and Python's interceptor signs only the unary and
+  server-streaming shapes.
+- **The HTTP management plane.** `mgmt_dpop_http_headers` / `mgmtDpopHttpHeaders` / `mgmtdpop.HTTPHeaders`
+  / `MgmtDpop.httpHeaders` return both headers for one request. The proof binds the method, the URL (as
+  `https://<host>[:port]<path>`, with the query dropped) and the body. Send exactly that body to exactly that
+  URL, and call the helper again for every request.
+
 ## Data-plane surface
 
 Beyond decisions & sessions, `SeamClient` wraps the rest of the data plane: independent proof retrieval +

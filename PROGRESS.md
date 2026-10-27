@@ -4069,7 +4069,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1640`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1660`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -4556,12 +4556,12 @@ green before any code changed.
   this — "rather than refusing outright" was wrong, fixed before merge). (2) the release's
   `retitle_changelog.sh` run shifted `CHANGELOG.md`'s "No yank" paragraph from line 1054 to 1056
   (a +2 insert right after `## Unreleased`), pushing `COMPATIBILITY.md:123` and
-  `DECISIONS.md:1222`'s `CHANGELOG.md:1480-1497` citations past the citation test's slack
-  tolerance; repointed both to `CHANGELOG.md:1482-1499`. Tested: `check_vendored_spec.py` OK via both
+  `DECISIONS.md:1222`'s `CHANGELOG.md:1500-1517` citations past the citation test's slack
+  tolerance; repointed both to `CHANGELOG.md:1502-1519`. Tested: `check_vendored_spec.py` OK via both
   `--from local` and `--from gh`; `test_compatibility_citations_resolve.py` 489 passed/0 failed
   standalone (was 4 failed). Verifier also flagged two pre-existing, gate-invisible citations
   elsewhere that the same +2 shift widened further — `DECISIONS.md:2035` cites
-  `CHANGELOG.md:1382` and `PROGRESS.md:3981` cites `CHANGELOG.md:1267`, both already ~130-250
+  `CHANGELOG.md:1402` and `PROGRESS.md:3981` cites `CHANGELOG.md:1287`, both already ~130-250
   lines stale before this release — out of scope for this release-unblock hotfix; filed as a
   follow-up issue rather than folded in here.
   **Rebased `feat/verify-anchor-tenant` onto this commit during `/sweep`'s ship pass.** Four
@@ -4571,7 +4571,7 @@ green before any code changed.
   `CHANGELOG.md`/`COMPATIBILITY.md`/`DECISIONS.md`: the feature branch's own new
   `## Unreleased` entry (16 lines) was kept above this hotfix's `## 0.33.3` header, which
   shifted "No yank" from this entry's `1056` to `1072` and recomputed the two citations above
-  (`CHANGELOG.md:1482-1499`) to `CHANGELOG.md:1498-1515` — verified against the exact
+  (`CHANGELOG.md:1502-1519`) to `CHANGELOG.md:1518-1535` — verified against the exact
   paragraph-boundary text at both the old and new line numbers before trusting the new range,
   not just the arithmetic. A dedicated ship-gate verifier independently re-derived this same
   shift from the diff and confirmed it exact.
@@ -4998,3 +4998,22 @@ at `584823a`; runtime `origin/main` `a9ddb982`.
 - **Suites:** `test_smoke_script_redaction.py` 12 passing; ruff clean.
 - **Files:** `scripts/smoke/mgmt_dpop_aws_stg.py`, `scripts/handoff/2026-10-27-mgmt-dpop-aws-stg.sh`, `python/tests/test_smoke_script_redaction.py`.
 - **Next:** the Phase 10 gate.
+
+## Phase 10 — DONE (2026-10-27)
+- **Verdict:** PASS after 3 rounds. Verifier: Opus; simple (docs, plus tests that run the snippets).
+- **Round 1 (GAPS):** the README said every SDK refuses a client-streaming call (Python's interceptor only
+  covers unary and server-streaming, and no such RPC exists) and that a bound token without its key is
+  refused (only Python and TS have a Bearer path). Both sentences were corrected.
+- **Round 2 (GAPS):** TS refuses any call that sends other than one message, rather than every client-streaming
+  call; and a token with spaces or non-ASCII characters is a plain `DpopError`, not a key error. The wording
+  was corrected in the README and in the docstrings of all five SDKs.
+- **/reconcile (same change):** printable-ASCII inputs CONFIRMED by Opus; the URL refusal now says to
+  percent-encode. The DpopError/DpopKeyError split CONFIRMED by the owner; the key-error docstrings now list
+  every cause. One line went to DEFERRED.md (the runtime accepts a non-ASCII `SEAM_RUNTIME_AUD`).
+- **Suites:** Python 2326 (39 skipped), TS 474 (16 live skipped), Go, Java 94, Kotlin 93; ruff, tsc, gofmt
+  and vet clean; the citation gate green after shifting 11 citations by +20.
+- **Files:** README.md, go/README.md, COMPATIBILITY.md, CHANGELOG.md, DECISIONS.md, ASSUMPTIONS.md,
+  DEFERRED.md, java/kotlin `build.gradle.kts`, the five `dpop`/`MgmtDpop` sources (message and docstrings),
+  `python/tests/test_readme_dpop_snippets.py`, `ts/tests/readme_dpop.test.ts`, `go/mgmtdpop/readme_test.go`,
+  and both `MgmtDpopTest` files.
+- **Next:** finalization (§4).

@@ -47,7 +47,9 @@ var (
 	// network call. Never returned for a wire error.
 	ErrDpop = errors.New("mgmtdpop")
 	// ErrKey is wrapped (alongside ErrDpop) when the key, or the token it is meant to be bound to,
-	// cannot work: a malformed JWK, an x that is not d's public key, or a cnf.jkt naming another key.
+	// cannot work: a malformed JWK, an x that is not d's public key, a token of valid characters that is
+	// not a compact JWS or carries no cnf.jkt, a cnf.jkt naming another key, a missing token, or a token
+	// whose aud is a list.
 	ErrKey = fmt.Errorf("%w: key", ErrDpop)
 )
 
@@ -334,7 +336,7 @@ func GRPCHTU(method, aud string) (string, error) {
 // percent-encoding) sends a path the htu does not name, and the runtime refuses the proof.
 func HTTPHTU(rawURL string) (string, error) {
 	if !tokenChars.MatchString(rawURL) {
-		return "", dpopErr("url must be a non-empty visible-ASCII string (no spaces)")
+		return "", dpopErr("url must be a non-empty visible-ASCII string (no spaces): percent-encode any other character, and send the request to that same encoded URL")
 	}
 	scheme, rest, found := strings.Cut(rawURL, "://")
 	scheme = strings.ToLower(scheme)

@@ -66,7 +66,8 @@ object MgmtDpop {
 
     /**
      * The key, or the token it is meant to be bound to, cannot work: a malformed JWK, an x that is not d's
-     * public key, or a cnf.jkt naming another key.
+     * public key, a token of valid characters that is not a compact JWS or carries no cnf.jkt, a cnf.jkt
+     * naming another key, a missing token, or a token whose aud is a list.
      */
     class DpopKeyException(message: String) : DpopException(message)
 
@@ -277,7 +278,7 @@ object MgmtDpop {
      */
     @JvmStatic
     fun httpHtu(url: String): String {
-        if (!tokenChars.matches(url)) throw DpopException("url must be a non-empty visible-ASCII string (no spaces)")
+        if (!tokenChars.matches(url)) throw DpopException("url must be a non-empty visible-ASCII string (no spaces): percent-encode any other character, and send the request to that same encoded URL")
         val sep = url.indexOf("://")
         val scheme = if (sep < 0) "" else url.substring(0, sep).lowercase(Locale.ROOT)
         if (sep < 0 || (scheme != "http" && scheme != "https")) {
