@@ -21,7 +21,7 @@ against a status table alone.
 ([#26](https://github.com/zer07labs/seam/issues/26)). They live here
 because writing into a sibling repo needs a gate and reading one never does: the plan stays where it
 was written, and the target repo fetches it. Each is paired with a tracking issue there. See
-[`cross-repo/README.md`](cross-repo/README.md) for the index and what blocks what.
+[`cross-repo/README.md`](cross-repo/README.md) for the index and what blocks what. As of 2026-10-27 every one of these asks is closed and verified delivered.
 
 ## Archived (delivered, verified)
 
