@@ -98,6 +98,20 @@ from .errors import (
     is_wrong_cell,
     map_rpc_error,
 )
+from .dpop import (
+    DEFAULT_OPERATOR_AUD,
+    MGMT_DPOP_MAX_BODY_BYTES,
+    MGMT_DPOP_MAX_JTI_BYTES,
+    MGMT_DPOP_MAX_PROOF_BYTES,
+    DpopError,
+    DpopKeyError,
+    OperatorDpopKey,
+    mgmt_dpop_grpc_htu,
+    mgmt_dpop_http_headers,
+    mgmt_dpop_http_htu,
+    mgmt_dpop_proof,
+    new_mgmt_dpop_jti,
+)
 from .tenant import TENANT_HEADER, AioTenantInterceptor, TenantInterceptor
 from .retry import (
     DEFAULT_RETRY_BUDGET_S,
@@ -107,6 +121,18 @@ from .retry import (
 
 __all__ = [
     "Agent",
+    "DEFAULT_OPERATOR_AUD",
+    "MGMT_DPOP_MAX_BODY_BYTES",
+    "MGMT_DPOP_MAX_JTI_BYTES",
+    "MGMT_DPOP_MAX_PROOF_BYTES",
+    "DpopError",
+    "DpopKeyError",
+    "OperatorDpopKey",
+    "mgmt_dpop_grpc_htu",
+    "mgmt_dpop_http_headers",
+    "mgmt_dpop_http_htu",
+    "mgmt_dpop_proof",
+    "new_mgmt_dpop_jti",
     "create_identity_file",
     "load_identity_file",
     "load_identity_facts",

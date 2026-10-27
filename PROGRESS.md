@@ -4805,3 +4805,53 @@ re-plan: step 4 was the only remaining work, and it is a test addition.
   forgery test (the header subject is honoured); the client signing `decisionId + "x"` fails the
   credentialed-read test; `allow` without the hatch refuses to boot.
 - Plan archived (no `ASSUMPTIONS.md` entries were tagged to it).
+
+# PROGRESS — `plans/operator-dpop-signer.md` (seam-sdk#290)
+
+Checkpoint trail and repo map for the operator Ed25519 DPoP signer, all five languages. Anchors were taken
+at `584823a`; runtime `origin/main` `a9ddb982`.
+
+## Repo map
+
+- `python/seam_sdk/admin.py`: `SeamAdminClient`.
+  - `_tenant_metadata` :166-173, `_BearerAuthInterceptor` :186-211, `connect` :278-298.
+  - Per-method `timeout=DEFAULT_ADMIN_TIMEOUT_S` from :303; `stream_events` `timeout=None` :611.
+- `python/seam_sdk/crypto.py`: `_b64url_nopad` :28; the enroll-PoP style model is at :1247-1324.
+- `python/seam_sdk/__init__.py`: explicit imports at :30, `__all__` at :108.
+- `python/tests/operator_token.py`: test minter, `_SEED_HEX` :23, `mint_operator_token` :31 (gains `cnf_jkt`).
+- `python/tests/live_server.py`: spawns `seam-grpc`; the management bind is `127.0.0.1` at :245.
+- `python/tests/test_admin.py`: asserts the Bearer header at :190-198, so the Bearer path must stay unchanged.
+- `ts/src/admin.ts`: `bearerAuth` :176-180; `connect` :204-211 (`createGrpcTransport` + `Http2SessionManager`).
+- `ts/src/crypto.ts`: noble imports :7-8, base64url :14-18, enroll-PoP model :1397-1483.
+- `ts/src/index.ts`: `export *` :8-9.
+- `ts/tests/unit_plumbing.test.ts`: :177 builds `SeamAdminClient` from a fake transport, so the constructor must stay compatible.
+- `go/routing/routing.go`: the interceptor-factory model (:61 unary, :71 stream, :81 `WithTenant` DialOptions).
+- `go/crypto/enroll_proof.go`: :25-29, struct field order as the JSON order.
+- `go/go.mod`: go 1.21, grpc v1.66.3; CI runs Go 1.22 (`.github/workflows/ci.yml:489`).
+- `java/.../SeamCrypto.java`: BouncyCastle seed→key :107, sign :110-114, plain `new Gson()` :41 (escapes HTML), ordered map :660.
+- `java/.../TenantRouting.java`: `interceptor` :67.
+- `java/build.gradle.kts`: bcprov 1.78.1 :9, grpc-api 1.66.0 :14-15, grpc-inprocess/stub (test) :19-20.
+- `kotlin/.../SeamCrypto.kt`: :117/:120 (duplicated, not depended on), `linkedMapOf` :649. `TenantRouting.kt`: :57.
+- `scripts/check_vendored_spec.py`: vendored-copy table at :136-150 (add `docs/specs/mgmt-dpop.md`).
+- `.github/workflows/ci.yml`: spec pin :657-682; integration :241 (seam-grpc from `seamd:main` :298-312; Python live :406-408, TS :415).
+- `conformance/`: one JSON per vector; tests load it by relative path (Py `python/tests/test_enroll_pop.py:26-47`, TS `ts/tests/enroll_pop.test.ts:46-47`, Go `go/crypto/call_sig_v3_vector_test.go:35`, Java `java/src/test/java/com/zer07labs/seam/EnrollPopTest.java:38`, Kotlin `kotlin/src/test/kotlin/com/zer07labs/seam/EnrollPopTest.kt:29`).
+- External, read-only:
+  - `seam-runtime/docs/specs/mgmt-dpop.md` (the grammar and the golden vector).
+  - `seam-runtime/deploy/helm/seam/values/aws-stg/seam-server.yaml:18-19,62-63,91-92` (mgmt 9099/9100, TLS; callers are control-plane and seam-relay only).
+  - `seam-control-plane/src/http/routes/mint.ts:144-179,202-210,413-423` (bound mint; route `/api/control-plane/operator-tokens`; fleet creds bind the fleet key, M2M binds the proof key).
+  - `seam-console-ui/packages/api-client/src/dpop.ts:153` (reveal shape `{kty,crv,x,d}`).
+- `ts/tests/operator_token.ts`: TS test minter `mintOperatorToken` :33 (opts :35, aud :38), gains `cnfJkt`. `ts/tests/admin.test.ts`: TS spawn :48-55 (also `SEAM_DEV_INSECURE` :53).
+- `python/tests/live_server.py`: `SEAM_DEV_INSECURE=1` :242; loopback readiness :97/:115/:140, so it is loopback-only by design.
+
+## Run setup (2026-10-27)
+
+- **PR strategy:** one PR at the end. Every change is additive and opt-in (no `dpop_key` means today's Bearer path), there is no contract-before-consumer seam, and per-phase commits keep it reviewable.
+- **Risk tiers:** Phases 1–9 are complex (each is a per-language foundation or crosses a gRPC, process or deployment boundary), so each gates solo. Phase 10 (docs) is simple.
+- Branch: `feat/operator-dpop-signer`.
+
+## Phase 1 — DONE (2026-10-27)
+- **Verdict:** PASS after 2 rounds. Verifier: Opus every round; the phase is complex but not a one-way door, because the primitive is additive.
+- **Round 1 (GAPS):** a JWK member of length 1 mod 4 escaped as `binascii.Error`; deeply nested JSON raised `RecursionError`; five deviations were unrecorded; there was no copy-refusal test. **Round 2:** all four closed.
+- **Files:** `docs/specs/mgmt-dpop.md` (vendored @ 7ea99e96), `scripts/check_vendored_spec.py`, `conformance/mgmt_dpop_vector.json`, `python/seam_sdk/dpop.py`, `python/seam_sdk/__init__.py`, `python/tests/test_mgmt_dpop.py` (92 tests), and `python/tests/test_compatibility_citations_resolve.py` (the vendored set, plus the `seam-console-ui/` and `seam-control-plane/` sibling prefixes).
+- **Tested:** Python suite 2245 passed / 30 skipped; `scripts/` suite 720 passed; ruff clean; a one-byte mutation of the vendored spec fails the pin gate.
+- **Next:** Phase 2.

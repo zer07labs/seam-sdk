@@ -1503,3 +1503,19 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Status:** CONFIRMED (2026-10-19). `ts/package.json:46` runs `node --test`, so `vi.spyOn` was a plan
   misnomer; `seedCodec` is unreachable (exports map is `"."` only, `ts/src/index.ts` omits it).
 
+
+## DPoP proof inputs are restricted to printable ASCII
+- **Plan:** plans/operator-dpop-signer.md (Phase 1)
+- **Assumed:** no real management call needs a non-ASCII `htu`, `jti` or `aud`. gRPC method paths and audiences are ASCII, an HTTP URL on the wire is percent-encoded ASCII, and the SDK's own `jti` is base64url.
+- **Chose:** every SDK refuses a non-printable-ASCII `htu`/`jti`/`aud` locally, and a token with spaces or non-ASCII characters. Then the JSON each SDK signs is byte-identical by construction: JSON encoders differ in how they escape non-ASCII and U+2028/2029 (Go always escapes them, JavaScript never does), and the `derived` vector group can pin five-way agreement.
+- **Alternatives:** allow UTF-8 and pin one escaping rule in all five encoders (fragile: Go's `encoding/json` cannot be told not to escape U+2028); or allow it and accept cross-SDK byte differences (the runtime verifies any valid JSON, but the shared vector could no longer prove agreement).
+- **Blast radius if wrong:** a caller with a genuinely non-ASCII `jti` or `aud` gets a local `DpopError`. Loosening the rule later is additive.
+- **Status:** UNCONFIRMED
+
+## A `DpopError` base under `ValueError`, with `DpopKeyError` for key and binding faults
+- **Plan:** plans/operator-dpop-signer.md (Phase 1; the plan named only `DpopKeyError`)
+- **Assumed:** callers want to tell "this key or token can never work" apart from "this one call's input is out of range".
+- **Chose:** `DpopError(ValueError)` for every local refusal, and `DpopKeyError(DpopError)` for a malformed JWK, a JWK whose `x` mismatches its `d`, a malformed token, or a `cnf` mismatch. Both live in `dpop.py`, not `errors.py`: they are local input faults, never wire errors. The other SDKs mirror this split in their own idiom.
+- **Alternatives:** a single `DpopKeyError` for everything (it would misname an oversized body as a key fault); or `TypeError` for wrong types (callers would need to catch two unrelated types).
+- **Blast radius if wrong:** renaming a public exception is breaking, so this should be settled before release.
+- **Status:** UNCONFIRMED

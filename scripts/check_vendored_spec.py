@@ -149,6 +149,13 @@ VENDORED = (
         repo="zer07labs/seam-runtime",
         remote="docs/specs/evidence-bundle.v1.md",
     ),
+    # What every SDK's operator DPoP signer implements (seam-sdk#290). A drifted copy means five signers
+    # built against a rule the runtime no longer enforces, discovered only as opaque 401s.
+    Vendored(
+        local="docs/specs/mgmt-dpop.md",
+        repo="zer07labs/seam-runtime",
+        remote="docs/specs/mgmt-dpop.md",
+    ),
 )
 
 
