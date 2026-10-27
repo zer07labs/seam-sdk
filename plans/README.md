@@ -10,8 +10,7 @@ against a status table alone.
 
 | Plan | Status |
 |---|---|
-| `build-agent-ingress.md` | **PENDING** — narrowed 2026-08-24. The §A core scenes (Suspended→raise→resume, denied admission) and §C `StepUsage` wiring shipped in `seam-adapters` PR #42; what remains is the **§B MCP server** (seam-sdk [#40](https://github.com/zer07labs/seam-sdk/issues/40), deliberately unbuilt — no named customer) and the **§D public-access DoD**. See the refresh header in the plan. |
-| `consolidation-2026-08-14.md` | **RECORD + BACKLOG** — the 2026-08-14 full-repo review (plan triage, 6-track code review of seam-sdk + the runtime contract boundary), the fixes applied, and the residual backlog. Backlog swept 2026-08-24: four of five entries retired in place with citations; the survivors are §B/§D of `build-agent-ingress.md`. |
+| _(none)_ | No active plans as of 2026-10-27. The open work is tracked as issues: #290 (DPoP signer) and #273 (blocked on seam-runtime#1361). |
 
 ## Cross-repo asks
 
@@ -21,12 +20,14 @@ against a status table alone.
 ([#26](https://github.com/zer07labs/seam/issues/26)). They live here
 because writing into a sibling repo needs a gate and reading one never does: the plan stays where it
 was written, and the target repo fetches it. Each is paired with a tracking issue there. See
-[`cross-repo/README.md`](cross-repo/README.md) for the index and what blocks what.
+[`cross-repo/README.md`](cross-repo/README.md) for the index and what blocks what. As of 2026-10-27 every one of these asks is closed and verified delivered.
 
 ## Archived (delivered, verified)
 
 | Plan | Delivered |
 |---|---|
+| `archive/build-agent-ingress.md` | Closed 2026-10-27 by owner decision. §A and §C shipped in `seam-adapters` PR #42; §B was superseded by `seam-mcp` (seam-sdk#40 → seam-mcp#27, closed); §D's "stranger with no private access" DoD was amended, since partner-gated distribution is intended (`DECISIONS.md`, 2026-10-27). |
+| `archive/consolidation-2026-08-14.md` | The 2026-08-14 full-repo review record. Its last backlog survivors (ingress §B and §D) closed on 2026-10-27, so it was archived with that plan. |
 | `archive/post-onboarding-sdk-asks.md` | Issues [#274](https://github.com/zer07labs/seam-sdk/issues/274) and [#275](https://github.com/zer07labs/seam-sdk/issues/275), merged as PR #278 (`b12053f`), 2026-10-20. Ticket refresh beyond `authorize` (credentialed reads, `report_outcome`, the seven `submit_*` verbs), the AID recorded in the bootstrap file and verified on load, and a seed-free identity-facts loader in all five languages. |
 | `archive/protocol-pass-2026-10.md` | Issue [#265](https://github.com/zer07labs/seam-sdk/issues/265), merged as PR #272 (`9690e25`), 2026-10-19, after #270 was reverted for landing ahead of the runtime's B11 order (#271). Derived `message_id`, record digest v4, commitment digest v3 plus the self-attestation TCT, `dec:` decision ids, `macp_code`, `IssueChallengeRequest`. |
 | `archive/request-credential.md` | Issue [#264](https://github.com/zer07labs/seam-sdk/issues/264) closes it, 2026-10-18. The `seam-request-call-v1` per-request credential (#508): steps 1–3 (vector, `request_sig_payload`/`request_sig`, opt-in `credential=` wiring into all 15 target verbs) shipped via PR #154, Python and TypeScript only — Go/Java/Kotlin never carried the primitive. Step 4 adds live tests per language that boot `seam-grpc` in the credential-only posture (`SEAM_ENFORCE_SUBJECT=1` + `SEAM_GRPC_SUBJECT_HEADERS=deny`): credentialed reads succeed, the same reads without a credential are refused typed, and a header subject or a re-pointed signature is refused — mutation-checked against a header-trusting plane and a wrong-resource signer. Its old "out of scope without a live runtime" note was stale: the `integration` job already spawned one. |

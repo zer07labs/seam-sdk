@@ -30,7 +30,7 @@ a moved line as evidence the surrounding design may have moved too.
 
 ## The asks
 
-| Plan | Target | Headline | Issue | State (2026-09-07) |
+| Plan | Target | Headline | Issue | State (2026-10-27) |
 |---|---|---|---|---|
 | [`seam-runtime-wire-framing-handshake.md`](seam-runtime-wire-framing-handshake.md) | seam-runtime | Carry `wire_framing_version` in the release dispatch so the SDK can refuse a release it has not adapted to | [#418](https://github.com/zer07labs/seam-runtime/issues/418) | ✅ **done** — landed and CLOSED COMPLETED 2026-08-26; the SDK flipped `runtime_emits_version` to true on 2026-09-03. The latch sat stale for that week, so the gate now also refuses a dispatch that carries the field while the latch reads false. |
 | [`seam-runtime-verify-crate-rename.md`](seam-runtime-verify-crate-rename.md) | seam-runtime | Rename `crates/seam-verify` so two crates in one org stop sharing a package name | [#419](https://github.com/zer07labs/seam-runtime/issues/419) | ✅ **done** — closed COMPLETED 2026-08-26 by seam-runtime#442 (`d1fcf95`). `crates/seam-verify/Cargo.toml` declares `name = "seam-verify-internal"`; `publish = false` stays and `[[bin]] name = "seam-verify"` is unchanged, so nothing that *runs* the binary notices. **The directory is still `crates/seam-verify`** — the package name moved, not the path, which is exactly what an `ls crates/` check misreads as "never landed". It had already been downgraded from blocker when seam-sdk moved to Cloudsmith. |
@@ -38,8 +38,8 @@ a moved line as evidence the surrounding design may have moved too.
 | [`seam-runtime-evidence-bundle-export.md`](seam-runtime-evidence-bundle-export.md) | seam-runtime | A bearer-scoped evidence bundle — an export, not a cross-tenant read grant | [#421](https://github.com/zer07labs/seam-runtime/issues/421) | ✅ **closed COMPLETED 2026-08-29** — same caveat as #420: state verified, code not read from here. |
 | [`seam-runtime-anchor-feed.md`](seam-runtime-anchor-feed.md) | seam-runtime | Publish a read-only anchor feed; without one no verifier can detect truncation | [#422](https://github.com/zer07labs/seam-runtime/issues/422) | ✅ **done, and consumed.** Feed landed as seam-runtime#453 (`bec8e2c`), closed COMPLETED 2026-08-26, deployed `sha-bec8e2c` — `GET /v1/anchors` serves the anchors newest-first with **no credential of any kind**. The seam-sdk side landed in [seam-sdk#140](https://github.com/zer07labs/seam-sdk/issues/140): `chain --issuer <AID> --expect-anchor <FILE>` takes a later anchor the caller fetched from that feed (never present in the stream itself), and refuses a window that does not reach it as **TRUNCATED**, or one that reaches it but disagrees as an **ANCHOR DIVERGENCE**. Conditional, not automatic — a caller who supplies no anchor is unchanged from before; see `COMPATIBILITY.md` §5 and `python/tests/test_retracted_claims.py`. |
 | [`seam-runtime-commitment-digest-spec.md`](seam-runtime-commitment-digest-spec.md) | seam-runtime | Write the spec for `seam-commitment-digest:v1` | [#423](https://github.com/zer07labs/seam-runtime/issues/423) | ✅ **done** — closed COMPLETED 2026-08-26; the spec landed as `seam-commitment-digest.v1.md` (2026-08-25) and is now `seam-runtime/docs/specs/seam-commitment-digest.v2.md` (runtime 0.44.0). v1 is deleted from all five shims, which implement v2, and `verify/` implements v2 inside `bundle` (seam-sdk#225). |
-| [`seam-runtime-acdp-p1a-spec-and-lockstep.md`](seam-runtime-acdp-p1a-spec-and-lockstep.md) | seam-runtime | File the ACDP downstream obligation their own plan says must not be forgotten, and sequence the `sdk-digest-parity` un-pin | [#525](https://github.com/zer07labs/seam-runtime/issues/525) | 🔴 **live** — coordination only; the contract half is already delivered and adopted (seam-sdk#80) |
-| [`seam-hub-sdk-install-caveat.md`](seam-hub-sdk-install-caveat.md) | seam | The hub quickstart says `pip install seam-sdk` with no co-installability caveat | [#26](https://github.com/zer07labs/seam/issues/26) | 🔴 **live** — proposed diff attached in full |
+| [`seam-runtime-acdp-p1a-spec-and-lockstep.md`](seam-runtime-acdp-p1a-spec-and-lockstep.md) | seam-runtime | File the ACDP downstream obligation their own plan says must not be forgotten, and sequence the `sdk-digest-parity` un-pin | [#525](https://github.com/zer07labs/seam-runtime/issues/525) | ✅ **closed COMPLETED 2026-09-10** — coordination only; the contract half was already delivered and adopted (seam-sdk#80) |
+| [`seam-hub-sdk-install-caveat.md`](seam-hub-sdk-install-caveat.md) | seam | The hub quickstart says `pip install seam-sdk` with no co-installability caveat | [#26](https://github.com/zer07labs/seam/issues/26) | ✅ **delivered** — closed COMPLETED; the caveat is at `seam/docs/sdk/01-base-concepts-and-quickstart.md:116-121`, linking `COMPATIBILITY.md` (verified 2026-10-27) |
 
 ## What blocks what
 
@@ -60,6 +60,11 @@ a moved line as evidence the surrounding design may have moved too.
 #423 (commitment-digest spec) ─►  any second, independent implementation of that framing
 ```
 
+**All asks closed (2026-10-27 sweep).** Every tracked issue above — seam-runtime #418–#423 and #525,
+seam #18 and #26, seam-adapters #57 — is closed COMPLETED, and each row's state was re-checked against
+the artefact the ask named, not the closure state. Nothing here is outstanding; the plans stay as the
+record of what was asked and why.
+
 `#419` blocks nothing since `seam-sdk` moved to Cloudsmith. `#420`, `#421` and `#423` are closed and
 block nothing further here.
 
@@ -77,8 +82,8 @@ place to find every outstanding cross-repo need.
 
 | Ask | Target | Issue | State |
 |---|---|---|---|
-| Point `CLAUDE.md`'s services-table row at `seam-sdk`'s `COMPATIBILITY.md` — a one-line edit, filed rather than made directly per that file's own maintenance rules | `seam` | [#18](https://github.com/zer07labs/seam/issues/18) | 🔴 live |
-| Heads-up that `seam-sdk` now probes framework co-installability weekly and will detect when CrewAI's pin is fixed — plus the finding that their `resolution-probe` cannot see it resolve | `seam-adapters` | [#57](https://github.com/zer07labs/seam-adapters/issues/57) | 🔴 live — informational, no action asked |
+| Point `CLAUDE.md`'s services-table row at `seam-sdk`'s `COMPATIBILITY.md` — a one-line edit, filed rather than made directly per that file's own maintenance rules | `seam` | [#18](https://github.com/zer07labs/seam/issues/18) | ✅ **delivered** — closed COMPLETED; `seam/CLAUDE.md`'s services table now points the `seam-sdk` row at `COMPATIBILITY.md` (verified 2026-10-27) |
+| Heads-up that `seam-sdk` now probes framework co-installability weekly and will detect when CrewAI's pin is fixed — plus the finding that their `resolution-probe` cannot see it resolve | `seam-adapters` | [#57](https://github.com/zer07labs/seam-adapters/issues/57) | ✅ **closed COMPLETED** — informational, no action was asked |
 
 ### Not filed: the upstream CrewAI pin
 
