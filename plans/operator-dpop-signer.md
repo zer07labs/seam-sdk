@@ -13,7 +13,7 @@
 
 ## Status
 
-IN PROGRESS. Planned 2026-10-27; Phases 1-8 DONE (see the per-phase Status lines).
+IN PROGRESS. Planned 2026-10-27; Phases 1-9 DONE (Phase 9's live run awaits the owner) (see the per-phase Status lines).
 
 ## Context
 
@@ -558,7 +558,27 @@ chars). Both are injectable for tests only.
 
 ### Phase 9: aws-stg end-to-end smoke (the issue's second acceptance criterion)
 
-- **Status:** TODO
+- **Status:** DONE (2026-10-27). PASS after 2 rounds. Built and dry-run by the agent. The live run is
+  `AWAITING-HUMAN` (see PROGRESS.md). Round 1 closed three leak paths: an inherited gRPC trace,
+  `bash -x`, and argv echo. It also corrected the AWS-access wording.
+- **Divergences (recorded at implementation):**
+  - **Console-reveal path only.** The M2M mint path is dropped: on aws-stg the only non-fleet M2M client is
+    seam-relay's, and using it would mean borrowing another service's secret (this section's own
+    *Mint identity* note). Q1's default needed no mint code, so Q2 (the CP's mint `htu` rule) is not
+    exercised by this script.
+  - **No typed confirmation:** every call is read-only (`ListTenants`, plus two calls that must be refused),
+    so `--apply` changes nothing in aws-stg.
+  - **The session tried the agent path first:**
+    - no kube context. The one AWS profile for the account, `seam-stg-oaar`
+      (OrganizationAccountAccessRole), has no EKS access entry on `seam-aws-stg`; the entries are
+      `seam-deploy` and `seam-iac` (GitHub OIDC only) plus the node and service roles. Adding one would be
+      an IaC change in seam-runtime, a cross-repo write;
+    - 9100 admits only the control-plane and seam-relay service accounts;
+    - no runtime workflow offers an in-cluster exec.
+    So the standing "no human stops" rule does not apply. The owner holds both inputs (the console reveal
+    and an admitted mesh identity).
+  - `SEAM_MGMT_TLS_NAME` maps to `grpc.ssl_target_name_override`. Through a port-forward, the dialled host is
+    not the certificate's name.
 - **Risk:** complex
 - **human-run:** yes, expected. The agent builds and dry-runs; an owner runs it.
 - **Delivers:**

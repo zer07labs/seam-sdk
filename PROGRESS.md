@@ -4962,3 +4962,39 @@ at `584823a`; runtime `origin/main` `a9ddb982`.
 - **Suites:** Kotlin on JDK 17, MgmtDpopTest 25 passing and the whole suite green.
 - **Files:** `kotlin/src/main/kotlin/com/zer07labs/seam/MgmtDpop.kt`, `kotlin/src/test/kotlin/com/zer07labs/seam/MgmtDpopTest.kt`.
 - **Next:** Phase 9 (handoff built, under gate).
+
+## Phase 9 — DONE (2026-10-27), live run AWAITING-HUMAN
+- **Verdict:** PASS after 2 rounds. Verifier: Opus; complex, because it crosses a trust boundary and handles secret material.
+- **Round 1 (GAPS):**
+  - `GRPC_TRACE`/`GRPC_VERBOSITY=debug` leaked both tokens to stderr and the log;
+  - `bash -x` traced the input values;
+  - the wrapper echoed argv;
+  - "no AWS credentials" overstated the case (the `seam-stg-oaar` profile exists, but has no EKS access entry);
+  - a `RecursionError` could escape the redactor.
+- **Fix:**
+  - the gRPC trace is cleared in both the wrapper and the script, the script before grpc is imported;
+  - `set +x`, and `${!name:+set}`;
+  - argv is not shown;
+  - the plan wording is corrected;
+  - the redactor catches `RecursionError`;
+  - three leak tests added, and mutation-checked.
+- **Dry-run transcript (AC1)**, with placeholder inputs (golden-seed JWK, a bound token, a throwaway CA, target 127.0.0.1:1). Exit 0, no network call:
+  ```
+  == 2026-10-27-mgmt-dpop-aws-stg — bound operator token + DPoP → SeamAdmin/ListTenants on aws-stg
+     rollback: none needed (read-only)
+     mode: DRY-RUN (pass --apply to execute)
+     input SEAM_OPERATOR_TOKEN: set · SEAM_OPERATOR_DPOP_JWK: set · SEAM_MGMT_TARGET: set · SEAM_MGMT_CA_FILE: set
+     input SEAM_MGMT_TLS_NAME / SEAM_UNBOUND_OPERATOR_TOKEN / SEAM_RUNTIME_IMAGE_TAG: unset
+  [verify] local preconditions (inputs, CA, seam_sdk, token/JWK pairing) — no network
+  [ok] local preconditions: key jkt nEArpjG3kYMcxbdzInyGlBEYQUw7RfAfe3Tw1fZvAA0, target 127.0.0.1:1
+  [dry-run] no network call made; pass --apply to run the live checks
+  [1] live checks against $SEAM_MGMT_TARGET
+      (dry-run: skipped)
+  ```
+- **AWAITING-HUMAN: scripts/handoff/2026-10-27-mgmt-dpop-aws-stg.sh.** The owner holds both missing inputs: the console's one-time reveal (a human Auth0 login) and an identity the mesh admits to seam-server:9100. No session holds either.
+  - **What, and the blast radius:** mints nothing and writes nothing. It makes three read-only `SeamAdmin/ListTenants` calls on aws-stg: one with the bound token plus DPoP (must succeed), and the same token, then an optional unbound one, as Bearer (both must be refused).
+  - **The command:** export `SEAM_OPERATOR_TOKEN`, `SEAM_OPERATOR_DPOP_JWK` (the console reveal), `SEAM_MGMT_TARGET` (a port-forward to svc/seam-server:9100), `SEAM_MGMT_CA_FILE` and `SEAM_MGMT_TLS_NAME=seam-server`, then run `scripts/handoff/2026-10-27-mgmt-dpop-aws-stg.sh --apply`.
+  - **How to confirm:** the run exits 0 with `[ok] bound token + DPoP proof: SeamAdmin/ListTenants` and `[ok] bound token as Bearer is refused`; the log is under `~/.cache/seam/handoff/`.
+- **Suites:** `test_smoke_script_redaction.py` 12 passing; ruff clean.
+- **Files:** `scripts/smoke/mgmt_dpop_aws_stg.py`, `scripts/handoff/2026-10-27-mgmt-dpop-aws-stg.sh`, `python/tests/test_smoke_script_redaction.py`.
+- **Next:** the Phase 10 gate.
