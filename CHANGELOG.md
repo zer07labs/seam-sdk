@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.61.0 — 2026-10-28
+
 ### Added
 - **DPoP-bound operator tokens on the management plane, in all five SDKs (seam-sdk#290; runtime 0.54.0+,
   seam-runtime#1428).**
