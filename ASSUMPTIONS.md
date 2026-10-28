@@ -1526,7 +1526,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Chose:** `seal_attestation_of` raises `UnknownCollectiveVerdictError` (with `view.decision_id`) on an UNSPECIFIED or unknown verdict under RECORDED + COMMIT — the same as `collective_outcome_of` on the immediate response. Unknown availability and seal reason never raise (they read `"UNRECOGNIZED"`, per `SealAttestation`'s WITHHELD growth policy). `get_decision` itself never raises: it returns the raw view.
 - **Alternatives:** degrade to `collective_outcome=None` so an explain tool still shows availability and reason. Rejected as the default because it silently drops a fail-closed signal the proto calls normative.
 - **Blast radius if wrong:** an explain tool hitting a newer verdict on a recorded attestation must catch the error to show the rest. Loosening later (raise → None) is additive for callers; tightening would not be.
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (2026-10-28) — /reconcile, decided by Opus; see DECISIONS.md
 
 ## The SDK's record reads send no `x-seam-clearance`
 - **Plan:** plans/record-explain.md (Phase 1, open question Q2)
@@ -1534,4 +1534,4 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Chose:** no clearance option on `get_decision` / `getDecision`. Every read is at the default PUBLIC clearance, so a record whose handling rule needs more reads `"CLEARANCE_DENIED"` — documented in `_seal.py` and the TS twin, never an error.
 - **Alternatives:** add a `clearance=` keyword now (new public surface with no consumer asking for it).
 - **Blast radius if wrong:** a consumer that needs restricted attestations gets `CLEARANCE_DENIED` until an option is added; adding one later is additive. The deferral is recorded in `DEFERRED.md`.
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (2026-10-28) — /reconcile, decided by Opus; see DECISIONS.md

@@ -2981,3 +2981,15 @@ A reversible, SDK-internal retry bound; not a one-way door, so Opus decided it.
 - **Decision:** confirm as-is. The docstrings were widened in the same change.
 - **Decided by:** owner (interactive, one-way door: a public exception contract in five SDKs).
 - **Status:** CONFIRMED.
+
+## 2026-10-28 — /reconcile for plans/record-explain.md (seam-sdk#273)
+
+### Q1: an unknown verdict inside a recorded seal attestation raises
+- **Assumption:** `seal_attestation_of` / `sealAttestationOf` raise `UnknownCollectiveVerdictError` (with the view's `decision_id`) on an UNSPECIFIED or unknown verdict under RECORDED + COMMIT. Unknown availability and seal reason never raise.
+- **Analysis (fresh Opus):** the proto makes the attestation's growth policy "normative, as CollectiveVerdict's" (seam.proto:1111-1113), and that policy routes an unrecognized verdict to FailPolicy, never to allow (:527-529). Degrading to `None` would drop that signal. The sealed path uses the same decoder as the immediate response (`python/seam_sdk/_seal.py:157-158` → `python/seam_sdk/_collective.py:174`). The raise is narrow. seam-mcp P4b needs one `except` to still show the rest. Loosening to `None` later is additive.
+- **Decided by:** Opus (reversible tier). **Verdict:** CONFIRM. **Status:** CONFIRMED.
+
+### Q2: record reads send no `x-seam-clearance`
+- **Assumption:** no clearance option on `get_decision` / `getDecision`; a restricted record reads `CLEARANCE_DENIED`.
+- **Analysis (fresh Opus):** P4b reads only the partner's own records under its own identity, and no consumer asks for restricted reads. The proto returns `CLEARANCE_DENIED` on the view, never an error (seam.proto:1101-1104). A keyword-only Python argument or a TS `opts` field can be added later without breaking callers. The deferral is in `DEFERRED.md`.
+- **Decided by:** Opus (reversible tier). **Verdict:** CONFIRM. **Status:** CONFIRMED.
