@@ -78,15 +78,15 @@ function json(obj: object): Uint8Array {
   return enc.encode(JSON.stringify(obj));
 }
 
+/** Signs with a key's private seed. Module-private, so the seed's only use is never part of the published API. */
+let signWith: (key: OperatorDpopKey, message: Uint8Array) => Uint8Array;
+
 /** The Ed25519 key an operator token is bound to.
  *
  * Load it from the JWK the management console reveals once, next to the token —
  * `{"kty":"OKP","crv":"Ed25519","x":...,"d":...}` — with {@link OperatorDpopKey.fromJwk}. Keep that JWK as
  * secret as the token. The private half lives in a private field: `toString`, `util.inspect` and
  * `JSON.stringify` show only the thumbprint. */
-/** Signs with a key's private seed. Module-private, so the seed's only use is never part of the published API. */
-let signWith: (key: OperatorDpopKey, message: Uint8Array) => Uint8Array;
-
 export class OperatorDpopKey {
   readonly #seed: Uint8Array;
   /** The public key, unpadded base64url — the JWK's `x`. */

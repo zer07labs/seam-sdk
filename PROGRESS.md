@@ -5049,5 +5049,6 @@ at `584823a`; runtime `origin/main` `a9ddb982`.
   - TS `OperatorDpopKey.sign` shipped in the published `.d.ts`. It is now a module-private function: hidden
     before release, reversible, and the same as Java, Kotlin and Go.
   - The Go `Key` doc now notes the by-value-in-an-unexported-field caveat.
+- Round 2 (Fable): PASS. Its one side effect was that the TS class JSDoc had become attached to `signWith`; the declaration now sits above the JSDoc.
 - Each fix has a test that fails if it is undone (both the TS message test and the Java Gson test were
   mutation-checked).
