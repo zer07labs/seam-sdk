@@ -5138,3 +5138,8 @@ the bot's `chore(release): v0.61.0` commit `32ab80d` landed while the plan was w
 - **Files:** `README.md` (BSR field list; *Explaining a sealed record*; resend sentence), `COMPATIBILITY.md` (0.61.1 pairing paragraph; record-explain row; README cite 160→163), `CHANGELOG.md` (Unreleased Added + Changed; the 0.61.0 "Tagged, never published" line), `plans/README.md` (active row), `python/seam_sdk/client.py` and `ts/src/client.ts` (resend docstrings). `scripts/shift_changelog_citations.py . 17 24` shifted 11 citations.
 - **Suites:** Python 2394 passed; TS 508 / 0 fail; Go, Rust `verify/`, Java and Kotlin (JDK 17) green.
 - **Next:** finalization, /reconcile (Q1, Q2), /ship.
+
+## Finalization — DONE (2026-10-28)
+- **Verdict:** whole-feature Opus verify returned GAPS (two one-line doc items): the plan's top-level Status still read TODO; Q2's planned `DEFERRED.md` line was missing. Both fixed here. Everything else checked clean: Python/TS parity over the shared fixture, public surfaces, no RECORDED-on-0.61.x claim, manifest = wired surface, tracked files.
+- **Clean-state checks:** a uv-built wheel in a fresh venv imports `seal_attestation_of` and decodes NOT_RECORDED; the built TS dist exports `sealAttestationOf`/`policyEnforcementOf` and not the private collective decoder; contract gate exits 0.
+- **Next:** /reconcile (Q1, Q2), then /ship.

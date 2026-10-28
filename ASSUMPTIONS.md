@@ -1533,5 +1533,5 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Assumed:** no consumer needs to read a restricted record's seal attestation yet; the runtime decides what a clearance claim is worth.
 - **Chose:** no clearance option on `get_decision` / `getDecision`. Every read is at the default PUBLIC clearance, so a record whose handling rule needs more reads `"CLEARANCE_DENIED"` — documented in `_seal.py` and the TS twin, never an error.
 - **Alternatives:** add a `clearance=` keyword now (new public surface with no consumer asking for it).
-- **Blast radius if wrong:** a consumer that needs restricted attestations gets `CLEARANCE_DENIED` until an option is added; adding one later is additive.
+- **Blast radius if wrong:** a consumer that needs restricted attestations gets `CLEARANCE_DENIED` until an option is added; adding one later is additive. The deferral is recorded in `DEFERRED.md`.
 - **Status:** UNCONFIRMED

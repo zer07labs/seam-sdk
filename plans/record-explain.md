@@ -15,7 +15,7 @@
 
 ## Status
 
-TODO. Plan written 2026-10-28; no phase started.
+Phases 1-4 DONE (2026-10-28), finalized; Phase 5 (release 0.61.1, consumer messages) runs post-merge.
 
 **Release state at plan time — read before Phase 5.** Runtime 0.61.0's `dispatch-sdk` fired while this
 plan was being written. `release-on-runtime.yml` saw `main` (`b77609a`) green, because that commit's CI
