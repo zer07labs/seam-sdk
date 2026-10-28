@@ -290,7 +290,7 @@ All phases land in `seam-sdk`. There are no cross-repo writes. Shared API (Opus 
 
 ### Phase 2: TypeScript mirror
 
-- **Status:** TODO
+- **Status:** DONE (2026-10-28). As planned. Divergences: "40 of the 167" reworded to a count-free phrase rather than re-measured; client.ts growth shifted seven pinned line citations in COMPATIBILITY.md/PROGRESS.md, renumbered to the same lines.
 - **Risk:** complex. It adds a public TS API and widens a root-level union.
 - **Delivers:** `sealAttestationOf`, the `SealAttestation` interface, a three-carrier `policyEnforcementOf`, and
   the corrected TS prose, behaviour-identical to Phase 1.

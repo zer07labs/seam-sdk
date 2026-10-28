@@ -20,6 +20,8 @@ import {
   OpenSessionRequestSchema,
   ProposalRequestSchema,
   ReportOutcomeRequestSchema,
+  SealAttestationAvailability,
+  SealReason,
   SeamAdmission,
   SeamAuthorization,
   SeamContext,
@@ -31,6 +33,7 @@ import {
   type Anchor,
   type Commitment,
   type ContextBinding,
+  type DecisionRecordView,
   type DecisionResponse,
   type SessionStep,
 } from "../gen/seam/api/v1/seam_pb.js";
@@ -279,8 +282,8 @@ export class UnknownVerdictError extends Error {
  * `CollectiveVerdict` this SDK version does not recognize, including the proto zero value
  * `COLLECTIVE_VERDICT_UNSPECIFIED`, which a correct server never emits.
  *
- * `decisionId` may be `""`: it is required on `DecisionResponse` but `optional` on `SessionStep`,
- * and an absent one renders as `<none>` rather than blocking the throw.
+ * `decisionId` may be `""`: it is required on `DecisionResponse` and `DecisionRecordView` but
+ * `optional` on `SessionStep`, and an absent one renders as `<none>` rather than blocking the throw.
  *
  * Growth policy (normative, copied verbatim into the proto from `AuthorizeVerdict`'s): any value a
  * client does not recognize, INCLUDING `COLLECTIVE_VERDICT_UNSPECIFIED`, MUST route to the adapter's
@@ -356,8 +359,9 @@ export interface CollectiveOutcome {
 /** Decode `resp.collectiveOutcome`, fail-closed. Accepts a `DecisionResponse` **or** a `SessionStep`.
  *
  * Returns `undefined` **iff the field is absent** — the runtime did not carry one on this response
- * (an older runtime, or a read verb that per the proto never does). That is not "the panel decided
- * nothing"; it is "this response does not answer the question", and the caller must decide what
+ * (an older runtime, or a read verb that per the proto never does: `GetDecision` carries its sealed
+ * collective outcome inside `sealAttestation` instead, read with {@link sealAttestationOf}). That is
+ * not "the panel decided nothing"; it is "this response does not answer the question", and the caller must decide what
  * that means for its own fail policy rather than being handed a value.
  *
  * **On a `SessionStep`, absent is the common case and does not mean "not supported".** The field is
@@ -403,13 +407,23 @@ export function collectiveOutcomeOf(
 ): CollectiveOutcome | undefined {
   const outcome = resp.collectiveOutcome;
   if (outcome === undefined) return undefined;
-
-  const verdict = COLLECTIVE_VERDICT_NAMES[outcome.verdict];
   // `decisionId` is required on DecisionResponse but `optional` on SessionStep, so the union
   // narrows it to `string | undefined`. Coalesce rather than widen the error's field: the message
   // already renders an empty id as `<none>` (see the constructor above).
-  if (!verdict)
-    throw new UnknownCollectiveVerdictError(outcome.verdict, resp.decisionId ?? "");
+  return decodeCollective(outcome, resp.decisionId ?? "");
+}
+
+/** Decode one `CollectiveOutcome` message, fail-closed — the single place the verdict is named.
+ * Shared by {@link collectiveOutcomeOf} (the top-level field on the immediate carriers) and
+ * {@link sealAttestationOf} (the one sealed inside `DecisionRecordView.sealAttestation`), so the
+ * growth policy is enforced by one implementation rather than two. Presence is the caller's job.
+ * Module-private: not exported. */
+function decodeCollective(
+  outcome: NonNullable<DecisionResponse["collectiveOutcome"]>,
+  decisionId: string,
+): CollectiveOutcome {
+  const verdict = COLLECTIVE_VERDICT_NAMES[outcome.verdict];
+  if (!verdict) throw new UnknownCollectiveVerdictError(outcome.verdict, decisionId);
 
   return {
     verdict,
@@ -420,6 +434,144 @@ export function collectiveOutcomeOf(
     statedValueContradictedTally: outcome.statedValueContradictedTally,
     effectiveThreshold: outcome.effectiveThreshold,
   };
+}
+
+// ── Seal attestation (runtime 0.61.0, seam-runtime#1361) ─────────────────────────────────────────
+
+/** The availability states this SDK version names. Anything outside the map — UNSPECIFIED included
+ * — reads `"UNRECOGNIZED"`, which the proto's growth policy says to treat as WITHHELD. */
+const SEAL_AVAILABILITY_NAMES: Record<
+  number,
+  Exclude<SealAttestation["availability"], "UNRECOGNIZED">
+> = {
+  [SealAttestationAvailability.RECORDED]: "RECORDED",
+  [SealAttestationAvailability.NOT_RECORDED]: "NOT_RECORDED",
+  [SealAttestationAvailability.KEY_UNAVAILABLE]: "KEY_UNAVAILABLE",
+  [SealAttestationAvailability.ARCHIVED]: "ARCHIVED",
+  [SealAttestationAvailability.CLEARANCE_DENIED]: "CLEARANCE_DENIED",
+  [SealAttestationAvailability.UNAVAILABLE]: "UNAVAILABLE",
+};
+
+const SEAL_REASON_NAMES: Record<
+  number,
+  Exclude<NonNullable<SealAttestation["sealReason"]>, "UNRECOGNIZED">
+> = {
+  [SealReason.COMMIT]: "COMMIT",
+  [SealReason.CANCEL]: "CANCEL",
+  [SealReason.EXPIRE_TTL]: "EXPIRE_TTL",
+  [SealReason.EXPIRE_SUSPEND_CAP]: "EXPIRE_SUSPEND_CAP",
+};
+
+/** The runtime's sealed statement of why a decision record was sealed — read from a `GetDecision`
+ * record with {@link sealAttestationOf} (runtime 0.61.0+).
+ *
+ * Fields are `readonly`, for the reason the Python twin is a frozen dataclass (erased at compile
+ * time, so it stops the accident, not the determined). Deliberately **three fields, no convenience
+ * booleans and no raw numbers**: a caller writes `att.availability === "RECORDED"`, and the raw
+ * values stay reachable on `view.sealAttestation` for diagnostics. Same rule
+ * {@link PolicyEnforcement} and {@link CollectiveOutcome} follow.
+ *
+ * **Trust standing.** Chain-bound (an operator alteration breaks the runtime's own chain re-verify)
+ * but **not client-verifiable**: it is not a TCT input, so `verifyDecision` does not cover it.
+ *
+ * Declared on both sides: this name and the generated `pb.SealAttestation` are different types, and
+ * at the package root this one is what you get; see the dual-declaration note in `index.ts`. */
+export interface SealAttestation {
+  /** Closed set. Only `"RECORDED"` means the payload below was read. `"NOT_RECORDED"` — sealed by a
+   * runtime that wrote none — is normal, and is what **every 0.61.x record** reads; for such a
+   * record the seal-time immediate response is the only source of its collective outcome.
+   * `"KEY_UNAVAILABLE"` is crypto-shred (the structural columns and `policyEnforcement` still
+   * answer). `"ARCHIVED"` means cold storage; cold-replay the archive bundle. `"CLEARANCE_DENIED"`
+   * means this read's clearance — PUBLIC, since this SDK sends no `x-seam-clearance` — is below the
+   * record's decrypt floor; never an error on the call. `"UNAVAILABLE"` is the runtime saying it
+   * could not read it (a transient fault, where a retry may succeed, or an attestation it cannot
+   * decode). `"UNRECOGNIZED"` is THIS SDK not knowing the value, UNSPECIFIED included: read it as
+   * withheld, and upgrade. */
+  readonly availability:
+    | "RECORDED"
+    | "NOT_RECORDED"
+    | "KEY_UNAVAILABLE"
+    | "ARCHIVED"
+    | "CLEARANCE_DENIED"
+    | "UNAVAILABLE"
+    | "UNRECOGNIZED";
+  /** `undefined` unless `availability` is `"RECORDED"`. Always a present property. */
+  readonly sealReason:
+    | "COMMIT"
+    | "CANCEL"
+    | "EXPIRE_TTL"
+    | "EXPIRE_SUSPEND_CAP"
+    | "UNRECOGNIZED"
+    | undefined;
+  /** The runtime's own collective outcome for the commit that sealed this record — so it describes
+   * that round, never a later re-drive. Set **only** when `availability` is `"RECORDED"`,
+   * `sealReason` is `"COMMIT"`, and the wire carries one; `undefined` otherwise. An absent one under
+   * RECORDED + COMMIT is `undefined`, not an error: absence makes no claim, which is the fail-closed
+   * direction. Always a present property. */
+  readonly collectiveOutcome: CollectiveOutcome | undefined;
+}
+
+/** Decode `view.sealAttestation` from a `GetDecision` record — why the record was sealed.
+ *
+ * Returns `undefined` **iff the field is absent** — a runtime older than 0.61.0. Otherwise an object,
+ * whatever the availability; `"NOT_RECORDED"` and the other non-recorded states are normal results,
+ * not errors.
+ *
+ * The generated surface makes three wrong readings easy, and this closes each — deliberately the
+ * same content as the Python twin (`seam_sdk._seal`), so neither language is the authoritative copy:
+ *
+ * 1. **Reading the payload when it means nothing.** The payload is meaningful ONLY under
+ *    `RECORDED`. Outside it, `sealReason` and `collectiveOutcome` are `undefined` whatever the wire
+ *    carries — they are not read at all.
+ * 2. **Reading an unknown availability as permission to read the payload.** The proto's growth
+ *    policy is normative: any `availability` a client does not recognize — INCLUDING UNSPECIFIED —
+ *    MUST be read as WITHHELD, never as RECORDED, and any unrecognized `seal_reason` as unknown.
+ *    Both read `"UNRECOGNIZED"` here, and neither throws: that is a reading rule, not a
+ *    fail-to-FailPolicy rule. `"UNRECOGNIZED"` is kept apart from the runtime's own
+ *    `"UNAVAILABLE"` because the remedies differ — upgrade this SDK, versus retry. A value from a
+ *    newer runtime is a plain number at runtime, so the lookup misses and maps to `"UNRECOGNIZED"`.
+ * 3. **Reading absence as zero.** An absent attestation is `undefined` — "this record does not
+ *    answer the question", never "nothing was attested".
+ *
+ * **Throws {@link UnknownCollectiveVerdictError}** (carrying `view.decisionId`) **only** when a
+ * RECORDED commit attestation carries a collective outcome whose verdict this SDK does not know,
+ * UNSPECIFIED included — `CollectiveVerdict`'s own growth policy is fail-closed and the
+ * `SealAttestation` doc defers to it. `getDecision` itself never throws on this: it returns the raw
+ * view, and decoding is opt-in.
+ *
+ * `DecisionRecordView.policyVersion` and `.policyRulesDigest` stay raw: plain proto3 scalars with no
+ * presence and no enum. An empty `policyVersion` means staged under no policy (or a solo or legacy
+ * record); `policyRulesDigest` has length 0 when no policy bound, 32 bytes otherwise. They are
+ * display values and cannot be fed back into `recordDigestV4`, which distinguishes absent from empty
+ * — a distinction these fields have already lost — and needs inputs the view does not carry.
+ *
+ * A TypeScript caller cannot pass a non-carrier — the parameter type is a compile error. **A
+ * JavaScript caller can**, and gets `undefined` (indistinguishable from an older runtime), where the
+ * Python twin's `HasField` raises — the same divergence {@link policyEnforcementOf} documents. */
+export function sealAttestationOf(
+  view: DecisionRecordView,
+): SealAttestation | undefined {
+  const att = view.sealAttestation;
+  if (att === undefined) return undefined;
+
+  const availability =
+    SEAL_AVAILABILITY_NAMES[att.availability] ?? "UNRECOGNIZED";
+  if (availability !== "RECORDED") {
+    // The payload is meaningful ONLY under RECORDED, so it is not read at all here — whatever the
+    // wire carries. Withhold rather than guess.
+    return {
+      availability,
+      sealReason: undefined,
+      collectiveOutcome: undefined,
+    };
+  }
+
+  const sealReason = SEAL_REASON_NAMES[att.sealReason] ?? "UNRECOGNIZED";
+  const collectiveOutcome =
+    sealReason === "COMMIT" && att.collectiveOutcome !== undefined
+      ? decodeCollective(att.collectiveOutcome, view.decisionId)
+      : undefined;
+  return { availability, sealReason, collectiveOutcome };
 }
 
 /** The runtime's statement about whether a policy gated this decision.
@@ -442,7 +594,8 @@ export function collectiveOutcomeOf(
 export interface PolicyEnforcement {
   /** `true` iff a real, mode-matching policy definition gated this commitment.
    *
-   * **`false` has THREE distinct meanings, and only two of them mean what it looks like.** Read it
+   * **On the immediate carriers (`DecisionResponse`, `SessionStep`), `false` has
+   * THREE distinct meanings, and only two of them mean what it looks like.** Read it
    * as **"no enforcement evidence for this call"**, never as "this ran ungoverned" — under the third
    * that reading is exactly backwards:
    *
@@ -462,6 +615,13 @@ export interface PolicyEnforcement {
    * case 2 by omitting the field entirely; `DecisionResponse` has no presence to use and reports
    * this zero value instead.
    *
+   * **On a `DecisionRecordView` meaning 3 does not occur**: that field is derived from the record's
+   * own columns and needs no live binding, so it never withholds after eviction. Meaning 2's
+   * fail-open case still applies there (a record sealed fail-open — staged id, no digest — reads
+   * `enforced: false`), as does the runtime's documented LOW limit: two genuinely concurrent opens of
+   * the same session id can bind each other's staged policy, so on that path alone the named id
+   * could be the other caller's.
+   *
    * `true` says a real policy definition gated the commitment and names its **id** — not its
    * **revision**. Nothing in the response binds the record's rules digest to whatever is registered
    * under that id now. */
@@ -473,7 +633,8 @@ export interface PolicyEnforcement {
   readonly policyId: string | undefined;
 }
 
-/** Decode `resp.policyEnforcement`. Accepts a `DecisionResponse` **or** a `SessionStep`.
+/** Decode `resp.policyEnforcement`. Accepts a `DecisionResponse`, a `SessionStep` or a
+ * `DecisionRecordView` (from `GetDecision`, runtime 0.61.0+).
  *
  * Returns `undefined` **iff the field is absent**, and an object otherwise — including when that
  * object carries `enforced: false`. Three states, and the middle one is the one that gets lost:
@@ -497,14 +658,19 @@ export interface PolicyEnforcement {
  * the one shape whose falsiness cannot answer the unanswered question: absent is `undefined`, and
  * every other state is a truthy object whose `.enforced` the caller must then actually read.
  *
- * **When the field is present at all — on both carriers, since this decoder takes both.** On a
- * `DecisionResponse` it accompanies the immediate `RunDecision` response only; per the generated
- * `PolicyEnforcement` message comment, `GetDecision`/`ReplayDecision` do **not** carry the field,
- * so a fetched or replayed decision reads `undefined` regardless of what was enforced when it was
- * sealed.
+ * **When the field is present at all — on all three carriers, since this decoder takes all three.**
+ * On a `DecisionResponse` it accompanies the immediate `RunDecision` response. `ReplayDecision` does
+ * **not** carry it, so a replayed decision reads `undefined` regardless of what was enforced when it
+ * was sealed.
  *
- * This "immediate response only" rule is about the VERB (`RunDecision` vs. `GetDecision`/
- * `ReplayDecision`), not about freshness — do not read it as "every immediate `RunDecision`
+ * **`GetDecision` carries it since runtime 0.61.0** (seam-runtime#1361), on `DecisionRecordView`
+ * field 11 — and there it is **derived and always present**: the runtime computes it from the
+ * record's own digest-bound columns (`outcome`, `policy_version`, `policy_rules_digest`) rather than
+ * from a live binding, so it answers even after crypto-shred and archive. On a record from a runtime
+ * older than 0.61.0 it is absent and this decoder returns `undefined`.
+ *
+ * On the immediate carriers, this rule is about the VERB (`RunDecision` vs. `ReplayDecision`), not
+ * about freshness — do not read it as "every immediate `RunDecision`
  * response carries `policyEnforcement`, `collectiveOutcome`, and `participantVerdicts` alike." The
  * latter two carry a SECOND, narrower condition (seam-runtime#817): they are further withheld on an
  * idempotent resubmit or a lost concurrent-seal race, even though that response is still the
@@ -556,10 +722,10 @@ export interface PolicyEnforcement {
  * on. This block and the Python module docstring are deliberately the same content in two places, so
  * neither language is the authoritative copy of it.
  *
- * One decoder, two message types, on purpose: the hazard is a property of the **field** — explicit
- * presence over a message whose absent form is falsy — not of the message carrying it. Field numbers
- * differ (7 on `DecisionResponse`, 3 on `SessionStep`) and both have explicit presence, so the one
- * `undefined` check covers both; a second implementation per carrier would be a second place for the
+ * One decoder, three message types, on purpose: the hazard is a property of the **field** —
+ * explicit presence over a message whose absent form is falsy — not of the message carrying it.
+ * Field numbers differ (7 on `DecisionResponse`, 3 on `SessionStep`, 11 on `DecisionRecordView`) and
+ * all three have explicit presence, so the one `undefined` check covers them all; a second implementation per carrier would be a second place for the
  * same inversion to reappear.
  *
  * Never throws — for every input, not only the ones the union admits. Unlike
@@ -574,7 +740,7 @@ export interface PolicyEnforcement {
  * disagree — Python surfaces the programming error, this reports "not answered" — and only the type
  * system stands between a JS caller and that. */
 export function policyEnforcementOf(
-  resp: DecisionResponse | SessionStep,
+  resp: DecisionResponse | SessionStep | DecisionRecordView,
 ): PolicyEnforcement | undefined {
   const enforcement = resp.policyEnforcement;
   if (enforcement === undefined) return undefined;
@@ -1523,6 +1689,9 @@ export class SeamClient {
     );
   }
 
+  /** Returns the raw `DecisionRecordView`. Read its policy enforcement with
+   * {@link policyEnforcementOf} and its seal attestation with {@link sealAttestationOf} (runtime
+   * 0.61.0+) rather than the raw fields. */
   async getDecision(decisionId: string, opts?: CredentialedCallOptions) {
     return this.credentialedCall(
       opts?.credential,

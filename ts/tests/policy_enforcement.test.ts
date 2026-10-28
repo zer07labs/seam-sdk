@@ -25,6 +25,7 @@ import type { DescMessage } from "@bufbuild/protobuf";
 import { FeatureSet_FieldPresence } from "@bufbuild/protobuf/wkt";
 
 import {
+  DecisionRecordViewSchema,
   DecisionResponseSchema,
   PolicyEnforcementSchema,
   SessionStepSchema,
@@ -167,6 +168,7 @@ test("the field numbers and presence the TSDoc claims are what the schemas say",
   for (const [schema, no] of [
     [DecisionResponseSchema, 7],
     [SessionStepSchema, 3],
+    [DecisionRecordViewSchema, 11],
   ] as const) {
     const f = field(schema, "policy_enforcement");
     assert.equal(f.number, no, `${schema.typeName}.policy_enforcement number`);
@@ -201,6 +203,24 @@ test("a SessionStep and a DecisionResponse decode identically", () => {
     policyEnforcementOf(resp({ enforced: true, policyId: "pol-1" })),
   );
   assert.deepEqual(policyEnforcementOf(step()), policyEnforcementOf(resp()));
+});
+
+test("a DecisionRecordView (GetDecision, runtime 0.61.0+) decodes identically to the others", () => {
+  // Field 11 on the record view, derived and always present on a 0.61.0+ runtime. Same decoder, so
+  // the result must equal the immediate carriers' for the same payload — enforced=false included.
+  for (const pe of [{ enforced: true, policyId: "pol-1" }, { enforced: false }, { enforced: true }]) {
+    const view = create(DecisionRecordViewSchema, {
+      decisionId: "dec-1",
+      policyEnforcement: create(PolicyEnforcementSchema, pe),
+    });
+    assert.deepEqual(policyEnforcementOf(view), policyEnforcementOf(resp(pe)));
+    assert.notEqual(policyEnforcementOf(view), undefined);
+  }
+});
+
+test("a DecisionRecordView without field 11 (runtime < 0.61.0) is undefined, not enforced=false", () => {
+  const view = create(DecisionRecordViewSchema, { decisionId: "dec-1" });
+  assert.equal(policyEnforcementOf(view), undefined);
 });
 
 test("state does not influence the decoder", () => {
