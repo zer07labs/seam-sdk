@@ -4069,7 +4069,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1662`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1686`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -4556,12 +4556,12 @@ green before any code changed.
   this — "rather than refusing outright" was wrong, fixed before merge). (2) the release's
   `retitle_changelog.sh` run shifted `CHANGELOG.md`'s "No yank" paragraph from line 1054 to 1056
   (a +2 insert right after `## Unreleased`), pushing `COMPATIBILITY.md:123` and
-  `DECISIONS.md:1222`'s `CHANGELOG.md:1502-1519` citations past the citation test's slack
-  tolerance; repointed both to `CHANGELOG.md:1504-1521`. Tested: `check_vendored_spec.py` OK via both
+  `DECISIONS.md:1222`'s `CHANGELOG.md:1526-1543` citations past the citation test's slack
+  tolerance; repointed both to `CHANGELOG.md:1528-1545`. Tested: `check_vendored_spec.py` OK via both
   `--from local` and `--from gh`; `test_compatibility_citations_resolve.py` 489 passed/0 failed
   standalone (was 4 failed). Verifier also flagged two pre-existing, gate-invisible citations
   elsewhere that the same +2 shift widened further — `DECISIONS.md:2035` cites
-  `CHANGELOG.md:1404` and `PROGRESS.md:3981` cites `CHANGELOG.md:1289`, both already ~130-250
+  `CHANGELOG.md:1428` and `PROGRESS.md:3981` cites `CHANGELOG.md:1313`, both already ~130-250
   lines stale before this release — out of scope for this release-unblock hotfix; filed as a
   follow-up issue rather than folded in here.
   **Rebased `feat/verify-anchor-tenant` onto this commit during `/sweep`'s ship pass.** Four
@@ -4571,7 +4571,7 @@ green before any code changed.
   `CHANGELOG.md`/`COMPATIBILITY.md`/`DECISIONS.md`: the feature branch's own new
   `## Unreleased` entry (16 lines) was kept above this hotfix's `## 0.33.3` header, which
   shifted "No yank" from this entry's `1056` to `1072` and recomputed the two citations above
-  (`CHANGELOG.md:1504-1521`) to `CHANGELOG.md:1520-1537` — verified against the exact
+  (`CHANGELOG.md:1528-1545`) to `CHANGELOG.md:1544-1561` — verified against the exact
   paragraph-boundary text at both the old and new line numbers before trusting the new range,
   not just the arithmetic. A dedicated ship-gate verifier independently re-derived this same
   shift from the diff and confirmed it exact.
@@ -5131,3 +5131,10 @@ the bot's `chore(release): v0.61.0` commit `32ab80d` landed while the plan was w
 - **Gate:** `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` → 0. Cutting one line gives 6 and names it.
 - **Suites (clean 0.61.0 seam-grpc via SEAM_GRPC_BIN):** Python 2423 passed / 10 skipped, live included; TS 533 / 0 fail / 0 skipped. The live asserts also passed on the train-B build.
 - **Next:** Phase 4, docs.
+
+## Phase 4 — DONE (2026-10-28)
+- **Verdict:** PASS on round 2 (Opus verifier). **Round 1 (GAPS):** the plan's AC4 line contradicted itself after the citation shift; two bare `(:N)` anchors were unshifted; `client.py` still said "read get_decision for the outcome"; the README `seal_attestation_of` bullet omitted None on an older runtime. **Round 2:** all four closed.
+- **Pre-phase:** rebased onto `origin/main` (`32ab80d`, the bot's v0.61.0 release commit). Clean.
+- **Files:** `README.md` (BSR field list; *Explaining a sealed record*; resend sentence), `COMPATIBILITY.md` (0.61.1 pairing paragraph; record-explain row; README cite 160→163), `CHANGELOG.md` (Unreleased Added + Changed; the 0.61.0 "Tagged, never published" line), `plans/README.md` (active row), `python/seam_sdk/client.py` and `ts/src/client.ts` (resend docstrings). `scripts/shift_changelog_citations.py . 17 24` shifted 11 citations.
+- **Suites:** Python 2394 passed; TS 508 / 0 fail; Go, Rust `verify/`, Java and Kotlin (JDK 17) green.
+- **Next:** finalization, /reconcile (Q1, Q2), /ship.

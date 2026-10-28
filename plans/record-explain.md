@@ -91,7 +91,7 @@ seam-mcp#123 (merged `3b8ca54`).
   in-package)"; status table `README.md:657-659`). No hand-written code in those trees touches any
   coordination message (`grep` over `go/ java/ kotlin/` for `GetDecision|CollectiveOutcome|PolicyEnforcement`
   finds nothing). The precedent for a new contract field is a single sentence: "Go, Java and Kotlin carry the
-  generated fields" (`CHANGELOG.md:101`, the 0.57.0 `stream_id` entry). `collective_outcome` (C5) and
+  generated fields" (`CHANGELOG.md:127`, the 0.57.0 `stream_id` entry). `collective_outcome` (C5) and
   `effective_threshold` were likewise decoded in Python and TS only.
 
 **The gate.** `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exits **6** with exactly seven fields
@@ -406,7 +406,7 @@ All phases land in `seam-sdk`. There are no cross-repo writes. Shared API (Opus 
 
 ### Phase 4: docs, compatibility, changelog
 
-- **Status:** TODO
+- **Status:** DONE (2026-10-28). As planned. Divergences: the README's resend sentence and the matching `submit_*` docstrings (Python, and seven in TS, edited in place) no longer say "read `get_decision` for the outcome", because a 0.61.x record reads NOT_RECORDED. The CHANGELOG inserts moved `:101` to `:127`, not `:103`.
 - **Risk:** simple.
 - **Delivers:** a reader can learn from the README how to explain a record, and `COMPATIBILITY.md` names
   the runtime it needs.
@@ -445,8 +445,8 @@ All phases land in `seam-sdk`. There are no cross-repo writes. Shared API (Opus 
       "Tagged, never published (see COMPATIBILITY.md); these entries first ship in 0.61.1." The
       Unreleased entry says the same. A reader of the heading alone would otherwise think DPoP shipped
       in 0.61.0. This line is a **deliberate departure** from precedent, not a copy of it: the
-      unpublished `## 0.50.0` (`CHANGELOG.md:146`, entries kept), `## 0.51.0` (:133) and `## 0.56.0`
-      (:104) headings carry no such note.
+      unpublished `## 0.50.0` (`CHANGELOG.md:172`, entries kept), `## 0.51.0` (:159) and `## 0.56.0`
+      (:130) headings carry no such note.
   - **Citations:** inserting lines near the top of `CHANGELOG.md` moves every `CHANGELOG.md:N` citation
     below them. Run `scripts/shift_changelog_citations.py . <after_line> <delta>` and the citation gate
     (`python/tests/test_compatibility_citations_resolve.py`). DPoP's Phase 10 shifted 11 citations this way.
@@ -463,7 +463,7 @@ All phases land in `seam-sdk`. There are no cross-repo writes. Shared API (Opus 
      the PUBLIC-clearance default.
   3. The COMPATIBILITY row cites `7d538c54` and seam-runtime#1535, and the 0.61.1 pairing paragraph is
      present.
-  4. After the rebase, `CHANGELOG.md:101` (cited in *Context* and D2) is `:103`; any new citation uses the
+  4. `CHANGELOG.md:101` (cited in *Context* and D2) is `:103` after the rebase and `:127` after this phase's inserts; any new citation uses the
      rebased line.
 - **Tests:** the citation gate; the full suites once more (Python, TS, Go, `verify/`, Java and Kotlin are
   untouched but run per `ci-spend-local-first`).
@@ -573,7 +573,7 @@ All phases land in `seam-sdk`. There are no cross-repo writes. Shared API (Opus 
   decision the exit-6 refusal asks for, and it is recorded in the manifest commit.
 - **D2. Go, Java and Kotlin: no code.** They ship no generated transport in-package (`README.md:135-138`),
   and consumers generate from the BSR. "Readable in all five" is met for them by the BSR module itself plus a
-  CHANGELOG/README sentence, as in 0.57.0 (`CHANGELOG.md:101`).
+  CHANGELOG/README sentence, as in 0.57.0 (`CHANGELOG.md:127`).
 - **D3. Each enum follows its own normative growth policy.**
   - Availability and seal reason **never raise**: unknown maps to `"UNRECOGNIZED"`. For availability that
     reads as withheld (no payload); for a reason it reads as unknown, and the collective is not decoded.
@@ -651,7 +651,7 @@ all hold. What changed:
    a core widening, a pin raise, a core release and a seam-mcp pin move. The adapters raise will redden
    `sibling-quotes` here, so a re-quote follow-up is listed.
 10. **Anchor drift (minor):** the proto availability enum (:1125), pyi (:579, :607, :43/:53) and TS enums
-    (:3870/:3934) are fixed. `CHANGELOG.md:101` becomes `:103` after the rebase. PROGRESS's
+    (:3870/:3934) are fixed. `CHANGELOG.md:101` becomes `:103` after the rebase (`:127` after Phase 4). PROGRESS's
     `test_integration.py` GetDecision anchors (:297, :393) are wrong (actual :57, :80, :107, :284).
     PROGRESS was not edited.
 

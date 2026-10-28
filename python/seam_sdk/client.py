@@ -164,7 +164,7 @@ _SUBMIT_RETRY_NOTE = """
           ``decision_id``, ``collective_outcome`` and ``policy_enforcement`` all unset. A resend
           after a step that SEALED the session returns the sealed ``decision_id`` but NO
           ``collective_outcome`` (``policy_enforcement`` only if the session is attestable) — so
-          after a retried write, read :meth:`get_decision` for the outcome.
+          after a retried write, the record's copy is ``seal_attestation_of(get_decision(...))`` (``NOT_RECORDED`` on 0.61.x).
         * A resend after the session was swept, or while an Expire/Cancel seal is pending,
           raises :class:`FailedPreconditionError` (``session_not_open``) instead of returning the
           sealed id.
