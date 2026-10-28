@@ -474,6 +474,10 @@ const SEAL_REASON_NAMES: Record<
  * **Trust standing.** Chain-bound (an operator alteration breaks the runtime's own chain re-verify)
  * but **not client-verifiable**: it is not a TCT input, so `verifyDecision` does not cover it.
  *
+ * The `availability` and `sealReason` unions may gain members in any release, since this SDK
+ * follows the runtime's version rather than semver. Keep a `default` branch; do not
+ * exhaustiveness-check them with `never`.
+ *
  * Declared on both sides: this name and the generated `pb.SealAttestation` are different types, and
  * at the package root this one is what you get; see the dual-declaration note in `index.ts`. */
 export interface SealAttestation {

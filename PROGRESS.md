@@ -157,10 +157,10 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `ts/src/client.ts:405` | `collectiveOutcomeOf(resp: DecisionResponse | SessionStep)` — the TS twin. **Phase 3 DONE.** It needed a real union: protobuf-es brands messages, so passing a `SessionStep` is a *compile error* today (reproduced: `TS2345`, `$typeName` mismatch). `:169-174` `UnknownCollectiveVerdictError(rawValue, decisionId: string)` — **required** `string`, so `:229`'s `resp.decisionId` became `resp.decisionId ?? ""`; a verifier mutation removing that coalesce reddens a test, so it is load-bearing, not decoration. |
 | `ts/gen/seam/api/v1/seam_pb.ts` | Branded `SessionStep = Message<"seam.api.v1.SessionStep"> & {…}` — the reason Phase 3's TS half is a hard block, not a typing nicety. Also carries `collectiveOutcome?` on the same branded type. Cited by symbol, not by line: this is a generated, gitignored file, and a line number into it is correct only until the next `make generate`. |
 | `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi` | `SessionStep.collective_outcome` in the Python stubs — generated, never surfaced. Cited by symbol for the same reason as the row above; it carried `:289,297` until round 3, in direct violation of that rule and of `test_no_document_line_anchors_into_a_generated_file`, which it evaded **only** because a comma-list matches `CITATION` not at all. The rule was stated one row up and broken the next. |
-| `python/seam_sdk/client.py:905`, `ts/src/client.ts:1510` | `submit_commit` / `submitCommit` return a `SessionStep` — the caller Phase 3 exists for. |
+| `python/seam_sdk/client.py:905`, `ts/src/client.ts:1514` | `submit_commit` / `submitCommit` return a `SessionStep` — the caller Phase 3 exists for. |
 | `python/tests/test_collective_outcome.py`, `ts/tests/collective_outcome.test.ts` | `DecisionResponse` cases only. **Phase 3** adds the `SessionStep` cases (absent ⇒ none; `UNSPECIFIED` ⇒ raise; unknown ⇒ raise; non-commit step ⇒ none). Drive red first. |
-| `python/seam_sdk/client.py:815` + `python/seam_sdk/client.py:868` · `python/seam_sdk/aio.py:561` + `python/seam_sdk/aio.py:614` · `ts/src/client.ts:1397` + `ts/src/client.ts:1458` | `submit_evaluation` / `submit_objection` — **already delivered** by `c49d005`. Do not re-plan. Written as six separate citations rather than three comma-lists, because a comma-list matches `CITATION` **not at all**: `` `…:723,759` `` was wrong twice in a row — once before this phase and once *inside the commit whose message claims it shifted every citation below `:239`* — and nothing ever said so. |
-| `python/seam_sdk/client.py:851-852` · `python/seam_sdk/aio.py:597-598` · `ts/src/client.ts:1419` | `confidence` presence mapping — `None` ⇒ field-absent, never `0.0`. Correct in both languages; pinned by `python/tests/test_evaluation_confidence.py:55,64,87,100` and `ts/tests/evaluation.test.ts:59,70,85,93`. |
+| `python/seam_sdk/client.py:815` + `python/seam_sdk/client.py:868` · `python/seam_sdk/aio.py:561` + `python/seam_sdk/aio.py:614` · `ts/src/client.ts:1401` + `ts/src/client.ts:1462` | `submit_evaluation` / `submit_objection` — **already delivered** by `c49d005`. Do not re-plan. Written as six separate citations rather than three comma-lists, because a comma-list matches `CITATION` **not at all**: `` `…:723,759` `` was wrong twice in a row — once before this phase and once *inside the commit whose message claims it shifted every citation below `:239`* — and nothing ever said so. |
+| `python/seam_sdk/client.py:851-852` · `python/seam_sdk/aio.py:597-598` · `ts/src/client.ts:1423` | `confidence` presence mapping — `None` ⇒ field-absent, never `0.0`. Correct in both languages; pinned by `python/tests/test_evaluation_confidence.py:55,64,87,100` and `ts/tests/evaluation.test.ts:59,70,85,93`. |
 > **Read every row below as *as at plan time*, 2026-08-31, unless the row says otherwise.** Some
 > were updated mid-run and some were not, which is worse than either — an unstamped map invites a
 > reader to treat a stale row as current. The rows known to have moved since are corrected inline.
@@ -729,7 +729,7 @@ ERROR: a breaking change and must be handled, never silently rewritten away.
   `ContextBinding` field present — all eleven, `content_hash` / `receipt_hash` / `key_status` /
   `resolved_status` / `retraction` among them.
 - **No wrapper change was needed, exactly as the plan predicted** — verified rather than assumed:
-  `resolve_context` (`python/seam_sdk/client.py:1223`) and `resolveContext` (`ts/src/client.ts:1625`)
+  `resolve_context` (`python/seam_sdk/client.py:1223`) and `resolveContext` (`ts/src/client.ts:1629`)
   return the generated `ContextBinding` straight through, so the five fields reach callers with no
   SDK work. What both *did* carry was a docstring enumerating four of the eleven fields as if that
   were the set; both now say what they actually return, and both carry the vocabulary warning.
@@ -1124,7 +1124,7 @@ them change what the phases do:
 | `python/seam_sdk/_policy.py` | **Phase 3 created it.** `policy_enforcement_of(resp)` returning `None` iff absent. New module, not a `_collective.py` addition — that module's docstring is entirely about a growth policy this field does not have. |
 | `python/seam_sdk/__init__.py:10` | Where `_collective`'s exports are imported; Phase 3 adds `_policy`'s alongside, plus two `__all__` entries. |
 | `ts/src/client.ts:326` | `collectiveOutcomeOf` over the union. **Phase 4 inserted `policyEnforcementOf` immediately after it**, so this citation survived unchanged; the `submitCommit` citation did not, and was repointed by measurement in the same commit. |
-| `ts/src/client.ts:495` | **Phase 4 created it.** `policyEnforcementOf(resp)` returning `undefined` iff absent — 103 lines inserted after `collectiveOutcomeOf` ends at `:239`. |
+| `ts/src/client.ts:499` | **Phase 4 created it.** `policyEnforcementOf(resp)` returning `undefined` iff absent — 103 lines inserted after `collectiveOutcomeOf` ends at `:239`. |
 | `ts/src/index.ts:29` | The dual-declaration comment (called "shadowed-names" until Phase 4 retracted that word — see the record). It opened with "Two" and listed three names; Phase 4 rewrote it to name all **five** names declared on both sides (`CollectiveOutcome` was already missing before this phase) and made the count one-per-name. `python/tests/test_shadowed_names_comment.py` now enforces the list, the count, the namespace prefix, and that none of the five is on an explicit `../gen/` re-export list. |
 | `python/tests/test_collective_outcome.py:208` | The `SessionStep` arm — the model for `test_policy_enforcement.py`. |
 | `python/tests/test_integration.py` | At `960cf81`: `addr = "127.0.0.1:8099"` (line 48), hardcoded, four tests; `_wait` (26-34) proved only that *something* listens; a bare `terminate()` (66). **Phase 2's primary target** — all three are gone, so this row quotes rather than line-anchors. |
@@ -1580,7 +1580,7 @@ caught more widely than before (drop-gate 8 → 9 failures, empty-`policy_id` 1 
 
 ### Phase 4 — `policyEnforcementOf` in TypeScript, and the citations it moved · **DONE**
 
-`ts/src/client.ts:495`, inserted immediately after `collectiveOutcomeOf` ends at `:239`, so `:218`
+`ts/src/client.ts:499`, inserted immediately after `collectiveOutcomeOf` ends at `:239`, so `:218`
 survived unchanged. **K = 103 as finally committed** — 100 lines at first commit, +1 for a blank line
 round 1 caught missing against the file's own convention (the only such gap between **top-level**
 declarations; member-level `}`-then-declaration adjacencies are ordinary and plentiful), +2 for a
@@ -1632,7 +1632,7 @@ Kept in full rather than quietly amended, because "a stale citation makes a hand
 wrong" and "a corrected citation moves a margin" are different failures and only the second happened.
 
 **Round 2 then narrowed it further, deliberately, and that is the more interesting number.** Splitting
-`` `ts/src/client.ts:859,774` `` into two anchored citations put a citation at 762, seventeen lines
+`` `ts/src/client.ts:863,774` `` into two anchored citations put a citation at 762, seventeen lines
 from `submitCommit(` at 779 — and `submitObjection(`'s own margin is **14**. (This record first
 called that "the tightest in that table, displacing `publish.yml`'s 27"; both halves were wrong —
 round 3 measured the displaced entry as `authenticity.rs`'s 16, contradicting a sentence fifteen
@@ -1753,7 +1753,7 @@ split block, a Cyrillic lookalike, names inside the intro line, tab indentation)
 anyway: the fix pass introduced four more.
 
 - **The commit that claimed to have shifted every citation below `:239` missed one.** `:71` still
-  cited `ts/src/client.ts:859,774`; the true lines were 724 and 760, and both cited lines are the
+  cited `ts/src/client.ts:863,774`; the true lines were 724 and 760, and both cited lines are the
   `*/` terminating the preceding doc comment. It was ungated for the reason this phase had already
   documented in the same file — a comma-list matches `CITATION` not at all — so the claim went into
   a commit message unchecked. Fixed by splitting the three comma-lists on that row into six ordinary
@@ -1789,7 +1789,7 @@ Also corrected: "4 failed, 819 passed" was 818; two `CHANGELOG.md` companions in
 by ~87 (round 3 caught the first figure double-counting that push — 115 is the *post*-push drift); a COMPATIBILITY.md citation for `opts.canonical` that pointed at line 265 of
 `ts/src/client.ts` (written without backticks here, since it names a position that was already wrong
 before this phase widened it) and now lands inside the new `PolicyEnforcement` interface — repointed
-to `ts/src/client.ts:709`; and a historical mention of a
+to `ts/src/client.ts:713`; and a historical mention of a
 long-removed citation that was written in backticks and so read as a live one.
 
 **Round-2 verification:** python **833 passed / 17 skipped** (835 at the end of round 3) · TS 136 / 126 pass / 0 fail ·
@@ -4394,8 +4394,8 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
 - `python/tests/test_authorize.py:400,501` — two positional `verify_party_anchor(...)` calls in
   deadline tables; confirmed unaffected by a keyword-only addition.
 - `ts/src/client.ts:110-154` (`UnaryCallOptions`/`CredentialedCallOptions`/`call()`),
-  `ts/src/client.ts:781-803` (`authorize`'s inline-opts precedent),
-  `ts/src/client.ts:1481-1488` (`verifyPartyAnchor` itself) — the TS surface Phase 2 changes
+  `ts/src/client.ts:785-807` (`authorize`'s inline-opts precedent),
+  `ts/src/client.ts:1485-1492` (`verifyPartyAnchor` itself) — the TS surface Phase 2 changes
   and the conventions it must match.
 - `ts/src/admin.ts:355-378` — `resumeSession`'s inline `tenant?: string` precedent, the pattern
   Phase 2 mirrors on the data plane.
