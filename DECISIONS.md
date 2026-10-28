@@ -2982,7 +2982,7 @@ A reversible, SDK-internal retry bound; not a one-way door, so Opus decided it.
 - **Decided by:** owner (interactive, one-way door: a public exception contract in five SDKs).
 - **Status:** CONFIRMED.
 
-## 2026-10-28 — /reconcile for plans/record-explain.md (seam-sdk#273)
+## 2026-10-28 — /reconcile for plans/archive/record-explain.md (seam-sdk#273)
 
 ### Q1: an unknown verdict inside a recorded seal attestation raises
 - **Assumption:** `seal_attestation_of` / `sealAttestationOf` raise `UnknownCollectiveVerdictError` (with the view's `decision_id`) on an UNSPECIFIED or unknown verdict under RECORDED + COMMIT. Unknown availability and seal reason never raise.

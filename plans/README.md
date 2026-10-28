@@ -10,7 +10,7 @@ against a status table alone.
 
 | Plan | Status |
 |---|---|
-| `record-explain.md` | Active, 2026-10-28. Issue [#273](https://github.com/zer07labs/seam-sdk/issues/273): the 0.61.0 `DecisionRecordView` fields (policy enforcement, seal attestation) read through presence-aware decoders in Python and TS, and the field manifest; ships as SDK 0.61.1. |
+| _(none)_ | No active plans as of 2026-10-28. |
 
 ## Cross-repo asks
 
@@ -26,6 +26,7 @@ was written, and the target repo fetches it. Each is paired with a tracking issu
 
 | Plan | Delivered |
 |---|---|
+| `archive/record-explain.md` | Issue [#273](https://github.com/zer07labs/seam-sdk/issues/273), merged as PR #304 (`3ab01d8`), 2026-10-28, published as SDK 0.61.1. The 0.61.0 `DecisionRecordView` fields read through `seal_attestation_of` / `sealAttestationOf` and record-view `policy_enforcement_of` / `policyEnforcementOf` in Python and TS, with the field manifest and live tests. On runtime 0.61.x every record reads NOT_RECORDED; train B (0.62.0) needs no SDK change. Q1/Q2 confirmed by `/reconcile`. |
 | `archive/build-agent-ingress.md` | Closed 2026-10-27 by owner decision. §A and §C shipped in `seam-adapters` PR #42; §B was superseded by `seam-mcp` (seam-sdk#40 → seam-mcp#27, closed); §D's "stranger with no private access" DoD was amended, since partner-gated distribution is intended (`DECISIONS.md`, 2026-10-27). |
 | `archive/consolidation-2026-08-14.md` | The 2026-08-14 full-repo review record. Its last backlog survivors (ingress §B and §D) closed on 2026-10-27, so it was archived with that plan. |
 | `archive/post-onboarding-sdk-asks.md` | Issues [#274](https://github.com/zer07labs/seam-sdk/issues/274) and [#275](https://github.com/zer07labs/seam-sdk/issues/275), merged as PR #278 (`b12053f`), 2026-10-20. Ticket refresh beyond `authorize` (credentialed reads, `report_outcome`, the seven `submit_*` verbs), the AID recorded in the bootstrap file and verified on load, and a seed-free identity-facts loader in all five languages. |

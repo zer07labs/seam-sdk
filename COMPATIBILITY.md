@@ -62,7 +62,7 @@ boundary above, that means an SDK ≥ 0.33.2 needs a runtime image built from se
 
 | Consumer | Constraint on `seam-sdk` | Verified at |
 |---|---|---|
-| `seam-adapters` (`seam-agent-core[sdk]`) | `seam-sdk>=0.59.0,<0.60` | `seam-adapters/core/pyproject.toml:101` |
+| `seam-adapters` (`seam-agent-core[sdk]`) | `seam-sdk>=0.61.1,<0.62` | `seam-adapters/core/pyproject.toml:111` |
 | `seam-aegis` | `seam-agent-core[sdk]>=0.17,<0.18` (reaches this SDK transitively) | `seam-aegis/pyproject.toml:94` |
 
 **One caveat on the first row: the lockfile number is not a real resolution.**
