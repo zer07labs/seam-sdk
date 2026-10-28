@@ -1,4 +1,5 @@
-"""Presence-aware decoding of ``policy_enforcement`` — on a ``DecisionResponse`` or a ``SessionStep``.
+"""Presence-aware decoding of ``policy_enforcement`` — on a ``DecisionResponse``, a ``SessionStep``,
+or a ``DecisionRecordView``.
 
 This is the ``PolicyEnforcement`` sibling of :mod:`seam_sdk._collective`, and it exists for a
 narrower reason. There is no enum here, no growth policy, and nothing to fail closed on. There is one
@@ -25,15 +26,19 @@ rather than being handed a value that answers it wrongly.
 
 When the field is present
 =========================
-Both carriers, since this decoder takes both. On a ``DecisionResponse`` the field accompanies the
-immediate ``RunDecision`` response only; per the generated ``PolicyEnforcement`` message comment,
-``GetDecision``/``ReplayDecision`` do **not** carry it at all, so a fetched or replayed decision
-reads ``None`` regardless of what was enforced when it was sealed.
+All three carriers, since this decoder takes all three. On a ``DecisionResponse`` the field
+accompanies the immediate ``RunDecision`` response. ``ReplayDecision`` does **not** carry it, so a
+replayed decision reads ``None`` regardless of what was enforced when it was sealed.
 
-This "immediate response only" rule is about the VERB (``RunDecision`` vs. ``GetDecision``/
-``ReplayDecision``), not about freshness — do not read it as "every immediate ``RunDecision``
-response carries ``policy_enforcement``, ``collective_outcome``, and ``participant_verdicts``
-alike." The latter two carry a SECOND, narrower condition (seam-runtime#817): they are further
+**``GetDecision`` carries it since runtime 0.61.0** (seam-runtime#1361), on ``DecisionRecordView``
+field 11 — and there it is **derived and always present**: the runtime computes it from the record's
+own digest-bound columns (``outcome``, ``policy_version``, ``policy_rules_digest``) rather than from a
+live binding, so it answers even after crypto-shred and archive. On a record from a runtime older
+than 0.61.0 it is absent and this decoder returns ``None``.
+
+On the immediate carriers, this rule is about the VERB (``RunDecision`` vs. ``ReplayDecision``), not
+about freshness — do not read it as "every immediate ``RunDecision`` response carries
+``policy_enforcement``, ``collective_outcome``, and ``participant_verdicts`` alike." The latter two carry a SECOND, narrower condition (seam-runtime#817): they are further
 withheld on an idempotent resubmit or a lost concurrent-seal race, even though that response is
 still the immediate one. ``policy_enforcement`` itself has no such further condition on
 ``DecisionResponse`` — it is derived from the returned record's own governing policy, not from
@@ -99,9 +104,9 @@ This list describes the runtime as measured at the time of writing. It is not en
 here, and it is not a contract the SDK can check — treat it as orientation for reading a ``None``,
 never as a guarantee to branch on.
 
-Field numbers differ between the two carriers (7 on ``DecisionResponse``, 3 on ``SessionStep``), and
-both have explicit presence, so one ``HasField`` gate covers both — verified against the descriptors
-rather than assumed.
+Field numbers differ between the three carriers (7 on ``DecisionResponse``, 3 on ``SessionStep``, 11
+on ``DecisionRecordView``), and all three have explicit presence, so one ``HasField`` gate covers
+them all — verified against the descriptors rather than assumed.
 """
 
 from __future__ import annotations
@@ -128,7 +133,8 @@ class PolicyEnforcement:
 
     #: ``True`` iff a real, mode-matching ``PolicyDefinition`` gated this commitment.
     #:
-    #: **``False`` has THREE distinct meanings, and only two of them mean what it looks like.**
+    #: **On the immediate carriers (``DecisionResponse``, ``SessionStep``), ``False`` has
+    #: THREE distinct meanings, and only two of them mean what it looks like.**
     #: Read it as **"no enforcement evidence for this call"**, never as "this ran ungoverned" —
     #: under the third that reading is exactly backwards:
     #:
@@ -148,6 +154,13 @@ class PolicyEnforcement:
     #: expresses case 2 by omitting the field entirely; ``DecisionResponse`` has no presence to use
     #: and reports this zero value instead.
     #:
+    #: **On a ``DecisionRecordView`` meaning 3 does not occur**: that field is derived from the
+    #: record's own columns and needs no live binding, so it never withholds after eviction. Meaning
+    #: 2's fail-open case still applies there (a record sealed fail-open — staged id, no digest —
+    #: reads ``enforced=False``), as does the runtime's documented LOW limit: two genuinely concurrent
+    #: opens of the same session id can bind each other's staged policy, so on that path alone the
+    #: named id could be the other caller's.
+    #:
     #: ``True`` says a real ``PolicyDefinition`` gated the commitment and names its **id** — not its
     #: **revision**. Nothing in the response binds the record's rules digest to whatever is
     #: registered under that id now, so republishing different rules under a stable id leaves an
@@ -161,16 +174,17 @@ class PolicyEnforcement:
 
 
 def policy_enforcement_of(
-    resp: Union["pb.DecisionResponse", "pb.SessionStep"],
+    resp: Union["pb.DecisionResponse", "pb.SessionStep", "pb.DecisionRecordView"],
 ) -> Optional[PolicyEnforcement]:
-    """Decode ``resp.policy_enforcement``. Accepts a ``DecisionResponse`` **or** a ``SessionStep``.
+    """Decode ``resp.policy_enforcement``. Accepts a ``DecisionResponse``, a ``SessionStep`` or a
+    ``DecisionRecordView`` (from ``GetDecision``, runtime 0.61.0+).
 
     Returns ``None`` **iff the field is absent**, and an instance otherwise — including when that
     instance carries ``enforced=False``. Those two cases are indistinguishable by value on the wire
     and this function is the one place that keeps them apart; see the module docstring for the
     three-state table and for when the field is populated at all.
 
-    One decoder, two message types, on purpose: the hazard is a property of the **field** —
+    One decoder, three message types, on purpose: the hazard is a property of the **field** —
     ``optional`` presence over a message whose default instance is false-y — not of the message that
     carries it. A second implementation per carrier would be a second place for the same inversion to
     reappear.

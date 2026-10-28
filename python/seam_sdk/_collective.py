@@ -6,10 +6,16 @@ for the same reason: the proto's growth policy is normative and fail-closed, and
 surface makes the wrong thing easy in two independent ways.
 
 1. ``collective_outcome`` is ``optional``. On a response that does not carry it — an older runtime,
-   or ``GetDecision``/``ReplayDecision``, which per the proto never carry it — reading
+   or ``GetDecision``/``ReplayDecision``, which per the proto never carry it as a top-level field —
+   reading
    ``resp.collective_outcome.verdict`` yields ``COLLECTIVE_VERDICT_UNSPECIFIED`` with no signal that
    the field was absent rather than zero. Absent and UNSPECIFIED are distinct wire states and this
    module keeps them distinct: absent returns ``None``, UNSPECIFIED raises.
+
+   Since runtime 0.61.0 a fetched record does carry a collective outcome, one level down: inside
+   ``DecisionRecordView.seal_attestation``, and only when that attestation was recorded for a commit.
+   Read it with :func:`seam_sdk.seal_attestation_of`, which decodes it through the same fail-closed
+   verdict mapping as this module.
 
 2. proto3 makes ``0`` the silent default, so the natural negative test —
    ``if verdict != COLLECTIVE_VERDICT_DECLINED: proceed`` — **allows on every unrecognized value**,
@@ -103,9 +109,10 @@ def collective_outcome_of(
     ``SessionStep``.
 
     Returns ``None`` **iff the field is absent** — the runtime did not carry one on this response
-    (an older runtime, or a read verb that never does). ``None`` is not "the panel decided nothing";
-    it is "this response does not answer the question", and a caller must decide what that means for
-    its own fail policy rather than being handed a value.
+    (an older runtime, or a read verb that never does: ``GetDecision`` carries its sealed collective
+    outcome inside ``seal_attestation`` instead, read with :func:`seam_sdk.seal_attestation_of`).
+    ``None`` is not "the panel decided nothing"; it is "this response does not answer the question",
+    and a caller must decide what that means for its own fail policy rather than being handed a value.
 
     **On a ``SessionStep``, absent is the common case and does not mean "not supported".** The field
     is present ONLY on the step that applied the commit envelope and **freshly sealed** the session —
@@ -149,10 +156,22 @@ def collective_outcome_of(
     if not resp.HasField("collective_outcome"):
         return None
 
-    outcome = resp.collective_outcome
+    return _decode_collective(resp.collective_outcome, resp.decision_id)
+
+
+def _decode_collective(
+    outcome: "pb.CollectiveOutcome", decision_id: str
+) -> CollectiveOutcome:
+    """Decode one ``CollectiveOutcome`` message, fail-closed. The single place the verdict is named.
+
+    Shared by :func:`collective_outcome_of` (the top-level field on the immediate carriers) and
+    :func:`seam_sdk.seal_attestation_of` (the one sealed inside ``DecisionRecordView.seal_attestation``),
+    so the growth policy is enforced by one implementation rather than two. Presence is the caller's
+    job; this function assumes the message is there.
+    """
     name = _VERDICT_NAMES.get(outcome.verdict)
     if name is None:
-        raise UnknownCollectiveVerdictError(int(outcome.verdict), resp.decision_id)
+        raise UnknownCollectiveVerdictError(int(outcome.verdict), decision_id)
 
     return CollectiveOutcome(
         verdict=name,

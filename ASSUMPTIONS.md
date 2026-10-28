@@ -1519,3 +1519,19 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Alternatives:** a single `DpopKeyError` for everything (it would misname an oversized body as a key fault); or `TypeError` for wrong types (callers would need to catch two unrelated types).
 - **Blast radius if wrong:** renaming a public exception is breaking, so this should be settled before release.
 - **Status:** CONFIRMED (2026-10-27), by the owner at /reconcile; see DECISIONS.md
+
+## An unknown `CollectiveVerdict` inside a recorded seal attestation raises
+- **Plan:** plans/record-explain.md (Phase 1, open question Q1, decision D3)
+- **Assumed:** the sealed collective inside `DecisionRecordView.seal_attestation` keeps `CollectiveVerdict`'s own fail-closed growth policy; the `SealAttestation` doc defers to it rather than overriding it.
+- **Chose:** `seal_attestation_of` raises `UnknownCollectiveVerdictError` (with `view.decision_id`) on an UNSPECIFIED or unknown verdict under RECORDED + COMMIT — the same as `collective_outcome_of` on the immediate response. Unknown availability and seal reason never raise (they read `"UNRECOGNIZED"`, per `SealAttestation`'s WITHHELD growth policy). `get_decision` itself never raises: it returns the raw view.
+- **Alternatives:** degrade to `collective_outcome=None` so an explain tool still shows availability and reason. Rejected as the default because it silently drops a fail-closed signal the proto calls normative.
+- **Blast radius if wrong:** an explain tool hitting a newer verdict on a recorded attestation must catch the error to show the rest. Loosening later (raise → None) is additive for callers; tightening would not be.
+- **Status:** CONFIRMED (2026-10-28) — /reconcile, decided by Opus; see DECISIONS.md
+
+## The SDK's record reads send no `x-seam-clearance`
+- **Plan:** plans/record-explain.md (Phase 1, open question Q2)
+- **Assumed:** no consumer needs to read a restricted record's seal attestation yet; the runtime decides what a clearance claim is worth.
+- **Chose:** no clearance option on `get_decision` / `getDecision`. Every read is at the default PUBLIC clearance, so a record whose handling rule needs more reads `"CLEARANCE_DENIED"` — documented in `_seal.py` and the TS twin, never an error.
+- **Alternatives:** add a `clearance=` keyword now (new public surface with no consumer asking for it).
+- **Blast radius if wrong:** a consumer that needs restricted attestations gets `CLEARANCE_DENIED` until an option is added; adding one later is additive. The deferral is recorded in `DEFERRED.md`.
+- **Status:** CONFIRMED (2026-10-28) — /reconcile, decided by Opus; see DECISIONS.md

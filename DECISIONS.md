@@ -1219,7 +1219,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:1630-1652` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:1654-1676` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2049,7 +2049,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:1662` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:1686` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -2981,3 +2981,15 @@ A reversible, SDK-internal retry bound; not a one-way door, so Opus decided it.
 - **Decision:** confirm as-is. The docstrings were widened in the same change.
 - **Decided by:** owner (interactive, one-way door: a public exception contract in five SDKs).
 - **Status:** CONFIRMED.
+
+## 2026-10-28 — /reconcile for plans/record-explain.md (seam-sdk#273)
+
+### Q1: an unknown verdict inside a recorded seal attestation raises
+- **Assumption:** `seal_attestation_of` / `sealAttestationOf` raise `UnknownCollectiveVerdictError` (with the view's `decision_id`) on an UNSPECIFIED or unknown verdict under RECORDED + COMMIT. Unknown availability and seal reason never raise.
+- **Analysis (fresh Opus):** the proto makes the attestation's growth policy "normative, as CollectiveVerdict's" (seam.proto:1111-1113), and that policy routes an unrecognized verdict to FailPolicy, never to allow (:527-529). Degrading to `None` would drop that signal. The sealed path uses the same decoder as the immediate response (`python/seam_sdk/_seal.py:157-158` → `python/seam_sdk/_collective.py:174`). The raise is narrow. seam-mcp P4b needs one `except` to still show the rest. Loosening to `None` later is additive.
+- **Decided by:** Opus (reversible tier). **Verdict:** CONFIRM. **Status:** CONFIRMED.
+
+### Q2: record reads send no `x-seam-clearance`
+- **Assumption:** no clearance option on `get_decision` / `getDecision`; a restricted record reads `CLEARANCE_DENIED`.
+- **Analysis (fresh Opus):** P4b reads only the partner's own records under its own identity, and no consumer asks for restricted reads. The proto returns `CLEARANCE_DENIED` on the view, never an error (seam.proto:1101-1104). A keyword-only Python argument or a TS `opts` field can be added later without breaking callers. The deferral is in `DEFERRED.md`.
+- **Decided by:** Opus (reversible tier). **Verdict:** CONFIRM. **Status:** CONFIRMED.

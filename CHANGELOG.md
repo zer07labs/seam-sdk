@@ -16,7 +16,31 @@ than trusting a summary here.
 
 ## Unreleased
 
+These entries, and those under 0.61.0 below, first ship in **0.61.1**: v0.61.0 was tagged and never
+published (see COMPATIBILITY.md).
+
+### Added
+- **Explain a sealed record (seam-sdk#273; runtime 0.61.0+, seam-runtime#1361 train A).** `GetDecision`'s
+  `DecisionRecordView` now carries policy enforcement and a seal attestation, read through decoders:
+  - Python `seal_attestation_of(view)` → `SealAttestation(availability, seal_reason, collective_outcome)`;
+    TS `sealAttestationOf(view)`.
+  - `availability` is a closed string set and only `RECORDED` carries a payload. `UNRECOGNIZED`
+    (UNSPECIFIED included) reads as withheld and never raises; an unknown verdict inside a recorded
+    collective raises `UnknownCollectiveVerdictError`.
+  - On runtime 0.61.x every record reads `NOT_RECORDED`; attestations are written from 0.62.0 with no
+    SDK change. The attestation is chain-bound but not client-verifiable, and reads go at clearance
+    PUBLIC.
+  - Go, Java and Kotlin carry the generated fields only.
+
+### Changed
+- **`policy_enforcement_of` / `policyEnforcementOf` accept a `DecisionRecordView` (seam-sdk#273).** On
+  runtime 0.61.0+ a fetched record carries the field, derived from its own columns and always present,
+  so the decoder no longer returns `None`/`undefined` for it. The docs that said `GetDecision` never
+  carries it are corrected; `ReplayDecision` still does not.
+
 ## 0.61.0 — 2026-10-28
+
+Tagged, never published (see COMPATIBILITY.md); these entries first ship in 0.61.1.
 
 ### Added
 - **DPoP-bound operator tokens on the management plane, in all five SDKs (seam-sdk#290; runtime 0.54.0+,

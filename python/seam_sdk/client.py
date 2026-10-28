@@ -164,7 +164,7 @@ _SUBMIT_RETRY_NOTE = """
           ``decision_id``, ``collective_outcome`` and ``policy_enforcement`` all unset. A resend
           after a step that SEALED the session returns the sealed ``decision_id`` but NO
           ``collective_outcome`` (``policy_enforcement`` only if the session is attestable) — so
-          after a retried write, read :meth:`get_decision` for the outcome.
+          after a retried write, the record's copy is ``seal_attestation_of(get_decision(...))`` (``NOT_RECORDED`` on 0.61.x).
         * A resend after the session was swept, or while an Expire/Cancel seal is pending,
           raises :class:`FailedPreconditionError` (``session_not_open``) instead of returning the
           sealed id.
@@ -1128,7 +1128,11 @@ class SeamClient:
         ``get_commitment_proof``, ``get_escalation``) and ``report_outcome``. A second rejection
         raises :class:`~seam_sdk.errors.UnauthenticatedError`. The runtime answers a scope refusal
         (an out-of-scope or absent id) with the same ``UNAUTHENTICATED`` as a dead ticket, so such a
-        call also pays one re-admit before it raises; without a credential nothing is retried."""
+        call also pays one re-admit before it raises; without a credential nothing is retried.
+
+        Returns the raw view. Read its policy enforcement with
+        :func:`~seam_sdk.policy_enforcement_of` and its seal attestation with
+        :func:`~seam_sdk.seal_attestation_of` (runtime 0.61.0+) rather than the raw fields."""
         return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/GetDecision",

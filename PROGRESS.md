@@ -154,13 +154,13 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | Path | Purpose / relevance |
 |---|---|
 | `python/seam_sdk/_collective.py:99` | `collective_outcome_of(resp: Union["pb.DecisionResponse", "pb.SessionStep"])` — fail-closed decode. **Phase 3 DONE**: widened to the union. `:1-30` documents why raw field access is unsafe (optional presence + `UNSPECIFIED` == 0 ⇒ a naive negative test allows on every unknown value). |
-| `ts/src/client.ts:401` | `collectiveOutcomeOf(resp: DecisionResponse | SessionStep)` — the TS twin. **Phase 3 DONE.** It needed a real union: protobuf-es brands messages, so passing a `SessionStep` is a *compile error* today (reproduced: `TS2345`, `$typeName` mismatch). `:169-174` `UnknownCollectiveVerdictError(rawValue, decisionId: string)` — **required** `string`, so `:229`'s `resp.decisionId` became `resp.decisionId ?? ""`; a verifier mutation removing that coalesce reddens a test, so it is load-bearing, not decoration. |
+| `ts/src/client.ts:405` | `collectiveOutcomeOf(resp: DecisionResponse | SessionStep)` — the TS twin. **Phase 3 DONE.** It needed a real union: protobuf-es brands messages, so passing a `SessionStep` is a *compile error* today (reproduced: `TS2345`, `$typeName` mismatch). `:169-174` `UnknownCollectiveVerdictError(rawValue, decisionId: string)` — **required** `string`, so `:229`'s `resp.decisionId` became `resp.decisionId ?? ""`; a verifier mutation removing that coalesce reddens a test, so it is load-bearing, not decoration. |
 | `ts/gen/seam/api/v1/seam_pb.ts` | Branded `SessionStep = Message<"seam.api.v1.SessionStep"> & {…}` — the reason Phase 3's TS half is a hard block, not a typing nicety. Also carries `collectiveOutcome?` on the same branded type. Cited by symbol, not by line: this is a generated, gitignored file, and a line number into it is correct only until the next `make generate`. |
 | `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi` | `SessionStep.collective_outcome` in the Python stubs — generated, never surfaced. Cited by symbol for the same reason as the row above; it carried `:289,297` until round 3, in direct violation of that rule and of `test_no_document_line_anchors_into_a_generated_file`, which it evaded **only** because a comma-list matches `CITATION` not at all. The rule was stated one row up and broken the next. |
-| `python/seam_sdk/client.py:905`, `ts/src/client.ts:1344` | `submit_commit` / `submitCommit` return a `SessionStep` — the caller Phase 3 exists for. |
+| `python/seam_sdk/client.py:905`, `ts/src/client.ts:1514` | `submit_commit` / `submitCommit` return a `SessionStep` — the caller Phase 3 exists for. |
 | `python/tests/test_collective_outcome.py`, `ts/tests/collective_outcome.test.ts` | `DecisionResponse` cases only. **Phase 3** adds the `SessionStep` cases (absent ⇒ none; `UNSPECIFIED` ⇒ raise; unknown ⇒ raise; non-commit step ⇒ none). Drive red first. |
-| `python/seam_sdk/client.py:815` + `python/seam_sdk/client.py:868` · `python/seam_sdk/aio.py:561` + `python/seam_sdk/aio.py:614` · `ts/src/client.ts:1231` + `ts/src/client.ts:1292` | `submit_evaluation` / `submit_objection` — **already delivered** by `c49d005`. Do not re-plan. Written as six separate citations rather than three comma-lists, because a comma-list matches `CITATION` **not at all**: `` `…:723,759` `` was wrong twice in a row — once before this phase and once *inside the commit whose message claims it shifted every citation below `:239`* — and nothing ever said so. |
-| `python/seam_sdk/client.py:851-852` · `python/seam_sdk/aio.py:597-598` · `ts/src/client.ts:1253` | `confidence` presence mapping — `None` ⇒ field-absent, never `0.0`. Correct in both languages; pinned by `python/tests/test_evaluation_confidence.py:55,64,87,100` and `ts/tests/evaluation.test.ts:59,70,85,93`. |
+| `python/seam_sdk/client.py:815` + `python/seam_sdk/client.py:868` · `python/seam_sdk/aio.py:561` + `python/seam_sdk/aio.py:614` · `ts/src/client.ts:1401` + `ts/src/client.ts:1462` | `submit_evaluation` / `submit_objection` — **already delivered** by `c49d005`. Do not re-plan. Written as six separate citations rather than three comma-lists, because a comma-list matches `CITATION` **not at all**: `` `…:723,759` `` was wrong twice in a row — once before this phase and once *inside the commit whose message claims it shifted every citation below `:239`* — and nothing ever said so. |
+| `python/seam_sdk/client.py:851-852` · `python/seam_sdk/aio.py:597-598` · `ts/src/client.ts:1423` | `confidence` presence mapping — `None` ⇒ field-absent, never `0.0`. Correct in both languages; pinned by `python/tests/test_evaluation_confidence.py:55,64,87,100` and `ts/tests/evaluation.test.ts:59,70,85,93`. |
 > **Read every row below as *as at plan time*, 2026-08-31, unless the row says otherwise.** Some
 > were updated mid-run and some were not, which is worse than either — an unstamped map invites a
 > reader to treat a stale row as current. The rows known to have moved since are corrected inline.
@@ -729,7 +729,7 @@ ERROR: a breaking change and must be handled, never silently rewritten away.
   `ContextBinding` field present — all eleven, `content_hash` / `receipt_hash` / `key_status` /
   `resolved_status` / `retraction` among them.
 - **No wrapper change was needed, exactly as the plan predicted** — verified rather than assumed:
-  `resolve_context` (`python/seam_sdk/client.py:1223`) and `resolveContext` (`ts/src/client.ts:1625`)
+  `resolve_context` (`python/seam_sdk/client.py:1223`) and `resolveContext` (`ts/src/client.ts:1629`)
   return the generated `ContextBinding` straight through, so the five fields reach callers with no
   SDK work. What both *did* carry was a docstring enumerating four of the eleven fields as if that
   were the set; both now say what they actually return, and both carry the vocabulary warning.
@@ -1124,7 +1124,7 @@ them change what the phases do:
 | `python/seam_sdk/_policy.py` | **Phase 3 created it.** `policy_enforcement_of(resp)` returning `None` iff absent. New module, not a `_collective.py` addition — that module's docstring is entirely about a growth policy this field does not have. |
 | `python/seam_sdk/__init__.py:10` | Where `_collective`'s exports are imported; Phase 3 adds `_policy`'s alongside, plus two `__all__` entries. |
 | `ts/src/client.ts:326` | `collectiveOutcomeOf` over the union. **Phase 4 inserted `policyEnforcementOf` immediately after it**, so this citation survived unchanged; the `submitCommit` citation did not, and was repointed by measurement in the same commit. |
-| `ts/src/client.ts:495` | **Phase 4 created it.** `policyEnforcementOf(resp)` returning `undefined` iff absent — 103 lines inserted after `collectiveOutcomeOf` ends at `:239`. |
+| `ts/src/client.ts:499` | **Phase 4 created it.** `policyEnforcementOf(resp)` returning `undefined` iff absent — 103 lines inserted after `collectiveOutcomeOf` ends at `:239`. |
 | `ts/src/index.ts:29` | The dual-declaration comment (called "shadowed-names" until Phase 4 retracted that word — see the record). It opened with "Two" and listed three names; Phase 4 rewrote it to name all **five** names declared on both sides (`CollectiveOutcome` was already missing before this phase) and made the count one-per-name. `python/tests/test_shadowed_names_comment.py` now enforces the list, the count, the namespace prefix, and that none of the five is on an explicit `../gen/` re-export list. |
 | `python/tests/test_collective_outcome.py:208` | The `SessionStep` arm — the model for `test_policy_enforcement.py`. |
 | `python/tests/test_integration.py` | At `960cf81`: `addr = "127.0.0.1:8099"` (line 48), hardcoded, four tests; `_wait` (26-34) proved only that *something* listens; a bare `terminate()` (66). **Phase 2's primary target** — all three are gone, so this row quotes rather than line-anchors. |
@@ -1580,7 +1580,7 @@ caught more widely than before (drop-gate 8 → 9 failures, empty-`policy_id` 1 
 
 ### Phase 4 — `policyEnforcementOf` in TypeScript, and the citations it moved · **DONE**
 
-`ts/src/client.ts:495`, inserted immediately after `collectiveOutcomeOf` ends at `:239`, so `:218`
+`ts/src/client.ts:499`, inserted immediately after `collectiveOutcomeOf` ends at `:239`, so `:218`
 survived unchanged. **K = 103 as finally committed** — 100 lines at first commit, +1 for a blank line
 round 1 caught missing against the file's own convention (the only such gap between **top-level**
 declarations; member-level `}`-then-declaration adjacencies are ordinary and plentiful), +2 for a
@@ -1632,7 +1632,7 @@ Kept in full rather than quietly amended, because "a stale citation makes a hand
 wrong" and "a corrected citation moves a margin" are different failures and only the second happened.
 
 **Round 2 then narrowed it further, deliberately, and that is the more interesting number.** Splitting
-`` `ts/src/client.ts:859,774` `` into two anchored citations put a citation at 762, seventeen lines
+`` `ts/src/client.ts:863,774` `` into two anchored citations put a citation at 762, seventeen lines
 from `submitCommit(` at 779 — and `submitObjection(`'s own margin is **14**. (This record first
 called that "the tightest in that table, displacing `publish.yml`'s 27"; both halves were wrong —
 round 3 measured the displaced entry as `authenticity.rs`'s 16, contradicting a sentence fifteen
@@ -1753,7 +1753,7 @@ split block, a Cyrillic lookalike, names inside the intro line, tab indentation)
 anyway: the fix pass introduced four more.
 
 - **The commit that claimed to have shifted every citation below `:239` missed one.** `:71` still
-  cited `ts/src/client.ts:859,774`; the true lines were 724 and 760, and both cited lines are the
+  cited `ts/src/client.ts:863,774`; the true lines were 724 and 760, and both cited lines are the
   `*/` terminating the preceding doc comment. It was ungated for the reason this phase had already
   documented in the same file — a comma-list matches `CITATION` not at all — so the claim went into
   a commit message unchecked. Fixed by splitting the three comma-lists on that row into six ordinary
@@ -1789,7 +1789,7 @@ Also corrected: "4 failed, 819 passed" was 818; two `CHANGELOG.md` companions in
 by ~87 (round 3 caught the first figure double-counting that push — 115 is the *post*-push drift); a COMPATIBILITY.md citation for `opts.canonical` that pointed at line 265 of
 `ts/src/client.ts` (written without backticks here, since it names a position that was already wrong
 before this phase widened it) and now lands inside the new `PolicyEnforcement` interface — repointed
-to `ts/src/client.ts:709`; and a historical mention of a
+to `ts/src/client.ts:713`; and a historical mention of a
 long-removed citation that was written in backticks and so read as a live one.
 
 **Round-2 verification:** python **833 passed / 17 skipped** (835 at the end of round 3) · TS 136 / 126 pass / 0 fail ·
@@ -4069,7 +4069,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1662`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1686`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -4394,8 +4394,8 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
 - `python/tests/test_authorize.py:400,501` — two positional `verify_party_anchor(...)` calls in
   deadline tables; confirmed unaffected by a keyword-only addition.
 - `ts/src/client.ts:110-154` (`UnaryCallOptions`/`CredentialedCallOptions`/`call()`),
-  `ts/src/client.ts:781-803` (`authorize`'s inline-opts precedent),
-  `ts/src/client.ts:1481-1488` (`verifyPartyAnchor` itself) — the TS surface Phase 2 changes
+  `ts/src/client.ts:785-807` (`authorize`'s inline-opts precedent),
+  `ts/src/client.ts:1485-1492` (`verifyPartyAnchor` itself) — the TS surface Phase 2 changes
   and the conventions it must match.
 - `ts/src/admin.ts:355-378` — `resumeSession`'s inline `tenant?: string` precedent, the pattern
   Phase 2 mirrors on the data plane.
@@ -4556,12 +4556,12 @@ green before any code changed.
   this — "rather than refusing outright" was wrong, fixed before merge). (2) the release's
   `retitle_changelog.sh` run shifted `CHANGELOG.md`'s "No yank" paragraph from line 1054 to 1056
   (a +2 insert right after `## Unreleased`), pushing `COMPATIBILITY.md:123` and
-  `DECISIONS.md:1222`'s `CHANGELOG.md:1502-1519` citations past the citation test's slack
-  tolerance; repointed both to `CHANGELOG.md:1504-1521`. Tested: `check_vendored_spec.py` OK via both
+  `DECISIONS.md:1222`'s `CHANGELOG.md:1526-1543` citations past the citation test's slack
+  tolerance; repointed both to `CHANGELOG.md:1528-1545`. Tested: `check_vendored_spec.py` OK via both
   `--from local` and `--from gh`; `test_compatibility_citations_resolve.py` 489 passed/0 failed
   standalone (was 4 failed). Verifier also flagged two pre-existing, gate-invisible citations
   elsewhere that the same +2 shift widened further — `DECISIONS.md:2035` cites
-  `CHANGELOG.md:1404` and `PROGRESS.md:3981` cites `CHANGELOG.md:1289`, both already ~130-250
+  `CHANGELOG.md:1428` and `PROGRESS.md:3981` cites `CHANGELOG.md:1313`, both already ~130-250
   lines stale before this release — out of scope for this release-unblock hotfix; filed as a
   follow-up issue rather than folded in here.
   **Rebased `feat/verify-anchor-tenant` onto this commit during `/sweep`'s ship pass.** Four
@@ -4571,7 +4571,7 @@ green before any code changed.
   `CHANGELOG.md`/`COMPATIBILITY.md`/`DECISIONS.md`: the feature branch's own new
   `## Unreleased` entry (16 lines) was kept above this hotfix's `## 0.33.3` header, which
   shifted "No yank" from this entry's `1056` to `1072` and recomputed the two citations above
-  (`CHANGELOG.md:1504-1521`) to `CHANGELOG.md:1520-1537` — verified against the exact
+  (`CHANGELOG.md:1528-1545`) to `CHANGELOG.md:1544-1561` — verified against the exact
   paragraph-boundary text at both the old and new line numbers before trusting the new range,
   not just the arithmetic. A dedicated ship-gate verifier independently re-derived this same
   shift from the diff and confirmed it exact.
@@ -5057,3 +5057,89 @@ at `584823a`; runtime `origin/main` `a9ddb982`.
 - PR #302 opened: https://github.com/zer07labs/seam-sdk/pull/302
 
 - CI round 1: 34 of 35 green. CodeQL py/clear-text-logging (alert 37) traced the env-var NAME tuple through the f"<{name}>" placeholder to print, a false positive (no value is printed). Fixed in code, not dismissed: placeholders are now literal labels (REDACTED_ENV).
+
+# PROGRESS — `plans/record-explain.md` (seam-sdk#273, B-RECORD-EXPLAIN SDK half)
+
+Checkpoint trail and repo map for reading `DecisionRecordView`'s 0.61.0 fields (policy and seal attestation).
+Anchors were taken at `b77609a`; runtime `7d538c54` (seam-runtime#1535). Rebase onto `origin/main` first:
+the bot's `chore(release): v0.61.0` commit `32ab80d` landed while the plan was written.
+
+## Repo map
+
+- Contract: `seam-runtime/crates/seam-api/proto/seam/api/v1/seam.proto` @ `7d538c54`: `PolicyEnforcement`
+  :742 (doc above it), `DecisionRecordView` :1064-1107, `SealAttestation` :1109-1123, the availability enum
+  :1124-1144, `SealReason` :1146-1157, `CollectiveVerdict` growth policy :556.
+- Generated (untracked, current from BSR): `DecisionRecordView` / `SealAttestation` and the
+  `SealAttestationAvailability` / `SealReason` enums in `seam_pb2.pyi` and `seam_pb.ts` (cited by
+  symbol: the generated trees are gitignored and regenerated).
+- Python reads: `client.py` `get_decision` :1113-1142; `aio.py` `get_decision` :854-868. Both return the raw view.
+- Python decoders:
+  - `_collective.py` `collective_outcome_of` :99-173 (body to extract :152-173; stale header :8-12);
+  - `_policy.py` `policy_enforcement_of` :163-199 (union :164; stale "when present" :26-40; meaning-3
+    block :129-154);
+  - `errors.py` `UnknownCollectiveVerdictError` :104-128;
+  - `__init__.py` imports :10-11, `__all__` :159-166.
+- TS: `client.ts` `UnknownCollectiveVerdictError` :291, verdict table :303-315, `collectiveOutcomeOf`
+  :401-423, `PolicyEnforcement` :442-472, stale prose :500-504, `policyEnforcementOf` :576-590,
+  `getDecision` :1526-1534; `index.ts` dual-declaration comment :53-84 ("FIVE"), type exports :87-124.
+- Tests to touch:
+  - `python/tests/test_policy_enforcement.py` (carriers :128, non-carriers :313, descriptors :329);
+  - `test_collective_outcome.py`;
+  - `test_presence_rules_agree_across_languages.py` (`RETRACTED` / `BOTH_LANGUAGES`);
+  - `test_shadowed_names_comment.py` (the count word);
+  - `test_field_manifest_gate.py` (the exact-lag test is red until the manifest is written);
+  - `test_integration.py` (GetDecision :297, :393);
+  - `ts/tests/policy_enforcement.test.ts`, `collective_outcome.test.ts`, `integration.test.ts` :85, :109.
+- Gate: `scripts/check-contract.sh` exits 6 on 7 fields + 12 enum values; `contract/field-manifest.txt`
+  `DecisionRecordView/*` :267-274, `PolicyEnforcement/*` :374-375.
+- Release: `.github/workflows/release-on-runtime.yml` (dispatch or manual with `version` +
+  `wire_framing_version`); `publish.yml` (ci-ok gate, then internal, then `promote-partner` :768);
+  `scripts/set_version.sh`, `retitle_changelog.sh`, `shift_changelog_citations.py`; precedent
+  `COMPATIBILITY.md:119-125` (v0.50.0 unpublished → v0.50.1).
+- Go/Java/Kotlin: no transport, no client (`README.md:135-138`, `go/README.md:3-6`). Nothing to edit.
+- External, read-only:
+  - `seam-runtime/plans/1361-record-explain.md` (train B has no wire change);
+  - seam-mcp's `plans/post-onboarding.md` § P4b and its `plans/cross-repo/seam-sdk-post-onboarding.md`
+    § B-RECORD-EXPLAIN (sibling repo, cited by section);
+  - `seam-adapters/core/seam_agent_core/transport_grpc.py:399-417` (`_decision_readback` copies 8 fields).
+
+## Plan — 2026-10-28
+- Plan written: 5 phases. Phase 1 (Python, complex), Phase 2 (TS, complex), Phase 3 (manifest + live,
+  simple), Phase 4 (docs, simple), Phase 5 (release + hand-off, post-merge).
+- At plan time, runtime 0.61.0's dispatch tagged `v0.61.0` / `go/v0.61.0` at `32ab80d`. Its CI failed (main,
+  both tags) and `publish` run 40739395352 failed: v0.61.0 is unpublished, and `main` is red until this PR merges. See the plan's Status and Q3.
+- **Next:** the plan review, then `/implement` Phase 1.
+
+## Phase 1 — DONE (2026-10-28)
+- **Verdict:** PASS on round 2 (Opus verifier; complex phase — new public API `seal_attestation_of`/`SealAttestation`, widened `policy_enforcement_of`).
+- **Round 1 (GAPS):** AC2 untested for four named availabilities and UNSPECIFIED with a COMMIT + collective payload; fixture `_comment` named the wrong TS path. **Round 2:** both closed.
+- **Files:** `python/seam_sdk/_seal.py` (new), `_collective.py` (`_decode_collective` extracted; doc pointer), `_policy.py` (three carriers; record-view meaning-3 note), `errors.py`, `__init__.py`, `client.py`/`aio.py` (`get_decision` docstrings); tests `test_seal_attestation.py` (new), `fixtures/seal_attestation_cases.json` (new, shared with TS), `test_policy_enforcement.py`, `test_collective_outcome.py`, `test_presence_rules_agree_across_languages.py` (RETRACTED, Python-only until Phase 2).
+- **Suite:** `pytest -q` 1 failed / 2392 passed; the one failure is the planned `test_field_manifest_gate.py` known-lag test (closes in Phase 3). ruff clean.
+- **Assumptions logged:** Q1 (unknown sealed verdict raises), Q2 (no clearance option) — UNCONFIRMED.
+- **Next:** Phase 2, TypeScript mirror.
+
+## Phase 2 — DONE (2026-10-28)
+- **Verdict:** PASS, round 1 (Opus verifier; complex — new public TS API `sealAttestationOf`/`SealAttestation`, widened root union).
+- **Files:** `ts/src/client.ts` (`decodeCollective` extracted, module-private; `SealAttestation` + `sealAttestationOf`; three-carrier `policyEnforcementOf`; carrier/VERB prose; `getDecision` doc), `ts/src/index.ts` (SIX dual-declared names), `ts/tests/seal_attestation.test.ts` (new, reads the shared Python fixture), `ts/tests/policy_enforcement.test.ts`; `python/tests/test_presence_rules_agree_across_languages.py` (RETRACTED widened to TS; new BOTH_LANGUAGES "never withholds after eviction"); line citations renumbered in `COMPATIBILITY.md` (567, 766) and `PROGRESS.md` (157, 160, 162, 163).
+- **Suites:** TS typecheck/build clean, 524 tests / 508 pass / 0 fail / 16 skipped; Python 1 known failure (field-manifest lag, Phase 3) / 2393 passed.
+- **Next:** Phase 3 — manifest + live coverage (seam-grpc 0.61.0 built locally into scratch).
+
+## Phase 3 — DONE (2026-10-28)
+- **Verdict:** PASS (Opus verifier, run solo because the phase gained a live-run incident). A first verify round was stopped before it returned: it was reviewing a docstring "correction" built on a dirty runtime build, which was then reverted.
+- **Incident:** the first live build came from the shared seam-runtime checkout, which held uncommitted train-B work on `feat/1361-train-b`, and it returned RECORDED. seam-runtime-f8 confirmed `7d538c54` has no writer. I rebuilt from a `git archive 7d538c54` export: NOT_RECORDED on both paths. Corrections and retractions went to seam-runtime-f8 and seam-mcp-b2.
+- **Files:** `contract/field-manifest.txt` (+19: 7 fields, 12 enum values; no other contract file moved); `python/tests/test_integration.py`, `ts/tests/integration.test.ts` (version-agnostic record-view asserts); `python/tests/test_field_manifest_gate.py` (enum floor now six enums).
+- **Gate:** `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` → 0. Cutting one line gives 6 and names it.
+- **Suites (clean 0.61.0 seam-grpc via SEAM_GRPC_BIN):** Python 2423 passed / 10 skipped, live included; TS 533 / 0 fail / 0 skipped. The live asserts also passed on the train-B build.
+- **Next:** Phase 4, docs.
+
+## Phase 4 — DONE (2026-10-28)
+- **Verdict:** PASS on round 2 (Opus verifier). **Round 1 (GAPS):** the plan's AC4 line contradicted itself after the citation shift; two bare `(:N)` anchors were unshifted; `client.py` still said "read get_decision for the outcome"; the README `seal_attestation_of` bullet omitted None on an older runtime. **Round 2:** all four closed.
+- **Pre-phase:** rebased onto `origin/main` (`32ab80d`, the bot's v0.61.0 release commit). Clean.
+- **Files:** `README.md` (BSR field list; *Explaining a sealed record*; resend sentence), `COMPATIBILITY.md` (0.61.1 pairing paragraph; record-explain row; README cite 160→163), `CHANGELOG.md` (Unreleased Added + Changed; the 0.61.0 "Tagged, never published" line), `plans/README.md` (active row), `python/seam_sdk/client.py` and `ts/src/client.ts` (resend docstrings). `scripts/shift_changelog_citations.py . 17 24` shifted 11 citations.
+- **Suites:** Python 2394 passed; TS 508 / 0 fail; Go, Rust `verify/`, Java and Kotlin (JDK 17) green.
+- **Next:** finalization, /reconcile (Q1, Q2), /ship.
+
+## Finalization — DONE (2026-10-28)
+- **Verdict:** whole-feature Opus verify returned GAPS (two one-line doc items): the plan's top-level Status still read TODO; Q2's planned `DEFERRED.md` line was missing. Both fixed here. Everything else checked clean: Python/TS parity over the shared fixture, public surfaces, no RECORDED-on-0.61.x claim, manifest = wired surface, tracked files.
+- **Clean-state checks:** a uv-built wheel in a fresh venv imports `seal_attestation_of` and decodes NOT_RECORDED; the built TS dist exports `sealAttestationOf`/`policyEnforcementOf` and not the private collective decoder; contract gate exits 0.
+- **Next:** /reconcile (Q1, Q2), then /ship.

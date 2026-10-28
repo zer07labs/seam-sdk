@@ -101,7 +101,10 @@ and probes the emitted stubs:
 > (`collective_outcome = 4`), the quorum verbs `SeamCoordination.SubmitApprovalRequest` /
 > `SubmitBallot` with `ApprovalRequestRequest`, `BallotRequest` and `BallotChoice`, the evaluation
 > verbs `SeamCoordination.SubmitEvaluation` / `SubmitObjection` with `EvaluationRequest` and
-> `ObjectionRequest`, and `AuthorizeRequest.subjects = 12`.
+> `ObjectionRequest`, and `AuthorizeRequest.subjects = 12`. Since runtime 0.61.0 (seam-runtime#1361) it
+> also carries the record-explain surface on `DecisionRecordView`: `policy_version = 9`,
+> `policy_rules_digest = 10`, `policy_enforcement = 11` and `seal_attestation = 12`
+> (`SealAttestation`, `SealAttestationAvailability`, `SealReason`).
 >
 > `EvaluationRequest.confidence` is **`optional`** on the wire (`proto3_optional`), which is the one
 > property worth stating rather than assuming: absent means *declined to claim*, and a client that
@@ -614,14 +617,39 @@ single refresh the credentialed reads `get_escalation`, `session_status`, `get_d
 `replay_decision`, `get_commitment_proof` (so `verify_decision`), `report_outcome` and the seven
 `submit_*` steps take when they carry a credential, #275; `open_session`, `cancel_session` and
 `expire_session` make exactly one call. A `submit_*` resend after a step that sealed the session returns
-the sealed `decision_id` with no `collective_outcome`, so read `get_decision` for the outcome, and
-`usage` is not part of a step's identity) returning a typed `AuthorizeResult` with the closed verdict set
+the sealed `decision_id` with no `collective_outcome`; the record's own copy is
+`seal_attestation_of(get_decision(...))`, which on runtime 0.61.x reads `NOT_RECORDED` (see
+*Explaining a sealed record* below), and `usage` is not part of a step's identity) returning a typed `AuthorizeResult` with the closed verdict set
 ALLOW / DENY / TRANSFORM / ESCALATE; an unrecognized verdict raises `UnknownVerdictError` (never an
 implicit allow), and a TRANSFORM without a transformed input raises `ProtocolViolationError`. The
 offline helpers `record_digest_v4` (with `RecordDigestStripError` and
 `UnsupportedRecordDigestVersion`) and
 `verify_chain_head_attestation` are exported at top level for consumers verifying exported streams
 without the `verify/` binary.
+
+**Explaining a sealed record (runtime 0.61.0+, seam-sdk#273).** `get_decision` / `getDecision` return
+the raw `DecisionRecordView`. Read it through two decoders rather than the raw fields:
+
+- `policy_enforcement_of(view)` / `policyEnforcementOf(view)`, the same decoder as for a
+  `DecisionResponse` or `SessionStep`, answers "was this gated, and by what?". On a record it is derived
+  from the record's own columns, so it is always present on 0.61.0+ and answers even after crypto-shred.
+  `None`/`undefined` means a runtime older than 0.61.0.
+- `seal_attestation_of(view)` / `sealAttestationOf(view)` returns `SealAttestation(availability,
+  seal_reason, collective_outcome)` — why the record was sealed and, for a commit, the runtime's own
+  collective outcome — or `None`/`undefined` on a runtime older than 0.61.0. `availability` is one of `RECORDED`, `NOT_RECORDED`, `KEY_UNAVAILABLE`, `ARCHIVED`,
+  `CLEARANCE_DENIED`, `UNAVAILABLE` or `UNRECOGNIZED`, and only `RECORDED` carries a payload. On runtime
+  0.61.x every record reads **`NOT_RECORDED`**; attestations are written from runtime 0.62.0 with no SDK
+  change. `UNRECOGNIZED` (UNSPECIFIED included) means this SDK does not know the value: read it as
+  withheld. Neither availability nor seal reason ever raises; an unknown verdict inside a `RECORDED`
+  collective raises `UnknownCollectiveVerdictError`, as on the immediate response. The state meanings
+  are the `SealAttestationAvailability` comments in `seam.api.v1`.
+
+The attestation is chain-bound but **not client-verifiable**: it is not a TCT input, so
+`verify_decision` does not cover it. Reads go at clearance **PUBLIC** (the SDK sends no
+`x-seam-clearance`), so a record whose handling rule needs more reads `CLEARANCE_DENIED`, never an
+error. Participant verdicts are not on the view: read them from `get_commitment_proof`.
+`policy_version` and `policy_rules_digest` are display values with no presence, not
+`record_digest_v4` inputs. Go, Java and Kotlin carry the generated fields only, with no decoder.
 
 **Async (Python).** `seam_sdk.aio` mirrors the full data-plane `SeamClient` for `asyncio` (same
 signatures, shared ticket core). The management plane is **sync-only by design** — an async operator

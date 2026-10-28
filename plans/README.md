@@ -10,7 +10,7 @@ against a status table alone.
 
 | Plan | Status |
 |---|---|
-| _(none)_ | No active plans as of 2026-10-27. The open work is tracked as issues: #290 (DPoP signer) and #273 (blocked on seam-runtime#1361). |
+| `record-explain.md` | Active, 2026-10-28. Issue [#273](https://github.com/zer07labs/seam-sdk/issues/273): the 0.61.0 `DecisionRecordView` fields (policy enforcement, seal attestation) read through presence-aware decoders in Python and TS, and the field manifest; ships as SDK 0.61.1. |
 
 ## Cross-repo asks
 

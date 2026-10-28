@@ -50,7 +50,7 @@ export type { MgmtDpopProofInput } from "./dpop.js";
 // and return — and construct the ones they must pass in, via protobuf-es `create(Schema)`, e.g.
 // `create(AnchorSchema, { … })` for `verifyPartyAnchor`.
 //
-// FIVE generated names are declared on BOTH sides — by a hand-written export here and by the
+// SIX generated names are declared on BOTH sides — by a hand-written export here and by the
 // generated surface — and at this root the hand-written declaration is the one you get. The
 // generated type stays reachable as `pb.X`. Listed one entry per NAME, so the count can be checked
 // against the list without decoding a grouping; `python/tests/test_shadowed_names_comment.py`
@@ -63,24 +63,25 @@ export type { MgmtDpopProofInput } from "./dpop.js";
 //                             needed.
 //   `pb.CollectiveOutcome`  — the wire message behind the DTO that `collectiveOutcomeOf` returns.
 //   `pb.PolicyEnforcement`  — the wire message behind the DTO that `policyEnforcementOf` returns.
+//   `pb.SealAttestation`    — the wire message behind the DTO that `sealAttestationOf` returns.
 //
 // **Why they are `pb.`-only is worth stating precisely, because the obvious explanation is wrong.**
 // It is not that a star export beat another star export: this file never star-exports the generated
 // module. `export * as pb` exports exactly one name — `pb` — and contributes none of the module's
 // inner names at the root. Every generated name that DOES reach the root gets there through an
-// explicit list below — a deliberately small subset, 40 of the 167 the two modules declare, with the
-// rest `pb.`/`ev.`-only and always so. These five are simply not on those lists, which is a
+// explicit list below — a deliberately small subset of what the two modules declare, with the
+// rest `pb.`/`ev.`-only and always so. These six are simply not on those lists, which is a
 // different thing from being displaced. Ordering has nothing to do with it, and had
 // there been two competing star exports, ESM would have EXCLUDED the ambiguous name rather than
 // resolving it to the first. **The causality runs the other way from the intuition:** adding one of
-// these five to the explicit `export type { … }` list would not "un-hide" it — it would make the
+// these six to the explicit `export type { … }` list would not "un-hide" it — it would make the
 // GENERATED type win the root name and silently displace the hand-written one.
 //
-// The last two differ from the first three in a way worth knowing before reaching for `pb.`: the
-// root-level `CollectiveOutcome` and `PolicyEnforcement` are DECODED forms, not parallel spellings
-// of the wire type. `CollectiveOutcome.verdict` is a narrowed string union where the wire type has
-// an open enum, and `PolicyEnforcement` is only ever reached through a decoder that returns
-// `undefined` for an absent field. Take the `pb.` type to build or inspect a raw message; take the
+// The last three differ from the first three in a way worth knowing before reaching for `pb.`: the
+// root-level `CollectiveOutcome`, `PolicyEnforcement` and `SealAttestation` are DECODED forms, not
+// parallel spellings of the wire type. `CollectiveOutcome.verdict` and `SealAttestation.availability`
+// are narrowed string unions where the wire type has an open enum, and `PolicyEnforcement` is only
+// ever reached through a decoder that returns `undefined` for an absent field. Take the `pb.` type to build or inspect a raw message; take the
 // root-level one to read what a client handed you.
 
 // seam.api.v1 — types in public signatures.

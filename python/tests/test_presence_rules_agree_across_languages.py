@@ -56,6 +56,13 @@ RETRACTED = [
         "return a verdict folded from a different round than the decision_id beside it named; "
         "seam-runtime#561 closed that toward absence, making the unqualified sentence wrong.",
     ),
+    (
+        "a fetched or replayed decision reads",
+        (PY_POLICY, TS_CLIENT),
+        "seam-runtime#1361 train A: GetDecision carries policy_enforcement since 0.61.0, derived "
+        "from the record's own columns and always present. A caller told a fetched record reads "
+        "None would never read the field that answers 'was this gated?' after the fact.",
+    ),
 ]
 
 #: Claims that must be present in BOTH languages. The pairing is the point — a claim in one
@@ -84,6 +91,13 @@ BOTH_LANGUAGES = [
         PY_POLICY,
         TS_CLIENT,
         "enforced=False is not one condition; under the third the natural reading is backwards",
+    ),
+    (
+        "never withholds after eviction",
+        PY_POLICY,
+        TS_CLIENT,
+        "on a DecisionRecordView policy_enforcement is derived from the record's own columns, so "
+        "the third meaning of enforced=False does not occur there (seam-runtime#1361)",
     ),
     (
         "never on the status or the message text",

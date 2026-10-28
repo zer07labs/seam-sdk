@@ -26,6 +26,9 @@ from seam_sdk import (
     SeamClient,
     StepUsage,
     UnauthenticatedError,
+    collective_outcome_of,
+    policy_enforcement_of,
+    seal_attestation_of,
 )
 
 
@@ -54,8 +57,31 @@ def test_full_round_trip(server):
     assert dec.decided_value == "BLOCK"
     assert dec.outcome == "Resolved"
 
-    assert client.get_decision(dec.decision_id).outcome == "Resolved"
+    record = client.get_decision(dec.decision_id)
+    assert record.outcome == "Resolved"
     assert client.replay_decision(dec.decision_id).chain_verified
+
+    # Runtime 0.61.0+ (seam-runtime#1361): the record view carries a derived, always-present
+    # policy_enforcement and a seal attestation. Written to hold on 0.61.x (NOT_RECORDED) and on the
+    # train-B runtimes that write attestations (RECORDED) alike — no version branch.
+    enforcement = policy_enforcement_of(record)
+    assert enforcement is not None
+    immediate_enforcement = policy_enforcement_of(dec)
+    if immediate_enforcement is not None:
+        assert enforcement.enforced == immediate_enforcement.enforced
+    attestation = seal_attestation_of(record)
+    assert attestation is not None
+    assert attestation.availability != "UNRECOGNIZED"
+    if attestation.availability == "RECORDED":
+        assert attestation.seal_reason == "COMMIT"
+        immediate_collective = collective_outcome_of(dec)
+        if (
+            immediate_collective is not None
+            and attestation.collective_outcome is not None
+        ):
+            assert (
+                attestation.collective_outcome.verdict == immediate_collective.verdict
+            )
 
     # Independent verification — pin the issuer (TOFU here) then verify the rooted TCT locally.
     issuer = client.issuer_aid()

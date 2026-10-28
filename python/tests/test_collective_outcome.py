@@ -331,3 +331,17 @@ def test_a_session_step_carries_effective_threshold_identically_to_a_response() 
     assert collective_outcome_of(_step(**kwargs)) == collective_outcome_of(
         _resp(**kwargs)
     )
+
+
+def test_the_shared_decoder_is_what_collective_outcome_of_runs() -> None:
+    """The verdict mapping was extracted into ``_decode_collective`` so the record view's sealed
+    collective (``seal_attestation_of``) reuses it. Pin that ``collective_outcome_of`` is a presence
+    gate over exactly that function, not a second copy that can drift."""
+    from seam_sdk._collective import _decode_collective
+
+    resp = pb.DecisionResponse(decision_id="dec-1")
+    resp.collective_outcome.verdict = pb.COLLECTIVE_VERDICT_ESCALATED
+    resp.collective_outcome.abstain_count = 2
+    assert collective_outcome_of(resp) == _decode_collective(
+        resp.collective_outcome, "dec-1"
+    )

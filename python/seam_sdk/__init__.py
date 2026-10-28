@@ -9,6 +9,7 @@ from . import aio
 from ._authorize import AuthorizeResult, canonicalize_tool_input
 from ._collective import CollectiveOutcome, collective_outcome_of
 from ._policy import PolicyEnforcement, policy_enforcement_of
+from ._seal import SealAttestation, seal_attestation_of
 from .admin import (
     DEFAULT_ADMIN_TIMEOUT_S,
     KNOWN_KINDS,
@@ -164,6 +165,10 @@ __all__ = [
     # `_collective.py` would have.
     "PolicyEnforcement",
     "policy_enforcement_of",
+    # Seal attestation (0.61.0) — why a fetched record was sealed. Enum growth policy is WITHHELD,
+    # not FailPolicy, so unknown availability/reason read "UNRECOGNIZED" rather than raising.
+    "SealAttestation",
+    "seal_attestation_of",
     "DEFAULT_TIMEOUT_S",
     "DEFAULT_ADMIN_TIMEOUT_S",
     "jcs_canonicalize",
