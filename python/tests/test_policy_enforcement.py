@@ -126,8 +126,9 @@ def test_enforced_true_carries_its_policy_id() -> None:
     ],
 )
 def test_both_message_types_decode_identically(payload: pb.PolicyEnforcement) -> None:
-    """Criterion 4. One decoder, two message types — and the field number differs between them
-    (7 on ``DecisionResponse``, 3 on ``SessionStep``), so this is not a tautology.
+    """Criterion 4. One decoder, three message types — and the field number differs between them
+    (7 on ``DecisionResponse``, 3 on ``SessionStep``, 11 on ``DecisionRecordView``), so this is not
+    a tautology.
 
     A second implementation per message type would be a second place for the fail-open inversion to
     reappear, which is why there is one.
@@ -138,8 +139,17 @@ def test_both_message_types_decode_identically(payload: pb.PolicyEnforcement) ->
     from_response = policy_enforcement_of(
         pb.DecisionResponse(decision_id="d-1", policy_enforcement=payload)
     )
-    assert from_step == from_response
+    from_record = policy_enforcement_of(
+        pb.DecisionRecordView(decision_id="d-1", policy_enforcement=payload)
+    )
+    assert from_step == from_response == from_record
     assert from_step is not None
+
+
+def test_a_record_view_without_the_field_is_none() -> None:
+    """A record from a runtime older than 0.61.0 has no field 11. That is "not answered", and must
+    not decode as ``enforced=False`` — the fail-open reading this module exists to close."""
+    assert policy_enforcement_of(pb.DecisionRecordView(decision_id="d-1")) is None
 
 
 def test_a_decision_response_without_the_field_is_none_too() -> None:
@@ -339,7 +349,11 @@ def test_the_descriptor_claims_in_the_docstring_are_true() -> None:
         pb.DecisionResponse.DESCRIPTOR.fields_by_name["policy_enforcement"].number == 7
     )
     assert pb.SessionStep.DESCRIPTOR.fields_by_name["policy_enforcement"].number == 3
-    for carrier in (pb.DecisionResponse, pb.SessionStep):
+    assert (
+        pb.DecisionRecordView.DESCRIPTOR.fields_by_name["policy_enforcement"].number
+        == 11
+    )
+    for carrier in (pb.DecisionResponse, pb.SessionStep, pb.DecisionRecordView):
         field = carrier.DESCRIPTOR.fields_by_name["policy_enforcement"]
         assert field.has_presence, (
             f"{carrier.__name__} lost presence — the HasField gate is moot"

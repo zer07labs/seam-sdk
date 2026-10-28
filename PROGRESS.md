@@ -5057,3 +5057,63 @@ at `584823a`; runtime `origin/main` `a9ddb982`.
 - PR #302 opened: https://github.com/zer07labs/seam-sdk/pull/302
 
 - CI round 1: 34 of 35 green. CodeQL py/clear-text-logging (alert 37) traced the env-var NAME tuple through the f"<{name}>" placeholder to print, a false positive (no value is printed). Fixed in code, not dismissed: placeholders are now literal labels (REDACTED_ENV).
+
+# PROGRESS — `plans/record-explain.md` (seam-sdk#273, B-RECORD-EXPLAIN SDK half)
+
+Checkpoint trail and repo map for reading `DecisionRecordView`'s 0.61.0 fields (policy and seal attestation).
+Anchors were taken at `b77609a`; runtime `7d538c54` (seam-runtime#1535). Rebase onto `origin/main` first:
+the bot's `chore(release): v0.61.0` commit `32ab80d` landed while the plan was written.
+
+## Repo map
+
+- Contract: `seam-runtime/crates/seam-api/proto/seam/api/v1/seam.proto` @ `7d538c54`: `PolicyEnforcement`
+  :742 (doc above it), `DecisionRecordView` :1064-1107, `SealAttestation` :1109-1123, the availability enum
+  :1124-1144, `SealReason` :1146-1157, `CollectiveVerdict` growth policy :556.
+- Generated (untracked, current from BSR): `DecisionRecordView` / `SealAttestation` and the
+  `SealAttestationAvailability` / `SealReason` enums in `seam_pb2.pyi` and `seam_pb.ts` (cited by
+  symbol: the generated trees are gitignored and regenerated).
+- Python reads: `client.py` `get_decision` :1113-1142; `aio.py` `get_decision` :854-868. Both return the raw view.
+- Python decoders:
+  - `_collective.py` `collective_outcome_of` :99-173 (body to extract :152-173; stale header :8-12);
+  - `_policy.py` `policy_enforcement_of` :163-199 (union :164; stale "when present" :26-40; meaning-3
+    block :129-154);
+  - `errors.py` `UnknownCollectiveVerdictError` :104-128;
+  - `__init__.py` imports :10-11, `__all__` :159-166.
+- TS: `client.ts` `UnknownCollectiveVerdictError` :291, verdict table :303-315, `collectiveOutcomeOf`
+  :401-423, `PolicyEnforcement` :442-472, stale prose :500-504, `policyEnforcementOf` :576-590,
+  `getDecision` :1526-1534; `index.ts` dual-declaration comment :53-84 ("FIVE"), type exports :87-124.
+- Tests to touch:
+  - `python/tests/test_policy_enforcement.py` (carriers :128, non-carriers :313, descriptors :329);
+  - `test_collective_outcome.py`;
+  - `test_presence_rules_agree_across_languages.py` (`RETRACTED` / `BOTH_LANGUAGES`);
+  - `test_shadowed_names_comment.py` (the count word);
+  - `test_field_manifest_gate.py` (the exact-lag test is red until the manifest is written);
+  - `test_integration.py` (GetDecision :297, :393);
+  - `ts/tests/policy_enforcement.test.ts`, `collective_outcome.test.ts`, `integration.test.ts` :85, :109.
+- Gate: `scripts/check-contract.sh` exits 6 on 7 fields + 12 enum values; `contract/field-manifest.txt`
+  `DecisionRecordView/*` :267-274, `PolicyEnforcement/*` :374-375.
+- Release: `.github/workflows/release-on-runtime.yml` (dispatch or manual with `version` +
+  `wire_framing_version`); `publish.yml` (ci-ok gate, then internal, then `promote-partner` :768);
+  `scripts/set_version.sh`, `retitle_changelog.sh`, `shift_changelog_citations.py`; precedent
+  `COMPATIBILITY.md:119-125` (v0.50.0 unpublished → v0.50.1).
+- Go/Java/Kotlin: no transport, no client (`README.md:135-138`, `go/README.md:3-6`). Nothing to edit.
+- External, read-only:
+  - `seam-runtime/plans/1361-record-explain.md` (train B has no wire change);
+  - seam-mcp's `plans/post-onboarding.md` § P4b and its `plans/cross-repo/seam-sdk-post-onboarding.md`
+    § B-RECORD-EXPLAIN (sibling repo, cited by section);
+  - `seam-adapters/core/seam_agent_core/transport_grpc.py:399-417` (`_decision_readback` copies 8 fields).
+
+## Plan — 2026-10-28
+- Plan written: 5 phases. Phase 1 (Python, complex), Phase 2 (TS, complex), Phase 3 (manifest + live,
+  simple), Phase 4 (docs, simple), Phase 5 (release + hand-off, post-merge).
+- At plan time, runtime 0.61.0's dispatch tagged `v0.61.0` / `go/v0.61.0` at `32ab80d`. Its CI failed (main,
+  both tags) and `publish` run 40739395352 failed: v0.61.0 is unpublished, and `main` is red until this PR merges. See the plan's Status and Q3.
+- **Next:** the plan review, then `/implement` Phase 1.
+
+## Phase 1 — DONE (2026-10-28)
+- **Verdict:** PASS on round 2 (Opus verifier; complex phase — new public API `seal_attestation_of`/`SealAttestation`, widened `policy_enforcement_of`).
+- **Round 1 (GAPS):** AC2 untested for four named availabilities and UNSPECIFIED with a COMMIT + collective payload; fixture `_comment` named the wrong TS path. **Round 2:** both closed.
+- **Files:** `python/seam_sdk/_seal.py` (new), `_collective.py` (`_decode_collective` extracted; doc pointer), `_policy.py` (three carriers; record-view meaning-3 note), `errors.py`, `__init__.py`, `client.py`/`aio.py` (`get_decision` docstrings); tests `test_seal_attestation.py` (new), `fixtures/seal_attestation_cases.json` (new, shared with TS), `test_policy_enforcement.py`, `test_collective_outcome.py`, `test_presence_rules_agree_across_languages.py` (RETRACTED, Python-only until Phase 2).
+- **Suite:** `pytest -q` 1 failed / 2392 passed; the one failure is the planned `test_field_manifest_gate.py` known-lag test (closes in Phase 3). ruff clean.
+- **Assumptions logged:** Q1 (unknown sealed verdict raises), Q2 (no clearance option) — UNCONFIRMED.
+- **Next:** Phase 2, TypeScript mirror.

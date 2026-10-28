@@ -1128,7 +1128,11 @@ class SeamClient:
         ``get_commitment_proof``, ``get_escalation``) and ``report_outcome``. A second rejection
         raises :class:`~seam_sdk.errors.UnauthenticatedError`. The runtime answers a scope refusal
         (an out-of-scope or absent id) with the same ``UNAUTHENTICATED`` as a dead ticket, so such a
-        call also pays one re-admit before it raises; without a credential nothing is retried."""
+        call also pays one re-admit before it raises; without a credential nothing is retried.
+
+        Returns the raw view. Read its policy enforcement with
+        :func:`~seam_sdk.policy_enforcement_of` and its seal attestation with
+        :func:`~seam_sdk.seal_attestation_of` (runtime 0.61.0+) rather than the raw fields."""
         return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/GetDecision",
