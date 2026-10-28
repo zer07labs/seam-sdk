@@ -239,8 +239,8 @@ def test_apply_against_a_hostile_echo_passes_and_reveals_nothing(
     assert "[ok] bound token as Bearer is refused" in out.out
     assert "[ok] unbound token as Bearer is refused" in out.out
     # The server really echoed the headers back, so the redactor did work rather than nothing leaking.
-    assert "refused: Bearer <SEAM_OPERATOR_TOKEN>" in out.out
-    assert "refused: Bearer <SEAM_UNBOUND_OPERATOR_TOKEN>" in out.out
+    assert "refused: Bearer <redacted operator token>" in out.out
+    assert "refused: Bearer <redacted unbound token>" in out.out
     assert _leaks(out.out + out.err, secrets) == []
     assert [m["authorization"].split(" ")[0] for m in seen] == [
         "DPoP",
@@ -310,6 +310,6 @@ def test_the_redactor_covers_each_line_of_a_multi_line_jwk(secrets) -> None:
     )
     assert secrets["_seed_b64"] not in redact(f"oops {d_line.strip()} leaked")
     # The private half alone, and a token's signature alone, are redacted too.
-    assert redact(f"d={secrets['_seed_b64']}") == "d=<SEAM_OPERATOR_DPOP_JWK>"
+    assert redact(f"d={secrets['_seed_b64']}") == "d=<redacted DPoP JWK>"
     sig = secrets["SEAM_OPERATOR_TOKEN"].rsplit(".", 1)[1]
-    assert redact(f"sig={sig}") == "sig=<SEAM_OPERATOR_TOKEN>"
+    assert redact(f"sig={sig}") == "sig=<redacted operator token>"

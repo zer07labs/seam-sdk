@@ -47,11 +47,13 @@ REQUIRED = (
     "SEAM_MGMT_TARGET",
     "SEAM_MGMT_CA_FILE",
 )
-SECRETS = (
-    "SEAM_OPERATOR_TOKEN",
-    "SEAM_OPERATOR_DPOP_JWK",
-    "SEAM_UNBOUND_OPERATOR_TOKEN",
-)
+# Each secret input, and the literal label that replaces it in any output. The label is never built from the
+# variable's name or value, so nothing derived from an input reaches the output except through redaction.
+REDACTED_ENV = {
+    "SEAM_OPERATOR_TOKEN": "<redacted operator token>",
+    "SEAM_OPERATOR_DPOP_JWK": "<redacted DPoP JWK>",
+    "SEAM_UNBOUND_OPERATOR_TOKEN": "<redacted unbound token>",
+}
 
 
 def _secret_fragments(value: str) -> list[str]:
@@ -75,16 +77,16 @@ class Redactor:
 
     def __init__(self, env: dict[str, str]) -> None:
         parts: list[tuple[str, str]] = []
-        for name in SECRETS:
+        for name, label in REDACTED_ENV.items():
             value = env.get(name, "")
             if value:
-                parts.append((value, f"<{name}>"))
+                parts.append((value, label))
                 parts.extend(
-                    (line.strip(), f"<{name}>")
+                    (line.strip(), label)
                     for line in value.splitlines()
                     if len(line.strip()) >= 8
                 )
-                parts.extend((frag, f"<{name}>") for frag in _secret_fragments(value))
+                parts.extend((frag, label) for frag in _secret_fragments(value))
         # Longest first, so a whole value is replaced before any fragment of it.
         self._parts = sorted(parts, key=lambda p: len(p[0]), reverse=True)
 

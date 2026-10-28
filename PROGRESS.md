@@ -5052,3 +5052,8 @@ at `584823a`; runtime `origin/main` `a9ddb982`.
 - Round 2 (Fable): PASS. Its one side effect was that the TS class JSDoc had become attached to `signWith`; the declaration now sits above the JSDoc.
 - Each fix has a test that fails if it is undone (both the TS message test and the Java Gson test were
   mutation-checked).
+
+- pushed feat/operator-dpop-signer fe9fbde
+- PR #302 opened: https://github.com/zer07labs/seam-sdk/pull/302
+
+- CI round 1: 34 of 35 green. CodeQL py/clear-text-logging (alert 37) traced the env-var NAME tuple through the f"<{name}>" placeholder to print, a false positive (no value is printed). Fixed in code, not dismissed: placeholders are now literal labels (REDACTED_ENV).
