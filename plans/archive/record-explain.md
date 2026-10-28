@@ -1,3 +1,5 @@
+> **Delivery verified 2026-10-28.** PR #304 (`3ab01d8`) is on `main`, `v0.61.1` is published to Cloudsmith `internal` and `partner`, and #273 is closed. ASSUMPTIONS Q1/Q2 are CONFIRMED in `DECISIONS.md`. #273 closes on train A: train B (runtime 0.62.0) writes RECORDED attestations with no wire or SDK change.
+
 # Explain a sealed record: `DecisionRecordView` policy and seal attestation (B-RECORD-EXPLAIN, SDK half)
 
 > **Issue:** [#273](https://github.com/zer07labs/seam-sdk/issues/273) (register ID B-RECORD-EXPLAIN; consumer
@@ -15,7 +17,7 @@
 
 ## Status
 
-Phases 1-4 DONE (2026-10-28), finalized; Phase 5 (release 0.61.1, consumer messages) runs post-merge.
+DONE (2026-10-28). All five phases delivered; SDK 0.61.1 published. Archived.
 
 **Release state at plan time — read before Phase 5.** Runtime 0.61.0's `dispatch-sdk` fired while this
 plan was being written. `release-on-runtime.yml` saw `main` (`b77609a`) green, because that commit's CI
@@ -472,7 +474,7 @@ All phases land in `seam-sdk`. There are no cross-repo writes. Shared API (Opus 
 
 ### Phase 5: release and hand-off (post-merge)
 
-- **Status:** TODO
+- **Status:** DONE (2026-10-28). PR #304 merged as `3ab01d8`. Run 40748813196 (release-on-runtime, `version=0.61.1`, `wire_framing_version=3`) tagged `v0.61.1`. Publish run 40749182060 succeeded: npm and the Python wheel went to `internal`, the install-from-Cloudsmith vector check passed, and the packages were promoted to `partner` (`seam-verify` skips on a tag push, as on 0.60.0). seam-mcp and seam-adapters were told. seam-agent-core 0.23.0 (seam-adapters#276, `f8feca8`) now requires `seam-sdk>=0.61.1,<0.62`, and COMPATIBILITY's adapters row is re-quoted to it.
 - **Risk:** simple, but it is a release with a fork in it.
 - **Delivers:** a published SDK on Cloudsmith `internal` (and `partner`, which `publish.yml`'s `promote-partner`
   job copies automatically, :768) whose decision reads decode the new fields; #273 closed; consumers told.

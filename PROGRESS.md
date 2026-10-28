@@ -5058,7 +5058,7 @@ at `584823a`; runtime `origin/main` `a9ddb982`.
 
 - CI round 1: 34 of 35 green. CodeQL py/clear-text-logging (alert 37) traced the env-var NAME tuple through the f"<{name}>" placeholder to print, a false positive (no value is printed). Fixed in code, not dismissed: placeholders are now literal labels (REDACTED_ENV).
 
-# PROGRESS — `plans/record-explain.md` (seam-sdk#273, B-RECORD-EXPLAIN SDK half)
+# PROGRESS — `plans/archive/record-explain.md` (seam-sdk#273, B-RECORD-EXPLAIN SDK half)
 
 Checkpoint trail and repo map for reading `DecisionRecordView`'s 0.61.0 fields (policy and seal attestation).
 Anchors were taken at `b77609a`; runtime `7d538c54` (seam-runtime#1535). Rebase onto `origin/main` first:
@@ -5143,3 +5143,7 @@ the bot's `chore(release): v0.61.0` commit `32ab80d` landed while the plan was w
 - **Verdict:** whole-feature Opus verify returned GAPS (two one-line doc items): the plan's top-level Status still read TODO; Q2's planned `DEFERRED.md` line was missing. Both fixed here. Everything else checked clean: Python/TS parity over the shared fixture, public surfaces, no RECORDED-on-0.61.x claim, manifest = wired surface, tracked files.
 - **Clean-state checks:** a uv-built wheel in a fresh venv imports `seal_attestation_of` and decodes NOT_RECORDED; the built TS dist exports `sealAttestationOf`/`policyEnforcementOf` and not the private collective decoder; contract gate exits 0.
 - **Next:** /reconcile (Q1, Q2), then /ship.
+
+## Phase 5 — DONE (2026-10-28)
+- PR #304 merged (`3ab01d8`); `v0.61.1` released (run 40748813196) and published (run 40749182060) to `internal` and `partner`. seam-mcp and seam-adapters were told.
+- seam-agent-core 0.23.0 (seam-adapters#276, `f8feca8`) requires `seam-sdk>=0.61.1,<0.62`; the COMPATIBILITY adapters row and its sibling-quote needle are re-quoted to it. The plan is archived.
