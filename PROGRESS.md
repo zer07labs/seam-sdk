@@ -4069,7 +4069,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1640`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1660`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -4556,12 +4556,12 @@ green before any code changed.
   this — "rather than refusing outright" was wrong, fixed before merge). (2) the release's
   `retitle_changelog.sh` run shifted `CHANGELOG.md`'s "No yank" paragraph from line 1054 to 1056
   (a +2 insert right after `## Unreleased`), pushing `COMPATIBILITY.md:123` and
-  `DECISIONS.md:1222`'s `CHANGELOG.md:1480-1497` citations past the citation test's slack
-  tolerance; repointed both to `CHANGELOG.md:1482-1499`. Tested: `check_vendored_spec.py` OK via both
+  `DECISIONS.md:1222`'s `CHANGELOG.md:1500-1517` citations past the citation test's slack
+  tolerance; repointed both to `CHANGELOG.md:1502-1519`. Tested: `check_vendored_spec.py` OK via both
   `--from local` and `--from gh`; `test_compatibility_citations_resolve.py` 489 passed/0 failed
   standalone (was 4 failed). Verifier also flagged two pre-existing, gate-invisible citations
   elsewhere that the same +2 shift widened further — `DECISIONS.md:2035` cites
-  `CHANGELOG.md:1382` and `PROGRESS.md:3981` cites `CHANGELOG.md:1267`, both already ~130-250
+  `CHANGELOG.md:1402` and `PROGRESS.md:3981` cites `CHANGELOG.md:1287`, both already ~130-250
   lines stale before this release — out of scope for this release-unblock hotfix; filed as a
   follow-up issue rather than folded in here.
   **Rebased `feat/verify-anchor-tenant` onto this commit during `/sweep`'s ship pass.** Four
@@ -4571,7 +4571,7 @@ green before any code changed.
   `CHANGELOG.md`/`COMPATIBILITY.md`/`DECISIONS.md`: the feature branch's own new
   `## Unreleased` entry (16 lines) was kept above this hotfix's `## 0.33.3` header, which
   shifted "No yank" from this entry's `1056` to `1072` and recomputed the two citations above
-  (`CHANGELOG.md:1482-1499`) to `CHANGELOG.md:1498-1515` — verified against the exact
+  (`CHANGELOG.md:1502-1519`) to `CHANGELOG.md:1518-1535` — verified against the exact
   paragraph-boundary text at both the old and new line numbers before trusting the new range,
   not just the arithmetic. A dedicated ship-gate verifier independently re-derived this same
   shift from the diff and confirmed it exact.
@@ -4805,3 +4805,255 @@ re-plan: step 4 was the only remaining work, and it is a test addition.
   forgery test (the header subject is honoured); the client signing `decisionId + "x"` fails the
   credentialed-read test; `allow` without the hatch refuses to boot.
 - Plan archived (no `ASSUMPTIONS.md` entries were tagged to it).
+
+# PROGRESS — `plans/operator-dpop-signer.md` (seam-sdk#290)
+
+Checkpoint trail and repo map for the operator Ed25519 DPoP signer, all five languages. Anchors were taken
+at `584823a`; runtime `origin/main` `a9ddb982`.
+
+## Repo map
+
+- `python/seam_sdk/admin.py`: `SeamAdminClient`.
+  - `_tenant_metadata` :166-173, `_BearerAuthInterceptor` :186-211, `connect` :278-298.
+  - Per-method `timeout=DEFAULT_ADMIN_TIMEOUT_S` from :303; `stream_events` `timeout=None` :611.
+- `python/seam_sdk/crypto.py`: `_b64url_nopad` :28; the enroll-PoP style model is at :1247-1324.
+- `python/seam_sdk/__init__.py`: explicit imports at :30, `__all__` at :108.
+- `python/tests/operator_token.py`: test minter, `_SEED_HEX` :23, `mint_operator_token` :31 (gains `cnf_jkt`).
+- `python/tests/live_server.py`: spawns `seam-grpc`; the management bind is `127.0.0.1` at :245.
+- `python/tests/test_admin.py`: asserts the Bearer header at :190-198, so the Bearer path must stay unchanged.
+- `ts/src/admin.ts`: `bearerAuth` :176-180; `connect` :204-211 (`createGrpcTransport` + `Http2SessionManager`).
+- `ts/src/crypto.ts`: noble imports :7-8, base64url :14-18, enroll-PoP model :1397-1483.
+- `ts/src/index.ts`: `export *` :8-9.
+- `ts/tests/unit_plumbing.test.ts`: :177 builds `SeamAdminClient` from a fake transport, so the constructor must stay compatible.
+- `go/routing/routing.go`: the interceptor-factory model (:61 unary, :71 stream, :81 `WithTenant` DialOptions).
+- `go/crypto/enroll_proof.go`: :25-29, struct field order as the JSON order.
+- `go/go.mod`: go 1.21, grpc v1.66.3; CI runs Go 1.22 (`.github/workflows/ci.yml:489`).
+- `java/.../SeamCrypto.java`: BouncyCastle seed→key :107, sign :110-114, plain `new Gson()` :41 (escapes HTML), ordered map :660.
+- `java/.../TenantRouting.java`: `interceptor` :67.
+- `java/build.gradle.kts`: bcprov 1.78.1 :9, grpc-api 1.66.0 :14-15, grpc-inprocess/stub (test) :19-20.
+- `kotlin/.../SeamCrypto.kt`: :117/:120 (duplicated, not depended on), `linkedMapOf` :649. `TenantRouting.kt`: :57.
+- `scripts/check_vendored_spec.py`: vendored-copy table at :136-150 (add `docs/specs/mgmt-dpop.md`).
+- `.github/workflows/ci.yml`: spec pin :657-682; integration :241 (seam-grpc from `seamd:main` :298-312; Python live :406-408, TS :415).
+- `conformance/`: one JSON per vector; tests load it by relative path (Py `python/tests/test_enroll_pop.py:26-47`, TS `ts/tests/enroll_pop.test.ts:46-47`, Go `go/crypto/call_sig_v3_vector_test.go:35`, Java `java/src/test/java/com/zer07labs/seam/EnrollPopTest.java:38`, Kotlin `kotlin/src/test/kotlin/com/zer07labs/seam/EnrollPopTest.kt:29`).
+- External, read-only:
+  - `seam-runtime/docs/specs/mgmt-dpop.md` (the grammar and the golden vector).
+  - `seam-runtime/deploy/helm/seam/values/aws-stg/seam-server.yaml:18-19,62-63,91-92` (mgmt 9099/9100, TLS; callers are control-plane and seam-relay only).
+  - `seam-control-plane/src/http/routes/mint.ts:144-179,202-210,413-423` (bound mint; route `/api/control-plane/operator-tokens`; fleet creds bind the fleet key, M2M binds the proof key).
+  - `seam-console-ui/packages/api-client/src/dpop.ts:153` (reveal shape `{kty,crv,x,d}`).
+- `ts/tests/operator_token.ts`: TS test minter `mintOperatorToken` :33 (opts :35, aud :38), gains `cnfJkt`. `ts/tests/admin.test.ts`: TS spawn :48-55 (also `SEAM_DEV_INSECURE` :53).
+- `python/tests/live_server.py`: `SEAM_DEV_INSECURE=1` :242; loopback readiness :97/:115/:140, so it is loopback-only by design.
+
+## Run setup (2026-10-27)
+
+- **PR strategy:** one PR at the end. Every change is additive and opt-in (no `dpop_key` means today's Bearer path), there is no contract-before-consumer seam, and per-phase commits keep it reviewable.
+- **Risk tiers:** Phases 1–9 are complex (each is a per-language foundation or crosses a gRPC, process or deployment boundary), so each gates solo. Phase 10 (docs) is simple.
+- Branch: `feat/operator-dpop-signer`.
+
+## Phase 1 — DONE (2026-10-27)
+- **Verdict:** PASS after 2 rounds. Verifier: Opus every round; the phase is complex but not a one-way door, because the primitive is additive.
+- **Round 1 (GAPS):** a JWK member of length 1 mod 4 escaped as `binascii.Error`; deeply nested JSON raised `RecursionError`; five deviations were unrecorded; there was no copy-refusal test. **Round 2:** all four closed.
+- **Files:** `docs/specs/mgmt-dpop.md` (vendored @ 7ea99e96), `scripts/check_vendored_spec.py`, `conformance/mgmt_dpop_vector.json`, `python/seam_sdk/dpop.py`, `python/seam_sdk/__init__.py`, `python/tests/test_mgmt_dpop.py` (92 tests), and `python/tests/test_compatibility_citations_resolve.py` (the vendored set, plus the `seam-console-ui/` and `seam-control-plane/` sibling prefixes).
+- **Tested:** Python suite 2245 passed / 30 skipped; `scripts/` suite 720 passed; ruff clean; a one-byte mutation of the vendored spec fails the pin gate.
+- **Next:** Phase 2.
+
+## Phase 2 — DONE (2026-10-27)
+- **Verdict:** PASS in round 1. Verifier: Opus; complex, because it crosses the gRPC boundary.
+- **Non-blocking items closed before commit:**
+  - `_peek_token_claims` now catches `RecursionError`, so a pathological Bearer token no longer crashes `connect`;
+  - `clock` is probed for an int at `connect`;
+  - new tests: a bytes method name, 16 concurrent calls each with their own proof, a pathological Bearer token;
+  - plan divergences recorded.
+- **Files:** `python/seam_sdk/admin.py` (`_DpopAuthInterceptor`, `_resolve_operator_aud`, `_management_auth`, the `connect` parameters), `python/seam_sdk/dpop.py`, `python/tests/test_mgmt_dpop_interceptor.py` (30 tests).
+- **Tested:** full Python suite green; ruff clean; `test_admin.py` untouched and passing.
+- **Next:** Phase 3.
+
+## Phase 3 — DONE (2026-10-27)
+- **Verdict:** PASS after 2 rounds. Verifier: Opus; complex, because it crosses the process boundary to a real runtime.
+- **Round 1 (GAPS):**
+  - the AC3 mutation result was not recorded here;
+  - a docstring cited the not-yet-written Phase 9 script;
+  - (cosmetic) raw-stub channels were never closed.
+- **Live run:** `seam-grpc` built locally from seam-runtime @ 15f5ebb6 (origin/main), into the scratchpad. With `SEAM_GRPC_BIN` set, all 9 cases pass:
+  - accepted: `ListTenants`, `EnrollTenant`, a `StreamEvents` drain, and 5 calls on one client;
+  - refused, each carrying the fixed message: a bound token as Bearer, a token bound to another key, a replayed proof, `iat` −120 s, and a `seam_bd` over other bytes.
+  - The live `test_admin.py` also passes.
+- **AC3 mutation (recorded):** with `admin.py`'s interceptor changed to sign `request.SerializeToString() + b"x"`, all 4 live accept cases failed with `UnauthenticatedError`. Restored, green.
+- **Files:** `python/tests/operator_token.py` (`cnf_jkt=`), `python/tests/test_mgmt_dpop_live.py`, `python/tests/test_live_fixtures_are_isolated.py`, `.github/workflows/ci.yml` (integration step).
+- **AC4:** to confirm from the PR's integration-job log.
+- **Next:** Phase 4.
+
+## Phase 4 — DONE (2026-10-27)
+- **Verdict:** PASS after 2 rounds. Verifier: Opus; complex, because the second SDK fixes the cross-language byte contract.
+- **Round 1 (GAPS), from Python-vs-TS differential fuzzing (20k URLs, 4k gRPC cases, 420 proofs):**
+  - a port of more than ~4,300 digits tripped Python's `int()` limit and raised a raw `ValueError`; TS disagreed;
+  - `iat ≥ 2^53`: Python accepted it, TS refused it;
+  - nothing documented that callers must send the request to exactly the URL the `htu` came from.
+- **Fix:** a port is 1-5 digits; `MGMT_DPOP_MAX_IAT` = 2^53 − 1 in both SDKs, pinned in the vector (`iat_max`, two new `http_htu_rejects`); the send-exactly-this-URL rule is in both docstrings.
+- **Round 2:** 50,262 URLs and 25 iat values gave 0 differences and 0 raw exceptions.
+- **Suites:** TS 469 offline; Python 2307.
+- **Files:** `ts/src/dpop.ts`, `ts/src/index.ts`, `ts/tests/mgmt_dpop.test.ts`, `python/seam_sdk/dpop.py` (explicit `htu` grammar), `python/seam_sdk/__init__.py`, `python/tests/test_mgmt_dpop.py`, `conformance/mgmt_dpop_vector.json`.
+- **Next:** Phase 5.
+
+## Phase 5 — DONE (2026-10-27)
+- **Verdict:** PASS after 2 rounds. Verifier: Opus; complex, because it is a transport boundary.
+- **Round 1 (GAPS); the code matched Python on every check, the gaps were in the tests:**
+  - the live case shared ports 8209/8210 with `verify_attestation`;
+  - the six live cases were folded into one test;
+  - no tests for zero or two stream messages, a mid-stream cancel, or re-signing on retry;
+  - the `clock: () => true` case was dropped;
+  - JS `null` did not behave like Python's `None`;
+  - the plan was not updated.
+- **Fix:**
+  - the interceptor moved to the internal `ts/src/dpop_interceptor.ts`, which is not re-exported;
+  - the live case runs on ports 8221/8222 with nine subtests;
+  - the four missing tests are added;
+  - `?? undefined` normalisation for the four options.
+- **Mutation:** signing the bytes plus a trailing `1` failed 7 interceptor tests and the live case. Restored, green.
+- **Suites:** TS 473 offline, 498 live (0 skipped); build OK; `unit_plumbing.test.ts` unchanged.
+- **Files:** `ts/src/admin.ts`, `ts/src/dpop_interceptor.ts`, `ts/tests/operator_token.ts` (`cnfJkt`), `ts/tests/mgmt_dpop_interceptor.test.ts`, `ts/tests/admin.test.ts`.
+- **Next:** Phase 6.
+
+## Phase 6 — DONE (2026-10-27)
+- **Verdict:** PASS after 2 rounds. Verifier: Opus; complex, because it is a transport boundary and a new public Go package.
+- **Round 1 (GAPS):**
+  - `Key` printed by value leaked its seed;
+  - a token with `aud: null` was accepted;
+  - a pre-send cancel returned the raw `ctx.Err`;
+  - the codec did not mirror grpc's selection;
+  - `1e400` was refused, and trailing data was not checked;
+  - the plan was not updated.
+- **Fix:**
+  - value-receiver `String`/`GoString`/`Format`;
+  - aud null or number is refused with `ErrKey`;
+  - `status.FromContextError`;
+  - `marshalFor` mirrors grpc 1.66.3's `setCallInfoCodec` (confirmed against `rpc_util.go`/`codec.go`);
+  - `UseNumber` plus an EOF check;
+  - divergences recorded in the plan.
+- **Round 2 notes, fixed:**
+  - the `ErrStreamNotStarted` doc now says a racing RecvMsg waits on SendMsg;
+  - the plan's top-level Status was updated.
+- **Not done:** extra codec-precedence tests (V1-over-V2, last-wins, `WithDefaultCallOptions`). The behaviour matches grpc and fails safe; recorded only.
+- **Suites:** `go vet` and `go test -race ./...` pass. Under go1.22.12, vet and `test -c` pass; linking the tests aborts on this macOS (dyld LC_UUID), which is environmental.
+- **Files:** `go/mgmtdpop/{mgmtdpop,interceptor,mgmtdpop_test,interceptor_test}.go`, `go/README.md`.
+- **Next:** Phase 7 (Java) is under verify; Phase 8 (Kotlin) is implemented.
+
+## Phase 7 — DONE (2026-10-27)
+- **Verdict:** PASS, round 1. Verifier: Opus; complex, because it is a transport boundary and a new public Java surface.
+- **Differential fuzz:** about 40k cases against Python, also under `-Duser.language=tr`. 0 diffs in httpHtu, grpcHtu or proof refusals.
+- **Minor notes, fixed:**
+  - G1: a leading BOM is refused;
+  - G4: `halfClose` before `start` throws `IllegalStateException`;
+  - G6: the clock is probed before the token, in Python's order.
+- **Recorded in the plan, not changed:** G2 and G3, the monitor held over `real.start` and the synthetic `onClose` on the caller's thread; G5, the deadline starts at `sendMessage`.
+- **Mutation:** signing the bytes plus 1 byte failed 8 of 24 tests (re-run by the verifier). Restored byte-exact.
+- **Suites:** Java on JDK 17, MgmtDpopTest 25 passing and the whole suite green.
+- **Files:** `java/src/main/java/com/zer07labs/seam/MgmtDpop.java`, `java/src/test/java/com/zer07labs/seam/MgmtDpopTest.java`.
+- **Next:** the Phase 8 gate (Kotlin, with the same fixes ported) and Phase 9.
+
+## Phase 8 — DONE (2026-10-27)
+- **Verdict:** PASS on the acceptance criteria, 1 round. Verifier: Opus; complex, because it is a transport boundary.
+  The "GAPS" it raised were record-only Java-interop notes:
+  - Kotlin vs Java: identical results on 39,754 fuzz cases;
+  - every refusal, aud rule, the clock order and the delayed call match line for line.
+- **Notes:**
+  - `Key.sign` is now `@JvmSynthetic`; `internal` alone was a public bytecode method;
+  - a Java caller passing null gets Kotlin's NPE, not `DpopException`. Recorded in the plan; Java callers use the Java SDK.
+- **Mutation:** signing the bytes plus 1 byte failed 11 of 25 tests (verifier re-run). Restored byte-exact.
+- **Suites:** Kotlin on JDK 17, MgmtDpopTest 25 passing and the whole suite green.
+- **Files:** `kotlin/src/main/kotlin/com/zer07labs/seam/MgmtDpop.kt`, `kotlin/src/test/kotlin/com/zer07labs/seam/MgmtDpopTest.kt`.
+- **Next:** Phase 9 (handoff built, under gate).
+
+## Phase 9 — DONE (2026-10-27), live run AWAITING-HUMAN
+- **Verdict:** PASS after 2 rounds. Verifier: Opus; complex, because it crosses a trust boundary and handles secret material.
+- **Round 1 (GAPS):**
+  - `GRPC_TRACE`/`GRPC_VERBOSITY=debug` leaked both tokens to stderr and the log;
+  - `bash -x` traced the input values;
+  - the wrapper echoed argv;
+  - "no AWS credentials" overstated the case (the `seam-stg-oaar` profile exists, but has no EKS access entry);
+  - a `RecursionError` could escape the redactor.
+- **Fix:**
+  - the gRPC trace is cleared in both the wrapper and the script, the script before grpc is imported;
+  - `set +x`, and `${!name:+set}`;
+  - argv is not shown;
+  - the plan wording is corrected;
+  - the redactor catches `RecursionError`;
+  - three leak tests added, and mutation-checked.
+- **Dry-run transcript (AC1)**, with placeholder inputs (golden-seed JWK, a bound token, a throwaway CA, target 127.0.0.1:1). Exit 0, no network call:
+  ```
+  == 2026-10-27-mgmt-dpop-aws-stg — bound operator token + DPoP → SeamAdmin/ListTenants on aws-stg
+     rollback: none needed (read-only)
+     mode: DRY-RUN (pass --apply to execute)
+     input SEAM_OPERATOR_TOKEN: set · SEAM_OPERATOR_DPOP_JWK: set · SEAM_MGMT_TARGET: set · SEAM_MGMT_CA_FILE: set
+     input SEAM_MGMT_TLS_NAME / SEAM_UNBOUND_OPERATOR_TOKEN / SEAM_RUNTIME_IMAGE_TAG: unset
+  [verify] local preconditions (inputs, CA, seam_sdk, token/JWK pairing) — no network
+  [ok] local preconditions: key jkt nEArpjG3kYMcxbdzInyGlBEYQUw7RfAfe3Tw1fZvAA0, target 127.0.0.1:1
+  [dry-run] no network call made; pass --apply to run the live checks
+  [1] live checks against $SEAM_MGMT_TARGET
+      (dry-run: skipped)
+  ```
+- **AWAITING-HUMAN: scripts/handoff/2026-10-27-mgmt-dpop-aws-stg.sh.** The owner holds both missing inputs: the console's one-time reveal (a human Auth0 login) and an identity the mesh admits to seam-server:9100. No session holds either.
+  - **What, and the blast radius:** mints nothing and writes nothing. It makes three read-only `SeamAdmin/ListTenants` calls on aws-stg: one with the bound token plus DPoP (must succeed), and the same token, then an optional unbound one, as Bearer (both must be refused).
+  - **The command:** export `SEAM_OPERATOR_TOKEN`, `SEAM_OPERATOR_DPOP_JWK` (the console reveal), `SEAM_MGMT_TARGET` (a port-forward to svc/seam-server:9100), `SEAM_MGMT_CA_FILE` and `SEAM_MGMT_TLS_NAME=seam-server`, then run `scripts/handoff/2026-10-27-mgmt-dpop-aws-stg.sh --apply`.
+  - **How to confirm:** the run exits 0 with `[ok] bound token + DPoP proof: SeamAdmin/ListTenants` and `[ok] bound token as Bearer is refused`; the log is under `~/.cache/seam/handoff/`.
+- **Suites:** `test_smoke_script_redaction.py` 12 passing; ruff clean.
+- **Files:** `scripts/smoke/mgmt_dpop_aws_stg.py`, `scripts/handoff/2026-10-27-mgmt-dpop-aws-stg.sh`, `python/tests/test_smoke_script_redaction.py`.
+- **Next:** the Phase 10 gate.
+
+## Phase 10 — DONE (2026-10-27)
+- **Verdict:** PASS after 3 rounds. Verifier: Opus; simple (docs, plus tests that run the snippets).
+- **Round 1 (GAPS):** the README said every SDK refuses a client-streaming call (Python's interceptor only
+  covers unary and server-streaming, and no such RPC exists) and that a bound token without its key is
+  refused (only Python and TS have a Bearer path). Both sentences were corrected.
+- **Round 2 (GAPS):** TS refuses any call that sends other than one message, rather than every client-streaming
+  call; and a token with spaces or non-ASCII characters is a plain `DpopError`, not a key error. The wording
+  was corrected in the README and in the docstrings of all five SDKs.
+- **/reconcile (same change):** printable-ASCII inputs CONFIRMED by Opus; the URL refusal now says to
+  percent-encode. The DpopError/DpopKeyError split CONFIRMED by the owner; the key-error docstrings now list
+  every cause. One line went to DEFERRED.md (the runtime accepts a non-ASCII `SEAM_RUNTIME_AUD`).
+- **Suites:** Python 2326 (39 skipped), TS 474 (16 live skipped), Go, Java 94, Kotlin 93; ruff, tsc, gofmt
+  and vet clean; the citation gate green after shifting 11 citations by +20.
+- **Files:** README.md, go/README.md, COMPATIBILITY.md, CHANGELOG.md, DECISIONS.md, ASSUMPTIONS.md,
+  DEFERRED.md, java/kotlin `build.gradle.kts`, the five `dpop`/`MgmtDpop` sources (message and docstrings),
+  `python/tests/test_readme_dpop_snippets.py`, `ts/tests/readme_dpop.test.ts`, `go/mgmtdpop/readme_test.go`,
+  and both `MgmtDpopTest` files.
+- **Next:** finalization (§4).
+
+## Finalization (§4) — 2026-10-27
+- **Whole-feature verify (Opus), round 1 (GAPS):**
+  - nothing tied `conformance/mgmt_dpop_vector.json`'s `golden` group to the vendored spec's Golden vector
+    table, so a re-vendored spec with a changed vector would leave all five KATs green;
+  - the plan's top-level status was stale.
+  It also noted two things left as they are, with reasons:
+  - aud and binding messages are worded per client shape (Python/TS name `dpop_key`; the interceptor-only
+    SDKs say "pass aud explicitly"); the refused inputs are the same, except for the next item;
+  - Go treats `aud ""` as "not given" (Go's zero-value idiom, with no null to use), where the other four
+    refuse an explicit empty aud. Documented on `UnaryInterceptor` and `DialOptions` and in go/README.md.
+  - Round 2 (GAPS): the "same inputs" sentence overstated the case (the empty aud), and `DialOptions` did not
+    document it. Both were corrected. The spec's "burn key" row is a runtime-side derivation, which no SDK
+    computes, so the tie test leaves it out.
+- **Fix:** `python/tests/test_mgmt_dpop_vector_matches_spec.py` pins every golden input and output, plus the
+  proof, to the spec table (mutation-checked: a one-character change to `ath` fails it). The plan status now
+  reads COMPLETE, with the one AWAITING-HUMAN item named.
+- **Integration coverage across phases:**
+  - each SDK's README snippet runs against a local server: Python TLS, TS http2, and Go/JVM in-process;
+  - the redaction tests drive the aws-stg smoke against a TLS echo server;
+  - only the live aws-stg listener is untested here, and that is the handoff.
+
+## /ship gate — Fable, round 1 (GAPS), 2026-10-27
+- Fable was used because the diff is a new public auth API that holds private key material.
+- **Gaps and fixes:**
+  - TS `fromJwk` quoted V8's JSON error, and V8's message carries nearby source text, which can include
+    part of `d`. The parser message is no longer quoted.
+  - The JVM `Key` seed was not transient, so the SDK's own Gson serialised it. Now `transient` in Java and
+    `@Transient` in Kotlin.
+  - TS `OperatorDpopKey.sign` shipped in the published `.d.ts`. It is now a module-private function: hidden
+    before release, reversible, and the same as Java, Kotlin and Go.
+  - The Go `Key` doc now notes the by-value-in-an-unexported-field caveat.
+- Round 2 (Fable): PASS. Its one side effect was that the TS class JSDoc had become attached to `signWith`; the declaration now sits above the JSDoc.
+- Each fix has a test that fails if it is undone (both the TS message test and the Java Gson test were
+  mutation-checked).
+
+- pushed feat/operator-dpop-signer fe9fbde
+- PR #302 opened: https://github.com/zer07labs/seam-sdk/pull/302
+
+- CI round 1: 34 of 35 green. CodeQL py/clear-text-logging (alert 37) traced the env-var NAME tuple through the f"<{name}>" placeholder to print, a false positive (no value is printed). Fixed in code, not dismissed: placeholders are now literal labels (REDACTED_ENV).

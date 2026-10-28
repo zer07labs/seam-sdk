@@ -29,6 +29,37 @@ Also, outside `vectors.json`:
 The vector file's `chain_head_attestation` and `record_digest_v2` sections — like the call-sig/JCS
 surface — are exercised by the full Python/TypeScript clients only, not by this shim.
 
+## Management-plane DPoP (`mgmtdpop`)
+
+A DPoP-bound operator token (one whose claims carry `cnf.jkt`) is refused as Bearer. Every management
+call needs `authorization: DPoP <token>` plus a fresh proof signed with the Ed25519 key the management
+console revealed **once**, next to the token (seam-sdk#290). `mgmtdpop` signs those proofs. It is pinned
+byte for byte by `conformance/mgmt_dpop_vector.json`, the same vector the other four SDKs pass.
+
+```go
+// The console's one-time reveal: the private JWK, exactly as shown. Load it from your secret store,
+// never from source control; the Key prints only its thumbprint. A typo in the reveal fails here,
+// by name (errors.Is(err, mgmtdpop.ErrKey)).
+key, err := mgmtdpop.ParseJWK([]byte(os.Getenv("SEAM_OPERATOR_DPOP_JWK")))
+if err != nil {
+	return err
+}
+// aud "" means the token's own aud, else "seam-runtime". Misuse fails here, before any call:
+// an unbound token, a token bound to another key, or a list aud with no override.
+opts, err := mgmtdpop.DialOptions(key, os.Getenv("SEAM_OPERATOR_TOKEN"), "")
+if err != nil {
+	return err
+}
+cc, err := grpc.NewClient(target, append(opts, grpc.WithTransportCredentials(creds))...)
+```
+
+Each unary call, and the one request of each server stream, gets its own proof over the exact request
+bytes. The runtime burns a proof on first use, so never use a retry policy that resends a call's
+metadata. Retry by making the call again.
+
+For the HTTP management plane, `mgmtdpop.HTTPHeaders(key, token, method, url, body)` returns both headers
+for one request. Send exactly `body` to exactly `url`, because the proof binds both.
+
 ## Module path and versions
 
 ```

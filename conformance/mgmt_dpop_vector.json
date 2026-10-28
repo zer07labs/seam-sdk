@@ -1,0 +1,357 @@
+{
+  "description": "Management-plane DPoP proofs (seam-sdk#290). `golden` is the runtime's own vector, transcribed from the Golden vector table of docs/specs/mgmt-dpop.md (pinned copy of seam-runtime docs/specs/mgmt-dpop.md @ 7ea99e96; it equals seam-runtime mgmt_dpop::tests::golden_vector and seam-control-plane src/mgmt-dpop.test.ts byte for byte). `derived` is SDK-computed \u2014 proofs by an implementation independent of every SDK (noble, scratch script), htu expectations written by hand from the spec's HTTP rules \u2014 and pins FIVE-WAY SDK agreement, not runtime agreement. All derived cases use the golden key and token.",
+  "golden": {
+    "seed_hex": "4242424242424242424242424242424242424242424242424242424242424242",
+    "jwk": {
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "x": "IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI",
+      "d": "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI"
+    },
+    "htm": "POST",
+    "method": "/seam.api.v1.SeamAdmin/EnrollTenant",
+    "aud": "seam-runtime",
+    "htu": "grpc://seam-runtime/seam.api.v1.SeamAdmin/EnrollTenant",
+    "token": "eyJhbGciOiJFZERTQSJ9.eyJzdWIiOiJnb2xkZW4ifQ.c2ln",
+    "message_hex": "0a0361636d",
+    "iat": 1800000000,
+    "jti": "golden-1",
+    "jkt": "nEArpjG3kYMcxbdzInyGlBEYQUw7RfAfe3Tw1fZvAA0",
+    "x": "IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI",
+    "ath": "n1FytbIY93hACMMcdHGLdjoDGzuCNcVj8E2IkVX7NXA",
+    "seam_bd": "KCyo4Anqvy3Kl15wJyQwoWwl6lSQQEUMzbCg9-OQ7jc",
+    "header_json": "{\"typ\":\"dpop+jwt\",\"alg\":\"EdDSA\",\"jwk\":{\"kty\":\"OKP\",\"crv\":\"Ed25519\",\"x\":\"IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI\"}}",
+    "claims_json": "{\"jti\":\"golden-1\",\"htm\":\"POST\",\"htu\":\"grpc://seam-runtime/seam.api.v1.SeamAdmin/EnrollTenant\",\"iat\":1800000000,\"ath\":\"n1FytbIY93hACMMcdHGLdjoDGzuCNcVj8E2IkVX7NXA\",\"seam_bd\":\"KCyo4Anqvy3Kl15wJyQwoWwl6lSQQEUMzbCg9-OQ7jc\"}",
+    "proof": "eyJ0eXAiOiJkcG9wK2p3dCIsImFsZyI6IkVkRFNBIiwiandrIjp7Imt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiSVZMNDBadDVIU1JGTWtMaFh5NnJiTGZQLW50cVh0TUFsNVlPQnBpQjJ4SSJ9fQ.eyJqdGkiOiJnb2xkZW4tMSIsImh0bSI6IlBPU1QiLCJodHUiOiJncnBjOi8vc2VhbS1ydW50aW1lL3NlYW0uYXBpLnYxLlNlYW1BZG1pbi9FbnJvbGxUZW5hbnQiLCJpYXQiOjE4MDAwMDAwMDAsImF0aCI6Im4xRnl0YklZOTNoQUNNTWNkSEdMZGpvREd6dUNOY1ZqOEUySWtWWDdOWEEiLCJzZWFtX2JkIjoiS0N5bzRBbnF2eTNLbDE1d0p5UXdvV3dsNmxTUVFFVU16YkNnOS1PUTdqYyJ9.OrJGI6MSd-Fgp_pV3CvQjZPmCtwBMV-obVlg7JMZeLjoxe7bQi0QLC2ndDUDdl1Z9YEb6Kn_ks_3nav310mRCg"
+  },
+  "derived": [
+    {
+      "name": "grpc_empty_message",
+      "htm": "POST",
+      "htu": "grpc://seam-runtime/seam.api.v1.SeamAdmin/ListTenants",
+      "message_hex": "",
+      "iat": 1800000000,
+      "jti": "derived-empty",
+      "seam_bd": "47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU",
+      "proof": "eyJ0eXAiOiJkcG9wK2p3dCIsImFsZyI6IkVkRFNBIiwiandrIjp7Imt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiSVZMNDBadDVIU1JGTWtMaFh5NnJiTGZQLW50cVh0TUFsNVlPQnBpQjJ4SSJ9fQ.eyJqdGkiOiJkZXJpdmVkLWVtcHR5IiwiaHRtIjoiUE9TVCIsImh0dSI6ImdycGM6Ly9zZWFtLXJ1bnRpbWUvc2VhbS5hcGkudjEuU2VhbUFkbWluL0xpc3RUZW5hbnRzIiwiaWF0IjoxODAwMDAwMDAwLCJhdGgiOiJuMUZ5dGJJWTkzaEFDTU1jZEhHTGRqb0RHenVDTmNWajhFMklrVlg3TlhBIiwic2VhbV9iZCI6IjQ3REVRcGo4SEJTYS1fVEltVy01SkNldVFlUmttNU5NcEpXWkczaFN1RlUifQ.9kU6KX1Tl_PRiUfxpEtlDKEpqo6a-IVA1ZPM3Ee1xMIVRFdXAj4PpXIBgGXrtOWDljVX5nPAu6yufai4I6uvAw"
+    },
+    {
+      "name": "grpc_custom_aud_stream",
+      "htm": "POST",
+      "htu": "grpc://ops.internal/seam.api.v1.SeamEvents/StreamEvents",
+      "message_hex": "0801",
+      "iat": 1800000060,
+      "jti": "derived-stream",
+      "seam_bd": "-42n61sbOZ5zIRedrJ6fZXc9czHh4wVU45EeQyXh7xk",
+      "proof": "eyJ0eXAiOiJkcG9wK2p3dCIsImFsZyI6IkVkRFNBIiwiandrIjp7Imt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiSVZMNDBadDVIU1JGTWtMaFh5NnJiTGZQLW50cVh0TUFsNVlPQnBpQjJ4SSJ9fQ.eyJqdGkiOiJkZXJpdmVkLXN0cmVhbSIsImh0bSI6IlBPU1QiLCJodHUiOiJncnBjOi8vb3BzLmludGVybmFsL3NlYW0uYXBpLnYxLlNlYW1FdmVudHMvU3RyZWFtRXZlbnRzIiwiaWF0IjoxODAwMDAwMDYwLCJhdGgiOiJuMUZ5dGJJWTkzaEFDTU1jZEhHTGRqb0RHenVDTmNWajhFMklrVlg3TlhBIiwic2VhbV9iZCI6Ii00Mm42MXNiT1o1eklSZWRySjZmWlhjOWN6SGg0d1ZVNDVFZVF5WGg3eGsifQ.LOFPJWrWWPFaBmi2u2pPfRvlpnhl17TH9tOZmbm1y5zhztuORX3qFrihntjPIyw7aHKn3evhsFQv4vOEM0KTAQ"
+    },
+    {
+      "name": "http_get_normalised",
+      "htm": "GET",
+      "url": "HTTPS://Mgmt.Example.COM:443/v1/tenants?limit=5#frag",
+      "htu": "https://mgmt.example.com/v1/tenants",
+      "message_hex": "",
+      "iat": 1800000000,
+      "jti": "derived-http-get",
+      "seam_bd": "47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU",
+      "proof": "eyJ0eXAiOiJkcG9wK2p3dCIsImFsZyI6IkVkRFNBIiwiandrIjp7Imt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiSVZMNDBadDVIU1JGTWtMaFh5NnJiTGZQLW50cVh0TUFsNVlPQnBpQjJ4SSJ9fQ.eyJqdGkiOiJkZXJpdmVkLWh0dHAtZ2V0IiwiaHRtIjoiR0VUIiwiaHR1IjoiaHR0cHM6Ly9tZ210LmV4YW1wbGUuY29tL3YxL3RlbmFudHMiLCJpYXQiOjE4MDAwMDAwMDAsImF0aCI6Im4xRnl0YklZOTNoQUNNTWNkSEdMZGpvREd6dUNOY1ZqOEUySWtWWDdOWEEiLCJzZWFtX2JkIjoiNDdERVFwajhIQlNhLV9USW1XLTVKQ2V1UWVSa201Tk1wSldaRzNoU3VGVSJ9.fHB9u-G1Rnr1h-I814MEqWTqz4fIC0glLVmhy6UVoBmP6la2qs0n667Rb2oBqkpM9241V8XTHn6zgAELAWH1Cw"
+    },
+    {
+      "name": "http_post_nondefault_port",
+      "htm": "POST",
+      "url": "http://10.0.0.7:9099/v1/tenants",
+      "htu": "https://10.0.0.7:9099/v1/tenants",
+      "message_hex": "7b2274656e616e74223a2261636d65227d",
+      "iat": 1800000000,
+      "jti": "derived-http-post",
+      "seam_bd": "uVEAV6lYIqACck2AxpVtF0zhglKotA71ggrjgIiBmfE",
+      "proof": "eyJ0eXAiOiJkcG9wK2p3dCIsImFsZyI6IkVkRFNBIiwiandrIjp7Imt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiSVZMNDBadDVIU1JGTWtMaFh5NnJiTGZQLW50cVh0TUFsNVlPQnBpQjJ4SSJ9fQ.eyJqdGkiOiJkZXJpdmVkLWh0dHAtcG9zdCIsImh0bSI6IlBPU1QiLCJodHUiOiJodHRwczovLzEwLjAuMC43OjkwOTkvdjEvdGVuYW50cyIsImlhdCI6MTgwMDAwMDAwMCwiYXRoIjoibjFGeXRiSVk5M2hBQ01NY2RIR0xkam9ER3p1Q05jVmo4RTJJa1ZYN05YQSIsInNlYW1fYmQiOiJ1VkVBVjZsWUlxQUNjazJBeHBWdEYwemhnbEtvdEE3MWdncmpnSWlCbWZFIn0.ZQncuOhCgxt-Y0apZTUilLdvbYB8e2qVNDuYtbmQQtx3pMRHoTUgtUsfF-3x8YpOE72iNvrQiMZ6G7iaw2W3DA"
+    },
+    {
+      "name": "html_sensitive_jti",
+      "htm": "POST",
+      "htu": "grpc://seam-runtime/seam.api.v1.SeamAdmin/EnrollTenant",
+      "message_hex": "0a0361636d",
+      "iat": 1800000000,
+      "jti": "a&b<c>d\"e\\f",
+      "seam_bd": "KCyo4Anqvy3Kl15wJyQwoWwl6lSQQEUMzbCg9-OQ7jc",
+      "proof": "eyJ0eXAiOiJkcG9wK2p3dCIsImFsZyI6IkVkRFNBIiwiandrIjp7Imt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiSVZMNDBadDVIU1JGTWtMaFh5NnJiTGZQLW50cVh0TUFsNVlPQnBpQjJ4SSJ9fQ.eyJqdGkiOiJhJmI8Yz5kXCJlXFxmIiwiaHRtIjoiUE9TVCIsImh0dSI6ImdycGM6Ly9zZWFtLXJ1bnRpbWUvc2VhbS5hcGkudjEuU2VhbUFkbWluL0Vucm9sbFRlbmFudCIsImlhdCI6MTgwMDAwMDAwMCwiYXRoIjoibjFGeXRiSVk5M2hBQ01NY2RIR0xkam9ER3p1Q05jVmo4RTJJa1ZYN05YQSIsInNlYW1fYmQiOiJLQ3lvNEFucXZ5M0tsMTV3SnlRd29Xd2w2bFNRUUVVTXpiQ2c5LU9RN2pjIn0.qVFTKxfkW6RSFYGlPsA-pM6jpkQi4eMNRzhtnh56CJlJZK0I93Jpck0Xd7og2OD3eyfjp7woZkv_axuoR9-iAA"
+    }
+  ],
+  "grpc_htu": [
+    {
+      "method": "/seam.api.v1.SeamAdmin/EnrollTenant",
+      "aud": "seam-runtime",
+      "htu": "grpc://seam-runtime/seam.api.v1.SeamAdmin/EnrollTenant"
+    },
+    {
+      "method": "/seam.api.v1.SeamEvents/StreamEvents",
+      "aud": "ops.internal",
+      "htu": "grpc://ops.internal/seam.api.v1.SeamEvents/StreamEvents"
+    }
+  ],
+  "http_htu": [
+    {
+      "url": "HTTPS://Mgmt.Example.COM:443/v1/tenants?limit=5#frag",
+      "htu": "https://mgmt.example.com/v1/tenants"
+    },
+    {
+      "url": "http://Host.Example:80/v1/a",
+      "htu": "https://host.example/v1/a"
+    },
+    {
+      "url": "http://10.0.0.7:9099/v1/tenants",
+      "htu": "https://10.0.0.7:9099/v1/tenants"
+    },
+    {
+      "url": "https://host.example:80/v1/a",
+      "htu": "https://host.example:80/v1/a"
+    },
+    {
+      "url": "https://[::1]:9099/v1/a",
+      "htu": "https://[::1]:9099/v1/a"
+    },
+    {
+      "url": "https://host.example",
+      "htu": "https://host.example/"
+    },
+    {
+      "url": "https://host.example:/v1/a",
+      "htu": "https://host.example/v1/a"
+    },
+    {
+      "url": "https://host.example:0443/v1/a",
+      "htu": "https://host.example/v1/a"
+    },
+    {
+      "url": "https://[FE80::1]:9099/v1/a",
+      "htu": "https://[fe80::1]:9099/v1/a"
+    },
+    {
+      "url": "https://host.example?x=1",
+      "htu": "https://host.example/"
+    },
+    {
+      "url": "https://host.example#frag",
+      "htu": "https://host.example/"
+    },
+    {
+      "url": "https://Host.Example/A/../b%7E?q",
+      "htu": "https://host.example/A/../b%7E"
+    },
+    {
+      "url": "http://host.example:443/v1/a",
+      "htu": "https://host.example:443/v1/a"
+    }
+  ],
+  "http_htu_rejects": [
+    {
+      "url": "https://user:pw@host.example/v1/a",
+      "reason": "userinfo"
+    },
+    {
+      "url": "ftp://host.example/v1/a",
+      "reason": "scheme"
+    },
+    {
+      "url": "https:///v1/a",
+      "reason": "no host"
+    },
+    {
+      "url": "/v1/a",
+      "reason": "not absolute"
+    },
+    {
+      "url": "https://user@host.example/v1/a",
+      "reason": "userinfo without a password"
+    },
+    {
+      "url": "https://host.example:99999/v1/a",
+      "reason": "port out of range"
+    },
+    {
+      "url": "https://host.example:12a/v1/a",
+      "reason": "port not numeric"
+    },
+    {
+      "url": "https://a:b:c/v1/a",
+      "reason": "two colons, unbracketed"
+    },
+    {
+      "url": "https://[::1/v1/a",
+      "reason": "unclosed IPv6 bracket"
+    },
+    {
+      "url": "https://[]/v1/a",
+      "reason": "empty IPv6 brackets"
+    },
+    {
+      "url": "https://[::1]x/v1/a",
+      "reason": "junk after IPv6 bracket"
+    },
+    {
+      "url": "https://host example/v1/a",
+      "reason": "space"
+    },
+    {
+      "url": "https:/host.example/v1/a",
+      "reason": "missing //"
+    },
+    {
+      "url": "https://:9099/v1/a",
+      "reason": "no host, port only"
+    },
+    {
+      "url": "",
+      "reason": "empty"
+    },
+    {
+      "url": "https://host.example:000443/v1/a",
+      "reason": "port longer than 5 digits"
+    },
+    {
+      "url": "https://host.example:000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001/v1/a",
+      "reason": "port of 5001 digits"
+    }
+  ],
+  "jwk_rejects": [
+    {
+      "reason": "kty",
+      "jwk": {
+        "kty": "EC",
+        "crv": "Ed25519",
+        "x": "IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI",
+        "d": "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI"
+      }
+    },
+    {
+      "reason": "crv",
+      "jwk": {
+        "kty": "OKP",
+        "crv": "X25519",
+        "x": "IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI",
+        "d": "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI"
+      }
+    },
+    {
+      "reason": "no d (public JWK)",
+      "jwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI"
+      }
+    },
+    {
+      "reason": "no x",
+      "jwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "d": "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI"
+      }
+    },
+    {
+      "reason": "x is not d's public key",
+      "jwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        "d": "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI"
+      }
+    },
+    {
+      "reason": "d is 31 bytes",
+      "jwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI",
+        "d": "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQg"
+      }
+    },
+    {
+      "reason": "d is padded",
+      "jwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI",
+        "d": "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI="
+      }
+    },
+    {
+      "reason": "d uses the standard alphabet",
+      "jwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI",
+        "d": "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk+"
+      }
+    },
+    {
+      "reason": "x is not canonical (stray low bits)",
+      "jwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xJ",
+        "d": "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI"
+      }
+    },
+    {
+      "reason": "alg contradicts EdDSA",
+      "jwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI",
+        "d": "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI",
+        "alg": "ES256"
+      }
+    },
+    {
+      "reason": "use is not sig",
+      "jwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI",
+        "d": "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI",
+        "use": "enc"
+      }
+    },
+    {
+      "reason": "d is not a string",
+      "jwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI",
+        "d": 42
+      }
+    },
+    {
+      "reason": "not an object",
+      "jwk": [
+        "OKP"
+      ]
+    },
+    {
+      "reason": "d length is 1 mod 4 (not base64 at all)",
+      "jwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI",
+        "d": "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQ"
+      }
+    }
+  ],
+  "jwk_accepts": [
+    {
+      "reason": "kid, alg EdDSA and use sig are allowed",
+      "jwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI",
+        "d": "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI",
+        "kid": "console-1",
+        "alg": "EdDSA",
+        "use": "sig"
+      }
+    }
+  ],
+  "iat_max": 9007199254740991
+}

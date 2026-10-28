@@ -122,7 +122,17 @@ CITATION = re.compile(r"`([\w./-]+\.[A-Za-z]\w*):(\d+)(?:-(\d+))?`")
 #: `seam` differs (`/` vs `-`) — and this repo has no top-level directory literally named `seam`
 #: (`test_no_local_directory_shadows_a_sibling_prefix` below fails loudly, not silently, if one is
 #: ever added).
-SIBLING_PREFIXES = ("seam-adapters/", "seam-aegis/", "seam-runtime/", "seam/")
+#:
+#: `seam-console-ui/` and `seam-control-plane/` joined for the operator DPoP signer (#290), whose
+#: `PROGRESS.md` repo map cites the console's JWK reveal and the control plane's bound mint.
+SIBLING_PREFIXES = (
+    "seam-adapters/",
+    "seam-aegis/",
+    "seam-console-ui/",
+    "seam-control-plane/",
+    "seam-runtime/",
+    "seam/",
+)
 
 
 def _sibling_relative_path(path: str) -> str:
@@ -184,7 +194,11 @@ def _sibling_relative_path(path: str) -> str:
 #: * Quote the sentence and let `QUOTED` (bottom of this file) check it by content. A trade rather
 #:   than an upgrade — see that table's own note — but the half it keeps is the half that survives a
 #:   refresh: the document and the file must still say the same words.
-VENDORED = ("verify/docs/seam-event.v1.md", "verify/docs/evidence-bundle.v1.md")
+VENDORED = (
+    "verify/docs/seam-event.v1.md",
+    "verify/docs/evidence-bundle.v1.md",
+    "docs/specs/mgmt-dpop.md",
+)
 
 
 #: `` `path/to/generated.pyi:106,163` `` — a comma-list. It line-anchors into a generated tree just as

@@ -405,7 +405,8 @@ jobs:
           # `schema_version == 2` assertion survived on the Python side and was caught on the TS one.
           pytest -q tests/test_integration.py tests/test_admin.py \
                     tests/test_streamed_decode.py tests/test_verify_attestation.py \
-                    tests/test_verify_anchor.py tests/test_redrive_events.py
+                    tests/test_verify_anchor.py tests/test_redrive_events.py \
+                    tests/test_mgmt_dpop_live.py
       - name: typescript live round-trip
         working-directory: ts
         env:

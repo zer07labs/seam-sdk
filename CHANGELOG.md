@@ -16,6 +16,26 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added
+- **DPoP-bound operator tokens on the management plane, in all five SDKs (seam-sdk#290; runtime 0.54.0+,
+  seam-runtime#1428).**
+  - **What changed.** A token the management console mints with DPoP on (its claims carry `cnf.jkt`) is
+    refused as Bearer. Every management call now needs `authorization: DPoP <token>` plus a fresh RFC 9449
+    proof over that call's exact request bytes, signed with the private JWK the console reveals once.
+  - **Per language:**
+    - Python: `SeamAdminClient.connect(..., dpop_key=OperatorDpopKey.from_jwk(jwk))`;
+    - TS: `SeamAdminClient.connect(url, { token, dpopKey })`;
+    - Go: `mgmtdpop.DialOptions` / `UnaryInterceptor` / `StreamInterceptor`;
+    - Java and Kotlin: `MgmtDpop.interceptor`.
+  - **HTTP helpers:** `mgmt_dpop_http_headers` / `mgmtDpopHttpHeaders` / `mgmtdpop.HTTPHeaders` /
+    `MgmtDpop.httpHeaders` sign an HTTP management request.
+  - **Refused at connect time:** any pairing the runtime is guaranteed to refuse (a key without its bound
+    token, a bound token without its key, a mismatched `cnf.jkt`, a list `aud`) is refused before any call.
+  - **Byte agreement:** all five SDKs pass `conformance/mgmt_dpop_vector.json` byte for byte, and the
+    grammar is vendored as `docs/specs/mgmt-dpop.md`.
+  - **Who must act:** aws-stg's management plane requires DPoP (runtime 0.55.0, seam-runtime#1463).
+    Nothing changes for unbound tokens. See the README's "Bound (DPoP) operator tokens".
+
 ## 0.60.0 — 2026-10-27
 
 ### Added

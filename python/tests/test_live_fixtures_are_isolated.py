@@ -37,6 +37,7 @@ LIVE_SUITES = (
     "test_verify_attestation.py",
     "test_verify_anchor.py",
     "test_redrive_events.py",
+    "test_mgmt_dpop_live.py",
 )
 
 #: Files allowed to touch the live-server surface without being a live suite: the helper itself and
@@ -419,10 +420,10 @@ def test_every_named_live_suite_exists_and_spawns() -> None:
     """Anti-vacuity floor.
 
     Every assertion below is a search over ``LIVE_SUITES``. If a file were renamed or dropped, those
-    searches would find nothing and report success. This pins the denominator first: all six files
+    searches would find nothing and report success. This pins the denominator first: all seven files
     exist, and each actually spawns a server through the shared helper.
     """
-    assert len(LIVE_SUITES) == 6
+    assert len(LIVE_SUITES) == 7
     for name in LIVE_SUITES:
         src = _source(name)
         assert "from live_server import spawn_server" in src, (

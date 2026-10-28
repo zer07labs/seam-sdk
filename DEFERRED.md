@@ -1,0 +1,1 @@
+- 2026-10-27 (#290): seam-runtime accepts a non-ASCII SEAM_RUNTIME_AUD, which no SDK can address (they refuse non-ASCII aud); an ASCII check at boot, or a spec line, would close it. No deployed value is affected.

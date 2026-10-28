@@ -25,4 +25,10 @@ java {
     toolchain { languageVersion = JavaLanguageVersion.of(17) }
 }
 
-tasks.test { useJUnitPlatform() }
+tasks.test {
+    useJUnitPlatform()
+    // MgmtDpopTest runs the README's DPoP snippet, which reads these two variables: the PUBLIC test-vector key
+    // (seed 0x42 x 32, conformance/mgmt_dpop_vector.json) and a token bound to it. Neither is a real secret.
+    environment("SEAM_OPERATOR_DPOP_JWK", """{"kty":"OKP","crv":"Ed25519","x":"IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI","d":"QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI"}""")
+    environment("SEAM_OPERATOR_TOKEN", "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJzZWFtLXJ1bnRpbWUiLCJzdWIiOiJyZWFkbWUiLCJjbmYiOnsiamt0IjoibkVBcnBqRzNrWU1jeGJkeklueUdsQkVZUVV3N1JmQWZlM1R3MWZadkFBMCJ9fQ.c2ln")
+}

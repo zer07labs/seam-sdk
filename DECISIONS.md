@@ -1219,7 +1219,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:1608-1630` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:1628-1650` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2049,7 +2049,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:1640` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:1660` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -2952,3 +2952,32 @@ A reversible, SDK-internal retry bound; not a one-way door, so Opus decided it.
 - **Decided by:** owner (interactive, /sweep 2026-10-27). Reversible: reopening a public path means
   writing a new plan, and nothing here deletes or blocks one.
 - **Status:** CONFIRMED (owner).
+
+## 2026-10-27 — DPoP proof inputs are restricted to printable ASCII (plans/operator-dpop-signer.md)
+- **Assumption:** no real management call needs a non-ASCII `htu`, `jti` or `aud`. Every SDK refuses one
+  locally, so the signed JSON is byte-identical across the five encoders by construction.
+- **Analysis (Opus, /reconcile):**
+  - The vendored spec does not require ASCII (the vendored `docs/specs/mgmt-dpop.md` bounds `jti` only as "non-empty, at most 256 bytes"). The SDK
+    only produces proofs, so being stricter than the spec is safe.
+  - The runtime accepts any non-empty `SEAM_RUNTIME_AUD` (seamd reads it with only a non-empty filter),
+    but every deployed value is ASCII (`seam-runtime`). A compact-JWS token is base64url.
+  - All five SDKs apply the same rule with the same messages.
+  - Loosening later is additive.
+- **Decision:** confirm. A small correction was applied in the same change: the URL refusal now says to
+  percent-encode any other character and to send to that same encoded URL, in all five SDKs.
+- **Decided by:** Opus (reversible tier).
+- **Status:** CONFIRMED.
+
+## 2026-10-27 — a `DpopError` base with `DpopKeyError` for key and binding faults (plans/operator-dpop-signer.md)
+- **Assumption:** callers want to tell "this key or token can never work" apart from "this one call's input
+  is out of range". Every local refusal is a `DpopError` (Python `ValueError`, Java/Kotlin
+  `IllegalArgumentException`, Go `ErrDpop`, TS `Error`), and key or binding faults are its subclass
+  `DpopKeyError` (Go `ErrKey`, which also matches `ErrDpop` under `errors.Is`).
+- **Analysis (Fable, /reconcile):** the classification is the same in all five SDKs (bad `aud` string, a
+  non-JWS token and a nil key were spot-checked), each SDK's idiom matches its existing local-fault errors,
+  and the base class keeps a later signer-side error additive. Nesting under `SeamError` is a non-breaking
+  widening that no consumer needs yet. Recommended: confirm as-is, and widen the `DpopKeyError` docstrings
+  to the full cause list (docs only).
+- **Decision:** confirm as-is. The docstrings were widened in the same change.
+- **Decided by:** owner (interactive, one-way door: a public exception contract in five SDKs).
+- **Status:** CONFIRMED.

@@ -25,6 +25,24 @@ export {
   loadIdentityFacts,
   loadIdentityFile,
 } from "./identity.js";
+// Management-plane DPoP (seam-sdk#290): the operator's Ed25519 proof signer — Python's `seam_sdk.dpop`.
+// Listed, not star-exported, so the token-peek helpers stay internal to `dpop.ts` and `admin.ts`.
+export {
+  DEFAULT_OPERATOR_AUD,
+  DpopError,
+  DpopKeyError,
+  MGMT_DPOP_MAX_BODY_BYTES,
+  MGMT_DPOP_MAX_IAT,
+  MGMT_DPOP_MAX_JTI_BYTES,
+  MGMT_DPOP_MAX_PROOF_BYTES,
+  OperatorDpopKey,
+  mgmtDpopGrpcHtu,
+  mgmtDpopHttpHeaders,
+  mgmtDpopHttpHtu,
+  mgmtDpopProof,
+  newMgmtDpopJti,
+} from "./dpop.js";
+export type { MgmtDpopProofInput } from "./dpop.js";
 
 // ── Generated protobuf surface ────────────────────────────────────────────────────────────────────
 // Every generated message type that appears in a public method signature is reachable from this root
