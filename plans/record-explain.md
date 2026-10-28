@@ -52,6 +52,12 @@ The availability states, verbatim in substance (`seam.proto:1126-1143`):
 - `UNAVAILABLE`: a transient store or KMS fault (a retry may succeed), or an attestation this runtime cannot
   decode.
 
+> **Phase 3 note (2026-10-28).** A first live run reported `RECORDED` on "0.61.0". That build came from the
+> shared seam-runtime checkout, which held uncommitted train-B work on `feat/1361-train-b`, so it measured
+> train B, not 0.61.0. seam-runtime-f8 confirmed that `7d538c54` has no attestation writer. The live lanes
+> were re-run on a seam-grpc built from a clean `git archive 7d538c54` export, and the paragraph below
+> stands. **Lesson:** build a pinned runtime from an export or a worktree, never from the shared checkout.
+
 **Runtime timeline.** Train A (0.61.0) authors **no** attestations. Every live record reads `NOT_RECORDED` or
 another non-RECORDED state until train B (0.62.0) writes them. Train B has **no wire change**: its release
 checklist says "there is no wire change, so the BSR push is a no-op label move"
@@ -355,7 +361,7 @@ All phases land in `seam-sdk`. There are no cross-repo writes. Shared API (Opus 
 
 ### Phase 3: record the contract decision, live coverage
 
-- **Status:** TODO
+- **Status:** DONE (2026-10-28). As planned. Divergences: the enum-floor test in `test_field_manifest_gate.py` pinned the exact enum set, so it was renamed (`..._covers_every_enum`) and extended to six; the live run was first made against a dirty train-B build and redone on a clean `7d538c54` export (see the Phase 3 note under *Runtime timeline*).
 - **Risk:** simple.
 - **Delivers:** `contract/field-manifest.txt` declares the seven fields and twelve enum values. The gate
   exits 0. The live lanes assert the record view decodes against a real 0.61.x runtime.

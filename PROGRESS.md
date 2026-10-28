@@ -5123,3 +5123,11 @@ the bot's `chore(release): v0.61.0` commit `32ab80d` landed while the plan was w
 - **Files:** `ts/src/client.ts` (`decodeCollective` extracted, module-private; `SealAttestation` + `sealAttestationOf`; three-carrier `policyEnforcementOf`; carrier/VERB prose; `getDecision` doc), `ts/src/index.ts` (SIX dual-declared names), `ts/tests/seal_attestation.test.ts` (new, reads the shared Python fixture), `ts/tests/policy_enforcement.test.ts`; `python/tests/test_presence_rules_agree_across_languages.py` (RETRACTED widened to TS; new BOTH_LANGUAGES "never withholds after eviction"); line citations renumbered in `COMPATIBILITY.md` (567, 766) and `PROGRESS.md` (157, 160, 162, 163).
 - **Suites:** TS typecheck/build clean, 524 tests / 508 pass / 0 fail / 16 skipped; Python 1 known failure (field-manifest lag, Phase 3) / 2393 passed.
 - **Next:** Phase 3 — manifest + live coverage (seam-grpc 0.61.0 built locally into scratch).
+
+## Phase 3 — DONE (2026-10-28)
+- **Verdict:** PASS (Opus verifier, run solo because the phase gained a live-run incident). A first verify round was stopped before it returned: it was reviewing a docstring "correction" built on a dirty runtime build, which was then reverted.
+- **Incident:** the first live build came from the shared seam-runtime checkout, which held uncommitted train-B work on `feat/1361-train-b`, and it returned RECORDED. seam-runtime-f8 confirmed `7d538c54` has no writer. I rebuilt from a `git archive 7d538c54` export: NOT_RECORDED on both paths. Corrections and retractions went to seam-runtime-f8 and seam-mcp-b2.
+- **Files:** `contract/field-manifest.txt` (+19: 7 fields, 12 enum values; no other contract file moved); `python/tests/test_integration.py`, `ts/tests/integration.test.ts` (version-agnostic record-view asserts); `python/tests/test_field_manifest_gate.py` (enum floor now six enums).
+- **Gate:** `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` → 0. Cutting one line gives 6 and names it.
+- **Suites (clean 0.61.0 seam-grpc via SEAM_GRPC_BIN):** Python 2423 passed / 10 skipped, live included; TS 533 / 0 fail / 0 skipped. The live asserts also passed on the train-B build.
+- **Next:** Phase 4, docs.

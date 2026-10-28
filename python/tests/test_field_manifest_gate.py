@@ -710,11 +710,11 @@ def test_nested_enum_in_ts_stub_trips_the_guard(scratch_stubs, tmp_path) -> None
 # ── the committed manifest's enum section, as shipped ──────────────────────────────────────────────
 
 
-def test_the_committed_manifest_enum_section_is_not_vacuous_and_covers_all_four_enums() -> (
+def test_the_committed_manifest_enum_section_is_not_vacuous_and_covers_every_enum() -> (
     None
 ):
     """The anti-vacuity floor: a future refactor that silently empties the enum section (or narrows it
-    to fewer than all four enums) must fail here, not slip through as a passing gate. Runs without
+    to fewer than every enum the contract declares) must fail here, not slip through as a passing gate. Runs without
     stubs on purpose, same as the field header test — a regression here must not be able to hide
     behind an absent `make generate`."""
     committed = REPO / "contract" / "field-manifest.txt"
@@ -728,6 +728,8 @@ def test_the_committed_manifest_enum_section_is_not_vacuous_and_covers_all_four_
         "CollectiveVerdict",
         "BallotChoice",
         "ExplanationKind",
+        "SealAttestationAvailability",
+        "SealReason",
     }, names
     # UNSPECIFIED zero values are DECLARED, never filtered — removing the fail-safe default every
     # OTHER value's fail-closed behaviour depends on is exactly as real a breaking change as removing
@@ -737,6 +739,8 @@ def test_the_committed_manifest_enum_section_is_not_vacuous_and_covers_all_four_
         "BallotChoice#BALLOT_CHOICE_UNSPECIFIED",
         "CollectiveVerdict#COLLECTIVE_VERDICT_UNSPECIFIED",
         "ExplanationKind#EXPLANATION_KIND_UNSPECIFIED",
+        "SealAttestationAvailability#SEAL_ATTESTATION_AVAILABILITY_UNSPECIFIED",
+        "SealReason#SEAL_REASON_UNSPECIFIED",
     ):
         assert zero in entries, zero
 

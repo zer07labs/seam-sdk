@@ -4,7 +4,14 @@ import { spawn } from "node:child_process";
 import { connect as tcpConnect, createServer, type AddressInfo } from "node:net";
 import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import { createGrpcTransport } from "@connectrpc/connect-node";
-import { Agent, IssuerMismatchError, SeamClient } from "../src/client.js";
+import {
+  Agent,
+  IssuerMismatchError,
+  SeamClient,
+  collectiveOutcomeOf,
+  policyEnforcementOf,
+  sealAttestationOf,
+} from "../src/client.js";
 import { SeamAdminClient } from "../src/admin.js";
 import { requestSig } from "../src/crypto.js";
 import { UnauthenticatedError } from "../src/errors.js";
@@ -82,8 +89,25 @@ test("full round trip: admit → decide → seal → read → verify", { skip: S
     const dec = await client.runDecision(agent, "ts-1-sid-0123456789abcdef", ["fraud-v3", "risk-v2"], [["fraud-v3", "BLOCK"], ["risk-v2", "BLOCK"]]);
     assert.equal(dec.decidedValue, "BLOCK");
     assert.equal(dec.outcome, "Resolved");
-    assert.equal((await client.getDecision(dec.decisionId)).outcome, "Resolved");
+    const record = await client.getDecision(dec.decisionId);
+    assert.equal(record.outcome, "Resolved");
     assert.equal((await client.replayDecision(dec.decisionId)).chainVerified, true);
+    // Runtime 0.61.0+ (seam-runtime#1361): derived policy enforcement and a seal attestation on the
+    // record. Holds on 0.61.x (NOT_RECORDED) and on train-B runtimes (RECORDED) alike.
+    const enforcement = policyEnforcementOf(record);
+    assert.notEqual(enforcement, undefined);
+    const immediateEnforcement = policyEnforcementOf(dec);
+    if (immediateEnforcement !== undefined)
+      assert.equal(enforcement?.enforced, immediateEnforcement.enforced);
+    const attestation = sealAttestationOf(record);
+    assert.ok(attestation);
+    assert.notEqual(attestation.availability, "UNRECOGNIZED");
+    if (attestation.availability === "RECORDED") {
+      assert.equal(attestation.sealReason, "COMMIT");
+      const immediateCollective = collectiveOutcomeOf(dec);
+      if (immediateCollective !== undefined && attestation.collectiveOutcome !== undefined)
+        assert.equal(attestation.collectiveOutcome.verdict, immediateCollective.verdict);
+    }
     const issuer = await client.issuerAid();
     assert.equal(await client.verifyDecision(dec.decisionId, issuer), true);
     // A wrong pinned issuer is a key-substitution signal — a DISTINCT error, not a bland false.
