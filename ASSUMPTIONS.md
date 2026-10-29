@@ -1542,7 +1542,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Chose:** `server_info() -> str` / `serverInfo(): Promise<string>`, unwrapping `runtime_version`, the same as `issuer_aid` and every single-scalar verb. The proto's "Nothing else about the build is carried" is a comment, not a freeze, so this is a one-way door; growth would get a new verb or an additive keyword.
 - **Alternatives:** return the raw `pb.ServerInfoResponse` (breaks the unwrap convention and needs a TS root type export, for no consumer).
 - **Blast radius if wrong:** if the runtime adds a field that callers need, it arrives through a new method, and `server_info` keeps its shape.
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (2026-10-29), by the owner on Fable's analysis (see DECISIONS.md)
 
 ## No version-comparison helper beside `server_info`
 - **Plan:** plans/server-info.md (Phase 1, open question Q2)

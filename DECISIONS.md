@@ -2998,3 +2998,8 @@ A reversible, SDK-internal retry bound; not a one-way door, so Opus decided it.
 - **Assumption:** the one consumer parses versions itself, so the SDK returns the string verbatim and validates nothing.
 - **Analysis (Opus):** seam-mcp parses in `common/src/seam_mcp_common/compat.py` (PEP 440 normalisation, its own refusal, a bundled matrix) and today reads the version from CP discovery, not the SDK. An SDK helper would be a second parser across five languages that could disagree on pre-release ordering. Adding one later is purely additive.
 - **Decided by:** Opus (reversible tier). **Verdict:** CONFIRM. **Status:** CONFIRMED.
+
+## 2026-10-29 — `server_info` returns a plain string (plans/server-info.md, Q1)
+- **Assumption:** `ServerInfoResponse` stays single-field, so `server_info() -> str` / `serverInfo(): Promise<string>` is the right public shape.
+- **Analysis (Fable):** confirm. Precedent: multi-field responses return raw pb, single scalars unwrap (`issuer_aid`). The runtime owner decided on 2026-10-28 to serve only the version on this unauthenticated read (`seam-runtime/crates/seamd/src/build_info.rs:3-6`), although `commit()` exists. A new field cannot arrive silently, because `contract/field-manifest.txt` pins the surface and the gate exits 6. seam-mcp needs only the string. Strongest counter: the RPC name is generic, so a reversal would leave a `str` verb beside a future raw-response verb.
+- **Decided by:** the owner (one-way door: public API). **Verdict:** CONFIRM, plain string. **Status:** CONFIRMED.
