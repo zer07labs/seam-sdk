@@ -1535,3 +1535,19 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Alternatives:** add a `clearance=` keyword now (new public surface with no consumer asking for it).
 - **Blast radius if wrong:** a consumer that needs restricted attestations gets `CLEARANCE_DENIED` until an option is added; adding one later is additive. The deferral is recorded in `DEFERRED.md`.
 - **Status:** CONFIRMED (2026-10-28) — /reconcile, decided by Opus; see DECISIONS.md
+
+## `server_info` returns a plain string
+- **Plan:** plans/server-info.md (Phase 1, open question Q1)
+- **Assumed:** `ServerInfoResponse` stays single-field for long enough that a scalar return is the right public shape.
+- **Chose:** `server_info() -> str` / `serverInfo(): Promise<string>`, unwrapping `runtime_version`, the same as `issuer_aid` and every single-scalar verb. The proto's "Nothing else about the build is carried" is a comment, not a freeze, so this is a one-way door; growth would get a new verb or an additive keyword.
+- **Alternatives:** return the raw `pb.ServerInfoResponse` (breaks the unwrap convention and needs a TS root type export, for no consumer).
+- **Blast radius if wrong:** if the runtime adds a field that callers need, it arrives through a new method, and `server_info` keeps its shape.
+- **Status:** UNCONFIRMED
+
+## No version-comparison helper beside `server_info`
+- **Plan:** plans/server-info.md (Phase 1, open question Q2)
+- **Assumed:** the one consumer (seam-mcp B-RTVER) already parses versions with its own `compat.resolve`.
+- **Chose:** no `runtime_at_least(...)`-style helper; the SDK returns the string verbatim and validates nothing.
+- **Alternatives:** an SDK-side semver comparison (a second, divergent parser with no consumer asking for it).
+- **Blast radius if wrong:** a consumer without its own parser writes one, or a helper is added later; additive either way.
+- **Status:** UNCONFIRMED
