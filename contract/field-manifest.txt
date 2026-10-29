@@ -433,6 +433,7 @@ RunDecisionRequest/votes
 SealAttestation/availability
 SealAttestation/collective_outcome
 SealAttestation/seal_reason
+ServerInfoResponse/runtime_version
 SessionRef/session_id
 SessionStatusResponse/decision_id
 SessionStatusResponse/state

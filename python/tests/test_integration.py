@@ -12,6 +12,7 @@ docstring for the #85 failure this replaced; do not reintroduce a fixed port or 
 """
 
 import os
+import re
 import time
 
 import pytest
@@ -40,6 +41,9 @@ def server(tmp_path):
         return
     with spawn_server(log_dir=tmp_path) as srv:
         yield srv.data_addr
+
+
+_SEMVER = re.compile(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?")
 
 
 def test_full_round_trip(server):
@@ -82,6 +86,14 @@ def test_full_round_trip(server):
             assert (
                 attestation.collective_outcome.verdict == immediate_collective.verdict
             )
+
+    # Runtime 0.63.0+ (seam-sdk#307): the runtime's version, credential-free. Always a semver string;
+    # an exact match only when the run says which runtime it built (SEAM_EXPECTED_RUNTIME_VERSION).
+    version = client.server_info()
+    assert _SEMVER.fullmatch(version), version
+    expected = os.environ.get("SEAM_EXPECTED_RUNTIME_VERSION")
+    if expected:
+        assert version == expected
 
     # Independent verification — pin the issuer (TOFU here) then verify the rooted TCT locally.
     issuer = client.issuer_aid()
