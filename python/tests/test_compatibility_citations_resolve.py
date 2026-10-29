@@ -1276,8 +1276,9 @@ QUOTED = [
         "seam-adapters/core/pyproject.toml",
         # Bumped 0.50.1 -> 0.54.3 on 2026-10-24 by seam-adapters 0.20.0 (#267), then 0.54.3 -> 0.59.0
         # on 2026-10-26 by seam-adapters#272 (abec857), then 0.59.0 -> 0.61.1 on 2026-10-28 by
-        # seam-agent-core 0.23.0 (seam-adapters#276, f8feca8).
-        "seam-sdk>=0.61.1,<0.62",
+        # seam-agent-core 0.23.0 (seam-adapters#276, f8feca8), then 0.61.1 -> 0.62.0 on 2026-10-29
+        # by seam-adapters#277 (bf059da).
+        "seam-sdk>=0.62.0,<0.63",
     ),
     (
         "COMPATIBILITY.md",
