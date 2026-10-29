@@ -202,7 +202,7 @@ Each returns `ServerInfoResponse.runtime_version` verbatim.
 
 ### Phase 2: TypeScript mirror
 
-- **Status:** TODO.
+- **Status:** DONE (2026-10-29). As planned; the router-transport harness worked first time.
 - **Risk:** simple. It mirrors Phase 1's decided shape.
 - **Delivers:** `SeamClient.serverInfo(opts?)` resolving to the runtime version string, behaviour-identical
   to Phase 1.
@@ -235,7 +235,7 @@ Each returns `ServerInfoResponse.runtime_version` verbatim.
 
 ### Phase 3: record the contract decision, live coverage
 
-- **Status:** TODO.
+- **Status:** DONE (2026-10-29). As planned, except that the expected version was read from the export's Cargo.toml with tomllib, because `cargo metadata` refuses the export (see *As run*).
 - **Risk:** simple.
 - **Delivers:** `contract/rpc-manifest.txt` declares `SeamTrust/ServerInfo` and `contract/field-manifest.txt`
   declares `ServerInfoResponse/runtime_version`. The gate exits 0, and the live lanes assert the version
@@ -268,6 +268,10 @@ Each returns `ServerInfoResponse.runtime_version` verbatim.
     ```
     The expected value is `0.63.0` (workspace `version`, `Cargo.toml:87` at `2e29be29`; `seamd` inherits
     it). The value is derived from the export's own manifest and never typed by hand.
+    *As run:* `cargo metadata` refuses the export (the private `zer07labs` registry is configured only in
+    the shared checkout's environment), so the value was read from the same file with tomllib:
+    `python/.venv/bin/python -c 'import sys,tomllib; print(tomllib.load(open(sys.argv[1],"rb"))["workspace"]["package"]["version"])' "$S/sr-0.63.0/Cargo.toml"`
+    → `0.63.0`. Same source, still never typed by hand.
   - **How the test learns the expected version (decision D4).** Nothing is hard-coded per release:
     - **Always:** `server_info()` returns a non-empty semver string,
       `^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`. This holds on every runtime ≥ 0.63.0,

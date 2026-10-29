@@ -5188,3 +5188,13 @@ PR strategy: one PR.
 - **Suite:** 2408 passed, with the 1 known field-manifest failure expected until Phase 3. Ruff is clean.
 - **Assumptions:** Q1 (plain string) and Q2 (no comparison helper) are logged UNCONFIRMED.
 - **Next:** Phase 2 (TS).
+
+## server-info Phases 2+3 — DONE (2026-10-29)
+- **Verdict:** PASS for each, one round (Opus, batched: both simple). The verifier also re-ran the router test without `errorMappingInterceptor`, and it failed as it should.
+- **Phase 2 files:** `ts/src/client.ts` (`serverInfo`), `ts/tests/server_info.test.ts` (new, 5 tests). TS: typecheck clean, build clean, `.d.ts` declares `serverInfo(opts?: UnaryCallOptions): Promise<string>`, 513 pass / 0 fail.
+- **Phase 3 files:**
+  - `contract/rpc-manifest.txt` and `contract/field-manifest.txt`: one line each. The gate exits 0. With a line removed it exits 5 or 6, naming the line, then was restored.
+  - `python/tests/test_integration.py` and `ts/tests/integration.test.ts`: the live version assertion.
+  - Live against a clean `git archive 2e29be29` export: Python 12 passed / 1 known skip, TS 8 / 0 / 0 skipped. The version is `0.63.0`, and expecting 9.9.9 fails in both.
+  - Python: 2409 passed, 0 failed.
+- **Next:** Phase 4 (docs).
