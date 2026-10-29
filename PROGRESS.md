@@ -4069,7 +4069,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1692`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1702`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -4556,12 +4556,12 @@ green before any code changed.
   this — "rather than refusing outright" was wrong, fixed before merge). (2) the release's
   `retitle_changelog.sh` run shifted `CHANGELOG.md`'s "No yank" paragraph from line 1054 to 1056
   (a +2 insert right after `## Unreleased`), pushing `COMPATIBILITY.md:123` and
-  `DECISIONS.md:1222`'s `CHANGELOG.md:1532-1549` citations past the citation test's slack
-  tolerance; repointed both to `CHANGELOG.md:1534-1551`. Tested: `check_vendored_spec.py` OK via both
+  `DECISIONS.md:1222`'s `CHANGELOG.md:1542-1559` citations past the citation test's slack
+  tolerance; repointed both to `CHANGELOG.md:1544-1561`. Tested: `check_vendored_spec.py` OK via both
   `--from local` and `--from gh`; `test_compatibility_citations_resolve.py` 489 passed/0 failed
   standalone (was 4 failed). Verifier also flagged two pre-existing, gate-invisible citations
   elsewhere that the same +2 shift widened further — `DECISIONS.md:2035` cites
-  `CHANGELOG.md:1434` and `PROGRESS.md:3981` cites `CHANGELOG.md:1319`, both already ~130-250
+  `CHANGELOG.md:1444` and `PROGRESS.md:3981` cites `CHANGELOG.md:1329`, both already ~130-250
   lines stale before this release — out of scope for this release-unblock hotfix; filed as a
   follow-up issue rather than folded in here.
   **Rebased `feat/verify-anchor-tenant` onto this commit during `/sweep`'s ship pass.** Four
@@ -4571,7 +4571,7 @@ green before any code changed.
   `CHANGELOG.md`/`COMPATIBILITY.md`/`DECISIONS.md`: the feature branch's own new
   `## Unreleased` entry (16 lines) was kept above this hotfix's `## 0.33.3` header, which
   shifted "No yank" from this entry's `1056` to `1072` and recomputed the two citations above
-  (`CHANGELOG.md:1534-1551`) to `CHANGELOG.md:1550-1567` — verified against the exact
+  (`CHANGELOG.md:1544-1561`) to `CHANGELOG.md:1560-1577` — verified against the exact
   paragraph-boundary text at both the old and new line numbers before trusting the new range,
   not just the arithmetic. A dedicated ship-gate verifier independently re-derived this same
   shift from the diff and confirmed it exact.
@@ -5147,3 +5147,69 @@ the bot's `chore(release): v0.61.0` commit `32ab80d` landed while the plan was w
 ## Phase 5 — DONE (2026-10-28)
 - PR #304 merged (`3ab01d8`); `v0.61.1` released (run 40748813196) and published (run 40749182060) to `internal` and `partner`. seam-mcp and seam-adapters were told.
 - seam-agent-core 0.23.0 (seam-adapters#276, `f8feca8`) requires `seam-sdk>=0.61.1,<0.62`; the COMPATIBILITY adapters row and its sibling-quote needle are re-quoted to it. The plan is archived.
+
+# server-info (#307)
+
+Checkpoint trail and repo map for wiring `SeamTrust.ServerInfo` (B-RTVER, SDK half) and shipping it as
+SDK 0.63.1. Plan: `plans/server-info.md`. Anchors are at `4760f9b` (= `origin/main`, the bot's v0.63.0
+release commit; v0.63.0 is tagged and unpublished, publish run 40814097723). Runtime `2e29be29`
+(seam-runtime#1544, #1360).
+
+## Repo map
+
+- Contract: `seam-runtime/crates/seam-api/proto/seam/api/v1/seam.proto` @ `2e29be29` (read via `git show`, never the working tree): `ServerInfoResponse` and `rpc ServerInfo` on `SeamTrust` (line anchors in the plan's header; cited by symbol here because the runtime working tree may hold another branch). Server: `DataPlaneGrpc::server_info` in `crates/seamd/src/grpc.rs`; version source `crates/seamd/src/build_info.rs` (`CARGO_PKG_VERSION`, workspace version 0.63.0).
+- `python/seam_sdk/client.py` — `issuer_aid` :1258-1259 (precedent; add `server_info` after it); `_trust` `_MappedStub` :305; tenant interceptor :331-344; no-retry rule :141-146, :603.
+- `python/seam_sdk/aio.py` — `issuer_aid` :971-972 (add the awaited twin); `_AioMappedStub` :82, :133.
+- `python/seam_sdk/errors.py` — `UnimplementedError` :559-560; `_BY_CODE` :567-579; `map_rpc_error` :582-621; `_MappedStub` :624-643.
+- `ts/src/client.ts` — `issuerAid` :1717-1719 (add `serverInfo` after it); `UnaryCallOptions` :115; `errorMappingInterceptor` wiring :884; authorize's UNIMPLEMENTED note :948-949.
+- `ts/src/errors.ts` — `UnimplementedError` :353, code map :366, interceptor :384.
+- `contract/rpc-manifest.txt` — `SeamTrust/IssuerAid` :71; gains `SeamTrust/ServerInfo` (Phase 3, `--write-manifest`).
+- `contract/field-manifest.txt` — `IssuerAidResponse/issuer_aid` :339; gains `ServerInfoResponse/runtime_version`.
+- `scripts/check-contract.sh` — probe 4 (RPC set vs manifest, header :39-49) exits 5 today; field gate exits 6 behind it (measured with a scratch `SEAM_RPC_MANIFEST`).
+- `python/tests/test_client_parity.py` — set parity :28, signature parity :64 (async twin mandatory).
+- `python/tests/test_authorize.py:480` — deadline matrices: sync :480 (entry :500), aio :578 (entry :603); `HangingSeam` class at `python/tests/test_authorize.py:227`, hang logic :237-244.
+- `python/tests/test_field_manifest_gate.py` — exact-lag test (:1100 assert) red until Phase 3 (baseline: 1 failed, 2395 passed, 39 skipped).
+- `python/tests/test_integration.py` — `test_full_round_trip` :45, `issuer_aid()` :87 (add the live version assert).
+- `ts/tests/integration.test.ts` — "full round trip" :85, `issuerAid()` :111.
+- `ts/tests/verify_anchor.test.ts` — `trust`-stub pattern :66-80 for the new `ts/tests/server_info.test.ts`.
+- New: `python/tests/test_server_info.py`, `ts/tests/server_info.test.ts`.
+- `README.md` — BSR-state block :92-104; *Data-plane surface* :602-610.
+- `COMPATIBILITY.md` — adapters row :65; v0.61.1 pairing paragraph :144-150 (0.63.1 paragraph goes after it); table header :152.
+- `CHANGELOG.md` — `## Unreleased` :17; bot's empty `## 0.63.0 — 2026-10-29` :19; 0.61.0 "Tagged, never published" precedent :49; shift with `scripts/shift_changelog_citations.py . 17 <delta>`, check with `python/tests/test_compatibility_citations_resolve.py`.
+- `plans/README.md` — active table :14 (`_(none)_`).
+- Release: `.github/workflows/release-on-runtime.yml` (framing latch :97-101, ci-ok guard :175-219); `contract/wire-framing.json:39` (`supported: 3`); `publish.yml` `promote-partner` :768; `ci.yml` `sibling-quotes` :685.
+- Consumers: seam-mcp `compat.resolve` (`common/src/seam_mcp_common/compat.py`, takes a string) and `discovery._runtime_version`; seam-mcp pins `seam-sdk==0.62.0` in `common` and `onboard` pyprojects (seam-mcp is not a citation-gate sibling prefix, so no line anchors here). seam-adapters core pins `seam-sdk>=0.62.0,<0.63` (`seam-adapters/core/pyproject.toml:115`); its `issuer_aid` passthrough is `seam-adapters/core/seam_agent_core/transport_grpc.py:2146`.
+
+PR strategy: one PR.
+
+## server-info Phase 1 — DONE (2026-10-29)
+- **Verdict:** PASS, one round (Opus; complex, so gated alone, because it fixes the public name and return type). The three minor notes were taken anyway: real credential header names in the absence check, the cause asserted as the raw unmapped error, and an empty-string test.
+- **Files:** `python/seam_sdk/client.py`, `python/seam_sdk/aio.py` (`server_info`), `python/tests/test_server_info.py` (new, 8 tests), `python/tests/test_authorize.py` (both deadline lists). Also re-bound one repo-map citation line above, to keep the unbound-citation ratchet at 68.
+- **Suite:** 2408 passed, with the 1 known field-manifest failure expected until Phase 3. Ruff is clean.
+- **Assumptions:** Q1 (plain string) and Q2 (no comparison helper) are logged UNCONFIRMED.
+- **Next:** Phase 2 (TS).
+
+## server-info Phases 2+3 — DONE (2026-10-29)
+- **Verdict:** PASS for each, one round (Opus, batched: both simple). The verifier also re-ran the router test without `errorMappingInterceptor`, and it failed as it should.
+- **Phase 2 files:** `ts/src/client.ts` (`serverInfo`), `ts/tests/server_info.test.ts` (new, 5 tests). TS: typecheck clean, build clean, `.d.ts` declares `serverInfo(opts?: UnaryCallOptions): Promise<string>`, 513 pass / 0 fail.
+- **Phase 3 files:**
+  - `contract/rpc-manifest.txt` and `contract/field-manifest.txt`: one line each. The gate exits 0. With a line removed it exits 5 or 6, naming the line, then was restored.
+  - `python/tests/test_integration.py` and `ts/tests/integration.test.ts`: the live version assertion.
+  - Live against a clean `git archive 2e29be29` export: Python 12 passed / 1 known skip, TS 8 / 0 / 0 skipped. The version is `0.63.0`, and expecting 9.9.9 fails in both.
+  - Python: 2409 passed, 0 failed.
+- **Next:** Phase 4 (docs).
+
+## server-info Phase 4 — DONE (2026-10-29)
+- **Verdict:** PASS, one round (Opus; simple, gated alone because Phase 5 runs after merge). Its minor note was taken: COMPATIBILITY's `README.md:163` citation was re-anchored to `:166`.
+- **Files:** `README.md` (BSR block line; a *Runtime version* paragraph), `COMPATIBILITY.md` (0.63.1 pairing paragraph, a table row, citation re-anchor), `CHANGELOG.md` (Unreleased Added; the `## 0.63.0` never-published line), `plans/README.md` (active row). CHANGELOG citations shifted +10 (11 citations).
+- **Full local gate:** Python 2409/0, ruff clean; TS typecheck clean, 513/0; go test ok; verify cargo test/clippy/fmt clean; Java and Kotlin gradle ok; contract gate 0.
+- **Next:** finalization, then /reconcile (Q1/Q2), then /ship. Phase 5 runs after merge.
+
+## server-info Finalization (2026-10-29)
+- **Round 1:** GAPS (Opus). No code defects. **Round 2:** GAPS on one item, the TS deadline test (it passed even when the caller timeout was dropped); fixed with an elapsed-time bound, now proven to fail at 2003 ms without the timeout. Everything else closed. Closed:
+  - Q3 logged to ASSUMPTIONS (UNCONFIRMED);
+  - the plan's top Status, and D4's `cargo metadata` text, updated to what ran (tomllib);
+  - Python: a `tenant=` client sends only `x-seam-tenant`, no credential;
+  - TS: a router-transport test proves `timeoutMs` fires as `DeadlineExceededError`;
+  - D1's full text goes in the PR body.
+- **Reconcile:** Q2 (no helper) CONFIRMED by Opus. Q1 (plain string) is a public-API one-way door, sent to Fable and then the owner. Q3 is reversible (one workflow line).

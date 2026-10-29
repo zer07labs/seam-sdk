@@ -1717,6 +1717,18 @@ export class SeamClient {
   issuerAid(opts?: UnaryCallOptions) {
     return this.trust.issuerAid({}, call(opts)).then((r) => r.issuerAid);
   }
+  /**
+   * The runtime's version (seam.api.v1 `SeamTrust/ServerInfo`, runtime 0.63.0+): a semver string
+   * such as `"0.63.0"` — the seamd crate version, which the runtime always sets — returned verbatim,
+   * not parsed or normalised. Like {@link issuerAid} it needs no credential or ticket (only TLS/mTLS
+   * gates it), and the SDK never retries it. A runtime older than 0.63.0 rejects with
+   * `UnimplementedError`: fall back to an explicitly configured version or to control-plane
+   * discovery. The value is server-asserted and unsigned — an input for picking a compatible SDK or
+   * adapter, never a trust signal.
+   */
+  serverInfo(opts?: UnaryCallOptions) {
+    return this.trust.serverInfo({}, call(opts)).then((r) => r.runtimeVersion);
+  }
   async getCommitmentProof(decisionId: string, opts?: CredentialedCallOptions) {
     return this.credentialedCall(
       opts?.credential,

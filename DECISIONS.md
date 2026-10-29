@@ -1219,7 +1219,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:1660-1682` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:1670-1692` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2049,7 +2049,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:1692` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:1702` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -2993,3 +2993,18 @@ A reversible, SDK-internal retry bound; not a one-way door, so Opus decided it.
 - **Assumption:** no clearance option on `get_decision` / `getDecision`; a restricted record reads `CLEARANCE_DENIED`.
 - **Analysis (fresh Opus):** P4b reads only the partner's own records under its own identity, and no consumer asks for restricted reads. The proto returns `CLEARANCE_DENIED` on the view, never an error (seam.proto:1101-1104). A keyword-only Python argument or a TS `opts` field can be added later without breaking callers. The deferral is in `DEFERRED.md`.
 - **Decided by:** Opus (reversible tier). **Verdict:** CONFIRM. **Status:** CONFIRMED.
+
+## 2026-10-29 — No version-comparison helper beside `server_info` (plans/server-info.md, Q2)
+- **Assumption:** the one consumer parses versions itself, so the SDK returns the string verbatim and validates nothing.
+- **Analysis (Opus):** seam-mcp parses in `common/src/seam_mcp_common/compat.py` (PEP 440 normalisation, its own refusal, a bundled matrix) and today reads the version from CP discovery, not the SDK. An SDK helper would be a second parser across five languages that could disagree on pre-release ordering. Adding one later is purely additive.
+- **Decided by:** Opus (reversible tier). **Verdict:** CONFIRM. **Status:** CONFIRMED.
+
+## 2026-10-29 — `server_info` returns a plain string (plans/server-info.md, Q1)
+- **Assumption:** `ServerInfoResponse` stays single-field, so `server_info() -> str` / `serverInfo(): Promise<string>` is the right public shape.
+- **Analysis (Fable):** confirm. Precedent: multi-field responses return raw pb, single scalars unwrap (`issuer_aid`). The runtime owner decided on 2026-10-28 to serve only the version on this unauthenticated read (`seam-runtime/crates/seamd/src/build_info.rs:3-6`), although `commit()` exists. A new field cannot arrive silently, because `contract/field-manifest.txt` pins the surface and the gate exits 6. seam-mcp needs only the string. Strongest counter: the RPC name is generic, so a reversal would leave a `str` verb beside a future raw-response verb.
+- **Decided by:** the owner (one-way door: public API). **Verdict:** CONFIRM, plain string. **Status:** CONFIRMED.
+
+## 2026-10-29 — CI's integration lane does not pass an expected runtime version (plans/server-info.md, Q3)
+- **Assumption:** CI cannot know the runtime version it lifts, so only the local live run asserts exact equality.
+- **Analysis (Opus):** the `seamd:main` lift is a moving tag, and `seam-grpc` has no `--version` flag. The SDK version is no proxy (0.63.1 ↔ 0.63.0). The from-source branch could read `workspace.package.version` with tomllib, but `SEAM_RUNTIME_BUILD_REF` is empty, so the branch never runs and a step there would be untested. The release-time local run asserts equality.
+- **Decided by:** Opus (reversible tier). **Verdict:** CONFIRM; the trigger is the next PR that sets `SEAM_RUNTIME_BUILD_REF`, which adds the tomllib export to `$GITHUB_ENV`. **Status:** CONFIRMED.

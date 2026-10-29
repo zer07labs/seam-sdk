@@ -69,6 +69,7 @@ SeamEvents/RedriveEvents
 SeamEvents/ReportEventsConsumed
 SeamEvents/StreamEvents
 SeamTrust/IssuerAid
+SeamTrust/ServerInfo
 SeamTrust/VerifyCommitment
 SeamTrust/VerifyPartyAnchor
 SeamTrust/VerifyPartyAttestation

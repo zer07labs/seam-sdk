@@ -10,7 +10,7 @@ against a status table alone.
 
 | Plan | Status |
 |---|---|
-| _(none)_ | No active plans as of 2026-10-28. |
+| [`server-info.md`](server-info.md) | #307 — Phases 1-4 DONE; Phase 5 (release 0.63.1) runs after merge. |
 
 ## Cross-repo asks
 

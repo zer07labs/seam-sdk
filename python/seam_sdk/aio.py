@@ -971,6 +971,20 @@ class SeamClient:
     async def issuer_aid(self, *, timeout: float = DEFAULT_TIMEOUT_S) -> str:
         return (await self._trust.IssuerAid(pb.Empty(), timeout=timeout)).issuer_aid
 
+    async def server_info(self, *, timeout: float = DEFAULT_TIMEOUT_S) -> str:
+        """The runtime's version (seam.api.v1 ``SeamTrust/ServerInfo``, runtime 0.63.0+).
+
+        A semver string such as ``"0.63.0"`` — the seamd crate version, which the runtime always sets —
+        returned verbatim, not parsed or normalised. Like :meth:`issuer_aid` it needs no credential or ticket (only TLS/mTLS gates
+        it), and the SDK never retries it. A runtime older than 0.63.0 raises
+        :class:`~seam_sdk.errors.UnimplementedError`: fall back to an explicitly configured version
+        or to control-plane discovery. The value is server-asserted and unsigned — an input for
+        picking a compatible SDK or adapter, never a trust signal.
+        """
+        return (
+            await self._trust.ServerInfo(pb.Empty(), timeout=timeout)
+        ).runtime_version
+
     async def verify_commitment(
         self,
         commitment: pb.Commitment,

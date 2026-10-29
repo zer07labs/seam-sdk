@@ -108,6 +108,12 @@ test("full round trip: admit → decide → seal → read → verify", { skip: S
       if (immediateCollective !== undefined && attestation.collectiveOutcome !== undefined)
         assert.equal(attestation.collectiveOutcome.verdict, immediateCollective.verdict);
     }
+    // Runtime 0.63.0+ (seam-sdk#307): the runtime's version, credential-free. Always a semver string;
+    // an exact match only when the run says which runtime it built (SEAM_EXPECTED_RUNTIME_VERSION).
+    const version = await client.serverInfo();
+    assert.match(version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/);
+    const expected = process.env.SEAM_EXPECTED_RUNTIME_VERSION;
+    if (expected) assert.equal(version, expected);
     const issuer = await client.issuerAid();
     assert.equal(await client.verifyDecision(dec.decisionId, issuer), true);
     // A wrong pinned issuer is a key-substitution signal — a DISTINCT error, not a bland false.
