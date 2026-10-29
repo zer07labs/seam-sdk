@@ -1505,7 +1505,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 
 
 ## DPoP proof inputs are restricted to printable ASCII
-- **Plan:** plans/operator-dpop-signer.md (Phase 1)
+- **Plan:** plans/archive/operator-dpop-signer.md (Phase 1)
 - **Assumed:** no real management call needs a non-ASCII `htu`, `jti` or `aud`. gRPC method paths and audiences are ASCII, an HTTP URL on the wire is percent-encoded ASCII, and the SDK's own `jti` is base64url.
 - **Chose:** every SDK refuses a non-printable-ASCII `htu`/`jti`/`aud` locally, and a token with spaces or non-ASCII characters. Then the JSON each SDK signs is byte-identical by construction: JSON encoders differ in how they escape non-ASCII and U+2028/2029 (Go always escapes them, JavaScript never does), and the `derived` vector group can pin five-way agreement.
 - **Alternatives:** allow UTF-8 and pin one escaping rule in all five encoders (fragile: Go's `encoding/json` cannot be told not to escape U+2028); or allow it and accept cross-SDK byte differences (the runtime verifies any valid JSON, but the shared vector could no longer prove agreement).
@@ -1513,7 +1513,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Status:** CONFIRMED (2026-10-27), by Opus at /reconcile; see DECISIONS.md
 
 ## A `DpopError` base under `ValueError`, with `DpopKeyError` for key and binding faults
-- **Plan:** plans/operator-dpop-signer.md (Phase 1; the plan named only `DpopKeyError`)
+- **Plan:** plans/archive/operator-dpop-signer.md (Phase 1; the plan named only `DpopKeyError`)
 - **Assumed:** callers want to tell "this key or token can never work" apart from "this one call's input is out of range".
 - **Chose:** `DpopError(ValueError)` for every local refusal, and `DpopKeyError(DpopError)` for a malformed JWK, a JWK whose `x` mismatches its `d`, a malformed token, or a `cnf` mismatch. Both live in `dpop.py`, not `errors.py`: they are local input faults, never wire errors. The other SDKs mirror this split in their own idiom.
 - **Alternatives:** a single `DpopKeyError` for everything (it would misname an oversized body as a key fault); or `TypeError` for wrong types (callers would need to catch two unrelated types).
@@ -1537,7 +1537,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Status:** CONFIRMED (2026-10-28) — /reconcile, decided by Opus; see DECISIONS.md
 
 ## `server_info` returns a plain string
-- **Plan:** plans/server-info.md (Phase 1, open question Q1)
+- **Plan:** plans/archive/server-info.md (Phase 1, open question Q1)
 - **Assumed:** `ServerInfoResponse` stays single-field for long enough that a scalar return is the right public shape.
 - **Chose:** `server_info() -> str` / `serverInfo(): Promise<string>`, unwrapping `runtime_version`, the same as `issuer_aid` and every single-scalar verb. The proto's "Nothing else about the build is carried" is a comment, not a freeze, so this is a one-way door; growth would get a new verb or an additive keyword.
 - **Alternatives:** return the raw `pb.ServerInfoResponse` (breaks the unwrap convention and needs a TS root type export, for no consumer).
@@ -1545,7 +1545,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Status:** CONFIRMED (2026-10-29), by the owner on Fable's analysis (see DECISIONS.md)
 
 ## No version-comparison helper beside `server_info`
-- **Plan:** plans/server-info.md (Phase 1, open question Q2)
+- **Plan:** plans/archive/server-info.md (Phase 1, open question Q2)
 - **Assumed:** the one consumer (seam-mcp B-RTVER) already parses versions with its own `compat.resolve`.
 - **Chose:** no `runtime_at_least(...)`-style helper; the SDK returns the string verbatim and validates nothing.
 - **Alternatives:** an SDK-side semver comparison (a second, divergent parser with no consumer asking for it).
@@ -1553,7 +1553,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Status:** CONFIRMED (2026-10-29), by Opus (see DECISIONS.md)
 
 ## CI's integration lane does not pass an expected runtime version
-- **Plan:** plans/server-info.md (Q3, decision D4)
+- **Plan:** plans/archive/server-info.md (Q3, decision D4)
 - **Assumed:** CI's integration job lifts `seam-grpc` from `seamd:main`, whose version the job cannot know, so only the local live run can assert exact equality.
 - **Chose:** the live tests always assert the semver shape and assert equality only when `SEAM_EXPECTED_RUNTIME_VERSION` is set. CI does not set it.
 - **Alternatives:** set it in the integration job's from-source branch (used only for lockstep trains), or compare against the SDK's own version (wrong exactly at 0.63.1 ↔ 0.63.0).

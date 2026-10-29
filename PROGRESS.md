@@ -4806,7 +4806,7 @@ re-plan: step 4 was the only remaining work, and it is a test addition.
   credentialed-read test; `allow` without the hatch refuses to boot.
 - Plan archived (no `ASSUMPTIONS.md` entries were tagged to it).
 
-# PROGRESS — `plans/operator-dpop-signer.md` (seam-sdk#290)
+# PROGRESS — `plans/archive/operator-dpop-signer.md` (seam-sdk#290)
 
 Checkpoint trail and repo map for the operator Ed25519 DPoP signer, all five languages. Anchors were taken
 at `584823a`; runtime `origin/main` `a9ddb982`.
@@ -4963,7 +4963,7 @@ at `584823a`; runtime `origin/main` `a9ddb982`.
 - **Files:** `kotlin/src/main/kotlin/com/zer07labs/seam/MgmtDpop.kt`, `kotlin/src/test/kotlin/com/zer07labs/seam/MgmtDpopTest.kt`.
 - **Next:** Phase 9 (handoff built, under gate).
 
-## Phase 9 — DONE (2026-10-27), live run AWAITING-HUMAN
+## Phase 9 — DONE (2026-10-27), live run accepted as proven offline (owner, 2026-10-27)
 - **Verdict:** PASS after 2 rounds. Verifier: Opus; complex, because it crosses a trust boundary and handles secret material.
 - **Round 1 (GAPS):**
   - `GRPC_TRACE`/`GRPC_VERBOSITY=debug` leaked both tokens to stderr and the log;
@@ -4991,7 +4991,7 @@ at `584823a`; runtime `origin/main` `a9ddb982`.
   [1] live checks against $SEAM_MGMT_TARGET
       (dry-run: skipped)
   ```
-- **AWAITING-HUMAN: scripts/handoff/2026-10-27-mgmt-dpop-aws-stg.sh.** The owner holds both missing inputs: the console's one-time reveal (a human Auth0 login) and an identity the mesh admits to seam-server:9100. No session holds either.
+- **Handoff `scripts/handoff/2026-10-27-mgmt-dpop-aws-stg.sh`. It was awaiting a human; resolved 2026-10-27, when the owner accepted it as proven offline (comment on #290).** The owner holds both missing inputs: the console's one-time reveal (a human Auth0 login) and an identity the mesh admits to seam-server:9100. No session holds either.
   - **What, and the blast radius:** mints nothing and writes nothing. It makes three read-only `SeamAdmin/ListTenants` calls on aws-stg: one with the bound token plus DPoP (must succeed), and the same token, then an optional unbound one, as Bearer (both must be refused).
   - **The command:** export `SEAM_OPERATOR_TOKEN`, `SEAM_OPERATOR_DPOP_JWK` (the console reveal), `SEAM_MGMT_TARGET` (a port-forward to svc/seam-server:9100), `SEAM_MGMT_CA_FILE` and `SEAM_MGMT_TLS_NAME=seam-server`, then run `scripts/handoff/2026-10-27-mgmt-dpop-aws-stg.sh --apply`.
   - **How to confirm:** the run exits 0 with `[ok] bound token + DPoP proof: SeamAdmin/ListTenants` and `[ok] bound token as Bearer is refused`; the log is under `~/.cache/seam/handoff/`.
@@ -5151,7 +5151,7 @@ the bot's `chore(release): v0.61.0` commit `32ab80d` landed while the plan was w
 # server-info (#307)
 
 Checkpoint trail and repo map for wiring `SeamTrust.ServerInfo` (B-RTVER, SDK half) and shipping it as
-SDK 0.63.1. Plan: `plans/server-info.md`. Anchors are at `4760f9b` (= `origin/main`, the bot's v0.63.0
+SDK 0.63.1. Plan: `plans/archive/server-info.md`. Anchors are at `4760f9b` (= `origin/main`, the bot's v0.63.0
 release commit; v0.63.0 is tagged and unpublished, publish run 40814097723). Runtime `2e29be29`
 (seam-runtime#1544, #1360).
 
@@ -5213,3 +5213,8 @@ PR strategy: one PR.
   - TS: a router-transport test proves `timeoutMs` fires as `DeadlineExceededError`;
   - D1's full text goes in the PR body.
 - **Reconcile:** Q2 (no helper) CONFIRMED by Opus. Q1 (plain string) is a public-API one-way door, sent to Fable and then the owner. Q3 is reversible (one workflow line).
+- pushed feat/server-info a956c44
+- PR #308 opened: https://github.com/zer07labs/seam-sdk/pull/308
+- merged #308 (`8ced15e`, 2026-10-29), all 35 checks green.
+- **Phase 5 — DONE (2026-10-29).** release-on-runtime (version=0.63.1, wire_framing_version=3) run 40818857608 tagged `v0.63.1` at `c1d5684`. Publish run 40818976729 is green: internal, partner promotion, and the install-from-Cloudsmith vectors. #307 was closed by the PR, and the release evidence was posted as a comment.
+- **Archived (2026-10-28, `/sweep`):** `plans/server-info.md` and `plans/operator-dpop-signer.md` moved to `plans/archive/`, with the `plans/README.md` rows. The merged remote branches `feat/server-info` and `feat/operator-dpop-signer` were deleted.

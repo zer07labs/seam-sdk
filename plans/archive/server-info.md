@@ -1,5 +1,10 @@
 # Read the runtime version over the data plane: `SeamTrust.ServerInfo` (B-RTVER, SDK half)
 
+> **📦 ARCHIVED 2026-10-28 — DELIVERED, merged as PR #308 (`8ced15e`) and released as SDK 0.63.1.**
+> Verified against this tree during `/sweep`: `server_info` is in `python/seam_sdk/client.py` and
+> `python/seam_sdk/aio.py`, `serverInfo` is in `ts/src/client.ts`, and `contract/rpc-manifest.txt` lists
+> `SeamTrust/ServerInfo`. Tag `v0.63.1` is at `c1d5684`; publish run 40818976729 succeeded, and #307 is CLOSED.
+
 > **Issue:** [#307](https://github.com/zer07labs/seam-sdk/issues/307), "Release v0.63.0 did not publish".
 > The register ID is B-RTVER (seam-mcp `plans/cross-repo/seam-runtime-post-onboarding.md:36-55`, epic
 > zer07labs/seam-mcp#50).
@@ -16,7 +21,7 @@
 
 ## Status
 
-Phases 1-4 DONE (2026-10-29), committed on `feat/server-info`. Phase 5 (release 0.63.1) runs after merge.
+COMPLETE: all five phases DONE. Phases 1-4 merged as PR #308 (`8ced15e`). Phase 5 released SDK 0.63.1 (tag `v0.63.1` at `c1d5684`).
 
 **Release state at plan time. Read this before Phase 5.** Runtime 0.63.0's `dispatch-sdk` stamped and tagged
 **`v0.63.0` / `go/v0.63.0` at `4760f9b`** ("chore(release): v0.63.0 — follow the runtime version"). That
@@ -372,7 +377,7 @@ Each returns `ServerInfoResponse.runtime_version` verbatim.
 
 ### Phase 5: release and hand-off (post-merge)
 
-- **Status:** TODO.
+- **Status:** DONE (2026-10-29). release-on-runtime (version=0.63.1, wire_framing_version=3) run 40818857608 tagged `v0.63.1` at `c1d5684`. Publish run 40818976729 is green, including partner promotion. #307 was closed by the PR, with the release evidence posted as a comment.
 - **Risk:** simple, but it is a release.
 - **Delivers:** SDK **0.63.1** on Cloudsmith `internal` and `partner` (`publish.yml`'s `promote-partner`,
   `:768`), #307 closed, and consumers told.

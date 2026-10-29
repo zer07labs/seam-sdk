@@ -10,7 +10,7 @@ against a status table alone.
 
 | Plan | Status |
 |---|---|
-| [`server-info.md`](server-info.md) | #307 — Phases 1-4 DONE; Phase 5 (release 0.63.1) runs after merge. |
+| _(none)_ | |
 
 ## Cross-repo asks
 
@@ -26,6 +26,8 @@ was written, and the target repo fetches it. Each is paired with a tracking issu
 
 | Plan | Delivered |
 |---|---|
+| `archive/server-info.md` | Issue [#307](https://github.com/zer07labs/seam-sdk/issues/307), merged as PR #308 (`8ced15e`), 2026-10-29, published as SDK 0.63.1 (`v0.63.1` at `c1d5684`). `server_info()` / `serverInfo()` read `SeamTrust/ServerInfo`'s `runtime_version` (runtime 0.63.0+) in Python and TS, with no credential, plus the RPC and field manifests and live tests. Q1-Q3 confirmed. Archived 2026-10-28 during `/sweep`. |
+| `archive/operator-dpop-signer.md` | Issue [#290](https://github.com/zer07labs/seam-sdk/issues/290), merged as PR #302 (`b77609a`), 2026-10-28. An operator DPoP signer in all five SDKs, for `cnf`-bound management tokens. The live aws-stg check was accepted as proven offline by the owner. Archived 2026-10-28 during `/sweep`. **Never indexed here while active.** |
 | `archive/record-explain.md` | Issue [#273](https://github.com/zer07labs/seam-sdk/issues/273), merged as PR #304 (`3ab01d8`), 2026-10-28, published as SDK 0.61.1. The 0.61.0 `DecisionRecordView` fields read through `seal_attestation_of` / `sealAttestationOf` and record-view `policy_enforcement_of` / `policyEnforcementOf` in Python and TS, with the field manifest and live tests. On runtime 0.61.x every record reads NOT_RECORDED; train B (0.62.0) needs no SDK change. Q1/Q2 confirmed by `/reconcile`. |
 | `archive/build-agent-ingress.md` | Closed 2026-10-27 by owner decision. §A and §C shipped in `seam-adapters` PR #42; §B was superseded by `seam-mcp` (seam-sdk#40 → seam-mcp#27, closed); §D's "stranger with no private access" DoD was amended, since partner-gated distribution is intended (`DECISIONS.md`, 2026-10-27). |
 | `archive/consolidation-2026-08-14.md` | The 2026-08-14 full-repo review record. Its last backlog survivors (ingress §B and §D) closed on 2026-10-27, so it was archived with that plan. |

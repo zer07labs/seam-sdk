@@ -2953,7 +2953,7 @@ A reversible, SDK-internal retry bound; not a one-way door, so Opus decided it.
   writing a new plan, and nothing here deletes or blocks one.
 - **Status:** CONFIRMED (owner).
 
-## 2026-10-27 — DPoP proof inputs are restricted to printable ASCII (plans/operator-dpop-signer.md)
+## 2026-10-27 — DPoP proof inputs are restricted to printable ASCII (plans/archive/operator-dpop-signer.md)
 - **Assumption:** no real management call needs a non-ASCII `htu`, `jti` or `aud`. Every SDK refuses one
   locally, so the signed JSON is byte-identical across the five encoders by construction.
 - **Analysis (Opus, /reconcile):**
@@ -2968,7 +2968,7 @@ A reversible, SDK-internal retry bound; not a one-way door, so Opus decided it.
 - **Decided by:** Opus (reversible tier).
 - **Status:** CONFIRMED.
 
-## 2026-10-27 — a `DpopError` base with `DpopKeyError` for key and binding faults (plans/operator-dpop-signer.md)
+## 2026-10-27 — a `DpopError` base with `DpopKeyError` for key and binding faults (plans/archive/operator-dpop-signer.md)
 - **Assumption:** callers want to tell "this key or token can never work" apart from "this one call's input
   is out of range". Every local refusal is a `DpopError` (Python `ValueError`, Java/Kotlin
   `IllegalArgumentException`, Go `ErrDpop`, TS `Error`), and key or binding faults are its subclass
@@ -2994,17 +2994,17 @@ A reversible, SDK-internal retry bound; not a one-way door, so Opus decided it.
 - **Analysis (fresh Opus):** P4b reads only the partner's own records under its own identity, and no consumer asks for restricted reads. The proto returns `CLEARANCE_DENIED` on the view, never an error (seam.proto:1101-1104). A keyword-only Python argument or a TS `opts` field can be added later without breaking callers. The deferral is in `DEFERRED.md`.
 - **Decided by:** Opus (reversible tier). **Verdict:** CONFIRM. **Status:** CONFIRMED.
 
-## 2026-10-29 — No version-comparison helper beside `server_info` (plans/server-info.md, Q2)
+## 2026-10-29 — No version-comparison helper beside `server_info` (plans/archive/server-info.md, Q2)
 - **Assumption:** the one consumer parses versions itself, so the SDK returns the string verbatim and validates nothing.
 - **Analysis (Opus):** seam-mcp parses in `common/src/seam_mcp_common/compat.py` (PEP 440 normalisation, its own refusal, a bundled matrix) and today reads the version from CP discovery, not the SDK. An SDK helper would be a second parser across five languages that could disagree on pre-release ordering. Adding one later is purely additive.
 - **Decided by:** Opus (reversible tier). **Verdict:** CONFIRM. **Status:** CONFIRMED.
 
-## 2026-10-29 — `server_info` returns a plain string (plans/server-info.md, Q1)
+## 2026-10-29 — `server_info` returns a plain string (plans/archive/server-info.md, Q1)
 - **Assumption:** `ServerInfoResponse` stays single-field, so `server_info() -> str` / `serverInfo(): Promise<string>` is the right public shape.
 - **Analysis (Fable):** confirm. Precedent: multi-field responses return raw pb, single scalars unwrap (`issuer_aid`). The runtime owner decided on 2026-10-28 to serve only the version on this unauthenticated read (`seam-runtime/crates/seamd/src/build_info.rs:3-6`), although `commit()` exists. A new field cannot arrive silently, because `contract/field-manifest.txt` pins the surface and the gate exits 6. seam-mcp needs only the string. Strongest counter: the RPC name is generic, so a reversal would leave a `str` verb beside a future raw-response verb.
 - **Decided by:** the owner (one-way door: public API). **Verdict:** CONFIRM, plain string. **Status:** CONFIRMED.
 
-## 2026-10-29 — CI's integration lane does not pass an expected runtime version (plans/server-info.md, Q3)
+## 2026-10-29 — CI's integration lane does not pass an expected runtime version (plans/archive/server-info.md, Q3)
 - **Assumption:** CI cannot know the runtime version it lifts, so only the local live run asserts exact equality.
 - **Analysis (Opus):** the `seamd:main` lift is a moving tag, and `seam-grpc` has no `--version` flag. The SDK version is no proxy (0.63.1 ↔ 0.63.0). The from-source branch could read `workspace.package.version` with tomllib, but `SEAM_RUNTIME_BUILD_REF` is empty, so the branch never runs and a step there would be untested. The release-time local run asserts equality.
 - **Decided by:** Opus (reversible tier). **Verdict:** CONFIRM; the trigger is the next PR that sets `SEAM_RUNTIME_BUILD_REF`, which adds the tomllib export to `$GITHUB_ENV`. **Status:** CONFIRMED.
