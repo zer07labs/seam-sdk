@@ -4,7 +4,7 @@ The spawned management listener is loopback, so its DPoP posture is *optional* â
 `cnf.jkt` "must come with a valid proof on every call, on every listener" (docs/specs/mgmt-dpop.md), so
 everything the SDK sends is checked here exactly as a required listener would check it. That a required
 listener also refuses UNBOUND Bearer tokens is runtime behaviour, exercised on a real deployment by the
-aws-stg smoke (plans/operator-dpop-signer.md, Phase 9).
+aws-stg smoke (plans/archive/operator-dpop-signer.md, Phase 9).
 
 Every refusal is asserted to carry the runtime's one fixed message, so a 401 for an unrelated reason (a
 bad operator signature, a missing scope) cannot pass for a DPoP refusal.

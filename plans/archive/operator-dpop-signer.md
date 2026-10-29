@@ -1,5 +1,10 @@
 # Operator Ed25519 DPoP signer for management-plane calls (all five languages)
 
+> **📦 ARCHIVED 2026-10-28 — DELIVERED, merged as PR #302 (`b77609a`).** Verified during `/sweep`. All ten
+> phases are DONE and both assumptions are reconciled (`DECISIONS.md`, 2026-10-27). #290 is CLOSED. The
+> Phase 9 live aws-stg run is no longer AWAITING-HUMAN: on 2026-10-27 the owner accepted acceptance criterion 2
+> as proven offline (the comment on #290). The handoff script stays in the repo.
+
 > **Issue:** [#290](https://github.com/zer07labs/seam-sdk/issues/290). **Owner decision 2026-10-27:** all
 > five languages (Python, TypeScript, Go, Java, Kotlin) in one train. Rejected alternative: a TS + Python
 > first cut.
@@ -13,7 +18,7 @@
 
 ## Status
 
-COMPLETE (2026-10-27): all 10 phases DONE, finalized, and both assumptions reconciled. One item awaits the owner: AWAITING-HUMAN `scripts/handoff/2026-10-27-mgmt-dpop-aws-stg.sh` (the live aws-stg run for acceptance criterion 2; see PROGRESS.md Phase 9).
+COMPLETE (2026-10-27): all 10 phases DONE, finalized, and both assumptions reconciled. The live aws-stg run for acceptance criterion 2 was accepted as proven offline by the owner (2026-10-27, comment on #290). `scripts/handoff/2026-10-27-mgmt-dpop-aws-stg.sh` stays for a later check of a deployed listener.
 
 ## Context
 
@@ -558,8 +563,8 @@ chars). Both are injectable for tests only.
 
 ### Phase 9: aws-stg end-to-end smoke (the issue's second acceptance criterion)
 
-- **Status:** DONE (2026-10-27). PASS after 2 rounds. Built and dry-run by the agent. The live run is
-  `AWAITING-HUMAN` (see PROGRESS.md). Round 1 closed three leak paths: an inherited gRPC trace,
+- **Status:** DONE (2026-10-27). PASS after 2 rounds. Built and dry-run by the agent. The live run was
+  accepted as proven offline by the owner instead (2026-10-27, comment on #290). Round 1 closed three leak paths: an inherited gRPC trace,
   `bash -x`, and argv echo. It also corrected the AWS-access wording.
 - **Divergences (recorded at implementation):**
   - **Console-reveal path only.** The M2M mint path is dropped: on aws-stg the only non-fleet M2M client is
