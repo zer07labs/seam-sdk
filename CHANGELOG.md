@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.63.0 — 2026-10-29
+
 ## 0.62.0 — 2026-10-29
 
 ## 0.61.1 — 2026-10-28
