@@ -2993,3 +2993,8 @@ A reversible, SDK-internal retry bound; not a one-way door, so Opus decided it.
 - **Assumption:** no clearance option on `get_decision` / `getDecision`; a restricted record reads `CLEARANCE_DENIED`.
 - **Analysis (fresh Opus):** P4b reads only the partner's own records under its own identity, and no consumer asks for restricted reads. The proto returns `CLEARANCE_DENIED` on the view, never an error (seam.proto:1101-1104). A keyword-only Python argument or a TS `opts` field can be added later without breaking callers. The deferral is in `DEFERRED.md`.
 - **Decided by:** Opus (reversible tier). **Verdict:** CONFIRM. **Status:** CONFIRMED.
+
+## 2026-10-29 — No version-comparison helper beside `server_info` (plans/server-info.md, Q2)
+- **Assumption:** the one consumer parses versions itself, so the SDK returns the string verbatim and validates nothing.
+- **Analysis (Opus):** seam-mcp parses in `common/src/seam_mcp_common/compat.py` (PEP 440 normalisation, its own refusal, a bundled matrix) and today reads the version from CP discovery, not the SDK. An SDK helper would be a second parser across five languages that could disagree on pre-release ordering. Adding one later is purely additive.
+- **Decided by:** Opus (reversible tier). **Verdict:** CONFIRM. **Status:** CONFIRMED.

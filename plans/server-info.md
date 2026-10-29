@@ -16,7 +16,7 @@
 
 ## Status
 
-TODO. Five phases, none started.
+Phases 1-4 DONE (2026-10-29), committed on `feat/server-info`. Phase 5 (release 0.63.1) runs after merge.
 
 **Release state at plan time. Read this before Phase 5.** Runtime 0.63.0's `dispatch-sdk` stamped and tagged
 **`v0.63.0` / `go/v0.63.0` at `4760f9b`** ("chore(release): v0.63.0 — follow the runtime version"). That
@@ -462,7 +462,7 @@ Each returns `ServerInfoResponse.runtime_version` verbatim.
 - **D3. `UNIMPLEMENTED` surfaces as the existing typed `UnimplementedError`, documented,** following the
   `authorize` precedent. No `None`, and no new error class.
 - **D4. The live test asserts semver shape always, and equality when `SEAM_EXPECTED_RUNTIME_VERSION` is
-  set.** The local run derives that value from the export's `cargo metadata`.
+  set.** The local run derives that value from the export's own `Cargo.toml`. As run, that meant tomllib, because `cargo metadata` refuses the export (Phase 3 *As run*).
 - **D5. Go, Java and Kotlin: no code** (D2 of `record-explain.md`; they ship no in-package transport).
 - **D6. Release as 0.63.1 by manual dispatch** (the brief and the #273 precedent). The v0.63.0 tags stay
   unpublished.

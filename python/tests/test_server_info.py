@@ -109,6 +109,17 @@ def test_aio_returns_the_version_verbatim_with_no_credential(
     _no_credential_headers(servicer.metadata[0])
 
 
+def test_a_tenant_client_sends_only_the_routing_hint(trust_server) -> None:
+    """``tenant=`` rides along as on every call (the answer is the serving cell's version); still no
+    credential or ticket header."""
+    servicer, addr = trust_server
+    assert SeamClient.connect(addr, tenant="acme").server_info() == "0.63.0"
+    md = servicer.metadata[0]
+    assert md.get("x-seam-tenant") == "acme"
+    for key in md:
+        assert key not in _CREDENTIAL_HEADERS, key
+
+
 def test_the_value_is_not_normalised(trust_server) -> None:
     """Returned as the server sent it — no parsing, trimming or semver validation in the SDK."""
     servicer, addr = trust_server

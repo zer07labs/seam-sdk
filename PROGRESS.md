@@ -5204,3 +5204,12 @@ PR strategy: one PR.
 - **Files:** `README.md` (BSR block line; a *Runtime version* paragraph), `COMPATIBILITY.md` (0.63.1 pairing paragraph, a table row, citation re-anchor), `CHANGELOG.md` (Unreleased Added; the `## 0.63.0` never-published line), `plans/README.md` (active row). CHANGELOG citations shifted +10 (11 citations).
 - **Full local gate:** Python 2409/0, ruff clean; TS typecheck clean, 513/0; go test ok; verify cargo test/clippy/fmt clean; Java and Kotlin gradle ok; contract gate 0.
 - **Next:** finalization, then /reconcile (Q1/Q2), then /ship. Phase 5 runs after merge.
+
+## server-info Finalization (2026-10-29)
+- **Round 1:** GAPS (Opus). No code defects. **Round 2:** GAPS on one item, the TS deadline test (it passed even when the caller timeout was dropped); fixed with an elapsed-time bound, now proven to fail at 2003 ms without the timeout. Everything else closed. Closed:
+  - Q3 logged to ASSUMPTIONS (UNCONFIRMED);
+  - the plan's top Status, and D4's `cargo metadata` text, updated to what ran (tomllib);
+  - Python: a `tenant=` client sends only `x-seam-tenant`, no credential;
+  - TS: a router-transport test proves `timeoutMs` fires as `DeadlineExceededError`;
+  - D1's full text goes in the PR body.
+- **Reconcile:** Q2 (no helper) CONFIRMED by Opus. Q1 (plain string) is a public-API one-way door, sent to Fable and then the owner. Q3 is reversible (one workflow line).

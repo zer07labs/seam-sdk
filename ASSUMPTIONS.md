@@ -1550,4 +1550,12 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Chose:** no `runtime_at_least(...)`-style helper; the SDK returns the string verbatim and validates nothing.
 - **Alternatives:** an SDK-side semver comparison (a second, divergent parser with no consumer asking for it).
 - **Blast radius if wrong:** a consumer without its own parser writes one, or a helper is added later; additive either way.
+- **Status:** CONFIRMED (2026-10-29), by Opus (see DECISIONS.md)
+
+## CI's integration lane does not pass an expected runtime version
+- **Plan:** plans/server-info.md (Q3, decision D4)
+- **Assumed:** CI's integration job lifts `seam-grpc` from `seamd:main`, whose version the job cannot know, so only the local live run can assert exact equality.
+- **Chose:** the live tests always assert the semver shape and assert equality only when `SEAM_EXPECTED_RUNTIME_VERSION` is set. CI does not set it.
+- **Alternatives:** set it in the integration job's from-source branch (used only for lockstep trains), or compare against the SDK's own version (wrong exactly at 0.63.1 ↔ 0.63.0).
+- **Blast radius if wrong:** CI misses a runtime that reports the wrong version string; the local release-time run still catches it. Reversible in one workflow line.
 - **Status:** UNCONFIRMED

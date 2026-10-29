@@ -6,13 +6,15 @@
 //   * an in-memory router transport with no `SeamTrust` registered — a stand-in for a pre-0.63.0
 //     runtime, which registers the service but lacks the method; both answer UNIMPLEMENTED — proving
 //     the rejection arrives as the typed `UnimplementedError` through `errorMappingInterceptor`.
+//   * the same router with a `SeamTrust` that never answers, proving `timeoutMs` reaches the wire as a
+//     deadline that fires as `DeadlineExceededError`.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ConnectError, Code, createRouterTransport } from "@connectrpc/connect";
-import { SeamAdmission } from "../gen/seam/api/v1/seam_pb.js";
+import { SeamAdmission, SeamTrust } from "../gen/seam/api/v1/seam_pb.js";
 import { Agent, SeamClient } from "../src/client.js";
-import { UnimplementedError, errorMappingInterceptor } from "../src/errors.js";
+import { DeadlineExceededError, UnimplementedError, errorMappingInterceptor } from "../src/errors.js";
 
 const SEED = Uint8Array.from({ length: 32 }, (_, i) => i);
 
@@ -70,4 +72,23 @@ test("serverInfo: a runtime without the method rejects with UnimplementedError",
     assert.equal(e.code, Code.Unimplemented);
     return true;
   });
+});
+
+test("serverInfo: the deadline fires on a server that never answers", async () => {
+  const transport = createRouterTransport(
+    ({ service }) => {
+      service(SeamTrust, {
+        serverInfo: (_req, ctx) =>
+          new Promise((_resolve, reject) => {
+            ctx.signal.addEventListener("abort", () => reject(ctx.signal.reason));
+          }),
+      });
+    },
+    { transport: { interceptors: [errorMappingInterceptor()] } },
+  );
+  const client = new SeamClient(transport as ConstructorParameters<typeof SeamClient>[0]);
+  const started = Date.now();
+  await assert.rejects(client.serverInfo({ timeoutMs: 50 }), DeadlineExceededError);
+  // Well under the 2 s default: the caller's 50 ms is what fired, not the fallback.
+  assert.ok(Date.now() - started < 1000, `took ${Date.now() - started} ms`);
 });
