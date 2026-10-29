@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.62.0 — 2026-10-29
+
 ## 0.61.1 — 2026-10-28
 
 These entries, and those under 0.61.0 below, first ship in **0.61.1**: v0.61.0 was tagged and never
