@@ -104,7 +104,8 @@ and probes the emitted stubs:
 > `ObjectionRequest`, and `AuthorizeRequest.subjects = 12`. Since runtime 0.61.0 (seam-runtime#1361) it
 > also carries the record-explain surface on `DecisionRecordView`: `policy_version = 9`,
 > `policy_rules_digest = 10`, `policy_enforcement = 11` and `seal_attestation = 12`
-> (`SealAttestation`, `SealAttestationAvailability`, `SealReason`).
+> (`SealAttestation`, `SealAttestationAvailability`, `SealReason`). Since runtime 0.63.0
+> (seam-runtime#1360) it also carries `SeamTrust.ServerInfo` → `ServerInfoResponse.runtime_version = 1`.
 >
 > `EvaluationRequest.confidence` is **`optional`** on the wire (`proto3_optional`), which is the one
 > property worth stating rather than assuming: absent means *declined to claim*, and a client that
@@ -609,6 +610,14 @@ check, boolean verdict, tamper/unknown/wrong-tenant ⇒ `False` never an excepti
 defaults to the untenanted partition), context binding
 (`register_context`, `resolve_context`), and advisory outcome reporting (`report_outcome`, Plan R —
 emits a `LEARNING_OUTCOME`, never mutates the sealed record).
+
+**Runtime version (runtime 0.63.0+, seam-sdk#307).** `server_info()` / `serverInfo()` return the runtime's
+version, a semver string such as `"0.63.0"`, verbatim. Like `issuer_aid` the call is credential-free (no
+ticket, no agent) and never retried. A runtime older than 0.63.0 raises `UnimplementedError`; fall back to
+an explicitly configured version or to control-plane discovery. The SDK does not compare versions: feed the
+string to your own compatibility resolver (seam-mcp's `compat.resolve` is one). The value is server-asserted
+and unsigned, so use TLS on any non-loopback endpoint and treat it as a compatibility input, never a trust
+signal. Go, Java and Kotlin generate the verb from the BSR module and carry no client for it.
 
 **`authorize` — the 1-RTT advisory tool-call gate.** Both clients expose the pre-tool-call
 `Authorize` verb: a ticketed call (admission handshake amortized across calls, refreshed at 80% TTL,

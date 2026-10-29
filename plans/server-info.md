@@ -306,7 +306,7 @@ Each returns `ServerInfoResponse.runtime_version` verbatim.
 
 ### Phase 4: docs, compatibility, changelog
 
-- **Status:** TODO.
+- **Status:** DONE (2026-10-29). As planned; also re-anchored `COMPATIBILITY.md`'s `README.md:163` crypto-shims citation to `:166` after the README insert.
 - **Risk:** simple.
 - **Delivers:** a reader can find the verb in the README, `COMPATIBILITY.md` names the runtime it needs and
   the 0.63.1 pairing, and the CHANGELOG records it and the unpublished 0.63.0.

@@ -16,7 +16,17 @@ than trusting a summary here.
 
 ## Unreleased
 
+These entries first ship in **0.63.1**: v0.63.0 was tagged and never published (see COMPATIBILITY.md).
+
+### Added
+- **Read the runtime version over the data plane (seam-sdk#307; runtime 0.63.0+, seam-runtime#1360).**
+  Python `server_info()` (sync and async), TS `serverInfo()`: the `seamd` version string, verbatim, with no
+  credential. An earlier runtime raises `UnimplementedError`. Go, Java and Kotlin generate the verb from the
+  BSR module; they carry no client.
+
 ## 0.63.0 — 2026-10-29
+
+Tagged, never published (see COMPATIBILITY.md). It carried no entries; 0.63.1 supersedes it.
 
 ## 0.62.0 — 2026-10-29
 

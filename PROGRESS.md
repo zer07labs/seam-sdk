@@ -4069,7 +4069,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1692`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1702`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -4556,12 +4556,12 @@ green before any code changed.
   this — "rather than refusing outright" was wrong, fixed before merge). (2) the release's
   `retitle_changelog.sh` run shifted `CHANGELOG.md`'s "No yank" paragraph from line 1054 to 1056
   (a +2 insert right after `## Unreleased`), pushing `COMPATIBILITY.md:123` and
-  `DECISIONS.md:1222`'s `CHANGELOG.md:1532-1549` citations past the citation test's slack
-  tolerance; repointed both to `CHANGELOG.md:1534-1551`. Tested: `check_vendored_spec.py` OK via both
+  `DECISIONS.md:1222`'s `CHANGELOG.md:1542-1559` citations past the citation test's slack
+  tolerance; repointed both to `CHANGELOG.md:1544-1561`. Tested: `check_vendored_spec.py` OK via both
   `--from local` and `--from gh`; `test_compatibility_citations_resolve.py` 489 passed/0 failed
   standalone (was 4 failed). Verifier also flagged two pre-existing, gate-invisible citations
   elsewhere that the same +2 shift widened further — `DECISIONS.md:2035` cites
-  `CHANGELOG.md:1434` and `PROGRESS.md:3981` cites `CHANGELOG.md:1319`, both already ~130-250
+  `CHANGELOG.md:1444` and `PROGRESS.md:3981` cites `CHANGELOG.md:1329`, both already ~130-250
   lines stale before this release — out of scope for this release-unblock hotfix; filed as a
   follow-up issue rather than folded in here.
   **Rebased `feat/verify-anchor-tenant` onto this commit during `/sweep`'s ship pass.** Four
@@ -4571,7 +4571,7 @@ green before any code changed.
   `CHANGELOG.md`/`COMPATIBILITY.md`/`DECISIONS.md`: the feature branch's own new
   `## Unreleased` entry (16 lines) was kept above this hotfix's `## 0.33.3` header, which
   shifted "No yank" from this entry's `1056` to `1072` and recomputed the two citations above
-  (`CHANGELOG.md:1534-1551`) to `CHANGELOG.md:1550-1567` — verified against the exact
+  (`CHANGELOG.md:1544-1561`) to `CHANGELOG.md:1560-1577` — verified against the exact
   paragraph-boundary text at both the old and new line numbers before trusting the new range,
   not just the arithmetic. A dedicated ship-gate verifier independently re-derived this same
   shift from the diff and confirmed it exact.
@@ -5198,3 +5198,9 @@ PR strategy: one PR.
   - Live against a clean `git archive 2e29be29` export: Python 12 passed / 1 known skip, TS 8 / 0 / 0 skipped. The version is `0.63.0`, and expecting 9.9.9 fails in both.
   - Python: 2409 passed, 0 failed.
 - **Next:** Phase 4 (docs).
+
+## server-info Phase 4 — DONE (2026-10-29)
+- **Verdict:** PASS, one round (Opus; simple, gated alone because Phase 5 runs after merge). Its minor note was taken: COMPATIBILITY's `README.md:163` citation was re-anchored to `:166`.
+- **Files:** `README.md` (BSR block line; a *Runtime version* paragraph), `COMPATIBILITY.md` (0.63.1 pairing paragraph, a table row, citation re-anchor), `CHANGELOG.md` (Unreleased Added; the `## 0.63.0` never-published line), `plans/README.md` (active row). CHANGELOG citations shifted +10 (11 citations).
+- **Full local gate:** Python 2409/0, ruff clean; TS typecheck clean, 513/0; go test ok; verify cargo test/clippy/fmt clean; Java and Kotlin gradle ok; contract gate 0.
+- **Next:** finalization, then /reconcile (Q1/Q2), then /ship. Phase 5 runs after merge.

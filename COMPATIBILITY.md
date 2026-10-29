@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:647`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:657`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -149,6 +149,13 @@ already on `main` (seam-sdk#290) ship as v0.61.1, and the `v0.61.0` tags stay wh
 unpublished. The runtime's next release must be 0.62.0 or later, because 0.61.1 is taken here. Pin
 `seam-sdk 0.61.1` beside seamd 0.61.0.
 
+**SDK v0.63.1 pairs with runtime 0.63.0.** SDK v0.63.0 was tagged at `4760f9b` and never published: the
+runtime's 0.63.0 release dispatch (seam-runtime#1544) tagged it before this repo had wired
+`SeamTrust.ServerInfo`, so the contract gate exited 5 on that commit and `publish.yml` refused (#307). A
+public tag is not re-cut, so the server-info verb (seam-sdk#307) ships as v0.63.1, and the `v0.63.0` tags
+stay where they are, unpublished. The runtime's next release must be 0.64.0 or later, because 0.63.1 is
+taken here. Pin `seam-sdk 0.63.1` beside seamd 0.63.0.
+
 | SDK change | Requires runtime | Earlier runtimes | Pinned from |
 |---|---|---|---|
 | Protocol pass 2026-10 (seam-sdk#265) | seam-runtime 0.48.0 (seam-runtime#1365, carries `protocol-pass-2026-10`) | **none** — no compatibility | runtime `main` @ `32f8196` (contract byte-identical to the freeze `1ac5de5`) |
@@ -158,6 +165,7 @@ unpublished. The runtime's next release must be 0.62.0 or later, because 0.61.1 
 | Bound (DPoP) operator tokens: Python `dpop_key=`, TS `dpopKey`, Go `mgmtdpop`, Java/Kotlin `MgmtDpop` (seam-sdk#290) | seam-runtime 0.54.0 (seam-runtime#1428, the management plane accepts a DPoP-bound token). The required posture, which refuses an unbound token on a non-loopback listener with no client CA, is 0.55.0 (seam-runtime#1463) | **compatible, opt-in.** Without a key nothing changes: an unbound token is still sent as Bearer. A runtime below 0.54.0 refuses the `DPoP` scheme, so mint unbound tokens for it | runtime `main` @ `7aa16cae` (seam-runtime#1428) and `47f89f3b` (seam-runtime#1463); spec vendored as `docs/specs/mgmt-dpop.md`, bytes pinned by `conformance/mgmt_dpop_vector.json` |
 | Record explain: `policy_enforcement_of`/`policyEnforcementOf` on `DecisionRecordView`, and `seal_attestation_of`/`sealAttestationOf` (seam-sdk#273) | seam-runtime 0.61.0 (seam-runtime#1535, #1361 train A); `RECORDED` attestations from 0.62.0 (train B, no wire change) | **compatible**: on an earlier runtime both decoders return `None`/`undefined` | runtime `main` @ `7d538c54` (seam-runtime#1535) |
 | `stream_id` on `StreamEvents` / `ReportEventsConsumed` / `SeamEvent` — **required** on both admin helpers (k8s P7) | seam-runtime 0.57.0 (k8s P7, OQ-1) | **compatible** — an earlier runtime ignores the unknown field. **The inverse is not:** runtime 0.57.0 refuses an SDK below 0.57.0 on both verbs with `FAILED_PRECONDITION` (`stream_id_mismatch`), because that SDK sends no stream | runtime `main` @ `2de71b5d` (seam-runtime#1470; BSR `7c8872847e3e45b09baa4b811305601c`; spec §Delivery stream and goldens vendored from it) |
+| Runtime version read: `server_info()` / `serverInfo()` (seam-sdk#307) | seam-runtime 0.63.0 (seam-runtime#1544, #1360) | **compatible, except this verb** — an earlier runtime answers `UNIMPLEMENTED`, surfaced as `UnimplementedError`; nothing else changes | runtime `main` @ `2e29be29` (seam-runtime#1544) |
 
 The protocol pass has no compatibility window in either direction: an earlier runtime refuses this
 SDK's derived PoP `message_id`, and this SDK treats an earlier runtime's v1-v3 records as
@@ -169,7 +177,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1659-1681`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1669-1691`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -245,7 +253,7 @@ this by trying.
 | **Java** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |
 | **Kotlin** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |
 
-**Go, Java and Kotlin are crypto shims, not clients** (`README.md:163`). They carry no generated
+**Go, Java and Kotlin are crypto shims, not clients** (`README.md:166`). They carry no generated
 transport and no verb methods — they implement AID derivation, the pinned-key presentation, TCT
 verification, the commitment digest, the `Authorize` call_sig and enrolment proof (`pop`, raw and REST
 form) framings, identity custody (`Agent` generation + the schema-v1 bootstrap file, #201) and the
