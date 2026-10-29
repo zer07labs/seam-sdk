@@ -272,7 +272,7 @@ duplicating it here would create a second copy to keep in sync. The assumption's
 "whoever next adds or reviews `buf breaking` config for `seam.api.v1`'s enums", and that review came
 due this cycle.
 
-**The config says what the plan said it says.** `../seam-runtime/buf.yaml:23-25` sets
+**The config says what the plan said it says.** `../seam-runtime/buf.yaml:18-20` sets
 `breaking: use: [WIRE_JSON]`, and `../seam-runtime/.github/workflows/ci.yml:173-181` runs
 `buf breaking --against` a materialised `main` branch.
 
@@ -3008,3 +3008,32 @@ A reversible, SDK-internal retry bound; not a one-way door, so Opus decided it.
 - **Assumption:** CI cannot know the runtime version it lifts, so only the local live run asserts exact equality.
 - **Analysis (Opus):** the `seamd:main` lift is a moving tag, and `seam-grpc` has no `--version` flag. The SDK version is no proxy (0.63.1 ↔ 0.63.0). The from-source branch could read `workspace.package.version` with tomllib, but `SEAM_RUNTIME_BUILD_REF` is empty, so the branch never runs and a step there would be untested. The release-time local run asserts equality.
 - **Decided by:** Opus (reversible tier). **Verdict:** CONFIRM; the trigger is the next PR that sets `SEAM_RUNTIME_BUILD_REF`, which adds the tomllib export to `$GITHUB_ENV`. **Status:** CONFIRMED.
+
+## 2026-10-29 — /reconcile over every remaining UNCONFIRMED entry (14)
+
+Ranked by blast radius. The two possible one-way doors (a public exception API, and an external registry action) went to Fable and then the owner. The other twelve were analysed by fresh Opus agents in four topic groups, and each conclusion is the decision.
+
+### `SeamRpcError` carries trailing metadata as normalized pairs
+- **Analysis (Fable):** confirm. seam-adapters consumes exactly this shape (`transport_grpc.py` `_wire_trailers`, `_seam_error_info`) and relies on the `None`/`()` distinction. The SDK's own `reason`/`error_metadata`/`macp_code`/`retry_after` read the same pairs. Storing the grpc object would have put `grpc.aio.Metadata` into adapters' `__reduce__` path for nothing.
+- **Decided by:** the owner (one-way door: public API). **Verdict:** CONFIRM. **Status:** CONFIRMED.
+
+### Cloudsmith 0.7.39–0.7.43 stays installable (both entries)
+- **Analysis (Fable):** confirm. Issue #43 closed on 2026-09-05 with this band out of scope. partner never held it. No consumer resolves into it (adapters `>=0.62.0,<0.63`, mcp `==0.62.0`, aegis via agent-core). The band could not be re-read on internal, because no Cloudsmith token was in the session. The trigger moves from #43 to the 2026-08-31 entry above: a consumer newly arrived on the band.
+- **Decided by:** the owner (an external registry action). **Verdict:** CONFIRM, no quarantine. **Status:** CONFIRMED.
+
+### Runtime-behaviour claims (`tool_input` canonical bytes; JCS `10**21`; `policy_enforcement_of` presence list)
+- **Analysis (Opus):** seam-runtime origin/main `11ec62cb` settles all three. `validate_input` deliberately checks the digest pair, not canonicalization. `jcs_integer_faithfulness_table` pins `1e+21`, and the authorize spec endorses refusing unfaithful integers. seam-runtime#526 closed via #564, and a runtime test pins the presence sites; the SDK docstring already reflects #561.
+- **Decided by:** Opus (reversible tier). **Verdict:** CONFIRM ×3. **Status:** CONFIRMED.
+
+### Repo process (`plans/` outside the citation guard; appending workstreams to `PROGRESS.md`)
+- **Analysis (Opus):** `plans/` holds only archived plans, so guarding it buys churn and nothing else. PROGRESS.md grew to 10 workstreams with the guard holding throughout. The PROGRESS trigger is replaced by "a stale workstream read as current state on a resumed run".
+- **Decided by:** Opus (reversible tier). **Verdict:** CONFIRM ×2. **Status:** CONFIRMED.
+
+### SDK caller and API choices (TS export list; duck-typed integers; `toJSON`; `engines.node >=20`)
+- **Analysis (Opus):** no consumer reaches any of these paths, and each choice keeps the languages agreeing. The export-list entry's premise was stale: both DTOs already reach the root through `export *`, so the entry was corrected rather than just confirmed. Node 20's end of life is a separate floor-raise question, a breaking change not decided here.
+- **Decided by:** Opus (reversible tier). **Verdict:** CONFIRM ×4 (one with a corrected premise). **Status:** CONFIRMED.
+
+### Gate and test coverage
+- **RPC manifest covers one package.** Analysis (Opus): the contract gate exits 0, and `seam.event.v1` declares no services; the exit-7 tripwire stays the trigger. Verdict: CONFIRM. **Status:** CONFIRMED.
+- **Java/Kotlin do not read the `exp` vector.** Analysis (Opus): JDK 17 is available and CI runs both JVM legs, so the "no JDK" trigger is moot. The source still matches the rule, and no divergence is shown. Writing the test is new work, not a defect fix. Verdict: DEFER. **Trigger:** the next change to either file's `exp` handling. **Status:** UNCONFIRMED.
+- **Decided by:** Opus (reversible tier).
