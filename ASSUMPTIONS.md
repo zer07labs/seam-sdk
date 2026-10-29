@@ -1558,4 +1558,4 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Chose:** the live tests always assert the semver shape and assert equality only when `SEAM_EXPECTED_RUNTIME_VERSION` is set. CI does not set it.
 - **Alternatives:** set it in the integration job's from-source branch (used only for lockstep trains), or compare against the SDK's own version (wrong exactly at 0.63.1 ↔ 0.63.0).
 - **Blast radius if wrong:** CI misses a runtime that reports the wrong version string; the local release-time run still catches it. Reversible in one workflow line.
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (2026-10-29), by Opus (see DECISIONS.md)

@@ -3003,3 +3003,8 @@ A reversible, SDK-internal retry bound; not a one-way door, so Opus decided it.
 - **Assumption:** `ServerInfoResponse` stays single-field, so `server_info() -> str` / `serverInfo(): Promise<string>` is the right public shape.
 - **Analysis (Fable):** confirm. Precedent: multi-field responses return raw pb, single scalars unwrap (`issuer_aid`). The runtime owner decided on 2026-10-28 to serve only the version on this unauthenticated read (`seam-runtime/crates/seamd/src/build_info.rs:3-6`), although `commit()` exists. A new field cannot arrive silently, because `contract/field-manifest.txt` pins the surface and the gate exits 6. seam-mcp needs only the string. Strongest counter: the RPC name is generic, so a reversal would leave a `str` verb beside a future raw-response verb.
 - **Decided by:** the owner (one-way door: public API). **Verdict:** CONFIRM, plain string. **Status:** CONFIRMED.
+
+## 2026-10-29 — CI's integration lane does not pass an expected runtime version (plans/server-info.md, Q3)
+- **Assumption:** CI cannot know the runtime version it lifts, so only the local live run asserts exact equality.
+- **Analysis (Opus):** the `seamd:main` lift is a moving tag, and `seam-grpc` has no `--version` flag. The SDK version is no proxy (0.63.1 ↔ 0.63.0). The from-source branch could read `workspace.package.version` with tomllib, but `SEAM_RUNTIME_BUILD_REF` is empty, so the branch never runs and a step there would be untested. The release-time local run asserts equality.
+- **Decided by:** Opus (reversible tier). **Verdict:** CONFIRM; the trigger is the next PR that sets `SEAM_RUNTIME_BUILD_REF`, which adds the tomllib export to `$GITHUB_ENV`. **Status:** CONFIRMED.
