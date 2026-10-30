@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:665`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:674`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -156,6 +156,14 @@ public tag is not re-cut, so the server-info verb (seam-sdk#307) ships as v0.63.
 stay where they are, unpublished. The runtime's next release must be 0.64.0 or later, because 0.63.1 is
 taken here. Pin `seam-sdk 0.63.1` beside seamd 0.63.0.
 
+**SDK v0.66.1 pairs with runtime 0.66.0.** SDK v0.66.0 was tagged at `350373e` and never published: the
+runtime's 0.66.0 release (seam-runtime#1555) changed `docs/specs/seam-event.v1.md`, so the vendored copy in
+`verify/docs/` was stale on that commit, the `spec pin` job failed, and `publish.yml` refused (#311). The
+movement is informational for this repo (a new `context_recalled` audit action, and an ACDP lifecycle note),
+so v0.66.1 carries only the refreshed copy. The `v0.66.0` tags stay where they are, unpublished. The
+runtime's next release must be 0.67.0 or later, because 0.66.1 is taken here. Pin `seam-sdk 0.66.1` beside
+seamd 0.66.0.
+
 | SDK change | Requires runtime | Earlier runtimes | Pinned from |
 |---|---|---|---|
 | Protocol pass 2026-10 (seam-sdk#265) | seam-runtime 0.48.0 (seam-runtime#1365, carries `protocol-pass-2026-10`) | **none** — no compatibility | runtime `main` @ `32f8196` (contract byte-identical to the freeze `1ac5de5`) |
@@ -177,7 +185,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1677-1699`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1686-1708`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was

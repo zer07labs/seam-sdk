@@ -16,7 +16,16 @@ than trusting a summary here.
 
 ## Unreleased
 
+These entries first ship in **0.66.1**: v0.66.0 was tagged and never published (see COMPATIBILITY.md).
+
+### Changed
+- **`verify/docs/seam-event.v1.md` re-pinned to seam-runtime `1a1f338`, the 0.66.0 train (seam-sdk#311).**
+  It adds the `context_recalled` audit action and an ACDP lifecycle note. No client or verifier behaviour
+  changes.
+
 ## 0.66.0 — 2026-10-30
+
+Tagged, never published (see COMPATIBILITY.md). It carried no entries; 0.66.1 supersedes it.
 
 ## 0.65.0 — 2026-10-29
 
