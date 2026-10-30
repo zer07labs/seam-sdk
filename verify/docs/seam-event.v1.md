@@ -1,5 +1,9 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 2de71b5 (refreshed 2026-10-25).
-     The runtime 0.57.0 train (k8s P7, seam-runtime#1470, seam-sdk#266); pre-vendored from ae40c52.
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 1a1f338 (refreshed 2026-10-30).
+     The runtime 0.66.0 train (seam-runtime#1555, #1493 ACDP-4 and ACDP-2; seam-sdk#311). Movement since
+     2de71b5: the audit action `context_recalled` (domain `seam.audit.context-recall.v1`), and a note that a
+     registry advertising lifecycle turns an absent event history into `not_retracted`. Both are informational
+     for this crate: neither the verifier nor any SDK enumerates audit actions or resolves ACDP contexts.
+     Prior pin 2de71b5 (refreshed 2026-10-25), the runtime 0.57.0 train (k8s P7, seam-runtime#1470, seam-sdk#266); pre-vendored from ae40c52.
      Movement since 320a998: §"Delivery stream `stream_id`" — SeamEvent.stream_id = 27 (every kind,
      UNSEALED: in no digest, checksum or signature), `{stream_id}/` event_id prefix from the history
      boundary on, StreamEventsRequest.stream_id = 4 / ReportConsumedRequest.stream_id = 2 refused
@@ -116,6 +120,18 @@ by `,`):
 | `subject_commitments_recomputed` | an operator recomputes subject commitments (`erasure:preview`), before they are returned | `subject-recompute:<tenant>@<millis>` |
 | `subject_commitment_recompute_refused` | a recompute named a subject that is tombstoned in the tenant | `subject-recompute-refused:<tenant>@<millis>` |
 | `subject_commitment_tombstoned` | a GDPR erasure, before anything is destroyed (once per subject and tenant) | `subject-tombstone:<commitment>` |
+
+#1493 ACDP-4 adds one runtime value, chained under the **relying decision's** tenant (domain
+`seam.audit.context-recall.v1`). It is a recall notice, never a change to the sealed record it names:
+
+| `action` | Written when | Entry id (envelope `decision_id`) |
+|---|---|---|
+| `context_recalled` | the recall worker verified that a remote `acdp://` context a sealed decision relied on is retracted, superseded, or signed by a revoked key on or after its compromise boundary — once per (decision, context, kind) | `context-recall:<decision_id>:<first 16 hex of sha256(ctx_ref)>:<kind>` |
+
+`subject` is the relying `decision_id`; `actor` is empty (the notice is the runtime's); `reason` is the closed
+form `context '<ctx_ref>' recalled: <kind>` with `kind` one of `retracted`, `superseded`, `key_revoked` — no
+registry-supplied text (no `actor`, no `reason` from the event) ever enters it. A republication after a recall
+writes nothing: a relying party re-resolves the context for its current state.
 
 ### `ERASURE_CERTIFICATE` (additive, tag 18 — chained)
 
@@ -1193,7 +1209,11 @@ assessment lives on a sibling `ResolvedContext`, never on `ContextBinding`, so i
 
 `unknown` is **not** a failure and must not be read as `not_retracted`. A registry that does not
 implement `acdp-registry-lifecycle` omits its event history entirely (never as an empty array), so
-"nothing was retracted" and "this registry cannot tell you" are indistinguishable on the wire.
+"nothing was retracted" and "this registry cannot tell you" are indistinguishable on the wire. Since release
+train 0.66.0 (ACDP-2) Seam reads the registry's capabilities, so `unknown` now means the registry
+does not advertise lifecycle; from one that does, an absent history is `not_retracted`. A
+`republished` event reverses a retraction only once its signature (and, where the registry owes
+them, its event receipt) verifies; an unverifiable reversal leaves the binding `retracted`.
 
 Rationale and threat model: [`docs/design/acdp-retraction-not-erasure-decision.md`](../design/acdp-retraction-not-erasure-decision.md).
 
