@@ -16,6 +16,13 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Changed
+- **`seam-verify`: payload binds to kind (seam-sdk#316; runtime 0.67.0, code-health A4).** The verifier now
+  refuses an event carrying another kind's payload, a known kind without its own payload, and an advisory kind
+  or the chain anchor carrying `digest`/`checksum` (`KIND/PAYLOAD MISMATCH`, `ADVISORY EVENT WITH CHAIN
+  FIELDS`), in every mode, as the runtime's verifier does. Genuine streams and the shipped evidence bundles are
+  unaffected. Reaches users with the next `seam-verify` publish.
+
 ## 0.68.0 — 2026-10-31
 
 ## 0.67.1 — 2026-10-31

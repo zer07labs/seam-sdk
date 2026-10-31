@@ -4069,7 +4069,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1747`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1754`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -4556,12 +4556,12 @@ green before any code changed.
   this — "rather than refusing outright" was wrong, fixed before merge). (2) the release's
   `retitle_changelog.sh` run shifted `CHANGELOG.md`'s "No yank" paragraph from line 1054 to 1056
   (a +2 insert right after `## Unreleased`), pushing `COMPATIBILITY.md:123` and
-  `DECISIONS.md:1222`'s `CHANGELOG.md:1587-1604` citations past the citation test's slack
-  tolerance; repointed both to `CHANGELOG.md:1589-1606`. Tested: `check_vendored_spec.py` OK via both
+  `DECISIONS.md:1222`'s `CHANGELOG.md:1594-1611` citations past the citation test's slack
+  tolerance; repointed both to `CHANGELOG.md:1596-1613`. Tested: `check_vendored_spec.py` OK via both
   `--from local` and `--from gh`; `test_compatibility_citations_resolve.py` 489 passed/0 failed
   standalone (was 4 failed). Verifier also flagged two pre-existing, gate-invisible citations
   elsewhere that the same +2 shift widened further — `DECISIONS.md:2035` cites
-  `CHANGELOG.md:1489` and `PROGRESS.md:3981` cites `CHANGELOG.md:1374`, both already ~130-250
+  `CHANGELOG.md:1496` and `PROGRESS.md:3981` cites `CHANGELOG.md:1381`, both already ~130-250
   lines stale before this release — out of scope for this release-unblock hotfix; filed as a
   follow-up issue rather than folded in here.
   **Rebased `feat/verify-anchor-tenant` onto this commit during `/sweep`'s ship pass.** Four
@@ -4571,7 +4571,7 @@ green before any code changed.
   `CHANGELOG.md`/`COMPATIBILITY.md`/`DECISIONS.md`: the feature branch's own new
   `## Unreleased` entry (16 lines) was kept above this hotfix's `## 0.33.3` header, which
   shifted "No yank" from this entry's `1056` to `1072` and recomputed the two citations above
-  (`CHANGELOG.md:1589-1606`) to `CHANGELOG.md:1605-1622` — verified against the exact
+  (`CHANGELOG.md:1596-1613`) to `CHANGELOG.md:1612-1629` — verified against the exact
   paragraph-boundary text at both the old and new line numbers before trusting the new range,
   not just the arithmetic. A dedicated ship-gate verifier independently re-derived this same
   shift from the diff and confirmed it exact.
@@ -5261,10 +5261,10 @@ not filed here. OQ-1 is resolved, so no phase is gated.
   `truncation.rs`, `multi_tenant.rs`, `conformance.rs` (synthetic attestation helpers): the helper churn in
   Phases 1 and 3.
 - `scripts/check_vendored_spec.py`: the PIN regex :107-111. It must stay green after the header edit.
-- `.github/workflows/ci.yml:523-560`: the `verify` job. `publish.yml:524-528`: the dispatch-only crate publish.
-- Runtime reference (read-only): `crates/seam-verify/src/entry.rs`, `src/main.rs` (:273-361, :692-722,
-  :1409-1429, :1768-1773), `tests/entry_recompute.rs`, `tests/anchored.rs:536-571`, and
-  `crates/seam-store/src/lib.rs` / `event.rs` (the writers and `KIND_CLASSIFICATION_CONTRACT` :131-145).
+- `.github/workflows/ci.yml:523-560`: the `verify` job. `.github/workflows/publish.yml:524-528`: the dispatch-only crate publish.
+- Runtime reference (read-only, seam-runtime @ 37576658 via `git show`; line anchors live in the plan): the
+  seam-verify crate's `entry.rs`, `main.rs`, `tests/entry_recompute.rs` and `tests/anchored.rs`, plus the
+  seam-store crate's `lib.rs` / `event.rs` (the writers and `KIND_CLASSIFICATION_CONTRACT`).
 
 ## Checkpoints
 
@@ -5274,8 +5274,8 @@ not filed here. OQ-1 is resolved, so no phase is gated.
     `entry.rs` @ `37576658` under the D-043 carve-out (expires when the spec carries the tables; tripwire test on
     `seam.audit.management.v1`). The owner checkpoint is the `publish-verify` dispatch.
   - Runtime anchor moved to `37576658`. Runtime answers 1–10 folded into OQ-RT-1..10.
-  - seam-runtime#1561 referenced as the runtime-side fix (spec preimage gap, `--allow-uncovered` false green, spec
-    `:137` "empty" actor). This repo's `--allow-uncovered` exits 2 (OQ-2 resolved).
+  - seam-runtime#1561 referenced as the runtime-side fix (spec preimage gap, `--allow-uncovered` false green, the spec
+    text calling `context_recalled`'s actor "empty"). This repo's `--allow-uncovered` exits 2 (OQ-2 resolved).
 - Plan review round 2: REVISE (4 precise items) applied directly; plan **SOUND**. See `## Plan review`.
 - PR strategy: PR A = P0+P1 (vectors + payload binds to kind); PR B = P2–P5 as one unit (splitting would ship a
   green over unrecomputed entries or refuse genuine streams). Branch for PR A: `feat/verify-a4-kind-binding`.
