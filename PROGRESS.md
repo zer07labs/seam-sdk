@@ -5291,3 +5291,12 @@ not filed here. OQ-1 is resolved, so no phase is gated.
   - Files: `verify/src/{wire,verify,lib}.rs`, `verify/tests/{kind_payload.rs (new), support/mod.rs (new), bundle, verifier, anchored, authenticity, multi_tenant, truncation}.rs`.
   - Assumption logged: spec-written v4 test helper.
   - Next: ship PR A (P0+P1), then P2.
+- pushed feat/verify-a4-kind-binding e97b740; PR #320 opened: https://github.com/zer07labs/seam-sdk/pull/320
+- merged #320 (861e977)
+- **P2 DONE** (2026-10-31). Verifier: Opus (complex phase, solo), PASS in 1 round. No gaps.
+  - The transcription matches runtime `entry.rs` @ 37576658 byte for byte: domains, table, classification map, framing.
+  - Recompute is structurally before every attestation check: loop 1 runs before loop 2.
+  - 201 tests pass.
+  - Files: `verify/src/{entry.rs (new), verify, wire, lib}.rs`, `verify/tests/{entry_recompute.rs (new), support/mod.rs, authenticity.rs, entry_vectors.rs}`.
+  - Uncovered entries are counted but not yet refused (Phase 4). PR B stays one unit.
+  - Next: P3.

@@ -1525,3 +1525,11 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Alternatives:** relabel those links as `AUDIT_ENTRY` (Phase 2 recompute would break them again); call the library digest (circular); four per-file copies (drift).
 - **Blast radius if wrong:** tests only; cheap to redo.
 - **Status:** UNCONFIRMED
+
+## verify/ keeps the entry recompute module private
+- **Plan:** plans/verify-a4-parity.md (Phase 2)
+- **Assumed:** embedders need the verdicts (`IssuerReport`, the uncovered list), not the per-domain preimage functions.
+- **Chose:** `mod entry` stays private; only `Uncovered` is re-exported. A classification relabel gets its own error text.
+- **Alternatives:** a public `entry` module (widens the 0.5.0 API surface before anyone asks for it).
+- **Blast radius if wrong:** making it public later is additive; no verdict changes.
+- **Status:** UNCONFIRMED

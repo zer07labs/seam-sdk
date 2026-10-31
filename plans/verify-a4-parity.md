@@ -307,7 +307,9 @@ lists zero Seam crates, and no green is reported over a chained entry this build
 
 ### Phase 2: Preimage framework and the `AUDIT_ENTRY` domain table
 
-- **Status:** TODO, unblocked (OQ-1 resolved: transcribe under D-043). **Risk:** complex. It adds a new trust claim
+- **Status:** DONE (2026-10-31). Divergences: the envelope-tenant mutation is tested at library level (a tenant
+  change breaks plain `chain` first); two `authenticity.rs` tests switched to real management digests via
+  `support::management_entry_digest`; D-043 text left to Phase 5; `entry` stays private. **Risk:** complex. It adds a new trust claim
   and a new refusal.
 - **Delivers:**
   - Under `--issuer`, every chained `AUDIT_ENTRY` recomputes under its action's domain and its envelope
