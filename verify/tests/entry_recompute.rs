@@ -1,0 +1,389 @@
+//! (b′) `AUDIT_ENTRY` recompute under `--issuer` (plan `plans/verify-a4-parity.md`, Phase 2; seam-sdk#316).
+//!
+//! The oracle is `tests/goldens/entry_domains.jsonl`, written by seam-runtime's own code (provenance in
+//! `tests/entry_vectors.rs`). Every genuine chained `AUDIT_ENTRY` in it must recompute; every mutation
+//! below changes one preimage input (or the bound classification) and leaves every link untouched, so
+//! plain `chain` stays green over the same bytes and only the recompute can catch it.
+//!
+//! The domain table and framing are transcribed from the runtime under the D-043 carve-out
+//! (`src/entry.rs`); [`the_vendored_spec_does_not_yet_carry_the_entry_tables`] is that carve-out's
+//! tripwire.
+
+use std::process::Command;
+
+use seam_verify::wire::Event;
+use serde_json::Value;
+
+const VERIFIED: i32 = 0;
+const FAILED: i32 = 2;
+
+/// The AID of the `21×32` seed that signs `entry_domains.jsonl` (see `tests/entry_vectors.rs`).
+const ENTRY_ISSUER: &str = "aid:pubkey:1UIH2hlJd9z0atv-wrwudbUtWopCGE_t_cAAJPDj6No";
+
+fn stream() -> Vec<Value> {
+    let path = format!(
+        "{}/tests/goldens/entry_domains.jsonl",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    std::fs::read_to_string(path)
+        .expect("golden must exist")
+        .lines()
+        .map(|l| serde_json::from_str(l).expect("one JSON event per line"))
+        .collect()
+}
+
+fn body(rows: &[Value]) -> String {
+    rows.iter().map(|r| r.to_string() + "\n").collect()
+}
+
+/// The stream with `edit` applied to the row at `seq`.
+fn mutated(seq: u64, edit: impl FnOnce(&mut Value)) -> Vec<Value> {
+    let mut rows = stream();
+    let row = rows
+        .iter_mut()
+        .find(|r| r["seq"] == seq)
+        .expect("the stream has that seq");
+    edit(row);
+    rows
+}
+
+fn run(name: &str, rows: &[Value], args: &[&str]) -> (i32, String) {
+    let path = std::env::temp_dir().join(format!("entry-rc-{name}-{}.jsonl", std::process::id()));
+    std::fs::write(&path, body(rows)).unwrap();
+    let mut a: Vec<&str> = vec!["chain", path.to_str().unwrap()];
+    a.extend_from_slice(args);
+    let out = Command::new(env!("CARGO_BIN_EXE_seam-verify"))
+        .args(&a)
+        .output()
+        .expect("run seam-verify");
+    let _ = std::fs::remove_file(&path);
+    let mut s = String::from_utf8_lossy(&out.stdout).into_owned();
+    s.push_str(&String::from_utf8_lossy(&out.stderr));
+    (out.status.code().unwrap(), s)
+}
+
+fn events(rows: &[Value]) -> Vec<Event> {
+    rows.iter()
+        .map(|r| Event::parse(&r.to_string()).expect("parses"))
+        .collect()
+}
+
+/// The library path: integrity, then per-tenant authenticity.
+fn authenticate(
+    rows: &[Value],
+) -> Result<std::collections::BTreeMap<String, seam_verify::IssuerReport>, String> {
+    let evs = events(rows);
+    let report = seam_verify::chain(&evs).expect("integrity holds");
+    seam_verify::verify_authenticity_by_tenant(&evs, &report, &[ENTRY_ISSUER.to_owned()])
+}
+
+/// The mutation is invisible to `chain` and fatal under `--issuer`, as an `ENTRY REWRITE` of an
+/// `AUDIT_ENTRY`.
+fn assert_rewrite(name: &str, rows: &[Value]) {
+    let (code, out) = run(&format!("{name}-plain"), rows, &[]);
+    assert_eq!(
+        code, VERIFIED,
+        "{name}: plain chain must stay green:\n{out}"
+    );
+    let (code, out) = run(name, rows, &["--issuer", ENTRY_ISSUER]);
+    assert_eq!(code, FAILED, "{name}: --issuer must refuse:\n{out}");
+    assert!(out.contains("ENTRY REWRITE"), "{name}:\n{out}");
+    assert!(out.contains("AUDIT_ENTRY"), "{name}:\n{out}");
+}
+
+fn chained_audit_entries(rows: &[Value]) -> usize {
+    rows.iter()
+        .filter(|r| {
+            r["kind"] == "AUDIT_ENTRY"
+                && r["digest"].is_string()
+                && r["checksum"].is_string()
+                && r["payload"].is_null()
+        })
+        .count()
+}
+
+// ---- the genuine stream ---------------------------------------------------------------------------
+
+#[test]
+fn every_chained_audit_entry_recomputes() {
+    let rows = stream();
+    let want = chained_audit_entries(&rows);
+    assert_eq!(want, 15, "the Phase 0 stream's chained AUDIT_ENTRY rows");
+    let reports = authenticate(&rows).expect("the genuine stream authenticates");
+    let got: usize = reports.values().map(|r| r.entries_recomputed).sum();
+    assert_eq!(
+        got, want,
+        "every chained, non-seal AUDIT_ENTRY must recompute"
+    );
+    assert!(
+        reports
+            .values()
+            .flat_map(|r| &r.uncovered)
+            .all(|u| u.kind != "AUDIT_ENTRY"),
+        "no genuine AUDIT_ENTRY may read as uncovered"
+    );
+
+    let (code, out) = run("genuine", &rows, &["--issuer", ENTRY_ISSUER, "--strict"]);
+    assert_eq!(code, VERIFIED, "{out}");
+}
+
+/// Absent and `""` frame alike (runtime `entry.rs` `unwrap_or("")`; D-043): dropping a `""` session to
+/// `null`, or omitting the key, still recomputes.
+#[test]
+fn an_absent_session_frames_as_empty() {
+    for (name, edit) in [
+        (
+            "session-null",
+            Box::new(|r: &mut Value| r["session_id"] = Value::Null) as Box<dyn Fn(&mut Value)>,
+        ),
+        (
+            "session-missing",
+            Box::new(|r: &mut Value| {
+                r.as_object_mut().unwrap().remove("session_id");
+            }),
+        ),
+    ] {
+        let rows = mutated(6, |r| edit(r));
+        let (code, out) = run(name, &rows, &["--issuer", ENTRY_ISSUER]);
+        assert_eq!(code, VERIFIED, "{name}:\n{out}");
+    }
+}
+
+// ---- one mutation per preimage input --------------------------------------------------------------
+
+/// Moving an action across domains must fail: the domain is in the preimage, and the table is not a
+/// pass-through. `hold_placed` (legal-hold) → `ciphertext_evicted` (archive-evict); both are `Internal`,
+/// so this reaches the hash rather than the classification check.
+#[test]
+fn a_domain_move_is_a_rewrite() {
+    assert_rewrite(
+        "domain",
+        &mutated(7, |r| {
+            r["audit_entry"]["action"] = "ciphertext_evicted".into()
+        }),
+    );
+}
+
+/// Same domain (management), different action: the action label itself is in the preimage.
+#[test]
+fn an_action_change_is_a_rewrite() {
+    assert_rewrite(
+        "action",
+        &mutated(6, |r| r["audit_entry"]["action"] = "party_removed".into()),
+    );
+}
+
+/// The envelope tenant is in the preimage. It is also the chain's partition key, so rewriting it on the
+/// wire moves the link into another tenant's chain and plain `chain` refuses first (`BROKEN CHAIN`). The
+/// recompute is therefore exercised at the library level: `acme`'s own events, one with its envelope
+/// tenant rewritten, against `acme`'s own unmodified window.
+#[test]
+fn an_envelope_tenant_change_is_a_rewrite() {
+    let rows = stream();
+    let evs = events(&rows);
+    let report = seam_verify::chain(&evs).expect("integrity holds");
+    let tc = &report.tenants["acme"];
+    let mut acme: Vec<Event> = evs.into_iter().filter(|e| e.tenant == "acme").collect();
+    acme.iter_mut()
+        .find(|e| e.seq == 6)
+        .expect("seq 6 is acme's")
+        .tenant = "acmf".into();
+    let err = match seam_verify::verify_authenticity_anchored(
+        &acme,
+        &tc.heads,
+        &tc.max_schema_by_link,
+        &[ENTRY_ISSUER.to_owned()],
+        tc.base_len,
+        &tc.heads[0],
+    ) {
+        Ok(_) => panic!("a rewritten envelope tenant must not recompute"),
+        Err(e) => e,
+    };
+    assert!(err.contains("ENTRY REWRITE"), "{err}");
+    assert!(err.contains("AUDIT_ENTRY"), "{err}");
+    assert!(err.contains("seq 6"), "{err}");
+}
+
+#[test]
+fn an_envelope_namespace_change_is_a_rewrite() {
+    assert_rewrite(
+        "namespace",
+        &mutated(6, |r| r["namespace"] = "fraud2".into()),
+    );
+}
+
+#[test]
+fn a_session_change_is_a_rewrite() {
+    assert_rewrite(
+        "session-set",
+        &mutated(6, |r| r["session_id"] = "s9".into()),
+    );
+    assert_rewrite(
+        "session-emptied",
+        &mutated(9, |r| r["session_id"] = "".into()),
+    );
+}
+
+#[test]
+fn a_subject_change_is_a_rewrite() {
+    assert_rewrite(
+        "subject",
+        &mutated(6, |r| r["audit_entry"]["subject"] = "party-2".into()),
+    );
+}
+
+#[test]
+fn a_reason_change_is_a_rewrite() {
+    assert_rewrite(
+        "reason",
+        &mutated(6, |r| r["audit_entry"]["reason"] = "registered!".into()),
+    );
+}
+
+#[test]
+fn an_occurred_at_change_is_a_rewrite() {
+    assert_rewrite(
+        "occurred-plus",
+        &mutated(6, |r| r["occurred_at"] = 1001.into()),
+    );
+    assert_rewrite(
+        "occurred-minus",
+        &mutated(6, |r| r["occurred_at"] = 999.into()),
+    );
+}
+
+#[test]
+fn an_actor_change_is_a_rewrite() {
+    assert_rewrite(
+        "actor-dropped",
+        &mutated(6, |r| r["audit_entry"]["actor"] = Value::Null),
+    );
+    assert_rewrite(
+        "actor-changed",
+        &mutated(6, |r| r["audit_entry"]["actor"] = "op@evil".into()),
+    );
+    assert_rewrite(
+        "actor-none-to-empty",
+        &mutated(10, |r| r["audit_entry"]["actor"] = "".into()),
+    );
+}
+
+/// `context_recalled`'s actor is ABSENT (the writer passes `None`), so it contributes no actor frame.
+/// The spec text calls it "empty"; hashing it as `Some("")` appends a four-zero-byte frame and must NOT
+/// match the recorded digest. Pins the code reading against the spec text (D-043, seam-runtime#1561).
+#[test]
+fn context_recalled_with_an_empty_actor_does_not_recompute() {
+    let rows = mutated(15, |r| {
+        assert_eq!(r["audit_entry"]["action"], "context_recalled");
+        assert!(r["audit_entry"]["actor"].is_null(), "recorded as absent");
+        r["audit_entry"]["actor"] = "".into();
+    });
+    assert_rewrite("context-recalled-empty-actor", &rows);
+}
+
+// ---- the bound classification ---------------------------------------------------------------------
+
+#[test]
+fn a_relabelled_classification_is_a_rewrite() {
+    for (name, seq, from, to) in [
+        ("class-scope-deny", 11, "Confidential", "Internal"),
+        ("class-gdpr", 13, "Pii", "Internal"),
+        ("class-internal", 6, "Internal", "Public"),
+    ] {
+        let rows = mutated(seq, |r| {
+            assert_eq!(r["classification"], from, "{name}: the recorded label");
+            r["classification"] = to.into();
+        });
+        assert_rewrite(name, &rows);
+        let (_, out) = run(name, &rows, &["--issuer", ENTRY_ISSUER]);
+        assert!(
+            out.contains("AUDIT_ENTRY's classification"),
+            "{name}:\n{out}"
+        );
+    }
+}
+
+// ---- uncovered, and the seal arm left as it was ---------------------------------------------------
+
+/// An action this build has no domain for is uncovered: counted, not recomputed, and (until Phase 4)
+/// not refused. Attestations and the certificate also read as uncovered until Phase 3, so this asserts
+/// on the `AUDIT_ENTRY` members only.
+#[test]
+fn an_unknown_action_is_uncovered() {
+    let rows = mutated(6, |r| {
+        r["audit_entry"]["action"] = "party_registered_v2".into()
+    });
+    let reports = authenticate(&rows).expect("uncovered is not yet refused");
+    let audit: Vec<_> = reports
+        .values()
+        .flat_map(|r| &r.uncovered)
+        .filter(|u| u.kind == "AUDIT_ENTRY")
+        .collect();
+    assert_eq!(audit.len(), 1, "{audit:?}");
+    assert_eq!(audit[0].action.as_deref(), Some("party_registered_v2"));
+    assert_eq!(audit[0].seq, 6);
+    assert_eq!(audit[0].tenant, "acme");
+    let got: usize = reports.values().map(|r| r.entries_recomputed).sum();
+    assert_eq!(got, chained_audit_entries(&rows) - 1);
+}
+
+/// `fact_appended` has no domain (it chains the fact's own checksum), so it is uncovered too.
+#[test]
+fn fact_appended_is_uncovered() {
+    let rows = mutated(6, |r| r["audit_entry"]["action"] = "fact_appended".into());
+    let reports = authenticate(&rows).expect("uncovered is not yet refused");
+    let audit: Vec<_> = reports
+        .values()
+        .flat_map(|r| &r.uncovered)
+        .filter(|u| u.kind == "AUDIT_ENTRY")
+        .collect();
+    assert_eq!(audit.len(), 1, "{audit:?}");
+    assert_eq!(audit[0].action.as_deref(), Some("fact_appended"));
+}
+
+/// The `DECISION_SEALED` arm is deliberately NOT narrowed to links (D-042): an unchained seal relabelled
+/// to `schema_version: 3` is refused under `--issuer`, exactly as before (b′) landed. Stricter than the
+/// runtime, which skips unchained seals; pinned so a later "parity" change cannot relax it silently.
+#[test]
+fn an_unchained_non_v4_seal_is_still_refused() {
+    let mut rows = stream();
+    let mut seal = rows
+        .iter()
+        .find(|r| r["seq"] == 5 && r["kind"] == "DECISION_SEALED")
+        .expect("seq 5 is a seal")
+        .clone();
+    let o = seal.as_object_mut().unwrap();
+    o.remove("digest");
+    o.remove("checksum");
+    o.insert("seq".into(), 25.into());
+    o.insert("event_id".into(), "dev/unchained#25".into());
+    seal["payload"]["schema_version"] = 3.into();
+    rows.push(seal);
+
+    let (code, out) = run("unchained-v3-plain", &rows, &[]);
+    assert_eq!(
+        code, VERIFIED,
+        "unchained history is disclosed, not refused, without --issuer:\n{out}"
+    );
+    let (code, out) = run("unchained-v3", &rows, &["--issuer", ENTRY_ISSUER]);
+    assert_eq!(code, FAILED, "{out}");
+    assert!(out.contains("CANNOT VERIFY"), "{out}");
+}
+
+// ---- the D-043 carve-out tripwire -----------------------------------------------------------------
+
+/// D-043 transcribes the (b′) tables from the runtime because the vendored spec does not carry them. The
+/// day it does, the carve-out must be retired and `src/entry.rs` re-derived from the spec.
+#[test]
+fn the_vendored_spec_does_not_yet_carry_the_entry_tables() {
+    let spec = std::fs::read_to_string(format!(
+        "{}/docs/seam-event.v1.md",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("the vendored spec must exist");
+    assert!(
+        !spec.contains("seam.audit.management.v1"),
+        "the vendored spec now carries the (b′) tables: retire the D-043 carve-out and re-derive \
+         `entry.rs` from the spec"
+    );
+}

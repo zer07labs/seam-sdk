@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use sha2::{Digest, Sha256};
 
+use crate::entry;
 use crate::wire::{Attestation, Cert, Decision, Event};
 
 /// The chain's genesis head: 32 zero bytes (`seam-event.v1.md` §Ordering & integrity).
@@ -611,6 +612,14 @@ pub struct IssuerReport {
     /// `digest` (design-a). Every other `schema_version` is refused outright rather than left
     /// uncounted.
     pub records_recomputed: usize,
+    /// **Spec (b′).** The number of chained, non-`DECISION_SEALED` links whose own fields recomputed
+    /// the digest the chain links (today: `AUDIT_ENTRY`, under the domain its action selects, with its
+    /// envelope classification bound). A mismatch is refused as `ENTRY REWRITE`, never counted.
+    pub entries_recomputed: usize,
+    /// **Spec (b′).** Chained, non-`DECISION_SEALED` links this build has no preimage for — an unknown
+    /// action, `fact_appended`, or a kind it does not recompute — in stream order. Neither recomputed
+    /// nor refused here: a caller must disclose them and must not fold them into a green claim.
+    pub uncovered: Vec<Uncovered>,
     /// **Spec clause (f4).** The number of valid attestations whose `attested_len` is strictly greater
     /// than `base_len` — the ones that actually warrant the window, as opposed to the anchor (which
     /// never counts, clause (f4)) or a below-window straggler (clause (f3), which never counts either).
@@ -623,6 +632,18 @@ pub struct IssuerReport {
     /// their position is not checkable against a window that does not contain it, so they are skipped
     /// and reported here rather than silently dropped. Always `0` in genesis mode.
     pub below_window: usize,
+}
+
+/// One chained link [`verify_authenticity_anchored`] could not recompute (spec (b′)): see
+/// [`IssuerReport::uncovered`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Uncovered {
+    pub seq: u64,
+    /// The envelope tenant.
+    pub tenant: String,
+    pub kind: String,
+    /// The `AUDIT_ENTRY` action, when the link carries one.
+    pub action: Option<String>,
 }
 
 /// The only record-digest formula this build implements (P7). Every other `schema_version` is
@@ -862,10 +883,45 @@ pub fn verify_authenticity_anchored(
     let mut below_window = 0usize;
     let mut covered_prefix = 0u64;
     let mut records_recomputed = 0usize;
+    let mut entries_recomputed = 0usize;
+    let mut uncovered = Vec::new();
 
     // design-a: every DECISION_SEALED recomputes under v4. A version other than 4 is refused; a v4
     // record missing a mandatory column is a strip — reported distinctly from a mismatch.
+    //
+    // (b′): every OTHER chain link recomputes from its own fields, here, in this first loop. It runs to
+    // completion before the attestation loop below starts, so no below-window or at-anchor `continue`
+    // there can ever skip past a rewritten entry.
     for e in events {
+        if e.is_link() && e.decision.is_none() {
+            match entry::recompute(e) {
+                entry::Body::Recomputed => entries_recomputed += 1,
+                entry::Body::Uncovered => uncovered.push(Uncovered {
+                    seq: e.seq,
+                    tenant: e.tenant.clone(),
+                    kind: e.kind.clone(),
+                    action: e.audit.as_ref().map(|a| a.action.clone()),
+                }),
+                entry::Body::Rewritten(what) if what.ends_with("classification") => {
+                    return Err(format!(
+                        "seq {}: ENTRY REWRITE — the chained {what} ({:?}) is not the label its action \
+                         fixes.\n  The envelope classification sits outside the digest, so a relabel \
+                         leaves the link hashing; it is bound to the action instead, and this one was \
+                         changed after the entry was chained.",
+                        e.seq, e.classification
+                    ));
+                }
+                entry::Body::Rewritten(what) => {
+                    return Err(format!(
+                        "seq {}: ENTRY REWRITE — the chained {what}'s fields do not recompute the \
+                         digest the chain links.\n  A field (e.g. an actor, reason or session) was \
+                         rewritten after the entry was chained: the link still hashes, but the entry no \
+                         longer matches it.",
+                        e.seq
+                    ));
+                }
+            }
+        }
         let Some(d) = e.decision.as_ref() else {
             continue;
         };
@@ -1120,6 +1176,8 @@ pub fn verify_authenticity_anchored(
         attestations,
         covered_prefix,
         records_recomputed,
+        entries_recomputed,
+        uncovered,
         covering,
         below_window,
     })

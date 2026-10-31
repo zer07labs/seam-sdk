@@ -30,8 +30,17 @@ pub struct SeamEventPb {
     pub tenant: String,
     #[prost(string, tag = "6")]
     pub namespace: String,
+    /// tag 7 — the envelope classification label. Outside every digest, but bound under `--issuer`: an
+    /// `AUDIT_ENTRY`'s label must be the one its action fixes (spec (b′); see `entry.rs`). Identity too,
+    /// so two chained copies differing only here are an impostor, not a duplicate.
+    #[prost(string, tag = "7")]
+    pub classification: String,
     #[prost(string, tag = "8")]
     pub kind: String,
+    /// tag 9 — the envelope session. Inside an `AUDIT_ENTRY`'s preimage (absent and `""` frame alike),
+    /// and part of the event's identity.
+    #[prost(string, optional, tag = "9")]
+    pub session_id: Option<String>,
     /// tag 12 — the head this event extends.
     #[prost(bytes = "vec", tag = "12")]
     pub prev_checksum: Vec<u8>,
@@ -299,7 +308,11 @@ pub struct SeamEventJson {
     #[serde(default)]
     pub namespace: String,
     #[serde(default)]
+    pub classification: String,
+    #[serde(default)]
     pub kind: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
     #[serde(default)]
     pub prev_checksum: String,
     #[serde(default)]
@@ -514,7 +527,11 @@ pub struct Event {
     pub occurred_at: u64,
     pub tenant: String,
     pub namespace: String,
+    /// The envelope classification (tag 7). Bound under `--issuer` for an `AUDIT_ENTRY`.
+    pub classification: String,
     pub kind: String,
+    /// The envelope session (tag 9). In an `AUDIT_ENTRY`'s preimage, where absent reads as `""`.
+    pub session_id: Option<String>,
     pub prev_checksum: Vec<u8>,
     pub digest: Option<Vec<u8>>,
     pub checksum: Option<Vec<u8>>,
@@ -830,7 +847,9 @@ impl Event {
                 occurred_at: j.occurred_at,
                 tenant: j.tenant,
                 namespace: j.namespace,
+                classification: j.classification,
                 kind: j.kind,
+                session_id: j.session_id,
                 prev_checksum: b64(&j.prev_checksum)?,
                 digest: j.digest.as_deref().map(b64).transpose()?,
                 checksum: j.checksum.as_deref().map(b64).transpose()?,
@@ -895,7 +914,9 @@ impl Event {
             occurred_at: pb.occurred_at,
             tenant: pb.tenant,
             namespace: pb.namespace,
+            classification: pb.classification,
             kind: pb.kind,
+            session_id: pb.session_id,
             prev_checksum: pb.prev_checksum,
             digest: pb.digest,
             checksum: pb.checksum,
@@ -973,7 +994,11 @@ impl Event {
             occurred_at: self.occurred_at,
             tenant: self.tenant.clone(),
             namespace: self.namespace.clone(),
+            // Tags 7 and 9 are identity: two chained copies differing only in their label or session
+            // are an impostor wearing a real id, never a duplicate to collapse.
+            classification: self.classification.clone(),
             kind: self.kind.clone(),
+            session_id: self.session_id.clone(),
             prev_checksum: self.prev_checksum.clone(),
             payload: self.decision.as_ref().map(|d| DecisionSealedPb {
                 decision_id: d.decision_id.clone(),
@@ -1396,7 +1421,9 @@ mod tests {
                 occurred_at: 1_700,
                 tenant: "acme".into(),
                 namespace: "fraud".into(),
+                classification: String::new(),
                 kind: "POLICY_DENIED".into(),
+                session_id: None,
                 prev_checksum: Vec::new(),
                 digest: None,
                 checksum: None,

@@ -175,8 +175,8 @@ fn plain_chain_verifies_the_stream() {
     assert_eq!(code, VERIFIED, "{out}");
 }
 
-/// Current code recomputes nothing but sealed decisions, so this is green today. Phase 4 replaces it
-/// with entries-recomputed assertions.
+/// Every chained `AUDIT_ENTRY` here recomputes (Phase 2; counted in `tests/entry_recompute.rs`), so this
+/// stays green. Phase 4 adds the uncovered refusal around it.
 #[test]
 fn chain_with_issuer_and_strict_verifies_the_stream() {
     let (code, out) = run(
