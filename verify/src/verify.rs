@@ -599,6 +599,7 @@ fn attestation_signature_verifies(
         .is_ok()
 }
 
+#[non_exhaustive]
 pub struct IssuerReport {
     /// The number of `CHAIN_HEAD_ATTESTATION`s that verified (signature + non-vacuous). In genesis
     /// mode this always equals `covering` (every valid attestation is, trivially, past position 0).
@@ -691,6 +692,7 @@ fn uncovered_refusal<'a>(entries: impl IntoIterator<Item = &'a Uncovered>) -> St
 /// One chained link [`verify_authenticity_anchored`] could not recompute (spec (b′)): see
 /// [`IssuerReport::uncovered`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Uncovered {
     pub seq: u64,
     /// The envelope tenant.

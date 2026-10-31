@@ -36,7 +36,8 @@ than trusting a summary here.
   full report with each uncovered entry under `AUTHENTICITY NOT ESTABLISHED: …` and **exits 2**. Unlike the
   runtime's verifier, it never reports green over content it did not check (D-042).
 - **BREAKING (verifier library): `IssuerReport` gains public `entries_recomputed` and `uncovered` fields**,
-  so code that constructs it no longer compiles, and `verify_authenticity*` now returns `Err` over an
+  and it, `Uncovered` and `AuthOptions` are `#[non_exhaustive]`, so code that builds them by literal no
+  longer compiles (later fields will not break it again); `verify_authenticity*` returns `Err` over an
   uncovered entry. The opt-in is `AuthOptions::allow_uncovered` on the new `_with` entry points; an `Ok`
   reached that way with a non-empty `uncovered` is a diagnostic report, not an authentication. Hence the
   crate's 0.4.0 → 0.5.0. Publishing is a manual `publish-verify` dispatch.
