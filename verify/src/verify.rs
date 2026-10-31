@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use sha2::{Digest, Sha256};
 
+use crate::entry;
 use crate::wire::{Attestation, Cert, Decision, Event};
 
 /// The chain's genesis head: 32 zero bytes (`seam-event.v1.md` §Ordering & integrity).
@@ -598,6 +599,7 @@ fn attestation_signature_verifies(
         .is_ok()
 }
 
+#[non_exhaustive]
 pub struct IssuerReport {
     /// The number of `CHAIN_HEAD_ATTESTATION`s that verified (signature + non-vacuous). In genesis
     /// mode this always equals `covering` (every valid attestation is, trivially, past position 0).
@@ -611,6 +613,22 @@ pub struct IssuerReport {
     /// `digest` (design-a). Every other `schema_version` is refused outright rather than left
     /// uncounted.
     pub records_recomputed: usize,
+    /// **Spec (b′).** The number of chained, non-`DECISION_SEALED` links whose own fields recomputed
+    /// the digest the chain links: `AUDIT_ENTRY` under the domain its action selects,
+    /// `CHAIN_HEAD_ATTESTATION` under `seam.audit.chain-attest-entry.v1` and `ERASURE_CERTIFICATE` under
+    /// `seam.audit.erasure-cert.v2`, each with its envelope classification bound. A mismatch is refused
+    /// as `ENTRY REWRITE`, never counted.
+    pub entries_recomputed: usize,
+    /// **Spec (b′).** Chained, non-`DECISION_SEALED` links this build has no preimage for — an unknown
+    /// action, `fact_appended`, or a kind it does not recompute — in stream order.
+    ///
+    /// **Always empty in an `Ok` from the default entry points** ([`verify_authenticity`],
+    /// [`verify_authenticity_anchored`], [`verify_authenticity_by_tenant`]): they REFUSE an uncovered
+    /// entry (spec `:293`, "uncovered and REFUSED under `--issuer`"). It is non-empty only when the
+    /// caller opted in with [`AuthOptions::allow_uncovered`], and such a report is **not an
+    /// authentication**: the content of these links was never checked, and spec §Versioning forbids
+    /// folding them into a green claim. The CLI maps it to exit 2.
+    pub uncovered: Vec<Uncovered>,
     /// **Spec clause (f4).** The number of valid attestations whose `attested_len` is strictly greater
     /// than `base_len` — the ones that actually warrant the window, as opposed to the anchor (which
     /// never counts, clause (f4)) or a below-window straggler (clause (f3), which never counts either).
@@ -623,6 +641,82 @@ pub struct IssuerReport {
     /// their position is not checkable against a window that does not contain it, so they are skipped
     /// and reported here rather than silently dropped. Always `0` in genesis mode.
     pub below_window: usize,
+}
+
+/// Options for the `_with` authenticity entry points. [`Default`] is the strict behaviour every other
+/// entry point has.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct AuthOptions {
+    /// Return `Ok` over uncovered chained entries instead of refusing them, so a caller can print a
+    /// diagnostic report of what this build could not recompute. An `Ok` whose
+    /// [`IssuerReport::uncovered`] is non-empty is **not an authentication** and must never be shown as
+    /// one (spec §Versioning: a verifier claiming recompute coverage "MUST NOT fold them into a green
+    /// claim"). Every other check still refuses exactly as it does without this option. `bundle` never
+    /// sets it.
+    pub allow_uncovered: bool,
+}
+
+impl AuthOptions {
+    /// The strict default with [`AuthOptions::allow_uncovered`] set as given. The struct is
+    /// `#[non_exhaustive]`, so callers outside this crate build it here rather than by literal.
+    pub fn allow_uncovered(allow_uncovered: bool) -> Self {
+        Self { allow_uncovered }
+    }
+}
+
+/// The marker every uncovered-entry refusal starts with, so a caller can name the refusal without
+/// parsing its prose.
+pub const UNCOVERED_ENTRY: &str = "UNCOVERED ENTRY";
+
+/// The uncovered-entry refusal (spec `:293`): `entries` are every uncovered link in the call, in the
+/// order they were found. Lists each one, so the refusal itself is the diagnosis.
+fn uncovered_refusal<'a>(entries: impl IntoIterator<Item = &'a Uncovered>) -> String {
+    let entries: Vec<&Uncovered> = entries.into_iter().collect();
+    let n = entries.len();
+    let mut msg = format!(
+        "{UNCOVERED_ENTRY} — {n} chained entr{} carr{} an action or kind this build cannot recompute, \
+         so {} content is unverified, and --issuer refuses to report a green chain over content it \
+         never checked (spec (b′): uncovered is REFUSED under --issuer). A rewritten entry relabelled \
+         to an unknown action would otherwise verify. A newer producer needs a newer seam-verify.",
+        if n == 1 { "y" } else { "ies" },
+        if n == 1 { "ies" } else { "y" },
+        if n == 1 { "its" } else { "their" },
+    );
+    for u in entries {
+        msg.push_str(&format!("\n  {}", u.describe()));
+    }
+    msg
+}
+
+/// One chained link [`verify_authenticity_anchored`] could not recompute (spec (b′)): see
+/// [`IssuerReport::uncovered`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Uncovered {
+    pub seq: u64,
+    /// The envelope tenant.
+    pub tenant: String,
+    pub kind: String,
+    /// The `AUDIT_ENTRY` action, when the link carries one.
+    pub action: Option<String>,
+}
+
+impl Uncovered {
+    /// `seq S, tenant "t", kind "K", action "a"` — every wire string `Debug`-quoted, since each is
+    /// whatever the stream carried.
+    pub fn describe(&self) -> String {
+        format!(
+            "seq {}, tenant {:?}, kind {:?}, action {}",
+            self.seq,
+            self.tenant,
+            self.kind,
+            match &self.action {
+                Some(a) => format!("{a:?}"),
+                None => "(none)".to_owned(),
+            }
+        )
+    }
 }
 
 /// The only record-digest formula this build implements (P7). Every other `schema_version` is
@@ -835,6 +929,16 @@ pub fn record_digest_v4(d: &Decision) -> Result<[u8; 32], String> {
 /// mandatory column (tag 10, 11, 12, 14, 15, 16 or 17) is REFUSED as a **strip**, distinct from a
 /// mismatch. Any `schema_version` other than 4 is REFUSED as cannot-verify — never skipped, and never
 /// recomputed under another formula.
+///
+/// # (b′) — every other chained entry recomputes, and an uncovered one is REFUSED
+///
+/// Each chained non-`DECISION_SEALED` link is recomputed from its own fields (an `ENTRY REWRITE` on a
+/// mismatch). A link this build has no preimage for (an unknown action, `fact_appended`, an unknown
+/// kind) is **uncovered**, and an uncovered link is REFUSED (spec `:293`) with an error starting
+/// [`UNCOVERED_ENTRY`] that lists each one. That refusal comes last, after every attestation check and
+/// the coverage check, so an attestation failure takes precedence over it (the runtime's order). Use
+/// [`verify_authenticity_anchored_with`] and [`AuthOptions::allow_uncovered`] to get a diagnostic
+/// report instead, which is not an authentication.
 pub fn verify_authenticity_anchored(
     events: &[Event],
     heads: &[Vec<u8>],
@@ -842,6 +946,29 @@ pub fn verify_authenticity_anchored(
     pinned_aids: &[String],
     base_len: u64,
     base_head: &[u8],
+) -> Result<IssuerReport, String> {
+    verify_authenticity_anchored_with(
+        events,
+        heads,
+        max_schema_by_link,
+        pinned_aids,
+        base_len,
+        base_head,
+        &AuthOptions::default(),
+    )
+}
+
+/// [`verify_authenticity_anchored`] with [`AuthOptions`]. With the default options the two are the same
+/// call. With [`AuthOptions::allow_uncovered`] an uncovered entry no longer refuses: the `Ok` report
+/// carries it in [`IssuerReport::uncovered`], and that report is **not an authentication**.
+pub fn verify_authenticity_anchored_with(
+    events: &[Event],
+    heads: &[Vec<u8>],
+    max_schema_by_link: &[u32],
+    pinned_aids: &[String],
+    base_len: u64,
+    base_head: &[u8],
+    opts: &AuthOptions,
 ) -> Result<IssuerReport, String> {
     use ed25519_dalek::{Signature, VerifyingKey};
 
@@ -862,10 +989,45 @@ pub fn verify_authenticity_anchored(
     let mut below_window = 0usize;
     let mut covered_prefix = 0u64;
     let mut records_recomputed = 0usize;
+    let mut entries_recomputed = 0usize;
+    let mut uncovered = Vec::new();
 
     // design-a: every DECISION_SEALED recomputes under v4. A version other than 4 is refused; a v4
     // record missing a mandatory column is a strip — reported distinctly from a mismatch.
+    //
+    // (b′): every OTHER chain link recomputes from its own fields, here, in this first loop. It runs to
+    // completion before the attestation loop below starts, so no below-window or at-anchor `continue`
+    // there can ever skip past a rewritten entry.
     for e in events {
+        if e.is_link() && e.decision.is_none() {
+            match entry::recompute(e) {
+                entry::Body::Recomputed => entries_recomputed += 1,
+                entry::Body::Uncovered => uncovered.push(Uncovered {
+                    seq: e.seq,
+                    tenant: e.tenant.clone(),
+                    kind: e.kind.clone(),
+                    action: e.audit.as_ref().map(|a| a.action.clone()),
+                }),
+                entry::Body::Rewritten(what) if what.ends_with("classification") => {
+                    return Err(format!(
+                        "seq {}: ENTRY REWRITE — the chained {what} ({:?}) is not the label its action \
+                         or kind fixes.\n  The envelope classification sits outside the digest, so a \
+                         relabel leaves the link hashing; it is bound to the action or kind instead, and \
+                         this one was changed after the entry was chained.",
+                        e.seq, e.classification
+                    ));
+                }
+                entry::Body::Rewritten(what) => {
+                    return Err(format!(
+                        "seq {}: ENTRY REWRITE — the chained {what}'s fields do not recompute the \
+                         digest the chain links.\n  A field (e.g. an actor, a session, an attested head or an \
+                         erased id) was rewritten after the entry was chained: the link still hashes, but \
+                         the entry no longer matches it.",
+                        e.seq
+                    ));
+                }
+            }
+        }
         let Some(d) = e.decision.as_ref() else {
             continue;
         };
@@ -1116,10 +1278,17 @@ pub fn verify_authenticity_anchored(
              ever signed."
         ));
     }
+    // Spec `:293`: an uncovered chained entry is REFUSED under `--issuer`. Last, after the attestation
+    // and coverage checks, which keeps the runtime's precedence.
+    if !uncovered.is_empty() && !opts.allow_uncovered {
+        return Err(uncovered_refusal(&uncovered));
+    }
     Ok(IssuerReport {
         attestations,
         covered_prefix,
         records_recomputed,
+        entries_recomputed,
+        uncovered,
         covering,
         below_window,
     })
@@ -1148,12 +1317,32 @@ pub fn verify_authenticity(
 /// `tc.heads`/`tc.max_schema_by_link`, and its own start is `(tc.base_len, tc.heads[0])` — genesis for
 /// an unanchored tenant, `chain_by_tenant`'s own seed for an anchored one (see that function: it stores
 /// the start head as `heads[0]` before any link is appended). A tenant failing authenticity fails the
-/// whole call — there is no such thing as "some tenants authenticated."
+/// whole call — there is no such thing as "some tenants authenticated." That includes an uncovered
+/// entry in any one tenant: it refuses the whole call, but only after every tenant's attestations have
+/// passed, so an attestation failure in any tenant takes precedence (the runtime's order). The refusal
+/// lists the uncovered entries of every tenant.
 pub fn verify_authenticity_by_tenant(
     events: &[Event],
     report: &ChainReport,
     pinned_aids: &[String],
 ) -> Result<BTreeMap<String, IssuerReport>, String> {
+    verify_authenticity_by_tenant_with(events, report, pinned_aids, &AuthOptions::default())
+}
+
+/// [`verify_authenticity_by_tenant`] with [`AuthOptions`]. With [`AuthOptions::allow_uncovered`] the
+/// per-tenant reports carry their uncovered entries instead of refusing, and a map in which any of
+/// them is non-empty is **not an authentication**.
+pub fn verify_authenticity_by_tenant_with(
+    events: &[Event],
+    report: &ChainReport,
+    pinned_aids: &[String],
+    opts: &AuthOptions,
+) -> Result<BTreeMap<String, IssuerReport>, String> {
+    // Every tenant runs with uncovered allowed, so all attestation checks complete first; the refusal
+    // is then taken over the whole call.
+    let per_tenant = AuthOptions {
+        allow_uncovered: true,
+    };
     let mut out = BTreeMap::new();
     for (tenant, tc) in &report.tenants {
         let tenant_events: Vec<Event> = events
@@ -1162,16 +1351,22 @@ pub fn verify_authenticity_by_tenant(
             .cloned()
             .collect();
         let base_head = tc.heads.first().map(Vec::as_slice).unwrap_or(&GENESIS);
-        let ir = verify_authenticity_anchored(
+        let ir = verify_authenticity_anchored_with(
             &tenant_events,
             &tc.heads,
             &tc.max_schema_by_link,
             pinned_aids,
             tc.base_len,
             base_head,
+            &per_tenant,
         )
         .map_err(|e| format!("tenant {tenant:?}: {e}"))?;
         out.insert(tenant.clone(), ir);
+    }
+    if !opts.allow_uncovered && out.values().any(|ir| !ir.uncovered.is_empty()) {
+        let mut all: Vec<&Uncovered> = out.values().flat_map(|ir| &ir.uncovered).collect();
+        all.sort_by_key(|u| u.seq);
+        return Err(uncovered_refusal(all));
     }
     Ok(out)
 }

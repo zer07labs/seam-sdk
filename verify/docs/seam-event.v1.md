@@ -3,8 +3,10 @@
      "payload binds to kind" (each payload field belongs to one kind; a known advisory kind or the chain
      anchor carrying `digest`/`checksum` is refused), and clause (b′): under `--issuer` every chained
      AUDIT_ENTRY, CHAIN_HEAD_ATTESTATION and ERASURE_CERTIFICATE recomputes its digest, its classification
-     is bound, and an uncovered action or kind is refused. NOT YET IMPLEMENTED by this repo's `verify/`:
-     it still links by field presence and recomputes only what it did at 1a1f338. Parity is seam-sdk#316.
+     is bound, and an uncovered action or kind is refused. Implemented by this repo's `verify/` 0.5.0
+     (seam-sdk#316). This body does not carry the (b′) preimages, domain table or classification map; they
+     are transcribed from the runtime's `crates/seam-verify/src/entry.rs` @ 37576658 (verify/DECISIONS.md
+     D-043) until the spec does (seam-runtime#1561).
      Prior pin 1a1f338 (refreshed 2026-10-30), the runtime 0.66.0 train (seam-runtime#1555, #1493 ACDP-4 and ACDP-2; seam-sdk#311). Movement since
      2de71b5: the audit action `context_recalled` (domain `seam.audit.context-recall.v1`), and a note that a
      registry advertising lifecycle turns an absent event history into `not_retracted`. Both are informational

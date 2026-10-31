@@ -1219,7 +1219,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:1722-1744` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:1745-1767` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2049,7 +2049,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:1754` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:1777` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -3044,3 +3044,28 @@ Ranked by blast radius. The two possible one-way doors (a public exception API, 
 - **Rejected:** keeping a deprecated parameter that is silently ignored, because a time override that does nothing is worse than a loud failure. Keeping a placeholder positional slot in TS would leave a permanent dead argument to protect untyped JS callers that pass `opts` fifth.
 - **Evidence it is safe:** no sibling consumer calls these methods with a run time. seam-control-plane refuses the key in its own proxy (`src/http/routes/mgmt.ts`); seam-adapters, seam-mcp and seam-aegis never pass it.
 - **Decided by:** Opus (forced by the contract; nothing to choose but the error shape). **Status:** CONFIRMED.
+
+## 2026-10-31 — seam-sdk#316 reconcile (plans/verify-a4-parity.md)
+
+### Test helpers (v4 seals from the spec; one shared `attest_entry_digest`)
+- **Analysis (Opus):** confirm both.
+  - `verify/tests/support/mod.rs` imports only `base64` and `sha2` and writes its own framing. No test imports a `seam_verify::` digest or framing function, so the tests are not circular. D-035's clean-room intent holds.
+  - The framings are proven against the runtime-produced vectors (`entry_vectors.rs`), not against the helper.
+- **Decided by:** Opus (reversible tier: tests only). **Verdict:** CONFIRM ×2. **Status:** CONFIRMED.
+
+### `mod entry` stays private
+- **Analysis (Opus):** confirm.
+  - Only the verdicts are re-exported. Nothing in the README, DECISIONS or the plan promises a public preimage API.
+  - D-043 makes the preimages a transcription that expires with seam-runtime#1561, so publishing them would freeze something meant to retire. Opening the module later is additive.
+- **Decided by:** Opus (reversible tier). **Verdict:** CONFIRM. **Status:** CONFIRMED.
+
+### seam-verify 0.5.0 public API additions
+- The additions: `verify_authenticity_by_tenant_with`, `UNCOVERED_ENTRY`, `Uncovered::describe()`, and `#[non_exhaustive]` on `AuthOptions`, `IssuerReport` and `Uncovered`.
+- **Analysis (Fable):** confirm; reversible at low cost, so it dropped a tier.
+  - 0.5.0 is unpublished.
+  - The crate goes to Cloudsmith only.
+  - No sibling repo depends on `seam-verify` (the runtime's crate is `seam-verify-internal`, `publish = false`).
+  - Under 0.x semver a reshape costs one minor bump.
+  - The shape is consistent with every existing `Result<_, String>` entry point. `describe()` must be public because the binary links the library as an external crate.
+  - A typed error enum would be an orthogonal break and is no cheaper now.
+- **Decided by:** Opus on Fable's analysis (not a one-way door). **Verdict:** CONFIRM. **Status:** CONFIRMED.

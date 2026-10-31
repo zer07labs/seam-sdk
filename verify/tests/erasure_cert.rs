@@ -121,3 +121,31 @@ fn a_mangled_signature_is_rejected_not_panicked_on() {
         "a malformed signature must fail cleanly:\n{out}"
     );
 }
+
+/// `--allow-uncovered` is chain-only. The certificate check is a signature over a certificate document,
+/// not a chain entry, so (b′) never touches it and the flag is a usage error here (exit 1, nothing on
+/// stdout, even under `--json`).
+#[test]
+fn erasure_cert_rejects_allow_uncovered() {
+    let path = std::env::temp_dir().join(format!("cert-allow-{}.json", std::process::id()));
+    std::fs::write(&path, serde_json::to_string(&vector()).unwrap()).unwrap();
+    let aid = issuer();
+    for extra in [&[][..], &["--json"][..]] {
+        let mut args = vec![
+            "erasure-cert",
+            path.to_str().unwrap(),
+            "--issuer",
+            aid.as_str(),
+            "--allow-uncovered",
+        ];
+        args.extend_from_slice(extra);
+        let out = Command::new(env!("CARGO_BIN_EXE_seam-verify"))
+            .args(&args)
+            .output()
+            .expect("run seam-verify");
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert!(out.stdout.is_empty(), "{args:?}");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("chain-only"));
+    }
+    let _ = std::fs::remove_file(&path);
+}

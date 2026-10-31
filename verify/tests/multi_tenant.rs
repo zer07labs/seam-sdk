@@ -432,7 +432,14 @@ fn attestation_event_signed(
     use ed25519_dalek::Signer;
     let at = 1_700 + seq;
     let sig = sk.sign(signed_digest).to_bytes();
-    let digest = Sha256::digest(format!("att-{seq}").as_bytes()).to_vec();
+    let digest = support::attest_entry_digest(
+        attested_len,
+        attested_head,
+        at,
+        digest_schema,
+        issuer_aid,
+        &sig,
+    );
     let checksum = {
         let mut h = Sha256::new();
         h.update(prev);
@@ -445,6 +452,7 @@ fn attestation_event_signed(
         "seq": seq,
         "tenant": tenant,
         "occurred_at": at,
+        "classification": "Internal",
         "kind": "CHAIN_HEAD_ATTESTATION",
         "prev_checksum": b64e(prev),
         "digest": b64e(&digest),
@@ -579,6 +587,78 @@ fn from_anchor_over_a_multi_tenant_window_seeds_only_the_named_tenant() {
     assert_eq!(base("globex"), 0, "{out}");
 }
 
+/// The per-tenant anchored path (`WINDOW AUTHENTICATED … per tenant`): an uncovered entry in ONE tenant
+/// refuses the whole call ("there is no such thing as some tenants authenticated"), and
+/// `--allow-uncovered` replaces the per-tenant banner with the non-green one, exit 2. `globex` carries a
+/// chain link of an unknown kind with no payload; its attestation covers it, so only the uncovered
+/// refusal can object.
+#[test]
+fn an_uncovered_entry_in_one_tenant_of_an_anchored_window_refuses_the_whole_call() {
+    let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
+    let (acme, base_len, base_head) = anchored_acme_window(&sk);
+    let genesis = vec![0u8; 32];
+    let (g0, gh0) = sealed_link(10, &genesis, "globex");
+    let (g1, gh1) = sealed_link(11, &gh0, "globex");
+    let udigest = Sha256::digest(b"a future entry").to_vec();
+    let uhead = {
+        let mut h = Sha256::new();
+        h.update(&gh1);
+        h.update(&udigest);
+        h.finalize().to_vec()
+    };
+    let unknown = serde_json::json!({
+        "schema_version": "seam-event.v1",
+        "event_id": "u#12",
+        "seq": 12,
+        "tenant": "globex",
+        "kind": "FUTURE_ENTRY",
+        "prev_checksum": b64e(&gh1),
+        "digest": b64e(&udigest),
+        "checksum": b64e(&uhead),
+    })
+    .to_string();
+    let gatt = attestation_event(13, &uhead, 3, &uhead, &sk, ISSUER, 4, "globex");
+    let body = format!("{acme}\n{g0}\n{g1}\n{unknown}\n{gatt}");
+    let anchor = anchor_json(base_len, &base_head, 1_700, ISSUER, 2, &sk, "acme");
+
+    let (code, out) = run_anchored("uncovered-multi", &body, &anchor, &[]);
+    assert_eq!(code, FAILED, "{out}");
+    assert!(out.contains("REFUSED (--issuer)"), "{out}");
+    assert!(out.contains("UNCOVERED ENTRY"), "{out}");
+    assert!(!out.contains("AUTHENTICATED"), "{out}");
+
+    let (code, out) = run_anchored("uncovered-multi-json", &body, &anchor, &["--json"]);
+    assert_eq!(code, FAILED, "{out}");
+    let v: serde_json::Value = serde_json::from_str(out.lines().next().unwrap()).unwrap();
+    assert_eq!(v["verified"], false, "{out}");
+    assert!(
+        v["error"].as_str().unwrap().contains("cannot recompute"),
+        "{out}"
+    );
+
+    let (code, out) = run_anchored(
+        "uncovered-multi-allow",
+        &body,
+        &anchor,
+        &["--allow-uncovered"],
+    );
+    assert_eq!(code, FAILED, "{out}");
+    assert!(!out.contains("VERIFIED"), "{out}");
+    assert!(!out.contains("AUTHENTICATED"), "{out}");
+    assert!(
+        out.starts_with(
+            "AUTHENTICITY NOT ESTABLISHED: 1 uncovered chained entry (--allow-uncovered diagnostic report)"
+        ),
+        "{out}"
+    );
+    assert!(
+        out.contains(r#"seq 12, tenant "globex", kind "FUTURE_ENTRY", action (none)"#),
+        "{out}"
+    );
+    assert!(out.contains("entries recomputed 1, uncovered 1"), "{out}");
+    assert!(out.contains("entries recomputed 1, uncovered 0"), "{out}");
+}
+
 /// A full-event anchor follows the same payload==envelope equality rule as an in-stream attestation
 /// (#835 step 4): an empty payload tenant under a named envelope is refused as a defect in the anchor
 /// itself — exit 2, before it can seed anything — not accepted on the envelope's word.
@@ -634,6 +714,7 @@ fn the_system_partition_is_attested_like_any_tenant() {
                 a["issuer_aid"].as_str().unwrap(),
             ));
             a["signature"] = serde_json::Value::String(b64e(&sig.to_bytes()));
+            rechain_attestation(e);
         }
     };
     let system: String = body
@@ -686,6 +767,26 @@ fn the_system_partition_is_attested_like_any_tenant() {
     );
 }
 
+/// Re-derive a re-signed attestation link's `digest` and `checksum`. The signature is inside its chained
+/// digest (spec (b′), `seam.audit.chain-attest-entry.v1`), so re-signing in place without this reads as an
+/// `ENTRY REWRITE`. Only valid for the last link of its tenant's chain: nothing after it is re-linked.
+fn rechain_attestation(e: &mut serde_json::Value) {
+    let a = &e["chain_head_attestation"];
+    let digest = support::attest_entry_digest(
+        a["attested_len"].as_u64().unwrap(),
+        &b64d(a["attested_head"].as_str().unwrap()),
+        a["attested_at"].as_u64().unwrap(),
+        a["digest_schema"].as_u64().unwrap() as u32,
+        a["issuer_aid"].as_str().unwrap(),
+        &b64d(a["signature"].as_str().unwrap()),
+    );
+    let mut h = Sha256::new();
+    h.update(b64d(e["prev_checksum"].as_str().unwrap()));
+    h.update(&digest);
+    e["digest"] = serde_json::Value::String(b64e(&digest));
+    e["checksum"] = serde_json::Value::String(b64e(&h.finalize()));
+}
+
 // ── (8) the v2 signed framing binds the tenant (seam-runtime #835) ────────────────────────────────
 
 /// `seam.audit.chain-head-attestation.v2` — the v1 frames under the v2 domain tag, then `frame(tenant)`.
@@ -730,6 +831,7 @@ fn v2_stream(signed_tenant: &str) -> String {
         .sign(&att_digest_v2(2, &h1, at, 4, ISSUER, signed_tenant))
         .to_bytes();
     att["chain_head_attestation"]["signature"] = serde_json::Value::String(b64e(&sig));
+    rechain_attestation(&mut att);
     format!("{l0}\n{l1}\n{att}")
 }
 

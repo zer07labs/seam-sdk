@@ -132,7 +132,7 @@ fn attestation_event(
     let sig = sk
         .sign(&att_digest(attested_len, attested_head, at, 4, ISSUER))
         .to_bytes();
-    let digest = Sha256::digest(format!("att-{seq}").as_bytes()).to_vec();
+    let digest = support::attest_entry_digest(attested_len, attested_head, at, 4, ISSUER, &sig);
     let checksum = {
         let mut h = Sha256::new();
         h.update(prev);
@@ -144,6 +144,7 @@ fn attestation_event(
         "event_id": format!("att#{seq}"),
         "seq": seq,
         "occurred_at": at,
+        "classification": "Internal",
         "kind": "CHAIN_HEAD_ATTESTATION",
         "prev_checksum": b64e(prev),
         "digest": b64e(&digest),

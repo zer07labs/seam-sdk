@@ -13,6 +13,8 @@
 //! The distinction Phase 3 (design-b) proves: integrity-only PASSES a self-consistent forged chain, but
 //! `--issuer` REFUSES it, because a forger cannot mint the issuer-signed head.
 
+mod support;
+
 use std::process::Command;
 
 use base64::Engine;
@@ -381,7 +383,7 @@ fn attestation_event(
     let sig = sk
         .sign(&att_digest(len, attested_head, at, digest_schema, aid))
         .to_bytes();
-    let digest = Sha256::digest(format!("att-{seq}").as_bytes()).to_vec();
+    let digest = support::attest_entry_digest(len, attested_head, at, digest_schema, aid, &sig);
     let checksum = {
         let mut h = Sha256::new();
         h.update(prev);
@@ -390,7 +392,7 @@ fn attestation_event(
     };
     let line = format!(
         "{{\"schema_version\":\"seam-event.v1\",\"event_id\":\"att#{seq}\",\"seq\":{seq},\
-         \"occurred_at\":{at},\"kind\":\"CHAIN_HEAD_ATTESTATION\",\
+         \"occurred_at\":{at},\"classification\":\"Internal\",\"kind\":\"CHAIN_HEAD_ATTESTATION\",\
          \"prev_checksum\":\"{}\",\"digest\":\"{}\",\"checksum\":\"{}\",\
          \"chain_head_attestation\":{{\"attested_len\":{len},\"attested_head\":\"{}\",\
          \"attested_at\":{at},\"issuer_aid\":\"{aid}\",\"digest_schema\":{digest_schema},\"signature\":\"{}\"}}}}",
@@ -1033,7 +1035,8 @@ fn an_attestation_below_the_prefix_ceiling_is_refused() {
 fn a_stale_attestation_over_an_earlier_prefix_still_passes() {
     let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
     let head0 = vec![0u8; 32];
-    let d0 = Sha256::digest(b"audit-0").to_vec();
+    // A genuine management entry: under `--issuer` every chained AUDIT_ENTRY recomputes (spec (b′)).
+    let d0 = support::management_entry_digest("party_registered", "", "", "agent-1", "", 1_700);
     let c1 = {
         let mut h = Sha256::new();
         h.update(&head0);
@@ -1042,7 +1045,7 @@ fn a_stale_attestation_over_an_earlier_prefix_still_passes() {
     };
     let entry = serde_json::json!({
         "schema_version": "seam-event.v1", "event_id": "aud#0", "seq": 0, "occurred_at": 1_700,
-        "kind": "AUDIT_ENTRY", "prev_checksum": b64e(&head0), "digest": b64e(&d0),
+        "kind": "AUDIT_ENTRY", "classification": "Internal", "prev_checksum": b64e(&head0), "digest": b64e(&d0),
         "checksum": b64e(&c1),
         "audit_entry": {"action": "party_registered", "subject": "agent-1", "reason": ""},
     })
@@ -1103,7 +1106,7 @@ fn a_prefix_with_no_sealed_records_cannot_violate_the_ceiling() {
     let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
     let head0 = vec![0u8; 32];
     // A chained AUDIT_ENTRY: a real link that carries no decision.
-    let d = Sha256::digest(b"audit-0").to_vec();
+    let d = support::management_entry_digest("party_registered", "", "", "agent-1", "", 1_700);
     let checksum = {
         let mut h = Sha256::new();
         h.update(&head0);
@@ -1112,7 +1115,7 @@ fn a_prefix_with_no_sealed_records_cannot_violate_the_ceiling() {
     };
     let entry = serde_json::json!({
         "schema_version": "seam-event.v1", "event_id": "aud#0", "seq": 0, "occurred_at": 1_700,
-        "kind": "AUDIT_ENTRY", "prev_checksum": b64e(&head0), "digest": b64e(&d),
+        "kind": "AUDIT_ENTRY", "classification": "Internal", "prev_checksum": b64e(&head0), "digest": b64e(&d),
         "checksum": b64e(&checksum),
         "audit_entry": {"action": "party_registered", "subject": "agent-1", "reason": ""},
     })

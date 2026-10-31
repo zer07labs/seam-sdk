@@ -80,3 +80,55 @@ pub fn v4_seal(decision_id: &str, tenant: &str) -> (serde_json::Value, Vec<u8>) 
     });
     (payload, digest)
 }
+
+/// The `AUDIT_ENTRY` digest of a `seam.audit.management.v1` entry, for a synthetic chained entry whose
+/// content is orthogonal to what a test proves. Under `--issuer` every chained `AUDIT_ENTRY` recomputes
+/// (spec (b′)), so an arbitrary digest is now an `ENTRY REWRITE`. The framing is the D-043 transcription
+/// (`src/entry.rs`); the runtime vectors in `tests/entry_recompute.rs` are what prove it, not this.
+pub fn management_entry_digest(
+    action: &str,
+    tenant: &str,
+    namespace: &str,
+    subject: &str,
+    reason: &str,
+    occurred_at: u64,
+) -> Vec<u8> {
+    let mut pre = Vec::new();
+    for part in [
+        "seam.audit.management.v1",
+        action,
+        tenant,
+        namespace,
+        "",
+        subject,
+        reason,
+    ] {
+        frame(&mut pre, part.as_bytes());
+    }
+    pre.extend_from_slice(&occurred_at.to_le_bytes());
+    Sha256::digest(&pre).to_vec()
+}
+
+/// The chained digest of a `CHAIN_HEAD_ATTESTATION` (`seam.audit.chain-attest-entry.v1`), for a
+/// synthetic attestation link: every part framed, the signature included, the payload `tenant` not.
+/// Under `--issuer` every chained attestation recomputes (spec (b′)), so an arbitrary digest is now an
+/// `ENTRY REWRITE`. Written here independently of `src/entry.rs`, so a framing bug there cannot pass
+/// its own tests; the runtime vectors in `tests/entry_recompute.rs` are what prove the framing.
+pub fn attest_entry_digest(
+    attested_len: u64,
+    attested_head: &[u8],
+    attested_at: u64,
+    digest_schema: u32,
+    issuer_aid: &str,
+    signature: &[u8],
+) -> Vec<u8> {
+    let mut pre = Vec::new();
+    frame(&mut pre, b"seam.audit.chain-attest-entry.v1");
+    frame(&mut pre, &attested_len.to_le_bytes());
+    frame(&mut pre, attested_head);
+    frame(&mut pre, &attested_at.to_le_bytes());
+    frame(&mut pre, &digest_schema.to_le_bytes());
+    frame(&mut pre, issuer_aid.as_bytes());
+    frame(&mut pre, signature);
+    Sha256::digest(&pre).to_vec()
+}

@@ -435,6 +435,97 @@ fn step_2_a_chained_chain_anchor_in_the_window_is_refused() {
     );
 }
 
+/// The `full` bundle with its window's `d2` seal relabelled into an `AUDIT_ENTRY` whose action this
+/// build has no domain for. It keeps its `digest`/`checksum`, so the link still hashes: only the (b′)
+/// uncovered refusal can object.
+fn uncovered_d2(d: &Path) {
+    let events = std::fs::read_to_string(d.join("events.jsonl")).unwrap();
+    let mut hit = false;
+    let edited: String = events
+        .lines()
+        .map(|l| {
+            let mut e: serde_json::Value = serde_json::from_str(l).unwrap();
+            if e["payload"]["decision_id"] == D2 {
+                let o = e.as_object_mut().unwrap();
+                o.remove("payload");
+                o.insert("kind".into(), "AUDIT_ENTRY".into());
+                o.insert(
+                    "audit_entry".into(),
+                    serde_json::json!({"action": "party_registered_v2", "subject": "s"}),
+                );
+                hit = true;
+            }
+            format!("{}\n", serde_json::to_string(&e).unwrap())
+        })
+        .collect();
+    assert!(hit, "the edit must relabel the d2 seal");
+    replace_and_rehash(d, "events.jsonl", edited.into_bytes());
+}
+
+/// An uncovered chained entry in the window is refused at step 2 (spec `:293`), through the library's
+/// strict default: `bundle` has no diagnostic mode, so no output of it, human, `--json` or the library
+/// report, can be green over it.
+#[test]
+fn step_2_an_uncovered_entry_in_the_window_is_refused() {
+    assert_refused(
+        "full",
+        vec![(
+            "uncovered entry",
+            Box::new(uncovered_d2),
+            "step 2: UNCOVERED ENTRY",
+        )],
+    );
+
+    let d = copy("full", "uncovered-json");
+    uncovered_d2(&d);
+    let (code, out) = run(&["bundle", d.to_str().unwrap(), "--issuer", ISSUER, "--json"]);
+    assert_eq!(code, FAILED, "{out}");
+    let v: serde_json::Value = serde_json::from_str(out.lines().next().unwrap()).unwrap();
+    assert_eq!(v["verified"], false, "{out}");
+    assert!(
+        v["error"].as_str().unwrap().contains("cannot recompute"),
+        "{out}"
+    );
+
+    match seam_verify::verify_bundle(&d, ISSUER, 1_700_000_000) {
+        Err(seam_verify::BundleError::Failed { step, message }) => {
+            assert_eq!(step, 2, "{message}");
+            assert!(message.contains("cannot recompute"), "{message}");
+        }
+        Err(other) => panic!("expected a step-2 failure, got {other:?}"),
+        Ok(_) => panic!("the library must not return a bundle report over an uncovered entry"),
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// `--allow-uncovered` is chain-only: `bundle` rejects it through `usage()` (exit 1, nothing on
+/// stdout, even under `--json`).
+#[test]
+fn bundle_rejects_allow_uncovered() {
+    let full = fixture("full");
+    for extra in [&[][..], &["--json"][..]] {
+        let mut args = vec![
+            "bundle",
+            full.to_str().unwrap(),
+            "--issuer",
+            ISSUER,
+            "--allow-uncovered",
+        ];
+        args.extend_from_slice(extra);
+        let out = Command::new(env!("CARGO_BIN_EXE_seam-verify"))
+            .args(&args)
+            .output()
+            .expect("run seam-verify");
+        assert_eq!(out.status.code(), Some(USAGE), "{args:?}");
+        assert!(out.stdout.is_empty(), "{args:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.contains("--allow-uncovered is a chain-only flag"),
+            "{err}"
+        );
+    }
+}
+
 /// The binding refuses no genuine export: the `bundle` CLI still passes over all four shipped
 /// fixtures, each under the issuer that exported it.
 #[test]

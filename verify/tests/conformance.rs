@@ -28,6 +28,8 @@ use ed25519_dalek::{Signer, SigningKey};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
+mod support;
+
 const VERIFIED: i32 = 0;
 const FAILED: i32 = 2;
 
@@ -243,7 +245,7 @@ fn attestation_line(
     frame(&mut pre, ISSUER.as_bytes());
     let sig = sk.sign(&Sha256::digest(&pre)).to_bytes();
 
-    let digest = Sha256::digest(b"att").to_vec();
+    let digest = support::attest_entry_digest(len, head, at, digest_schema, ISSUER, &sig);
     let checksum = {
         let mut h = Sha256::new();
         h.update(prev);
@@ -255,6 +257,7 @@ fn attestation_line(
         "event_id": format!("att#{seq}"),
         "seq": seq,
         "occurred_at": at,
+        "classification": "Internal",
         "kind": "CHAIN_HEAD_ATTESTATION",
         "prev_checksum": b64e(prev),
         "digest": b64e(&digest),

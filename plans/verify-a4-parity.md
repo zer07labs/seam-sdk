@@ -15,7 +15,7 @@
 
 ## Status
 
-IN PROGRESS. P0 and P1 DONE (PR A); P2–P5 TODO (PR B). **All phases are unblocked.** OQ-1 is resolved as **(b) ∥ (a)**, decided by Fable at plan
+DONE. P0–P5 and finalization DONE; shipped as PR A (#320) and PR B (closes #316). **All phases are unblocked.** OQ-1 is resolved as **(b) ∥ (a)**, decided by Fable at plan
 review; owner input was not needed (see OQ-1). Phases 2 and 3 transcribe from runtime `entry.rs` under the scoped
 D-043 carve-out, validated against Phase 0's runtime-produced vectors, while seam-runtime#1561 carries the spec
 fix. **Owner checkpoint:** `publish-verify` is `workflow_dispatch` only (`.github/workflows/publish.yml:524-528`),
@@ -307,7 +307,9 @@ lists zero Seam crates, and no green is reported over a chained entry this build
 
 ### Phase 2: Preimage framework and the `AUDIT_ENTRY` domain table
 
-- **Status:** TODO, unblocked (OQ-1 resolved: transcribe under D-043). **Risk:** complex. It adds a new trust claim
+- **Status:** DONE (2026-10-31). Divergences: the envelope-tenant mutation is tested at library level (a tenant
+  change breaks plain `chain` first); two `authenticity.rs` tests switched to real management digests via
+  `support::management_entry_digest`; D-043 text left to Phase 5; `entry` stays private. **Risk:** complex. It adds a new trust claim
   and a new refusal.
 - **Delivers:**
   - Under `--issuer`, every chained `AUDIT_ENTRY` recomputes under its action's domain and its envelope
@@ -429,7 +431,10 @@ lists zero Seam crates, and no green is reported over a chained entry this build
 
 ### Phase 3: Attestation and certificate preimages, the classification contract, and ordering
 
-- **Status:** TODO, unblocked (OQ-1 resolved). **Risk:** complex.
+- **Status:** DONE (2026-10-31). Divergences: reordering `erased` is a unit test (the Phase 0 certificate erases
+  one id); the below-base relabel test runs on the spliced row (the classification check is its sole emitter,
+  proven by mutation); two `multi_tenant` tests re-derive digest+checksum after re-signing; one shared
+  `support::attest_entry_digest` helper. **Risk:** complex.
 - **Delivers:** `CHAIN_HEAD_ATTESTATION` recomputes under `seam.audit.chain-attest-entry.v1` and
   `ERASURE_CERTIFICATE` under `seam.audit.erasure-cert.v2`. Their envelope classification is bound (`Internal`,
   `Pii`). Ordering against anchors is pinned by tests.
@@ -489,7 +494,11 @@ lists zero Seam crates, and no green is reported over a chained entry this build
 
 ### Phase 4: Uncovered refusal, `--allow-uncovered`, and no false green on any output
 
-- **Status:** TODO. **Risk:** complex. A CLI flag and a refusal are both public contract.
+- **Status:** DONE (2026-10-31). Divergences: public API beyond the plan's list —
+  `verify_authenticity_by_tenant_with` (multi-tenant diagnostic), the `UNCOVERED_ENTRY` marker,
+  `Uncovered::describe()` (one formatter for the library refusal and the CLI report), and a `#[non_exhaustive]`
+  `AuthOptions` with `AuthOptions::allow_uncovered(bool)`; the erasure-cert flag test lives in `erasure_cert.rs`.
+  Banner: `AUTHENTICITY NOT ESTABLISHED: N uncovered chained entr{y|ies} (--allow-uncovered diagnostic report)`, exit 2. **Risk:** complex. A CLI flag and a refusal are both public contract.
 - **Delivers:** an uncovered chained entry is REFUSED under `--issuer`, in the library, CLI and bundle (spec
   `:291`, "uncovered and REFUSED under `--issuer`"). `--allow-uncovered` (chain only, human only) prints the full
   diagnostic report instead, and **still exits 2**. The verifier gets a no-false-green audit of every banner and
@@ -577,7 +586,10 @@ lists zero Seam crates, and no green is reported over a chained entry this build
 
 ### Phase 5: Docs, the spec pin header, decisions, and version
 
-- **Status:** TODO. **Risk:** simple.
+- **Status:** DONE (2026-10-31). Divergences: one CLI word ("never recomputed" → "not recomputed") so the
+  README can quote real output; a README-sync test pins the genuine and diagnostic runs' stdout lines; OQ-5 taken
+  at its default (proto re-copied byte-identical from `37576658`, pin in the README layout table); the header edit
+  shifted the spec body +2, and every `verify/` spec citation was re-anchored. **Risk:** simple.
 - **Delivers:** documentation that states what this build now does.
 - **Depends on:** Phases 1–4.
 - **Files:**
