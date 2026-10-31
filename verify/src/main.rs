@@ -333,7 +333,7 @@ fn cmd_chain(
             // that is the anchored tenant from its anchor (`tc.base_len`/`tc.heads[0]`) and every other
             // tenant from genesis — the anchor seeds exactly the tenant it names (#835 step 4).
             let multi_tenant = r.tenants.len() > 1;
-            // The library refuses an uncovered entry (spec `:291`) unless this is set, and only the
+            // The library refuses an uncovered entry (spec `:293`) unless this is set, and only the
             // `--allow-uncovered` diagnostic sets it (argument validation keeps it off `--json`).
             let opts = verify::AuthOptions::allow_uncovered(allow_uncovered);
             let issuer_report = if issuers.is_empty() || multi_tenant {
@@ -473,7 +473,7 @@ fn cmd_chain(
                 );
             } else {
                 // `--allow-uncovered` with something uncovered REPLACES the AUTHENTICATED banners: no
-                // line of that report may read as a green claim (spec §Versioning, `:1677-1681`), and
+                // line of that report may read as a green claim (spec §Versioning, `:1679-1683`), and
                 // it exits 2 below. The banner deliberately contains neither VERIFIED nor
                 // AUTHENTICATED (nor UNVERIFIED, which contains VERIFIED).
                 if uncovered.is_empty() {
@@ -530,7 +530,7 @@ fn cmd_chain(
                         "  unverified content: {} link(s) of unmodelled kind: {} (first seq {})\n\
                          {:22}LINKAGE verified — folded into the head above, exactly as for a kind\n\
                          {:22}this build models. CONTENT not verified: no payload model, so the\n\
-                         {:22}digest was never recomputed, and these are in NO recompute count.",
+                         {:22}digest was not recomputed, and these are in NO recompute count.",
                         r.unmodelled.len(),
                         kinds.join(", "),
                         r.unmodelled[0].0,

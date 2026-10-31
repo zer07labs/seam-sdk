@@ -275,3 +275,108 @@ postgres-backed `seam-grpc` + `seam-ops export-evidence` run, but the runtime's 
 9×32 (same AID). Its governing document carries the policy, so policy is now disclosed rather than
 withheld. No test depended on that withholding. All four verify under the runtime's internal oracle at
 a853f89.
+
+## D-041 — payload binds to kind, in integrity mode too (seam-sdk#316, runtime A4)
+
+**Decision.** `chain` (plain, `--strict` and `--issuer`) and `bundle` refuse, with exit 2, an event
+carrying another kind's payload or a known kind without its own (`KIND/PAYLOAD MISMATCH`), and an
+advisory event or the `chain_anchor` that carries `digest`/`checksum` (`ADVISORY EVENT WITH CHAIN
+FIELDS`), never linking it. `erasure-cert` checks only the certificate. An unknown kind is still a link,
+disclosed as `unverified content`, as before.
+
+**Why in integrity mode, not only under `--issuer`.** The spec's "Payload binds to kind" clause carries no
+mode qualifier, and the runtime's verifier applies it to plain `chain`. A payload filed under the wrong
+kind is a malformed event whatever the caller asked for. Linking an advisory event that carries chain
+fields would also let a producer make "chained" a property of a kind the spec says never chains, which
+is the opposite of the field-presence rule the integrity check rests on.
+
+**Consequence.** Presence of an unmodelled payload slot is now part of event identity on both transports
+(the dedup re-encode carries it as an empty sub-message), so one event has one identity over JSON and
+protobuf. Genuine streams, the runtime goldens and the shipped evidence bundles are unaffected.
+
+## D-042 — the (b′) entry recompute, and an uncovered entry is refused in the library (seam-sdk#316)
+
+**Decision.** Under `--issuer`, every chained `AUDIT_ENTRY` recomputes under the domain its action selects,
+every `CHAIN_HEAD_ATTESTATION` under `seam.audit.chain-attest-entry.v1`, and every `ERASURE_CERTIFICATE`
+under `seam.audit.erasure-cert.v2`, and the envelope classification is bound to the action or kind. A
+mismatch is `ENTRY REWRITE`, exit 2. An entry with no preimage in this build (an unknown action,
+`fact_appended`, a chained link of an unmodelled kind) is **uncovered** and refused (spec `:293`,
+"uncovered and REFUSED under `--issuer`"). `IssuerReport` gains `entries_recomputed` and `uncovered`;
+the human report prints `entries recomputed` and `uncovered` on every `--issuer` run, zero included. The
+`--json` shape is unchanged.
+
+**Where it differs from the runtime's verifier, on purpose:**
+
+1. *The refusal is in the library*, after the `covering == 0` check, so the runtime's precedence holds
+   (attestation failures first, then uncovered). The runtime refuses in its CLI only. Here the library is
+   a supported surface, and a CLI-only gate would hand an embedder and `bundle` an `Ok` over unchecked
+   content. The strict entry points keep their signatures; the opt-in is
+   `AuthOptions::allow_uncovered` on the `_with` variants, and `bundle` never opts in.
+2. *`--allow-uncovered` exits 2* under the banner `AUTHENTICITY NOT ESTABLISHED: N uncovered chained
+   entr{y|ies} (--allow-uncovered diagnostic report)`, which contains neither VERIFIED nor
+   AUTHENTICATED. The runtime prints its AUTHENTICATED banner and exits 0, a green claim over content
+   nobody checked, which spec `:1679-1683` forbids ("MUST NOT fold them into a green claim"); the
+   runtime defect is seam-runtime#1561. This crate's README defines exit 0 as verified. The flag is
+   accepted only on `chain`, only with `--issuer`, never with `--json` (usage error, exit 1; the runtime
+   rejects `--json` and non-`chain` use too, and only treats a missing `--issuer` as a no-op).
+3. *The `DECISION_SEALED` arm is not narrowed to links.* An unchained seal whose `schema_version` is not 4,
+   or that lacks `ciphertext_digest`, is still refused, as it was before #316. The runtime keys on
+   payload + digest + checksum and skips it. Narrowing would be a relaxation the spec does not ask for:
+   clause (c) (`:293-295`) and §Versioning (`:1661`) refuse such a record with no link qualifier.
+4. *The first defect named may differ.* Every entry is recomputed (loop 1) before any attestation is
+   checked (loop 2); the runtime does both per event in sequence order. A multi-defect stream exits 2 in
+   both, but may name a different defect. Single-defect streams agree.
+
+**Earned, not asserted.** Every genuine chained non-seal link of the runtime-produced
+`tests/goldens/entry_domains.jsonl` recomputes; each single-field mutation (action, domain move, actor
+`None` vs `Some("")`, session, subject, reason, attested head, erased id, classification relabel) is
+green under plain `chain` and refused under `--issuer` (an envelope tenant change breaks plain `chain`
+first, so it is pinned at library level); an unknown action, `fact_appended` and an unknown chained
+kind are refused, and under `--allow-uncovered` still exit 2. Removing the library refusal turns the
+embedder test red, not only the CLI test. Pinned by `tests/entry_recompute.rs`, `tests/verifier.rs`,
+`tests/bundle.rs`, `tests/multi_tenant.rs` and `tests/erasure_cert.rs`.
+
+**Not covered.** The `--from-anchor` / `--expect-anchor` document and `erasure-cert` are not window links
+and are not entry-recomputed. There is no `chain --bridge` here, so the runtime's bridge-mode A4
+obligations have nothing to attach to. A future entry-domain bump reads as `ENTRY REWRITE` here, not as
+uncovered: no domain is on the wire, and the runtime plans no discriminator.
+
+**Blast radius / reversal.** The new refusals can turn a genuine stream red if a runtime writer ever
+digests an envelope value other than the one it emits (the runtime traced every writer it found; not
+every `audit_action` caller). Reversal is a code change; nothing persisted depends on it. `IssuerReport`'s
+new public fields make this a breaking library change, hence 0.5.0.
+
+## D-043 — scoped carve-out from D-035's clean-room claim: the (b′) preimages are transcribed (seam-sdk#316)
+
+**Decision.** D-035 says this crate's implementations were written from the published spec, never from the
+runtime's Rust. For the (b′) entry recompute that is not possible today: the vendored spec (`docs/seam-event.v1.md`
+@ `4f70c2c`) states the rule at `:293` but points at the runtime's `crates/seam-verify/src/entry.rs` for the
+preimages, and spells only three domains. So these are **transcribed** from seam-runtime `entry.rs` at
+`37576658`, read through `git show` and never linked:
+
+* the action-entry preimage: seven `u32le`-length-framed strings `domain, action, tenant, namespace,
+  session_id, subject, reason`, then unframed `u64le occurred_at`, then `frame(actor)` only when present;
+* the `seam.audit.chain-attest-entry.v1` and `seam.audit.erasure-cert.v2` framings;
+* the closed action→domain table (eight domains; `fact_appended` has none);
+* the action→classification map and the per-kind fixed labels.
+
+It is modelled on the README's named exception for `seam-commitment-digest.v2.md`, and the README names it
+the same way.
+
+**Code over spec, where they disagree.** Two readings follow the code, and the runtime confirmed both are
+spec gaps or errors (seam-runtime#1561): an absent `session_id` frames as `""` (the spec is silent), and
+`context_recalled`'s actor is absent, not "empty" as spec `:139` says. `Some("")` stays distinct from
+`None` (a four-zero-byte frame), as in the code.
+
+**Validation is against the runtime, not against a second reading of it.** The transcription is checked
+against vectors the runtime's own code produced (`tests/goldens/entry_domains*.jsonl`, sha256-pinned in
+`tests/entry_vectors.rs`), so a shared misreading cannot pass on agreement alone.
+
+**Expiry.** The carve-out ends when the vendored spec carries the tables (seam-runtime#1561 is the spec
+fix). `tests/entry_recompute.rs::the_vendored_spec_does_not_yet_carry_the_entry_tables` fails with
+"retire the D-043 carve-out" at the re-pin that brings them in; then `src/entry.rs` is re-derived from
+the spec and this entry and the README's exception are retired with it.
+
+**Independence is untouched.** No dependency was added; `cargo tree -e normal` still shows zero Seam
+crates. What this concedes is narrower: for these five things, a reimplementer needs the runtime's source
+or this crate's, not only `docs/`.

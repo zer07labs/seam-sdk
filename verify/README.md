@@ -32,12 +32,22 @@ linked Seam's own library would be *Seam checking Seam* — which is precisely w
 should not have to accept.
 
 It is written from the specs in `docs/` (plus the runtime's `seam-commitment-digest.v2.md`, which the bundle
-spec cites and the shared `conformance/` vectors pin), and nothing else. `cargo tree` is the assertion: if a Seam
-crate ever appears in it, the claim has quietly stopped being true.
+spec cites and the shared `conformance/` vectors pin), and nothing else, with the one named exception below.
+`cargo tree` is the assertion: if a Seam crate ever appears in it, the claim has quietly stopped being true.
+
+**The named exception: the (b′) entry preimages.** Spec clause (b′) requires `--issuer` to recompute every
+chained `AUDIT_ENTRY`, `CHAIN_HEAD_ATTESTATION` and `ERASURE_CERTIFICATE`, but the spec's text points at the
+runtime's own code for how, instead of carrying it. Until the spec carries them (seam-runtime#1561), five
+things are **transcribed** from seam-runtime `crates/seam-verify/src/entry.rs` @ `37576658`: the action-entry
+framing, the `seam.audit.chain-attest-entry.v1` and `seam.audit.erasure-cert.v2` framings, the action→domain
+table, and the action→classification map. They were read, not linked, so `cargo tree` is unchanged. They are
+checked against vectors the runtime's own code produced (`tests/goldens/entry_domains*.jsonl`), not against
+a second transcription. `DECISIONS.md` D-043 records the carve-out and when it ends: a test turns red with
+"retire the D-043 carve-out" once the vendored spec carries the tables.
 
 **You do not have to use this program.** Everything it does is specified in `docs/`, precisely enough to
-reimplement — that is the actual deliverable. This is a reference, and a demonstration that the spec is
-sufficient.
+reimplement, apart from the exception above — that is the actual deliverable. This is a reference, and a
+demonstration that the spec is sufficient.
 
 ---
 
@@ -75,7 +85,8 @@ unfiltered stream.
 a known kind carries its own. An event carrying another kind's payload, or a known kind without its own,
 is refused with `KIND/PAYLOAD MISMATCH`. An advisory event or the `chain_anchor` that carries
 `digest`/`checksum` is refused with `ADVISORY EVENT WITH CHAIN FIELDS`, never linked. Both refusals apply
-to `chain` (plain, `--strict` and `--issuer`) and to `bundle`, and exit 2; `cert` checks only the certificate.
+to `chain` (plain, `--strict` and `--issuer`) and to `bundle`, and exit 2; `erasure-cert` checks only the certificate
+(D-041).
 
 **A `kind` this build has never seen is still verified — and still disclosed.** `seam-event.v1` grows
 kinds additively, so a stream can legitimately outrun the verifier reading it. Such an event is a link
@@ -88,13 +99,22 @@ run, zero included, naming the kinds:
   unverified content: 2 link(s) of unmodelled kind: GRAPH_COMMIT, RETENTION_HOLD (first seq 2)
                       LINKAGE verified — folded into the head above, exactly as for a kind
                       this build models. CONTENT not verified: no payload model, so the
-                      digest was never recomputed, and these are in NO recompute count.
+                      digest was not recomputed, and these are in NO recompute count.
 ```
 
 Do not try to infer this from `links` minus `records recomputed`: that difference is already non-zero on
-a healthy stream, because `AUDIT_ENTRY` / `ERASURE_CERTIFICATE` / `CHAIN_HEAD_ATTESTATION` are chained
-kinds that never recompute and v1 `DECISION_SEALED` records are link-only. Under `--json` the same
+a healthy stream, because `records recomputed` counts only `DECISION_SEALED`. Plain `chain` recomputes no
+entry digest at all. Under `--issuer`, `AUDIT_ENTRY`, `ERASURE_CERTIFICATE` and `CHAIN_HEAD_ATTESTATION`
+are recomputed and counted on their own line, `entries recomputed` (below). Under `--json` the same
 disclosure is `"unverified_content"` (a count) and `"unmodelled_kinds"` (the distinct names).
+
+Under `--issuer`, a link of an unmodelled kind is **uncovered** as well, and refused (below): a build
+that cannot read a payload cannot vouch for it.
+
+`unverified content` is a claim about **kinds**, not actions. Without `--issuer`, an `AUDIT_ENTRY` whose
+`action` this build does not know still shows `unverified content: 0`: its kind is modelled, and plain
+`chain` recomputes no entry, whatever its action. The action-level claim, "every chained entry was
+recomputed", exists only under `--issuer`, where such an entry is counted under `uncovered` and refused.
 
 `--strict` does **not** refuse on this. It refuses on a different thing — non-advisory events carrying
 no chain fields at all — and a stream that merely outran your verifier is not the same failure as
@@ -106,20 +126,37 @@ discloses, and leaves refusing to the caller, who has the number.
 Integrity proves the chain is *internally consistent*. It does not prove Seam *wrote* it: an unkeyed
 SHA-256 chain over a public genesis can be rebuilt by anyone who controls the bytes you receive. `--issuer`
 closes that — it upgrades the check from integrity to **authenticity**, against a key **you** pinned out of
-band (Seam serves it at `GET /v1/trust/issuer-aid`):
+band (Seam serves it at `GET /v1/trust/issuer-aid`). Over `tests/goldens/entry_domains.jsonl`, a stream the
+runtime's own code wrote with one entry from every audit writer, an erasure certificate, and signed heads for
+three tenants:
 
 ```
-CHAIN AUTHENTICATED (integrity + issuer-signed head)
-  events            : 767
-  links checked     : 767
+seam-verify chain tests/goldens/entry_domains.jsonl --issuer aid:pubkey:1UIH2hlJd9z0atv-wrwudbUtWopCGE_t_cAAJPDj6No
+```
+
+```
+CHAIN AUTHENTICATED (integrity + issuer-signed head, per tenant)
+  events            : 25
+  links checked     : 0 (top-level — N/A across 3 tenants, see below)
+  advisory (skipped): 0
   unverified content: 0 (every link's kind is modelled by this build)
-  attestations      : 3 (issuer-signed)
-  covered prefix    : 750 links
-  records recomputed: 764 (v4 record-digest recompute)
-  head              : 9f2c…
+  entries recomputed: 19 (audit, attestation and erasure entry digests)
+  uncovered         : 0
+  tenants           : 3
+    "": links 2, head ed218495295782755877f245fd62fde9881ed93258439ba9e68c8c26fc4f3aaf
+      attestations 1 (issuer-signed), covered prefix 1 links, records recomputed 0, entries recomputed 2, uncovered 0
+    "acme": links 19, head f1a9f53f8b5ed5c6d2ac43b080bbc603a88da339651c49d3c0f716948022faab
+      attestations 1 (issuer-signed), covered prefix 18 links, records recomputed 5, entries recomputed 14, uncovered 0
+    "beta": links 4, head 4d970cd71e545b68637f3a7bfdcc28d1dabe254ebe3e2e7aeca520aef0421f0c
+      attestations 1 (issuer-signed), covered prefix 3 links, records recomputed 1, entries recomputed 3, uncovered 0
 ```
 
-Two things a forger cannot fake:
+A single-tenant stream prints `attestations`, `covered prefix` and `records recomputed` as top-level lines
+instead, and its `head`. `entries recomputed` and `uncovered` are printed on every `--issuer` run, zero
+included, for the same reason as `unverified content`: a coverage line that disappears at zero cannot be
+told apart from one that was never measured.
+
+Three things a forger cannot fake:
 
 * **Signed chain heads.** Seam periodically signs its audit-chain `(length, head)` with the issuer key
   (`CHAIN_HEAD_ATTESTATION`). `--issuer` verifies every one against the **pinned** AID *and* checks the
@@ -143,6 +180,84 @@ Two things a forger cannot fake:
   verifier does not blur them. A `schema_version` this build does not implement is refused outright: a
   formula it does not have is not a record it can vouch for, and "cannot check, therefore fine" is the
   shape of a downgrade.
+* **Recomputed entries** (spec clause (b′), runtime A4). Every other chained entry is recomputed from its
+  own fields too: an `AUDIT_ENTRY` under the domain its `action` selects, a `CHAIN_HEAD_ATTESTATION` under
+  `seam.audit.chain-attest-entry.v1`, and an `ERASURE_CERTIFICATE` under `seam.audit.erasure-cert.v2`. A
+  field rewritten after chaining (an actor, a session, an attested head, an erased id) leaves the link
+  hashing but no longer recomputes its digest, and is refused as `ENTRY REWRITE`. **The envelope
+  classification is bound** too. It sits outside the digest, so the label is fixed by the action or kind
+  instead (`Pii` for `gdpr_erasure` and the certificate; `Confidential` for `execute.scope_deny` and
+  `boundary.data_flagged`; `Internal` for every other action and the attestation; matched as exact,
+  case-sensitive bytes), and a relabel is an `ENTRY REWRITE` as well. The recompute runs over the whole
+  window before any attestation is checked, so an entry below an attested head is caught too. The
+  `--from-anchor` / `--expect-anchor` document and the `erasure-cert` subcommand are not window links, and
+  are not entry-recomputed: the anchor is checked by its signature, and `erasure-cert` checks the
+  certificate's signature as it always has.
+
+**An entry this build cannot recompute is refused, not passed.** An `AUDIT_ENTRY` with an action this
+build has no domain for, a `fact_appended` entry (the runtime leaves it uncovered too), or a chained link
+of a kind it does not model is **uncovered**: its content was never checked. Spec (b′) refuses it under
+`--issuer`, and so does this build, in the library as well as the CLI and `bundle`:
+
+```
+REFUSED (--issuer)
+
+UNCOVERED ENTRY — 1 chained entry carries an action or kind this build cannot recompute, so its content is unverified, and --issuer refuses to report a green chain over content it never checked (spec (b′): uncovered is REFUSED under --issuer). A rewritten entry relabelled to an unknown action would otherwise verify. A newer producer needs a newer seam-verify.
+  seq 7, tenant "acme", kind "AUDIT_ENTRY", action "hold_extended"
+  (`chain --issuer <AID> --allow-uncovered` prints a diagnostic report of them; it still exits 2)
+```
+
+(That is `entry_domains.jsonl` with one `hold_placed` relabelled `hold_extended`. Plain `chain` still
+passes it, with `unverified content: 0`: the link hashes and the kind is modelled.) `--strict` does not
+change this, and one uncovered entry in any tenant refuses the whole call.
+
+**`--allow-uncovered` is a diagnosis, never a pass.** It is accepted only on `chain`, only with
+`--issuer`, and never with `--json` (each is a usage error, exit 1). On the same stream it prints the full
+report under a banner that says neither VERIFIED nor AUTHENTICATED, lists each uncovered entry, and **still
+exits 2**:
+
+```
+AUTHENTICITY NOT ESTABLISHED: 1 uncovered chained entry (--allow-uncovered diagnostic report)
+  events            : 25
+  links checked     : 0 (top-level — N/A across 3 tenants, see below)
+  advisory (skipped): 0
+  unverified content: 0 (every link's kind is modelled by this build)
+  entries recomputed: 18 (audit, attestation and erasure entry digests)
+  uncovered         : 1
+    seq 7, tenant "acme", kind "AUDIT_ENTRY", action "hold_extended"
+  tenants           : 3
+    "": links 2, head ed218495295782755877f245fd62fde9881ed93258439ba9e68c8c26fc4f3aaf
+      attestations 1 (issuer-signed), covered prefix 1 links, records recomputed 0, entries recomputed 2, uncovered 0
+    "acme": links 19, head f1a9f53f8b5ed5c6d2ac43b080bbc603a88da339651c49d3c0f716948022faab
+      attestations 1 (issuer-signed), covered prefix 18 links, records recomputed 5, entries recomputed 13, uncovered 1
+    "beta": links 4, head 4d970cd71e545b68637f3a7bfdcc28d1dabe254ebe3e2e7aeca520aef0421f0c
+      attestations 1 (issuer-signed), covered prefix 3 links, records recomputed 1, entries recomputed 3, uncovered 0
+```
+
+Over a stream with nothing uncovered the flag changes nothing: normal banner, exit 0. **This differs from
+the runtime's verifier**, whose `--allow-uncovered` prints its AUTHENTICATED banner and exits 0 over an
+uncovered entry. That is a green claim over content nobody checked, which spec §Versioning forbids
+(seam-runtime#1561); here exit 0 means verified and nothing else (D-042). The `--json` shape is unchanged:
+no `entries recomputed` or `uncovered` keys, and a rewrite or uncovered entry arrives as
+`{"verified":false,"error":…}`, exit 2.
+
+**Three more places this build and the runtime's verifier differ**, all on purpose (D-042):
+
+* **Unchained seals.** A `DECISION_SEALED` with no chain fields whose `schema_version` is not 4, or that
+  lacks `ciphertext_digest`, is refused here under `--issuer` (exit 2). The runtime's verifier skips it: it
+  checks only events carrying a payload, a digest and a checksum. Spec clause (c) and §Versioning refuse
+  such a record with no link qualifier.
+* **The first defect named.** This build recomputes every entry before it checks any attestation; the
+  runtime does both per event, in sequence order. On a stream with an attestation defect at seq 3 and a
+  rewritten entry at seq 9, the runtime names the attestation and this build names the `ENTRY REWRITE`.
+  Both exit 2, and on a single-defect stream they agree.
+* **Library placement.** The uncovered refusal lives in the library, so an embedder and `bundle` get it
+  too; the runtime refuses in its CLI only. An embedder can opt into the diagnostic with
+  `AuthOptions::allow_uncovered`, and the `Ok` it gets back is a report, not an authentication.
+
+**No `chain --bridge`.** The runtime's verifier has a bridge mode (verifying a tenant's chain across a cell move), with
+A4 obligations of its own. This crate has no bridge mode, so there is nothing for them to attach to;
+porting it is a separate feature, out of scope here.
 
 The pin is load-bearing for exactly the reason it is on the erasure certificate (below): deriving the key
 from the chain's own attestation would let a forgery verify against its forger. `--issuer` is strictly
@@ -184,17 +299,26 @@ of it — a transport has a retention horizon, or an evidence bundle is delibera
 seam-verify chain window.jsonl --issuer <AID> --from-anchor anchor.json
 ```
 
+Over the runtime-produced window in `tests/goldens/`:
+
+```
+seam-verify chain tests/goldens/entry_domains.window.jsonl --issuer aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw --from-anchor tests/goldens/entry_domains.anchor.json
+```
+
 ```
 WINDOW AUTHENTICATED (issuer-anchored start)
-  events            : 42
-  links checked     : 42
+  events            : 4
+  links checked     : 4
+  advisory (skipped): 0
   unverified content: 0 (every link's kind is modelled by this build)
   attestations      : 2 (issuer-signed)
-  covered prefix    : 793 links
-  records recomputed: 41 (v4 record-digest recompute)
-  anchored start    : base_len 750 / base_head 9f2c…
+  covered prefix    : 5 links
+  records recomputed: 2 (v4 record-digest recompute)
+  anchored start    : base_len 2 / base_head d87a7ef9f47d5040ae7bef93f4df00879d0b4a890ffb675cba9f63e47029a914
   covering (len > base_len): 1 (these satisfy spec clause (f4))
-  head              : a01d…
+  entries recomputed: 2 (audit, attestation and erasure entry digests)
+  uncovered         : 0
+  head              : 8930c13a371a3e4bbe79bcababd4ba85c4f3014ad321d790c894d40a3a185442
 ```
 
 `anchor.json` is one `CHAIN_HEAD_ATTESTATION` — either a bare anchor object (byte-for-byte one element
@@ -329,6 +453,12 @@ Stated plainly, because a verifier that oversells itself is worse than none:
   participation list is always withheld. A v1 verifier also does not check a disclosure file the v1 spec
   does not define; an unknown `format` is refused.
 * **It cannot verify pre-cutover history** (see `--strict` above). It will say so rather than pretend.
+* **It cannot tell a newer entry domain from a rewrite.** No entry domain is carried on the wire, and the
+  runtime plans no discriminator. If the runtime ever bumps one (a `seam.audit.chain-attest-entry.v2`, say),
+  its entries will not recompute under this build's domain and are refused as `ENTRY REWRITE`, not as
+  uncovered. The refusal is still correct (nothing green is claimed), but its wording is wrong for that
+  case. If a stream from a newer runtime reads as `ENTRY REWRITE` on every entry of one kind, try a newer
+  `seam-verify` before concluding it was tampered with.
 
 ---
 
@@ -340,7 +470,7 @@ Stated plainly, because a verifier that oversells itself is worse than none:
 | `docs/erasure-certificate.v1.md` | the certificate signing framing — **normative** |
 | `docs/evidence-bundle.v1.md` | the evidence bundle and its binding framing — **normative**, a verbatim pinned copy of the runtime's spec (see Drift) |
 | `docs/audit-anchor.md` | the out-of-band anchor |
-| `proto/seam/event/v1/seam_event.proto` | the canonical protobuf schema |
+| `proto/seam/event/v1/seam_event.proto` | the canonical protobuf schema, a byte-verbatim copy of seam-runtime `crates/seam-api/proto/seam/event/v1/seam_event.proto` @ `37576658` (it has no header to carry a pin, so the commit is recorded here; not checked by `check_vendored_spec.py`) |
 | `fixtures/erasure_certificate_vector.json` | a real signed certificate to check against |
 | `fixtures/evidence-bundle/` | four real bundles from the runtime's exporter (byte-exact: `.gitattributes` keeps git off them) |
 | `src/` | the reference implementation |

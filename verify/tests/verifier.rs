@@ -443,7 +443,7 @@ fn an_unmodelled_kind_is_verified_as_a_link_but_disclosed_as_unverified_content(
     );
     assert!(
         !out.contains("AUDIT_ENTRY"),
-        "AUDIT_ENTRY is CHAINED and MODELLED and never recomputed. Reporting it as unverified content \
+        "AUDIT_ENTRY is CHAINED and MODELLED; plain `chain` does not recompute it (only --issuer does). Reporting it as unverified content \
          would make the number mean 'links we did not recompute' instead of 'links we could not \
          parse' — and on a healthy stream the first is always non-zero, so the disclosure would be \
          noise a reader learns to ignore:\n{out}"

@@ -623,7 +623,7 @@ pub struct IssuerReport {
     ///
     /// **Always empty in an `Ok` from the default entry points** ([`verify_authenticity`],
     /// [`verify_authenticity_anchored`], [`verify_authenticity_by_tenant`]): they REFUSE an uncovered
-    /// entry (spec `:291`, "uncovered and REFUSED under `--issuer`"). It is non-empty only when the
+    /// entry (spec `:293`, "uncovered and REFUSED under `--issuer`"). It is non-empty only when the
     /// caller opted in with [`AuthOptions::allow_uncovered`], and such a report is **not an
     /// authentication**: the content of these links was never checked, and spec §Versioning forbids
     /// folding them into a green claim. The CLI maps it to exit 2.
@@ -668,7 +668,7 @@ impl AuthOptions {
 /// parsing its prose.
 pub const UNCOVERED_ENTRY: &str = "UNCOVERED ENTRY";
 
-/// The uncovered-entry refusal (spec `:291`): `entries` are every uncovered link in the call, in the
+/// The uncovered-entry refusal (spec `:293`): `entries` are every uncovered link in the call, in the
 /// order they were found. Lists each one, so the refusal itself is the diagnosis.
 fn uncovered_refusal<'a>(entries: impl IntoIterator<Item = &'a Uncovered>) -> String {
     let entries: Vec<&Uncovered> = entries.into_iter().collect();
@@ -932,7 +932,7 @@ pub fn record_digest_v4(d: &Decision) -> Result<[u8; 32], String> {
 ///
 /// Each chained non-`DECISION_SEALED` link is recomputed from its own fields (an `ENTRY REWRITE` on a
 /// mismatch). A link this build has no preimage for (an unknown action, `fact_appended`, an unknown
-/// kind) is **uncovered**, and an uncovered link is REFUSED (spec `:291`) with an error starting
+/// kind) is **uncovered**, and an uncovered link is REFUSED (spec `:293`) with an error starting
 /// [`UNCOVERED_ENTRY`] that lists each one. That refusal comes last, after every attestation check and
 /// the coverage check, so an attestation failure takes precedence over it (the runtime's order). Use
 /// [`verify_authenticity_anchored_with`] and [`AuthOptions::allow_uncovered`] to get a diagnostic
@@ -1276,7 +1276,7 @@ pub fn verify_authenticity_anchored_with(
              ever signed."
         ));
     }
-    // Spec `:291`: an uncovered chained entry is REFUSED under `--issuer`. Last, after the attestation
+    // Spec `:293`: an uncovered chained entry is REFUSED under `--issuer`. Last, after the attestation
     // and coverage checks, which keeps the runtime's precedence.
     if !uncovered.is_empty() && !opts.allow_uncovered {
         return Err(uncovered_refusal(&uncovered));

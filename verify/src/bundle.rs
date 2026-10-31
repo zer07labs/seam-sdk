@@ -505,7 +505,7 @@ fn check_window(dir: &Path, pinned: &str) -> Result<Window, BundleError> {
             report.unverifiable[0]
         )));
     }
-    // The strict default: an uncovered chained entry is refused here (spec `:291`). A bundle never
+    // The strict default: an uncovered chained entry is refused here (spec `:293`). A bundle never
     // opts into `AuthOptions::allow_uncovered`, so its green is never over unrecomputed content.
     let issuer = verify::verify_authenticity_anchored(
         &events,

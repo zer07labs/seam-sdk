@@ -607,7 +607,7 @@ fn only(rows: Vec<Value>, tenant: &str) -> Vec<Value> {
 
 const SEQ6: &str = r#"seq 6, tenant "acme", kind "AUDIT_ENTRY", action "party_registered_v2""#;
 
-/// `--issuer` refuses an uncovered entry (spec `:291`), with or without `--strict`, and under `--json` it
+/// `--issuer` refuses an uncovered entry (spec `:293`), with or without `--strict`, and under `--json` it
 /// is a `"verified":false` naming "cannot recompute". Plain `chain` (integrity) does not refuse it.
 fn assert_uncovered_refused(name: &str, rows: &[Value], names: &str) {
     let (code, out) = run(&format!("{name}-plain"), rows, &[]);
@@ -1040,4 +1040,46 @@ fn the_vendored_spec_does_not_yet_carry_the_entry_tables() {
         "the vendored spec now carries the (b′) tables: retire the D-043 carve-out and re-derive \
          `entry.rs` from the spec"
     );
+}
+
+// ---- the README shows what the binary prints -------------------------------------------------------
+
+/// `README.md` shows the `--issuer` report over `entry_domains.jsonl`, genuine and with one action
+/// relabelled under `--allow-uncovered`. Every stdout line of those two runs must appear in it verbatim,
+/// so the `entries recomputed` / `uncovered` lines and the `AUTHENTICITY NOT ESTABLISHED` banner cannot
+/// drift from `main.rs` silently (the precedent is `python/tests/test_event_field_manifest_gate.py`
+/// pinning CLAUDE.md prose to the gate's behaviour).
+#[test]
+fn the_readme_shows_the_issuer_report_the_binary_prints() {
+    let readme = std::fs::read_to_string(format!("{}/README.md", env!("CARGO_MANIFEST_DIR")))
+        .expect("README.md must exist");
+    let relabelled = mutated(7, |r| r["audit_entry"]["action"] = "hold_extended".into());
+    for (name, rows, args) in [
+        ("readme-genuine", stream(), vec!["--issuer", ENTRY_ISSUER]),
+        (
+            "readme-diagnostic",
+            relabelled,
+            vec!["--issuer", ENTRY_ISSUER, "--allow-uncovered"],
+        ),
+    ] {
+        let path =
+            std::env::temp_dir().join(format!("entry-rc-{name}-{}.jsonl", std::process::id()));
+        std::fs::write(&path, body(&rows)).unwrap();
+        let mut a = vec!["chain", path.to_str().unwrap()];
+        a.extend_from_slice(&args);
+        let out = Command::new(env!("CARGO_BIN_EXE_seam-verify"))
+            .args(&a)
+            .output()
+            .expect("run seam-verify");
+        let _ = std::fs::remove_file(&path);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("entries recomputed:"), "{name}:\n{stdout}");
+        for line in stdout.lines() {
+            assert!(
+                readme.lines().any(|l| l == line),
+                "{name}: README.md does not show this line of the real output; re-run the README's \
+                 command and update its block:\n{line}"
+            );
+        }
+    }
 }

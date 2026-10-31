@@ -22,6 +22,26 @@ than trusting a summary here.
   or the chain anchor carrying `digest`/`checksum` (`KIND/PAYLOAD MISMATCH`, `ADVISORY EVENT WITH CHAIN
   FIELDS`) under `chain` and `bundle`, as the runtime's verifier does. Genuine streams and the shipped evidence bundles are
   unaffected. Reaches users with the next `seam-verify` publish.
+- **`seam-verify` 0.5.0: entry recompute under `--issuer` (seam-sdk#316; runtime 0.67.0, code-health A4,
+  spec clause (b′)).** Every chained `AUDIT_ENTRY` now recomputes under the domain its action selects, and
+  every `CHAIN_HEAD_ATTESTATION` and `ERASURE_CERTIFICATE` under its own framing; the envelope
+  classification is bound to the action or kind. A mismatch is refused as `ENTRY REWRITE` (exit 2). The
+  human report gains `entries recomputed` and `uncovered` lines; the `--json` shape is unchanged. The
+  preimages are transcribed from the runtime until its spec carries them (`verify/DECISIONS.md` D-043,
+  seam-runtime#1561).
+- **`seam-verify` 0.5.0: an uncovered entry is refused under `--issuer`.** An entry this build cannot
+  recompute (an unknown action, `fact_appended`, a chained link of an unknown kind) is refused, in the
+  library, the CLI and `bundle`. A stream from a newer runtime may therefore need a newer `seam-verify`.
+- **`seam-verify` 0.5.0: `--allow-uncovered` (chain only, with `--issuer`, not with `--json`)** prints the
+  full report with each uncovered entry under `AUTHENTICITY NOT ESTABLISHED: …` and **exits 2**. Unlike the
+  runtime's verifier, it never reports green over content it did not check (D-042).
+- **BREAKING (verifier library): `IssuerReport` gains public `entries_recomputed` and `uncovered` fields**,
+  so code that constructs it no longer compiles, and `verify_authenticity*` now returns `Err` over an
+  uncovered entry. The opt-in is `AuthOptions::allow_uncovered` on the new `_with` entry points; an `Ok`
+  reached that way with a non-empty `uncovered` is a diagnostic report, not an authentication. Hence the
+  crate's 0.4.0 → 0.5.0. Publishing is a manual `publish-verify` dispatch.
+- **`verify/proto/seam/event/v1/seam_event.proto` re-vendored** byte-verbatim from seam-runtime
+  `37576658`. The old copy lacked tags 24–27, which the verifier already decoded.
 
 ## 0.68.0 — 2026-10-31
 

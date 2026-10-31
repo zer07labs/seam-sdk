@@ -1,263 +1,253 @@
-// THE canonical `seam-event.v1` wire schema — the outbox contract.
+// seam.event.v1 — the CANONICAL seam-event.v1 wire schema.
 //
-// This is the schema an external consumer decodes, and the one a third party needs in order to verify
-// Seam's audit chain without trusting Seam. The normative prose is `docs/seam-event.v1.md`, alongside;
-// the reference verifier that reads these bytes is this crate.
+// This is the single source of truth for the seam-event.v1 outbox/relay event format: every message and
+// field tag here is byte-identical to the hand-written `seam_store::event::canonical::SeamEventPb` (the
+// encoder `SeamEvent::to_bytes` emits, and the raw outbox + gRPC `StreamEvents` carry). It was extracted
+// out of `seam.api.v1` so consumers that want ONLY the event schema (e.g. seam-learning's protobuf codec)
+// can generate from it without pulling the whole transport contract; `seam.api.v1` now IMPORTS this file
+// and reuses `SeamEvent` (for `StreamEvents`), `ErasureCertificate` (for `SeamAdmin.EraseSubject`) and
+// `ChainHeadAttestation` (for `SeamTrust.VerifyPartyAttestation`).
 //
-// RULES FOR CHANGING THIS FILE:
-//   * Tags are the wire contract. Never renumber, never reuse, never retype.
-//   * Additive-only within v1: a new field takes the next free tag and MUST be `optional` or `repeated`,
-//     so existing encoders produce byte-identical output when it is absent.
-//   * A breaking change is not a change here — it is `seam-event.v2` plus a dual-emit window
-//     (spec §Versioning).
+// WIRE CONTRACT: the field tags are load-bearing (the audit hash-chain digests, the SDK verifiers, and the
+// learning codec all decode by tag). Tags are frozen; `docs/specs/seam-event.v1.md` is the prose spec and
+// `crates/seam-store/tests/pb_byte_golden.rs` is the byte oracle. A tag renumber is a breaking wire change.
 //
-// Presence mapping (why some fields are `optional` and others are not):
-//   proto3 `optional string`  -> explicit presence
-//   proto3 `string`           -> implicit presence (no tag emitted for the default value)
-//   message field             -> presence is native
-//   `repeated double`         -> packed, the proto3 default
-// Getting this wrong changes the bytes on the wire.
-
+// CONVENTIONS (R4 — keep this file, the hand-written `seam_store::event::canonical::SeamEventPb`, and the
+// seam-connectors contract copy convergent):
+//   - `optional` is used ONLY on scalar fields (string/bytes/double, and `tenant_seq` uint64 — 0 is a valid
+//     value there and absence means "predates the counter") that need presence. MESSAGE-typed
+//     fields are ALWAYS presence-tracked in proto3 (prost emits `Option<M>` regardless), so `optional` on a
+//     message field is redundant and is NOT written here.
+//   - `DecisionSealed` cardinality is DERIVED, not stylistic: a scalar is `optional` iff its
+//     record-digest slot is `opt(...)` AND the empty value is inside its value domain (tags 4/5/7 —
+//     absence and `""` are different preimages, so they must not alias on the wire). Everything else is
+//     singular — in particular the four digest slots (tags 10-13), whose domain is {absent} u
+//     {32 bytes}: singular makes present-but-empty UNREPRESENTABLE by a conforming encoder (proto3
+//     emits no bytes for a singular scalar at its default), and `len == 0` is then DEFINED to mean
+//     absent (spec, "Presence on the wire"). Flipping one to `optional` is wire-compatible (this repo's
+//     `buf.yaml` runs WIRE_JSON, which permits it) but SEMANTICALLY BREAKING: a zero-length tag would
+//     frame as `opt(None)` to a consumer testing emptiness and `opt(Some(b""))` to one testing
+//     generated presence — two digests from identical bytes. Per-tag cardinality is pinned in
+//     `fixtures/seam_event_descriptor.json` so the flip cannot be quiet. The rule is DecisionSealed's,
+//     not the package's: `SeamEvent` declares `digest`/`checksum` (19/20) `optional` yet
+//     `prev_checksum` (12) singular (empty there is itself a value — "not chained"); the spec section
+//     gives the local reasons.
+//   - Message type names are canonical HERE (this package owns seam.event.v1). The tag→field mapping is
+//     pinned against the hand-written `SeamEventPb` by `seam-store`'s `event_schema_matches_hand_written_pb`
+//     drift guard; a divergent consumer copy (e.g. connectors' `AuditEntry` vs this `AuditEntryEvent`) must
+//     converge to these names.
 syntax = "proto3";
 
 package seam.event.v1;
 
-option go_package = "github.com/zer07labs/seam-sdk/gen/seam/event/v1;eventv1";
-option java_multiple_files = true;
-option java_package = "com.zer07labs.seam.event.v1";
-
-// The `seam-event.v1` envelope — one outbox row.
-//
-// Exactly one payload field is set, selected by `kind`:
-//   DECISION_SEALED        -> payload                 (tag 13, CHAINED)
-//   LEARNING_DECISION      -> learning_decision       (tag 14, advisory/unchained)
-//   LEARNING_OUTCOME       -> learning_outcome        (tag 15, advisory/unchained)
-//   AUDIT_ENTRY            -> audit_entry              (tag 16, CHAINED)
-//   BUDGET_BREACH          -> budget_breach            (tag 17, advisory/unchained)
-//   ERASURE_CERTIFICATE    -> erasure_certificate      (tag 18, CHAINED, signed)
-//   SESSION_LIFECYCLE      -> session_lifecycle        (tag 21, advisory/unchained; CP-09)
-//   CHAIN_HEAD_ATTESTATION -> chain_head_attestation   (tag 22, CHAINED, signed; A14)
-//   AUTHORIZE_EVALUATED    -> authorize_evaluated      (tag 23, advisory/unchained)
-//
-// SESSION_LIFECYCLE (CP-09) was revived at its long-reserved tag 21 WITH its producer (the runtime emits
-// `phase: "opened"` on interactive opens); it is advisory (carries no digest/checksum) and this verifier
-// treats it as such (by field presence, not kind). CHAIN_HEAD_ATTESTATION (A14) is the issuer-signed
-// `(len, head)` at tag 22 — itself CHAINED, and additionally verified under `seam-verify chain --issuer`.
-// See DECISIONS.md D-002 (tag 21 reservation).
-message SeamEvent {
-  // Always "seam-event.v1". A consumer that sees anything else DLQs the event tagged
-  // `unknown-schema` — it never crashes and never guesses.
-  string schema_version = 1;
-
-  // Unique + stable per event. THE idempotency key: every sink write is idempotent by this, or
-  // dedups on it before the sink.
-  string event_id = 2;
-
-  // Monotonic over the runtime's single ordered outbox. The ordering key, and the unit `replay_from`
-  // rewinds to.
-  uint64 seq = 3;
-
-  // Millis. Injected at emit — never a wall-clock read on the binding path.
-  uint64 occurred_at = 4;
-
-  string tenant = 5;
-  string namespace = 6;
-
-  // The classification label driving per-consumer redaction. Vocabulary (ascending sensitivity):
-  // Public < Internal < Confidential < Financial < Pii < Phi. An unknown label is fail-closed
-  // everywhere (a manifest naming one is refused; an event carrying one is DLQ'd, never passed on).
-  string classification = 7;
-
-  // The kind discriminator. A *string*, not an enum, precisely so an unknown kind decodes cleanly
-  // and is ignored rather than erroring (tolerant reader, spec §Versioning).
-  string kind = 8;
-
-  optional string session_id = 9;
-  optional string decision_id = 10;
-
-  // Per-event cost signal (R11 — observability, never a record field).
-  uint64 cost_micros = 11;
-
-  // The hash-chain link. Set on the CHAINED kinds (DECISION_SEALED, AUDIT_ENTRY,
-  // ERASURE_CERTIFICATE); EMPTY on the advisory kinds (LEARNING_*, BUDGET_BREACH).
-  //
-  // The chain is global over the *unfiltered* stream. A kind-filtered subscription therefore gets
-  // at-least-once + dedup but NOT the completeness proof — which is why every SDK refuses
-  // `verify_chain` on a filtered subscription rather than silently reporting a false gap.
-  bytes prev_checksum = 12;
-
-  // The DECISION_SEALED payload — structural columns only, never the encrypted commitment
-  // plaintext. The stream never carries openable secrets.
-  //
-  // Message-typed fields are NOT marked `optional`: in proto3 they already carry explicit presence
-  // natively (`optional` would only wrap them in a redundant synthetic oneof). This mirrors prost's
-  // `Option<Message>` exactly. The scalar `optional`s above (tags 9/10) DO need the keyword.
-  DecisionSealed payload = 13;
-
-  LearningDecision learning_decision = 14;
-  LearningOutcome learning_outcome = 15;
-  AuditEntry audit_entry = 16;
-  BudgetBreach budget_breach = 17;
-  ErasureCertificate erasure_certificate = 18;
-
-  // ── 19/20: the chain-verifiability fix, now SHIPPED (docs/upstream/UPSTREAM-001) ──
-  //
-  // The chain link is `checksum = H(prev || digest)` over the sealed-record digest. Previously the digest
-  // was NOT on the wire, so a consumer held `prev_checksum` and could never recompute a single link, and
-  // every SDK's `verify_chain` shipped the weaker, honest check (seq contiguity + genesis + non-reverting
-  // head). These two additive fields carry this entry's own digest and resulting checksum, so a consumer
-  // now verifies the full chain from the stream alone: for each chained event in seq order, assert
-  // `prev_checksum == running_head` and `checksum == H(prev_checksum || digest)`, then advance the head.
-  //
-  // Set on the CHAINED kinds ONLY (DECISION_SEALED / AUDIT_ENTRY / ERASURE_CERTIFICATE); absent on the
-  // advisory kinds (as `prev_checksum` is empty for them). Purely additive — an encoder that omits them
-  // produces byte-identical output, so no lockstep upgrade.
-  //
-  // NOTE: events written BEFORE these fields were added carry neither, and are therefore indistinguishable
-  // from advisory (unchained) events to a verifier reading bytes. See the spec's warning — a verifier MUST
-  // disclose how many such events it skipped, or refuse the stream. Reporting a green chain over history
-  // it never checked is the one thing it must not do.
-  optional bytes digest = 19;    // this entry's record/action digest
-  optional bytes checksum = 20;  // = H(prev_checksum || digest); the head this entry produces
-
-  // ── 21/22: the CP-09 revival + A14 authenticity root ──
-  //
-  // 21 — SESSION_LIFECYCLE (advisory, unchained): a session transition ("opened" today). Carries no
-  // digest/checksum; a verifier keys chained-ness on field presence, so this never advances the head.
-  // 22 — CHAIN_HEAD_ATTESTATION (CHAINED, signed): the issuer-signed audit-chain `(len, head)`. It IS a
-  // link (carries digest/checksum) AND is separately verified under `--issuer` — every attestation must
-  // check against the pinned issuer key and sit at the head it attests, closing the fabricated-chain gap
-  // (an unkeyed SHA-256 chain over a public genesis is otherwise rebuildable by a transport-level forger).
-  optional SessionLifecycle session_lifecycle = 21;
-  optional ChainHeadAttestation chain_head_attestation = 22;
-
-  // ── 23: the advisory AUTHORIZE_EVALUATED payload ──
-  //
-  // One row per `SeamAuthorization.Authorize` evaluation (spec §AUTHORIZE_EVALUATED). ADVISORY,
-  // unchained: the authorize path seals nothing — no decision record, no DEK, no chain append — so the
-  // event carries no digest/checksum and an empty prev_checksum, and never advances the head. Additive:
-  // absent on every other kind, so existing events' bytes are unchanged.
-  optional AuthorizeEvaluated authorize_evaluated = 23;
-}
-
-// AUTHORIZE_EVALUATED payload (envelope tag 23) — ADVISORY, unchained. The audit row for one advisory
-// authorization; `authorize_id` (a ULID) is its handle, never a `decision_id` (nothing was sealed).
-//
-// PII rule: the end-user data subject rides ONLY as `subject_digest`, never raw — an outbox row is
-// un-shredable, so a raw end-user id here would be an un-erasable copy of it. Since seam-runtime#484 both
-// digest fields are KEYED COMMITMENTS, `hmac-sha256:<kid>:<hex>` over `put(domain) ‖ put(tenant) ‖
-// put(value)`, not bare hashes: an end-user id has a small enumerable preimage space, so a bare
-// `sha256(subject)` let anyone holding the row confirm a guess at the identifier. They stay
-// correlation-preserving WITHIN one `<kid>` — joins and dedup are unchanged — but recompute now needs the
-// per-deployment key, so an operator holding it can still correlate and a row-holder cannot. Rows written
-// before the cutover keep the old bare hashes, are never backfilled, remain brute-forceable, and DO NOT
-// join to rows written after it. Where the issuer seed is public (`SEAM_DEV_INSECURE`) so is the derived
-// key, and these fields conceal nothing. The normative prose is `docs/seam-event.v1.md` §AUTHORIZE_EVALUATED.
-//
-// This verifier reads both fields as OPAQUE strings (they feed the dedup identity and nothing else) and
-// never parses the prefix, so the change is documentation truth here rather than behaviour.
-message AuthorizeEvaluated {
-  string authorize_id = 1;                // ULID — the handle returned to the caller
-  optional string client_request_id = 2;  // the caller's idempotent audit-join key, when supplied
-  string agent_aid = 3;                   // the VERIFIED caller AID (derived, never asserted)
-  string agent_id = 4;                    // the registry identity the scope floor was evaluated against
-  string tool_name = 5;
-  string tool_input_digest = 6;           // "hmac-sha256:<kid>:<hex>" — a KEYED commitment, NOT the
-                                          // request-side digest and never equal to it
-  string verdict = 7;                     // "ALLOW" | "DENY" | "TRANSFORM" | "ESCALATE"
-  string reason = 8;                      // closed-set / operator-authored only (D-030)
-  string policy_version = 9;
-  optional string subject_digest = 10;    // "hmac-sha256:<kid>:<hex>" — NEVER the raw subject
-}
-
-// SESSION_LIFECYCLE payload (envelope tag 21) — ADVISORY, unchained (CP-09). Operational metadata only:
-// no subject, secret, or agent content. Consumers MUST tolerate unknown `phase` values (additive vocab).
-message SessionLifecycle {
-  string phase = 1;           // "opened" today
-  string mode = 2;
-  string policy_version = 3;
-  uint64 opened_at_millis = 4;
-}
-
-// CHAIN_HEAD_ATTESTATION payload (envelope tag 22) — CHAINED and SIGNED (A14).
-//
-// Ed25519 over SHA256 of the domain-separated `seam.audit.chain-head-attestation.v1` framing, by the
-// runtime ISSUER key (the same key as the TCT + erasure cert). `seam-verify chain --issuer <AID>` verifies
-// every attestation against the PINNED issuer AID and asserts `attested_head` is the running head after
-// `attested_len` links; a stream carrying none is refused.
-message ChainHeadAttestation {
-  uint64 attested_len = 1;    // 1-based head position = number of chained links covered
-  bytes attested_head = 2;    // the checksum at position attested_len (32 bytes)
-  uint64 attested_at = 3;
-  string issuer_aid = 4;
-  // CEILING, not a description, and it selects nothing (spec §Chain-head attestation). Since B3 a
-  // chain is mixed — v2 and v3 records interleave — so no scalar can name "the" formula in use.
-  // This asserts every record in the attested prefix has `schema_version <= digest_schema`, which
-  // is why old attestations stay true and are never re-signed: a ceiling only rises.
-  // A verifier MUST NOT read it to choose a formula; src/verify.rs dispatches per record on the
-  // record's own `schema_version`. Its job is about the SIGNED artifact — an attestation goes to an
-  // external notary, so stamping v3 while signing `digest_schema = 2` would issue, under the issuer
-  // key, exactly the downgrade claim this field exists to prevent.
-  uint32 digest_schema = 5;   // 2 = A14 v2, 3 = B3 v3; bound into the signature (downgrade guard)
-  bytes signature = 6;
-  // The attesting tenant (U-RT-3 Phase 2); "" for the system partition. Selects the signed framing
-  // (seam-runtime #835 step 4): non-empty ⇒ v2 only, which signs it; "" ⇒ v1 only. A verifier also
-  // requires it to EQUAL the envelope `tenant`.
-  string tenant = 7;
-}
-
-// DECISION_SEALED payload (envelope tag 13). Structural columns of the DecisionRecord.
+// The DECISION_SEALED payload. Tags mirror `seam-event.v1` `DecisionSealedPb` exactly.
 message DecisionSealed {
   string decision_id = 1;
   string tenant = 2;
   string namespace = 3;
   optional string mode = 4;
+  // The policy the binding named, as governance STAGED it — NOT "ran under". A populated value is
+  // not on its own evidence that the named policy's rules evaluated this commitment: a namespace
+  // governed to an id the loaded registry does not carry seals fail-open with this field set and
+  // nothing bound. For what actually bound, read `policy_rules_digest` (tag 13) on this same
+  // message. Mirrors the identically named field on `seam.api.v1.DecisionResponse` (#561).
   optional string policy_version = 5;
   string outcome = 6;
   optional string supersedes = 7;
   uint64 sealed_at = 8;
   uint32 schema_version = 9;
-  // tag 10 (A14) — SHA256(ciphertext). MANDATORY on v2 (schema_version >= 2), absent on v1. The one input
-  // to the record digest a stream consumer does not otherwise hold: with it, a consumer recomputes
-  // digest-v2 (§Record digest) and compares to `digest` (tag 19) to catch a payload rewrite. A v2 record
-  // missing it is a strip/downgrade — `seam-verify chain --issuer` REFUSES it.
+  // `SHA256(ciphertext)` — the one record-digest input a stream consumer does not otherwise hold.
+  // MANDATORY (`schema_version == 4`, the only version); a payload missing it is a strip and a strict
+  // verifier REFUSES it. Mirrors `DecisionSealedPb.ciphertext_digest` (tag 10).
   bytes ciphertext_digest = 10;
-  // tags 11/12/13 (B3) — the three columns carrying the decision's actual claims, each a 32-byte
-  // sub-digest. They are OPAQUE to a consumer: the record-digest v3 formula takes them as inputs and
-  // never re-derives them, so recomputation needs no access to the context or participation data
-  // itself (which is the point — `participation[].subject` is the GDPR erasure predicate, and
-  // publishing subjects on an append-only outbox would make erasure unenforceable at the sink).
-  //
-  // These are SINGULAR, not `optional`, and this copy said the opposite until seam-runtime#435 settled
-  // it. The argument for `optional` — that presence is what separates "no participants" from "field
-  // deleted" — was put to the runtime and REJECTED, for a better reason than the one it proposed: a
-  // digest slot's value domain is {absent} ∪ {exactly 32 bytes}, and a singular field makes the
-  // out-of-domain empty value UNREPRESENTABLE by a conforming encoder, because proto3 emits no bytes
-  // for a singular scalar at its default. Declaring these `optional` would make `Some(b"")` encodable
-  // and meaningless — and a representable-but-meaningless value is one some implementation eventually
-  // produces. Absent vs present is still what drives the refusal; it is just carried by LENGTH.
-  //
-  // The consumer rule (spec §"Presence on the wire") is therefore a TOTAL mapping: on tags 10-13,
-  // `len == 0` means absent however the bytes arose — including an explicitly-encoded zero-length
-  // field, which proto3 obliges a decoder to accept even though a conforming producer never emits one.
-  // Tags 11/12 absent on schema_version = 3 is a strip and is REFUSED — never defaulted to an empty
-  // digest, never recomputed under the v2 formula. Tag 13 absent is legitimate and frames as opt(None).
-  //
-  // Tags 4/5/7 above are the genuine `optional` case, and the contrast is the whole rule: the empty
-  // string IS in their value domain, so `None` and `Some("")` are two preimages the wire must keep
-  // apart. The digest slots have no such second state to track.
-  //
-  // Flipping any of these to `optional` is a SEMANTIC break even though `buf breaking`'s WIRE_JSON
-  // ruleset permits it: afterwards a zero-length tag 13 frames as opt(None) for a consumer testing
-  // length and opt(Some(b"")) for one testing generated presence, and the two recompute different
-  // digests from identical bytes.
-  bytes context_digest = 11;        // MANDATORY on v3 — what context the decision consumed
-  bytes participation_digest = 12;  // MANDATORY on v3 — who participated
-  bytes policy_rules_digest = 13;   // OPTIONAL — absent (len == 0) means no policy was bound
+  // The two rolled-up sub-digests the v4 record digest frames, published so a stream consumer recomputes
+  // the digest from the wire alone. Rolled up rather than carrying the lists themselves:
+  // `participation[].subject` is the GDPR erasure predicate and must never leave the runtime on the
+  // outbox (spec §9 item 4). Both MANDATORY; a payload missing either is a strip attack and a strict
+  // verifier REFUSES it — reported distinctly from a digest mismatch. Mirror `DecisionSealedPb` tags 11/12.
+  bytes context_digest = 11;
+  bytes participation_digest = 12;
+  // `SHA256(JCS(policy_definition))` of the policy actually bound to the session. Genuinely OPTIONAL:
+  // absent means no policy was bound, so absence here is NOT a strip signal. A stripped tag 13 still
+  // fails closed — the recomputed digest simply won't match, since the preimage `opt`s this slot and
+  // `None` ≠ `Some(..)`. Mirrors `DecisionSealedPb.policy_rules_digest`.
+  // Declared singular, not `optional`, per the cardinality rule above: a consumer reads `len == 0` as
+  // `opt(None)`, and a present-but-empty digest is not a state a conforming producer can encode.
+  bytes policy_rules_digest = 13;
+  // §P7 (v4) — the record's data classification (`Classification` name, e.g. `Financial`), framed into
+  // the v4 record digest. MANDATORY; empty is a strip. Mirrors `DecisionSealedPb.classification` (14).
+  string classification = 14;
+  // §P7 (v4) — `SHA256(frame("seam.audit.participants.v4") ‖ le32 n ‖ frame(id)…)` over the sealed
+  // `participants`, in stored order. Rolled up: participant ids never leave the runtime on the outbox.
+  // MANDATORY (an empty roster still has a digest, n = 0). Mirrors `DecisionSealedPb.participants_digest`.
+  bytes participants_digest = 15;
+  // §P7 (v4) — the keyed trust-basis commitment, `hmac-sha256:<kid>:<hex>`, exactly as stored. Opaque:
+  // a consumer frames it, never re-derives it (the key is tenant-scoped and shreddable). MANDATORY.
+  // Mirrors `DecisionSealedPb.trust_basis_commitment` (tag 16).
+  string trust_basis_commitment = 16;
+  // §P7 (v4) — the closed-vocabulary authentication method (`aitp-pinned-handshake`, `aitp-tct`,
+  // `aitp-pinned`, or the sentinel `none`). MANDATORY. Mirrors `DecisionSealedPb.auth_method` (tag 17).
+  string auth_method = 17;
 }
 
-// The posterior-keying tuple, shared verbatim with the seam-learning engine so the runtime and the
-// engine agree on the arm key without a re-map (`docs/specs/learning-keys.md`).
+// A governance event. Tags mirror the canonical `seam-event.v1` `SeamEventPb` wire form EXACTLY so an
+// existing connector decodes either identically. At most one payload field (tags 13–18, 21–24, 26) is set,
+// keyed by `kind`; the rest are absent.
+message SeamEvent {
+  string schema_version = 1;
+  string event_id = 2;
+  uint64 seq = 3;
+  uint64 occurred_at = 4;
+  string tenant = 5;
+  string namespace = 6;
+  string classification = 7;
+  string kind = 8;
+  optional string session_id = 9;
+  optional string decision_id = 10;
+  uint64 cost_micros = 11;
+  bytes prev_checksum = 12;
+  DecisionSealed payload = 13;
+  // Additive governance/advisory payloads (tags 14–18), mirroring the canonical wire form so a
+  // gRPC stream consumer decodes the same bodies an HTTP `GET /v1/events` consumer sees.
+  LearningDecision learning_decision = 14;
+  LearningOutcome learning_outcome = 15;
+  AuditEntryEvent audit_entry = 16;
+  BudgetBreach budget_breach = 17;
+  ErasureCertificate erasure_certificate = 18;
+  // §A — the chain-verification fields, mirroring the canonical wire (tags 19/20). Present on the CHAINED
+  // kinds only (DECISION_SEALED / AUDIT_ENTRY / ERASURE_CERTIFICATE), so a gRPC `StreamEvents` consumer can
+  // recompute `checksum == H(prev_checksum ‖ digest)` from the stream alone — same guarantee the HTTP
+  // `GET /v1/events` and raw-outbox consumers get. (Must stay in lockstep with the canonical form: a gRPC
+  // consumer that only saw `prev_checksum` would be back in the pre-§A unverifiable state.)
+  optional bytes digest = 19;
+  optional bytes checksum = 20;
+  // CP-09 (tag 21) — the advisory SESSION_LIFECYCLE payload. A14 (tag 22) — the signed
+  // CHAIN_HEAD_ATTESTATION (a CHAINED kind; carries digest/checksum above). Both mirror the canonical
+  // `SeamEventPb` so a gRPC `StreamEvents` consumer decodes the same bodies the raw outbox emits.
+  SessionLifecycle session_lifecycle = 21;
+  ChainHeadAttestation chain_head_attestation = 22;
+  // The advisory AUTHORIZE_EVALUATED payload (tag 23) — one row per `SeamAuthorization.Authorize`
+  // evaluation. Additive: absent on every other kind, so existing events' bytes are unchanged.
+  AuthorizeEvaluated authorize_evaluated = 23;
+  // The advisory POLICY_DENIED payload (tag 24) — one row per commitment a bound policy REFUSED.
+  // Additive: absent on every other kind, so existing events' bytes are unchanged.
+  PolicyDenied policy_denied = 24;
+  // Per-tenant outbox counter (#973): gap-free per `tenant`, starting at 0, counting EVERY event of that tenant
+  // (chained and advisory). `optional` because 0 is a valid value and absence means "this event predates the
+  // counter": singular would alias them. Additive: absent on every event written before the producer change, so
+  // existing events' bytes — and every digest — are unchanged. UNSEALED: in no digest, checksum or signature, so
+  // it detects loss/duplication in the stream, not adversarial suppression (see CHAIN_HEAD_ATTESTATION). NOT the
+  // audit chain's `audit_entry.tenant_seq` (chained entries only) nor `GET /v1/audit` `chain_index`.
+  optional uint64 tenant_seq = 25;
+  // The advisory EVENT_REDRIVEN wrapper (tag 26, #1176) — an operator re-drove an existing outbox event
+  // by reference (`SeamEvents.RedriveEvents`). Additive: absent on every other kind, so existing events'
+  // bytes are unchanged.
+  EventRedriven event_redriven = 26;
+  // k8s P7 — the delivery stream (one per cell; today exactly one per deployment) this event was appended to:
+  // a lowercase DNS label of at most 32 chars, the producer's `SEAM_STREAM_ID`. `seq` is monotonic and
+  // gap-free WITHIN a stream_id, and `event_id` starts with `{stream_id}/`. MANDATORY on every event a
+  // producer at or above this field writes; absent only on events written before it (the history boundary).
+  // UNSEALED like `tenant_seq` (tag 25): in no digest, checksum or signature. A relay binds to one stream
+  // by `StreamEventsRequest.stream_id`, which is where a wrong-cell relay is refused.
+  string stream_id = 27;
+}
+
+// EVENT_REDRIVEN payload (advisory, UNCHAINED, tag 26; #1176) — DLQ retry option C. An operator named an
+// existing outbox event by its coordinates and the runtime re-emitted it: `event` is that outbox row's
+// seam-event.v1 bytes VERBATIM, read from the runtime's own outbox — never bytes a caller supplied, and
+// never re-encoded, so every digest/checksum/signature inside still verifies.
+//
+// A WRAPPER, not a re-append of the original row: a verbatim copy at a fresh offset would carry a `seq`
+// and (for a chained kind) a `prev_checksum` that no longer fit the stream, and a chain-verifying reader
+// would read it as a replay. The envelope therefore has its own fresh `seq`/`tenant_seq`/`event_id`
+// (`{original_event_id}#rd#{seq}`), copies the original's tenant/namespace/classification/session_id/
+// decision_id, and carries no chain fields. A consumer (the relay) that re-delivers the inner event
+// dedups on ITS `event_id`, so re-driving twice is harmless downstream.
+//
+// The three scalar fields copy what is inside `event` so a router can act without decoding it; a consumer
+// that needs certainty decodes `event`. Mirrors `EventRedrivenPb`.
+message EventRedriven {
+  bytes event = 1;               // the original outbox row, verbatim seam-event.v1 protobuf
+  string original_event_id = 2;  // the inner event's event_id (the consumers' dedup key)
+  uint64 original_seq = 3;       // the inner event's global outbox seq (a DLQ letter's `seq` header)
+  string original_kind = 4;      // the inner event's kind
+}
+
+// AUTHORIZE_EVALUATED payload (advisory, tag 23) — the audit row for one advisory authorization. Nothing
+// was sealed, so this event is the ONLY trace of the call; `authorize_id` is its handle (never a
+// `decision_id`). Mirrors `AuthorizeEvaluatedPb`.
+//
+// PII rule: the end-user data subject rides ONLY as `subject_digest`, never raw. An outbox row is
+// un-shredable (GDPR erasure walks decision *records*), so a raw end-user id here would be an
+// un-erasable copy. Since #484 both digest fields are KEYED COMMITMENTS —
+// `hmac-sha256:<kid>:<hex>` over `put(domain) ‖ put(tenant) ‖ put(value)` — not bare hashes: an
+// end-user id has a small enumerable preimage space, so a bare `sha256(subject)` let anyone holding
+// the row confirm a guess at the identifier. Commitments stay correlation-preserving WITHIN one
+// `<kid>`, so joins and dedup are unchanged; but recompute is no longer unilateral — it needs the
+// deployment key, so an operator with the key can still correlate and a row-holder cannot. An in-band
+// operator recompute facility is specified and is NOT built. Rows written before the cutover keep the
+// old bare hashes, are never backfilled, remain brute-forceable, and DO NOT join to rows written
+// after it. Where the issuer seed is public (SEAM_DEV_INSECURE) the derived key is public too and
+// these fields conceal nothing. See docs/specs/seam-event.v1.md.
+message AuthorizeEvaluated {
+  string authorize_id = 1;                // ULID
+  optional string client_request_id = 2;  // the caller's idempotent audit-join key, when supplied
+  string agent_aid = 3;                   // the VERIFIED caller AID (derived, never asserted)
+  string agent_id = 4;                    // audit-only LABEL, never the scope-floor key (see agent_aid)
+  string tool_name = 5;
+  string tool_input_digest = 6;           // "hmac-sha256:<kid>:<hex>" — a KEYED commitment, NOT
+                                          // the request digest and never equal to it
+  string verdict = 7;                     // "ALLOW" | "DENY" | "TRANSFORM" | "ESCALATE" (closed set)
+  string reason = 8;                      // closed-set / operator-authored only (D-030)
+  // The policy the binding named — STAGED, not "ran under". The authorize path produces no
+  // enforcement fact at all by design (it seals nothing), so there is no companion attestation
+  // here and a populated value proves only that a policy was routed and recorded (#561, #600).
+  string policy_version = 9;
+  optional string subject_digest = 10;    // "hmac-sha256:<kid>:<hex>" — NEVER the raw subject
+  // One keyed commitment PER effective subject (#715): the union of AuthorizeRequest.subject and
+  // .subjects, deduped, in request order, at most 16. Each element is the SAME commitment as
+  // `subject_digest` ("hmac-sha256:<kid>:<hex>", same key and kid), so it is no weaker than tag 10: unlinkable to a
+  // subject without the deployment key (rotating the key severs every join), no bare-hash oracle. `subject_digest` (10) stays populated with the FIRST
+  // element for legacy consumers. Empty on rows written before this field existed — absent from the
+  // canonical JSON when empty.
+  repeated string subject_digests = 11;
+}
+
+// The POLICY_DENIED payload — a bound policy REFUSED a commitment, so nothing was sealed.
+//
+// This event exists because that refusal is otherwise durably INVISIBLE on the one-shot path: a
+// policy-denied `RunDecision` errors before the seal, before the metrics tick and before the outbox
+// wake, so it leaves no trace at all. For a system whose claim is an auditable decision boundary, "a
+// refused action leaves no record" is the wrong failure mode. It follows the AUTHORIZE_EVALUATED
+// precedent exactly: ADVISORY, not chained, sealing nothing — this event is the ONLY trace of the
+// refusal, and it is a durable trace rather than a decision record.
+//
+// The envelope already carries tenant, namespace, session_id, occurred_at and seq, so this payload
+// carries only what the envelope cannot. `decision_id` is absent on the envelope for the same reason
+// it is on AUTHORIZE_EVALUATED: nothing was sealed, so there is no decision to name.
+message PolicyDenied {
+  // The policy that refused, as the binding named it. STAGED, not "ran under" — see the identically
+  // named field on `seam.api.v1.DecisionResponse`, whose comment carries the full #561 reasoning. A
+  // reader must not treat this as proof the named policy's rules are what evaluated the commitment.
+  string policy_version = 1;
+  // The coordination mode the refused session was opened in (`macp.mode.decision.v1` etc.).
+  string mode = 2;
+  // The deny reason, ALREADY REDACTED. D-030: built from the closed-set capability-class strings the
+  // policy evaluator produced, never agent-proposed content — and #542 strips objector ids from them,
+  // so a denial cannot leak WHO objected to a consumer that may not be entitled to know.
+  //
+  // ONE string rather than a repeated field, because a single joined string is what the runtime's
+  // error boundary actually holds: `seam_coord_macp::map_macp_err` joins the evaluator's reasons
+  // with `"; "` long before this producer sees them, and the #542 redaction emits that SAME
+  // delimiter INSIDE one reason (`... (objector ids withheld; see operator logs)`). Splitting the
+  // joined message back apart is therefore lossy - two reasons yield three parts, one of them
+  // dangling mid-parenthetical - so a repeated field here could only ever be filled by shredding
+  // the text. Consumers MUST NOT split this on `"; "`. The seam-coord-macp test
+  // `the_joined_denial_message_is_not_safely_splittable` pins the hazard.
+  string reason = 3;
+}
+
+// The learned-policy routing key (advisory, Plan R). Mirrors `PolicyKeyPb`.
 message PolicyKey {
   string tenant = 1;
   string task_type = 2;
@@ -265,94 +255,100 @@ message PolicyKey {
   string mode = 4;
 }
 
-// LEARNING_DECISION payload (envelope tag 14) — ADVISORY, unchained, no binding authority.
-// One event per decision *dimension*, joined to outcomes by the ENVELOPE `decision_id`.
+// LEARNING_DECISION payload (advisory). Mirrors `LearningDecisionPb`.
 message LearningDecision {
   PolicyKey policy_key = 1;
-
-  // "policy" | "agent" — which decision dimension this arm is for.
   string dimension = 2;
-
   string algorithm_id = 3;
-
-  // The chosen arm.
   string candidate = 4;
-
   optional string experiment_id = 5;
   optional string algorithm_arm = 6;
-
-  // The served feature vector `x` — the EXACT one the serving read used, so serve==fit parity holds
-  // by construction. Empty for non-contextual algorithms (Thompson).
   repeated double features = 7;
-
-  // The FeatureSchema id `x` was encoded under. Absent for Thompson.
   optional string schema_id = 8;
-
-  // P(this arm | x) at serve time — required for retroactive off-policy evaluation (IPS/SNIPS/DR).
-  // Absent until the serving read populates it. Once real traffic flows an unlogged propensity is
-  // UNRECOVERABLE, which is why the slot is fixed now (plan 02 §E). The ingestion connector maps it
-  // when present and writes NULL when absent; it can never synthesize it.
-  optional double propensity = 9;
+  optional double propensity = 9;  // P(arm | x) at serve time — off-policy eval (matches seam-event.v1 tag 9)
 }
 
-// LEARNING_OUTCOME payload (envelope tag 15) — ADVISORY, unchained.
-//
-// Repeated outcomes for one decision are DISTINCT events by construction (the runtime folds the
-// report time and seq into the event_id: `{decision_id}#lo#{occurred_at}#{seq}`) — a correction or a
-// second reporter is a new event, never a mutation. The offline join decides which one wins.
+// LEARNING_OUTCOME payload (advisory). Mirrors `LearningOutcomePb`.
 message LearningOutcome {
   bool correct = 1;
   optional string verified_by = 2;
+  // #354 — the per-arm OWNER key `(tenant, task_type, mode)` for deterministic per-arm ordering in
+  // the learning plane ("one arm, one owner"). Derived at outcome time from the sealed
+  // DecisionRecord, so `context_class` is ALWAYS EMPTY here: it is computed from request-scoped
+  // features that are never sealed and CANNOT be recomputed after the decision. Do NOT treat this
+  // field as full arm identity — the owner key deliberately excludes `context_class`. Absent when
+  // the record has no mode or the learning plane is disabled (never a partial key with an empty
+  // mode, which would silently merge arms under a coarser partition).
+  PolicyKey policy_key = 3;
 }
 
-// AUDIT_ENTRY payload (envelope tag 16) — CHAINED. An audit event for actions that produce no
-// DecisionRecord: nothing was decided, but the refusal itself must be provable.
-message AuditEntry {
-  // Machine-readable action discriminator, e.g. "admit.compat_reject" | "execute.scope_deny".
+// AUDIT_ENTRY payload — a chained audit event with no sealed decision (enterprise 6.2/2.4/2.6).
+message AuditEntryEvent {
   string action = 1;
-  // The subject acted on (e.g. the offending agent_id).
   string subject = 2;
-  // The rendered typed denial. No secrets, no free-text agent content — which is why SIEM
-  // destinations may pass it through unredacted.
   string reason = 3;
-  // rt-D §4 — the authenticated operator subject that performed a management action; absent on the
-  // unauthenticated dev-open plane. A FRESH optional tag: a decoder that never saw it reads absent
-  // (back-compat) and a pre-migration entry re-encodes byte-identically.
+  // rt-D §4 — the authenticated operator subject that performed a management action (`None` on the
+  // unauthenticated dev-open plane). Mirrors `AuditEntryPb.actor` (tag 4).
   optional string actor = 4;
 }
 
-// BUDGET_BREACH payload (envelope tag 17) — ADVISORY, unchained.
-//
-// severity "hard" means the session is now SUSPENDED awaiting an approver, so alert latency on this
-// kind is user-facing, not merely operational.
+// The SESSION_LIFECYCLE payload (CP-09) — an advisory (non-chained) session lifecycle transition,
+// `phase = "opened"` today. Mirrors the canonical `SessionLifecyclePb` (tag 21 on SeamEvent).
+message SessionLifecycle {
+  string phase = 1;
+  string mode = 2;
+  // The policy the binding named at OPEN — STAGED, not "bound". This event emits at
+  // `phase = "opened"`, before anything seals, so no enforcement fact exists yet to report. The
+  // stream carries the companion one event later: `DecisionSealed.policy_rules_digest` (tag 13),
+  // joinable by `session_id` (#561, #600).
+  string policy_version = 3;
+  uint64 opened_at_millis = 4;
+  // #1359 — one entry per admitted participant, in admission order: the agent and the registry
+  // version the session is pinned to at Admit (never re-pinned mid-session). Set on
+  // `phase = "opened"` only. The CP drain intake counts a version's live sessions from these, and
+  // the session's `DECISION_SEALED` (same envelope `session_id`) ends it.
+  repeated AgentPin pins = 5;
+}
+
+// A participant's registry pin as bound at session open (SESSION_LIFECYCLE `pins`).
+message AgentPin {
+  string agent_id = 1;
+  string version = 2;
+}
+
+// BUDGET_BREACH payload — the R9 escalation signal (enterprise 6.2).
 message BudgetBreach {
-  // "hard" (suspended, awaiting HITL) | "soft" (early warning).
   string severity = 1;
-  // The breached dimension: "messages" | "tokens" | "cost_micros" | "wall_ms".
   string dimension = 2;
-  // The limit on the breached dimension.
   uint64 limit = 3;
-  // The full ledger snapshot at the breach, so an approver sees exactly what was spent against what.
   uint64 messages = 4;
   uint64 tokens = 5;
   uint64 cost_micros = 6;
   uint64 wall_ms = 7;
 }
 
-// ERASURE_CERTIFICATE payload (envelope tag 18) — CHAINED and SIGNED.
-//
-// Ed25519 over the domain-separated `seam.erasure-certificate.v1` framing, by the runtime ISSUER
-// key. A data subject or regulator verifies it from the published issuer AID alone. No connector
-// ever holds or references that key (custody separation — plan 04 §5.4).
+// ERASURE_CERTIFICATE payload — the signed, chain-anchored GDPR artifact (enterprise 2.6). Also the
+// return of `seam.api.v1 SeamAdmin.EraseSubject`.
 message ErasureCertificate {
   string subject = 1;
-  // Decision ids whose keys are destroyed.
   repeated string erased = 2;
-  // Decision ids withheld under legal hold — disclosed, never silent.
   repeated string held = 3;
   uint64 erased_at = 4;
-  // The audit-chain head at certification.
   bytes chain_head = 5;
   string issuer_aid = 6;
   bytes signature = 7;
+}
+
+// A counterparty's signed chain-head attestation (A14 network mode). Mirrors
+// `seam_trust_aitp::ChainHeadAttestation`; the signature is Ed25519 over the domain-separated,
+// length-prefixed payload defined in `docs/specs/seam-event.v1.md` §CHAIN_HEAD_ATTESTATION. Also carried
+// by `seam.api.v1 SeamTrust.VerifyPartyAttestation`.
+message ChainHeadAttestation {
+  uint64 attested_len = 1;
+  bytes attested_head = 2;
+  uint64 attested_at = 3;
+  string issuer_aid = 4;
+  uint32 digest_schema = 5;
+  bytes signature = 6;
+  string tenant = 7;
 }

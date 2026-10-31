@@ -462,7 +462,7 @@ fn uncovered_d2(d: &Path) {
     replace_and_rehash(d, "events.jsonl", edited.into_bytes());
 }
 
-/// An uncovered chained entry in the window is refused at step 2 (spec `:291`), through the library's
+/// An uncovered chained entry in the window is refused at step 2 (spec `:293`), through the library's
 /// strict default: `bundle` has no diagnostic mode, so no output of it, human, `--json` or the library
 /// report, can be green over it.
 #[test]

@@ -4,7 +4,10 @@
 //! something. It links **nothing of Seam's** — see `Cargo.toml`, where the dependency list is the
 //! argument, and `.github/workflows/ci.yml`, where `cargo tree -e normal` turns that argument into a
 //! gate rather than a comment. It is written from the published specs, takes bytes and a public key,
-//! and answers yes or no.
+//! and answers yes or no. One named exception: the spec clause (b′) entry preimages, domain table and
+//! classification map are transcribed from seam-runtime `crates/seam-verify/src/entry.rs` @ `37576658`
+//! until the spec carries them (seam-runtime#1561; `DECISIONS.md` D-043). They are read, not linked,
+//! and checked against vectors the runtime's own code produced.
 //!
 //! # Why there is a library and not only a binary
 //!
@@ -19,14 +22,16 @@
 //! Verified:
 //!
 //! * the **`seam-event.v1` hash chain** — internal consistency of a stream, from the stream alone
-//!   ([`chain`]);
+//!   ([`chain`]), with each payload bound to its kind ([`check_kind_payload`], D-041): another kind's
+//!   payload, a known kind without its own, or an advisory event carrying chain fields is refused;
 //! * **authenticity** — every `CHAIN_HEAD_ATTESTATION` verifies against a pinned issuer key and sits
 //!   at the head it attests, and every `DECISION_SEALED` digest is recomputed from its payload
 //!   under record digest v4 ([`verify_authenticity`]). A record missing a mandatory column (tags
 //!   10-12, 14-17) is refused as a **strip**, reported distinctly from a digest mismatch; any
 //!   `schema_version` other than 4 is refused as cannot-verify, never skipped. Every other chained
 //!   entry (`AUDIT_ENTRY`, `CHAIN_HEAD_ATTESTATION`, `ERASURE_CERTIFICATE`) is recomputed from its own
-//!   fields too (spec (b′)), and one this build has no preimage for (an unknown action,
+//!   fields too (spec (b′)), with its envelope classification bound to its action or kind, and a
+//!   mismatch refused as `ENTRY REWRITE`. One this build has no preimage for (an unknown action,
 //!   `fact_appended`, an unknown kind) is **uncovered and REFUSED**: no entry point returns `Ok` over
 //!   it unless the caller opts in with [`AuthOptions::allow_uncovered`]
 //!   ([`verify_authenticity_anchored_with`], [`verify_authenticity_by_tenant_with`]), and an `Ok`
