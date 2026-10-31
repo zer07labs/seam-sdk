@@ -15,7 +15,7 @@
 
 ## Status
 
-IN PROGRESS. P0 and P1 DONE (PR A); P2–P5 TODO (PR B). **All phases are unblocked.** OQ-1 is resolved as **(b) ∥ (a)**, decided by Fable at plan
+IN PROGRESS. P0–P5 DONE; finalization and PR B pending. **All phases are unblocked.** OQ-1 is resolved as **(b) ∥ (a)**, decided by Fable at plan
 review; owner input was not needed (see OQ-1). Phases 2 and 3 transcribe from runtime `entry.rs` under the scoped
 D-043 carve-out, validated against Phase 0's runtime-produced vectors, while seam-runtime#1561 carries the spec
 fix. **Owner checkpoint:** `publish-verify` is `workflow_dispatch` only (`.github/workflows/publish.yml:524-528`),
@@ -586,7 +586,10 @@ lists zero Seam crates, and no green is reported over a chained entry this build
 
 ### Phase 5: Docs, the spec pin header, decisions, and version
 
-- **Status:** TODO. **Risk:** simple.
+- **Status:** DONE (2026-10-31). Divergences: one CLI word ("never recomputed" → "not recomputed") so the
+  README can quote real output; a README-sync test pins the genuine and diagnostic runs' stdout lines; OQ-5 taken
+  at its default (proto re-copied byte-identical from `37576658`, pin in the README layout table); the header edit
+  shifted the spec body +2, and every `verify/` spec citation was re-anchored. **Risk:** simple.
 - **Delivers:** documentation that states what this build now does.
 - **Depends on:** Phases 1–4.
 - **Files:**

@@ -5314,3 +5314,12 @@ not filed here. OQ-1 is resolved, so no phase is gated.
   - 229 tests pass.
   - Files: `verify/src/{main,verify,lib,bundle}.rs`, `verify/tests/{entry_recompute,bundle,multi_tenant,erasure_cert,entry_vectors}.rs`.
   - Next: P5.
+- **P5 DONE** (2026-10-31). Verifier: Opus. Round 1 GAPS:
+  - spec citations stale after the +2 header shift;
+  - D-042's runtime no-op overclaim;
+  - the bridge wording;
+  - a stale test message.
+  - Round 2: PASS.
+  - 230 tests pass; citations 631; python 2416.
+  - Files: `verify/{README.md, DECISIONS.md, docs/seam-event.v1.md (header), Cargo.toml, Cargo.lock, proto/…/seam_event.proto, src/{lib,main,verify,bundle}.rs, tests/{entry_recompute,bundle,verifier}.rs}`, `CHANGELOG.md`, plus citation shifts.
+  - Next: finalization.
