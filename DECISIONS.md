@@ -1219,7 +1219,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:1691-1713` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:1711-1733` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2049,7 +2049,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:1723` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:1743` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -3037,3 +3037,10 @@ Ranked by blast radius. The two possible one-way doors (a public exception API, 
 - **RPC manifest covers one package.** Analysis (Opus): the contract gate exits 0, and `seam.event.v1` declares no services; the exit-7 tripwire stays the trigger. Verdict: CONFIRM. **Status:** CONFIRMED.
 - **Java/Kotlin do not read the `exp` vector.** Analysis (Opus): JDK 17 is available and CI runs both JVM legs, so the "no JDK" trigger is moot. The source still matches the rule, and no divergence is shown. Writing the test is new work, not a defect fix. Verdict: DEFER. **Trigger:** the next change to either file's `exp` handling. **Status:** UNCONFIRMED.
 - **Decided by:** Opus (reversible tier).
+
+## 2026-10-30 — `now_millis` is removed from the admin clients, not kept as a dead parameter (seam-sdk#315)
+- **Context:** runtime 0.67.0 (code-health A1, seam-runtime#1557) removed `ErasureRequest.now_millis` and `RetentionRequest.now_millis` and reserved the tags. Over gRPC it ignores a stale tag; over HTTP it rejects the key with 422. The regenerated stubs no longer carry the field, so the hand-written clients failed on the v0.67.0 commit (#317).
+- **Chose:** remove the parameter. Python callers passing `now_millis=` get a `TypeError` before any call is made. In TS, `opts` moves into the freed positional slot, so a stale `nowMillis` argument or a five-argument call fails to typecheck.
+- **Rejected:** keeping a deprecated parameter that is silently ignored, because a time override that does nothing is worse than a loud failure. Keeping a placeholder positional slot in TS would leave a permanent dead argument to protect untyped JS callers that pass `opts` fifth.
+- **Evidence it is safe:** no sibling consumer calls these methods with a run time. seam-control-plane refuses the key in its own proxy (`src/http/routes/mgmt.ts`); seam-adapters, seam-mcp and seam-aegis never pass it.
+- **Decided by:** Opus (forced by the contract; nothing to choose but the error shape). **Status:** CONFIRMED.

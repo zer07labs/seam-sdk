@@ -336,17 +336,16 @@ export class SeamAdminClient {
 
   /** Crypto-shred every record bound to `subject` in `tenant`; returns the signed certificate. `tenant`
    * is REQUIRED (empty ⇒ rejected); `confirmCount` MUST equal the preview's `wouldErase.length`.
-   * `nowMillis` overrides the injected run time (default: the server clock) — mirrors
-   * `enforceRetention`'s identical field. */
+   * The run time is always the server's clock: runtime 0.67.0 removed `nowMillis` from
+   * `ErasureRequest` (seam-sdk#315), and `opts` moved up into its positional slot. */
   eraseSubject(
     tenant: string,
     subject: string,
     confirmCount: bigint,
-    nowMillis?: bigint,
     opts?: UnaryCallOptions,
   ): Promise<ErasureCertificate> {
     return this.admin.eraseSubject(
-      { tenant, subject, confirmCount, nowMillis },
+      { tenant, subject, confirmCount },
       call(opts),
     );
   }
@@ -356,7 +355,6 @@ export class SeamAdminClient {
   async eraseSubjectConfirmed(
     tenant: string,
     subject: string,
-    nowMillis?: bigint,
     opts?: UnaryCallOptions,
   ): Promise<ErasureCertificate> {
     const preview = await this.previewErasure(tenant, subject, opts);
@@ -364,7 +362,6 @@ export class SeamAdminClient {
       tenant,
       subject,
       BigInt(preview.wouldErase.length),
-      nowMillis,
       opts,
     );
   }
@@ -536,12 +533,13 @@ export class SeamAdminClient {
     await this.admin.releaseLegalHold({ decisionId }, legalHoldCall(opts));
   }
 
-  /** Crypto-shred decisions past their tiered retention windows; returns the purged decision ids. */
+  /** Crypto-shred decisions past their tiered retention windows; returns the purged decision ids.
+   * The windows are measured from the server's clock: runtime 0.67.0 removed `nowMillis` from
+   * `RetentionRequest` (seam-sdk#315), and `opts` moved up into its positional slot. */
   async enforceRetention(
     fullDays: bigint,
     sealedDigestDays: bigint,
     commitmentOnlyDays: bigint,
-    nowMillis?: bigint,
     opts?: UnaryCallOptions,
   ): Promise<string[]> {
     return (
@@ -550,7 +548,6 @@ export class SeamAdminClient {
           fullDays,
           sealedDigestDays,
           commitmentOnlyDays,
-          nowMillis,
         },
         call(opts),
       )

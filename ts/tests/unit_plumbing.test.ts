@@ -149,8 +149,8 @@ const ADMIN_CALLS: Record<
   (a: SeamAdminClient, o?: { timeoutMs?: number }) => Promise<unknown>
 > = {
   previewErasure: (a, o) => a.previewErasure("acme", "cust-42", o),
-  eraseSubject: (a, o) => a.eraseSubject("acme", "cust-42", 0n, undefined, o),
-  eraseSubjectConfirmed: (a, o) => a.eraseSubjectConfirmed("acme", "cust-42", undefined, o),
+  eraseSubject: (a, o) => a.eraseSubject("acme", "cust-42", 0n, o),
+  eraseSubjectConfirmed: (a, o) => a.eraseSubjectConfirmed("acme", "cust-42", o),
   enrollTenant: (a, o) => a.enrollTenant("aid:x", "acme", "ns", undefined, o),
   "enrollTenant[pop]": (a, o) =>
     a.enrollTenant("aid:x", "acme", "ns", new Agent(new Uint8Array(32)).enrolmentProof("acme", "ns"), o),
@@ -165,7 +165,7 @@ const ADMIN_CALLS: Record<
   listLegalHolds: (a, o) => a.listLegalHolds(o),
   placeLegalHold: (a, o) => a.placeLegalHold("d", o),
   releaseLegalHold: (a, o) => a.releaseLegalHold("d", o),
-  enforceRetention: (a, o) => a.enforceRetention(1n, 2n, 3n, undefined, o),
+  enforceRetention: (a, o) => a.enforceRetention(1n, 2n, 3n, o),
   auditTrail: (a, o) => a.auditTrail(o),
   reportEventsConsumed: (a, o) => a.reportEventsConsumed(1n, { ...o, streamId: "s1" }),
   redriveEvents: (a, o) => a.redriveEvents("acme", 1n, o),

@@ -1,5 +1,11 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 1a1f338 (refreshed 2026-10-30).
-     The runtime 0.66.0 train (seam-runtime#1555, #1493 ACDP-4 and ACDP-2; seam-sdk#311). Movement since
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 4f70c2c (refreshed 2026-10-30).
+     The runtime 0.67.0 train (seam-runtime#1557, code-health A4; seam-sdk#317). Movement since 1a1f338:
+     "payload binds to kind" (each payload field belongs to one kind; a known advisory kind or the chain
+     anchor carrying `digest`/`checksum` is refused), and clause (b′): under `--issuer` every chained
+     AUDIT_ENTRY, CHAIN_HEAD_ATTESTATION and ERASURE_CERTIFICATE recomputes its digest, its classification
+     is bound, and an uncovered action or kind is refused. NOT YET IMPLEMENTED by this repo's `verify/`:
+     it still links by field presence and recomputes only what it did at 1a1f338. Parity is seam-sdk#316.
+     Prior pin 1a1f338 (refreshed 2026-10-30), the runtime 0.66.0 train (seam-runtime#1555, #1493 ACDP-4 and ACDP-2; seam-sdk#311). Movement since
      2de71b5: the audit action `context_recalled` (domain `seam.audit.context-recall.v1`), and a note that a
      registry advertising lifecycle turns an absent event history into `not_retracted`. Both are informational
      for this crate: neither the verifier nor any SDK enumerates audit actions or resolves ACDP contexts.
@@ -282,7 +288,7 @@ equal its envelope's, per "Reader obligations on `tenant`" above, and (since #83
 MUST verify under the one framing that `tenant` selects**; (b) for every `DECISION_SEALED`, recompute the record
 digest (spec §Record digest) from its payload and compare it to the event's `digest` (tag 19) — a
 mismatch is a **payload rewrite** (a structural column was changed after sealing; the chain link still
-hashes, but the payload no longer matches it); (c) **a `DECISION_SEALED` whose `schema_version` is not
+hashes, but the payload no longer matches it); **(b′) every other chained body recomputes too**: a chained `AUDIT_ENTRY` under the domain its `action` selects (management, legal-hold, archive-evict, boundary, denial, purge, erasure, context-recall; the closed table is `seam-verify/src/entry.rs`), with its envelope `classification` bound to the one its action's typed reason stamps; a `CHAIN_HEAD_ATTESTATION` under `seam.audit.chain-attest-entry.v1`, and an `ERASURE_CERTIFICATE` under `seam.audit.erasure-cert.v2` — a mismatch is an **entry rewrite** (exit 2). The recompute runs before every attestation check, including attestations at or below an anchored window's base. An attestation's and a certificate's `classification` must be the label the store fixes for its kind (`KIND_CLASSIFICATION_CONTRACT`: `Internal`, `Pii`). Their envelope `namespace` and `occurred_at` are outside the preimage, as the store digests them, and are not bound. `chain --bridge` recomputes both streams' bodies the same way and refuses an uncovered entry outright (`UNCOVERED ENTRY`), and it also requires a pinned attestation on the new stream that covers the move-in itself (`MOVE-IN NOT YET ATTESTED`): on a return trip, the tenant's older signed history would otherwise satisfy `--issuer` before the move-in is attested. v1 certificates predate every deployment (v2 since 2026-07-18; the earliest deployed database is 2026-07-26), so a v2 mismatch is a rewrite, not an older format. A chained body with an action or kind the verifier has no preimage for is **uncovered** and REFUSED under `--issuer` (otherwise a rewrite relabelled to an unknown action would verify). `--allow-uncovered` reports it instead, for diagnosis, in the human report only; it never pairs with `--json`, so an automated caller cannot get a green over an uncovered entry. `fact_appended` is uncovered: it chains the fact's own checksum, not an entry digest; (c) **a `DECISION_SEALED` whose `schema_version` is not
 `4` ⇒ REFUSE (UNKNOWN SCHEMA VERSION)**, and **a v4 `DECISION_SEALED` that lacks a non-empty
 `ciphertext_digest` (tag 10) ⇒ REFUSE (MISSING COMMITMENT)**, or lacks any of its mandatory sub-digest
 and binding tags 11, 12, 14, 15, 16, 17 ⇒ REFUSE (MISSING SUB-DIGEST). Every record is *required* to carry
@@ -791,7 +797,12 @@ The decision being scored is identified by the **envelope `decision_id`**, not a
   are present (equivalently, `prev_checksum` is non-empty). The chained kinds are `DECISION_SEALED`,
   `AUDIT_ENTRY`, and `ERASURE_CERTIFICATE` — **except** the `action: "chain_anchor"` `AUDIT_ENTRY`, which is
   emitted off-chain (no `digest`) and is *not* a link. Advisory kinds (`LEARNING_DECISION`,
-  `LEARNING_OUTCOME`, `BUDGET_BREACH`) likewise set none of the three. **Since U-RT-1 (tenant
+  `LEARNING_OUTCOME`, `BUDGET_BREACH`) likewise set none of the three. **Payload binds to kind** (code-health
+  A4): each payload field belongs to exactly one kind, so an event carries only its own kind's payload, and a
+  known kind carries it. A known advisory kind (or the chain anchor) that carries `digest`/`checksum` is
+  refused, not linked. `seam-verify` fails such a stream (`KIND/PAYLOAD MISMATCH`,
+  `ADVISORY EVENT WITH CHAIN FIELDS`): without this, a sealed decision relabelled as an advisory kind would
+  still count as a link. **Since U-RT-1 (tenant
   partitioning), a chained `AUDIT_ENTRY`'s `prev_checksum`/`checksum` are computed per-`tenant`, not
   over the whole database** — each tenant has its own chain from its own genesis, the same way each
   tenant gets its own `chain_anchor` per attestation tick (`audit-anchor.md`). The wire `seq` itself is
@@ -1656,8 +1667,9 @@ path and keep consuming — `seam-learning`'s decoder does exactly that, deliber
 kept closed on purpose. Adding a `kind` is an additive change within `seam-event.v1`, on the same
 footing as adding a field.
 
-**Tolerance never extends to *attesting* the stream — but chain verification does not key on `kind`
-at all** (§Ordering & integrity: *"Chained-ness is by field presence, not by `kind`"*). An unmodelled
+**Tolerance never extends to *attesting* the stream — but chain linkage does not key on `kind`**
+(§Ordering & integrity: *"Chained-ness is by field presence, not by `kind`"*). Only a kind the verifier
+models is held to its own payload and, if advisory, refused when it carries chain fields. An unmodelled
 `kind` carrying `digest`/`checksum` **is a link**: a verifier MUST verify it and advance
 `running_head` exactly as for a kind it models, because the link check needs no payload semantics —
 `digest` is on the wire. Skipping it instead falsely reports the chain **broken at the next link**.

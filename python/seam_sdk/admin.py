@@ -469,19 +469,16 @@ class SeamAdminClient:
         subject: str,
         confirm_count: int,
         *,
-        now_millis: Optional[int] = None,
         timeout: float = DEFAULT_ADMIN_TIMEOUT_S,
     ) -> ev.ErasureCertificate:
         """Crypto-shred every record bound to ``subject`` in ``tenant`` and return the signed,
         chain-anchored certificate. ``tenant`` is REQUIRED (empty ⇒ server rejects); ``confirm_count``
         MUST equal the preview's ``len(would_erase)`` or the server rejects (``INVALID_ARGUMENT``).
-        ``now_millis`` overrides the injected run time (default: the server clock) — mirrors
-        ``enforce_retention``'s identical field."""
+        The run time is always the server's clock: runtime 0.67.0 removed ``now_millis`` from
+        ``ErasureRequest`` (seam-sdk#315)."""
         req = pb.ErasureRequest(
             subject=subject, tenant=tenant, confirm_count=confirm_count
         )
-        if now_millis is not None:
-            req.now_millis = now_millis
         return self._admin.EraseSubject(req, timeout=timeout)
 
     def erase_subject_confirmed(
@@ -489,7 +486,6 @@ class SeamAdminClient:
         tenant: str,
         subject: str,
         *,
-        now_millis: Optional[int] = None,
         timeout: float = DEFAULT_ADMIN_TIMEOUT_S,
     ) -> ev.ErasureCertificate:
         """The common, safe path: preview, then erase with the preview's ``would_erase`` count.
@@ -502,7 +498,6 @@ class SeamAdminClient:
             tenant,
             subject,
             len(preview.would_erase),
-            now_millis=now_millis,
             timeout=timeout,
         )
 
@@ -735,17 +730,17 @@ class SeamAdminClient:
         sealed_digest_days: int,
         commitment_only_days: int,
         *,
-        now_millis: Optional[int] = None,
         timeout: float = DEFAULT_ADMIN_TIMEOUT_S,
     ) -> Sequence[str]:
-        """Crypto-shred decisions past their tiered retention windows; returns the purged decision ids."""
+        """Crypto-shred decisions past their tiered retention windows; returns the purged decision ids.
+
+        The windows are measured from the server's clock: runtime 0.67.0 removed ``now_millis`` from
+        ``RetentionRequest`` (seam-sdk#315)."""
         req = pb.RetentionRequest(
             full_days=full_days,
             sealed_digest_days=sealed_digest_days,
             commitment_only_days=commitment_only_days,
         )
-        if now_millis is not None:
-            req.now_millis = now_millis
         return list(self._admin.EnforceRetention(req, timeout=timeout).purged)
 
     def audit_trail(

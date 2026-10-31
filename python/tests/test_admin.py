@@ -208,31 +208,33 @@ def test_legal_hold_empty_tenant_is_sent_not_dropped(recording_admin):
     assert _tenant_headers(md) == [""]
 
 
-def test_erase_subject_now_millis_absent_by_default(recording_admin):
-    """Matches ``enforce_retention``'s presence semantics: omitted ⇒ the field is never set on the
-    wire, so the server falls back to its own clock rather than an explicit (and possibly stale) 0."""
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda admin: admin.erase_subject("acme", "cust-1", 0, now_millis=1),
+        lambda admin: admin.erase_subject_confirmed("acme", "cust-1", now_millis=1),
+        lambda admin: admin.enforce_retention(1, 2, 3, now_millis=1),
+    ],
+    ids=["erase_subject", "erase_subject_confirmed", "enforce_retention"],
+)
+def test_now_millis_is_no_longer_accepted(recording_admin, call):
+    """Runtime 0.67.0 removed ``now_millis`` from ``ErasureRequest`` / ``RetentionRequest``
+    (seam-sdk#315). A caller still passing it fails locally and loudly, before any call is made,
+    rather than having a time override silently ignored by the server."""
+    servicer, addr = recording_admin
+    with SeamAdminClient.connect(addr) as admin:
+        with pytest.raises(TypeError, match="now_millis"):
+            call(admin)
+    assert servicer.erase_requests == []
+
+
+def test_erase_subject_sends_no_run_time(recording_admin):
     servicer, addr = recording_admin
     with SeamAdminClient.connect(addr) as admin:
         admin.erase_subject("acme", "cust-1", 0)
-    assert not servicer.erase_requests[-1].HasField("now_millis")
-
-
-def test_erase_subject_now_millis_set_when_given(recording_admin):
-    servicer, addr = recording_admin
-    with SeamAdminClient.connect(addr) as admin:
-        admin.erase_subject("acme", "cust-1", 0, now_millis=1_700_000_000_000)
     req = servicer.erase_requests[-1]
-    assert req.HasField("now_millis")
-    assert req.now_millis == 1_700_000_000_000
-
-
-def test_erase_subject_confirmed_forwards_now_millis(recording_admin):
-    servicer, addr = recording_admin
-    with SeamAdminClient.connect(addr) as admin:
-        admin.erase_subject_confirmed("acme", "cust-1", now_millis=1_700_000_000_000)
-    req = servicer.erase_requests[-1]
-    assert req.HasField("now_millis")
-    assert req.now_millis == 1_700_000_000_000
+    assert "now_millis" not in req.DESCRIPTOR.fields_by_name
+    assert (req.tenant, req.subject, req.confirm_count) == ("acme", "cust-1", 0)
 
 
 # ── Live: erasure preview→confirm→erase + bearer auth (env-gated) ────────────────────────────────
