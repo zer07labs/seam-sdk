@@ -16,7 +16,27 @@ than trusting a summary here.
 
 ## Unreleased
 
+These entries first ship in **0.67.1**: v0.67.0 was tagged and never published (see COMPATIBILITY.md).
+
+**Breaking, under a patch number.** This SDK cannot express its own semver (see above).
+
+### Removed
+- **`now_millis` on erasure and retention (seam-sdk#315; runtime 0.67.0, code-health A1).** The runtime
+  removed `ErasureRequest.now_millis` and `RetentionRequest.now_millis` (now `reserved`), so the run time is
+  always the server's clock. Python `erase_subject`, `erase_subject_confirmed` and `enforce_retention` no
+  longer accept `now_millis=`; passing it raises `TypeError`. TS `eraseSubject`, `eraseSubjectConfirmed`
+  and `enforceRetention` drop the `nowMillis` parameter, and `opts` moves up into its positional slot. Go,
+  Java and Kotlin drop the field with the regenerated stubs.
+
+### Changed
+- **`verify/docs/seam-event.v1.md` re-pinned to seam-runtime `4f70c2c`, the 0.67.0 train.** It adds "payload
+  binds to kind" and clause (b′), whole-body recompute under `--issuer`. This repo's verifier does not
+  implement either yet (seam-sdk#316); its README already discloses that audit entries, erasure
+  certificates and chain-head attestations are not recomputed.
+
 ## 0.67.0 — 2026-10-30
+
+Tagged, never published (see COMPATIBILITY.md). It carried no entries; 0.67.1 supersedes it.
 
 ## 0.66.1 — 2026-10-30
 

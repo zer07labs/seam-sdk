@@ -298,7 +298,6 @@ ErasurePreview/held
 ErasurePreview/subject_enrolled
 ErasurePreview/would_erase
 ErasureRequest/confirm_count
-ErasureRequest/now_millis
 ErasureRequest/subject
 ErasureRequest/tenant
 EscalationDeliveryView/authorize_id
@@ -414,7 +413,6 @@ ResumeRequest/raise
 ResumeRequest/session_id
 RetentionRequest/commitment_only_days
 RetentionRequest/full_days
-RetentionRequest/now_millis
 RetentionRequest/sealed_digest_days
 RetentionResponse/purged
 RevokeGrantRequest/from_ns
