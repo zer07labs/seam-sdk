@@ -24,7 +24,14 @@
 //!   at the head it attests, and every `DECISION_SEALED` digest is recomputed from its payload
 //!   under record digest v4 ([`verify_authenticity`]). A record missing a mandatory column (tags
 //!   10-12, 14-17) is refused as a **strip**, reported distinctly from a digest mismatch; any
-//!   `schema_version` other than 4 is refused as cannot-verify, never skipped;
+//!   `schema_version` other than 4 is refused as cannot-verify, never skipped. Every other chained
+//!   entry (`AUDIT_ENTRY`, `CHAIN_HEAD_ATTESTATION`, `ERASURE_CERTIFICATE`) is recomputed from its own
+//!   fields too (spec (b′)), and one this build has no preimage for (an unknown action,
+//!   `fact_appended`, an unknown kind) is **uncovered and REFUSED**: no entry point returns `Ok` over
+//!   it unless the caller opts in with [`AuthOptions::allow_uncovered`]
+//!   ([`verify_authenticity_anchored_with`], [`verify_authenticity_by_tenant_with`]), and an `Ok`
+//!   reached that way, with a non-empty [`IssuerReport::uncovered`], is a diagnostic report, **not an
+//!   authentication**. [`verify_bundle`] never opts in;
 //! * **GDPR erasure certificates**, from the issuer AID alone ([`erasure_certificate`]).
 //! * **Truncation — conditionally, when the caller supplies a later anchor** ([`check_not_truncated`],
 //!   seam-sdk#140). A stream cut at the tail is internally consistent and verifies green **on its
@@ -97,5 +104,7 @@ pub use bundle::{verify_bundle, BundleError, BundleReport};
 pub use verify::{
     chain, chain_anchored, chain_by_tenant, check_kind_payload, check_not_truncated,
     erasure_certificate, link, verify_anchor, verify_authenticity, verify_authenticity_anchored,
-    verify_authenticity_by_tenant, ChainReport, IssuerReport, TenantChain, Uncovered,
+    verify_authenticity_anchored_with, verify_authenticity_by_tenant,
+    verify_authenticity_by_tenant_with, AuthOptions, ChainReport, IssuerReport, TenantChain,
+    Uncovered, UNCOVERED_ENTRY,
 };

@@ -581,43 +581,418 @@ fn an_in_window_attestation_rewrite_is_caught_before_its_signature() {
 
 // ---- uncovered, and the seal arm left as it was ---------------------------------------------------
 
-/// An action this build has no domain for is uncovered: counted, not recomputed, and (until Phase 4)
-/// not refused. It is the only uncovered link: the attestations and the certificate recompute.
-#[test]
-fn an_unknown_action_is_uncovered() {
-    let rows = mutated(6, |r| {
+/// The stream with seq 6's action relabelled to one this build has no domain for. Its digest is
+/// untouched, so every link still hashes and plain `chain` stays green.
+fn unknown_action() -> Vec<Value> {
+    mutated(6, |r| {
         r["audit_entry"]["action"] = "party_registered_v2".into()
-    });
-    let reports = authenticate(&rows).expect("uncovered is not yet refused");
-    let audit: Vec<_> = reports
-        .values()
-        .flat_map(|r| &r.uncovered)
-        .filter(|u| u.kind == "AUDIT_ENTRY")
-        .collect();
-    assert_eq!(audit.len(), 1, "{audit:?}");
-    assert_eq!(audit[0].action.as_deref(), Some("party_registered_v2"));
-    assert_eq!(audit[0].seq, 6);
-    assert_eq!(audit[0].tenant, "acme");
-    assert_eq!(
-        reports.values().map(|r| r.uncovered.len()).sum::<usize>(),
-        1
-    );
-    let got: usize = reports.values().map(|r| r.entries_recomputed).sum();
-    assert_eq!(got, chained_non_seal_links(&rows) - 1);
+    })
 }
 
-/// `fact_appended` has no domain (it chains the fact's own checksum), so it is uncovered too.
+/// seq 6 relabelled to a kind this build does not model, with its payload removed: a chain link of an
+/// unknown kind (criterion 4).
+fn unknown_kind() -> Vec<Value> {
+    mutated(6, |r| {
+        let o = r.as_object_mut().unwrap();
+        o.remove("audit_entry");
+        o.insert("kind".into(), "FUTURE_ENTRY".into());
+    })
+}
+
+/// Only `tenant`'s rows: each tenant's chain starts at genesis, so this is a single-tenant stream that
+/// takes the single-tenant report path (`CHAIN AUTHENTICATED`, not `… per tenant`).
+fn only(rows: Vec<Value>, tenant: &str) -> Vec<Value> {
+    rows.into_iter().filter(|r| r["tenant"] == tenant).collect()
+}
+
+const SEQ6: &str = r#"seq 6, tenant "acme", kind "AUDIT_ENTRY", action "party_registered_v2""#;
+
+/// `--issuer` refuses an uncovered entry (spec `:291`), with or without `--strict`, and under `--json` it
+/// is a `"verified":false` naming "cannot recompute". Plain `chain` (integrity) does not refuse it.
+fn assert_uncovered_refused(name: &str, rows: &[Value], names: &str) {
+    let (code, out) = run(&format!("{name}-plain"), rows, &[]);
+    assert_eq!(code, VERIFIED, "{name}: integrity does not refuse:\n{out}");
+    for args in [
+        &["--issuer", ENTRY_ISSUER][..],
+        &["--issuer", ENTRY_ISSUER, "--strict"][..],
+    ] {
+        let (code, out) = run(name, rows, args);
+        assert_eq!(code, FAILED, "{name} {args:?}:\n{out}");
+        assert!(out.contains("REFUSED (--issuer)"), "{name}:\n{out}");
+        assert!(out.contains("UNCOVERED ENTRY"), "{name}:\n{out}");
+        assert!(out.contains("cannot recompute"), "{name}:\n{out}");
+        assert!(out.contains(names), "{name}:\n{out}");
+        assert!(!out.contains("AUTHENTICATED"), "{name}:\n{out}");
+    }
+    let (code, stdout, _) = run_split(name, rows, &["--issuer", ENTRY_ISSUER, "--json"]);
+    assert_eq!(code, FAILED, "{name} --json:\n{stdout}");
+    let v: Value = serde_json::from_str(stdout.trim()).expect("one JSON object on stdout");
+    assert_eq!(v["verified"], false, "{stdout}");
+    assert!(v.get("authenticated").is_none(), "{stdout}");
+    assert!(
+        v["error"].as_str().unwrap().contains("cannot recompute"),
+        "{stdout}"
+    );
+}
+
+/// Exit code, stdout and stderr, kept apart.
+fn run_split(name: &str, rows: &[Value], args: &[&str]) -> (i32, String, String) {
+    let path = std::env::temp_dir().join(format!("entry-rcs-{name}-{}.jsonl", std::process::id()));
+    std::fs::write(&path, body(rows)).unwrap();
+    let mut a: Vec<&str> = vec!["chain", path.to_str().unwrap()];
+    a.extend_from_slice(args);
+    let out = Command::new(env!("CARGO_BIN_EXE_seam-verify"))
+        .args(&a)
+        .output()
+        .expect("run seam-verify");
+    let _ = std::fs::remove_file(&path);
+    (
+        out.status.code().unwrap(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// The `--allow-uncovered` diagnostic: exit 2, the non-green banner, and the full report. No line may
+/// contain `VERIFIED` (which `UNVERIFIED` also contains) or `AUTHENTICATED`.
+fn assert_diagnostic(name: &str, out: &str, code: i32, n: usize, entries: &[&str]) {
+    assert_eq!(
+        code, FAILED,
+        "{name}: a diagnostic is never a pass (exit 2):\n{out}"
+    );
+    assert!(!out.contains("VERIFIED"), "{name}: no VERIFIED:\n{out}");
+    assert!(
+        !out.contains("AUTHENTICATED"),
+        "{name}: no AUTHENTICATED:\n{out}"
+    );
+    let entr = if n == 1 { "entry" } else { "entries" };
+    assert!(
+        out.contains(&format!(
+            "AUTHENTICITY NOT ESTABLISHED: {n} uncovered chained {entr} (--allow-uncovered diagnostic report)"
+        )),
+        "{name}:\n{out}"
+    );
+    assert!(
+        out.contains(&format!("  uncovered         : {n}\n")),
+        "{name}:\n{out}"
+    );
+    for e in entries {
+        assert!(out.contains(e), "{name}: lists {e}:\n{out}");
+    }
+    // The rest of the report a green run prints after its banner.
+    for line in [
+        "  events            :",
+        "  links checked     :",
+        "  unverified content:",
+        "  entries recomputed:",
+        "NOT AN AUTHENTICATION",
+    ] {
+        assert!(out.contains(line), "{name}: reports {line:?}:\n{out}");
+    }
+    assert!(out.contains("attestations"), "{name}:\n{out}");
+}
+
 #[test]
-fn fact_appended_is_uncovered() {
+fn an_unknown_action_is_refused_under_issuer() {
+    assert_uncovered_refused("unknown-action", &unknown_action(), SEQ6);
+    // The single-tenant report path refuses too.
+    assert_uncovered_refused("unknown-action-acme", &only(unknown_action(), "acme"), SEQ6);
+}
+
+/// `fact_appended` has no domain (it chains the fact's own checksum, so recomputing it as management
+/// would be wrong): refused under `--issuer`, never judged as management.
+#[test]
+fn fact_appended_is_refused_under_issuer() {
     let rows = mutated(6, |r| r["audit_entry"]["action"] = "fact_appended".into());
-    let reports = authenticate(&rows).expect("uncovered is not yet refused");
-    let audit: Vec<_> = reports
-        .values()
-        .flat_map(|r| &r.uncovered)
-        .filter(|u| u.kind == "AUDIT_ENTRY")
-        .collect();
-    assert_eq!(audit.len(), 1, "{audit:?}");
-    assert_eq!(audit[0].action.as_deref(), Some("fact_appended"));
+    assert_uncovered_refused(
+        "fact-appended",
+        &rows,
+        r#"seq 6, tenant "acme", kind "AUDIT_ENTRY", action "fact_appended""#,
+    );
+    let (_, out) = run("fact-appended-issuer", &rows, &["--issuer", ENTRY_ISSUER]);
+    assert!(
+        !out.contains("ENTRY REWRITE"),
+        "uncovered, not a rewrite:\n{out}"
+    );
+}
+
+/// Criterion 4: a chain link of an unknown kind, with no payload, is disclosed (not refused) by plain
+/// `chain`, refused under `--issuer`, and diagnosed under `--allow-uncovered`.
+#[test]
+fn an_unknown_kind_is_refused_under_issuer_and_diagnosed_under_allow_uncovered() {
+    let rows = unknown_kind();
+    let entry = r#"seq 6, tenant "acme", kind "FUTURE_ENTRY", action (none)"#;
+    let (code, out) = run("unknown-kind-plain", &rows, &[]);
+    assert_eq!(code, VERIFIED, "{out}");
+    assert!(out.contains("unverified content: 1"), "{out}");
+    assert_uncovered_refused("unknown-kind", &rows, entry);
+    let (code, out) = run(
+        "unknown-kind-allow",
+        &rows,
+        &["--issuer", ENTRY_ISSUER, "--allow-uncovered"],
+    );
+    assert_diagnostic("unknown-kind-allow", &out, code, 1, &[entry]);
+}
+
+/// The library refuses, not only the CLI: an embedder calling the default entry points cannot get `Ok`
+/// over an uncovered entry. Opting in returns the entries, counted, in a report that is not an
+/// authentication.
+#[test]
+fn the_library_refuses_an_uncovered_entry_unless_the_caller_opts_in() {
+    let rows = unknown_action();
+    let err = match authenticate(&rows) {
+        Ok(_) => panic!("verify_authenticity_by_tenant must refuse an uncovered entry"),
+        Err(e) => e,
+    };
+    assert!(err.starts_with(seam_verify::UNCOVERED_ENTRY), "{err}");
+    assert!(
+        err.contains("cannot recompute") && err.contains(SEQ6),
+        "{err}"
+    );
+
+    // The single-tenant entry points refuse too.
+    let acme = events(&only(rows.clone(), "acme"));
+    let report = seam_verify::chain(&acme).expect("integrity holds");
+    let pins = [ENTRY_ISSUER.to_owned()];
+    let err = match seam_verify::verify_authenticity(
+        &acme,
+        &report.heads,
+        &report.max_schema_by_link,
+        &pins,
+    ) {
+        Ok(_) => panic!("verify_authenticity must refuse an uncovered entry"),
+        Err(e) => e,
+    };
+    assert!(err.contains("cannot recompute"), "{err}");
+    assert!(seam_verify::verify_authenticity_anchored(
+        &acme,
+        &report.heads,
+        &report.max_schema_by_link,
+        &pins,
+        0,
+        &seam_verify::verify::GENESIS,
+    )
+    .is_err());
+
+    let allow = seam_verify::AuthOptions::allow_uncovered(true);
+    let ir = seam_verify::verify_authenticity_anchored_with(
+        &acme,
+        &report.heads,
+        &report.max_schema_by_link,
+        &pins,
+        0,
+        &seam_verify::verify::GENESIS,
+        &allow,
+    )
+    .expect("opted in: a diagnostic report");
+    assert_eq!(ir.uncovered.len(), 1);
+
+    let evs = events(&rows);
+    let report = seam_verify::chain(&evs).expect("integrity holds");
+    let reports = seam_verify::verify_authenticity_by_tenant_with(&evs, &report, &pins, &allow)
+        .expect("opted in: a diagnostic report");
+    let all: Vec<_> = reports.values().flat_map(|r| &r.uncovered).collect();
+    assert_eq!(all.len(), 1, "{all:?}");
+    assert_eq!(all[0].kind, "AUDIT_ENTRY");
+    assert_eq!(all[0].action.as_deref(), Some("party_registered_v2"));
+    assert_eq!(all[0].seq, 6);
+    assert_eq!(all[0].tenant, "acme");
+    assert_eq!(all[0].describe(), SEQ6);
+    let got: usize = reports.values().map(|r| r.entries_recomputed).sum();
+    assert_eq!(got, chained_non_seal_links(&rows) - 1);
+
+    // The default options are the strict ones.
+    assert!(seam_verify::verify_authenticity_by_tenant_with(
+        &evs,
+        &report,
+        &pins,
+        &seam_verify::AuthOptions::default()
+    )
+    .is_err());
+}
+
+/// Criterion 2, on both report paths (per tenant, and single tenant), with and without `--strict`
+/// (which does not change uncovered behaviour).
+#[test]
+fn allow_uncovered_exits_2_under_a_non_green_banner_with_the_full_report() {
+    for (name, rows) in [
+        ("allow-multi", unknown_action()),
+        ("allow-acme", only(unknown_action(), "acme")),
+    ] {
+        for args in [
+            &["--issuer", ENTRY_ISSUER, "--allow-uncovered"][..],
+            &["--issuer", ENTRY_ISSUER, "--allow-uncovered", "--strict"][..],
+        ] {
+            let (code, out) = run(name, &rows, args);
+            assert_diagnostic(name, &out, code, 1, &[SEQ6]);
+        }
+    }
+}
+
+/// With nothing uncovered the flag changes nothing: the normal banner, exit 0.
+#[test]
+fn allow_uncovered_over_a_genuine_stream_changes_nothing() {
+    for (name, rows, banner) in [
+        (
+            "allow-genuine",
+            stream(),
+            "CHAIN AUTHENTICATED (integrity + issuer-signed head, per tenant)",
+        ),
+        (
+            "allow-genuine-acme",
+            only(stream(), "acme"),
+            "CHAIN AUTHENTICATED (integrity + issuer-signed head)\n",
+        ),
+    ] {
+        let (code, out) = run(
+            name,
+            &rows,
+            &["--issuer", ENTRY_ISSUER, "--allow-uncovered", "--strict"],
+        );
+        assert_eq!(code, VERIFIED, "{name}:\n{out}");
+        assert!(out.starts_with(banner), "{name}:\n{out}");
+        assert!(out.contains("  uncovered         : 0\n"), "{name}:\n{out}");
+        assert!(!out.contains("NOT ESTABLISHED"), "{name}:\n{out}");
+    }
+}
+
+/// Criterion 3: `--allow-uncovered` is accepted only on `chain`, only with `--issuer`, never with
+/// `--json`. Each rejection is the `usage()` path: exit 1, nothing on stdout (no JSON either).
+#[test]
+fn allow_uncovered_is_rejected_with_json_and_without_issuer() {
+    for (name, args) in [
+        (
+            "allow-json",
+            &["--issuer", ENTRY_ISSUER, "--allow-uncovered", "--json"][..],
+        ),
+        ("allow-no-issuer", &["--allow-uncovered"][..]),
+        ("allow-no-issuer-json", &["--allow-uncovered", "--json"][..]),
+    ] {
+        let (code, stdout, stderr) = run_split(name, &unknown_action(), args);
+        assert_eq!(code, 1, "{name}: usage error:\n{stdout}{stderr}");
+        assert!(stdout.is_empty(), "{name}: stdout must be empty:\n{stdout}");
+        assert!(stderr.contains("--allow-uncovered"), "{name}:\n{stderr}");
+        assert!(stderr.contains("USAGE:"), "{name}:\n{stderr}");
+    }
+}
+
+/// Criterion 7: `--json` keeps its shape exactly. No `entries`, `entries_recomputed` or `uncovered` key,
+/// on either report path.
+#[test]
+fn the_json_shape_is_unchanged() {
+    fn keys(v: &Value) -> Vec<&str> {
+        let mut k: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+        k.sort_unstable();
+        k
+    }
+    let top = [
+        "advisory",
+        "duplicates",
+        "events",
+        "head",
+        "links",
+        "unmodelled_kinds",
+        "unverifiable",
+        "unverified_content",
+        "verified",
+    ];
+    let auth = [
+        "attestations",
+        "authenticated",
+        "covered_prefix",
+        "records_recomputed",
+    ];
+
+    let (code, stdout, _) = run_split(
+        "json-multi",
+        &stream(),
+        &["--issuer", ENTRY_ISSUER, "--strict", "--json"],
+    );
+    assert_eq!(code, VERIFIED, "{stdout}");
+    let v: Value = serde_json::from_str(stdout.trim()).unwrap();
+    let mut want: Vec<&str> = top.iter().copied().chain(["tenants"]).collect();
+    want.sort_unstable();
+    assert_eq!(keys(&v), want, "{stdout}");
+    for t in v["tenants"].as_array().unwrap() {
+        let mut want: Vec<&str> = ["base_len", "head", "links", "tenant"]
+            .iter()
+            .chain(auth.iter())
+            .copied()
+            .collect();
+        want.sort_unstable();
+        assert_eq!(keys(t), want, "{stdout}");
+    }
+
+    let (code, stdout, _) = run_split(
+        "json-acme",
+        &only(stream(), "acme"),
+        &["--issuer", ENTRY_ISSUER, "--strict", "--json"],
+    );
+    assert_eq!(code, VERIFIED, "{stdout}");
+    let v: Value = serde_json::from_str(stdout.trim()).unwrap();
+    let mut want: Vec<&str> = top.iter().chain(auth.iter()).copied().collect();
+    want.sort_unstable();
+    assert_eq!(keys(&v), want, "{stdout}");
+}
+
+/// A rewrite takes precedence over uncovered: it refuses immediately in the recompute loop. And
+/// `--allow-uncovered` relaxes nothing but the uncovered refusal.
+#[test]
+fn a_rewrite_beside_an_uncovered_entry_is_refused_as_a_rewrite_even_under_allow_uncovered() {
+    let mut rows = unknown_action();
+    rows.iter_mut().find(|r| r["seq"] == 7).unwrap()["audit_entry"]["action"] =
+        "ciphertext_evicted".into();
+    for args in [
+        &["--issuer", ENTRY_ISSUER][..],
+        &["--issuer", ENTRY_ISSUER, "--allow-uncovered"][..],
+    ] {
+        let (code, out) = run("rewrite-and-uncovered", &rows, args);
+        assert_eq!(code, FAILED, "{args:?}:\n{out}");
+        assert!(out.contains("ENTRY REWRITE"), "{args:?}:\n{out}");
+        assert!(!out.contains("UNCOVERED ENTRY"), "{args:?}:\n{out}");
+        assert!(!out.contains("NOT ESTABLISHED"), "{args:?}:\n{out}");
+    }
+}
+
+/// The anchored-window report path (`WINDOW AUTHENTICATED`): an uncovered entry inside the window is
+/// refused, and `--allow-uncovered` replaces that banner too. The window's second seal (seq 4) is
+/// relabelled into an `AUDIT_ENTRY` with an unknown action, keeping its digest, so the link still hashes.
+#[test]
+fn an_uncovered_entry_in_an_anchored_window_is_refused_and_never_reads_as_authenticated() {
+    let mut rows = window();
+    let r = rows.iter_mut().find(|r| r["seq"] == 4).unwrap();
+    let o = r.as_object_mut().unwrap();
+    o.remove("payload");
+    o.insert("kind".into(), "AUDIT_ENTRY".into());
+    o.insert(
+        "audit_entry".into(),
+        serde_json::json!({"action": "party_registered_v2", "subject": "s"}),
+    );
+    let (code, out) = run_window("window-uncovered", &rows);
+    assert_eq!(code, FAILED, "{out}");
+    assert!(out.contains("UNCOVERED ENTRY"), "{out}");
+    assert!(!out.contains("AUTHENTICATED"), "{out}");
+
+    let anchor = golden_path("entry_domains.anchor.json");
+    let (code, out) = run(
+        "window-uncovered-allow",
+        &rows,
+        &[
+            "--issuer",
+            WINDOW_ISSUER,
+            "--from-anchor",
+            &anchor,
+            "--allow-uncovered",
+        ],
+    );
+    assert_diagnostic(
+        "window-uncovered-allow",
+        &out,
+        code,
+        1,
+        &[r#"seq 4, tenant "acme", kind "AUDIT_ENTRY", action "party_registered_v2""#],
+    );
+    assert!(out.contains("anchored start"), "{out}");
 }
 
 /// The `DECISION_SEALED` arm is deliberately NOT narrowed to links (D-042): an unchained seal relabelled

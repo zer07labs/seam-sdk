@@ -7,6 +7,7 @@
 //! ```text
 //! seam-verify chain <FILE> [--strict]              # the seam-event.v1 hash chain, from the stream alone
 //! seam-verify chain <FILE> --issuer <AID>          # + AUTHENTICITY: every issuer-signed head verifies
+//! seam-verify chain <FILE> --issuer <AID> --allow-uncovered  # diagnostic report; never exit 0 over one
 //! seam-verify erasure-cert <FILE> --issuer <AID>   # a GDPR erasure certificate, from the issuer AID alone
 //! seam-verify bundle <DIR> --issuer <AID>          # a seam-evidence-bundle.v1 directory, end to end
 //! ```
@@ -35,7 +36,7 @@ fn usage() -> ! {
          \n\
          USAGE:\n    \
              seam-verify chain <FILE> [--strict] [--issuer <AID>] [--from-anchor <FILE>]\n                             \
-             [--expect-anchor <FILE>] [--json]\n    \
+             [--expect-anchor <FILE>] [--allow-uncovered] [--json]\n    \
              seam-verify erasure-cert <FILE> --issuer <AID> [--json]\n    \
              seam-verify bundle <DIR> --issuer <AID> [--json]\n\
          \n\
@@ -78,7 +79,17 @@ fn usage() -> ! {
                        payload tenant must EQUAL its envelope's, and its signature must verify under the\n                      \
                        one framing that tenant selects — v2 for a named tenant, v1 for the empty (system)\n                      \
                        partition. A tenant attestation minted before step 3 (v1) is REFUSED: verify that\n                      \
-                       history from a v2 anchor onward.\n\
+                       history from a v2 anchor onward.\n                      \
+                       EVERY OTHER CHAINED ENTRY (AUDIT_ENTRY, CHAIN_HEAD_ATTESTATION, ERASURE_CERTIFICATE)\n                      \
+                       is recomputed from its own fields too: a mismatch is an ENTRY REWRITE. One this\n                      \
+                       build has no preimage for (an unknown action, fact_appended, an unknown kind) is\n                      \
+                       UNCOVERED and REFUSED: its content was never checked. The report prints\n                      \
+                       `entries recomputed` and `uncovered`, zero included.\n\
+         \n    \
+             --allow-uncovered  DIAGNOSIS ONLY (chain, with --issuer, never with --json): print the full\n                      \
+                       report with each uncovered (seq, tenant, kind, action) instead of refusing. It is\n                      \
+                       NOT an authentication: the banner is AUTHENTICITY NOT ESTABLISHED and the exit is\n                      \
+                       still 2. Over a stream with nothing uncovered it changes nothing.\n\
          \n    \
              --from-anchor <FILE>  ANCHORED START (spec clause (f)): seed the running head from an\n                      \
                        issuer-signed CHAIN_HEAD_ATTESTATION instead of genesis, and verify the window from\n                      \
@@ -219,6 +230,7 @@ fn cmd_chain(
     issuers: &[String],
     from_anchor: Option<&str>,
     expect_anchor: Option<&str>,
+    allow_uncovered: bool,
 ) -> ExitCode {
     let anchor = match load_anchor(from_anchor, issuers, json) {
         Ok(a) => a,
@@ -321,38 +333,62 @@ fn cmd_chain(
             // that is the anchored tenant from its anchor (`tc.base_len`/`tc.heads[0]`) and every other
             // tenant from genesis — the anchor seeds exactly the tenant it names (#835 step 4).
             let multi_tenant = r.tenants.len() > 1;
+            // The library refuses an uncovered entry (spec `:291`) unless this is set, and only the
+            // `--allow-uncovered` diagnostic sets it (argument validation keeps it off `--json`).
+            let opts = verify::AuthOptions::allow_uncovered(allow_uncovered);
             let issuer_report = if issuers.is_empty() || multi_tenant {
                 None
             } else {
-                let res = match &anchor {
-                    Some(a) => verify::verify_authenticity_anchored(
-                        &events,
-                        &r.heads,
-                        &r.max_schema_by_link,
-                        issuers,
-                        a.attested_len,
-                        &a.attested_head,
-                    ),
-                    None => verify::verify_authenticity(
-                        &events,
-                        &r.heads,
-                        &r.max_schema_by_link,
-                        issuers,
-                    ),
+                let (base_len, base_head): (u64, &[u8]) = match &anchor {
+                    Some(a) => (a.attested_len, &a.attested_head),
+                    None => (0, &verify::GENESIS),
                 };
-                match res {
+                match verify::verify_authenticity_anchored_with(
+                    &events,
+                    &r.heads,
+                    &r.max_schema_by_link,
+                    issuers,
+                    base_len,
+                    base_head,
+                    &opts,
+                ) {
                     Ok(ir) => Some(ir),
-                    Err(e) => return fail(&e, json, "AUTHENTICITY VERIFICATION FAILED"),
+                    Err(e) => return authenticity_failed(&e, json),
                 }
             };
             let tenant_issuer_reports = if issuers.is_empty() || !multi_tenant {
                 None
             } else {
-                match verify::verify_authenticity_by_tenant(&events, &r, issuers) {
+                match verify::verify_authenticity_by_tenant_with(&events, &r, issuers, &opts) {
                     Ok(m) => Some(m),
-                    Err(e) => return fail(&e, json, "AUTHENTICITY VERIFICATION FAILED"),
+                    Err(e) => return authenticity_failed(&e, json),
                 }
             };
+            // Every report under `--issuer`, single or per tenant, and the uncovered entries across all
+            // of them. Non-empty only under `--allow-uncovered`: the library refused otherwise.
+            let all_reports: Vec<&verify::IssuerReport> = issuer_report
+                .iter()
+                .chain(tenant_issuer_reports.iter().flat_map(|m| m.values()))
+                .collect();
+            let mut uncovered: Vec<&verify::Uncovered> =
+                all_reports.iter().flat_map(|ir| &ir.uncovered).collect();
+            uncovered.sort_by_key(|u| u.seq);
+            let entries_recomputed: usize =
+                all_reports.iter().map(|ir| ir.entries_recomputed).sum();
+            if !uncovered.is_empty() && json {
+                // Unreachable: `--allow-uncovered` never pairs with `--json`. Kept so a future change to
+                // argument validation still cannot print a JSON green over an uncovered entry.
+                return fail(
+                    &format!(
+                        "{} — {} uncovered chained entr{} (this build cannot recompute them)",
+                        verify::UNCOVERED_ENTRY,
+                        uncovered.len(),
+                        if uncovered.len() == 1 { "y" } else { "ies" }
+                    ),
+                    json,
+                    "REFUSED (--issuer)",
+                );
+            }
             // Additive: a window spanning more than one tenant (`r.tenants` — see [`ChainReport`]'s own
             // doc comment on its genesis-sentinel top-level fields in that case) reports each tenant's
             // OWN links/head/authenticity here. Absent entirely for `r.tenants.len() <= 1` — the one
@@ -436,21 +472,34 @@ fn cmd_chain(
                     truncation_extra,
                 );
             } else {
-                println!(
-                    "{}",
-                    match (&anchor, &issuer_report, &tenant_issuer_reports) {
-                        (Some(_), Some(_), _) => "WINDOW AUTHENTICATED (issuer-anchored start)",
-                        (None, Some(_), _) =>
-                            "CHAIN AUTHENTICATED (integrity + issuer-signed head)",
-                        (Some(_), None, Some(_)) => {
-                            "WINDOW AUTHENTICATED (issuer-anchored start, per tenant)"
+                // `--allow-uncovered` with something uncovered REPLACES the AUTHENTICATED banners: no
+                // line of that report may read as a green claim (spec §Versioning, `:1677-1681`), and
+                // it exits 2 below. The banner deliberately contains neither VERIFIED nor
+                // AUTHENTICATED (nor UNVERIFIED, which contains VERIFIED).
+                if uncovered.is_empty() {
+                    println!(
+                        "{}",
+                        match (&anchor, &issuer_report, &tenant_issuer_reports) {
+                            (Some(_), Some(_), _) => "WINDOW AUTHENTICATED (issuer-anchored start)",
+                            (None, Some(_), _) =>
+                                "CHAIN AUTHENTICATED (integrity + issuer-signed head)",
+                            (Some(_), None, Some(_)) => {
+                                "WINDOW AUTHENTICATED (issuer-anchored start, per tenant)"
+                            }
+                            (None, None, Some(_)) => {
+                                "CHAIN AUTHENTICATED (integrity + issuer-signed head, per tenant)"
+                            }
+                            _ => "CHAIN VERIFIED",
                         }
-                        (None, None, Some(_)) => {
-                            "CHAIN AUTHENTICATED (integrity + issuer-signed head, per tenant)"
-                        }
-                        _ => "CHAIN VERIFIED",
-                    }
-                );
+                    );
+                } else {
+                    println!(
+                        "AUTHENTICITY NOT ESTABLISHED: {} uncovered chained entr{} \
+                         (--allow-uncovered diagnostic report)",
+                        uncovered.len(),
+                        if uncovered.len() == 1 { "y" } else { "ies" }
+                    );
+                }
                 println!("  events            : {}", r.events);
                 if multi_tenant {
                     println!(
@@ -515,6 +564,19 @@ fn cmd_chain(
                         }
                     }
                 }
+                // Spec (b′). Both printed UNCONDITIONALLY under --issuer, zero included, for the same
+                // reason as `unverified content` above: a coverage disclosure that vanishes at zero
+                // cannot be told apart from one never measured.
+                if !issuers.is_empty() {
+                    println!(
+                        "  entries recomputed: {entries_recomputed} (audit, attestation and erasure \
+                         entry digests)"
+                    );
+                    println!("  uncovered         : {}", uncovered.len());
+                    for u in &uncovered {
+                        println!("    {}", u.describe());
+                    }
+                }
                 if r.duplicates > 0 {
                     println!(
                         "  duplicates        : {} (at-least-once retries)",
@@ -539,8 +601,12 @@ fn cmd_chain(
                         if let Some(ir) = tenant_issuer_reports.as_ref().and_then(|m| m.get(t)) {
                             println!(
                                 "      attestations {} (issuer-signed), covered prefix {} links, \
-                                 records recomputed {}",
-                                ir.attestations, ir.covered_prefix, ir.records_recomputed
+                                 records recomputed {}, entries recomputed {}, uncovered {}",
+                                ir.attestations,
+                                ir.covered_prefix,
+                                ir.records_recomputed,
+                                ir.entries_recomputed,
+                                ir.uncovered.len()
                             );
                         }
                     }
@@ -554,9 +620,37 @@ fn cmd_chain(
                         e.attested_len
                     );
                 }
+                if !uncovered.is_empty() {
+                    // stderr, like every other refusal's prose: stdout is the report above.
+                    eprintln!(
+                        "\nNOT AN AUTHENTICATION: the {} entr{} listed under `uncovered` carr{} an \
+                         action or kind this build cannot recompute, so {} content was never checked. \
+                         --allow-uncovered prints this report for diagnosis and still exits 2; without \
+                         it --issuer refuses the stream. A newer producer needs a newer seam-verify.",
+                        uncovered.len(),
+                        if uncovered.len() == 1 { "y" } else { "ies" },
+                        if uncovered.len() == 1 { "ies" } else { "y" },
+                        if uncovered.len() == 1 { "its" } else { "their" },
+                    );
+                    return ExitCode::from(FAILED);
+                }
             }
             ExitCode::SUCCESS
         }
+    }
+}
+
+/// An authenticity refusal. An uncovered entry is named as the runtime names it (`REFUSED (--issuer)`)
+/// and gains the diagnostic hint; every other library refusal keeps its banner.
+fn authenticity_failed(e: &str, json: bool) -> ExitCode {
+    if e.contains(verify::UNCOVERED_ENTRY) {
+        let msg = format!(
+            "{e}\n  (`chain --issuer <AID> --allow-uncovered` prints a diagnostic report of them; it \
+             still exits 2)"
+        );
+        fail(&msg, json, "REFUSED (--issuer)")
+    } else {
+        fail(e, json, "AUTHENTICITY VERIFICATION FAILED")
     }
 }
 
@@ -694,12 +788,16 @@ fn main() -> ExitCode {
     // Truncation check (seam-sdk#140): exactly one independently-held anchor to check the window's
     // reach against, same one-wins-loudly shape as `from_anchor` above.
     let mut expect_anchor: Option<String> = None;
+    // `--allow-uncovered`: chain only, with `--issuer`, never with `--json` (checked below, before any
+    // verification runs, so a rejected combination never reaches stdout).
+    let mut allow_uncovered = false;
 
     let mut it = argv[1..].iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--json" => json = true,
             "--strict" => strict = true,
+            "--allow-uncovered" => allow_uncovered = true,
             "--issuer" => match it.next() {
                 Some(v) => issuers.push(v.clone()),
                 None => {
@@ -777,6 +875,24 @@ fn main() -> ExitCode {
                     );
                     usage();
                 }
+                // Never with --json: an automated caller must not be able to get a green, or a
+                // parseable "verified", over an entry whose content was never checked.
+                if allow_uncovered && json {
+                    eprintln!(
+                        "seam-verify: --allow-uncovered is a human diagnostic report only; it never \
+                         pairs with --json"
+                    );
+                    usage();
+                }
+                // Stricter than the runtime, which accepts it as a no-op: without --issuer nothing is
+                // recomputed, so there is nothing for it to allow.
+                if allow_uncovered && issuers.is_empty() {
+                    eprintln!(
+                        "seam-verify: --allow-uncovered requires --issuer — only --issuer recomputes \
+                         entries, so without it there is nothing uncovered to report"
+                    );
+                    usage();
+                }
                 cmd_chain(
                     &p,
                     strict,
@@ -784,6 +900,7 @@ fn main() -> ExitCode {
                     &issuers,
                     from_anchor.as_deref(),
                     expect_anchor.as_deref(),
+                    allow_uncovered,
                 )
             }
             None => {
@@ -798,6 +915,10 @@ fn main() -> ExitCode {
             }
             if expect_anchor.is_some() {
                 eprintln!("seam-verify: --expect-anchor is a chain-only flag");
+                usage();
+            }
+            if allow_uncovered {
+                eprintln!("seam-verify: --allow-uncovered is a chain-only flag");
                 usage();
             }
             // A certificate names exactly ONE signer; repeatable --issuer is a chain-only affordance for
@@ -816,6 +937,11 @@ fn main() -> ExitCode {
                     "seam-verify: bundle takes its anchor from the bundle's own anchor.json; \
                      --from-anchor/--expect-anchor are chain-only flags"
                 );
+                usage();
+            }
+            // A bundle's chain step always refuses an uncovered entry; there is no diagnostic mode.
+            if allow_uncovered {
+                eprintln!("seam-verify: --allow-uncovered is a chain-only flag");
                 usage();
             }
             // Like a certificate, a bundle names exactly ONE issuer, and the pin must be that issuer.

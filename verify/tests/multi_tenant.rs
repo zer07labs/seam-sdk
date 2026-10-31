@@ -587,6 +587,78 @@ fn from_anchor_over_a_multi_tenant_window_seeds_only_the_named_tenant() {
     assert_eq!(base("globex"), 0, "{out}");
 }
 
+/// The per-tenant anchored path (`WINDOW AUTHENTICATED … per tenant`): an uncovered entry in ONE tenant
+/// refuses the whole call ("there is no such thing as some tenants authenticated"), and
+/// `--allow-uncovered` replaces the per-tenant banner with the non-green one, exit 2. `globex` carries a
+/// chain link of an unknown kind with no payload; its attestation covers it, so only the uncovered
+/// refusal can object.
+#[test]
+fn an_uncovered_entry_in_one_tenant_of_an_anchored_window_refuses_the_whole_call() {
+    let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
+    let (acme, base_len, base_head) = anchored_acme_window(&sk);
+    let genesis = vec![0u8; 32];
+    let (g0, gh0) = sealed_link(10, &genesis, "globex");
+    let (g1, gh1) = sealed_link(11, &gh0, "globex");
+    let udigest = Sha256::digest(b"a future entry").to_vec();
+    let uhead = {
+        let mut h = Sha256::new();
+        h.update(&gh1);
+        h.update(&udigest);
+        h.finalize().to_vec()
+    };
+    let unknown = serde_json::json!({
+        "schema_version": "seam-event.v1",
+        "event_id": "u#12",
+        "seq": 12,
+        "tenant": "globex",
+        "kind": "FUTURE_ENTRY",
+        "prev_checksum": b64e(&gh1),
+        "digest": b64e(&udigest),
+        "checksum": b64e(&uhead),
+    })
+    .to_string();
+    let gatt = attestation_event(13, &uhead, 3, &uhead, &sk, ISSUER, 4, "globex");
+    let body = format!("{acme}\n{g0}\n{g1}\n{unknown}\n{gatt}");
+    let anchor = anchor_json(base_len, &base_head, 1_700, ISSUER, 2, &sk, "acme");
+
+    let (code, out) = run_anchored("uncovered-multi", &body, &anchor, &[]);
+    assert_eq!(code, FAILED, "{out}");
+    assert!(out.contains("REFUSED (--issuer)"), "{out}");
+    assert!(out.contains("UNCOVERED ENTRY"), "{out}");
+    assert!(!out.contains("AUTHENTICATED"), "{out}");
+
+    let (code, out) = run_anchored("uncovered-multi-json", &body, &anchor, &["--json"]);
+    assert_eq!(code, FAILED, "{out}");
+    let v: serde_json::Value = serde_json::from_str(out.lines().next().unwrap()).unwrap();
+    assert_eq!(v["verified"], false, "{out}");
+    assert!(
+        v["error"].as_str().unwrap().contains("cannot recompute"),
+        "{out}"
+    );
+
+    let (code, out) = run_anchored(
+        "uncovered-multi-allow",
+        &body,
+        &anchor,
+        &["--allow-uncovered"],
+    );
+    assert_eq!(code, FAILED, "{out}");
+    assert!(!out.contains("VERIFIED"), "{out}");
+    assert!(!out.contains("AUTHENTICATED"), "{out}");
+    assert!(
+        out.starts_with(
+            "AUTHENTICITY NOT ESTABLISHED: 1 uncovered chained entry (--allow-uncovered diagnostic report)"
+        ),
+        "{out}"
+    );
+    assert!(
+        out.contains(r#"seq 12, tenant "globex", kind "FUTURE_ENTRY", action (none)"#),
+        "{out}"
+    );
+    assert!(out.contains("entries recomputed 1, uncovered 1"), "{out}");
+    assert!(out.contains("entries recomputed 1, uncovered 0"), "{out}");
+}
+
 /// A full-event anchor follows the same payload==envelope equality rule as an in-stream attestation
 /// (#835 step 4): an empty payload tenant under a named envelope is refused as a defect in the anchor
 /// itself — exit 2, before it can seed anything — not accepted on the envelope's word.

@@ -175,8 +175,9 @@ fn plain_chain_verifies_the_stream() {
     assert_eq!(code, VERIFIED, "{out}");
 }
 
-/// Every chained `AUDIT_ENTRY` here recomputes (Phase 2; counted in `tests/entry_recompute.rs`), so this
-/// stays green. Phase 4 adds the uncovered refusal around it.
+/// The runtime's own stream is fully green under `--issuer --strict`, with the uncovered refusal in
+/// force: every chained non-seal link recomputes (15 `AUDIT_ENTRY`, 1 `ERASURE_CERTIFICATE`, 3
+/// `CHAIN_HEAD_ATTESTATION`), and nothing is uncovered. Both disclosures are printed, zero included.
 #[test]
 fn chain_with_issuer_and_strict_verifies_the_stream() {
     let (code, out) = run(
@@ -185,6 +186,16 @@ fn chain_with_issuer_and_strict_verifies_the_stream() {
         &["--issuer", ENTRY_ISSUER, "--strict"],
     );
     assert_eq!(code, VERIFIED, "{out}");
+    assert!(
+        out.starts_with("CHAIN AUTHENTICATED (integrity + issuer-signed head, per tenant)"),
+        "{out}"
+    );
+    assert!(
+        out.contains("  entries recomputed: 19 (audit, attestation and erasure entry digests)\n"),
+        "{out}"
+    );
+    assert!(out.contains("  uncovered         : 0\n"), "{out}");
+    assert!(!out.contains("UNCOVERED ENTRY"), "{out}");
 }
 
 /// Negative control: the file is a real chain, so dropping one middle line breaks a link.
