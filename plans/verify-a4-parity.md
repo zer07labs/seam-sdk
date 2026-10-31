@@ -229,7 +229,11 @@ lists zero Seam crates, and no green is reported over a chained entry this build
 
 ### Phase 1: Payload binds to kind
 
-- **Status:** TODO. **Risk:** complex. It changes integrity-mode verdicts, and the test churn is wide.
+- **Status:** DONE (2026-10-30). Divergences: the `--issuer`-path helpers chained payload-less seals (the plan
+  assumed v4). They now use real v4 records from a new spec-written `verify/tests/support/mod.rs`, and their
+  signed ceilings rose from 2 to 4. `conformance.rs` needed no change. Unmodelled JSON slots accept only an
+  object (`OpaqueObject`), matching the runtime's typed decoder. **Risk:** complex. It changes integrity-mode
+  verdicts, and the test churn is wide.
 - **Delivers:** `KIND/PAYLOAD MISMATCH` and `ADVISORY EVENT WITH CHAIN FIELDS` refusals, in every mode (plain `chain`,
   `--strict`, `--issuer`, `bundle`), matching runtime `main.rs:273-361`.
 - **Depends on:** nothing. The spec text at `:800-805` is fully normative. It is not gated on OQ-1.

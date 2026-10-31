@@ -101,6 +101,110 @@ pub struct TenantChain {
     pub base_len: u64,
 }
 
+/// **Payload binds to kind** (spec §Ordering & integrity, code-health A4): *"each payload field belongs
+/// to exactly one kind, so an event carries only its own kind's payload, and a known kind carries it. A
+/// known advisory kind (or the chain anchor) that carries `digest`/`checksum` is refused, not linked."*
+///
+/// Three rules, in this order, mirroring the runtime verifier's `check_kind_payload` so the two refuse
+/// the same streams with the same markers:
+///
+/// 1. No payload is present that belongs to a kind other than `e.kind` (`KIND/PAYLOAD MISMATCH`).
+/// 2. A **known** kind — one of the eleven payload owners below — carries its own payload
+///    (`KIND/PAYLOAD MISMATCH`). An unknown, future kind may carry none of the known ones (rule 1), and
+///    carrying nothing is not a mismatch: it is a link like any other, disclosed as unmodelled.
+/// 3. An [`Event::is_advisory`] event — a known advisory kind, or the `chain_anchor` audit entry —
+///    carries neither `digest` nor `checksum` (`ADVISORY EVENT WITH CHAIN FIELDS`).
+///
+/// Without it, *"a sealed decision relabelled as an advisory kind would still count as a link"* — and
+/// under `--issuer` as a recomputed seal. It runs in **every** mode, integrity included, because the
+/// hole it closes is a linkage hole, not an authenticity one. It reads only presence: the five
+/// unmodelled payloads are never decoded ([`crate::wire::PayloadPresence`]).
+///
+/// The field labels and the marker strings are the runtime's verbatim, so a differential harness can
+/// map one side's diagnosis onto the other's.
+pub fn check_kind_payload(e: &Event) -> Result<(), String> {
+    let p = &e.presence;
+    let fields: [(&str, bool, &str); 11] = [
+        ("payload (tag 13)", e.decision.is_some(), "DECISION_SEALED"),
+        (
+            "learning_decision (tag 14)",
+            p.learning_decision,
+            "LEARNING_DECISION",
+        ),
+        (
+            "learning_outcome (tag 15)",
+            p.learning_outcome,
+            "LEARNING_OUTCOME",
+        ),
+        ("audit_entry (tag 16)", e.audit.is_some(), "AUDIT_ENTRY"),
+        ("budget_breach (tag 17)", p.budget_breach, "BUDGET_BREACH"),
+        (
+            "erasure_certificate (tag 18)",
+            e.cert.is_some(),
+            "ERASURE_CERTIFICATE",
+        ),
+        (
+            "session_lifecycle (tag 21)",
+            p.session_lifecycle,
+            "SESSION_LIFECYCLE",
+        ),
+        (
+            "chain_head_attestation (tag 22)",
+            e.attestation.is_some(),
+            "CHAIN_HEAD_ATTESTATION",
+        ),
+        (
+            "authorize_evaluated (tag 23)",
+            e.authorize.is_some(),
+            "AUTHORIZE_EVALUATED",
+        ),
+        (
+            "policy_denied (tag 24)",
+            e.denial.is_some(),
+            "POLICY_DENIED",
+        ),
+        (
+            "event_redriven (tag 26)",
+            p.event_redriven,
+            "EVENT_REDRIVEN",
+        ),
+    ];
+    // Rule 1: "each payload field belongs to exactly one kind, so an event carries only its own kind's
+    // payload".
+    if let Some((field, _, owner)) = fields
+        .iter()
+        .find(|(_, present, owner)| *present && *owner != e.kind)
+    {
+        return Err(format!(
+            "tenant '{}': seq {}: KIND/PAYLOAD MISMATCH — a {} event carries {field}, which only a {owner} \
+             carries. A payload was grafted onto another kind (e.g. a sealed decision dressed as an \
+             advisory row), or the producer is non-conforming.",
+            e.tenant, e.seq, e.kind
+        ));
+    }
+    // Rule 2: "and a known kind carries it". After rule 1 the only payload that can still be present is
+    // the event's own, so its presence is the whole test.
+    if let Some((_, present, owner)) = fields.iter().find(|(_, _, owner)| *owner == e.kind) {
+        if !present {
+            return Err(format!(
+                "tenant '{}': seq {}: KIND/PAYLOAD MISMATCH — a {} event carries no {owner} payload.",
+                e.tenant, e.seq, e.kind
+            ));
+        }
+    }
+    // Rule 3: "a known advisory kind (or the chain anchor) that carries `digest`/`checksum` is refused,
+    // not linked". Either field alone is enough: a half-chained advisory row is no more a link than a
+    // fully chained one.
+    if e.is_advisory() && (e.digest.is_some() || e.checksum.is_some()) {
+        return Err(format!(
+            "tenant '{}': seq {}: ADVISORY EVENT WITH CHAIN FIELDS — a {} event is never a chain link, but \
+             it carries digest/checksum. An advisory row cannot be promoted into the chain.",
+            e.tenant, e.seq, e.kind
+        ));
+    }
+    Ok(())
+}
+
 /// Collapse at-least-once duplicates.
 ///
 /// A duplicate is **byte-identical**, full stop — that is precisely what a retried delivery is.
@@ -203,6 +307,10 @@ pub fn chain_by_tenant(
     };
 
     for e in events {
+        // First, before the link/advisory split and before any `unverifiable` counting — as the runtime
+        // does — so a relabelled or stripped event reports the binding, never a downstream symptom of
+        // it. Every entry point (`chain`, `chain_anchored`, and `bundle` through it) inherits it here.
+        check_kind_payload(e)?;
         let (Some(digest), Some(checksum)) = (e.digest.as_ref(), e.checksum.as_ref()) else {
             if e.is_advisory() {
                 r.advisory += 1;

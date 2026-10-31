@@ -26,9 +26,41 @@ fn b64(b: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(b)
 }
 
+/// The minimal payload each of the eleven known kinds must carry (spec §Ordering & integrity, "payload
+/// binds to kind": "a known kind carries it"), as `(payload key, stub suffix)`. Integrity mode never
+/// reads a payload's content, only its presence, so a stub is enough; an unknown kind gets none.
+fn stub_payload(kind: &str) -> Option<(&'static str, &'static str)> {
+    Some(match kind {
+        "DECISION_SEALED" => ("payload", r#","payload":{"decision_id":"d"}"#),
+        "LEARNING_DECISION" => ("learning_decision", r#","learning_decision":{}"#),
+        "LEARNING_OUTCOME" => ("learning_outcome", r#","learning_outcome":{}"#),
+        "AUDIT_ENTRY" => (
+            "audit_entry",
+            r#","audit_entry":{"action":"party_registered"}"#,
+        ),
+        "BUDGET_BREACH" => ("budget_breach", r#","budget_breach":{}"#),
+        "ERASURE_CERTIFICATE" => (
+            "erasure_certificate",
+            r#","erasure_certificate":{"subject":"s","erased":[],"held":[],"erased_at":0,"chain_head":"","issuer_aid":"","signature":""}"#,
+        ),
+        "SESSION_LIFECYCLE" => ("session_lifecycle", r#","session_lifecycle":{}"#),
+        "CHAIN_HEAD_ATTESTATION" => (
+            "chain_head_attestation",
+            r#","chain_head_attestation":{"attested_len":0,"attested_head":"","attested_at":0,"issuer_aid":"","digest_schema":0,"signature":""}"#,
+        ),
+        "AUTHORIZE_EVALUATED" => ("authorize_evaluated", r#","authorize_evaluated":{}"#),
+        "POLICY_DENIED" => ("policy_denied", r#","policy_denied":{}"#),
+        "EVENT_REDRIVEN" => ("event_redriven", r#","event_redriven":{}"#),
+        _ => return None,
+    })
+}
+
 /// One event of the JSON projection. `digest`/`checksum` are omitted entirely when absent (per the spec's
 /// `skip_serializing_if` rule), which is exactly what makes a pre-cutover event indistinguishable from an
 /// advisory one.
+///
+/// A known kind whose `extra` does not already carry its own payload gets [`stub_payload`], so every
+/// helper-built stream satisfies the kind/payload binding and each test keeps exercising what it names.
 fn event(seq: u64, kind: &str, prev: &[u8], digest: Option<&[u8]>, extra: &str) -> String {
     let mut s = format!(
         r#"{{"schema_version":"seam-event.v1","event_id":"e{seq}","seq":{seq},"kind":"{kind}","prev_checksum":"{}""#,
@@ -42,6 +74,11 @@ fn event(seq: u64, kind: &str, prev: &[u8], digest: Option<&[u8]>, extra: &str) 
         ));
     }
     s.push_str(extra);
+    if let Some((key, stub)) = stub_payload(kind) {
+        if !extra.contains(&format!("\"{key}\":")) {
+            s.push_str(stub);
+        }
+    }
     s.push('}');
     s
 }
@@ -169,7 +206,7 @@ fn an_advisory_event_does_not_advance_the_head() {
     let mut c = chain(3);
     c.insert(
         1,
-        r#"{"schema_version":"seam-event.v1","event_id":"ld1","seq":1,"kind":"LEARNING_DECISION","prev_checksum":""}"#.to_string(),
+        r#"{"schema_version":"seam-event.v1","event_id":"ld1","seq":1,"kind":"LEARNING_DECISION","prev_checksum":"","learning_decision":{}}"#.to_string(),
     );
     let (code, out) = run("advisory", &c, &[]);
     assert_eq!(code, VERIFIED, "{out}");
@@ -183,7 +220,7 @@ fn pre_cutover_events_are_disclosed_and_strict_refuses_them() {
     // and cannot be verified. Skipping it silently would report a green chain over history never checked.
     let mut c = chain(3);
     c.push(
-        r#"{"schema_version":"seam-event.v1","event_id":"old","seq":99,"kind":"DECISION_SEALED","prev_checksum":""}"#
+        r#"{"schema_version":"seam-event.v1","event_id":"old","seq":99,"kind":"DECISION_SEALED","prev_checksum":"","payload":{"decision_id":"old"}}"#
             .to_string(),
     );
 

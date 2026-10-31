@@ -10,6 +10,8 @@
 //! `DECISION_SEALED` links and one issuer-signed `CHAIN_HEAD_ATTESTATION` each, both attestations
 //! agreeing with their own envelope tenant (the post-U-RT-3 Phase 2/3 shape).
 
+mod support;
+
 use std::collections::BTreeMap;
 use std::process::Command;
 
@@ -178,7 +180,7 @@ fn a_legacy_tenant_unbound_attestation_is_refused() {
     let genesis = vec![0u8; 32];
     let (l0, h0) = sealed_link(0, &genesis, "acme");
     let (l1, h1) = sealed_link(1, &h0, "acme");
-    let v1 = attestation_event_v1(2, &h1, 2, &h1, &sk, ISSUER, 2, "acme");
+    let v1 = attestation_event_v1(2, &h1, 2, &h1, &sk, ISSUER, 4, "acme");
 
     let mut legacy: serde_json::Value = serde_json::from_str(&v1).unwrap();
     legacy["chain_head_attestation"]["tenant"] = serde_json::Value::String(String::new());
@@ -327,8 +329,10 @@ fn anchor_json(
     v.to_string()
 }
 
+/// An honest v4 `DECISION_SEALED` link for `tenant` ([`support::v4_seal`]): the kind/payload binding
+/// requires the payload, and `--issuer` recomputes it.
 fn sealed_link(seq: u64, prev: &[u8], tenant: &str) -> (String, Vec<u8>) {
-    let digest = Sha256::digest(format!("r{seq}").as_bytes()).to_vec();
+    let (payload, digest) = support::v4_seal(&format!("d{seq}"), tenant);
     let checksum = {
         let mut h = Sha256::new();
         h.update(prev);
@@ -344,6 +348,7 @@ fn sealed_link(seq: u64, prev: &[u8], tenant: &str) -> (String, Vec<u8>) {
         "prev_checksum": b64e(prev),
         "digest": b64e(&digest),
         "checksum": b64e(&checksum),
+        "payload": payload,
     })
     .to_string();
     (line, checksum)
@@ -477,7 +482,7 @@ fn anchored_acme_window(sk: &ed25519_dalek::SigningKey) -> (String, u64, Vec<u8>
     let base_head = Sha256::digest(b"anchor-head-seed").to_vec();
     let (link1, head1) = sealed_link(5, &base_head, "acme");
     let (link2, head2) = sealed_link(6, &head1, "acme");
-    let att = attestation_event(7, &head2, base_len + 2, &head2, sk, ISSUER, 2, "acme");
+    let att = attestation_event(7, &head2, base_len + 2, &head2, sk, ISSUER, 4, "acme");
     (format!("{link1}\n{link2}\n{att}"), base_len, base_head)
 }
 
@@ -526,7 +531,7 @@ fn an_untenanted_anchor_never_seeds_a_tenant_chain() {
     let genesis = vec![0u8; 32];
     let (l0, h0) = sealed_link(0, &genesis, "acme");
     let (l1, h1) = sealed_link(1, &h0, "acme");
-    let att = attestation_event(2, &h1, 2, &h1, &sk, ISSUER, 2, "acme");
+    let att = attestation_event(2, &h1, 2, &h1, &sk, ISSUER, 4, "acme");
     let whole = format!("{l0}\n{l1}\n{att}");
     let anchor = anchor_json(2, &h1, 1_700, ISSUER, 2, &sk, "");
     let (code, out) = run_anchored("untenanted-genesis", &whole, &anchor, &[]);
@@ -547,7 +552,7 @@ fn from_anchor_over_a_multi_tenant_window_seeds_only_the_named_tenant() {
     let genesis = vec![0u8; 32];
     let (g0, gh0) = sealed_link(10, &genesis, "globex");
     let (g1, gh1) = sealed_link(11, &gh0, "globex");
-    let gatt = attestation_event(12, &gh1, 2, &gh1, &sk, ISSUER, 2, "globex");
+    let gatt = attestation_event(12, &gh1, 2, &gh1, &sk, ISSUER, 4, "globex");
     let body = format!("{acme}\n{g0}\n{g1}\n{gatt}");
 
     let anchor = anchor_json(base_len, &base_head, 1_700, ISSUER, 2, &sk, "acme");
@@ -581,7 +586,7 @@ fn from_anchor_over_a_multi_tenant_window_seeds_only_the_named_tenant() {
 fn a_full_event_anchor_whose_payload_tenant_differs_from_its_envelope_is_refused() {
     let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
     let (body, base_len, base_head) = anchored_acme_window(&sk);
-    let full = attestation_event(4, &[0u8; 32], base_len, &base_head, &sk, ISSUER, 2, "acme");
+    let full = attestation_event(4, &[0u8; 32], base_len, &base_head, &sk, ISSUER, 4, "acme");
 
     let (code, out) = run_anchored("full-event-anchor", &body, &full, &[]);
     assert_eq!(
@@ -717,12 +722,12 @@ fn v2_stream(signed_tenant: &str) -> String {
     let (l0, h0) = sealed_link(0, &genesis, "acme");
     let (l1, h1) = sealed_link(1, &h0, "acme");
     let mut att: serde_json::Value =
-        serde_json::from_str(&attestation_event(2, &h1, 2, &h1, &sk, ISSUER, 2, "acme")).unwrap();
+        serde_json::from_str(&attestation_event(2, &h1, 2, &h1, &sk, ISSUER, 4, "acme")).unwrap();
     let at = att["chain_head_attestation"]["attested_at"]
         .as_u64()
         .unwrap();
     let sig = sk
-        .sign(&att_digest_v2(2, &h1, at, 2, ISSUER, signed_tenant))
+        .sign(&att_digest_v2(2, &h1, at, 4, ISSUER, signed_tenant))
         .to_bytes();
     att["chain_head_attestation"]["signature"] = serde_json::Value::String(b64e(&sig));
     format!("{l0}\n{l1}\n{att}")

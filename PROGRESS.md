@@ -5284,3 +5284,10 @@ not filed here. OQ-1 is resolved, so no phase is gated.
   - AIDs: 21×32 → `aid:pubkey:1UIH2hlJd9z0atv-wrwudbUtWopCGE_t_cAAJPDj6No`; ISSUER_SEED 07×32 → `aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw`.
   - Files: `verify/tests/goldens/{entry_domains.jsonl, entry_domains.window.jsonl, entry_domains.anchor.json, entry_domains.swapped-attestation.json, .gitattributes, README.md}`, `verify/tests/entry_vectors.rs` (8 tests).
   - Next: P1, executing in parallel in a worktree.
+- **P1 DONE** (2026-10-30). Verifier: Opus (complex phase, solo), PASS in 1 round. Two minor gaps closed in the same commit:
+  - an `--json` refusal test;
+  - unmodelled JSON slots now accept only an object (a scalar or array is malformed, as in the runtime's decoder).
+  - Built in a parallel worktree and cherry-picked. Full suite: 182 passed. All 4 bundle fixtures verify.
+  - Files: `verify/src/{wire,verify,lib}.rs`, `verify/tests/{kind_payload.rs (new), support/mod.rs (new), bundle, verifier, anchored, authenticity, multi_tenant, truncation}.rs`.
+  - Assumption logged: spec-written v4 test helper.
+  - Next: ship PR A (P0+P1), then P2.

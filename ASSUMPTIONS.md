@@ -1517,3 +1517,11 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Alternatives:** set it in the integration job's from-source branch (used only for lockstep trains), or compare against the SDK's own version (wrong exactly at 0.63.1 ↔ 0.63.0).
 - **Blast radius if wrong:** CI misses a runtime that reports the wrong version string; the local release-time run still catches it. Reversible in one workflow line.
 - **Status:** CONFIRMED (2026-10-29), by Opus (see DECISIONS.md)
+
+## verify/ test helpers build real v4 seals from the spec, not via the library digest
+- **Plan:** plans/verify-a4-parity.md (Phase 1)
+- **Assumed:** chained `DECISION_SEALED` test links must carry a genuine v4 payload once payload binds to kind; a test helper that derives `record-digest.v4` from the spec keeps the D-035 clean-room boundary, where calling the crate's own `record_digest_v4` would make the tests circular.
+- **Chose:** one shared `verify/tests/support/mod.rs` written from the spec, used by anchored/truncation/multi_tenant/bundle and the authenticity rotation test. The attestation ceilings those helpers sign rose from 2 to 4 to match the v4 records.
+- **Alternatives:** relabel those links as `AUDIT_ENTRY` (Phase 2 recompute would break them again); call the library digest (circular); four per-file copies (drift).
+- **Blast radius if wrong:** tests only; cheap to redo.
+- **Status:** UNCONFIRMED
