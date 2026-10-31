@@ -426,27 +426,15 @@ fn a_key_rotation_chain_passes_with_both_issuers_pinned_and_fails_with_one() {
     // Two plain links, then an OLD-signed attestation (itself link 3), then a NEW-signed one (link 4).
     let mut head = vec![0u8; 32];
     let mut lines = Vec::new();
+    // Honest v4 seals: the kind/payload binding requires the payload, and --issuer recomputes it.
     for seq in 0..2u64 {
-        let digest = Sha256::digest(format!("r{seq}").as_bytes()).to_vec();
-        let checksum = {
-            let mut h = Sha256::new();
-            h.update(&head);
-            h.update(&digest);
-            h.finalize().to_vec()
-        };
-        lines.push(format!(
-            "{{\"schema_version\":\"seam-event.v1\",\"event_id\":\"d{seq}#{seq}\",\"seq\":{seq},\
-             \"kind\":\"DECISION_SEALED\",\"prev_checksum\":\"{}\",\"digest\":\"{}\",\
-             \"checksum\":\"{}\"}}",
-            b64e(&head),
-            b64e(&digest),
-            b64e(&checksum),
-        ));
+        let (line, checksum) = sealed_line(seq, &head, &v4_payload());
+        lines.push(line);
         head = checksum;
     }
-    let (old_att, head3) = attestation_event(2, &head, 2, &head, &old_sk, &old_aid, 2);
+    let (old_att, head3) = attestation_event(2, &head, 2, &head, &old_sk, &old_aid, 4);
     lines.push(old_att);
-    let (new_att, _) = attestation_event(3, &head3, 3, &head3, &new_sk, &new_aid, 2);
+    let (new_att, _) = attestation_event(3, &head3, 3, &head3, &new_sk, &new_aid, 4);
     lines.push(new_att);
     let body = lines.join("\n");
 
@@ -1056,6 +1044,7 @@ fn a_stale_attestation_over_an_earlier_prefix_still_passes() {
         "schema_version": "seam-event.v1", "event_id": "aud#0", "seq": 0, "occurred_at": 1_700,
         "kind": "AUDIT_ENTRY", "prev_checksum": b64e(&head0), "digest": b64e(&d0),
         "checksum": b64e(&c1),
+        "audit_entry": {"action": "party_registered", "subject": "agent-1", "reason": ""},
     })
     .to_string();
     // Ceiling 3 over the 1-link prefix — honest at the moment it was signed: nothing in it exceeds 3.
@@ -1125,6 +1114,7 @@ fn a_prefix_with_no_sealed_records_cannot_violate_the_ceiling() {
         "schema_version": "seam-event.v1", "event_id": "aud#0", "seq": 0, "occurred_at": 1_700,
         "kind": "AUDIT_ENTRY", "prev_checksum": b64e(&head0), "digest": b64e(&d),
         "checksum": b64e(&checksum),
+        "audit_entry": {"action": "party_registered", "subject": "agent-1", "reason": ""},
     })
     .to_string();
     let (att, _) = attestation_event(1, &checksum, 1, &checksum, &sk, ISSUER, 2);

@@ -41,9 +41,22 @@ pub struct SeamEventPb {
     /// widening the plan prices.
     #[prost(message, optional, tag = "13")]
     pub payload: Option<DecisionSealedPb>,
+    /// tags 14/15 — the ADVISORY `LEARNING_DECISION` / `LEARNING_OUTCOME` payloads. **Presence only**:
+    /// declared as opaque `bytes`, which share wire type 2 with a message, so prost reads "was the slot
+    /// on the wire" without this crate modelling a single field of them. Presence is the whole of what
+    /// verification needs (spec §Ordering & integrity, "payload binds to kind": "each payload field
+    /// belongs to exactly one kind, so an event carries only its own kind's payload, and a known kind
+    /// carries it"). The bytes themselves are never read; see [`PayloadPresence`].
+    #[prost(bytes = "vec", optional, tag = "14")]
+    pub learning_decision: Option<Vec<u8>>,
+    #[prost(bytes = "vec", optional, tag = "15")]
+    pub learning_outcome: Option<Vec<u8>>,
     /// tag 16 — an `AUDIT_ENTRY`. We need only its `action`, to spot the off-chain `chain_anchor`.
     #[prost(message, optional, tag = "16")]
     pub audit_entry: Option<AuditEntryPb>,
+    /// tag 17 — the ADVISORY `BUDGET_BREACH` payload. Presence only, exactly as tags 14/15.
+    #[prost(bytes = "vec", optional, tag = "17")]
+    pub budget_breach: Option<Vec<u8>>,
     /// tag 18 — the signed erasure certificate.
     #[prost(message, optional, tag = "18")]
     pub erasure_certificate: Option<ErasureCertificatePb>,
@@ -53,6 +66,9 @@ pub struct SeamEventPb {
     /// tag 20 — the head this entry produces, `= H(prev_checksum ‖ digest)`.
     #[prost(bytes = "vec", optional, tag = "20")]
     pub checksum: Option<Vec<u8>>,
+    /// tag 21 — the ADVISORY `SESSION_LIFECYCLE` payload. Presence only, exactly as tags 14/15.
+    #[prost(bytes = "vec", optional, tag = "21")]
+    pub session_lifecycle: Option<Vec<u8>>,
     /// tag 22 — the issuer-signed `(len, head)` (A14). Present on a `CHAIN_HEAD_ATTESTATION`, which is
     /// itself chained (it carries digest/checksum like any link) AND additionally verified under `--issuer`.
     #[prost(message, optional, tag = "22")]
@@ -68,6 +84,11 @@ pub struct SeamEventPb {
     /// across both transports.
     #[prost(message, optional, tag = "24")]
     pub policy_denied: Option<PolicyDeniedPb>,
+    /// tag 26 — the ADVISORY `EVENT_REDRIVEN` wrapper. Presence only, exactly as tags 14/15: the
+    /// re-driven row's bytes inside it are never decoded here (see `EVENT_REDRIVEN` in
+    /// [`ADVISORY_KINDS`]).
+    #[prost(bytes = "vec", optional, tag = "26")]
+    pub event_redriven: Option<Vec<u8>>,
     /// tag 25 — the per-tenant outbox counter (spec §tenant_seq, runtime #973). UNSEALED: in no digest,
     /// checksum or signature, so it proves nothing and is never verified here. Decoded anyway because it is
     /// part of the event's canonical identity: two advisory rows that differ only in `tenant_seq` are two
@@ -301,6 +322,63 @@ pub struct SeamEventJson {
     pub tenant_seq: Option<u64>,
     #[serde(default)]
     pub stream_id: String,
+    /// The five payloads this crate does not model (tags 14, 15, 17, 21, 26). **Presence only**, as on
+    /// the protobuf side: [`OpaqueObject`] consumes the value without modelling it, and `Option` makes
+    /// `null` read as absent — the same reading serde's `Option` gives it on the runtime side.
+    #[serde(default)]
+    pub learning_decision: Option<OpaqueObject>,
+    #[serde(default)]
+    pub learning_outcome: Option<OpaqueObject>,
+    #[serde(default)]
+    pub budget_breach: Option<OpaqueObject>,
+    #[serde(default)]
+    pub session_lifecycle: Option<OpaqueObject>,
+    #[serde(default)]
+    pub event_redriven: Option<OpaqueObject>,
+}
+
+/// An unmodelled payload slot's JSON value: an object whose contents are consumed and discarded. A
+/// payload is a message, so a scalar or an array here is malformed — the runtime's typed decoder
+/// refuses it, and so does this one, rather than reading a stray `1` as "present".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OpaqueObject;
+
+impl<'de> Deserialize<'de> for OpaqueObject {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = OpaqueObject;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a payload object")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut m: A,
+            ) -> Result<OpaqueObject, A::Error> {
+                while m
+                    .next_entry::<serde::de::IgnoredAny, serde::de::IgnoredAny>()?
+                    .is_some()
+                {}
+                Ok(OpaqueObject)
+            }
+        }
+        d.deserialize_map(V)
+    }
+}
+
+/// Which of the five **unmodelled** payload slots (tags 14, 15, 17, 21, 26) an event carried. The
+/// boolean is the whole record: nothing of their content is kept, because nothing of it is verified.
+///
+/// The other six slots are modelled on [`Event`] (`decision`, `audit`, `cert`, `attestation`,
+/// `authorize`, `denial`), and their `Option` is their presence. Together the eleven are the input to
+/// [`crate::verify::check_kind_payload`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PayloadPresence {
+    pub learning_decision: bool,
+    pub learning_outcome: bool,
+    pub budget_breach: bool,
+    pub session_lifecycle: bool,
+    pub event_redriven: bool,
 }
 
 #[derive(Deserialize)]
@@ -457,6 +535,9 @@ pub struct Event {
     pub attestation: Option<Attestation>,
     /// The `DECISION_SEALED` payload — read only for the digest-v4 recompute under `--issuer`.
     pub decision: Option<Decision>,
+    /// Presence of the five payloads this crate does not model — read only by the kind/payload
+    /// binding, and carried into the dedup identity.
+    pub presence: PayloadPresence,
     /// The canonical bytes this event decoded from (or re-encodes to) — the dedup identity.
     pub bytes: Vec<u8>,
 }
@@ -782,6 +863,13 @@ impl Event {
                 cert: cert.transpose()?,
                 attestation: attestation.transpose()?,
                 decision: decision.transpose()?,
+                presence: PayloadPresence {
+                    learning_decision: j.learning_decision.is_some(),
+                    learning_outcome: j.learning_outcome.is_some(),
+                    budget_breach: j.budget_breach.is_some(),
+                    session_lifecycle: j.session_lifecycle.is_some(),
+                    event_redriven: j.event_redriven.is_some(),
+                },
                 bytes: Vec::new(),
             };
             return Ok(ev.with_identity());
@@ -858,6 +946,13 @@ impl Event {
                 trust_basis_commitment: p.trust_basis_commitment,
                 auth_method: p.auth_method,
             }),
+            presence: PayloadPresence {
+                learning_decision: pb.learning_decision.is_some(),
+                learning_outcome: pb.learning_outcome.is_some(),
+                budget_breach: pb.budget_breach.is_some(),
+                session_lifecycle: pb.session_lifecycle.is_some(),
+                event_redriven: pb.event_redriven.is_some(),
+            },
             bytes: raw,
         }
         .with_identity())
@@ -921,6 +1016,16 @@ impl Event {
             policy_denied: self.denial.clone(),
             tenant_seq: self.tenant_seq,
             stream_id: self.stream_id.clone(),
+            // Presence is identity: each present unmodelled slot re-encodes as an EMPTY sub-message,
+            // whichever transport delivered it, so one event has one identity over JSON and protobuf
+            // alike. Left out, a copy carrying a foreign payload and a clean copy of the same event
+            // would dedup into whichever arrived first — and the kind/payload binding would judge
+            // only that one.
+            learning_decision: self.presence.learning_decision.then(Vec::new),
+            learning_outcome: self.presence.learning_outcome.then(Vec::new),
+            budget_breach: self.presence.budget_breach.then(Vec::new),
+            session_lifecycle: self.presence.session_lifecycle.then(Vec::new),
+            event_redriven: self.presence.event_redriven.then(Vec::new),
             erasure_certificate: self.cert.as_ref().map(|c| ErasureCertificatePb {
                 subject: c.subject.clone(),
                 erased: c.erased.clone(),
@@ -1014,8 +1119,8 @@ pub const ADVISORY_KINDS: &[&str] = &[
 /// NOT fold them into a green claim"); [`crate::verify::ChainReport::unmodelled`] is that disclosure.
 ///
 /// **Being listed here is NOT a claim that the payload is parsed.** Four of these
-/// (`LEARNING_DECISION`, `LEARNING_OUTCOME`, `BUDGET_BREACH`, `SESSION_LIFECYCLE`) have no slot on
-/// [`Event`] at all. They are ADVISORY — they carry no `digest`/`checksum` by design, so they are
+/// (`LEARNING_DECISION`, `LEARNING_OUTCOME`, `BUDGET_BREACH`, `SESSION_LIFECYCLE`) have no content
+/// slot on [`Event`] at all — only a presence bit in [`PayloadPresence`], for the kind/payload binding. They are ADVISORY — they carry no `digest`/`checksum` by design, so they are
 /// never links, and content coverage is a question that does not arise for them. The claim this list
 /// makes is only that the kind was **known when this build shipped**, which is precisely what
 /// §Versioning's "unmodelled" means: a kind from a later additive spec revision.
@@ -1307,6 +1412,7 @@ mod tests {
                 cert: None,
                 attestation: None,
                 decision: None,
+                presence: PayloadPresence::default(),
                 bytes: Vec::new(),
             }
             .with_identity()
@@ -1653,5 +1759,75 @@ mod tests {
         );
         // And byte-identical redeliveries still collapse.
         assert_eq!(base.bytes, entry("agent-1", "scope", None).bytes);
+    }
+
+    /// Presence decode for each of the five unmodelled slots (tags 14, 15, 17, 21, 26), on both
+    /// transports: the slot sets exactly its own bit and no other, its content is never needed, and
+    /// JSON `null` is absence.
+    #[test]
+    fn each_unmodelled_payload_slot_decodes_as_presence_only() {
+        let bit = |p: &PayloadPresence, tag: u32| match tag {
+            14 => p.learning_decision,
+            15 => p.learning_outcome,
+            17 => p.budget_breach,
+            21 => p.session_lifecycle,
+            26 => p.event_redriven,
+            _ => unreachable!(),
+        };
+        for (tag, key) in [
+            (14u32, "learning_decision"),
+            (15, "learning_outcome"),
+            (17, "budget_breach"),
+            (21, "session_lifecycle"),
+            (26, "event_redriven"),
+        ] {
+            // Protobuf: the envelope, then the slot hand-appended as a length-delimited field whose
+            // body is arbitrary bytes this crate has no model for.
+            let mut raw = SeamEventPb {
+                schema_version: "seam-event.v1".into(),
+                event_id: "e".into(),
+                kind: "K".into(),
+                ..Default::default()
+            }
+            .encode_to_vec();
+            // The field key `tag << 3 | 2` as a varint: one byte for tags 14/15, two from tag 16 up.
+            let field_key = (tag << 3) | 2;
+            if field_key < 0x80 {
+                raw.push(field_key as u8);
+            } else {
+                raw.extend_from_slice(&[(field_key as u8) | 0x80, (field_key >> 7) as u8]);
+            }
+            raw.extend_from_slice(&[3, 0xff, 0x00, 0x7f]);
+            let from_pb = Event::parse(&b64e(&raw)).expect("pb must parse");
+
+            let json = format!(
+                r#"{{"schema_version":"seam-event.v1","event_id":"e","kind":"K","prev_checksum":"","{key}":{{"any":[1,{{"x":null}}]}}}}"#
+            );
+            let from_json = Event::parse(&json).expect("json must parse");
+
+            for (transport, e) in [("protobuf", &from_pb), ("json", &from_json)] {
+                for other in [14u32, 15, 17, 21, 26] {
+                    assert_eq!(
+                        bit(&e.presence, other),
+                        other == tag,
+                        "{key} ({transport}): tag {other}'s bit"
+                    );
+                }
+            }
+            assert_eq!(
+                from_pb.bytes, from_json.bytes,
+                "{key}: presence re-encodes identically from either transport"
+            );
+
+            let null = format!(
+                r#"{{"schema_version":"seam-event.v1","event_id":"e","kind":"K","prev_checksum":"","{key}":null}}"#
+            );
+            let e = Event::parse(&null).expect("json null must parse");
+            assert_eq!(
+                e.presence,
+                PayloadPresence::default(),
+                "{key}: null is absent"
+            );
+        }
     }
 }

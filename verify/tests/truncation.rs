@@ -8,6 +8,8 @@
 //! shows that supplying an anchor the operator holds independently (never present in the stream
 //! itself) is what actually catches it.
 
+mod support;
+
 use std::process::Command;
 
 use base64::Engine;
@@ -94,8 +96,10 @@ fn anchor_json(len: u64, head: &[u8], sk: &ed25519_dalek::SigningKey) -> String 
     .to_string()
 }
 
+/// An honest v4 `DECISION_SEALED` link ([`support::v4_seal`]): the kind/payload binding requires the
+/// payload, and `--issuer` recomputes it.
 fn sealed_link(seq: u64, prev: &[u8]) -> (String, Vec<u8>) {
-    let digest = Sha256::digest(format!("r{seq}").as_bytes()).to_vec();
+    let (payload, digest) = support::v4_seal(&format!("d{seq}"), "");
     let checksum = {
         let mut h = Sha256::new();
         h.update(prev);
@@ -110,6 +114,7 @@ fn sealed_link(seq: u64, prev: &[u8]) -> (String, Vec<u8>) {
         "prev_checksum": b64e(prev),
         "digest": b64e(&digest),
         "checksum": b64e(&checksum),
+        "payload": payload,
     })
     .to_string();
     (line, checksum)
@@ -125,7 +130,7 @@ fn attestation_event(
     use ed25519_dalek::Signer;
     let at = 1_700 + seq;
     let sig = sk
-        .sign(&att_digest(attested_len, attested_head, at, 2, ISSUER))
+        .sign(&att_digest(attested_len, attested_head, at, 4, ISSUER))
         .to_bytes();
     let digest = Sha256::digest(format!("att-{seq}").as_bytes()).to_vec();
     let checksum = {
@@ -148,7 +153,7 @@ fn attestation_event(
             "attested_head": b64e(attested_head),
             "attested_at": at,
             "issuer_aid": ISSUER,
-            "digest_schema": 2,
+            "digest_schema": 4,
             "signature": b64e(&sig),
         },
     })
@@ -296,7 +301,7 @@ fn a_spliced_tail_as_long_as_the_anchor_is_still_caught() {
     // on (a hash chain propagates the fork into every head after it) while staying exactly as
     // long as the real chain.
     let (diverged_line, diverged_head) = {
-        let digest = Sha256::digest(b"a-different-record-entirely").to_vec();
+        let (payload, digest) = support::v4_seal("a-different-record-entirely", "");
         let checksum = {
             let mut h = Sha256::new();
             h.update(&c.heads[3]);
@@ -311,6 +316,7 @@ fn a_spliced_tail_as_long_as_the_anchor_is_still_caught() {
             "prev_checksum": b64e(&c.heads[3]),
             "digest": b64e(&digest),
             "checksum": b64e(&checksum),
+            "payload": payload,
         })
         .to_string();
         (line, checksum)
@@ -353,7 +359,7 @@ fn a_spliced_tail_as_long_as_the_anchor_is_still_caught() {
 fn an_untenanted_expect_anchor_never_stands_for_a_tenant_chain() {
     let base_head = vec![0u8; 32];
     let mk_tenant_link = |seq: u64, tenant: &str| {
-        let digest = Sha256::digest(format!("r{seq}").as_bytes()).to_vec();
+        let (payload, digest) = support::v4_seal(&format!("d{seq}"), tenant);
         let checksum = {
             let mut h = Sha256::new();
             h.update(&base_head);
@@ -369,6 +375,7 @@ fn an_untenanted_expect_anchor_never_stands_for_a_tenant_chain() {
             "prev_checksum": b64e(&base_head),
             "digest": b64e(&digest),
             "checksum": b64e(&checksum),
+            "payload": payload,
         })
         .to_string()
     };

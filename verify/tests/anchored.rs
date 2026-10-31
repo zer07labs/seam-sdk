@@ -16,6 +16,8 @@
 //!   anchor's position is required;
 //! * genesis-mode output/behaviour is untouched by any of this.
 
+mod support;
+
 use std::process::Command;
 
 use base64::Engine;
@@ -163,10 +165,11 @@ fn attestation_event(
     (line, checksum)
 }
 
-/// A plain `DECISION_SEALED` link (no payload — the sealed-record digest is orthogonal to what this
-/// file is proving).
+/// A plain `DECISION_SEALED` link. The sealed record is orthogonal to what this file is proving, but
+/// the kind/payload binding requires a seal to carry its payload, and `--issuer` recomputes it, so it is
+/// an honest v4 record ([`support::v4_seal`]).
 fn sealed_link(seq: u64, prev: &[u8]) -> (String, Vec<u8>) {
-    let digest = Sha256::digest(format!("r{seq}").as_bytes()).to_vec();
+    let (payload, digest) = support::v4_seal(&format!("d{seq}"), "");
     let checksum = {
         let mut h = Sha256::new();
         h.update(prev);
@@ -181,6 +184,7 @@ fn sealed_link(seq: u64, prev: &[u8]) -> (String, Vec<u8>) {
         "prev_checksum": b64e(prev),
         "digest": b64e(&digest),
         "checksum": b64e(&checksum),
+        "payload": payload,
     })
     .to_string();
     (line, checksum)
@@ -218,7 +222,7 @@ fn fixture() -> Fixture {
 }
 
 fn covering_attestation(f: &Fixture) -> String {
-    attestation_event(7, &f.head2, f.covering_len, &f.head2, &f.sk, ISSUER, 2).0
+    attestation_event(7, &f.head2, f.covering_len, &f.head2, &f.sk, ISSUER, 4).0
 }
 
 fn anchor_file(f: &Fixture) -> std::path::PathBuf {
@@ -294,7 +298,7 @@ fn genesis_behaviour_unchanged() {
     let genesis = [0u8; 32];
     let (link1, head1) = sealed_link(0, &genesis);
     let (link2, head2) = sealed_link(1, &head1);
-    let (att, _) = attestation_event(2, &head2, 2, &head2, &sk, ISSUER, 2);
+    let (att, _) = attestation_event(2, &head2, 2, &head2, &sk, ISSUER, 4);
     let body = format!("{link1}\n{link2}\n{att}");
 
     let (code, out) = run("genesis-text", "chain", &body, &["--issuer", ISSUER]);
@@ -495,7 +499,7 @@ fn attestation_at_exactly_anchor_position_does_not_count_as_covering() {
     // An attestation landing EXACTLY on the anchor's own position (attested_len == base_len,
     // attested_head == the anchor's head) — verifies, but must not satisfy (f4) by itself.
     let (at_anchor, head_a) =
-        attestation_event(5, &f.base_head, f.base_len, &f.base_head, &f.sk, ISSUER, 2);
+        attestation_event(5, &f.base_head, f.base_len, &f.base_head, &f.sk, ISSUER, 4);
     let (link1, head1) = sealed_link(6, &head_a);
     let (link2, head2) = sealed_link(7, &head1);
     let body_alone = format!("{at_anchor}\n{link1}\n{link2}");
@@ -520,7 +524,7 @@ fn attestation_at_exactly_anchor_position_does_not_count_as_covering() {
 
     // Add a genuine covering attestation: NOW it passes, and covering_attestations counts only the
     // real one — the at-anchor attestation still does not count.
-    let (covering, _) = attestation_event(8, &head2, f.base_len + 3, &head2, &f.sk, ISSUER, 2);
+    let (covering, _) = attestation_event(8, &head2, f.base_len + 3, &head2, &f.sk, ISSUER, 4);
     let body_both = format!("{body_alone}\n{covering}");
     let (code, out) = run(
         "at-anchor-plus-covering",
@@ -550,7 +554,7 @@ fn attestation_beyond_window_is_out_of_range() {
     // The attestation event chains too (it is a link like any other), so once it is appended the
     // window holds THREE links (link1, link2, beyond) — positions base_len..=base_len+3. Attesting
     // base_len + 5 is genuinely past the window's extent, not merely past its own append point.
-    let (beyond, _) = attestation_event(7, &f.head2, f.base_len + 5, &f.head2, &f.sk, ISSUER, 2);
+    let (beyond, _) = attestation_event(7, &f.head2, f.base_len + 5, &f.head2, &f.sk, ISSUER, 4);
     let body = format!("{}\n{}\n{beyond}", f.link1, f.link2);
     let anchor = anchor_file(&f);
     let (code, out) = run(
@@ -585,12 +589,12 @@ fn below_window_attestation_is_skipped_and_reported() {
         &stale_head,
         &f.sk,
         ISSUER,
-        2,
+        4,
     );
     let (link1, head1) = sealed_link(6, &head_b);
     let (link2, head2) = sealed_link(7, &head1);
     // Covering attestation over the full (now three-link) window.
-    let (covering, _) = attestation_event(8, &head2, f.base_len + 3, &head2, &f.sk, ISSUER, 2);
+    let (covering, _) = attestation_event(8, &head2, f.base_len + 3, &head2, &f.sk, ISSUER, 4);
     let body = format!("{below}\n{link1}\n{link2}\n{covering}");
     let anchor = anchor_file(&f);
 
@@ -645,7 +649,7 @@ fn below_window_forged_attestation_still_fails() {
         &stale_head,
         &f.sk,
         ISSUER,
-        2,
+        4,
     );
     // Forge the below-window attestation's signature by corrupting its chain_head_attestation.
     let mut v: serde_json::Value = serde_json::from_str(&below).unwrap();
@@ -656,7 +660,7 @@ fn below_window_forged_attestation_still_fails() {
 
     let (link1, head1) = sealed_link(6, &head_b);
     let (link2, head2) = sealed_link(7, &head1);
-    let (covering, _) = attestation_event(8, &head2, f.base_len + 3, &head2, &f.sk, ISSUER, 2);
+    let (covering, _) = attestation_event(8, &head2, f.base_len + 3, &head2, &f.sk, ISSUER, 4);
     let body = format!("{below_forged}\n{link1}\n{link2}\n{covering}");
     let anchor = anchor_file(&f);
 
@@ -692,7 +696,7 @@ fn anchor_as_full_event_line_is_accepted() {
     // The anchor supplied as a FULL seam-event.v1 event line (what an outbox consumer already holds),
     // not the bare six-field object `GET /v1/anchors` returns.
     let (event_line, _) =
-        attestation_event(4, &[0u8; 32], f.base_len, &f.base_head, &f.sk, ISSUER, 2);
+        attestation_event(4, &[0u8; 32], f.base_len, &f.base_head, &f.sk, ISSUER, 4);
     let anchor = write_tmp("event-anchor", "jsonl", &event_line);
 
     let (code, out) = run(

@@ -71,6 +71,12 @@ digest and do not
 advance the head. A verifier that keys on `kind` instead breaks on the first advisory event in an
 unfiltered stream.
 
+**Payload binds to kind** (seam-event.v1, runtime A4). Each payload field belongs to exactly one kind, and
+a known kind carries its own. An event carrying another kind's payload, or a known kind without its own,
+is refused with `KIND/PAYLOAD MISMATCH`. An advisory event or the `chain_anchor` that carries
+`digest`/`checksum` is refused with `ADVISORY EVENT WITH CHAIN FIELDS`, never linked. Both refusals apply
+to `chain` (plain, `--strict` and `--issuer`) and to `bundle`, and exit 2; `cert` checks only the certificate.
+
 **A `kind` this build has never seen is still verified — and still disclosed.** `seam-event.v1` grows
 kinds additively, so a stream can legitimately outrun the verifier reading it. Such an event is a link
 like any other (the link check needs no payload semantics; skipping it would falsely report the chain

@@ -32,6 +32,8 @@
 //! edit; where the edit is to a member, the manifest is re-hashed so the refusal under test is the
 //! content check and not the manifest hash.
 
+mod support;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -387,6 +389,68 @@ fn step_2_wrong_anchor_and_broken_window_are_refused() {
     );
 }
 
+// ── payload binds to kind (code-health A4) ────────────────────────────────────────────────────────
+
+/// The kind/payload binding reaches `bundle` through `chain_anchored`, with no bundle-side code: a
+/// chained `chain_anchor` inside the window is refused at step 2. The window's `d2` seal is relabelled
+/// into a well-formed `chain_anchor` audit entry (its own payload, no foreign one) that keeps its
+/// `digest`/`checksum` — so the link still hashes, and only rule 3 of the binding can refuse it (spec
+/// §Ordering & integrity: "a known advisory kind (or the chain anchor) that carries
+/// `digest`/`checksum` is refused, not linked").
+#[test]
+fn step_2_a_chained_chain_anchor_in_the_window_is_refused() {
+    assert_refused(
+        "full",
+        vec![(
+            "chained chain_anchor",
+            Box::new(|d: &Path| {
+                let events = std::fs::read_to_string(d.join("events.jsonl")).unwrap();
+                let mut hit = false;
+                let edited: String = events
+                    .lines()
+                    .map(|l| {
+                        let mut e: serde_json::Value = serde_json::from_str(l).unwrap();
+                        if e["payload"]["decision_id"] == D2 {
+                            let o = e.as_object_mut().unwrap();
+                            o.remove("payload");
+                            o.insert("kind".into(), "AUDIT_ENTRY".into());
+                            o.insert(
+                                "audit_entry".into(),
+                                serde_json::json!({
+                                    "action": "chain_anchor",
+                                    "subject": "audit-chain",
+                                    "reason": "len=5",
+                                }),
+                            );
+                            hit = true;
+                        }
+                        format!("{}\n", serde_json::to_string(&e).unwrap())
+                    })
+                    .collect();
+                assert!(hit, "the edit must relabel the d2 seal");
+                replace_and_rehash(d, "events.jsonl", edited.into_bytes());
+            }),
+            "ADVISORY EVENT WITH CHAIN FIELDS",
+        )],
+    );
+}
+
+/// The binding refuses no genuine export: the `bundle` CLI still passes over all four shipped
+/// fixtures, each under the issuer that exported it.
+#[test]
+fn every_shipped_bundle_fixture_still_verifies() {
+    for (name, aid) in [
+        ("full", ISSUER),
+        ("minimal", ISSUER),
+        ("other-issuer", OTHER),
+        ("shredded", ISSUER),
+    ] {
+        let (code, out) = verify(&fixture(name), aid);
+        assert_eq!(code, VERIFIED, "{name}:\n{out}");
+        assert!(out.contains("EVIDENCE BUNDLE VERIFIED"), "{name}:\n{out}");
+    }
+}
+
 // ── #835 step 4: the anchor seeds exactly the tenant it names, and a window is one tenant's ──────
 
 /// `anchor.json` re-signed by the fixture issuer (seed 7×32) over the same `(len, head, at, schema)`,
@@ -427,16 +491,17 @@ fn resigned_anchor(d: &Path, tenant: &str) -> Vec<u8> {
     serde_json::to_vec(&a).unwrap()
 }
 
-/// One chained `DECISION_SEALED` link for `tenant`, from genesis, with no payload — enough to put a
-/// chain for `tenant` in the window (only its link fields are checked at step 2's chain walk).
+/// One chained `DECISION_SEALED` link for `tenant`, from genesis — enough to put a chain for `tenant`
+/// in the window. It carries an honest v4 payload ([`support::v4_seal`]), because the kind/payload
+/// binding refuses a seal without one before step 2's chain walk reaches its link fields.
 fn genesis_link(seq: u64, tenant: &str) -> String {
     use base64::Engine;
     let b64 = base64::engine::general_purpose::STANDARD;
     let genesis = [0u8; 32];
-    let digest = Sha256::digest(format!("other-{seq}").as_bytes());
+    let (payload, digest) = support::v4_seal(&format!("other-{seq}"), tenant);
     let mut h = Sha256::new();
     h.update(genesis);
-    h.update(digest);
+    h.update(&digest);
     serde_json::json!({
         "schema_version": "seam-event.v1",
         "event_id": format!("other#{seq}"),
@@ -444,8 +509,9 @@ fn genesis_link(seq: u64, tenant: &str) -> String {
         "tenant": tenant,
         "kind": "DECISION_SEALED",
         "prev_checksum": b64.encode(genesis),
-        "digest": b64.encode(digest),
+        "digest": b64.encode(&digest),
         "checksum": b64.encode(h.finalize()),
+        "payload": payload,
     })
     .to_string()
 }

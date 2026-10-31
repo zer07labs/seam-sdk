@@ -94,7 +94,7 @@ pub mod wire;
 // `verify` is a helper they compose.
 pub use bundle::{verify_bundle, BundleError, BundleReport};
 pub use verify::{
-    chain, chain_anchored, chain_by_tenant, check_not_truncated, erasure_certificate, link,
-    verify_anchor, verify_authenticity, verify_authenticity_anchored,
+    chain, chain_anchored, chain_by_tenant, check_kind_payload, check_not_truncated,
+    erasure_certificate, link, verify_anchor, verify_authenticity, verify_authenticity_anchored,
     verify_authenticity_by_tenant, ChainReport, IssuerReport, TenantChain,
 };
