@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.68.0 — 2026-10-31
+
 ## 0.67.1 — 2026-10-31
 
 These entries first ship in **0.67.1**: v0.67.0 was tagged and never published (see COMPATIBILITY.md).
