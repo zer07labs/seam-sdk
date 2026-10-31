@@ -1533,3 +1533,11 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Alternatives:** a public `entry` module (widens the 0.5.0 API surface before anyone asks for it).
 - **Blast radius if wrong:** making it public later is additive; no verdict changes.
 - **Status:** UNCONFIRMED
+
+## verify/ attestation test digests come from one shared spec-written helper
+- **Plan:** plans/verify-a4-parity.md (Phase 3)
+- **Assumed:** the plan's "computed locally" rule for test digests is met by a test-only helper independent of `src/`.
+- **Chose:** `support::attest_entry_digest` (own framing, no `seam_verify::entry` import), shared by five test files.
+- **Alternatives:** a copy per test file (drift risk).
+- **Blast radius if wrong:** tests only.
+- **Status:** UNCONFIRMED

@@ -5300,3 +5300,9 @@ not filed here. OQ-1 is resolved, so no phase is gated.
   - Files: `verify/src/{entry.rs (new), verify, wire, lib}.rs`, `verify/tests/{entry_recompute.rs (new), support/mod.rs, authenticity.rs, entry_vectors.rs}`.
   - Uncovered entries are counted but not yet refused (Phase 4). PR B stays one unit.
   - Next: P3.
+- **P3 DONE** (2026-10-31). Verifier: Opus (complex phase, solo), PASS in 1 round.
+  - Both preimages match the runtime byte for byte. The classification contract matches all 11 rows.
+  - Mutation checks confirmed the below-base and in-window tests are real.
+  - 217 tests pass.
+  - Files: `verify/src/{entry,verify}.rs`, `verify/tests/{entry_recompute, support/mod, multi_tenant, anchored, conformance, authenticity, truncation}.rs`.
+  - Next: P4.

@@ -431,7 +431,10 @@ lists zero Seam crates, and no green is reported over a chained entry this build
 
 ### Phase 3: Attestation and certificate preimages, the classification contract, and ordering
 
-- **Status:** TODO, unblocked (OQ-1 resolved). **Risk:** complex.
+- **Status:** DONE (2026-10-31). Divergences: reordering `erased` is a unit test (the Phase 0 certificate erases
+  one id); the below-base relabel test runs on the spliced row (the classification check is its sole emitter,
+  proven by mutation); two `multi_tenant` tests re-derive digest+checksum after re-signing; one shared
+  `support::attest_entry_digest` helper. **Risk:** complex.
 - **Delivers:** `CHAIN_HEAD_ATTESTATION` recomputes under `seam.audit.chain-attest-entry.v1` and
   `ERASURE_CERTIFICATE` under `seam.audit.erasure-cert.v2`. Their envelope classification is bound (`Internal`,
   `Pii`). Ordering against anchors is pinned by tests.
