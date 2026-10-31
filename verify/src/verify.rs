@@ -613,8 +613,10 @@ pub struct IssuerReport {
     /// uncounted.
     pub records_recomputed: usize,
     /// **Spec (b′).** The number of chained, non-`DECISION_SEALED` links whose own fields recomputed
-    /// the digest the chain links (today: `AUDIT_ENTRY`, under the domain its action selects, with its
-    /// envelope classification bound). A mismatch is refused as `ENTRY REWRITE`, never counted.
+    /// the digest the chain links: `AUDIT_ENTRY` under the domain its action selects,
+    /// `CHAIN_HEAD_ATTESTATION` under `seam.audit.chain-attest-entry.v1` and `ERASURE_CERTIFICATE` under
+    /// `seam.audit.erasure-cert.v2`, each with its envelope classification bound. A mismatch is refused
+    /// as `ENTRY REWRITE`, never counted.
     pub entries_recomputed: usize,
     /// **Spec (b′).** Chained, non-`DECISION_SEALED` links this build has no preimage for — an unknown
     /// action, `fact_appended`, or a kind it does not recompute — in stream order. Neither recomputed
@@ -905,18 +907,18 @@ pub fn verify_authenticity_anchored(
                 entry::Body::Rewritten(what) if what.ends_with("classification") => {
                     return Err(format!(
                         "seq {}: ENTRY REWRITE — the chained {what} ({:?}) is not the label its action \
-                         fixes.\n  The envelope classification sits outside the digest, so a relabel \
-                         leaves the link hashing; it is bound to the action instead, and this one was \
-                         changed after the entry was chained.",
+                         or kind fixes.\n  The envelope classification sits outside the digest, so a \
+                         relabel leaves the link hashing; it is bound to the action or kind instead, and \
+                         this one was changed after the entry was chained.",
                         e.seq, e.classification
                     ));
                 }
                 entry::Body::Rewritten(what) => {
                     return Err(format!(
                         "seq {}: ENTRY REWRITE — the chained {what}'s fields do not recompute the \
-                         digest the chain links.\n  A field (e.g. an actor, reason or session) was \
-                         rewritten after the entry was chained: the link still hashes, but the entry no \
-                         longer matches it.",
+                         digest the chain links.\n  A field (e.g. an actor, a session, an attested head or an \
+                         erased id) was rewritten after the entry was chained: the link still hashes, but \
+                         the entry no longer matches it.",
                         e.seq
                     ));
                 }

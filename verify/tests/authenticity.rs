@@ -383,7 +383,7 @@ fn attestation_event(
     let sig = sk
         .sign(&att_digest(len, attested_head, at, digest_schema, aid))
         .to_bytes();
-    let digest = Sha256::digest(format!("att-{seq}").as_bytes()).to_vec();
+    let digest = support::attest_entry_digest(len, attested_head, at, digest_schema, aid, &sig);
     let checksum = {
         let mut h = Sha256::new();
         h.update(prev);
@@ -392,7 +392,7 @@ fn attestation_event(
     };
     let line = format!(
         "{{\"schema_version\":\"seam-event.v1\",\"event_id\":\"att#{seq}\",\"seq\":{seq},\
-         \"occurred_at\":{at},\"kind\":\"CHAIN_HEAD_ATTESTATION\",\
+         \"occurred_at\":{at},\"classification\":\"Internal\",\"kind\":\"CHAIN_HEAD_ATTESTATION\",\
          \"prev_checksum\":\"{}\",\"digest\":\"{}\",\"checksum\":\"{}\",\
          \"chain_head_attestation\":{{\"attested_len\":{len},\"attested_head\":\"{}\",\
          \"attested_at\":{at},\"issuer_aid\":\"{aid}\",\"digest_schema\":{digest_schema},\"signature\":\"{}\"}}}}",

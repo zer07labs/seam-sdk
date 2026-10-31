@@ -432,7 +432,14 @@ fn attestation_event_signed(
     use ed25519_dalek::Signer;
     let at = 1_700 + seq;
     let sig = sk.sign(signed_digest).to_bytes();
-    let digest = Sha256::digest(format!("att-{seq}").as_bytes()).to_vec();
+    let digest = support::attest_entry_digest(
+        attested_len,
+        attested_head,
+        at,
+        digest_schema,
+        issuer_aid,
+        &sig,
+    );
     let checksum = {
         let mut h = Sha256::new();
         h.update(prev);
@@ -445,6 +452,7 @@ fn attestation_event_signed(
         "seq": seq,
         "tenant": tenant,
         "occurred_at": at,
+        "classification": "Internal",
         "kind": "CHAIN_HEAD_ATTESTATION",
         "prev_checksum": b64e(prev),
         "digest": b64e(&digest),
@@ -634,6 +642,7 @@ fn the_system_partition_is_attested_like_any_tenant() {
                 a["issuer_aid"].as_str().unwrap(),
             ));
             a["signature"] = serde_json::Value::String(b64e(&sig.to_bytes()));
+            rechain_attestation(e);
         }
     };
     let system: String = body
@@ -686,6 +695,26 @@ fn the_system_partition_is_attested_like_any_tenant() {
     );
 }
 
+/// Re-derive a re-signed attestation link's `digest` and `checksum`. The signature is inside its chained
+/// digest (spec (b′), `seam.audit.chain-attest-entry.v1`), so re-signing in place without this reads as an
+/// `ENTRY REWRITE`. Only valid for the last link of its tenant's chain: nothing after it is re-linked.
+fn rechain_attestation(e: &mut serde_json::Value) {
+    let a = &e["chain_head_attestation"];
+    let digest = support::attest_entry_digest(
+        a["attested_len"].as_u64().unwrap(),
+        &b64d(a["attested_head"].as_str().unwrap()),
+        a["attested_at"].as_u64().unwrap(),
+        a["digest_schema"].as_u64().unwrap() as u32,
+        a["issuer_aid"].as_str().unwrap(),
+        &b64d(a["signature"].as_str().unwrap()),
+    );
+    let mut h = Sha256::new();
+    h.update(b64d(e["prev_checksum"].as_str().unwrap()));
+    h.update(&digest);
+    e["digest"] = serde_json::Value::String(b64e(&digest));
+    e["checksum"] = serde_json::Value::String(b64e(&h.finalize()));
+}
+
 // ── (8) the v2 signed framing binds the tenant (seam-runtime #835) ────────────────────────────────
 
 /// `seam.audit.chain-head-attestation.v2` — the v1 frames under the v2 domain tag, then `frame(tenant)`.
@@ -730,6 +759,7 @@ fn v2_stream(signed_tenant: &str) -> String {
         .sign(&att_digest_v2(2, &h1, at, 4, ISSUER, signed_tenant))
         .to_bytes();
     att["chain_head_attestation"]["signature"] = serde_json::Value::String(b64e(&sig));
+    rechain_attestation(&mut att);
     format!("{l0}\n{l1}\n{att}")
 }
 
