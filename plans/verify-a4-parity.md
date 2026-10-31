@@ -494,7 +494,11 @@ lists zero Seam crates, and no green is reported over a chained entry this build
 
 ### Phase 4: Uncovered refusal, `--allow-uncovered`, and no false green on any output
 
-- **Status:** TODO. **Risk:** complex. A CLI flag and a refusal are both public contract.
+- **Status:** DONE (2026-10-31). Divergences: public API beyond the plan's list —
+  `verify_authenticity_by_tenant_with` (multi-tenant diagnostic), the `UNCOVERED_ENTRY` marker,
+  `Uncovered::describe()` (one formatter for the library refusal and the CLI report), and a `#[non_exhaustive]`
+  `AuthOptions` with `AuthOptions::allow_uncovered(bool)`; the erasure-cert flag test lives in `erasure_cert.rs`.
+  Banner: `AUTHENTICITY NOT ESTABLISHED: N uncovered chained entr{y|ies} (--allow-uncovered diagnostic report)`, exit 2. **Risk:** complex. A CLI flag and a refusal are both public contract.
 - **Delivers:** an uncovered chained entry is REFUSED under `--issuer`, in the library, CLI and bundle (spec
   `:291`, "uncovered and REFUSED under `--issuer`"). `--allow-uncovered` (chain only, human only) prints the full
   diagnostic report instead, and **still exits 2**. The verifier gets a no-false-green audit of every banner and

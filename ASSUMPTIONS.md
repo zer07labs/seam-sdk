@@ -1541,3 +1541,11 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Alternatives:** a copy per test file (drift risk).
 - **Blast radius if wrong:** tests only.
 - **Status:** UNCONFIRMED
+
+## seam-verify 0.5.0 public API additions for the uncovered refusal
+- **Plan:** plans/verify-a4-parity.md (Phase 4)
+- **Assumed:** embedders need a multi-tenant diagnostic entry point and a stable marker to name the refusal, since errors are plain `String`.
+- **Chose:** `verify_authenticity_by_tenant_with`, `UNCOVERED_ENTRY`, `Uncovered::describe()`, and `#[non_exhaustive] AuthOptions` + `AuthOptions::allow_uncovered(bool)`. Per-tenant precedence matches the runtime: every tenant's attestation checks run first, then one refusal lists all uncovered entries (runtime `main.rs:1412-1429`).
+- **Alternatives:** keep the diagnostic CLI-only (the binary links the library as a separate crate, so `pub(crate)` is not available); a typed error enum (larger API change).
+- **Blast radius if wrong:** public items of a published 0.x crate; removal needs a minor bump. `non_exhaustive` keeps adding options non-breaking.
+- **Status:** UNCONFIRMED

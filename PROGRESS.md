@@ -5306,3 +5306,11 @@ not filed here. OQ-1 is resolved, so no phase is gated.
   - 217 tests pass.
   - Files: `verify/src/{entry,verify}.rs`, `verify/tests/{entry_recompute, support/mod, multi_tenant, anchored, conformance, authenticity, truncation}.rs`.
   - Next: P4.
+- **P4 DONE** (2026-10-31). Verifier: Opus (complex phase, solo), PASS in 1 round.
+  - The verifier ran the CLI on an uncovered stream: no VERIFIED or AUTHENTICATED on any exit-2 path.
+  - The prior binary showed `CHAIN AUTHENTICATED` on that stream, so this closes a real false green.
+  - JSON key set unchanged (key-path hash identical).
+  - Optional tightening applied: `AuthOptions` is `#[non_exhaustive]` with a constructor.
+  - 229 tests pass.
+  - Files: `verify/src/{main,verify,lib,bundle}.rs`, `verify/tests/{entry_recompute,bundle,multi_tenant,erasure_cert,entry_vectors}.rs`.
+  - Next: P5.
