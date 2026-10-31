@@ -15,7 +15,7 @@
 
 ## Status
 
-TODO. No phase started. **All phases are unblocked.** OQ-1 is resolved as **(b) ∥ (a)**, decided by Fable at plan
+IN PROGRESS. P0 and P1 DONE (PR A); P2–P5 TODO (PR B). **All phases are unblocked.** OQ-1 is resolved as **(b) ∥ (a)**, decided by Fable at plan
 review; owner input was not needed (see OQ-1). Phases 2 and 3 transcribe from runtime `entry.rs` under the scoped
 D-043 carve-out, validated against Phase 0's runtime-produced vectors, while seam-runtime#1561 carries the spec
 fix. **Owner checkpoint:** `publish-verify` is `workflow_dispatch` only (`.github/workflows/publish.yml:524-528`),
