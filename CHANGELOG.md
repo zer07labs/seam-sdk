@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.69.0 — 2026-10-31
+
 ### Changed
 - **`seam-verify`: payload binds to kind (seam-sdk#316; runtime 0.67.0, code-health A4).** The verifier now
   refuses an event carrying another kind's payload, a known kind without its own payload, and an advisory kind
