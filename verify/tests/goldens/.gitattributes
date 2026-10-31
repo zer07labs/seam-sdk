@@ -1,0 +1,4 @@
+# The entry_domains.* vectors are byte-vendored from seam-runtime's own tests, and
+# tests/entry_vectors.rs pins each file's sha256. A line-ending conversion on checkout would change
+# those bytes and turn a genuine vector red, so git must never touch them.
+entry_domains.* -text

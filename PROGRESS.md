@@ -5218,3 +5218,69 @@ PR strategy: one PR.
 - merged #308 (`8ced15e`, 2026-10-29), all 35 checks green.
 - **Phase 5 — DONE (2026-10-29).** release-on-runtime (version=0.63.1, wire_framing_version=3) run 40818857608 tagged `v0.63.1` at `c1d5684`. Publish run 40818976729 is green: internal, partner promotion, and the install-from-Cloudsmith vectors. #307 was closed by the PR, and the release evidence was posted as a comment.
 - **Archived (2026-10-28, `/sweep`):** `plans/server-info.md` and `plans/operator-dpop-signer.md` moved to `plans/archive/`, with the `plans/README.md` rows. The merged remote branches `feat/server-info` and `feat/operator-dpop-signer` were deleted.
+
+# PROGRESS — `plans/verify-a4-parity.md` (seam-sdk#316)
+
+Checkpoint trail and repo map for bringing `verify/` to parity with seam-runtime 0.67.0 "code-health A4":
+the kind/payload binding, the (b′) entry recompute under `--issuer`, and the uncovered refusal. Anchors:
+seam-sdk `71d9955`; seam-runtime `origin/main` `37576658` (re-anchored from `273cd578`; `crates/seam-verify/src`
+and the spec are unchanged between them); spec pin `4f70c2c4` (seam-runtime#1557, an ancestor of both). Read
+runtime files only with `git show origin/main:<path>`, never from the working tree. Runtime-side defects (the
+`--allow-uncovered` false green, the spec omitting the (b′) preimage) are tracked by seam-runtime#1561, referenced,
+not filed here. OQ-1 is resolved, so no phase is gated.
+
+## Repo map
+
+- `verify/src/wire.rs`: the parse layer. `SeamEventPb` :16-86 (it lacks tags 7, 9, 14, 15, 17, 21 and 26);
+  `SeamEventJson` :267-305; `Event` :433-462; the JSON re-encode for dedup identity, around :870-947; `is_link`
+  :950; `is_advisory` :955-963; `ADVISORY_KINDS` :983-1004; `MODELLED_KINDS` :1029-1043.
+- `verify/src/verify.rs`: the library.
+  - `chain_by_tenant` :180-321 (loop :205; Phase 1 hooks the binding here).
+  - `IssuerReport` :493-520.
+  - `verify_authenticity_anchored` :730-1020. Loop 1 :760-820 is where Phase 2 adds the recompute. Loop 2
+    :822-997 is the attestation checks, with below-window `continue` :943-950 and at-anchor :951-968. Then
+    `covering == 0` :999, followed by Phase 4's uncovered refusal.
+  - `verify_authenticity_by_tenant` :1044-1072.
+- `verify/src/entry.rs` (new, Phase 2): the frame helper, the domain and classification tables, and the three
+  preimages.
+- `verify/src/main.rs`: the CLI. `usage` :32-122; `fail` :154; `io_error` :166; `cmd_chain` :215-561 (JSON :393-437,
+  banners :439-452, issuer lines :493-517); flag parsing :695-748; requires-`--issuer` checks :764-777;
+  chain-only checks :794-801.
+- `verify/src/bundle.rs`: step 2 `verify_authenticity_anchored` :508 inherits the library refusals.
+- `verify/src/lib.rs`: the public API re-exports :88-100. `IssuerReport` grows, so the crate goes 0.4.0 → 0.5.0.
+- `verify/Cargo.toml`: version, and the test excludes.
+- `verify/README.md`: unmodelled kinds :74-96 ("never recompute" :88-91); AUTHENTICITY :98-157; bridge absent.
+- `verify/docs/seam-event.v1.md`: the pin header :1-28 (only the :6-7 "NOT YET IMPLEMENTED" note changes); (b′)
+  :291; payload binds to kind :800-805.
+- `verify/DECISIONS.md`: D-035 is the clean-room claim. The next entries are D-041 to D-043 (D-043 is the scoped
+  provenance carve-out for the transcribed preimages).
+- `verify/tests/goldens/`: four runtime goldens. Their attestations recompute under chain-attest-entry.v1. Phase 0
+  adds `entry_domains*.jsonl`.
+- `verify/fixtures/evidence-bundle/*/events.jsonl`: four bundles. Their attestations recompute and the binding holds.
+- `verify/tests/verifier.rs` (`chain`/`chain_of` :49-73, payload-less seals), and `authenticity.rs`, `anchored.rs`,
+  `truncation.rs`, `multi_tenant.rs`, `conformance.rs` (synthetic attestation helpers): the helper churn in
+  Phases 1 and 3.
+- `scripts/check_vendored_spec.py`: the PIN regex :107-111. It must stay green after the header edit.
+- `.github/workflows/ci.yml:523-560`: the `verify` job. `publish.yml:524-528`: the dispatch-only crate publish.
+- Runtime reference (read-only): `crates/seam-verify/src/entry.rs`, `src/main.rs` (:273-361, :692-722,
+  :1409-1429, :1768-1773), `tests/entry_recompute.rs`, `tests/anchored.rs:536-571`, and
+  `crates/seam-store/src/lib.rs` / `event.rs` (the writers and `KIND_CLASSIFICATION_CONTRACT` :131-145).
+
+## Checkpoints
+
+- Plan written. No phase started. Owner fork OQ-1 is open.
+- Plan review round 1: REVISE (9 items + Fable on OQ-1), all applied to the plan; see its `## Plan review`.
+  - **OQ-1 resolved → (b) ∥ (a)** by Fable; owner input not needed. Phases 2–3 transcribe from runtime
+    `entry.rs` @ `37576658` under the D-043 carve-out (expires when the spec carries the tables; tripwire test on
+    `seam.audit.management.v1`). The owner checkpoint is the `publish-verify` dispatch.
+  - Runtime anchor moved to `37576658`. Runtime answers 1–10 folded into OQ-RT-1..10.
+  - seam-runtime#1561 referenced as the runtime-side fix (spec preimage gap, `--allow-uncovered` false green, spec
+    `:137` "empty" actor). This repo's `--allow-uncovered` exits 2 (OQ-2 resolved).
+- Plan review round 2: REVISE (4 precise items) applied directly; plan **SOUND**. See `## Plan review`.
+- PR strategy: PR A = P0+P1 (vectors + payload binds to kind); PR B = P2–P5 as one unit (splitting would ship a
+  green over unrecomputed entries or refuse genuine streams). Branch for PR A: `feat/verify-a4-kind-binding`.
+- **P0 DONE** (2026-10-30). Verifier: Opus, PASS in 1 round. The gap it noted (the window and anchor never verified together) was closed with `the_window_authenticates_from_its_anchor`.
+  - Captured from a `git archive 37576658` export of the runtime (zz_capture tests in the export only).
+  - AIDs: 21×32 → `aid:pubkey:1UIH2hlJd9z0atv-wrwudbUtWopCGE_t_cAAJPDj6No`; ISSUER_SEED 07×32 → `aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw`.
+  - Files: `verify/tests/goldens/{entry_domains.jsonl, entry_domains.window.jsonl, entry_domains.anchor.json, entry_domains.swapped-attestation.json, .gitattributes, README.md}`, `verify/tests/entry_vectors.rs` (8 tests).
+  - Next: P1, executing in parallel in a worktree.
