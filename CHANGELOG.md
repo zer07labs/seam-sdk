@@ -39,7 +39,9 @@ than trusting a summary here.
   and it, `Uncovered` and `AuthOptions` are `#[non_exhaustive]`, so code that builds them by literal no
   longer compiles (later fields will not break it again); `verify_authenticity*` returns `Err` over an
   uncovered entry. The opt-in is `AuthOptions::allow_uncovered` on the new `_with` entry points; an `Ok`
-  reached that way with a non-empty `uncovered` is a diagnostic report, not an authentication. Hence the
+  reached that way with a non-empty `uncovered` is a diagnostic report, not an authentication.
+  `wire::{SeamEventPb, SeamEventJson, Event}` also gain public `classification` and `session_id` (the
+  AUDIT_ENTRY preimage needs them), so a literal of those breaks too. Hence the
   crate's 0.4.0 → 0.5.0. Publishing is a manual `publish-verify` dispatch.
 - **`verify/proto/seam/event/v1/seam_event.proto` re-vendored** byte-verbatim from seam-runtime
   `37576658`. The old copy lacked tags 24–27, which the verifier already decoded.

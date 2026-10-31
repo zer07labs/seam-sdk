@@ -1524,7 +1524,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Chose:** one shared `verify/tests/support/mod.rs` written from the spec, used by anchored/truncation/multi_tenant/bundle and the authenticity rotation test. The attestation ceilings those helpers sign rose from 2 to 4 to match the v4 records.
 - **Alternatives:** relabel those links as `AUDIT_ENTRY` (Phase 2 recompute would break them again); call the library digest (circular); four per-file copies (drift).
 - **Blast radius if wrong:** tests only; cheap to redo.
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (2026-10-31), see DECISIONS.md "seam-sdk#316 reconcile"
 
 ## verify/ keeps the entry recompute module private
 - **Plan:** plans/verify-a4-parity.md (Phase 2)
@@ -1532,7 +1532,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Chose:** `mod entry` stays private; only `Uncovered` is re-exported. A classification relabel gets its own error text.
 - **Alternatives:** a public `entry` module (widens the 0.5.0 API surface before anyone asks for it).
 - **Blast radius if wrong:** making it public later is additive; no verdict changes.
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (2026-10-31), see DECISIONS.md "seam-sdk#316 reconcile"
 
 ## verify/ attestation test digests come from one shared spec-written helper
 - **Plan:** plans/verify-a4-parity.md (Phase 3)
@@ -1540,7 +1540,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Chose:** `support::attest_entry_digest` (own framing, no `seam_verify::entry` import), shared by five test files.
 - **Alternatives:** a copy per test file (drift risk).
 - **Blast radius if wrong:** tests only.
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (2026-10-31), see DECISIONS.md "seam-sdk#316 reconcile"
 
 ## seam-verify 0.5.0 public API additions for the uncovered refusal
 - **Plan:** plans/verify-a4-parity.md (Phase 4)
@@ -1548,4 +1548,4 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Chose:** `verify_authenticity_by_tenant_with`, `UNCOVERED_ENTRY`, `Uncovered::describe()`, and `#[non_exhaustive] AuthOptions` + `AuthOptions::allow_uncovered(bool)`. Per-tenant precedence matches the runtime: every tenant's attestation checks run first, then one refusal lists all uncovered entries (runtime `main.rs:1412-1429`).
 - **Alternatives:** keep the diagnostic CLI-only (the binary links the library as a separate crate, so `pub(crate)` is not available); a typed error enum (larger API change).
 - **Blast radius if wrong:** public items of a published 0.x crate; removal needs a minor bump. `non_exhaustive` keeps adding options non-breaking.
-- **Status:** UNCONFIRMED
+- **Status:** CONFIRMED (2026-10-31), see DECISIONS.md "seam-sdk#316 reconcile"
