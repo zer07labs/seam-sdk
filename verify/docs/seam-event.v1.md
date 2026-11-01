@@ -1,5 +1,14 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 4a7b47c (refreshed 2026-11-01).
-     The runtime 0.70.0 train (seam-runtime#1573), landed on runtime main as 4a7b47c. Movement since 4f70c2c:
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 8e6fc800 tracking feat/outcome-ingestion-w0 (refreshed 2026-11-01).
+     Pinned AHEAD of the default branch, deliberately: the runtime 0.71.0 train (seam-runtime#1579) merges and
+     dispatches the SDK release in one step, so the copy has to be on SDK main first. The exception ends itself
+     when the train squash-merges (the file becomes byte-identical on both refs). Movement since 4a7b47c:
+     outcome-ingestion wave 0, BP-2a (seam-runtime#1572): LearningDecision tags 10-14 (intended_action,
+     allocation_mode, unit_tag, allocation_propensity, outcome_owner_class) and LearningOutcome tags 4-7 (reward,
+     metrics, observed_at_millis, reporter_class) — wire slots only; no 0.71.0 event carries any of them. The
+     outcome fields are emitted from BP-2c, behind the `outcome.*` wire features; `metrics` is a map encoded in
+     ascending key order, and projects as a key-sorted JSON object. Outside every digest and every vector;
+     informational for this crate: `verify/` neither requires nor attests them.
+     Prior pin 4a7b47c (refreshed 2026-11-01), the runtime 0.70.0 train (seam-runtime#1573), landed on runtime main as 4a7b47c. Movement since 4f70c2c:
      D6 (seam-runtime#1340): DecisionSealed.governing_config (payload tag 18) = GoverningConfig{tenant_snapshot_id},
      the tenant governing document id the session was opened under. Event-only, outside every digest (record v4,
      commitment v3) and every vector; absent on pre-0.70 rows, on a session parked or touched by a pre-0.70
@@ -755,14 +764,49 @@ LearningDecision {                         // payload at SeamEvent tag 14
   propensity:    double?  // P(arm | x) at serve time — for retroactive off-policy eval (IPS/SNIPS/DR).
                           // Reserved (tag 9); absent until the serving read populates it. Once real
                           // traffic flows an unlogged propensity is unrecoverable, so the slot is fixed now.
+  // Branchpoint BP-2 (tags 10-14) — wire slots only today; nothing sets them yet.
+  intended_action:       string?  // BP-9 (tag 10)
+  allocation_mode:       string?  // BP-9 (tag 11), e.g. "split"
+  unit_tag:              string?  // BP-9 (tag 12), 32 lowercase hex chars (HMAC-derived), never the raw unit
+  allocation_propensity: double?  // BP-9 (tag 13), the variant/arm ALLOCATION probability;
+                                  // `propensity` (tag 9) keeps its within-variant meaning
+  outcome_owner_class:   string?  // BP-7 (tag 14), stamped at seal from the governing config; a value
+                                  // from the `reporter_class` closed set
 }
 
 LearningOutcome {                          // payload at SeamEvent tag 15
   correct:     bool       // did the decision turn out right?
   verified_by: string?    // the reporter (system / human / automated feed) — for filter/weight
   policy_key:  PolicyKey? // the arm's OWNER KEY (tag 3) — additive, may be absent. See below.
+  // Branchpoint BP-2 / plan 47 OI-R1 (tags 4-7) — emitted only from BP-2c (see below).
+  reward:             double?              // tag 4, finite
+  metrics:            map<string, double>  // tag 5, empty = absent; encoded in ascending key order
+  observed_at_millis: uint64?              // tag 6, SOURCE-EVENT time, ms since the Unix epoch
+  reporter_class:     string?              // tag 7, runtime-stamped; closed set below
 }
 ```
+
+**Branchpoint BP-2 fields (additive — outcome-ingestion-w0 BP-2a).** The tags exist on the wire so
+consumers can mirror them before the runtime emits them; `fixtures/learning_bp2_wire.json` pins one
+event of each kind with every new field set (JSON and protobuf). Ownership:
+
+- **`LearningOutcome` tags 4-7 — BP-2c.** Until the runtime's outcome-fields gate is on, no
+  `LearningOutcome` carries any of them, and `ReportOutcomeRequest` refuses `reward`, a non-empty
+  `metrics` and `observed_at_millis` rather than dropping them. The gate's state is advertised as the
+  wire features `outcome.observed_at` / `outcome.reward_metrics` (OI-R6,
+  [`wire-features.md`](wire-features.md)); a producer sends the fields only while they are listed.
+- **`reporter_class`** is stamped by the runtime from the authenticated subject's enrolment kind, never
+  client-asserted. Closed set: `agent` | `outcome_connector` | `changeset_worker` | `operator`
+  (`operator` is reserved; nothing produces it yet). It is **absent when subject enforcement is off**
+  — there is no authenticated identity to classify. Consumers read it open: an unrecognised value is a
+  new class, not a malformed event.
+- **`LearningDecision` tags 10-13 — BP-9** (the allocation primitive); **tag 14 — BP-7** (the
+  `experiments` section of the governing config). Absent until those phases ship.
+- **`metrics` is a protobuf map.** Map entries carry no order on the wire, so the runtime fixes one:
+  both of its encoders (the outbox's `SeamEvent::to_bytes` and the gRPC `StreamEvents` path) write
+  entries in **ascending key order**, and a re-encode of the same event is byte-identical. In
+  `fixtures/seam_event_descriptor.json` a map field is
+  `{"name": "metrics", "wire_kind": "map<string,double>", "cardinality": "map"}`.
 
 **`LearningOutcome.policy_key` (tag 3, additive — #354).** Carries the per-arm **owner key
 `(tenant, task_type, mode)`**, so a relay can partition by arm and give `seam-learning`'s
@@ -1694,6 +1738,10 @@ per-destination `redaction_profile` (in the connector manifest) can redact furth
 
 The JSON projection is a field-for-field mapping of `SeamEvent` with `bytes` fields base64-encoded and
 `u64` fields as JSON numbers.
+
+`learning_outcome.metrics` projects as a JSON object with keys **sorted** (ascending by key), and is
+omitted when empty. `learning_outcome.observed_at_millis` is a JSON **number** (like every `u64`),
+never a string.
 
 `payload.governing_config` projects as the object `{"tenant_snapshot_id": "<id>"}`. When absent the key
 is **omitted** — never `null`, never `{}`. A projection carrying an empty `tenant_snapshot_id` is

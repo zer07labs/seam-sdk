@@ -105,6 +105,32 @@ export const KNOWN_KINDS: ReadonlySet<string> = new Set([
   "POLICY_DENIED",
 ]);
 
+/** What an AID is enrolled FOR (runtime 0.71.0, OI-R2a): the CLOSED set the runtime parses strictly on
+ * `EnrollTenantRequest.kind`, and the value `TenantView.kind` / `WhoAmIResponse.kind` report. Name a
+ * kind with these rather than hand-typing the string — any other value, `""` included, is the
+ * runtime's INVALID_ARGUMENT. An `outcome_reporter` or `changeset_worker` credential is refused
+ * PERMISSION_DENIED (`SUBJECT_KIND_CONFINED`) on every verb outside its kind. Python's
+ * `seam_sdk.ENROLMENT_KIND_*` / `ENROLMENT_KINDS`. */
+export const ENROLMENT_KIND_AGENT = "agent";
+export const ENROLMENT_KIND_OUTCOME_REPORTER = "outcome_reporter";
+export const ENROLMENT_KIND_CHANGESET_WORKER = "changeset_worker";
+export type EnrolmentKind =
+  | typeof ENROLMENT_KIND_AGENT
+  | typeof ENROLMENT_KIND_OUTCOME_REPORTER
+  | typeof ENROLMENT_KIND_CHANGESET_WORKER;
+export const ENROLMENT_KINDS: ReadonlySet<EnrolmentKind> = new Set<EnrolmentKind>([
+  ENROLMENT_KIND_AGENT,
+  ENROLMENT_KIND_OUTCOME_REPORTER,
+  ENROLMENT_KIND_CHANGESET_WORKER,
+]);
+
+/** `enrollTenant`'s options: the call deadline plus the enrolment `kind` (runtime 0.71.0). */
+export interface EnrollTenantOptions extends UnaryCallOptions {
+  /** What the AID is enrolled FOR — one of {@link ENROLMENT_KINDS}. Omitted, no kind is sent and the
+   * runtime enrols an `agent`, exactly as before. */
+  kind?: EnrolmentKind;
+}
+
 /** Recompute a streamed `DECISION_SEALED`'s record digest from its payload and compare it to the wire
  * `digest` (tag 19) — live authenticity for a single record, the in-client counterpart of
  * `seam-verify chain --issuer`'s design-a. Recomputes **v4 only** (`seam.audit.record-digest.v4`).
@@ -374,16 +400,36 @@ export class SeamAdminClient {
    * #1157), produced by the AGENT — `agent.enrolmentProof(tenant, namespace)` — not by the operator
    * making this call. It is **required when the operator token is tenant-scoped**; a fleet token may
    * pass `undefined`, and then no `pop` is sent. A malformed one (a nonce outside 1..=128 chars of
-   * `[A-Za-z0-9_-]`, a signature that is not 64 bytes) throws `InvalidArgumentError` before any RPC. */
+   * `[A-Za-z0-9_-]`, a signature that is not 64 bytes) throws `InvalidArgumentError` before any RPC.
+   *
+   * `opts.kind` is what the AID is enrolled FOR (runtime 0.71.0, OI-R2a) — one of
+   * {@link ENROLMENT_KINDS}; a value outside the closed set throws `InvalidArgumentError` before any
+   * RPC. Re-enrolling an active AID with a different kind is `FailedPreconditionError`
+   * (`ENROLMENT_KIND_CONFLICT`): revoke first. A runtime older than 0.71.0 does not know the field and
+   * enrols `agent` regardless, so send `kind` only to a runtime that advertises the `enroll.kind` wire
+   * feature, and read the kind it stored on the returned view's `kind`. */
   async enrollTenant(
     subjectAid: string,
     tenant: string,
     namespace: string,
     pop?: EnrollProof,
-    opts?: UnaryCallOptions,
+    opts?: EnrollTenantOptions,
   ): Promise<TenantView> {
+    const kind = opts?.kind;
+    if (kind !== undefined && !ENROLMENT_KINDS.has(kind)) {
+      throw new InvalidArgumentError(
+        `enrollTenant: kind ${JSON.stringify(kind)} is not one of ${[...ENROLMENT_KINDS].sort().join(", ")}`,
+        Code.InvalidArgument,
+      );
+    }
     return this.admin.enrollTenant(
-      { subjectAid, tenant, namespace, pop: checkedEnrollPop(pop) },
+      {
+        subjectAid,
+        tenant,
+        namespace,
+        pop: checkedEnrollPop(pop),
+        ...(kind !== undefined ? { kind } : {}),
+      },
       call(opts),
     );
   }

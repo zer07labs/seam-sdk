@@ -273,3 +273,47 @@ def test_enroll_tenant_refuses_a_malformed_pop_before_any_rpc(bad, err) -> None:
     with pytest.raises(err):
         admin.enroll_tenant("aid:x", "acme", "fraud", pop=bad)
     assert seen == [], "a malformed pop reached the wire"
+
+
+# ── enroll_tenant kind (runtime 0.71.0, OI-R2a) ────────────────────────────────────────────────────
+
+
+def test_the_enrolment_kinds_are_the_runtimes_closed_set() -> None:
+    from seam_sdk import (
+        ENROLMENT_KIND_AGENT,
+        ENROLMENT_KIND_CHANGESET_WORKER,
+        ENROLMENT_KIND_OUTCOME_REPORTER,
+        ENROLMENT_KINDS,
+    )
+
+    assert ENROLMENT_KIND_AGENT == "agent"
+    assert ENROLMENT_KIND_OUTCOME_REPORTER == "outcome_reporter"
+    assert ENROLMENT_KIND_CHANGESET_WORKER == "changeset_worker"
+    assert ENROLMENT_KINDS == frozenset(
+        {"agent", "outcome_reporter", "changeset_worker"}
+    )
+
+
+def test_enroll_tenant_sends_kind_only_when_given() -> None:
+    from seam_sdk import ENROLMENT_KINDS
+
+    admin, seen = _recording_admin()
+    admin.enroll_tenant("aid:x", "acme", "fraud")
+    assert not seen[0].HasField(
+        "kind"
+    )  # absent on the wire → the runtime's `agent`, as before
+    for kind in sorted(ENROLMENT_KINDS):
+        admin.enroll_tenant("aid:x", "acme", "fraud", kind=kind)
+        assert seen[-1].HasField("kind") and seen[-1].kind == kind
+
+
+@pytest.mark.parametrize(
+    "bad", ["", "Agent", "operator", "outcome_connector", " agent"]
+)
+def test_enroll_tenant_refuses_a_kind_outside_the_closed_set_before_any_rpc(
+    bad: str,
+) -> None:
+    admin, seen = _recording_admin()
+    with pytest.raises(ValueError, match="kind"):
+        admin.enroll_tenant("aid:x", "acme", "fraud", kind=bad)
+    assert seen == []

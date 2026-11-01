@@ -1070,7 +1070,7 @@ the phase ran, which is itself the finding worth recording first.
   that matters.
 - **Decision.** Mirror the RPC manifest exactly one level down: a committed declaration
   (`contract/field-manifest.txt`), set-compared per language in both directions
-  (`scripts/check-contract.sh:830`), exiting 6 with the field named (`scripts/check-contract.sh:1200`). `STREAM`/`EVENTS` stay as
+  (`scripts/check-contract.sh:851`), exiting 6 with the field named (`scripts/check-contract.sh:1221`). `STREAM`/`EVENTS` stay as
   they are — they gate *event* fields for a different reason (BSR publication lag) and are not what
   this replaces. Scope is `seam.api.v1` only; `seam.event.v1` is already covered by those probes and
   by the vendored-spec gate, and duplicating it would mean two gates failing for different reasons on
@@ -1104,12 +1104,12 @@ the phase ran, which is itself the finding worth recording first.
      emits no type for map entries, which is an accident of this contract rather than an exclusion.
      Pinned by `python/tests/test_field_manifest_gate.py:292`.
 - **The escape names its authoritative side.** `--write-manifest` writes **both** manifests from
-  **Python** (`scripts/check-contract.sh:644`), with TypeScript as the cross-check
-  (`scripts/check-contract.sh:616`) — one command to document, not two. If it wrote from a side that cannot see every field, it
+  **Python** (`scripts/check-contract.sh:665`), with TypeScript as the cross-check
+  (`scripts/check-contract.sh:637`) — one command to document, not two. If it wrote from a side that cannot see every field, it
   would produce failures the documented escape could never clear, which is exactly what `raise` does
   under a `__slots__` extractor.
 - **The refusal deliberately puts the escape second.** It says decide first, then run it
-  (`scripts/check-contract.sh:1129`). A failure message that leads with the fix trains the reader to
+  (`scripts/check-contract.sh:1150`). A failure message that leads with the fix trains the reader to
   run the fix, which turns the gate back into the silent pass it replaced.
 - **What it does NOT check: names only, not tags or types.** A field retagged or retyped is
   wire-breaking and invisible here, exactly as the RPC manifest records names and not signatures.
@@ -1219,7 +1219,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:1755-1777` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:1767-1789` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2049,7 +2049,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:1786` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:1798` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.

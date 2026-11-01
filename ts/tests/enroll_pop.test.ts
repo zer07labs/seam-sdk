@@ -16,7 +16,14 @@ import type { DescMessage, DescMethodUnary, MessageInitShape } from "@bufbuild/p
 import type { Transport, UnaryResponse } from "@connectrpc/connect";
 
 import { Agent } from "../src/client.js";
-import { SeamAdminClient } from "../src/admin.js";
+import {
+  ENROLMENT_KIND_AGENT,
+  ENROLMENT_KIND_CHANGESET_WORKER,
+  ENROLMENT_KIND_OUTCOME_REPORTER,
+  ENROLMENT_KINDS,
+  SeamAdminClient,
+  type EnrolmentKind,
+} from "../src/admin.js";
 import { InvalidArgumentError } from "../src/errors.js";
 import {
   ENROLL_POP_V1_CONTEXT,
@@ -230,5 +237,36 @@ test("enrollTenant refuses a malformed pop with InvalidArgumentError before any 
     const { admin, seen } = recordingAdmin();
     await assert.rejects(admin.enrollTenant("aid:x", "acme", "fraud", pop), InvalidArgumentError, name);
     assert.equal(seen.length, 0, `${name}: a malformed pop reached the wire`);
+  }
+});
+
+// ── enrollTenant kind (runtime 0.71.0, OI-R2a) ──────────────────────────────────────────────────
+
+test("the enrolment kinds are the runtime's closed set", () => {
+  assert.equal(ENROLMENT_KIND_AGENT, "agent");
+  assert.equal(ENROLMENT_KIND_OUTCOME_REPORTER, "outcome_reporter");
+  assert.equal(ENROLMENT_KIND_CHANGESET_WORKER, "changeset_worker");
+  assert.deepEqual([...ENROLMENT_KINDS].sort(), ["agent", "changeset_worker", "outcome_reporter"]);
+});
+
+test("enrollTenant sends kind only when given", async () => {
+  const { admin, seen } = recordingAdmin();
+  await admin.enrollTenant("aid:x", "acme", "fraud");
+  assert.equal(seen[0]!.kind, undefined, "kind must be absent on the wire when not given");
+  for (const kind of ENROLMENT_KINDS) {
+    await admin.enrollTenant("aid:x", "acme", "fraud", undefined, { kind });
+    assert.equal(seen.at(-1)!.kind, kind);
+  }
+});
+
+test("enrollTenant refuses a kind outside the closed set with InvalidArgumentError before any RPC", async () => {
+  for (const bad of ["", "Agent", "operator", "outcome_connector", " agent"]) {
+    const { admin, seen } = recordingAdmin();
+    await assert.rejects(
+      admin.enrollTenant("aid:x", "acme", "fraud", undefined, { kind: bad as EnrolmentKind }),
+      InvalidArgumentError,
+      JSON.stringify(bad),
+    );
+    assert.equal(seen.length, 0, `${JSON.stringify(bad)}: a refused kind reached the wire`);
   }
 });

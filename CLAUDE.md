@@ -61,7 +61,8 @@ deliberately links nothing of Seam's.
   **four streamed-payload mirror fields** (`session_lifecycle`, `chain_head_attestation`,
   `ciphertext_digest`, `AuditEntryEvent.actor`), `STREAM=1` refuses earlier with exit **2**.
   Earlier still — ahead of all three — is exit **7**, a structural precondition of the event gate:
-  `seam.event.v1` is asserted to have zero enums, zero nested messages, and **zero services**. The
+  `seam.event.v1` is asserted to have zero enums, zero nested messages (bar an exact allowlist of
+  map-entry synthetics), and **zero services**. The
   verb clause is the newest: `contract/rpc-manifest.txt` covers `seam.api.v1` only, so a service
   landing in the event package would be declared nowhere and named by no probe in either language,
   and would ship unwired with every gate green. It is probed over the package **directory**, not two

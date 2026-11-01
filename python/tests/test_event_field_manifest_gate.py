@@ -309,6 +309,41 @@ def test_an_event_enum_or_nested_message_fails_the_precondition_with_exit_7(
     assert what in out, out
 
 
+#: The one map-entry synthetic seam.event.v1 carries (runtime 0.71.0, `LearningOutcome.metrics`).
+_EV_METRICS_ENTRY = "    class MetricsEntry(_message.Message):\n"
+
+
+def test_the_event_map_entry_synthetic_is_allowed_and_its_map_is_one_field(
+    scratch,
+) -> None:
+    """`map<string, double> metrics` makes Python emit `LearningOutcome.MetricsEntry`; protobuf-es
+    emits no type. It is on the exact allowlist, so the real tree passes, and the map itself is ONE
+    field on its owner — `LearningOutcome/metrics` — never `MetricsEntry/key` / `MetricsEntry/value`."""
+    assert scratch["py_ev"].read_text(encoding="utf-8").count(_EV_METRICS_ENTRY) == 1
+    r = _run(scratch)
+    assert r.returncode == OK, f"{r.returncode}\n{r.stdout}\n{r.stderr}"
+    fields = _event_fields(COMMITTED)
+    assert "LearningOutcome/metrics" in fields
+    assert not [f for f in fields if f.startswith("MetricsEntry/")]
+
+
+def test_a_vanished_event_map_entry_synthetic_fails_the_precondition(scratch) -> None:
+    """The event allowlist is EXACT, not a floor: renaming the known synthetic reports both the
+    unknown name and the missing one, exit 7."""
+    text = scratch["py_ev"].read_text(encoding="utf-8")
+    scratch["py_ev"].write_text(
+        text.replace(_EV_METRICS_ENTRY, "    class OtherEntry(_message.Message):\n"),
+        encoding="utf-8",
+    )
+    r = _run(scratch)
+    assert r.returncode == PRECONDITION_FAILED, (
+        f"{r.returncode}\n{r.stdout}\n{r.stderr}"
+    )
+    out = r.stdout + r.stderr
+    assert "unknown: LearningOutcome.OtherEntry" in out, out
+    assert "MISSING known map-entry synthetic: LearningOutcome.MetricsEntry" in out, out
+
+
 def test_both_surfaces_disagreeing_at_once_reports_both_and_exits_8(scratch) -> None:
     """This is what pins the PLACEMENT decision — together with the three single-surface cases above,
     not alone.
@@ -383,9 +418,11 @@ def test_the_committed_manifest_is_not_empty_and_names_every_message() -> None:
     # 106 since the protocol pass: DecisionSealed tags 14-17 (record digest v4). 109 since runtime
     # 0.50.0: SessionLifecycle.pins and its AgentPin message (seam-runtime#1380). 110 since runtime
     # 0.57.0: SeamEvent.stream_id (k8s P7). 112 since runtime 0.70.0: DecisionSealed.governing_config
-    # and its GoverningConfig message (D6, seam-runtime#1340).
-    assert len(fields) == 112, (
-        f"expected 112 declared event fields, found {len(fields)}"
+    # and its GoverningConfig message (D6, seam-runtime#1340). 121 since runtime 0.71.0:
+    # LearningDecision tags 10-14 and LearningOutcome tags 4-7 (outcome-ingestion BP-2a,
+    # seam-runtime#1572).
+    assert len(fields) == 121, (
+        f"expected 121 declared event fields, found {len(fields)}"
     )
     messages = {line.split("/")[0] for line in fields}
     assert messages == {

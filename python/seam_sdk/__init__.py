@@ -12,6 +12,10 @@ from ._policy import PolicyEnforcement, policy_enforcement_of
 from ._seal import SealAttestation, seal_attestation_of
 from .admin import (
     DEFAULT_ADMIN_TIMEOUT_S,
+    ENROLMENT_KIND_AGENT,
+    ENROLMENT_KIND_CHANGESET_WORKER,
+    ENROLMENT_KIND_OUTCOME_REPORTER,
+    ENROLMENT_KINDS,
     KNOWN_KINDS,
     SeamAdminClient,
     verify_streamed_record_digest,
@@ -181,6 +185,11 @@ __all__ = [
     "EnrollProof",
     "enroll_pop",
     "enroll_pop_payload",
+    # Enrolment kind (runtime 0.71.0, OI-R2a) — EnrollTenantRequest.kind / TenantView.kind / WhoAmI
+    "ENROLMENT_KIND_AGENT",
+    "ENROLMENT_KIND_CHANGESET_WORKER",
+    "ENROLMENT_KIND_OUTCOME_REPORTER",
+    "ENROLMENT_KINDS",
     # Streamed-event surface (A14)
     "KNOWN_KINDS",
     "verify_streamed_record_digest",

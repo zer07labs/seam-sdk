@@ -499,6 +499,7 @@ def test_every_public_method_enforces_timeout(hanging_server):
         lambda: client.resolve_context(["r"], timeout=0.1),
         lambda: client.issuer_aid(timeout=0.1),
         lambda: client.server_info(timeout=0.1),
+        lambda: client.who_am_i(timeout=0.1),
         lambda: client.verify_commitment(pb.Commitment(), b"", timeout=0.1),
         lambda: client.verify_party_anchor("p", pb.Anchor(), timeout=0.1),
         lambda: client.verify_party_attestation(
@@ -603,6 +604,7 @@ def test_aio_deadlines_enforced(hanging_server):
                 lambda: client.resolve_context(["r"], timeout=0.1),
                 lambda: client.issuer_aid(timeout=0.1),
                 lambda: client.server_info(timeout=0.1),
+                lambda: client.who_am_i(timeout=0.1),
                 lambda: client.verify_commitment(pb.Commitment(), b"", timeout=0.1),
                 lambda: client.verify_party_anchor("p", pb.Anchor(), timeout=0.1),
                 lambda: client.verify_party_attestation(
