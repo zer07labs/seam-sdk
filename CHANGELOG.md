@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.71.0 — 2026-11-01
+
 ### Added
 - **Runtime 0.71.0, outcome-ingestion wave 0 (seam-runtime#1572): `who_am_i()` / `whoAmI()`, the enrolment
   kind, and the new `seam.api.v1` / `seam.event.v1` fields.** `SeamTrust/WhoAmI` is wired in both clients as a
