@@ -16,6 +16,12 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added
+- **`seam.event.v1`: `DecisionSealed.governing_config` (payload tag 18), `GoverningConfig { tenant_snapshot_id }`
+  (runtime 0.70.0, D6 / seam-runtime#1340).** The generated Python and TS event stubs carry the tenant governing
+  document id a session was opened under. Additive and outside every digest: vectors, `wire-framing.json` and
+  `seam-verify` are unchanged. The build pins BSR `train-0.70.0` until the runtime train lands.
+
 ## 0.69.0 — 2026-10-31
 
 ### Changed

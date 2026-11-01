@@ -28,7 +28,9 @@
 //     `buf.yaml` runs WIRE_JSON, which permits it) but SEMANTICALLY BREAKING: a zero-length tag would
 //     frame as `opt(None)` to a consumer testing emptiness and `opt(Some(b""))` to one testing
 //     generated presence — two digests from identical bytes. Per-tag cardinality is pinned in
-//     `fixtures/seam_event_descriptor.json` so the flip cannot be quiet. The rule is DecisionSealed's,
+//     `fixtures/seam_event_descriptor.json` so the flip cannot be quiet. A message-typed field that sits
+//     outside every digest (tag 18, `governing_config`) is presence-tracked by construction, so the
+//     rule has nothing to decide for it. The rule is DecisionSealed's,
 //     not the package's: `SeamEvent` declares `digest`/`checksum` (19/20) `optional` yet
 //     `prev_checksum` (12) singular (empty there is itself a value — "not chained"); the spec section
 //     gives the local reasons.
@@ -88,6 +90,24 @@ message DecisionSealed {
   // §P7 (v4) — the closed-vocabulary authentication method (`aitp-pinned-handshake`, `aitp-tct`,
   // `aitp-pinned`, or the sentinel `none`). MANDATORY. Mirrors `DecisionSealedPb.auth_method` (tag 17).
   string auth_method = 17;
+  // D6 (0.70.0) — the governing config the session was opened under, captured ONCE at session open
+  // (the governing load that admitted the session and bound its policies), never re-read at seal.
+  // OUTSIDE record digest v4 and commitment digest v3: it is NOT tamper-evident, and a consumer MUST
+  // NOT treat it as evidence. When present, `tenant_snapshot_id` is non-empty.
+  // ABSENT means any of: a row sealed before 0.70.0; a session parked or touched by a pre-0.70.0
+  // replica; a replayed record; or a row SERVED by a pre-0.70.0 replica during a rollout or after a
+  // rollback (that replica drops unknown tags when it re-encodes). Consumers MUST tolerate absence.
+  // The fleet root config is deliberately not carried: fleet staff recover it from the chained
+  // `config:root:<id>` system audit plus the `seam.security` `session_governing_root` log line, joined
+  // on `session_id` and `SESSION_LIFECYCLE.opened_at_millis`. Mirrors `DecisionSealedPb.governing_config`.
+  GoverningConfig governing_config = 18;
+}
+
+// D6 — the governing config named on `DecisionSealed.governing_config` (tag 18). Carries the tenant
+// document id only (decision G0 = B′); the root id is a staff log, never on the tenant's stream.
+message GoverningConfig {
+  // The id of the tenant governing snapshot document the session was opened under. Non-empty.
+  string tenant_snapshot_id = 1;
 }
 
 // A governance event. Tags mirror the canonical `seam-event.v1` `SeamEventPb` wire form EXACTLY so an

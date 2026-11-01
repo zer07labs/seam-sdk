@@ -382,9 +382,10 @@ def test_the_committed_manifest_is_not_empty_and_names_every_message() -> None:
     fields = _event_fields(COMMITTED)
     # 106 since the protocol pass: DecisionSealed tags 14-17 (record digest v4). 109 since runtime
     # 0.50.0: SessionLifecycle.pins and its AgentPin message (seam-runtime#1380). 110 since runtime
-    # 0.57.0: SeamEvent.stream_id (k8s P7).
-    assert len(fields) == 110, (
-        f"expected 110 declared event fields, found {len(fields)}"
+    # 0.57.0: SeamEvent.stream_id (k8s P7). 112 since runtime 0.70.0: DecisionSealed.governing_config
+    # and its GoverningConfig message (D6, seam-runtime#1340).
+    assert len(fields) == 112, (
+        f"expected 112 declared event fields, found {len(fields)}"
     )
     messages = {line.split("/")[0] for line in fields}
     assert messages == {
@@ -396,6 +397,7 @@ def test_the_committed_manifest_is_not_empty_and_names_every_message() -> None:
         "DecisionSealed",
         "ErasureCertificate",
         "EventRedriven",
+        "GoverningConfig",
         "LearningDecision",
         "LearningOutcome",
         "PolicyDenied",
