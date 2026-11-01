@@ -1,7 +1,5 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 93dd01ff tracking train/d6-pr-b (refreshed 2026-11-01).
-     Pinned AHEAD of the default branch, deliberately: the runtime 0.70.0 train (seam-runtime#1573) merges and
-     dispatches the SDK release in one step, so the copy has to be on SDK main first. The exception ends itself
-     when the train squash-merges (the file becomes byte-identical on both refs). Movement since 4f70c2c:
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 4a7b47c (refreshed 2026-11-01).
+     The runtime 0.70.0 train (seam-runtime#1573), landed on runtime main as 4a7b47c. Movement since 4f70c2c:
      D6 (seam-runtime#1340): DecisionSealed.governing_config (payload tag 18) = GoverningConfig{tenant_snapshot_id},
      the tenant governing document id the session was opened under. Event-only, outside every digest (record v4,
      commitment v3) and every vector; absent on pre-0.70 rows, on a session parked or touched by a pre-0.70
