@@ -1,5 +1,13 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 4f70c2c (refreshed 2026-10-30).
-     The runtime 0.67.0 train (seam-runtime#1557, code-health A4; seam-sdk#317). Movement since 1a1f338:
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 93dd01ff tracking train/d6-pr-b (refreshed 2026-11-01).
+     Pinned AHEAD of the default branch, deliberately: the runtime 0.70.0 train (seam-runtime#1573) merges and
+     dispatches the SDK release in one step, so the copy has to be on SDK main first. The exception ends itself
+     when the train squash-merges (the file becomes byte-identical on both refs). Movement since 4f70c2c:
+     D6 (seam-runtime#1340): DecisionSealed.governing_config (payload tag 18) = GoverningConfig{tenant_snapshot_id},
+     the tenant governing document id the session was opened under. Event-only, outside every digest (record v4,
+     commitment v3) and every vector; absent on pre-0.70 rows, on a session parked or touched by a pre-0.70
+     replica, on a replay, and on a row served by a pre-0.70 replica; non-empty whenever present. The fleet root id is never on the event. Informational
+     for this crate: `verify/` neither requires nor attests the field.
+     Prior pin 4f70c2c (refreshed 2026-10-30), the runtime 0.67.0 train (seam-runtime#1557, code-health A4; seam-sdk#317). Movement since 1a1f338:
      "payload binds to kind" (each payload field belongs to one kind; a known advisory kind or the chain
      anchor carrying `digest`/`checksum` is refused), and clause (b′): under `--issuer` every chained
      AUDIT_ENTRY, CHAIN_HEAD_ATTESTATION and ERASURE_CERTIFICATE recomputes its digest, its classification
@@ -928,6 +936,42 @@ stream**, so `(stream_id, seq)` is the identity a multi-cell consumer keys on.
   multi-cell topic can be partitioned or filtered without decoding the payload.
 - **Tag 27 is permanent** once consumers vendor the descriptor.
 
+### `DecisionSealed.governing_config` (additive, payload tag 18 — UNSEALED) — D6
+
+Since 0.70.0 a `DECISION_SEALED` payload MAY carry the governing config its session was opened under:
+
+```
+DecisionSealed {
+  …                                        // tags 1-17 as above
+  governing_config: GoverningConfig?       // tag 18 — captured ONCE at session open; outside every digest
+}
+GoverningConfig {
+  tenant_snapshot_id: string               // tag 1 — the tenant governing snapshot document id; non-empty
+}
+```
+
+- **Captured at open, never at seal.** The id is the tenant governing snapshot document of the governing
+  load that admitted the session and bound its policies. A tenant that republishes mid-session does not
+  move it; an expire or cancel seal carries the open-time id. A one-shot `RunDecision` has no separate
+  open, so its single governing load serves as both.
+- **Tenant document id only.** The fleet root config is deliberately absent (decision G0 = B′). Fleet staff
+  recover it from the chained `config:root:<id>` system audit plus the `seam.security`
+  `session_governing_root` log line, joined on `session_id` and `SESSION_LIFECYCLE.opened_at_millis`.
+  That log line is staff-only and never on a tenant's stream.
+- **Not tamper-evident.** It is outside record digest v4 and
+  [`seam-commitment-digest:v3`](seam-commitment-digest.v3.md) (see §What the record digest binds). A
+  consumer MUST NOT treat it as evidence of what bound the decision; `policy_rules_digest` (tag 13) is
+  the bound evidence.
+- **Non-empty when present.** A conforming producer never emits an empty `tenant_snapshot_id`. A consumer
+  MUST treat a tag-18 message with an empty id exactly as an absent tag 18.
+- **Absent** means any of: a row sealed before 0.70.0; a session parked or touched by a pre-0.70.0
+  replica; a replayed record; or a row **served** by a pre-0.70.0 replica during a rollout or after a
+  rollback (that replica drops unknown tags when it re-encodes the row for `StreamEvents` or
+  `GET /v1/events`). Consumers MUST tolerate absence (§Versioning).
+- **Wire shape.** Tag 18 is emitted after tag 17, so a payload with it equals the payload without it
+  plus `0x92 0x01 <len> <GoverningConfig bytes>`. It is a message field, so presence-tracked by
+  construction; the `DecisionSealed` cardinality rule (§Presence on the wire) has nothing to decide for it.
+
 ## Tenant tag — a producer rule (invariant 10)
 
 Every event carries a non-empty wire `tenant` (invariant 10). Since #903 this is **enforced at the producer,
@@ -974,7 +1018,8 @@ retaining the current max-`seq` row so the `seq` allocator cannot regress.
 The `digest` field (tag 19) on a `DECISION_SEALED` event is the **record digest v4**. It is the only
 record-digest formula: a producer stamps `schema_version = 4` on every record, and a verifier recomputes v4
 only and **refuses** every other `schema_version` as unknown — it never skips one and never defaults to a
-formula it was not asked for. (v1-v3 were retired by P7, 2026-10; no record sealed under them is
+formula it was not asked for. Payload tag 18 (`governing_config`, D6) is **not** in the preimage: adding,
+removing or changing it leaves the digest unchanged. (v1-v3 were retired by P7, 2026-10; no record sealed under them is
 verifiable by this build, by design — production is recreated at the v4 cutover, not migrated.)
 
 All framing is byte-exact and any-language-reproducible. `frame(x) = le32(len(x)) ‖ x` (a little-endian
@@ -1581,6 +1626,13 @@ are inside the ciphertext that `ciphertext_digest` (tag 10) already commits to, 
 into the TCT by [`seam-commitment-digest:v3`](seam-commitment-digest.v3.md). Neither is on this wire —
 the explanation carries free text and data-subject reasons, and crypto-shred erases it with the record.
 
+| payload field | record digest v4 | commitment digest v3 |
+|---------------|------------------|----------------------|
+| `governing_config` (tag 18, D6) | **not bound** | **not bound** |
+
+`governing_config` is an observability field on the event only: it is not a record column, so no
+digest can bind it, and it is pruned with the outbox row. It is not tamper-evident.
+
 #### Worked vector
 
 Every input fixed; the independent reference is `scripts/v4-digest-reference.py`, and the Rust pins are
@@ -1645,6 +1697,10 @@ per-destination `redaction_profile` (in the connector manifest) can redact furth
 The JSON projection is a field-for-field mapping of `SeamEvent` with `bytes` fields base64-encoded and
 `u64` fields as JSON numbers.
 
+`payload.governing_config` projects as the object `{"tenant_snapshot_id": "<id>"}`. When absent the key
+is **omitted** — never `null`, never `{}`. A projection carrying an empty `tenant_snapshot_id` is
+malformed; the runtime's decoder refuses it.
+
 > **Note:** an in-core signed-webhook emitter (signing the JSON body, carrying the `prev_checksum`/head
 > range) is **not built** — there is no HTTP delivery loop or body-signing in the runtime today, only this
 > projection. A consumer reads the outbox stream and delivers/signs on its own side. (Tracked: plan T3.4/T4.)
@@ -1662,6 +1718,11 @@ A breaking change bumps to `seam-event.v2`; the runtime may emit both during a m
 A new record-digest formula retires the previous one outright — there is one formula per build, no
 dual-emit, and no read path for retired versions — and it is released as one coordinated contract change
 (runtime, `seam-sdk` verifier and vectors, and the golden manifest re-pin together).
+
+Consumers MUST tolerate the **absence** of an additive field, not only its presence. In particular
+`DecisionSealed.governing_config` (tag 18, 0.70.0) is absent on pre-0.70.0 rows, on sessions parked or
+touched by an older replica, on replays, and on any row an older replica re-encodes while serving it —
+during a rollout or after a rollback. Its absence is never a strip signal and never a reason to refuse.
 
 Consumers MUST likewise tolerate an unknown event **`kind`**: it MUST NOT stall or fail delivery of
 the stream. A delivery consumer skips it; a fail-loud consumer MAY instead divert it to a dead-letter

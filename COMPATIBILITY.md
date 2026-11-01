@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:734`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:740`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -183,6 +183,7 @@ gRPC: the runtime ignores a stale `now_millis` tag and uses its own clock.
 | Record explain: `policy_enforcement_of`/`policyEnforcementOf` on `DecisionRecordView`, and `seal_attestation_of`/`sealAttestationOf` (seam-sdk#273) | seam-runtime 0.61.0 (seam-runtime#1535, #1361 train A); `RECORDED` attestations from 0.62.0 (train B, no wire change) | **compatible**: on an earlier runtime both decoders return `None`/`undefined` | runtime `main` @ `7d538c54` (seam-runtime#1535) |
 | `stream_id` on `StreamEvents` / `ReportEventsConsumed` / `SeamEvent` — **required** on both admin helpers (k8s P7) | seam-runtime 0.57.0 (k8s P7, OQ-1) | **compatible** — an earlier runtime ignores the unknown field. **The inverse is not:** runtime 0.57.0 refuses an SDK below 0.57.0 on both verbs with `FAILED_PRECONDITION` (`stream_id_mismatch`), because that SDK sends no stream | runtime `main` @ `2de71b5d` (seam-runtime#1470; BSR `7c8872847e3e45b09baa4b811305601c`; spec §Delivery stream and goldens vendored from it) |
 | Runtime version read: `server_info()` / `serverInfo()` (seam-sdk#307) | seam-runtime 0.63.0 (seam-runtime#1544, #1360) | **compatible, except this verb** — an earlier runtime answers `UNIMPLEMENTED`, surfaced as `UnimplementedError`; nothing else changes | runtime `main` @ `2e29be29` (seam-runtime#1544) |
+| `DecisionSealed.governing_config` (tag 18) = `GoverningConfig{tenant_snapshot_id}` in the generated `seam.event.v1` stubs (D6) | seam-runtime 0.70.0 (seam-runtime#1573, #1340) | **compatible** — additive event field outside every digest; an earlier runtime never sets it, and a consumer reads it as absent. No framing change (`wire-framing.json` `supported` stays 3); vectors unchanged; `seam-verify` neither requires nor attests it | BSR `train-0.70.0` @ `756c75ef` (seam-runtime `train/d6-pr-b` @ `93dd01ff`); un-pinned after the train lands |
 
 The protocol pass has no compatibility window in either direction: an earlier runtime refuses this
 SDK's derived PoP `message_id`, and this SDK treats an earlier runtime's v1-v3 records as
@@ -194,7 +195,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1746-1768`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1752-1774`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was

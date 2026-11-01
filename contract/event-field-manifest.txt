@@ -114,6 +114,7 @@ DecisionSealed/ciphertext_digest
 DecisionSealed/classification
 DecisionSealed/context_digest
 DecisionSealed/decision_id
+DecisionSealed/governing_config
 DecisionSealed/mode
 DecisionSealed/namespace
 DecisionSealed/outcome
@@ -137,6 +138,7 @@ EventRedriven/event
 EventRedriven/original_event_id
 EventRedriven/original_kind
 EventRedriven/original_seq
+GoverningConfig/tenant_snapshot_id
 LearningDecision/algorithm_arm
 LearningDecision/algorithm_id
 LearningDecision/candidate
