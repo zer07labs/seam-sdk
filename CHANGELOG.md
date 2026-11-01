@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.70.0 — 2026-11-01
+
 ### Added
 - **`seam.event.v1`: `DecisionSealed.governing_config` (payload tag 18), `GoverningConfig { tenant_snapshot_id }`
   (runtime 0.70.0, D6 / seam-runtime#1340).** The generated Python and TS event stubs carry the tenant governing
