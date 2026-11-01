@@ -16,6 +16,18 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added
+- **Runtime 0.71.0, outcome-ingestion wave 0 (seam-runtime#1572): `who_am_i()` / `whoAmI()`, the enrolment
+  kind, and the new `seam.api.v1` / `seam.event.v1` fields.** `SeamTrust/WhoAmI` is wired in both clients as a
+  credentialed read returning `tenant`, `namespace`, `kind` and `subject_enforcement`. The closed enrolment-kind
+  set is exported as `ENROLMENT_KIND_AGENT` / `ENROLMENT_KIND_OUTCOME_REPORTER` / `ENROLMENT_KIND_CHANGESET_WORKER`
+  (`ENROLMENT_KINDS`), and `enroll_tenant(..., kind=)` / `enrollTenant(..., { kind })` sends one (omitted, the
+  runtime enrols `agent` as before). The generated stubs also carry `TenantView.kind`, the `wire_features` lists
+  on `ServerInfoResponse` / `ReportOutcomeResponse`, the gated `ReportOutcomeRequest` `reward` / `metrics` /
+  `observed_at_millis` (not exposed by the hand-written clients until BP-2c), and the BP-2a `LearningDecision`
+  tags 10-14 / `LearningOutcome` tags 4-7. Additive: framing stays 3, vectors and `seam-verify` are unchanged.
+  The build pins BSR `train-0.71.0` until the runtime train lands.
+
 ## 0.70.0 — 2026-11-01
 
 ### Added

@@ -289,6 +289,7 @@ DecisionResponse/tenant
 EnrollPop/issued_at_ms
 EnrollPop/nonce
 EnrollPop/signature
+EnrollTenantRequest/kind
 EnrollTenantRequest/namespace
 EnrollTenantRequest/pop
 EnrollTenantRequest/subject_aid
@@ -404,8 +405,12 @@ ReportConsumedRequest/stream_id
 ReportOutcomeRequest/correct
 ReportOutcomeRequest/decision_id
 ReportOutcomeRequest/idempotency_key
+ReportOutcomeRequest/metrics
+ReportOutcomeRequest/observed_at_millis
+ReportOutcomeRequest/reward
 ReportOutcomeRequest/verified_by
 ReportOutcomeResponse/recorded
+ReportOutcomeResponse/wire_features
 ResolveContextRequest/refs
 ResolveContextResponse/bindings
 ResumeRequest/budget
@@ -432,6 +437,7 @@ SealAttestation/availability
 SealAttestation/collective_outcome
 SealAttestation/seal_reason
 ServerInfoResponse/runtime_version
+ServerInfoResponse/wire_features
 SessionRef/session_id
 SessionStatusResponse/decision_id
 SessionStatusResponse/state
@@ -446,6 +452,7 @@ StreamEventsRequest/follow
 StreamEventsRequest/from_seq
 StreamEventsRequest/stream_id
 TenantView/aid
+TenantView/kind
 TenantView/namespace
 TenantView/tenant
 TerminalResponse/decision_id
@@ -469,6 +476,10 @@ VoteRequest/session_id
 VoteRequest/usage
 VoteRequest/value
 VoteRequest/voter
+WhoAmIResponse/kind
+WhoAmIResponse/namespace
+WhoAmIResponse/subject_enforcement
+WhoAmIResponse/tenant
 AuthorizeVerdict#ALLOW
 AuthorizeVerdict#AUTHORIZE_VERDICT_UNSPECIFIED
 AuthorizeVerdict#DENY

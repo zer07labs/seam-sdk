@@ -872,8 +872,8 @@ def test_removing_a_known_synthetic_also_trips_the_guard(
 
 
 def test_the_real_tree_passes_the_nested_message_tripwire(manifests) -> None:
-    """Acceptance criterion 4: on the real generated stubs, the only nested message types are the two
-    known FeaturesEntry map-entry synthetics. The `manifests` fixture already proves this indirectly
+    """Acceptance criterion 4: on the real generated stubs, the only nested message types are the known
+    map-entry synthetics (two FeaturesEntry, plus ReportOutcomeRequest.MetricsEntry since 0.71.0). The `manifests` fixture already proves this indirectly
     (--write-manifest calls assert_known_nested_messages_only before writing), but this drives the
     probing path too and asserts the failure mode by name, not just by side effect.
 
@@ -892,9 +892,7 @@ def test_the_real_tree_passes_the_nested_message_tripwire(manifests) -> None:
     assert "nested-message allowlist disagrees" not in combined
 
 
-def test_nested_messages_python_extractor_sees_exactly_the_two_known_synthetics() -> (
-    None
-):
+def test_nested_messages_python_extractor_sees_exactly_the_known_synthetics() -> None:
     """A direct check on the extractor itself (lifted from the shipped script, same technique as
     `_ts_extractor_src`), independent of the hardcoded allowlist in
     `assert_known_nested_messages_only` — so a future edit that changes BOTH the extractor and the
@@ -911,6 +909,7 @@ def test_nested_messages_python_extractor_sees_exactly_the_two_known_synthetics(
     got = extracted.stdout.split()
     assert got == [
         "AuthorizeRequest.FeaturesEntry",
+        "ReportOutcomeRequest.MetricsEntry",
         "RunDecisionRequest.FeaturesEntry",
     ], got
 

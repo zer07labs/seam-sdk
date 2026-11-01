@@ -63,8 +63,28 @@ __all__ = [
     "EventStream",
     "KNOWN_KINDS",
     "DEFAULT_ADMIN_TIMEOUT_S",
+    "ENROLMENT_KIND_AGENT",
+    "ENROLMENT_KIND_CHANGESET_WORKER",
+    "ENROLMENT_KIND_OUTCOME_REPORTER",
+    "ENROLMENT_KINDS",
     "verify_streamed_record_digest",
 ]
+
+# What an AID is enrolled FOR (runtime 0.71.0, OI-R2a): the CLOSED set the runtime parses strictly on
+# `EnrollTenantRequest.kind`, and the value `TenantView.kind` / `WhoAmIResponse.kind` report. Name a
+# kind with these rather than hand-typing the string — any other value, `""` included, is the
+# runtime's INVALID_ARGUMENT. An `outcome_reporter` or `changeset_worker` credential is refused
+# PERMISSION_DENIED (`SUBJECT_KIND_CONFINED`) on every verb outside its kind.
+ENROLMENT_KIND_AGENT = "agent"
+ENROLMENT_KIND_OUTCOME_REPORTER = "outcome_reporter"
+ENROLMENT_KIND_CHANGESET_WORKER = "changeset_worker"
+ENROLMENT_KINDS = frozenset(
+    {
+        ENROLMENT_KIND_AGENT,
+        ENROLMENT_KIND_OUTCOME_REPORTER,
+        ENROLMENT_KIND_CHANGESET_WORKER,
+    }
+)
 
 # The `seam-event.v1` kinds the SDK knows about. A consumer MAY use this to branch on typed payloads, but
 # MUST still tolerate an unknown kind (the wire is a tolerant reader — new kinds are additive): iterate
@@ -510,6 +530,7 @@ class SeamAdminClient:
         namespace: str,
         *,
         pop: Optional[EnrollProof | pb.EnrollPop] = None,
+        kind: Optional[str] = None,
         timeout: float = DEFAULT_ADMIN_TIMEOUT_S,
     ) -> pb.TenantView:
         """Bind an agent identity to a tenant/namespace.
@@ -520,16 +541,28 @@ class SeamAdminClient:
         tenant-scoped**; a fleet token may omit it, and then no ``pop`` is sent. Accepts an
         :class:`~seam_sdk.crypto.EnrollProof` or a generated ``EnrollPop``. A malformed one (a nonce
         outside 1..=128 chars of ``[A-Za-z0-9_-]``, a signature that is not 64 bytes) raises
-        :class:`ValueError` here, before any RPC."""
-        return self._admin.EnrollTenant(
-            pb.EnrollTenantRequest(
-                subject_aid=subject_aid,
-                tenant=tenant,
-                namespace=namespace,
-                pop=_enroll_pop_pb(pop),
-            ),
-            timeout=timeout,
+        :class:`ValueError` here, before any RPC.
+
+        ``kind`` is what the AID is enrolled FOR — one of :data:`ENROLMENT_KINDS` (runtime 0.71.0,
+        OI-R2a). Omitted, no kind is sent and the runtime enrols an ``agent``, exactly as before. A
+        value outside the closed set raises :class:`ValueError` before any RPC. Re-enrolling an active
+        AID with a different kind is ``FailedPreconditionError`` (``ENROLMENT_KIND_CONFLICT``): revoke
+        first. A runtime older than 0.71.0 does not know the field and enrols ``agent`` regardless, so
+        send ``kind`` only to a runtime that advertises the ``enroll.kind`` wire feature, and read
+        the kind it stored on the returned view's ``kind``."""
+        req = pb.EnrollTenantRequest(
+            subject_aid=subject_aid,
+            tenant=tenant,
+            namespace=namespace,
+            pop=_enroll_pop_pb(pop),
         )
+        if kind is not None:
+            if kind not in ENROLMENT_KINDS:
+                raise ValueError(
+                    f"enroll_tenant: kind {kind!r} is not one of {sorted(ENROLMENT_KINDS)}"
+                )
+            req.kind = kind
+        return self._admin.EnrollTenant(req, timeout=timeout)
 
     def list_tenants(
         self, *, timeout: float = DEFAULT_ADMIN_TIMEOUT_S

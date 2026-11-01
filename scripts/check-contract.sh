@@ -363,7 +363,7 @@ expected_local_lag_age_days() {
 
 # ── Nested-message guard ────────────────────────────────────────────────────────────────────────────
 # fields_python/fields_ts exclude a nested message BY NESTING (see their own header above), which is
-# correct for the two known map-entry synthetics — but that exclusion is SYMMETRIC across both
+# correct for the known map-entry synthetics — but that exclusion is SYMMETRIC across both
 # languages, so a genuine nested message (not a map entry) is invisible to BOTH extractors at once:
 # exactly the "the gate stays green while going blind" failure the manifest header warns about,
 # reproduced here by the fix for the *other* case of it. Proven by mutation: adding
@@ -380,7 +380,10 @@ expected_local_lag_age_days() {
 # `<Owner>.<Nested>` for every INDENTED `class ...(_message.Message):` under a top-level message. TS
 # reads `Message<"seam.api.v1.<Owner>.<Nested...>">` — the same dotted-name shape fields_ts already
 # matches to SKIP a nested type, extracted here instead of discarded. Both read only $PY_GEN/$TS_GEN
-# (seam.api.v1) — never seam.event.v1, which is out of this gate's scope.
+# (seam.api.v1) by default. The python extractor takes an optional .pyi as $1, so the EVENT surface's
+# precondition (assert_event_surface_preconditions) reads its own allowlist with THIS extractor rather
+# than a second copy of it; nested_messages_ts stays api-only, because protobuf-es emits no map-entry
+# type and the event side refuses ANY nested TS type outright.
 nested_messages_python() {
   awk '
     /^class [A-Za-z0-9_]+\(_message\.Message\):/ {
@@ -392,7 +395,7 @@ nested_messages_python() {
         n=$0; sub(/^[[:space:]]+class /,"",n); sub(/\(_message\.Message\):.*$/,"",n)
         print cls "." n
     }
-  ' "$PY_GEN" | LC_ALL=C sort -u
+  ' "${1:-$PY_GEN}" | LC_ALL=C sort -u
 }
 
 nested_messages_ts() {
@@ -400,11 +403,14 @@ nested_messages_ts() {
     | sed -E 's/^Message<"seam\.api\.v1\.//; s/">$//' | LC_ALL=C sort -u
 }
 
-# The two known map-entry synthetics — see fields_python's own comment above for why they exist and why
+# The known map-entry synthetics — see fields_python's own comment above for why they exist and why
 # they are excluded by nesting rather than by an `*Entry` name filter. protobuf-es emits NO type for
-# either, so the TS allowlist is empty: today, ANY nested `Message<...>` at all in TS means a real
-# nested message landed.
+# any of them, so the TS allowlist is empty: today, ANY nested `Message<...>` at all in TS means a real
+# nested message landed. `ReportOutcomeRequest.MetricsEntry` is the `map<string, double> metrics`
+# (tag 6) of runtime 0.71.0 (outcome-ingestion BP-2a) — the same synthetic shape as the two
+# FeaturesEntry maps, carried as ONE field on its owner (`ReportOutcomeRequest/metrics`).
 _KNOWN_NESTED_MESSAGES_PY="AuthorizeRequest.FeaturesEntry
+ReportOutcomeRequest.MetricsEntry
 RunDecisionRequest.FeaturesEntry"
 _KNOWN_NESTED_MESSAGES_TS=""
 
@@ -486,8 +492,8 @@ manifest_enums() {
 }
 
 # ── Nested-enum guard ───────────────────────────────────────────────────────────────────────────────
-# No enum is nested inside a message today — only nested TYPES are the two FeaturesEntry map
-# synthetics, and those are messages, not enums. enums_python/enums_ts above assume that structurally
+# No enum is nested inside a message today — only nested TYPES are the map-entry synthetics
+# (_KNOWN_NESTED_MESSAGES_PY), and those are messages, not enums. enums_python/enums_ts above assume that structurally
 # (column-0 class headers in Python, un-dotted `seam.api.v1.<Enum>` doc-comment anchors in TS) exactly
 # the way fields_python/fields_ts assume no real message is itself nested — and would fail the same
 # way: a nested enum would disappear from BOTH languages at once, symmetrically, so the gate would stay
@@ -513,7 +519,11 @@ assert_no_nested_enums() {
 }
 
 # ── The event surface's structural preconditions ─────────────────────────────────────────────────────
-# `seam.event.v1` has ZERO enums and ZERO nested messages today, in both languages. The event field
+# `seam.event.v1` has ZERO enums and ZERO nested messages today, in both languages — save exactly the
+# map-entry synthetics in _KNOWN_EVENT_NESTED_MESSAGES_PY (python only; protobuf-es emits no type for a
+# map), held to an EXACT allowlist like the api side's: an unknown one appearing and a known one
+# vanishing both refuse. A map field is extracted as one field on its owner, so its synthetic hides
+# nothing the gate needs. Any other nested message, any nested TS type and any enum still refuse. The event field
 # gate below reuses fields_python/fields_ts, which skip a nested message's fields structurally, and it
 # has NO enum partition at all — so both facts are load-bearing, and both would fail SILENTLY and
 # SYMMETRICALLY if they stopped holding: a nested message's fields vanish from Python and TS at once,
@@ -530,17 +540,28 @@ assert_no_nested_enums() {
 # fired on. Exit 6 and 8 name a CONTRACT ("this manifest disagrees"), and two contracts sharing one of
 # those would make a real event drift indistinguishable from the recorded api lag that CI is told to
 # read past.
+# `LearningOutcome.MetricsEntry` is `LearningOutcome.metrics` (map<string, double>, tag 5), runtime
+# 0.71.0 outcome-ingestion BP-2a — declared on the event manifest as `LearningOutcome/metrics`.
+_KNOWN_EVENT_NESTED_MESSAGES_PY="LearningOutcome.MetricsEntry"
+
 assert_event_surface_preconditions() {
-  local py_enum py_nested ts_enum ts_nested
+  local py_enum py_nested ts_enum ts_nested py_nested_have py_nested_want
   # Python: ANY enum at ANY indentation (the api side only guards NESTED enums; here even a top-level
   # one is a precondition failure, because there is no event enum extractor to route it to).
   py_enum="$(grep -nE '^[[:space:]]*class [A-Za-z0-9_]+\(int, metaclass=_enum_type_wrapper\.EnumTypeWrapper\):' "$PY_EV" 2>/dev/null || true)"
-  py_nested="$(grep -nE '^[[:space:]]+class [A-Za-z0-9_]+\(_message\.Message\):' "$PY_EV" 2>/dev/null || true)"
+  py_nested_have="$(nested_messages_python "$PY_EV" 2>/dev/null || true)"
+  py_nested_want="$(printf '%s\n' "$_KNOWN_EVENT_NESTED_MESSAGES_PY" | LC_ALL=C sort -u)"
+  py_nested="$(
+    comm -23 <(echo "$py_nested_have") <(echo "$py_nested_want") | grep -v '^$' | sed 's/^/unknown: /'
+    comm -13 <(echo "$py_nested_have") <(echo "$py_nested_want") | grep -v '^$' \
+      | sed 's/^/MISSING known map-entry synthetic: /'
+  )"
   ts_enum="$(grep -nE '@generated from enum seam\.event\.v1\.' "$TS_EV" 2>/dev/null || true)"
   ts_nested="$(grep -nE '^export type [A-Za-z0-9_]+ = Message<"seam\.event\.v1\.[A-Za-z0-9_]+\.[A-Za-z0-9_.]+">' "$TS_EV" 2>/dev/null || true)"
   if [ -n "$py_enum" ] || [ -n "$py_nested" ] || [ -n "$ts_enum" ] || [ -n "$ts_nested" ]; then
     err "a structural precondition of the EVENT field gate failed: seam.event.v1 is asserted to have"
-    err "ZERO enums and ZERO nested messages, and the stubs now have at least one."
+    err "ZERO enums and ZERO nested messages (save the exact map-entry allowlist"
+    err "_KNOWN_EVENT_NESTED_MESSAGES_PY), and the stubs now disagree with that."
     if [ -n "$py_enum" ];    then err "  an ENUM in python ($PY_EV):";           echo "$py_enum" >&2;    fi
     if [ -n "$py_nested" ];  then err "  a NESTED MESSAGE in python ($PY_EV):";  echo "$py_nested" >&2;  fi
     if [ -n "$ts_enum" ];    then err "  an ENUM in ts ($TS_EV):";               echo "$ts_enum" >&2;    fi

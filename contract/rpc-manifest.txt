@@ -73,3 +73,4 @@ SeamTrust/ServerInfo
 SeamTrust/VerifyCommitment
 SeamTrust/VerifyPartyAnchor
 SeamTrust/VerifyPartyAttestation
+SeamTrust/WhoAmI

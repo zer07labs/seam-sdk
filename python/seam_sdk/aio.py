@@ -985,6 +985,36 @@ class SeamClient:
             await self._trust.ServerInfo(pb.Empty(), timeout=timeout)
         ).runtime_version
 
+    async def who_am_i(
+        self,
+        *,
+        credential: Optional[Agent] = None,
+        timeout: float = DEFAULT_TIMEOUT_S,
+    ) -> pb.WhoAmIResponse:
+        """The identity the runtime resolves for the caller's credential (seam.api.v1
+        ``SeamTrust/WhoAmI``, runtime 0.71.0+): a ``WhoAmIResponse`` with ``tenant``, ``namespace``,
+        ``kind`` (the enrolment kind — one of :data:`~seam_sdk.admin.ENROLMENT_KINDS`) and
+        ``subject_enforcement``, returned as the runtime sent it.
+
+        Unlike :meth:`server_info` it is subject-bearing: the call carries ``credential`` (default:
+        the bound agent) as a ``seam-request-call-v1`` credential that binds the verb only (no
+        resource id, no body digest), and refreshes a rejected ticket once, like every credentialed
+        read (#275). It writes nothing and is permitted for every enrolment kind. With subject
+        enforcement on, an unenrolled or revoked AID (or no credential at all) raises
+        :class:`~seam_sdk.errors.UnauthenticatedError` — which is how a caller tells "my credential is
+        wrong" from "this resource is out of my scope". With it off, an unproven caller gets the
+        empty triple and ``subject_enforcement=False``. A runtime older than 0.71.0 raises
+        :class:`~seam_sdk.errors.UnimplementedError`.
+        """
+        return await self._credentialed_call(
+            credential,
+            "/seam.api.v1.SeamTrust/WhoAmI",
+            "",
+            None,
+            lambda md: self._trust.WhoAmI(pb.Empty(), timeout=timeout, metadata=md),
+            timeout=timeout,
+        )
+
     async def verify_commitment(
         self,
         commitment: pb.Commitment,

@@ -1139,8 +1139,8 @@ them change what the phases do:
 | `.github/workflows/ci.yml:757` | `ADVISORY: integration,spec-pin`. Advisory means *may skip*, not *may fail* — a red `integration` still reddens `ci-ok`, which lists it at `.github/workflows/ci.yml:742`. |
 | `scripts/check-contract.sh:274` · `scripts/check-contract.sh:294` | `fields_python` and `fields_ts`. Already parameterised on stub path (and package, for TS) when #88 landed — measured, they yield 90/90 on the event stubs with zero one-sided entries. **Phase 5 did NOT touch them**: the gap it closed is one level up, at the VERB surface, so it parameterised `rpcs_python`/`rpcs_ts` instead. This row said Phase 5 would do it; that was a planning-time guess about the wrong pair. Two full citations on one row, not `` `:248` `` as a bare number: a pathless line reference matches `CITATION` not at all, so it is invisible to every check in `test_compatibility_citations_resolve.py`. Both needles are in `ANCHORED` and bound to this row by `CLAIM_LINES`. |
 | `scripts/check-contract.sh:317` | `manifest_fields` — its stripper claims every `#`-free line, which is why the event surface cannot share `contract/field-manifest.txt`. |
-| `scripts/check-contract.sh:663-672` | `--write-manifest` deletes `contract/expected-local-lag.txt`; the cited block is the comment scoping that delete to the api write (`# Scoped to the API write, deliberately`), and the `-f` guard and `rm -f` are the two lines immediately below it. **Re-targeted:** it pointed at the FIELD-manifest write for two rounds — the number was faithfully remapped each time the file moved, which preserved a wrong target rather than fixing it. A remap can only keep a citation pointing where it already pointed; it is now ANCHORED so the content, not just the line, is checked. The second reason the event surface needs its own file. Deliberately no bare `:NNN` for those two — a naked line number inside a row is invisible to `test_compatibility_citations_resolve.py` (it checks backticked `file:line`, and a bare `:473` has no path), so it rots unnoticed. This one had: it still said `:473` after the guard moved to `:571`. |
-| `scripts/check-contract.sh:806` | The comment #88 was filed from. It already records the field-surface gap as closed (#88 rewrote it when `contract/event-field-manifest.txt` landed), so **Phase 5 left it alone** — the planning-time note here claimed Phase 5 would rewrite it, and rewriting a comment that was already correct would have been churn. |
+| `scripts/check-contract.sh:684-693` | `--write-manifest` deletes `contract/expected-local-lag.txt`; the cited block is the comment scoping that delete to the api write (`# Scoped to the API write, deliberately`), and the `-f` guard and `rm -f` are the two lines immediately below it. **Re-targeted:** it pointed at the FIELD-manifest write for two rounds — the number was faithfully remapped each time the file moved, which preserved a wrong target rather than fixing it. A remap can only keep a citation pointing where it already pointed; it is now ANCHORED so the content, not just the line, is checked. The second reason the event surface needs its own file. Deliberately no bare `:NNN` for those two — a naked line number inside a row is invisible to `test_compatibility_citations_resolve.py` (it checks backticked `file:line`, and a bare `:473` has no path), so it rots unnoticed. This one had: it still said `:473` after the guard moved to `:571`. |
+| `scripts/check-contract.sh:827` | The comment #88 was filed from. It already records the field-surface gap as closed (#88 rewrote it when `contract/event-field-manifest.txt` landed), so **Phase 5 left it alone** — the planning-time note here claimed Phase 5 would rewrite it, and rewriting a comment that was already correct would have been churn. |
 | `contract/event-field-manifest.txt` | **Phase 5 creates.** 90 fields, 11 messages, zero enums, zero nested messages — all measured, not assumed. |
 | `python/tests/test_field_manifest_gate.py:112` | `_run()` — the scratch-copy-plus-env-override pattern Phase 5's tests mirror. Nothing may mutate the real gitignored stub trees. |
 | `python/tests/test_compatibility_citations_resolve.py:681` | The `submitCommit` `ANCHORED` needle into `ts/src/client.ts`. Its siblings in the same list pin `collectiveOutcomeOf` (just above) and, from Phase 4, `submitEvaluation` and `submitObjection` — named rather than cited, for the reason the row above records: the bare `:606` and `:617-618` that used to sit here were both stale, and nothing could have told anyone. The plan predicted the insertion would break the `submitCommit` anchor for any K of 4+ lines *except* a 125-131 window where it would go green against the unrelated `:804` citation. **Measured K = 101 at the time of that check, 103 as finally committed** — outside that window at every intermediate value, and the anchor failed red-first as required before `PROGRESS.md` was touched. |
@@ -2883,7 +2883,7 @@ otherwise reading the real gen tree through the new probe; both fixtures now red
 `SEAM_*` variables the script reads. `CLAUDE.md`'s "three other codes" was still an undercount — 5
 and 3 are reachable from the same command, measured — and now says so.
 
-One citation deserves its own note. `scripts/check-contract.sh:612-621` pointed at the FIELD-manifest
+One citation deserves its own note. `scripts/check-contract.sh:633-642` pointed at the FIELD-manifest
 write, not at the `expected-local-lag` delete-scoping comment it described, and had done for two
 rounds: **each remap faithfully carried the wrong target forward.** A remap can only keep a citation
 pointing where it already pointed. It is re-targeted and ANCHORED now, so mis-pointing it kills two
@@ -4069,7 +4069,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1786`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1798`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -4556,12 +4556,12 @@ green before any code changed.
   this — "rather than refusing outright" was wrong, fixed before merge). (2) the release's
   `retitle_changelog.sh` run shifted `CHANGELOG.md`'s "No yank" paragraph from line 1054 to 1056
   (a +2 insert right after `## Unreleased`), pushing `COMPATIBILITY.md:123` and
-  `DECISIONS.md:1222`'s `CHANGELOG.md:1621-1638` citations past the citation test's slack
-  tolerance; repointed both to `CHANGELOG.md:1623-1640`. Tested: `check_vendored_spec.py` OK via both
+  `DECISIONS.md:1222`'s `CHANGELOG.md:1633-1650` citations past the citation test's slack
+  tolerance; repointed both to `CHANGELOG.md:1635-1652`. Tested: `check_vendored_spec.py` OK via both
   `--from local` and `--from gh`; `test_compatibility_citations_resolve.py` 489 passed/0 failed
   standalone (was 4 failed). Verifier also flagged two pre-existing, gate-invisible citations
   elsewhere that the same +2 shift widened further — `DECISIONS.md:2035` cites
-  `CHANGELOG.md:1523` and `PROGRESS.md:3981` cites `CHANGELOG.md:1408`, both already ~130-250
+  `CHANGELOG.md:1535` and `PROGRESS.md:3981` cites `CHANGELOG.md:1420`, both already ~130-250
   lines stale before this release — out of scope for this release-unblock hotfix; filed as a
   follow-up issue rather than folded in here.
   **Rebased `feat/verify-anchor-tenant` onto this commit during `/sweep`'s ship pass.** Four
@@ -4571,7 +4571,7 @@ green before any code changed.
   `CHANGELOG.md`/`COMPATIBILITY.md`/`DECISIONS.md`: the feature branch's own new
   `## Unreleased` entry (16 lines) was kept above this hotfix's `## 0.33.3` header, which
   shifted "No yank" from this entry's `1056` to `1072` and recomputed the two citations above
-  (`CHANGELOG.md:1623-1640`) to `CHANGELOG.md:1639-1656` — verified against the exact
+  (`CHANGELOG.md:1635-1652`) to `CHANGELOG.md:1651-1668` — verified against the exact
   paragraph-boundary text at both the old and new line numbers before trusting the new range,
   not just the arithmetic. A dedicated ship-gate verifier independently re-derived this same
   shift from the diff and confirmed it exact.

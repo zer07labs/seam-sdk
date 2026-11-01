@@ -1729,6 +1729,29 @@ export class SeamClient {
   serverInfo(opts?: UnaryCallOptions) {
     return this.trust.serverInfo({}, call(opts)).then((r) => r.runtimeVersion);
   }
+  /**
+   * The identity the runtime resolves for the caller's credential (seam.api.v1 `SeamTrust/WhoAmI`,
+   * runtime 0.71.0+): a `WhoAmIResponse` with `tenant`, `namespace`, `kind` (the enrolment kind — one
+   * of `ENROLMENT_KINDS`) and `subjectEnforcement`, returned as the runtime sent it.
+   *
+   * Unlike {@link serverInfo} it is subject-bearing: the call carries `opts.credential` (default: the
+   * bound agent) as a `seam-request-call-v1` credential that binds the verb only (no resource id, no
+   * body digest), and refreshes a rejected ticket once, like every credentialed read (#275). It writes
+   * nothing and is permitted for every enrolment kind. With subject enforcement on, an unenrolled or
+   * revoked AID (or no credential at all) rejects with `UnauthenticatedError` — which is how a caller
+   * tells "my credential is wrong" from "this resource is out of my scope". With it off, an unproven
+   * caller gets the empty triple and `subjectEnforcement: false`. A runtime older than 0.71.0 rejects
+   * with `UnimplementedError`.
+   */
+  async whoAmI(opts?: CredentialedCallOptions) {
+    return this.credentialedCall(
+      opts?.credential,
+      "/seam.api.v1.SeamTrust/WhoAmI",
+      "",
+      opts,
+      (headers) => this.trust.whoAmI({}, { ...call(opts), headers }),
+    );
+  }
   async getCommitmentProof(decisionId: string, opts?: CredentialedCallOptions) {
     return this.credentialedCall(
       opts?.credential,
