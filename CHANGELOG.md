@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.72.0 — 2026-11-02
+
 ### Changed
 - **`register_context` / `resolve_context` (`registerContext` / `resolveContext`) are credentialed (runtime
   0.72.0, B1 Phase 2).** From runtime 0.72.0 `seam.api.v1.SeamContext` serves only a proven subject: the #508
