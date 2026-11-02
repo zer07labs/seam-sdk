@@ -6,6 +6,7 @@
 
 export * from "./client.js";
 export * from "./admin.js";
+export * from "./outcome.js";
 export * from "./crypto.js";
 export * from "./errors.js";
 // Cell routing (seam-runtime k8s P15, D123): the `x-seam-tenant` hint (Python's `seam_sdk.tenant`).
