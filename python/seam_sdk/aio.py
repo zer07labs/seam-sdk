@@ -32,6 +32,7 @@ from .client import (
     BudgetLimits,
     StepUsage,
     _check_idempotency_key,
+    _set_outcome_fields,
     _now_ms,
     _submit_retry_doc,
     _vote_messages,
@@ -49,6 +50,7 @@ from .errors import (
     is_tenant_moving,
     map_rpc_error,
 )
+from ._outcome import ObservedAt
 from .tenant import AioTenantInterceptor
 
 from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
@@ -896,16 +898,22 @@ class SeamClient:
         verified_by: Optional[str] = None,
         *,
         idempotency_key: str,
+        reward: Optional[float] = None,
+        metrics: Optional[Mapping[str, float]] = None,
+        observed_at: Optional[ObservedAt] = None,
         credential: Optional[Agent] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> bool:
         """The async twin of :meth:`seam_sdk.SeamClient.report_outcome`; read its docstring for the
-        ``idempotency_key`` stability rule, which is the part that matters."""
+        ``idempotency_key`` stability rule, which is the part that matters, and for the gating of
+        ``reward`` / ``metrics`` / ``observed_at`` (send them only while
+        :meth:`server_wire_features` advertises them)."""
         req = pb.ReportOutcomeRequest(
             decision_id=decision_id,
             correct=correct,
             idempotency_key=_check_idempotency_key(idempotency_key),
         )
+        _set_outcome_fields(req, reward, metrics, observed_at)
         if verified_by is not None:
             req.verified_by = verified_by
         # Refresh-once over the SAME ``req`` (#275) — see the sync twin.
@@ -1013,6 +1021,15 @@ class SeamClient:
         return (
             await self._trust.ServerInfo(pb.Empty(), timeout=timeout)
         ).runtime_version
+
+    async def server_wire_features(
+        self, *, timeout: float = DEFAULT_TIMEOUT_S
+    ) -> tuple[str, ...]:
+        """The async twin of :meth:`seam_sdk.SeamClient.server_wire_features`: the wire features this
+        replica accepts (``ServerInfoResponse.wire_features``), sorted; re-check per connection."""
+        return tuple(
+            (await self._trust.ServerInfo(pb.Empty(), timeout=timeout)).wire_features
+        )
 
     async def who_am_i(
         self,

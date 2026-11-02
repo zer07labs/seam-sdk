@@ -42,6 +42,7 @@ import {
 // ChainHeadAttestation moved to the canonical seam.event.v1 package.
 import { type ChainHeadAttestation } from "../gen/seam/event/v1/seam_event_pb.js";
 import { tenantHeaderInterceptor } from "./tenant.js";
+import { type ObservedAt, checkOutcomeFields } from "./outcome.js";
 import {
   aidFromPubkey,
   buildPresentation,
@@ -1737,6 +1738,18 @@ export class SeamClient {
   serverInfo(opts?: UnaryCallOptions) {
     return this.trust.serverInfo({}, call(opts)).then((r) => r.runtimeVersion);
   }
+
+  /** The wire features this runtime replica accepts (`ServerInfoResponse.wireFeatures`, OI-R6), sorted,
+   * e.g. `["enroll.kind", "outcome.observed_at", "outcome.reward_metrics"]`. Same call as
+   * {@link serverInfo} (no credential, never retried). A gated request field is sent only while its
+   * feature is listed ({@link WIRE_FEATURE_OUTCOME_REWARD_METRICS}, {@link WIRE_FEATURE_OUTCOME_OBSERVED_AT},
+   * {@link WIRE_FEATURE_ENROLL_KIND}). The list is a build constant of the replica that answers: during a
+   * rolling deploy behind a load balancer, re-check per connection or per cycle rather than caching it
+   * for the process. A runtime 0.63.0-0.70.x resolves `[]`; an older one rejects with
+   * `UnimplementedError`. */
+  serverWireFeatures(opts?: UnaryCallOptions): Promise<string[]> {
+    return this.trust.serverInfo({}, call(opts)).then((r) => [...r.wireFeatures]);
+  }
   /**
    * The identity the runtime resolves for the caller's credential (seam.api.v1 `SeamTrust/WhoAmI`,
    * runtime 0.71.0+): a `WhoAmIResponse` with `tenant`, `namespace`, `kind` (the enrolment kind — one
@@ -1786,17 +1799,38 @@ export class SeamClient {
    * `credential` opts in to the in-band request credential (#508), digest over the whole message.
    * With a credential (explicit or the bound agent), an `UNAUTHENTICATED` refreshes the ticket once
    * and re-signs and resends the SAME request once (#275); a second rejection throws
-   * `UnauthenticatedError`. */
+   * `UnauthenticatedError`.
+   *
+   * `reward`, `metrics` and `observedAt` (Branchpoint BP-2 / OI-R1) are optional and **gated by the
+   * runtime**: send them only while {@link serverWireFeatures} lists
+   * {@link WIRE_FEATURE_OUTCOME_REWARD_METRICS} (`reward`/`metrics`) or
+   * {@link WIRE_FEATURE_OUTCOME_OBSERVED_AT} (`observedAt`), and never probe for support with a real
+   * report — an outcome is permanent. A runtime that does not accept them (0.71.0 and 0.72.x, before
+   * BP-2c in 0.73.0) refuses the report with `INVALID_ARGUMENT`; a runtime older than 0.71.0 **silently drops
+   * them** and records the outcome without them. `reward` is a finite number; `metrics` maps at most 16
+   * keys matching `^[a-z][a-z0-9_]{0,62}$` to finite numbers (an empty object is the same as none);
+   * `observedAt` is the source-event time, a `Date` or integer ms since the Unix epoch, and the runtime
+   * refuses one earlier than the decision's seal or more than 300 s past its clock. Every check but that
+   * last one runs here, before any network call (`InvalidArgumentError`). They are part of the outcome
+   * the key identifies: a replay of the key with a different value is refused. */
   async reportOutcome(
     decisionId: string,
     correct: boolean,
-    opts: { idempotencyKey: string; verifiedBy?: string } & CredentialedCallOptions,
+    opts: {
+      idempotencyKey: string;
+      verifiedBy?: string;
+      reward?: number;
+      metrics?: { [key: string]: number };
+      observedAt?: ObservedAt;
+    } & CredentialedCallOptions,
   ): Promise<boolean> {
     const init = {
       decisionId,
       correct,
       verifiedBy: opts.verifiedBy,
       idempotencyKey: checkIdempotencyKey(opts.idempotencyKey),
+      // Only the set ones: a caller passing none sends the same bytes as before.
+      ...checkOutcomeFields(opts),
     };
     // Refresh-once over the SAME `init` (#275): idempotent on the signed key, exempt from the replay
     // guard, so a resend of a report that already landed is a no-op.

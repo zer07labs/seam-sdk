@@ -14,7 +14,12 @@ import {
 } from "../src/client.js";
 import { SeamAdminClient } from "../src/admin.js";
 import { requestSig } from "../src/crypto.js";
-import { UnauthenticatedError } from "../src/errors.js";
+import { InvalidArgumentError, UnauthenticatedError } from "../src/errors.js";
+import {
+  WIRE_FEATURE_ENROLL_KIND,
+  WIRE_FEATURE_OUTCOME_OBSERVED_AT,
+  WIRE_FEATURE_OUTCOME_REWARD_METRICS,
+} from "../src/outcome.js";
 import { SeamCoordination } from "../gen/seam/api/v1/seam_pb.js";
 import { governanceEnv, mintOperatorToken } from "./operator_token.js";
 
@@ -140,6 +145,39 @@ test("H4: request features never affect the sealed record", { skip: SKIP }, asyn
     const recFeat = await client.getDecision(feat.decisionId);
     assert.equal(recFeat.outcome, recPlain.outcome);
     assert.equal(recFeat.classification, recPlain.classification);
+  });
+});
+
+// BP-2 / OI-R6 end to end: reward/metrics/observedAt are accepted exactly while the replica advertises
+// them, and refused INVALID_ARGUMENT (never dropped) while it does not. Holds on either side of BP-2c.
+test("BP-2: outcome fields follow the advertised gate", { skip: SKIP }, async () => {
+  await withServer(8094, async (addr) => {
+    const client = SeamClient.connect(`http://${addr}`);
+    const votes: [string, string][] = [["fraud-v3", "BLOCK"], ["risk-v2", "BLOCK"]];
+    const dec = await client.runDecision(demoAgent(), "ts-bp2-sid-0123456789abcdef", ["fraud-v3", "risk-v2"], votes);
+    const features = await client.serverWireFeatures();
+    // Every runtime this lane runs (seamd:main) is 0.71.0+; below that the fields would be dropped.
+    assert.ok(features.includes(WIRE_FEATURE_ENROLL_KIND), String(features));
+    assert.deepEqual(features, [...features].sort());
+    const fields = { reward: 0.75, metrics: { latency_ms: 12.5 }, observedAt: new Date() };
+    if (features.includes(WIRE_FEATURE_OUTCOME_REWARD_METRICS)) {
+      assert.ok(features.includes(WIRE_FEATURE_OUTCOME_OBSERVED_AT));
+      const opts = { idempotencyKey: "ts-bp2-outcome-1", verifiedBy: "qa", ...fields };
+      assert.equal(await client.reportOutcome(dec.decisionId, true, opts), true);
+      // A replay of the same outcome is a no-op; the same key with a different reward is refused.
+      assert.equal(await client.reportOutcome(dec.decisionId, true, opts), true);
+      await assert.rejects(client.reportOutcome(dec.decisionId, true, { ...opts, reward: 0.5 }), InvalidArgumentError);
+    } else {
+      assert.equal(features.includes(WIRE_FEATURE_OUTCOME_OBSERVED_AT), false);
+      for (const one of [{ reward: 0.75 }, { metrics: { n: 1 } }, { observedAt: fields.observedAt }]) {
+        await assert.rejects(
+          client.reportOutcome(dec.decisionId, true, { idempotencyKey: "ts-bp2-refused", ...one }),
+          InvalidArgumentError,
+        );
+      }
+    }
+    // A report with none of the fields is unaffected either way.
+    assert.equal(await client.reportOutcome(dec.decisionId, true, { idempotencyKey: "ts-bp2-plain" }), true);
   });
 });
 

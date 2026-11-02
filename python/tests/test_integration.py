@@ -22,11 +22,15 @@ from live_server import spawn_server
 from seam_sdk import (
     Agent,
     BudgetLimits,
+    InvalidArgumentError,
     IssuerMismatchError,
     SeamAdminClient,
     SeamClient,
     StepUsage,
     UnauthenticatedError,
+    WIRE_FEATURE_ENROLL_KIND,
+    WIRE_FEATURE_OUTCOME_OBSERVED_AT,
+    WIRE_FEATURE_OUTCOME_REWARD_METRICS,
     collective_outcome_of,
     policy_enforcement_of,
     seal_attestation_of,
@@ -146,6 +150,57 @@ def test_features_do_not_affect_the_record(server):
     rec_feat = client.get_decision(feat.decision_id)
     assert rec_feat.outcome == rec_plain.outcome
     assert rec_feat.classification == rec_plain.classification
+
+
+def test_outcome_fields_follow_the_advertised_gate(server):
+    """BP-2 / OI-R6 end to end: ``reward`` / ``metrics`` / ``observed_at`` are accepted exactly while the
+    replica advertises them, and refused INVALID_ARGUMENT (never dropped) while it does not. Holds on
+    either side of BP-2c, so no version branch."""
+    client = SeamClient.connect(server)
+    dec = client.run_decision(
+        Agent(bytes([42] * 32)),
+        "py-bp2-sid-0123456789abcdef",
+        ["fraud-v3", "risk-v2"],
+        [("fraud-v3", "BLOCK"), ("risk-v2", "BLOCK")],
+    )
+    features = client.server_wire_features()
+    # Every runtime this lane runs (seamd:main) is 0.71.0+; below that the fields would be dropped.
+    assert WIRE_FEATURE_ENROLL_KIND in features, features
+    assert list(features) == sorted(features)
+    fields = dict(
+        reward=0.75, metrics={"latency_ms": 12.5}, observed_at=int(time.time() * 1000)
+    )
+    if WIRE_FEATURE_OUTCOME_REWARD_METRICS in features:
+        assert WIRE_FEATURE_OUTCOME_OBSERVED_AT in features
+        key = "py-bp2-outcome-1"
+        assert client.report_outcome(
+            dec.decision_id, True, "qa", idempotency_key=key, **fields
+        )
+        # A replay of the same outcome is a no-op; the same key with a different reward is refused.
+        assert client.report_outcome(
+            dec.decision_id, True, "qa", idempotency_key=key, **fields
+        )
+        with pytest.raises(InvalidArgumentError):
+            client.report_outcome(
+                dec.decision_id,
+                True,
+                "qa",
+                idempotency_key=key,
+                **{**fields, "reward": 0.5},
+            )
+    else:
+        assert WIRE_FEATURE_OUTCOME_OBSERVED_AT not in features
+        for one in (
+            {"reward": 0.75},
+            {"metrics": {"n": 1.0}},
+            {"observed_at": fields["observed_at"]},
+        ):
+            with pytest.raises(InvalidArgumentError):
+                client.report_outcome(
+                    dec.decision_id, True, idempotency_key="py-bp2-refused", **one
+                )
+    # A report with none of the fields is unaffected either way.
+    assert client.report_outcome(dec.decision_id, True, idempotency_key="py-bp2-plain")
 
 
 @pytest.fixture

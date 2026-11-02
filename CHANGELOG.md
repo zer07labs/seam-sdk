@@ -16,6 +16,26 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added
+- **`report_outcome(..., reward=, metrics=, observed_at=)` / `reportOutcome(…, { reward, metrics, observedAt })`
+  (Branchpoint BP-2 / plan 47 OI-R1, runtime BP-2c), and `server_wire_features()` / `serverWireFeatures()`
+  (OI-R6).** All three outcome fields are optional and keyword-only (Python) or in the options object (TS):
+  `reward` a finite float, `metrics` at most 16 keys matching `^[a-z][a-z0-9_]{0,62}$` to finite floats (an
+  empty mapping is the same as none), `observed_at` the source-event time as an aware `datetime` / `Date` or
+  integer ms since the Unix epoch. They are validated the way the runtime validates them and refused
+  **before any RPC** (`ValueError` / `TypeError` in Python, `InvalidArgumentError` in TS); the runtime's one
+  record-dependent check (`observed_at` within `[sealed_at, now + 300 s]`) stays server-side. A call that
+  passes none of them sends the same bytes as before (pinned by a hand-derived golden shared by both SDKs).
+  `server_wire_features()` returns `ServerInfoResponse.wire_features`; the names are exported as
+  `WIRE_FEATURE_OUTCOME_REWARD_METRICS`, `WIRE_FEATURE_OUTCOME_OBSERVED_AT` and `WIRE_FEATURE_ENROLL_KIND`, with
+  `OUTCOME_METRICS_MAX`. Go/Java/Kotlin have carried the generated fields since 0.71.0 and need nothing.
+- **Skew hazard — send the fields only while they are advertised.** A runtime 0.71.0 or 0.72.x (before BP-2c,
+  0.73.0) refuses a report carrying any of them with `INVALID_ARGUMENT` (nothing is recorded). A runtime
+  **older than 0.71.0 silently drops them** and records the outcome without them. Check
+  `server_wire_features()` per connection (each replica answers for itself during a rolling deploy) and never
+  probe with a real report: an outcome is permanent. The fields are part of the outcome the idempotency key
+  identifies, so a replay of a key with a different `reward` / `metrics` / `observed_at` is refused.
+
 ## 0.72.0 — 2026-11-02
 
 ### Changed

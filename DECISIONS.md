@@ -1219,7 +1219,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:1784-1806` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:1804-1826` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2049,7 +2049,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:1814` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:1834` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -3069,3 +3069,16 @@ Ranked by blast radius. The two possible one-way doors (a public exception API, 
   - The shape is consistent with every existing `Result<_, String>` entry point. `describe()` must be public because the binary links the library as an external crate.
   - A typed error enum would be an orthogonal break and is no cheaper now.
 - **Decided by:** Opus on Fable's analysis (not a one-way door). **Verdict:** CONFIRM. **Status:** CONFIRMED.
+
+## 2026-11-02 — BP-2 outcome fields on the hand-written clients (plans/outcome-reward-metrics.md)
+
+- **D-W3-1 — merge order.** The proto has carried the fields since 0.71.0, so this PR is green against BSR main
+  on its own. But any runtime tag stamps an SDK release, so the PR merges only once seam-runtime#1591 (0.73.0,
+  BP-2c) is green and final. The vendored `seam-event.v1.md` is pinned `tracking feat/bp-2c`, and the runtime's
+  squash-merge turns that pin into a notice rather than a red, so the release commit's CI stays green. If
+  `release-on-runtime` refuses anyway, re-run it by hand with `workflow_dispatch` at 0.73.0. **Decided by:** Opus (reversible).
+- **D-W3-2 — `report_outcome` keeps returning `bool`.** The `ReportOutcomeResponse.wire_features` echo is not
+  surfaced, because changing the return type would break every caller. The supported check is
+  `server_wire_features()` before sending, per `wire-features.md`. **Decided by:** Opus (additive; a richer return can be added later).
+- **D-W3-3 — `observed_at` accepts an aware `datetime` / `Date` or integer ms.** A naive `datetime` is refused
+  rather than guessed. Values are truncated to the ms, never rounded, matching the runtime's u64 ms. **Decided by:** Opus (still-private API shape, pre-release).

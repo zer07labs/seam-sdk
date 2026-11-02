@@ -185,6 +185,7 @@ gRPC: the runtime ignores a stale `now_millis` tag and uses its own clock.
 | Runtime version read: `server_info()` / `serverInfo()` (seam-sdk#307) | seam-runtime 0.63.0 (seam-runtime#1544, #1360) | **compatible, except this verb** — an earlier runtime answers `UNIMPLEMENTED`, surfaced as `UnimplementedError`; nothing else changes | runtime `main` @ `2e29be29` (seam-runtime#1544) |
 | `DecisionSealed.governing_config` (tag 18) = `GoverningConfig{tenant_snapshot_id}` in the generated `seam.event.v1` stubs (D6) | seam-runtime 0.70.0 (seam-runtime#1573, #1340) | **compatible** — additive event field outside every digest; an earlier runtime never sets it, and a consumer reads it as absent. No framing change (`wire-framing.json` `supported` stays 3); vectors unchanged; `seam-verify` neither requires nor attests it | runtime `main` @ `4a7b47c` (seam-runtime#1573; BSR `main` byte-identical to the train pin `756c75ef`) |
 | Outcome-ingestion wave 0: `who_am_i()` / `whoAmI()` (`SeamTrust/WhoAmI`), the enrolment-kind constants and `enroll_tenant(kind=)` / `enrollTenant(…, { kind })`; generated stubs carry `EnrollTenantRequest.kind`, `TenantView.kind`, `ServerInfoResponse.wire_features`, `ReportOutcomeResponse.wire_features`, the gated `ReportOutcomeRequest` `reward`/`metrics`/`observed_at_millis` (not exposed by the hand-written clients), and `LearningDecision` tags 10-14 / `LearningOutcome` tags 4-7 (BP-2a) | seam-runtime 0.71.0 (seam-runtime#1579, #1572) | **compatible, except these verbs** — `who_am_i` on an earlier runtime raises `UnimplementedError`; an earlier runtime ignores `kind` and enrols `agent`, so send it only while `ServerInfo.wire_features` lists `enroll.kind`. Every field is additive; no 0.71.0 event carries the BP-2a fields. No framing change (`wire-framing.json` `supported` stays 3); vectors unchanged; `seam-verify` neither requires nor attests the new fields. Behaviour on 0.71.0: an `outcome_reporter` / `changeset_worker` credential is refused `PERMISSION_DENIED` (lead `SUBJECT_KIND_CONFINED`) on every verb outside its kind; both outcome conflicts carry ErrorInfo metadata `cause` (`idempotency_conflict` \| `reporter_class_mismatch`); `ENROLMENT_KIND_CONFLICT` is `FAILED_PRECONDITION` | runtime `main` @ `ca64dee1` (seam-runtime#1579; BSR `main` byte-identical to the train pin `5966780f`) |
+| Outcome fields on the hand-written clients: `report_outcome(reward=, metrics=, observed_at=)` / `reportOutcome(…, { reward, metrics, observedAt })` and `server_wire_features()` / `serverWireFeatures()` (Branchpoint BP-2, J3 train 1) | seam-runtime 0.73.0 (seam-runtime#1591, BP-2c: accepts the fields and advertises `outcome.reward_metrics` + `outcome.observed_at`) | **compatible, except these fields** — 0.71.0 and 0.72.x refuse a report carrying any of them `INVALID_ARGUMENT` (nothing recorded); **before 0.71.0 they are silently dropped** and the outcome is recorded without them, so send them only while `server_wire_features()` lists the feature. `server_wire_features()` is `()` / `[]` on 0.63.0-0.70.x and `UNIMPLEMENTED` before 0.63.0. Omitting all three sends byte-identical requests. No proto, manifest or framing change; `seam-verify` neither requires nor attests the fields | BSR `main` (no new tags: the fields are in the BSR since 0.71.0); spec `seam-event.v1.md` @ `432b4421` tracking `feat/bp-2c` (seam-runtime#1591) |
 
 The protocol pass has no compatibility window in either direction: an earlier runtime refuses this
 SDK's derived PoP `message_id`, and this SDK treats an earlier runtime's v1-v3 records as
@@ -196,7 +197,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1783-1805`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1803-1825`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -599,7 +600,7 @@ so it cannot reach the taxonomy. Use `canonicalize_tool_input()`
 
 ### `canonical=` hands you the derivation, and the responsibility with it
 
-`authorize(canonical=…)` (`python/seam_sdk/client.py:417`, `python/seam_sdk/aio.py:229`; `opts.canonical`
+`authorize(canonical=…)` (`python/seam_sdk/client.py:417`, `python/seam_sdk/aio.py:233`; `opts.canonical`
 in TypeScript, `ts/src/client.ts:979`) is additive and keyword-only. The SDK does **not** verify the
 bytes — re-deriving to check would reinstate the second derivation the parameter exists to remove.
 So two things become possible that were not:
