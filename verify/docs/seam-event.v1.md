@@ -1,4 +1,9 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ ca64dee1 (refreshed 2026-11-01).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 432b4421 tracking feat/bp-2c (refreshed 2026-11-02).
+     The runtime 0.73.0 train (seam-runtime#1591, Branchpoint BP-2c), not yet on runtime main. Movement since ca64dee1:
+     wording only — LearningOutcome tags 4-7 are emitted from 0.73 on (the runtime accepts reward / metrics /
+     observed_at_millis on ReportOutcomeRequest and stamps reporter_class); 0.71 and 0.72 emitted none and refused
+     a report setting any. No tag, digest or vector change; informational for this crate.
+     Prior pin ca64dee1 (refreshed 2026-11-01).
      The runtime 0.71.0 train (seam-runtime#1579), landed on runtime main as ca64dee1. Movement since 4a7b47c:
      outcome-ingestion wave 0, BP-2a (seam-runtime#1572): LearningDecision tags 10-14 (intended_action,
      allocation_mode, unit_tag, allocation_propensity, outcome_owner_class) and LearningOutcome tags 4-7 (reward,
@@ -776,7 +781,7 @@ LearningOutcome {                          // payload at SeamEvent tag 15
   correct:     bool       // did the decision turn out right?
   verified_by: string?    // the reporter (system / human / automated feed) — for filter/weight
   policy_key:  PolicyKey? // the arm's OWNER KEY (tag 3) — additive, may be absent. See below.
-  // Branchpoint BP-2 / plan 47 OI-R1 (tags 4-7) — emitted only from BP-2c (see below).
+  // Branchpoint BP-2 / plan 47 OI-R1 (tags 4-7) — emitted from BP-2c (0.73) on (see below).
   reward:             double?              // tag 4, finite
   metrics:            map<string, double>  // tag 5, empty = absent; encoded in ascending key order
   observed_at_millis: uint64?              // tag 6, SOURCE-EVENT time, ms since the Unix epoch
@@ -788,11 +793,12 @@ LearningOutcome {                          // payload at SeamEvent tag 15
 consumers can mirror them before the runtime emits them; `fixtures/learning_bp2_wire.json` pins one
 event of each kind with every new field set (JSON and protobuf). Ownership:
 
-- **`LearningOutcome` tags 4-7 — BP-2c.** Until the runtime's outcome-fields gate is on, no
-  `LearningOutcome` carries any of them, and `ReportOutcomeRequest` refuses `reward`, a non-empty
-  `metrics` and `observed_at_millis` rather than dropping them. The gate's state is advertised as the
-  wire features `outcome.observed_at` / `outcome.reward_metrics` (OI-R6,
-  [`wire-features.md`](wire-features.md)); a producer sends the fields only while they are listed.
+- **`LearningOutcome` tags 4-7 — BP-2c (0.73).** From 0.73 the runtime accepts `reward`, `metrics`
+  and `observed_at_millis` on `ReportOutcomeRequest` and emits them, with `reporter_class`, on every
+  `LearningOutcome` that carries them. 0.71 and 0.72 emitted none of them and refused a report setting
+  any (never dropping it). A runtime that accepts them advertises the wire features
+  `outcome.observed_at` / `outcome.reward_metrics` (OI-R6, [`wire-features.md`](wire-features.md)); a
+  producer sends the fields only while they are listed.
 - **`reporter_class`** is stamped by the runtime from the authenticated subject's enrolment kind, never
   client-asserted. Closed set: `agent` | `outcome_connector` | `changeset_worker` | `operator`
   (`operator` is reserved; nothing produces it yet). It is **absent when subject enforcement is off**
