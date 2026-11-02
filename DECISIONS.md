@@ -3069,3 +3069,16 @@ Ranked by blast radius. The two possible one-way doors (a public exception API, 
   - The shape is consistent with every existing `Result<_, String>` entry point. `describe()` must be public because the binary links the library as an external crate.
   - A typed error enum would be an orthogonal break and is no cheaper now.
 - **Decided by:** Opus on Fable's analysis (not a one-way door). **Verdict:** CONFIRM. **Status:** CONFIRMED.
+
+## 2026-11-02 — BP-2 outcome fields on the hand-written clients (plans/outcome-reward-metrics.md)
+
+- **D-W3-1 — merge order.** The proto has carried the fields since 0.71.0, so this PR is green against BSR main
+  on its own. But any runtime tag stamps an SDK release, so the PR merges only once seam-runtime#1591 (0.73.0,
+  BP-2c) is green and final. The vendored `seam-event.v1.md` is pinned `tracking feat/bp-2c`, and the runtime's
+  squash-merge turns that pin into a notice rather than a red, so the release commit's CI stays green. If
+  `release-on-runtime` refuses anyway, re-run it by hand with `workflow_dispatch` at 0.73.0. **Decided by:** Opus (reversible).
+- **D-W3-2 — `report_outcome` keeps returning `bool`.** The `ReportOutcomeResponse.wire_features` echo is not
+  surfaced, because changing the return type would break every caller. The supported check is
+  `server_wire_features()` before sending, per `wire-features.md`. **Decided by:** Opus (additive; a richer return can be added later).
+- **D-W3-3 — `observed_at` accepts an aware `datetime` / `Date` or integer ms.** A naive `datetime` is refused
+  rather than guessed. Values are truncated to the ms, never rounded, matching the runtime's u64 ms. **Decided by:** Opus (still-private API shape, pre-release).

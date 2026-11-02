@@ -1200,7 +1200,7 @@ class SeamClient:
         :data:`~seam_sdk.WIRE_FEATURE_OUTCOME_REWARD_METRICS` (``reward``/``metrics``) or
         :data:`~seam_sdk.WIRE_FEATURE_OUTCOME_OBSERVED_AT` (``observed_at``), and never probe for
         support with a real report — an outcome is permanent. A runtime that does not accept them
-        (0.71.0 up to the BP-2c release) refuses the report with ``INVALID_ARGUMENT``; a runtime older
+        (0.71.0 and 0.72.x) refuses the report with ``INVALID_ARGUMENT``; a runtime older
         than 0.71.0 **silently drops them** and records the outcome without them. ``reward`` is a finite
         float; ``metrics`` maps at most 16 keys matching ``^[a-z][a-z0-9_]{0,62}$`` to finite floats
         (an empty mapping is the same as none); ``observed_at`` is the source-event time, a

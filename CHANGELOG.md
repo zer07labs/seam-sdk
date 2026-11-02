@@ -29,8 +29,8 @@ than trusting a summary here.
   `server_wire_features()` returns `ServerInfoResponse.wire_features`; the names are exported as
   `WIRE_FEATURE_OUTCOME_REWARD_METRICS`, `WIRE_FEATURE_OUTCOME_OBSERVED_AT` and `WIRE_FEATURE_ENROLL_KIND`, with
   `OUTCOME_METRICS_MAX`. Go/Java/Kotlin have carried the generated fields since 0.71.0 and need nothing.
-- **Skew hazard — send the fields only while they are advertised.** A runtime from 0.71.0 up to the BP-2c
-  release refuses a report carrying any of them with `INVALID_ARGUMENT` (nothing is recorded). A runtime
+- **Skew hazard — send the fields only while they are advertised.** A runtime 0.71.0 or 0.72.x (before BP-2c,
+  0.73.0) refuses a report carrying any of them with `INVALID_ARGUMENT` (nothing is recorded). A runtime
   **older than 0.71.0 silently drops them** and records the outcome without them. Check
   `server_wire_features()` per connection (each replica answers for itself during a rolling deploy) and never
   probe with a real report: an outcome is permanent. The fields are part of the outcome the idempotency key

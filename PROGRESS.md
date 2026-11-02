@@ -5338,3 +5338,6 @@ not filed here. OQ-1 is resolved, so no phase is gated.
 
 - Plan: `plans/outcome-reward-metrics.md` — 3 phases (P1 Python, P2 TS, P3 docs), one PR. No proto or manifest change (BP-2a fields in the BSR since 0.71.0; contract gate exits 0 after `make generate`).
 - Release sequencing D-W3-1: merge held until the runtime BP-2c train PR is merged or about to merge.
+- P1 DONE, P2 DONE, P3 DONE (2026-11-02). One Opus verify over P1-P3 (batched): GAPS ×2 (OverflowError on 10**400; a plan citation), fixed in 7bc8a5d.
+  - Live: gate-off path against seamd:main 0.72.0 (docker); gate-on path against a seam-grpc 0.73.0 built from a git-archive export of seam-runtime feat/bp-2c @ 432b4421 (features `enroll.kind, outcome.observed_at, outcome.reward_metrics`) — the Python and TS integration suites pass on both.
+  - Spec re-pinned @ 432b4421 tracking feat/bp-2c (12bc5be). Reconcile: no UNCONFIRMED entries (D-W3-1..3 in DECISIONS.md are reversible, Opus-settled).

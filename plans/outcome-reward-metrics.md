@@ -30,7 +30,7 @@
 ## Phases
 
 ### P1 — Python: `report_outcome(reward=, metrics=, observed_at=)` + `server_wire_features()`
-- **Status:** TODO
+- **Status:** DONE
 - **Delivers:** keyword-only `reward: float | None`, `metrics: Mapping[str, float] | None`,
   `observed_at: datetime | int | None` (aware `datetime`, or integer ms since the epoch) on sync and async
   `report_outcome`; one shared `_check_outcome_fields` mirroring the runtime's shape checks (finite; `bool`
@@ -44,7 +44,7 @@
 - **Acceptance:** suite + ruff green; contract gate exits 0.
 
 ### P2 — TypeScript parity
-- **Status:** TODO
+- **Status:** DONE
 - **Delivers:** `reportOutcome(id, correct, { idempotencyKey, verifiedBy?, reward?, metrics?, observedAt? })`
   (`observedAt: Date | number | bigint`, ms); `checkOutcomeFields` with the same rules and messages;
   `serverWireFeatures()`; exported `WIRE_FEATURE_*` constants.
@@ -53,7 +53,7 @@
 - **Acceptance:** `npm run typecheck && npm run build && npm test` green.
 
 ### P3 — Docs + compatibility
-- **Status:** TODO
+- **Status:** DONE
 - **Delivers:** `CHANGELOG.md` Unreleased entry (incl. the skew hazard: a pre-0.71 runtime silently drops the
   fields; 0.71/0.72 refuse them `INVALID_ARGUMENT`); `COMPATIBILITY.md` row naming the BP-2c runtime release;
   README outcome example if one exists.

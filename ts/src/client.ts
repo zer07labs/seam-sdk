@@ -1805,8 +1805,8 @@ export class SeamClient {
    * runtime**: send them only while {@link serverWireFeatures} lists
    * {@link WIRE_FEATURE_OUTCOME_REWARD_METRICS} (`reward`/`metrics`) or
    * {@link WIRE_FEATURE_OUTCOME_OBSERVED_AT} (`observedAt`), and never probe for support with a real
-   * report — an outcome is permanent. A runtime that does not accept them (0.71.0 up to the BP-2c
-   * release) refuses the report with `INVALID_ARGUMENT`; a runtime older than 0.71.0 **silently drops
+   * report — an outcome is permanent. A runtime that does not accept them (0.71.0 and 0.72.x, before
+   * BP-2c in 0.73.0) refuses the report with `INVALID_ARGUMENT`; a runtime older than 0.71.0 **silently drops
    * them** and records the outcome without them. `reward` is a finite number; `metrics` maps at most 16
    * keys matching `^[a-z][a-z0-9_]{0,62}$` to finite numbers (an empty object is the same as none);
    * `observedAt` is the source-event time, a `Date` or integer ms since the Unix epoch, and the runtime
