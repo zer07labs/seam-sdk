@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.73.0 — 2026-11-02
+
 ### Added
 - **`report_outcome(..., reward=, metrics=, observed_at=)` / `reportOutcome(…, { reward, metrics, observedAt })`
   (Branchpoint BP-2 / plan 47 OI-R1, runtime BP-2c), and `server_wire_features()` / `serverWireFeatures()`
