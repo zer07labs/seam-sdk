@@ -16,6 +16,18 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Changed
+- **`register_context` / `resolve_context` (`registerContext` / `resolveContext`) are credentialed (runtime
+  0.72.0, B1 Phase 2).** From runtime 0.72.0 `seam.api.v1.SeamContext` serves only a proven subject: the #508
+  request credential or a cert-bound mTLS identity. Both calls now take `credential=` (`opts.credential`),
+  default to the bound agent, sign the **bodied** gRPC framing (empty resource id, digest of the whole request
+  message) and refresh a rejected ticket once, like the credentialed reads. `/seam.api.v1.SeamContext/RegisterContext`
+  joins the replay-guarded set (a resend re-signs under a fresh ticket); `ResolveContext` is a read and does not.
+  **Behaviour change for unbound callers:** an unbound client calling either verb without `credential=` (and
+  without cert-bound mTLS) is refused `UNAUTHENTICATED` by runtime 0.72.0+. Against runtime 0.71.0 and older the
+  headers pass through unchecked and the call succeeds as before. Go/Java/Kotlin carry no client for these verbs;
+  their docs note the `ResolveContext` replay exemption.
+
 ## 0.71.0 — 2026-11-01
 
 ### Added

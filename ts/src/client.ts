@@ -19,7 +19,9 @@ import {
   ObjectionRequestSchema,
   OpenSessionRequestSchema,
   ProposalRequestSchema,
+  RegisterContextRequestSchema,
   ReportOutcomeRequestSchema,
+  ResolveContextRequestSchema,
   SealAttestationAvailability,
   SealReason,
   SeamAdmission,
@@ -64,7 +66,9 @@ import {
 } from "./errors.js";
 
 // The credentialed writes the runtime's seen-proof cache burns at admission (seam-runtime
-// `authorize.rs` `replay_guarded`: every credentialed write but `ReportOutcome`). It burns BEFORE the
+// `authorize.rs` `replay_guarded`: every credentialed write but `ReportOutcome`, and from runtime 0.72.0
+// `SeamContext/RegisterContext` too — `ResolveContext` writes nothing, so it is exempt like a read and a
+// resend may carry the same signature). It burns BEFORE the
 // session lease is taken and before the tenant-move check (seamd `session.rs` `refuse_moving`), so a
 // `SESSION_UNAVAILABLE` or `TENANT_MOVING` refusal has already spent the signature:
 // re-signing the same body under the same ticket yields the same bytes, refused `request_replayed`.
@@ -81,7 +85,11 @@ const REPLAY_GUARDED: ReadonlySet<string> = new Set(
     "SubmitBallot",
     "CancelSession",
     "ExpireSession",
-  ].map((verb) => `/seam.api.v1.SeamCoordination/${verb}`),
+  ]
+    .map((verb) => `/seam.api.v1.SeamCoordination/${verb}`)
+    // A FULL path, not a verb name: RegisterContext lives in the SeamContext service, not
+    // SeamCoordination, so it cannot ride the prefix above.
+    .concat(["/seam.api.v1.SeamContext/RegisterContext"]),
 );
 
 // `timeoutMs` is PER-RPC, not an overall budget for the call. Decided, not accidental — and it has a
@@ -1806,15 +1814,35 @@ export class SeamClient {
   // ── Context binding (data plane) ──────────────────────────────────────────────────────────────
 
   /** Register context content at a `fidelity` (`Digest` | `Reference` | `Value`); resolves its content
-   * ref (a `sha256:` ref or an `acdp://` remote id). */
+   * ref (a `sha256:` ref or an `acdp://` remote id).
+   *
+   * **A credential is required from runtime 0.72.0** (B1 Phase 2): `SeamContext` serves only a proven
+   * subject — this in-band request credential (#508) or a cert-bound mTLS identity — and scopes the
+   * registration by that subject's enrolment. `credential` defaults to the bound agent
+   * ({@link SeamClientOptions.agent}); on an unbound client with no `credential` and no cert-bound
+   * mTLS, a 0.72.0 runtime rejects the call `UNAUTHENTICATED`. Against an older runtime the headers
+   * pass through unchecked and the call behaves as before.
+   *
+   * The signature binds the bodied framing: an empty resource id and a digest of the whole request.
+   * `RegisterContext` is replay-guarded ({@link REPLAY_GUARDED}), so a resend is never the same bytes:
+   * an `UNAUTHENTICATED` refreshes the ticket once and re-signs the SAME request under the fresh ticket
+   * once (#275); a second rejection throws `UnauthenticatedError`. */
   async registerContext(
     content: Uint8Array,
     fidelity: string,
     derivedFrom: string[] = [],
-    opts?: UnaryCallOptions,
+    opts?: CredentialedCallOptions,
   ): Promise<string> {
-    return (await this.context.registerContext({ content, fidelity, derivedFrom }, call(opts)))
-      .contentRef;
+    const init = { content, fidelity, derivedFrom };
+    const resp = await this.credentialedCall(
+      opts?.credential,
+      "/seam.api.v1.SeamContext/RegisterContext",
+      "",
+      opts,
+      (headers) => this.context.registerContext(init, { ...call(opts), headers }),
+      { schema: RegisterContextRequestSchema, init },
+    );
+    return resp.contentRef;
   }
 
   /**
@@ -1831,9 +1859,24 @@ export class SeamClient {
    * valid history, NOT a current registry attestation, and must not be presented as one.
    * `contextDigestV4` (crypto.ts) recomputes the sealed digest from these bindings and refuses an unpaired
    * or out-of-vocabulary slot.
+   *
+   * **A credential is required from runtime 0.72.0** (B1 Phase 2), exactly as for
+   * {@link registerContext}: `credential` (default: the bound agent) is sent as a bodied #508 request
+   * credential (empty resource id, whole-message digest), and the runtime resolves only refs within the
+   * proven subject's scope. `ResolveContext` writes nothing, so it is NOT replay-guarded: an
+   * `UNAUTHENTICATED` refreshes the ticket once and resends once (#275), like every credentialed read.
    */
-  async resolveContext(refs: string[], opts?: UnaryCallOptions): Promise<ContextBinding[]> {
-    return (await this.context.resolveContext({ refs }, call(opts))).bindings;
+  async resolveContext(refs: string[], opts?: CredentialedCallOptions): Promise<ContextBinding[]> {
+    const init = { refs };
+    const resp = await this.credentialedCall(
+      opts?.credential,
+      "/seam.api.v1.SeamContext/ResolveContext",
+      "",
+      opts,
+      (headers) => this.context.resolveContext(init, { ...call(opts), headers }),
+      { schema: ResolveContextRequestSchema, init },
+    );
+    return resp.bindings;
   }
 
   // ── Trust / verification (data plane) ─────────────────────────────────────────────────────────

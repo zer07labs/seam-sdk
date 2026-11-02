@@ -227,7 +227,7 @@ class _BusyWire(_Wire):
         return super().handle(name, req, kw)
 
 
-@pytest.mark.parametrize("verb", SUBMITS + EXCLUDED)
+@pytest.mark.parametrize("verb", SUBMITS + EXCLUDED + ("RegisterContext",))
 def test_session_unavailable_on_a_guarded_write_drops_the_burned_ticket(h, verb):
     wire = _BusyWire()
     cred = Agent(CRED_SEED)
@@ -244,7 +244,7 @@ def test_session_unavailable_on_a_guarded_write_drops_the_burned_ticket(h, verb)
     assert _cached(client, cred) is None
 
 
-@pytest.mark.parametrize("verb", READS_AND_OUTCOME)
+@pytest.mark.parametrize("verb", READS_AND_OUTCOME + ("ResolveContext",))
 def test_session_unavailable_on_an_unguarded_call_keeps_the_ticket(h, verb):
     """Reads and ``ReportOutcome`` are outside the runtime's seen-proof cache: nothing was burned."""
     wire = _BusyWire()
@@ -259,7 +259,7 @@ def test_session_unavailable_on_an_unguarded_call_keeps_the_ticket(h, verb):
     assert _cached(client, cred) == OLD
 
 
-@pytest.mark.parametrize("verb", SUBMITS + EXCLUDED)
+@pytest.mark.parametrize("verb", SUBMITS + EXCLUDED + ("RegisterContext",))
 @pytest.mark.parametrize(
     "err",
     [_unavailable(None), _unavailable("CHALLENGE_REFUSED", 1)],

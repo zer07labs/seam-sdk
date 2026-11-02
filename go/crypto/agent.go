@@ -67,7 +67,8 @@ const RequestSigContext = "seam-request-call-v1"
 // runtime replica holds the live session's lease, or the shared session store is unreachable
 // (seam-runtime k8s P6). RetryInfo carries the holder's remaining lease (at most the 30s lease TTL), or
 // 1s while the store is down; a single-replica runtime never returns it. It is retryable, but the
-// runtime has already burned the credential's proof for every credentialed write except ReportOutcome,
+// runtime has already burned the credential's proof for every credentialed write except ReportOutcome
+// and (runtime 0.72.0+) SeamContext/ResolveContext, which writes nothing and is replay-exempt like a read,
 // and the signature is deterministic: drop the cached admission ticket, re-admit, and re-sign before
 // resending, or the resend is refused UNAUTHENTICATED request_replayed.
 const SessionUnavailableReason = "SESSION_UNAVAILABLE"

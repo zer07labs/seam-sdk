@@ -611,6 +611,18 @@ defaults to the untenanted partition), context binding
 (`register_context`, `resolve_context`), and advisory outcome reporting (`report_outcome`, Plan R —
 emits a `LEARNING_OUTCOME`, never mutates the sealed record).
 
+**Context binding needs a credential (runtime 0.72.0+, B1 Phase 2).** `RegisterContext` and
+`ResolveContext` (`seam.api.v1.SeamContext`, also `POST /v1/context` and `POST /v1/context/resolve`) serve
+only a proven subject: the #508 request credential (`x-seam-ticket-bin` + `x-seam-call-sig-bin`) or a
+cert-bound mTLS identity. `register_context` / `resolve_context` (`registerContext` / `resolveContext`) take
+`credential=` (`opts.credential`) like the credentialed reads, default to the bound agent, sign the
+**bodied** gRPC framing (empty resource id, `sha256:` digest of the whole request message) and refresh a
+rejected ticket once. `RegisterContext` is replay-guarded, so a resend re-signs under a fresh ticket;
+`ResolveContext` is a read and is not. An unbound client with no credential is refused `UNAUTHENTICATED` by
+a 0.72.0 runtime; an older runtime passes the headers through unchecked. Go, Java and Kotlin carry no
+client for these verbs: send the same two headers yourself — `RequestCredentials` (Java/Kotlin) and
+`go/crypto`'s `RequestSig` already sign any verb, bodied included.
+
 **Runtime version (runtime 0.63.0+, seam-sdk#307).** `server_info()` / `serverInfo()` return the runtime's
 version, a semver string such as `"0.63.0"`, verbatim. Like `issuer_aid` the call is credential-free (no
 ticket, no agent) and never retried. A runtime older than 0.63.0 raises `UnimplementedError`; fall back to

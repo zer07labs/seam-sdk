@@ -57,7 +57,9 @@ from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as ev  # noqa: F401  (re-
 _T = TypeVar("_T")
 
 # The credentialed writes the runtime's seen-proof cache burns at admission (seam-runtime
-# ``authorize.rs`` ``replay_guarded``: every credentialed write but ``ReportOutcome``). It burns
+# ``authorize.rs`` ``replay_guarded``: every credentialed write but ``ReportOutcome``, and from runtime
+# 0.72.0 ``SeamContext/RegisterContext`` too — ``ResolveContext`` writes nothing, so it is exempt like a
+# read and a resend may carry the same signature). It burns
 # BEFORE the session lease is taken and before the tenant-move check (seamd ``session.rs``
 # ``refuse_moving``), so a ``SESSION_UNAVAILABLE`` or ``TENANT_MOVING`` refusal has already spent the
 # signature: re-signing the same body under the same ticket yields the same bytes, refused
@@ -77,7 +79,11 @@ _REPLAY_GUARDED = frozenset(
         "CancelSession",
         "ExpireSession",
     )
-)
+) | {
+    # A FULL path, not a verb name: RegisterContext lives in the SeamContext service, not
+    # SeamCoordination, so it cannot ride the prefix above.
+    "/seam.api.v1.SeamContext/RegisterContext",
+}
 
 
 # ``SeamError`` and ``IssuerMismatchError`` are defined in :mod:`seam_sdk.errors` and imported above; they
@@ -1217,23 +1223,53 @@ class SeamClient:
         fidelity: str,
         derived_from: Optional[Sequence[str]] = None,
         *,
+        credential: Optional[Agent] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> str:
         """Register context content at a given ``fidelity`` (``Digest`` | ``Reference`` | ``Value``);
-        returns its content ref (a ``sha256:`` ref or an ``acdp://`` remote id)."""
-        return self._context.RegisterContext(
-            pb.RegisterContextRequest(
-                content=content,
-                fidelity=fidelity,
-                derived_from=list(derived_from or []),
-            ),
+        returns its content ref (a ``sha256:`` ref or an ``acdp://`` remote id).
+
+        **A credential is required from runtime 0.72.0** (B1 Phase 2): ``SeamContext`` serves only a
+        proven subject — this in-band request credential (#508) or a cert-bound mTLS identity — and
+        scopes the registration by that subject's enrolment. ``credential`` defaults to the bound agent
+        (``SeamClient(channel, agent=...)``); on an unbound client with no ``credential=`` and no
+        cert-bound mTLS, a 0.72.0 runtime refuses the call ``UNAUTHENTICATED``. Against an older runtime
+        the headers pass through unchecked and the call behaves as before.
+
+        The signature binds the bodied framing: an empty resource id and a digest of the whole
+        serialized request. ``RegisterContext`` is replay-guarded (see :data:`_REPLAY_GUARDED`), so a
+        resend is never the same bytes: an ``UNAUTHENTICATED`` refreshes the ticket once and re-signs
+        the SAME request under the fresh ticket once (#275); a second rejection raises
+        :class:`~seam_sdk.errors.UnauthenticatedError`."""
+        req = pb.RegisterContextRequest(
+            content=content,
+            fidelity=fidelity,
+            derived_from=list(derived_from or []),
+        )
+        return self._credentialed_call(
+            credential,
+            "/seam.api.v1.SeamContext/RegisterContext",
+            "",
+            req,
+            lambda md: self._context.RegisterContext(req, timeout=timeout, metadata=md),
             timeout=timeout,
         ).content_ref
 
     def resolve_context(
-        self, refs: Sequence[str], *, timeout: float = DEFAULT_TIMEOUT_S
+        self,
+        refs: Sequence[str],
+        *,
+        credential: Optional[Agent] = None,
+        timeout: float = DEFAULT_TIMEOUT_S,
     ) -> Sequence[pb.ContextBinding]:
         """Resolve context refs to their bindings.
+
+        **A credential is required from runtime 0.72.0** (B1 Phase 2), exactly as for
+        :meth:`register_context`: ``credential`` (default: the bound agent) is sent as a bodied #508
+        request credential (empty resource id, whole-message digest), and the runtime resolves only
+        refs within the proven subject's scope. ``ResolveContext`` writes nothing, so it is NOT
+        replay-guarded: an ``UNAUTHENTICATED`` refreshes the ticket once and resends once (#275), like
+        every credentialed read.
 
         Returns the generated `ContextBinding` unchanged. Nothing is projected or renamed here, so
         every field the contract carries arrives — including the five ACDP receipt slots
@@ -1247,9 +1283,17 @@ class SeamClient:
         attestation, and must not be presented as one. :func:`seam_sdk.context_digest_v4` recomputes
         the sealed digest from these bindings and refuses an unpaired or out-of-vocabulary slot.
         """
+        req = pb.ResolveContextRequest(refs=list(refs))
         return list(
-            self._context.ResolveContext(
-                pb.ResolveContextRequest(refs=list(refs)), timeout=timeout
+            self._credentialed_call(
+                credential,
+                "/seam.api.v1.SeamContext/ResolveContext",
+                "",
+                req,
+                lambda md: self._context.ResolveContext(
+                    req, timeout=timeout, metadata=md
+                ),
+                timeout=timeout,
             ).bindings
         )
 

@@ -55,7 +55,9 @@ import {
   OpenSessionRequestSchema,
   ProposalRequestSchema,
   SessionRefSchema,
+  RegisterContextRequestSchema,
   ReportOutcomeRequestSchema,
+  ResolveContextRequestSchema,
   VoteRequestSchema,
 } from "../gen/seam/api/v1/seam_pb.js";
 
@@ -325,7 +327,7 @@ interface CredentialSpec {
   invoke: (c: SeamClient, cred: Agent | undefined) => Promise<unknown>;
 }
 
-/** The same 16 verbs as `test_credential_wiring.py`'s `CALLS` table — rpc full name, bodyless vs.
+/** The same 18 verbs as `test_credential_wiring.py`'s `CALLS` table — rpc full name, bodyless vs.
  * bodied (and its request schema, to recompute the expected digest independently), and how to
  * invoke it with/without `credential`. */
 const CREDENTIAL_CALLS: Record<string, CredentialSpec> = {
@@ -428,6 +430,23 @@ const CREDENTIAL_CALLS: Record<string, CredentialSpec> = {
     resourceId: "d1",
     invoke: (c, cred) => c.getCommitmentProof("d1", { credential: cred }),
   },
+  // B1 Phase 2 (runtime 0.72.0): the context verbs serve only a proven subject. Both are BODIED on
+  // gRPC — empty resource id, digest over the whole request message.
+  RegisterContext: {
+    rpc: "/seam.api.v1.SeamContext/RegisterContext",
+    bodyless: false,
+    schema: RegisterContextRequestSchema,
+    invoke: (c, cred) =>
+      c.registerContext(new TextEncoder().encode("ctx-bytes"), "Digest", ["sha256:" + "a".repeat(64)], {
+        credential: cred,
+      }),
+  },
+  ResolveContext: {
+    rpc: "/seam.api.v1.SeamContext/ResolveContext",
+    bodyless: false,
+    schema: ResolveContextRequestSchema,
+    invoke: (c, cred) => c.resolveContext(["sha256:" + "b".repeat(64), "acdp://reg/x"], { credential: cred }),
+  },
 };
 
 function expectedBodyDigest(spec: CredentialSpec, recordedInput: Record<string, unknown>): string {
@@ -436,7 +455,7 @@ function expectedBodyDigest(spec: CredentialSpec, recordedInput: Record<string, 
   return toolInputDigest(toBinary(spec.schema, msg));
 }
 
-test("credential=: omitted sends no headers, on every one of the 16 target verbs", async () => {
+test("credential=: omitted sends no headers, on every one of the 18 target verbs", async () => {
   for (const [name, spec] of Object.entries(CREDENTIAL_CALLS)) {
     const calls: Recorded[] = [];
     const client = new SeamClient(fakeTransport(calls, minimalHandle));
@@ -447,7 +466,7 @@ test("credential=: omitted sends no headers, on every one of the 16 target verbs
   }
 });
 
-test("credential=: attaches a ticket + signature that verifies, on every one of the 16 target verbs", async () => {
+test("credential=: attaches a ticket + signature that verifies, on every one of the 18 target verbs", async () => {
   const credential = new Agent(new Uint8Array(32).fill(3));
   const pubkey = ed25519.getPublicKey(credential.seed);
   for (const [name, spec] of Object.entries(CREDENTIAL_CALLS)) {
@@ -931,8 +950,14 @@ const REFRESHING = [
   "GetEscalation",
   "ReportOutcome",
   ...SUBMITS,
+  "RegisterContext",
+  "ResolveContext",
 ] as const;
 const EXCLUDED = ["OpenSession", "CancelSession", "ExpireSession"] as const;
+// The refreshing verbs the runtime's seen-proof cache burns: the submit* steps and, from runtime 0.72.0,
+// RegisterContext. ResolveContext (a read in effect) and the reads/ReportOutcome are not burned.
+const GUARDED_REFRESHING = [...SUBMITS, "RegisterContext"] as const;
+const UNGUARDED_REFRESHING = REFRESHING.filter((n) => !(GUARDED_REFRESHING as readonly string[]).includes(n));
 const REFRESH_WRITES = Object.keys(CREDENTIAL_CALLS).filter(
   (n) => !(REFRESHING as readonly string[]).includes(n),
 );
@@ -1394,7 +1419,7 @@ const ticketsOf = (client: SeamClient) =>
 
 test("SESSION_UNAVAILABLE on a replay-guarded write drops the burned ticket, with no retry and no admit", async () => {
   const cred = new Agent(new Uint8Array(32).fill(3));
-  for (const name of [...SUBMITS, ...EXCLUDED]) {
+  for (const name of [...GUARDED_REFRESHING, ...EXCLUDED]) {
     const calls: Recorded[] = [];
     const wire = refreshWire();
     wire.state.fail[name] = sessionUnavailable(1);
@@ -1409,7 +1434,7 @@ test("SESSION_UNAVAILABLE on a replay-guarded write drops the burned ticket, wit
 
 test("SESSION_UNAVAILABLE on a read or reportOutcome keeps the ticket", async () => {
   const cred = new Agent(new Uint8Array(32).fill(3));
-  for (const name of REFRESHING.filter((n) => !(SUBMITS as readonly string[]).includes(n))) {
+  for (const name of UNGUARDED_REFRESHING) {
     const wire = refreshWire();
     wire.state.fail[name] = sessionUnavailable(1);
     const client = new SeamClient(fakeTransport([], wire.handle));
@@ -1421,7 +1446,7 @@ test("SESSION_UNAVAILABLE on a read or reportOutcome keeps the ticket", async ()
 
 test("any other UNAVAILABLE on a guarded write leaves the ticket as before", async () => {
   const cred = new Agent(new Uint8Array(32).fill(3));
-  for (const name of [...SUBMITS, ...EXCLUDED]) {
+  for (const name of [...GUARDED_REFRESHING, ...EXCLUDED]) {
     for (const err of [refusal(Code.Unavailable, undefined), refusal(Code.Unavailable, "CHALLENGE_REFUSED", 1)]) {
       const wire = refreshWire();
       wire.state.fail[name] = err;
@@ -1437,7 +1462,7 @@ test("any other UNAVAILABLE on a guarded write leaves the ticket as before", asy
 
 test("TENANT_MOVING on a replay-guarded write drops the burned ticket, with no retry and no admit", async () => {
   const cred = new Agent(new Uint8Array(32).fill(3));
-  for (const name of [...SUBMITS, ...EXCLUDED]) {
+  for (const name of [...GUARDED_REFRESHING, ...EXCLUDED]) {
     const calls: Recorded[] = [];
     const wire = refreshWire();
     wire.state.fail[name] = tenantMoving();
@@ -1452,7 +1477,7 @@ test("TENANT_MOVING on a replay-guarded write drops the burned ticket, with no r
 
 test("TENANT_MOVING on a read or reportOutcome keeps the ticket", async () => {
   const cred = new Agent(new Uint8Array(32).fill(3));
-  for (const name of REFRESHING.filter((n) => !(SUBMITS as readonly string[]).includes(n))) {
+  for (const name of UNGUARDED_REFRESHING) {
     const wire = refreshWire();
     wire.state.fail[name] = tenantMoving();
     const client = new SeamClient(fakeTransport([], wire.handle));
@@ -1464,7 +1489,7 @@ test("TENANT_MOVING on a read or reportOutcome keeps the ticket", async () => {
 
 test("WRONG_CELL on a guarded write leaves the ticket as before", async () => {
   const cred = new Agent(new Uint8Array(32).fill(3));
-  for (const name of [...SUBMITS, ...EXCLUDED]) {
+  for (const name of [...GUARDED_REFRESHING, ...EXCLUDED]) {
     const err = refusal(Code.FailedPrecondition, "WRONG_CELL");
     const wire = refreshWire();
     wire.state.fail[name] = err;
@@ -1496,4 +1521,46 @@ test("withSessionRetry re-signs every attempt under a fresh ticket over the same
   const sigs = sent.map((c) => (c.headers as Record<string, string>)["x-seam-call-sig-bin"]);
   assert.equal(new Set(sigs).size, 3);
   assert.equal(new Set(sent.map((c) => JSON.stringify(c.input, (_, v) => (typeof v === "bigint" ? String(v) : v)))).size, 1);
+});
+
+// ── B1 Phase 2 (runtime 0.72.0): the SeamContext verbs are credentialed, bodied ─────────────────
+
+test("registerContext / resolveContext carry both headers and sign the bodied framing for /seam.api.v1.SeamContext/*", async () => {
+  const credential = new Agent(new Uint8Array(32).fill(3));
+  const pubkey = ed25519.getPublicKey(credential.seed);
+  for (const name of ["RegisterContext", "ResolveContext"]) {
+    const spec = CREDENTIAL_CALLS[name]!;
+    const calls: Recorded[] = [];
+    const client = new SeamClient(fakeTransport(calls, minimalHandle));
+    seedCredentialTicket(client, credential.aid);
+    await spec.invoke(client, credential);
+    const call = calls.find((c) => c.method === name)!;
+    const headers = call.headers as Record<string, string>;
+    assert.deepEqual(Object.keys(headers).sort(), ["x-seam-call-sig-bin", "x-seam-ticket-bin"], name);
+    const sig = Buffer.from(headers["x-seam-call-sig-bin"]!, "base64");
+    const digest = expectedBodyDigest(spec, call.input);
+    assert.match(digest, /^sha256:[0-9a-f]{64}$/, `${name}: the whole message is digested`);
+    const rpc = `/seam.api.v1.SeamContext/${name}`;
+    assert.ok(ed25519.verify(sig, requestSigPayload(CREDENTIAL_TICKET, rpc, "", digest), pubkey), name);
+    assert.equal(
+      ed25519.verify(sig, requestSigPayload(CREDENTIAL_TICKET, rpc, "", ""), pubkey),
+      false,
+      `${name}: must not verify over the bodyless framing`,
+    );
+  }
+});
+
+test("REPLAY_GUARDED: RegisterContext is a member (its burned ticket is dropped), ResolveContext is not", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  for (const [name, guarded] of [
+    ["RegisterContext", true],
+    ["ResolveContext", false],
+  ] as const) {
+    const wire = refreshWire();
+    wire.state.fail[name] = sessionUnavailable(1);
+    const client = new SeamClient(fakeTransport([], wire.handle));
+    seedCredentialTicket(client, cred.aid);
+    await assert.rejects(CREDENTIAL_CALLS[name]!.invoke(client, cred), (e) => isSessionUnavailable(e));
+    assert.equal(ticketsOf(client).has(cred.aid), !guarded, `${name}: guarded=${guarded}`);
+  }
 });
