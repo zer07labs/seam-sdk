@@ -14,7 +14,7 @@
 - Proto: `ReportOutcomeRequest.reward = 5` (`optional double`), `.metrics = 6` (`map<string,double>`),
   `.observed_at_millis = 7` (`optional uint64`); `ReportOutcomeResponse.wire_features = 2`;
   `ServerInfoResponse.wire_features = 2` — `seam-runtime/crates/seam-api/proto/seam/api/v1/seam.proto:1302-1360`,
-  in the BSR since 0.71.0. `contract/field-manifest.txt:409-413,440` already lists them;
+  in the BSR since 0.71.0. `contract/field-manifest.txt:408-410,413,440` already lists them;
   `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exits 0 on a fresh `make generate`. **No manifest change.**
 - Runtime validation (`seamd/src/facade.rs` `validate_outcome_shape`, order: key → gate → finite → count →
   key grammar → record load → `observed_at` window): reward and every metric value finite; ≤ 16 metrics;

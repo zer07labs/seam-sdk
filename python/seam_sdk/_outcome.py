@@ -35,7 +35,12 @@ def _finite(name: str, v: object) -> float:
     # ``bool`` is an ``int`` subclass: ``reward=True`` is a caller bug, never a 1.0.
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         raise TypeError(f"{name} must be a float, got {type(v).__name__}")
-    f = float(v)
+    try:
+        f = float(v)
+    except (
+        OverflowError
+    ):  # an int beyond the f64 range (e.g. 10**400) is not finite either
+        f = math.inf
     if not math.isfinite(f):
         raise ValueError(
             f"{name} must be a finite number (NaN and ±infinity are refused); "

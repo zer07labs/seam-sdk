@@ -149,6 +149,7 @@ _BAD = [
     ({"reward": math.nan}, ValueError, "reward must be a finite"),
     ({"reward": math.inf}, ValueError, "reward must be a finite"),
     ({"reward": -math.inf}, ValueError, "reward must be a finite"),
+    ({"reward": 10**400}, ValueError, "reward must be a finite"),
     ({"reward": True}, TypeError, "reward must be a float"),
     ({"reward": "0.5"}, TypeError, "reward must be a float"),
     ({"metrics": {"a": math.nan}}, ValueError, "metrics values must be a finite"),
