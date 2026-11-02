@@ -928,23 +928,44 @@ class SeamClient:
         fidelity: str,
         derived_from: Optional[Sequence[str]] = None,
         *,
+        credential: Optional[Agent] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> str:
+        """The async twin of :meth:`seam_sdk.SeamClient.register_context`. **A credential is required
+        from runtime 0.72.0** (``credential=`` or the bound agent, or cert-bound mTLS); the call is
+        replay-guarded, so the one ``UNAUTHENTICATED`` resend re-signs under a fresh ticket."""
+        req = pb.RegisterContextRequest(
+            content=content,
+            fidelity=fidelity,
+            derived_from=list(derived_from or []),
+        )
         return (
-            await self._context.RegisterContext(
-                pb.RegisterContextRequest(
-                    content=content,
-                    fidelity=fidelity,
-                    derived_from=list(derived_from or []),
+            await self._credentialed_call(
+                credential,
+                "/seam.api.v1.SeamContext/RegisterContext",
+                "",
+                req,
+                lambda md: self._context.RegisterContext(
+                    req, timeout=timeout, metadata=md
                 ),
                 timeout=timeout,
             )
         ).content_ref
 
     async def resolve_context(
-        self, refs: Sequence[str], *, timeout: float = DEFAULT_TIMEOUT_S
+        self,
+        refs: Sequence[str],
+        *,
+        credential: Optional[Agent] = None,
+        timeout: float = DEFAULT_TIMEOUT_S,
     ) -> Sequence[pb.ContextBinding]:
         """Resolve context refs to their bindings.
+
+        **A credential is required from runtime 0.72.0** (B1 Phase 2): ``credential`` (default: the
+        bound agent) is sent as a bodied #508 request credential (empty resource id, whole-message
+        digest). ``ResolveContext`` writes nothing, so it is NOT replay-guarded; an
+        ``UNAUTHENTICATED`` refreshes once and resends once (#275), like every credentialed read. See
+        :meth:`seam_sdk.SeamClient.resolve_context`.
 
         Returns the generated `ContextBinding` unchanged. Nothing is projected or renamed here, so
         every field the contract carries arrives — including the five ACDP receipt slots
@@ -958,10 +979,18 @@ class SeamClient:
         attestation, and must not be presented as one. :func:`seam_sdk.context_digest_v4` recomputes
         the sealed digest from these bindings and refuses an unpaired or out-of-vocabulary slot.
         """
+        req = pb.ResolveContextRequest(refs=list(refs))
         return list(
             (
-                await self._context.ResolveContext(
-                    pb.ResolveContextRequest(refs=list(refs)), timeout=timeout
+                await self._credentialed_call(
+                    credential,
+                    "/seam.api.v1.SeamContext/ResolveContext",
+                    "",
+                    req,
+                    lambda md: self._context.ResolveContext(
+                        req, timeout=timeout, metadata=md
+                    ),
+                    timeout=timeout,
                 )
             ).bindings
         )

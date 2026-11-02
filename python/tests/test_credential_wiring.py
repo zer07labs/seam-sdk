@@ -1,10 +1,10 @@
 """`client.py` / `aio.py` wiring for the per-request credential (`seam-request-call-v1`, #508).
 
 `request_sig_payload`/`request_sig` themselves are pinned against the runtime's conformance vector
-in ``test_request_sig_payload.py``; this file is the layer above — that each of the 16 target verbs,
+in ``test_request_sig_payload.py``; this file is the layer above — that each of the 18 target verbs,
 in BOTH clients, attaches (or omits) the right gRPC metadata for the right RPC/resource/body.
 
-No network: ``_coord``/``_authz`` are swapped for a recorder that captures the exact request object
+No network: ``_coord``/``_authz``/``_context`` are swapped for a recorder that captures the exact request object
 and keyword arguments a wrapper method passed on, and a ticket is pre-seeded into the per-AID cache
 so ``credential=`` never needs a real ``Admit``. The signature check recomputes the expected payload
 from the RECORDED (i.e. actually-sent) request via the independent, already-tested
@@ -44,6 +44,19 @@ def _seed_ticket(tickets: dict, aid: str) -> None:
     tickets[aid] = cache
 
 
+def _response_for(name: str):
+    """The canned answer for a recorded RPC: its own response type where the wrapper reads a field
+    off it (``ReportOutcome``'s ``.recorded``, the context verbs' ``.content_ref``/``.bindings``),
+    else a generic ``SessionStep`` the other wrappers never inspect."""
+    if name == "ReportOutcome":
+        return pb.ReportOutcomeResponse(recorded=True)
+    if name == "RegisterContext":
+        return pb.ContextRef(content_ref="sha256:" + "0" * 64)
+    if name == "ResolveContext":
+        return pb.ResolveContextResponse()
+    return pb.SessionStep(state="Open")
+
+
 class _Recorder:
     """Stands in for ``_coord``/``_authz``. Every RPC-shaped attribute records ``(req, kwargs)``
     and returns a generic ``SessionStep`` (``ReportOutcome`` gets its own response type, because its
@@ -55,9 +68,7 @@ class _Recorder:
     def __getattr__(self, name):
         def record(req, **kw):
             self._seen[name] = (req, kw)
-            if name == "ReportOutcome":
-                return pb.ReportOutcomeResponse(recorded=True)
-            return pb.SessionStep(state="Open")
+            return _response_for(name)
 
         return record
 
@@ -69,9 +80,7 @@ class _AioRecorder:
     def __getattr__(self, name):
         async def record(req, **kw):
             self._seen[name] = (req, kw)
-            if name == "ReportOutcome":
-                return pb.ReportOutcomeResponse(recorded=True)
-            return pb.SessionStep(state="Open")
+            return _response_for(name)
 
         return record
 
@@ -184,6 +193,22 @@ CALLS = {
         "resource_id": "d1",
         "invoke": lambda c, cred: c.get_commitment_proof("d1", credential=cred),
     },
+    # B1 Phase 2 (runtime 0.72.0): the context verbs serve only a proven subject. Both are BODIED on
+    # gRPC — empty resource id, digest over the whole request message.
+    "RegisterContext": {
+        "rpc": "/seam.api.v1.SeamContext/RegisterContext",
+        "bodyless": False,
+        "invoke": lambda c, cred: c.register_context(
+            b"ctx-bytes", "Digest", ["sha256:" + "a" * 64], credential=cred
+        ),
+    },
+    "ResolveContext": {
+        "rpc": "/seam.api.v1.SeamContext/ResolveContext",
+        "bodyless": False,
+        "invoke": lambda c, cred: c.resolve_context(
+            ["sha256:" + "b" * 64, "acdp://reg/x"], credential=cred
+        ),
+    },
 }
 
 
@@ -224,6 +249,7 @@ def test_sync_credential_wiring_every_verb() -> None:
         client = SeamClient.connect("127.0.0.1:1")  # lazy channel, never dialed
         client._coord = _Recorder(seen)
         client._authz = _Recorder(seen)
+        client._context = _Recorder(seen)
         client._presentation = lambda agent, timeout=None: pb.PinnedPresentation()  # type: ignore
         _seed_ticket(client._tickets, credential.aid)
 
@@ -243,6 +269,7 @@ def test_async_credential_wiring_every_verb() -> None:
             client = AioSeamClient.connect("127.0.0.1:1")  # lazy channel, never dialed
             client._coord = _AioRecorder(seen)
             client._authz = _AioRecorder(seen)
+            client._context = _AioRecorder(seen)
 
             async def _fake_presentation(agent, timeout=None):
                 return pb.PinnedPresentation()
@@ -273,6 +300,7 @@ def test_a_different_credential_produces_a_signature_that_does_not_verify(
     client = SeamClient.connect("127.0.0.1:1")
     client._coord = _Recorder(seen)
     client._authz = _Recorder(seen)
+    client._context = _Recorder(seen)
     _seed_ticket(client._tickets, cred_a.aid)
     _seed_ticket(client._tickets, cred_b.aid)
 
@@ -423,6 +451,7 @@ def _bound_sync(seen: dict, bound: Agent, explicit: Agent) -> SeamClient:
     client = SeamClient.connect("127.0.0.1:1", agent=bound)
     client._coord = _Recorder(seen)
     client._authz = _Recorder(seen)
+    client._context = _Recorder(seen)
     client._presentation = lambda agent, timeout=None: pb.PinnedPresentation()  # type: ignore
     _seed_ticket(client._tickets, bound.aid)
     _seed_ticket(client._tickets, explicit.aid)
@@ -452,6 +481,7 @@ def test_async_bound_agent_is_the_default_credential_on_every_verb() -> None:
             client = AioSeamClient.connect("127.0.0.1:1", agent=bound)
             client._coord = _AioRecorder(seen)
             client._authz = _AioRecorder(seen)
+            client._context = _AioRecorder(seen)
 
             async def _fake_presentation(agent, timeout=None):
                 return pb.PinnedPresentation()
@@ -525,3 +555,64 @@ def test_verify_decision_passes_its_credential_to_the_proof_fetch(aio: bool) -> 
     _assert_credential_sent_and_verifies(
         seen, "GetCommitmentProof", CALLS["GetCommitmentProof"], credential
     )
+
+
+@pytest.mark.parametrize("aio", [False, True], ids=["sync", "aio"])
+@pytest.mark.parametrize("verb", ["RegisterContext", "ResolveContext"])
+def test_context_verbs_sign_the_bodied_framing(verb: str, aio: bool) -> None:
+    """B1 Phase 2 (runtime 0.72.0): both context calls carry ``x-seam-ticket-bin`` +
+    ``x-seam-call-sig-bin``, and the signature verifies over the BODIED gRPC framing for
+    ``/seam.api.v1.SeamContext/<verb>`` — empty resource id, ``sha256:`` digest of the whole serialized
+    request (the runtime's ``Binding::WriteWholeMessage``). It must NOT verify over the bodyless
+    framing (empty digest): a client that signed the verb alone would be refused by the runtime."""
+    spec = CALLS[verb]
+    credential = Agent(CRED_SEED)
+    seen: dict = {}
+    if aio:
+
+        async def run() -> None:
+            client = AioSeamClient.connect("127.0.0.1:1")
+            client._context = _AioRecorder(seen)
+            _seed_ticket(client._tickets, credential.aid)
+            await spec["invoke"](client, credential)
+            await client.close()
+
+        asyncio.run(run())
+    else:
+        client = SeamClient.connect("127.0.0.1:1")
+        client._context = _Recorder(seen)
+        _seed_ticket(client._tickets, credential.aid)
+        spec["invoke"](client, credential)
+        client.close()
+
+    req, kw = seen[verb]
+    md = dict(kw["metadata"])
+    assert set(md) == {"x-seam-ticket-bin", "x-seam-call-sig-bin"}
+    assert md["x-seam-ticket-bin"] == TICKET
+    pub = Ed25519PrivateKey.from_private_bytes(credential.seed).public_key()
+    digest = tool_input_digest(req.SerializeToString())
+    assert digest.startswith("sha256:")
+    pub.verify(
+        md["x-seam-call-sig-bin"],
+        request_sig_payload(TICKET, f"/seam.api.v1.SeamContext/{verb}", "", digest),
+    )
+    with pytest.raises(InvalidSignature):
+        pub.verify(
+            md["x-seam-call-sig-bin"],
+            request_sig_payload(TICKET, f"/seam.api.v1.SeamContext/{verb}", "", ""),
+        )
+
+
+def test_register_context_is_replay_guarded_and_resolve_context_is_not() -> None:
+    """The runtime burns a ``RegisterContext`` proof at admission (its metadata upsert is a write) and
+    exempts ``ResolveContext`` (a read in effect). The set is built from a ``SeamCoordination`` prefix,
+    so the context verb must be unioned in as a full path."""
+    from seam_sdk import aio
+    from seam_sdk.client import _REPLAY_GUARDED
+
+    assert "/seam.api.v1.SeamContext/RegisterContext" in _REPLAY_GUARDED
+    assert "/seam.api.v1.SeamContext/ResolveContext" not in _REPLAY_GUARDED
+    assert "/seam.api.v1.SeamCoordination/RegisterContext" not in _REPLAY_GUARDED
+    assert "/seam.api.v1.SeamCoordination/SubmitVote" in _REPLAY_GUARDED
+    assert "/seam.api.v1.SeamCoordination/ReportOutcome" not in _REPLAY_GUARDED
+    assert aio._REPLAY_GUARDED is _REPLAY_GUARDED

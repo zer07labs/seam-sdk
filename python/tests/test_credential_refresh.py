@@ -3,12 +3,12 @@ Phase 1) and the seven ``submit_*`` steps (Phase 2, D-SUBMIT-RETRY), in BOTH Pyt
 
 Two layers, both needed:
 
-* **Unit** — the clients' ``_coord``/``_authz``/``_admission`` are swapped for one scripted wire that
+* **Unit** — the clients' ``_coord``/``_authz``/``_admission``/``_context`` are swapped for one scripted wire that
   records every call (name, request, metadata) and refuses chosen verbs ``UNAUTHENTICATED`` a set
   number of times. A live ticket is pre-seeded into the per-AID cache, so the baseline makes NO
   admission and "one extra admit" is exactly two admission RPCs (``IssueChallenge`` + ``Admit``).
-  This layer covers all 16 credentialed verbs: the thirteen that retry, and the three writes that
-  must not (D-WRITES-EXCLUDED).
+  This layer covers all 18 credentialed verbs: the fifteen that retry (the two ``SeamContext`` verbs
+  included, from runtime 0.72.0), and the three writes that must not (D-WRITES-EXCLUDED).
 * **Real gRPC** — :class:`test_authorize.FakeSeam`'s coordination handlers refuse on real ticket
   state over a real channel, so the typed error mapping is exercised end to end, and the concurrency
   criteria (N=32 coalescing, aio cancellation mid-refresh) are staged on real transports rather than
@@ -57,8 +57,8 @@ from seam_sdk.errors import (
 from test_authorize import FakeSeam
 from test_credential_wiring import CALLS, CRED_SEED, OTHER_CRED_SEED
 
-# The six verbs Phase 1 retries, the seven steps Phase 2 retries, and the three writes that never
-# do. Asserted to partition the shared 16-verb table, so a verb added there without a decision here
+# The six verbs Phase 1 retries, the seven steps Phase 2 retries, the two context verbs, and the three
+# writes that never do. Asserted to partition the shared 18-verb table, so a verb added there without a decision here
 # fails loudly.
 READS_AND_OUTCOME = (
     "SessionStatus",
@@ -78,9 +78,16 @@ SUBMITS = (
     "SubmitBallot",
 )
 EXCLUDED = ("OpenSession", "CancelSession", "ExpireSession")
-RETRYING = READS_AND_OUTCOME + SUBMITS
+# B1 Phase 2 (runtime 0.72.0): the context verbs refresh once and resend once, like the reads.
+CONTEXT = ("RegisterContext", "ResolveContext")
+RETRYING = READS_AND_OUTCOME + SUBMITS + CONTEXT
 assert set(RETRYING) | set(EXCLUDED) == set(CALLS) and not set(RETRYING) & set(EXCLUDED)
-assert (len(READS_AND_OUTCOME), len(SUBMITS), len(EXCLUDED)) == (6, 7, 3)
+assert (len(READS_AND_OUTCOME), len(SUBMITS), len(EXCLUDED), len(CONTEXT)) == (
+    6,
+    7,
+    3,
+    2,
+)
 
 OLD = b"old-ticket"
 ADMISSION = ("IssueChallenge", "Admit")
@@ -142,6 +149,12 @@ class _Wire:
                 resp = pb.ReportOutcomeResponse(recorded=True)
             elif name == "GetCommitmentProof":
                 resp = pb.CommitmentProof(issuer_aid="aid:served")
+            elif name == "RegisterContext":
+                resp = pb.ContextRef(content_ref="sha256:served")
+            elif name == "ResolveContext":
+                resp = pb.ResolveContextResponse(
+                    bindings=[pb.ContextBinding(ctx_ref="sha256:served")]
+                )
             else:
                 resp = pb.SessionStep(state=f"served:{name}")
             self.responses[name] = resp
@@ -196,7 +209,7 @@ class _Harness:
         else:
             c = SeamClient.connect("127.0.0.1:1", agent=agent)
             stub = _SyncStub(wire)
-        c._coord = c._authz = c._admission = stub
+        c._coord = c._authz = c._admission = c._context = stub
         self._clients.append(c)
         return c
 
@@ -242,6 +255,14 @@ def test_one_rejection_is_refreshed_and_retried_once(h, verb):
 
     if verb == "ReportOutcome":
         assert result is True
+    elif verb == "RegisterContext":
+        assert result == wire.responses[verb].content_ref, (
+            "must return the RETRY's response"
+        )
+    elif verb == "ResolveContext":
+        assert result == list(wire.responses[verb].bindings), (
+            "must return the RETRY's response"
+        )
     else:
         assert result == wire.responses[verb], "must return the RETRY's response"
     assert len(wire.of(verb)) == 2, f"{verb}: exactly one retry"

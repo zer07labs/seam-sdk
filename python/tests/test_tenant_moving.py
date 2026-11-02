@@ -132,7 +132,7 @@ class _RefusingWire(_Wire):
         return super().handle(name, req, kw)
 
 
-@pytest.mark.parametrize("verb", SUBMITS + EXCLUDED)
+@pytest.mark.parametrize("verb", SUBMITS + EXCLUDED + ("RegisterContext",))
 def test_tenant_moving_on_a_guarded_write_drops_the_burned_ticket(h, verb):
     wire = _RefusingWire()
     cred = Agent(CRED_SEED)
@@ -149,7 +149,7 @@ def test_tenant_moving_on_a_guarded_write_drops_the_burned_ticket(h, verb):
     assert _cached(client, cred) is None
 
 
-@pytest.mark.parametrize("verb", READS_AND_OUTCOME)
+@pytest.mark.parametrize("verb", READS_AND_OUTCOME + ("ResolveContext",))
 def test_tenant_moving_on_an_unguarded_call_keeps_the_ticket(h, verb):
     """Reads and ``ReportOutcome`` are outside the runtime's seen-proof cache: nothing was burned."""
     wire = _RefusingWire()
@@ -164,7 +164,7 @@ def test_tenant_moving_on_an_unguarded_call_keeps_the_ticket(h, verb):
     assert _cached(client, cred) == OLD
 
 
-@pytest.mark.parametrize("verb", SUBMITS + EXCLUDED)
+@pytest.mark.parametrize("verb", SUBMITS + EXCLUDED + ("RegisterContext",))
 def test_any_other_failed_precondition_leaves_the_ticket_as_before(h, verb):
     wire = _RefusingWire()
     cred = Agent(CRED_SEED)
