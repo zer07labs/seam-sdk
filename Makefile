@@ -16,13 +16,7 @@
 # `check-contract` makes "what surface does the active contract actually expose?" a verifiable fact rather
 # than an assumption — the SDK's equivalent of the runtime's published-surface gate.
 
-# PINNED for the runtime 0.71.0 train (seam-runtime#1579 @ 8e6fc800, BSR label `train-0.71.0`): the train
-# adds outcome-ingestion wave 0 (SeamTrust/WhoAmI, EnrollTenantRequest.kind / TenantView.kind, the
-# wire_features lists, the gated ReportOutcome reward/metrics/observed_at fields, and the BP-2a
-# LearningDecision / LearningOutcome event fields; seam-runtime#1572) and merges + dispatches the SDK
-# release in one step, so SDK main must generate from that proto before the default label carries it.
-# Un-pin (back to the bare module) once the train lands and BSR main is at or past this commit.
-BUF_MODULE ?= buf.build/zer07labs/seam:5966780fc50b4e9381145797aefca5c3
+BUF_MODULE ?= buf.build/zer07labs/seam
 RUNTIME    ?= ../seam-runtime
 
 .PHONY: generate generate-local check-contract clean lint probe-frameworks

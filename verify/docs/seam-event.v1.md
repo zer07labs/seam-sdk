@@ -1,7 +1,5 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 8e6fc800 tracking feat/outcome-ingestion-w0 (refreshed 2026-11-01).
-     Pinned AHEAD of the default branch, deliberately: the runtime 0.71.0 train (seam-runtime#1579) merges and
-     dispatches the SDK release in one step, so the copy has to be on SDK main first. The exception ends itself
-     when the train squash-merges (the file becomes byte-identical on both refs). Movement since 4a7b47c:
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ ca64dee1 (refreshed 2026-11-01).
+     The runtime 0.71.0 train (seam-runtime#1579), landed on runtime main as ca64dee1. Movement since 4a7b47c:
      outcome-ingestion wave 0, BP-2a (seam-runtime#1572): LearningDecision tags 10-14 (intended_action,
      allocation_mode, unit_tag, allocation_propensity, outcome_owner_class) and LearningOutcome tags 4-7 (reward,
      metrics, observed_at_millis, reporter_class) — wire slots only; no 0.71.0 event carries any of them. The
