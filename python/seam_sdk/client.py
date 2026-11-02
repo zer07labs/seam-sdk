@@ -43,6 +43,7 @@ from .errors import (  # noqa: F401  (SeamError re-exported)
     is_session_unavailable,
     is_tenant_moving,
 )
+from ._outcome import ObservedAt, check_outcome_fields
 from .tenant import TenantInterceptor
 
 # The generated transport stubs are ROOTED subpackages (`scripts/root_gen.py` rewrites the
@@ -1175,6 +1176,9 @@ class SeamClient:
         verified_by: Optional[str] = None,
         *,
         idempotency_key: str,
+        reward: Optional[float] = None,
+        metrics: Optional[Mapping[str, float]] = None,
+        observed_at: Optional[ObservedAt] = None,
         credential: Optional[Agent] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> bool:
@@ -1191,6 +1195,20 @@ class SeamClient:
         which would turn every retry into a second report. It is stored durably and never erased, so keep
         personal data out of it.
 
+        ``reward``, ``metrics`` and ``observed_at`` (Branchpoint BP-2 / OI-R1) are optional and
+        **gated by the runtime**: send them only while :meth:`server_wire_features` lists
+        :data:`~seam_sdk.WIRE_FEATURE_OUTCOME_REWARD_METRICS` (``reward``/``metrics``) or
+        :data:`~seam_sdk.WIRE_FEATURE_OUTCOME_OBSERVED_AT` (``observed_at``), and never probe for
+        support with a real report — an outcome is permanent. A runtime that does not accept them
+        (0.71.0 up to the BP-2c release) refuses the report with ``INVALID_ARGUMENT``; a runtime older
+        than 0.71.0 **silently drops them** and records the outcome without them. ``reward`` is a finite
+        float; ``metrics`` maps at most 16 keys matching ``^[a-z][a-z0-9_]{0,62}$`` to finite floats
+        (an empty mapping is the same as none); ``observed_at`` is the source-event time, a
+        timezone-aware ``datetime`` or integer milliseconds since the Unix epoch, and the runtime
+        refuses one earlier than the decision's seal or more than 300 s past its clock. Every check but
+        that last one runs here, before any network call (``TypeError``/``ValueError``). They are part
+        of the outcome the key identifies: a replay of the key with a different value is refused.
+
         ``credential`` opts in to the in-band request credential (#508). The digest covers the whole
         request message; this is what makes the verb callable on a header-denied plane. With a
         credential (explicit or the bound agent), an ``UNAUTHENTICATED`` refreshes the ticket once and
@@ -1201,6 +1219,7 @@ class SeamClient:
             correct=correct,
             idempotency_key=_check_idempotency_key(idempotency_key),
         )
+        _set_outcome_fields(req, reward, metrics, observed_at)
         if verified_by is not None:
             req.verified_by = verified_by
         # Refresh-once (#275): ReportOutcome is idempotent on its signed ``idempotency_key`` and exempt
@@ -1313,6 +1332,21 @@ class SeamClient:
         picking a compatible SDK or adapter, never a trust signal.
         """
         return self._trust.ServerInfo(pb.Empty(), timeout=timeout).runtime_version
+
+    def server_wire_features(
+        self, *, timeout: float = DEFAULT_TIMEOUT_S
+    ) -> tuple[str, ...]:
+        """The wire features this runtime replica accepts (``ServerInfoResponse.wire_features``, OI-R6),
+        sorted, for example ``("enroll.kind", "outcome.observed_at", "outcome.reward_metrics")``.
+
+        Same call as :meth:`server_info` (no credential, never retried). A gated request field is sent
+        only while its feature is listed (:data:`~seam_sdk.WIRE_FEATURE_OUTCOME_REWARD_METRICS`,
+        :data:`~seam_sdk.WIRE_FEATURE_OUTCOME_OBSERVED_AT`, :data:`~seam_sdk.WIRE_FEATURE_ENROLL_KIND`).
+        The list is a build constant of the replica that answers: behind a load balancer during a
+        rolling deploy, re-check per connection or per cycle rather than caching it for the process.
+        A runtime 0.63.0-0.70.x returns ``()``; one older than 0.63.0 raises
+        :class:`~seam_sdk.errors.UnimplementedError`."""
+        return tuple(self._trust.ServerInfo(pb.Empty(), timeout=timeout).wire_features)
 
     def who_am_i(
         self,
@@ -1495,6 +1529,24 @@ def commitment_view(c: "pb.Commitment") -> dict:
             for e in c.explanation
         ],
     }
+
+
+def _set_outcome_fields(
+    req: "pb.ReportOutcomeRequest",
+    reward: Optional[float],
+    metrics: Optional[Mapping[str, float]],
+    observed_at: Optional[ObservedAt],
+) -> None:
+    """Validate the BP-2 outcome fields (before any RPC) and set them on ``req``. An argument left at
+    ``None`` (and an empty ``metrics``) leaves its field unset, so a caller that passes none of them
+    sends the same bytes as before. Shared by the sync and async clients."""
+    r, m, t = check_outcome_fields(reward, metrics, observed_at)
+    if r is not None:
+        req.reward = r
+    if m:
+        req.metrics.update(m)
+    if t is not None:
+        req.observed_at_millis = t
 
 
 def _check_idempotency_key(key: str) -> str:

@@ -118,6 +118,12 @@ from .dpop import (
     mgmt_dpop_proof,
     new_mgmt_dpop_jti,
 )
+from ._outcome import (
+    OUTCOME_METRICS_MAX,
+    WIRE_FEATURE_ENROLL_KIND,
+    WIRE_FEATURE_OUTCOME_OBSERVED_AT,
+    WIRE_FEATURE_OUTCOME_REWARD_METRICS,
+)
 from .tenant import TENANT_HEADER, AioTenantInterceptor, TenantInterceptor
 from .retry import (
     DEFAULT_RETRY_BUDGET_S,
@@ -190,6 +196,11 @@ __all__ = [
     "ENROLMENT_KIND_CHANGESET_WORKER",
     "ENROLMENT_KIND_OUTCOME_REPORTER",
     "ENROLMENT_KINDS",
+    # Wire features (OI-R6) — ServerInfo.wire_features; gates for ReportOutcome's BP-2 fields
+    "WIRE_FEATURE_ENROLL_KIND",
+    "WIRE_FEATURE_OUTCOME_OBSERVED_AT",
+    "WIRE_FEATURE_OUTCOME_REWARD_METRICS",
+    "OUTCOME_METRICS_MAX",
     # Streamed-event surface (A14)
     "KNOWN_KINDS",
     "verify_streamed_record_digest",
