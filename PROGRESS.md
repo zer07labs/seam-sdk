@@ -4069,7 +4069,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1814`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1834`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -5333,3 +5333,8 @@ not filed here. OQ-1 is resolved, so no phase is gated.
     - ruff: OK.
   - Final Opus verify over `main...HEAD`, round 1: GAPS, one item. `IssuerReport` and `Uncovered` were not `#[non_exhaustive]`, though the plan's Long-term posture required it. Fixed, and the CHANGELOG states it.
   - The verifier compared main's verifier with this branch on all goldens and bundles: exit codes, stdout and `--json` are identical, apart from the two new `--issuer` report lines.
+
+## outcome-reward-metrics (waves outcome-ingestion W3, 2026-11-02)
+
+- Plan: `plans/outcome-reward-metrics.md` — 3 phases (P1 Python, P2 TS, P3 docs), one PR. No proto or manifest change (BP-2a fields in the BSR since 0.71.0; contract gate exits 0 after `make generate`).
+- Release sequencing D-W3-1: merge held until the runtime BP-2c train PR is merged or about to merge.
