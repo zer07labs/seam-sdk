@@ -1,5 +1,12 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 432b4421 tracking feat/bp-2c (refreshed 2026-11-02).
-     The runtime 0.73.0 train (seam-runtime#1591, Branchpoint BP-2c), not yet on runtime main. Movement since ca64dee1:
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ e69914aa (refreshed 2026-11-04).
+     The runtime 0.74.0 train (seam-runtime#1600, outcome-ingestion wave 6: OI-R3, OI-R1), on runtime main.
+     Movement since 432b4421 (landed on main as e1c74b7): wording only — the `reporter_class` closed set is
+     named (`outcome_connector`, `changeset_worker`, produced from 0.74.0), and LearningDecision tag 14
+     (`outcome_owner_class`) is produced from 0.74.0: `RunDecision` stamps it on every arm row from the
+     governing document's `experiments.decision_points[]`. No tag, digest or vector change; informational
+     for this crate.
+     Prior pin 432b4421 tracking feat/bp-2c (refreshed 2026-11-02).
+     The runtime 0.73.0 train (seam-runtime#1591, Branchpoint BP-2c), landed on runtime main as e1c74b7. Movement since ca64dee1:
      wording only — LearningOutcome tags 4-7 are emitted from 0.73 on (the runtime accepts reward / metrics /
      observed_at_millis on ReportOutcomeRequest and stamps reporter_class); 0.71 and 0.72 emitted none and refused
      a report setting any. No tag, digest or vector change; informational for this crate.
@@ -774,7 +781,8 @@ LearningDecision {                         // payload at SeamEvent tag 14
   allocation_propensity: double?  // BP-9 (tag 13), the variant/arm ALLOCATION probability;
                                   // `propensity` (tag 9) keeps its within-variant meaning
   outcome_owner_class:   string?  // BP-7 (tag 14), stamped at seal from the governing config; a value
-                                  // from the `reporter_class` closed set
+                                  // from the `reporter_class` closed set (`outcome_connector`,
+                                  // `changeset_worker`); produced from 0.74.0 (OI-R1)
 }
 
 LearningOutcome {                          // payload at SeamEvent tag 15
@@ -804,8 +812,15 @@ event of each kind with every new field set (JSON and protobuf). Ownership:
   (`operator` is reserved; nothing produces it yet). It is **absent when subject enforcement is off**
   — there is no authenticated identity to classify. Consumers read it open: an unrecognised value is a
   new class, not a malformed event.
-- **`LearningDecision` tags 10-13 — BP-9** (the allocation primitive); **tag 14 — BP-7** (the
-  `experiments` section of the governing config). Absent until those phases ship.
+- **`LearningDecision` tags 10-13 — BP-9** (the allocation primitive). Absent until that phase ships.
+- **`LearningDecision` tag 14 — BP-7 / OI-R1, produced from 0.74.0.** `RunDecision` stamps it on
+  **every** arm row (policy and agent) of the decision, from the governing tenant document's
+  `experiments.decision_points[]`: the single `selector: namespace` point on the decision's namespace,
+  owned by the tenant, carrying an `outcome_owner_class`. It is read from the same governing load the
+  record's `governing_config` names, so a republish after that load cannot change it. **Absent** (never
+  empty) when there is no section, no matching point, a `caller`-owned point (no class), two or more
+  `namespace` points on the namespace (ambiguity stamps nothing), or the seal is an interactive session
+  (BP-7 matches `RunDecision` only; BP-16 deferred). Rows emitted before a republish are immutable.
 - **`metrics` is a protobuf map.** Map entries carry no order on the wire, so the runtime fixes one:
   both of its encoders (the outbox's `SeamEvent::to_bytes` and the gRPC `StreamEvents` path) write
   entries in **ascending key order**, and a re-encode of the same event is byte-identical. In
