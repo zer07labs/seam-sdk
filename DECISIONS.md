@@ -3082,3 +3082,23 @@ Ranked by blast radius. The two possible one-way doors (a public exception API, 
   `server_wire_features()` before sending, per `wire-features.md`. **Decided by:** Opus (additive; a richer return can be added later).
 - **D-W3-3 — `observed_at` accepts an aware `datetime` / `Date` or integer ms.** A naive `datetime` is refused
   rather than guessed. Values are truncated to the ms, never rounded, matching the runtime's u64 ms. **Decided by:** Opus (still-private API shape, pre-release).
+
+## 2026-11-04 — v0.74.0 re-cut after a refused publish (#332, #334)
+
+- **D-W13-1: move the root `v0.74.0` tag; leave `go/v0.74.0` in place.** This is a one-time exception to the
+  rule in `release-on-runtime.yml` that a tag which never published cannot be re-cut.
+  - **The problem.** `v0.74.0` sat at ba7c78c, and that commit's own vendored spec failed `spec pin` against
+    live runtime main. A re-run there could never go green.
+  - **Why the exception is safe here.** The rule exists for two things:
+    - **The Go proxy's cache.** index.golang.org showed `go/v0.74.0` was never fetched. The `go/` tree is also
+      byte-identical between ba7c78c and the fix commit 2eeeeca, so `go/v0.74.0` stays put and no Go checksum
+      can change.
+    - **Published bytes.** Nothing was ever published under 0.74.0, so no registry artifact is replaced.
+  - **Result.** Root `v0.74.0` was re-pushed at 2eeeeca, and publish run 41898305455 was green end to end.
+  - **When it applies again.** Only when the same three facts hold: no artifact under that version in any
+    registry, the Go index has no fetch of `go/vX.Y.Z`, and `go/` is unchanged. Otherwise, take the next
+    runtime version.
+  - **Decided by:** the owner (one-way door), 2026-11-04.
+- **Process gap, not fixed here.** The runtime 0.74.0 train (#1600) amended `seam-event.v1.md` with no SDK
+  pre-vendor, so the release commit's CI was always going to fail `spec pin`. A train that touches the spec
+  needs a seam-sdk re-pin PR merged right after the runtime merge and before the dispatch (the same order as a contract train).
