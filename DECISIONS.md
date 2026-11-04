@@ -3101,4 +3101,4 @@ Ranked by blast radius. The two possible one-way doors (a public exception API, 
   - **Decided by:** the owner (one-way door), 2026-11-04.
 - **Process gap, not fixed here.** The runtime 0.74.0 train (#1600) amended `seam-event.v1.md` with no SDK
   pre-vendor, so the release commit's CI was always going to fail `spec pin`. A train that touches the spec
-  needs a seam-sdk re-pin PR merged right after the runtime merge and before the dispatch, (the same order as a contract train).
+  needs a seam-sdk re-pin PR merged right after the runtime merge and before the dispatch (the same order as a contract train).
