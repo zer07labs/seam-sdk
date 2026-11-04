@@ -5333,6 +5333,8 @@ not filed here. OQ-1 is resolved, so no phase is gated.
     - ruff: OK.
   - Final Opus verify over `main...HEAD`, round 1: GAPS, one item. `IssuerReport` and `Uncovered` were not `#[non_exhaustive]`, though the plan's Long-term posture required it. Fixed, and the CHANGELOG states it.
   - The verifier compared main's verifier with this branch on all goldens and bundles: exit codes, stdout and `--json` are identical, apart from the two new `--issuer` report lines.
+- pushed feat/verify-a4-recompute 5c2b9b9; PR #321 opened: https://github.com/zer07labs/seam-sdk/pull/321
+- merged #321 (960a3f3); #316 closed
 
 ## outcome-reward-metrics (waves outcome-ingestion W3, 2026-11-02)
 
@@ -5341,3 +5343,8 @@ not filed here. OQ-1 is resolved, so no phase is gated.
 - P1 DONE, P2 DONE, P3 DONE (2026-11-02). One Opus verify over P1-P3 (batched): GAPS ×2 (OverflowError on 10**400; a plan citation), fixed in 7bc8a5d.
   - Live: gate-off path against seamd:main 0.72.0 (docker); gate-on path against a seam-grpc 0.73.0 built from a git-archive export of seam-runtime feat/bp-2c @ 432b4421 (features `enroll.kind, outcome.observed_at, outcome.reward_metrics`) — the Python and TS integration suites pass on both.
   - Spec re-pinned @ 432b4421 tracking feat/bp-2c (12bc5be). Reconcile: no UNCONFIRMED entries (D-W3-1..3 in DECISIONS.md are reversible, Opus-settled).
+
+## spec-pin-0.74.0 (waves outcome-ingestion W13, 2026-11-04)
+
+- Cause of the v0.74.0 publish refusal (run 41696842485, #332): `ci-green` read three red `ci-ok` runs on ba7c78c (main, `v0.74.0`, `go/v0.74.0`). Each failed on one job, `spec pin`: `verify/docs/seam-event.v1.md` still declared `tracking feat/bp-2c`, but #1591 had landed on runtime main (e1c74b7), and the runtime 0.74.0 train (#1600, e69914aa) then amended the spec 21 minutes before the SDK release commit. The gate was right: the copy was stale against the published contract.
+- Fix: re-vendored @ e69914aa (wording only, no tag, digest or vector change), and dropped the tracking declaration. `check_vendored_spec.py --from gh` is OK on all three copies. Python: 2542 passed. Contract gate: exit 0. verify: `cargo test` green.
