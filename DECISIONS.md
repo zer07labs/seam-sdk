@@ -3102,3 +3102,22 @@ Ranked by blast radius. The two possible one-way doors (a public exception API, 
 - **Process gap, not fixed here.** The runtime 0.74.0 train (#1600) amended `seam-event.v1.md` with no SDK
   pre-vendor, so the release commit's CI was always going to fail `spec pin`. A train that touches the spec
   needs a seam-sdk re-pin PR merged right after the runtime merge and before the dispatch (the same order as a contract train).
+
+## 2026-11-05 — `ci.yml` push runs on main only; superseded PR runs are cancelled
+
+- **D-CI-PUSH-MAIN: `push:` is `branches: [main]`, with no `tags:`.** A bare `push:` ran the full suite twice for
+  every push to a PR branch and once more per release tag (`v*` and `go/v*` each fire a push event). Over
+  2026-10-19..11-05 `ci` push runs cost $20.81, of which $7.84 was on main; the rest (feature branches and the
+  `v0.74.0` tags) was about $15, roughly $26 a month.
+  - **Why tags are not kept.** No `ci.yml` job reads a tag or a branch ref. The two consumers of `ci-ok`,
+    `publish.yml`'s `ci-green` and `release-on-runtime.yml`'s main-is-green gate, read it by commit SHA, and the
+    release commit is pushed to main before it is tagged, so its main push run supplies that `ci-ok`. The
+    `v0.74.0` re-cut (D-W13-1) tagged 2eeeeca, a commit merged to main through #334, so it had a main run too.
+  - **What would break it.** Tagging a commit that was never the head of a main push (an intermediate commit
+    of a multi-commit push) now finds no `ci-ok`, and `ci-green` times out and refuses. That fails closed;
+    tag the head commit, or dispatch CI on it.
+  - **Required checks.** The `main` ruleset requires only `ci-ok`, which every `pull_request` run reports.
+- **D-CI-CONCURRENCY: cancel superseded `pull_request` runs only.** The group is the PR ref for `pull_request`
+  and the run id for everything else, so a main push never cancels or replaces another main push's pending
+  run. A shared group with `cancel-in-progress: false` would still drop a pending run when a newer one queues,
+  leaving that commit without a `ci-ok` for the release gates.

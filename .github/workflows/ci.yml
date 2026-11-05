@@ -15,9 +15,22 @@ name: ci
 # silently green. `integration` and `spec-pin` are the only advisory jobs (may skip, must not fail) — see
 # the ci-ok job below.
 
+# Push runs on main only. A bare `push:` ran the whole suite a second time for every push to a PR
+# branch (the `pull_request` run already covers it) and once more per release tag (`v*` and `go/v*`
+# each fire one). No job here reads a tag or a feature-branch ref. publish.yml's `ci-green` and
+# release-on-runtime.yml's main-is-green gate read `ci-ok` on the release commit's SHA, and that
+# commit is pushed to main first, so the main push run is the one they resolve.
 on:
   push:
+    branches: [main]
   pull_request:
+
+# A new push to a PR cancels that PR's superseded run. Every other run gets its own group (keyed by
+# run_id, not ref): a shared group on main would let a newer main push cancel a pending one, and the
+# release gates above would then find no green `ci-ok` on that commit.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   version-lockstep:

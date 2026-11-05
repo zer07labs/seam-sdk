@@ -168,8 +168,9 @@ jobs:
             echo "::error::tag v$TAG does not match ts ($TS) / python ($PY) — bump the versions and re-tag."
             exit 1
           fi
-      # A tag is not branch-scoped, and `ci.yml` runs on EVERY branch push — so `ci-green` can
-      # legitimately resolve a green `ci-ok` for a commit that only ever lived on a feature branch.
+      # A tag is not branch-scoped, and `ci.yml`'s `pull_request:` run reports `ci-ok` against the PR's
+      # head commit — so `ci-green` can legitimately resolve a green `ci-ok` for a commit that only
+      # ever lived on a feature branch.
       # Nothing else in this workflow asserts the commit reached `main`: `version-check` compares the
       # tag to in-tree strings, and `ci-green` reads check runs. Without this, tagging a green
       # unmerged commit publishes it.
