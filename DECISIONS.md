@@ -3115,7 +3115,8 @@ Ranked by blast radius. The two possible one-way doors (a public exception API, 
     `v0.74.0` re-cut (D-W13-1) tagged 2eeeeca, a commit merged to main through #334, so it had a main run too.
   - **What would break it.** Tagging a commit that was never the head of a main push (an intermediate commit
     of a multi-commit push) now finds no `ci-ok`, and `ci-green` times out and refuses. That fails closed;
-    tag the head commit, or dispatch CI on it.
+    tag a commit that was the head of a main push. `ci.yml` has no `workflow_dispatch:`, so CI cannot be
+    started on an arbitrary commit by hand.
   - **Required checks.** The `main` ruleset requires only `ci-ok`, which every `pull_request` run reports.
 - **D-CI-CONCURRENCY: cancel superseded `pull_request` runs only.** The group is the PR ref for `pull_request`
   and the run id for everything else, so a main push never cancels or replaces another main push's pending
