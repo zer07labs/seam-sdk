@@ -1,0 +1,9 @@
+{
+  "decision_id": "dec:design-partner:d3-allocated-000000000",
+  "tenant": "design-partner",
+  "record_checksum": "vP8VQYWCdGZfkVrI4g1XaTMzlHMETIYdoZWrLFhuJgg=",
+  "commitment_digest": "e238585d2709b59e7b25ceda504eaf0b87f2e499b8dc873dd970dbd954efcaee",
+  "bound_at": 2000,
+  "issuer_aid": "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
+  "signature": "dB2c0pqYScj3IRwhIwxeHHRv4WiJqYOWz2z3B8+DfjJwHBEmEaQUWvGu8Rfgbzt8iNvAm0AISbWuoKf8j9kBAQ=="
+}

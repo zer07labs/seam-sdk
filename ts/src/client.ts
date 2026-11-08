@@ -8,6 +8,7 @@ import { create, toBinary, type DescMessage, type MessageInitShape } from "@bufb
 import { ed25519 } from "@noble/curves/ed25519";
 
 import {
+  AllocationAvailability,
   ApprovalRequestRequestSchema,
   AuthorizeVerdict,
   BallotChoice,
@@ -585,6 +586,157 @@ export function sealAttestationOf(
       ? decodeCollective(att.collectiveOutcome, view.decisionId)
       : undefined;
   return { availability, sealReason, collectiveOutcome };
+}
+
+// ── Experiment allocation (runtime 0.76.0, Branchpoint BP-8, seam-runtime#1652) ──────────────────
+
+/** The availability states this SDK version names. Anything outside the map — UNSPECIFIED included
+ * — reads `"UNRECOGNIZED"`, which the proto's growth policy says to treat as WITHHELD. */
+const ALLOCATION_AVAILABILITY_NAMES: Record<
+  number,
+  Exclude<AllocationView["availability"], "UNRECOGNIZED">
+> = {
+  [AllocationAvailability.RECORDED]: "RECORDED",
+  [AllocationAvailability.NOT_RECORDED]: "NOT_RECORDED",
+  [AllocationAvailability.KEY_UNAVAILABLE]: "KEY_UNAVAILABLE",
+  [AllocationAvailability.ARCHIVED]: "ARCHIVED",
+  [AllocationAvailability.CLEARANCE_DENIED]: "CLEARANCE_DENIED",
+  [AllocationAvailability.UNAVAILABLE]: "UNAVAILABLE",
+};
+
+/** The sealed experiment allocation of one decision — field for field the v1 body of the
+ * commitment's Allocation trailer, as the runtime read it. Reached only through
+ * {@link allocationOf}, and only under `"RECORDED"`.
+ *
+ * Fields are `readonly`, for the reason the Python twin is a frozen dataclass. Every field is the
+ * raw proto3 scalar, presence-less on the wire: a field a later runtime phase fills reads as `""`
+ * or `0` until then, never `undefined`.
+ *
+ * Declared on both sides: this name and the generated `pb.Allocation` are different types, and at
+ * the package root this one is what you get; see the dual-declaration note in `index.ts`. */
+export interface Allocation {
+  /** `"split"` or `"holdout"` today. A raw string, not a union: the proto declares no enum. */
+  readonly mode: string;
+  readonly experimentId: string;
+  /** The arm id; empty for a holdout. */
+  readonly variantId: string;
+  /** The action the experiment arm chose. */
+  readonly intendedAction: string;
+  /** The action actually served (equal to `intendedAction` for a split). */
+  readonly servedAction: string;
+  /** The ALLOCATION probability of this arm, in [0, 1] — never the within-variant action
+   * propensity. Passed through exactly as decoded (no clamping, no rounding). */
+  readonly allocationPropensity: number;
+  /** The exploration budget in basis points, at most 10000 (0 for a split). */
+  readonly budgetBp: number;
+  /** A uint64, so a `bigint`: a `number` would lose precision above 2^53. */
+  readonly budgetEpoch: bigint;
+  /** The experiment config snapshot the allocation was made under. */
+  readonly snapshotId: string;
+  /** The keyed tag of the allocation unit (32 lowercase hex); never the unit itself. */
+  readonly unitTag: string;
+  /** The caller-supplied unit's digest (43-char base64url); empty unless the point requires one. */
+  readonly unitDigest: string;
+  /** The bucketing algorithm version. */
+  readonly bucketVersion: number;
+  /** The public kid (8 hex) of the commitment key that derived the bucket salt. */
+  readonly commitmentKid: string;
+  /** The decision point; empty until the point is recorded. */
+  readonly decisionPoint: string;
+}
+
+/** Whether a record's sealed experiment allocation could be read, and if so what it says — read
+ * from a `GetDecision` record with {@link allocationOf} (runtime 0.76.0+).
+ *
+ * Deliberately **two fields, no convenience booleans and no raw numbers**, by the same rule as
+ * {@link SealAttestation}: a caller writes `view.availability === "RECORDED"`, and the raw values
+ * stay reachable on `record.allocation` for diagnostics.
+ *
+ * **Trust standing.** Chain-bound (via `ciphertext_digest`: an operator alteration breaks the
+ * runtime's own chain re-verify) but **not client-verifiable**: it is not
+ * a TCT input, so `verifyDecision` does not cover it, and a verifier that checks `ciphertext_digest`
+ * only never opens it. Treat it as the runtime's statement.
+ *
+ * The `availability` union may gain members in any release, since this SDK follows the runtime's
+ * version rather than semver. Keep a `default` branch; do not exhaustiveness-check it with `never`.
+ *
+ * Declared on both sides: this name and the generated `pb.AllocationView` are different types, and
+ * at the package root this one is what you get; see the dual-declaration note in `index.ts`. */
+export interface AllocationView {
+  /** Closed set. Only `"RECORDED"` means `allocation` was read. `"NOT_RECORDED"` — the decision ran
+   * outside any experiment, or was sealed by a runtime that wrote none — is normal, and is what
+   * **every 0.76.0 record** reads. `"KEY_UNAVAILABLE"` is crypto-shred. `"ARCHIVED"` means cold
+   * storage; cold-replay the archive bundle. `"CLEARANCE_DENIED"` means this read's clearance —
+   * PUBLIC, since this SDK sends no `x-seam-clearance` — is below the record's decrypt floor; never
+   * an error on the call. `"UNAVAILABLE"` is the runtime saying it could not open or decode it: a
+   * transient fault (a retry may succeed) or a trailer that runtime cannot decode (persists until
+   * the RUNTIME is upgraded). `"UNRECOGNIZED"` is THIS SDK not knowing the value, UNSPECIFIED
+   * included: read it as withheld, and upgrade. */
+  readonly availability:
+    | "RECORDED"
+    | "NOT_RECORDED"
+    | "KEY_UNAVAILABLE"
+    | "ARCHIVED"
+    | "CLEARANCE_DENIED"
+    | "UNAVAILABLE"
+    | "UNRECOGNIZED";
+  /** Set **only** when `availability` is `"RECORDED"` and the wire carries the inner message;
+   * `undefined` otherwise. An absent one under RECORDED is `undefined`, not an error: absence makes
+   * no claim, which is the fail-closed direction. Always a present property. */
+  readonly allocation: Allocation | undefined;
+}
+
+/** Decode `view.allocation` from a `GetDecision` record — which experiment arm it was allocated to.
+ *
+ * Returns `undefined` **iff the field is absent** — a runtime older than 0.76.0. Otherwise an object,
+ * whatever the availability; `"NOT_RECORDED"` and the other non-recorded states are normal results,
+ * not errors.
+ *
+ * Deliberately the same reading rules as {@link sealAttestationOf} and the Python twin
+ * (`seam_sdk._allocation`): the inner allocation is not read at all outside `RECORDED`; any
+ * availability this SDK does not recognize — INCLUDING UNSPECIFIED — reads `"UNRECOGNIZED"`
+ * (WITHHELD), never RECORDED or NOT_RECORDED; absence is `undefined`, never "outside any
+ * experiment". **Never throws** on any wire value: every inner field is a plain scalar, and `mode`
+ * stays a raw string because the proto gives it no enum.
+ *
+ * A TypeScript caller cannot pass a non-carrier — the parameter type is a compile error. **A
+ * JavaScript caller can**, and an object with no `allocation` field gets `undefined`
+ * (indistinguishable from an older runtime), where the Python twin's `HasField` raises — the same
+ * divergence {@link sealAttestationOf} documents. `null` or `undefined` as the view is a caller bug
+ * and throws a `TypeError`. */
+export function allocationOf(
+  view: DecisionRecordView,
+): AllocationView | undefined {
+  const wire = view.allocation;
+  if (wire === undefined) return undefined;
+
+  const availability =
+    ALLOCATION_AVAILABILITY_NAMES[wire.availability] ?? "UNRECOGNIZED";
+  const a = wire.allocation;
+  if (availability !== "RECORDED" || a === undefined) {
+    // The payload is meaningful ONLY under RECORDED, so it is not read at all otherwise — whatever
+    // the wire carries. Withhold rather than guess.
+    return { availability, allocation: undefined };
+  }
+  return {
+    availability,
+    allocation: {
+      mode: a.mode,
+      experimentId: a.experimentId,
+      variantId: a.variantId,
+      intendedAction: a.intendedAction,
+      servedAction: a.servedAction,
+      allocationPropensity: a.allocationPropensity,
+      budgetBp: a.budgetBp,
+      budgetEpoch: a.budgetEpoch,
+      snapshotId: a.snapshotId,
+      unitTag: a.unitTag,
+      unitDigest: a.unitDigest,
+      bucketVersion: a.bucketVersion,
+      commitmentKid: a.commitmentKid,
+      decisionPoint: a.decisionPoint,
+    },
+  };
 }
 
 /** The runtime's statement about whether a policy gated this decision.
@@ -1703,8 +1855,9 @@ export class SeamClient {
   }
 
   /** Returns the raw `DecisionRecordView`. Read its policy enforcement with
-   * {@link policyEnforcementOf} and its seal attestation with {@link sealAttestationOf} (runtime
-   * 0.61.0+) rather than the raw fields. */
+   * {@link policyEnforcementOf}, its seal attestation with {@link sealAttestationOf} (runtime
+   * 0.61.0+) and its experiment allocation with {@link allocationOf} (runtime 0.76.0+) rather than
+   * the raw fields. */
   async getDecision(decisionId: string, opts?: CredentialedCallOptions) {
     return this.credentialedCall(
       opts?.credential,

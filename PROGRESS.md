@@ -157,10 +157,10 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `ts/src/client.ts:413` | `collectiveOutcomeOf(resp: DecisionResponse | SessionStep)` — the TS twin. **Phase 3 DONE.** It needed a real union: protobuf-es brands messages, so passing a `SessionStep` is a *compile error* today (reproduced: `TS2345`, `$typeName` mismatch). `:169-174` `UnknownCollectiveVerdictError(rawValue, decisionId: string)` — **required** `string`, so `:229`'s `resp.decisionId` became `resp.decisionId ?? ""`; a verifier mutation removing that coalesce reddens a test, so it is load-bearing, not decoration. |
 | `ts/gen/seam/api/v1/seam_pb.ts` | Branded `SessionStep = Message<"seam.api.v1.SessionStep"> & {…}` — the reason Phase 3's TS half is a hard block, not a typing nicety. Also carries `collectiveOutcome?` on the same branded type. Cited by symbol, not by line: this is a generated, gitignored file, and a line number into it is correct only until the next `make generate`. |
 | `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi` | `SessionStep.collective_outcome` in the Python stubs — generated, never surfaced. Cited by symbol for the same reason as the row above; it carried `:289,297` until round 3, in direct violation of that rule and of `test_no_document_line_anchors_into_a_generated_file`, which it evaded **only** because a comma-list matches `CITATION` not at all. The rule was stated one row up and broken the next. |
-| `python/seam_sdk/client.py:905`, `ts/src/client.ts:1524` | `submit_commit` / `submitCommit` return a `SessionStep` — the caller Phase 3 exists for. |
+| `python/seam_sdk/client.py:905`, `ts/src/client.ts:1674` | `submit_commit` / `submitCommit` return a `SessionStep` — the caller Phase 3 exists for. |
 | `python/tests/test_collective_outcome.py`, `ts/tests/collective_outcome.test.ts` | `DecisionResponse` cases only. **Phase 3** adds the `SessionStep` cases (absent ⇒ none; `UNSPECIFIED` ⇒ raise; unknown ⇒ raise; non-commit step ⇒ none). Drive red first. |
-| `python/seam_sdk/client.py:815` + `python/seam_sdk/client.py:868` · `python/seam_sdk/aio.py:561` + `python/seam_sdk/aio.py:614` · `ts/src/client.ts:1411` + `ts/src/client.ts:1472` | `submit_evaluation` / `submit_objection` — **already delivered** by `c49d005`. Do not re-plan. Written as six separate citations rather than three comma-lists, because a comma-list matches `CITATION` **not at all**: `` `…:723,759` `` was wrong twice in a row — once before this phase and once *inside the commit whose message claims it shifted every citation below `:239`* — and nothing ever said so. |
-| `python/seam_sdk/client.py:851-852` · `python/seam_sdk/aio.py:597-598` · `ts/src/client.ts:1423` | `confidence` presence mapping — `None` ⇒ field-absent, never `0.0`. Correct in both languages; pinned by `python/tests/test_evaluation_confidence.py:55,64,87,100` and `ts/tests/evaluation.test.ts:59,70,85,93`. |
+| `python/seam_sdk/client.py:815` + `python/seam_sdk/client.py:868` · `python/seam_sdk/aio.py:561` + `python/seam_sdk/aio.py:614` · `ts/src/client.ts:1561` + `ts/src/client.ts:1622` | `submit_evaluation` / `submit_objection` — **already delivered** by `c49d005`. Do not re-plan. Written as six separate citations rather than three comma-lists, because a comma-list matches `CITATION` **not at all**: `` `…:723,759` `` was wrong twice in a row — once before this phase and once *inside the commit whose message claims it shifted every citation below `:239`* — and nothing ever said so. |
+| `python/seam_sdk/client.py:851-852` · `python/seam_sdk/aio.py:597-598` · `ts/src/client.ts:1583` | `confidence` presence mapping — `None` ⇒ field-absent, never `0.0`. Correct in both languages; pinned by `python/tests/test_evaluation_confidence.py:55,64,87,100` and `ts/tests/evaluation.test.ts:59,70,85,93`. |
 > **Read every row below as *as at plan time*, 2026-08-31, unless the row says otherwise.** Some
 > were updated mid-run and some were not, which is worse than either — an unstamped map invites a
 > reader to treat a stale row as current. The rows known to have moved since are corrected inline.
@@ -4069,7 +4069,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1842`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1860`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -5348,3 +5348,47 @@ not filed here. OQ-1 is resolved, so no phase is gated.
 
 - Cause of the v0.74.0 publish refusal (run 41696842485, #332): `ci-green` read three red `ci-ok` runs on ba7c78c (main, `v0.74.0`, `go/v0.74.0`). Each failed on one job, `spec pin`: `verify/docs/seam-event.v1.md` still declared `tracking feat/bp-2c`, but #1591 had landed on runtime main (e1c74b7), and the runtime 0.74.0 train (#1600, e69914aa) then amended the spec 21 minutes before the SDK release commit. The gate was right: the copy was stale against the published contract.
 - Fix: re-vendored @ e69914aa (wording only, no tag, digest or vector change), and dropped the tracking declaration. `check_vendored_spec.py --from gh` is OK on all three copies. Python: 2542 passed. Contract gate: exit 0. verify: `cargo test` green.
+
+## bp8-allocation-view (waves branchpoint W3, 2026-11-08)
+
+- Plan: `plans/bp8-allocation-view.md`, 5 phases (P1 Py, P2 TS, P3 verify AC6, P4 docs, P5 CI-cost). One PR, branch `feat/bp8-allocation-view`.
+- Main is red: the contract gate exits 6 on the 0.76.0 stubs. This PR fixes it.
+- Repo map:
+  - `python/seam_sdk/_seal.py:73-163`: the decoder precedent (WITHHELD).
+  - `python/seam_sdk/__init__.py:12,178-181`: exports.
+  - `client.py:~1140`, `aio.py:~863`: get_decision docs.
+  - `python/tests/test_seal_attestation.py` and `fixtures/seal_attestation_cases.json`: the table precedent, shared with TS.
+  - `ts/src/client.ts:460-584`: sealAttestationOf.
+  - `ts/src/index.ts:54-80`: dual-declared names comment, pinned by `python/tests/test_shadowed_names_comment.py`.
+  - `ts/tests/seal_attestation.test.ts:1-6`: reads the Python fixture.
+  - generated TS `Allocation` message (in `ts/gen`): budgetEpoch is a bigint.
+  - `contract/field-manifest.txt`: sorted entries; `scripts/check-contract.sh:633-680` holds `--write-manifest`.
+  - `verify/tests/bundle.rs:1-33`: fixture provenance rule; fixtures in `verify/fixtures/evidence-bundle/`.
+  - `COMPATIBILITY.md:176-188` (seal row at line 183), `README.md` "Explaining a sealed record".
+  - `.github/workflows/ci.yml`: 14 jobs, all blacksmith-4vcpu, ci-ok job `ci-ok`.
+  - `.github/workflows/publish.yml:63` and `.github/workflows/release-on-runtime.yml:177` read ci-ok by SHA (off-limits).
+- PR strategy: one PR (feat/bp8-allocation-view). Why: the manifest fix is what turns main green and unblocks the 0.76.0 release, and the owner brief requires the CI pass in the same PR. Risk: P1 and P2 complex (public API); P3+P4 batched simple; P5 simple.
+- 2026-11-08 P1 DONE: PASS (Opus verifier, solo, since it is a complex public-API phase), 1 round. The gaps were minor (add a 0.0001 propensity case, an unknown-7-with-payload case, and sort the import) and were closed before the commit. Files: `python/seam_sdk/_allocation.py` (new), `python/tests/test_allocation.py` (new), `python/tests/fixtures/allocation_cases.json` (new, 24 cases), `__init__.py`, `client.py`, `aio.py`, `test_integration.py`, `test_field_manifest_gate.py`, `contract/field-manifest.txt` (+24/-0). Results: contract gate 0; ruff clean; pytest 2601 passed. Next: P2 (TS).
+- 2026-11-08 P2 DONE: PASS (Opus verifier, solo: complex public API), 1 round.
+  - Gaps, all minor and closed before the commit:
+    - an explicit JS non-carrier test;
+    - TSDoc now states that a `null` view throws;
+    - TSDoc carries the "operator alteration breaks the chain re-verify" sentence;
+    - re-anchored `PROGRESS.md:163` (`confidence`, now `ts/src/client.ts:1583`).
+  - Files: `ts/src/client.ts` (allocationOf + interfaces after sealAttestationOf), `ts/src/index.ts` (EIGHT dual-declared names), `ts/tests/allocation.test.ts` (new; reads the Python fixture), `ts/tests/integration.test.ts`.
+  - The client.ts insertion shifted citations by 149: `COMPATIBILITY.md:604,803` and `PROGRESS.md:160,162` were re-anchored.
+  - Results: TS typecheck/build clean, 567 tests pass; pytest 2601 passed.
+  - Plan drift: `test_shadowed_names_comment.py` needed no edit, because it derives the count word.
+  - Next: P3 + P4 (batched simple).
+- 2026-11-08 P3+P4 DONE (batched simple, Opus verifier, separate verdicts).
+  - Round 1: GAPS on both.
+    - P3: the doc comment was displaced by the `sealed_field` helper; the provenance overstated what proves the trailer is present; the ISSUER doc missed `allocated`.
+    - P4: the README example lacked a `None` guard and the field list omitted `snapshot_id`; "ciphertext's digest" became "chained `ciphertext_digest`"; the aio import note.
+  - Round 2: P4 PASS. P3 had two comment-only residuals (both trailing `remove_dir_all` calls; the inline distinctness comment), fixed verbatim as the verifier worded them; the final cumulative verify re-checks them.
+  - Files: `verify/fixtures/evidence-bundle/allocated/` (new, 5 files), `verify/tests/bundle.rs`, `README.md`, `COMPATIBILITY.md`, `CHANGELOG.md`, `DECISIONS.md` (D-BP8S-1..6).
+  - Results: verify cargo test/clippy/fmt green; pytest 2603 passed; `scripts/test_*.py` 720 passed.
+  - Next: P5 (CI cost).
+- 2026-11-08 P5 implemented (CI-cost pass 2). 13 `ci.yml` jobs plus registry-drift and framework-coinstall moved to blacksmith-2vcpu; `integration` stays 4vcpu. `docs/ci-cost.md` (new), DECISIONS D-CI-RUNNER and D-CI-PATHS, ASSUMPTIONS A-BP8S-2, DEFERRED (owner lever: revert #279). `scripts/test_ci_gate.py` 68 passed; actionlint findings unchanged (5 existing, before and after). The P5 verdict is folded into the final cumulative verify; the PR run's per-job durations go into the doc before merge (AC3).
+- 2026-11-08 Finalization: full local gates green (ruff; pytest 2603; TS typecheck/build, 567 pass 0 fail; go; verify test/clippy/fmt; contract gate exit 0; scripts 720). Final Opus verify of the cumulative diff: (B) P3 residuals PASS, (C) whole feature PASS, (A) P5 GAPS, doc-only: the durations table was missing, the GitHub-hosted saving was overstated, and the #279 date. All three fixed with the verifier's numbers. /reconcile: A-BP8S-1 and A-BP8S-2 CONFIRMED by Opus (reversible tier). Next: /ship, a draft PR.
+- pushed feat/bp8-allocation-view 802b31e; PR #338 opened (draft): https://github.com/zer07labs/seam-sdk/pull/338
+- PR #338 CI green (run 42534222847); 2vcpu durations recorded in docs/ci-cost.md (P5 AC3); all jobs under 60 s.

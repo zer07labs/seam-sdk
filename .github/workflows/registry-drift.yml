@@ -87,7 +87,7 @@ on:
 jobs:
   drift:
     name: is main's declared version installable?
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     permissions:
       contents: read      # the checkout

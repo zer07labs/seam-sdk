@@ -31,6 +31,7 @@ from seam_sdk import (
     WIRE_FEATURE_ENROLL_KIND,
     WIRE_FEATURE_OUTCOME_OBSERVED_AT,
     WIRE_FEATURE_OUTCOME_REWARD_METRICS,
+    allocation_of,
     collective_outcome_of,
     policy_enforcement_of,
     seal_attestation_of,
@@ -90,6 +91,15 @@ def test_full_round_trip(server):
             assert (
                 attestation.collective_outcome.verdict == immediate_collective.verdict
             )
+
+    # Runtime 0.76.0+ (Branchpoint BP-8): the record view carries an always-present allocation view.
+    # No runtime writes the Allocation trailer before BP-9, and nothing here runs an experiment, so it
+    # reads NOT_RECORDED unconditionally — a RECORDED here would be a runtime reading a payload it was
+    # never given.
+    allocation = allocation_of(record)
+    assert allocation is not None
+    assert allocation.availability == "NOT_RECORDED"
+    assert allocation.allocation is None
 
     # Runtime 0.63.0+ (seam-sdk#307): the runtime's version, credential-free. Always a semver string;
     # an exact match only when the run says which runtime it built (SEAM_EXPECTED_RUNTIME_VERSION).

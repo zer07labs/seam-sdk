@@ -16,6 +16,25 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added
+- **`allocation_of(view)` / `allocationOf(view)` — which experiment arm a fetched record was allocated to
+  (Branchpoint BP-8, runtime 0.76.0).** It decodes `DecisionRecordView.allocation` (tag 13) into
+  `AllocationView(availability, allocation)` and the 14-field `Allocation`, both exported from the package root
+  (Python `seam_sdk` — a pure function, used with the sync and `seam_sdk.aio` clients alike; TS
+  `@zer07labs/seam-sdk`). It follows the seal attestation's reading
+  rules: `None`/`undefined` only when the field is absent (a runtime older than 0.76.0); an unknown
+  availability, `UNSPECIFIED` included, reads `"UNRECOGNIZED"` and is treated as withheld; the payload is read
+  only under `RECORDED`; nothing raises. `budget_epoch` keeps full uint64 precision (`int` / `bigint`), and `mode`
+  stays a raw string. Every live record reads `NOT_RECORDED` until a runtime writes the allocation. Go, Java and
+  Kotlin carry the generated fields only, as for the seal attestation.
+- `verify/` ships an `allocated/` evidence bundle exported by runtime 0.76.0 from a record sealed with the
+  Allocation trailer, and proves `seam-verify bundle` verifies it unchanged (it checks the chained
+  `ciphertext_digest` and never sees the trailer).
+
+### Changed
+- `contract/field-manifest.txt` records the `AllocationView`, `Allocation` and `AllocationAvailability` surface,
+  which the contract gate has refused since the 0.76.0 regeneration; this release turns it green again.
+
 ## 0.76.0 — 2026-11-08
 
 ## 0.75.0 — 2026-11-08

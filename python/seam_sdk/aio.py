@@ -861,7 +861,8 @@ class SeamClient:
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.DecisionRecordView:
         """Async twin of :meth:`seam_sdk.SeamClient.get_decision`. Returns the raw view; read it with
-        :func:`~seam_sdk.policy_enforcement_of` and :func:`~seam_sdk.seal_attestation_of`."""
+        :func:`~seam_sdk.policy_enforcement_of`, :func:`~seam_sdk.seal_attestation_of` and
+        :func:`~seam_sdk.allocation_of`."""
         return await self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/GetDecision",

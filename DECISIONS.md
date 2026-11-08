@@ -1219,7 +1219,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:1812-1834` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:1830-1852` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2049,7 +2049,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:1842` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:1860` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -3122,3 +3122,57 @@ Ranked by blast radius. The two possible one-way doors (a public exception API, 
   and the run id for everything else, so a main push never cancels or replaces another main push's pending
   run. A shared group with `cancel-in-progress: false` would still drop a pending run when a newer one queues,
   leaving that commit without a `ci-ok` for the release gates.
+
+## 2026-11-08 — BP-8 `AllocationView` on the SDK (plans/bp8-allocation-view.md)
+
+- **D-BP8S-1 — carry the field, and decode it.** `DecisionRecordView.allocation` (tag 13) is wired into both
+  hand-written clients as `allocation_of` / `allocationOf`, not just recorded in `contract/field-manifest.txt`.
+  BP-9 will start writing the trailer with no wire change, and a client that already decodes it then needs no
+  release. **Decided by:** Opus (additive public surface, mirrors `SealAttestation`).
+- **D-BP8S-2 — the seal attestation's reading rules, unchanged.** Absent means `None`/`undefined`. `UNSPECIFIED`
+  and any unknown availability read `"UNRECOGNIZED"` (the proto's normative WITHHELD growth policy). The payload is
+  read only under `RECORDED`, whatever else the wire carries. Nothing raises: the allocation has no fail-closed
+  enum, so there is no raising path. **Decided by:** Opus (the proto states the rule; the SDK only follows it).
+- **D-BP8S-3 — `mode` stays a raw string; `budget_epoch` keeps full uint64.** The proto gives `mode` no enum and no
+  growth policy, so a closed set here would break on the first new mode. `budget_epoch` is an `int` in Python and
+  a `bigint` in TS, never a `number`. **Decided by:** Opus (reversible: a typed accessor can be added later).
+- **D-BP8S-4 — `RECORDED` without the inner message reads `allocation = None`.** Recorded as A-BP8S-1; absence
+  makes no claim, which is the fail-closed direction. **Decided by:** Opus, pending `/reconcile`.
+- **D-BP8S-5 — AC6 is proved with a real exported bundle, not with vendored trailer bytes.**
+  `verify/fixtures/evidence-bundle/allocated/` is the runtime's own export at 3645c10f2. Its provenance and the one
+  export-only patch are in `verify/tests/bundle.rs`. The trailer is commitment plaintext that `verify/` never
+  sees, so vendoring `ALLOCATION_TRAILER_HEX` would prove nothing about the verifier. **Decided by:** Opus.
+- **D-BP8S-6 — J3 train 2's `decision_point` / `allocation_unit` request fields are out of scope.** They wait for
+  J4-a. Only the read-side `AllocationView` ships here. **Decided by:** the plan (seam-experiments
+  `joint/shared-substrate.md` §J3).
+
+## 2026-11-08 — CI-cost pass 2: the smallest runner that fits (docs/ci-cost.md)
+
+- **D-CI-RUNNER: every `ci.yml` job but `integration` runs on `blacksmith-2vcpu-ubuntu-2404`**, as do
+  `registry-drift.yml` and `framework-coinstall.yml`. Each job finishes in under a minute on 4vcpu and bills one
+  started minute, so 2vcpu halves the rate: about $8 a month off the ~$26 left after #336.
+  - `integration` stays on 4vcpu: a cache miss builds `seamd` from source under a 45-minute timeout.
+  - `publish.yml`, `release-on-runtime.yml`, yank and promote are untouched. `ci-ok`'s `needs` and the required
+    check set are unchanged.
+  - A job that regularly crosses 60 s on 2vcpu bills 2 minutes; move that one job back. The PR run's durations
+    are in `docs/ci-cost.md`.
+  - **Decided by:** Opus (reversible, one label per job).
+- **D-CI-PATHS: no path filter.** There is no merge queue, so the brief's `merge_group.base_sha` filter has
+  nothing to attach to. The `pull_request` analogue (a `changes` job gating go, java, kotlin, verify and
+  verify-msrv) saves about 145 min per 30 days (≈$1 a month after D-CI-RUNNER). It would add skip-means-success
+  logic to `ci-ok`, which `publish.yml` and `release-on-runtime.yml` read by SHA as a full-suite green, and the
+  Python suite reads across the whole repo, so it could never gate the expensive jobs. Revisit if a merge queue
+  is adopted. **Decided by:** Opus, logged as A-BP8S-2 pending `/reconcile`.
+
+## 2026-11-08 — BP-8 reconcile (plans/bp8-allocation-view.md)
+
+### A-BP8S-1 — RECORDED without the inner Allocation reads `allocation=None`
+- **Analysis (Opus):** confirm.
+  - The proto states the inner message is present iff RECORDED, and states a reading rule, not a FailPolicy, so raising has no basis.
+  - `seal_attestation_of` already reads an absent collective under RECORDED+COMMIT the same way, so one rule holds across both decoders.
+  - Absence makes no claim: a caller that tests `view.allocation is not None` gets the fail-closed answer.
+- **Decided by:** Opus (reversible tier: one documented branch in two decoders). **Verdict:** CONFIRM. **Status:** CONFIRMED.
+
+### A-BP8S-2 — no CI path filter
+- **Analysis (Opus):** confirm. There is no merge queue to filter. The `pull_request` analogue saves about $1 a month and puts skip-means-success logic into the `ci-ok` the release workflows read by SHA. Adding it later is one PR.
+- **Decided by:** Opus (reversible tier: CI config). **Verdict:** CONFIRM. **Status:** CONFIRMED.
