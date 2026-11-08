@@ -6,7 +6,7 @@ the path-filter call is also A-BP8S-2 in `ASSUMPTIONS.md`.
 
 ## How it is billed
 
-- Every job runs on Blacksmith (since #279, 2026-10-20). Blacksmith bills per job, per started minute:
+- Every job runs on Blacksmith (since #279; first Blacksmith job 2026-10-20 UTC). Blacksmith bills per job, per started minute:
   $0.004/min on `blacksmith-2vcpu-ubuntu-2404`, $0.008/min on `blacksmith-4vcpu-ubuntu-2404`.
 - Before #279, jobs ran on GitHub-hosted `ubuntu-latest`. The repo is public, so those standard-runner
   minutes are free; every billed dollar is Blacksmith.
@@ -57,6 +57,10 @@ one minute, and the run's cost is set by the job count and the per-minute rate, 
 - Per-job durations on 2vcpu, from this PR's own CI run, are in the table below. If a job's duration
   regularly crosses 60 s, move that one job back to 4vcpu; that is a one-line change.
 
+| Job | 4vcpu (latest green main run) | 2vcpu (this PR's run) |
+|-----|------------------------------:|----------------------:|
+<!-- DURATIONS -->
+
 ## Considered and not adopted
 
 - **Path filters (D-CI-PATHS).** seam-sdk has no merge queue, so there is no `merge_group` run to filter. On
@@ -65,5 +69,5 @@ one minute, and the run's cost is set by the job count and the per-minute rate, 
   let a release commit's green mean less than it does now. The PR-event analogue would save about 145 min per
   30 days, about $1 a month after pass 2.
 - **Back to GitHub-hosted runners.** Reverting #279 would make non-publish CI free on this public repo (about
-  $20 a month → $0 after this pass). #279 was an org-level Blacksmith migration, so it is the owner's call,
+  $20 a month of non-publish spend before this pass, roughly $12-15 after it, → $0). #279 was an org-level Blacksmith migration, so it is the owner's call,
   recorded in `DEFERRED.md`.

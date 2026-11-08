@@ -152,7 +152,7 @@ Scope corrections against the resources:
   - The provenance paragraph states that the record comes from a test-only reseal
     (`seamd::testing::reseal_with_allocation`: a fresh DEK, new id `d3-allocated-000000000`). It also states that
     the runtime test seals `bucket_version: 1` where the spec says 2, which does not matter to `verify/`. And it
-    states the one export-only patch: the final `remove_dir_all` was replaced with a printed path.
+    states the one export-only patch: the two trailing `remove_dir_all` calls was replaced with a printed path.
   - **Pre-checked 2026-11-08:** the bundle captured from the 3645c10f2 export verifies with this repo's
     `seam-verify bundle --issuer <seed 7×32 AID>` (exit 0, "signed binding ties"). Version-refusal risk is
     retired. `verify/` links nothing of Seam's, and that stays

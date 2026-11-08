@@ -3163,3 +3163,16 @@ Ranked by blast radius. The two possible one-way doors (a public exception API, 
   logic to `ci-ok`, which `publish.yml` and `release-on-runtime.yml` read by SHA as a full-suite green, and the
   Python suite reads across the whole repo, so it could never gate the expensive jobs. Revisit if a merge queue
   is adopted. **Decided by:** Opus, logged as A-BP8S-2 pending `/reconcile`.
+
+## 2026-11-08 — BP-8 reconcile (plans/bp8-allocation-view.md)
+
+### A-BP8S-1 — RECORDED without the inner Allocation reads `allocation=None`
+- **Analysis (Opus):** confirm.
+  - The proto states the inner message is present iff RECORDED, and states a reading rule, not a FailPolicy, so raising has no basis.
+  - `seal_attestation_of` already reads an absent collective under RECORDED+COMMIT the same way, so one rule holds across both decoders.
+  - Absence makes no claim: a caller that tests `view.allocation is not None` gets the fail-closed answer.
+- **Decided by:** Opus (reversible tier: one documented branch in two decoders). **Verdict:** CONFIRM. **Status:** CONFIRMED.
+
+### A-BP8S-2 — no CI path filter
+- **Analysis (Opus):** confirm. There is no merge queue to filter. The `pull_request` analogue saves about $1 a month and puts skip-means-success logic into the `ci-ok` the release workflows read by SHA. Adding it later is one PR.
+- **Decided by:** Opus (reversible tier: CI config). **Verdict:** CONFIRM. **Status:** CONFIRMED.
