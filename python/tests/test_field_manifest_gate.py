@@ -724,6 +724,7 @@ def test_the_committed_manifest_enum_section_is_not_vacuous_and_covers_every_enu
     )
     names = {e.split("#", 1)[0] for e in entries}
     assert names == {
+        "AllocationAvailability",
         "AuthorizeVerdict",
         "CollectiveVerdict",
         "BallotChoice",
@@ -735,6 +736,7 @@ def test_the_committed_manifest_enum_section_is_not_vacuous_and_covers_every_enu
     # OTHER value's fail-closed behaviour depends on is exactly as real a breaking change as removing
     # any other value.
     for zero in (
+        "AllocationAvailability#ALLOCATION_AVAILABILITY_UNSPECIFIED",
         "AuthorizeVerdict#AUTHORIZE_VERDICT_UNSPECIFIED",
         "BallotChoice#BALLOT_CHOICE_UNSPECIFIED",
         "CollectiveVerdict#COLLECTIVE_VERDICT_UNSPECIFIED",

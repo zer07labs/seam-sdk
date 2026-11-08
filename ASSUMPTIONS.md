@@ -1549,3 +1549,10 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Alternatives:** keep the diagnostic CLI-only (the binary links the library as a separate crate, so `pub(crate)` is not available); a typed error enum (larger API change).
 - **Blast radius if wrong:** public items of a published 0.x crate; removal needs a minor bump. `non_exhaustive` keeps adding options non-breaking.
 - **Status:** CONFIRMED (2026-10-31), see DECISIONS.md "seam-sdk#316 reconcile"
+
+## A-BP8S-1 — RECORDED without the inner Allocation reads `allocation=None` (plan bp8-allocation-view, P1)
+- **Assumed:** the proto says the inner message is "present iff RECORDED", so a RECORDED view whose inner message is absent breaks the server's own invariant.
+- **Chose:** decode it as `AllocationView(availability="RECORDED", allocation=None)`, without raising. Absence makes no claim (the fail-closed direction), and this matches `seal_attestation_of`'s absent collective under RECORDED+COMMIT.
+- **Alternatives:** raise (but the proto states a reading rule, not a FailPolicy, and no raising path exists anywhere else in this decoder); read it as UNRECOGNIZED (that would misreport an availability the server stated).
+- **Blast radius if wrong:** one documented branch in two decoders, so changing it would be a minor behaviour change.
+- **Status:** UNCONFIRMED

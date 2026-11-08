@@ -5348,3 +5348,24 @@ not filed here. OQ-1 is resolved, so no phase is gated.
 
 - Cause of the v0.74.0 publish refusal (run 41696842485, #332): `ci-green` read three red `ci-ok` runs on ba7c78c (main, `v0.74.0`, `go/v0.74.0`). Each failed on one job, `spec pin`: `verify/docs/seam-event.v1.md` still declared `tracking feat/bp-2c`, but #1591 had landed on runtime main (e1c74b7), and the runtime 0.74.0 train (#1600, e69914aa) then amended the spec 21 minutes before the SDK release commit. The gate was right: the copy was stale against the published contract.
 - Fix: re-vendored @ e69914aa (wording only, no tag, digest or vector change), and dropped the tracking declaration. `check_vendored_spec.py --from gh` is OK on all three copies. Python: 2542 passed. Contract gate: exit 0. verify: `cargo test` green.
+
+## bp8-allocation-view (waves branchpoint W3, 2026-11-08)
+
+- Plan: `plans/bp8-allocation-view.md`, 5 phases (P1 Py, P2 TS, P3 verify AC6, P4 docs, P5 CI-cost). One PR, branch `feat/bp8-allocation-view`.
+- Main is red: the contract gate exits 6 on the 0.76.0 stubs. This PR fixes it.
+- Repo map:
+  - `python/seam_sdk/_seal.py:73-163`: the decoder precedent (WITHHELD).
+  - `python/seam_sdk/__init__.py:12,178-181`: exports.
+  - `client.py:~1140`, `aio.py:~863`: get_decision docs.
+  - `python/tests/test_seal_attestation.py` and `fixtures/seal_attestation_cases.json`: the table precedent, shared with TS.
+  - `ts/src/client.ts:460-584`: sealAttestationOf.
+  - `ts/src/index.ts:54-80`: dual-declared names comment, pinned by `python/tests/test_shadowed_names_comment.py`.
+  - `ts/tests/seal_attestation.test.ts:1-6`: reads the Python fixture.
+  - generated TS `Allocation` message (in `ts/gen`): budgetEpoch is a bigint.
+  - `contract/field-manifest.txt`: sorted entries; `scripts/check-contract.sh:633-680` holds `--write-manifest`.
+  - `verify/tests/bundle.rs:1-33`: fixture provenance rule; fixtures in `verify/fixtures/evidence-bundle/`.
+  - `COMPATIBILITY.md:176-188` (seal row at line 183), `README.md` "Explaining a sealed record".
+  - `.github/workflows/ci.yml`: 14 jobs, all blacksmith-4vcpu, ci-ok job `ci-ok`.
+  - `.github/workflows/publish.yml:63` and `.github/workflows/release-on-runtime.yml:177` read ci-ok by SHA (off-limits).
+- PR strategy: one PR (feat/bp8-allocation-view). Why: the manifest fix is what turns main green and unblocks the 0.76.0 release, and the owner brief requires the CI pass in the same PR. Risk: P1 and P2 complex (public API); P3+P4 batched simple; P5 simple.
+- 2026-11-08 P1 DONE: PASS (Opus verifier, solo, since it is a complex public-API phase), 1 round. The gaps were minor (add a 0.0001 propensity case, an unknown-7-with-payload case, and sort the import) and were closed before the commit. Files: `python/seam_sdk/_allocation.py` (new), `python/tests/test_allocation.py` (new), `python/tests/fixtures/allocation_cases.json` (new, 24 cases), `__init__.py`, `client.py`, `aio.py`, `test_integration.py`, `test_field_manifest_gate.py`, `contract/field-manifest.txt` (+24/-0). Results: contract gate 0; ruff clean; pytest 2601 passed. Next: P2 (TS).

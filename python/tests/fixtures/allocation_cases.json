@@ -1,0 +1,608 @@
+{
+ "_comment": "Shared by python/tests/test_allocation.py and ts/tests/allocation.test.ts so the two decoders are held to one table. 'wire': null means DecisionRecordView.allocation is absent; otherwise availability is the raw AllocationAvailability integer (so an unknown value can be expressed) and 'allocation': null means the inner Allocation message is absent. Field names are the proto's snake_case. budget_epoch is a uint64 carried as a decimal STRING in both wire and expect, because JSON numbers cannot hold it exactly. 'expect': null means the decoder returns None/undefined. -0.0 and NaN propensities cannot be written in JSON and are tested in each language's own suite.",
+ "cases": [
+  {
+   "name": "absent (runtime < 0.76.0)",
+   "wire": null,
+   "expect": null
+  },
+  {
+   "name": "NOT_RECORDED",
+   "wire": {
+    "availability": 2,
+    "allocation": null
+   },
+   "expect": {
+    "availability": "NOT_RECORDED",
+    "allocation": null
+   }
+  },
+  {
+   "name": "KEY_UNAVAILABLE",
+   "wire": {
+    "availability": 3,
+    "allocation": null
+   },
+   "expect": {
+    "availability": "KEY_UNAVAILABLE",
+    "allocation": null
+   }
+  },
+  {
+   "name": "ARCHIVED",
+   "wire": {
+    "availability": 4,
+    "allocation": null
+   },
+   "expect": {
+    "availability": "ARCHIVED",
+    "allocation": null
+   }
+  },
+  {
+   "name": "CLEARANCE_DENIED",
+   "wire": {
+    "availability": 5,
+    "allocation": null
+   },
+   "expect": {
+    "availability": "CLEARANCE_DENIED",
+    "allocation": null
+   }
+  },
+  {
+   "name": "UNAVAILABLE",
+   "wire": {
+    "availability": 6,
+    "allocation": null
+   },
+   "expect": {
+    "availability": "UNAVAILABLE",
+    "allocation": null
+   }
+  },
+  {
+   "name": "UNSPECIFIED reads UNRECOGNIZED (withheld), not RECORDED",
+   "wire": {
+    "availability": 0,
+    "allocation": null
+   },
+   "expect": {
+    "availability": "UNRECOGNIZED",
+    "allocation": null
+   }
+  },
+  {
+   "name": "unknown 7 reads UNRECOGNIZED",
+   "wire": {
+    "availability": 7,
+    "allocation": null
+   },
+   "expect": {
+    "availability": "UNRECOGNIZED",
+    "allocation": null
+   }
+  },
+  {
+   "name": "unknown 99 reads UNRECOGNIZED",
+   "wire": {
+    "availability": 99,
+    "allocation": null
+   },
+   "expect": {
+    "availability": "UNRECOGNIZED",
+    "allocation": null
+   }
+  },
+  {
+   "name": "NOT_RECORDED with a payload on the wire: payload not read",
+   "wire": {
+    "availability": 2,
+    "allocation": {
+     "mode": "split",
+     "experiment_id": "exp-checkout-1",
+     "variant_id": "arm-b",
+     "intended_action": "APPROVE",
+     "served_action": "APPROVE",
+     "allocation_propensity": 0.25,
+     "budget_bp": 0,
+     "budget_epoch": "7",
+     "snapshot_id": "snap-0001",
+     "unit_tag": "0123456789abcdef0123456789abcdef",
+     "unit_digest": "",
+     "bucket_version": 2,
+     "commitment_kid": "a1b2c3d4",
+     "decision_point": ""
+    }
+   },
+   "expect": {
+    "availability": "NOT_RECORDED",
+    "allocation": null
+   }
+  },
+  {
+   "name": "UNAVAILABLE with a payload on the wire: payload not read",
+   "wire": {
+    "availability": 6,
+    "allocation": {
+     "mode": "split",
+     "experiment_id": "exp-checkout-1",
+     "variant_id": "arm-b",
+     "intended_action": "APPROVE",
+     "served_action": "APPROVE",
+     "allocation_propensity": 0.25,
+     "budget_bp": 0,
+     "budget_epoch": "7",
+     "snapshot_id": "snap-0001",
+     "unit_tag": "0123456789abcdef0123456789abcdef",
+     "unit_digest": "",
+     "bucket_version": 2,
+     "commitment_kid": "a1b2c3d4",
+     "decision_point": ""
+    }
+   },
+   "expect": {
+    "availability": "UNAVAILABLE",
+    "allocation": null
+   }
+  },
+  {
+   "name": "UNSPECIFIED with a payload on the wire: payload not read",
+   "wire": {
+    "availability": 0,
+    "allocation": {
+     "mode": "split",
+     "experiment_id": "exp-checkout-1",
+     "variant_id": "arm-b",
+     "intended_action": "APPROVE",
+     "served_action": "APPROVE",
+     "allocation_propensity": 0.25,
+     "budget_bp": 0,
+     "budget_epoch": "7",
+     "snapshot_id": "snap-0001",
+     "unit_tag": "0123456789abcdef0123456789abcdef",
+     "unit_digest": "",
+     "bucket_version": 2,
+     "commitment_kid": "a1b2c3d4",
+     "decision_point": ""
+    }
+   },
+   "expect": {
+    "availability": "UNRECOGNIZED",
+    "allocation": null
+   }
+  },
+  {
+   "name": "unknown 7 with a payload on the wire: payload not read",
+   "wire": {
+    "availability": 7,
+    "allocation": {
+     "mode": "split",
+     "experiment_id": "exp-checkout-1",
+     "variant_id": "arm-b",
+     "intended_action": "APPROVE",
+     "served_action": "APPROVE",
+     "allocation_propensity": 0.25,
+     "budget_bp": 0,
+     "budget_epoch": "7",
+     "snapshot_id": "snap-0001",
+     "unit_tag": "0123456789abcdef0123456789abcdef",
+     "unit_digest": "",
+     "bucket_version": 2,
+     "commitment_kid": "a1b2c3d4",
+     "decision_point": ""
+    }
+   },
+   "expect": {
+    "availability": "UNRECOGNIZED",
+    "allocation": null
+   }
+  },
+  {
+   "name": "unknown 99 with a payload on the wire: payload not read",
+   "wire": {
+    "availability": 99,
+    "allocation": {
+     "mode": "split",
+     "experiment_id": "exp-checkout-1",
+     "variant_id": "arm-b",
+     "intended_action": "APPROVE",
+     "served_action": "APPROVE",
+     "allocation_propensity": 0.25,
+     "budget_bp": 0,
+     "budget_epoch": "7",
+     "snapshot_id": "snap-0001",
+     "unit_tag": "0123456789abcdef0123456789abcdef",
+     "unit_digest": "",
+     "bucket_version": 2,
+     "commitment_kid": "a1b2c3d4",
+     "decision_point": ""
+    }
+   },
+   "expect": {
+    "availability": "UNRECOGNIZED",
+    "allocation": null
+   }
+  },
+  {
+   "name": "RECORDED split",
+   "wire": {
+    "availability": 1,
+    "allocation": {
+     "mode": "split",
+     "experiment_id": "exp-checkout-1",
+     "variant_id": "arm-b",
+     "intended_action": "APPROVE",
+     "served_action": "APPROVE",
+     "allocation_propensity": 0.25,
+     "budget_bp": 0,
+     "budget_epoch": "7",
+     "snapshot_id": "snap-0001",
+     "unit_tag": "0123456789abcdef0123456789abcdef",
+     "unit_digest": "",
+     "bucket_version": 2,
+     "commitment_kid": "a1b2c3d4",
+     "decision_point": ""
+    }
+   },
+   "expect": {
+    "availability": "RECORDED",
+    "allocation": {
+     "mode": "split",
+     "experiment_id": "exp-checkout-1",
+     "variant_id": "arm-b",
+     "intended_action": "APPROVE",
+     "served_action": "APPROVE",
+     "allocation_propensity": 0.25,
+     "budget_bp": 0,
+     "budget_epoch": "7",
+     "snapshot_id": "snap-0001",
+     "unit_tag": "0123456789abcdef0123456789abcdef",
+     "unit_digest": "",
+     "bucket_version": 2,
+     "commitment_kid": "a1b2c3d4",
+     "decision_point": ""
+    }
+   }
+  },
+  {
+   "name": "RECORDED holdout: empty variant, served differs, budget at 10000",
+   "wire": {
+    "availability": 1,
+    "allocation": {
+     "mode": "holdout",
+     "experiment_id": "exp-checkout-1",
+     "variant_id": "",
+     "intended_action": "APPROVE",
+     "served_action": "REVIEW",
+     "allocation_propensity": 1.0,
+     "budget_bp": 10000,
+     "budget_epoch": "7",
+     "snapshot_id": "snap-0001",
+     "unit_tag": "0123456789abcdef0123456789abcdef",
+     "unit_digest": "",
+     "bucket_version": 2,
+     "commitment_kid": "a1b2c3d4",
+     "decision_point": ""
+    }
+   },
+   "expect": {
+    "availability": "RECORDED",
+    "allocation": {
+     "mode": "holdout",
+     "experiment_id": "exp-checkout-1",
+     "variant_id": "",
+     "intended_action": "APPROVE",
+     "served_action": "REVIEW",
+     "allocation_propensity": 1.0,
+     "budget_bp": 10000,
+     "budget_epoch": "7",
+     "snapshot_id": "snap-0001",
+     "unit_tag": "0123456789abcdef0123456789abcdef",
+     "unit_digest": "",
+     "bucket_version": 2,
+     "commitment_kid": "a1b2c3d4",
+     "decision_point": ""
+    }
+   }
+  },
+  {
+   "name": "RECORDED with unit_digest and decision_point filled",
+   "wire": {
+    "availability": 1,
+    "allocation": {
+     "mode": "split",
+     "experiment_id": "exp-checkout-1",
+     "variant_id": "arm-b",
+     "intended_action": "APPROVE",
+     "served_action": "APPROVE",
+     "allocation_propensity": 0.25,
+     "budget_bp": 0,
+     "budget_epoch": "7",
+     "snapshot_id": "snap-0001",
+     "unit_tag": "0123456789abcdef0123456789abcdef",
+     "unit_digest": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+     "bucket_version": 2,
+     "commitment_kid": "a1b2c3d4",
+     "decision_point": "checkout.approve"
+    }
+   },
+   "expect": {
+    "availability": "RECORDED",
+    "allocation": {
+     "mode": "split",
+     "experiment_id": "exp-checkout-1",
+     "variant_id": "arm-b",
+     "intended_action": "APPROVE",
+     "served_action": "APPROVE",
+     "allocation_propensity": 0.25,
+     "budget_bp": 0,
+     "budget_epoch": "7",
+     "snapshot_id": "snap-0001",
+     "unit_tag": "0123456789abcdef0123456789abcdef",
+     "unit_digest": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+     "bucket_version": 2,
+     "commitment_kid": "a1b2c3d4",
+     "decision_point": "checkout.approve"
+    }
+   }
+  },
+  {
+   "name": "RECORDED budget_epoch at 2^63 (beyond float precision)",
+   "wire": {
+    "availability": 1,
+    "allocation": {
+     "mode": "split",
+     "experiment_id": "exp-checkout-1",
+     "variant_id": "arm-b",
+     "intended_action": "APPROVE",
+     "served_action": "APPROVE",
+     "allocation_propensity": 0.25,
+     "budget_bp": 0,
+     "budget_epoch": "9223372036854775808",
+     "snapshot_id": "snap-0001",
+     "unit_tag": "0123456789abcdef0123456789abcdef",
+     "unit_digest": "",
+     "bucket_version": 2,
+     "commitment_kid": "a1b2c3d4",
+     "decision_point": ""
+    }
+   },
+   "expect": {
+    "availability": "RECORDED",
+    "allocation": {
+     "mode": "split",
+     "experiment_id": "exp-checkout-1",
+     "variant_id": "arm-b",
+     "intended_action": "APPROVE",
+     "served_action": "APPROVE",
+     "allocation_propensity": 0.25,
+     "budget_bp": 0,
+     "budget_epoch": "9223372036854775808",
+     "snapshot_id": "snap-0001",
+     "unit_tag": "0123456789abcdef0123456789abcdef",
+     "unit_digest": "",
+     "bucket_version": 2,
+     "commitment_kid": "a1b2c3d4",
+     "decision_point": ""
+    }
+   }
+  },
+  {
+   "name": "RECORDED budget_epoch at u64 max",
+   "wire": {
+    "availability": 1,
+    "allocation": {
+     "mode": "split",
+     "experiment_id": "exp-checkout-1",
+     "variant_id": "arm-b",
+     "intended_action": "APPROVE",
+     "served_action": "APPROVE",
+     "allocation_propensity": 0.25,
+     "budget_bp": 0,
+     "budget_epoch": "18446744073709551615",
+     "snapshot_id": "snap-0001",
+     "unit_tag": "0123456789abcdef0123456789abcdef",
+     "unit_digest": "",
+     "bucket_version": 2,
+     "commitment_kid": "a1b2c3d4",
+     "decision_point": ""
+    }
+   },
+   "expect": {
+    "availability": "RECORDED",
+    "allocation": {
+     "mode": "split",
+     "experiment_id": "exp-checkout-1",
+     "variant_id": "arm-b",
+     "intended_action": "APPROVE",
+     "served_action": "APPROVE",
+     "allocation_propensity": 0.25,
+     "budget_bp": 0,
+     "budget_epoch": "18446744073709551615",
+     "snapshot_id": "snap-0001",
+     "unit_tag": "0123456789abcdef0123456789abcdef",
+     "unit_digest": "",
+     "bucket_version": 2,
+     "commitment_kid": "a1b2c3d4",
+     "decision_point": ""
+    }
+   }
+  },
+  {
+   "name": "RECORDED unknown mode string passes through raw",
+   "wire": {
+    "availability": 1,
+    "allocation": {
+     "mode": "bandit",
+     "experiment_id": "exp-checkout-1",
+     "variant_id": "arm-b",
+     "intended_action": "APPROVE",
+     "served_action": "APPROVE",
+     "allocation_propensity": 0.25,
+     "budget_bp": 0,
+     "budget_epoch": "7",
+     "snapshot_id": "snap-0001",
+     "unit_tag": "0123456789abcdef0123456789abcdef",
+     "unit_digest": "",
+     "bucket_version": 2,
+     "commitment_kid": "a1b2c3d4",
+     "decision_point": ""
+    }
+   },
+   "expect": {
+    "availability": "RECORDED",
+    "allocation": {
+     "mode": "bandit",
+     "experiment_id": "exp-checkout-1",
+     "variant_id": "arm-b",
+     "intended_action": "APPROVE",
+     "served_action": "APPROVE",
+     "allocation_propensity": 0.25,
+     "budget_bp": 0,
+     "budget_epoch": "7",
+     "snapshot_id": "snap-0001",
+     "unit_tag": "0123456789abcdef0123456789abcdef",
+     "unit_digest": "",
+     "bucket_version": 2,
+     "commitment_kid": "a1b2c3d4",
+     "decision_point": ""
+    }
+   }
+  },
+  {
+   "name": "RECORDED propensity 0",
+   "wire": {
+    "availability": 1,
+    "allocation": {
+     "mode": "split",
+     "experiment_id": "exp-checkout-1",
+     "variant_id": "arm-b",
+     "intended_action": "APPROVE",
+     "served_action": "APPROVE",
+     "allocation_propensity": 0.0,
+     "budget_bp": 0,
+     "budget_epoch": "7",
+     "snapshot_id": "snap-0001",
+     "unit_tag": "0123456789abcdef0123456789abcdef",
+     "unit_digest": "",
+     "bucket_version": 2,
+     "commitment_kid": "a1b2c3d4",
+     "decision_point": ""
+    }
+   },
+   "expect": {
+    "availability": "RECORDED",
+    "allocation": {
+     "mode": "split",
+     "experiment_id": "exp-checkout-1",
+     "variant_id": "arm-b",
+     "intended_action": "APPROVE",
+     "served_action": "APPROVE",
+     "allocation_propensity": 0.0,
+     "budget_bp": 0,
+     "budget_epoch": "7",
+     "snapshot_id": "snap-0001",
+     "unit_tag": "0123456789abcdef0123456789abcdef",
+     "unit_digest": "",
+     "bucket_version": 2,
+     "commitment_kid": "a1b2c3d4",
+     "decision_point": ""
+    }
+   }
+  },
+  {
+   "name": "RECORDED propensity 0.0001",
+   "wire": {
+    "availability": 1,
+    "allocation": {
+     "mode": "split",
+     "experiment_id": "exp-checkout-1",
+     "variant_id": "arm-b",
+     "intended_action": "APPROVE",
+     "served_action": "APPROVE",
+     "allocation_propensity": 0.0001,
+     "budget_bp": 0,
+     "budget_epoch": "7",
+     "snapshot_id": "snap-0001",
+     "unit_tag": "0123456789abcdef0123456789abcdef",
+     "unit_digest": "",
+     "bucket_version": 2,
+     "commitment_kid": "a1b2c3d4",
+     "decision_point": ""
+    }
+   },
+   "expect": {
+    "availability": "RECORDED",
+    "allocation": {
+     "mode": "split",
+     "experiment_id": "exp-checkout-1",
+     "variant_id": "arm-b",
+     "intended_action": "APPROVE",
+     "served_action": "APPROVE",
+     "allocation_propensity": 0.0001,
+     "budget_bp": 0,
+     "budget_epoch": "7",
+     "snapshot_id": "snap-0001",
+     "unit_tag": "0123456789abcdef0123456789abcdef",
+     "unit_digest": "",
+     "bucket_version": 2,
+     "commitment_kid": "a1b2c3d4",
+     "decision_point": ""
+    }
+   }
+  },
+  {
+   "name": "RECORDED all-zero inner message is present, every field zero",
+   "wire": {
+    "availability": 1,
+    "allocation": {
+     "mode": "",
+     "experiment_id": "",
+     "variant_id": "",
+     "intended_action": "",
+     "served_action": "",
+     "allocation_propensity": 0.0,
+     "budget_bp": 0,
+     "budget_epoch": "0",
+     "snapshot_id": "",
+     "unit_tag": "",
+     "unit_digest": "",
+     "bucket_version": 0,
+     "commitment_kid": "",
+     "decision_point": ""
+    }
+   },
+   "expect": {
+    "availability": "RECORDED",
+    "allocation": {
+     "mode": "",
+     "experiment_id": "",
+     "variant_id": "",
+     "intended_action": "",
+     "served_action": "",
+     "allocation_propensity": 0.0,
+     "budget_bp": 0,
+     "budget_epoch": "0",
+     "snapshot_id": "",
+     "unit_tag": "",
+     "unit_digest": "",
+     "bucket_version": 0,
+     "commitment_kid": "",
+     "decision_point": ""
+    }
+   }
+  },
+  {
+   "name": "RECORDED without the inner message reads allocation None (absence makes no claim)",
+   "wire": {
+    "availability": 1,
+    "allocation": null
+   },
+   "expect": {
+    "availability": "RECORDED",
+    "allocation": null
+   }
+  }
+ ]
+}

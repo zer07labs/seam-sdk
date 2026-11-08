@@ -6,6 +6,7 @@ vectors generated from the Rust runtime pin the exact bytes (see ``conformance/v
 """
 
 from . import aio
+from ._allocation import Allocation, AllocationView, allocation_of
 from ._authorize import AuthorizeResult, canonicalize_tool_input
 from ._collective import CollectiveOutcome, collective_outcome_of
 from ._policy import PolicyEnforcement, policy_enforcement_of
@@ -179,6 +180,11 @@ __all__ = [
     # not FailPolicy, so unknown availability/reason read "UNRECOGNIZED" rather than raising.
     "SealAttestation",
     "seal_attestation_of",
+    # Experiment allocation (0.76.0, Branchpoint BP-8) — which arm a fetched record was allocated to.
+    # Same WITHHELD growth policy as the seal attestation; no raising path at all.
+    "Allocation",
+    "AllocationView",
+    "allocation_of",
     "DEFAULT_TIMEOUT_S",
     "DEFAULT_ADMIN_TIMEOUT_S",
     "jcs_canonicalize",

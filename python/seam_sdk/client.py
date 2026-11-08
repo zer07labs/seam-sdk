@@ -1139,7 +1139,8 @@ class SeamClient:
 
         Returns the raw view. Read its policy enforcement with
         :func:`~seam_sdk.policy_enforcement_of` and its seal attestation with
-        :func:`~seam_sdk.seal_attestation_of` (runtime 0.61.0+) rather than the raw fields."""
+        :func:`~seam_sdk.seal_attestation_of` (runtime 0.61.0+) and its experiment allocation with
+        :func:`~seam_sdk.allocation_of` (runtime 0.76.0+) rather than the raw fields."""
         return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/GetDecision",
