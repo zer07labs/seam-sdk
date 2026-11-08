@@ -5380,3 +5380,11 @@ not filed here. OQ-1 is resolved, so no phase is gated.
   - Results: TS typecheck/build clean, 567 tests pass; pytest 2601 passed.
   - Plan drift: `test_shadowed_names_comment.py` needed no edit, because it derives the count word.
   - Next: P3 + P4 (batched simple).
+- 2026-11-08 P3+P4 DONE (batched simple, Opus verifier, separate verdicts).
+  - Round 1: GAPS on both.
+    - P3: the doc comment was displaced by the `sealed_field` helper; the provenance overstated what proves the trailer is present; the ISSUER doc missed `allocated`.
+    - P4: the README example lacked a `None` guard and the field list omitted `snapshot_id`; "ciphertext's digest" became "chained `ciphertext_digest`"; the aio import note.
+  - Round 2: P4 PASS. P3 had two comment-only residuals (both trailing `remove_dir_all` calls; the inline distinctness comment), fixed verbatim as the verifier worded them; the final cumulative verify re-checks them.
+  - Files: `verify/fixtures/evidence-bundle/allocated/` (new, 5 files), `verify/tests/bundle.rs`, `README.md`, `COMPATIBILITY.md`, `CHANGELOG.md`, `DECISIONS.md` (D-BP8S-1..6).
+  - Results: verify cargo test/clippy/fmt green; pytest 2603 passed; `scripts/test_*.py` 720 passed.
+  - Next: P5 (CI cost).

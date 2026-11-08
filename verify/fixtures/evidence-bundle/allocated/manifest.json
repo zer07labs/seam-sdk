@@ -1,0 +1,61 @@
+{
+  "format": "seam-evidence-bundle.v1",
+  "scope": "decision",
+  "decision_id": "dec:design-partner:d3-allocated-000000000",
+  "tenant": "design-partner",
+  "exported_at": 2000,
+  "issuer": {
+    "aid": "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
+    "ed25519_public_key": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "pin": "Trust comes from pinning this AID out of band (GET /v1/trust/issuer-aid, the anchors your notary holds), never from this file."
+  },
+  "inclusion": {
+    "decision_offset": 9,
+    "record_checksum": "vP8VQYWCdGZfkVrI4g1XaTMzlHMETIYdoZWrLFhuJgg=",
+    "anchor_offset": 7,
+    "anchor_attested_len": 5,
+    "window_events": 3,
+    "window_links": 3,
+    "window_attestations": 2
+  },
+  "files": {
+    "events.jsonl": {
+      "sha256": "61b65b810847bac9c941057419b4d4dd7f01d659faea3f04e722daeea6af78e3",
+      "bytes": 2967
+    },
+    "anchor.json": {
+      "sha256": "0503130df753700921df0d819bfddb88d96ec30c77a1f5ee3409d86d665727a3",
+      "bytes": 317
+    },
+    "commitment.json": {
+      "sha256": "b9f56f12a049c3355696e9788d895c1d3f8cac97e619a0c3777427591bed62f5",
+      "bytes": 2109
+    },
+    "binding.json": {
+      "sha256": "b18ff29631feb585777b91754d767f49b139a061fde0130ecac4dd7cf0f17bc5",
+      "bytes": 456
+    }
+  },
+  "disclosed": [
+    "commitment",
+    "binding"
+  ],
+  "withheld": [
+    {
+      "item": "context",
+      "reason": "not disclosed by the exporter (pass --disclose context)"
+    },
+    {
+      "item": "policy",
+      "reason": "not disclosed by the exporter (pass --disclose policy)"
+    },
+    {
+      "item": "participation",
+      "reason": "participation[].subject is the GDPR erasure predicate; only participation_digest is chained and published"
+    }
+  ],
+  "verify": [
+    "seam-verify chain events.jsonl --issuer aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw --from-anchor anchor.json",
+    "seam-verify bundle . --issuer aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw"
+  ]
+}

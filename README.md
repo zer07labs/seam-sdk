@@ -649,7 +649,7 @@ offline helpers `record_digest_v4` (with `RecordDigestStripError` and
 without the `verify/` binary.
 
 **Explaining a sealed record (runtime 0.61.0+, seam-sdk#273).** `get_decision` / `getDecision` return
-the raw `DecisionRecordView`. Read it through two decoders rather than the raw fields:
+the raw `DecisionRecordView`. Read it through three decoders rather than the raw fields:
 
 - `policy_enforcement_of(view)` / `policyEnforcementOf(view)`, the same decoder as for a
   `DecisionResponse` or `SessionStep`, answers "was this gated, and by what?". On a record it is derived
@@ -664,13 +664,28 @@ the raw `DecisionRecordView`. Read it through two decoders rather than the raw f
   withheld. Neither availability nor seal reason ever raises; an unknown verdict inside a `RECORDED`
   collective raises `UnknownCollectiveVerdictError`, as on the immediate response. The state meanings
   are the `SealAttestationAvailability` comments in `seam.api.v1`.
+- `allocation_of(view)` / `allocationOf(view)` (runtime 0.76.0+, Branchpoint BP-8) returns
+  `AllocationView(availability, allocation)` — which experiment arm the decision was allocated to — or
+  `None`/`undefined` on a runtime older than 0.76.0. `availability` takes the same seven values and the same
+  reading rule as the seal attestation's, and only `RECORDED` carries an `Allocation` (mode, experiment and
+  variant ids, intended and served action, the allocation propensity, budget and budget epoch, config
+  snapshot id, unit tag and digest, bucket version, commitment kid, decision point; `budget_epoch` is an `int` / `bigint`, full uint64). `mode` is a
+  raw string (`split` or `holdout` today), never a closed set. Nothing raises. **No runtime writes the
+  allocation yet**, so every live record reads `NOT_RECORDED` until one does — a normal state, which also
+  means "ran outside any experiment".
 
-The attestation is chain-bound but **not client-verifiable**: it is not a TCT input, so
-`verify_decision` does not cover it. Reads go at clearance **PUBLIC** (the SDK sends no
+  ```python
+  view = allocation_of(client.get_decision(decision_id))
+  if view is not None and view.allocation is not None:  # set only under RECORDED
+      arm = view.allocation.variant_id  # empty for a holdout
+  ```
+
+The attestation and the allocation are chain-bound but **not client-verifiable**: neither is a TCT input, so
+`verify_decision` covers neither, and of these `verify/` sees only the chained `ciphertext_digest`, never the contents. Reads go at clearance **PUBLIC** (the SDK sends no
 `x-seam-clearance`), so a record whose handling rule needs more reads `CLEARANCE_DENIED`, never an
 error. Participant verdicts are not on the view: read them from `get_commitment_proof`.
 `policy_version` and `policy_rules_digest` are display values with no presence, not
-`record_digest_v4` inputs. Go, Java and Kotlin carry the generated fields only, with no decoder.
+`record_digest_v4` inputs. Go, Java and Kotlin carry the generated fields only, with no decoders.
 
 **Async (Python).** `seam_sdk.aio` mirrors the full data-plane `SeamClient` for `asyncio` (same
 signatures, shared ticket core). The management plane is **sync-only by design** — an async operator

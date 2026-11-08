@@ -134,7 +134,7 @@ Scope corrections against the resources:
 
 ### P3 — `verify/` AC6: an allocated evidence bundle verifies
 - **Risk:** simple
-- **Status:** TODO
+- **Status:** DONE (2026-11-08, Opus GAPS then PASS on re-verify; comment-only residuals confirmed in the final verify). Divergence: the fixture is a real runtime export at 3645c10f2 (D-BP8S-5), not vendored trailer bytes; its `commitment.json` is byte-identical to `full/`'s, and the distinctness check is on the chained `ciphertext_digest`.
 - **Delivers:** `verify/fixtures/evidence-bundle/allocated/`, a real bundle exported by the runtime from a record
   whose commitment carries a 0x02 Allocation trailer, plus a test that `seam-verify bundle` exits 0 on it.
 - **Depends on:** nothing. Independent of P1 and P2.
@@ -175,7 +175,7 @@ Scope corrections against the resources:
 
 ### P4 — Docs, compatibility, changelog
 - **Risk:** simple
-- **Status:** TODO
+- **Status:** DONE (2026-11-08, Opus GAPS then PASS, 2 rounds). As planned.
 - **Delivers:** user-facing docs for the new decoder.
 - **Depends on:** P1 and P2 (the README, COMPATIBILITY and CHANGELOG parts); P3 only for the DECISIONS line on
   AC6.

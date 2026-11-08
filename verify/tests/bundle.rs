@@ -25,8 +25,26 @@
 //!   Its governing document carries the policy, so policy is disclosed; only participation is
 //!   withheld. The tests use it only for its foreign signatures (manifest pin, anchor, binding).
 //!
+//! * `allocated/` — Branchpoint BP-8 AC6: a record whose encrypted commitment carries the `0x02`
+//!   Allocation trailer, exported by seam-runtime@3645c10f2 (seamd-v0.76.0) from the temp directory
+//!   of its own `crates/seam-verify/tests/bundle.rs::an_allocated_record_bundle_verifies`. That test
+//!   reseals a record through the test-only `seamd::testing::reseal_with_allocation` (a fresh DEK,
+//!   new id `d3-allocated-000000000`) and exports it with the same issuer seed 7×32. The one
+//!   export-only patch, made in a `git archive` copy and never committed anywhere: the test's two
+//!   trailing `remove_dir_all` calls were replaced with one printed path, so the exported directory
+//!   survived to be copied. The runtime test seals `bucket_version: 1` where the BP-8 spec says 2;
+//!   `verify/` never opens the commitment plaintext, so that is invisible here. That the trailer is
+//!   really inside the sealed ciphertext is proved on the runtime side, not here: the same runtime
+//!   test opens the record and asserts the allocation round-trips before exporting. Here the bundle
+//!   carries no ciphertext at all, only its chained `ciphertext_digest` (a record-digest input). That
+//!   digest differs from `full/`'s target, which proves this is not a relabelled copy, though the
+//!   fresh DEK alone would also change it. `commitment_digest` (and `commitment.json`) are the same,
+//!   because the trailer is not a `seam-commitment-digest:v3` input. This verifier never decrypts, so
+//!   an allocated record must verify exactly like any other, which is all AC6 claims.
+//!
 //! Every directory also verifies under the runtime's internal oracle (`seam-verify-internal`'s
-//! `seam-verify bundle`) at that commit, so a disagreement here is a disagreement between two verifiers.
+//! `seam-verify bundle`) at the commit that exported it (a853f89, or 3645c10f2 for `allocated/`), so
+//! a disagreement here is a disagreement between two verifiers.
 //!
 //! No byte here is hand-invented. Every negative starts from one of those directories and makes ONE
 //! edit; where the edit is to a member, the manifest is re-hashed so the refusal under test is the
@@ -43,7 +61,7 @@ const VERIFIED: i32 = 0;
 const USAGE: i32 = 1;
 const FAILED: i32 = 2;
 
-/// Issuer seed 7×32 — the AID `fixtures/evidence-bundle/{full,minimal,shredded}` were exported under.
+/// Issuer seed 7×32 — the AID `fixtures/evidence-bundle/{allocated,full,minimal,shredded}` were exported under.
 const ISSUER: &str = "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw";
 /// Issuer seed 9×32 — `other-issuer/`.
 const OTHER: &str = "aid:pubkey:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg";
@@ -526,11 +544,51 @@ fn bundle_rejects_allow_uncovered() {
     }
 }
 
-/// The binding refuses no genuine export: the `bundle` CLI still passes over all four shipped
+/// The string field `name` of `decision`'s `DECISION_SEALED` payload in fixture `dir`.
+fn sealed_field(dir: &str, decision: &str, name: &str) -> String {
+    std::fs::read_to_string(fixture(dir).join("events.jsonl"))
+        .expect("read events.jsonl")
+        .lines()
+        .map(|l| serde_json::from_str::<serde_json::Value>(l).expect("event json"))
+        .find(|e| e["kind"] == "DECISION_SEALED" && e["decision_id"] == decision)
+        .unwrap_or_else(|| panic!("{dir}: no DECISION_SEALED for {decision}"))["payload"][name]
+        .as_str()
+        .unwrap_or_else(|| panic!("{dir}: {decision} has no string {name}"))
+        .to_owned()
+}
+
+/// Branchpoint BP-8 AC6: a record sealed with the `0x02` Allocation trailer verifies, through every
+/// step, with nothing in this verifier aware of the trailer.
+#[test]
+fn allocated_record_bundle_verifies() {
+    const D3: &str = "dec:design-partner:d3-allocated-000000000";
+    let (code, out) = verify(&fixture("allocated"), ISSUER);
+    assert_eq!(code, VERIFIED, "{out}");
+    for want in [
+        "EVIDENCE BUNDLE VERIFIED (seam-evidence-bundle.v1)",
+        &format!("decision  : {D3}"),
+        "TCT verifies against the pinned issuer",
+        "signed binding ties this Commitment",
+    ] {
+        assert!(out.contains(want), "missing '{want}' in\n{out}");
+    }
+    // Not a relabelled copy of `full/`: a distinct sealed ciphertext (fresh DEK + trailer)...
+    let ct = sealed_field("allocated", D3, "ciphertext_digest");
+    assert!(!ct.is_empty());
+    assert_ne!(ct, sealed_field("full", D1, "ciphertext_digest"));
+    // ...and nothing the commitment digest covers (the trailer is not a digest:v3 input).
+    let digest =
+        |d: &str| read_json(&fixture(d).join("commitment.json"))["commitment_digest"].clone();
+    assert!(digest("allocated").is_string());
+    assert_eq!(digest("allocated"), digest("full"));
+}
+
+/// The binding refuses no genuine export: the `bundle` CLI still passes over all five shipped
 /// fixtures, each under the issuer that exported it.
 #[test]
 fn every_shipped_bundle_fixture_still_verifies() {
     for (name, aid) in [
+        ("allocated", ISSUER),
         ("full", ISSUER),
         ("minimal", ISSUER),
         ("other-issuer", OTHER),
