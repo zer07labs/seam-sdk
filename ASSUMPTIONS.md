@@ -1556,3 +1556,10 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Alternatives:** raise (but the proto states a reading rule, not a FailPolicy, and no raising path exists anywhere else in this decoder); read it as UNRECOGNIZED (that would misreport an availability the server stated).
 - **Blast radius if wrong:** one documented branch in two decoders, so changing it would be a minor behaviour change.
 - **Status:** UNCONFIRMED
+
+## A-BP8S-2 — no CI path filter (plan bp8-allocation-view, P5)
+- **Assumed:** with no merge queue, a path filter can only live on `pull_request`, inside the `ci-ok` gate the release workflows read by SHA.
+- **Chose:** no filter (D-CI-PATHS). The saving is about 145 min per 30 days (≈$1/mo after D-CI-RUNNER).
+- **Alternatives:** a fail-closed `changes` job gating go, java, kotlin, verify and verify-msrv, with `ci-ok` accepting their skips.
+- **Blast radius if wrong:** about $1 a month. Adding the filter later is one PR.
+- **Status:** UNCONFIRMED

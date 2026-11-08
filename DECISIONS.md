@@ -3145,3 +3145,21 @@ Ranked by blast radius. The two possible one-way doors (a public exception API, 
 - **D-BP8S-6 — J3 train 2's `decision_point` / `allocation_unit` request fields are out of scope.** They wait for
   J4-a. Only the read-side `AllocationView` ships here. **Decided by:** the plan (seam-experiments
   `joint/shared-substrate.md` §J3).
+
+## 2026-11-08 — CI-cost pass 2: the smallest runner that fits (docs/ci-cost.md)
+
+- **D-CI-RUNNER: every `ci.yml` job but `integration` runs on `blacksmith-2vcpu-ubuntu-2404`**, as do
+  `registry-drift.yml` and `framework-coinstall.yml`. Each job finishes in under a minute on 4vcpu and bills one
+  started minute, so 2vcpu halves the rate: about $8 a month off the ~$26 left after #336.
+  - `integration` stays on 4vcpu: a cache miss builds `seamd` from source under a 45-minute timeout.
+  - `publish.yml`, `release-on-runtime.yml`, yank and promote are untouched. `ci-ok`'s `needs` and the required
+    check set are unchanged.
+  - A job that regularly crosses 60 s on 2vcpu bills 2 minutes; move that one job back. The PR run's durations
+    are in `docs/ci-cost.md`.
+  - **Decided by:** Opus (reversible, one label per job).
+- **D-CI-PATHS: no path filter.** There is no merge queue, so the brief's `merge_group.base_sha` filter has
+  nothing to attach to. The `pull_request` analogue (a `changes` job gating go, java, kotlin, verify and
+  verify-msrv) saves about 145 min per 30 days (≈$1 a month after D-CI-RUNNER). It would add skip-means-success
+  logic to `ci-ok`, which `publish.yml` and `release-on-runtime.yml` read by SHA as a full-suite green, and the
+  Python suite reads across the whole repo, so it could never gate the expensive jobs. Revisit if a merge queue
+  is adopted. **Decided by:** Opus, logged as A-BP8S-2 pending `/reconcile`.

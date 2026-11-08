@@ -190,7 +190,7 @@ Scope corrections against the resources:
 
 ### P5 — CI-cost pass (CI config only)
 - **Risk:** simple
-- **Status:** TODO
+- **Status:** DONE (2026-11-08). As planned; the PR run's per-job 2vcpu durations are added to `docs/ci-cost.md` before merge (AC3).
 - **Delivers:** smaller runners where measurements show no need for 4vcpu; `docs/ci-cost.md` with the measured
   before/after; DECISIONS entries.
 - **Depends on:** nothing. It ships in the same PR.

@@ -1,0 +1,69 @@
+# CI cost
+
+This is the record of what seam-sdk's GitHub Actions spend is, and what each cost pass changed.
+Decisions behind it are in `DECISIONS.md` (D-CI-PUSH-MAIN, D-CI-CONCURRENCY, D-CI-RUNNER, D-CI-PATHS);
+the path-filter call is also A-BP8S-2 in `ASSUMPTIONS.md`.
+
+## How it is billed
+
+- Every job runs on Blacksmith (since #279, 2026-10-20). Blacksmith bills per job, per started minute:
+  $0.004/min on `blacksmith-2vcpu-ubuntu-2404`, $0.008/min on `blacksmith-4vcpu-ubuntu-2404`.
+- Before #279, jobs ran on GitHub-hosted `ubuntu-latest`. The repo is public, so those standard-runner
+  minutes are free; every billed dollar is Blacksmith.
+- There is **no merge queue**. A PR runs `ci.yml` once per push (superseded runs are cancelled), and the
+  merge commit runs it once more on `main`. The required check is `ci-ok` alone.
+
+## Measured spend (2026-10-09 .. 2026-11-08)
+
+Billed minutes on Blacksmith since 2026-10-20, by workflow and trigger:
+
+| Workflow | Trigger | Runs | Billed min | min/run |
+|----------|---------|-----:|-----------:|--------:|
+| ci | push to main | 70 | 1048 | 15.0 |
+| ci | push of a release tag | 69 | 1040 | 15.1 |
+| ci | pull_request | 43 | 622 | 14.5 |
+| ci | push to a PR branch | 42 | 607 | 14.5 |
+| publish (internal) | push / dispatch | 38 | 272 | 7.2 |
+| registry drift | schedule / dispatch | 141 | 141 | 1.0 |
+| release (follow runtime) | dispatch | 39 | 46 | 1.2 |
+| framework co-install | pull_request / schedule | 35 | 35 | 1.0 |
+| **Total** | | | **3811** | |
+
+Over a 30-day window that is about 5,770 min, roughly $46 at the 4vcpu rate. GitHub-hosted minutes before
+2026-10-20 (3,701) were free and are not counted.
+
+A `ci` run is 14 jobs, each one under a minute of wall clock on 4vcpu (latest green main run: guards 53 s,
+python 42 s, integration 29 s, kotlin 26 s, verify-msrv 24 s, typescript 21 s, go 20 s, verify 19 s,
+java 19 s, spec pin 15 s, sibling quotes 9 s, version lockstep 6 s, preflight 4 s, ci-ok 3 s). So each job bills
+one minute, and the run's cost is set by the job count and the per-minute rate, not by speed.
+
+## Pass 1 — #336 (2026-11-05): push on main only, cancel superseded PR runs
+
+- `push:` became `branches: [main]`. That removed the push-to-PR-branch and push-of-a-tag rows above.
+- Superseded `pull_request` runs are cancelled.
+- Estimated 30-day spend: about 5,770 → 3,270 min (about $46 → $26).
+
+## Pass 2 — BP-8 PR (2026-11-08): the smallest runner that fits
+
+- Every `ci.yml` job except `integration` moved from 4vcpu to 2vcpu, as did `registry-drift.yml`'s and
+  `framework-coinstall.yml`'s job.
+  - The jobs are I/O- and setup-bound, finishing in under a minute on 4vcpu, so 2vcpu costs half per minute.
+    The risk is a job crossing a minute boundary on the slower runner, which turns 1 billed minute into 2.
+  - `integration` stays on 4vcpu. On a cache miss it builds `seamd` from source under a 45-minute timeout,
+    which is a measured need for the larger runner.
+  - `publish.yml` and `release-on-runtime.yml` are deploy/publish jobs and were not touched.
+- Estimated saving: about $8 a month (the 13 moved `ci` jobs at half the rate, over about 2,000 `ci` job-minutes
+  a month after pass 1).
+- Per-job durations on 2vcpu, from this PR's own CI run, are in the table below. If a job's duration
+  regularly crosses 60 s, move that one job back to 4vcpu; that is a one-line change.
+
+## Considered and not adopted
+
+- **Path filters (D-CI-PATHS).** seam-sdk has no merge queue, so there is no `merge_group` run to filter. On
+  `pull_request`, skipping a language's jobs would mean `ci-ok` deciding which skips are legitimate, and
+  `publish.yml` / `release-on-runtime.yml` read `ci-ok` by SHA as a full-suite green. A per-path `ci-ok` would
+  let a release commit's green mean less than it does now. The PR-event analogue would save about 145 min per
+  30 days, about $1 a month after pass 2.
+- **Back to GitHub-hosted runners.** Reverting #279 would make non-publish CI free on this public repo (about
+  $20 a month → $0 after this pass). #279 was an org-level Blacksmith migration, so it is the owner's call,
+  recorded in `DEFERRED.md`.

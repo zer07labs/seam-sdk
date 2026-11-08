@@ -35,7 +35,7 @@ concurrency:
 jobs:
   version-lockstep:
     name: version lockstep (python == typescript)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     # "One version everywhere": ts/package.json and python/pyproject.toml must always be the same version
     # (they are released together, following the runtime). Fail a PR that lets them drift.
     steps:
@@ -62,7 +62,7 @@ jobs:
 
   preflight:
     name: preflight (secret gating)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       have_buf_token: ${{ steps.check.outputs.have_buf_token }}
       have_bot_app: ${{ steps.check.outputs.have_bot_app }}
@@ -106,7 +106,7 @@ jobs:
     name: python (ruff · pytest)
     needs: preflight
     if: needs.preflight.outputs.have_buf_token == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: actions/setup-python@v5
@@ -182,7 +182,7 @@ jobs:
     name: typescript (typecheck · build · test)
     needs: preflight
     if: needs.preflight.outputs.have_buf_token == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: actions/setup-node@v4
@@ -495,7 +495,7 @@ jobs:
   # run unconditionally, verifying byte-for-byte reproduction of conformance/vectors.json.
   go:
     name: go (test)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: actions/setup-go@v5
@@ -507,7 +507,7 @@ jobs:
 
   java:
     name: java (gradle test)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: actions/setup-java@v4
@@ -521,7 +521,7 @@ jobs:
 
   kotlin:
     name: kotlin (gradle test)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: actions/setup-java@v4
@@ -535,7 +535,7 @@ jobs:
 
   verify:
     name: verify (the independent verifier)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: dtolnay/rust-toolchain@stable
@@ -589,7 +589,7 @@ jobs:
   # and pinning it lower would be re-breaking the promise this job exists to keep.
   verify-msrv:
     name: verify (builds at its declared MSRV)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
 
@@ -671,7 +671,7 @@ jobs:
     name: spec pin (the vendored spec is verbatim and current)
     needs: preflight
     if: needs.preflight.outputs.have_bot_app == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
       - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
@@ -699,7 +699,7 @@ jobs:
     name: sibling quotes (claims about seam-adapters / seam-aegis)
     needs: preflight
     if: needs.preflight.outputs.have_bot_app == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
       - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
@@ -732,7 +732,7 @@ jobs:
 
   workflow-guards:
     name: guards (no credentials required)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
       - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
@@ -849,7 +849,7 @@ jobs:
       - spec-pin
       - sibling-quotes
       - workflow-guards
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
       - name: required jobs must SUCCEED; advisory jobs may skip but not fail

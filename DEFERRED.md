@@ -1,2 +1,3 @@
 - 2026-10-27 (#290): seam-runtime accepts a non-ASCII SEAM_RUNTIME_AUD, which no SDK can address (they refuse non-ASCII aud); an ASCII check at boot, or a spec line, would close it. No deployed value is affected.
 - 2026-10-28 (#273, Q2): no `x-seam-clearance` option on the record reads; a record above PUBLIC reads `CLEARANCE_DENIED`. Add one if a consumer needs restricted records explained.
+- 2026-11-08 (CI-cost pass 2, owner lever): reverting #279 (Blacksmith → `ubuntu-latest`) makes non-publish CI free on this public repo, about $20/mo → $0; an org-level choice (docs/ci-cost.md).

@@ -5388,3 +5388,4 @@ not filed here. OQ-1 is resolved, so no phase is gated.
   - Files: `verify/fixtures/evidence-bundle/allocated/` (new, 5 files), `verify/tests/bundle.rs`, `README.md`, `COMPATIBILITY.md`, `CHANGELOG.md`, `DECISIONS.md` (D-BP8S-1..6).
   - Results: verify cargo test/clippy/fmt green; pytest 2603 passed; `scripts/test_*.py` 720 passed.
   - Next: P5 (CI cost).
+- 2026-11-08 P5 implemented (CI-cost pass 2). 13 `ci.yml` jobs plus registry-drift and framework-coinstall moved to blacksmith-2vcpu; `integration` stays 4vcpu. `docs/ci-cost.md` (new), DECISIONS D-CI-RUNNER and D-CI-PATHS, ASSUMPTIONS A-BP8S-2, DEFERRED (owner lever: revert #279). `scripts/test_ci_gate.py` 68 passed; actionlint findings unchanged (5 existing, before and after). The P5 verdict is folded into the final cumulative verify; the PR run's per-job durations go into the doc before merge (AC3).
