@@ -59,7 +59,23 @@ one minute, and the run's cost is set by the job count and the per-minute rate, 
 
 | Job | 4vcpu (latest green main run) | 2vcpu (this PR's run) |
 |-----|------------------------------:|----------------------:|
-<!-- DURATIONS -->
+| guards (no credentials required) | 53 s | 43 s |
+| python (ruff · pytest) | 42 s | 39 s |
+| integration (live seam-grpc round-trip) | 29 s | 42 s (stays 4vcpu) |
+| kotlin (gradle test) | 26 s | 25 s |
+| verify (builds at its declared MSRV) | 24 s | 25 s |
+| typescript (typecheck · build · test) | 21 s | 28 s |
+| go (test) | 20 s | 26 s |
+| verify (the independent verifier) | 19 s | 26 s |
+| java (gradle test) | 19 s | 18 s |
+| spec pin (the vendored spec is verbatim and current) | 15 s | 19 s |
+| sibling quotes (claims about seam-adapters / seam-aegis) | 9 s | 10 s |
+| version lockstep (python == typescript) | 6 s | 8 s |
+| preflight (secret gating) | 4 s | 5 s |
+| ci-ok | 3 s | 6 s |
+
+Every job stays under 60 s on 2vcpu (longest: guards, 43 s), so each still bills one minute and the
+rate halves as estimated. Run 42534222847 (PR #338) against run 42500484461 (main); single runs, so a few seconds of noise.
 
 ## Considered and not adopted
 
