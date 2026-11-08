@@ -157,10 +157,10 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `ts/src/client.ts:413` | `collectiveOutcomeOf(resp: DecisionResponse | SessionStep)` — the TS twin. **Phase 3 DONE.** It needed a real union: protobuf-es brands messages, so passing a `SessionStep` is a *compile error* today (reproduced: `TS2345`, `$typeName` mismatch). `:169-174` `UnknownCollectiveVerdictError(rawValue, decisionId: string)` — **required** `string`, so `:229`'s `resp.decisionId` became `resp.decisionId ?? ""`; a verifier mutation removing that coalesce reddens a test, so it is load-bearing, not decoration. |
 | `ts/gen/seam/api/v1/seam_pb.ts` | Branded `SessionStep = Message<"seam.api.v1.SessionStep"> & {…}` — the reason Phase 3's TS half is a hard block, not a typing nicety. Also carries `collectiveOutcome?` on the same branded type. Cited by symbol, not by line: this is a generated, gitignored file, and a line number into it is correct only until the next `make generate`. |
 | `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi` | `SessionStep.collective_outcome` in the Python stubs — generated, never surfaced. Cited by symbol for the same reason as the row above; it carried `:289,297` until round 3, in direct violation of that rule and of `test_no_document_line_anchors_into_a_generated_file`, which it evaded **only** because a comma-list matches `CITATION` not at all. The rule was stated one row up and broken the next. |
-| `python/seam_sdk/client.py:905`, `ts/src/client.ts:1524` | `submit_commit` / `submitCommit` return a `SessionStep` — the caller Phase 3 exists for. |
+| `python/seam_sdk/client.py:905`, `ts/src/client.ts:1674` | `submit_commit` / `submitCommit` return a `SessionStep` — the caller Phase 3 exists for. |
 | `python/tests/test_collective_outcome.py`, `ts/tests/collective_outcome.test.ts` | `DecisionResponse` cases only. **Phase 3** adds the `SessionStep` cases (absent ⇒ none; `UNSPECIFIED` ⇒ raise; unknown ⇒ raise; non-commit step ⇒ none). Drive red first. |
-| `python/seam_sdk/client.py:815` + `python/seam_sdk/client.py:868` · `python/seam_sdk/aio.py:561` + `python/seam_sdk/aio.py:614` · `ts/src/client.ts:1411` + `ts/src/client.ts:1472` | `submit_evaluation` / `submit_objection` — **already delivered** by `c49d005`. Do not re-plan. Written as six separate citations rather than three comma-lists, because a comma-list matches `CITATION` **not at all**: `` `…:723,759` `` was wrong twice in a row — once before this phase and once *inside the commit whose message claims it shifted every citation below `:239`* — and nothing ever said so. |
-| `python/seam_sdk/client.py:851-852` · `python/seam_sdk/aio.py:597-598` · `ts/src/client.ts:1423` | `confidence` presence mapping — `None` ⇒ field-absent, never `0.0`. Correct in both languages; pinned by `python/tests/test_evaluation_confidence.py:55,64,87,100` and `ts/tests/evaluation.test.ts:59,70,85,93`. |
+| `python/seam_sdk/client.py:815` + `python/seam_sdk/client.py:868` · `python/seam_sdk/aio.py:561` + `python/seam_sdk/aio.py:614` · `ts/src/client.ts:1561` + `ts/src/client.ts:1622` | `submit_evaluation` / `submit_objection` — **already delivered** by `c49d005`. Do not re-plan. Written as six separate citations rather than three comma-lists, because a comma-list matches `CITATION` **not at all**: `` `…:723,759` `` was wrong twice in a row — once before this phase and once *inside the commit whose message claims it shifted every citation below `:239`* — and nothing ever said so. |
+| `python/seam_sdk/client.py:851-852` · `python/seam_sdk/aio.py:597-598` · `ts/src/client.ts:1583` | `confidence` presence mapping — `None` ⇒ field-absent, never `0.0`. Correct in both languages; pinned by `python/tests/test_evaluation_confidence.py:55,64,87,100` and `ts/tests/evaluation.test.ts:59,70,85,93`. |
 > **Read every row below as *as at plan time*, 2026-08-31, unless the row says otherwise.** Some
 > were updated mid-run and some were not, which is worse than either — an unstamped map invites a
 > reader to treat a stale row as current. The rows known to have moved since are corrected inline.
@@ -4069,7 +4069,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1842`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1860`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -5369,3 +5369,14 @@ not filed here. OQ-1 is resolved, so no phase is gated.
   - `.github/workflows/publish.yml:63` and `.github/workflows/release-on-runtime.yml:177` read ci-ok by SHA (off-limits).
 - PR strategy: one PR (feat/bp8-allocation-view). Why: the manifest fix is what turns main green and unblocks the 0.76.0 release, and the owner brief requires the CI pass in the same PR. Risk: P1 and P2 complex (public API); P3+P4 batched simple; P5 simple.
 - 2026-11-08 P1 DONE: PASS (Opus verifier, solo, since it is a complex public-API phase), 1 round. The gaps were minor (add a 0.0001 propensity case, an unknown-7-with-payload case, and sort the import) and were closed before the commit. Files: `python/seam_sdk/_allocation.py` (new), `python/tests/test_allocation.py` (new), `python/tests/fixtures/allocation_cases.json` (new, 24 cases), `__init__.py`, `client.py`, `aio.py`, `test_integration.py`, `test_field_manifest_gate.py`, `contract/field-manifest.txt` (+24/-0). Results: contract gate 0; ruff clean; pytest 2601 passed. Next: P2 (TS).
+- 2026-11-08 P2 DONE: PASS (Opus verifier, solo: complex public API), 1 round.
+  - Gaps, all minor and closed before the commit:
+    - an explicit JS non-carrier test;
+    - TSDoc now states that a `null` view throws;
+    - TSDoc carries the "operator alteration breaks the chain re-verify" sentence;
+    - re-anchored `PROGRESS.md:163` (`confidence`, now `ts/src/client.ts:1583`).
+  - Files: `ts/src/client.ts` (allocationOf + interfaces after sealAttestationOf), `ts/src/index.ts` (EIGHT dual-declared names), `ts/tests/allocation.test.ts` (new; reads the Python fixture), `ts/tests/integration.test.ts`.
+  - The client.ts insertion shifted citations by 149: `COMPATIBILITY.md:604,803` and `PROGRESS.md:160,162` were re-anchored.
+  - Results: TS typecheck/build clean, 567 tests pass; pytest 2601 passed.
+  - Plan drift: `test_shadowed_names_comment.py` needed no edit, because it derives the count word.
+  - Next: P3 + P4 (batched simple).

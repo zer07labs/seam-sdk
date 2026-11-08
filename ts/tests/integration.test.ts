@@ -11,6 +11,7 @@ import {
   collectiveOutcomeOf,
   policyEnforcementOf,
   sealAttestationOf,
+  allocationOf,
 } from "../src/client.js";
 import { SeamAdminClient } from "../src/admin.js";
 import { requestSig } from "../src/crypto.js";
@@ -113,6 +114,13 @@ test("full round trip: admit → decide → seal → read → verify", { skip: S
       if (immediateCollective !== undefined && attestation.collectiveOutcome !== undefined)
         assert.equal(attestation.collectiveOutcome.verdict, immediateCollective.verdict);
     }
+    // Runtime 0.76.0+ (Branchpoint BP-8): an always-present allocation view. No runtime writes the
+    // Allocation trailer before BP-9 and nothing here runs an experiment, so it reads NOT_RECORDED
+    // unconditionally.
+    const allocation = allocationOf(record);
+    assert.ok(allocation);
+    assert.equal(allocation.availability, "NOT_RECORDED");
+    assert.equal(allocation.allocation, undefined);
     // Runtime 0.63.0+ (seam-sdk#307): the runtime's version, credential-free. Always a semver string;
     // an exact match only when the run says which runtime it built (SEAM_EXPECTED_RUNTIME_VERSION).
     const version = await client.serverInfo();

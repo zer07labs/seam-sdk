@@ -601,7 +601,7 @@ so it cannot reach the taxonomy. Use `canonicalize_tool_input()`
 ### `canonical=` hands you the derivation, and the responsibility with it
 
 `authorize(canonical=…)` (`python/seam_sdk/client.py:417`, `python/seam_sdk/aio.py:233`; `opts.canonical`
-in TypeScript, `ts/src/client.ts:979`) is additive and keyword-only. The SDK does **not** verify the
+in TypeScript, `ts/src/client.ts:1128`) is additive and keyword-only. The SDK does **not** verify the
 bytes — re-deriving to check would reinstate the second derivation the parameter exists to remove.
 So two things become possible that were not:
 
@@ -800,7 +800,7 @@ covered `{}` — so it did not mean what you thought. Convert at the boundary:
 `date.toISOString()`, `Object.fromEntries(map)`, `[...set]`. The error names the type and the
 conversion.
 
-**This reaches you through `authorize()`, not only through the helper.** `ts/src/client.ts:817` calls
+**This reaches you through `authorize()`, not only through the helper.** `ts/src/client.ts:967` calls
 `jcsCanonicalize(toolInput ?? {})` directly, so `authorize({ toolInput: { deadline: new Date() } })`
 now throws where it previously signed a digest over `{"deadline":{}}`. That is the case worth
 checking in your own code, because it is the one where the aliased digest was being *signed*.

@@ -103,7 +103,8 @@ Scope corrections against the resources:
 
 ### P2 — TS `allocationOf` parity
 - **Risk:** complex
-- **Status:** TODO
+- **Status:** DONE (2026-11-08, Opus PASS, 1 round). Divergence: `test_shadowed_names_comment.py` needed no edit,
+  because it derives the count word itself; only `ts/src/index.ts` changed.
 - **Delivers:** `allocationOf(view): AllocationView | undefined` and readonly interfaces `AllocationView` and
   `Allocation`, exported from the package index. They behave exactly like Python.
 - **Depends on:** P1 (shared fixture JSON).
