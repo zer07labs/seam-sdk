@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.77.0 — 2026-11-09
+
 ### Added
 - **`allocation_of(view)` / `allocationOf(view)` — which experiment arm a fetched record was allocated to
   (Branchpoint BP-8, runtime 0.76.0).** It decodes `DecisionRecordView.allocation` (tag 13) into
