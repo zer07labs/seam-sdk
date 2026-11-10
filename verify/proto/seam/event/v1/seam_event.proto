@@ -286,13 +286,13 @@ message LearningDecision {
   repeated double features = 7;
   optional string schema_id = 8;
   optional double propensity = 9;  // P(arm | x) at serve time — off-policy eval (matches seam-event.v1 tag 9)
-  // Branchpoint BP-2 decision fields (tags 10-14). Wire slots only: nothing in this build sets them,
-  // so they are absent (zero bytes) on every event until their owner phase populates them.
+  // Branchpoint BP-2 decision fields (tags 10-14). BP-9 (0.77.0) fills tags 10-13 when a decision is
+  // allocated by a live split; on every other decision they are absent (zero bytes).
   // BP-9 — the intended action of the allocated arm/variant (Branchpoint allocation).
   optional string intended_action = 10;
   // BP-9 — the allocation mode (e.g. `split`); see Branchpoint `branchpoint-allocation.md`.
   optional string allocation_mode = 11;
-  // BP-9 — `lowercase_hex(HMAC-SHA256(salt_e, unit)[..16])`, 32 hex chars; never the raw unit.
+  // BP-9 — `lowercase_hex(HMAC-SHA256(salt_e, "bp2-tag\n" ‖ unit)[..16])`, 32 hex chars; never the raw unit.
   optional string unit_tag = 12;
   // BP-9 — the variant/arm ALLOCATION probability (e.g. split `weight_bp/10000`). Distinct from
   // `propensity` (9), which keeps its within-variant action-probability meaning.
