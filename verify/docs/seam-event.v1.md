@@ -1,4 +1,10 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ e69914aa (refreshed 2026-11-04).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ d70774454 (refreshed 2026-11-10).
+     The runtime 0.77.0 train (seam-runtime#1654, Branchpoint W3: BP-9 Allocation writer, BP-17 erasure unit_tags),
+     on runtime main. Movement since e69914aa: wording only — LearningDecision tags 10-13 are now set by BP-9 on a
+     one-shot split's policy row (absent otherwise), and `POST /v1/erasure/subject-commitments` takes optional
+     `experiments` and returns `unit_tags` (refusal is 403 POLICY_DENIED). No tag, digest or vector change;
+     informational for this crate.
+     Prior pin e69914aa (refreshed 2026-11-04).
      The runtime 0.74.0 train (seam-runtime#1600, outcome-ingestion wave 6: OI-R3, OI-R1), on runtime main.
      Movement since 432b4421 (landed on main as e1c74b7): wording only — the `reporter_class` closed set is
      named (`outcome_connector`, `changeset_worker`, produced from 0.74.0), and LearningDecision tag 14
@@ -563,11 +569,18 @@ not be compared to each other.
   tenant is inside the MAC and the key is per tenant).
 - **Recompute is in-band and audited, never unilateral (#1293).** Confirming that a given subject
   produced a given row requires `k_tenant`, which only the runtime holds. An erasure operator uses
-  `POST /v1/erasure/subject-commitments` (scope `erasure:preview`; body `{tenant, subjects[1..16]}`;
-  response `{tenant, kid, results:[{subject_index, commitment}]}` — raw subjects never echoed). Every
-  call chains a `subject_commitments_recomputed` `AUDIT_ENTRY` before it answers, and a subject that
-  has been erased in the tenant is **refused** (409, audited as `subject_commitment_recompute_refused`).
-  There is no export and no offline recompute. (gRPC parity is a later, additive `seam.api.v1` RPC.)
+  `POST /v1/erasure/subject-commitments` (scope `erasure:preview`; body `{tenant, subjects[1..16],
+  experiments?[0..16]}`; response `{tenant, kid, results:[{subject_index, commitment, unit_tags?}]}` — raw
+  subjects never echoed). Every call chains a `subject_commitments_recomputed` `AUDIT_ENTRY` before it
+  answers, and a subject that has been erased in the tenant is **refused** (403 `POLICY_DENIED`, audited as
+  `subject_commitment_recompute_refused`). There is no export and no offline recompute. (gRPC parity is a
+  later, additive `seam.api.v1` RPC.)
+- **Branchpoint `unit_tag` recompute (BP-17).** The same call with `experiments` (experiment ULIDs, distinct,
+  not required to be installed) returns, per result, `unit_tags: {experiment_id: tag}` — the subject-unit
+  `unit_tag` a split trailer and its `LEARNING_DECISION.unit_tag` carry for that subject. `unit_tags` is
+  present iff `experiments` was sent non-empty; without it the response is unchanged. Decision-unit tags are
+  not computed. A sink retaining `LEARNING_DECISION` rows purges them by these tags after the experiment's
+  final evidence (`docs/runbooks/gdpr-erasure.md` Step 5).
 
 **Erasure of a subject's commitments — the consumer obligation (#1293 D3).** A GDPR erasure
 (`POST /v1/erasure`) first chains a `subject_commitment_tombstoned` `AUDIT_ENTRY` carrying the subject's
@@ -774,7 +787,7 @@ LearningDecision {                         // payload at SeamEvent tag 14
   propensity:    double?  // P(arm | x) at serve time — for retroactive off-policy eval (IPS/SNIPS/DR).
                           // Reserved (tag 9); absent until the serving read populates it. Once real
                           // traffic flows an unlogged propensity is unrecoverable, so the slot is fixed now.
-  // Branchpoint BP-2 (tags 10-14) — wire slots only today; nothing sets them yet.
+  // Branchpoint BP-2 (tags 10-14) — 10-13 set by BP-9 on a one-shot split's policy row; 14 by BP-7.
   intended_action:       string?  // BP-9 (tag 10)
   allocation_mode:       string?  // BP-9 (tag 11), e.g. "split"
   unit_tag:              string?  // BP-9 (tag 12), 32 lowercase hex chars (HMAC-derived), never the raw unit
@@ -812,7 +825,14 @@ event of each kind with every new field set (JSON and protobuf). Ownership:
   (`operator` is reserved; nothing produces it yet). It is **absent when subject enforcement is off**
   — there is no authenticated identity to classify. Consumers read it open: an unrecognised value is a
   new class, not a malformed event.
-- **`LearningDecision` tags 10-13 — BP-9** (the allocation primitive). Absent until that phase ships.
+- **`LearningDecision` tags 10-13 — BP-9** (the allocation primitive). Set only on the **policy** row of
+  a `RunDecision` that the governing document allocates through a live `split` experiment (see
+  [`branchpoint-allocation.md`](branchpoint-allocation.md)). That row also carries `algorithm_id`
+  `{base}@{arm}`, `experiment_id` (tag 5) and `algorithm_arm` (tag 6). `intended_action` is the sealed
+  commitment's action; `allocation_mode` is `split`; `unit_tag` is 32 lowercase hex, never the raw
+  unit; `allocation_propensity` is the arm's weight / 10000. Agent rows never carry them. **Absent**
+  on every decision with no admitted experiment, when the `SEAM_BRANCHPOINT_DISABLE` kill switch is on, and on an
+  interactive session seal (BP-16 deferred).
 - **`LearningDecision` tag 14 — BP-7 / OI-R1, produced from 0.74.0.** `RunDecision` stamps it on
   **every** arm row (policy and agent) of the decision, from the governing tenant document's
   `experiments.decision_points[]`: the single `selector: namespace` point on the decision's namespace,
