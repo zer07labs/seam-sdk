@@ -16,6 +16,10 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Security
+- Upgrade grpc-go from 1.83.1 to 1.83.2 to address high-severity advisory GHSA-2v4p-qf9q-27wj,
+  including its required transitive dependency updates.
+
 ## 0.82.1 — 2026-11-11
 
 ### Added
