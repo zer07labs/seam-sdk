@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.82.1 — 2026-11-11
+
 ### Added
 - Python and TypeScript export `NOT_GOVERNED_REASON = "namespace_not_governed"` and
   `is_not_governed` / `isNotGoverned`. They recognise INVALID_ARGUMENT by the typed reason,
