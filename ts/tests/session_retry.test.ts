@@ -139,3 +139,32 @@ test("custom classifiers supply delay, can refuse, and cannot bypass budget or a
     await assert.rejects(run(script(e), { classifier: () => ({ delayMs }) }), RangeError);
   }
 });
+
+test("negative server RetryInfo retains default retry and the original error", async () => {
+  const err = sessionUnavailable(-1);
+  assert.ok(err instanceof UnavailableError);
+  assert.equal(err.retryAfter, -1); // Real signed protobuf Duration.
+  for (const jitter of [0, 0.5]) {
+    const s = script(err, err);
+    const slept: number[] = [];
+    await assert.rejects(withSessionRetry(s.call, {
+      maxAttempts: 2,
+      random: () => jitter,
+      sleep: async ms => { slept.push(ms); },
+    }), e => e === err);
+    assert.equal(s.calls, 2);
+    assert.deepEqual(slept, [jitter * 250]); // Zero server delay, ordinary jitter retained.
+  }
+});
+
+test("built-in classifier clamps negative server delays for every retry class", () => {
+  for (const [code, reason, freshChallenge] of [
+    [Code.Unavailable, "SESSION_UNAVAILABLE", false],
+    [Code.ResourceExhausted, "QUOTA_EXCEEDED", false],
+    [Code.Unavailable, "CHALLENGE_REFUSED", true],
+  ] as const) {
+    const decision = loadShedRetryClassifier(refusal(code, reason, -1));
+    assert.equal(decision?.delayMs, 0);
+    assert.equal(decision?.freshChallenge ?? false, freshChallenge);
+  }
+});

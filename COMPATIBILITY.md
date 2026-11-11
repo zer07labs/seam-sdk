@@ -111,12 +111,6 @@ there is nothing stronger of ours to wait for.
 
 ### Runtime ↔ SDK
 
-**SDK 0.82.1 pairs with runtime 0.82.0.** This SDK patch prepares the typed governing refusal
-and opt-in load-shed retry hooks. The runtime's next release must be 0.83.0 or later because
-0.82.1 is reserved here. `NOT_GOVERNED_REASON` requires seamd >= 0.82.0; status remains
-INVALID_ARGUMENT and the wire message is unchanged. Recognition checks reason first, then the
-COORDINATION cause metadata (`python/seam_sdk/errors.py:521`, `ts/src/errors.ts:328`).
-
 **Go requires 1.25.0**, raised from 1.21 by grpc-go 1.83.1 / x/net 0.55.0 (`go/go.mod:3`).
 CI selects Go using the module's declared floor (`.github/workflows/ci.yml`, Go setup step).
 
@@ -189,6 +183,12 @@ integration and `spec pin` jobs failed and `publish.yml` refused (#317). v0.67.1
 they are, unpublished. The runtime's next release must be 0.68.0 or later, because 0.67.1 is taken here.
 Pin `seam-sdk 0.67.1` beside seamd 0.67.0. An SDK at 0.66.1 or earlier still talks to runtime 0.67.0 over
 gRPC: the runtime ignores a stale `now_millis` tag and uses its own clock.
+
+**SDK 0.82.1 pairs with runtime 0.82.0.** This SDK patch prepares the typed governing refusal
+and opt-in load-shed retry hooks. The runtime's next release must be 0.83.0 or later because
+0.82.1 is reserved here. `NOT_GOVERNED_REASON` requires seamd >= 0.82.0; status remains
+INVALID_ARGUMENT and the wire message is unchanged. Recognition checks reason first, then the
+COORDINATION cause metadata (`python/seam_sdk/errors.py:521`, `ts/src/errors.ts:328`).
 
 | SDK change | Requires runtime | Earlier runtimes | Pinned from |
 |---|---|---|---|

@@ -53,16 +53,17 @@ RetryClassifier = Callable[[BaseException], Optional[RetryDecision]]
 def load_shed_retry_classifier(exc: BaseException) -> Optional[RetryDecision]:
     """Opt in to quota backoff and one fresh-challenge recovery, plus session retries.
 
-    ``None`` refuses retry. Missing RetryInfo means zero server delay (jitter still applies).
+    ``None`` refuses retry. Missing or negative RetryInfo means zero server delay
+    (jitter still applies).
     CHALLENGE_REFUSED requires the helper's ``refresh_challenge`` callback, e.g. a fresh
     ``client.admit(agent)`` handshake. This classifier is stateless and safe to share.
     """
     if isinstance(exc, ResourceExhaustedError) and exc.reason == "QUOTA_EXCEEDED":
-        return RetryDecision(exc.retry_after or 0.0)
+        return RetryDecision(max(0.0, exc.retry_after or 0.0))
     if isinstance(exc, UnavailableError) and exc.reason == "CHALLENGE_REFUSED":
-        return RetryDecision(exc.retry_after or 0.0, fresh_challenge=True)
+        return RetryDecision(max(0.0, exc.retry_after or 0.0), fresh_challenge=True)
     if is_retryable(exc):
-        return RetryDecision(exc.retry_after or 0.0)
+        return RetryDecision(max(0.0, exc.retry_after or 0.0))
     return None
 
 
@@ -77,11 +78,12 @@ def _next_delay(
     max_attempts: int,
     rng: Callable[[], float],
     decision: Optional[RetryDecision],
+    validate_delay: bool,
 ) -> Optional[float]:
     """The delay before the next attempt, or ``None`` when ``exc`` must be raised."""
     if decision is None or attempt >= max_attempts:
         return None
-    if not math.isfinite(decision.delay_s) or decision.delay_s < 0:
+    if validate_delay and (not math.isfinite(decision.delay_s) or decision.delay_s < 0):
         raise ValueError("retry delay_s must be finite and non-negative")
     delay = decision.delay_s + rng() * min(
         max_delay_s, base_delay_s * 2 ** (attempt - 1)
@@ -121,7 +123,7 @@ def with_session_retry(
             decision = (
                 classifier(exc)
                 if classifier is not None
-                else RetryDecision(exc.retry_after or 0.0)
+                else RetryDecision(max(0.0, exc.retry_after or 0.0))
                 if isinstance(exc, SeamRpcError) and is_retryable(exc)
                 else None
             )
@@ -138,6 +140,7 @@ def with_session_retry(
                 max_attempts=max_attempts,
                 rng=rng,
                 decision=decision,
+                validate_delay=classifier is not None,
             )
             if delay is None:
                 raise
@@ -172,7 +175,7 @@ async def with_session_retry_async(
             decision = (
                 classifier(exc)
                 if classifier is not None
-                else RetryDecision(exc.retry_after or 0.0)
+                else RetryDecision(max(0.0, exc.retry_after or 0.0))
                 if isinstance(exc, SeamRpcError) and is_retryable(exc)
                 else None
             )
@@ -189,6 +192,7 @@ async def with_session_retry_async(
                 max_attempts=max_attempts,
                 rng=rng,
                 decision=decision,
+                validate_delay=classifier is not None,
             )
             if delay is None:
                 raise

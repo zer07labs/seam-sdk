@@ -294,3 +294,22 @@ def test_not_governed_does_not_infer_a_reason_from_the_message():
         grpc.StatusCode.INVALID_ARGUMENT, "namespace is not governed for this tenant"
     )
     assert not is_not_governed(err)
+
+
+@pytest.mark.parametrize(
+    "cls,code,reason,fresh",
+    [
+        (UnavailableError, grpc.StatusCode.UNAVAILABLE, "SESSION_UNAVAILABLE", False),
+        (
+            ResourceExhaustedError,
+            grpc.StatusCode.RESOURCE_EXHAUSTED,
+            "QUOTA_EXCEEDED",
+            False,
+        ),
+        (UnavailableError, grpc.StatusCode.UNAVAILABLE, "CHALLENGE_REFUSED", True),
+    ],
+)
+def test_builtin_classifier_clamps_negative_server_delays(cls, code, reason, fresh):
+    err = refusal(cls, code, reason, delay=-1)
+    assert err.retry_after == -1
+    assert load_shed_retry_classifier(err) == RetryDecision(0, fresh_challenge=fresh)

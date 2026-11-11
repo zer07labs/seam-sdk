@@ -8,18 +8,18 @@ const te = new TextEncoder();
 
 function varint(n: number): number[] {
   const out: number[] = [];
-  let v = n;
-  while (v >= 0x80) {
-    out.push((v & 0x7f) | 0x80);
-    v >>>= 7;
+  let v = BigInt.asUintN(64, BigInt(n));
+  while (v >= 0x80n) {
+    out.push(Number(v & 0x7fn) | 0x80);
+    v >>= 7n;
   }
-  out.push(v);
+  out.push(Number(v));
   return out;
 }
 const ld = (num: number, payload: Uint8Array): number[] => [...varint((num << 3) | 2), ...varint(payload.length), ...payload];
 const vi = (num: number, value: number): number[] => [...varint(num << 3), ...varint(value)];
 
-/** A typed SDK error for `code` carrying `reason` (when given) and `RetryInfo` (when > 0). */
+/** A typed SDK error for `code` carrying `reason` (when given) and `RetryInfo` (when nonzero, including malformed negatives). */
 export function refusal(code: Code, reason: string | undefined, retrySeconds = 0): Error {
   const details: { type: string; value: Uint8Array }[] = [];
   if (reason !== undefined) {
@@ -28,7 +28,7 @@ export function refusal(code: Code, reason: string | undefined, retrySeconds = 0
       value: new Uint8Array([...ld(1, te.encode(reason)), ...ld(2, te.encode("seam.zer07labs.com"))]),
     });
   }
-  if (retrySeconds > 0) {
+  if (retrySeconds !== 0) {
     details.push({ type: "google.rpc.RetryInfo", value: new Uint8Array(ld(1, new Uint8Array(vi(1, retrySeconds)))) });
   }
   const received = details as unknown as ConstructorParameters<typeof ConnectError>[3];

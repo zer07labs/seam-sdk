@@ -29,15 +29,15 @@ export interface RetryDecision {
 export type RetryClassifier = (error: unknown) => RetryDecision | undefined;
 
 /** Opt-in quota backoff and fresh-challenge recovery, retaining session retries.
- * Missing RetryInfo means zero server delay (jitter still applies). Stateless and safe to share. */
+ * Missing or negative RetryInfo means zero server delay (jitter still applies). Stateless and safe to share. */
 export const loadShedRetryClassifier: RetryClassifier = (e) => {
   if (e instanceof ResourceExhaustedError && e.reason === "QUOTA_EXCEEDED") {
-    return { delayMs: (e.retryAfter ?? 0) * 1000 };
+    return { delayMs: Math.max(0, e.retryAfter ?? 0) * 1000 };
   }
   if (e instanceof UnavailableError && e.reason === "CHALLENGE_REFUSED") {
-    return { delayMs: (e.retryAfter ?? 0) * 1000, freshChallenge: true };
+    return { delayMs: Math.max(0, e.retryAfter ?? 0) * 1000, freshChallenge: true };
   }
-  if (isRetryable(e)) return { delayMs: ((e as SeamRpcError).retryAfter ?? 0) * 1000 };
+  if (isRetryable(e)) return { delayMs: Math.max(0, (e as SeamRpcError).retryAfter ?? 0) * 1000 };
   return undefined;
 };
 
@@ -81,10 +81,10 @@ export async function withSessionRetry<T>(
       if (attempt >= maxAttempts) throw e;
       const decision = opts.classifier
         ? opts.classifier(e)
-        : isRetryable(e) ? { delayMs: ((e as SeamRpcError).retryAfter ?? 0) * 1000 } : undefined;
+        : isRetryable(e) ? { delayMs: Math.max(0, (e as SeamRpcError).retryAfter ?? 0) * 1000 } : undefined;
       if (!decision) throw e;
       if (decision.freshChallenge && (recovered || !opts.refreshChallenge)) throw e;
-      if (!Number.isFinite(decision.delayMs) || decision.delayMs < 0) {
+      if (opts.classifier && (!Number.isFinite(decision.delayMs) || decision.delayMs < 0)) {
         throw new RangeError("retry delayMs must be finite and non-negative");
       }
       const retryAfterMs = decision.delayMs;
