@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:774`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:789`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -111,6 +111,18 @@ there is nothing stronger of ours to wait for.
 
 ### Runtime ↔ SDK
 
+**Go requires 1.25.0**, raised from 1.21 by grpc-go 1.83.1 / x/net 0.55.0 (`go/go.mod:3`).
+CI selects Go using the module's declared floor (`.github/workflows/ci.yml`, Go setup step).
+
+**SDK 0.76.0 remains permanently unpublished (#337).** Its commit `61eca844` failed the Python
+and TypeScript contract gates on the allocation field/enum surface, so publish correctly refused
+([CI evidence](https://github.com/zer07labs/seam-sdk/actions/runs/42526397866),
+[publish refusal](https://github.com/zer07labs/seam-sdk/actions/runs/42526399781)). The allocation
+manifest repair is recorded under 0.77.0 in CHANGELOG.md. Later 0.82.0 published successfully,
+including registry smoke ([run](https://github.com/zer07labs/seam-sdk/actions/runs/42980409144));
+no retag or workflow bypass is needed.
+
+
 There is exactly one rule and it needs no table: **the SDK version equals the runtime version.**
 `ci.yml`'s `version-lockstep` job and `publish.yml`'s `version-check` job both enforce it, so a
 mismatch cannot ship.
@@ -172,6 +184,12 @@ they are, unpublished. The runtime's next release must be 0.68.0 or later, becau
 Pin `seam-sdk 0.67.1` beside seamd 0.67.0. An SDK at 0.66.1 or earlier still talks to runtime 0.67.0 over
 gRPC: the runtime ignores a stale `now_millis` tag and uses its own clock.
 
+**SDK 0.82.1 pairs with runtime 0.82.0.** This SDK patch prepares the typed governing refusal
+and opt-in load-shed retry hooks. The runtime's next release must be 0.83.0 or later because
+0.82.1 is reserved here. `NOT_GOVERNED_REASON` requires seamd >= 0.82.0; status remains
+INVALID_ARGUMENT and the wire message is unchanged. Recognition checks reason first, then the
+COORDINATION cause metadata (`python/seam_sdk/errors.py:521`, `ts/src/errors.ts:328`).
+
 | SDK change | Requires runtime | Earlier runtimes | Pinned from |
 |---|---|---|---|
 | Protocol pass 2026-10 (seam-sdk#265) | seam-runtime 0.48.0 (seam-runtime#1365, carries `protocol-pass-2026-10`) | **none** — no compatibility | runtime `main` @ `32f8196` (contract byte-identical to the freeze `1ac5de5`) |
@@ -197,7 +215,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1837-1859`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1852-1874`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -279,7 +297,7 @@ verification, the commitment digest, the `Authorize` call_sig and enrolment proo
 form) framings, identity custody (`Agent` generation + the schema-v1 bootstrap file, #201) and the
 `seam-request-call-v1` request credential, plus the `x-seam-tenant` routing interceptor and the
 `WRONG_CELL` / `TENANT_MOVING` readers (D123, P16), and nothing else. If you need to *call* Seam, that is Python or TypeScript. The routing
-helpers are why the Go module and the Java and Kotlin builds now depend on gRPC: grpc-go 1.66.3 and
+helpers are why the Go module and the Java and Kotlin builds now depend on gRPC: grpc-go 1.83.1 and
 grpc-java 1.66.0, both as floors that a caller's newer gRPC replaces.
 
 | Identity / credential surface | Python | TypeScript | Go | Java | Kotlin |

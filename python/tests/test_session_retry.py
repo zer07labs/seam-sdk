@@ -333,3 +333,33 @@ def test_with_session_retry_re_signs_every_attempt_under_a_fresh_ticket(h):
     assert tickets == [OLD, b"new-ticket-1", b"new-ticket-2"]
     assert len(set(sigs)) == 3
     assert wire.admission_rpcs() == 2 * len(ADMISSION)
+
+
+@pytest.mark.parametrize("aio", [False, True])
+@pytest.mark.parametrize("jitter", [0.0, 0.5])
+def test_negative_server_retry_info_keeps_default_retry_and_original_error(aio, jitter):
+    err = session_unavailable(-1)
+    assert (
+        err.retry_after == -1
+    )  # Real signed protobuf Duration, not a mocked property.
+    script = _Script(err, err)
+    slept = []
+    opts = dict(max_attempts=2, rng=lambda: jitter)
+    if aio:
+
+        async def call():
+            return script()
+
+        async def sleep(delay):
+            slept.append(delay)
+
+        with pytest.raises(UnavailableError) as caught:
+            asyncio.run(with_session_retry_async(call, sleep=sleep, **opts))
+    else:
+        with pytest.raises(UnavailableError) as caught:
+            with_session_retry(script, sleep=slept.append, **opts)
+    assert caught.value is err
+    assert script.calls == 2
+    assert slept == [
+        jitter * 0.25
+    ]  # Clamp only the server delay; retain ordinary jitter.

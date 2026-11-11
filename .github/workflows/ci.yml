@@ -500,7 +500,7 @@ jobs:
       - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version-file: go/go.mod
       - name: go test
         working-directory: go
         run: go test ./...

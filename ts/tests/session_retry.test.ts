@@ -5,6 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Code } from "@connectrpc/connect";
 import {
+  loadShedRetryClassifier,
   DEFAULT_RETRY_BUDGET_MS,
   isRetryable,
   isSessionUnavailable,
@@ -100,5 +101,70 @@ test("every other error propagates on the first attempt, unslept", async () => {
     );
     assert.equal(s.calls, 1, name);
     assert.deepEqual(slept, [], name);
+  }
+});
+
+
+test("quota retries are opt-in and honour RetryInfo", async () => {
+  const e = refusal(Code.ResourceExhausted, "QUOTA_EXCEEDED", 2);
+  const baseline = script(e);
+  await assert.rejects(run(baseline), (err) => err === e);
+  assert.equal(baseline.calls, 1);
+  const s = script(e);
+  const { out, slept } = await run(s, { classifier: loadShedRetryClassifier });
+  assert.equal(out, "ok");
+  assert.deepEqual(slept, [2250]);
+  for (const other of [
+    refusal(Code.Unavailable, "QUOTA_EXCEEDED"),
+    refusal(Code.ResourceExhausted, "CHALLENGE_REFUSED"),
+    refusal(Code.ResourceExhausted, "other"), new Error("stop"),
+  ]) assert.equal(loadShedRetryClassifier(other), undefined);
+});
+
+test("custom classifiers supply delay, can refuse, and cannot bypass budget or attempts", async () => {
+  const e = new Error("custom");
+  const s = script(e);
+  const { slept } = await run(s, { classifier: () => ({ delayMs: 3000 }) });
+  assert.deepEqual(slept, [3250]);
+  for (const opts of [
+    { classifier: () => undefined },
+    { classifier: () => ({ delayMs: 3000 }), budgetMs: 2999 },
+    { classifier: () => ({ delayMs: 3000 }), maxAttempts: 1 },
+  ]) {
+    const s = script(e);
+    await assert.rejects(run(s, opts), (err) => err === e);
+    assert.equal(s.calls, 1);
+  }
+  for (const delayMs of [-1, Infinity, NaN]) {
+    await assert.rejects(run(script(e), { classifier: () => ({ delayMs }) }), RangeError);
+  }
+});
+
+test("negative server RetryInfo retains default retry and the original error", async () => {
+  const err = sessionUnavailable(-1);
+  assert.ok(err instanceof UnavailableError);
+  assert.equal(err.retryAfter, -1); // Real signed protobuf Duration.
+  for (const jitter of [0, 0.5]) {
+    const s = script(err, err);
+    const slept: number[] = [];
+    await assert.rejects(withSessionRetry(s.call, {
+      maxAttempts: 2,
+      random: () => jitter,
+      sleep: async ms => { slept.push(ms); },
+    }), e => e === err);
+    assert.equal(s.calls, 2);
+    assert.deepEqual(slept, [jitter * 250]); // Zero server delay, ordinary jitter retained.
+  }
+});
+
+test("built-in classifier clamps negative server delays for every retry class", () => {
+  for (const [code, reason, freshChallenge] of [
+    [Code.Unavailable, "SESSION_UNAVAILABLE", false],
+    [Code.ResourceExhausted, "QUOTA_EXCEEDED", false],
+    [Code.Unavailable, "CHALLENGE_REFUSED", true],
+  ] as const) {
+    const decision = loadShedRetryClassifier(refusal(code, reason, -1));
+    assert.equal(decision?.delayMs, 0);
+    assert.equal(decision?.freshChallenge ?? false, freshChallenge);
   }
 });

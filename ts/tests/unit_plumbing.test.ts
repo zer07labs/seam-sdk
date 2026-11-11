@@ -42,7 +42,7 @@ import {
   isSessionUnavailable,
   isTenantMoving,
 } from "../src/errors.js";
-import { withSessionRetry } from "../src/retry.js";
+import { loadShedRetryClassifier, withSessionRetry } from "../src/retry.js";
 import { refusal, sessionUnavailable, tenantMoving } from "./session_unavailable.js";
 import {
   ApprovalRequestRequestSchema,
@@ -1563,4 +1563,70 @@ test("REPLAY_GUARDED: RegisterContext is a member (its burned ticket is dropped)
     await assert.rejects(CREDENTIAL_CALLS[name]!.invoke(client, cred), (e) => isSessionUnavailable(e));
     assert.equal(ticketsOf(client).has(cred.aid), !guarded, `${name}: guarded=${guarded}`);
   }
+});
+
+
+for (const mode of ["success", "twice", "refresh-fails", "no-hook", "budget", "attempts", "default"]) {
+  test(`opt-in challenge recovery obtains fresh admission: ${mode}`, async () => {
+    const calls: Recorded[] = [];
+    const err = refusal(Code.Unavailable, "CHALLENGE_REFUSED", 2);
+    const client = new SeamClient(fakeTransport(calls, (method) => {
+      if (mode === "refresh-fails" && method === "IssueChallenge") throw err;
+      return minimalHandle(method);
+    }));
+    const agent = new Agent(SEED);
+    const events: (string | number)[] = [];
+    let attempts = 0;
+    const run = () => withSessionRetry(async () => {
+      events.push("call");
+      if (++attempts === 1 || mode === "twice") throw err;
+      assert.deepEqual(calls.map(c => c.method), ["IssueChallenge", "Admit"]);
+      return "ok";
+    }, {
+      classifier: mode === "default" ? undefined : loadShedRetryClassifier,
+      refreshChallenge: mode === "no-hook" ? undefined : async () => {
+        events.push("refresh");
+        await client.admit(agent);
+      },
+      budgetMs: mode === "budget" ? 1000 : undefined,
+      maxAttempts: mode === "attempts" ? 1 : undefined,
+      random: () => 0,
+      sleep: async ms => { events.push(ms); },
+    });
+    if (mode === "success") assert.equal(await run(), "ok");
+    else await assert.rejects(run(), e => e === err);
+    if (["success", "twice"].includes(mode)) {
+      assert.deepEqual(events, ["call", 2000, "refresh", "call"]);
+      assert.deepEqual(calls.map(c => c.method), ["IssueChallenge", "Admit"]);
+    } else if (mode === "refresh-fails") {
+      assert.deepEqual(events, ["call", 2000, "refresh"]);
+      assert.deepEqual(calls.map(c => c.method), ["IssueChallenge"]);
+    } else {
+      assert.deepEqual(events, ["call"]);
+      assert.equal(calls.length, 0);
+    }
+  });
+}
+
+test("cold SDK call recovers refused challenge before reporting", async () => {
+  const calls: Recorded[] = [];
+  let challenges = 0;
+  const client = new SeamClient(fakeTransport(calls, method => {
+    if (method === "IssueChallenge" && ++challenges === 1) {
+      throw refusal(Code.Unavailable, "CHALLENGE_REFUSED", 2);
+    }
+    if (method === "ReportOutcome") return { recorded: true };
+    return minimalHandle(method);
+  }));
+  const agent = new Agent(SEED);
+  assert.equal(await withSessionRetry(
+    () => client.reportOutcome("decision-fixture", true, { idempotencyKey: "report-fixture", credential: agent }),
+    {
+      classifier: loadShedRetryClassifier,
+      refreshChallenge: () => client.admit(agent),
+      sleep: async () => {},
+      random: () => 0,
+    },
+  ), true);
+  assert.deepEqual(calls.map(c => c.method), ["IssueChallenge", "IssueChallenge", "Admit", "ReportOutcome"]);
 });

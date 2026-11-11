@@ -179,7 +179,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `python/tests/test_protobuf_floor.py:72,88` | The two pure-file-read assertions Phase 6 runs at publish time. `:29-31` reads only `_gen/seam/api/v1/seam_pb2.py`; `:47-51` **skips** when `_gen` is absent. `:88-99` forces `cap == gencode_major + 1` — this is why "widen the floor" is not a metadata edit. |
 | `python/tests/test_grpcio_floor.py:38` | Module-level `import grpc` — matters if Phase 6 runs it in the publish job. |
 | `.github/workflows/yank.yml` | `workflow_dispatch`, `dry_run` default `"true"`. A hard **DELETE** (`:91-92`), not a PyPI-style yank. Its token line did **not** strip the cargo token's `"Bearer "` prefix (`.github/workflows/publish.yml:383-385` does) — **Phase 10 fixed it** (DONE 2026-08-31) at `.github/workflows/yank.yml:55-60`, and left the version/format/name filters (`:73-76`) byte-unchanged. `scripts/test_yank_gate.py` now executes the resolution and pins those filters. |
-| `COMPATIBILITY.md:120-157` | §3 known-bad table + the "Nothing was yanked" preamble. **Phase 7 added the `0.7.39 – 0.7.43` row** (DONE 2026-08-31) — *not* the hedged `≥ 0.7.40` this row first planned: both edges are proven from CI history, so the hedge was deleted rather than softened. `:181-188` dependency floors · `:203-262` §4a co-installability (`:221-223` machine-read `PROBE-TABLE` marker — columns and order load-bearing; `:227` crewai row, whose Tracking cell linked **#48 and not crewAI#7103** — **Phase 7 fixed this; the cell now links the PR**) · `:328-364` §7 cross-repo coupling, incl. `:337-355` vector origination. **§7 documents `seam-sdk` main → `seam-runtime` CI, *not* a spec-side merge-order courtesy — do not cite it for one.** |
+| `COMPATIBILITY.md:132-169` | §3 known-bad table + the "Nothing was yanked" preamble. **Phase 7 added the `0.7.39 – 0.7.43` row** (DONE 2026-08-31) — *not* the hedged `≥ 0.7.40` this row first planned: both edges are proven from CI history, so the hedge was deleted rather than softened. `:181-188` dependency floors · `:203-262` §4a co-installability (`:221-223` machine-read `PROBE-TABLE` marker — columns and order load-bearing; `:227` crewai row, whose Tracking cell linked **#48 and not crewAI#7103** — **Phase 7 fixed this; the cell now links the PR**) · `:328-364` §7 cross-repo coupling, incl. `:337-355` vector origination. **§7 documents `seam-sdk` main → `seam-runtime` CI, *not* a spec-side merge-order courtesy — do not cite it for one.** |
 | `python/tests/test_retracted_claims.py:170-184` | Parametrized presence check over `COMPATIBILITY.md`. **Phase 7 added `"0.7.39"`** — the *lower* edge, which is the one a reader is most likely to assume they are outside of — plus two real row guards (`python/tests/test_retracted_claims.py:194-256`), because this parametrize is a substring check and could not fail for a deleted row. `python/tests/test_retracted_claims.py:27-30` globs **every `*.md` in the repo including `plans/` and this file**; `python/tests/test_retracted_claims.py:39-48` are the qualifier markers that make a paragraph "discussing, not claiming". |
 | `python/tests/test_compatibility_citations_resolve.py` | Every backticked `file:line` in `COMPATIBILITY.md`/`DECISIONS.md` must resolve; `:61-64,:92` ≥10 each; `:76` sibling paths need a `seam-runtime/` prefix; `:141-172` `ANCHORED` needles must hit **exactly once** within `CITATION_SLACK` (`:176`). **Phase 8** adds the vendored-file rule. |
 | `verify/docs/seam-event.v1.md` | Byte-verbatim vendored spec, pinned in its header. **Phase 9** refreshes it whole-file. Source of #73's citation drift. |
@@ -380,9 +380,9 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 
 ### Phase 7 — `COMPATIBILITY.md` pass: the 0.7.39-0.7.43 band, the upstream link, #76 · 2026-08-31
 
-- **Delivered:** §3 carries a third known-bad band (`COMPATIBILITY.md:155`) with the narrow
+- **Delivered:** §3 carries a third known-bad band (`COMPATIBILITY.md:167`) with the narrow
   condition, the root cause, 0.7.47 as the fixed release, and **both edges proven**; the crewai row
-  (`COMPATIBILITY.md:260`) names the upstream PR that actually ends it; §2 gains a definition of
+  (`COMPATIBILITY.md:278`) names the upstream PR that actually ends it; §2 gains a definition of
   what a compatibility-matrix cell asserts (`COMPATIBILITY.md:75-110`), which is #76's ask.
 - **The band is 0.7.39-0.7.43, and round 1 of the gate is why.** I first wrote `≥ 0.7.40` with a
   paragraph arguing the lower edge was *unprovable* — "per-tag gencode is not recoverable from this
@@ -477,7 +477,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
     `CHANGELOG.md`'s advisory named two bands while `README.md` now points there for three; and a
     row guard failed with a bare `StopIteration` carrying no message.
 - **The bare-citation defect appeared twice more, making four distinct forms.** Round 2 found a
-  `COMPATIBILITY.md:122-139` sitting alone in a paragraph, where paragraph-scoped inheritance
+  `COMPATIBILITY.md:134-151` sitting alone in a paragraph, where paragraph-scoped inheritance
   resolves it against the *previous* paragraph's file — and it resolves there structurally, so
   nothing catches it. Then, fixing that, the remapper captured a `:194-256` that pointed at the test
   file, because a bare `COMPATIBILITY.md` appeared earlier in the row; and the parenthetical I wrote
@@ -589,7 +589,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   - *#52's quote stopped one sentence before its rebuttal of my own lead argument.* It continues
     "That was the stated reason not to yank before, and it does not apply here." Restored in full
     and answered: it is **right** that "a floor already in wide use" does not describe this band —
-    which is why `COMPATIBILITY.md:122-149` scopes that limb to the first two — and the precedent
+    which is why `COMPATIBILITY.md:134-161` scopes that limb to the first two — and the precedent
     bullet turns on defect severity, which the objection leaves untouched.
 - **What the gate confirmed:** all 12 original guards killed by 14 mutations except the two above;
   the destructive scoping byte-identical to HEAD~1 (it split both revisions at the token block and
@@ -878,7 +878,7 @@ ERROR: a breaking change and must be handled, never silently rewritten away.
   *required* job in their repo red, fixable only from here; (3) a heads-up when the spec changes.
 - **Ask A's third point is evidenced, not hypothetical** — it fired during this run and cost the time
   documented above.
-- **The plan's `COMPATIBILITY.md:236-295` anchor for Ask B was fine; my check of it was not.** I
+- **The plan's `COMPATIBILITY.md:254-313` anchor for Ask B was fine; my check of it was not.** I
   read it off a branch based on `main` *before* #79 merged, saw commitment-digest text at that line,
   and recorded the anchor as stale. At `20786dc` line 203 is exactly
   `### Agent-framework co-installability` (the section runs `:203-264`). The plan was right.
@@ -4069,7 +4069,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1868`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1883`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -4478,7 +4478,7 @@ green before any code changed.
   by the time this phase ran; verifier confirmed the divergence is faithful to AC1's intent),
   `DECISIONS.md` (new 2026-10-05 entry at `DECISIONS.md:2350` + a purely-additive dated amendment to the
   2026-10-04 entry's trigger bullet — verifier confirmed via diff hunk the original bullet text,
-  and the entry's CONFIRMED-DEFERRED conclusion, are byte-unchanged), `COMPATIBILITY.md:123` +
+  and the entry's CONFIRMED-DEFERRED conclusion, are byte-unchanged), `COMPATIBILITY.md:135` +
   `DECISIONS.md:1222` (mandatory "No yank" citation repoint, byte-identity verified both
   endpoints), `plans/README.md` (new Active/pending row), `README.md` (tenant clause in the
   Data-plane surface trust description). Verifier independently re-confirmed every factual claim
@@ -4555,13 +4555,13 @@ green before any code changed.
   code change was needed (a fresh-Opus verify pass caught the header's first draft overstating
   this — "rather than refusing outright" was wrong, fixed before merge). (2) the release's
   `retitle_changelog.sh` run shifted `CHANGELOG.md`'s "No yank" paragraph from line 1054 to 1056
-  (a +2 insert right after `## Unreleased`), pushing `COMPATIBILITY.md:123` and
-  `DECISIONS.md:1222`'s `CHANGELOG.md:1653-1670` citations past the citation test's slack
-  tolerance; repointed both to `CHANGELOG.md:1655-1672`. Tested: `check_vendored_spec.py` OK via both
+  (a +2 insert right after `## Unreleased`), pushing `COMPATIBILITY.md:135` and
+  `DECISIONS.md:1222`'s `CHANGELOG.md:1668-1685` citations past the citation test's slack
+  tolerance; repointed both to `CHANGELOG.md:1670-1687`. Tested: `check_vendored_spec.py` OK via both
   `--from local` and `--from gh`; `test_compatibility_citations_resolve.py` 489 passed/0 failed
   standalone (was 4 failed). Verifier also flagged two pre-existing, gate-invisible citations
   elsewhere that the same +2 shift widened further — `DECISIONS.md:2035` cites
-  `CHANGELOG.md:1555` and `PROGRESS.md:3981` cites `CHANGELOG.md:1440`, both already ~130-250
+  `CHANGELOG.md:1570` and `PROGRESS.md:3981` cites `CHANGELOG.md:1455`, both already ~130-250
   lines stale before this release — out of scope for this release-unblock hotfix; filed as a
   follow-up issue rather than folded in here.
   **Rebased `feat/verify-anchor-tenant` onto this commit during `/sweep`'s ship pass.** Four
@@ -4571,7 +4571,7 @@ green before any code changed.
   `CHANGELOG.md`/`COMPATIBILITY.md`/`DECISIONS.md`: the feature branch's own new
   `## Unreleased` entry (16 lines) was kept above this hotfix's `## 0.33.3` header, which
   shifted "No yank" from this entry's `1056` to `1072` and recomputed the two citations above
-  (`CHANGELOG.md:1655-1672`) to `CHANGELOG.md:1671-1688` — verified against the exact
+  (`CHANGELOG.md:1670-1687`) to `CHANGELOG.md:1686-1703` — verified against the exact
   paragraph-boundary text at both the old and new line numbers before trusting the new range,
   not just the arithmetic. A dedicated ship-gate verifier independently re-derived this same
   shift from the diff and confirmed it exact.
@@ -5095,7 +5095,7 @@ the bot's `chore(release): v0.61.0` commit `32ab80d` landed while the plan was w
 - Release: `.github/workflows/release-on-runtime.yml` (dispatch or manual with `version` +
   `wire_framing_version`); `publish.yml` (ci-ok gate, then internal, then `promote-partner` :768);
   `scripts/set_version.sh`, `retitle_changelog.sh`, `shift_changelog_citations.py`; precedent
-  `COMPATIBILITY.md:119-125` (v0.50.0 unpublished → v0.50.1).
+  `COMPATIBILITY.md:131-137` (v0.50.0 unpublished → v0.50.1).
 - Go/Java/Kotlin: no transport, no client (`README.md:135-138`, `go/README.md:3-6`). Nothing to edit.
 - External, read-only:
   - `seam-runtime/plans/1361-record-explain.md` (train B has no wire change);
@@ -5364,7 +5364,7 @@ not filed here. OQ-1 is resolved, so no phase is gated.
   - generated TS `Allocation` message (in `ts/gen`): budgetEpoch is a bigint.
   - `contract/field-manifest.txt`: sorted entries; `scripts/check-contract.sh:633-680` holds `--write-manifest`.
   - `verify/tests/bundle.rs:1-33`: fixture provenance rule; fixtures in `verify/fixtures/evidence-bundle/`.
-  - `COMPATIBILITY.md:176-188` (seal row at line 183), `README.md` "Explaining a sealed record".
+  - `COMPATIBILITY.md:194-206` (seal row at line 183), `README.md` "Explaining a sealed record".
   - `.github/workflows/ci.yml`: 14 jobs, all blacksmith-4vcpu, ci-ok job `ci-ok`.
   - `.github/workflows/publish.yml:63` and `.github/workflows/release-on-runtime.yml:177` read ci-ok by SHA (off-limits).
 - PR strategy: one PR (feat/bp8-allocation-view). Why: the manifest fix is what turns main green and unblocks the 0.76.0 release, and the owner brief requires the CI pass in the same PR. Risk: P1 and P2 complex (public API); P3+P4 batched simple; P5 simple.
@@ -5376,7 +5376,7 @@ not filed here. OQ-1 is resolved, so no phase is gated.
     - TSDoc carries the "operator alteration breaks the chain re-verify" sentence;
     - re-anchored `PROGRESS.md:163` (`confidence`, now `ts/src/client.ts:1583`).
   - Files: `ts/src/client.ts` (allocationOf + interfaces after sealAttestationOf), `ts/src/index.ts` (EIGHT dual-declared names), `ts/tests/allocation.test.ts` (new; reads the Python fixture), `ts/tests/integration.test.ts`.
-  - The client.ts insertion shifted citations by 149: `COMPATIBILITY.md:604,803` and `PROGRESS.md:160,162` were re-anchored.
+  - The client.ts insertion shifted citations by 149: `COMPATIBILITY.md:622,803` and `PROGRESS.md:160,162` were re-anchored.
   - Results: TS typecheck/build clean, 567 tests pass; pytest 2601 passed.
   - Plan drift: `test_shadowed_names_comment.py` needed no edit, because it derives the count word.
   - Next: P3 + P4 (batched simple).

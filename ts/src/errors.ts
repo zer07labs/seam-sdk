@@ -324,6 +324,16 @@ export class ResourceExhaustedError extends SeamRpcError {}
  * the refresh `Admit` of a credentialed call's one ticket refresh (#275): it propagates typed. */
 export class UnavailableError extends SeamRpcError {}
 
+/** Stable typed governing refusal, emitted by seamd >= 0.82.0. */
+export const NOT_GOVERNED_REASON = "namespace_not_governed";
+
+/** Recognise INVALID_ARGUMENT by reason, then COORDINATION's cause; never message text. */
+export function isNotGoverned(e: unknown): boolean {
+  if (!(e instanceof InvalidArgumentError)) return false;
+  if (e.reason === NOT_GOVERNED_REASON) return true;
+  return e.reason === "COORDINATION" && e.errorMetadata?.cause === NOT_GOVERNED_REASON;
+}
+
 /** True for the runtime's `SESSION_UNAVAILABLE` refusal (see {@link SESSION_UNAVAILABLE_REASON}). */
 export function isSessionUnavailable(e: unknown): boolean {
   return e instanceof UnavailableError && e.reason === SESSION_UNAVAILABLE_REASON;
