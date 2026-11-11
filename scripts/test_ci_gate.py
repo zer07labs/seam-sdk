@@ -53,7 +53,7 @@ GATE = "ci-ok"
 #:     repository; drift blocking the merge was a deliberate call, since the copy went stale three
 #:     times and a warning would have been ignored a fourth. Its CHECKER is separately exercised
 #:     in `workflow-guards`, which needs no credential, so a fork PR still proves the logic.
-#:   * sibling-quotes — reads two PRIVATE sibling repos (seam-adapters, seam-aegis) through a scoped
+#:   * sibling-quotes — reads the PRIVATE seam-adapters repo through a scoped
 #:     seam-deps-bot App token, which a fork PR's secretless run cannot mint. Added 2026-09-10 for
 #:     seam-sdk#103, and the reasoning is worth stating because "advisory" is what this entry is
 #:     fixing, not what it is asking for: the sibling half of `QUOTED` was checked by NOTHING in CI

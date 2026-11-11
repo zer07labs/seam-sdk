@@ -1,8 +1,8 @@
 """`check_sibling_quotes.py` is the only CI check on the sibling half of `QUOTED` (seam-sdk#103).
 
 That table catches a claim whose source **changes value in place** — a version constraint on another
-repo's release cadence, which never moves a line and so cannot be line-anchored. Three of its four
-entries name sibling repos, and the pytest that owns it skips those: `../seam-adapters` is not
+repo's release cadence, which never moves a line and so cannot be line-anchored. Two of its three
+entries name seam-adapters, and the pytest that owns it skips those: `../seam-adapters` is not
 checked out in CI and never will be. So the only mechanism that can catch this class of drift ran on
 a workstation that happened to have the siblings cloned.
 
@@ -41,20 +41,18 @@ SCRIPT = REPO / "scripts" / "check_sibling_quotes.py"
 CI = REPO / ".github" / "workflows" / "ci.yml"
 JOB = "sibling-quotes"
 
-#: A table shaped exactly like the real one: one local row (ignored) and two sibling rows.
+#: A table with one local row (ignored) and one platform-consumer sibling row.
 TABLE = '''\
 CITATION = None
 
 QUOTED = [
     ("DECISIONS.md", "verify/docs/seam-event.v1.md", "a local claim, not a sibling one"),
-    ("COMPATIBILITY.md", "seam-aegis/pyproject.toml", "seam-agent-core[sdk]>=0.6,<0.7"),
     ("COMPATIBILITY.md", "../seam-adapters/core/pyproject.toml", "seam-sdk>=0.7.20,<0.8"),
 ]
 '''
 
 #: What the stubbed `gh` serves per (repo, path), keyed by the tail of the request.
 SOURCES = {
-    "seam-aegis": 'dependencies = ["seam-agent-core[sdk]>=0.6,<0.7"]\n',
     "seam-adapters": 'dependencies = ["seam-sdk>=0.7.20,<0.8"]\n',
 }
 
@@ -70,7 +68,6 @@ def _tree(tmp_path: Path, *, table: str = TABLE, doc: str | None = None) -> Path
         if doc is not None
         else (
             "# Compatibility\n\n"
-            "seam-aegis pins `seam-agent-core[sdk]>=0.6,<0.7` today.\n"
             "seam-adapters pins `seam-sdk>=0.7.20,<0.8` today.\n"
         )
     )
@@ -149,7 +146,7 @@ def _run(
 def test_matching_quotes_pass(tmp_path: Path) -> None:
     proc = _run(_tree(tmp_path), tmp_path)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "checking 2 sibling quote(s)" in proc.stdout, (
+    assert "checking 1 sibling quote(s)" in proc.stdout, (
         "the local row was counted as a sibling, or a sibling row was dropped: " + proc.stdout
     )
 
@@ -168,11 +165,11 @@ def test_the_local_row_is_not_fetched(tmp_path: Path) -> None:
 
 
 def test_a_changed_constraint_is_drift(tmp_path: Path) -> None:
-    """The case that actually happened: seam-aegis bumped 0.5 -> 0.6 and CI stayed green."""
-    moved = dict(SOURCES, **{"seam-aegis": 'dependencies = ["seam-agent-core[sdk]>=0.7,<0.8"]\n'})
+    """A platform consumer's changed SDK constraint must still fail the gate."""
+    moved = dict(SOURCES, **{"seam-adapters": 'dependencies = ["seam-sdk>=0.8,<0.9"]\n'})
     proc = _run(_tree(tmp_path), tmp_path, sources=moved)
     assert proc.returncode == 1, f"exit {proc.returncode}: {proc.stdout}{proc.stderr}"
-    assert "seam-agent-core[sdk]>=0.6,<0.7" in proc.stdout
+    assert "seam-sdk>=0.7.20,<0.8" in proc.stdout
     assert "0 time(s)" in proc.stdout, proc.stdout
 
 
