@@ -118,7 +118,7 @@ CITATION = re.compile(r"`([\w./-]+\.[A-Za-z]\w*):(\d+)(?:-(\d+))?`")
 #:
 #: `seam/` (the shared cross-repo context repo) joined this tuple for the same reason: Phase 6 added
 #: `PROGRESS.md` citations into its docs. Each entry ends in `/`, so `startswith` cannot confuse
-#: `seam/` with `seam-runtime/`, `seam-adapters/` or `seam-aegis/` — the character right after
+#: `seam/` with `seam-runtime/` or `seam-adapters/` — the character right after
 #: `seam` differs (`/` vs `-`) — and this repo has no top-level directory literally named `seam`
 #: (`test_no_local_directory_shadows_a_sibling_prefix` below fails loudly, not silently, if one is
 #: ever added).
@@ -127,7 +127,6 @@ CITATION = re.compile(r"`([\w./-]+\.[A-Za-z]\w*):(\d+)(?:-(\d+))?`")
 #: `PROGRESS.md` repo map cites the console's JWK reveal and the control plane's bound mint.
 SIBLING_PREFIXES = (
     "seam-adapters/",
-    "seam-aegis/",
     "seam-console-ui/",
     "seam-control-plane/",
     "seam-runtime/",
@@ -561,7 +560,6 @@ def test_sibling_citations_skip_cleanly_with_no_sibling_repos_checked_out(
         "../seam/docs/sdk/01-base-concepts-and-quickstart.md",
         "seam-runtime/.github/workflows/ci.yml",
         "seam-adapters/pyproject.toml",
-        "seam-aegis/pyproject.toml",
         "seam/docs/OPEN-TASKS.md",
     ):
         assert _resolve_citation_target("PROGRESS.md", path, 1, repo=repo) is None, (
@@ -1251,7 +1249,7 @@ QUOTED = [
         "verify/docs/seam-event.v1.md",
         "Every payload **must** carry `ciphertext_digest`",
     ),
-    # COMPATIBILITY.md §2's two sibling-repo rows. Both rotted while their citations stayed green,
+    # Originally COMPATIBILITY.md §2's two sibling-repo rows. Both rotted while their citations stayed green,
     # which is the whole argument for this mechanism over `ANCHORED`:
     #
     #   * the `seam-aegis` row quoted `seam-agent-core[sdk]>=0.1,<0.2` against a line that had long
@@ -1262,15 +1260,6 @@ QUOTED = [
     # A version constraint is exactly the wrong thing to line-anchor: it is a short string that
     # changes VALUE in place, on another repo's release cadence, without moving. Quoting it is the
     # only check that fails when it goes stale.
-    (
-        "COMPATIBILITY.md",
-        "seam-aegis/pyproject.toml",
-        # Bumped 0.5 -> 0.6 on 2026-09-05 by seam-aegis 7771f28. Caught by this quote and by
-        # nothing else — and only on a workstation with the sibling cloned: in CI `../seam-aegis`
-        # does not exist, so the check `pytest.skip`s and the stale claim rides through green. The
-        # quote is doing its job; the coverage gap is that its job is only done locally.
-        "seam-agent-core[sdk]>=0.17,<0.18",
-    ),
     (
         "COMPATIBILITY.md",
         "seam-adapters/core/pyproject.toml",
@@ -1304,7 +1293,7 @@ def test_the_quoted_claims_still_match_their_source_word_for_word(
     # Sibling-aware, for the same reason `test_each_citation_resolves` is: a `QUOTED` entry whose
     # source lives in another repo is the case that needs this mechanism MOST — a line anchor into a
     # sibling cannot be re-checked from here at all, so the verbatim quote is the only handle there
-    # is. Resolving it as `REPO / path` instead would look for `seam-sdk/seam-aegis/pyproject.toml`,
+    # is. Resolving it as `REPO / path` instead would look for `seam-sdk/seam-adapters/pyproject.toml`,
     # fail the `exists()` assertion, and make the entry unaddable — which is why the two stale
     # sibling constraints in COMPATIBILITY.md §2 went unguarded until now.
     sibling_path = _sibling_relative_path(path)
@@ -1314,7 +1303,7 @@ def test_the_quoted_claims_still_match_their_source_word_for_word(
             # This skip is now DELEGATION, not blindness — and the difference is worth writing
             # down, because for a while it was blindness and read identically. `scripts/
             # check_sibling_quotes.py` re-checks exactly these entries over the GitHub API, in
-            # ci.yml's `sibling-quotes` job, using an App token scoped to the two private siblings.
+            # ci.yml's `sibling-quotes` job, using an App token scoped to seam-adapters.
             # It reads `QUOTED` out of THIS file with `ast`, so there is one table, not two.
             #
             # Before that job existed (seam-sdk#103) the sibling rows were verified only on a

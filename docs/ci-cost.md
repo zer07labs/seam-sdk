@@ -69,7 +69,7 @@ one minute, and the run's cost is set by the job count and the per-minute rate, 
 | verify (the independent verifier) | 19 s | 26 s |
 | java (gradle test) | 19 s | 18 s |
 | spec pin (the vendored spec is verbatim and current) | 15 s | 19 s |
-| sibling quotes (claims about seam-adapters / seam-aegis) | 9 s | 10 s |
+| sibling quotes (claims about seam-adapters) | 9 s | 10 s |
 | version lockstep (python == typescript) | 6 s | 8 s |
 | preflight (secret gating) | 4 s | 5 s |
 | ci-ok | 3 s | 6 s |

@@ -696,7 +696,7 @@ jobs:
         run: python scripts/check_vendored_spec.py --from gh
 
   sibling-quotes:
-    name: sibling quotes (claims about seam-adapters / seam-aegis)
+    name: sibling quotes (claims about seam-adapters)
     needs: preflight
     if: needs.preflight.outputs.have_bot_app == 'true'
     runs-on: blacksmith-2vcpu-ubuntu-2404
@@ -706,26 +706,26 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      # Scoped to the two repos `QUOTED` actually names, and no more. `spec-pin` above asks for
+      # Scoped to seam-adapters, the sibling `QUOTED` names. `spec-pin` above asks for
       # seam-runtime for the same reason: the App can reach several repos, and a job that reads one
       # thing asks for one thing. `scripts/check_sibling_quotes.py`'s own `SIBLING_REPOS` must agree
       # with this list — `scripts/test_sibling_quotes_gate.py` fails if they drift apart, so this
       # cannot be widened on one side only.
-      - name: Mint a seam-deps-bot App token, scoped to the two sibling repos
+      - name: Mint a seam-deps-bot App token, scoped to seam-adapters
         id: app
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.SEAM_BOT_APP_ID }}
           private-key: ${{ secrets.SEAM_BOT_PRIVATE_KEY }}
           owner: zer07labs
-          repositories: seam-adapters,seam-aegis
+          repositories: seam-adapters
       # This is the ONLY place the sibling half of `QUOTED` is checked in CI. The pytest that owns
       # that table skips those entries — `../seam-adapters` is not checked out here and never will
       # be — so before this job the only mechanism that can catch a claim whose source changes value
       # in place ran on a workstation and nowhere else (seam-sdk#103).
       - name: quoted claims about sibling repos still match their source
         env:
-          # NOT github.token: both siblings are private and the default token is scoped to this
+          # NOT github.token: seam-adapters is private and the default token is scoped to this
           # repo, so it would 404 — and a 404 here is reported as INFRASTRUCTURE, never as drift.
           GH_TOKEN: ${{ steps.app.outputs.token }}
         run: python scripts/check_sibling_quotes.py

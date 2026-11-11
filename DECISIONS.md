@@ -3176,3 +3176,10 @@ Ranked by blast radius. The two possible one-way doors (a public exception API, 
 ### A-BP8S-2 — no CI path filter
 - **Analysis (Opus):** confirm. There is no merge queue to filter. The `pull_request` analogue saves about $1 a month and puts skip-means-success logic into the `ci-ok` the release workflows read by SHA. Adding it later is one PR.
 - **Decided by:** Opus (reversible tier: CI config). **Verdict:** CONFIRM. **Status:** CONFIRMED.
+
+## 2026-11-10 — aegis-v2 D7: sibling-quotes no longer verifies seam-aegis
+
+- **Decision:** remove seam-aegis from the sibling-quotes gate, its App-token scope, and the verified
+  compatibility consumer table. A demo app's dependency pin is not a platform compatibility promise.
+  seam-adapters remains checked, including its SDK constraint and editable-source caveat.
+- **Decided by:** owner, aegis-v2 D7 (wave A0). Historical references remain unchanged.

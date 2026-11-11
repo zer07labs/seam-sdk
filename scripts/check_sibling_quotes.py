@@ -6,7 +6,7 @@ claim whose source **changes value in place**. A version constraint on another r
 cadence never moves a line, so a line anchor cannot notice it going stale; quoting the sentence is
 the only check that fails when it does.
 
-Three of its four entries name sibling repos. In CI none of those siblings are checked out, so the
+Two of its three entries name seam-adapters. In CI that sibling is not checked out, so the
 test hits `pytest.skip(...)` and **the only mechanism that can catch this class of drift never runs
 in the only place that gates a merge** (seam-sdk#103). It ran on a workstation that happened to have
 the siblings cloned, which is a property of someone's laptop rather than of the repo.
@@ -61,7 +61,7 @@ TABLE = REPO / "python" / "tests" / "test_compatibility_citations_resolve.py"
 #: this job asks for — the workflow's `repositories:` list and this tuple must be changed together,
 #: and `scripts/test_sibling_quotes_gate.py` asserts they agree.
 OWNER = "zer07labs"
-SIBLING_REPOS = ("seam-adapters", "seam-aegis")
+SIBLING_REPOS = ("seam-adapters",)
 
 DRIFT, INFRA = 1, 2
 
