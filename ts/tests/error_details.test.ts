@@ -280,3 +280,27 @@ test("IssueChallenge sends an IssueChallengeRequest, not google.protobuf.Empty (
     assert.equal(c.messageType, "seam.api.v1.IssueChallengeRequest");
   }
 });
+
+
+test("not governed recognises reason then coordination cause, without changing status or message", async () => {
+  const { NOT_GOVERNED_REASON, isNotGoverned } = await import("../src/index.js");
+  assert.equal(NOT_GOVERNED_REASON, "namespace_not_governed");
+  for (const [reason, cause, expected] of [
+    [NOT_GOVERNED_REASON, "other", true],
+    ["COORDINATION", NOT_GOVERNED_REASON, true],
+    ["COORDINATION", "other", false],
+    ["OTHER", NOT_GOVERNED_REASON, false],
+    ["namespace_not_governed_similar", "", false],
+  ] as const) {
+    const err = parsed(Code.InvalidArgument, errorInfo(reason, { cause }));
+    const message = err.message;
+    assert.equal(isNotGoverned(err), expected);
+    assert.equal(err.code, Code.InvalidArgument);
+    assert.equal(err.message, message);
+    assert.equal(isNotGoverned(parsed(Code.Unavailable, errorInfo(reason, { cause }))), false);
+  }
+  assert.equal(isNotGoverned(new Error("namespace is not governed for this tenant")), false);
+  assert.equal(isNotGoverned(toSeamError(new ConnectError(
+    "namespace is not governed for this tenant", Code.InvalidArgument,
+  ))), false);
+});

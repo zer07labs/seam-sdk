@@ -1139,8 +1139,8 @@ the phase ran, which is itself the finding worth recording first.
 
 ### The decision
 
-**Do not yank 0.7.39 through 0.7.43. Document them.** `COMPATIBILITY.md:155` carries the row and
-`COMPATIBILITY.md:122-149` the disposition; this entry is the reasoning behind it, and exists
+**Do not yank 0.7.39 through 0.7.43. Document them.** `COMPATIBILITY.md:173` carries the row and
+`COMPATIBILITY.md:140-167` the disposition; this entry is the reasoning behind it, and exists
 because a decision that is only implied gets re-litigated by the next person to read the issue.
 
 `yank.yml` stays available and has been repaired (below) so that it would work if this is ever
@@ -1170,7 +1170,7 @@ band is *also* self-diagnosing makes it an easier call, not a differently reason
 the blast radius of yanking is much smaller than it was there. That was the stated reason not to
 yank before, and it does not apply here."** The last sentence is aimed squarely at the precedent
 this entry leads with, so it goes first: it is **right**. *"A floor already in wide use"* does not
-describe this band, and that limb is not relied on — `COMPATIBILITY.md:122-149` scopes it to the
+describe this band, and that limb is not relied on — `COMPATIBILITY.md:140-167` scopes it to the
 first two bands for exactly this reason. What the precedent bullet below turns on is **defect
 severity**, which the objection leaves untouched: the milder defect would be deleted while worse
 ones stay installable.
@@ -1219,7 +1219,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:1838-1860` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:1853-1875` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2049,7 +2049,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:1868` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:1883` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.

@@ -16,6 +16,21 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added
+- Python and TypeScript export `NOT_GOVERNED_REASON = "namespace_not_governed"` and
+  `is_not_governed` / `isNotGoverned`. They recognise INVALID_ARGUMENT by the typed reason,
+  then COORDINATION's `cause` metadata; they never match message text. Requires seamd 0.82.0+.
+- The opt-in session retry helpers accept a `classifier` returning `RetryDecision` or no retry.
+  `load_shed_retry_classifier` / `loadShedRetryClassifier` honours quota RetryInfo and requires an
+  explicit fresh-admission callback for CHALLENGE_REFUSED, with one recovery and one retry only.
+  Existing default retries, jitter, attempt limits and wait budgets are unchanged.
+
+### Changed
+- **Go toolchain minimum: 1.25.0** (previously 1.21), required by the security dependency update.
+  grpc-go is 1.83.1 and x/net is 0.55.0; Go CI reads the toolchain floor from `go/go.mod` (#322).
+- Prepare SDK 0.82.1 paired with runtime 0.82.0; 0.82.0 is already published and is not retagged.
+
+
 ## 0.82.0 — 2026-11-11
 
 ## 0.81.0 — 2026-11-10

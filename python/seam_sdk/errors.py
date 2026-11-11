@@ -517,6 +517,22 @@ class UnavailableError(SeamRpcError):
     """
 
 
+#: Stable typed governing refusal, emitted by seamd >= 0.82.0.
+NOT_GOVERNED_REASON = "namespace_not_governed"
+
+
+def is_not_governed(exc: BaseException) -> bool:
+    """Recognise INVALID_ARGUMENT by reason, then COORDINATION's cause; never message text."""
+    if not isinstance(exc, InvalidArgumentError):
+        return False
+    if exc.reason == NOT_GOVERNED_REASON:
+        return True
+    return (
+        exc.reason == "COORDINATION"
+        and (exc.error_metadata or {}).get("cause") == NOT_GOVERNED_REASON
+    )
+
+
 def is_session_unavailable(exc: BaseException) -> bool:
     """True when ``exc`` is the runtime's ``SESSION_UNAVAILABLE`` refusal: an
     :class:`UnavailableError` whose :attr:`~SeamRpcError.reason` is

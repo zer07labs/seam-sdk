@@ -728,3 +728,53 @@ surface (JCS/call-sig framing for `authorize`, `record_digest_v4`, chain-head at
 in **Python and TypeScript only** — its "every SDK MUST" vectors are scoped to languages with an
 authorize surface, and wiring them is a named precondition of any future Go/Java/Kotlin ergonomic
 client. Python (`python/`) is the reference each other language mirrors.
+
+
+### Typed governing refusals and opt-in load-shed retry
+
+Python exports `NOT_GOVERNED_REASON` and `is_not_governed(error)`; TypeScript exports the
+same constant and `isNotGoverned(error)`. With seamd >= 0.82.0 they recognise the
+`INVALID_ARGUMENT` refusal by reason first, then `COORDINATION`'s `cause` metadata.
+Neither helper matches message text or changes the error. Older runtimes without these
+structured markers are not recognised.
+
+The retry helpers keep their existing session-only defaults. Opt in per call:
+
+```python
+from seam_sdk import load_shed_retry_classifier, with_session_retry
+
+result = with_session_retry(
+    lambda: client.report_outcome(
+        decision_id, correct, idempotency_key=report_key, credential=agent,
+    ),
+    classifier=load_shed_retry_classifier,
+    refresh_challenge=lambda: client.admit(agent),
+)
+```
+
+```typescript
+import { loadShedRetryClassifier, withSessionRetry } from "@zer07labs/seam-sdk";
+
+const result = await withSessionRetry(
+  () => client.reportOutcome(decisionId, correct, { idempotencyKey: reportKey, credential: agent }),
+  {
+    classifier: loadShedRetryClassifier,
+    refreshChallenge: () => client.admit(agent),
+  },
+);
+```
+
+For Python async clients use `await with_session_retry_async(...)`; both the call and
+`refresh_challenge` must return fresh awaitables. The built-in classifier retains session retries,
+adds `RESOURCE_EXHAUSTED / QUOTA_EXCEEDED`, and handles `UNAVAILABLE / CHALLENGE_REFUSED`.
+It waits for RetryInfo plus the existing exponential jitter (missing RetryInfo means zero server
+delay). A challenge refusal requires the explicit callback: obtain a new challenge and complete
+admission, then retry the original call once. A second challenge refusal or a failed recovery
+propagates unchanged. No callback means no challenge retry. Recovery runs at most once per helper
+invocation, within the attempt and wait limits; call/recovery durations retain their own RPC timeouts.
+
+Custom classifiers replace the default policy: return `RetryDecision(delay_s=..., fresh_challenge=...)`
+in Python, or `{ delayMs, freshChallenge }` in TypeScript; `None` / `undefined` refuses retry.
+Delay must be finite and nonnegative. Python delays are seconds; TypeScript delays are milliseconds.
+Only wrap unary operations safe to reissue, preserving any application idempotency key. Each
+attempt must make a new SDK call so it signs fresh bytes; do not replay signed requests.

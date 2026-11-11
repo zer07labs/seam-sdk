@@ -5,6 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Code } from "@connectrpc/connect";
 import {
+  loadShedRetryClassifier,
   DEFAULT_RETRY_BUDGET_MS,
   isRetryable,
   isSessionUnavailable,
@@ -100,5 +101,41 @@ test("every other error propagates on the first attempt, unslept", async () => {
     );
     assert.equal(s.calls, 1, name);
     assert.deepEqual(slept, [], name);
+  }
+});
+
+
+test("quota retries are opt-in and honour RetryInfo", async () => {
+  const e = refusal(Code.ResourceExhausted, "QUOTA_EXCEEDED", 2);
+  const baseline = script(e);
+  await assert.rejects(run(baseline), (err) => err === e);
+  assert.equal(baseline.calls, 1);
+  const s = script(e);
+  const { out, slept } = await run(s, { classifier: loadShedRetryClassifier });
+  assert.equal(out, "ok");
+  assert.deepEqual(slept, [2250]);
+  for (const other of [
+    refusal(Code.Unavailable, "QUOTA_EXCEEDED"),
+    refusal(Code.ResourceExhausted, "CHALLENGE_REFUSED"),
+    refusal(Code.ResourceExhausted, "other"), new Error("stop"),
+  ]) assert.equal(loadShedRetryClassifier(other), undefined);
+});
+
+test("custom classifiers supply delay, can refuse, and cannot bypass budget or attempts", async () => {
+  const e = new Error("custom");
+  const s = script(e);
+  const { slept } = await run(s, { classifier: () => ({ delayMs: 3000 }) });
+  assert.deepEqual(slept, [3250]);
+  for (const opts of [
+    { classifier: () => undefined },
+    { classifier: () => ({ delayMs: 3000 }), budgetMs: 2999 },
+    { classifier: () => ({ delayMs: 3000 }), maxAttempts: 1 },
+  ]) {
+    const s = script(e);
+    await assert.rejects(run(s, opts), (err) => err === e);
+    assert.equal(s.calls, 1);
+  }
+  for (const delayMs of [-1, Infinity, NaN]) {
+    await assert.rejects(run(script(e), { classifier: () => ({ delayMs }) }), RangeError);
   }
 });

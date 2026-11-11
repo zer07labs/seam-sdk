@@ -77,6 +77,8 @@ from .identity import (
     load_identity_file,
 )
 from .errors import (
+    NOT_GOVERNED_REASON,
+    is_not_governed,
     AlreadyExistsError,
     CanonicalizationError,
     DeadlineExceededError,
@@ -127,6 +129,9 @@ from ._outcome import (
 )
 from .tenant import TENANT_HEADER, AioTenantInterceptor, TenantInterceptor
 from .retry import (
+    RetryDecision,
+    RetryClassifier,
+    load_shed_retry_classifier,
     DEFAULT_RETRY_BUDGET_S,
     with_session_retry,
     with_session_retry_async,
@@ -235,6 +240,11 @@ __all__ = [
     # SESSION_UNAVAILABLE (seam-runtime k8s P6) — classification plus the opt-in retry helper
     "SESSION_UNAVAILABLE_REASON",
     "is_retryable",
+    "NOT_GOVERNED_REASON",
+    "is_not_governed",
+    "RetryDecision",
+    "RetryClassifier",
+    "load_shed_retry_classifier",
     "is_session_unavailable",
     "DEFAULT_RETRY_BUDGET_S",
     "with_session_retry",

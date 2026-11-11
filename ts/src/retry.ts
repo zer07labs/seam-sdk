@@ -3,7 +3,7 @@
 //
 // The SDK never retries on its own (D-WRITES-EXCLUDED); this is a helper a caller wraps around a call
 // it chooses to retry. It re-invokes `call`, so every attempt is a fresh SDK call: it re-signs its
-// credential and, when the ticket is cold, re-admits. Only `isRetryable` errors are retried — every
+// credential and, when the ticket is cold, re-admits. By default only `isRetryable` errors are retried — every
 // other error, including every other `UNAVAILABLE`, propagates on the first attempt.
 //
 // The delay before attempt n+1 is `retryAfter + U(0, min(maxDelayMs, baseDelayMs * 2**(n-1)))`. The
@@ -13,12 +13,39 @@
 // until its live sessions finish, so pass a `budgetMs` sized for that drain. When the next
 // delay would overrun the budget, the last error is thrown as-is. Wrap unary calls only.
 
-import { isRetryable, SeamRpcError } from "./errors.js";
+import { isRetryable, SeamRpcError, ResourceExhaustedError, UnavailableError } from "./errors.js";
 
 /** Total milliseconds a retry loop may spend waiting between attempts. Longer than the 30s lease TTL. */
 export const DEFAULT_RETRY_BUDGET_MS = 40_000;
 
+export interface RetryDecision {
+  /** Server delay in milliseconds; the helper adds its normal jitter. */
+  delayMs: number;
+  /** Require a fresh challenge/admission before retrying; at most once per invocation. */
+  freshChallenge?: boolean;
+}
+
+/** undefined means no retry. Replaces the default classifier when supplied. */
+export type RetryClassifier = (error: unknown) => RetryDecision | undefined;
+
+/** Opt-in quota backoff and fresh-challenge recovery, retaining session retries.
+ * Missing RetryInfo means zero server delay (jitter still applies). Stateless and safe to share. */
+export const loadShedRetryClassifier: RetryClassifier = (e) => {
+  if (e instanceof ResourceExhaustedError && e.reason === "QUOTA_EXCEEDED") {
+    return { delayMs: (e.retryAfter ?? 0) * 1000 };
+  }
+  if (e instanceof UnavailableError && e.reason === "CHALLENGE_REFUSED") {
+    return { delayMs: (e.retryAfter ?? 0) * 1000, freshChallenge: true };
+  }
+  if (isRetryable(e)) return { delayMs: ((e as SeamRpcError).retryAfter ?? 0) * 1000 };
+  return undefined;
+};
+
 export interface SessionRetryOptions {
+  classifier?: RetryClassifier;
+  /** Obtain a fresh challenge and complete admission, e.g. client.admit(agent).
+   * Runs after backoff, at most once. Failure propagates without retrying recovery. */
+  refreshChallenge?: () => Promise<unknown>;
   /** Total wait budget across attempts, in ms. Default {@link DEFAULT_RETRY_BUDGET_MS}. */
   budgetMs?: number;
   /** Base of the jittered exponential, in ms. Default 250. */
@@ -46,17 +73,30 @@ export async function withSessionRetry<T>(
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const random = opts.random ?? Math.random;
   let waited = 0;
+  let recovered = false;
   for (let attempt = 1; ; attempt++) {
     try {
       return await call();
     } catch (e) {
-      if (!isRetryable(e) || attempt >= maxAttempts) throw e;
-      const retryAfterMs = ((e as SeamRpcError).retryAfter ?? 0) * 1000;
+      if (attempt >= maxAttempts) throw e;
+      const decision = opts.classifier
+        ? opts.classifier(e)
+        : isRetryable(e) ? { delayMs: ((e as SeamRpcError).retryAfter ?? 0) * 1000 } : undefined;
+      if (!decision) throw e;
+      if (decision.freshChallenge && (recovered || !opts.refreshChallenge)) throw e;
+      if (!Number.isFinite(decision.delayMs) || decision.delayMs < 0) {
+        throw new RangeError("retry delayMs must be finite and non-negative");
+      }
+      const retryAfterMs = decision.delayMs;
       const delay =
         retryAfterMs + random() * Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1));
       if (waited + delay > budgetMs) throw e;
       await sleep(delay);
       waited += delay;
+      if (decision.freshChallenge) {
+        recovered = true;
+        await opts.refreshChallenge!();
+      }
     }
   }
 }
