@@ -1,8 +1,8 @@
 # Plan: outcome reward / metrics / observed_at on the hand-written clients (Branchpoint BP-2, J3 train 1)
 
 - **Source:** waves `outcome-ingestion` wave 3 brief (`.waves/outcome-ingestion/briefs/seam-sdk-w3.md`);
-  `seam-experiments/plans/cross-repo/seam-sdk-branchpoint.md` §Train 1 (BP-2 part) as amended by
-  `seam-experiments/plans/joint/shared-substrate.md` §J3 Train 1.
+  `seam-branchpoint/docs/history/seam-experiments/plans/cross-repo/seam-sdk-branchpoint.md` §Train 1 (BP-2 part) as amended by
+  `seam-branchpoint/docs/history/seam-experiments/plans/joint/shared-substrate.md` §J3 Train 1.
 - **Locked to:** the seam-runtime release that ships BP-2c (`seamd::facade::OUTCOME_FIELDS_ACCEPTED = true`,
   advertising `outcome.reward_metrics` + `outcome.observed_at`).
 - **Out of scope:** `run_decision(contexts=, context_refs=)` (train 1's other half, not in this wave's brief);
