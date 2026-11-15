@@ -83,7 +83,7 @@ pub fn v4_seal(decision_id: &str, tenant: &str) -> (serde_json::Value, Vec<u8>) 
 
 /// The `AUDIT_ENTRY` digest of a `seam.audit.management.v1` entry, for a synthetic chained entry whose
 /// content is orthogonal to what a test proves. Under `--issuer` every chained `AUDIT_ENTRY` recomputes
-/// (spec (b′)), so an arbitrary digest is now an `ENTRY REWRITE`. The framing is the D-043 transcription
+/// (spec (b′)), so an arbitrary digest is now an `ENTRY REWRITE`. The framing is the spec's (b′) preimage
 /// (`src/entry.rs`); the runtime vectors in `tests/entry_recompute.rs` are what prove it, not this.
 pub fn management_entry_digest(
     action: &str,

@@ -380,3 +380,26 @@ the spec and this entry and the README's exception are retired with it.
 **Independence is untouched.** No dependency was added; `cargo tree -e normal` still shows zero Seam
 crates. What this concedes is narrower: for these five things, a reimplementer needs the runtime's source
 or this crate's, not only `docs/`.
+
+## D-044 — D-043 retired: the (b′) preimages are read from the vendored spec (re-pin @ `b4d1366`)
+
+**Decision.** D-043's carve-out expired as it said it would. seam-runtime#1699 (closing #1561) put the (b′)
+preimages into `seam-event.v1.md`, in §"(b′) preimages: the closed entry tables", and this repo's vendored
+copy was re-pinned to `b4d1366`. The tripwire `the_vendored_spec_does_not_yet_carry_the_entry_tables` went
+red, which was its job, and is removed. `src/entry.rs` is re-derived from the spec: its 26 action→domain→
+classification rows and its three framings were compared to the spec text and are **identical** to the D-043
+transcription, so no digest, refusal or vector changed. Only the source it cites changed.
+
+* **Pinned to the spec, not to a comment.** `entry::tests::the_tables_are_the_vendored_spec_tables` parses
+  the vendored table and fails if `src/entry.rs` adds, drops or relabels a row. The runtime vectors still
+  prove the same tables against the runtime's own output, so both directions are checked.
+* **The per-kind contract shrinks to what the spec states.** D-043 carried the store's whole eleven-row
+  `KIND_CLASSIFICATION_CONTRACT`, but only the `CHAIN_HEAD_ATTESTATION` (`Internal`) and
+  `ERASURE_CERTIFICATE` (`Pii`) rows were ever read. Those are the two the spec fixes, and the only two kept.
+* **D-043's "code over spec" readings are now the spec's text**: `context_recalled`'s actor is "absent,
+  never `""`", and an absent `session_id` is "absent ≡ `""`".
+* **D-042's runtime divergence closed too.** #1699 also makes the runtime's `--allow-uncovered` report NOT
+  VERIFIED and exit 2 over an uncovered entry, which is what this crate already did. The README says so.
+
+D-035's clean-room claim now holds without exception for this crate's own code. D-043 stays above unedited,
+as the record of why the transcription existed.

@@ -32,18 +32,17 @@ linked Seam's own library would be *Seam checking Seam* — which is precisely w
 should not have to accept.
 
 It is written from the specs in `docs/` (plus the runtime's `seam-commitment-digest.v2.md`, which the bundle
-spec cites and the shared `conformance/` vectors pin), and nothing else, with the one named exception below.
+spec cites and the shared `conformance/` vectors pin), and nothing else.
 `cargo tree` is the assertion: if a Seam crate ever appears in it, the claim has quietly stopped being true.
 
-**The named exception: the (b′) entry preimages.** Spec clause (b′) requires `--issuer` to recompute every
-chained `AUDIT_ENTRY`, `CHAIN_HEAD_ATTESTATION` and `ERASURE_CERTIFICATE`, but the spec's text points at the
-runtime's own code for how, instead of carrying it. Until the spec carries them (seam-runtime#1561), five
-things are **transcribed** from seam-runtime `crates/seam-verify/src/entry.rs` @ `37576658`: the action-entry
+**The former exception: the (b′) entry preimages.** Spec clause (b′) requires `--issuer` to recompute every
+chained `AUDIT_ENTRY`, `CHAIN_HEAD_ATTESTATION` and `ERASURE_CERTIFICATE`. Until seam-runtime#1699 (#1561) the
+spec pointed at the runtime's own code for how, so five things were transcribed from it (`DECISIONS.md`
+D-043). The vendored spec now carries them, in §"(b′) preimages: the closed entry tables": the action-entry
 framing, the `seam.audit.chain-attest-entry.v1` and `seam.audit.erasure-cert.v2` framings, the action→domain
-table, and the action→classification map. They were read, not linked, so `cargo tree` is unchanged. They are
-checked against vectors the runtime's own code produced (`tests/goldens/entry_domains*.jsonl`), not against
-a second transcription. `DECISIONS.md` D-043 records the carve-out and when it ends: a test turns red with
-"retire the D-043 carve-out" once the vendored spec carries the tables.
+table, and the action→classification map. They matched the transcription row for row, so the carve-out is
+retired (D-044) and a unit test pins `src/entry.rs` to the spec's table. They are still checked against
+vectors the runtime's own code produced (`tests/goldens/entry_domains*.jsonl`).
 
 **You do not have to use this program.** Everything it does is specified in `docs/`, precisely enough to
 reimplement, apart from the exception above — that is the actual deliverable. This is a reference, and a
@@ -234,10 +233,11 @@ AUTHENTICITY NOT ESTABLISHED: 1 uncovered chained entry (--allow-uncovered diagn
       attestations 1 (issuer-signed), covered prefix 3 links, records recomputed 1, entries recomputed 3, uncovered 0
 ```
 
-Over a stream with nothing uncovered the flag changes nothing: normal banner, exit 0. **This differs from
-the runtime's verifier**, whose `--allow-uncovered` prints its AUTHENTICATED banner and exits 0 over an
-uncovered entry. That is a green claim over content nobody checked, which spec §Versioning forbids
-(seam-runtime#1561); here exit 0 means verified and nothing else (D-042). The `--json` shape is unchanged:
+Over a stream with nothing uncovered the flag changes nothing: normal banner, exit 0. Here exit 0 means
+verified and nothing else (D-042). **The runtime's verifier used to differ**: before seam-runtime#1699 (#1561)
+its `--allow-uncovered` printed its AUTHENTICATED banner and exited 0 over an uncovered entry, a green claim
+over content nobody checked, which spec §Versioning forbids. From #1699 it reports NOT VERIFIED and exits 2
+there too. The `--json` shape is unchanged:
 no `entries recomputed` or `uncovered` keys, and a rewrite or uncovered entry arrives as
 `{"verified":false,"error":…}`, exit 2.
 

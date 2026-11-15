@@ -1,4 +1,13 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ d70774454 (refreshed 2026-11-10).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ b4d1366 (refreshed 2026-11-15).
+     seam-runtime#1699 (#1561, #1556), on runtime main. Movement since d70774454: clause (b′) now CARRIES its
+     preimages — §"(b′) preimages: the closed entry tables" spells the AUDIT_ENTRY framing, the action→domain→
+     classification table, and the CHAIN_HEAD_ATTESTATION / ERASURE_CERTIFICATE framings and fixed labels;
+     `context_recalled`'s actor is now **absent**, never `""` (was "empty"); CHAIN_HEAD_ATTESTATION is listed
+     among the chained kinds; and a once-per-UTC-day chain-head attestation trigger
+     (`SEAM_CHAIN_ATTEST_MAX_AGE_SECS`, default 86400). No tag, digest or vector change. The tables are
+     identical, row for row, to the ones `src/entry.rs` transcribed from the runtime under D-043, which this
+     re-pin retires (verify/DECISIONS.md D-044); the daily trigger is informational for this crate.
+     Prior pin d70774454 (refreshed 2026-11-10).
      The runtime 0.77.0 train (seam-runtime#1654, Branchpoint W3: BP-9 Allocation writer, BP-17 erasure unit_tags),
      on runtime main. Movement since e69914aa: wording only — LearningDecision tags 10-13 are now set by BP-9 on a
      one-shot split's policy row (absent otherwise), and `POST /v1/erasure/subject-commitments` takes optional
@@ -167,7 +176,7 @@ by `,`):
 |---|---|---|
 | `context_recalled` | the recall worker verified that a remote `acdp://` context a sealed decision relied on is retracted, superseded, or signed by a revoked key on or after its compromise boundary — once per (decision, context, kind) | `context-recall:<decision_id>:<first 16 hex of sha256(ctx_ref)>:<kind>` |
 
-`subject` is the relying `decision_id`; `actor` is empty (the notice is the runtime's); `reason` is the closed
+`subject` is the relying `decision_id`; `actor` is **absent** (the notice is the runtime's; absent, never `""`: the (b′) preimage appends `actor` only when present, so `""` digests differently); `reason` is the closed
 form `context '<ctx_ref>' recalled: <kind>` with `kind` one of `retracted`, `superseded`, `key_revoked` — no
 registry-supplied text (no `actor`, no `reason` from the event) ever enters it. A republication after a recall
 writes nothing: a relying party re-resolves the context for its current state.
@@ -292,9 +301,13 @@ a lower `digest_schema` would be issuing, under the issuer key, exactly the down
 exists to prevent.
 
 **Triggers.** Emitted at **boot** (every restart leaves a signed head immediately, covering restart gaps),
-**every N chain entries** (`SEAM_CHAIN_ATTEST_EVERY`, default 1000; `0` disables — the every-N worker is
-**ON by default**, unlike the opt-in retention worker, because an authenticity root that is opt-in is the
-gap persisting by default), and at **every anchor boundary** (attest-then-anchor, so the externally
+**every N chain entries** (`SEAM_CHAIN_ATTEST_EVERY`, default 1000; `0` disables the whole worker — the
+every-N worker is **ON by default**, unlike the opt-in retention worker, because an authenticity root that
+is opt-in is the gap persisting by default), **once per UTC day** (#1556: on the worker's tick, when
+`floor(now_ms / (max_age·1000)) > floor(last_attested_ms / (max_age·1000))` with
+`SEAM_CHAIN_ATTEST_MAX_AGE_SECS`, default 86400, so the first tick at or after 00:00Z attests every non-empty
+partition; the boot attestation seeds `last_attested_ms`, so a same-day restart adds no second daily one; a
+failed pass retries next tick; `0` disables only this trigger), and at **every anchor boundary** (attest-then-anchor, so the externally
 notarized `(len, head)` transitively pins an issuer-signed head — see `audit-anchor.md`). The empty chain
 (`attested_len == 0`) is never signed (no genesis attestation).
 
@@ -321,7 +334,7 @@ equal its envelope's, per "Reader obligations on `tenant`" above, and (since #83
 MUST verify under the one framing that `tenant` selects**; (b) for every `DECISION_SEALED`, recompute the record
 digest (spec §Record digest) from its payload and compare it to the event's `digest` (tag 19) — a
 mismatch is a **payload rewrite** (a structural column was changed after sealing; the chain link still
-hashes, but the payload no longer matches it); **(b′) every other chained body recomputes too**: a chained `AUDIT_ENTRY` under the domain its `action` selects (management, legal-hold, archive-evict, boundary, denial, purge, erasure, context-recall; the closed table is `seam-verify/src/entry.rs`), with its envelope `classification` bound to the one its action's typed reason stamps; a `CHAIN_HEAD_ATTESTATION` under `seam.audit.chain-attest-entry.v1`, and an `ERASURE_CERTIFICATE` under `seam.audit.erasure-cert.v2` — a mismatch is an **entry rewrite** (exit 2). The recompute runs before every attestation check, including attestations at or below an anchored window's base. An attestation's and a certificate's `classification` must be the label the store fixes for its kind (`KIND_CLASSIFICATION_CONTRACT`: `Internal`, `Pii`). Their envelope `namespace` and `occurred_at` are outside the preimage, as the store digests them, and are not bound. `chain --bridge` recomputes both streams' bodies the same way and refuses an uncovered entry outright (`UNCOVERED ENTRY`), and it also requires a pinned attestation on the new stream that covers the move-in itself (`MOVE-IN NOT YET ATTESTED`): on a return trip, the tenant's older signed history would otherwise satisfy `--issuer` before the move-in is attested. v1 certificates predate every deployment (v2 since 2026-07-18; the earliest deployed database is 2026-07-26), so a v2 mismatch is a rewrite, not an older format. A chained body with an action or kind the verifier has no preimage for is **uncovered** and REFUSED under `--issuer` (otherwise a rewrite relabelled to an unknown action would verify). `--allow-uncovered` reports it instead, for diagnosis, in the human report only; it never pairs with `--json`, so an automated caller cannot get a green over an uncovered entry. `fact_appended` is uncovered: it chains the fact's own checksum, not an entry digest; (c) **a `DECISION_SEALED` whose `schema_version` is not
+hashes, but the payload no longer matches it); **(b′) every other chained body recomputes too**: a chained `AUDIT_ENTRY` under the domain its `action` selects (management, legal-hold, archive-evict, boundary, denial, purge, erasure, context-recall; the closed tables are [(b′) preimages](#b-preimages-the-closed-entry-tables) below), with its envelope `classification` bound to the one its action's typed reason stamps; a `CHAIN_HEAD_ATTESTATION` under `seam.audit.chain-attest-entry.v1`, and an `ERASURE_CERTIFICATE` under `seam.audit.erasure-cert.v2` — a mismatch is an **entry rewrite** (exit 2). The recompute runs before every attestation check, including attestations at or below an anchored window's base. An attestation's and a certificate's `classification` must be the label the store fixes for its kind (`KIND_CLASSIFICATION_CONTRACT`: `Internal`, `Pii`). Their envelope `namespace` and `occurred_at` are outside the preimage, as the store digests them, and are not bound. `chain --bridge` recomputes both streams' bodies the same way and refuses an uncovered entry outright (`UNCOVERED ENTRY`), and it also requires a pinned attestation on the new stream that covers the move-in itself (`MOVE-IN NOT YET ATTESTED`): on a return trip, the tenant's older signed history would otherwise satisfy `--issuer` before the move-in is attested. v1 certificates predate every deployment (v2 since 2026-07-18; the earliest deployed database is 2026-07-26), so a v2 mismatch is a rewrite, not an older format. A chained body with an action or kind the verifier has no preimage for is **uncovered** and REFUSED under `--issuer` (otherwise a rewrite relabelled to an unknown action would verify). `--allow-uncovered` reports it instead, for diagnosis, in the human report only; it never pairs with `--json`, so an automated caller cannot get a green over an uncovered entry. Under `--issuer` the refusal is unconditional (`--strict` is not needed), and `--allow-uncovered` output is **NOT VERIFIED** with exit 2: it names the uncovered count and never prints a `VERIFIED` banner (#1561). `fact_appended` is uncovered: it chains the fact's own checksum, not an entry digest; (c) **a `DECISION_SEALED` whose `schema_version` is not
 `4` ⇒ REFUSE (UNKNOWN SCHEMA VERSION)**, and **a v4 `DECISION_SEALED` that lacks a non-empty
 `ciphertext_digest` (tag 10) ⇒ REFUSE (MISSING COMMITMENT)**, or lacks any of its mandatory sub-digest
 and binding tags 11, 12, 14, 15, 16, 17 ⇒ REFUSE (MISSING SUB-DIGEST). Every record is *required* to carry
@@ -437,6 +450,41 @@ What anchored verification does **not** weaken: within-window truncation, insert
 caught by (a) exactly as from genesis; tail truncation is exactly as visible as from genesis (the
 integrity-only tail, and comparison against a later anchor); and a tampered prefix cannot be skipped,
 because a forger cannot produce the issuer-signed anchor an anchored start requires.
+
+
+##### (b′) preimages: the closed entry tables
+
+A verifier transcribes these, not `seam-verify/src/entry.rs` (#1561). Every preimage is SHA-256 over a
+sequence of **fields, each framed as a u32 little-endian byte length followed by the bytes**, except where a
+field is marked *raw*.
+
+**`AUDIT_ENTRY`** (the store's `ActionEntry`): the fields `domain`, `action`, envelope `tenant`, envelope
+`namespace`, envelope `session_id` (**absent ≡ `""`**), `subject`, `reason`, in that order, each framed;
+then envelope `occurred_at` as a *raw* u64 LE (8 bytes, no length prefix); then `actor`, framed, **only
+when present** (absent appends nothing; `Some("")` appends a zero length and so digests differently).
+
+| domain | actions | envelope `classification` |
+|---|---|---|
+| `seam.audit.management.v1` | `session_resumed`, `party_registered`, `party_removed`, `cross_namespace_grant_placed`, `cross_namespace_grant_revoked`, `tenant_enrolled`, `tenant_revoked`, `config_snapshot_installed`, `config_section_removed`, `events_redriven`, `erasure_previewed`, `subject_commitments_recomputed`, `subject_commitment_recompute_refused`, `subject_commitment_tombstoned`, `tenant_move_out`, `tenant_move_in` | `Internal` |
+| `seam.audit.legal-hold.v1` | `hold_placed`, `hold_released` | `Internal` |
+| `seam.audit.archive-evict.v1` | `ciphertext_evicted` | `Internal` |
+| `seam.audit.boundary.v1` | `boundary.data_flagged` | `Confidential` |
+| `seam.audit.denial.v1` | `admit.compat_reject` | `Internal` |
+| `seam.audit.denial.v1` | `execute.scope_deny` | `Confidential` |
+| `seam.audit.purge.v1` | `crypto_shred_purge` | `Internal` |
+| `seam.audit.erasure.v1` | `gdpr_erasure` | `Pii` |
+| `seam.audit.erasure.v1` | `tenant_kek_shred` | `Internal` |
+| `seam.audit.context-recall.v1` | `context_recalled` | `Internal` |
+
+Any other `action` (including `fact_appended`, which chains the fact's own checksum) is **uncovered**.
+
+**`CHAIN_HEAD_ATTESTATION`**: framed `seam.audit.chain-attest-entry.v1`, `attested_len` (u64 LE),
+`attested_head`, `attested_at` (u64 LE), `digest_schema` (u32 LE), `issuer_aid`, `signature`; each of these
+seven is framed, the integers as their LE bytes. Envelope `classification` is `Internal`.
+
+**`ERASURE_CERTIFICATE`**: framed `seam.audit.erasure-cert.v2`, `subject`, the count of `erased` (its u32 LE
+bytes, framed), each `erased` id, the count of `held` (framed likewise), each `held` id, `erased_at`
+(u64 LE), `chain_head`, `issuer_aid`, `signature`. Envelope `classification` is `Pii`.
 
 ### `SESSION_LIFECYCLE` (additive, tag 21 — advisory, not chained) — CP-09
 
@@ -886,7 +934,7 @@ The decision being scored is identified by the **envelope `decision_id`**, not a
   (its own record/action digest), and `checksum` (the head it produces, `= H(prev_checksum ‖ digest)`).
   **Chained-ness is by field presence, not by `kind`:** an event is on the chain iff `digest` + `checksum`
   are present (equivalently, `prev_checksum` is non-empty). The chained kinds are `DECISION_SEALED`,
-  `AUDIT_ENTRY`, and `ERASURE_CERTIFICATE` — **except** the `action: "chain_anchor"` `AUDIT_ENTRY`, which is
+  `AUDIT_ENTRY`, `ERASURE_CERTIFICATE` and `CHAIN_HEAD_ATTESTATION` — **except** the `action: "chain_anchor"` `AUDIT_ENTRY`, which is
   emitted off-chain (no `digest`) and is *not* a link. Advisory kinds (`LEARNING_DECISION`,
   `LEARNING_OUTCOME`, `BUDGET_BREACH`) likewise set none of the three. **Payload binds to kind** (code-health
   A4): each payload field belongs to exactly one kind, so an event carries only its own kind's payload, and a
