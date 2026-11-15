@@ -9,9 +9,8 @@
 //! genuinely signed earlier attestation (`entry_domains.swapped-attestation.json`); nothing here is
 //! signed by this repository.
 //!
-//! The domain table and framing are transcribed from the runtime under the D-043 carve-out
-//! (`src/entry.rs`); [`the_vendored_spec_does_not_yet_carry_the_entry_tables`] is that carve-out's
-//! tripwire.
+//! The domain table and framing are the vendored spec's (b′) preimage tables (`src/entry.rs`; D-044,
+//! which retired the D-043 transcription carve-out).
 
 use std::process::Command;
 
@@ -149,7 +148,7 @@ fn every_chained_audit_entry_recomputes() {
     assert_eq!(code, VERIFIED, "{out}");
 }
 
-/// Absent and `""` frame alike (runtime `entry.rs` `unwrap_or("")`; D-043): dropping a `""` session to
+/// Absent and `""` frame alike (spec (b′) preimages: `session_id` "absent ≡ `""`"): dropping a `""` session to
 /// `null`, or omitting the key, still recomputes.
 #[test]
 fn an_absent_session_frames_as_empty() {
@@ -291,8 +290,8 @@ fn an_actor_change_is_a_rewrite() {
 }
 
 /// `context_recalled`'s actor is ABSENT (the writer passes `None`), so it contributes no actor frame.
-/// The spec text calls it "empty"; hashing it as `Some("")` appends a four-zero-byte frame and must NOT
-/// match the recorded digest. Pins the code reading against the spec text (D-043, seam-runtime#1561).
+/// The spec says "absent, never `""`" (it said "empty" before seam-runtime#1561); hashing it as
+/// `Some("")` appends a four-zero-byte frame and must NOT match the recorded digest.
 #[test]
 fn context_recalled_with_an_empty_actor_does_not_recompute() {
     let rows = mutated(15, |r| {
@@ -1024,23 +1023,11 @@ fn an_unchained_non_v4_seal_is_still_refused() {
     assert!(out.contains("CANNOT VERIFY"), "{out}");
 }
 
-// ---- the D-043 carve-out tripwire -----------------------------------------------------------------
-
-/// D-043 transcribes the (b′) tables from the runtime because the vendored spec does not carry them. The
-/// day it does, the carve-out must be retired and `src/entry.rs` re-derived from the spec.
-#[test]
-fn the_vendored_spec_does_not_yet_carry_the_entry_tables() {
-    let spec = std::fs::read_to_string(format!(
-        "{}/docs/seam-event.v1.md",
-        env!("CARGO_MANIFEST_DIR")
-    ))
-    .expect("the vendored spec must exist");
-    assert!(
-        !spec.contains("seam.audit.management.v1"),
-        "the vendored spec now carries the (b′) tables: retire the D-043 carve-out and re-derive \
-         `entry.rs` from the spec"
-    );
-}
+// ---- D-043 retired (D-044) ---------------------------------------------------------------------------
+//
+// The carve-out tripwire that stood here went red, as designed, at the re-pin that brought the (b′)
+// tables into the vendored spec (seam-runtime b4d1366). Its replacement is positive, not negative:
+// `entry::tests::the_tables_are_the_vendored_spec_tables` pins `src/entry.rs` to the spec's table.
 
 // ---- the README shows what the binary prints -------------------------------------------------------
 

@@ -16,6 +16,14 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Changed
+- **`seam-verify`: the (b′) entry preimages are now read from the spec (verify/DECISIONS.md D-044).** The
+  vendored `seam-event.v1.md` is re-pinned to seam-runtime `b4d1366` (#1699, closing #1561), which carries
+  the AUDIT_ENTRY framing, the action→domain→classification table and the attestation/certificate framings.
+  They match the D-043 transcription row for row, so no digest, refusal or exit code changes. The D-043
+  carve-out is retired, and a unit test now pins `src/entry.rs` to the spec's table. Reaches users with the
+  next `seam-verify` publish, and changes nothing a caller can observe.
+
 ## 0.83.0 — 2026-11-11
 
 ### Security
