@@ -1,7 +1,7 @@
 # BP-8 SDK half — `DecisionRecordView.allocation` (AllocationView)
 
-Branchpoint wave 3, seam-sdk row. Sources: `seam-experiments/plans/branchpoint.md` §BP-8 (origin/main e1565f2;
-the presence and growth rules there are normative), `seam-experiments/plans/joint/shared-substrate.md` §J3 train 2,
+Branchpoint wave 3, seam-sdk row. Sources: `seam-branchpoint/docs/history/seam-experiments/plans/branchpoint.md` §BP-8 (origin/main e1565f2;
+the presence and growth rules there are normative), `seam-branchpoint/docs/history/seam-experiments/plans/joint/shared-substrate.md` §J3 train 2,
 runtime spec `seam-runtime/docs/specs/branchpoint-allocation.md` (@3645c10f2, #1652, seamd-v0.76.0), board
 `../.waves/branchpoint/CHARTER.md`.
 

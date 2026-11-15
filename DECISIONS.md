@@ -1,5 +1,7 @@
 # Decisions
 
+> seam-experiments references: see seam-branchpoint/docs/history/seam-experiments/
+
 The durable record of `/reconcile` passes over `ASSUMPTIONS.md`. Each entry: the original
 assumption, the independent recommender's analysis, the human verdict, and the resulting status.
 `/ship` and any later reconciliation read this file instead of replaying the conversation that
