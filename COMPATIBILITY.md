@@ -190,6 +190,11 @@ and opt-in load-shed retry hooks. The runtime's next release must be 0.83.0 or l
 INVALID_ARGUMENT and the wire message is unchanged. Recognition checks reason first, then the
 COORDINATION cause metadata (`python/seam_sdk/errors.py:521`, `ts/src/errors.ts:328`).
 
+**Runtime 0.86.0 adopts MACP semantics rev 5 (MACP 0.14.1) for new sessions** (seam-runtime#1703).
+The sealed `SessionStart` bytes of new sessions differ; records sealed earlier still verify. No API,
+status or reason code changes, so no SDK change is needed. AITP 0.25.1 in the same train changes no
+wire or sealed byte, and its new `hold:read` operator scope is management-plane only.
+
 | SDK change | Requires runtime | Earlier runtimes | Pinned from |
 |---|---|---|---|
 | Protocol pass 2026-10 (seam-sdk#265) | seam-runtime 0.48.0 (seam-runtime#1365, carries `protocol-pass-2026-10`) | **none** — no compatibility | runtime `main` @ `32f8196` (contract byte-identical to the freeze `1ac5de5`) |
