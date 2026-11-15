@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.85.0 — 2026-11-15
+
 ### Changed
 - **`seam-verify`: the (b′) entry preimages are now read from the spec (verify/DECISIONS.md D-044).** The
   vendored `seam-event.v1.md` is re-pinned to seam-runtime `b4d1366` (#1699, closing #1561), which carries
