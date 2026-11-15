@@ -4,10 +4,10 @@
 //! something. It links **nothing of Seam's** — see `Cargo.toml`, where the dependency list is the
 //! argument, and `.github/workflows/ci.yml`, where `cargo tree -e normal` turns that argument into a
 //! gate rather than a comment. It is written from the published specs, takes bytes and a public key,
-//! and answers yes or no. One named exception: the spec clause (b′) entry preimages, domain table and
-//! classification map are transcribed from seam-runtime `crates/seam-verify/src/entry.rs` @ `37576658`
-//! until the spec carries them (seam-runtime#1561; `DECISIONS.md` D-043). They are read, not linked,
-//! and checked against vectors the runtime's own code produced.
+//! and answers yes or no. That includes the spec clause (b′) entry preimages, domain table and
+//! classification map, which the spec has carried since seam-runtime#1699 (`DECISIONS.md` D-044 retired
+//! the D-043 carve-out that transcribed them); they are also checked against vectors the runtime's own
+//! code produced.
 //!
 //! # Why there is a library and not only a binary
 //!

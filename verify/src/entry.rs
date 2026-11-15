@@ -10,33 +10,25 @@
 //! * `CHAIN_HEAD_ATTESTATION`, under `seam.audit.chain-attest-entry.v1` ([`chain_attest_digest`]);
 //! * `ERASURE_CERTIFICATE`, under `seam.audit.erasure-cert.v2` ([`erasure_cert_digest`]).
 //!
-//! The last two have their envelope classification bound to the label the store's emitter fixes for the
-//! kind ([`KIND_CLASSIFICATION_CONTRACT`]).
+//! The last two have their envelope classification bound to the label the spec fixes for the kind
+//! ([`fixed_classification`]).
 //!
-//! # Provenance — a scoped exception to the clean-room rule (D-043)
+//! # Provenance — from the spec (D-035; D-043 retired by D-044)
 //!
-//! Everything else in this crate is written from `docs/` alone (D-035). This module is not, because the
-//! vendored spec does not carry what it needs: (b′) names the `AUDIT_ENTRY` domains by short name and
-//! delegates "the closed table" to the runtime's private `seam-verify/src/entry.rs`, and it spells neither
-//! the action-entry framing nor the action→classification map. It names the attestation and certificate
-//! entry domains but spells neither framing, and the per-kind classification contract lives only in the
-//! store's code. So the domain table, the classification map, the three preimage framings and the
-//! per-kind contract below are **transcribed** from seam-runtime `crates/seam-verify/src/entry.rs` @
-//! `37576658` (which mirrors the store's `ActionEntry::new`, `audit_system_action`,
-//! `chain_attest_entry_digest` and `erasure_cert_entry_digest`) and from `crates/seam-store/src/event.rs`
-//! `KIND_CLASSIFICATION_CONTRACT` @ `37576658`. They are proven against runtime-produced vectors
-//! (`tests/goldens/entry_domains.jsonl`, the four runtime goldens and the four evidence bundles), not
-//! against a second transcription. The spec fix is seam-runtime#1561. The exception expires when the
-//! vendored spec carries the tables: `tests/entry_recompute.rs` holds a tripwire that goes red the moment
-//! it does, so this module is then re-derived from the spec.
+//! Like the rest of this crate, this module is written from `docs/` (D-035). The domain table, the
+//! action→classification map, the three preimage framings and the two fixed kind labels are all in
+//! `docs/seam-event.v1.md` §"(b′) preimages: the closed entry tables" (vendored @ `b4d1366`,
+//! seam-runtime#1699, which closed #1561). Until that re-pin they were transcribed from the runtime's own
+//! code under the D-043 carve-out. The spec's tables match that transcription row for row, so nothing
+//! here changed except the source it cites, and `tests::the_tables_are_the_vendored_spec_tables` now pins
+//! this module to the spec text itself. They are still proven against runtime-produced vectors
+//! (`tests/goldens/entry_domains.jsonl`, the four runtime goldens and the four evidence bundles).
 //!
-//! Where the code and the spec text disagree, this module hashes per the code, and each case is recorded
-//! under D-043:
+//! The three readings D-043 recorded as "code over spec" are now the spec's own text:
 //!
-//! * `context_recalled`'s `actor` is **absent** (the writer passes `None`), so it contributes no actor
-//!   frame. The spec calls it "empty"; `Some("")` would append a four-zero-byte frame and digest
-//!   differently.
-//! * An absent `session_id` and `""` frame identically (`unwrap_or("")`); the spec is silent.
+//! * `context_recalled`'s `actor` is **absent, never `""`**, so it contributes no actor frame;
+//!   `Some("")` would append a four-zero-byte frame and digest differently.
+//! * An absent `session_id` frames as `""` ("absent ≡ `\"\"`").
 //! * The classification is an exact, case-sensitive comparison of the envelope label.
 //!
 //! Any other chained kind reads as [`Body::Uncovered`].
@@ -46,15 +38,12 @@ use sha2::{Digest, Sha256};
 use crate::wire::{Attestation, AuditEntry, Cert, Event};
 
 /// The domain management entries are digested under: every management action, the tenant-move writers
-/// and the system partition's config actions.
-///
-/// Transcribed from seam-runtime `entry.rs` @ `37576658` (D-043; spec fix seam-runtime#1561).
+/// and the system partition's config actions. Spec: `docs/seam-event.v1.md` §"(b′) preimages: the closed entry tables".
 pub(crate) const MANAGEMENT_DOMAIN: &str = "seam.audit.management.v1";
 
 /// The management actions: the store's `AuditAction` labels minus `fact_appended` (see [`audit_domain`]).
 ///
-/// Transcribed from seam-runtime `seam-store/src/lib.rs` `audit_action_enum!` @ `37576658`, which
-/// `entry.rs` reads as `AuditAction::ALL` (D-043; spec fix seam-runtime#1561).
+/// The `seam.audit.management.v1` row of the spec's table, in its order.
 const MANAGEMENT_ACTIONS: &[&str] = &[
     "session_resumed",
     "party_registered",
@@ -74,13 +63,11 @@ const MANAGEMENT_ACTIONS: &[&str] = &[
     "tenant_move_in",
 ];
 
-/// `fact_appended` chains the fact's own checksum, not an action-entry digest, and has no production
-/// writer: recomputing it under management would fail every genuine one, so it is uncovered.
+/// `fact_appended` chains the fact's own checksum, not an action-entry digest: the spec names it
+/// **uncovered**, and recomputing it under management would fail every genuine one.
 const FACT_APPENDED: &str = "fact_appended";
 
-/// The non-management writers, each with the closed set of actions it emits.
-///
-/// Transcribed from seam-runtime `entry.rs` @ `37576658` (D-043; spec fix seam-runtime#1561).
+/// The non-management writers, each with the closed set of actions it emits: the spec table's other rows.
 const DOMAINS: &[(&str, &[&str])] = &[
     (
         "seam.audit.legal-hold.v1",
@@ -117,10 +104,8 @@ pub(crate) fn audit_domain(action: &str) -> Option<&'static str> {
 }
 
 /// The envelope classification the store stamps on an `AUDIT_ENTRY` with `action`. It is outside the
-/// digest, and each action is written with exactly one reason variant, so the action fixes it.
-///
-/// Transcribed from seam-runtime `entry.rs` @ `37576658`, derived there from the store's
-/// `AuditReason::classification` (D-043; spec fix seam-runtime#1561).
+/// digest, and each action is written with exactly one reason variant, so the action fixes it: the spec
+/// table's envelope `classification` column.
 fn audit_classification(action: &str) -> &'static str {
     match action {
         "execute.scope_deny" | "boundary.data_flagged" => "Confidential",
@@ -129,33 +114,21 @@ fn audit_classification(action: &str) -> &'static str {
     }
 }
 
-/// The per-kind classification contract: `"varies"` means the emitter lets the label vary; a concrete
-/// label means the emitter FIXES it, outside the digest. Only the two fixed rows of the kinds recomputed
-/// here are read ([`fixed_classification`]); the rest are carried so the table stays a whole
-/// transcription, comparable row for row with its source.
+/// The envelope label the spec fixes for each non-`AUDIT_ENTRY` kind recomputed here, outside its
+/// digest: "Envelope `classification` is `Internal`" (`CHAIN_HEAD_ATTESTATION`) and "… is `Pii`"
+/// (`ERASURE_CERTIFICATE`), both in `docs/seam-event.v1.md` §"(b′) preimages: the closed entry tables".
 ///
-/// Transcribed from seam-runtime `seam-store/src/event.rs` `KIND_CLASSIFICATION_CONTRACT` @ `37576658`,
-/// which `entry.rs` reads (D-043; spec fix seam-runtime#1561).
-const KIND_CLASSIFICATION_CONTRACT: &[(&str, &str)] = &[
-    ("DECISION_SEALED", "varies"),
-    ("AUDIT_ENTRY", "varies"),
-    ("LEARNING_DECISION", "varies"),
-    ("LEARNING_OUTCOME", "varies"),
-    ("BUDGET_BREACH", "Internal"),
-    ("ERASURE_CERTIFICATE", "Pii"),
+/// D-043's transcription carried the store's whole eleven-row per-kind contract; only these two rows
+/// were ever read, and only these two are in the spec, so only these two remain (D-044).
+const FIXED_KIND_CLASSIFICATION: &[(&str, &str)] = &[
     ("CHAIN_HEAD_ATTESTATION", "Internal"),
-    ("SESSION_LIFECYCLE", "Internal"),
-    ("AUTHORIZE_EVALUATED", "Internal"),
-    ("POLICY_DENIED", "Internal"),
-    ("EVENT_REDRIVEN", "varies"),
+    ("ERASURE_CERTIFICATE", "Pii"),
 ];
 
-/// The label the store's emitter fixes for `kind`, outside its digest; `""` (which no envelope carries
-/// legitimately) for a kind with no row.
-///
-/// Transcribed from seam-runtime `entry.rs` @ `37576658` (D-043; spec fix seam-runtime#1561).
+/// The label the spec fixes for `kind`, outside its digest; `""` (which no envelope carries
+/// legitimately) for any other kind.
 fn fixed_classification(kind: &str) -> &'static str {
-    KIND_CLASSIFICATION_CONTRACT
+    FIXED_KIND_CLASSIFICATION
         .iter()
         .find(|(k, _)| *k == kind)
         .map_or("", |(_, label)| *label)
@@ -169,8 +142,7 @@ fn frame(h: &mut Sha256, x: &[u8]) {
 
 /// `e`'s `AUDIT_ENTRY` digest under `domain`, from the event's own fields.
 ///
-/// The framing, transcribed from seam-runtime `entry.rs` @ `37576658` (D-043; spec fix
-/// seam-runtime#1561): seven frames (domain, action, envelope tenant, envelope namespace, envelope
+/// The framing, per the spec's `AUDIT_ENTRY` preimage: seven frames (domain, action, envelope tenant, envelope namespace, envelope
 /// `session_id` or `""`, subject, reason), then the envelope `occurred_at` as a raw, **unframed**
 /// `u64le`, then a frame for the actor **only when there is one** — `Some("")` appends a zero-length
 /// frame, `None` appends nothing.
@@ -205,8 +177,7 @@ fn framed(parts: &[&[u8]]) -> [u8; 32] {
 
 /// The chained digest of a `CHAIN_HEAD_ATTESTATION`.
 ///
-/// The framing, transcribed from seam-runtime `entry.rs` @ `37576658`, which mirrors the store's
-/// `chain_attest_entry_digest` (D-043; spec fix seam-runtime#1561): every part framed — the domain
+/// The framing, per the spec's `CHAIN_HEAD_ATTESTATION` preimage: every part framed — the domain
 /// `seam.audit.chain-attest-entry.v1`, `u64le(attested_len)`, `attested_head`, `u64le(attested_at)`,
 /// `u32le(digest_schema)`, `issuer_aid`, `signature`. The payload `tenant` is **not** in it: the v2
 /// signature binds the tenant, and the signature is in here.
@@ -224,8 +195,7 @@ pub(crate) fn chain_attest_digest(a: &Attestation) -> [u8; 32] {
 
 /// The chained digest of an `ERASURE_CERTIFICATE`, under `seam.audit.erasure-cert.v2` only.
 ///
-/// The framing, transcribed from seam-runtime `entry.rs` @ `37576658`, which mirrors the store's
-/// `erasure_cert_entry_digest` (D-043; spec fix seam-runtime#1561): every part framed — the domain,
+/// The framing, per the spec's `ERASURE_CERTIFICATE` preimage: every part framed — the domain,
 /// `subject`, `u32le(|erased|)`, each erased id, `u32le(|held|)`, each held id, `u64le(erased_at)`,
 /// `chain_head`, `issuer_aid`, `signature`. The counts are what v2 adds: without them an id moved from
 /// `erased` to `held` frames identically. v1 predates every deployment, so there is no fallback — a
@@ -465,15 +435,67 @@ mod tests {
         }
     }
 
-    /// The transcribed contract, row for row with the store's `KIND_CLASSIFICATION_CONTRACT`; a kind with
-    /// no row reads `""`, which no envelope label matches.
+    /// Only the two kinds recomputed here have a fixed label; any other kind reads `""`, which no envelope
+    /// label matches.
     #[test]
-    fn the_kind_classification_contract_matches_the_runtime_table() {
-        assert_eq!(KIND_CLASSIFICATION_CONTRACT.len(), 11);
-        assert_eq!(fixed_classification("AUDIT_ENTRY"), "varies");
-        assert_eq!(fixed_classification("DECISION_SEALED"), "varies");
-        assert_eq!(fixed_classification("BUDGET_BREACH"), "Internal");
-        assert_eq!(fixed_classification("NO_SUCH_KIND"), "");
+    fn only_the_recomputed_kinds_have_a_fixed_label() {
+        assert_eq!(FIXED_KIND_CLASSIFICATION.len(), 2);
+        for kind in [
+            "AUDIT_ENTRY",
+            "DECISION_SEALED",
+            "BUDGET_BREACH",
+            "NO_SUCH_KIND",
+        ] {
+            assert_eq!(fixed_classification(kind), "", "{kind}");
+        }
+    }
+
+    /// The vendored spec's (b′) table — every `| domain | actions | classification |` row — is exactly
+    /// what this module digests under and binds: no action the spec lists is missing here, none is added,
+    /// and each one's domain and envelope label agree. This is what makes "written from the spec" a
+    /// checked claim rather than a comment (D-044); the vectors separately prove it against the runtime.
+    #[test]
+    fn the_tables_are_the_vendored_spec_tables() {
+        let spec = include_str!("../docs/seam-event.v1.md");
+        let section = spec
+            .split_once("##### (b′) preimages: the closed entry tables")
+            .expect("the vendored spec carries the (b′) preimage section")
+            .1;
+        let ticked = |s: &str| -> Vec<String> {
+            s.split('`').skip(1).step_by(2).map(str::to_owned).collect()
+        };
+        let mut from_spec = Vec::new();
+        for line in section.lines().filter(|l| l.starts_with("| `seam.audit.")) {
+            let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+            let domain = ticked(cells[1]).remove(0);
+            let label = ticked(cells[3]).remove(0);
+            for action in ticked(cells[2]) {
+                from_spec.push((action, domain.clone(), label.clone()));
+            }
+        }
+        assert!(!from_spec.is_empty(), "the spec table parsed to zero rows");
+        let mut ours: Vec<(String, String, String)> = MANAGEMENT_ACTIONS
+            .iter()
+            .map(|a| (a.to_string(), MANAGEMENT_DOMAIN.to_owned()))
+            .chain(
+                DOMAINS
+                    .iter()
+                    .flat_map(|(d, acts)| acts.iter().map(move |a| (a.to_string(), d.to_string()))),
+            )
+            .map(|(a, d)| {
+                let label = audit_classification(&a).to_owned();
+                (a, d, label)
+            })
+            .collect();
+        from_spec.sort();
+        ours.sort();
+        assert_eq!(ours, from_spec);
+        for (action, domain, _) in &from_spec {
+            assert_eq!(audit_domain(action), Some(domain.as_str()), "{action}");
+        }
+        assert_eq!(audit_domain(FACT_APPENDED), None);
+        assert!(section.contains("Envelope `classification` is `Internal`"));
+        assert!(section.contains("Envelope `classification` is `Pii`"));
     }
 
     /// The certificate's lists are ordered and counted: reordering `erased`, or moving an id across to
