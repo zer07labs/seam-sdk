@@ -6579,3 +6579,118 @@ def test_with_report_a_newest_warned_tier_beside_a_declared_drift_files_only_the
     assert proc.returncode == 1, proc.stdout + proc.stderr
     assert _creates(log) == [DRIFT_TITLE.format(version=DRIFTING)], gh_calls(log)
 
+
+
+# ── A declared pre-release (seam-sdk#355) ─────────────────────────────────────────────────────
+#
+# Main declares `0.87.0-rc.1` for the length of an rc train. Cloudsmith stores the npm package under
+# that semver spelling and the python wheel + sdist under PEP 440's `0.87.0rc1` — observed on the
+# real 0.87.0-rc.1 publish, whose partner promotion refused for exactly this mismatch (seam-sdk#354).
+# The rc is checked like any other version, each format under its own spelling; a skip would hide
+# a real rc drift for the whole train.
+
+RC = "0.87.0-rc.1"
+RC_PEP440 = "0.87.0rc1"
+
+
+def rc_published(*, python: str | None = RC_PEP440, npm: str | None = RC) -> list[dict]:
+    specs = []
+    if python is not None:
+        specs.append(("seam-sdk", python, "python"))
+    if npm is not None:
+        specs.append(("@zer07labs/seam-sdk", npm, "npm"))
+    return rows(*specs)
+
+
+def test_a_declared_prerelease_stored_under_both_spellings_is_clean(tmp_path: Path) -> None:
+    """The real shape: npm at the semver spelling, python at PEP 440. No skip, no exit 2."""
+    repo = make_repo(tmp_path, version=RC)
+    world = rc_published() + published("0.86.0")
+    proc = run(repo, world, tmp_path, extra=_partner_dump(tmp_path, world))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "both formats" in proc.stdout
+
+
+@pytest.mark.parametrize(
+    ("python", "npm", "missing"),
+    [
+        (None, RC, "python"),
+        # The bug this replaces would have read THIS as clean-for-python: a python row at the
+        # semver spelling is not how Cloudsmith stores it, so it is not evidence of the wheel.
+        (RC, RC, "python"),
+        (RC_PEP440, None, "npm"),
+        (RC_PEP440, RC_PEP440, "npm"),
+    ],
+    ids=["python-absent", "python-at-semver-spelling", "npm-absent", "npm-at-pep440-spelling"],
+)
+def test_a_declared_prerelease_missing_a_format_is_drift(
+    tmp_path: Path, python: str | None, npm: str | None, missing: str
+) -> None:
+    repo = make_repo(tmp_path, version=RC, tag=True)
+    proc = run(repo, rc_published(python=python, npm=npm), tmp_path)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert missing in proc.stdout
+
+
+def test_a_declared_prerelease_lagging_on_partner_is_a_partner_lag(tmp_path: Path) -> None:
+    """The exact state 0.87.0-rc.1's promotion left behind: npm copied, python not."""
+    repo = make_repo(tmp_path, version=RC, tag=True)
+    internal = rc_published() + published("0.86.0")
+    partner = rc_published(python=None) + published("0.86.0")
+    proc = run(repo, internal, tmp_path, extra=_partner_dump(tmp_path, partner))
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "partner" in proc.stdout
+
+
+@pytest.mark.parametrize(
+    "version", ["0.87.0-dev.1", "0.87.0-rc1", "0.87.0rc1", "0.87.0-rc.1+build", "0.87-rc.1"]
+)
+def test_a_version_outside_both_grammars_is_still_infrastructure(
+    tmp_path: Path, version: str
+) -> None:
+    """Pre-release support is the three suffixes the release tooling stamps, not "anything"."""
+    repo = make_repo(tmp_path, version=version)
+    proc = run(repo, published("0.86.0"), tmp_path)
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "not plain digits-and-dots" in proc.stdout + proc.stderr
+
+
+def test_a_live_prerelease_read_asks_once_per_stored_spelling(monkeypatch) -> None:
+    """Live, the rc is asked under BOTH spellings — each answer proved by its own positive control —
+    and the rows are joined; a plain version is asked exactly once, as before."""
+    asked: list[str] = []
+    store = {RC: rc_published(python=None), RC_PEP440: rc_published(npm=None)}
+
+    def fake_curl(url: str, query: str, token: str) -> object:
+        asked.append(query)
+        version = query.split("version:", 1)[1].split("&", 1)[0]
+        return store.get(version, published(version))
+
+    monkeypatch.setattr(_SCRIPT_MODULE, "_curl_json", fake_curl)
+    got = _SCRIPT_MODULE.fetch_registry(RC, "stub-token")
+    assert [q.split("version:", 1)[1].split("&", 1)[0] for q in asked] == [RC_PEP440, RC] or [
+        q.split("version:", 1)[1].split("&", 1)[0] for q in asked
+    ] == [RC, RC_PEP440], asked
+    assert _SCRIPT_MODULE.registry_formats(got, RC) == {"python", "npm"}
+
+    asked.clear()
+    _SCRIPT_MODULE.fetch_registry("0.86.0", "stub-token")
+    assert len(asked) == 1, asked
+
+
+def test_the_pep440_mapping_matches_the_promote_scripts(tmp_path: Path) -> None:
+    """`stored_version` and `promote-to-partner.sh`'s `_format_version` must agree, or the drift
+    check and the promotion would disagree about where a pre-release's python package lives."""
+    promote = SCRIPT.parent / "promote-to-partner.sh"
+    src = promote.read_text("utf-8")
+    start = src.index("_format_version()")
+    end = src.index("\n}\n", start) + 3
+    for version in [RC, "1.2.3-alpha.4", "1.2.3-beta.10", "0.86.0", "0.87.0-rc.12"]:
+        for fmt in ("python", "npm"):
+            got = subprocess.run(
+                ["bash", "-c", src[start:end] + f'\n_format_version "{fmt}" "{version}"'],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            assert got == _SCRIPT_MODULE.stored_version(version, fmt), (fmt, version, got)

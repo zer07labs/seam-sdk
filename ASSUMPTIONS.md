@@ -912,7 +912,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   the offline path on every PR. Second, the one case where this rule could be accused of refusing a
   true report — every `seam-sdk` version genuinely gone — is answered the *same* way by the live
   path, where no canary returns both formats and `assert_live_instrument_healthy`
-  (`scripts/check_registry_drift.py:620`) also exits 2. The two rules are opposite in mechanism and
+  (`scripts/check_registry_drift.py:651`) also exits 2. The two rules are opposite in mechanism and
   identical in that outcome, which is a stronger defence than this entry originally gave itself.
 - **Residual, fixed rather than deferred (2026-09-06):** the flag's real contract is "an UNSCOPED
   `?query=seam-sdk` dump", and nothing said so anywhere. A human capturing the check's *own*
@@ -920,7 +920,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   absent version that response is legitimately `[]` and offline it cannot be told apart from a
   failed query — but with a message blaming the query shape, the credential or the file, never the
   actual mistake. The refusal stays. The help string, the refusal text
-  (`scripts/check_registry_drift.py:484`) and the module Usage block now name the required shape.
+  (`scripts/check_registry_drift.py:514`) and the module Usage block now name the required shape.
 
 
 ## Five minutes is the boundary between clock skew and a broken clock
@@ -1012,11 +1012,11 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   What is still inferred rather than observed is only "and nobody has deleted them since". Against
   that: `yank.yml` has 27 runs and the only versions ever deleted are 0.7.7 and 0.7.13–0.7.19 — the
   exact scope of issue #43, closed sixteen minutes after the final run, and corroborated
-  independently by `CHANGELOG.md:867-868` in the repo's own words.
+  independently by `CHANGELOG.md:874-875` in the repo's own words.
 - **Correction to this entry's stated rationale (2026-09-06):** the code comment justified the age
   spread as a hedge against a *retention* sweep aging all entries out at once. No retention sweep
   has ever run here, and the real yank predicate is "named in an advisory as unconditionally
-  broken", not "old" — `CHANGELOG.md:914` records that 0.7.39–0.7.43 was deliberately **not**
+  broken", not "old" — `CHANGELOG.md:921` records that 0.7.39–0.7.43 was deliberately **not**
   deleted despite being older than every roster entry. A wrong reason in that comment is how the
   next editor re-points the roster badly, dropping a safe old version in favour of one sitting
   inside an advisory band; the comment now states the real predicate. None of the four roster
@@ -1118,10 +1118,10 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   logs, not taken from the analysis.
 - **What is still NOT proven, and why it is safe:** that the array contains *only* those rows. The
   evidence above excludes a fixed window but not relevance ranking over a superset. It does not need
-  to be excluded: `registry_formats` (`scripts/check_registry_drift.py:469`) applies the same
+  to be excluded: `registry_formats` (`scripts/check_registry_drift.py:499`) applies the same
   three-clause filter, so a superset can never make a missing version read as present, and the one
   way over-inclusion could bite — the target pushed out of a truncated page — is exit 2 at
-  `scripts/check_registry_drift.py:583`, never exit 1.
+  `scripts/check_registry_drift.py:614`, never exit 1.
 - **This entry is NOT evidence for its sibling below.** Under `curl -sf`, "qualifier honoured" and
   "qualifier silently ignored" both return 2xx, so 27 green runs are consistent with either. The
   sibling was settled by a code change instead — see its own status.
@@ -1150,19 +1150,19 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   version the registry demonstrably serves, this is the assumption that broke.
 - **Status:** CHANGED — the code now checks this at runtime, so it is no longer an assumption
   (2026-09-06). `fetch_registry` gained a server-side positive control
-  (`scripts/check_registry_drift.py:606`): if a response carries `seam-sdk` rows but **none** at the
+  (`scripts/check_registry_drift.py:637`): if a response carries `seam-sdk` rows but **none** at the
   version asked for, it raises `InfraError` naming the versions that did come back. "Rows came back,
   none at the version I asked for" is a statement about the server that no client-side filter can
   restate — and it costs zero extra requests, firing on the first canary query before the target is
   ever fetched.
 
   Why a code change rather than a confirm: this entry's stated mechanism is **unreachable**, and its
-  real risk lay somewhere else. `registry_formats` (`scripts/check_registry_drift.py:469`)
+  real risk lay somewhere else. `registry_formats` (`scripts/check_registry_drift.py:499`)
   re-applies `.version == version` client-side, so rows for the wrong versions are inert — they
   cannot make a published target look absent. Only a **truncated** response can do that. With
   `page_size=50` honoured, truncation is already caught: three registry rows per release across 67
   `v*` tags puts the unfiltered set near 200, so an unqualified query returns exactly the page size
-  and the guard at `scripts/check_registry_drift.py:583` refuses with exit 2. The residual exposure
+  and the guard at `scripts/check_registry_drift.py:614` refuses with exit 2. The residual exposure
   was a server-side page cap **below** 50, at which point that equality is permanently blind, a
   canary inside the window certifies the instrument, and a target outside it exits 1 for a published
   version. The new control fires under every configuration of that: any page size, any sort order,

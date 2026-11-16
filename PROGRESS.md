@@ -4050,12 +4050,12 @@ The durable record with per-entry reasoning is in `DECISIONS.md`; only what chan
 repeated here.
 
 **One assumption stopped being an assumption.** `fetch_registry` gained a server-side positive
-control (`scripts/check_registry_drift.py:606`): a response carrying `seam-sdk` rows but **none** at
+control (`scripts/check_registry_drift.py:637`): a response carrying `seam-sdk` rows but **none** at
 the version asked for now raises `InfraError` naming the versions that came back. The entry it closes
 claimed a mechanism that is unreachable — `registry_formats`
-(`scripts/check_registry_drift.py:469`) re-filters client-side, so wrong-version rows are inert and
+(`scripts/check_registry_drift.py:499`) re-filters client-side, so wrong-version rows are inert and
 cannot make a published target look absent. The real hole was narrower and worse: the truncation
-guard at `scripts/check_registry_drift.py:583` tests `len(rows) == PAGE_SIZE`, an **equality**, so a
+guard at `scripts/check_registry_drift.py:614` tests `len(rows) == PAGE_SIZE`, an **equality**, so a
 server-side page cap *below* 50 leaves it permanently silent while a canary inside the window
 certifies the instrument and the target outside it exits 1 for a published version. The new control
 is blind to page size, sort order and row count. It cost zero extra requests.
@@ -4069,7 +4069,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1981`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1988`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -4556,12 +4556,12 @@ green before any code changed.
   this — "rather than refusing outright" was wrong, fixed before merge). (2) the release's
   `retitle_changelog.sh` run shifted `CHANGELOG.md`'s "No yank" paragraph from line 1054 to 1056
   (a +2 insert right after `## Unreleased`), pushing `COMPATIBILITY.md:135` and
-  `DECISIONS.md:1222`'s `CHANGELOG.md:1758-1775` citations past the citation test's slack
-  tolerance; repointed both to `CHANGELOG.md:1760-1777`. Tested: `check_vendored_spec.py` OK via both
+  `DECISIONS.md:1222`'s `CHANGELOG.md:1765-1782` citations past the citation test's slack
+  tolerance; repointed both to `CHANGELOG.md:1767-1784`. Tested: `check_vendored_spec.py` OK via both
   `--from local` and `--from gh`; `test_compatibility_citations_resolve.py` 489 passed/0 failed
   standalone (was 4 failed). Verifier also flagged two pre-existing, gate-invisible citations
   elsewhere that the same +2 shift widened further — `DECISIONS.md:2035` cites
-  `CHANGELOG.md:1660` and `PROGRESS.md:3981` cites `CHANGELOG.md:1545`, both already ~130-250
+  `CHANGELOG.md:1667` and `PROGRESS.md:3981` cites `CHANGELOG.md:1552`, both already ~130-250
   lines stale before this release — out of scope for this release-unblock hotfix; filed as a
   follow-up issue rather than folded in here.
   **Rebased `feat/verify-anchor-tenant` onto this commit during `/sweep`'s ship pass.** Four
@@ -4571,7 +4571,7 @@ green before any code changed.
   `CHANGELOG.md`/`COMPATIBILITY.md`/`DECISIONS.md`: the feature branch's own new
   `## Unreleased` entry (16 lines) was kept above this hotfix's `## 0.33.3` header, which
   shifted "No yank" from this entry's `1056` to `1072` and recomputed the two citations above
-  (`CHANGELOG.md:1760-1777`) to `CHANGELOG.md:1776-1793` — verified against the exact
+  (`CHANGELOG.md:1767-1784`) to `CHANGELOG.md:1783-1800` — verified against the exact
   paragraph-boundary text at both the old and new line numbers before trusting the new range,
   not just the arithmetic. A dedicated ship-gate verifier independently re-derived this same
   shift from the diff and confirmed it exact.
