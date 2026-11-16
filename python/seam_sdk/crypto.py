@@ -259,7 +259,7 @@ def _commitment_explanation_digest(commitment: dict) -> bytes:
 
 
 def _digest_slot(commitment: dict, name: str) -> bytes:
-    """Commitment digest v4 fields 9/10: ``0x00`` when ``name`` is absent (missing or ``None``), else
+    """Commitment digest v5 fields 9/10/11: ``0x00`` when ``name`` is absent (missing or ``None``), else
     ``0x01 || F(digest)`` over exactly 32 raw bytes (bytes, or 64 hex chars). Any other length is refused,
     never hashed."""
     v = commitment.get(name)
@@ -272,22 +272,27 @@ def _digest_slot(commitment: dict, name: str) -> bytes:
 
 
 def _seam_commitment_digest(commitment: dict) -> str:
-    """``seam-commitment-digest:v4`` (hex): SHA-256 over the length-prefixed domain tag and fields.
+    """``seam-commitment-digest:v5`` (hex): SHA-256 over the length-prefixed domain tag and fields.
 
-    Spec: seam-runtime ``docs/specs/seam-commitment-digest.v4.md``. Every field is ``F(x) = be64(len) ||
+    Spec: seam-runtime ``docs/specs/seam-commitment-digest.v5.md`` (v4 plus field 11; v4 holds the
+    framing it does not restate). Every field is ``F(x) = be64(len) ||
     x`` (no separator), so the digest is injective over ``(domain, id, action, authority, supersedes,
-    auth_method, trust_basis, committer, explanation_digest, selection_digest, certificate_digest)``.
+    auth_method, trust_basis, committer, explanation_digest, selection_digest, certificate_digest,
+    governing_doc_sha256)``.
     The length prefixes are load-bearing: with a NUL separator instead, ``("a\\0b", "c")`` and
     ``("a", "b\\0c")`` would collide, and these fields are arbitrary text that may itself contain NUL.
     Never "simplify" them away. ``supersedes`` carries a presence byte: ``0x00`` when absent (key missing
     or ``None``), ``0x01 || F(value)`` when present. Field 8 is the 32 raw bytes of the v2 explanation
     digest (see :func:`_commitment_explanation_digest`). Fields 9 and 10 are the optional
     ``selection_digest`` and ``certificate_digest`` (32 bytes each, :func:`_digest_slot`), absent on
-    every record runtime 0.87.0 seals. v1-v3 are deleted, not dual-verified.
+    every record the runtime seals today. Field 11 is ``governing_doc_sha256`` (#1711), the SHA-256 of
+    the tenant governing document the decision was opened under: the same slot, present on every
+    governed record and absent on an ungoverned one. v1-v4 are deleted, not dual-verified: a v4 TCT
+    does not verify here, and there is no fallback.
     """
     supersedes = commitment.get("supersedes")
     out = [
-        _be64_frame(b"seam-commitment-digest:v4"),
+        _be64_frame(b"seam-commitment-digest:v5"),
         _be64_frame(commitment["id"].encode()),
         _be64_frame(commitment["action"].encode()),
         _be64_frame(commitment["authority"].encode()),
@@ -298,6 +303,7 @@ def _seam_commitment_digest(commitment: dict) -> str:
         _be64_frame(_commitment_explanation_digest(commitment)),
         _digest_slot(commitment, "selection_digest"),
         _digest_slot(commitment, "certificate_digest"),
+        _digest_slot(commitment, "governing_doc_sha256"),
     ]
     return hashlib.sha256(b"".join(out)).hexdigest()
 
@@ -332,7 +338,7 @@ def verify_tct(
     (recovered from its AID), the self-issued claims (`typ`, `iss==sub==aud==issuer_aid`, `exp`),
     that `grants` is exactly `["aitp.attestation"]`, and that `ext` is exactly
     `{"com.zer07labs.seam": {"type": "seam:commitment", "commitment_digest": <hex>}}` whose digest is
-    `seam-commitment-digest:v4` of this exact commitment (tamper-evidence over the decided content,
+    `seam-commitment-digest:v5` of this exact commitment (tamper-evidence over the decided content,
     the committer, and the sealed explanation). A duplicate JSON key anywhere in the header or
     payload, a statement carried in `grants` (the retired v2 shape), or an extra grant verifies
     ``False``. ``commitment`` carries ``committer`` and the ``explanation`` entries and/or the published

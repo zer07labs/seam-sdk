@@ -257,6 +257,7 @@ Commitment/authority
 Commitment/committer
 Commitment/explanation
 Commitment/explanation_digest
+Commitment/governing_doc_sha256
 Commitment/id
 Commitment/signed_artifact
 Commitment/supersedes

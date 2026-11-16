@@ -1,5 +1,13 @@
 //! `seam-verify bundle` against **real** `seam-evidence-bundle.v1` directories.
 //!
+//! **Re-exported for #1711 (commitment digest v5, the seam-sdk 0.88.0 train): every directory below was
+//! rewritten by the runtime's own exporter at seam-runtime@c2817d8d (PR #1727, branch
+//! `feat/1711-commitment-v5-p1`, stacked on #1713, not yet on main), the same way as the #1687 export
+//! described next (same patch, same five tests).** `seam-commitment-digest:v5`: every commitment.json carries
+//! `governing_doc_sha256` (the in-process runtime admits through its governing gate, so every export is
+//! governed; there is no ungoverned bundle fixture, and the ungoverned v5 framing is pinned by
+//! `tests/commitment_vectors.rs` instead).
+//!
 //! **Re-exported for #1687 (seam-sdk 0.87.0 pre-releases): every directory below was rewritten by the
 //! runtime's own exporter at seam-runtime@8f4e30ee (PR #1713, branch `feat/1687-verified-voters`, not yet
 //! on main):** `seam-commitment-digest:v4` / `seam-explanation-digest:v2`, and every vote carries its
@@ -841,6 +849,90 @@ fn step_4_commitment_tampers_are_refused() {
                     })
                 }),
                 "step 4:",
+            ),
+        ],
+    );
+}
+
+/// v5 field 11 (seam-runtime#1711). Every shipped export is governed, so the positive case is the
+/// fixture itself; stripping, nulling or swapping the digest is caught by the TCT, and a malformed
+/// spelling is refused before anything is hashed — never read as "ungoverned".
+#[test]
+fn step_4_governing_document_tampers_are_refused() {
+    let doc = read_json(&fixture("full").join("commitment.json"))["governing_doc_sha256"]
+        .as_str()
+        .expect("the runtime export is governed: commitment.json carries governing_doc_sha256")
+        .to_owned();
+    assert_eq!(doc.len(), 64);
+    let (code, out) = verify(&fixture("full"), ISSUER);
+    assert_eq!(code, 0, "the governed bundle must verify\n{out}");
+
+    let swapped = format!(
+        "{}{}",
+        if doc.starts_with('0') { "1" } else { "0" },
+        &doc[1..]
+    );
+    let upper = doc.to_uppercase();
+    let short = doc[..62].to_owned();
+    assert_refused(
+        "full",
+        vec![
+            (
+                "governing doc stripped",
+                Box::new(|d: &Path| {
+                    edit_and_rehash(d, "commitment.json", |v| {
+                        v.as_object_mut().unwrap().remove("governing_doc_sha256");
+                    })
+                }),
+                "step 4: commitment.json: the TCT does not verify",
+            ),
+            (
+                "governing doc nulled",
+                Box::new(|d: &Path| {
+                    edit_and_rehash(d, "commitment.json", |v| {
+                        v["governing_doc_sha256"] = serde_json::Value::Null
+                    })
+                }),
+                "step 4: commitment.json: the TCT does not verify",
+            ),
+            (
+                "governing doc swapped",
+                Box::new(move |d: &Path| {
+                    let s = swapped.clone();
+                    edit_and_rehash(d, "commitment.json", |v| {
+                        v["governing_doc_sha256"] = s.into()
+                    })
+                }),
+                "step 4: commitment.json: the TCT does not verify",
+            ),
+            (
+                "governing doc uppercase",
+                Box::new(move |d: &Path| {
+                    let s = upper.clone();
+                    edit_and_rehash(d, "commitment.json", |v| {
+                        v["governing_doc_sha256"] = s.into()
+                    })
+                }),
+                "not 64 lowercase hex characters",
+            ),
+            (
+                "governing doc short",
+                Box::new(move |d: &Path| {
+                    let s = short.clone();
+                    edit_and_rehash(d, "commitment.json", |v| {
+                        v["governing_doc_sha256"] = s.into()
+                    })
+                }),
+                "not 64 lowercase hex characters",
+            ),
+            (
+                "governing doc as bytes",
+                Box::new(|d: &Path| {
+                    edit_and_rehash(d, "commitment.json", |v| {
+                        v["governing_doc_sha256"] = serde_json::json!([0u8; 32].to_vec())
+                    })
+                }),
+                "not a string or null",
             ),
         ],
     );

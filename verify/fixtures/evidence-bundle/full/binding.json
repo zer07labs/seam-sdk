@@ -1,9 +1,9 @@
 {
   "decision_id": "dec:design-partner:d1-0000000000000000000",
   "tenant": "design-partner",
-  "record_checksum": "n01skk+LCMo1EaStCqAlqI1NdjK0mSwz5NZkWvlWN+o=",
-  "commitment_digest": "82bd6a3718a46e99e61ae906de773eeea8d28be62ba9f89b0c8b6e979263e69d",
+  "record_checksum": "Q2V7/jQUXohwasjSY+EtoxJFYlX8l3ZOHgajU8WI0oA=",
+  "commitment_digest": "7fb2b75c65db27f374d8d9b16e0ab18b98a61ad7606413e6a1f8a0b17bcc1034",
   "bound_at": 2000,
   "issuer_aid": "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
-  "signature": "ESx1sPonIaCu3AE4ouqkL/XL4+fXEI9Ir+Oy74fmm5cnLdHHv8E6kfy32pfI5PSpDqt9SyOEJVLVFF+jvV/8Cw=="
+  "signature": "B2LpKMvaWruXzh/7myUekTKyDf6VUY01WPWbx7KEZVs4CvhYuPJnmlbscN+OTR6JMV7qgEKCfcVecxqATy5zDA=="
 }

@@ -607,7 +607,7 @@ class SeamClient:
         ``rationale_ref`` is a ``sha256:<hex>`` context ref. Since runtime 0.44.0 it is **sealed**:
         every accepted evaluation's ``rationale_ref`` (and whether a ``confidence`` was stated at
         all) is bound into the Commitment's explanation under ``seam-explanation-digest:v2``, which
-        ``seam-commitment-digest:v4`` covers. ``verify_decision`` recomputes it locally.
+        ``seam-commitment-digest:v5`` covers. ``verify_decision`` recomputes it locally.
         """
         req = pb.EvaluationRequest(
             session_id=session_id,

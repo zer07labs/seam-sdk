@@ -13,8 +13,8 @@ Pinned against `conformance/vectors.json` (generated from the Rust reference):
   derivation, deterministic message id `derivedUuid("seam-pop-mid-v1", nonce)`).
 - **`tct`** — independent verification of a sealed commitment's rooted TCT (EdDSA JWS, self-issued
   claims, truncated-seconds `exp`, the single `aitp.attestation` grant, and the
-  `ext["com.zer07labs.seam"]` statement binding `seam-commitment-digest:v4` over the committer and the
-  sealed explanation, `seam-explanation-digest:v2` with each vote/ballot/objection's voter record).
+  `ext["com.zer07labs.seam"]` statement binding `seam-commitment-digest:v5` over the committer, the
+  governing document digest (field 11) and the sealed explanation, `seam-explanation-digest:v2` with each vote/ballot/objection's voter record).
 
 Also, outside `vectors.json`:
 

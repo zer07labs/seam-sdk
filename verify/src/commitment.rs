@@ -1,10 +1,13 @@
-//! The Commitment and its rooted TCT: `seam-commitment-digest:v4`, `seam-explanation-digest:v2`, and
+//! The Commitment and its rooted TCT: `seam-commitment-digest:v5`, `seam-explanation-digest:v2`, and
 //! the self-attestation `aitp-tct+jwt` that carries the digest in its `ext` claim.
 //!
-//! Written from `seam-runtime/docs/specs/seam-commitment-digest.v4.md` (not vendored here; the
-//! evidence-bundle spec in `docs/evidence-bundle.v1.md` cites it) and pinned by
-//! `conformance/commitment_digest_v4_vector.json` (six cases, one a real TCT from the real signer, three
-//! exercising the field 9/10 slots) and by `conformance/vectors.json`'s `tct` block. v4 (seam-runtime
+//! Written from `seam-runtime/docs/specs/seam-commitment-digest.v5.md` and the v4 text it extends (not
+//! vendored here; the evidence-bundle spec in `docs/evidence-bundle.v1.md` cites it) and pinned by
+//! `conformance/commitment_digest_v5_signed_vector.json` (seven cases, two of them real TCTs from the
+//! real signer, one governed and one not, and three exercising the field 9/10 slots),
+//! `conformance/commitment_digest_v5_vector.json` (the field 11 slot cases) and `conformance/vectors.json`'s
+//! `tct` block. v5 (seam-runtime #1711) adds field 11, `governing_doc_sha256`: the SHA-256 of the tenant
+//! governing document, a presence slot like fields 9 and 10. Since v4 (seam-runtime
 //! #1687, D-045): every vote, ballot and objection entry carries a sealed voter verification record (`VV`,
 //! framed into the explanation digest), and fields 9 (selection) and 10 (Gate certificate) are
 //! always-framed presence slots after the explanation digest. The record's own signature is re-checked
@@ -78,7 +81,7 @@ pub struct VoterVerification {
     pub accepted_at_ms: u64,
 }
 
-/// A Commitment as the v4 framing reads it, plus its TCT.
+/// A Commitment as the v5 framing reads it, plus its TCT.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Commitment {
     pub id: String,
@@ -93,6 +96,9 @@ pub struct Commitment {
     pub selection_digest: Option<Vec<u8>>,
     /// Field 10, the Gate certificate digest. `None` on every record this release seals.
     pub certificate_digest: Option<Vec<u8>>,
+    /// Field 11 (v5, seam-runtime#1711): the SHA-256 of the tenant governing document the decision was
+    /// governed by. `None` on an ungoverned record; a present value must be 32 bytes.
+    pub governing_doc_sha256: Option<Vec<u8>>,
     /// The compact-JWS TCT. Empty only for a record sealed under `identity: local-sealed`.
     pub signed_artifact: String,
 }
@@ -177,15 +183,25 @@ pub fn explanation_digest(entries: &[ExplanationEntry]) -> Result<[u8; 32], Stri
 }
 
 /// The domain tag, field 0 of the commitment-digest preimage.
-pub const COMMITMENT_DIGEST_DOMAIN: &[u8] = b"seam-commitment-digest:v4";
+pub const COMMITMENT_DIGEST_DOMAIN: &[u8] = b"seam-commitment-digest:v5";
 
-/// `seam-commitment-digest:v4`: SHA-256 over eleven fields in the spec's order, each `F`-framed except
-/// fields 4, 9 and 10. `supersedes` carries a presence byte — absent is `0x00`, present is `0x01 ‖
+/// `seam-commitment-digest:v5`: SHA-256 over twelve fields in the spec's order, each `F`-framed except
+/// fields 4, 9, 10 and 11. `supersedes` carries a presence byte — absent is `0x00`, present is `0x01 ‖
 /// F(value)` — so an absent prior and a present empty one are different digests. Field 8 is the 32 RAW
-/// bytes of the explanation digest (v2). Fields 9 and 10 are `0x00` absent, else `0x01 ‖ be64(32) ‖ 32
-/// raw bytes`; a present digest of any other length is refused, never hashed.
+/// bytes of the explanation digest (v2). Fields 9, 10 and 11 (selection, Gate certificate, governing
+/// document) are `0x00` absent, else `0x01 ‖ be64(32) ‖ 32 raw bytes`; a present digest of any other
+/// length is refused, never hashed. v4 is deleted, not dual-verified: a v4 TCT does not verify here.
 pub fn commitment_digest(c: &Commitment) -> Result<[u8; 32], String> {
-    let explanation = explanation_digest(&c.explanation)?;
+    commitment_digest_with_explanation(c, &explanation_digest(&c.explanation)?)
+}
+
+/// [`commitment_digest`] with field 8 supplied as the 32-byte explanation digest instead of recomputed
+/// from `c.explanation` (which is ignored). For vectors that publish only the digest; a verifier of a
+/// real record uses [`commitment_digest`], which binds the entries.
+pub fn commitment_digest_with_explanation(
+    c: &Commitment,
+    explanation: &[u8; 32],
+) -> Result<[u8; 32], String> {
     let mut h = Sha256::new();
     for field in [
         COMMITMENT_DIGEST_DOMAIN,
@@ -213,6 +229,7 @@ pub fn commitment_digest(c: &Commitment) -> Result<[u8; 32], String> {
     for (name, slot) in [
         ("selection_digest", &c.selection_digest),
         ("certificate_digest", &c.certificate_digest),
+        ("governing_doc_sha256", &c.governing_doc_sha256),
     ] {
         match slot {
             None => h.update([0u8]),
@@ -427,7 +444,7 @@ pub fn verify_tct(
     let want = crate::verify::hex(digest);
     if binding.get("commitment_digest").and_then(|d| d.as_str()) != Some(want.as_str()) {
         return Err(
-            "the TCT's ext does not bind this Commitment's seam-commitment-digest:v4 (forged \
+            "the TCT's ext does not bind this Commitment's seam-commitment-digest:v5 (forged \
              token, or an edited field)"
                 .into(),
         );
@@ -464,16 +481,27 @@ mod tests {
             explanation: vec![],
             selection_digest: None,
             certificate_digest: None,
+            governing_doc_sha256: None,
             signed_artifact: String::new(),
         }
     }
 
-    /// `commitment_digest_v4_vector.json` case `all_empty`, inlined so a packaged crate tests it.
+    fn d(h: &str) -> Vec<u8> {
+        (0..h.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&h[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    /// `seam-governing-doc:test-vector`'s SHA-256, the v5 vectors' field 11 value.
+    const DOC: &str = "3488696887c9b0454b0947e69ec0b51c62c9d63f3f840ea98f3fd3b8e1004a05";
+
+    /// `commitment_digest_v5_vector.json` case `all_empty`, inlined so a packaged crate tests it.
     #[test]
     fn all_empty_commitment_matches_the_vector() {
         assert_eq!(
             hex(&commitment_digest(&empty_commitment()).unwrap()),
-            "6e3a11bbef5f552f78e6d9114c13b7e48bb0a30de82d38a603981d6d1ca7281a"
+            "f31f8081790860a42529c30c4b75626213c6ad36b7c797ba172a2246eab41207"
         );
     }
 
@@ -484,14 +512,14 @@ mod tests {
         c.supersedes = Some(String::new());
         assert_eq!(
             hex(&commitment_digest(&c).unwrap()),
-            "a495c011cd353de108bb7c0e2a3bcb90051d59b135696a10848c3a087e5fed50"
+            "9bf7e384a2d8b003c1cb5669b8198dcd5784401797d0897586baa87afeba4ce3"
         );
     }
 
     /// The domain literal the cross-language framing test greps for.
     #[test]
-    fn the_domain_tags_are_v4_and_v2() {
-        assert_eq!(COMMITMENT_DIGEST_DOMAIN, b"seam-commitment-digest:v4");
+    fn the_domain_tags_are_v5_and_v2() {
+        assert_eq!(COMMITMENT_DIGEST_DOMAIN, b"seam-commitment-digest:v5");
         assert_eq!(EXPLANATION_DIGEST_DOMAIN, b"seam-explanation-digest:v2");
     }
 
@@ -499,12 +527,6 @@ mod tests {
     /// vector's own digests, inlined so a packaged crate tests them.
     #[test]
     fn the_selection_and_certificate_slots_match_the_vector() {
-        fn d(h: &str) -> Vec<u8> {
-            (0..h.len())
-                .step_by(2)
-                .map(|i| u8::from_str_radix(&h[i..i + 2], 16).unwrap())
-                .collect()
-        }
         let sel = d("b71424be32b4e9de8d5b7b1ce5333d1469a68c6ee7b936ba44d175ccd3723c15");
         let cert = d("f0ad9d4e2d95e36ccbfbb0e9277108af979854634cc45989fa719079d3ffb1ca");
         let mut c = empty_commitment();
@@ -512,7 +534,28 @@ mod tests {
         c.certificate_digest = Some(cert);
         assert_eq!(
             hex(&commitment_digest(&c).unwrap()),
-            "e5b101c9f68eb0dedbb47cdb4fc65e38f7bd7569e92b30d7f6a3ac94caa66a17"
+            "41d8c1bf6b8dcb855e89744a185ed73de32086d280e80159f44d28d68e595d0e"
+        );
+    }
+
+    /// Cases `doc_present` and `all_slots_present`: field 11, alone and beside fields 9 and 10.
+    #[test]
+    fn the_governing_document_slot_matches_the_vector() {
+        let mut c = empty_commitment();
+        c.governing_doc_sha256 = Some(d(DOC));
+        assert_eq!(
+            hex(&commitment_digest(&c).unwrap()),
+            "f3adf45b1eea210f1022bb53a9bf63d8219f309702506075da35dbeb419b749e"
+        );
+        c.selection_digest = Some(d(
+            "b71424be32b4e9de8d5b7b1ce5333d1469a68c6ee7b936ba44d175ccd3723c15",
+        ));
+        c.certificate_digest = Some(d(
+            "f0ad9d4e2d95e36ccbfbb0e9277108af979854634cc45989fa719079d3ffb1ca",
+        ));
+        assert_eq!(
+            hex(&commitment_digest(&c).unwrap()),
+            "9f157ab8e92dccef403f4c817a18be02e3ab1ac70b0fdc9a3e062c461d3e3746"
         );
     }
 
@@ -525,6 +568,9 @@ mod tests {
             let mut c = empty_commitment();
             c.certificate_digest = Some(vec![1; len]);
             assert!(commitment_digest(&c).is_err(), "certificate {len}");
+            let mut c = empty_commitment();
+            c.governing_doc_sha256 = Some(vec![1; len]);
+            assert!(commitment_digest(&c).is_err(), "governing doc {len}");
         }
     }
 

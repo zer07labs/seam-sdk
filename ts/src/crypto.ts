@@ -142,13 +142,18 @@ export interface Commitment {
   /** The published `seam-explanation-digest:v2` (32 raw bytes, or 64 hex chars). Used as field 8 only
    * when no `explanation` entries are supplied; an empty value counts as "not published". */
   explanation_digest?: Uint8Array | string | null;
-  /** Field 9 (`seam-commitment-digest:v4`): the selection block's 32-byte digest. Absent (`undefined` or
-   * `null`) frames `0x00`, which is what every record runtime 0.87.0 seals carries; any length other than
-   * 32 is refused. */
+  /** Field 9 (`seam-commitment-digest:v5`): the selection block's 32-byte digest. Absent (`undefined` or
+   * `null`) frames `0x00`, which is what every record the runtime seals today carries; any length other
+   * than 32 is refused. */
   selection_digest?: DigestBytes | null;
-  /** Field 10 (`seam-commitment-digest:v4`): the Gate certificate's 32-byte digest. Absent frames `0x00`
-   * (every record runtime 0.87.0 seals); any length other than 32 is refused. */
+  /** Field 10 (`seam-commitment-digest:v5`): the Gate certificate's 32-byte digest. Absent frames `0x00`
+   * (every record the runtime seals today); any length other than 32 is refused. */
   certificate_digest?: DigestBytes | null;
+  /** Field 11 (`seam-commitment-digest:v5`, #1711): the SHA-256 of the tenant governing document the
+   * decision was opened under. Present on every governed record, absent (`undefined` or `null`, framed
+   * `0x00`) on an ungoverned one; any length other than 32 is refused — a present empty value is NOT
+   * absent. */
+  governing_doc_sha256?: DigestBytes | null;
 }
 
 /** The agent's `aid:pubkey:ed25519:` identity for a 32-byte Ed25519 public key. */
@@ -234,7 +239,7 @@ function digestBytes(v: DigestBytes, what: string): Uint8Array {
   throw new TypeError(`${what} must be bytes`);
 }
 
-/** `0x00` when absent, else `0x01 ‖ be64(32) ‖ 32 raw bytes` — the v4 fields 9 and 10. */
+/** `0x00` when absent, else `0x01 ‖ be64(32) ‖ 32 raw bytes` — the v5 fields 9, 10 and 11. */
 function optDigest32(v: DigestBytes | null | undefined, what: string): Uint8Array {
   if (v === undefined || v === null) return new Uint8Array([0]);
   const b = digestBytes(v, what);
@@ -355,9 +360,9 @@ function commitmentExplanationDigest(c: Commitment): Uint8Array {
   return computed;
 }
 
-/** `seam-commitment-digest:v4` (hex): SHA-256 over the length-prefixed domain tag and fields
+/** `seam-commitment-digest:v5` (hex): SHA-256 over the length-prefixed domain tag and fields
  * `(id, action, authority, supersedes, auth_method, trust_basis, committer, explanation_digest,
- * selection_digest, certificate_digest)`.
+ * selection_digest, certificate_digest, governing_doc_sha256)`.
  *
  * Every field is `F(x) = be64(len) || x` (no separator), so the digest is injective over the tuple. The
  * length prefixes are load-bearing: with a NUL separator instead, `("a\0b", "c")` and `("a", "b\0c")`
@@ -365,13 +370,15 @@ function commitmentExplanationDigest(c: Commitment): Uint8Array {
  * fields are arbitrary text that may itself contain NUL. Never "simplify" them away. `supersedes` alone
  * carries a presence byte: `0x00` when absent (`undefined` or `null`), `0x01 || F(value)` when present —
  * so an absent prior and a present empty one are different digests. Field 8 is the 32 RAW bytes of the
- * explanation digest (`seam-explanation-digest:v2`). Fields 9 and 10 are always framed: `0x00` when absent,
- * `0x01 || F(32 bytes)` when present (a length other than 32 throws). v1-v3 are deleted, not dual-verified.
- * Mirrors the runtime byte-for-byte; normative: `seam-runtime/docs/specs/seam-commitment-digest.v4.md`. */
+ * explanation digest (`seam-explanation-digest:v2`). Fields 9, 10 and 11 are always framed: `0x00` when
+ * absent, `0x01 || F(32 bytes)` when present (a length other than 32 throws); field 11 is the governing
+ * document digest (#1711). v1-v4 are deleted, not dual-verified: a v4 TCT does not verify here.
+ * Mirrors the runtime byte-for-byte; normative: `seam-runtime/docs/specs/seam-commitment-digest.v5.md`
+ * (v4 plus field 11; `.v4.md` holds the framing v5 does not restate). */
 export function seamCommitmentDigest(c: Commitment): string {
   const supersedes = c.supersedes;
   const parts = [
-    frame(enc.encode("seam-commitment-digest:v4")),
+    frame(enc.encode("seam-commitment-digest:v5")),
     frame(utf8Field(c.id, "id")),
     frame(utf8Field(c.action, "action")),
     frame(utf8Field(c.authority, "authority")),
@@ -384,6 +391,7 @@ export function seamCommitmentDigest(c: Commitment): string {
     frame(commitmentExplanationDigest(c)),
     optDigest32(c.selection_digest, "selection_digest"),
     optDigest32(c.certificate_digest, "certificate_digest"),
+    optDigest32(c.governing_doc_sha256, "governing_doc_sha256"),
   ];
   return Buffer.from(sha256(concat(...parts))).toString("hex");
 }
@@ -451,7 +459,7 @@ function isJsonObject(v: unknown): v is Record<string, unknown> {
  * self-issued claims (`typ`, `iss==sub==aud==issuerAid`, `exp`), that `grants` is exactly
  * `["aitp.attestation"]`, and that `ext` is exactly
  * `{"com.zer07labs.seam": {"type": "seam:commitment", "commitment_digest": <hex>}}` whose digest is
- * `seam-commitment-digest:v4` of this exact commitment — its decided content, its committer and its
+ * `seam-commitment-digest:v5` of this exact commitment — its decided content, its committer and its
  * sealed explanation. A duplicate JSON key anywhere in the header or payload, a statement carried in
  * `grants` (the retired v2 shape), or an extra grant verifies `false`. Explanation entries that disagree
  * with the published digest, an unknown kind, or a non-canonical confidence verify `false`; this never

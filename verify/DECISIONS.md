@@ -433,3 +433,27 @@ not yet on main) for the seam-sdk 0.87.0 pre-releases, written from `seam-commit
 * **Vendored docs** `seam-event.v1.md` and `evidence-bundle.v1.md` are pinned `@ 8f4e30e tracking
   feat/1687-verified-voters`. The tracking pin is self-terminating (`scripts/check_vendored_spec.py`); re-pin
   to main when #1713 lands (seam-sdk#352).
+
+## D-046 — commitment digest v5: field 11, the governing document (seam-runtime#1711)
+
+**Decision.** This crate follows seam-runtime PR #1727 (head `c2817d8d`, branch `feat/1711-commitment-v5-p1`,
+stacked on #1713, not yet on main) for the seam-sdk 0.88.0 train, written from `seam-commitment-digest.v5.md`
+and never from the runtime's Rust:
+
+* **Digest.** `seam-commitment-digest:v5` is v4 plus field 11, `governing_doc_sha256`: `0x00` when the
+  decision is ungoverned, else `0x01 ‖ be64(32) ‖ 32 raw bytes`, with the same refusal as fields 9 and 10 (a
+  present value of any other length is refused, never hashed). v4 is deleted, not dual-verified: a v4 TCT does
+  not verify here, and an absent field 11 is never permission to try v4.
+* **Bundle.** `commitment.json`'s `governing_doc_sha256` is 64 lowercase hex or `null`/absent. Uppercase, a
+  wrong length or a non-string is refused at parse time, never read as "ungoverned" (absent and malformed are
+  different records). Fields 9 and 10 stay refused, as the bundle spec still projects neither.
+* **No trailer decoder.** The sealed `0x06` trailer is runtime-internal; this crate reads field 11 only from the
+  commitment, so the vector file's `governing_trailer_refusals` are not exercised (noted in the test).
+* **`commitment_digest_with_explanation`** is public so the spec vector's cases, which publish only the
+  explanation digest, run through the one framing implementation. A real record goes through
+  `commitment_digest`, which binds the entries.
+* **Fixtures re-exported** from the runtime's own exporter at `c2817d8d`, same method as D-045. Every export is
+  governed, so there is no ungoverned bundle fixture; the ungoverned v5 framing is pinned by the signed vector's
+  `populated_signed_ungoverned` real TCT.
+* **Vendored doc** `evidence-bundle.v1.md` was pinned `@ c2817d8 tracking feat/1711-commitment-v5-p1`, and is re-pinned
+  `@ 83e691d` (runtime 0.88.0, #1740) now that #1727 has landed; the doc is unchanged between the two.

@@ -117,7 +117,11 @@ class ConformanceTest {
         (String) c.get("trust_basis"),
         (String) c.get("committer"),
         published,
-        explanation);
+        explanation,
+        null,
+        null,
+        // Field 11 (#1711): a JSON number array on the commitment, null/absent when ungoverned.
+        vectorBytes(c, "governing_doc_sha256"));
   }
 
   /** {@code base} with one of the six string fields replaced — committer and explanation kept. */
@@ -131,7 +135,10 @@ class ConformanceTest {
         field.equals("trust_basis") ? v : b.trustBasis(),
         field.equals("committer") ? v : b.committer(),
         b.explanationDigest(),
-        b.explanation());
+        b.explanation(),
+        b.selectionDigest(),
+        b.certificateDigest(),
+        b.governingDocSha256());
   }
 
   @Test
@@ -208,9 +215,9 @@ class ConformanceTest {
     assertEquals(m(adm, "derived").get("sender_aid"), p.senderAid());
   }
 
-  /** The `tct` block's digests are reproduced exactly (seam-commitment-digest:v4 KAT). */
+  /** The `tct` block's digests are reproduced exactly (seam-commitment-digest:v5 KAT). */
   @Test
-  void tctCommitmentDigestV3IsByteExact() throws Exception {
+  void tctCommitmentDigestV5IsByteExact() throws Exception {
     Map<String, Object> t = m(vectors(), "tct");
     SeamCrypto.Commitment c = commitment(m(m(t, "inputs"), "commitment"));
     assertEquals(
@@ -255,9 +262,10 @@ class ConformanceTest {
 
   // -- Commitment-digest framing coverage (W5.4 / G4) --------------------------------------------
   //
-  // `seam-commitment-digest:v4` is implemented byte-for-byte in ALL FIVE SDK languages -- the widest
-  // fan-out of any framing in this repo. Its standalone vector is
-  // conformance/commitment_digest_v4_vector.json (CommitmentDigestV4Test); the `tct` block of
+  // `seam-commitment-digest:v5` is implemented byte-for-byte in ALL FIVE SDK languages -- the widest
+  // fan-out of any framing in this repo. Its standalone vectors are
+  // conformance/commitment_digest_v5_signed_vector.json and commitment_digest_v5_vector.json
+  // (CommitmentDigestV5Test); the `tct` block of
   // conformance/vectors.json carries the same framing. Neither is edited on this side:
   // seam-runtime's `sdk-digest-parity` job byte-diffs them against its own emitter.
   //

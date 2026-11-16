@@ -906,7 +906,7 @@ class SeamClient:
         ``rationale_ref`` is a ``sha256:<hex>`` context ref. Since runtime 0.44.0 it is **sealed**:
         every accepted evaluation's ``rationale_ref`` (and whether a ``confidence`` was stated at
         all) is bound into the Commitment's explanation under ``seam-explanation-digest:v2``, which
-        ``seam-commitment-digest:v4`` covers. ``verify_decision`` recomputes it locally.
+        ``seam-commitment-digest:v5`` covers. ``verify_decision`` recomputes it locally.
         """
         req = pb.EvaluationRequest(
             session_id=session_id,
@@ -1579,8 +1579,11 @@ def commitment_view(c: "pb.Commitment") -> dict:
     """The dict :func:`~seam_sdk.crypto.verify_tct` takes, from a served ``Commitment``.
 
     Carries the committer and the sealed explanation (entries AND the published digest), so
-    verification checks the entries against the digest before binding it (seam-commitment-digest:v4).
-    Explicit presence is preserved: an absent ``confidence`` / ``rationale_ref`` stays ``None``."""
+    verification checks the entries against the digest before binding it (seam-commitment-digest:v5).
+    Explicit presence is preserved: an absent ``confidence`` / ``rationale_ref`` stays ``None``, and
+    so does an absent ``governing_doc_sha256`` (an ungoverned decision, v5 field 11 = ``0x00``). A
+    present one is passed through as served, so a wrong length fails the digest closed rather than
+    reading as ungoverned."""
     return {
         "id": c.id,
         "action": c.action,
@@ -1592,6 +1595,10 @@ def commitment_view(c: "pb.Commitment") -> dict:
         # present-empty one and its TCT would never verify.
         "supersedes": c.supersedes if c.HasField("supersedes") else None,
         "committer": c.committer,
+        # v5 field 11 (#1711): `optional bytes`, so presence is explicit and must survive.
+        "governing_doc_sha256": bytes(c.governing_doc_sha256)
+        if c.HasField("governing_doc_sha256")
+        else None,
         # proto3 bytes cannot say "absent": empty means not published, and the entries decide.
         "explanation_digest": bytes(c.explanation_digest) or None,
         "explanation": [

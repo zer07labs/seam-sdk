@@ -16,7 +16,33 @@ than trusting a summary here.
 
 ## Unreleased
 
+These entries first ship in **0.88.1**: v0.88.0 was tagged and never published (see COMPATIBILITY.md).
+
+### Changed (BREAKING) — commitment digest v5 (#1711, for the runtime 0.88.0 train)
+- **`seam-commitment-digest:v5`** in all five languages and in `verify/`. It is v4 plus field 11,
+  `governing_doc_sha256`: the SHA-256 of the tenant governing document the decision was opened under. It
+  uses the slot encoding of fields 9 and 10: `0x00` when absent (an ungoverned decision), else
+  `0x01 ‖ be64(32) ‖ 32 bytes`, and any other length is refused, never hashed. v4 is deleted, not
+  dual-verified: a runtime 0.87.0 TCT does not verify, and a runtime 0.88.0 TCT does not verify under
+  SDK 0.87.x.
+- **`Commitment.governing_doc_sha256`** (proto tag 11, `optional bytes`) is in the field manifest and
+  carried by Python `commitment_view` and TS `commitmentView` with explicit presence: absent stays
+  absent, and a present value is passed through as served, so a wrong length fails verification closed
+  rather than reading as ungoverned. Go, Java and Kotlin gain the field on their `Commitment` digest
+  input (`GoverningDocSha256` / `governingDocSha256`); the Java record keeps its earlier constructors.
+- **`seam-verify bundle`** reads `commitment.json`'s `governing_doc_sha256`: 64 lowercase hex, or
+  `null`/absent for an ungoverned decision. Any other spelling is refused, never read as ungoverned.
+- **Vectors:** `conformance/vectors.json` re-vendored from runtime #1727 (`tct` commitment digest
+  `0c73edc6…aea2`); `commitment_digest_v5_signed_vector.json` (a governed and an ungoverned real TCT)
+  and `commitment_digest_v5_vector.json` (the independent generator's slot cases) replace
+  `commitment_digest_v4_vector.json`; `tct_exp_extended.json` re-signed under v5. The `0x06` trailer
+  refusals in the v5 vector pin the runtime's decoder and are not exercised: the SDK never decodes
+  sealed trailers. `verify/fixtures/evidence-bundle/` re-exported by the runtime's own exporter at #1727,
+  and `verify/docs/evidence-bundle.v1.md` re-pinned there.
+
 ## 0.88.0 — 2026-11-16
+
+Tagged, never published (see COMPATIBILITY.md). It carried no entries; 0.88.1 supersedes it.
 
 ## 0.87.1 — 2026-11-16
 

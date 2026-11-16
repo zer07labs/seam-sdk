@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:912`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:938`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -218,6 +218,19 @@ without a `seam-voter-pop-v1` proof (`voter_proof_required`). Python (`sign_vote
 directly, with no runtime release, as 0.54.3 and 0.82.1 were. 0.87.1 is taken here, so the runtime's next
 release must be 0.87.2 or later (the planned next is 0.88.0).
 
+**Commitment digest v5 (#1711) pairs only with runtime 0.88.0 or later** (seam-runtime #1727, released
+in 0.88.0 as `83e691d4`; BSR `main`). Field 11, `governing_doc_sha256`, binds
+the tenant governing document the decision was opened under into the TCT. There is **no compatibility**
+with runtime 0.87.0 or earlier, in either direction: v5 replaces v4 and there is no fallback, so a 0.87.0
+TCT does not verify under this SDK and a 0.88.0 TCT does not verify under SDK 0.87.x. It ships in SDK
+0.88.1.
+
+**SDK v0.88.1 pairs with runtime 0.88.0.** SDK v0.88.0 was tagged at `e7e9780` and never published: the
+runtime's 0.88.0 release dispatch (seam-runtime#1740) tagged it before this repo had merged commitment digest
+v5 (#357), so CI on that commit failed against the v5 runtime and `publish.yml` refused. A public tag is not
+re-cut, so v5 ships as v0.88.1, and the `v0.88.0` tags stay where they are, unpublished. The runtime's next
+release must be 0.89.0 or later, because 0.88.1 is taken here. Pin `seam-sdk 0.88.1` beside seamd 0.88.0.
+
 | SDK change | Requires runtime | Earlier runtimes | Pinned from |
 |---|---|---|---|
 | Protocol pass 2026-10 (seam-sdk#265) | seam-runtime 0.48.0 (seam-runtime#1365, carries `protocol-pass-2026-10`) | **none** — no compatibility | runtime `main` @ `32f8196` (contract byte-identical to the freeze `1ac5de5`) |
@@ -243,7 +256,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1983-2005`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2009-2031`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -610,7 +623,7 @@ patch, so the callouts have to live here rather than in a version number.
 ### The accepted integer set widened, and that is irreversible
 
 `jcs_canonicalize` previously refused any `int` with `|v| > 2^53`. It now accepts an integer iff JCS
-renders it as itself (`python/seam_sdk/crypto.py:397`, `ts/src/crypto.ts:410`). Practically:
+renders it as itself (`python/seam_sdk/crypto.py:403`, `ts/src/crypto.ts:418`). Practically:
 
 | value | before | now | why |
 |---|---|---|---|
@@ -675,17 +688,17 @@ values reached one digest. Measured against the pre-fix build, `recordDigestV2({
 `b566fdea56b8487bc5ebc26d1d6585339e9ab2a3a499247bd7230e4f20f05d7f`. That is a digest failing at the
 only thing a digest does.
 
-The guard is `uintSlot` (`ts/src/crypto.ts:1149`), which already governed the v3 record digest;
-`u64le`/`u32le` (`ts/src/crypto.ts:864`) now route through it, so v2 and the attestation framing get
+The guard is `uintSlot` (`ts/src/crypto.ts:1157`), which already governed the v3 record digest;
+`u64le`/`u32le` (`ts/src/crypto.ts:872`) now route through it, so v2 and the attestation framing get
 the rule that was always written for them. Python got the same treatment: `_uint_slot`
-(`python/seam_sdk/crypto.py:874`) was `_v3_uint`, and `record_digest_v2` shared it (both v2 and v3
+(`python/seam_sdk/crypto.py:880`) was `_v3_uint`, and `record_digest_v2` shared it (both v2 and v3
 are now deleted; `record_digest_v4` uses it). Every
 "before" below was measured against the pre-fix build, not inferred.
 
 **Read the `now` column as the record-digest arm.** In the chain-head **attestation** arm every one
 of these refusals was observed as `false` rather than as a thrown error, because
 `verifyChainHeadAttestation` wrapped its whole body in a catch that returned `false`
-(`const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid }, framingTenant);`, `ts/src/crypto.ts:1428`). The
+(`const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid }, framingTenant);`, `ts/src/crypto.ts:1436`). The
 distinction mattered for the `true` row in particular, where the attestation arm showed no
 caller-visible change at all — `false` before, `false` after — even though what it was refusing had
 changed. **§10 closed that**: the type checks now run before the `try`, so a wrong type throws there
@@ -712,7 +725,7 @@ Python never had it. What Python had was three smaller defects in the same code:
 
 - `verify_chain_head_attestation` let that `struct.error` escape a function documented to return
   `False` on any tamper, so an out-of-range length **crashed** a caller instead of being rejected. It
-  now returns `False` (`python/seam_sdk/crypto.py:1088-1214`).
+  now returns `False` (`python/seam_sdk/crypto.py:1094-1220`).
 - `attested_len`, `attested_at` and `digest_schema` are now required to be `int`. Previously
   `True` was digested as `1` (`bool` subclasses `int`) and `5.0` raised `struct.error` — a *third*
   answer from a function that should only ever give two. Both now raise `TypeError`.
@@ -834,7 +847,7 @@ writes without thinking about it.
 
 The guard is a rule, not a denylist: an object is accepted iff its prototype is a root — `null`, or
 something whose own prototype is `null` (`function isPlainObject(v: object): boolean {`,
-`ts/src/crypto.ts:611`). An enumeration of
+`ts/src/crypto.ts:619`). An enumeration of
 `Date | Map | Set | ...` is only correct until the next exotic type. Testing the prototype chain's
 *depth* rather than `proto === Object.prototype` is also what keeps objects from other realms (`vm`
 contexts, iframes) working — they have their own `Object.prototype`, and an identity check would

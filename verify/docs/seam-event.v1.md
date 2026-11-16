@@ -1,4 +1,10 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 8f4e30e tracking feat/1687-verified-voters (refreshed 2026-11-15).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 83e691d (refreshed 2026-11-16).
+     Runtime 0.88.0 (#1740), on runtime main. Movement since ede96dd (the #1713 merge): `stream_id` is now
+     REQUIRED on every event (#1488). The legacy-row rule and `SEAM_STREAM_ID_CUTOFF_SEQ` are retired, and a
+     consumer MUST refuse an empty `stream_id`. It stays UNSEALED: no digest, checksum, signature, tag or vector
+     changes, and `seam-verify` still accepts bare, prefixed and mixed windows.
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 8f4e30e tracking feat/1687-verified-voters (refreshed 2026-11-15).
      seam-runtime#1713 (#1687 verified voters), NOT yet on runtime main: the SDK 0.87.0 pre-releases ship
      ahead of it (seam-sdk#352). Movement since b4d1366: four cross-links now cite
      `seam-commitment-digest.v4.md` instead of `.v3.md`. No tag, digest, framing or vector change here.
@@ -112,7 +118,7 @@ SeamEvent {
   checksum:        bytes?    // §A — the head this entry produces = H(prev_checksum ‖ digest) (tag 20)
   tenant_seq:      u64?      // #973 — per-tenant outbox counter, gap-free per `tenant`, UNSEALED; see §Per-tenant `tenant_seq` (tag 25)
   payload:         bytes     // kind-specific body (central seam-guard redaction on the outbox is NOT YET WIRED — see the Redaction note below)
-  stream_id:       string    // k8s P7 — the runtime cell's delivery stream (`SEAM_STREAM_ID`); empty on legacy rows; UNSEALED; see §Delivery stream (tag 27)
+  stream_id:       string    // k8s P7 — the runtime cell's delivery stream (`SEAM_STREAM_ID`); REQUIRED — never empty; UNSEALED; see §Delivery stream (tag 27)
 }
 
 enum EventKind {
@@ -1041,13 +1047,18 @@ stream**, so `(stream_id, seq)` is the identity a multi-cell consumer keys on.
   value **refuses to start**. A database belongs to exactly one stream for life.
 - **Per-stream scope.** `seq`, `tenant_seq`, the relay watermark (`outbox_relay_watermark`, keyed by
   `stream_id`) and the StreamEvents cursor are all scoped to one stream. Nothing is ordered across streams.
-- **Prefix rule.** Every event appended from the boundary on carries `stream_id` and an `event_id` of
+- **Required (#1488).** `stream_id` is **required on every event**: a consumer MUST refuse an event whose
+  `stream_id` is empty as a producer defect. The legacy-row rule (a missing `stream_id` below a pinned
+  boundary is tolerated) **has ended**, and `SEAM_STREAM_ID_CUTOFF_SEQ` is retired: consumers drop it and
+  keep no cutoff. Pre-P7 history is test data (owner, 2026-11-15): it is deleted or wiped, never stamped or
+  replayed. The JSON wire golden (`crates/seam-store/tests/golden_seam_event_json.json`) is the stamped
+  shape; there is no unstamped golden.
+- **Prefix rule.** Every event carries `stream_id` and an `event_id` of
   `{stream_id}/{local}`, where `{local}` is the kind's id as documented in its section. The one exception
   in shape is `EVENT_REDRIVEN`: its id is `{stream_id}/{original_local}#rd#{seq}` — the original's own
   prefix is stripped first, so the id carries one prefix, never two. A stream id cannot contain `/`, so
   the first `/` always ends the prefix: ids from two streams can never collide, and a consumer's
-  `event_id` dedup stays correct across cells. **Legacy rows are untouched**: they keep their
-  bare id and an empty `stream_id`; nothing is rewritten.
+  `event_id` dedup stays correct across cells.
 - **UNSEALED.** `stream_id` and the prefix are in **no digest, checksum or signature** (the chain is
   per-tenant within a database and never spans streams). `seam-verify` therefore accepts bare, prefixed and
   mixed windows unchanged; a chained id is compared whole.
@@ -1058,8 +1069,8 @@ stream**, so `(stream_id, seq)` is the identity a multi-cell consumer keys on.
   legacy rows stay readable but every new INSERT is checked). A pre-P7 binary does not set the column, so
   during a rolling deploy **old replicas fail their appends** (clients retry onto a new replica) instead of
   writing legacy rows above the boundary. The runtime logs `seam_stream_id` and `boundary_seq` (or `unset`)
-  at info on boot. Consumers pin the boundary as `SEAM_STREAM_ID_CUTOFF_SEQ`: below it, a missing
-  `stream_id` is legacy; at or after it, a missing `stream_id` is a producer defect.
+  at info on boot. `boundary_seq` is diagnostic only: consumers no longer pin it (see **Required**). Rows
+  below it on a pre-P7 database are test data, to be deleted rather than served.
 - **Mismatch refusal.** `StreamEvents` (`StreamEventsRequest.stream_id = 4`) and `ReportEventsConsumed`
   (`ReportConsumedRequest.stream_id = 2`) must name this deployment's stream. An empty or different value is
   refused with `FAILED_PRECONDITION` `stream_id_mismatch` — `StreamEvents` before any event is read,
