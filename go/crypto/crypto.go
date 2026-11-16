@@ -88,9 +88,11 @@ type Presentation struct {
 // Commitment is the sealed-decision commitment whose rooted TCT is verified.
 //
 // Committer, and the Explanation entries and/or the published ExplanationDigest, are bound by
-// `seam-commitment-digest:v3` (see seamCommitmentDigest). A nil Explanation means the entries are not
+// `seam-commitment-digest:v4` (see seamCommitmentDigest). A nil Explanation means the entries are not
 // held (only the published digest, if any, is used); a non-nil empty slice is the empty explanation.
-// A nil Supersedes is ABSENT, which v3 frames differently from a present empty string.
+// A nil Supersedes is ABSENT, which v4 frames differently from a present empty string. A nil
+// SelectionDigest / CertificateDigest (fields 9 and 10) is ABSENT — every record runtime 0.87.0 seals;
+// present, each MUST be exactly 32 bytes.
 type Commitment struct {
 	ID                string             `json:"id"`
 	Action            string             `json:"action"`
@@ -101,6 +103,8 @@ type Commitment struct {
 	Committer         string             `json:"committer"`
 	ExplanationDigest []byte             `json:"explanation_digest,omitempty"`
 	Explanation       []ExplanationEntry `json:"explanation,omitempty"`
+	SelectionDigest   []byte             `json:"-"`
+	CertificateDigest []byte             `json:"-"`
 }
 
 // ExplanationEntry is one sealed explanation entry, in the order the runtime accepted it. Kind is the
@@ -114,6 +118,109 @@ type ExplanationEntry struct {
 	Reason       string   `json:"reason"`
 	Confidence   *float64 `json:"confidence"`
 	RationaleRef *string  `json:"rationale_ref"`
+	// VoterVerification is the sealed voter proof record (seam-runtime #1687): present on every vote,
+	// ballot and objection runtime 0.87.0+ seals, absent (nil) on evaluations.
+	VoterVerification *VoterVerification `json:"voter_verification"`
+}
+
+// VoterVerification is a sealed `VoterVerificationRecord` (seam-runtime docs/specs/voter-verification.v1.md),
+// field for field. Method is the lowercase word VoterMethodPop or VoterMethodCpSigned — never the proto
+// enum name; VoterMethodFromProto maps the enum. ContentDigest is the 32 raw bytes of
+// `seam-vote-content-v1`; SignerCertificate is empty for `pop`.
+type VoterVerification struct {
+	Method            string
+	Principal         string
+	ContentDigest     []byte
+	IssuedAtMs        uint64
+	ExpiresAtMs       uint64
+	Signature         []byte
+	SignerCertificate []byte
+	Tenant            string
+	Namespace         string
+	SessionID         string
+	OpenedAtMillis    uint64
+	Issuer            string
+	Audience          string
+	AcceptedAtMs      uint64
+}
+
+// The closed voter-verification method words the explanation digest frames.
+const (
+	VoterMethodPop      = "pop"
+	VoterMethodCpSigned = "cp_signed"
+)
+
+// VoterMethodFromProto maps the `seam.api.v1.VoterVerification` enum number to its digest word:
+// 1 (POP) → "pop", 2 (CP_SIGNED) → "cp_signed". UNSPECIFIED (0) and any unknown value are refused —
+// the runtime never seals one.
+func VoterMethodFromProto(n int32) (string, error) {
+	switch n {
+	case 1:
+		return VoterMethodPop, nil
+	case 2:
+		return VoterMethodCpSigned, nil
+	}
+	return "", fmt.Errorf("voter verification method %d is not sealable", n)
+}
+
+// UnmarshalJSON reads a voter record in either vector projection: the seam-client conformance form
+// (`content_digest_hex`, `signature_hex`, `signer_certificate_hex`) or the REST form (byte fields as
+// JSON number arrays).
+func (v *VoterVerification) UnmarshalJSON(raw []byte) error {
+	var w struct {
+		Method               string  `json:"method"`
+		Principal            string  `json:"principal"`
+		ContentDigest        []int   `json:"content_digest"`
+		ContentDigestHex     *string `json:"content_digest_hex"`
+		IssuedAtMs           uint64  `json:"issued_at_ms"`
+		ExpiresAtMs          uint64  `json:"expires_at_ms"`
+		Signature            []int   `json:"signature"`
+		SignatureHex         *string `json:"signature_hex"`
+		SignerCertificate    []int   `json:"signer_certificate"`
+		SignerCertificateHex *string `json:"signer_certificate_hex"`
+		Tenant               string  `json:"tenant"`
+		Namespace            string  `json:"namespace"`
+		SessionID            string  `json:"session_id"`
+		OpenedAtMillis       uint64  `json:"opened_at_millis"`
+		Issuer               string  `json:"issuer"`
+		Audience             string  `json:"audience"`
+		AcceptedAtMs         uint64  `json:"accepted_at_ms"`
+	}
+	if err := json.Unmarshal(raw, &w); err != nil {
+		return err
+	}
+	pick := func(name string, ints []int, hx *string) ([]byte, error) {
+		if hx != nil {
+			return hex.DecodeString(*hx)
+		}
+		out := make([]byte, len(ints))
+		for i, b := range ints {
+			if b < 0 || b > 255 {
+				return nil, fmt.Errorf("%s: byte out of range: %d", name, b)
+			}
+			out[i] = byte(b)
+		}
+		return out, nil
+	}
+	cd, err := pick("content_digest", w.ContentDigest, w.ContentDigestHex)
+	if err != nil {
+		return err
+	}
+	sig, err := pick("signature", w.Signature, w.SignatureHex)
+	if err != nil {
+		return err
+	}
+	cert, err := pick("signer_certificate", w.SignerCertificate, w.SignerCertificateHex)
+	if err != nil {
+		return err
+	}
+	*v = VoterVerification{
+		Method: w.Method, Principal: w.Principal, ContentDigest: cd, IssuedAtMs: w.IssuedAtMs,
+		ExpiresAtMs: w.ExpiresAtMs, Signature: sig, SignerCertificate: cert, Tenant: w.Tenant,
+		Namespace: w.Namespace, SessionID: w.SessionID, OpenedAtMillis: w.OpenedAtMillis,
+		Issuer: w.Issuer, Audience: w.Audience, AcceptedAtMs: w.AcceptedAtMs,
+	}
+	return nil
 }
 
 // BuildPresentation builds the pinned-key admission presentation.
@@ -170,10 +277,10 @@ func BuildPresentation(agentSeed []byte, receiverAID, popNonce string, nowMs int
 var ExplanationKinds = []string{"vote", "evaluation", "objection", "ballot"}
 
 // ExplanationDomain and CommitmentDigestDomain are the two domain tags of the commitment binding.
-// Normative: seam-runtime docs/specs/seam-commitment-digest.v3.md.
+// Normative: seam-runtime docs/specs/seam-commitment-digest.v4.md.
 const (
-	ExplanationDomain      = "seam-explanation-digest:v1"
-	CommitmentDigestDomain = "seam-commitment-digest:v3"
+	ExplanationDomain      = "seam-explanation-digest:v2"
+	CommitmentDigestDomain = "seam-commitment-digest:v4"
 )
 
 // The self-attestation TCT statement (RFC-AITP-0005) a Seam commitment is sealed as: the only grant,
@@ -190,15 +297,18 @@ func be64Frame(out, x []byte) []byte {
 	return append(out, x...)
 }
 
-// ExplanationDigest is `seam-explanation-digest:v1` over a sealed explanation (32 raw bytes):
+// ExplanationDigest is `seam-explanation-digest:v2` over a sealed explanation (32 raw bytes):
 //
-//	SHA-256( F("seam-explanation-digest:v1") ‖ be64(count) ‖ Σ ENTRY )
-//	ENTRY = F(kind) ‖ F(participant) ‖ F(proposal_id) ‖ F(value) ‖ F(reason) ‖ CONF ‖ REF
+//	SHA-256( F("seam-explanation-digest:v2") ‖ be64(count) ‖ Σ ENTRY )
+//	ENTRY = F(kind) ‖ F(participant) ‖ F(proposal_id) ‖ F(value) ‖ F(reason) ‖ CONF ‖ REF ‖ VV
 //	CONF  = 0x00 | 0x01 ‖ be64(IEEE-754 bits)      REF = 0x00 | 0x01 ‖ F(rationale_ref)
+//	VV    = 0x00 | 0x01 ‖ F(method) ‖ F(principal) ‖ F(content_digest) ‖ be64(issued_at_ms) ‖
+//	        be64(expires_at_ms) ‖ F(signature) ‖ F(signer_certificate) ‖ F(tenant) ‖ F(namespace) ‖
+//	        F(session_id) ‖ be64(opened_at_millis) ‖ F(issuer) ‖ F(audience) ‖ be64(accepted_at_ms)
 //
 // Entries are hashed in the given order, never sorted or de-duplicated. It refuses (returns an error)
-// an unknown kind or a non-canonical confidence — NaN, ±Inf, outside [0, 1], or -0.0 — rather than
-// hash it.
+// an unknown kind, a non-canonical confidence — NaN, ±Inf, outside [0, 1], or -0.0 — or a voter record
+// with an unknown method word or a content digest that is not 32 bytes, rather than hash it.
 func ExplanationDigest(entries []ExplanationEntry) ([32]byte, error) {
 	out := be64Frame(nil, []byte(ExplanationDomain))
 	out = binary.BigEndian.AppendUint64(out, uint64(len(entries)))
@@ -233,6 +343,31 @@ func ExplanationDigest(entries []ExplanationEntry) ([32]byte, error) {
 			out = append(out, 0x01)
 			out = be64Frame(out, []byte(*e.RationaleRef))
 		}
+		if vv := e.VoterVerification; vv == nil {
+			out = append(out, 0x00)
+		} else {
+			if vv.Method != VoterMethodPop && vv.Method != VoterMethodCpSigned {
+				return [32]byte{}, fmt.Errorf("explanation entry %d: unknown voter method %q", i, vv.Method)
+			}
+			if len(vv.ContentDigest) != sha256.Size {
+				return [32]byte{}, fmt.Errorf("explanation entry %d: voter content_digest must be %d bytes, got %d", i, sha256.Size, len(vv.ContentDigest))
+			}
+			out = append(out, 0x01)
+			out = be64Frame(out, []byte(vv.Method))
+			out = be64Frame(out, []byte(vv.Principal))
+			out = be64Frame(out, vv.ContentDigest)
+			out = binary.BigEndian.AppendUint64(out, vv.IssuedAtMs)
+			out = binary.BigEndian.AppendUint64(out, vv.ExpiresAtMs)
+			out = be64Frame(out, vv.Signature)
+			out = be64Frame(out, vv.SignerCertificate)
+			out = be64Frame(out, []byte(vv.Tenant))
+			out = be64Frame(out, []byte(vv.Namespace))
+			out = be64Frame(out, []byte(vv.SessionID))
+			out = binary.BigEndian.AppendUint64(out, vv.OpenedAtMillis)
+			out = be64Frame(out, []byte(vv.Issuer))
+			out = be64Frame(out, []byte(vv.Audience))
+			out = binary.BigEndian.AppendUint64(out, vv.AcceptedAtMs)
+		}
 	}
 	return sha256.Sum256(out), nil
 }
@@ -262,15 +397,18 @@ func commitmentExplanationDigest(c Commitment) ([]byte, error) {
 	return d[:], nil
 }
 
-// seamCommitmentDigest is `seam-commitment-digest:v3` (hex): SHA-256 over
+// seamCommitmentDigest is `seam-commitment-digest:v4` (hex): SHA-256 over
 //
 //	F(domain) ‖ F(id) ‖ F(action) ‖ F(authority) ‖ SUP ‖ F(auth_method) ‖ F(trust_basis) ‖
-//	F(committer) ‖ F(explanation_digest)
-//	SUP = 0x00 (supersedes absent) | 0x01 ‖ F(supersedes) (present)
+//	F(committer) ‖ F(explanation_digest) ‖ SEL ‖ CERT
+//	SUP  = 0x00 (supersedes absent) | 0x01 ‖ F(supersedes) (present)
+//	SEL  = 0x00 (no selection) | 0x01 ‖ be64(32) ‖ selection_digest
+//	CERT = 0x00 (no Gate certificate) | 0x01 ‖ be64(32) ‖ certificate_digest
 //
 // with F(x) = be64(len(x)) ‖ x, so the digest is injective over the tuple (a `\0` separator would let
 // boundary-shifted fields collide). Field 8 is the 32 RAW bytes of the explanation digest (see
-// commitmentExplanationDigest). v1 and v2 are deleted, not dual-verified. Mirrors the runtime
+// commitmentExplanationDigest). A present slot-9/10 digest that is not 32 bytes is refused, not hashed.
+// v1, v2 and v3 are deleted, not dual-verified. Mirrors the runtime
 // byte-for-byte.
 func seamCommitmentDigest(c Commitment) (string, error) {
 	ed, err := commitmentExplanationDigest(c)
@@ -289,6 +427,20 @@ func seamCommitmentDigest(c Commitment) (string, error) {
 	}
 	for _, f := range [][]byte{[]byte(c.AuthMethod), []byte(c.TrustBasis), []byte(c.Committer), ed} {
 		out = be64Frame(out, f)
+	}
+	for _, slot := range []struct {
+		name string
+		d    []byte
+	}{{"selection_digest", c.SelectionDigest}, {"certificate_digest", c.CertificateDigest}} {
+		if slot.d == nil {
+			out = append(out, 0x00)
+			continue
+		}
+		if len(slot.d) != sha256.Size {
+			return "", fmt.Errorf("%s must be %d bytes, got %d", slot.name, sha256.Size, len(slot.d))
+		}
+		out = append(out, 0x01)
+		out = be64Frame(out, slot.d)
 	}
 	sum := sha256.Sum256(out)
 	return hex.EncodeToString(sum[:]), nil
@@ -347,7 +499,7 @@ func hasDuplicateKey(raw []byte) bool {
 // claims (`typ`, `iss==sub==aud==issuer_aid`, `exp`), and the RFC-AITP-0005 self-attestation shape:
 // `grants` is exactly ["aitp.attestation"], and `ext` is exactly
 // {"com.zer07labs.seam": {"type": "seam:commitment", "commitment_digest": "<64 lowercase hex>"}},
-// whose digest must equal `seam-commitment-digest:v3` of this exact commitment — the decided content,
+// whose digest must equal `seam-commitment-digest:v4` of this exact commitment — the decided content,
 // the committer, and the sealed explanation. A repeated JSON key anywhere in the header or payload
 // refuses the token, and a digest carried in `grants` (the retired v2 shape) does not verify.
 // Explanation entries that disagree with a published ExplanationDigest, an unknown kind, or a
@@ -518,10 +670,11 @@ func CallSigV3(agentSeed []byte, f CallSigV3Fields) ([]byte, error) {
 	return ed25519.Sign(ed25519.NewKeyFromSeed(agentSeed), CallSigV3Payload(f)), nil
 }
 
-// EnrollPopV1Context is the domain tag of the enrolment proof-of-possession (seam-runtime #1157, SDK
-// #205): the subject AID's own consent, by the key it embeds, to ONE `EnrollTenant` binding. Bump it only
-// in lockstep with the runtime.
-const EnrollPopV1Context = "seam-enroll-pop-v1"
+// EnrollPopV2Context is the domain tag of the enrolment proof-of-possession (seam-runtime #1157, #1687):
+// the subject AID's own consent, by the key it embeds, to ONE `EnrollTenant` binding — including the
+// participant a `voter` enrolment binds. v1 is deleted (runtime 0.87.0 refuses it). Bump it only in
+// lockstep with the runtime.
+const EnrollPopV2Context = "seam-enroll-pop-v2"
 
 // EnrollPopFields are the inputs EnrollPopPayload frames, each exactly as sent on the wire. Strings are
 // signed as their UTF-8 bytes.
@@ -529,18 +682,21 @@ type EnrollPopFields struct {
 	SubjectAID string // `aid:pubkey:ed25519:<b64url>` — the AID being enrolled
 	Tenant     string
 	Namespace  string
-	IssuedAtMs uint64 // Unix epoch MILLISECONDS
-	Nonce      string // 1..=128 chars of [A-Za-z0-9_-]
+	// ParticipantID is the participant a `voter` enrolment binds; "" for every other kind. It must equal
+	// the `participant_id` sent beside the proof.
+	ParticipantID string
+	IssuedAtMs    uint64 // Unix epoch MILLISECONDS
+	Nonce         string // 1..=128 chars of [A-Za-z0-9_-]
 }
 
 // EnrollPopPayload is the exact byte string EnrollPopSign signs:
 //
-//	frame(context) | frame(subject_aid) | frame(tenant) | frame(namespace) | frame(u64le(issued_at_ms)) |
-//	frame(nonce)
+//	frame(context) | frame(subject_aid) | frame(tenant) | frame(namespace) | frame(participant_id) |
+//	frame(u64le(issued_at_ms)) | frame(nonce)
 //
 // with frame(x) = u32le(len_bytes(x)) | x. issued_at_ms is 8 raw little-endian bytes, not ASCII decimal.
 //
-// Pinned by conformance/enroll_pop_v1_payload_vector.json. Exported so a caller can reproduce or verify
+// Pinned by conformance/enroll_pop_v2_payload_vector.json. Exported so a caller can reproduce or verify
 // the binding without re-deriving it from prose.
 func EnrollPopPayload(f EnrollPopFields) []byte {
 	var out []byte
@@ -548,10 +704,11 @@ func EnrollPopPayload(f EnrollPopFields) []byte {
 		out = binary.LittleEndian.AppendUint32(out, uint32(len(b)))
 		out = append(out, b...)
 	}
-	frame([]byte(EnrollPopV1Context))
+	frame([]byte(EnrollPopV2Context))
 	frame([]byte(f.SubjectAID))
 	frame([]byte(f.Tenant))
 	frame([]byte(f.Namespace))
+	frame([]byte(f.ParticipantID))
 	frame(binary.LittleEndian.AppendUint64(nil, f.IssuedAtMs))
 	frame([]byte(f.Nonce))
 	return out

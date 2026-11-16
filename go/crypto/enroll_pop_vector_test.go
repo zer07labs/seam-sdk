@@ -12,28 +12,29 @@ import (
 	"testing"
 )
 
-// enrollPopVector mirrors conformance/enroll_pop_v1_payload_vector.json — the cross-language contract for
-// the enrolment proof-of-possession (#205). NO bless mode: a mismatch is a contract break, not a stale
+// enrollPopVector mirrors conformance/enroll_pop_v2_payload_vector.json — the cross-language contract for
+// the enrolment proof-of-possession (#205, v2 for #1687). NO bless mode: a mismatch is a contract break, not a stale
 // fixture.
 type enrollPopVector struct {
 	Domain string `json:"domain"`
 	Cases  []struct {
-		Name       string `json:"name"`
-		Why        string `json:"why"`
-		SeedHex    string `json:"seed_hex"`
-		SubjectAID string `json:"subject_aid"`
-		Tenant     string `json:"tenant"`
-		Namespace  string `json:"namespace"`
-		IssuedAtMs uint64 `json:"issued_at_ms"`
-		Nonce      string `json:"nonce"`
-		PayloadHex string `json:"payload_hex"`
-		Signature  string `json:"signature"`
+		Name        string `json:"name"`
+		Why         string `json:"why"`
+		SeedHex     string `json:"seed_hex"`
+		SubjectAID  string `json:"subject_aid"`
+		Tenant      string `json:"tenant"`
+		Namespace   string `json:"namespace"`
+		Participant string `json:"participant_id"`
+		IssuedAtMs  uint64 `json:"issued_at_ms"`
+		Nonce       string `json:"nonce"`
+		PayloadHex  string `json:"payload_hex"`
+		Signature   string `json:"signature"`
 	} `json:"cases"`
 }
 
 func loadEnrollPop(t *testing.T) enrollPopVector {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "conformance", "enroll_pop_v1_payload_vector.json"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "conformance", "enroll_pop_v2_payload_vector.json"))
 	if err != nil {
 		t.Fatalf("read vector: %v", err)
 	}
@@ -49,17 +50,18 @@ func loadEnrollPop(t *testing.T) enrollPopVector {
 
 func TestEnrollPopVector(t *testing.T) {
 	v := loadEnrollPop(t)
-	if v.Domain != EnrollPopV1Context {
-		t.Fatalf("domain = %q, want %q", v.Domain, EnrollPopV1Context)
+	if v.Domain != EnrollPopV2Context {
+		t.Fatalf("domain = %q, want %q", v.Domain, EnrollPopV2Context)
 	}
 	for _, tc := range v.Cases {
 		t.Run(tc.Name, func(t *testing.T) {
 			f := EnrollPopFields{
-				SubjectAID: tc.SubjectAID,
-				Tenant:     tc.Tenant,
-				Namespace:  tc.Namespace,
-				IssuedAtMs: tc.IssuedAtMs,
-				Nonce:      tc.Nonce,
+				SubjectAID:    tc.SubjectAID,
+				Tenant:        tc.Tenant,
+				Namespace:     tc.Namespace,
+				ParticipantID: tc.Participant,
+				IssuedAtMs:    tc.IssuedAtMs,
+				Nonce:         tc.Nonce,
 			}
 			want, err := hex.DecodeString(tc.PayloadHex)
 			if err != nil {
@@ -108,6 +110,7 @@ func TestEnrollPopDoesNotVerifyForAnotherTenantOrNamespace(t *testing.T) {
 		{SubjectAID: f.SubjectAID, Tenant: "tenant-b", Namespace: "ns-x", IssuedAtMs: f.IssuedAtMs, Nonce: f.Nonce},
 		{SubjectAID: f.SubjectAID, Tenant: "tenant-a", Namespace: "ns-y", IssuedAtMs: f.IssuedAtMs, Nonce: f.Nonce},
 		{SubjectAID: f.SubjectAID, Tenant: "tenant-b", Namespace: "ns-y", IssuedAtMs: f.IssuedAtMs, Nonce: f.Nonce},
+		{SubjectAID: f.SubjectAID, Tenant: "tenant-a", Namespace: "ns-x", ParticipantID: "risk", IssuedAtMs: f.IssuedAtMs, Nonce: f.Nonce},
 	} {
 		if ed25519.Verify(pub, EnrollPopPayload(other), sig) {
 			t.Fatalf("a proof for tenant-a/ns-x verified for %s/%s", other.Tenant, other.Namespace)

@@ -43,6 +43,41 @@ class ConformanceTest {
     return out;
   }
 
+  /** Bytes from a vector: a {@code <name>_hex} string, or {@code <name>} as a list of byte values. */
+  @SuppressWarnings("unchecked")
+  static byte[] vectorBytes(Map<String, Object> m, String name) {
+    Object hex = m.get(name + "_hex");
+    if (hex instanceof String h) return hexToBytes(h);
+    Object raw = m.get(name);
+    if (raw instanceof String h) return hexToBytes(h);
+    if (raw instanceof List<?> nums) {
+      byte[] out = new byte[nums.size()];
+      for (int i = 0; i < out.length; i++) out[i] = (byte) ((Number) nums.get(i)).intValue();
+      return out;
+    }
+    return null;
+  }
+
+  /** A sealed voter verification record from a vector's JSON projection ({@code null} when absent). */
+  static SeamCrypto.VoterVerification voterVerification(Map<String, Object> v) {
+    if (v == null) return null;
+    return new SeamCrypto.VoterVerification(
+        (String) v.get("method"),
+        (String) v.get("principal"),
+        vectorBytes(v, "content_digest"),
+        ((Number) v.get("issued_at_ms")).longValue(),
+        ((Number) v.get("expires_at_ms")).longValue(),
+        vectorBytes(v, "signature"),
+        vectorBytes(v, "signer_certificate"),
+        (String) v.get("tenant"),
+        (String) v.get("namespace"),
+        (String) v.get("session_id"),
+        ((Number) v.get("opened_at_millis")).longValue(),
+        (String) v.get("issuer"),
+        (String) v.get("audience"),
+        ((Number) v.get("accepted_at_ms")).longValue());
+  }
+
   /** Build a commitment from a vector's JSON projection (absent confidence/rationale_ref = null). */
   @SuppressWarnings("unchecked")
   static SeamCrypto.Commitment commitment(Map<String, Object> c) {
@@ -61,7 +96,8 @@ class ConformanceTest {
                 (String) e.get("value"),
                 (String) e.get("reason"),
                 conf == null ? null : ((Number) conf).doubleValue(),
-                (String) e.get("rationale_ref")));
+                (String) e.get("rationale_ref"),
+                voterVerification((Map<String, Object>) e.get("voter_verification"))));
       }
     }
     byte[] published = null;
@@ -172,7 +208,7 @@ class ConformanceTest {
     assertEquals(m(adm, "derived").get("sender_aid"), p.senderAid());
   }
 
-  /** The `tct` block's digests are reproduced exactly (seam-commitment-digest:v3 KAT). */
+  /** The `tct` block's digests are reproduced exactly (seam-commitment-digest:v4 KAT). */
   @Test
   void tctCommitmentDigestV3IsByteExact() throws Exception {
     Map<String, Object> t = m(vectors(), "tct");
@@ -219,9 +255,9 @@ class ConformanceTest {
 
   // -- Commitment-digest framing coverage (W5.4 / G4) --------------------------------------------
   //
-  // `seam-commitment-digest:v3` is implemented byte-for-byte in ALL FIVE SDK languages -- the widest
+  // `seam-commitment-digest:v4` is implemented byte-for-byte in ALL FIVE SDK languages -- the widest
   // fan-out of any framing in this repo. Its standalone vector is
-  // conformance/commitment_digest_v3_vector.json (CommitmentDigestV3Test); the `tct` block of
+  // conformance/commitment_digest_v4_vector.json (CommitmentDigestV4Test); the `tct` block of
   // conformance/vectors.json carries the same framing. Neither is edited on this side:
   // seam-runtime's `sdk-digest-parity` job byte-diffs them against its own emitter.
   //
@@ -265,8 +301,39 @@ class ConformanceTest {
         new SeamCrypto.ExplanationEntry(
             e0.kind(), e0.participant(), e0.proposalId(), e0.value(), e0.reason() + "-x",
             e0.confidence(), e0.rationaleRef()));
+    // #1687: the vote's sealed voter verification record is bound too (explanation digest v2's VV).
+    List<SeamCrypto.ExplanationEntry> vvTampered = new ArrayList<>(ex);
+    List<SeamCrypto.ExplanationEntry> vvStripped = new ArrayList<>(ex);
+    SeamCrypto.ExplanationEntry ev = ex.get(2);
+    SeamCrypto.VoterVerification vv = ev.voterVerification();
+    assertTrue(vv != null, "the vector's vote must carry a voter verification record");
+    vvTampered.set(
+        2,
+        new SeamCrypto.ExplanationEntry(
+            ev.kind(), ev.participant(), ev.proposalId(), ev.value(), ev.reason(),
+            ev.confidence(), ev.rationaleRef(),
+            new SeamCrypto.VoterVerification(
+                vv.method(), vv.principal(), vv.contentDigest(), vv.issuedAtMs(),
+                vv.expiresAtMs(), vv.signature(), vv.signerCertificate(), vv.tenant(),
+                vv.namespace(), vv.sessionId(), vv.openedAtMillis(), vv.issuer(), vv.audience(),
+                vv.acceptedAtMs() + 1)));
+    vvStripped.set(
+        2,
+        new SeamCrypto.ExplanationEntry(
+            ev.kind(), ev.participant(), ev.proposalId(), ev.value(), ev.reason(),
+            ev.confidence(), ev.rationaleRef()));
     List<Mutation> mutations =
         List.of(
+            new Mutation(
+                "explanation (voter record accepted_at_ms)",
+                new SeamCrypto.Commitment(
+                    base.id(), base.action(), base.authority(), base.supersedes(),
+                    base.authMethod(), base.trustBasis(), base.committer(), null, vvTampered)),
+            new Mutation(
+                "explanation (voter record stripped)",
+                new SeamCrypto.Commitment(
+                    base.id(), base.action(), base.authority(), base.supersedes(),
+                    base.authMethod(), base.trustBasis(), base.committer(), null, vvStripped)),
             new Mutation("id", with(base, "id", base.id() + "-x")),
             new Mutation("action", with(base, "action", "ALLOW")),
             new Mutation("authority", with(base, "authority", base.authority() + "-x")),

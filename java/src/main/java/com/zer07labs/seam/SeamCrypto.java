@@ -53,10 +53,37 @@ public final class SeamCrypto {
   public static final List<String> EXPLANATION_KINDS =
       List.of("vote", "evaluation", "objection", "ballot");
 
+  /** The voter-verification {@code method} words the explanation digest frames — lowercase, exactly. */
+  public static final List<String> VOTER_VERIFICATION_METHODS = List.of("pop", "cp_signed");
+
+  /**
+   * A sealed voter verification record (seam-runtime #1687, {@code voter-verification.v1.md}): the
+   * voter's own proof of possession plus where it was cast and when the runtime accepted it.
+   * {@code method} is {@code "pop"} or {@code "cp_signed"} (never the proto enum name); {@code
+   * contentDigest} is the 32 raw bytes of {@code seam-vote-content-v1}; {@code signerCertificate} is
+   * empty for {@code pop}. Integers are read as UNSIGNED 64-bit values.
+   */
+  public record VoterVerification(
+      String method,
+      String principal,
+      byte[] contentDigest,
+      long issuedAtMs,
+      long expiresAtMs,
+      byte[] signature,
+      byte[] signerCertificate,
+      String tenant,
+      String namespace,
+      String sessionId,
+      long openedAtMillis,
+      String issuer,
+      String audience,
+      long acceptedAtMs) {}
+
   /**
    * One sealed explanation entry. {@code confidence} and {@code rationaleRef} are {@code null} when
    * absent — an absent confidence and a stated {@code 0.0} are different bytes, which is the point of
-   * the explanation digest.
+   * the explanation digest. {@code voterVerification} is {@code null} when absent (evaluations); the
+   * runtime seals one on every vote, ballot and objection (#1687).
    */
   public record ExplanationEntry(
       String kind,
@@ -65,13 +92,28 @@ public final class SeamCrypto {
       String value,
       String reason,
       Double confidence,
-      String rationaleRef) {}
+      String rationaleRef,
+      VoterVerification voterVerification) {
+    /** An entry with no voter verification record (an evaluation). */
+    public ExplanationEntry(
+        String kind,
+        String participant,
+        String proposalId,
+        String value,
+        String reason,
+        Double confidence,
+        String rationaleRef) {
+      this(kind, participant, proposalId, value, reason, confidence, rationaleRef, null);
+    }
+  }
 
   /**
-   * The commitment fields {@code seam-commitment-digest:v3} binds. {@code committer} may be {@code
-   * null} (hashed as empty). {@code supersedes} is {@code null} when ABSENT, which v3 frames as
+   * The commitment fields {@code seam-commitment-digest:v4} binds. {@code committer} may be {@code
+   * null} (hashed as empty). {@code supersedes} is {@code null} when ABSENT, which v4 frames as
    * {@code 0x00} — a different digest from a present empty string ({@code 0x01 ‖ F("")}). Field 8 resolves from {@code explanation} (the
    * entries) and/or {@code explanationDigest} (the 32 published bytes) — see {@link #verifyTct}.
+   * {@code selectionDigest} (field 9) and {@code certificateDigest} (field 10) are {@code null} when
+   * absent — every record runtime 0.87.0 seals — and exactly 32 bytes when present.
    */
   public record Commitment(
       String id,
@@ -82,7 +124,34 @@ public final class SeamCrypto {
       String trustBasis,
       String committer,
       byte[] explanationDigest,
-      List<ExplanationEntry> explanation) {}
+      List<ExplanationEntry> explanation,
+      byte[] selectionDigest,
+      byte[] certificateDigest) {
+    /** A commitment with neither a selection (field 9) nor a Gate certificate (field 10). */
+    public Commitment(
+        String id,
+        String action,
+        String authority,
+        String supersedes,
+        String authMethod,
+        String trustBasis,
+        String committer,
+        byte[] explanationDigest,
+        List<ExplanationEntry> explanation) {
+      this(
+          id,
+          action,
+          authority,
+          supersedes,
+          authMethod,
+          trustBasis,
+          committer,
+          explanationDigest,
+          explanation,
+          null,
+          null);
+    }
+  }
 
   // ── base64url (no padding) ──────────────────────────────────────────────────────────────────
   private static String b64urlNoPad(byte[] b) {
@@ -203,20 +272,31 @@ public final class SeamCrypto {
     out.writeBytes(b);
   }
 
+  private static void be64(ByteArrayOutputStream out, long v) {
+    out.writeBytes(ByteBuffer.allocate(8).putLong(v).array());
+  }
+
+  /** Domain tag of the explanation digest. */
+  public static final String EXPLANATION_DIGEST_DOMAIN = "seam-explanation-digest:v2";
+
   /**
-   * {@code seam-explanation-digest:v1} over a sealed explanation (32 raw bytes), entries in sealed
-   * order: {@code SHA-256(F("seam-explanation-digest:v1") ‖ be64(count) ‖ Σ ENTRY)}, with {@code ENTRY
-   * = F(kind) ‖ F(participant) ‖ F(proposal_id) ‖ F(value) ‖ F(reason) ‖ CONF ‖ REF}, {@code CONF =
-   * 0x00 | 0x01 ‖ be64(IEEE-754 bits)}, {@code REF = 0x00 | 0x01 ‖ F(rationale_ref)} and {@code F(x) =
+   * {@code seam-explanation-digest:v2} over a sealed explanation (32 raw bytes), entries in sealed
+   * order: {@code SHA-256(F("seam-explanation-digest:v2") ‖ be64(count) ‖ Σ ENTRY)}, with {@code ENTRY
+   * = F(kind) ‖ F(participant) ‖ F(proposal_id) ‖ F(value) ‖ F(reason) ‖ CONF ‖ REF ‖ VV}, {@code CONF =
+   * 0x00 | 0x01 ‖ be64(IEEE-754 bits)}, {@code REF = 0x00 | 0x01 ‖ F(rationale_ref)}, {@code VV = 0x00
+   * | 0x01 ‖ F(method) ‖ F(principal) ‖ F(content_digest) ‖ be64(issued_at_ms) ‖ be64(expires_at_ms) ‖
+   * F(signature) ‖ F(signer_certificate) ‖ F(tenant) ‖ F(namespace) ‖ F(session_id) ‖
+   * be64(opened_at_millis) ‖ F(issuer) ‖ F(audience) ‖ be64(accepted_at_ms)} and {@code F(x) =
    * be64(len) ‖ x}. Never sorts, never de-duplicates.
    *
-   * @throws IllegalArgumentException on an unknown kind or a non-canonical confidence (NaN, ±inf,
-   *     outside {@code [0.0, 1.0]}, or {@code -0.0}) — refused rather than hashed. Normative: {@code
-   *     seam-runtime/docs/specs/seam-commitment-digest.v3.md}.
+   * @throws IllegalArgumentException on an unknown kind, a non-canonical confidence (NaN, ±inf,
+   *     outside {@code [0.0, 1.0]}, or {@code -0.0}), an unknown voter-verification method, or a
+   *     content digest that is not 32 bytes — refused rather than hashed. Normative: {@code
+   *     seam-runtime/docs/specs/seam-commitment-digest.v4.md}.
    */
   public static byte[] explanationDigest(List<ExplanationEntry> entries) {
     ByteArrayOutputStream out = new ByteArrayOutputStream();
-    be64Frame(out, "seam-explanation-digest:v1".getBytes(StandardCharsets.UTF_8));
+    be64Frame(out, EXPLANATION_DIGEST_DOMAIN.getBytes(StandardCharsets.UTF_8));
     out.writeBytes(ByteBuffer.allocate(8).putLong(entries.size()).array());
     for (ExplanationEntry e : entries) {
       if (e == null || !EXPLANATION_KINDS.contains(e.kind())) {
@@ -246,6 +326,32 @@ public final class SeamCrypto {
       } else {
         out.write(0x01);
         be64Frame(out, e.rationaleRef().getBytes(StandardCharsets.UTF_8));
+      }
+      VoterVerification v = e.voterVerification();
+      if (v == null) {
+        out.write(0x00);
+      } else {
+        if (v.method() == null || !VOTER_VERIFICATION_METHODS.contains(v.method())) {
+          throw new IllegalArgumentException("unknown voter verification method " + v.method());
+        }
+        if (v.contentDigest() == null || v.contentDigest().length != 32) {
+          throw new IllegalArgumentException("voter verification content_digest must be 32 bytes");
+        }
+        out.write(0x01);
+        be64Frame(out, nz(v.method()));
+        be64Frame(out, nz(v.principal()));
+        be64Frame(out, v.contentDigest());
+        be64(out, v.issuedAtMs());
+        be64(out, v.expiresAtMs());
+        be64Frame(out, v.signature() == null ? new byte[0] : v.signature());
+        be64Frame(out, v.signerCertificate() == null ? new byte[0] : v.signerCertificate());
+        be64Frame(out, nz(v.tenant()));
+        be64Frame(out, nz(v.namespace()));
+        be64Frame(out, nz(v.sessionId()));
+        be64(out, v.openedAtMillis());
+        be64Frame(out, nz(v.issuer()));
+        be64Frame(out, nz(v.audience()));
+        be64(out, v.acceptedAtMs());
       }
     }
     return sha256(out.toByteArray());
@@ -277,7 +383,7 @@ public final class SeamCrypto {
   }
 
   /** Domain tag of the commitment digest. */
-  public static final String COMMITMENT_DIGEST_DOMAIN = "seam-commitment-digest:v3";
+  public static final String COMMITMENT_DIGEST_DOMAIN = "seam-commitment-digest:v4";
 
   /** The one grant a commitment self-attestation carries. */
   public static final String ATTESTATION_GRANT = "aitp.attestation";
@@ -289,12 +395,13 @@ public final class SeamCrypto {
   public static final String COMMITMENT_STATEMENT = "seam:commitment";
 
   /**
-   * {@code seam-commitment-digest:v3} (hex): SHA-256 over a <b>length-prefixed</b> framing of a domain
+   * {@code seam-commitment-digest:v4} (hex): SHA-256 over a <b>length-prefixed</b> framing of a domain
    * tag plus the commitment fields — each field preceded by its 8-byte big-endian length. Mirrors the
-   * runtime byte-for-byte, and mirrors the Go/Kotlin/Python/TypeScript shims. v2 is deleted, not
-   * dual-verified. v3's one framing change: {@code supersedes} carries a presence byte — {@code 0x00}
-   * when absent ({@code null}), {@code 0x01 ‖ F(s)} when present — so "supersedes nothing" and
-   * "supersedes the empty id" are no longer the same digest.
+   * runtime byte-for-byte, and mirrors the Go/Kotlin/Python/TypeScript shims. v3 is deleted, not
+   * dual-verified. {@code supersedes} carries a presence byte — {@code 0x00} when absent ({@code
+   * null}), {@code 0x01 ‖ F(s)} when present. v4 (#1687) binds the v2 explanation digest as field 8 and
+   * appends two always-framed slots: field 9 (selection digest) and field 10 (Gate certificate
+   * digest), each {@code 0x00} when absent or {@code 0x01 ‖ be64(32) ‖ 32 raw bytes}.
    *
    * <p><b>The length prefixes are not decoration and must never be "simplified" to a separator.</b>
    * The fields are arbitrary text that may itself contain NUL — UTF-8 permits U+0000, and it
@@ -316,9 +423,11 @@ public final class SeamCrypto {
    * every one of these is bound.
    *
    * @throws IllegalArgumentException when field 8 cannot be resolved (see {@link
-   *     #commitmentExplanationDigest}).
+   *     #commitmentExplanationDigest}), or a present field 9/10 digest is not 32 bytes.
    */
   static String seamCommitmentDigest(Commitment c) {
+    checkSlot("selection_digest", c.selectionDigest());
+    checkSlot("certificate_digest", c.certificateDigest());
     byte[] explanation = commitmentExplanationDigest(c);
     ByteArrayOutputStream h = new ByteArrayOutputStream();
     be64Frame(h, COMMITMENT_DIGEST_DOMAIN.getBytes(StandardCharsets.UTF_8));
@@ -335,7 +444,24 @@ public final class SeamCrypto {
     be64Frame(h, nz(c.trustBasis()));
     be64Frame(h, nz(c.committer()));
     be64Frame(h, explanation);
+    optionalDigestSlot(h, c.selectionDigest());
+    optionalDigestSlot(h, c.certificateDigest());
     return hex(sha256(h.toByteArray()));
+  }
+
+  private static void checkSlot(String name, byte[] d) {
+    if (d != null && d.length != 32) {
+      throw new IllegalArgumentException(name + " must be 32 bytes when present");
+    }
+  }
+
+  private static void optionalDigestSlot(ByteArrayOutputStream h, byte[] d) {
+    if (d == null) {
+      h.write(0x00);
+    } else {
+      h.write(0x01);
+      be64Frame(h, d);
+    }
   }
 
   /**
@@ -344,7 +470,7 @@ public final class SeamCrypto {
    * self-issued claims ({@code iss == sub == aud == issuerAid}); {@code exp}; that {@code grants} is
    * exactly {@code ["aitp.attestation"]}; and that {@code ext} is exactly {@code
    * {"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":<hex>}}} with the hex equal to
-   * the recomputed {@code seam-commitment-digest:v3} of this exact commitment (decided content,
+   * the recomputed {@code seam-commitment-digest:v4} of this exact commitment (decided content,
    * committer, and sealed explanation). A header or payload whose JSON repeats an object key at any
    * depth is refused: Gson would keep one of the two, and another parser might keep the other. Any malformed/forged input fails closed (returns {@code false}), never throws
    * — including explanation entries that disagree with the published digest, an unknown kind, or a
@@ -550,9 +676,10 @@ public final class SeamCrypto {
   /**
    * Domain tag of the enrolment proof-of-possession (seam-runtime #1157): the subject AID's own
    * consent, by the key it embeds, to ONE {@code EnrollTenant} binding. Bump it only in lockstep
-   * with the runtime.
+   * with the runtime. v2 (#1687) signs the {@code participant_id} a {@code voter} enrolment binds
+   * ({@code ""} for every other kind); v1 is refused by runtime 0.87.0 and is gone.
    */
-  public static final String ENROLL_POP_V1_CONTEXT = "seam-enroll-pop-v1";
+  public static final String ENROLL_POP_V2_CONTEXT = "seam-enroll-pop-v2";
 
   /**
    * The inputs {@link #enrollPopPayload} frames, each exactly as sent on the wire. Strings are signed
@@ -560,23 +687,36 @@ public final class SeamCrypto {
    * MILLISECONDS, read as an UNSIGNED 64-bit value (the proto field is {@code uint64}).
    */
   public record EnrollPopFields(
-      String subjectAid, String tenant, String namespace, long issuedAtMs, String nonce) {}
+      String subjectAid,
+      String tenant,
+      String namespace,
+      String participantId,
+      long issuedAtMs,
+      String nonce) {
+    /** Fields for a non-voter enrolment: {@code participantId} is {@code ""}. */
+    public EnrollPopFields(
+        String subjectAid, String tenant, String namespace, long issuedAtMs, String nonce) {
+      this(subjectAid, tenant, namespace, "", issuedAtMs, nonce);
+    }
+  }
 
   /**
    * The exact bytes {@link #enrollPop} signs: {@code frame(context) | frame(subject_aid) |
-   * frame(tenant) | frame(namespace) | frame(u64le(issued_at_ms)) | frame(nonce)}, with {@code
+   * frame(tenant) | frame(namespace) | frame(participant_id) | frame(u64le(issued_at_ms)) |
+   * frame(nonce)}, with {@code
    * frame(x) = u32le(len_bytes(x)) | x}. {@code issued_at_ms} is 8 raw little-endian bytes, not ASCII
    * decimal.
    *
-   * <p>Pinned by {@code conformance/enroll_pop_v1_payload_vector.json}. Public so a caller can
+   * <p>Pinned by {@code conformance/enroll_pop_v2_payload_vector.json}. Public so a caller can
    * reproduce or verify the binding without re-deriving it from prose.
    */
   public static byte[] enrollPopPayload(EnrollPopFields f) {
     ByteArrayOutputStream out = new ByteArrayOutputStream();
-    enrollFrame(out, ENROLL_POP_V1_CONTEXT.getBytes(StandardCharsets.UTF_8));
+    enrollFrame(out, ENROLL_POP_V2_CONTEXT.getBytes(StandardCharsets.UTF_8));
     enrollFrame(out, nz(f.subjectAid()));
     enrollFrame(out, nz(f.tenant()));
     enrollFrame(out, nz(f.namespace()));
+    enrollFrame(out, nz(f.participantId()));
     enrollFrame(out, leBytes(f.issuedAtMs(), 8));
     enrollFrame(out, nz(f.nonce()));
     return out.toByteArray();
@@ -702,18 +842,33 @@ public final class SeamCrypto {
   /**
    * Sign an enrolment proof with the agent's own key (32-byte seed) at an explicit time and nonce.
    * The subject AID is DERIVED from the seed — a proof can only ever speak for the key that signs it
-   * — and the nonce is validated first. Prefer {@link #enrolmentProof(byte[], String, String)}, which
-   * defaults {@code issuedAtMs} to now and the nonce to a fresh random one.
+   * — and the nonce is validated first. {@code participantId} is the participant a {@code voter}
+   * enrolment binds ({@code ""} for every other kind); the operator sends the same value as {@code
+   * EnrollTenantRequest.participant_id}. Prefer {@link #enrolmentProof(byte[], String, String,
+   * String)}, which defaults {@code issuedAtMs} to now and the nonce to a fresh random one.
    */
   public static EnrollProof enrolmentProof(
-      byte[] agentSeed, String tenant, String namespace, long issuedAtMs, String nonce) {
+      byte[] agentSeed,
+      String tenant,
+      String namespace,
+      String participantId,
+      long issuedAtMs,
+      String nonce) {
     if (agentSeed == null || agentSeed.length != 32) {
       throw new IllegalArgumentException("agent seed must be 32 bytes");
     }
     String subject = aidFromPubkey(ed25519Pub(agentSeed));
     byte[] sig =
-        enrollPop(agentSeed, new EnrollPopFields(subject, tenant, namespace, issuedAtMs, nonce));
+        enrollPop(
+            agentSeed,
+            new EnrollPopFields(subject, tenant, namespace, participantId, issuedAtMs, nonce));
     return new EnrollProof(issuedAtMs, nonce, sig);
+  }
+
+  /** {@link #enrolmentProof(byte[], String, String, String, long, String)} with no participant. */
+  public static EnrollProof enrolmentProof(
+      byte[] agentSeed, String tenant, String namespace, long issuedAtMs, String nonce) {
+    return enrolmentProof(agentSeed, tenant, namespace, "", issuedAtMs, nonce);
   }
 
   /**
@@ -724,8 +879,22 @@ public final class SeamCrypto {
    * Python's {@code Agent.enrolment_proof} and TypeScript's {@code Agent.enrolmentProof}.
    */
   public static EnrollProof enrolmentProof(byte[] agentSeed, String tenant, String namespace) {
+    return enrolmentProof(agentSeed, tenant, namespace, "");
+  }
+
+  /**
+   * {@link #enrolmentProof(byte[], String, String)} for a {@code voter} enrolment bound to {@code
+   * participantId} (#1687).
+   */
+  public static EnrollProof enrolmentProof(
+      byte[] agentSeed, String tenant, String namespace, String participantId) {
     return enrolmentProof(
-        agentSeed, tenant, namespace, System.currentTimeMillis(), newEnrollPopNonce());
+        agentSeed,
+        tenant,
+        namespace,
+        participantId,
+        System.currentTimeMillis(),
+        newEnrollPopNonce());
   }
 
   // ── The per-request credential (`seam-request-call-v1`, #508) ──────────────────────────────────

@@ -125,20 +125,94 @@ def _be64_frame(field: bytes) -> bytes:
     return len(field).to_bytes(8, "big") + field
 
 
+#: The ``method`` words ``seam-explanation-digest:v2`` frames in a voter verification record (#1687).
+#: ``cp_signed`` is declared, not yet served; ``UNSPECIFIED`` is never sealed and is refused.
+VOTER_VERIFICATION_METHODS = ("pop", "cp_signed")
+#: The entry kinds that MUST carry a voter verification record, and the one that must not (#1687).
+VOTER_VERIFIED_KINDS = ("vote", "ballot", "objection")
+
+# The VV block's fields in normative order: (name, encoding). "t" = F(UTF-8), "b" = F(raw bytes),
+# "u" = be64 unsigned.
+_VV_FIELDS = (
+    ("method", "t"),
+    ("principal", "t"),
+    ("content_digest", "b"),
+    ("issued_at_ms", "u"),
+    ("expires_at_ms", "u"),
+    ("signature", "b"),
+    ("signer_certificate", "b"),
+    ("tenant", "t"),
+    ("namespace", "t"),
+    ("session_id", "t"),
+    ("opened_at_millis", "u"),
+    ("issuer", "t"),
+    ("audience", "t"),
+    ("accepted_at_ms", "u"),
+)
+
+
+def _vv_bytes(vv, name: str) -> bytes:
+    """A bytes field of a voter verification record: ``name`` as bytes, or ``name + "_hex"`` as hex (the
+    vector form). Missing means empty."""
+    if vv.get(name) is not None:
+        return bytes(vv[name])
+    h = vv.get(name + "_hex")
+    return bytes.fromhex(h) if h else b""
+
+
+def voter_verification_frame(vv) -> bytes:
+    """The ``VV`` block of ``seam-explanation-digest:v2`` for one entry: ``0x00`` when ``vv`` is ``None``,
+    else ``0x01`` followed by all fourteen record fields, always framed. Raises ``ValueError`` on an
+    unknown ``method`` or a ``content_digest`` that is not 32 bytes, rather than hash a record no
+    runtime sealed."""
+    if vv is None:
+        return b"\x00"
+    if vv.get("method") not in VOTER_VERIFICATION_METHODS:
+        raise ValueError(f"unknown voter verification method {vv.get('method')!r}")
+    out = [b"\x01"]
+    for name, enc in _VV_FIELDS:
+        if enc == "t":
+            out.append(_be64_frame((vv.get(name) or "").encode()))
+        elif enc == "b":
+            b = _vv_bytes(vv, name)
+            if name == "content_digest" and len(b) != 32:
+                raise ValueError(
+                    f"voter verification content_digest must be 32 bytes, got {len(b)}"
+                )
+            out.append(_be64_frame(b))
+        else:
+            out.append(_uint_slot(name, int(vv.get(name) or 0), 64).to_bytes(8, "big"))
+    return b"".join(out)
+
+
+def _canonical_confidence(conf) -> float:
+    import math
+
+    if isinstance(conf, bool) or not isinstance(conf, (int, float)):
+        raise ValueError(f"confidence must be a number, got {conf!r}")
+    conf = float(conf)
+    if (
+        not math.isfinite(conf)
+        or not 0.0 <= conf <= 1.0
+        or math.copysign(1.0, conf) < 0
+    ):
+        raise ValueError(f"non-canonical confidence {conf!r}")
+    return conf
+
+
 def explanation_digest(entries) -> bytes:
-    """``seam-explanation-digest:v1`` over a sealed explanation (32 raw bytes).
+    """``seam-explanation-digest:v2`` over a sealed explanation (32 raw bytes).
 
     ``entries`` is the list of explanation entries in the order the runtime sealed them, each a mapping
     with ``kind`` (one of :data:`EXPLANATION_KINDS`), ``participant``, ``proposal_id``, ``value``,
-    ``reason``, and optional ``confidence`` / ``rationale_ref`` (``None`` or missing = absent). An absent
-    confidence and a stated ``0.0`` are different bytes — that distinction is the point of this digest.
-    Raises ``ValueError`` on an unknown kind or a non-canonical confidence (NaN, ±inf, outside
-    ``[0.0, 1.0]``, or ``-0.0``) rather than hashing it. Normative:
-    ``seam-runtime/docs/specs/seam-commitment-digest.v3.md``."""
-    import math
-
+    ``reason``, optional ``confidence`` / ``rationale_ref`` (``None`` or missing = absent), and optional
+    ``voter_verification`` (a record mapping, see :func:`voter_verification_frame`; ``None`` = absent).
+    An absent confidence and a stated ``0.0`` are different bytes. Raises ``ValueError`` on an unknown
+    kind, a non-canonical confidence (NaN, ±inf, outside ``[0.0, 1.0]``, or ``-0.0``) or a malformed
+    voter record rather than hashing it. Normative: seam-runtime
+    ``docs/specs/seam-commitment-digest.v4.md`` (#1687)."""
     entries = list(entries)
-    out = [_be64_frame(b"seam-explanation-digest:v1"), len(entries).to_bytes(8, "big")]
+    out = [_be64_frame(b"seam-explanation-digest:v2"), len(entries).to_bytes(8, "big")]
     for e in entries:
         kind = e["kind"]
         if kind not in EXPLANATION_KINDS:
@@ -151,21 +225,14 @@ def explanation_digest(entries) -> bytes:
             _be64_frame(e["reason"].encode()),
         ]
         conf = e.get("confidence")
-        if conf is None:
-            out.append(b"\x00")
-        else:
-            if isinstance(conf, bool) or not isinstance(conf, (int, float)):
-                raise ValueError(f"confidence must be a number, got {conf!r}")
-            conf = float(conf)
-            if (
-                not math.isfinite(conf)
-                or not 0.0 <= conf <= 1.0
-                or math.copysign(1.0, conf) < 0
-            ):
-                raise ValueError(f"non-canonical confidence {conf!r}")
-            out.append(b"\x01" + struct.pack(">d", conf))
+        out.append(
+            b"\x00"
+            if conf is None
+            else b"\x01" + struct.pack(">d", _canonical_confidence(conf))
+        )
         ref = e.get("rationale_ref")
         out.append(b"\x00" if ref is None else b"\x01" + _be64_frame(ref.encode()))
+        out.append(voter_verification_frame(e.get("voter_verification")))
     return hashlib.sha256(b"".join(out)).digest()
 
 
@@ -191,23 +258,36 @@ def _commitment_explanation_digest(commitment: dict) -> bytes:
     return computed
 
 
-def _seam_commitment_digest(commitment: dict) -> str:
-    """``seam-commitment-digest:v3`` (hex): SHA-256 over the length-prefixed domain tag and fields.
+def _digest_slot(commitment: dict, name: str) -> bytes:
+    """Commitment digest v4 fields 9/10: ``0x00`` when ``name`` is absent (missing or ``None``), else
+    ``0x01 || F(digest)`` over exactly 32 raw bytes (bytes, or 64 hex chars). Any other length is refused,
+    never hashed."""
+    v = commitment.get(name)
+    if v is None:
+        return b"\x00"
+    b = bytes.fromhex(v) if isinstance(v, str) else bytes(v)
+    if len(b) != 32:
+        raise ValueError(f"{name} must be 32 bytes, got {len(b)}")
+    return b"\x01" + _be64_frame(b)
 
-    Spec: seam-runtime ``docs/specs/seam-commitment-digest.v3.md``. Every field is ``F(x) = be64(len) ||
+
+def _seam_commitment_digest(commitment: dict) -> str:
+    """``seam-commitment-digest:v4`` (hex): SHA-256 over the length-prefixed domain tag and fields.
+
+    Spec: seam-runtime ``docs/specs/seam-commitment-digest.v4.md``. Every field is ``F(x) = be64(len) ||
     x`` (no separator), so the digest is injective over ``(domain, id, action, authority, supersedes,
-    auth_method, trust_basis, committer, explanation_digest)``. The length prefixes are load-bearing:
-    with a NUL separator instead, ``("a\\0b", "c")`` and ``("a", "b\\0c")`` would collide — identical
-    preimages, so one Commitment could verify under another's TCT — and these fields are arbitrary
-    text that may itself contain NUL. Never "simplify" them away. ``supersedes`` alone carries a presence
-    byte: ``0x00`` when absent (key missing or ``None``), ``0x01 || F(value)`` when present — so an
-    absent prior and a present empty one are different digests. Field 8 is the 32 raw bytes of the
-    explanation digest (see :func:`_commitment_explanation_digest`). v1 and v2 are deleted, not
-    dual-verified.
+    auth_method, trust_basis, committer, explanation_digest, selection_digest, certificate_digest)``.
+    The length prefixes are load-bearing: with a NUL separator instead, ``("a\\0b", "c")`` and
+    ``("a", "b\\0c")`` would collide, and these fields are arbitrary text that may itself contain NUL.
+    Never "simplify" them away. ``supersedes`` carries a presence byte: ``0x00`` when absent (key missing
+    or ``None``), ``0x01 || F(value)`` when present. Field 8 is the 32 raw bytes of the v2 explanation
+    digest (see :func:`_commitment_explanation_digest`). Fields 9 and 10 are the optional
+    ``selection_digest`` and ``certificate_digest`` (32 bytes each, :func:`_digest_slot`), absent on
+    every record runtime 0.87.0 seals. v1-v3 are deleted, not dual-verified.
     """
     supersedes = commitment.get("supersedes")
     out = [
-        _be64_frame(b"seam-commitment-digest:v3"),
+        _be64_frame(b"seam-commitment-digest:v4"),
         _be64_frame(commitment["id"].encode()),
         _be64_frame(commitment["action"].encode()),
         _be64_frame(commitment["authority"].encode()),
@@ -216,6 +296,8 @@ def _seam_commitment_digest(commitment: dict) -> str:
         _be64_frame(commitment["trust_basis"].encode()),
         _be64_frame((commitment.get("committer") or "").encode()),
         _be64_frame(_commitment_explanation_digest(commitment)),
+        _digest_slot(commitment, "selection_digest"),
+        _digest_slot(commitment, "certificate_digest"),
     ]
     return hashlib.sha256(b"".join(out)).hexdigest()
 
@@ -237,7 +319,12 @@ def _no_duplicate_keys(pairs: list) -> dict:
 
 
 def verify_tct(
-    issuer_aid: str, tct_jws: str, commitment: dict, now_s: int | None = None
+    issuer_aid: str,
+    tct_jws: str,
+    commitment: dict,
+    now_s: int | None = None,
+    *,
+    decision: tuple[str, str] | None = None,
 ) -> bool:
     """Independently verify a sealed commitment's rooted TCT — zero server trust, stock crypto only.
 
@@ -245,12 +332,18 @@ def verify_tct(
     (recovered from its AID), the self-issued claims (`typ`, `iss==sub==aud==issuer_aid`, `exp`),
     that `grants` is exactly `["aitp.attestation"]`, and that `ext` is exactly
     `{"com.zer07labs.seam": {"type": "seam:commitment", "commitment_digest": <hex>}}` whose digest is
-    `seam-commitment-digest:v3` of this exact commitment (tamper-evidence over the decided content,
+    `seam-commitment-digest:v4` of this exact commitment (tamper-evidence over the decided content,
     the committer, and the sealed explanation). A duplicate JSON key anywhere in the header or
     payload, a statement carried in `grants` (the retired v2 shape), or an extra grant verifies
     ``False``. ``commitment`` carries ``committer`` and the ``explanation`` entries and/or the published
     ``explanation_digest``; entries that disagree with the published digest, an unknown kind, or a
     non-canonical confidence verify ``False``.
+
+    When the ``explanation`` entries are given, the sealed voter records are checked too (runtime
+    0.87.0, #1687, :func:`verify_commitment_voters`): every vote, ballot and objection must carry a
+    ``seam-voter-pop-v1`` record addressed to ``issuer_aid`` that re-verifies offline, all from one
+    session, and, with ``decision=(tenant, session_id)``, from that decision's session. With only the
+    published ``explanation_digest`` there are no entries to check, so this proves *who* and *what*.
     """
     # Any malformed/forged input must fail closed (return False), never raise.
     try:
@@ -309,6 +402,11 @@ def verify_tct(
             return False
         # Exact string compare: the runtime emits lowercase hex, and an uppercase spelling is a
         # different statement, not a normalization opportunity.
+        entries = commitment.get("explanation")
+        if entries is not None and not verify_commitment_voters(
+            entries, issuer_aid, decision
+        ):
+            return False
         return stmt["commitment_digest"] == _seam_commitment_digest(commitment)
     except Exception:
         return False
@@ -1236,15 +1334,16 @@ def call_sig_v3(
     )
 
 
-# ── Enrolment proof-of-possession (`seam-enroll-pop-v1`, seam-runtime #1157 / #1164, SDK #205) ─────────
+# ── Enrolment proof-of-possession (`seam-enroll-pop-v2`, seam-runtime #1157 / #1164 / #1687, SDK #205) ──
 # `EnrollTenantRequest.pop` is the subject AID's own consent to ONE enrolment: an Ed25519 signature, by
-# the key the AID embeds, over the tenant and namespace it is being bound to. Without it a tenant-scoped
-# operator could enrol any AID it has merely seen. Pinned by `conformance/enroll_pop_v1_payload_vector.json`,
+# the key the AID embeds, over the tenant, namespace and (for a `voter`) participant it is being bound to. Without it a tenant-scoped
+# operator could enrol any AID it has merely seen. Pinned by `conformance/enroll_pop_v2_payload_vector.json`,
 # generated by an independent implementation. `EnrollProof` is a NamedTuple, not a dataclass:
 # `scripts/` and the import-light tests load this file standalone by path, outside `sys.modules`, and
 # `@dataclass` looks its own module up there.
 
-ENROLL_POP_V1_CONTEXT = b"seam-enroll-pop-v1"
+#: v2 (#1687) adds the framed ``participant_id``; v1 is gone (runtime 0.87.0 refuses it).
+ENROLL_POP_V2_CONTEXT = b"seam-enroll-pop-v2"
 ENROLL_POP_NONCE_MAX_LEN = 128
 _ENROLL_POP_NONCE_CHARS = frozenset(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
@@ -1274,21 +1373,28 @@ def new_enroll_pop_nonce() -> str:
 
 
 def enroll_pop_payload(
-    subject_aid: str, tenant: str, namespace: str, issued_at_ms: int, nonce: str
+    subject_aid: str,
+    tenant: str,
+    namespace: str,
+    issued_at_ms: int,
+    nonce: str,
+    participant_id: str = "",
 ) -> bytes:
     """The exact bytes an enrolment proof signs:
 
-    ``frame("seam-enroll-pop-v1") || frame(subject_aid) || frame(tenant) || frame(namespace) ||
-    frame(u64le(issued_at_ms)) || frame(nonce)``, with ``frame(x) = u32le(len(x)) || x`` over UTF-8,
+    ``frame("seam-enroll-pop-v2") || frame(subject_aid) || frame(tenant) || frame(namespace) ||
+    frame(participant_id) || frame(u64le(issued_at_ms)) || frame(nonce)``, with ``frame(x) = u32le(len(x)) || x`` over UTF-8,
     lengths in BYTES. ``issued_at_ms`` is Unix epoch MILLISECONDS as 8 raw little-endian bytes, not
-    ASCII decimal. Every argument must be exactly what goes on the wire: the runtime rebuilds this
+    ASCII decimal. ``participant_id`` is the participant a ``voter`` enrolment binds and ``""`` for
+    every other kind. Every argument must be exactly what goes on the wire: the runtime rebuilds this
     payload from the request it received."""
     return b"".join(
         (
-            _frame(ENROLL_POP_V1_CONTEXT),
+            _frame(ENROLL_POP_V2_CONTEXT),
             _frame(subject_aid.encode("utf-8")),
             _frame(tenant.encode("utf-8")),
             _frame(namespace.encode("utf-8")),
+            _frame(participant_id.encode("utf-8")),
             _frame(struct.pack("<Q", _uint_slot("issued_at_ms", issued_at_ms, 64))),
             _frame(nonce.encode("utf-8")),
         )
@@ -1328,6 +1434,7 @@ def enroll_pop(
     *,
     issued_at_ms: int,
     nonce: str,
+    participant_id: str = "",
 ) -> EnrollProof:
     """Sign an enrolment proof with the agent's own key. The subject AID is DERIVED from the seed —
     a proof can only ever speak for the key that signs it — and the nonce is validated first, since a
@@ -1336,7 +1443,9 @@ def enroll_pop(
     validate_enroll_pop_nonce(nonce)
     sk = Ed25519PrivateKey.from_private_bytes(agent_seed)
     subject_aid = aid_from_pubkey(sk.public_key().public_bytes_raw())
-    payload = enroll_pop_payload(subject_aid, tenant, namespace, issued_at_ms, nonce)
+    payload = enroll_pop_payload(
+        subject_aid, tenant, namespace, issued_at_ms, nonce, participant_id
+    )
     return EnrollProof(
         issued_at_ms=issued_at_ms, nonce=nonce, signature=sk.sign(payload)
     )
@@ -1349,17 +1458,414 @@ def verify_enroll_pop(
     issued_at_ms: int,
     nonce: str,
     signature: bytes,
+    participant_id: str = "",
 ) -> bool:
     """``True`` iff ``signature`` is ``subject_aid``'s Ed25519 signature over :func:`enroll_pop_payload`
     of these exact fields. Checks the binding only — freshness is the runtime's call, on its clock."""
     try:
         Ed25519PublicKey.from_public_bytes(_aid_to_pubkey(subject_aid)).verify(
             signature,
-            enroll_pop_payload(subject_aid, tenant, namespace, issued_at_ms, nonce),
+            enroll_pop_payload(
+                subject_aid, tenant, namespace, issued_at_ms, nonce, participant_id
+            ),
         )
         return True
     except Exception:
         return False
+
+
+# ── Voter proof-of-possession (`seam-voter-pop-v1`, seam-runtime #1687) ────────────────────────────
+# Every binding vote, ballot and objection carries a proof signed by the voter's OWN enrolled `voter`
+# key (never the caller's transport key), over the session's open identity, the decision content and
+# the exact entry the runtime will seal. Normative: seam-runtime `docs/specs/voter-verification.v1.md`.
+# Pinned by `conformance/voter_pop_v1_payload_vector.json` (generated by an independent implementation).
+
+VOTER_POP_V1_DOMAIN = b"seam-voter-pop-v1"
+VOTE_CONTENT_V1_DOMAIN = b"seam-vote-content-v1"
+#: The proof lifetime and clock skew the runtime enforces: ``expires_at - issued_at <= 15 min``,
+#: ``issued_at <= now + 60 s``, ``now <= expires_at``.
+VOTER_POP_MAX_LIFETIME_MS = 15 * 60 * 1000
+VOTER_POP_MAX_SKEW_MS = 60 * 1000
+#: A sensible default lifetime for a freshly signed proof (5 minutes).
+VOTER_POP_DEFAULT_LIFETIME_MS = 5 * 60 * 1000
+
+
+class VoterPopTarget(_NamedTuple):
+    """Where a vote is cast: the runtime (``issuer`` AID from ``GET /v1/trust/issuer-aid`` and
+    ``audience``, default ``seam-runtime``) and the session's ``tenant``/``namespace`` and open identity
+    (``session_id``, ``opened_at_millis`` = ``SessionStep.opened_at_millis`` from the open; ``0`` on the
+    one-shot ``RunDecision`` path)."""
+
+    issuer: str
+    tenant: str
+    namespace: str
+    session_id: str
+    opened_at_millis: int = 0
+    audience: str = "seam-runtime"
+
+
+class VoterPop(_NamedTuple):
+    """A signed voter proof: the parts of ``VoterProof.pop``. ``signature`` is the raw 64 bytes."""
+
+    voter_aid: str
+    issued_at_ms: int
+    expires_at_ms: int
+    signature: bytes
+
+    def to_pb(self, pb_module: Any):
+        """The generated ``VoterProof`` message (``VoterProof{pop: VoterPop{...}}``) of ``pb_module``
+        (``seam_sdk._gen.seam.api.v1.seam_pb2``; passed in because this module imports no stubs)."""
+        return pb_module.VoterProof(
+            pop=pb_module.VoterPop(
+                voter_aid=self.voter_aid,
+                issued_at_ms=self.issued_at_ms,
+                expires_at_ms=self.expires_at_ms,
+                signature=self.signature,
+            )
+        )
+
+    def to_rest(self) -> dict:
+        """The REST/JSON ``proof`` object: ``{"pop": {..., "signature": <unpadded base64url>}}``."""
+        return {
+            "pop": {
+                "voter_aid": self.voter_aid,
+                "issued_at_ms": self.issued_at_ms,
+                "expires_at_ms": self.expires_at_ms,
+                "signature": _b64url_nopad(self.signature),
+            }
+        }
+
+
+def _ctx_pair(c) -> tuple[str, str]:
+    if isinstance(c, (tuple, list)) and len(c) == 2:
+        return c[0], c[1] or ""
+    return c["ctx_ref"], c.get("content_hash") or ""
+
+
+def _count_frame(n: int) -> bytes:
+    return _frame(struct.pack("<I", _uint_slot("count", n, 32)))
+
+
+def vote_content_digest(
+    mode: str,
+    proposal_id: str,
+    content: str,
+    participants=(),
+    on_behalf_of=(),
+    context=(),
+    features=(),
+    policy=None,
+) -> bytes:
+    """``seam-vote-content-v1``: what the vote is about (32 raw bytes). The runtime derives this from its
+    own session state and never accepts it from a client; this is the same function, so a voter can
+    compute what it signs.
+
+    ``mode`` is the session's canonical mode id (``macp.mode.decision.v1`` / ``macp.mode.quorum.v1``;
+    always decision on the one-shot path). ``proposal_id`` is the vote's/objection's proposal, or the
+    ballot's ``request_id`` (``"p1"`` one-shot). ``content`` is the accepted proposal's ``option`` (vote,
+    objection), the approval request's ``action`` (ballot), or ``votes[0].value`` (one-shot).
+    ``participants`` and ``on_behalf_of`` are as opened, in request order. ``context`` is the sealed
+    context provenance in sealed order: ``(ctx_ref, content_hash)`` pairs or mappings with those keys,
+    ``content_hash`` ``""`` when the binding carries none.
+
+    ``features`` is the one-shot ``RunDecisionRequest.features`` (a mapping or ``(key, value)`` pairs;
+    framed sorted by UTF-8 key bytes, a repeated key refused, never deduplicated); a session vote has
+    none. ``policy`` is the session's ``SessionStep.vote_policy`` from open (a generated ``VotePolicyRef``,
+    a mapping with ``policy_version`` and ``rules_digest`` / ``rules_digest_hex``, or a pair), framed
+    ``0x01‖F(policy_version)‖F(rules_digest)``; ``None`` frames ``0x00`` (the one-shot: server-resolved)."""
+    participants = list(participants)
+    on_behalf_of = list(on_behalf_of)
+    ctx = [_ctx_pair(c) for c in context]
+    out = [
+        _frame(VOTE_CONTENT_V1_DOMAIN),
+        _frame(mode.encode()),
+        _frame(proposal_id.encode()),
+        _frame(content.encode()),
+        _count_frame(len(participants)),
+        *(_frame(p.encode()) for p in participants),
+        _count_frame(len(on_behalf_of)),
+        *(_frame(o.encode()) for o in on_behalf_of),
+        _count_frame(len(ctx)),
+    ]
+    for ref, h in ctx:
+        out += [_frame(ref.encode()), _frame(h.encode())]
+    feats = _canonical_features(features)
+    out.append(_count_frame(len(feats)))
+    for k, v in feats:
+        out += [_frame(k), _frame(v)]
+    out.append(_vote_policy_slot(policy))
+    return hashlib.sha256(b"".join(out)).digest()
+
+
+def _canonical_features(features) -> list[tuple[bytes, bytes]]:
+    pairs = list(features.items()) if hasattr(features, "items") else list(features)
+    out: list[tuple[bytes, bytes]] = []
+    for pair in pairs:
+        k, v = pair
+        if not isinstance(k, str) or not isinstance(v, str):
+            raise TypeError(f"a feature is a (str, str) pair, not {pair!r}")
+        out.append((k.encode(), v.encode()))
+    out.sort(key=lambda kv: kv[0])
+    for a, b in zip(out, out[1:]):
+        if a[0] == b[0]:
+            raise ValueError(
+                f"feature key {a[0].decode()!r} is given twice (refused, never deduplicated)"
+            )
+    return out
+
+
+def _vote_policy_slot(policy) -> bytes:
+    if policy is None:
+        return b"\x00"
+    if hasattr(policy, "policy_version") and hasattr(policy, "rules_digest"):
+        version, digest = policy.policy_version, bytes(policy.rules_digest)
+    elif hasattr(policy, "get"):
+        version = policy["policy_version"]
+        digest = (
+            bytes.fromhex(policy["rules_digest_hex"])
+            if "rules_digest_hex" in policy
+            else bytes(policy["rules_digest"])
+        )
+    else:
+        version, digest = policy
+        digest = bytes(digest)
+    if not isinstance(version, str):
+        raise TypeError("policy_version must be a str")
+    if len(digest) != 32:
+        raise ValueError(f"rules_digest must be 32 bytes, got {len(digest)}")
+    return b"\x01" + _frame(version.encode()) + _frame(digest)
+
+
+def vote_entry_bytes(
+    kind: str,
+    participant: str,
+    proposal_id: str,
+    value: str,
+    reason: str = "",
+    *,
+    confidence: float | None = None,
+    rationale_ref: str | None = None,
+) -> bytes:
+    """The frozen ``entry_bytes`` a voter signs: the entry the runtime will seal, framed on its own
+    (``F(x) = be64(len) || x``). ``kind`` is ``vote``, ``ballot`` or ``objection``; ``participant`` is the
+    voter (objector); ``proposal_id`` is the ballot's ``request_id`` for a ballot; ``value`` is the vote
+    value, ballot choice, or objection severity (``""`` when omitted); ``reason`` as sealed. A stated
+    ``-0.0`` confidence folds to ``+0.0``. Frozen: an explanation-digest bump never changes it."""
+    import math
+
+    if kind not in EXPLANATION_KINDS:
+        raise ValueError(f"unknown explanation kind {kind!r}")
+    out = [
+        _be64_frame(kind.encode()),
+        _be64_frame(participant.encode()),
+        _be64_frame(proposal_id.encode()),
+        _be64_frame(value.encode()),
+        _be64_frame(reason.encode()),
+    ]
+    if confidence is None:
+        out.append(b"\x00")
+    else:
+        c = float(confidence)
+        if not math.isfinite(c):
+            raise ValueError(f"non-finite confidence {confidence!r}")
+        out.append(b"\x01" + struct.pack(">d", c + 0.0))  # -0.0 + 0.0 == +0.0
+    out.append(
+        b"\x00"
+        if rationale_ref is None
+        else b"\x01" + _be64_frame(rationale_ref.encode())
+    )
+    return b"".join(out)
+
+
+def _entry_bytes_of(entry) -> bytes:
+    """:func:`vote_entry_bytes` of an explanation-entry mapping, or the bytes themselves."""
+    if isinstance(entry, (bytes, bytearray)):
+        return bytes(entry)
+    return vote_entry_bytes(
+        entry["kind"],
+        entry["participant"],
+        entry["proposal_id"],
+        entry["value"],
+        entry.get("reason", ""),
+        confidence=entry.get("confidence"),
+        rationale_ref=entry.get("rationale_ref"),
+    )
+
+
+def voter_pop_payload(
+    target: VoterPopTarget,
+    voter_aid: str,
+    content_digest: bytes,
+    issued_at_ms: int,
+    expires_at_ms: int,
+    entry_bytes: bytes,
+) -> bytes:
+    """The exact bytes a voter proof signs (``framed(x) = u32le(len) || x``)::
+
+    framed("seam-voter-pop-v1") || framed(issuer) || framed(audience) || framed(tenant)
+    || framed(namespace) || framed(session_id) || framed(u64le(opened_at_millis)) || framed(voter_aid)
+    || framed(content_digest[32]) || framed(u64le(issued_at_ms)) || framed(u64le(expires_at_ms))
+    || framed(entry_bytes)
+    """
+    if len(content_digest) != 32:
+        raise ValueError(f"content_digest must be 32 bytes, got {len(content_digest)}")
+    u64 = lambda name, v: _frame(struct.pack("<Q", _uint_slot(name, v, 64)))  # noqa: E731
+    return b"".join(
+        (
+            _frame(VOTER_POP_V1_DOMAIN),
+            _frame(target.issuer.encode()),
+            _frame(target.audience.encode()),
+            _frame(target.tenant.encode()),
+            _frame(target.namespace.encode()),
+            _frame(target.session_id.encode()),
+            u64("opened_at_millis", target.opened_at_millis),
+            _frame(voter_aid.encode()),
+            _frame(bytes(content_digest)),
+            u64("issued_at_ms", issued_at_ms),
+            u64("expires_at_ms", expires_at_ms),
+            _frame(bytes(entry_bytes)),
+        )
+    )
+
+
+def sign_voter_pop(
+    voter_seed: bytes,
+    target: VoterPopTarget,
+    content_digest: bytes,
+    entry,
+    *,
+    issued_at_ms: int | None = None,
+    expires_at_ms: int | None = None,
+) -> VoterPop:
+    """Sign a ``seam-voter-pop-v1`` proof with the voter's OWN enrolled ``voter`` key (Ed25519 seed).
+
+    ``entry`` is the entry the runtime will seal: a mapping (``kind``, ``participant``, ``proposal_id``,
+    ``value``, ``reason``, optional ``confidence``/``rationale_ref``) or :func:`vote_entry_bytes` output.
+    ``issued_at_ms`` defaults to now and ``expires_at_ms`` to five minutes later. The window is checked
+    here against the runtime's rule (``issued <= expires``, ``expires - issued <= 15 min``) so a proof the
+    runtime must refuse is never produced. The voter AID is DERIVED from the seed."""
+    issued = int(time.time() * 1000) if issued_at_ms is None else issued_at_ms
+    expires = (
+        issued + VOTER_POP_DEFAULT_LIFETIME_MS
+        if expires_at_ms is None
+        else expires_at_ms
+    )
+    if not issued <= expires or expires - issued > VOTER_POP_MAX_LIFETIME_MS:
+        raise ValueError(
+            "voter proof window must satisfy issued_at_ms <= expires_at_ms <= issued_at_ms + 15 min"
+        )
+    sk = Ed25519PrivateKey.from_private_bytes(voter_seed)
+    voter_aid = aid_from_pubkey(sk.public_key().public_bytes_raw())
+    payload = voter_pop_payload(
+        target, voter_aid, content_digest, issued, expires, _entry_bytes_of(entry)
+    )
+    return VoterPop(voter_aid, issued, expires, sk.sign(payload))
+
+
+def verify_voter_pop(
+    target: VoterPopTarget,
+    voter_aid: str,
+    content_digest: bytes,
+    issued_at_ms: int,
+    expires_at_ms: int,
+    entry,
+    signature: bytes,
+) -> bool:
+    """``True`` iff ``signature`` is ``voter_aid``'s Ed25519 signature over :func:`voter_pop_payload`.
+    The binding only; the window is the caller's to check (see :func:`verify_voter_record`)."""
+    try:
+        Ed25519PublicKey.from_public_bytes(_aid_to_pubkey(voter_aid)).verify(
+            bytes(signature),
+            voter_pop_payload(
+                target,
+                voter_aid,
+                content_digest,
+                issued_at_ms,
+                expires_at_ms,
+                _entry_bytes_of(entry),
+            ),
+        )
+        return True
+    except Exception:
+        return False
+
+
+def verify_voter_record(entry) -> bool:
+    """Re-check one sealed entry's ``voter_verification`` offline, from the record alone: rebuild the
+    signed input from the record's own addressing fields and the entry's frozen ``entry_bytes``, check
+    the window at ``accepted_at_ms``, and verify the signature with the key ``principal`` embeds.
+    ``False`` for a missing record, a non-``pop`` method, or anything that does not verify."""
+    vv = entry.get("voter_verification")
+    if vv is None or vv.get("method") != "pop":
+        return False
+    try:
+        issued, expires = int(vv["issued_at_ms"]), int(vv["expires_at_ms"])
+        accepted = int(vv["accepted_at_ms"])
+        if not (
+            issued <= expires
+            and expires - issued <= VOTER_POP_MAX_LIFETIME_MS
+            and issued <= accepted + VOTER_POP_MAX_SKEW_MS
+            and accepted <= expires
+        ):
+            return False
+        if _vv_bytes(vv, "signer_certificate"):
+            return False
+        target = VoterPopTarget(
+            issuer=vv["issuer"],
+            tenant=vv["tenant"],
+            namespace=vv["namespace"],
+            session_id=vv["session_id"],
+            opened_at_millis=int(vv["opened_at_millis"]),
+            audience=vv["audience"],
+        )
+        return verify_voter_pop(
+            target,
+            vv["principal"],
+            _vv_bytes(vv, "content_digest"),
+            issued,
+            expires,
+            entry,
+            _vv_bytes(vv, "signature"),
+        )
+    except Exception:
+        return False
+
+
+def verify_commitment_voters(
+    entries, issuer: str, decision: tuple[str, str] | None = None
+) -> bool:
+    """The commitment-level voter check every verifier runs (``voter-verification.v1.md`` §The sealed
+    record). ``True`` iff: every ``vote``, ``ballot`` and ``objection`` carries a record and no
+    ``evaluation`` does; every record's ``issuer`` is ``issuer`` (the one the verifier pinned); all records
+    share one ``(tenant, namespace, session_id, opened_at_millis, audience)``; when ``decision`` =
+    ``(tenant, session_id)`` is known, that is the records' own; and each record re-checks
+    (:func:`verify_voter_record`). An explanation with no voter-kind entries passes. ``content_digest``
+    is not re-derived: what it covers is not in the commitment."""
+    addressing = None
+    for e in entries:
+        vv = e.get("voter_verification")
+        if e["kind"] not in VOTER_VERIFIED_KINDS:
+            if vv is not None:
+                return False
+            continue
+        if vv is None or vv.get("issuer") != issuer:
+            return False
+        a = (
+            vv.get("tenant"),
+            vv.get("namespace"),
+            vv.get("session_id"),
+            vv.get("opened_at_millis"),
+            vv.get("audience"),
+        )
+        if addressing is None:
+            addressing = a
+        elif a != addressing:
+            return False
+        if decision is not None and (a[0], a[2]) != tuple(decision):
+            return False
+        if not verify_voter_record(e):
+            return False
+    return True
 
 
 # ── context_digest (wire tag 11) — seam.audit.context-provenance.v4 ─────────────────────────────────

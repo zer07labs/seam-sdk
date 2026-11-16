@@ -350,7 +350,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   **Cannot be answered from this repo** — answering it needs the runtime's **Rust**, and the
   clean-room constraint is that this repo's crypto/digest implementations are written from the
   published spec and never from that Rust. (The constraint targets the implementation, not the
-  contract: `../seam-runtime/crates/seam-api/proto/**` *is* read — `Makefile:29`'s `generate-local`
+  contract: `../seam-runtime/crates/seam-api/proto/**` *is* read — `Makefile:31`'s `generate-local`
   runs `buf generate ../seam-runtime` against exactly that path. An earlier wording of this line
   said `crates/**` was unreadable outright, which forbade the proto and contradicted the build.)
   Filed as a question upstream.
@@ -871,8 +871,8 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   guard receives, not one a prose author can renegotiate.
 
   One factual correction to this entry's own premise: the wrap it says nobody has needed has
-  already happened. `.github/workflows/publish.yml:764` carries the promise and the issue pointer at
-  100 characters, and `.github/workflows/publish.yml:765` carries the *workflow* pointer — outside
+  already happened. `.github/workflows/publish.yml:769` carries the promise and the issue pointer at
+  100 characters, and `.github/workflows/publish.yml:770` carries the *workflow* pointer — outside
   the window, invisible to the guard. The guard passes today only because a second, redundant
   pointer shares the promise line, which means the `_WORKFLOW_POINTER` arm is currently exercised by
   fixtures alone. Not a defect (the issue pointer is valid, and `zer07labs/seam-sdk#100` is open),
@@ -996,7 +996,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Status:** CONFIRMED (2026-09-06, from recorded evidence — no live query made), and the roster
   CHANGED in the same pass to `("0.7.71", "0.7.50", "0.7.65", "0.7.75")`
   (`scripts/check_registry_drift.py:185`). Publication is proven for all four by their publish
-  runs' `registry-smoke` job, which `.github/workflows/publish.yml:790-794` calls "the ONLY job
+  runs' `registry-smoke` job, which `.github/workflows/publish.yml:795-799` calls "the ONLY job
   whose success proves the release landed: it installs the published artifact back OUT of Cloudsmith
   and runs the conformance vectors against it." Green for 0.7.50 (run 32933376474), 0.7.65
   (33267190153), 0.7.75 (33986357361) and 0.7.71 (33479578480).
@@ -1012,11 +1012,11 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   What is still inferred rather than observed is only "and nobody has deleted them since". Against
   that: `yank.yml` has 27 runs and the only versions ever deleted are 0.7.7 and 0.7.13–0.7.19 — the
   exact scope of issue #43, closed sixteen minutes after the final run, and corroborated
-  independently by `CHANGELOG.md:789-790` in the repo's own words.
+  independently by `CHANGELOG.md:860-861` in the repo's own words.
 - **Correction to this entry's stated rationale (2026-09-06):** the code comment justified the age
   spread as a hedge against a *retention* sweep aging all entries out at once. No retention sweep
   has ever run here, and the real yank predicate is "named in an advisory as unconditionally
-  broken", not "old" — `CHANGELOG.md:836` records that 0.7.39–0.7.43 was deliberately **not**
+  broken", not "old" — `CHANGELOG.md:907` records that 0.7.39–0.7.43 was deliberately **not**
   deleted despite being older than every roster entry. A wrong reason in that comment is how the
   next editor re-points the roster badly, dropping a safe old version in favour of one sitting
   inside an advisory band; the comment now states the real predicate. None of the four roster

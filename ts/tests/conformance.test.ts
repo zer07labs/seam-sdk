@@ -18,10 +18,13 @@ import {
   verifyChainHeadAttestation,
 } from "../src/crypto.js";
 import type { Commitment } from "../src/crypto.js";
+import { commitmentFromVector } from "./vector_commitment.js";
 
 const vectors = JSON.parse(
   readFileSync(new URL("../../conformance/vectors.json", import.meta.url), "utf8"),
 );
+// The vote's voter verification record (#1687) arrives with `*_hex` byte fields; map it once.
+vectors.tct.inputs.commitment = commitmentFromVector(vectors.tct.inputs.commitment);
 
 test("pinned-key presentation is byte-exact", () => {
   const { inputs, presentation } = vectors.admission;
@@ -108,9 +111,9 @@ test("chain-head attestation signature verifies, tamper does not (A14)", () => {
 
 // -- Commitment-digest framing coverage (W5.4 / G4) ----------------------------------------------
 //
-// `seam-commitment-digest:v3` is implemented byte-for-byte in ALL FIVE SDK languages -- the widest
+// `seam-commitment-digest:v4` is implemented byte-for-byte in ALL FIVE SDK languages -- the widest
 // fan-out of any framing in this repo. Its digests are pinned directly below (the `tct` block's
-// `explanation_digest_hex` / `commitment_digest_hex`, and `commitment_digest_v3.test.ts` over the
+// `explanation_digest_hex` / `commitment_digest_hex`, and `commitment_digest_v4.test.ts` over the
 // runtime's own reference vector); seam-runtime's `sdk-digest-parity` job byte-diffs the whole of
 // conformance/vectors.json against its own emitter, so those values originate there.
 //
@@ -149,7 +152,7 @@ test("commitment digest binds every field", () => {
     // pins the PRESENT branch, which nothing covered: absent and present must differ, or a
     // supersession could be stripped from a sealed record undetected.
     ["supersedes (absent -> present)", { supersedes: "k-previous" }],
-    // v3's presence byte: present-but-empty is not absent.
+    // The presence byte (since v3): present-but-empty is not absent.
     ["supersedes (absent -> present empty)", { supersedes: "" }],
     ["auth_method", { auth_method: base.auth_method + "-x" }],
     ["trust_basis", { trust_basis: base.trust_basis + "-x" }],
@@ -170,6 +173,41 @@ test("commitment digest binds every field", () => {
     ["explanation (rationale_ref dropped)", {
       explanation: base.explanation!.map((e, i) => (i === 0 ? { ...e, rationale_ref: null } : e)),
     }],
+    // #1687: the vote's voter verification record is bound through `seam-explanation-digest:v2`.
+    ["explanation (voter record dropped)", {
+      explanation: base.explanation!.map((e, i) => (i === 2 ? { ...e, voter_verification: null } : e)),
+    }],
+    ...(["principal", "tenant", "namespace", "session_id", "issuer", "audience"] as const).map(
+      (f): [string, Partial<Commitment>] => [`explanation (voter record ${f})`, {
+        explanation: base.explanation!.map((e, i) =>
+          i === 2 ? { ...e, voter_verification: { ...e.voter_verification!, [f]: e.voter_verification![f] + "-x" } } : e),
+      }],
+    ),
+    ...(["issued_at_ms", "expires_at_ms", "opened_at_millis", "accepted_at_ms"] as const).map(
+      (f): [string, Partial<Commitment>] => [`explanation (voter record ${f})`, {
+        explanation: base.explanation!.map((e, i) =>
+          i === 2 ? { ...e, voter_verification: { ...e.voter_verification!, [f]: BigInt(e.voter_verification![f]) + 1n } } : e),
+      }],
+    ),
+    ["explanation (voter record signature)", {
+      explanation: base.explanation!.map((e, i) =>
+        i === 2 ? { ...e, voter_verification: { ...e.voter_verification!, signature: "00".repeat(64) } } : e),
+    }],
+    ["explanation (voter record certificate)", {
+      explanation: base.explanation!.map((e, i) =>
+        i === 2 ? { ...e, voter_verification: { ...e.voter_verification!, signer_certificate: "00" } } : e),
+    }],
+    ["explanation (voter record content digest)", {
+      explanation: base.explanation!.map((e, i) =>
+        i === 2 ? { ...e, voter_verification: { ...e.voter_verification!, content_digest: "00".repeat(32) } } : e),
+    }],
+    ["explanation (voter record method)", {
+      explanation: base.explanation!.map((e, i) =>
+        i === 2 ? { ...e, voter_verification: { ...e.voter_verification!, method: "cp_signed" } } : e),
+    }],
+    // v4 fields 9 and 10: a present slot is not an absent one.
+    ["selection_digest (absent -> present)", { selection_digest: "00".repeat(32) }],
+    ["certificate_digest (absent -> present)", { certificate_digest: "00".repeat(32) }],
   ];
   for (const [field, change] of mutations) {
     assert.equal(
@@ -180,7 +218,7 @@ test("commitment digest binds every field", () => {
   }
 });
 
-test("tct block: explanation and commitment digests match the runtime (seam-commitment-digest:v3)", () => {
+test("tct block: explanation and commitment digests match the runtime (seam-commitment-digest:v4)", () => {
   const t = vectors.tct;
   const c = t.inputs.commitment as Commitment;
   assert.equal(Buffer.from(explanationDigest(c.explanation!)).toString("hex"), t.explanation_digest_hex);

@@ -9,7 +9,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { IssuerMismatchError, SeamClient } from "../src/client.js";
-import { ExplanationKind } from "../gen/seam/api/v1/seam_pb.js";
+import { ExplanationKind, VoterVerification } from "../gen/seam/api/v1/seam_pb.js";
 
 const vectors = JSON.parse(
   readFileSync(new URL("../../conformance/vectors.json", import.meta.url), "utf8"),
@@ -23,7 +23,30 @@ type ProtoEntry = {
   reason: string;
   confidence?: number;
   rationaleRef?: string;
+  voterVerification?: Record<string, unknown>;
 };
+
+const fromHex = (h: string) => new Uint8Array(Buffer.from(h, "hex"));
+
+/** The vector's `*_hex` voter verification record (#1687) as the proto `VoterVerificationRecord`. */
+function protoVoterRecord(v: Record<string, any>): Record<string, unknown> {
+  return {
+    method: v.method === "pop" ? VoterVerification.POP : VoterVerification.CP_SIGNED,
+    principal: v.principal,
+    contentDigest: fromHex(v.content_digest_hex),
+    issuedAtMs: BigInt(v.issued_at_ms),
+    expiresAtMs: BigInt(v.expires_at_ms),
+    signature: fromHex(v.signature_hex),
+    signerCertificate: fromHex(v.signer_certificate_hex),
+    tenant: v.tenant,
+    namespace: v.namespace,
+    sessionId: v.session_id,
+    openedAtMillis: BigInt(v.opened_at_millis),
+    issuer: v.issuer,
+    audience: v.audience,
+    acceptedAtMs: BigInt(v.accepted_at_ms),
+  };
+}
 
 const KIND: Record<string, ExplanationKind> = {
   vote: ExplanationKind.VOTE,
@@ -42,6 +65,9 @@ function protoExplanation(): ProtoEntry[] {
     reason: e.reason as string,
     ...(e.confidence !== null ? { confidence: e.confidence as number } : {}),
     ...(e.rationale_ref !== null ? { rationaleRef: e.rationale_ref as string } : {}),
+    ...(e.voter_verification !== null && e.voter_verification !== undefined
+      ? { voterVerification: protoVoterRecord(e.voter_verification as Record<string, any>) }
+      : {}),
   }));
 }
 
@@ -66,7 +92,7 @@ function clientWithProof(
       authority: c.authority,
       authMethod: c.auth_method,
       trustBasis: c.trust_basis,
-      // v3 frames absent and present-empty differently (a presence byte): an unset `supersedes` must
+      // v4 frames absent and present-empty differently (a presence byte): an unset `supersedes` must
       // stay unset, as the proto's explicit presence carries it, not become "".
       ...(c.supersedes !== null && c.supersedes !== undefined ? { supersedes: c.supersedes } : {}),
       signedArtifact: signedArtifact ?? new TextEncoder().encode(t.signed_artifact_jws),
@@ -82,13 +108,23 @@ function clientWithProof(
   return client;
 }
 
-test("verifyDecision: a served v3 commitment (committer + explanation + digest) verifies", async () => {
+// #1687: verifyDecision checks the sealed voter records come from the decision's own session, so the id
+// names the vector's (`dec:{tenant}:{session}` of its voter record).
+const DECISION_ID = "dec:acme:s-conformance-0000000";
+
+test("verifyDecision: a decision id naming another session, or no session, resolves to false", async () => {
   const issuer = vectors.tct.issuer_aid as string;
-  assert.equal(await clientWithProof(issuer).verifyDecision("dec-1", issuer), true);
+  for (const id of ["dec:acme:s-other-0000000000000", "dec:other:s-conformance-0000000", "dec-1"])
+    assert.equal(await clientWithProof(issuer).verifyDecision(id, issuer), false, id);
+});
+
+test("verifyDecision: a served v4 commitment (committer + explanation + digest) verifies", async () => {
+  const issuer = vectors.tct.issuer_aid as string;
+  assert.equal(await clientWithProof(issuer).verifyDecision(DECISION_ID, issuer), true);
   // Unset published digest (empty bytes) = "not published": the entries alone still bind field 8.
   assert.equal(
     await clientWithProof(issuer, undefined, undefined, { explanationDigest: new Uint8Array() }).verifyDecision(
-      "dec-1",
+      DECISION_ID,
       issuer,
     ),
     true,
@@ -104,10 +140,22 @@ test("verifyDecision: explanation entries that disagree with the published diges
     // The proto cannot say "entries not served": an empty list is taken as zero entries.
     ["entries withheld", { explanation: [] }],
     ["unspecified kind", { explanation: [{ ...protoExplanation()[0], kind: ExplanationKind.UNSPECIFIED }] }],
+    // #1687: an UNSPECIFIED method is never sealed, and a content digest is exactly 32 bytes.
+    ["unspecified voter method", {
+      explanation: protoExplanation().map((e, i) =>
+        i === 2 ? { ...e, voterVerification: { ...e.voterVerification, method: VoterVerification.UNSPECIFIED } } : e),
+    }],
+    ["31-byte voter content digest", {
+      explanation: protoExplanation().map((e, i) =>
+        i === 2 ? { ...e, voterVerification: { ...e.voterVerification, contentDigest: new Uint8Array(31) } } : e),
+    }],
+    ["voter record withheld", {
+      explanation: protoExplanation().map((e, i) => (i === 2 ? { ...e, voterVerification: undefined } : e)),
+    }],
     ["committer changed", { committer: "aid:pubkey:ed25519:" + "B".repeat(43) }],
   ] as [string, Record<string, unknown>][]) {
     assert.equal(
-      await clientWithProof(issuer, undefined, undefined, extra).verifyDecision("dec-1", issuer),
+      await clientWithProof(issuer, undefined, undefined, extra).verifyDecision(DECISION_ID, issuer),
       false,
       name,
     );
@@ -119,7 +167,7 @@ test("verifyDecision: swapped issuer key rejects with a DISTINCT IssuerMismatchE
   const pinned = "aid:pubkey:ed25519:" + "A".repeat(43); // pinned out of band
   const client = clientWithProof(serverIssuer);
 
-  await assert.rejects(client.verifyDecision("dec-1", pinned), (err: unknown) => {
+  await assert.rejects(client.verifyDecision(DECISION_ID, pinned), (err: unknown) => {
     assert.ok(err instanceof IssuerMismatchError, "must be the distinct typed error");
     assert.equal(err.proofIssuer, serverIssuer);
     assert.equal(err.expectedIssuer, pinned);
@@ -131,7 +179,7 @@ test("verifyDecision: matching issuer but invalid TCT resolves to false (no thro
   const issuer = vectors.tct.issuer_aid as string;
   // Issuer matches the pin, so we pass the mismatch gate; the tampered action ⇒ digest miss ⇒ invalid.
   const client = clientWithProof(issuer, "TAMPERED");
-  assert.equal(await client.verifyDecision("dec-1", issuer), false);
+  assert.equal(await client.verifyDecision(DECISION_ID, issuer), false);
 });
 
 test("verifyDecision: non-UTF-8 signedArtifact throws rather than decoding lossily to a bland false", async () => {
@@ -142,5 +190,5 @@ test("verifyDecision: non-UTF-8 signedArtifact throws rather than decoding lossi
   const issuer = vectors.tct.issuer_aid as string;
   const invalidUtf8 = new Uint8Array([0xff, 0xfe, 0xfd]);
   const client = clientWithProof(issuer, undefined, invalidUtf8);
-  await assert.rejects(client.verifyDecision("dec-1", issuer), TypeError);
+  await assert.rejects(client.verifyDecision(DECISION_ID, issuer), TypeError);
 });

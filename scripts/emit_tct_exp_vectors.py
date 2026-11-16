@@ -216,24 +216,25 @@ def _b64(b: bytes) -> str:
     return base64.urlsafe_b64encode(b).decode().rstrip("=")
 
 
-# `seam-explanation-digest:v1` of the EMPTY explanation: F(domain) ‖ be64(0). This vector is about `exp`,
-# so its commitment deliberated nothing; the value is pinned by the spec (`eb7853dc…`).
-_EXPLANATION_DOMAIN = b"seam-explanation-digest:v1"
+# `seam-explanation-digest:v2` of the EMPTY explanation: F(domain) ‖ be64(0). This vector is about `exp`,
+# so its commitment deliberated nothing; the value is pinned by the spec (`cabe83af…`).
+_EXPLANATION_DOMAIN = b"seam-explanation-digest:v2"
 _EMPTY_EXPLANATION_DIGEST = hashlib.sha256(
     len(_EXPLANATION_DOMAIN).to_bytes(8, "big") + _EXPLANATION_DOMAIN + (0).to_bytes(8, "big")
 ).digest()
 
 
 def _commitment_digest(c: dict) -> str:
-    """`seam-commitment-digest:v3`: every field `be64(len) || bytes`, except `supersedes`, which is a
-    presence byte (`0x00` absent, `0x01 || F(value)` present)."""
+    """`seam-commitment-digest:v4`: every field `be64(len) || bytes`, except `supersedes`, which is a
+    presence byte (`0x00` absent, `0x01 || F(value)` present), and the selection/certificate slots 9/10,
+    absent (`0x00` each) here."""
 
     def f(b: bytes) -> bytes:
         return len(b).to_bytes(8, "big") + b
 
     sup = c["supersedes"]
     return hashlib.sha256(
-        f(b"seam-commitment-digest:v3")
+        f(b"seam-commitment-digest:v4")
         + f(c["id"].encode())
         + f(c["action"].encode())
         + f(c["authority"].encode())
@@ -242,6 +243,7 @@ def _commitment_digest(c: dict) -> str:
         + f(c["trust_basis"].encode())
         + f(c["committer"].encode())
         + f(_EMPTY_EXPLANATION_DIGEST)
+        + b"\x00\x00"
     ).hexdigest()
 
 

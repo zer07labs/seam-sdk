@@ -16,6 +16,77 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.87.0-rc.1 — 2026-11-15
+
+**Pre-release, BREAKING, for the #1687 caller wave only.** Generated from BSR label `pr-1713`
+(seam-runtime PR #1713, head `8f4e30ee`, `contract/bsr-label`), because #1713 cannot merge until its
+callers are ready. npm publishes it under dist-tag `next`; pip resolves it only when pinned
+(`seam-sdk==0.87.0rc1`). 0.87.0 final flips the label back to `main` (#352). It talks only to a runtime
+built from #1713: digests, enrolment proofs and votes are all incompatible with runtime 0.86.0 and
+earlier, in both directions.
+
+### Changed (BREAKING)
+- **Commitment digest v4 and explanation digest v2 in all five languages and `seam-verify`.** Each
+  explanation entry frames its sealed voter verification record (`VV`: a presence byte, then all fourteen
+  record fields), and the commitment digest appends always-framed slots 9 (selection) and 10 (Gate
+  certificate), each `0x00` absent or `0x01‖be64(32)‖digest`. Python `_seam_commitment_digest` takes
+  optional `selection_digest` / `certificate_digest`, as do TS `seamCommitmentDigest`, Go `Commitment`, and
+  Java/Kotlin `Commitment`. A record with an UNSPECIFIED or unknown method, or a content digest that is
+  not 32 bytes, fails closed. v3 and v1 are deleted, not dual-verified. Vectors:
+  `conformance/commitment_digest_v4_vector.json` and a refreshed `conformance/vectors.json`.
+- **Enrolment proofs are `seam-enroll-pop-v2`**: `participant_id` is signed after the namespace (`""` for
+  every kind but `voter`). Python `Agent.enrolment_proof(..., participant_id=)`, TS
+  `enrolmentProof(..., { participantId })`, Go `EnrollPopForParticipant` / `VoterEnrolmentProof`, Java/Kotlin
+  `enrolmentProof(..., participantId)`. v1 is removed because the runtime refuses it. Vector:
+  `conformance/enroll_pop_v2_payload_vector.json`.
+- **`verify_decision` / `verify_tct` (Python) and `verifyDecision` / `verifyTct` (TS) re-check every sealed voter record.** Every vote, ballot and
+  objection must carry a `seam-voter-pop-v1` record addressed to the pinned issuer, all from one session
+  (the decision's own, for `verify_decision`), and each must re-verify offline; otherwise the result is
+  `False`. Go and the JVM check the digest over the records; their record re-check lands in 0.87.0
+  final (#352).
+
+- **`run_decision` vote values must be exactly `APPROVE`, `REJECT` or `ABSTAIN`** (runtime #1713, plan
+  A4.5). The voter signs the value as sealed, so the runtime no longer classifies a richer word such as
+  `BLOCK` on the caller's behalf. It refuses one with `INVALID_ARGUMENT`. Session-path proposal options
+  are unaffected.
+- **Live suites sign with the public demo voter keys.** `python/tests/demo_voters.py` provides
+  `DemoVotingClient` and `ts/tests/demo_voters.ts` provides `demoVoting`, and CI's integration job builds `seam-grpc` from #1713's head (`SEAM_RUNTIME_BUILD_REF`,
+  reset at final, #352). This is test-only; nothing in `seam_sdk` knows a demo key.
+
+- **`seam-verify`: commitment digest v4 and explanation digest v2.** `bundle` re-checks every sealed vote,
+  ballot and objection voter record offline: `seam-voter-pop-v1`, bound to the bundle's own session and the
+  pinned issuer. `bundle --json` reports `voters_verified`. It refuses a `commitment.json` that carries a
+  slot 9 or 10 block, which the bundle spec does not define, and a P-256 or `cp_signed` record, which it
+  does not verify. The vendored specs are re-pinned @ `8f4e30e` (tracking `feat/1687-verified-voters`) and
+  the bundle fixtures are re-exported (verify/DECISIONS.md D-045).
+
+### Added
+- **Python voter proofs (`seam-voter-pop-v1`, `seam-vote-content-v1`):** `VoterPopTarget`, `VoterPop`,
+  `vote_content_digest`, `vote_entry_bytes`, `voter_pop_payload`, `sign_voter_pop` (Ed25519 voter seed; the
+  default window is now + 5 min, and a window the runtime must refuse is never signed),
+  `verify_voter_pop`, `verify_voter_record` and `verify_commitment_voters`. Vector:
+  `conformance/voter_pop_v1_payload_vector.json`.
+  `vote_content_digest(..., features=, policy=)` / TS `voteContentDigest(..., { features, policy })` frame
+  what the vote binds on each path. A one-shot `run_decision` vote signs the request `features`
+  (canonical: sorted by key bytes, a repeated key refused) with policy slot `0x00`, because the runtime
+  resolves the policy. A session vote signs the `SessionStep.vote_policy` its open returned
+  (`VotePolicyRef{policy_version, rules_digest}`, new in the stubs).
+- **Python vote APIs take proofs:** `submit_vote`, `submit_objection` and `submit_ballot` (sync and async)
+  take `proof=` (a `VoterPop` or a generated `VoterProof`), and `run_decision` votes accept
+  `(agent, value, reason, proof)` or a generated `Vote`. Runtime 0.87.0 refuses a vote without one
+  (`voter_proof_required` / `voter_proof_invalid`, `PermissionDeniedError`). Go and the JVM get the
+  helpers and the proof-taking APIs in 0.87.0 final (#352).
+- **TypeScript voter proofs:** `signVoterPop`, `verifyVoterPop`, `voteContentDigest`, `voteEntryBytes`,
+  `voterPopPayload`, `voterPopToRest`, `verifyVoterRecord` and `verifyCommitmentVoters`, plus the
+  `VoterPopTarget`, `VoterPopProof` and `VoterProofInput` types. `submitVote`, `submitObjection` and
+  `submitBallot` take `opts.proof`, and `runDecision` votes accept `[agent, value, reason, proof]`.
+  `VoterPopProof` is not named `VoterPop`, because that name belongs to the generated `pb.VoterPop`.
+- **The `voter` enrolment kind:** Python `ENROLMENT_KIND_VOTER` with `enroll_tenant(..., participant_id=)`,
+  and TS `ENROLMENT_KIND_VOTER` with `enrollTenant(..., { participantId })`.
+- The generated stubs carry `Vote.proof`, the `VoteRequest`/`BallotRequest`/`ObjectionRequest.proof`,
+  `SessionStep.opened_at_millis`, `EnrollTenantRequest.participant_id`, `TenantView.participant_id`,
+  `ExplanationEntry.voter_verification`, `SessionStep.vote_policy`, `VotePolicyRef`, `VoterProof`, `VoterPop`, `VoterVerificationRecord` and the
+  `VoterVerification` enum (`contract/field-manifest.txt`).
 ## 0.86.0 — 2026-11-15
 
 ## 0.85.0 — 2026-11-15

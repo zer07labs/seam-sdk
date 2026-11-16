@@ -16,10 +16,10 @@ import pytest
 from governing_root import STREAM_ID
 from live_server import spawn_server
 
+from demo_voters import DemoVotingClient
 from seam_sdk import (
     Agent,
     SeamAdminClient,
-    SeamClient,
     SeamRpcError,
     UnauthenticatedError,
 )
@@ -259,13 +259,13 @@ def _admin(mgmt_addr: str, *scopes: str) -> SeamAdminClient:
 
 def _seal_one(data_addr: str) -> tuple[str, str]:
     """Seal a decision as the demo agent; return (agent_aid, decision_id)."""
-    client = SeamClient.connect(data_addr)
+    client = DemoVotingClient.connect(data_addr)
     agent = Agent(bytes([42] * 32))
     dec = client.run_decision(
         agent,
         "admin-seal-sid-0123456789abcdef",
         ["fraud-v3", "risk-v2"],
-        [("fraud-v3", "BLOCK"), ("risk-v2", "BLOCK")],
+        [("fraud-v3", "APPROVE"), ("risk-v2", "APPROVE")],
     )
     assert dec.outcome == "Resolved"
     return agent.aid, dec.decision_id

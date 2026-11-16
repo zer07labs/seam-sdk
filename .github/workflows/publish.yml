@@ -278,7 +278,12 @@ jobs:
           JS
           cd "$GITHUB_WORKSPACE/ts"
 
-          npm publish   # registry + access come from package.json publishConfig
+          # A pre-release (0.87.0-rc.1, contract/bsr-label) goes out under dist-tag `next`, never
+          # `latest`: npm refuses an untagged pre-release, and a bare install must not resolve an rc.
+          case "$(node -p "require('./package.json').version")" in
+            *-*) npm publish --tag next ;;   # registry + access come from package.json publishConfig
+            *)   npm publish ;;
+          esac
 
   python:
     name: python wheel → Cloudsmith

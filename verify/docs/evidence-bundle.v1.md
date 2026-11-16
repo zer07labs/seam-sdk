@@ -1,4 +1,12 @@
-<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 32f8196 (refreshed 2026-10-19; landed with the runtime 0.48.0 train, seam-runtime#1365).
+<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 8f4e30e tracking feat/1687-verified-voters (refreshed 2026-11-15).
+     seam-runtime#1713 (#1687 verified voters), NOT yet on runtime main (seam-sdk#352). Movement since 32f8196:
+     commitment.json binds `seam-commitment-digest:v4` / `seam-explanation-digest:v2`, and every vote, ballot
+     and objection entry carries its sealed `voter_verification` record (byte fields as JSON number arrays,
+     `null` on an evaluation), which a verifier re-checks offline (`voter-verification.v1.md`, NOT vendored;
+     implemented in `src/voter.rs`, pinned by `conformance/voter_pop_v1_payload_vector.json`). The binding
+     digest is unchanged apart from naming v4.
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 32f8196 (refreshed 2026-10-19; landed with the runtime 0.48.0 train, seam-runtime#1365).
      The normative text `seam-verify bundle` implements (seam-sdk#225), re-vendored for seam-sdk#265: step 2
      recomputes record digest v4 (tags 10-17), and commitment.json binds seam-commitment-digest:v3 through a
      self-attestation TCT. It links two sibling specs by relative path: `seam-event.v1.md` (vendored beside
@@ -93,15 +101,22 @@ convenience.
 { "id": "…", "action": "…", "authority": "…", "auth_method": "…", "trust_basis": "…",
   "supersedes": null, "signed_artifact": "<compact JWS>", "committer": "…",
   "explanation": [ { "kind": "vote", "participant": "…", "proposal_id": "…", "value": "…",
-                     "reason": "…", "confidence": null, "rationale_ref": null } ],
+                     "reason": "…", "confidence": null, "rationale_ref": null,
+                     "voter_verification": { "method": "pop", "principal": "aid:…",
+                       "content_digest": [32 numbers], "issued_at_ms": 0, "expires_at_ms": 0,
+                       "signature": [numbers], "signer_certificate": [], "tenant": "…",
+                       "namespace": "…", "session_id": "…", "opened_at_millis": 0,
+                       "issuer": "aid:…", "audience": "…", "accepted_at_ms": 0 } } ],
   "issuer_aid": "…", "commitment_digest": "<64 hex>" }
 ```
 
 `id`, `action`, `authority`, `auth_method`, `trust_basis`, `supersedes`, `committer` and
-`explanation` are the `Commitment` exactly as the [`seam-commitment-digest:v3`](seam-commitment-digest.v3.md)
+`explanation` are the `Commitment` exactly as the [`seam-commitment-digest:v4`](seam-commitment-digest.v4.md)
 framing reads them (`supersedes` is `null` when absent and `{session_id}/sha256:<hex>` when present;
 `explanation` is in sealed order, each entry's `kind` is the lowercase digest word, and `confidence` / `rationale_ref` are `null` when absent — never
-`0.0`). A verifier recomputes the `seam-explanation-digest:v1` from the entries, so a re-worded entry
+`0.0`). Every `vote`, `ballot` and `objection` carries its sealed `voter_verification` record
+([`voter-verification.v1.md`](voter-verification.v1.md); byte fields as JSON number arrays, `null` on an
+evaluation); a verifier re-checks each signature offline and refuses a binding entry without one. A verifier recomputes the `seam-explanation-digest:v2` from the entries, so a re-worded entry
 fails the TCT. `signed_artifact` is the TCT. It is empty
 only for a record sealed under `identity: local-sealed`, which has no TCT; such a Commitment is bound
 to the chain by `binding.json` alone. `commitment_digest` is informational: a verifier recomputes it.
@@ -120,7 +135,7 @@ key that signs the chain-head attestations:
 ```
 
 `record_checksum` is the `checksum` of the decision's `DECISION_SEALED` link. `commitment_digest` is
-the raw 32-byte `seam-commitment-digest:v3`, rendered as lowercase hex. The signature is Ed25519 over
+the raw 32-byte `seam-commitment-digest:v4`, rendered as lowercase hex. The signature is Ed25519 over
 the 32-byte digest:
 
 ```

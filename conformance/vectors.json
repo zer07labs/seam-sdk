@@ -43,7 +43,8 @@
             "value": "BLOCK",
             "reason": "velocity spike",
             "confidence": null,
-            "rationale_ref": "sha256:abababababababababababababababababababababababababababababababab"
+            "rationale_ref": "sha256:abababababababababababababababababababababababababababababababab",
+            "voter_verification": null
           },
           {
             "kind": "evaluation",
@@ -52,7 +53,8 @@
             "value": "REVIEW",
             "reason": "",
             "confidence": 0.0,
-            "rationale_ref": null
+            "rationale_ref": null,
+            "voter_verification": null
           },
           {
             "kind": "vote",
@@ -61,15 +63,31 @@
             "value": "REJECT",
             "reason": "limit breach",
             "confidence": null,
-            "rationale_ref": null
+            "rationale_ref": null,
+            "voter_verification": {
+              "method": "pop",
+              "principal": "aid:pubkey:ed25519:GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
+              "content_digest_hex": "61773db92689b7ecdb7bfa8b5187d39f3e25bf51c0c0ff29e36f79060f6c87a7",
+              "issued_at_ms": 1700000000000,
+              "expires_at_ms": 1700000300000,
+              "signature_hex": "79405e20435ba5f62054cf6eab9fcf3ce196888531ba90dcf349a8674e0350c33a016d4a947b609e703ff0cb52d2a10b473344ddbc39376a92cd4d3870c9420a",
+              "signer_certificate_hex": "",
+              "tenant": "acme",
+              "namespace": "fraud",
+              "session_id": "s-conformance-0000000",
+              "opened_at_millis": 0,
+              "issuer": "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
+              "audience": "seam-runtime",
+              "accepted_at_ms": 1700000000000
+            }
           }
         ]
       }
     },
-    "explanation_digest_hex": "54803a97ad61731092761ae4bc54b611a6e3d88c1cef7bf58f7f0f65a25af973",
-    "commitment_digest_hex": "d9ac48bf866a2d970031389575cfed0e86e95947e5fa82b5a087812af9db46bc",
+    "explanation_digest_hex": "74abd50064dd738583e9a014269239e298fa4d63ef6f300feed888fc92adb8d3",
+    "commitment_digest_hex": "e8dde38a4dbfa30d4c94cae7d85500f00c6d1c4fcaac438f5f0409f141b607b6",
     "issuer_aid": "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
-    "signed_artifact_jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJhdWQiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJjbmYiOnsiamt0IjoiLS02SU01bDBPb3NMajl5V3NrSVNZaFVBM25fM0NVUlFrbXJZTVNoYV9jayJ9LCJleHAiOjQ4NTM2MDAwMDAsImV4dCI6eyJjb20uemVyMDdsYWJzLnNlYW0iOnsiY29tbWl0bWVudF9kaWdlc3QiOiJkOWFjNDhiZjg2NmEyZDk3MDAzMTM4OTU3NWNmZWQwZTg2ZTk1OTQ3ZTVmYTgyYjVhMDg3ODEyYWY5ZGI0NmJjIiwidHlwZSI6InNlYW06Y29tbWl0bWVudCJ9fSwiZ3JhbnRzIjpbImFpdHAuYXR0ZXN0YXRpb24iXSwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJqdGkiOiJjNzMyMWNlNC02MmYxLTRlMzgtYWMyMy0yMTJkYzllMDA1NWIiLCJzdWIiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJ2ZXIiOiJhaXRwLzAuMyJ9.Nb9iPVlt9dQCsR4O9TsyMX3XaG8Qy3xentFOT6nmRiez-K8ngIHIcug1kaC5iCkPSP61Jvby913ixJ_-SHcVCg"
+    "signed_artifact_jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFpdHAtdGN0K2p3dCJ9.eyJhdWQiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJjbmYiOnsiamt0IjoiLS02SU01bDBPb3NMajl5V3NrSVNZaFVBM25fM0NVUlFrbXJZTVNoYV9jayJ9LCJleHAiOjQ4NTM2MDAwMDAsImV4dCI6eyJjb20uemVyMDdsYWJzLnNlYW0iOnsiY29tbWl0bWVudF9kaWdlc3QiOiJlOGRkZTM4YTRkYmZhMzBkNGM5NGNhZTdkODU1MDBmMDBjNmQxYzRmY2FhYzQzOGY1ZjA0MDlmMTQxYjYwN2I2IiwidHlwZSI6InNlYW06Y29tbWl0bWVudCJ9fSwiZ3JhbnRzIjpbImFpdHAuYXR0ZXN0YXRpb24iXSwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJqdGkiOiJjNzMyMWNlNC02MmYxLTRlMzgtYWMyMy0yMTJkYzllMDA1NWIiLCJzdWIiOiJhaWQ6cHVia2V5OjZrcHNZLUtjVWdxLTlWQjdFeTdGLVpWSGRxNi12bnVTUWg3cWFSUkcwaXciLCJ2ZXIiOiJhaXRwLzAuMyJ9.pYCI0h8Y8e6wSUVzpgTfXFXh5dRKdQ5zmQnxlGe0P4RU0ZTznkHz-LMX2B_c3-5tsw5IhlZDu1jt1bRkO0pEBA"
   },
   "derived_uuid": {
     "rule": "h = SHA-256(tag || 0x00 || input); uuid = h[0..16] with h[6] = (h[6] & 0x0f) | 0x40, h[8] = (h[8] & 0x3f) | 0x80; lowercase hyphenated",

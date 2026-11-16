@@ -33,12 +33,15 @@ import {
   SessionRefSchema,
   VoteRequestSchema,
   ExplanationKind,
+  VoterVerification,
   type Anchor,
   type Commitment,
   type ContextBinding,
   type DecisionRecordView,
   type DecisionResponse,
   type SessionStep,
+  type VoterProof,
+  type VoterVerificationRecord,
 } from "../gen/seam/api/v1/seam_pb.js";
 // ChainHeadAttestation moved to the canonical seam.event.v1 package.
 import { type ChainHeadAttestation } from "../gen/seam/event/v1/seam_event_pb.js";
@@ -57,6 +60,8 @@ import {
   verifyTct,
   type Commitment as CommitmentView,
   type EnrollProof,
+  type VoterPopProof,
+  type VoterVerificationInput,
 } from "./crypto.js";
 import {
   errorMappingInterceptor,
@@ -161,7 +166,7 @@ export interface SubmitCommitOptions extends CredentialedCallOptions {
    * prior's sealed commitment, and seals `{session}/sha256:<hex>` into the record — so the served
    * `Commitment.supersedes` is that stored form, not what was sent. A prior that is missing, in
    * another tenant, not `Resolved`, or carries no MACP commitment is refused with one uniform
-   * `INVALID_ENVELOPE` (seam-runtime `docs/specs/seam-commitment-digest.v3.md` §supersedes). Omit it
+   * `INVALID_ENVELOPE` (seam-runtime `docs/specs/seam-commitment-digest.v4.md` §supersedes). Omit it
    * rather than passing `""`: absence and an empty value are different digests under v3. */
   supersedes?: string;
 }
@@ -252,17 +257,20 @@ export class Agent {
    * an operator passes to `SeamAdminClient.enrollTenant(subjectAid, tenant, namespace, pop)`. Required
    * for enrolment by a tenant-scoped operator token.
    *
-   * `issuedAtMs` defaults to now and `nonce` to 16 fresh random bytes as 22 base64url characters; both
-   * are overridable for tests. The runtime accepts the proof for 5 minutes (and up to 60 s ahead of its
+   * The proof is `seam-enroll-pop-v2` (#1687): `participantId` is the participant a `voter` enrolment
+   * binds, and must equal the `participantId` passed to `enrollTenant`; it defaults to `""`, the value
+   * for every other kind. `issuedAtMs` defaults to now and `nonce` to 16 fresh random bytes as 22
+   * base64url characters; both are overridable for tests. The runtime accepts the proof for 5 minutes (and up to 60 s ahead of its
    * clock), so mint it just before the enrolment call. */
   enrolmentProof(
     tenant: string,
     namespace: string,
-    opts?: { issuedAtMs?: number | bigint; nonce?: string },
+    opts?: { participantId?: string; issuedAtMs?: number | bigint; nonce?: string },
   ): EnrollProof {
     return enrollPop(this.seed, {
       tenant,
       namespace,
+      participantId: opts?.participantId ?? "",
       issuedAtMs: opts?.issuedAtMs ?? BigInt(Date.now()),
       nonce: opts?.nonce ?? newEnrollPopNonce(),
     });
@@ -984,18 +992,71 @@ function resolveCanonical(toolInput: unknown, canonical: Uint8Array | undefined)
   return canonical;
 }
 
-/** One `runDecision` ballot entry: `[agent, value]`, or `[agent, value, reason]` to state a reason. */
-export type RunDecisionVote = readonly [agent: string, value: string] | readonly [agent: string, value: string, reason: string];
+/** A voter's `seam-voter-pop-v1` proof as a vote API takes it: a {@link VoterPopProof} from
+ * `signVoterPop`, or a generated `VoterProof` message. Runtime 0.87.0 (#1687) refuses a vote, ballot or
+ * objection without one (`voter_proof_required` / `voter_proof_invalid`, `PERMISSION_DENIED`). */
+export type VoterProofInput = VoterPopProof | VoterProof;
+
+type VoterProofInit = { proof: { case: "pop"; value: { voterAid: string; issuedAtMs: bigint; expiresAtMs: bigint; signature: Uint8Array } } };
+
+/** The wire `VoterProof` of `proof`, `undefined` when none is given (none is sent). A malformed proof is
+ * a caller bug, refused before the wire — never sent for the runtime to refuse. */
+function voterProofInit(proof: VoterProofInput | undefined | null, where: string): VoterProofInit | undefined {
+  if (proof === undefined || proof === null) return undefined;
+  let pop: { voterAid: unknown; issuedAtMs: unknown; expiresAtMs: unknown; signature: unknown };
+  if (typeof proof === "object" && (proof as { $typeName?: string }).$typeName === "seam.api.v1.VoterProof") {
+    const p = (proof as VoterProof).proof;
+    if (p.case !== "pop") throw new TypeError(`${where}: a VoterProof must carry a pop`);
+    pop = p.value;
+  } else if (typeof proof === "object" && "voterAid" in proof && "signature" in proof) {
+    pop = proof as VoterPopProof;
+  } else {
+    throw new TypeError(`${where}: proof must be a VoterPopProof (signVoterPop) or a VoterProof message`);
+  }
+  if (typeof pop.voterAid !== "string" || pop.voterAid === "") throw new TypeError(`${where}: proof.voterAid must be a non-empty string`);
+  if (!(pop.signature instanceof Uint8Array) || pop.signature.length !== 64)
+    throw new RangeError(`${where}: proof.signature must be 64 bytes`);
+  const ms = (n: string, v: unknown): bigint => {
+    if (typeof v === "bigint") return v;
+    if (typeof v === "number" && Number.isSafeInteger(v) && v >= 0) return BigInt(v);
+    throw new TypeError(`${where}: proof.${n} must be a non-negative integer`);
+  };
+  return {
+    proof: {
+      case: "pop",
+      value: {
+        voterAid: pop.voterAid,
+        issuedAtMs: ms("issuedAtMs", pop.issuedAtMs),
+        expiresAtMs: ms("expiresAtMs", pop.expiresAtMs),
+        signature: pop.signature,
+      },
+    },
+  };
+}
+
+/** One `runDecision` vote: `[agent, value]`, `[agent, value, reason]`, or `[agent, value, reason, proof]`
+ * to carry the voter's proof (#1687 — runtime 0.87.0 refuses a vote without one). On the one-shot path
+ * `value` must be exactly `APPROVE`, `REJECT` or `ABSTAIN`; the proof is addressed `(sessionId, 0)`, mode
+ * `macp.mode.decision.v1`, proposal `p1`, content `votes[0].value`. */
+export type RunDecisionVote =
+  | readonly [agent: string, value: string]
+  | readonly [agent: string, value: string, reason: string]
+  | readonly [agent: string, value: string, reason: string, proof: VoterProofInput];
 
 /** Shape only: an entry of any other length is a caller bug, refused before the wire with its index.
  * The reason's content is the runtime's to judge, never checked here. */
-function voteMessages(votes: readonly RunDecisionVote[]): { agent: string; value: string; reason: string }[] {
+function voteMessages(
+  votes: readonly RunDecisionVote[],
+): { agent: string; value: string; reason: string; proof?: VoterProofInit }[] {
   return votes.map((vote, i) => {
-    if (!Array.isArray(vote) || (vote.length !== 2 && vote.length !== 3)) {
-      throw new TypeError(`votes[${i}] must be an [agent, value] pair or an [agent, value, reason] triple`);
+    if (!Array.isArray(vote) || vote.length < 2 || vote.length > 4) {
+      throw new TypeError(
+        `votes[${i}] must be [agent, value], [agent, value, reason] or [agent, value, reason, proof]`,
+      );
     }
-    const [agent, value, reason] = vote as readonly string[];
-    return { agent: agent!, value: value!, reason: reason ?? "" };
+    const [agent, value, reason, proof] = vote as readonly [string, string, string?, VoterProofInput?];
+    const wire = voterProofInit(proof, `votes[${i}]`);
+    return { agent: agent!, value: value!, reason: reason ?? "", ...(wire ? { proof: wire } : {}) };
   });
 }
 
@@ -1485,7 +1546,12 @@ export class SeamClient {
   }
 
   /**
-   * Cast a vote on a proposal. `opts.reason` is the voter's stated reason, sealed into the vote envelope
+   * Cast a vote on a proposal. `opts.proof` is the voter's `seam-voter-pop-v1` proof ({@link signVoterPop}
+   * over {@link voteContentDigest} of the accepted proposal, addressed to `SessionStep.openedAtMillis`
+   * from the open); runtime 0.87.0 (#1687) refuses a vote without one (`voter_proof_required`). The same
+   * `opts.proof` is taken by {@link submitObjection} and {@link submitBallot}.
+   *
+   * `opts.reason` is the voter's stated reason, sealed into the vote envelope
    * (seam-runtime #804). Omitted or empty means no reason, byte-identical to a vote without one. The
    * server bounds it (4096 bytes, injection-redacted, classified) and REQUIRES it when the governing
    * policy sets `rules["x-com.zer07labs.seam"].capture_dissent`; those checks are deliberately not
@@ -1514,9 +1580,10 @@ export class SeamClient {
     proposalId: string,
     value: string,
     usage?: StepUsage,
-    opts?: { reason?: string } & CredentialedCallOptions,
+    opts?: { reason?: string; proof?: VoterProofInput } & CredentialedCallOptions,
   ) {
-    const init = { sessionId, voter, proposalId, value, usage, reason: opts?.reason ?? "" };
+    const proof = voterProofInit(opts?.proof, "submitVote");
+    const init = { sessionId, voter, proposalId, value, usage, reason: opts?.reason ?? "", ...(proof ? { proof } : {}) };
     // Refresh-once over the SAME `init` (#275, D-SUBMIT-RETRY); see this verb's doc.
     return this.credentialedCall(
       opts?.credential,
@@ -1541,8 +1608,8 @@ export class SeamClient {
    *
    * `rationaleRef` is a `sha256:<hex>` context ref. Since runtime 0.44.0 it is **sealed**: every
    * accepted evaluation's `rationaleRef` (and whether a `confidence` was stated at all) is bound
-   * into the Commitment's explanation under `seam-explanation-digest:v1`, which
-   * `seam-commitment-digest:v3` covers. `verifyDecision` recomputes it locally.
+   * into the Commitment's explanation under `seam-explanation-digest:v2`, which
+   * `seam-commitment-digest:v4` covers. `verifyDecision` recomputes it locally.
    *
    * **Refresh-once (#275).** With a credential (`credential` or a bound agent), a rejected ticket is
    * refreshed once and this SAME request is re-signed under the new ticket and resent once; a second
@@ -1630,10 +1697,12 @@ export class SeamClient {
     opts?: {
       severity?: string;
       usage?: StepUsage;
+      proof?: VoterProofInput;
       credential?: Agent;
       timeoutMs?: number;
     },
   ) {
+    const proof = voterProofInit(opts?.proof, "submitObjection");
     const init = {
       sessionId,
       objector,
@@ -1641,6 +1710,7 @@ export class SeamClient {
       reason,
       severity: opts?.severity ?? "",
       usage: opts?.usage,
+      ...(proof ? { proof } : {}),
     };
     // Refresh-once over the SAME `init` (#275, D-SUBMIT-RETRY); see this verb's doc.
     return this.credentialedCall(
@@ -1790,9 +1860,10 @@ export class SeamClient {
     choice: BallotChoice,
     reason = "",
     usage?: StepUsage,
-    opts?: CredentialedCallOptions,
+    opts?: { proof?: VoterProofInput } & CredentialedCallOptions,
   ) {
-    const init = { sessionId, voter, requestId, choice, reason, usage };
+    const proof = voterProofInit(opts?.proof, "submitBallot");
+    const init = { sessionId, voter, requestId, choice, reason, usage, ...(proof ? { proof } : {}) };
     // Refresh-once over the SAME `init` (#275, D-SUBMIT-RETRY); see this verb's doc.
     return this.credentialedCall(
       opts?.credential,
@@ -2138,15 +2209,31 @@ export class SeamClient {
       throw new IssuerMismatchError(proof.issuerAid, expectedIssuer);
     const c = proof.commitment;
     if (!c) return false;
+    const tct = new TextDecoder("utf-8", { fatal: true }).decode(c.signedArtifact);
+    // #1687: the voter records must come from THIS decision's session — `(tenant, session)` of its id.
+    const decision = decisionOf(decisionId);
+    if (decision === undefined) return false;
     return verifyTct(
       expectedIssuer,
-      new TextDecoder("utf-8", { fatal: true }).decode(c.signedArtifact),
+      tct,
       commitmentView(c),
+      undefined,
+      { decision },
     );
   }
 }
 
-// The lowercase words `seam-explanation-digest:v1` frames, by `ExplanationKind` value. An unknown or
+/** `[tenant, sessionId]` of a `dec:{tenant}:{session_id}` decision id, or `undefined` when it is not
+ * one. The tenant holds no `:`; the session id is everything after it. Python's `_decision_of`. */
+function decisionOf(decisionId: string): readonly [string, string] | undefined {
+  if (!decisionId.startsWith("dec:")) return undefined;
+  const rest = decisionId.slice(4);
+  const sep = rest.indexOf(":");
+  if (sep <= 0 || sep === rest.length - 1) return undefined;
+  return [rest.slice(0, sep), rest.slice(sep + 1)];
+}
+
+// The lowercase words `seam-explanation-digest:v2` frames, by `ExplanationKind` value. An unknown or
 // UNSPECIFIED kind maps to a word the digest refuses, so verification fails closed rather than guessing.
 const EXPLANATION_KIND_WORDS: Partial<Record<ExplanationKind, string>> = {
   [ExplanationKind.VOTE]: "vote",
@@ -2156,7 +2243,7 @@ const EXPLANATION_KIND_WORDS: Partial<Record<ExplanationKind, string>> = {
 };
 
 /**
- * The snake_case commitment {@link verifyTct} takes, from a served `Commitment` (seam-commitment-digest:v3).
+ * The snake_case commitment {@link verifyTct} takes, from a served `Commitment` (seam-commitment-digest:v4).
  *
  * Carries the committer and the sealed explanation — the entries AND the published digest — so
  * verification recomputes the explanation digest from the entries and requires it to equal the published
@@ -2165,7 +2252,12 @@ const EXPLANATION_KIND_WORDS: Partial<Record<ExplanationKind, string>> = {
  * supplied: an empty list with a non-empty published digest verifies `false`. An empty
  * `explanationDigest` (unset bytes) is "not published". Explicit presence is preserved: an absent
  * `confidence` / `rationaleRef` stays `null`, never `0` / `""`, and an absent `supersedes` stays
- * `undefined` while a present empty one stays `""` — v3 frames the two differently (a presence byte).
+ * `undefined` while a present empty one stays `""` — v4 frames the two differently (a presence byte).
+ * Each entry's `voterVerification` (#1687) maps field for field; an UNSPECIFIED or unknown `method`
+ * maps to a word the digest refuses, and a `contentDigest` that is not 32 bytes is refused too, so
+ * verification fails closed rather than hashing a record the runtime never sealed. Fields 9 and 10
+ * (selection / Gate certificate) are not on the served `Commitment` and are absent, as runtime 0.87.0
+ * seals them.
  */
 export function commitmentView(c: Commitment): CommitmentView {
   return {
@@ -2174,7 +2266,7 @@ export function commitmentView(c: Commitment): CommitmentView {
     authority: c.authority,
     auth_method: c.authMethod,
     trust_basis: c.trustBasis,
-    // v3 frames absent and present-empty differently (a presence byte), so explicit presence must
+    // v4 frames absent and present-empty differently (a presence byte), so explicit presence must
     // survive: `c.supersedes || ""` turned every unsuperseding commitment into a present-empty one
     // and its TCT would never verify.
     supersedes: c.supersedes,
@@ -2188,7 +2280,34 @@ export function commitmentView(c: Commitment): CommitmentView {
       reason: e.reason,
       confidence: e.confidence ?? null,
       rationale_ref: e.rationaleRef ?? null,
+      voter_verification: e.voterVerification === undefined ? null : voterVerificationView(e.voterVerification),
     })),
+  };
+}
+
+// The lowercase words `seam-explanation-digest:v2` frames for `VoterVerificationRecord.method`. UNSPECIFIED
+// (never sealed) and any unknown value map to a word the digest refuses.
+const VOTER_VERIFICATION_WORDS: Partial<Record<VoterVerification, string>> = {
+  [VoterVerification.POP]: "pop",
+  [VoterVerification.CP_SIGNED]: "cp_signed",
+};
+
+function voterVerificationView(v: VoterVerificationRecord): VoterVerificationInput {
+  return {
+    method: VOTER_VERIFICATION_WORDS[v.method] ?? `<unknown method ${v.method}>`,
+    principal: v.principal,
+    content_digest: v.contentDigest,
+    issued_at_ms: v.issuedAtMs,
+    expires_at_ms: v.expiresAtMs,
+    signature: v.signature,
+    signer_certificate: v.signerCertificate,
+    tenant: v.tenant,
+    namespace: v.namespace,
+    session_id: v.sessionId,
+    opened_at_millis: v.openedAtMillis,
+    issuer: v.issuer,
+    audience: v.audience,
+    accepted_at_ms: v.acceptedAtMs,
   };
 }
 

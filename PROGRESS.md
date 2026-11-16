@@ -127,11 +127,11 @@ unfiled, reading it from this header rather than from Phase 2's log.
 **published spec only, never from the runtime's Rust** — that is the claim at `verify/DECISIONS.md:113-117`,
 and four independent implementations agreeing is only evidence because none read the others. So:
 `../seam-runtime/crates/**` **Rust sources are never read**. `crates/seam-api/proto/**` is the *published
-contract* and **is** read — `Makefile:25`'s `generate-local` target does exactly that via `buf`. Permitted
+contract* and **is** read — `Makefile:27`'s `generate-local` target does exactly that via `buf`. Permitted
 sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime/plans/**`,
 `../seam-runtime/scripts/**`, `../seam/docs/**`.
 > The previous wording of this line ("`../seam-runtime/crates/**` is NEVER read") was over-broad and
-> contradicted `Makefile:25`. Phase 1 corrects it wherever else it appears.
+> contradicted `Makefile:27`. Phase 1 corrects it wherever else it appears.
 
 > The previous occupant of this file tracked `plans/record-digest-v3.md`, which is **delivered** —
 > Phases 1-8 complete, the Phase 6 blocker explicitly cleared at `plans/archive/record-digest-v3.md:666-669`,
@@ -141,8 +141,8 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 > checkpoint trail lives in git history (`git log -p -- PROGRESS.md`); nothing here carries over.
 >
 > **Done in Phase 1 (2026-08-31).** Delivery was verified against this tree — `record_digest_v3` (since the
-> protocol pass, `record_digest_v4`) at `python/seam_sdk/crypto.py:851`, `ts/src/crypto.ts:1139`, `verify/src/verify.rs:648`; the 6a/6b
-> streamed arms live at `python/seam_sdk/admin.py:136` and `ts/src/admin.ts:151`; KATs at
+> protocol pass, `record_digest_v4`) at `python/seam_sdk/crypto.py:949`, `ts/src/crypto.ts:1249`, `verify/src/verify.rs:648`; the 6a/6b
+> streamed arms live at `python/seam_sdk/admin.py:141` and `ts/src/admin.ts:161`; KATs at
 > `conformance/vectors.json:70` — and the plan is now `plans/archive/record-digest-v3.md`.
 > `plans/authorize-single-canonicalization.md` turned out to be delivered too (issue #60, closed
 > 2026-08-25) and had **no index row at all**, so it was archived in the same pass. Delivery PRs:
@@ -154,13 +154,13 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | Path | Purpose / relevance |
 |---|---|
 | `python/seam_sdk/_collective.py:99` | `collective_outcome_of(resp: Union["pb.DecisionResponse", "pb.SessionStep"])` — fail-closed decode. **Phase 3 DONE**: widened to the union. `:1-30` documents why raw field access is unsafe (optional presence + `UNSPECIFIED` == 0 ⇒ a naive negative test allows on every unknown value). |
-| `ts/src/client.ts:413` | `collectiveOutcomeOf(resp: DecisionResponse | SessionStep)` — the TS twin. **Phase 3 DONE.** It needed a real union: protobuf-es brands messages, so passing a `SessionStep` is a *compile error* today (reproduced: `TS2345`, `$typeName` mismatch). `:169-174` `UnknownCollectiveVerdictError(rawValue, decisionId: string)` — **required** `string`, so `:229`'s `resp.decisionId` became `resp.decisionId ?? ""`; a verifier mutation removing that coalesce reddens a test, so it is load-bearing, not decoration. |
+| `ts/src/client.ts:421` | `collectiveOutcomeOf(resp: DecisionResponse | SessionStep)` — the TS twin. **Phase 3 DONE.** It needed a real union: protobuf-es brands messages, so passing a `SessionStep` is a *compile error* today (reproduced: `TS2345`, `$typeName` mismatch). `:169-174` `UnknownCollectiveVerdictError(rawValue, decisionId: string)` — **required** `string`, so `:229`'s `resp.decisionId` became `resp.decisionId ?? ""`; a verifier mutation removing that coalesce reddens a test, so it is load-bearing, not decoration. |
 | `ts/gen/seam/api/v1/seam_pb.ts` | Branded `SessionStep = Message<"seam.api.v1.SessionStep"> & {…}` — the reason Phase 3's TS half is a hard block, not a typing nicety. Also carries `collectiveOutcome?` on the same branded type. Cited by symbol, not by line: this is a generated, gitignored file, and a line number into it is correct only until the next `make generate`. |
 | `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi` | `SessionStep.collective_outcome` in the Python stubs — generated, never surfaced. Cited by symbol for the same reason as the row above; it carried `:289,297` until round 3, in direct violation of that rule and of `test_no_document_line_anchors_into_a_generated_file`, which it evaded **only** because a comma-list matches `CITATION` not at all. The rule was stated one row up and broken the next. |
-| `python/seam_sdk/client.py:905`, `ts/src/client.ts:1674` | `submit_commit` / `submitCommit` return a `SessionStep` — the caller Phase 3 exists for. |
+| `python/seam_sdk/client.py:967`, `ts/src/client.ts:1744` | `submit_commit` / `submitCommit` return a `SessionStep` — the caller Phase 3 exists for. |
 | `python/tests/test_collective_outcome.py`, `ts/tests/collective_outcome.test.ts` | `DecisionResponse` cases only. **Phase 3** adds the `SessionStep` cases (absent ⇒ none; `UNSPECIFIED` ⇒ raise; unknown ⇒ raise; non-commit step ⇒ none). Drive red first. |
-| `python/seam_sdk/client.py:815` + `python/seam_sdk/client.py:868` · `python/seam_sdk/aio.py:561` + `python/seam_sdk/aio.py:614` · `ts/src/client.ts:1561` + `ts/src/client.ts:1622` | `submit_evaluation` / `submit_objection` — **already delivered** by `c49d005`. Do not re-plan. Written as six separate citations rather than three comma-lists, because a comma-list matches `CITATION` **not at all**: `` `…:723,759` `` was wrong twice in a row — once before this phase and once *inside the commit whose message claims it shifted every citation below `:239`* — and nothing ever said so. |
-| `python/seam_sdk/client.py:851-852` · `python/seam_sdk/aio.py:597-598` · `ts/src/client.ts:1583` | `confidence` presence mapping — `None` ⇒ field-absent, never `0.0`. Correct in both languages; pinned by `python/tests/test_evaluation_confidence.py:55,64,87,100` and `ts/tests/evaluation.test.ts:59,70,85,93`. |
+| `python/seam_sdk/client.py:869` + `python/seam_sdk/client.py:922` · `python/seam_sdk/aio.py:576` + `python/seam_sdk/aio.py:629` · `ts/src/client.ts:1628` + `ts/src/client.ts:1689` | `submit_evaluation` / `submit_objection` — **already delivered** by `c49d005`. Do not re-plan. Written as six separate citations rather than three comma-lists, because a comma-list matches `CITATION` **not at all**: `` `…:723,759` `` was wrong twice in a row — once before this phase and once *inside the commit whose message claims it shifted every citation below `:239`* — and nothing ever said so. |
+| `python/seam_sdk/client.py:905-906` · `python/seam_sdk/aio.py:612-613` · `ts/src/client.ts:1650` | `confidence` presence mapping — `None` ⇒ field-absent, never `0.0`. Correct in both languages; pinned by `python/tests/test_evaluation_confidence.py:55,64,87,100` and `ts/tests/evaluation.test.ts:59,70,85,93`. |
 > **Read every row below as *as at plan time*, 2026-08-31, unless the row says otherwise.** Some
 > were updated mid-run and some were not, which is worse than either — an unstamped map invites a
 > reader to treat a stale row as current. The rows known to have moved since are corrected inline.
@@ -172,25 +172,25 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi` | `AuthorizeRequest.FeaturesEntry` / `RunDecisionRequest.FeaturesEntry` — **synthetic map-entry messages Python emits and protobuf-es does not**. Phase 5's extractors must exclude them **by nesting, not by the `*Entry` name** — `AuditEntry` is a real top-level message (cited by symbol: this tree regenerates). `.pyi` carries **no `oneof` grouping at all** (and `seam.api.v1` has zero `oneof`s). |
 | `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi` | **`__slots__` is NOT the field list.** `ResumeRequest`/`AdminResumeRequest` carry a proto field named `raise`; the `.pyi` generator cannot emit a Python keyword, so `__slots__` omits it and only `RAISE_FIELD_NUMBER` survives. Measured: `__slots__` = 221 fields, protobuf-es = 223. **Phase 5 must extract from `<NAME>_FIELD_NUMBER: _ClassVar[int]` lowercased** — that reconciles both sides at 223 with zero diff. |
 | `contract/wire-framing.json:31-33` | `_comment`: a bump is **NOT** for an additive proto field or a new RPC verb. Do not touch it for ACDP. |
-| `.github/workflows/publish.yml:316` | `make generate` **again at publish time**, against unpinned plugins — the open half of #52. `:390-401` pre-upload smoke installs protobuf *unconstrained*, so the skew is invisible to it; `registry-smoke` (`:519`) likewise. Measured at planning: `grep -rn protobuf .github/workflows/` yielded **one** hit, a prose comment — no workflow pinned protobuf anywhere, so nothing caught the skew. **Phase 6 closed that** (DONE 2026-08-31): the same grep now yields 17, and `.github/workflows/publish.yml:423` installs the built wheel with `protobuf==$FLOOR`. The declared floor and the emitted gencode are both **7.36.0** (`python/pyproject.toml:50`, `python/seam_sdk/_gen/seam/api/v1/seam_pb2.py`'s `Protobuf Python Version` header — cited by symbol, not by line, since it is a generated, gitignored file) — zero headroom, which is why this phase ran first. |
+| `.github/workflows/publish.yml:321` | `make generate` **again at publish time**, against unpinned plugins — the open half of #52. `:390-401` pre-upload smoke installs protobuf *unconstrained*, so the skew is invisible to it; `registry-smoke` (`:519`) likewise. Measured at planning: `grep -rn protobuf .github/workflows/` yielded **one** hit, a prose comment — no workflow pinned protobuf anywhere, so nothing caught the skew. **Phase 6 closed that** (DONE 2026-08-31): the same grep now yields 17, and `.github/workflows/publish.yml:428` installs the built wheel with `protobuf==$FLOOR`. The declared floor and the emitted gencode are both **7.36.0** (`python/pyproject.toml:50`, `python/seam_sdk/_gen/seam/api/v1/seam_pb2.py`'s `Protobuf Python Version` header — cited by symbol, not by line, since it is a generated, gitignored file) — zero headroom, which is why this phase ran first. |
 | `.github/workflows/publish.yml:63-148` | `ci-green` — resolves every `ci-ok` conclusion for the tagged commit. Sound: `:107` still-running ⇒ `pending`, `:117-126` one-green-cannot-mask-one-red, `:143-148` timeout is a refusal. `:192`/`:285` gate both npm and python. **Must not regress.** |
 | `.github/workflows/publish.yml:150-188` | `version-check` — tag vs in-tree versions. It had **no branch-ancestry check** (`.github/workflows/ci.yml:19` runs on every branch push, so a tag at a green feature-branch commit published cleanly); **Phase 6 added one at `:176`**, which is inside this row's own range. Read the range as the job, not as evidence of the gap — it was widened in round 1 until it contained the very step it is cited for lacking. |
 | `buf.gen.yaml:29,31,33` | Unpinned remote plugins — `protocolbuffers/python`, `pyi`, `grpc/python`. The reason the floors are *derived*. Pinning them is **rejected**: `DECISIONS.md:1334`. |
 | `python/tests/test_protobuf_floor.py:72,88` | The two pure-file-read assertions Phase 6 runs at publish time. `:29-31` reads only `_gen/seam/api/v1/seam_pb2.py`; `:47-51` **skips** when `_gen` is absent. `:88-99` forces `cap == gencode_major + 1` — this is why "widen the floor" is not a metadata edit. |
 | `python/tests/test_grpcio_floor.py:38` | Module-level `import grpc` — matters if Phase 6 runs it in the publish job. |
-| `.github/workflows/yank.yml` | `workflow_dispatch`, `dry_run` default `"true"`. A hard **DELETE** (`:91-92`), not a PyPI-style yank. Its token line did **not** strip the cargo token's `"Bearer "` prefix (`.github/workflows/publish.yml:383-385` does) — **Phase 10 fixed it** (DONE 2026-08-31) at `.github/workflows/yank.yml:55-60`, and left the version/format/name filters (`:73-76`) byte-unchanged. `scripts/test_yank_gate.py` now executes the resolution and pins those filters. |
+| `.github/workflows/yank.yml` | `workflow_dispatch`, `dry_run` default `"true"`. A hard **DELETE** (`:91-92`), not a PyPI-style yank. Its token line did **not** strip the cargo token's `"Bearer "` prefix (`.github/workflows/publish.yml:388-390` does) — **Phase 10 fixed it** (DONE 2026-08-31) at `.github/workflows/yank.yml:55-60`, and left the version/format/name filters (`:73-76`) byte-unchanged. `scripts/test_yank_gate.py` now executes the resolution and pins those filters. |
 | `COMPATIBILITY.md:132-169` | §3 known-bad table + the "Nothing was yanked" preamble. **Phase 7 added the `0.7.39 – 0.7.43` row** (DONE 2026-08-31) — *not* the hedged `≥ 0.7.40` this row first planned: both edges are proven from CI history, so the hedge was deleted rather than softened. `:181-188` dependency floors · `:203-262` §4a co-installability (`:221-223` machine-read `PROBE-TABLE` marker — columns and order load-bearing; `:227` crewai row, whose Tracking cell linked **#48 and not crewAI#7103** — **Phase 7 fixed this; the cell now links the PR**) · `:328-364` §7 cross-repo coupling, incl. `:337-355` vector origination. **§7 documents `seam-sdk` main → `seam-runtime` CI, *not* a spec-side merge-order courtesy — do not cite it for one.** |
 | `python/tests/test_retracted_claims.py:170-184` | Parametrized presence check over `COMPATIBILITY.md`. **Phase 7 added `"0.7.39"`** — the *lower* edge, which is the one a reader is most likely to assume they are outside of — plus two real row guards (`python/tests/test_retracted_claims.py:194-256`), because this parametrize is a substring check and could not fail for a deleted row. `python/tests/test_retracted_claims.py:27-30` globs **every `*.md` in the repo including `plans/` and this file**; `python/tests/test_retracted_claims.py:39-48` are the qualifier markers that make a paragraph "discussing, not claiming". |
 | `python/tests/test_compatibility_citations_resolve.py` | Every backticked `file:line` in `COMPATIBILITY.md`/`DECISIONS.md` must resolve; `:61-64,:92` ≥10 each; `:76` sibling paths need a `seam-runtime/` prefix; `:141-172` `ANCHORED` needles must hit **exactly once** within `CITATION_SLACK` (`:176`). **Phase 8** adds the vendored-file rule. |
 | `verify/docs/seam-event.v1.md` | Byte-verbatim vendored spec, pinned in its header. **Phase 9** refreshes it whole-file. Source of #73's citation drift. |
-| `scripts/check_vendored_spec.py:22-38` | Integrity (`:24-26`) / reachability (`:28-32`) / **currency** (`:34-38`) — fails on staleness by explicit decision. This is what will announce runtime P1a Phase 6 by reddening `spec-pin` (`.github/workflows/ci.yml:641-642`) on every PR. |
-| `python/seam_sdk/crypto.py:772-776` | `record_digest_v3` takes `context_digest` as an **opaque 32-byte sub-digest**, deliberately not reimplemented. **This is why ACDP P1a costs the digest layer nothing** — verified: `context_digest` appears only as an input (`:624,668,702`, `python/seam_sdk/admin.py:148`), and no context-provenance formula exists in `python/`, `ts/` or `verify/`. `:386` `_frame` · `:390` `_opt` · `:609` `_opt_bytes` · `:394` `record_digest_v2`. |
+| `scripts/check_vendored_spec.py:22-38` | Integrity (`:24-26`) / reachability (`:28-32`) / **currency** (`:34-38`) — fails on staleness by explicit decision. This is what will announce runtime P1a Phase 6 by reddening `spec-pin` (`.github/workflows/ci.yml:643-644`) on every PR. |
+| `python/seam_sdk/crypto.py:870-874` | `record_digest_v3` takes `context_digest` as an **opaque 32-byte sub-digest**, deliberately not reimplemented. **This is why ACDP P1a costs the digest layer nothing** — verified: `context_digest` appears only as an input (`:624,668,702`, `python/seam_sdk/admin.py:153`), and no context-provenance formula exists in `python/`, `ts/` or `verify/`. `:386` `_frame` · `:390` `_opt` · `:609` `_opt_bytes` · `:394` `record_digest_v2`. |
 | `verify/src/verify.rs:869-875` | `schema_version` dispatch (2 ⇒ v2, 3 ⇒ v3, else refuse); `:837-845` ceiling refusal. P1a keeps `schema_version = 3`, so **no new arm**. |
 | `python/tests/test_errors_is_import_light.py:87-100` | `crypto.py` may import only `cryptography`; `errors.py` only `grpc`. seam-runtime's `sdk-digest-parity` gate loads `crypto.py` standalone. **No phase may add an import to either.** |
 | `scripts/test_ci_gate.py:79,98,141` | `ci-ok`'s `needs:` must equal the full job set both ways; `ALLOWED_ADVISORY` (the literal is at `:52`, asserted by the test at `:98`) may hold only `{integration, spec-pin}`; `workflow-guards` must stay free of `BUF_TOKEN`/`buf-setup-action`/`make generate` (banned triple at `:191-195`). **Any new CI job must be added to `needs:`.** |
 | `scripts/test_publish_gate.py` | Executes `publish.yml`'s extracted `run:` blocks against a stubbed `gh`. **Phase 6** extends it in the same style. |
 | `python/tests/test_workflows_generate_through_the_makefile.py:43,72` | No workflow may call `buf generate` directly; the `generate:` target must keep both `buf generate` and `root_gen.py` (without which the wheel is unimportable). |
-| `Makefile:20,29,57-58` | `generate` (BSR) · `generate-local RUNTIME=../seam-runtime` (reads `crates/seam-api/proto` via `buf`) · **`clean` `rm -rf`s all three stub trees — never run it; recovery needs a BSR login.** |
+| `Makefile:22,29,57-58` | `generate` (BSR) · `generate-local RUNTIME=../seam-runtime` (reads `crates/seam-api/proto` via `buf`) · **`clean` `rm -rf`s all three stub trees — never run it; recovery needs a BSR login.** |
 | `plans/README.md:1-6` | Archive convention: delivered plans move to `plans/archive/` with a dated verification note, verified **against code, never a status table**. `:13` **carried** the stale `record-digest-v3` Active row (*"Phases 1–5 delivered … Phase 6 remains BLOCKED"*) and the index was **missing a row entirely** for `plans/authorize-single-canonicalization.md` — both corrected in Phase 1, which archived each plan against code. `:13` now holds this plan's own Active row. The cross-repo *table* lives in `plans/cross-repo/README.md`, not here — **Phase 2** edits that file. |
 | `CHANGELOG.md:3-7` | The SDK does not choose its own version; entries accumulate under `## Unreleased`. `:751-754` is the hedging style Phase 7 *was* to mirror — it did not, the band being provable, and the citation was removed as it sat within `CITATION_SLACK` of the `"No yank"` needle; `:756-760` the no-yank decision of record. **Both re-measured 2026-09-07** and they had NOT merely drifted by that day's +29: they were already pointing at unrelated prose (a `gh`-stub paragraph and the `recommendation` parameter note), so shifting them by the delta would have moved a broken pointer to a differently-broken place while looking like maintenance. They were re-found by their described content instead. Both re-measured in Phase 4, which pushed them 28 lines down and found them already stale by ~115 before that; **re-measured again in Phase 1 of this workstream**, which had shifted them a further 3 and repointed the two sibling copies in `COMPATIBILITY.md`/`DECISIONS.md` while leaving this one — the same omission `PROGRESS.md:2092-2097` records, one file over. Neither citation is anchored, so nothing went red; that is the point. **This advisory still names only 0.7.13-0.7.19** — see the Phase 7 checkpoint. |
 
@@ -240,8 +240,8 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   documentation-precision; none was a correctness risk, and the commit is docs-only.
   - *R1 GAPS (4):* the repo-map cell asserted a staleness this very commit had just fixed;
     the Approach's "add the delivery PR numbers" instruction was silently skipped;
-    `ts/src/admin.ts:118` was cited as the streamed v3 arm when it is the version-ceiling refusal
-    (`ts/src/admin.ts:150` is the dispatch); and the archive move orphaned citations — two line-anchors plus seven
+    `ts/src/admin.ts:121` was cited as the streamed v3 arm when it is the version-ceiling refusal
+    (`ts/src/admin.ts:160` is the dispatch); and the archive move orphaned citations — two line-anchors plus seven
     `**Plan:**` paths in `ASSUMPTIONS.md`, which no guard covers.
   - *R2 GAPS (3):* the `:109`→`:141` fix reached `PROGRESS.md` but missed
     `plans/archive/record-digest-v3.md:12`; removing a duplicated execution-order block ate the
@@ -258,9 +258,9 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   `python/pyproject.toml` and `ts/package.json` (version stamps) — no line number cited anywhere in
   the plan moved. Merge commit `68e92c2`; branch `feat/publish-integrity-and-tracking-state`.
 - **Delivery verified against code, not status tables** (the whole point of the phase):
-  `record_digest_v3` at `python/seam_sdk/crypto.py:776`, `ts/src/crypto.ts:1139`,
-  `verify/src/verify.rs:648`; streamed v3 arms at `python/seam_sdk/admin.py:136` (with `:107`
-  refusing `schema_version > 3`) and `ts/src/admin.ts:151` (with `:109` the matching ceiling
+  `record_digest_v3` at `python/seam_sdk/crypto.py:874`, `ts/src/crypto.ts:1249`,
+  `verify/src/verify.rs:648`; streamed v3 arms at `python/seam_sdk/admin.py:141` (with `:107`
+  refusing `schema_version > 3`) and `ts/src/admin.ts:161` (with `:109` the matching ceiling
   refusal); KATs at `conformance/vectors.json:70`;
   issue #56 CLOSED 2026-08-25.
 - **Divergence:** `plans/authorize-single-canonicalization.md` was also fully delivered (5/5 phases
@@ -282,9 +282,9 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 
 - **Commit:** see below · branch `feat/publish-integrity-and-tracking-state`
 - **Delivered:** the publish path now re-derives the dependency floors from the stubs *it* generated
-  (`.github/workflows/publish.yml:354`), installs the built wheel with `protobuf` pinned at the floor
+  (`.github/workflows/publish.yml:359`), installs the built wheel with `protobuf` pinned at the floor
   the wheel itself declares and imports the generated module there
-  (`.github/workflows/publish.yml:411`), and refuses a tag whose
+  (`.github/workflows/publish.yml:416`), and refuses a tag whose
   commit is not an ancestor of `origin/main` (`.github/workflows/publish.yml:176`). All three
   are executed — not merely
   asserted — by `scripts/test_publish_gate.py`.
@@ -382,7 +382,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 
 - **Delivered:** §3 carries a third known-bad band (`COMPATIBILITY.md:167`) with the narrow
   condition, the root cause, 0.7.47 as the fixed release, and **both edges proven**; the crewai row
-  (`COMPATIBILITY.md:278`) names the upstream PR that actually ends it; §2 gains a definition of
+  (`COMPATIBILITY.md:287`) names the upstream PR that actually ends it; §2 gains a definition of
   what a compatibility-matrix cell asserts (`COMPATIBILITY.md:75-110`), which is #76's ask.
 - **The band is 0.7.39-0.7.43, and round 1 of the gate is why.** I first wrote `≥ 0.7.40` with a
   paragraph arguing the lower edge was *unprovable* — "per-tag gencode is not recoverable from this
@@ -452,7 +452,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   - **`v0.7.43`'s CI was RED, and three places on this branch said it was green.** Phase 6's
     `DECISIONS.md` entry opened *"CI was green when it did… The green was honest"*, and
     `COMPATIBILITY.md` and `scripts/test_publish_gate.py` repeated it. All three runs at `ff0139a`
-    are `failure`, on that exact floor test. `.github/workflows/publish.yml:325-327` had it right the whole time
+    are `failure`, on that exact floor test. `.github/workflows/publish.yml:330-332` had it right the whole time
     ("a red CI at the tagged commit"), so the branch contradicted itself. **Phase 6's conclusion
     survives and its worked example does not:** there are *two* paths to shipping this defect —
     publish past a red gate (what actually happened, five times; `ci-green` closes it) and a
@@ -496,7 +496,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 - **Delivered:** a `DECISIONS.md` entry that makes the forward reference Phase 7 left dangling
   true; `yank.yml`'s credential resolution fixed (`.github/workflows/yank.yml:55-60`); and
   `scripts/test_yank_gate.py` (12 tests) wired into `workflow-guards`
-  (`.github/workflows/ci.yml:708-709`).
+  (`.github/workflows/ci.yml:710-711`).
 - **Nothing was dispatched and nothing was deleted.** The scoping filters — exact version equality,
   the python+npm allowlist, the exact-name match keeping the org's Cargo crates unreachable — are
   byte-unchanged, and are now pinned by tests so that widening one is deliberate and visible.
@@ -524,7 +524,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   defect only one language has.
 - **The `yank.yml` bug was latent and fails closed, which is the argument for fixing it.** It
   resolved `${CLOUDSMITH_API_KEY:-$CARGO_REGISTRIES_ZER07LABS_TOKEN}` without stripping the
-  `"Bearer "` the org Cargo token carries — a strip `.github/workflows/publish.yml:385` has always
+  `"Bearer "` the org Cargo token carries — a strip `.github/workflows/publish.yml:390` has always
   done. Cloudsmith 401s and `curl -sf` aborts before any DELETE, so no wrong deletion was possible;
   neither was the tool working *at all*, dry run included, unless the dedicated secret happened to
   be set. A safety tool that silently does not work is discovered during the incident.
@@ -573,7 +573,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   one citation repoint printed `ok` and were never written, because the script wrote once at the
   end and a later match failed first. Re-applied with a write after *every* edit.
 - **Fourth: nine literal `'\"'\"'` shell-quoting artifacts had leaked into `DECISIONS.md`** from
-  the heredoc that wrote it. Repaired; the one remaining match in the repo (`.github/workflows/ci.yml:360`) is
+  the heredoc that wrote it. Repaired; the one remaining match in the repo (`.github/workflows/ci.yml:362`) is
   legitimate quoting inside a `run:` block.
 - **Substantive corrections from the gate, not just hygiene:**
   - *Fail-closed was overstated.* "A token that is only the prefix strips to empty and is refused"
@@ -729,7 +729,7 @@ ERROR: a breaking change and must be handled, never silently rewritten away.
   `ContextBinding` field present — all eleven, `content_hash` / `receipt_hash` / `key_status` /
   `resolved_status` / `retraction` among them.
 - **No wrapper change was needed, exactly as the plan predicted** — verified rather than assumed:
-  `resolve_context` (`python/seam_sdk/client.py:1223`) and `resolveContext` (`ts/src/client.ts:1629`)
+  `resolve_context` (`python/seam_sdk/client.py:1295`) and `resolveContext` (`ts/src/client.ts:1696`)
   return the generated `ContextBinding` straight through, so the five fields reach callers with no
   SDK work. What both *did* carry was a docstring enumerating four of the eleven fields as if that
   were the set; both now say what they actually return, and both carry the vocabulary warning.
@@ -878,7 +878,7 @@ ERROR: a breaking change and must be handled, never silently rewritten away.
   *required* job in their repo red, fixable only from here; (3) a heads-up when the spec changes.
 - **Ask A's third point is evidenced, not hypothetical** — it fired during this run and cost the time
   documented above.
-- **The plan's `COMPATIBILITY.md:254-313` anchor for Ask B was fine; my check of it was not.** I
+- **The plan's `COMPATIBILITY.md:263-322` anchor for Ask B was fine; my check of it was not.** I
   read it off a branch based on `main` *before* #79 merged, saw commitment-digest text at that line,
   and recorded the anchor as stale. At `20786dc` line 203 is exactly
   `### Agent-framework co-installability` (the section runs `:203-264`). The plan was right.
@@ -1101,7 +1101,7 @@ linear sequencing keeps it trivial.
 
 **Ground-truth corrections made while planning.** Recorded rather than smoothed over, because two of
 them change what the phases do:
-- `ts/src/client.ts:354` already carries `collectiveOutcomeOf` over a `DecisionResponse | SessionStep`
+- `ts/src/client.ts:362` already carries `collectiveOutcomeOf` over a `DecisionResponse | SessionStep`
   union. TypeScript is not a judgement call — it gets the twin.
 - The #85 failing set is the shared-8099 set **minus the first test**, not the whole set. Four tests
   use the `server` fixture (in `python/tests/test_integration.py` at `960cf81`, lines 69/93/108/306 —
@@ -1123,8 +1123,8 @@ them change what the phases do:
 | `python/seam_sdk/_collective.py:99` | `collective_outcome_of` — the shape Phase 3 mirrors: `HasField` gate at `:116`, frozen dataclass at `:52`, union signature at `:84-86`. |
 | `python/seam_sdk/_policy.py` | **Phase 3 created it.** `policy_enforcement_of(resp)` returning `None` iff absent. New module, not a `_collective.py` addition — that module's docstring is entirely about a growth policy this field does not have. |
 | `python/seam_sdk/__init__.py:10` | Where `_collective`'s exports are imported; Phase 3 adds `_policy`'s alongside, plus two `__all__` entries. |
-| `ts/src/client.ts:326` | `collectiveOutcomeOf` over the union. **Phase 4 inserted `policyEnforcementOf` immediately after it**, so this citation survived unchanged; the `submitCommit` citation did not, and was repointed by measurement in the same commit. |
-| `ts/src/client.ts:499` | **Phase 4 created it.** `policyEnforcementOf(resp)` returning `undefined` iff absent — 103 lines inserted after `collectiveOutcomeOf` ends at `:239`. |
+| `ts/src/client.ts:334` | `collectiveOutcomeOf` over the union. **Phase 4 inserted `policyEnforcementOf` immediately after it**, so this citation survived unchanged; the `submitCommit` citation did not, and was repointed by measurement in the same commit. |
+| `ts/src/client.ts:507` | **Phase 4 created it.** `policyEnforcementOf(resp)` returning `undefined` iff absent — 103 lines inserted after `collectiveOutcomeOf` ends at `:239`. |
 | `ts/src/index.ts:29` | The dual-declaration comment (called "shadowed-names" until Phase 4 retracted that word — see the record). It opened with "Two" and listed three names; Phase 4 rewrote it to name all **five** names declared on both sides (`CollectiveOutcome` was already missing before this phase) and made the count one-per-name. `python/tests/test_shadowed_names_comment.py` now enforces the list, the count, the namespace prefix, and that none of the five is on an explicit `../gen/` re-export list. |
 | `python/tests/test_collective_outcome.py:208` | The `SessionStep` arm — the model for `test_policy_enforcement.py`. |
 | `python/tests/test_integration.py` | At `960cf81`: `addr = "127.0.0.1:8099"` (line 48), hardcoded, four tests; `_wait` (26-34) proved only that *something* listens; a bare `terminate()` (66). **Phase 2's primary target** — all three are gone, so this row quotes rather than line-anchors. |
@@ -1133,10 +1133,10 @@ them change what the phases do:
 | `python/tests/test_admin.py` | At `960cf81`: `_free_port()` (line 175) — the ephemeral-port helper that already existed and that Phase 2 made the single copy. Its docstring already said fixed ports collide. |
 | `python/tests/test_verify_attestation.py` | At `960cf81`: the second, verbatim copy of `_free_port()` (line 122). |
 | `python/tests/live_server.py` | **Phase 2 creates.** One spawn/readiness/teardown/log-capture helper for all four live suites. |
-| `ts/tests/integration.test.ts:53` | "Distinct ports avoid cross-test collisions" — the TS suite reached this conclusion and applied it everywhere. It has never shown this flake. |
+| `ts/tests/integration.test.ts:54` | "Distinct ports avoid cross-test collisions" — the TS suite reached this conclusion and applied it everywhere. It has never shown this flake. |
 | `.github/workflows/ci.yml` (cont.) | At `960cf81`: the smoke step's `kill "$pid"` (line 290), immediately followed by `exit 0` — it never waited for the process it started. Replaced by `reap()`. |
-| `.github/workflows/ci.yml:382-393` | The python live step (the `pytest` line is `.github/workflows/ci.yml:392`). Phase 2 added an `if: failure()` log dump + artifact upload at the **end of the job**, after the TypeScript step at `.github/workflows/ci.yml:394` — a step is evaluated at its own position, so anything placed earlier cannot see a TypeScript failure. |
-| `.github/workflows/ci.yml:757` | `ADVISORY: integration,spec-pin`. Advisory means *may skip*, not *may fail* — a red `integration` still reddens `ci-ok`, which lists it at `.github/workflows/ci.yml:742`. |
+| `.github/workflows/ci.yml:384-395` | The python live step (the `pytest` line is `.github/workflows/ci.yml:394`). Phase 2 added an `if: failure()` log dump + artifact upload at the **end of the job**, after the TypeScript step at `.github/workflows/ci.yml:396` — a step is evaluated at its own position, so anything placed earlier cannot see a TypeScript failure. |
+| `.github/workflows/ci.yml:759` | `ADVISORY: integration,spec-pin`. Advisory means *may skip*, not *may fail* — a red `integration` still reddens `ci-ok`, which lists it at `.github/workflows/ci.yml:744`. |
 | `scripts/check-contract.sh:274` · `scripts/check-contract.sh:294` | `fields_python` and `fields_ts`. Already parameterised on stub path (and package, for TS) when #88 landed — measured, they yield 90/90 on the event stubs with zero one-sided entries. **Phase 5 did NOT touch them**: the gap it closed is one level up, at the VERB surface, so it parameterised `rpcs_python`/`rpcs_ts` instead. This row said Phase 5 would do it; that was a planning-time guess about the wrong pair. Two full citations on one row, not `` `:248` `` as a bare number: a pathless line reference matches `CITATION` not at all, so it is invisible to every check in `test_compatibility_citations_resolve.py`. Both needles are in `ANCHORED` and bound to this row by `CLAIM_LINES`. |
 | `scripts/check-contract.sh:317` | `manifest_fields` — its stripper claims every `#`-free line, which is why the event surface cannot share `contract/field-manifest.txt`. |
 | `scripts/check-contract.sh:684-693` | `--write-manifest` deletes `contract/expected-local-lag.txt`; the cited block is the comment scoping that delete to the api write (`# Scoped to the API write, deliberately`), and the `-f` guard and `rm -f` are the two lines immediately below it. **Re-targeted:** it pointed at the FIELD-manifest write for two rounds — the number was faithfully remapped each time the file moved, which preserved a wrong target rather than fixing it. A remap can only keep a citation pointing where it already pointed; it is now ANCHORED so the content, not just the line, is checked. The second reason the event surface needs its own file. Deliberately no bare `:NNN` for those two — a naked line number inside a row is invisible to `test_compatibility_citations_resolve.py` (it checks backticked `file:line`, and a bare `:473` has no path), so it rots unnoticed. This one had: it still said `:473` after the guard moved to `:571`. |
@@ -1233,7 +1233,7 @@ defects, four of them in the halves that were never exercised locally:
   DEVNULL` (bare names, not attributes), `from os import kill`, `proc.send_signal()`, and ports
   `9113/9114` outside the hardcoded `8000-8999` window. Detectors now match bare names and import
   aliases as well as attributes, cover `send_signal`/`killpg`/`posix_spawn`, and resolve dotted paths
-  so `subprocess.run` is caught while `asyncio.run` — which `python/tests/test_integration.py:254` genuinely uses
+  so `subprocess.run` is caught while `asyncio.run` — which `python/tests/test_integration.py:258` genuinely uses
   — is not. Ports are caught by three independent rules, the load-bearing one being *assignment to a
   port-named target from an int literal*, at any number. Deliberately **not** "any int in the
   registered-port range": `test_integration.py` legitimately holds `BudgetLimits(tokens=5000)`, and a
@@ -1580,7 +1580,7 @@ caught more widely than before (drop-gate 8 → 9 failures, empty-`policy_id` 1 
 
 ### Phase 4 — `policyEnforcementOf` in TypeScript, and the citations it moved · **DONE**
 
-`ts/src/client.ts:499`, inserted immediately after `collectiveOutcomeOf` ends at `:239`, so `:218`
+`ts/src/client.ts:507`, inserted immediately after `collectiveOutcomeOf` ends at `:239`, so `:218`
 survived unchanged. **K = 103 as finally committed** — 100 lines at first commit, +1 for a blank line
 round 1 caught missing against the file's own convention (the only such gap between **top-level**
 declarations; member-level `}`-then-declaration adjacencies are ordinary and plentiful), +2 for a
@@ -1632,7 +1632,7 @@ Kept in full rather than quietly amended, because "a stale citation makes a hand
 wrong" and "a corrected citation moves a margin" are different failures and only the second happened.
 
 **Round 2 then narrowed it further, deliberately, and that is the more interesting number.** Splitting
-`` `ts/src/client.ts:863,774` `` into two anchored citations put a citation at 762, seventeen lines
+`` `ts/src/client.ts:871,774` `` into two anchored citations put a citation at 762, seventeen lines
 from `submitCommit(` at 779 — and `submitObjection(`'s own margin is **14**. (This record first
 called that "the tightest in that table, displacing `publish.yml`'s 27"; both halves were wrong —
 round 3 measured the displaced entry as `authenticity.rs`'s 16, contradicting a sentence fifteen
@@ -1753,7 +1753,7 @@ split block, a Cyrillic lookalike, names inside the intro line, tab indentation)
 anyway: the fix pass introduced four more.
 
 - **The commit that claimed to have shifted every citation below `:239` missed one.** `:71` still
-  cited `ts/src/client.ts:863,774`; the true lines were 724 and 760, and both cited lines are the
+  cited `ts/src/client.ts:871,774`; the true lines were 724 and 760, and both cited lines are the
   `*/` terminating the preceding doc comment. It was ungated for the reason this phase had already
   documented in the same file — a comma-list matches `CITATION` not at all — so the claim went into
   a commit message unchecked. Fixed by splitting the three comma-lists on that row into six ordinary
@@ -1789,7 +1789,7 @@ Also corrected: "4 failed, 819 passed" was 818; two `CHANGELOG.md` companions in
 by ~87 (round 3 caught the first figure double-counting that push — 115 is the *post*-push drift); a COMPATIBILITY.md citation for `opts.canonical` that pointed at line 265 of
 `ts/src/client.ts` (written without backticks here, since it names a position that was already wrong
 before this phase widened it) and now lands inside the new `PolicyEnforcement` interface — repointed
-to `ts/src/client.ts:713`; and a historical mention of a
+to `ts/src/client.ts:721`; and a historical mention of a
 long-removed citation that was written in backticks and so read as a live one.
 
 **Round-2 verification:** python **833 passed / 17 skipped** (835 at the end of round 3) · TS 136 / 126 pass / 0 fail ·
@@ -2143,7 +2143,7 @@ closing it and replaced the mechanism outright — see below.
 Also closed: a paragraph here naming a test round 5 had deleted, thirty-five lines above the paragraph
 recording that it deleted it; the reconcile arithmetic in `DECISIONS.md`, which gave two different
 wrong partitions of its own seven sub-sections and counted an eighth entry that has no sub-section;
-and `Makefile:29`, which said "the RPC + Authorize probes are always hard gates" two lines above the
+and `Makefile:31`, which said "the RPC + Authorize probes are always hard gates" two lines above the
 exit-code list that round 5 had just corrected to include admin.
 
 **Re-verified after these fixes:** python **878 passed / 17 skipped** · `scripts/` **100 passed** ·
@@ -2743,7 +2743,7 @@ run:
     ERROR tests/test_workflows_generate_through_the_makefile.py
     !!!!!! Interrupted: 1 error during collection !!!!!!
 
-The repo already held the evidence twice over — `.github/workflows/ci.yml:695` installs `pyyaml` for the
+The repo already held the evidence twice over — `.github/workflows/ci.yml:697` installs `pyyaml` for the
 sibling `workflow-guards` job, and `test_node_engines_floor.py` hand-parses YAML with a regex rather
 than import it — and a green local suite still said everything was fine. Declaring `pyyaml` fixes
 the instance; `test_test_dependencies_are_declared.py` fixes the class, by parsing every test
@@ -2975,7 +2975,7 @@ invalidated it were checked:
    tested the guard and found it **vacuous for two of the three things the comment names**: with
    the `| **0.7.16 – 0.7.19**` row deleted, or the `**Floor: 0.7.20.**` line deleted, the suite
    stayed green. `"0.7.17"` never appears in the §3 table (the row reads `0.7.16 – 0.7.19`) and
-   matched only unrelated prose at `COMPATIBILITY.md:200`; `"0.7.20"` occurs five times elsewhere.
+   matched only unrelated prose at `COMPATIBILITY.md:209`; `"0.7.20"` occurs five times elsewhere.
    Asserting that assertions exist is not asserting that they fire — the exact substitution this
    plan exists to delete, committed while checking a claim about a guard.
 
@@ -3165,25 +3165,25 @@ Every line below was opened and verified during planning; line numbers are as of
 - `.github/workflows/publish.yml:24` — triggers on `tags: ["v*"]`, which does **not** match
   `go/v0.7.77`. Only the root tag starts a publish.
 - `.github/workflows/publish.yml:82-83` — `ci-green` polls 40 x 30s = 20 min before `npm`/`python`
-  start; `.github/workflows/publish.yml:625` and `:721` add 10 x 30s retries per ecosystem. Together
+  start; `.github/workflows/publish.yml:630` and `:721` add 10 x 30s retries per ecosystem. Together
   they are the publish latency the grace window is sized against.
-- `.github/workflows/publish.yml:771` — the **only** `timeout-minutes` in the file. `ci-green`
+- `.github/workflows/publish.yml:776` — the **only** `timeout-minutes` in the file. `ci-green`
   (`.github/workflows/publish.yml:63`), `version-check` (`:150`), `npm` (`:189`), `python` (`:282`),
-  `publish-verify` (`.github/workflows/publish.yml:526`) and `registry-smoke` (`:587`) declare none, so their real bound is
+  `publish-verify` (`.github/workflows/publish.yml:531`) and `registry-smoke` (`:587`) declare none, so their real bound is
   GitHub's default 360-minute job limit. That limit sizes the check's HARD grace tier only: a job
   killed at it makes the run fail, which `release-outcome` reports itself
-  (`.github/workflows/publish.yml:768`, `if: always()`), so the limit bounds *duplication*, not
+  (`.github/workflows/publish.yml:773`, `if: always()`), so the limit bounds *duplication*, not
   *detection*. The SOFT tier is sized on the declared ceilings instead.
 
 **The half already shipped — read, do not modify**
 
-- `.github/workflows/publish.yml:761-765` — the blind-spot comment. Phase 1 fixes its dangling
+- `.github/workflows/publish.yml:766-770` — the blind-spot comment. Phase 1 fixes its dangling
   "see the issue this job cites"; Phase 9 updates it once the new workflow exists. Both edits must
   be line-count-neutral so citations into this file do not move.
-- `.github/workflows/publish.yml:766-832` — `release-outcome`, whose title template sits at `:788`.
+- `.github/workflows/publish.yml:771-837` — `release-outcome`, whose title template sits at `:788`.
   Create-vs-comment is **exact** title equality over the first 100 open issues,
-  `.github/workflows/publish.yml:818-824`; job-level `permissions`,
-  `.github/workflows/publish.yml:772-774`, replace top-level rather than extend them.
+  `.github/workflows/publish.yml:823-829`; job-level `permissions`,
+  `.github/workflows/publish.yml:777-779`, replace top-level rather than extend them.
 - `scripts/test_release_notice_gate.py:62-109` — the canonical hermeticity harness: `gh` stubbed as a
   heredoc executable, `chmod(0o755)`, every argv appended to a call-log file, canned responses
   pre-rendered in the tool's real output shape, executed under `bash -c` with a fully-replaced env.
@@ -3213,12 +3213,12 @@ Every line below was opened and verified during planning; line numbers are as of
 
 **CI wiring the new files must satisfy**
 
-- `.github/workflows/ci.yml:678-735` — `workflow-guards`, the credential-free lane. A new
+- `.github/workflows/ci.yml:680-737` — `workflow-guards`, the credential-free lane. A new
   `scripts/test_*.py` needs its own named step here.
-- `.github/workflows/ci.yml:695` — the only install: `pyyaml pytest grpcio cryptography`. A new
+- `.github/workflows/ci.yml:697` — the only install: `pyyaml pytest grpcio cryptography`. A new
   `scripts/` test may import nothing else. An undeclared import is a CI **collection error** — but
   scoped to one step, not the job's whole suite: `workflow-guards` invokes pytest once per file
-  (`.github/workflows/ci.yml:697` and `:656`, `:661`, `:667`, `:672`, `:678`, `:684`, `:691`), so
+  (`.github/workflows/ci.yml:699` and `:656`, `:661`, `:667`, `:672`, `:678`, `:684`, `:691`), so
   the steps above it have already reported and only the ones below are skipped. It is loud, on the
   PR that introduces it.
 - `scripts/test_ci_gate.py:277-301` — set equality both directions between `scripts/test_*.py` on
@@ -3299,7 +3299,7 @@ filed as its own issue during finalization.
   sentences. Verdict turned on the promise line's final character. Fix was terminal rather than
   incremental: the heuristic was deleted and the window narrowed to the promise line.
 * **Files:** `.github/workflows/publish.yml` (line 765 only; file still 832 lines, so every
-  line-anchored citation into `.github/workflows/publish.yml:766-832` is unmoved) ·
+  line-anchored citation into `.github/workflows/publish.yml:771-837` is unmoved) ·
   `scripts/test_release_notice_gate.py` (15 → 54 tests).
 * **Proof:** each of the guard's 10 clauses caught by an individual mutation; a 16-case sweep over
   promise-line endings; all defeats from all three rounds firing against the real file; both
@@ -3529,7 +3529,7 @@ filed as its own issue during finalization.
   cron would let a release cross the entire band between runs, leaving the middle tier as code that
   never executes in production. That mutation is red.
 * **A guard that bit on the argument for its own existence.** The sibling-workflow test scanned raw
-  workflow text for `check_registry_drift.py`, and `.github/workflows/ci.yml:733` names the script in a comment
+  workflow text for `check_registry_drift.py`, and `.github/workflows/ci.yml:735` names the script in a comment
   explaining why the drift question is *not* asked there. It now reads comment-stripped `run:`
   bodies — `scripts/test_yank_gate.py:51-62`'s discipline, which exists because two of that file's
   guards were satisfied by prose quoting the strings they searched for.
@@ -4069,7 +4069,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1903`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:1974`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -4376,14 +4376,14 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
 
 ## plans/verify-anchor-tenant.md — repo map (written by /plan, 2026-10-05)
 
-- `python/seam_sdk/client.py:1204-1210` — sync `verify_party_anchor`, the primary wrapper to
-  change; `python/seam_sdk/client.py:142` has `DEFAULT_TIMEOUT_S = 2.0`, the method's timeout
+- `python/seam_sdk/client.py:1276-1282` — sync `verify_party_anchor`, the primary wrapper to
+  change; `python/seam_sdk/client.py:177` has `DEFAULT_TIMEOUT_S = 2.0`, the method's timeout
   default.
-- `python/seam_sdk/aio.py:959-967` — the async twin, hand-duplicated (no shared base class) —
+- `python/seam_sdk/aio.py:992-1000` — the async twin, hand-duplicated (no shared base class) —
   must change in lockstep: `python/tests/test_client_parity.py:64-79`'s
   `test_the_two_clients_agree_on_each_verbs_signature` compares parameter lists in order, so a
   half-done change reddens it, not just a names-only check.
-- `python/seam_sdk/admin.py:490-505` — `resume_session`'s `tenant: str = ""` keyword-only
+- `python/seam_sdk/admin.py:495-510` — `resume_session`'s `tenant: str = ""` keyword-only
   precedent, the pattern Phase 1 mirrors.
 - `python/tests/test_verify_attestation.py:78-93` (`_RecordingTrust`/`_client_with_trust` unit
   pattern) and `python/tests/test_verify_attestation.py:96-176` (`dual_plane` fixture +
@@ -4393,17 +4393,17 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
   reused as-is by Phase 1's new live test, not modified.
 - `python/tests/test_authorize.py:400,501` — two positional `verify_party_anchor(...)` calls in
   deadline tables; confirmed unaffected by a keyword-only addition.
-- `ts/src/client.ts:110-154` (`UnaryCallOptions`/`CredentialedCallOptions`/`call()`),
-  `ts/src/client.ts:785-807` (`authorize`'s inline-opts precedent),
-  `ts/src/client.ts:1485-1492` (`verifyPartyAnchor` itself) — the TS surface Phase 2 changes
+- `ts/src/client.ts:115-159` (`UnaryCallOptions`/`CredentialedCallOptions`/`call()`),
+  `ts/src/client.ts:793-815` (`authorize`'s inline-opts precedent),
+  `ts/src/client.ts:1546-1558` (`verifyPartyAnchor` itself) — the TS surface Phase 2 changes
   and the conventions it must match.
-- `ts/src/admin.ts:355-378` — `resumeSession`'s inline `tenant?: string` precedent, the pattern
+- `ts/src/admin.ts:365-388` — `resumeSession`'s inline `tenant?: string` precedent, the pattern
   Phase 2 mirrors on the data plane.
 - `ts/tests/verify_attestation.test.ts` — sibling test file to model Phase 2's new
   `verify_anchor.test.ts` after (`clientWithTrust` unit pattern, `withPlanes` live pattern).
 - `ts/tests/operator_token.ts` — already carries `mintOperatorToken`'s `opts.tenant` (added in
   PR #174); reused as-is.
-- `contract/field-manifest.txt:413` — already lists `VerifyAnchorRequest/tenant`; no change.
+- `contract/field-manifest.txt:417` — already lists `VerifyAnchorRequest/tenant`; no change.
 - `DECISIONS.md:2294-2327` — the 2026-10-04 deferral entry; Phase 3 amends its stale trigger
   bullet (`DECISIONS.md:2313-2314`) in place AND appends a new dated entry (this file is not
   append-only — `DECISIONS.md:1220-1221`, `DECISIONS.md:1551`, and `DECISIONS.md:1952` are
@@ -4556,12 +4556,12 @@ green before any code changed.
   this — "rather than refusing outright" was wrong, fixed before merge). (2) the release's
   `retitle_changelog.sh` run shifted `CHANGELOG.md`'s "No yank" paragraph from line 1054 to 1056
   (a +2 insert right after `## Unreleased`), pushing `COMPATIBILITY.md:135` and
-  `DECISIONS.md:1222`'s `CHANGELOG.md:1680-1697` citations past the citation test's slack
-  tolerance; repointed both to `CHANGELOG.md:1682-1699`. Tested: `check_vendored_spec.py` OK via both
+  `DECISIONS.md:1222`'s `CHANGELOG.md:1751-1768` citations past the citation test's slack
+  tolerance; repointed both to `CHANGELOG.md:1753-1770`. Tested: `check_vendored_spec.py` OK via both
   `--from local` and `--from gh`; `test_compatibility_citations_resolve.py` 489 passed/0 failed
   standalone (was 4 failed). Verifier also flagged two pre-existing, gate-invisible citations
   elsewhere that the same +2 shift widened further — `DECISIONS.md:2035` cites
-  `CHANGELOG.md:1582` and `PROGRESS.md:3981` cites `CHANGELOG.md:1467`, both already ~130-250
+  `CHANGELOG.md:1653` and `PROGRESS.md:3981` cites `CHANGELOG.md:1538`, both already ~130-250
   lines stale before this release — out of scope for this release-unblock hotfix; filed as a
   follow-up issue rather than folded in here.
   **Rebased `feat/verify-anchor-tenant` onto this commit during `/sweep`'s ship pass.** Four
@@ -4571,7 +4571,7 @@ green before any code changed.
   `CHANGELOG.md`/`COMPATIBILITY.md`/`DECISIONS.md`: the feature branch's own new
   `## Unreleased` entry (16 lines) was kept above this hotfix's `## 0.33.3` header, which
   shifted "No yank" from this entry's `1056` to `1072` and recomputed the two citations above
-  (`CHANGELOG.md:1682-1699`) to `CHANGELOG.md:1698-1715` — verified against the exact
+  (`CHANGELOG.md:1753-1770`) to `CHANGELOG.md:1769-1786` — verified against the exact
   paragraph-boundary text at both the old and new line numbers before trusting the new range,
   not just the arithmetic. A dedicated ship-gate verifier independently re-derived this same
   shift from the diff and confirmed it exact.
@@ -4584,16 +4584,16 @@ green before any code changed.
      unknown-event-tag audit (relayed to seam-runtime, closed): no SDK verifier re-serializes a
      whole decoded `seam.event.v1` message to compute a digest/chain hash — Rust
      (`verify/src/wire.rs:16-80,161-211`, `verify/src/verify.rs:559-585`), Python
-     (`python/seam_sdk/crypto.py:556-593,695`), and TypeScript (`ts/src/crypto.ts:650,882`) all
+     (`python/seam_sdk/crypto.py:654-691,695`), and TypeScript (`ts/src/crypto.ts:760,882`) all
      hand-build their preimage from an explicit, spec-transcribed field list. An unsealed,
      non-preimage field just flows through harmlessly, same conclusion as that audit reached for
      the sealed-vs-unsealed question in general.
   2. **No event-consumption wiring code needs to change either**, confirmed newly this session:
      both languages' `StreamEvents` paths are pure pass-through, not reconstruction.
-     `python/seam_sdk/admin.py:620` returns `EventStream(lambda: self._events.StreamEvents(...))`,
-     whose `__next__` (`python/seam_sdk/admin.py:244`) yields the raw generated `ev.SeamEvent` object directly —
+     `python/seam_sdk/admin.py:636` returns `EventStream(lambda: self._events.StreamEvents(...))`,
+     whose `__next__` (`python/seam_sdk/admin.py:249`) yields the raw generated `ev.SeamEvent` object directly —
      same shape as `preview_erasure` returning the whole `pb.ErasurePreview` (PR #182's finding).
-     `ts/src/admin.ts:472-480`'s `streamEvents` generator does `for await (const ev of
+     `ts/src/admin.ts:486-494`'s `streamEvents` generator does `for await (const ev of
      events.streamEvents(...)) { yield ev; }` — also raw pass-through, typed
      `AsyncIterable<SeamEvent>`. So `tenant_seq` will be reachable as `event.tenant_seq` in both
      languages the instant the stubs regenerate, with zero method/type changes — exactly the
@@ -4624,7 +4624,7 @@ green before any code changed.
 **Risk tiers:** P1 complex · P2 complex · P3 simple.
 **Repo map:** `scripts/check_registry_drift.py` (the check) · `scripts/test_registry_drift_gate.py`
 (its gate; curl/gh stubs first on PATH) · `.github/workflows/registry-drift.yml` (schedule, credential
-resolution) · `.github/workflows/publish.yml:747-810` (`promote-partner`) ·
+resolution) · `.github/workflows/publish.yml:752-815` (`promote-partner`) ·
 `.github/workflows/promote-partner-backfill.yml` + `scripts/promote-to-partner.sh` (remediation) ·
 `README.md` § registry drift · `CLAUDE.md` command line.
 
@@ -4827,14 +4827,14 @@ at `584823a`; runtime `origin/main` `a9ddb982`.
 - `ts/tests/unit_plumbing.test.ts`: :177 builds `SeamAdminClient` from a fake transport, so the constructor must stay compatible.
 - `go/routing/routing.go`: the interceptor-factory model (:61 unary, :71 stream, :81 `WithTenant` DialOptions).
 - `go/crypto/enroll_proof.go`: :25-29, struct field order as the JSON order.
-- `go/go.mod`: go 1.21, grpc v1.66.3; CI runs Go 1.22 (`.github/workflows/ci.yml:489`).
+- `go/go.mod`: go 1.21, grpc v1.66.3; CI runs Go 1.22 (`.github/workflows/ci.yml:491`).
 - `java/.../SeamCrypto.java`: BouncyCastle seed→key :107, sign :110-114, plain `new Gson()` :41 (escapes HTML), ordered map :660.
 - `java/.../TenantRouting.java`: `interceptor` :67.
 - `java/build.gradle.kts`: bcprov 1.78.1 :9, grpc-api 1.66.0 :14-15, grpc-inprocess/stub (test) :19-20.
 - `kotlin/.../SeamCrypto.kt`: :117/:120 (duplicated, not depended on), `linkedMapOf` :649. `TenantRouting.kt`: :57.
 - `scripts/check_vendored_spec.py`: vendored-copy table at :136-150 (add `docs/specs/mgmt-dpop.md`).
 - `.github/workflows/ci.yml`: spec pin :657-682; integration :241 (seam-grpc from `seamd:main` :298-312; Python live :406-408, TS :415).
-- `conformance/`: one JSON per vector; tests load it by relative path (Py `python/tests/test_enroll_pop.py:26-47`, TS `ts/tests/enroll_pop.test.ts:46-47`, Go `go/crypto/call_sig_v3_vector_test.go:35`, Java `java/src/test/java/com/zer07labs/seam/EnrollPopTest.java:38`, Kotlin `kotlin/src/test/kotlin/com/zer07labs/seam/EnrollPopTest.kt:29`).
+- `conformance/`: one JSON per vector; tests load it by relative path (Py `python/tests/test_enroll_pop.py:26-47`, TS `ts/tests/enroll_pop.test.ts:48-49`, Go `go/crypto/call_sig_v3_vector_test.go:35`, Java `java/src/test/java/com/zer07labs/seam/EnrollPopTest.java:38`, Kotlin `kotlin/src/test/kotlin/com/zer07labs/seam/EnrollPopTest.kt:29`).
 - External, read-only:
   - `seam-runtime/docs/specs/mgmt-dpop.md` (the grammar and the golden vector).
   - `seam-runtime/deploy/helm/seam/values/aws-stg/seam-server.yaml:18-19,62-63,91-92` (mgmt 9099/9100, TLS; callers are control-plane and seam-relay only).
@@ -5261,7 +5261,7 @@ not filed here. OQ-1 is resolved, so no phase is gated.
   `truncation.rs`, `multi_tenant.rs`, `conformance.rs` (synthetic attestation helpers): the helper churn in
   Phases 1 and 3.
 - `scripts/check_vendored_spec.py`: the PIN regex :107-111. It must stay green after the header edit.
-- `.github/workflows/ci.yml:523-560`: the `verify` job. `.github/workflows/publish.yml:524-528`: the dispatch-only crate publish.
+- `.github/workflows/ci.yml:525-562`: the `verify` job. `.github/workflows/publish.yml:529-533`: the dispatch-only crate publish.
 - Runtime reference (read-only, seam-runtime @ 37576658 via `git show`; line anchors live in the plan): the
   seam-verify crate's `entry.rs`, `main.rs`, `tests/entry_recompute.rs` and `tests/anchored.rs`, plus the
   seam-store crate's `lib.rs` / `event.rs` (the writers and `KIND_CLASSIFICATION_CONTRACT`).
@@ -5358,13 +5358,13 @@ not filed here. OQ-1 is resolved, so no phase is gated.
   - `python/seam_sdk/__init__.py:12,178-181`: exports.
   - `client.py:~1140`, `aio.py:~863`: get_decision docs.
   - `python/tests/test_seal_attestation.py` and `fixtures/seal_attestation_cases.json`: the table precedent, shared with TS.
-  - `ts/src/client.ts:460-584`: sealAttestationOf.
+  - `ts/src/client.ts:468-592`: sealAttestationOf.
   - `ts/src/index.ts:54-80`: dual-declared names comment, pinned by `python/tests/test_shadowed_names_comment.py`.
   - `ts/tests/seal_attestation.test.ts:1-6`: reads the Python fixture.
   - generated TS `Allocation` message (in `ts/gen`): budgetEpoch is a bigint.
   - `contract/field-manifest.txt`: sorted entries; `scripts/check-contract.sh:633-680` holds `--write-manifest`.
   - `verify/tests/bundle.rs:1-33`: fixture provenance rule; fixtures in `verify/fixtures/evidence-bundle/`.
-  - `COMPATIBILITY.md:194-206` (seal row at line 183), `README.md` "Explaining a sealed record".
+  - `COMPATIBILITY.md:194-215` (seal row at line 183), `README.md` "Explaining a sealed record".
   - `.github/workflows/ci.yml`: 14 jobs, all blacksmith-4vcpu, ci-ok job `ci-ok`.
   - `.github/workflows/publish.yml:63` and `.github/workflows/release-on-runtime.yml:177` read ci-ok by SHA (off-limits).
 - PR strategy: one PR (feat/bp8-allocation-view). Why: the manifest fix is what turns main green and unblocks the 0.76.0 release, and the owner brief requires the CI pass in the same PR. Risk: P1 and P2 complex (public API); P3+P4 batched simple; P5 simple.
@@ -5374,9 +5374,9 @@ not filed here. OQ-1 is resolved, so no phase is gated.
     - an explicit JS non-carrier test;
     - TSDoc now states that a `null` view throws;
     - TSDoc carries the "operator alteration breaks the chain re-verify" sentence;
-    - re-anchored `PROGRESS.md:163` (`confidence`, now `ts/src/client.ts:1583`).
+    - re-anchored `PROGRESS.md:163` (`confidence`, now `ts/src/client.ts:1650`).
   - Files: `ts/src/client.ts` (allocationOf + interfaces after sealAttestationOf), `ts/src/index.ts` (EIGHT dual-declared names), `ts/tests/allocation.test.ts` (new; reads the Python fixture), `ts/tests/integration.test.ts`.
-  - The client.ts insertion shifted citations by 149: `COMPATIBILITY.md:622,803` and `PROGRESS.md:160,162` were re-anchored.
+  - The client.ts insertion shifted citations by 149: `COMPATIBILITY.md:631,803` and `PROGRESS.md:160,162` were re-anchored.
   - Results: TS typecheck/build clean, 567 tests pass; pytest 2601 passed.
   - Plan drift: `test_shadowed_names_comment.py` needed no edit, because it derives the count word.
   - Next: P3 + P4 (batched simple).

@@ -1,4 +1,9 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ b4d1366 (refreshed 2026-11-15).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 8f4e30e tracking feat/1687-verified-voters (refreshed 2026-11-15).
+     seam-runtime#1713 (#1687 verified voters), NOT yet on runtime main: the SDK 0.87.0 pre-releases ship
+     ahead of it (seam-sdk#352). Movement since b4d1366: four cross-links now cite
+     `seam-commitment-digest.v4.md` instead of `.v3.md`. No tag, digest, framing or vector change here.
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ b4d1366 (refreshed 2026-11-15).
      seam-runtime#1699 (#1561, #1556), on runtime main. Movement since d70774454: clause (b′) now CARRIES its
      preimages — §"(b′) preimages: the closed entry tables" spells the AUDIT_ENTRY framing, the action→domain→
      classification table, and the CHAIN_HEAD_ATTESTATION / ERASURE_CERTIFICATE framings and fixed labels;
@@ -1088,7 +1093,7 @@ GoverningConfig {
   `session_governing_root` log line, joined on `session_id` and `SESSION_LIFECYCLE.opened_at_millis`.
   That log line is staff-only and never on a tenant's stream.
 - **Not tamper-evident.** It is outside record digest v4 and
-  [`seam-commitment-digest:v3`](seam-commitment-digest.v3.md) (see §What the record digest binds). A
+  [`seam-commitment-digest:v4`](seam-commitment-digest.v4.md) (see §What the record digest binds). A
   consumer MUST NOT treat it as evidence of what bound the decision; `policy_rules_digest` (tag 13) is
   the bound evidence.
 - **Non-empty when present.** A conforming producer never emits an empty `tenant_snapshot_id`. A consumer
@@ -1193,7 +1198,7 @@ never empty on a conforming payload. `outcome` is framed as its canonical string
 `Expired` / `Cancelled`); `mode`, `policy_version` and `supersedes` are `opt`-framed as their raw UTF-8
 string values (the mode id, the policy version, and the superseded commitment as
 `{session_id}/sha256:<hex>` — its RFC-MACP-0013 hash, verified at commit, see
-[`seam-commitment-digest.v3.md`](seam-commitment-digest.v3.md#supersedes)), `0x00` when absent;
+[`seam-commitment-digest.v4.md`](seam-commitment-digest.v4.md#supersedes)), `0x00` when absent;
 `classification` uses the same canonical PascalCase strings as inside `context_digest` below
 (`Public` / `Internal` / `Confidential` / `Financial` / `Pii` / `Phi`), never an ordinal.
 
@@ -1741,7 +1746,7 @@ manifest — so the flip surfaces as a reviewed, coordinated re-pin, never a qui
 v4 binds `trust_basis` (via its keyed commitment, tag 16), `auth_method`, `classification` and
 `participants` directly in the record digest, so all four are now tamper-evident **from the wire**.
 Before v4 they sat outside the record digest, and the claim that they were "bound inside the commitment
-TCT" was only partly true. [`seam-commitment-digest:v3`](seam-commitment-digest.v3.md) frames
+TCT" was only partly true. [`seam-commitment-digest:v4`](seam-commitment-digest.v4.md) frames
 `auth_method` and the **raw** `trust_basis`, so those two were and still are bound into the TCT.
 `classification` and `participants` are **not** framed by the commitment digest; v4 is the first thing
 that binds them. The commitment digest keeps framing the raw `trust_basis` by design: it sits inside the
@@ -1752,7 +1757,7 @@ The commitment's `committer` (#802) and its sealed **explanation** (#804 — eve
 evaluation, objection and quorum ballot with its reason, an evaluation's `rationale_ref`, and its
 confidence *or its absence*) need no slot here: both are part of the commitment plaintext, so they
 are inside the ciphertext that `ciphertext_digest` (tag 10) already commits to, and both are also bound
-into the TCT by [`seam-commitment-digest:v3`](seam-commitment-digest.v3.md). Neither is on this wire —
+into the TCT by [`seam-commitment-digest:v4`](seam-commitment-digest.v4.md). Neither is on this wire —
 the explanation carries free text and data-subject reasons, and crypto-shred erases it with the record.
 
 | payload field | record digest v4 | commitment digest v3 |

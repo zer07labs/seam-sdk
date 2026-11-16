@@ -114,14 +114,19 @@ export const KNOWN_KINDS: ReadonlySet<string> = new Set([
 export const ENROLMENT_KIND_AGENT = "agent";
 export const ENROLMENT_KIND_OUTCOME_REPORTER = "outcome_reporter";
 export const ENROLMENT_KIND_CHANGESET_WORKER = "changeset_worker";
+/** A signer-only voter key (#1687, runtime 0.87.0): bound to exactly one `participantId`, it signs
+ * `seam-voter-pop-v1` proofs and permits no data-plane verb. */
+export const ENROLMENT_KIND_VOTER = "voter";
 export type EnrolmentKind =
   | typeof ENROLMENT_KIND_AGENT
   | typeof ENROLMENT_KIND_OUTCOME_REPORTER
-  | typeof ENROLMENT_KIND_CHANGESET_WORKER;
+  | typeof ENROLMENT_KIND_CHANGESET_WORKER
+  | typeof ENROLMENT_KIND_VOTER;
 export const ENROLMENT_KINDS: ReadonlySet<EnrolmentKind> = new Set<EnrolmentKind>([
   ENROLMENT_KIND_AGENT,
   ENROLMENT_KIND_OUTCOME_REPORTER,
   ENROLMENT_KIND_CHANGESET_WORKER,
+  ENROLMENT_KIND_VOTER,
 ]);
 
 /** `enrollTenant`'s options: the call deadline plus the enrolment `kind` (runtime 0.71.0). */
@@ -129,6 +134,11 @@ export interface EnrollTenantOptions extends UnaryCallOptions {
   /** What the AID is enrolled FOR — one of {@link ENROLMENT_KINDS}. Omitted, no kind is sent and the
    * runtime enrols an `agent`, exactly as before. */
   kind?: EnrolmentKind;
+  /** The participant a `voter` enrolment binds (#1687, runtime 0.87.0): REQUIRED with kind `voter` and
+   * refused (INVALID_ARGUMENT) with any other kind. It must equal the `participantId` the subject signed
+   * into its `seam-enroll-pop-v2` proof (`agent.enrolmentProof(tenant, namespace, { participantId })`).
+   * Omitted, no participant is sent. */
+  participantId?: string;
 }
 
 /** Recompute a streamed `DECISION_SEALED`'s record digest from its payload and compare it to the wire
@@ -407,7 +417,10 @@ export class SeamAdminClient {
    * RPC. Re-enrolling an active AID with a different kind is `FailedPreconditionError`
    * (`ENROLMENT_KIND_CONFLICT`): revoke first. A runtime older than 0.71.0 does not know the field and
    * enrols `agent` regardless, so send `kind` only to a runtime that advertises the `enroll.kind` wire
-   * feature, and read the kind it stored on the returned view's `kind`. */
+   * feature, and read the kind it stored on the returned view's `kind`.
+   *
+   * `opts.participantId` (#1687) binds a `voter` enrolment to one participant; see
+   * {@link EnrollTenantOptions.participantId}. */
   async enrollTenant(
     subjectAid: string,
     tenant: string,
@@ -429,6 +442,7 @@ export class SeamAdminClient {
         namespace,
         pop: checkedEnrollPop(pop),
         ...(kind !== undefined ? { kind } : {}),
+        ...(opts?.participantId !== undefined ? { participantId: opts.participantId } : {}),
       },
       call(opts),
     );

@@ -1,20 +1,23 @@
-//! `seam-commitment-digest:v3` / `seam-explanation-digest:v1` and the TCT, against the shared
+//! `seam-commitment-digest:v4` / `seam-explanation-digest:v2` and the TCT, against the shared
 //! cross-repo vectors in `../conformance/` — the same files the five SDKs are held to.
 //!
-//! * `commitment_digest_v3_vector.json` is the runtime's own vector
-//!   (`crates/seam-trust-aitp/tests/fixtures/commitment_digest_v3_vector.json`), byte-identical: the
-//!   all-empty case, the present-but-empty `supersedes` case, and a populated one with decomposed
-//!   combining marks, an absent confidence beside a stated `0.0`, and a REAL self-attestation TCT from
-//!   the real signer.
+//! * `commitment_digest_v4_vector.json` is the runtime's own vector
+//!   (`crates/seam-trust-aitp/tests/fixtures/commitment_digest_v4_vector.json`, seam-runtime#1713),
+//!   byte-identical: the all-empty case, the present-but-empty `supersedes` case, a populated one with
+//!   decomposed combining marks, an absent confidence beside a stated `0.0`, three voter verification
+//!   records that genuinely re-verify, and a REAL self-attestation TCT from the real signer; and three
+//!   cases exercising the field 9/10 selection and certificate slots.
 //! * `vectors.json`'s `tct` block is the SDK conformance copy of the same framing, with its own TCT.
 //!
 //! Excluded from the published package (see `Cargo.toml`), for the reason `tests/conformance.rs` is:
 //! it reads the ONE copy of these files rather than vendoring a second one to drift. The spec's worked
 //! examples are pinned by unit tests in `src/commitment.rs`, which ship with the crate.
 
+use seam_verify::bundle::parse_voter_verification;
 use seam_verify::commitment::{
     commitment_digest, explanation_digest, verify_tct, Commitment, ExplanationEntry,
 };
+use seam_verify::voter::verify_commitment_voters;
 use serde_json::Value;
 
 fn load(name: &str) -> Value {
@@ -34,6 +37,30 @@ fn hex(b: &[u8]) -> String {
 
 fn text(v: &Value, k: &str) -> String {
     v.get(k).and_then(Value::as_str).unwrap_or("").to_owned()
+}
+
+fn unhex(h: &str) -> Vec<u8> {
+    (0..h.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&h[i..i + 2], 16).unwrap())
+        .collect()
+}
+
+/// A voter record in either projection: the REST one (byte fields as number arrays) or `vectors.json`'s
+/// (`<field>_hex`), normalised to the REST one and parsed by the bundle's own parser.
+fn voter(e: &Value) -> Option<seam_verify::commitment::VoterVerification> {
+    let v = e.get("voter_verification")?;
+    if v.is_null() {
+        return None;
+    }
+    let mut v = v.clone();
+    let o = v.as_object_mut().unwrap();
+    for k in ["content_digest", "signature", "signer_certificate"] {
+        if let Some(h) = o.remove(&format!("{k}_hex")) {
+            o.insert(k.into(), serde_json::json!(unhex(h.as_str().unwrap())));
+        }
+    }
+    Some(parse_voter_verification(&v).unwrap())
 }
 
 /// The REST projection: byte fields as JSON number arrays, absent optionals as `null`.
@@ -71,8 +98,11 @@ fn commitment(c: &Value) -> Commitment {
                     .get("rationale_ref")
                     .and_then(Value::as_str)
                     .map(str::to_owned),
+                voter_verification: voter(e),
             })
             .collect(),
+        selection_digest: None,
+        certificate_digest: None,
         signed_artifact: artifact,
     }
 }
@@ -82,25 +112,44 @@ const NOW: u64 = 1_800_000_000;
 
 #[test]
 fn every_runtime_vector_case_reproduces_and_its_tct_verifies() {
-    let v = load("commitment_digest_v3_vector.json");
-    assert_eq!(v["commitment_digest_domain"], "seam-commitment-digest:v3");
+    let v = load("commitment_digest_v4_vector.json");
+    assert_eq!(v["commitment_digest_domain"], "seam-commitment-digest:v4");
+    assert_eq!(v["explanation_digest_domain"], "seam-explanation-digest:v2");
     let issuer = v["issuer_aid"].as_str().unwrap();
     let cases = v["cases"].as_array().unwrap();
     let names: Vec<&str> = cases.iter().map(|c| c["name"].as_str().unwrap()).collect();
     assert_eq!(
         names,
-        ["all_empty", "empty_supersedes", "populated_signed"],
+        [
+            "all_empty",
+            "empty_supersedes",
+            "populated_signed",
+            "selection_present",
+            "certificate_present",
+            "both_present"
+        ],
         "the vector's cases changed"
     );
     let mut signed = 0;
     for case in cases {
         let name = case["name"].as_str().unwrap();
-        let c = commitment(&case["commitment"]);
+        let mut c = commitment(&case["commitment"]);
+        c.selection_digest = case
+            .get("selection_digest")
+            .and_then(Value::as_str)
+            .map(unhex);
+        c.certificate_digest = case
+            .get("certificate_digest")
+            .and_then(Value::as_str)
+            .map(unhex);
         assert_eq!(
             hex(&explanation_digest(&c.explanation).unwrap()),
             case["explanation_digest"].as_str().unwrap(),
             "{name}: explanation_digest"
         );
+        // Every voter record the vector seals genuinely re-verifies against the vector's issuer.
+        verify_commitment_voters(&c.explanation, issuer, None)
+            .unwrap_or_else(|e| panic!("{name}: voter records: {e}"));
         let d = commitment_digest(&c).unwrap();
         assert_eq!(
             hex(&d),
@@ -150,6 +199,20 @@ fn the_sdk_conformance_tct_block_reproduces_and_verifies() {
         hex(&explanation_digest(&c.explanation).unwrap()),
         t["explanation_digest_hex"].as_str().unwrap()
     );
+    assert_eq!(
+        verify_commitment_voters(&c.explanation, t["issuer_aid"].as_str().unwrap(), None),
+        Ok(1),
+        "the conformance vote's voter record must re-verify"
+    );
+    // ...and it is bound to the vector's own decision, `dec:acme:s-conformance-0000000`.
+    let did = t["inputs"]["decision_id"].as_str().unwrap();
+    let (tenant, session) = did.strip_prefix("dec:").unwrap().split_once(':').unwrap();
+    let iss = t["issuer_aid"].as_str().unwrap();
+    assert_eq!(
+        verify_commitment_voters(&c.explanation, iss, Some((tenant, session))),
+        Ok(1)
+    );
+    assert!(verify_commitment_voters(&c.explanation, iss, Some((tenant, "s-other"))).is_err());
     let d = commitment_digest(&c).unwrap();
     assert_eq!(hex(&d), t["commitment_digest_hex"].as_str().unwrap());
     verify_tct(
@@ -183,7 +246,7 @@ const HEADER: &str = r#"{"alg":"EdDSA","typ":"aitp-tct+jwt"}"#;
 
 /// The signed case's real claims, re-assembled from parts so each test can vary exactly one.
 fn claims(grants: &str, ext: &str) -> String {
-    let v = load("commitment_digest_v3_vector.json");
+    let v = load("commitment_digest_v4_vector.json");
     let aid = v["issuer_aid"].as_str().unwrap();
     format!(
         r#"{{"aud":"{aid}","cnf":{{"jkt":"--6IM5l0OosLj9yWskISYhUA3n_3CURQkmrYMSha_ck"}},"exp":4913600000,"ext":{ext},"grants":{grants},"iat":1760000000,"iss":"{aid}","jti":"j","sub":"{aid}","ver":"aitp/0.3"}}"#
@@ -191,7 +254,7 @@ fn claims(grants: &str, ext: &str) -> String {
 }
 
 fn signed_case() -> (String, [u8; 32]) {
-    let v = load("commitment_digest_v3_vector.json");
+    let v = load("commitment_digest_v4_vector.json");
     let c = commitment(&v["cases"][2]["commitment"]);
     (
         v["issuer_aid"].as_str().unwrap().to_owned(),
@@ -342,7 +405,7 @@ fn every_tct_rule_is_enforced() {
         );
     }
 
-    // The digest must be THIS Commitment's v3 recompute: a token binding a different digest is refused.
+    // The digest must be THIS Commitment's v4 recompute: a token binding a different digest is refused.
     let mut wrong = d;
     wrong[0] ^= 1;
     assert!(verify_tct(&aid, &mint(HEADER, &claims(GRANTS, &ext)), &wrong, NOW).is_err());

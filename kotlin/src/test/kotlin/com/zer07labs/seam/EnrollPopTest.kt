@@ -16,8 +16,8 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * The enrolment proof-of-possession (#205). conformance/enroll_pop_v1_payload_vector.json is the
- * cross-language contract. NO bless mode: a mismatch is a contract break (a v2 domain tag), not a
+ * The enrolment proof-of-possession (#205). conformance/enroll_pop_v2_payload_vector.json (#1687) is the
+ * cross-language contract. NO bless mode: a mismatch is a contract break (a v3 domain tag), not a
  * stale fixture.
  */
 class EnrollPopTest {
@@ -26,10 +26,10 @@ class EnrollPopTest {
     fun enrollPopMatchesVector() {
         val v: Map<String, Any?> =
             Gson().fromJson(
-                File("../conformance/enroll_pop_v1_payload_vector.json").readText(),
+                File("../conformance/enroll_pop_v2_payload_vector.json").readText(),
                 object : TypeToken<Map<String, Any?>>() {}.type,
             )
-        assertEquals(SeamCrypto.ENROLL_POP_V1_CONTEXT, v["domain"])
+        assertEquals(SeamCrypto.ENROLL_POP_V2_CONTEXT, v["domain"])
         val cases = v["cases"] as List<Map<String, Any?>>
         assertFalse(cases.isEmpty(), "vector is empty; every assertion below would pass vacuously")
         for (c in cases) {
@@ -41,6 +41,7 @@ class EnrollPopTest {
                     namespace = c["namespace"] as String,
                     issuedAtMs = (c["issued_at_ms"] as Number).toLong().toULong(),
                     nonce = c["nonce"] as String,
+                    participantId = c["participant_id"] as String,
                 )
             assertEquals(c["payload_hex"], hex(SeamCrypto.enrollPopPayload(f)), label)
 
@@ -66,6 +67,8 @@ class EnrollPopTest {
                 "a tenant-a/ns-x proof verified for $t/$n",
             )
         }
+        // #1687: the participant is signed — a non-voter proof does not verify as a voter one.
+        assertFalse(verify(pub, SeamCrypto.enrollPopPayload(f.copy(participantId = "risk")), sig))
     }
 
     @Test

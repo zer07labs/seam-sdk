@@ -1,10 +1,14 @@
-//! The Commitment and its rooted TCT: `seam-commitment-digest:v3`, `seam-explanation-digest:v1`, and
+//! The Commitment and its rooted TCT: `seam-commitment-digest:v4`, `seam-explanation-digest:v2`, and
 //! the self-attestation `aitp-tct+jwt` that carries the digest in its `ext` claim.
 //!
-//! Written from `seam-runtime/docs/specs/seam-commitment-digest.v3.md` (not vendored here; the
+//! Written from `seam-runtime/docs/specs/seam-commitment-digest.v4.md` (not vendored here; the
 //! evidence-bundle spec in `docs/evidence-bundle.v1.md` cites it) and pinned by
-//! `conformance/commitment_digest_v3_vector.json` (three cases, one a real TCT from the real signer)
-//! and by `conformance/vectors.json`'s `tct` block. The five SDK crypto shims implement the same
+//! `conformance/commitment_digest_v4_vector.json` (six cases, one a real TCT from the real signer, three
+//! exercising the field 9/10 slots) and by `conformance/vectors.json`'s `tct` block. v4 (seam-runtime
+//! #1687, D-045): every vote, ballot and objection entry carries a sealed voter verification record (`VV`,
+//! framed into the explanation digest), and fields 9 (selection) and 10 (Gate certificate) are
+//! always-framed presence slots after the explanation digest. The record's own signature is re-checked
+//! by [`crate::voter`]. The five SDK crypto shims implement the same
 //! framing; this is a sixth port, from the same text, linking none of them.
 //!
 //! **Where the digest travels.** The TCT is an AITP self-attestation: `grants` is exactly
@@ -41,9 +45,40 @@ pub struct ExplanationEntry {
     /// `None` = the evaluator declined to claim. NOT the same bytes as `Some(0.0)`.
     pub confidence: Option<f64>,
     pub rationale_ref: Option<String>,
+    /// The sealed voter verification record (#1687): present on every `vote`, `ballot` and `objection`
+    /// the runtime seals, absent on an `evaluation`. Framed as `VV` into `seam-explanation-digest:v2`.
+    pub voter_verification: Option<VoterVerification>,
 }
 
-/// A Commitment as the v3 framing reads it, plus its TCT.
+/// The method words a `VV` block may frame — lowercase ASCII, exactly. `cp_signed` is declared by the
+/// spec but not yet served: it digests, and [`crate::voter`] refuses to re-check it.
+pub const VOTER_METHODS: &[&str] = &["pop", "cp_signed"];
+
+/// A sealed voter verification record (`voter-verification.v1.md` § The sealed record), field for field.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VoterVerification {
+    /// `pop` or `cp_signed`.
+    pub method: String,
+    /// The signer AID.
+    pub principal: String,
+    /// The 32 raw bytes of `seam-vote-content-v1` (a different length is refused, not hashed).
+    pub content_digest: Vec<u8>,
+    pub issued_at_ms: u64,
+    pub expires_at_ms: u64,
+    pub signature: Vec<u8>,
+    /// Empty for `pop`.
+    pub signer_certificate: Vec<u8>,
+    pub tenant: String,
+    pub namespace: String,
+    pub session_id: String,
+    /// `0` on the one-shot `RunDecision` path.
+    pub opened_at_millis: u64,
+    pub issuer: String,
+    pub audience: String,
+    pub accepted_at_ms: u64,
+}
+
+/// A Commitment as the v4 framing reads it, plus its TCT.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Commitment {
     pub id: String,
@@ -54,6 +89,10 @@ pub struct Commitment {
     pub trust_basis: String,
     pub committer: String,
     pub explanation: Vec<ExplanationEntry>,
+    /// Field 9, the selection block's digest. `None` on every record this release seals.
+    pub selection_digest: Option<Vec<u8>>,
+    /// Field 10, the Gate certificate digest. `None` on every record this release seals.
+    pub certificate_digest: Option<Vec<u8>>,
     /// The compact-JWS TCT. Empty only for a record sealed under `identity: local-sealed`.
     pub signed_artifact: String,
 }
@@ -63,11 +102,15 @@ fn be64_frame(h: &mut Sha256, x: &[u8]) {
     h.update(x);
 }
 
-/// `seam-explanation-digest:v1` over entries in sealed order. Refuses (never hashes) an unknown kind
-/// or a non-canonical confidence: NaN, infinite, outside `[0.0, 1.0]`, or `-0.0`.
+/// The explanation digest's domain tag.
+pub const EXPLANATION_DIGEST_DOMAIN: &[u8] = b"seam-explanation-digest:v2";
+
+/// `seam-explanation-digest:v2` over entries in sealed order. Refuses (never hashes) an unknown kind,
+/// a non-canonical confidence (NaN, infinite, outside `[0.0, 1.0]`, or `-0.0`), an unknown voter
+/// method word, or a voter content digest that is not 32 bytes.
 pub fn explanation_digest(entries: &[ExplanationEntry]) -> Result<[u8; 32], String> {
     let mut h = Sha256::new();
-    be64_frame(&mut h, b"seam-explanation-digest:v1");
+    be64_frame(&mut h, EXPLANATION_DIGEST_DOMAIN);
     h.update((entries.len() as u64).to_be_bytes());
     for (i, e) in entries.iter().enumerate() {
         if !EXPLANATION_KINDS.contains(&e.kind.as_str()) {
@@ -97,17 +140,50 @@ pub fn explanation_digest(entries: &[ExplanationEntry]) -> Result<[u8; 32], Stri
                 be64_frame(&mut h, r.as_bytes());
             }
         }
+        match &e.voter_verification {
+            None => h.update([0u8]),
+            Some(v) => {
+                if !VOTER_METHODS.contains(&v.method.as_str()) {
+                    return Err(format!(
+                        "explanation[{i}]: unknown voter verification method {:?}",
+                        v.method
+                    ));
+                }
+                if v.content_digest.len() != 32 {
+                    return Err(format!(
+                        "explanation[{i}]: voter content_digest is {} bytes, not 32",
+                        v.content_digest.len()
+                    ));
+                }
+                h.update([1u8]);
+                be64_frame(&mut h, v.method.as_bytes());
+                be64_frame(&mut h, v.principal.as_bytes());
+                be64_frame(&mut h, &v.content_digest);
+                h.update(v.issued_at_ms.to_be_bytes());
+                h.update(v.expires_at_ms.to_be_bytes());
+                be64_frame(&mut h, &v.signature);
+                be64_frame(&mut h, &v.signer_certificate);
+                be64_frame(&mut h, v.tenant.as_bytes());
+                be64_frame(&mut h, v.namespace.as_bytes());
+                be64_frame(&mut h, v.session_id.as_bytes());
+                h.update(v.opened_at_millis.to_be_bytes());
+                be64_frame(&mut h, v.issuer.as_bytes());
+                be64_frame(&mut h, v.audience.as_bytes());
+                h.update(v.accepted_at_ms.to_be_bytes());
+            }
+        }
     }
     Ok(h.finalize().into())
 }
 
 /// The domain tag, field 0 of the commitment-digest preimage.
-pub const COMMITMENT_DIGEST_DOMAIN: &[u8] = b"seam-commitment-digest:v3";
+pub const COMMITMENT_DIGEST_DOMAIN: &[u8] = b"seam-commitment-digest:v4";
 
-/// `seam-commitment-digest:v3`: SHA-256 over nine fields in the spec's order, each `F`-framed except
-/// field 4. `supersedes` carries a presence byte — absent is `0x00`, present is `0x01 ‖ F(value)` — so
-/// an absent prior and a present empty one are different digests. Field 8 is the 32 RAW bytes of the
-/// explanation digest.
+/// `seam-commitment-digest:v4`: SHA-256 over eleven fields in the spec's order, each `F`-framed except
+/// fields 4, 9 and 10. `supersedes` carries a presence byte — absent is `0x00`, present is `0x01 ‖
+/// F(value)` — so an absent prior and a present empty one are different digests. Field 8 is the 32 RAW
+/// bytes of the explanation digest (v2). Fields 9 and 10 are `0x00` absent, else `0x01 ‖ be64(32) ‖ 32
+/// raw bytes`; a present digest of any other length is refused, never hashed.
 pub fn commitment_digest(c: &Commitment) -> Result<[u8; 32], String> {
     let explanation = explanation_digest(&c.explanation)?;
     let mut h = Sha256::new();
@@ -133,6 +209,24 @@ pub fn commitment_digest(c: &Commitment) -> Result<[u8; 32], String> {
         explanation.as_slice(),
     ] {
         be64_frame(&mut h, field);
+    }
+    for (name, slot) in [
+        ("selection_digest", &c.selection_digest),
+        ("certificate_digest", &c.certificate_digest),
+    ] {
+        match slot {
+            None => h.update([0u8]),
+            Some(d) if d.len() == 32 => {
+                h.update([1u8]);
+                be64_frame(&mut h, d);
+            }
+            Some(d) => {
+                return Err(format!(
+                    "{name} is {} bytes; a present digest must be 32",
+                    d.len()
+                ))
+            }
+        }
     }
     Ok(h.finalize().into())
 }
@@ -333,7 +427,7 @@ pub fn verify_tct(
     let want = crate::verify::hex(digest);
     if binding.get("commitment_digest").and_then(|d| d.as_str()) != Some(want.as_str()) {
         return Err(
-            "the TCT's ext does not bind this Commitment's seam-commitment-digest:v3 (forged \
+            "the TCT's ext does not bind this Commitment's seam-commitment-digest:v4 (forged \
              token, or an edited field)"
                 .into(),
         );
@@ -354,7 +448,7 @@ mod tests {
     fn empty_explanation_matches_the_spec() {
         assert_eq!(
             hex(&explanation_digest(&[]).unwrap()),
-            "eb7853dc086ef5385db8408cf35c9c984e845ccc03d269102f942eed7806ce40"
+            "cabe83af912ea38ef4525f5a7d8580b4c4e217417edc0c93f936d2c18c4fd8f5"
         );
     }
 
@@ -368,16 +462,18 @@ mod tests {
             trust_basis: String::new(),
             committer: String::new(),
             explanation: vec![],
+            selection_digest: None,
+            certificate_digest: None,
             signed_artifact: String::new(),
         }
     }
 
-    /// `commitment_digest_v3_vector.json` case `all_empty`, inlined so a packaged crate tests it.
+    /// `commitment_digest_v4_vector.json` case `all_empty`, inlined so a packaged crate tests it.
     #[test]
     fn all_empty_commitment_matches_the_vector() {
         assert_eq!(
             hex(&commitment_digest(&empty_commitment()).unwrap()),
-            "9238441205cd395f9507a5152e2c67f93fa83ca8d336d2ce7b8e01a385c3dd2e"
+            "6e3a11bbef5f552f78e6d9114c13b7e48bb0a30de82d38a603981d6d1ca7281a"
         );
     }
 
@@ -388,14 +484,88 @@ mod tests {
         c.supersedes = Some(String::new());
         assert_eq!(
             hex(&commitment_digest(&c).unwrap()),
-            "b7f0e7a2a14e91f0d7dc1a56781a39f7601bce4df979f3b25a58aa9d86d3263c"
+            "a495c011cd353de108bb7c0e2a3bcb90051d59b135696a10848c3a087e5fed50"
         );
     }
 
     /// The domain literal the cross-language framing test greps for.
     #[test]
-    fn the_domain_tag_is_v3() {
-        assert_eq!(COMMITMENT_DIGEST_DOMAIN, b"seam-commitment-digest:v3");
+    fn the_domain_tags_are_v4_and_v2() {
+        assert_eq!(COMMITMENT_DIGEST_DOMAIN, b"seam-commitment-digest:v4");
+        assert_eq!(EXPLANATION_DIGEST_DOMAIN, b"seam-explanation-digest:v2");
+    }
+
+    /// Cases `selection_present`, `certificate_present`, `both_present`: the field 9/10 slots, with the
+    /// vector's own digests, inlined so a packaged crate tests them.
+    #[test]
+    fn the_selection_and_certificate_slots_match_the_vector() {
+        fn d(h: &str) -> Vec<u8> {
+            (0..h.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&h[i..i + 2], 16).unwrap())
+                .collect()
+        }
+        let sel = d("b71424be32b4e9de8d5b7b1ce5333d1469a68c6ee7b936ba44d175ccd3723c15");
+        let cert = d("f0ad9d4e2d95e36ccbfbb0e9277108af979854634cc45989fa719079d3ffb1ca");
+        let mut c = empty_commitment();
+        c.selection_digest = Some(sel);
+        c.certificate_digest = Some(cert);
+        assert_eq!(
+            hex(&commitment_digest(&c).unwrap()),
+            "e5b101c9f68eb0dedbb47cdb4fc65e38f7bd7569e92b30d7f6a3ac94caa66a17"
+        );
+    }
+
+    #[test]
+    fn a_slot_digest_that_is_not_32_bytes_is_refused_not_hashed() {
+        for len in [0usize, 31, 33] {
+            let mut c = empty_commitment();
+            c.selection_digest = Some(vec![1; len]);
+            assert!(commitment_digest(&c).is_err(), "selection {len}");
+            let mut c = empty_commitment();
+            c.certificate_digest = Some(vec![1; len]);
+            assert!(commitment_digest(&c).is_err(), "certificate {len}");
+        }
+    }
+
+    fn record() -> VoterVerification {
+        VoterVerification {
+            method: "pop".into(),
+            principal: "aid:pubkey:ed25519:x".into(),
+            content_digest: vec![5; 32],
+            issued_at_ms: 1,
+            expires_at_ms: 2,
+            signature: vec![9; 64],
+            signer_certificate: vec![],
+            tenant: "t".into(),
+            namespace: "n".into(),
+            session_id: "s".into(),
+            opened_at_millis: 0,
+            issuer: "i".into(),
+            audience: "a".into(),
+            accepted_at_ms: 1,
+        }
+    }
+
+    /// A record is bound: present vs absent, and any field edit, moves the digest; a bad method word or
+    /// a short content digest is refused.
+    #[test]
+    fn the_voter_record_is_bound_and_validated() {
+        let mut e = entry(None);
+        e.kind = "vote".into();
+        let bare = explanation_digest(std::slice::from_ref(&e)).unwrap();
+        e.voter_verification = Some(record());
+        let with = explanation_digest(std::slice::from_ref(&e)).unwrap();
+        assert_ne!(bare, with);
+        let mut edited = e.clone();
+        edited.voter_verification.as_mut().unwrap().accepted_at_ms += 1;
+        assert_ne!(explanation_digest(&[edited]).unwrap(), with);
+        let mut bad = e.clone();
+        bad.voter_verification.as_mut().unwrap().method = "POP".into();
+        assert!(explanation_digest(&[bad]).is_err());
+        let mut bad = e;
+        bad.voter_verification.as_mut().unwrap().content_digest = vec![5; 31];
+        assert!(explanation_digest(&[bad]).is_err());
     }
 
     #[test]
@@ -418,6 +588,7 @@ mod tests {
             reason: String::new(),
             confidence: conf,
             rationale_ref: None,
+            voter_verification: None,
         }
     }
 

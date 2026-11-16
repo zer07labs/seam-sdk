@@ -10,7 +10,7 @@
 //! 3. **Inclusion** — exactly one chained `DECISION_SEALED` for the manifest's decision, in its tenant,
 //!    whose `checksum` is `inclusion.record_checksum`.
 //! 4. **Commitment** — the TCT (when present) verifies against the pinned AID and binds this
-//!    Commitment's `seam-commitment-digest:v3`; `supersedes` matches the chained payload's.
+//!    Commitment's `seam-commitment-digest:v4` (after every voter record re-verifies, `src/voter.rs`); `supersedes` matches the chained payload's.
 //! 5. **Binding** — the `seam.evidence-binding.v1` signature verifies against the pinned AID and names
 //!    this decision, tenant, link checksum and recomputed Commitment digest.
 //! 6. **Disclosures** — `context.json` recomputes the chained `context_digest`;
@@ -23,7 +23,7 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-use crate::commitment::{self, Commitment, ExplanationEntry};
+use crate::commitment::{self, Commitment, ExplanationEntry, VoterVerification};
 use crate::verify;
 use crate::wire::{Attestation, Event};
 
@@ -75,6 +75,9 @@ pub struct BundleReport {
     /// sealed under `identity: local-sealed`, bound by the binding alone), `None` when no Commitment
     /// was disclosed.
     pub tct_verified: Option<bool>,
+    /// How many voter verification records re-verified offline (#1687), `None` when no Commitment was
+    /// disclosed.
+    pub voters_verified: Option<usize>,
     /// The checks that passed, in order, as one human-readable line each.
     pub checks: Vec<String>,
     /// The manifest's `withheld` list, `(item, reason)`, verbatim. Part of what the reader is told.
@@ -296,6 +299,10 @@ pub fn parse_commitment(c: &serde_json::Value) -> Result<Commitment, String> {
             Some(serde_json::Value::String(s)) => Some(s.clone()),
             Some(_) => return Err(at("'rationale_ref' is not a string")),
         };
+        let voter_verification = match e.get("voter_verification") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(v) => Some(parse_voter_verification(v).map_err(|m| at(&m))?),
+        };
         explanation.push(ExplanationEntry {
             kind,
             participant: text("participant")?,
@@ -304,6 +311,7 @@ pub fn parse_commitment(c: &serde_json::Value) -> Result<Commitment, String> {
             reason: text("reason")?,
             confidence,
             rationale_ref,
+            voter_verification,
         });
     }
     Ok(Commitment {
@@ -315,7 +323,69 @@ pub fn parse_commitment(c: &serde_json::Value) -> Result<Commitment, String> {
         trust_basis: req("trust_basis")?,
         committer: req("committer")?,
         explanation,
+        // Fields 9 and 10: the bundle spec projects neither, and every record this release seals has
+        // both absent. A commitment.json that names either is a block this verifier cannot digest.
+        selection_digest: refuse_slot(c, "selection_digest")?,
+        certificate_digest: refuse_slot(c, "certificate_digest")?,
         signed_artifact: req("signed_artifact")?,
+    })
+}
+
+/// Fail closed on a field 9/10 block: absent (or `null`) is the only shape the bundle spec defines.
+fn refuse_slot(c: &serde_json::Value, k: &str) -> Result<Option<Vec<u8>>, String> {
+    match c.get(k) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(_) => Err(format!(
+            "commitment.json: '{k}' is present, and this verifier cannot digest a block the bundle \
+             spec does not define (fails closed)"
+        )),
+    }
+}
+
+/// Parse one entry's `voter_verification` (spec § `commitment.json`): strings and u64s, with the byte
+/// fields (`content_digest`, `signature`, `signer_certificate`) as JSON arrays of numbers 0-255.
+pub fn parse_voter_verification(v: &serde_json::Value) -> Result<VoterVerification, String> {
+    let s = |k: &str| -> Result<String, String> {
+        v.get(k)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| format!("voter_verification: missing string field '{k}'"))
+    };
+    let n = |k: &str| -> Result<u64, String> {
+        v.get(k)
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| format!("voter_verification: missing u64 field '{k}'"))
+    };
+    let b = |k: &str| -> Result<Vec<u8>, String> {
+        v.get(k)
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| format!("voter_verification: '{k}' is not an array of bytes"))?
+            .iter()
+            .map(|x| {
+                x.as_u64()
+                    .and_then(|x| u8::try_from(x).ok())
+                    .ok_or_else(|| format!("voter_verification: '{k}' holds a non-byte"))
+            })
+            .collect()
+    };
+    if !v.is_object() {
+        return Err("voter_verification is not an object or null".into());
+    }
+    Ok(VoterVerification {
+        method: s("method")?,
+        principal: s("principal")?,
+        content_digest: b("content_digest")?,
+        issued_at_ms: n("issued_at_ms")?,
+        expires_at_ms: n("expires_at_ms")?,
+        signature: b("signature")?,
+        signer_certificate: b("signer_certificate")?,
+        tenant: s("tenant")?,
+        namespace: s("namespace")?,
+        session_id: s("session_id")?,
+        opened_at_millis: n("opened_at_millis")?,
+        issuer: s("issuer")?,
+        audience: s("audience")?,
+        accepted_at_ms: n("accepted_at_ms")?,
     })
 }
 
@@ -617,6 +687,7 @@ pub fn verify_bundle(dir: &Path, pinned: &str, now_secs: u64) -> Result<BundleRe
 
     // 4 + 5. Commitment, then its binding.
     let mut tct_verified = None;
+    let mut voters_verified = None;
     if has("commitment.json") {
         let c = parse_json(
             &read_member(dir, "commitment.json", 4)?,
@@ -625,6 +696,32 @@ pub fn verify_bundle(dir: &Path, pinned: &str, now_secs: u64) -> Result<BundleRe
         )?;
         let c = parse_commitment(&c).map_err(|e| failed(4, e))?;
         let digest = commitment::commitment_digest(&c).map_err(|e| failed(4, e))?;
+        // #1687: every vote, ballot and objection carries a voter record addressed to the pinned
+        // issuer, all from ONE session, and that session is this decision's (`dec:{tenant}:{session}`).
+        let session = decision_id
+            .strip_prefix("dec:")
+            .and_then(|r| r.strip_prefix(tenant.as_str()))
+            .and_then(|r| r.strip_prefix(':'))
+            .ok_or_else(|| {
+                failed(
+                    4,
+                    format!(
+                        "manifest.json: decision_id '{decision_id}' is not dec:{tenant}:<session>, so \
+                         the Commitment's voter records cannot be bound to it"
+                    ),
+                )
+            })?;
+        let voters = crate::voter::verify_commitment_voters(
+            &c.explanation,
+            pinned,
+            Some((tenant.as_str(), session)),
+        )
+        .map_err(|e| failed(4, format!("commitment.json: voter verification: {e}")))?;
+        voters_verified = Some(voters);
+        checks.push(format!(
+            "{voters} voter verification record(s) re-verify offline (seam-voter-pop-v1), all addressed to \
+             the pinned issuer from this decision's session"
+        ));
         if c.signed_artifact.is_empty() {
             tct_verified = Some(false);
             checks.push(
@@ -645,7 +742,7 @@ pub fn verify_bundle(dir: &Path, pinned: &str, now_secs: u64) -> Result<BundleRe
             tct_verified = Some(true);
             checks.push(
                 "the Commitment's TCT verifies against the pinned issuer and binds its \
-                 seam-commitment-digest:v3"
+                 seam-commitment-digest:v4"
                     .into(),
             );
         }
@@ -765,6 +862,7 @@ pub fn verify_bundle(dir: &Path, pinned: &str, now_secs: u64) -> Result<BundleRe
         anchor_len: w.anchor.attested_len,
         head: w.report.head,
         tct_verified,
+        voters_verified,
         checks,
         withheld,
     })

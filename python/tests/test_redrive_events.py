@@ -7,7 +7,8 @@ from concurrent import futures
 import grpc
 import pytest
 
-from seam_sdk import Agent, SeamAdminClient, SeamClient
+from demo_voters import DemoVotingClient
+from seam_sdk import Agent, SeamAdminClient
 from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
 from seam_sdk._gen.seam.api.v1 import seam_pb2_grpc as rpc
 from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as ev
@@ -89,13 +90,13 @@ def test_redrive_round_trip_live(tmp_path):
     from operator_token import mint_operator_token
 
     with spawn_server(mgmt=True, log_dir=tmp_path) as srv:
-        data = SeamClient.connect(srv.data_addr)
+        data = DemoVotingClient.connect(srv.data_addr)
         agent = Agent(bytes([42] * 32))
         dec = data.run_decision(
             agent,
             "redrive-1-sid-0123456789abcdef",
             ["fraud-v3", "risk-v2"],
-            [("fraud-v3", "BLOCK"), ("risk-v2", "BLOCK")],
+            [("fraud-v3", "APPROVE"), ("risk-v2", "APPROVE")],
         )
         audit = SeamAdminClient.connect(
             srv.mgmt_addr, token=mint_operator_token(["audit:read"])

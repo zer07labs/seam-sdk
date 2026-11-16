@@ -10,11 +10,12 @@ import (
 	"testing"
 )
 
-// conformance/commitment_digest_v3_vector.json is the runtime's reference vector for
-// `seam-commitment-digest:v3` + `seam-explanation-digest:v1`. A port is conforming iff it reproduces
+// conformance/commitment_digest_v4_vector.json is the runtime's reference vector for
+// `seam-commitment-digest:v4` + `seam-explanation-digest:v2` (seam-runtime #1687). A port is conforming iff it reproduces
 // every digest in it and verifies its signed_artifact against issuer_aid. The commitments are the REST
-// projection: byte fields as JSON number arrays, absent confidence/rationale_ref/supersedes as null.
-type v3Vector struct {
+// projection: byte fields as JSON number arrays, absent confidence/rationale_ref/supersedes/
+// voter_verification as null. The slot-9/10 digests sit beside the commitment as hex (null = absent).
+type v4Vector struct {
 	CommitmentDigestDomain  string `json:"commitment_digest_domain"`
 	ExplanationDigestDomain string `json:"explanation_digest_domain"`
 	IssuerAID               string `json:"issuer_aid"`
@@ -32,8 +33,10 @@ type v3Vector struct {
 			ExplanationDigest []int              `json:"explanation_digest"`
 			Explanation       []ExplanationEntry `json:"explanation"`
 		} `json:"commitment"`
-		ExplanationDigest string `json:"explanation_digest"`
-		CommitmentDigest  string `json:"commitment_digest"`
+		SelectionDigest   *string `json:"selection_digest"`
+		CertificateDigest *string `json:"certificate_digest"`
+		ExplanationDigest string  `json:"explanation_digest"`
+		CommitmentDigest  string  `json:"commitment_digest"`
 	} `json:"cases"`
 }
 
@@ -49,13 +52,25 @@ func intsToBytes(t *testing.T, in []int) []byte {
 	return out
 }
 
-func loadV3(t *testing.T) v3Vector {
+func optHex(t *testing.T, s *string) []byte {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "conformance", "commitment_digest_v3_vector.json"))
+	if s == nil {
+		return nil
+	}
+	b, err := hex.DecodeString(*s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func loadV4(t *testing.T) v4Vector {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "conformance", "commitment_digest_v4_vector.json"))
 	if err != nil {
 		t.Fatalf("read vector: %v", err)
 	}
-	var v v3Vector
+	var v v4Vector
 	if err := json.Unmarshal(raw, &v); err != nil {
 		t.Fatalf("parse vector: %v", err)
 	}
@@ -65,8 +80,8 @@ func loadV3(t *testing.T) v3Vector {
 	return v
 }
 
-func TestCommitmentDigestV3Vector(t *testing.T) {
-	v := loadV3(t)
+func TestCommitmentDigestV4Vector(t *testing.T) {
+	v := loadV4(t)
 	if v.CommitmentDigestDomain != CommitmentDigestDomain || v.ExplanationDigestDomain != ExplanationDomain {
 		t.Fatalf("domain tags drifted: %q / %q", v.CommitmentDigestDomain, v.ExplanationDigestDomain)
 	}
@@ -92,6 +107,7 @@ func TestCommitmentDigestV3Vector(t *testing.T) {
 				ID: vc.ID, Action: vc.Action, Authority: vc.Authority, AuthMethod: vc.AuthMethod,
 				TrustBasis: vc.TrustBasis, Committer: vc.Committer,
 				ExplanationDigest: published, Explanation: vc.Explanation, Supersedes: vc.Supersedes,
+				SelectionDigest: optHex(t, tc.SelectionDigest), CertificateDigest: optHex(t, tc.CertificateDigest),
 			}
 			// All three field-8 resolutions must agree: entries + published, entries only, published only.
 			only := c
@@ -126,10 +142,94 @@ func TestCommitmentDigestV3Vector(t *testing.T) {
 	if signed == 0 {
 		t.Fatal("no case carries a signed_artifact; the signature path is untested")
 	}
+	voters := 0
+	for _, tc := range v.Cases {
+		for _, e := range tc.Commitment.Explanation {
+			if e.VoterVerification != nil {
+				voters++
+			}
+		}
+	}
+	if voters == 0 {
+		t.Fatal("no entry carries a voter_verification; the VV framing is untested")
+	}
+}
+
+// Fields 9 and 10: a present digest must be exactly 32 bytes, and presence is a different preimage from
+// absence (no all-zero sentinel).
+func TestCommitmentSlotsRefuseBadLengthAndBindPresence(t *testing.T) {
+	absent, err := seamCommitmentDigest(Commitment{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	zero := make([]byte, 32)
+	for name, c := range map[string]Commitment{"selection": {SelectionDigest: zero}, "certificate": {CertificateDigest: zero}} {
+		got, err := seamCommitmentDigest(c)
+		if err != nil || got == absent {
+			t.Fatalf("%s: a present all-zero digest must differ from absent (%v)", name, err)
+		}
+	}
+	for name, c := range map[string]Commitment{
+		"selection 31":   {SelectionDigest: zero[:31]},
+		"selection 0":    {SelectionDigest: []byte{}},
+		"certificate 33": {CertificateDigest: append(append([]byte{}, zero...), 0)},
+	} {
+		if _, err := seamCommitmentDigest(c); err == nil {
+			t.Fatalf("%s must be refused, not hashed", name)
+		}
+	}
+}
+
+func voterEntry() ExplanationEntry {
+	return ExplanationEntry{Kind: "vote", Participant: "risk", ProposalID: "p1", Value: "APPROVE",
+		VoterVerification: &VoterVerification{Method: VoterMethodPop, ContentDigest: make([]byte, 32), Signature: make([]byte, 64)}}
+}
+
+func TestExplanationVoterRecordRefusals(t *testing.T) {
+	plain := voterEntry()
+	plain.VoterVerification = nil
+	a, err := ExplanationDigest([]ExplanationEntry{plain})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := ExplanationDigest([]ExplanationEntry{voterEntry()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a == b {
+		t.Fatal("a voter record must change the entry's preimage")
+	}
+	for name, mutate := range map[string]func(*VoterVerification){
+		"unspecified method": func(v *VoterVerification) { v.Method = "" },
+		"enum name":          func(v *VoterVerification) { v.Method = "VOTER_VERIFICATION_POP" },
+		"uppercase":          func(v *VoterVerification) { v.Method = "POP" },
+		"short digest":       func(v *VoterVerification) { v.ContentDigest = v.ContentDigest[:31] },
+	} {
+		e := voterEntry()
+		mutate(e.VoterVerification)
+		if _, err := ExplanationDigest([]ExplanationEntry{e}); err == nil {
+			t.Fatalf("%s must be refused, not hashed", name)
+		}
+	}
+	cp := voterEntry()
+	cp.VoterVerification.Method = VoterMethodCpSigned
+	if _, err := ExplanationDigest([]ExplanationEntry{cp}); err != nil {
+		t.Fatalf("cp_signed is a framed word: %v", err)
+	}
+	for n, want := range map[int32]string{1: "pop", 2: "cp_signed"} {
+		if got, err := VoterMethodFromProto(n); err != nil || got != want {
+			t.Fatalf("VoterMethodFromProto(%d) = %q, %v", n, got, err)
+		}
+	}
+	for _, n := range []int32{0, 3, -1} {
+		if _, err := VoterMethodFromProto(n); err == nil {
+			t.Fatalf("VoterMethodFromProto(%d) must be refused", n)
+		}
+	}
 }
 
 func TestExplanationDigestEmptyMatchesSpec(t *testing.T) {
-	const want = "eb7853dc086ef5385db8408cf35c9c984e845ccc03d269102f942eed7806ce40"
+	const want = "cabe83af912ea38ef4525f5a7d8580b4c4e217417edc0c93f936d2c18c4fd8f5"
 	for name, entries := range map[string][]ExplanationEntry{"nil": nil, "empty": {}} {
 		d, err := ExplanationDigest(entries)
 		if err != nil || hex.EncodeToString(d[:]) != want {
@@ -138,7 +238,7 @@ func TestExplanationDigestEmptyMatchesSpec(t *testing.T) {
 	}
 	// The spec's worked example: all fields empty, no explanation held.
 	got, err := seamCommitmentDigest(Commitment{})
-	if err != nil || got != "9238441205cd395f9507a5152e2c67f93fa83ca8d336d2ce7b8e01a385c3dd2e" {
+	if err != nil || got != "6e3a11bbef5f552f78e6d9114c13b7e48bb0a30de82d38a603981d6d1ca7281a" {
 		t.Fatalf("all-empty worked example: got %s, %v", got, err)
 	}
 }
@@ -244,7 +344,7 @@ func TestVerifyTCTRefusesInconsistentExplanation(t *testing.T) {
 	}
 }
 
-// v3's only framing change from v2: `supersedes` carries a presence byte, so absent and present-empty
+// Unchanged since v3: `supersedes` carries a presence byte, so absent and present-empty
 // are different digests (the vector's all_empty / empty_supersedes cases, reproduced directly).
 func TestEmptyVsAbsentSupersedesDiffer(t *testing.T) {
 	empty := ""
@@ -259,7 +359,7 @@ func TestEmptyVsAbsentSupersedesDiffer(t *testing.T) {
 	if absent == present {
 		t.Fatal("absent and present-empty supersedes must give different digests")
 	}
-	if present != "b7f0e7a2a14e91f0d7dc1a56781a39f7601bce4df979f3b25a58aa9d86d3263c" {
+	if present != "a495c011cd353de108bb7c0e2a3bcb90051d59b135696a10848c3a087e5fed50" {
 		t.Fatalf("present-empty supersedes: got %s", present)
 	}
 }

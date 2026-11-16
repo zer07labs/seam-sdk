@@ -77,7 +77,7 @@ export interface Presentation {
   pop_nonce: string;
 }
 
-/** The `kind` words `seam-explanation-digest:v1` frames — lowercase ASCII, exactly; never the proto enum name. */
+/** The `kind` words `seam-explanation-digest:v2` frames — lowercase ASCII, exactly; never the proto enum name. */
 export const EXPLANATION_KINDS = ["vote", "evaluation", "objection", "ballot"] as const;
 
 /** One sealed explanation entry, as the digest frames it (snake_case, like {@link Commitment}).
@@ -92,6 +92,39 @@ export interface ExplanationEntryInput {
   reason: string;
   confidence?: number | null;
   rationale_ref?: string | null;
+  /** The sealed voter verification record (#1687): present on every `vote`, `ballot` and `objection` the
+   * runtime seals, absent (`undefined` or `null`) on evaluations. Framed as `VV` in
+   * `seam-explanation-digest:v2`. */
+  voter_verification?: VoterVerificationInput | null;
+}
+
+/** The `method` words `seam-explanation-digest:v2` frames — lowercase ASCII, exactly. `cp_signed` is
+ * declared by the runtime, not yet served. */
+export const VOTER_VERIFICATION_METHODS = ["pop", "cp_signed"] as const;
+
+/** Raw bytes as a digest input: a `Uint8Array`, a JSON number array (the REST projection), or lowercase
+ * or uppercase hex. */
+export type DigestBytes = Uint8Array | readonly number[] | string;
+
+/** One sealed `VoterVerificationRecord` (#1687, `voter-verification.v1.md` §"The sealed record"), as
+ * `seam-explanation-digest:v2` frames it. Every field is framed whatever the method; `content_digest`
+ * MUST be 32 bytes. Integers are u64 Unix milliseconds (`number` up to 2^53, or `bigint`). */
+export interface VoterVerificationInput {
+  /** One of {@link VOTER_VERIFICATION_METHODS}; anything else is refused. */
+  method: string;
+  principal: string;
+  content_digest: DigestBytes;
+  issued_at_ms: number | bigint;
+  expires_at_ms: number | bigint;
+  signature: DigestBytes;
+  signer_certificate: DigestBytes;
+  tenant: string;
+  namespace: string;
+  session_id: string;
+  opened_at_millis: number | bigint;
+  issuer: string;
+  audience: string;
+  accepted_at_ms: number | bigint;
 }
 
 export interface Commitment {
@@ -106,9 +139,16 @@ export interface Commitment {
   /** The sealed explanation entries (#804), in sealed order. When present (even `[]`) they are
    * recomputed into field 8 and, if {@link explanation_digest} is also given, must agree with it. */
   explanation?: ExplanationEntryInput[] | null;
-  /** The published `seam-explanation-digest:v1` (32 raw bytes, or 64 hex chars). Used as field 8 only
+  /** The published `seam-explanation-digest:v2` (32 raw bytes, or 64 hex chars). Used as field 8 only
    * when no `explanation` entries are supplied; an empty value counts as "not published". */
   explanation_digest?: Uint8Array | string | null;
+  /** Field 9 (`seam-commitment-digest:v4`): the selection block's 32-byte digest. Absent (`undefined` or
+   * `null`) frames `0x00`, which is what every record runtime 0.87.0 seals carries; any length other than
+   * 32 is refused. */
+  selection_digest?: DigestBytes | null;
+  /** Field 10 (`seam-commitment-digest:v4`): the Gate certificate's 32-byte digest. Absent frames `0x00`
+   * (every record runtime 0.87.0 seals); any length other than 32 is refused. */
+  certificate_digest?: DigestBytes | null;
 }
 
 /** The agent's `aid:pubkey:ed25519:` identity for a 32-byte Ed25519 public key. */
@@ -173,6 +213,62 @@ function frame(b: Uint8Array): Uint8Array {
   return concat(lenPrefix(b), b);
 }
 
+function be64(name: string, n: number | bigint): Uint8Array {
+  const out = new Uint8Array(8);
+  new DataView(out.buffer).setBigUint64(0, uintSlot(name, n, 64), false);
+  return out;
+}
+
+/** A {@link DigestBytes} value as raw bytes, refusing anything that is not bytes. */
+function digestBytes(v: DigestBytes, what: string): Uint8Array {
+  if (v instanceof Uint8Array) return v;
+  if (typeof v === "string") {
+    if (!/^([0-9a-fA-F]{2})*$/.test(v)) throw new Error(`${what} is not hex`);
+    return new Uint8Array(Buffer.from(v, "hex"));
+  }
+  if (Array.isArray(v)) {
+    for (const x of v)
+      if (typeof x !== "number" || !Number.isInteger(x) || x < 0 || x > 255) throw new Error(`${what} is not a byte array`);
+    return Uint8Array.from(v);
+  }
+  throw new TypeError(`${what} must be bytes`);
+}
+
+/** `0x00` when absent, else `0x01 ‖ be64(32) ‖ 32 raw bytes` — the v4 fields 9 and 10. */
+function optDigest32(v: DigestBytes | null | undefined, what: string): Uint8Array {
+  if (v === undefined || v === null) return new Uint8Array([0]);
+  const b = digestBytes(v, what);
+  if (b.length !== 32) throw new Error(`${what} must be 32 bytes, got ${b.length}`);
+  return concat(new Uint8Array([1]), frame(b));
+}
+
+/** `VV` of `seam-explanation-digest:v2`: `0x00` when absent, else `0x01` and all fifteen fields. */
+function voterVerificationBytes(v: VoterVerificationInput | null | undefined): Uint8Array {
+  if (v === undefined || v === null) return new Uint8Array([0]);
+  if (typeof v !== "object") throw new TypeError("voter_verification must be an object");
+  if (!(VOTER_VERIFICATION_METHODS as readonly string[]).includes(v.method))
+    throw new Error(`unknown voter verification method ${JSON.stringify(v.method)}`);
+  const content = digestBytes(v.content_digest, "voter_verification.content_digest");
+  if (content.length !== 32) throw new Error(`voter_verification.content_digest must be 32 bytes, got ${content.length}`);
+  return concat(
+    new Uint8Array([1]),
+    frame(enc.encode(v.method)),
+    frame(utf8Field(v.principal, "voter_verification.principal")),
+    frame(content),
+    be64("voter_verification.issued_at_ms", v.issued_at_ms),
+    be64("voter_verification.expires_at_ms", v.expires_at_ms),
+    frame(digestBytes(v.signature, "voter_verification.signature")),
+    frame(digestBytes(v.signer_certificate, "voter_verification.signer_certificate")),
+    frame(utf8Field(v.tenant, "voter_verification.tenant")),
+    frame(utf8Field(v.namespace, "voter_verification.namespace")),
+    frame(utf8Field(v.session_id, "voter_verification.session_id")),
+    be64("voter_verification.opened_at_millis", v.opened_at_millis),
+    frame(utf8Field(v.issuer, "voter_verification.issuer")),
+    frame(utf8Field(v.audience, "voter_verification.audience")),
+    be64("voter_verification.accepted_at_ms", v.accepted_at_ms),
+  );
+}
+
 /** UTF-8 of a digest field, refusing a string that has no UTF-8 form (see {@link hasLoneSurrogate}). */
 function utf8Field(s: string, what: string): Uint8Array {
   if (typeof s !== "string") throw new TypeError(`${what} must be a string`);
@@ -181,20 +277,24 @@ function utf8Field(s: string, what: string): Uint8Array {
 }
 
 /**
- * `seam-explanation-digest:v1` over a sealed explanation — 32 raw bytes.
+ * `seam-explanation-digest:v2` over a sealed explanation — 32 raw bytes.
  *
- * `SHA-256(F("seam-explanation-digest:v1") ‖ be64(count) ‖ Σ ENTRY)`, where
- * `ENTRY = F(kind) ‖ F(participant) ‖ F(proposal_id) ‖ F(value) ‖ F(reason) ‖ CONF ‖ REF`,
- * `CONF = 0x00 | 0x01 ‖ be64(IEEE-754 bits)`, `REF = 0x00 | 0x01 ‖ F(rationale_ref)`. Entries are hashed
- * in the given (sealed) order — never sorted or de-duplicated. An absent confidence and a stated `0.0` are
- * different bytes. Throws on an unknown kind or a non-canonical confidence (NaN, ±Infinity, outside
- * `[0, 1]`, or `-0.0`) rather than hashing it. Normative: `seam-runtime/docs/specs/seam-commitment-digest.v3.md`.
+ * `SHA-256(F("seam-explanation-digest:v2") ‖ be64(count) ‖ Σ ENTRY)`, where
+ * `ENTRY = F(kind) ‖ F(participant) ‖ F(proposal_id) ‖ F(value) ‖ F(reason) ‖ CONF ‖ REF ‖ VV`,
+ * `CONF = 0x00 | 0x01 ‖ be64(IEEE-754 bits)`, `REF = 0x00 | 0x01 ‖ F(rationale_ref)`, and `VV = 0x00 |
+ * 0x01 ‖ F(method) ‖ F(principal) ‖ F(content_digest) ‖ be64(issued_at_ms) ‖ be64(expires_at_ms) ‖
+ * F(signature) ‖ F(signer_certificate) ‖ F(tenant) ‖ F(namespace) ‖ F(session_id) ‖ be64(opened_at_millis)
+ * ‖ F(issuer) ‖ F(audience) ‖ be64(accepted_at_ms)` (#1687). Entries are hashed in the given (sealed)
+ * order — never sorted or de-duplicated. An absent confidence and a stated `0.0` are different bytes.
+ * Throws on an unknown kind or method, a non-canonical confidence (NaN, ±Infinity, outside `[0, 1]`, or
+ * `-0.0`) or a `content_digest` that is not 32 bytes rather than hashing it. Normative:
+ * `seam-runtime/docs/specs/seam-commitment-digest.v4.md`.
  */
 export function explanationDigest(entries: readonly ExplanationEntryInput[]): Uint8Array {
   if (!Array.isArray(entries)) throw new TypeError("explanation must be an array");
   const count = new Uint8Array(8);
   new DataView(count.buffer).setBigUint64(0, BigInt(entries.length), false);
-  const parts: Uint8Array[] = [frame(enc.encode("seam-explanation-digest:v1")), count];
+  const parts: Uint8Array[] = [frame(enc.encode("seam-explanation-digest:v2")), count];
   for (const e of entries) {
     if (!(EXPLANATION_KINDS as readonly string[]).includes(e.kind))
       throw new Error(`unknown explanation kind ${JSON.stringify(e.kind)}`);
@@ -221,6 +321,7 @@ export function explanationDigest(entries: readonly ExplanationEntryInput[]): Ui
       ref === undefined || ref === null
         ? new Uint8Array([0])
         : concat(new Uint8Array([1]), frame(utf8Field(ref, "rationale_ref"))),
+      voterVerificationBytes(e.voter_verification),
     );
   }
   return sha256(concat(...parts));
@@ -254,8 +355,9 @@ function commitmentExplanationDigest(c: Commitment): Uint8Array {
   return computed;
 }
 
-/** `seam-commitment-digest:v3` (hex): SHA-256 over the length-prefixed domain tag and fields
- * `(id, action, authority, supersedes, auth_method, trust_basis, committer, explanation_digest)`.
+/** `seam-commitment-digest:v4` (hex): SHA-256 over the length-prefixed domain tag and fields
+ * `(id, action, authority, supersedes, auth_method, trust_basis, committer, explanation_digest,
+ * selection_digest, certificate_digest)`.
  *
  * Every field is `F(x) = be64(len) || x` (no separator), so the digest is injective over the tuple. The
  * length prefixes are load-bearing: with a NUL separator instead, `("a\0b", "c")` and `("a", "b\0c")`
@@ -263,12 +365,13 @@ function commitmentExplanationDigest(c: Commitment): Uint8Array {
  * fields are arbitrary text that may itself contain NUL. Never "simplify" them away. `supersedes` alone
  * carries a presence byte: `0x00` when absent (`undefined` or `null`), `0x01 || F(value)` when present —
  * so an absent prior and a present empty one are different digests. Field 8 is the 32 RAW bytes of the
- * explanation digest. v1 and v2 are deleted, not dual-verified. Mirrors the runtime byte-for-byte;
- * normative: `seam-runtime/docs/specs/seam-commitment-digest.v3.md`. */
+ * explanation digest (`seam-explanation-digest:v2`). Fields 9 and 10 are always framed: `0x00` when absent,
+ * `0x01 || F(32 bytes)` when present (a length other than 32 throws). v1-v3 are deleted, not dual-verified.
+ * Mirrors the runtime byte-for-byte; normative: `seam-runtime/docs/specs/seam-commitment-digest.v4.md`. */
 export function seamCommitmentDigest(c: Commitment): string {
   const supersedes = c.supersedes;
   const parts = [
-    frame(enc.encode("seam-commitment-digest:v3")),
+    frame(enc.encode("seam-commitment-digest:v4")),
     frame(utf8Field(c.id, "id")),
     frame(utf8Field(c.action, "action")),
     frame(utf8Field(c.authority, "authority")),
@@ -279,6 +382,8 @@ export function seamCommitmentDigest(c: Commitment): string {
     frame(utf8Field(c.trust_basis, "trust_basis")),
     frame(utf8Field(c.committer || "", "committer")),
     frame(commitmentExplanationDigest(c)),
+    optDigest32(c.selection_digest, "selection_digest"),
+    optDigest32(c.certificate_digest, "certificate_digest"),
   ];
   return Buffer.from(sha256(concat(...parts))).toString("hex");
 }
@@ -346,7 +451,7 @@ function isJsonObject(v: unknown): v is Record<string, unknown> {
  * self-issued claims (`typ`, `iss==sub==aud==issuerAid`, `exp`), that `grants` is exactly
  * `["aitp.attestation"]`, and that `ext` is exactly
  * `{"com.zer07labs.seam": {"type": "seam:commitment", "commitment_digest": <hex>}}` whose digest is
- * `seam-commitment-digest:v3` of this exact commitment — its decided content, its committer and its
+ * `seam-commitment-digest:v4` of this exact commitment — its decided content, its committer and its
  * sealed explanation. A duplicate JSON key anywhere in the header or payload, a statement carried in
  * `grants` (the retired v2 shape), or an extra grant verifies `false`. Explanation entries that disagree
  * with the published digest, an unknown kind, or a non-canonical confidence verify `false`; this never
@@ -356,6 +461,7 @@ export function verifyTct(
   tctJws: string,
   commitment: Commitment,
   nowS?: number,
+  opts?: { decision?: readonly [tenant: string, sessionId: string] },
 ): boolean {
   // Any malformed/forged input must fail closed (return false), never throw.
   try {
@@ -408,6 +514,10 @@ export function verifyTct(
     if (stmtKeys.length !== 2 || !stmtKeys.includes("type") || !stmtKeys.includes("commitment_digest"))
       return false;
     if (stmt.type !== "seam:commitment") return false;
+    // #1687: with the entries given, every sealed voter record is re-checked (verifyCommitmentVoters).
+    const entries = commitment.explanation;
+    if (entries !== undefined && entries !== null && !verifyCommitmentVoters(entries, issuerAid, opts?.decision))
+      return false;
     // Exact string compare: the runtime emits lowercase hex, and an uppercase spelling is a different
     // statement, not a normalization opportunity.
     return stmt.commitment_digest === seamCommitmentDigest(commitment);
@@ -1389,12 +1499,13 @@ export function callSigV3(agentSeed: Uint8Array, f: CallSigV3Fields): Uint8Array
   return ed25519.sign(callSigV3Payload(f), agentSeed);
 }
 
-// ── Enrolment proof-of-possession (`seam-enroll-pop-v1`, seam-runtime #1157 / #1164, SDK #205) ─────────
+// ── Enrolment proof-of-possession (`seam-enroll-pop-v2`, seam-runtime #1157 / #1164 / #1687, SDK #205) ──
 // `EnrollTenantRequest.pop` is the subject AID's own consent to ONE enrolment: an Ed25519 signature, by
 // the key the AID embeds, over the tenant and namespace it is being bound to. Without it a tenant-scoped
-// operator could enrol any AID it has merely seen. Pinned by `conformance/enroll_pop_v1_payload_vector.json`,
-// generated by an independent implementation.
-export const ENROLL_POP_V1_CONTEXT = "seam-enroll-pop-v1";
+// operator could enrol any AID it has merely seen. v2 (#1687) also signs the `participant_id` a `voter`
+// enrolment binds ("" for every other kind); v1 is refused by runtime 0.87.0 and gone here. Pinned by
+// `conformance/enroll_pop_v2_payload_vector.json`, generated by an independent implementation.
+export const ENROLL_POP_V2_CONTEXT = "seam-enroll-pop-v2";
 export const ENROLL_POP_NONCE_MAX_LEN = 128;
 const ENROLL_POP_NONCE = /^[A-Za-z0-9_-]{1,128}$/;
 
@@ -1403,6 +1514,9 @@ export interface EnrollPopFields {
   subjectAid: string;
   tenant: string;
   namespace: string;
+  /** The participant a `voter` enrolment binds (#1687); `""` (the default) for every other kind. It must
+   * equal the `participantId` sent on the enrolment. */
+  participantId?: string;
   /** Unix epoch MILLISECONDS; signed as 8 raw little-endian bytes. */
   issuedAtMs: number | bigint;
   nonce: string;
@@ -1440,15 +1554,16 @@ export function newEnrollPopNonce(): string {
 
 /** The exact bytes an enrolment proof signs:
  *
- * `frame("seam-enroll-pop-v1") | frame(subjectAid) | frame(tenant) | frame(namespace) |
- * frame(u64le(issuedAtMs)) | frame(nonce)`, with `frame(x) = u32le(len(x)) | x` over UTF-8, lengths in
+ * `frame("seam-enroll-pop-v2") | frame(subjectAid) | frame(tenant) | frame(namespace) |
+ * frame(participantId) | frame(u64le(issuedAtMs)) | frame(nonce)`, with `frame(x) = u32le(len(x)) | x` over UTF-8, lengths in
  * BYTES. The runtime rebuilds this from the request it received, so every field must be the wire value. */
 export function enrollPopPayload(f: EnrollPopFields): Uint8Array {
   return concat(
-    frameLE(enc.encode(ENROLL_POP_V1_CONTEXT)),
+    frameLE(enc.encode(ENROLL_POP_V2_CONTEXT)),
     frameLE(enc.encode(f.subjectAid)),
     frameLE(enc.encode(f.tenant)),
     frameLE(enc.encode(f.namespace)),
+    frameLE(enc.encode(f.participantId ?? "")),
     frameLE(u64le("issuedAtMs", f.issuedAtMs)),
     frameLE(enc.encode(f.nonce)),
   );
@@ -1459,9 +1574,11 @@ export function enrollPopPayload(f: EnrollPopFields): Uint8Array {
  * `Agent.enrolmentProof`, which defaults `issuedAtMs` to now and `nonce` to a fresh random one. */
 export function enrollPop(
   agentSeed: Uint8Array,
-  f: { tenant: string; namespace: string; issuedAtMs: number | bigint; nonce: string },
+  f: { tenant: string; namespace: string; participantId?: string; issuedAtMs: number | bigint; nonce: string },
 ): EnrollProof {
   validateEnrollPopNonce(f.nonce);
+  if (f.participantId !== undefined && typeof f.participantId !== "string")
+    throw new TypeError(`participantId must be a string, got ${typeof f.participantId}`);
   const issuedAtMs = uintSlot("issuedAtMs", f.issuedAtMs, 64);
   const subjectAid = aidFromPubkey(ed25519.getPublicKey(agentSeed));
   const payload = enrollPopPayload({ ...f, subjectAid, issuedAtMs });
@@ -1485,6 +1602,350 @@ export function enrollProofToRest(p: EnrollProof): { issued_at_ms: number; nonce
     throw new RangeError("issuedAtMs exceeds 2^53 and cannot be carried as a JSON number");
   }
   return { issued_at_ms: Number(p.issuedAtMs), nonce: p.nonce, signature: b64urlNoPad(p.signature) };
+}
+
+// ── Voter proofs — seam-voter-pop-v1 / seam-vote-content-v1 (seam-runtime #1687, runtime 0.87.0) ─────
+//
+// Every binding vote, quorum ballot and objection is accepted only with a proof signed by the participant's
+// own enrolled `voter` key (`docs/specs/voter-verification.v1.md`). Byte-exact against
+// `conformance/voter_pop_v1_payload_vector.json`; the Python twin is `seam_sdk.crypto`'s voter section.
+
+export const VOTER_POP_V1_DOMAIN = "seam-voter-pop-v1";
+export const VOTE_CONTENT_V1_DOMAIN = "seam-vote-content-v1";
+/** The lifetime and skew the runtime enforces: `expires - issued <= 15 min`, `issued <= now + 60 s`,
+ * `now <= expires`. */
+export const VOTER_POP_MAX_LIFETIME_MS = 15 * 60 * 1000;
+export const VOTER_POP_MAX_SKEW_MS = 60 * 1000;
+/** The default lifetime of a freshly signed proof (5 minutes). */
+export const VOTER_POP_DEFAULT_LIFETIME_MS = 5 * 60 * 1000;
+
+/** Where a vote is cast: the runtime (`issuer` AID and `audience`, default `seam-runtime`) and the
+ * session's tenant/namespace and open identity (`sessionId`, `openedAtMillis` =
+ * `SessionStep.openedAtMillis` from the open; `0` on the one-shot `runDecision` path). */
+export interface VoterPopTarget {
+  issuer: string;
+  tenant: string;
+  namespace: string;
+  sessionId: string;
+  openedAtMillis?: number | bigint;
+  audience?: string;
+}
+
+/** A signed voter proof — the parts of `VoterProof.pop`. Named `VoterPopProof` (not `VoterPop`) so it
+ * does not take the root name of the generated `pb.VoterPop`. `signature` is the raw 64 bytes. */
+export interface VoterPopProof {
+  voterAid: string;
+  issuedAtMs: bigint;
+  expiresAtMs: bigint;
+  signature: Uint8Array;
+}
+
+/** The entry the runtime will seal, as the voter signs it. `kind` is `vote`, `ballot` or `objection`;
+ * `proposalId` is the ballot's `requestId` for a ballot; `value` is the vote value, ballot choice, or
+ * objection severity (`""` when omitted). */
+export interface VoteEntryInput {
+  kind: string;
+  participant: string;
+  proposalId: string;
+  value: string;
+  reason?: string;
+  confidence?: number | null;
+  rationaleRef?: string | null;
+}
+
+/** One sealed context binding the content digest frames: `[ctxRef, contentHash]` or an object. */
+export type VoteContextInput = readonly [ctxRef: string, contentHash: string] | { ctxRef: string; contentHash?: string | null };
+
+function countFrame(n: number): Uint8Array {
+  return frameLE(u32le("count", n));
+}
+
+/** `seam-vote-content-v1`: what the vote is about (32 raw bytes). `content` is the accepted proposal's
+ * `option` (vote, objection), the approval request's `action` (ballot), or `votes[0].value` (one-shot);
+ * participants / onBehalfOf as opened, in request order; `context` the sealed provenance in sealed
+ * order (`contentHash` `""` when the binding carries none). */
+export function voteContentDigest(
+  mode: string,
+  proposalId: string,
+  content: string,
+  participants: readonly string[] = [],
+  onBehalfOf: readonly string[] = [],
+  context: readonly VoteContextInput[] = [],
+  opts: VoteContentExtras = {},
+): Uint8Array {
+  const ctx = context.map((c): [string, string] =>
+    Array.isArray(c) ? [c[0] as string, (c[1] as string) ?? ""] : [(c as { ctxRef: string }).ctxRef, (c as { contentHash?: string | null }).contentHash ?? ""],
+  );
+  const parts: Uint8Array[] = [
+    frameLE(enc.encode(VOTE_CONTENT_V1_DOMAIN)),
+    frameLE(enc.encode(mode)),
+    frameLE(enc.encode(proposalId)),
+    frameLE(enc.encode(content)),
+    countFrame(participants.length),
+    ...participants.map((p) => frameLE(enc.encode(p))),
+    countFrame(onBehalfOf.length),
+    ...onBehalfOf.map((o) => frameLE(enc.encode(o))),
+    countFrame(ctx.length),
+  ];
+  for (const [ref, h] of ctx) parts.push(frameLE(enc.encode(ref)), frameLE(enc.encode(h)));
+  const feats = canonicalFeatures(opts.features ?? []);
+  parts.push(countFrame(feats.length));
+  for (const [k, v] of feats) parts.push(frameLE(k), frameLE(v));
+  parts.push(votePolicySlot(opts.policy ?? null));
+  return sha256(concat(...parts));
+}
+
+/** The vote-content inputs added by #1713's BIND commit. `features` is the one-shot
+ * `RunDecisionRequest.features` (a record or `[key, value]` pairs). They are framed sorted by UTF-8 key
+ * bytes, and a repeated key is refused, never deduplicated; a session vote has none. `policy` is the
+ * session's `SessionStep.votePolicy` from open (`{ policyVersion, rulesDigest }`, 32 raw bytes), framed
+ * `0x01‖F(policyVersion)‖F(rulesDigest)`. Absent or null frames `0x00`, which is the one-shot,
+ * server-resolved. */
+export interface VoteContentExtras {
+  features?: Readonly<Record<string, string>> | readonly (readonly [string, string])[];
+  policy?: { policyVersion: string; rulesDigest: Uint8Array } | null;
+}
+
+function canonicalFeatures(f: NonNullable<VoteContentExtras["features"]>): [Uint8Array, Uint8Array][] {
+  const pairs: readonly (readonly [string, string])[] = Array.isArray(f)
+    ? (f as readonly (readonly [string, string])[])
+    : Object.entries(f as Record<string, string>);
+  const out = pairs.map(([k, v]): [Uint8Array, Uint8Array] => {
+    if (typeof k !== "string" || typeof v !== "string") throw new TypeError("a feature is a [string, string] pair");
+    return [enc.encode(k), enc.encode(v)];
+  });
+  const cmp = (a: Uint8Array, b: Uint8Array): number => {
+    for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return a[i]! - b[i]!;
+    return a.length - b.length;
+  };
+  out.sort((x, y) => cmp(x[0], y[0]));
+  for (let i = 1; i < out.length; i++)
+    if (cmp(out[i - 1]![0], out[i]![0]) === 0)
+      throw new Error(`feature key ${JSON.stringify(new TextDecoder().decode(out[i]![0]))} is given twice (refused, never deduplicated)`);
+  return out;
+}
+
+function votePolicySlot(p: VoteContentExtras["policy"]): Uint8Array {
+  if (p === null || p === undefined) return new Uint8Array([0]);
+  if (typeof p.policyVersion !== "string") throw new TypeError("policyVersion must be a string");
+  if (!(p.rulesDigest instanceof Uint8Array) || p.rulesDigest.length !== 32)
+    throw new Error(`rulesDigest must be 32 bytes, got ${p.rulesDigest?.length}`);
+  return concat(new Uint8Array([1]), frameLE(enc.encode(p.policyVersion)), frameLE(p.rulesDigest));
+}
+
+/** The frozen `entry_bytes` a voter signs (`F(x) = be64(len) || x`). A stated `-0` confidence folds to
+ * `+0`. Frozen: an explanation-digest bump never changes it. */
+export function voteEntryBytes(e: VoteEntryInput): Uint8Array {
+  if (!(EXPLANATION_KINDS as readonly string[]).includes(e.kind)) throw new Error(`unknown explanation kind ${JSON.stringify(e.kind)}`);
+  const parts: Uint8Array[] = [
+    frame(enc.encode(e.kind)),
+    frame(enc.encode(e.participant)),
+    frame(enc.encode(e.proposalId)),
+    frame(enc.encode(e.value)),
+    frame(enc.encode(e.reason ?? "")),
+  ];
+  if (e.confidence === null || e.confidence === undefined) {
+    parts.push(new Uint8Array([0]));
+  } else {
+    if (typeof e.confidence !== "number" || !Number.isFinite(e.confidence))
+      throw new RangeError(`non-finite confidence ${String(e.confidence)}`);
+    const d = new Uint8Array(9);
+    d[0] = 1;
+    new DataView(d.buffer).setFloat64(1, e.confidence + 0, false); // -0 + 0 === +0
+    parts.push(d);
+  }
+  parts.push(
+    e.rationaleRef === null || e.rationaleRef === undefined
+      ? new Uint8Array([0])
+      : concat(new Uint8Array([1]), frame(enc.encode(e.rationaleRef))),
+  );
+  return concat(...parts);
+}
+
+function entryBytesOf(entry: VoteEntryInput | Uint8Array): Uint8Array {
+  return entry instanceof Uint8Array ? entry : voteEntryBytes(entry);
+}
+
+/** The exact bytes a voter proof signs (`framed(x) = u32le(len) || x`): domain, issuer, audience,
+ * tenant, namespace, sessionId, u64le(openedAtMillis), voterAid, contentDigest[32], u64le(issuedAtMs),
+ * u64le(expiresAtMs), entryBytes. */
+export function voterPopPayload(
+  target: VoterPopTarget,
+  voterAid: string,
+  contentDigest: Uint8Array,
+  issuedAtMs: number | bigint,
+  expiresAtMs: number | bigint,
+  entryBytes: Uint8Array,
+): Uint8Array {
+  const digest = requireBytes("contentDigest", contentDigest);
+  if (digest.length !== 32) throw new RangeError(`contentDigest must be 32 bytes, got ${digest.length}`);
+  return concat(
+    frameLE(enc.encode(VOTER_POP_V1_DOMAIN)),
+    frameLE(enc.encode(target.issuer)),
+    frameLE(enc.encode(target.audience ?? "seam-runtime")),
+    frameLE(enc.encode(target.tenant)),
+    frameLE(enc.encode(target.namespace)),
+    frameLE(enc.encode(target.sessionId)),
+    frameLE(u64le("openedAtMillis", target.openedAtMillis ?? 0)),
+    frameLE(enc.encode(voterAid)),
+    frameLE(digest),
+    frameLE(u64le("issuedAtMs", issuedAtMs)),
+    frameLE(u64le("expiresAtMs", expiresAtMs)),
+    frameLE(requireBytes("entryBytes", entryBytes)),
+  );
+}
+
+/** Sign a `seam-voter-pop-v1` proof with the voter's OWN enrolled `voter` key (Ed25519 seed). `issuedAtMs`
+ * defaults to now and `expiresAtMs` to five minutes later; a window the runtime must refuse
+ * (`issued > expires`, or longer than 15 min) is never signed. The voter AID is DERIVED from the seed. */
+export function signVoterPop(
+  voterSeed: Uint8Array,
+  target: VoterPopTarget,
+  contentDigest: Uint8Array,
+  entry: VoteEntryInput | Uint8Array,
+  opts?: { issuedAtMs?: number | bigint; expiresAtMs?: number | bigint },
+): VoterPopProof {
+  const issued = uintSlot("issuedAtMs", opts?.issuedAtMs ?? Date.now(), 64);
+  const expires = uintSlot("expiresAtMs", opts?.expiresAtMs ?? issued + BigInt(VOTER_POP_DEFAULT_LIFETIME_MS), 64);
+  if (issued > expires || expires - issued > BigInt(VOTER_POP_MAX_LIFETIME_MS))
+    throw new RangeError("voter proof window must satisfy issuedAtMs <= expiresAtMs <= issuedAtMs + 15 min");
+  const voterAid = aidFromPubkey(ed25519.getPublicKey(voterSeed));
+  const payload = voterPopPayload(target, voterAid, contentDigest, issued, expires, entryBytesOf(entry));
+  return { voterAid, issuedAtMs: issued, expiresAtMs: expires, signature: ed25519.sign(payload, voterSeed) };
+}
+
+/** `true` iff `signature` is `voterAid`'s Ed25519 signature over {@link voterPopPayload}. The binding
+ * only; the window is the runtime's (and a re-verifier's) to check. */
+export function verifyVoterPop(
+  target: VoterPopTarget,
+  voterAid: string,
+  contentDigest: Uint8Array,
+  issuedAtMs: number | bigint,
+  expiresAtMs: number | bigint,
+  entry: VoteEntryInput | Uint8Array,
+  signature: Uint8Array,
+): boolean {
+  try {
+    return ed25519.verify(
+      signature,
+      voterPopPayload(target, voterAid, contentDigest, issuedAtMs, expiresAtMs, entryBytesOf(entry)),
+      aidToPubkey(voterAid),
+      { zip215: false },
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** The REST/JSON `proof` object: `{ pop: { ..., signature: <unpadded base64url> } }`. The window is a
+ * JSON number, so a value past 2^53 is refused rather than rounded. */
+export function voterPopToRest(p: VoterPopProof): {
+  pop: { voter_aid: string; issued_at_ms: number; expires_at_ms: number; signature: string };
+} {
+  for (const [n, v] of [["issuedAtMs", p.issuedAtMs], ["expiresAtMs", p.expiresAtMs]] as const)
+    if (v > BigInt(Number.MAX_SAFE_INTEGER)) throw new RangeError(`${n} exceeds 2^53 and cannot be carried as a JSON number`);
+  return {
+    pop: {
+      voter_aid: p.voterAid,
+      issued_at_ms: Number(p.issuedAtMs),
+      expires_at_ms: Number(p.expiresAtMs),
+      signature: b64urlNoPad(p.signature),
+    },
+  };
+}
+
+/** The explanation kinds a voter must sign: every one of them carries a sealed voter record, and an
+ * evaluation never does. */
+export const VOTER_VERIFIED_KINDS = ["vote", "ballot", "objection"] as const;
+
+function asU64(v: number | bigint): bigint {
+  return uintSlot("voter record integer", v, 64);
+}
+
+/** Re-check one sealed entry's `voter_verification` offline, from the record alone: rebuild the signed
+ * input from the record's own addressing fields and the entry's frozen `entry_bytes`, check the window
+ * at `accepted_at_ms`, and verify the signature with the key `principal` embeds. `false` for a missing
+ * record, a non-`pop` method, a signer certificate, or anything that does not verify. Twin of Python
+ * `verify_voter_record`. */
+export function verifyVoterRecord(entry: ExplanationEntryInput): boolean {
+  const vv = entry.voter_verification;
+  if (vv === undefined || vv === null || vv.method !== "pop") return false;
+  try {
+    const issued = asU64(vv.issued_at_ms);
+    const expires = asU64(vv.expires_at_ms);
+    const accepted = asU64(vv.accepted_at_ms);
+    if (
+      !(
+        issued <= expires &&
+        expires - issued <= BigInt(VOTER_POP_MAX_LIFETIME_MS) &&
+        issued <= accepted + BigInt(VOTER_POP_MAX_SKEW_MS) &&
+        accepted <= expires
+      )
+    )
+      return false;
+    if (digestBytes(vv.signer_certificate, "signer_certificate").length !== 0) return false;
+    const target: VoterPopTarget = {
+      issuer: vv.issuer,
+      tenant: vv.tenant,
+      namespace: vv.namespace,
+      sessionId: vv.session_id,
+      openedAtMillis: asU64(vv.opened_at_millis),
+      audience: vv.audience,
+    };
+    return verifyVoterPop(
+      target,
+      vv.principal,
+      digestBytes(vv.content_digest, "content_digest"),
+      issued,
+      expires,
+      {
+        kind: entry.kind,
+        participant: entry.participant,
+        proposalId: entry.proposal_id,
+        value: entry.value,
+        reason: entry.reason,
+        confidence: entry.confidence ?? null,
+        rationaleRef: entry.rationale_ref ?? null,
+      },
+      digestBytes(vv.signature, "signature"),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** The commitment-level voter check (`voter-verification.v1.md` §"The sealed record"). `true` iff every
+ * `vote`, `ballot` and `objection` carries a record and no `evaluation` does; every record's `issuer` is
+ * `issuer` (the one the verifier pinned); all records share one `(tenant, namespace, session_id,
+ * opened_at_millis, audience)`; when `decision` = `[tenant, sessionId]` is known, that is the records'
+ * own; and each record re-checks ({@link verifyVoterRecord}). An explanation with no voter-kind entries
+ * passes. `content_digest` is not re-derived: what it covers is not in the commitment. Twin of Python
+ * `verify_commitment_voters`. */
+export function verifyCommitmentVoters(
+  entries: readonly ExplanationEntryInput[],
+  issuer: string,
+  decision?: readonly [tenant: string, sessionId: string],
+): boolean {
+  let addressing: string | undefined;
+  for (const e of entries) {
+    const vv = e.voter_verification;
+    if (!(VOTER_VERIFIED_KINDS as readonly string[]).includes(e.kind)) {
+      if (vv !== undefined && vv !== null) return false;
+      continue;
+    }
+    if (vv === undefined || vv === null || vv.issuer !== issuer) return false;
+    let a: string;
+    try {
+      a = JSON.stringify([vv.tenant, vv.namespace, vv.session_id, String(asU64(vv.opened_at_millis)), vv.audience]);
+    } catch {
+      return false;
+    }
+    if (addressing === undefined) addressing = a;
+    else if (a !== addressing) return false;
+    if (decision !== undefined && (vv.tenant !== decision[0] || vv.session_id !== decision[1])) return false;
+    if (!verifyVoterRecord(e)) return false;
+  }
+  return true;
 }
 
 // ── context_digest (wire tag 11) — seam.audit.context-provenance.v4 ──────────────────────────────

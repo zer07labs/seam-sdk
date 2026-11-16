@@ -26,7 +26,7 @@ the public contract, never on the runtime internals.
 > bands, which languages are actually published (two of five), the derived dependency floors, and —
 > importantly — what "independently verifiable" does **not** cover: the published verifier detects a
 > truncated chain only when you supply a later anchor (`chain --issuer … --expect-anchor`), and checks the
-> commitment digest (`seam-commitment-digest:v3`) only inside an evidence bundle (`bundle`). It has no
+> commitment digest (`seam-commitment-digest:v4`, with every sealed voter record) only inside an evidence bundle (`bundle`). It has no
 > standalone Commitment check.
 
 ## Architecture

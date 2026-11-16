@@ -15,13 +15,14 @@ import {
 } from "../src/client.js";
 import { SeamAdminClient } from "../src/admin.js";
 import { requestSig } from "../src/crypto.js";
-import { InvalidArgumentError, UnauthenticatedError } from "../src/errors.js";
+import { InvalidArgumentError, PermissionDeniedError, UnauthenticatedError } from "../src/errors.js";
 import {
   WIRE_FEATURE_ENROLL_KIND,
   WIRE_FEATURE_OUTCOME_OBSERVED_AT,
   WIRE_FEATURE_OUTCOME_REWARD_METRICS,
 } from "../src/outcome.js";
 import { SeamCoordination } from "../gen/seam/api/v1/seam_pb.js";
+import { demoVoting } from "./demo_voters.js";
 import { governanceEnv, mintOperatorToken } from "./operator_token.js";
 
 const BIN = process.env.SEAM_GRPC_BIN;
@@ -90,10 +91,11 @@ const demoAgent = () => new Agent(new Uint8Array(32).fill(42));
 
 test("full round trip: admit → decide → seal → read → verify", { skip: SKIP }, async () => {
   await withServer(8098, async (addr) => {
-    const client = SeamClient.connect(`http://${addr}`);
+    const client = demoVoting(SeamClient.connect(`http://${addr}`));
     const agent = demoAgent();
-    const dec = await client.runDecision(agent, "ts-1-sid-0123456789abcdef", ["fraud-v3", "risk-v2"], [["fraud-v3", "BLOCK"], ["risk-v2", "BLOCK"]]);
-    assert.equal(dec.decidedValue, "BLOCK");
+    const dec = await client.runDecision(agent, "ts-1-sid-0123456789abcdef", ["fraud-v3", "risk-v2"], [["fraud-v3", "APPROVE"], ["risk-v2", "APPROVE"]]);
+    // #1687: a one-shot vote value is exactly APPROVE/REJECT/ABSTAIN (the voter signs it as sealed).
+    assert.equal(dec.decidedValue, "APPROVE");
     assert.equal(dec.outcome, "Resolved");
     const record = await client.getDecision(dec.decisionId);
     assert.equal(record.outcome, "Resolved");
@@ -139,8 +141,8 @@ test("full round trip: admit → decide → seal → read → verify", { skip: S
 
 test("H4: request features never affect the sealed record", { skip: SKIP }, async () => {
   await withServer(8095, async (addr) => {
-    const client = SeamClient.connect(`http://${addr}`);
-    const votes: [string, string][] = [["fraud-v3", "BLOCK"], ["risk-v2", "BLOCK"]];
+    const client = demoVoting(SeamClient.connect(`http://${addr}`));
+    const votes: [string, string][] = [["fraud-v3", "APPROVE"], ["risk-v2", "APPROVE"]];
     const plain = await client.runDecision(demoAgent(), "ts-feat-off-sid-0123456789abcdef", ["fraud-v3", "risk-v2"], votes);
     const feat = await client.runDecision(demoAgent(), "ts-feat-on-sid-0123456789abcdef", ["fraud-v3", "risk-v2"], votes, {
       amount_band: "high",
@@ -160,8 +162,8 @@ test("H4: request features never affect the sealed record", { skip: SKIP }, asyn
 // them, and refused INVALID_ARGUMENT (never dropped) while it does not. Holds on either side of BP-2c.
 test("BP-2: outcome fields follow the advertised gate", { skip: SKIP }, async () => {
   await withServer(8094, async (addr) => {
-    const client = SeamClient.connect(`http://${addr}`);
-    const votes: [string, string][] = [["fraud-v3", "BLOCK"], ["risk-v2", "BLOCK"]];
+    const client = demoVoting(SeamClient.connect(`http://${addr}`));
+    const votes: [string, string][] = [["fraud-v3", "APPROVE"], ["risk-v2", "APPROVE"]];
     const dec = await client.runDecision(demoAgent(), "ts-bp2-sid-0123456789abcdef", ["fraud-v3", "risk-v2"], votes);
     const features = await client.serverWireFeatures();
     // Every runtime this lane runs (seamd:main) is 0.71.0+; below that the fields would be dropped.
@@ -189,9 +191,39 @@ test("BP-2: outcome fields follow the advertised gate", { skip: SKIP }, async ()
   });
 });
 
+test("#1687: an unsigned vote is refused; a signed one-shot seals a record that verifies", { skip: SKIP }, async () => {
+  await withServer(8093, async (addr) => {
+    // The runtime refuses a vote without its voter's proof — no flag, no dev bypass.
+    const plain = SeamClient.connect(`http://${addr}`);
+    const sid = "ts-unsigned-sid-0123456789abcdef";
+    await plain.openSession(demoAgent(), { sessionId: sid, participants: ["lead", "peer"] });
+    await plain.submitProposal(sid, "lead", "p1", "BLOCK");
+    await assert.rejects(plain.submitVote(sid, "peer", "p1", "APPROVE"), (e: unknown) => {
+      assert.ok(e instanceof PermissionDeniedError, String(e));
+      assert.match(`${(e as PermissionDeniedError).reason ?? ""} ${(e as Error).message}`, /voter_proof_required/);
+      return true;
+    });
+    await assert.rejects(
+      plain.runDecision(demoAgent(), "ts-unsigned-1s-sid-0123456789abcdef", ["fraud-v3"], [["fraud-v3", "APPROVE"]]),
+      PermissionDeniedError,
+    );
+    // The same one-shot signed with the voters' enrolled (demo) keys seals, and verifyDecision re-checks it.
+    const signed = demoVoting(SeamClient.connect(`http://${addr}`));
+    const dec = await signed.runDecision(demoAgent(), "ts-signed-1s-sid-0123456789abcdef", ["fraud-v3", "risk-v2"], [
+      ["fraud-v3", "APPROVE"],
+      ["risk-v2", "APPROVE", "looks fine"],
+    ]);
+    assert.equal(dec.outcome, "Resolved");
+    const proof = await signed.getCommitmentProof(dec.decisionId);
+    const voters = (proof.commitment?.explanation ?? []).filter((e) => e.voterVerification !== undefined);
+    assert.equal(voters.length, 2);
+    assert.equal(await signed.verifyDecision(dec.decisionId, await signed.issuerAid()), true);
+  });
+});
+
 test("session lifecycle: open → propose → vote → commit seals", { skip: SKIP }, async () => {
   await withServer(8097, async (addr) => {
-    const client = SeamClient.connect(`http://${addr}`);
+    const client = demoVoting(SeamClient.connect(`http://${addr}`));
     await client.openSession(demoAgent(), { sessionId: "ts-sess-sid-0123456789abcdef", participants: ["lead", "peer"] });
     await client.submitProposal("ts-sess-sid-0123456789abcdef", "lead", "p1", "BLOCK");
     await client.submitVote("ts-sess-sid-0123456789abcdef", "peer", "p1", "APPROVE");
@@ -206,7 +238,7 @@ test("6.2 budget loop: hard breach suspends, mgmt-plane resume continues and sea
   // this needs both planes; since seam-runtime #1156 there is no dev-open mgmt plane, so the R9
   // approver presents an operator token.
   await withPlanes(8217, 8218, async (dataAddr, mgmtUrl) => {
-    const client = SeamClient.connect(`http://${dataAddr}`);
+    const client = demoVoting(SeamClient.connect(`http://${dataAddr}`));
     const admin = SeamAdminClient.connect(mgmtUrl, { token: mintOperatorToken(["session:resume"]) });
     await client.openSession(demoAgent(), {
       sessionId: "ts-budget-sid-0123456789abcdef",
@@ -288,14 +320,14 @@ async function withDenyPlane(fn: (baseUrl: string) => Promise<void>): Promise<vo
 
 async function seal(client: SeamClient, agent: Agent, tag: string): Promise<string> {
   // RunDecision proves identity from its body presentation, so it seals on a deny plane unaided.
-  const dec = await client.runDecision(agent, tag, ["fraud-v3", "risk-v2"], [["fraud-v3", "BLOCK"], ["risk-v2", "BLOCK"]]);
+  const dec = await client.runDecision(agent, tag, ["fraud-v3", "risk-v2"], [["fraud-v3", "APPROVE"], ["risk-v2", "APPROVE"]]);
   assert.equal(dec.outcome, "Resolved");
   return dec.decisionId;
 }
 
 test("deny plane: a credentialed read succeeds, the same read without one is refused", { skip: !BIN }, async () => {
   await withDenyPlane(async (baseUrl) => {
-    const client = SeamClient.connect(baseUrl);
+    const client = demoVoting(SeamClient.connect(baseUrl));
     const agent = demoAgent();
     try {
       const id = await seal(client, agent, "ts-deny-cred-sid-0123456789abcdef");
@@ -306,7 +338,7 @@ test("deny plane: a credentialed read succeeds, the same read without one is ref
       await assert.rejects(client.getDecision(id), UnauthenticatedError);
       await assert.rejects(client.replayDecision(id), UnauthenticatedError);
       // A client bound to the agent (#202) attaches the credential without a per-call option.
-      const bound = SeamClient.connect(baseUrl, { agent });
+      const bound = demoVoting(SeamClient.connect(baseUrl, { agent }));
       try {
         assert.equal((await bound.getDecision(id)).decisionId, id);
       } finally {
@@ -323,7 +355,7 @@ test("deny plane: a header subject and a wrong-context signature are both refuse
   // `x-seam-subject` header (stripped at the edge), and an honest signature — right key, right
   // ticket — re-pointed at another resource or another verb.
   await withDenyPlane(async (baseUrl) => {
-    const client = SeamClient.connect(baseUrl);
+    const client = demoVoting(SeamClient.connect(baseUrl));
     const agent = demoAgent();
     try {
       const first = await seal(client, agent, "ts-deny-a-sid-0123456789abcdef");
@@ -402,7 +434,7 @@ async function voteThenResendTwice(client: SeamClient, agent: Agent, sid: string
 
 test("#275 P2 deny plane: a refreshed submitVote lands once; resends are deduped; a resolving resend returns the sealed id", { skip: !BIN }, async () => {
   await withDenyPlane(async (baseUrl) => {
-    const client = SeamClient.connect(baseUrl);
+    const client = demoVoting(SeamClient.connect(baseUrl));
     const agent = demoAgent();
     const sid = "ts-submit-retry-sid-0123456789abcdef";
     try {
@@ -439,7 +471,7 @@ test("#275 P2 deny plane: a refreshed submitVote lands once; resends are deduped
 
 test("#275 P2 deny plane: the refreshed vote is debited (exactly once, with the test above)", { skip: !BIN }, async () => {
   await withDenyPlane(async (baseUrl) => {
-    const client = SeamClient.connect(baseUrl);
+    const client = demoVoting(SeamClient.connect(baseUrl));
     const agent = demoAgent();
     const sid = "ts-submit-debit-sid-0123456789abcdef";
     try {

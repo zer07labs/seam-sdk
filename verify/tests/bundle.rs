@@ -1,5 +1,18 @@
 //! `seam-verify bundle` against **real** `seam-evidence-bundle.v1` directories.
 //!
+//! **Re-exported for #1687 (seam-sdk 0.87.0 pre-releases): every directory below was rewritten by the
+//! runtime's own exporter at seam-runtime@8f4e30ee (PR #1713, branch `feat/1687-verified-voters`, not yet
+//! on main):** `seam-commitment-digest:v4` / `seam-explanation-digest:v2`, and every vote carries its
+//! sealed `seam-voter-pop-v1` record. Captured from a `git archive` copy of that head, never committed
+//! anywhere, whose `crates/seam-verify/tests/bundle.rs` was patched only to print each export directory
+//! instead of removing it, plus two added export calls: `full/` is `fixture()` exported with
+//! `disclose_context` AND `disclose_policy` (so it is now a genuine runtime export, no manifest edit; its
+//! `policy.json` is byte-identical to the previous fixture's), and `other-issuer/` is the same history
+//! under `Seam::new([9u8; 32])` with both disclosures. `minimal/`, `shredded/` and `allocated/` are the
+//! temp directories of `context_is_opt_in_and_its_absence_is_declared`,
+//! `a_shredded_record_withholds_the_commitment_with_the_reason` and `an_allocated_record_bundle_verifies`.
+//! The history notes that follow describe the earlier exports and are kept for provenance.
+//!
 //! `fixtures/evidence-bundle/` was written by the runtime's own exporter at seam-runtime@a853f89
 //! (branch `aitp-0.17.0`: record digest v4 whose `context_digest` is
 //! `seam.audit.context-provenance.v4`, `seam-commitment-digest:v3` under a self-attestation TCT whose
@@ -169,6 +182,8 @@ fn json_output_reports_the_verdict_and_the_withheld_items() {
     assert_eq!(v["verified"], true);
     assert_eq!(v["decision_id"], D1);
     assert_eq!(v["tct"], "verified");
+    // #1687: the fixture's two votes each carry a voter record that re-verifies offline.
+    assert_eq!(v["voters_verified"], 2);
     assert_eq!(v["base_len"], 2);
     let withheld: Vec<&str> = v["withheld"]
         .as_array()
@@ -576,11 +591,32 @@ fn allocated_record_bundle_verifies() {
     let ct = sealed_field("allocated", D3, "ciphertext_digest");
     assert!(!ct.is_empty());
     assert_ne!(ct, sealed_field("full", D1, "ciphertext_digest"));
-    // ...and nothing the commitment digest covers (the trailer is not a digest:v3 input).
-    let digest =
-        |d: &str| read_json(&fixture(d).join("commitment.json"))["commitment_digest"].clone();
-    assert!(digest("allocated").is_string());
-    assert_eq!(digest("allocated"), digest("full"));
+    // ...and the trailer is not a digest:v4 input. Since #1687 the two commitment digests DO differ, but
+    // only because each vote's voter record is bound to its own session (d3 vs d1): strip the session id
+    // and the signature over it from every record and the two commitments are the same, field for field.
+    let strip = |d: &str| {
+        let mut c = read_json(&fixture(d).join("commitment.json"));
+        let o = c.as_object_mut().unwrap();
+        for k in ["commitment_digest", "signed_artifact"] {
+            o.remove(k);
+        }
+        for e in o["explanation"].as_array_mut().unwrap() {
+            if let Some(v) = e["voter_verification"].as_object_mut() {
+                assert_eq!(
+                    v["session_id"],
+                    if d == "allocated" {
+                        "d3-allocated-000000000"
+                    } else {
+                        "d1-0000000000000000000"
+                    }
+                );
+                v.remove("session_id");
+                v.remove("signature");
+            }
+        }
+        c
+    };
+    assert_eq!(strip("allocated"), strip("full"));
 }
 
 /// The binding refuses no genuine export: the `bundle` CLI still passes over all five shipped
@@ -805,6 +841,66 @@ fn step_4_commitment_tampers_are_refused() {
                     })
                 }),
                 "step 4:",
+            ),
+        ],
+    );
+}
+
+#[test]
+fn step_4_voter_verification_tampers_are_refused() {
+    // #1687: the voter check runs before the TCT, so each of these is refused for the voter record.
+    assert_refused(
+        "full",
+        vec![
+            (
+                "vote record stripped",
+                Box::new(|d: &Path| {
+                    edit_and_rehash(d, "commitment.json", |v| {
+                        v["explanation"][2]["voter_verification"] = serde_json::Value::Null
+                    })
+                }),
+                "step 4: commitment.json: voter verification: explanation[2]: a vote, ballot or objection carries no voter verification record",
+            ),
+            (
+                "voter signature flipped",
+                Box::new(|d: &Path| {
+                    edit_and_rehash(d, "commitment.json", |v| {
+                        let b = &mut v["explanation"][2]["voter_verification"]["signature"][0];
+                        *b = (b.as_u64().unwrap() ^ 1).into();
+                    })
+                }),
+                "the voter's signature does not verify",
+            ),
+            (
+                "voter record moved to another session",
+                Box::new(|d: &Path| {
+                    edit_and_rehash(d, "commitment.json", |v| {
+                        for i in [2, 3] {
+                            v["explanation"][i]["voter_verification"]["session_id"] =
+                                "d9-0000000000000000000".into();
+                        }
+                    })
+                }),
+                "from a session other than this decision's",
+            ),
+            (
+                "voter record on an evaluation",
+                Box::new(|d: &Path| {
+                    edit_and_rehash(d, "commitment.json", |v| {
+                        v["explanation"][0]["voter_verification"] =
+                            v["explanation"][2]["voter_verification"].clone()
+                    })
+                }),
+                "an evaluation carries a voter verification record",
+            ),
+            (
+                "a field 9 block",
+                Box::new(|d: &Path| {
+                    edit_and_rehash(d, "commitment.json", |v| {
+                        v["selection_digest"] = "00".repeat(32).into()
+                    })
+                }),
+                "'selection_digest' is present",
             ),
         ],
     );
