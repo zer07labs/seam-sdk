@@ -1269,8 +1269,9 @@ QUOTED = [
         # by seam-adapters#277 (bf059da), then 0.62.0 -> 0.82.1 on 2026-11-11 by seam-adapters#283
         # (af1799f), then ceiling <0.83 -> <0.84 on 2026-11-15 by seam-adapters#287 (afcf619), then
         # 0.82.1,<0.84 -> 0.87.0,<0.88 on 2026-11-16 by seam-agent-core 0.28.0 (seam-adapters#289,
-        # 165f626, verified voters #1687).
-        "seam-sdk>=0.87.0,<0.88",
+        # 165f626, verified voters #1687), then 0.87.0,<0.88 -> 0.88.1,<0.89 on 2026-11-16 by
+        # seam-agent-core 0.29.0 (seam-adapters#292, 19e8165, commitment digest v5 #1711).
+        "seam-sdk>=0.88.1,<0.89",
     ),
     (
         "COMPATIBILITY.md",
