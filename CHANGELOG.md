@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.88.1 — 2026-11-16
+
 These entries first ship in **0.88.1**: v0.88.0 was tagged and never published (see COMPATIBILITY.md).
 
 ### Changed (BREAKING) — commitment digest v5 (#1711, for the runtime 0.88.0 train)
