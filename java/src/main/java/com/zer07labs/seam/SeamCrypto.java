@@ -108,12 +108,15 @@ public final class SeamCrypto {
   }
 
   /**
-   * The commitment fields {@code seam-commitment-digest:v4} binds. {@code committer} may be {@code
-   * null} (hashed as empty). {@code supersedes} is {@code null} when ABSENT, which v4 frames as
+   * The commitment fields {@code seam-commitment-digest:v5} binds. {@code committer} may be {@code
+   * null} (hashed as empty). {@code supersedes} is {@code null} when ABSENT, which v5 frames as
    * {@code 0x00} — a different digest from a present empty string ({@code 0x01 ‖ F("")}). Field 8 resolves from {@code explanation} (the
    * entries) and/or {@code explanationDigest} (the 32 published bytes) — see {@link #verifyTct}.
    * {@code selectionDigest} (field 9) and {@code certificateDigest} (field 10) are {@code null} when
-   * absent — every record runtime 0.87.0 seals — and exactly 32 bytes when present.
+   * absent — every record runtime 0.88.0 seals — and exactly 32 bytes when present. {@code
+   * governingDocSha256} (field 11, #1711) is the SHA-256 of the tenant governing document the decision
+   * was sealed under ({@code Commitment.governing_doc_sha256} on the wire): {@code null} for an
+   * ungoverned decision, else exactly 32 bytes.
    */
   public record Commitment(
       String id,
@@ -126,8 +129,40 @@ public final class SeamCrypto {
       byte[] explanationDigest,
       List<ExplanationEntry> explanation,
       byte[] selectionDigest,
-      byte[] certificateDigest) {
-    /** A commitment with neither a selection (field 9) nor a Gate certificate (field 10). */
+      byte[] certificateDigest,
+      byte[] governingDocSha256) {
+    /** An ungoverned commitment (field 11 absent) with the given field 9/10 slots. */
+    public Commitment(
+        String id,
+        String action,
+        String authority,
+        String supersedes,
+        String authMethod,
+        String trustBasis,
+        String committer,
+        byte[] explanationDigest,
+        List<ExplanationEntry> explanation,
+        byte[] selectionDigest,
+        byte[] certificateDigest) {
+      this(
+          id,
+          action,
+          authority,
+          supersedes,
+          authMethod,
+          trustBasis,
+          committer,
+          explanationDigest,
+          explanation,
+          selectionDigest,
+          certificateDigest,
+          null);
+    }
+
+    /**
+     * A commitment with neither a selection (field 9) nor a Gate certificate (field 10), and no
+     * governing document (field 11).
+     */
     public Commitment(
         String id,
         String action,
@@ -148,6 +183,7 @@ public final class SeamCrypto {
           committer,
           explanationDigest,
           explanation,
+          null,
           null,
           null);
     }
@@ -292,7 +328,7 @@ public final class SeamCrypto {
    * @throws IllegalArgumentException on an unknown kind, a non-canonical confidence (NaN, ±inf,
    *     outside {@code [0.0, 1.0]}, or {@code -0.0}), an unknown voter-verification method, or a
    *     content digest that is not 32 bytes — refused rather than hashed. Normative: {@code
-   *     seam-runtime/docs/specs/seam-commitment-digest.v4.md}.
+   *     seam-runtime/docs/specs/seam-commitment-digest.v5.md}.
    */
   public static byte[] explanationDigest(List<ExplanationEntry> entries) {
     ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -383,7 +419,7 @@ public final class SeamCrypto {
   }
 
   /** Domain tag of the commitment digest. */
-  public static final String COMMITMENT_DIGEST_DOMAIN = "seam-commitment-digest:v4";
+  public static final String COMMITMENT_DIGEST_DOMAIN = "seam-commitment-digest:v5";
 
   /** The one grant a commitment self-attestation carries. */
   public static final String ATTESTATION_GRANT = "aitp.attestation";
@@ -395,13 +431,14 @@ public final class SeamCrypto {
   public static final String COMMITMENT_STATEMENT = "seam:commitment";
 
   /**
-   * {@code seam-commitment-digest:v4} (hex): SHA-256 over a <b>length-prefixed</b> framing of a domain
+   * {@code seam-commitment-digest:v5} (hex): SHA-256 over a <b>length-prefixed</b> framing of a domain
    * tag plus the commitment fields — each field preceded by its 8-byte big-endian length. Mirrors the
-   * runtime byte-for-byte, and mirrors the Go/Kotlin/Python/TypeScript shims. v3 is deleted, not
+   * runtime byte-for-byte, and mirrors the Go/Kotlin/Python/TypeScript shims. v1-v4 are deleted, not
    * dual-verified. {@code supersedes} carries a presence byte — {@code 0x00} when absent ({@code
    * null}), {@code 0x01 ‖ F(s)} when present. v4 (#1687) binds the v2 explanation digest as field 8 and
    * appends two always-framed slots: field 9 (selection digest) and field 10 (Gate certificate
-   * digest), each {@code 0x00} when absent or {@code 0x01 ‖ be64(32) ‖ 32 raw bytes}.
+   * digest), each {@code 0x00} when absent or {@code 0x01 ‖ be64(32) ‖ 32 raw bytes}. v5 (#1711) appends
+   * field 11, the governing document digest, in the same slot encoding.
    *
    * <p><b>The length prefixes are not decoration and must never be "simplified" to a separator.</b>
    * The fields are arbitrary text that may itself contain NUL — UTF-8 permits U+0000, and it
@@ -423,11 +460,12 @@ public final class SeamCrypto {
    * every one of these is bound.
    *
    * @throws IllegalArgumentException when field 8 cannot be resolved (see {@link
-   *     #commitmentExplanationDigest}), or a present field 9/10 digest is not 32 bytes.
+   *     #commitmentExplanationDigest}), or a present field 9/10/11 digest is not 32 bytes.
    */
   static String seamCommitmentDigest(Commitment c) {
     checkSlot("selection_digest", c.selectionDigest());
     checkSlot("certificate_digest", c.certificateDigest());
+    checkSlot("governing_doc_sha256", c.governingDocSha256());
     byte[] explanation = commitmentExplanationDigest(c);
     ByteArrayOutputStream h = new ByteArrayOutputStream();
     be64Frame(h, COMMITMENT_DIGEST_DOMAIN.getBytes(StandardCharsets.UTF_8));
@@ -446,6 +484,7 @@ public final class SeamCrypto {
     be64Frame(h, explanation);
     optionalDigestSlot(h, c.selectionDigest());
     optionalDigestSlot(h, c.certificateDigest());
+    optionalDigestSlot(h, c.governingDocSha256());
     return hex(sha256(h.toByteArray()));
   }
 
@@ -470,8 +509,8 @@ public final class SeamCrypto {
    * self-issued claims ({@code iss == sub == aud == issuerAid}); {@code exp}; that {@code grants} is
    * exactly {@code ["aitp.attestation"]}; and that {@code ext} is exactly {@code
    * {"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":<hex>}}} with the hex equal to
-   * the recomputed {@code seam-commitment-digest:v4} of this exact commitment (decided content,
-   * committer, and sealed explanation). A header or payload whose JSON repeats an object key at any
+   * the recomputed {@code seam-commitment-digest:v5} of this exact commitment (decided content,
+   * committer, governing document digest, and sealed explanation). A header or payload whose JSON repeats an object key at any
    * depth is refused: Gson would keep one of the two, and another parser might keep the other. Any malformed/forged input fails closed (returns {@code false}), never throws
    * — including explanation entries that disagree with the published digest, an unknown kind, or a
    * non-canonical confidence.

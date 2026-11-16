@@ -88,23 +88,26 @@ type Presentation struct {
 // Commitment is the sealed-decision commitment whose rooted TCT is verified.
 //
 // Committer, and the Explanation entries and/or the published ExplanationDigest, are bound by
-// `seam-commitment-digest:v4` (see seamCommitmentDigest). A nil Explanation means the entries are not
+// `seam-commitment-digest:v5` (see seamCommitmentDigest). A nil Explanation means the entries are not
 // held (only the published digest, if any, is used); a non-nil empty slice is the empty explanation.
-// A nil Supersedes is ABSENT, which v4 frames differently from a present empty string. A nil
-// SelectionDigest / CertificateDigest (fields 9 and 10) is ABSENT — every record runtime 0.87.0 seals;
-// present, each MUST be exactly 32 bytes.
+// A nil Supersedes is ABSENT, which v5 frames differently from a present empty string. A nil
+// SelectionDigest / CertificateDigest (fields 9 and 10) is ABSENT — every record runtime 0.88.0 seals;
+// present, each MUST be exactly 32 bytes. GoverningDocSha256 (field 11, #1711) is the SHA-256 of the
+// tenant governing document the decision was sealed under (`Commitment.governing_doc_sha256` on the
+// wire): nil for an ungoverned decision, else exactly 32 bytes.
 type Commitment struct {
-	ID                string             `json:"id"`
-	Action            string             `json:"action"`
-	Authority         string             `json:"authority"`
-	Supersedes        *string            `json:"supersedes"`
-	AuthMethod        string             `json:"auth_method"`
-	TrustBasis        string             `json:"trust_basis"`
-	Committer         string             `json:"committer"`
-	ExplanationDigest []byte             `json:"explanation_digest,omitempty"`
-	Explanation       []ExplanationEntry `json:"explanation,omitempty"`
-	SelectionDigest   []byte             `json:"-"`
-	CertificateDigest []byte             `json:"-"`
+	ID                 string             `json:"id"`
+	Action             string             `json:"action"`
+	Authority          string             `json:"authority"`
+	Supersedes         *string            `json:"supersedes"`
+	AuthMethod         string             `json:"auth_method"`
+	TrustBasis         string             `json:"trust_basis"`
+	Committer          string             `json:"committer"`
+	ExplanationDigest  []byte             `json:"explanation_digest,omitempty"`
+	Explanation        []ExplanationEntry `json:"explanation,omitempty"`
+	SelectionDigest    []byte             `json:"-"`
+	CertificateDigest  []byte             `json:"-"`
+	GoverningDocSha256 []byte             `json:"-"`
 }
 
 // ExplanationEntry is one sealed explanation entry, in the order the runtime accepted it. Kind is the
@@ -277,10 +280,10 @@ func BuildPresentation(agentSeed []byte, receiverAID, popNonce string, nowMs int
 var ExplanationKinds = []string{"vote", "evaluation", "objection", "ballot"}
 
 // ExplanationDomain and CommitmentDigestDomain are the two domain tags of the commitment binding.
-// Normative: seam-runtime docs/specs/seam-commitment-digest.v4.md.
+// Normative: seam-runtime docs/specs/seam-commitment-digest.v5.md.
 const (
 	ExplanationDomain      = "seam-explanation-digest:v2"
-	CommitmentDigestDomain = "seam-commitment-digest:v4"
+	CommitmentDigestDomain = "seam-commitment-digest:v5"
 )
 
 // The self-attestation TCT statement (RFC-AITP-0005) a Seam commitment is sealed as: the only grant,
@@ -397,18 +400,19 @@ func commitmentExplanationDigest(c Commitment) ([]byte, error) {
 	return d[:], nil
 }
 
-// seamCommitmentDigest is `seam-commitment-digest:v4` (hex): SHA-256 over
+// seamCommitmentDigest is `seam-commitment-digest:v5` (hex): SHA-256 over
 //
 //	F(domain) ‖ F(id) ‖ F(action) ‖ F(authority) ‖ SUP ‖ F(auth_method) ‖ F(trust_basis) ‖
-//	F(committer) ‖ F(explanation_digest) ‖ SEL ‖ CERT
+//	F(committer) ‖ F(explanation_digest) ‖ SEL ‖ CERT ‖ DOC
 //	SUP  = 0x00 (supersedes absent) | 0x01 ‖ F(supersedes) (present)
 //	SEL  = 0x00 (no selection) | 0x01 ‖ be64(32) ‖ selection_digest
 //	CERT = 0x00 (no Gate certificate) | 0x01 ‖ be64(32) ‖ certificate_digest
+//	DOC  = 0x00 (ungoverned) | 0x01 ‖ be64(32) ‖ governing_doc_sha256 (field 11, #1711)
 //
 // with F(x) = be64(len(x)) ‖ x, so the digest is injective over the tuple (a `\0` separator would let
 // boundary-shifted fields collide). Field 8 is the 32 RAW bytes of the explanation digest (see
-// commitmentExplanationDigest). A present slot-9/10 digest that is not 32 bytes is refused, not hashed.
-// v1, v2 and v3 are deleted, not dual-verified. Mirrors the runtime
+// commitmentExplanationDigest). A present slot-9/10/11 digest that is not 32 bytes is refused, not
+// hashed. v1-v4 are deleted, not dual-verified. Mirrors the runtime
 // byte-for-byte.
 func seamCommitmentDigest(c Commitment) (string, error) {
 	ed, err := commitmentExplanationDigest(c)
@@ -431,7 +435,7 @@ func seamCommitmentDigest(c Commitment) (string, error) {
 	for _, slot := range []struct {
 		name string
 		d    []byte
-	}{{"selection_digest", c.SelectionDigest}, {"certificate_digest", c.CertificateDigest}} {
+	}{{"selection_digest", c.SelectionDigest}, {"certificate_digest", c.CertificateDigest}, {"governing_doc_sha256", c.GoverningDocSha256}} {
 		if slot.d == nil {
 			out = append(out, 0x00)
 			continue
@@ -499,7 +503,7 @@ func hasDuplicateKey(raw []byte) bool {
 // claims (`typ`, `iss==sub==aud==issuer_aid`, `exp`), and the RFC-AITP-0005 self-attestation shape:
 // `grants` is exactly ["aitp.attestation"], and `ext` is exactly
 // {"com.zer07labs.seam": {"type": "seam:commitment", "commitment_digest": "<64 lowercase hex>"}},
-// whose digest must equal `seam-commitment-digest:v4` of this exact commitment — the decided content,
+// whose digest must equal `seam-commitment-digest:v5` of this exact commitment — the decided content,
 // the committer, and the sealed explanation. A repeated JSON key anywhere in the header or payload
 // refuses the token, and a digest carried in `grants` (the retired v2 shape) does not verify.
 // Explanation entries that disagree with a published ExplanationDigest, an unknown kind, or a

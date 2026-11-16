@@ -10,7 +10,7 @@
 //! 3. **Inclusion** — exactly one chained `DECISION_SEALED` for the manifest's decision, in its tenant,
 //!    whose `checksum` is `inclusion.record_checksum`.
 //! 4. **Commitment** — the TCT (when present) verifies against the pinned AID and binds this
-//!    Commitment's `seam-commitment-digest:v4` (after every voter record re-verifies, `src/voter.rs`); `supersedes` matches the chained payload's.
+//!    Commitment's `seam-commitment-digest:v5` (after every voter record re-verifies, `src/voter.rs`); `supersedes` matches the chained payload's.
 //! 5. **Binding** — the `seam.evidence-binding.v1` signature verifies against the pinned AID and names
 //!    this decision, tenant, link checksum and recomputed Commitment digest.
 //! 6. **Disclosures** — `context.json` recomputes the chained `context_digest`;
@@ -327,8 +327,28 @@ pub fn parse_commitment(c: &serde_json::Value) -> Result<Commitment, String> {
         // both absent. A commitment.json that names either is a block this verifier cannot digest.
         selection_digest: refuse_slot(c, "selection_digest")?,
         certificate_digest: refuse_slot(c, "certificate_digest")?,
+        governing_doc_sha256: governing_doc(c)?,
         signed_artifact: req("signed_artifact")?,
     })
+}
+
+/// v5 field 11 (seam-runtime#1711): `null`/absent on an ungoverned decision, else exactly 64 LOWERCASE
+/// hex characters (32 bytes). Any other spelling — uppercase, a wrong length, a non-string — is refused,
+/// never hashed and never read as "ungoverned": absent and malformed are different records.
+fn governing_doc(c: &serde_json::Value) -> Result<Option<Vec<u8>>, String> {
+    match c.get("governing_doc_sha256") {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(h))
+            if h.len() == 64 && h.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) =>
+        {
+            Ok(hex_decode(h))
+        }
+        Some(serde_json::Value::String(_)) => Err(
+            "commitment.json: 'governing_doc_sha256' is not 64 lowercase hex characters (32 bytes)"
+                .into(),
+        ),
+        Some(_) => Err("commitment.json: 'governing_doc_sha256' is not a string or null".into()),
+    }
 }
 
 /// Fail closed on a field 9/10 block: absent (or `null`) is the only shape the bundle spec defines.
@@ -742,7 +762,7 @@ pub fn verify_bundle(dir: &Path, pinned: &str, now_secs: u64) -> Result<BundleRe
             tct_verified = Some(true);
             checks.push(
                 "the Commitment's TCT verifies against the pinned issuer and binds its \
-                 seam-commitment-digest:v4"
+                 seam-commitment-digest:v5"
                     .into(),
             );
         }

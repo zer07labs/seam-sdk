@@ -111,9 +111,9 @@ test("chain-head attestation signature verifies, tamper does not (A14)", () => {
 
 // -- Commitment-digest framing coverage (W5.4 / G4) ----------------------------------------------
 //
-// `seam-commitment-digest:v4` is implemented byte-for-byte in ALL FIVE SDK languages -- the widest
+// `seam-commitment-digest:v5` is implemented byte-for-byte in ALL FIVE SDK languages -- the widest
 // fan-out of any framing in this repo. Its digests are pinned directly below (the `tct` block's
-// `explanation_digest_hex` / `commitment_digest_hex`, and `commitment_digest_v4.test.ts` over the
+// `explanation_digest_hex` / `commitment_digest_hex`, and `commitment_digest_v5.test.ts` over the
 // runtime's own reference vector); seam-runtime's `sdk-digest-parity` job byte-diffs the whole of
 // conformance/vectors.json against its own emitter, so those values originate there.
 //
@@ -218,7 +218,7 @@ test("commitment digest binds every field", () => {
   }
 });
 
-test("tct block: explanation and commitment digests match the runtime (seam-commitment-digest:v4)", () => {
+test("tct block: explanation and commitment digests match the runtime (seam-commitment-digest:v5)", () => {
   const t = vectors.tct;
   const c = t.inputs.commitment as Commitment;
   assert.equal(Buffer.from(explanationDigest(c.explanation!)).toString("hex"), t.explanation_digest_hex);

@@ -15,7 +15,8 @@ import org.junit.jupiter.api.Test
 
 /**
  * Build a [Commitment] from the REST projection used by the vectors: byte fields as JSON number
- * arrays (or hex strings), absent `confidence` / `rationale_ref` / `supersedes` as `null`.
+ * arrays (or hex strings), absent `confidence` / `rationale_ref` / `supersedes` /
+ * `governing_doc_sha256` as `null`.
  */
 /** Bytes from a vector: a `<name>_hex` string, or `<name>` as a hex string or a list of byte values. */
 @Suppress("UNCHECKED_CAST")
@@ -80,18 +81,21 @@ internal fun commitmentFromJson(c: Map<String, Any?>): Commitment {
         committer = (c["committer"] as String?) ?: "",
         explanation = explanation,
         explanationDigest = published,
+        // Field 11 (#1711): a JSON number array on the commitment, null/absent when ungoverned.
+        governingDocSha256 = vectorBytes(c, "governing_doc_sha256"),
     )
 }
 
 /**
- * `seam-commitment-digest:v4` + `seam-explanation-digest:v2` against
- * conformance/commitment_digest_v4_vector.json, plus the self-attestation TCT shape `verifyTct`
+ * `seam-commitment-digest:v5` + `seam-explanation-digest:v2` against
+ * conformance/commitment_digest_v5_signed_vector.json and the slot vector
+ * conformance/commitment_digest_v5_vector.json, plus the self-attestation TCT shape `verifyTct`
  * accepts — and nothing beside it.
  */
-class CommitmentDigestV4Test {
+class CommitmentDigestV5Test {
     private val vector: Map<String, Any?> =
         Gson().fromJson(
-            File("../conformance/commitment_digest_v4_vector.json").readText(),
+            File("../conformance/commitment_digest_v5_signed_vector.json").readText(),
             object : TypeToken<Map<String, Any?>>() {}.type,
         )
 
@@ -106,7 +110,7 @@ class CommitmentDigestV4Test {
         commitmentFromJson(c["commitment"] as Map<String, Any?>).copy(
             selectionDigest = vectorBytes(c, "selection_digest"),
             certificateDigest = vectorBytes(c, "certificate_digest"),
-        )
+        ).let { cm -> vectorBytes(c, "governing_doc_sha256")?.let { cm.copy(governingDocSha256 = it) } ?: cm }
 
     private fun hex(b: ByteArray) = b.joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
@@ -126,14 +130,14 @@ class CommitmentDigestV4Test {
     fun domainsMatch() {
         assertEquals(SeamCrypto.COMMITMENT_DIGEST_DOMAIN, vector["commitment_digest_domain"])
         assertEquals(SeamCrypto.EXPLANATION_DIGEST_DOMAIN, vector["explanation_digest_domain"])
-        assertEquals("seam-commitment-digest:v4", SeamCrypto.COMMITMENT_DIGEST_DOMAIN)
+        assertEquals("seam-commitment-digest:v5", SeamCrypto.COMMITMENT_DIGEST_DOMAIN)
         assertEquals("seam-explanation-digest:v2", SeamCrypto.EXPLANATION_DIGEST_DOMAIN)
     }
 
     @Test
     fun reproducesEveryDigest() {
         assertEquals(listOf(
-                "all_empty", "empty_supersedes", "populated_signed",
+                "all_empty", "empty_supersedes", "populated_signed", "populated_signed_ungoverned",
                 "selection_present", "certificate_present", "both_present",
             ), cases.map { it["name"] })
         for (c in cases) {
@@ -155,7 +159,7 @@ class CommitmentDigestV4Test {
         )
         // Neither entries nor a published digest: field 8 is the empty explanation's digest.
         val bare = Commitment("", "", "", null, "", "")
-        assertEquals("6e3a11bbef5f552f78e6d9114c13b7e48bb0a30de82d38a603981d6d1ca7281a", SeamCrypto.seamCommitmentDigest(bare))
+        assertEquals("f31f8081790860a42529c30c4b75626213c6ad36b7c797ba172a2246eab41207", SeamCrypto.seamCommitmentDigest(bare))
     }
 
     /** The supersedes presence byte: absent supersedes and present-empty supersedes are different digests. */
@@ -167,7 +171,7 @@ class CommitmentDigestV4Test {
         assertEquals("", empty.supersedes)
         assertNotEquals(SeamCrypto.seamCommitmentDigest(absent), SeamCrypto.seamCommitmentDigest(empty))
         assertEquals(
-            "a495c011cd353de108bb7c0e2a3bcb90051d59b135696a10848c3a087e5fed50",
+            "9bf7e384a2d8b003c1cb5669b8198dcd5784401797d0897586baa87afeba4ce3",
             SeamCrypto.seamCommitmentDigest(empty),
         )
     }
@@ -188,7 +192,45 @@ class CommitmentDigestV4Test {
         for (len in listOf(0, 31, 33)) {
             assertThrows(IllegalArgumentException::class.java, { SeamCrypto.seamCommitmentDigest(none.copy(selectionDigest = ByteArray(len))) }, "selection $len")
             assertThrows(IllegalArgumentException::class.java, { SeamCrypto.seamCommitmentDigest(none.copy(certificateDigest = ByteArray(len))) }, "certificate $len")
+            assertThrows(IllegalArgumentException::class.java, { SeamCrypto.seamCommitmentDigest(none.copy(governingDocSha256 = ByteArray(len))) }, "governing_doc_sha256 $len")
         }
+    }
+
+    /**
+     * The v5 slot vector (generated independently of the runtime): every digest reproduced from the
+     * published explanation digest alone. Its `governing_trailer_refusals` are not exercised: they pin
+     * the runtime's 0x06 trailer decoder, and this SDK never decodes sealed trailers.
+     */
+    @Suppress("UNCHECKED_CAST")
+    @Test
+    fun reproducesEverySlotVectorDigest() {
+        val slot: Map<String, Any?> =
+            Gson().fromJson(
+                File("../conformance/commitment_digest_v5_vector.json").readText(),
+                object : TypeToken<Map<String, Any?>>() {}.type,
+            )
+        assertEquals(SeamCrypto.COMMITMENT_DIGEST_DOMAIN, slot["commitment_digest_domain"])
+        val ks = slot["cases"] as List<Map<String, Any?>>
+        assertEquals(7, ks.size)
+        for (k in ks) {
+            assertEquals(k["commitment_digest"], SeamCrypto.seamCommitmentDigest(commitmentOf(k)), k["name"] as String)
+        }
+    }
+
+    /** Field 11: the governed signed case is bound to its document digest, and absent is not zero. */
+    @Test
+    fun governingDocumentIsBound() {
+        val governed = commitmentOf(case("populated_signed"))
+        assertEquals(32, governed.governingDocSha256!!.size)
+        assertEquals(null, commitmentOf(case("populated_signed_ungoverned")).governingDocSha256)
+        val none = commitmentOf(case("all_empty"))
+        assertNotEquals(
+            SeamCrypto.seamCommitmentDigest(none),
+            SeamCrypto.seamCommitmentDigest(none.copy(governingDocSha256 = ByteArray(32))),
+        )
+        val jws = signedArtifact(case("populated_signed"))
+        assertTrue(SeamCrypto.verifyTct(issuer, jws, governed, 1_700_000_001L))
+        assertFalse(SeamCrypto.verifyTct(issuer, jws, governed.copy(governingDocSha256 = null), 1_700_000_001L))
     }
 
     /** A voter record with an unknown method, or a content digest that is not 32 bytes, is refused. */

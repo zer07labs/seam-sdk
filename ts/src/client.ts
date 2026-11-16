@@ -1609,7 +1609,7 @@ export class SeamClient {
    * `rationaleRef` is a `sha256:<hex>` context ref. Since runtime 0.44.0 it is **sealed**: every
    * accepted evaluation's `rationaleRef` (and whether a `confidence` was stated at all) is bound
    * into the Commitment's explanation under `seam-explanation-digest:v2`, which
-   * `seam-commitment-digest:v4` covers. `verifyDecision` recomputes it locally.
+   * `seam-commitment-digest:v5` covers. `verifyDecision` recomputes it locally.
    *
    * **Refresh-once (#275).** With a credential (`credential` or a bound agent), a rejected ticket is
    * refreshed once and this SAME request is re-signed under the new ticket and resent once; a second
@@ -2243,7 +2243,7 @@ const EXPLANATION_KIND_WORDS: Partial<Record<ExplanationKind, string>> = {
 };
 
 /**
- * The snake_case commitment {@link verifyTct} takes, from a served `Commitment` (seam-commitment-digest:v4).
+ * The snake_case commitment {@link verifyTct} takes, from a served `Commitment` (seam-commitment-digest:v5).
  *
  * Carries the committer and the sealed explanation — the entries AND the published digest — so
  * verification recomputes the explanation digest from the entries and requires it to equal the published
@@ -2256,8 +2256,10 @@ const EXPLANATION_KIND_WORDS: Partial<Record<ExplanationKind, string>> = {
  * Each entry's `voterVerification` (#1687) maps field for field; an UNSPECIFIED or unknown `method`
  * maps to a word the digest refuses, and a `contentDigest` that is not 32 bytes is refused too, so
  * verification fails closed rather than hashing a record the runtime never sealed. Fields 9 and 10
- * (selection / Gate certificate) are not on the served `Commitment` and are absent, as runtime 0.87.0
- * seals them.
+ * (selection / Gate certificate) are not on the served `Commitment` and are absent, as the runtime
+ * seals them today. Field 11, `governingDocSha256` (#1711, `optional bytes`), keeps its explicit
+ * presence: `undefined` (ungoverned) stays absent, and a present value — even an empty one — is passed
+ * through as served, so a wrong length fails closed rather than reading as ungoverned.
  */
 export function commitmentView(c: Commitment): CommitmentView {
   return {
@@ -2271,6 +2273,7 @@ export function commitmentView(c: Commitment): CommitmentView {
     // and its TCT would never verify.
     supersedes: c.supersedes,
     committer: c.committer,
+    governing_doc_sha256: c.governingDocSha256 ?? null,
     explanation_digest: c.explanationDigest,
     explanation: c.explanation.map((e) => ({
       kind: EXPLANATION_KIND_WORDS[e.kind] ?? `<unknown kind ${e.kind}>`,

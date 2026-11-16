@@ -24,19 +24,29 @@ import org.bouncycastle.crypto.signers.Ed25519Signer;
 import org.junit.jupiter.api.Test;
 
 /**
- * {@code seam-commitment-digest:v4} + {@code seam-explanation-digest:v2} against the runtime's
- * reference vector ({@code conformance/commitment_digest_v4_vector.json}). Conforming iff every digest
+ * {@code seam-commitment-digest:v5} + {@code seam-explanation-digest:v2} against the runtime's
+ * reference vectors ({@code conformance/commitment_digest_v5_signed_vector.json}, and the slot vector
+ * {@code conformance/commitment_digest_v5_vector.json}). Conforming iff every digest
  * is reproduced and the signed case verifies against the issuer AID. NO bless mode. Also pins the
  * self-attestation TCT shape {@code verifyTct} accepts, and nothing beside it.
  */
-class CommitmentDigestV4Test {
+class CommitmentDigestV5Test {
   private static final Type MAP = new TypeToken<Map<String, Object>>() {}.getType();
   private static final long NOW_S = 1_700_000_001L;
   private static final HexFormat HEX = HexFormat.of();
 
   private static Map<String, Object> vector() throws Exception {
-    String raw = Files.readString(Path.of("..", "conformance", "commitment_digest_v4_vector.json"));
+    String raw =
+        Files.readString(Path.of("..", "conformance", "commitment_digest_v5_signed_vector.json"));
     return new Gson().fromJson(raw, MAP);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static List<Map<String, Object>> slotCases() throws Exception {
+    String raw = Files.readString(Path.of("..", "conformance", "commitment_digest_v5_vector.json"));
+    Map<String, Object> v = new Gson().fromJson(raw, MAP);
+    assertEquals(SeamCrypto.COMMITMENT_DIGEST_DOMAIN, v.get("commitment_digest_domain"));
+    return (List<Map<String, Object>>) v.get("cases");
   }
 
   @SuppressWarnings("unchecked")
@@ -50,20 +60,30 @@ class CommitmentDigestV4Test {
     throw new AssertionError("no case " + name);
   }
 
-  /** The case's commitment, with its field-9/10 slots (case-level hex, {@code null} when absent). */
+  /**
+   * The case's commitment, with its field-9/10 slots (case-level hex, {@code null} when absent) and
+   * field 11 (on the commitment in the signed vector, case-level hex in the slot vector).
+   */
   @SuppressWarnings("unchecked")
   private static SeamCrypto.Commitment commitmentOf(Map<String, Object> k) {
     SeamCrypto.Commitment b = ConformanceTest.commitment((Map<String, Object>) k.get("commitment"));
+    byte[] doc = ConformanceTest.vectorBytes(k, "governing_doc_sha256");
     return withSlots(
         b, ConformanceTest.vectorBytes(k, "selection_digest"),
-        ConformanceTest.vectorBytes(k, "certificate_digest"));
+        ConformanceTest.vectorBytes(k, "certificate_digest"),
+        doc != null ? doc : b.governingDocSha256());
   }
 
   private static SeamCrypto.Commitment withSlots(
       SeamCrypto.Commitment b, byte[] selection, byte[] certificate) {
+    return withSlots(b, selection, certificate, b.governingDocSha256());
+  }
+
+  private static SeamCrypto.Commitment withSlots(
+      SeamCrypto.Commitment b, byte[] selection, byte[] certificate, byte[] doc) {
     return new SeamCrypto.Commitment(
         b.id(), b.action(), b.authority(), b.supersedes(), b.authMethod(), b.trustBasis(),
-        b.committer(), b.explanationDigest(), b.explanation(), selection, certificate);
+        b.committer(), b.explanationDigest(), b.explanation(), selection, certificate, doc);
   }
 
   @SuppressWarnings("unchecked")
@@ -82,12 +102,13 @@ class CommitmentDigestV4Test {
       SeamCrypto.Commitment b, byte[] published, List<SeamCrypto.ExplanationEntry> entries) {
     return new SeamCrypto.Commitment(
         b.id(), b.action(), b.authority(), b.supersedes(), b.authMethod(), b.trustBasis(),
-        b.committer(), published, entries, b.selectionDigest(), b.certificateDigest());
+        b.committer(), published, entries, b.selectionDigest(), b.certificateDigest(),
+        b.governingDocSha256());
   }
 
   @Test
   void everyCaseDigestIsByteExact() throws Exception {
-    assertEquals(6, cases().size());
+    assertEquals(7, cases().size());
     for (Map<String, Object> k : cases()) {
       SeamCrypto.Commitment c = commitmentOf(k);
       String name = (String) k.get("name");
@@ -121,7 +142,7 @@ class CommitmentDigestV4Test {
   void neitherEntriesNorDigestIsTheEmptyExplanation() throws Exception {
     SeamCrypto.Commitment c = commitmentOf(caseNamed("all_empty"));
     assertEquals(
-        "6e3a11bbef5f552f78e6d9114c13b7e48bb0a30de82d38a603981d6d1ca7281a",
+        "f31f8081790860a42529c30c4b75626213c6ad36b7c797ba172a2246eab41207",
         SeamCrypto.seamCommitmentDigest(withEntries(c, null, null)));
   }
 
@@ -135,7 +156,7 @@ class CommitmentDigestV4Test {
     assertNotEquals(
         SeamCrypto.seamCommitmentDigest(absent), SeamCrypto.seamCommitmentDigest(empty));
     assertEquals(
-        "a495c011cd353de108bb7c0e2a3bcb90051d59b135696a10848c3a087e5fed50",
+        "9bf7e384a2d8b003c1cb5669b8198dcd5784401797d0897586baa87afeba4ce3",
         SeamCrypto.seamCommitmentDigest(empty));
   }
 
@@ -166,7 +187,48 @@ class CommitmentDigestV4Test {
       assertThrows(
           IllegalArgumentException.class,
           () -> SeamCrypto.seamCommitmentDigest(withSlots(none, null, bad)), "certificate " + len);
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> SeamCrypto.seamCommitmentDigest(withSlots(none, null, null, bad)),
+          "governing_doc_sha256 " + len);
     }
+  }
+
+  /**
+   * The v5 slot vector (generated independently of the runtime): every digest reproduced, from the
+   * published explanation digest alone. Its {@code governing_trailer_refusals} are not exercised: they
+   * pin the runtime's 0x06 trailer decoder, and this SDK never decodes sealed trailers.
+   */
+  @Test
+  void everySlotVectorCaseIsByteExact() throws Exception {
+    List<Map<String, Object>> ks = slotCases();
+    assertEquals(7, ks.size());
+    for (Map<String, Object> k : ks) {
+      assertEquals(
+          k.get("commitment_digest"), SeamCrypto.seamCommitmentDigest(commitmentOf(k)),
+          (String) k.get("name"));
+    }
+  }
+
+  /** Field 11: the governed signed case is bound to its document digest, and absent is not zero. */
+  @Test
+  void governingDocumentIsBound() throws Exception {
+    SeamCrypto.Commitment governed = commitmentOf(caseNamed("populated_signed"));
+    SeamCrypto.Commitment ungoverned = commitmentOf(caseNamed("populated_signed_ungoverned"));
+    assertEquals(32, governed.governingDocSha256().length);
+    assertEquals(null, ungoverned.governingDocSha256());
+    SeamCrypto.Commitment none = commitmentOf(caseNamed("all_empty"));
+    assertNotEquals(
+        SeamCrypto.seamCommitmentDigest(none),
+        SeamCrypto.seamCommitmentDigest(withSlots(none, null, null, new byte[32])));
+    // Dropping field 11 from the governed case breaks its signature.
+    SeamCrypto.Commitment stripped = withSlots(governed, null, null, null);
+    assertFalse(
+        SeamCrypto.verifyTct(
+            (String) vector().get("issuer_aid"),
+            signedArtifact(caseNamed("populated_signed")),
+            stripped,
+            NOW_S));
   }
 
   /** A voter record with an unknown method, or a content digest that is not 32 bytes, is refused. */

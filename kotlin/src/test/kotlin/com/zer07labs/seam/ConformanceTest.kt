@@ -150,9 +150,10 @@ class ConformanceTest {
 
     // -- Commitment-digest framing coverage (W5.4 / G4) ----------------------------------------
     //
-    // `seam-commitment-digest:v4` is implemented byte-for-byte in ALL FIVE SDK languages -- the
-    // widest fan-out of any framing in this repo. Its own reference vector is
-    // conformance/commitment_digest_v4_vector.json (see CommitmentDigestV4Test); the `tct` block of
+    // `seam-commitment-digest:v5` is implemented byte-for-byte in ALL FIVE SDK languages -- the
+    // widest fan-out of any framing in this repo. Its own reference vectors are
+    // conformance/commitment_digest_v5_signed_vector.json and commitment_digest_v5_vector.json (see
+    // CommitmentDigestV5Test); the `tct` block of
     // conformance/vectors.json carries `explanation_digest_hex` / `commitment_digest_hex` too. Both
     // originate in seam-runtime, whose `sdk-digest-parity` job byte-diffs vectors.json against its
     // own emitter.

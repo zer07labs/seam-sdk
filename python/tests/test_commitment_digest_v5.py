@@ -1,8 +1,13 @@
-"""seam-commitment-digest:v4 + seam-explanation-digest:v2 (#1687), and the RFC-AITP-0005 self-attestation TCT.
+"""seam-commitment-digest:v5 (#1711) + seam-explanation-digest:v2 (#1687), and the RFC-AITP-0005 self-attestation TCT.
 
-Pinned against the runtime's reference vector (`conformance/commitment_digest_v4_vector.json`,
-copied verbatim from the runtime's trust-aitp test fixtures) and the `tct` block of
-`conformance/vectors.json`. Framing: seam-runtime `docs/specs/seam-commitment-digest.v4.md`. The TCT
+Pinned against the runtime's reference vectors, copied verbatim from its trust-aitp test fixtures:
+`conformance/commitment_digest_v5_signed_vector.json` (real TCTs, one governed and one ungoverned
+populated case; byte fields are JSON number arrays), `conformance/commitment_digest_v5_vector.json`
+(the independent generator's field-9/10/11 slot cases; byte fields are hex), and the `tct` block of
+`conformance/vectors.json`. Framing: seam-runtime `docs/specs/seam-commitment-digest.v5.md` (v4 plus
+field 11, `governing_doc_sha256`). That file's `governing_trailer_refusals` pins the runtime's `0x06`
+trailer DECODER, which the SDK does not have: the trailer is sealed inside the record ciphertext and
+reaches a client only as the `Commitment.governing_doc_sha256` proto field, so it is not exercised here. The TCT
 shape (`grants: ["aitp.attestation"]`, the digest under `ext["com.zer07labs.seam"]`) is taken from the
 signed vectors, which are the source of truth where the pinned spec's prose still describes the
 retired grants form.
@@ -23,12 +28,13 @@ from seam_sdk.client import commitment_view
 from seam_sdk.crypto import _seam_commitment_digest
 
 ROOT = Path(__file__).resolve().parents[2] / "conformance"
-V4 = json.loads((ROOT / "commitment_digest_v4_vector.json").read_text())
+V5 = json.loads((ROOT / "commitment_digest_v5_signed_vector.json").read_text())
+SLOTS = json.loads((ROOT / "commitment_digest_v5_vector.json").read_text())
 TCT = json.loads((ROOT / "vectors.json").read_text())["tct"]
 EMPTY = "cabe83af912ea38ef4525f5a7d8580b4c4e217417edc0c93f936d2c18c4fd8f5"
 
 
-@pytest.mark.parametrize("case", V4["cases"], ids=lambda c: c["name"])
+@pytest.mark.parametrize("case", V5["cases"], ids=lambda c: c["name"])
 def test_reference_vector_digests(case):
     c = case["commitment"]
     assert explanation_digest(c["explanation"]).hex() == case["explanation_digest"]
@@ -43,13 +49,15 @@ def test_reference_vector_voter_records_reverify():
     """Every voter-kind entry in the vector carries a record that re-checks offline."""
     from seam_sdk.crypto import verify_commitment_voters
 
-    for case in V4["cases"]:
+    for case in V5["cases"]:
         entries = case["commitment"]["explanation"]
-        assert verify_commitment_voters(entries, V4["issuer_aid"]), case["name"]
+        assert verify_commitment_voters(entries, V5["issuer_aid"]), case["name"]
 
 
 @pytest.mark.parametrize("bad", [b"", bytes(31), bytes(33)])
-@pytest.mark.parametrize("slot", ["selection_digest", "certificate_digest"])
+@pytest.mark.parametrize(
+    "slot", ["selection_digest", "certificate_digest", "governing_doc_sha256"]
+)
 def test_digest_slot_length_is_refused(slot, bad):
     with pytest.raises(ValueError):
         _seam_commitment_digest(
@@ -64,25 +72,89 @@ def test_digest_slot_length_is_refused(slot, bad):
         )
 
 
-def test_reference_vector_signed_case_verifies():
-    (case,) = [c for c in V4["cases"] if c["commitment"]["signed_artifact"]]
+SIGNED = [c for c in V5["cases"] if c["commitment"]["signed_artifact"]]
+
+
+def test_the_signed_vector_has_one_governed_and_one_ungoverned_case():
+    governed = {
+        c["name"]: c["commitment"]["governing_doc_sha256"] is not None for c in SIGNED
+    }
+    assert sorted(governed.values()) == [False, True], governed
+
+
+@pytest.mark.parametrize("case", SIGNED, ids=lambda c: c["name"])
+def test_reference_vector_signed_case_verifies(case):
     c = case["commitment"]
     assert verify_tct(
-        V4["issuer_aid"], bytes(c["signed_artifact"]).decode(), c, now_s=0
+        V5["issuer_aid"], bytes(c["signed_artifact"]).decode(), c, now_s=0
     )
+
+
+def test_a_governed_tct_does_not_verify_with_field_11_dropped_or_changed():
+    """Field 11 is TCT-bound: reading a governed record as ungoverned, or under another document,
+    is a different digest and the runtime's signature does not cover it."""
+    (case,) = [c for c in SIGNED if c["commitment"]["governing_doc_sha256"] is not None]
+    c = case["commitment"]
+    jws = bytes(c["signed_artifact"]).decode()
+    assert not verify_tct(
+        V5["issuer_aid"], jws, {**c, "governing_doc_sha256": None}, now_s=0
+    )
+    other = bytes(c["governing_doc_sha256"])[:-1] + b"\x00"
+    assert not verify_tct(
+        V5["issuer_aid"], jws, {**c, "governing_doc_sha256": other}, now_s=0
+    )
+    assert not verify_tct(
+        V5["issuer_aid"], jws, {**c, "governing_doc_sha256": b""}, now_s=0
+    )
+
+
+def test_the_governing_document_digest_is_the_spec_test_label():
+    """The spec's test document digest is SHA-256 of a fixed ASCII label; field 11 carries it raw."""
+    import hashlib
+
+    doc = hashlib.sha256(b"seam-governing-doc:test-vector").digest()
+    (case,) = [c for c in SIGNED if c["commitment"]["governing_doc_sha256"] is not None]
+    assert bytes(case["commitment"]["governing_doc_sha256"]) == doc
+    assert (
+        SLOTS["labels"]["governing_doc_sha256"]
+        == 'SHA-256("seam-governing-doc:test-vector")'
+    )
+    by = {c["name"]: c for c in SLOTS["cases"]}
+    assert by["doc_present"]["governing_doc_sha256"] == doc.hex()
+    # The trailer the runtime seals it in (not decoded here): 0x06 ‖ u32le(33) ‖ 0x01 ‖ doc.
+    assert (
+        by["doc_present"]["governing_trailer"] == "06" + "21000000" + "01" + doc.hex()
+    )
+
+
+@pytest.mark.parametrize("case", SLOTS["cases"], ids=lambda c: c["name"])
+def test_independent_generator_slot_cases(case):
+    """The stdlib-only generator's cases: every combination of fields 9, 10 and 11, empty and populated."""
+    assert SLOTS["commitment_digest_domain"] == "seam-commitment-digest:v5"
+    c = dict(case["commitment"])
+    for k in (
+        "selection_digest",
+        "certificate_digest",
+        "governing_doc_sha256",
+        "explanation_digest",
+    ):
+        if case.get(k) is not None:
+            c[k] = case[k]
+    assert _seam_commitment_digest(c) == case["commitment_digest"]
 
 
 def test_spec_worked_examples():
     assert explanation_digest([]).hex() == EMPTY
     # The spec's worked example: six empty fields, an absent `supersedes`, the empty explanation.
     empty = dict(id="", action="", authority="", auth_method="", trust_basis="")
-    (all_empty,) = [c for c in V4["cases"] if c["name"] == "all_empty"]
+    (all_empty,) = [c for c in V5["cases"] if c["name"] == "all_empty"]
+    assert all_empty["commitment_digest"].startswith("f31f8081")  # the spec's table
     assert _seam_commitment_digest(empty) == all_empty["commitment_digest"]
 
 
 def test_absent_and_present_empty_supersedes_differ():
     """v3 added a presence byte to `supersedes` (v2 framed absent as the empty string); v4 keeps it."""
-    by = {c["name"]: c for c in V4["cases"]}
+    by = {c["name"]: c for c in V5["cases"]}
     assert by["all_empty"]["commitment"]["supersedes"] is None
     assert by["empty_supersedes"]["commitment"]["supersedes"] == ""
     assert (
@@ -161,6 +233,10 @@ def _proto_from_vector(c: dict) -> pb.Commitment:
         trust_basis=c["trust_basis"],
         committer=c["committer"],
     )
+    if c.get("supersedes") is not None:
+        m.supersedes = c["supersedes"]
+    if c.get("governing_doc_sha256") is not None:
+        m.governing_doc_sha256 = bytes(c["governing_doc_sha256"])
     for e in c["explanation"]:
         entry = m.explanation.add(
             kind=kinds[e["kind"]],
@@ -181,7 +257,11 @@ def _proto_from_vector(c: dict) -> pb.Commitment:
                 "cp_signed": pb.VOTER_VERIFICATION_CP_SIGNED,
             }[vv["method"]]
             for name in ("content_digest", "signature", "signer_certificate"):
-                setattr(r, name, bytes.fromhex(vv[name + "_hex"]))
+                # `vectors.json` spells these as `<name>_hex`; the signed fixture as number arrays.
+                raw = vv[name + "_hex"] if name + "_hex" in vv else vv[name]
+                setattr(
+                    r, name, bytes.fromhex(raw) if isinstance(raw, str) else bytes(raw)
+                )
             for name in (
                 "principal",
                 "issued_at_ms",
@@ -217,6 +297,32 @@ def test_commitment_view_of_the_served_proto_verifies():
         )
         is False
     )
+
+
+@pytest.mark.parametrize("case", SIGNED, ids=lambda c: c["name"])
+def test_commitment_view_carries_field_11_with_explicit_presence(case):
+    """The served proto's `optional bytes governing_doc_sha256 = 11` reaches the digest as served:
+    absent stays absent (ungoverned, 0x00), present is the raw 32 bytes, and either way the runtime's
+    TCT verifies through `commitment_view`. Clearing it on the governed case fails closed."""
+    c = case["commitment"]
+    m = _proto_from_vector(c)
+    m.explanation_digest = bytes(c["explanation_digest"])
+    view = commitment_view(m)
+    governed = c["governing_doc_sha256"] is not None
+    assert m.HasField("governing_doc_sha256") is governed
+    assert view["governing_doc_sha256"] == (
+        bytes(c["governing_doc_sha256"]) if governed else None
+    )
+    jws = bytes(c["signed_artifact"]).decode()
+    assert verify_tct(V5["issuer_aid"], jws, view, now_s=0) is True
+    if governed:
+        m.ClearField("governing_doc_sha256")
+        assert verify_tct(V5["issuer_aid"], jws, commitment_view(m), now_s=0) is False
+        m.governing_doc_sha256 = (
+            b""  # present-empty is NOT absent: refused, never hashed
+        )
+        assert commitment_view(m)["governing_doc_sha256"] == b""
+        assert verify_tct(V5["issuer_aid"], jws, commitment_view(m), now_s=0) is False
 
 
 def test_unspecified_kind_from_the_wire_fails_closed():
@@ -256,14 +362,14 @@ def _sign(header: bytes, payload: bytes) -> str:
 
 
 def _vector_claims():
-    (case,) = [c for c in V4["cases"] if c["commitment"]["signed_artifact"]]
+    (case,) = [c for c in V5["cases"] if c["name"] == "populated_signed"]
     h, p, _ = bytes(case["commitment"]["signed_artifact"]).decode().split(".")
     return case["commitment"], json.loads(_unb64(h)), json.loads(_unb64(p))
 
 
 def _verify(commitment, header, payload) -> bool:
     jws = _sign(json.dumps(header).encode(), json.dumps(payload).encode())
-    return verify_tct(V4["issuer_aid"], jws, commitment, now_s=0)
+    return verify_tct(V5["issuer_aid"], jws, commitment, now_s=0)
 
 
 def test_the_resigned_vector_still_verifies():
@@ -324,14 +430,14 @@ def test_a_duplicate_json_key_fails_closed():
     forged = body[:-1] + ', "grants": ["aitp.attestation"]}'
     assert (
         verify_tct(
-            V4["issuer_aid"], _sign(json.dumps(h).encode(), forged.encode()), c, now_s=0
+            V5["issuer_aid"], _sign(json.dumps(h).encode(), forged.encode()), c, now_s=0
         )
         is False
     )
     dup_header = json.dumps(h)[:-1] + ', "typ": "aitp-tct+jwt"}'
     assert (
         verify_tct(
-            V4["issuer_aid"], _sign(dup_header.encode(), body.encode()), c, now_s=0
+            V5["issuer_aid"], _sign(dup_header.encode(), body.encode()), c, now_s=0
         )
         is False
     )

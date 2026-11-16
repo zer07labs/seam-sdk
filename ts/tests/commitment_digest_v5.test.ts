@@ -1,16 +1,21 @@
-// `seam-commitment-digest:v4` + `seam-explanation-digest:v2`, and the RFC-AITP-0005 self-attestation TCT.
+// `seam-commitment-digest:v5` (#1711) + `seam-explanation-digest:v2`, and the RFC-AITP-0005 self-attestation TCT.
 //
-// `conformance/commitment_digest_v4_vector.json` is seam-runtime's trust-aitp reference fixture (#1687),
-// vendored. Per the normative spec (`seam-runtime/docs/specs/seam-commitment-digest.v4.md`) an
-// implementation is conforming iff it reproduces EVERY digest in that file and verifies its
-// `signed_artifact` against its `issuer_aid`. The `commitment` objects are the REST projection:
+// `conformance/commitment_digest_v5_signed_vector.json` is seam-runtime's trust-aitp reference fixture,
+// vendored: real TCTs over v5 digests, one governed and one ungoverned populated case. Per the normative
+// spec (`seam-runtime/docs/specs/seam-commitment-digest.v5.md`, v4 plus field 11 `governing_doc_sha256`)
+// an implementation is conforming iff it reproduces EVERY digest in that file and verifies its
+// `signed_artifact` against its `issuer_aid`. `conformance/commitment_digest_v5_vector.json` is the
+// independent stdlib-only generator's field-9/10/11 slot cases (byte fields hex); its
+// `governing_trailer_refusals` pin the runtime's `0x06` trailer DECODER, which the SDK does not have
+// (the trailer is sealed in the record ciphertext and reaches a client only as the proto field), so they
+// are not exercised here. The `commitment` objects are the REST projection:
 // snake_case, byte fields as JSON number arrays, absent `supersedes` / `confidence` / `rationale_ref`
 // as `null`. v4 adds the sealed voter verification record on every vote / ballot / objection (`VV`, byte
 // fields as number arrays) and the always-framed slots 9 (selection) and 10 (Gate certificate), given
 // per case as `selection_digest` / `certificate_digest` hex or `null`. The TCT shape (`grants: ["aitp.attestation"]`, the digest under
 // `ext["com.zer07labs.seam"]`) is taken from the signed vectors, which are the source of truth where
 // the pinned spec's prose still describes the retired grants form. Mirrors
-// `python/tests/test_commitment_digest_v4.py`.
+// `python/tests/test_commitment_digest_v5.py`.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -40,12 +45,13 @@ interface RestCommitment {
   committer: string;
   explanation_digest: number[];
   explanation: ExplanationEntryInput[];
+  governing_doc_sha256: number[] | null;
 }
 
 const conf = (name: string) =>
   JSON.parse(readFileSync(new URL(`../../conformance/${name}`, import.meta.url), "utf8"));
 
-const vector = conf("commitment_digest_v4_vector.json") as {
+const vector = conf("commitment_digest_v5_signed_vector.json") as {
   issuer_aid: string;
   commitment_digest_domain: string;
   explanation_digest_domain: string;
@@ -54,6 +60,19 @@ const vector = conf("commitment_digest_v4_vector.json") as {
     commitment: RestCommitment;
     selection_digest?: string | null;
     certificate_digest?: string | null;
+    explanation_digest: string;
+    commitment_digest: string;
+  }[];
+};
+const slotVector = conf("commitment_digest_v5_vector.json") as {
+  commitment_digest_domain: string;
+  cases: {
+    name: string;
+    commitment: Record<string, any>;
+    selection_digest: string | null;
+    certificate_digest: string | null;
+    governing_doc_sha256: string | null;
+    governing_trailer: string | null;
     explanation_digest: string;
     commitment_digest: string;
   }[];
@@ -80,6 +99,7 @@ function toCommitment(r: RestCommitment, slots?: { selection_digest?: string | n
     committer: r.committer,
     explanation: r.explanation,
     explanation_digest: new Uint8Array(r.explanation_digest),
+    governing_doc_sha256: r.governing_doc_sha256 === null ? null : new Uint8Array(r.governing_doc_sha256),
   };
 }
 
@@ -89,18 +109,20 @@ function caseNamed(name: string) {
   return c;
 }
 
+const signedCases = () => vector.cases.filter((c) => c.commitment.signed_artifact.length > 0);
+/** The governed populated case — the one whose TCT binds a field 11. */
 const signedCase = () => {
-  const signed = vector.cases.filter((c) => c.commitment.signed_artifact.length > 0);
-  assert.equal(signed.length, 1, "the vector should carry exactly one signed case");
-  return signed[0];
+  assert.equal(signedCases().length, 2, "the vector should carry a governed and an ungoverned signed case");
+  return caseNamed("populated_signed");
 };
 
-test("v4 vector: the domains are the ones this SDK frames", () => {
-  assert.equal(vector.commitment_digest_domain, "seam-commitment-digest:v4");
+test("v5 vector: the domains are the ones this SDK frames", () => {
+  assert.equal(vector.commitment_digest_domain, "seam-commitment-digest:v5");
+  assert.equal(slotVector.commitment_digest_domain, "seam-commitment-digest:v5");
   assert.equal(vector.explanation_digest_domain, "seam-explanation-digest:v2");
 });
 
-test("v4 vector: every case reproduces its explanation and commitment digests", () => {
+test("v5 vector: every case reproduces its explanation and commitment digests", () => {
   assert.ok(vector.cases.length >= 6, "vector has fewer cases than the spec describes");
   for (const c of vector.cases) {
     assert.equal(hex(explanationDigest(c.commitment.explanation)), c.explanation_digest, `${c.name}: explanation`);
@@ -113,7 +135,7 @@ test("v4 vector: every case reproduces its explanation and commitment digests", 
   }
 });
 
-test("v4 spec: empty explanation and the all-empty worked example", () => {
+test("v5 spec: empty explanation and the all-empty worked example", () => {
   assert.equal(hex(explanationDigest([])), EMPTY);
   // Six empty fields, an absent `supersedes`, the empty explanation.
   assert.equal(
@@ -122,7 +144,7 @@ test("v4 spec: empty explanation and the all-empty worked example", () => {
   );
 });
 
-test("v4: absent and present-empty supersedes are different digests", () => {
+test("v5: absent and present-empty supersedes are different digests", () => {
   // The presence byte (since v3). v2 framed absent as the empty string.
   const absent = caseNamed("all_empty");
   const empty = caseNamed("empty_supersedes");
@@ -138,7 +160,7 @@ test("v4: absent and present-empty supersedes are different digests", () => {
   );
 });
 
-test("v4: fields 9 and 10 — each slot is bound, and absent is not present", () => {
+test("v5: fields 9 and 10 — each slot is bound, and absent is not present", () => {
   const empty = toCommitment(caseNamed("all_empty").commitment);
   const sel = caseNamed("selection_present");
   const cert = caseNamed("certificate_present");
@@ -158,18 +180,20 @@ test("v4: fields 9 and 10 — each slot is bound, and absent is not present", ()
   assert.equal(digests.size, 4);
 });
 
-test("v4: a slot digest that is not 32 bytes is refused, and verifyTct fails closed on it", () => {
+test("v5: a slot digest that is not 32 bytes is refused, and verifyTct fails closed on it", () => {
   const sc = signedCase();
   const jws = Buffer.from(sc.commitment.signed_artifact).toString("utf8");
   const cm = toCommitment(sc.commitment);
   for (const bad of [new Uint8Array(0), new Uint8Array(31), new Uint8Array(33), "ab", "zz".repeat(32)]) {
     assert.throws(() => seamCommitmentDigest({ ...cm, selection_digest: bad }), Error);
     assert.throws(() => seamCommitmentDigest({ ...cm, certificate_digest: bad }), Error);
+    assert.throws(() => seamCommitmentDigest({ ...cm, governing_doc_sha256: bad }), Error);
+    assert.equal(verifyTct(vector.issuer_aid, jws, { ...cm, governing_doc_sha256: bad }, NOW_S), false);
     assert.equal(verifyTct(vector.issuer_aid, jws, { ...cm, selection_digest: bad }, NOW_S), false);
   }
 });
 
-test("v4: the voter verification record is bound, and a malformed one is refused", () => {
+test("v5: the voter verification record is bound, and a malformed one is refused", () => {
   const sc = signedCase();
   const jws = Buffer.from(sc.commitment.signed_artifact).toString("utf8");
   const cm = toCommitment(sc.commitment);
@@ -198,7 +222,7 @@ test("v4: the voter verification record is bound, and a malformed one is refused
   }
 });
 
-test("v4 vector: populated_signed verifies against issuer_aid; tampering does not", () => {
+test("v5 vector: populated_signed verifies against issuer_aid; tampering does not", () => {
   const c = caseNamed("populated_signed");
   const jws = Buffer.from(c.commitment.signed_artifact).toString("utf8");
   const cm = toCommitment(c.commitment);
@@ -211,13 +235,45 @@ test("v4 vector: populated_signed verifies against issuer_aid; tampering does no
   assert.equal(verifyTct(vector.issuer_aid, jws, { ...cm, action: cm.action.normalize("NFC") }, NOW_S), false);
 });
 
-test("v4: the conformance tct block reproduces", () => {
+test("v5 generator: every field-9/10/11 slot case reproduces its digest", () => {
+  for (const c of slotVector.cases) {
+    const cm = {
+      ...c.commitment,
+      explanation_digest: c.explanation_digest,
+      selection_digest: c.selection_digest,
+      certificate_digest: c.certificate_digest,
+      governing_doc_sha256: c.governing_doc_sha256,
+    } as Commitment;
+    assert.equal(seamCommitmentDigest(cm), c.commitment_digest, c.name);
+  }
+  const doc = slotVector.cases.find((c) => c.name === "doc_present")!;
+  // The trailer the runtime seals it in (not decoded here): 0x06 ‖ u32le(33) ‖ 0x01 ‖ doc.
+  assert.equal(doc.governing_trailer, "06" + "21000000" + "01" + doc.governing_doc_sha256);
+});
+
+test("v5: field 11 is TCT-bound — both signed cases verify, and a governed record read as ungoverned does not", () => {
+  for (const c of signedCases()) {
+    const jws = Buffer.from(c.commitment.signed_artifact).toString("utf8");
+    assert.equal(verifyTct(vector.issuer_aid, jws, toCommitment(c.commitment), NOW_S), true, c.name);
+  }
+  const gov = signedCase();
+  assert.notEqual(gov.commitment.governing_doc_sha256, null);
+  const jws = Buffer.from(gov.commitment.signed_artifact).toString("utf8");
+  const cm = toCommitment(gov.commitment);
+  assert.equal(verifyTct(vector.issuer_aid, jws, { ...cm, governing_doc_sha256: null }, NOW_S), false, "dropped");
+  assert.equal(verifyTct(vector.issuer_aid, jws, { ...cm, governing_doc_sha256: undefined }, NOW_S), false, "undefined");
+  const other = new Uint8Array(cm.governing_doc_sha256 as Uint8Array);
+  other[31] ^= 1;
+  assert.equal(verifyTct(vector.issuer_aid, jws, { ...cm, governing_doc_sha256: other }, NOW_S), false, "another document");
+});
+
+test("v5: the conformance tct block reproduces", () => {
   const c = TCT.inputs.commitment as Commitment;
   assert.equal(hex(explanationDigest(c.explanation!)), TCT.explanation_digest_hex);
   assert.equal(seamCommitmentDigest(c), TCT.commitment_digest_hex);
 });
 
-test("v4: entries disagreeing with the published digest → verifyTct false (and the digest throws)", () => {
+test("v5: entries disagreeing with the published digest → verifyTct false (and the digest throws)", () => {
   const c = caseNamed("populated_signed");
   const jws = Buffer.from(c.commitment.signed_artifact).toString("utf8");
   const cm = toCommitment(c.commitment);
@@ -237,7 +293,7 @@ test("v4: entries disagreeing with the published digest → verifyTct false (and
   );
 });
 
-test("v4: the published digest alone verifies who and what", () => {
+test("v5: the published digest alone verifies who and what", () => {
   const { explanation: _drop, ...c } = TCT.inputs.commitment;
   assert.equal(
     verifyTct(TCT.issuer_aid, TCT.signed_artifact_jws, { ...c, explanation_digest: TCT.explanation_digest_hex }, NOW_S),
@@ -245,7 +301,7 @@ test("v4: the published digest alone verifies who and what", () => {
   );
 });
 
-test("v4: absent confidence and a stated 0.0 are different digests", () => {
+test("v5: absent confidence and a stated 0.0 are different digests", () => {
   const e: ExplanationEntryInput = {
     kind: "evaluation",
     participant: "a",
@@ -259,7 +315,7 @@ test("v4: absent confidence and a stated 0.0 are different digests", () => {
   assert.notEqual(hex(explanationDigest([{ ...e, rationale_ref: "" }])), absent, "empty ref is not absent ref");
 });
 
-test("v4: non-canonical confidence and unknown kind are refused, and verifyTct fails closed on them", () => {
+test("v5: non-canonical confidence and unknown kind are refused, and verifyTct fails closed on them", () => {
   const c = caseNamed("populated_signed");
   const jws = Buffer.from(c.commitment.signed_artifact).toString("utf8");
   const cm = toCommitment(c.commitment);
@@ -313,6 +369,9 @@ function protoFromVector(c: Record<string, any>) {
     trustBasis: c.trust_basis,
     committer: c.committer,
     ...(c.supersedes === null || c.supersedes === undefined ? {} : { supersedes: c.supersedes }),
+    ...(c.governing_doc_sha256 === null || c.governing_doc_sha256 === undefined
+      ? {}
+      : { governingDocSha256: new Uint8Array(c.governing_doc_sha256) }),
     explanation: (c.explanation as ExplanationEntryInput[]).map((e) => ({
       kind: KINDS[e.kind],
       participant: e.participant,
@@ -374,6 +433,26 @@ test("commitmentView maps the served voter record, and an UNSPECIFIED method fai
   m.explanation[i].voterVerification!.method = VoterVerification.POP;
   m.explanation[i].voterVerification!.contentDigest = new Uint8Array(31);
   assert.equal(verifyTct(vector.issuer_aid, jws, commitmentView(m), NOW_S), false);
+});
+
+test("commitmentView carries field 11 with explicit presence", () => {
+  for (const c of signedCases()) {
+    const jws = Buffer.from(c.commitment.signed_artifact).toString("utf8");
+    const m = protoFromVector(c.commitment);
+    m.explanationDigest = new Uint8Array(c.commitment.explanation_digest);
+    const governed = c.commitment.governing_doc_sha256 !== null;
+    assert.equal(m.governingDocSha256 !== undefined, governed, c.name);
+    assert.equal(verifyTct(vector.issuer_aid, jws, commitmentView(m), NOW_S), true, c.name);
+    if (governed) {
+      m.governingDocSha256 = undefined;
+      assert.equal(verifyTct(vector.issuer_aid, jws, commitmentView(m), NOW_S), false, "cleared");
+      m.governingDocSha256 = new Uint8Array(0); // present-empty is NOT absent: refused, never hashed
+      assert.deepEqual(commitmentView(m).governing_doc_sha256, new Uint8Array(0));
+      assert.equal(verifyTct(vector.issuer_aid, jws, commitmentView(m), NOW_S), false, "present-empty");
+    } else {
+      assert.equal(commitmentView(m).governing_doc_sha256, null);
+    }
+  }
 });
 
 test("an UNSPECIFIED kind from the wire fails closed", () => {

@@ -11,7 +11,7 @@
   },
   "inclusion": {
     "decision_offset": 5,
-    "record_checksum": "4I9oAk3SfDhpp6ThpIe6ct71z77a60evBaBiINSpOJY=",
+    "record_checksum": "HHjpUJfVQ3UVzqHpXV33DHBPqmFtdNl74F5wPgV0u1s=",
     "anchor_offset": 3,
     "anchor_attested_len": 2,
     "window_events": 4,
@@ -20,19 +20,19 @@
   },
   "files": {
     "events.jsonl": {
-      "sha256": "8b1ab3cda9aa951d59e466954ab86f68e6e150ef9ad2a3331159045321fddd30",
+      "sha256": "739ca02cc7a1d5151c4f56a39ce6c47db2fd36d18a7eb94baff71f5de8cb780e",
       "bytes": 4432
     },
     "anchor.json": {
-      "sha256": "f852a17c30d1add4b70cbe1735829d98f57ca475024dd5940818912f71a78b58",
+      "sha256": "1c0aad5993b418b0e667bf7a7924bff00236e63e5d220e90627913ec2a7ed0c2",
       "bytes": 317
     },
     "commitment.json": {
-      "sha256": "66293d0d195ca606c7d9679133ca0d33cf223dfc84af5874575cbe6e91903c4f",
-      "bytes": 6215
+      "sha256": "23f5c94d873b34198fcefc8834e04e5811aa527c012e0f19f19dc0f93b9ce0e3",
+      "bytes": 6309
     },
     "binding.json": {
-      "sha256": "a8d14358e09dc341e78a3c5ff1268b628456df321d67ad83fb332ab36f476879",
+      "sha256": "f5d9200c85f9e8e6356b62cc91771638fe05602ea54529687ca80b835e305a4e",
       "bytes": 456
     },
     "context.json": {

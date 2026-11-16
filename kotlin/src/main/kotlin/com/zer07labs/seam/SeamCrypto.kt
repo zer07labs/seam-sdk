@@ -77,10 +77,13 @@ data class ExplanationEntry(
 )
 
 /**
- * The commitment fields `seam-commitment-digest:v4` binds. [committer] is the verified AID that
+ * The commitment fields `seam-commitment-digest:v5` binds. [committer] is the verified AID that
  * committed (empty when absent). [selectionDigest] (field 9) and [certificateDigest] (field 10) are
- * `null` when absent — every record runtime 0.87.0 seals — and exactly 32 bytes when present.
- * [supersedes] is `null` when ABSENT, which v4 frames as `0x00` — a
+ * `null` when absent — every record runtime 0.88.0 seals — and exactly 32 bytes when present.
+ * [governingDocSha256] (field 11, #1711) is the SHA-256 of the tenant governing document the decision
+ * was sealed under (`Commitment.governing_doc_sha256` on the wire): `null` for an ungoverned decision,
+ * else exactly 32 bytes.
+ * [supersedes] is `null` when ABSENT, which v5 frames as `0x00` — a
  * different digest from a present empty string (`0x01 ‖ F("")`). Field 8 (the explanation digest) is resolved from [explanation] and
  * [explanationDigest] (32 raw bytes) — see [SeamCrypto.verifyTct].
  */
@@ -96,6 +99,7 @@ data class Commitment(
     val explanationDigest: ByteArray? = null,
     val selectionDigest: ByteArray? = null,
     val certificateDigest: ByteArray? = null,
+    val governingDocSha256: ByteArray? = null,
 )
 
 /**
@@ -330,7 +334,7 @@ object SeamCrypto {
     }
 
     /** Domain tag of the commitment digest. */
-    const val COMMITMENT_DIGEST_DOMAIN = "seam-commitment-digest:v4"
+    const val COMMITMENT_DIGEST_DOMAIN = "seam-commitment-digest:v5"
 
     /** The one grant a commitment self-attestation carries. */
     const val ATTESTATION_GRANT = "aitp.attestation"
@@ -342,14 +346,15 @@ object SeamCrypto {
     const val COMMITMENT_STATEMENT = "seam:commitment"
 
     /**
-     * `seam-commitment-digest:v4` (hex): SHA-256 over a **length-prefixed** framing of a domain tag
+     * `seam-commitment-digest:v5` (hex): SHA-256 over a **length-prefixed** framing of a domain tag
      * plus the commitment fields — each field preceded by its 8-byte big-endian length. Mirrors the
-     * runtime byte-for-byte, and mirrors the Go/Java/Python/TypeScript shims. v3 is deleted, not
-     * dual-verified. Normative: `seam-runtime/docs/specs/seam-commitment-digest.v4.md`. `supersedes`
+     * runtime byte-for-byte, and mirrors the Go/Java/Python/TypeScript shims. v1-v4 are deleted, not
+     * dual-verified. Normative: `seam-runtime/docs/specs/seam-commitment-digest.v5.md`. `supersedes`
      * carries a presence byte — `0x00` when absent (`null`), `0x01 ‖ F(s)` when present. v4 (#1687)
      * binds the v2 explanation digest as field 8 and appends two always-framed slots: field 9 (selection
      * digest) and field 10 (Gate certificate digest), each `0x00` when absent or `0x01 ‖ be64(32) ‖ 32
-     * raw bytes`; a present slot that is not 32 bytes throws [IllegalArgumentException].
+     * raw bytes`. v5 (#1711) appends field 11, the governing document digest, in the same slot
+     * encoding. A present slot that is not 32 bytes throws [IllegalArgumentException].
      *
      * **The length prefixes are not decoration and must never be "simplified" to a separator.** The
      * fields are arbitrary text that may itself contain NUL — UTF-8 permits U+0000, and it survives
@@ -376,6 +381,9 @@ object SeamCrypto {
         require(c.certificateDigest == null || c.certificateDigest.size == 32) {
             "certificate_digest must be 32 bytes when present"
         }
+        require(c.governingDocSha256 == null || c.governingDocSha256.size == 32) {
+            "governing_doc_sha256 must be 32 bytes when present"
+        }
         val explanation = commitmentExplanationDigest(c)
         val h = ByteArrayOutputStream()
         h.frame(COMMITMENT_DIGEST_DOMAIN.toByteArray(Charsets.UTF_8))
@@ -393,7 +401,7 @@ object SeamCrypto {
         h.frame(c.trustBasis.toByteArray(Charsets.UTF_8))
         h.frame(c.committer.toByteArray(Charsets.UTF_8))
         h.frame(explanation)
-        for (slot in listOf(c.selectionDigest, c.certificateDigest)) {
+        for (slot in listOf(c.selectionDigest, c.certificateDigest, c.governingDocSha256)) {
             if (slot == null) {
                 h.write(0x00)
             } else {
@@ -410,7 +418,7 @@ object SeamCrypto {
      * claims (`iss == sub == aud == issuerAid`); `exp`; that `grants` is exactly
      * `["aitp.attestation"]`; and that `ext` is exactly
      * `{"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":<hex>}}` with the hex equal
-     * to the recomputed `seam-commitment-digest:v4` of this exact commitment (the decided content, the
+     * to the recomputed `seam-commitment-digest:v5` of this exact commitment (the decided content, the
      * committer, and the sealed explanation). A header or payload whose JSON repeats an object key at
      * any depth is refused: Gson would keep one of the two, and another parser might keep the other. Any malformed/forged input fails closed (returns false),
      * never throws — including explanation entries that disagree with the published

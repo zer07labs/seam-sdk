@@ -53,7 +53,7 @@
 //!   ([`verify_bundle`]): the manifest's hashes, the anchored window (the same calls as
 //!   `chain --from-anchor --strict`), the decision's inclusion, the Commitment's TCT, the issuer's
 //!   signed binding of that Commitment to the chain link, and the disclosed context and policy.
-//! * **The commitment digest** (`seam-commitment-digest:v4`, with `seam-explanation-digest:v2`) and
+//! * **The commitment digest** (`seam-commitment-digest:v5`, with `seam-explanation-digest:v2`) and
 //!   the self-issued TCT that carries it ([`commitment`]) — implemented for the bundle's step 4, and
 //!   pinned by the spec's worked examples and the shared `conformance/` vectors.
 //! * **The voters** (seam-runtime#1687, [`voter`]): every sealed vote, ballot and objection's

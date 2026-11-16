@@ -30,7 +30,8 @@ categories = ["command-line-utilities", "cryptography"]
 # runs `cargo test` sees the formula defended, not merely present.
 #
 # `tests/commitment_vectors.rs` is excluded for the same reason (it reads
-# `../conformance/commitment_digest_v4_vector.json` and `vectors.json`), and `tests/voter_vectors.rs`
+# `../conformance/commitment_digest_v5_signed_vector.json`, `commitment_digest_v5_vector.json` and
+# `vectors.json`), and `tests/voter_vectors.rs`
 # (it reads `../conformance/voter_pop_v1_payload_vector.json`); the commitment digest's own
 # worked examples are unit tests in `src/commitment.rs`, which ship.
 exclude = ["tests/conformance.rs", "tests/commitment_vectors.rs", "tests/voter_vectors.rs"]

@@ -10,28 +10,30 @@ import (
 	"testing"
 )
 
-// conformance/commitment_digest_v4_vector.json is the runtime's reference vector for
-// `seam-commitment-digest:v4` + `seam-explanation-digest:v2` (seam-runtime #1687). A port is conforming iff it reproduces
-// every digest in it and verifies its signed_artifact against issuer_aid. The commitments are the REST
-// projection: byte fields as JSON number arrays, absent confidence/rationale_ref/supersedes/
-// voter_verification as null. The slot-9/10 digests sit beside the commitment as hex (null = absent).
-type v4Vector struct {
+// conformance/commitment_digest_v5_signed_vector.json is the runtime's reference vector for
+// `seam-commitment-digest:v5` + `seam-explanation-digest:v2` (seam-runtime #1711, #1687). A port is conforming iff it
+// reproduces every digest in it and verifies its signed_artifact against issuer_aid. The commitments are the
+// REST projection: byte fields (governing_doc_sha256 included) as JSON number arrays, absent
+// confidence/rationale_ref/supersedes/voter_verification/governing_doc_sha256 as null. The slot-9/10
+// digests sit beside the commitment as hex (null = absent).
+type v5Vector struct {
 	CommitmentDigestDomain  string `json:"commitment_digest_domain"`
 	ExplanationDigestDomain string `json:"explanation_digest_domain"`
 	IssuerAID               string `json:"issuer_aid"`
 	Cases                   []struct {
 		Name       string `json:"name"`
 		Commitment struct {
-			ID                string             `json:"id"`
-			Action            string             `json:"action"`
-			Authority         string             `json:"authority"`
-			Supersedes        *string            `json:"supersedes"`
-			AuthMethod        string             `json:"auth_method"`
-			TrustBasis        string             `json:"trust_basis"`
-			Committer         string             `json:"committer"`
-			SignedArtifact    []int              `json:"signed_artifact"`
-			ExplanationDigest []int              `json:"explanation_digest"`
-			Explanation       []ExplanationEntry `json:"explanation"`
+			ID                 string             `json:"id"`
+			Action             string             `json:"action"`
+			Authority          string             `json:"authority"`
+			Supersedes         *string            `json:"supersedes"`
+			AuthMethod         string             `json:"auth_method"`
+			TrustBasis         string             `json:"trust_basis"`
+			Committer          string             `json:"committer"`
+			SignedArtifact     []int              `json:"signed_artifact"`
+			ExplanationDigest  []int              `json:"explanation_digest"`
+			Explanation        []ExplanationEntry `json:"explanation"`
+			GoverningDocSha256 []int              `json:"governing_doc_sha256"`
 		} `json:"commitment"`
 		SelectionDigest   *string `json:"selection_digest"`
 		CertificateDigest *string `json:"certificate_digest"`
@@ -64,13 +66,22 @@ func optHex(t *testing.T, s *string) []byte {
 	return b
 }
 
-func loadV4(t *testing.T) v4Vector {
+// optInts is a JSON number array that may be null (absent).
+func optInts(t *testing.T, in []int) []byte {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "conformance", "commitment_digest_v4_vector.json"))
+	if in == nil {
+		return nil
+	}
+	return intsToBytes(t, in)
+}
+
+func loadV5(t *testing.T) v5Vector {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "conformance", "commitment_digest_v5_signed_vector.json"))
 	if err != nil {
 		t.Fatalf("read vector: %v", err)
 	}
-	var v v4Vector
+	var v v5Vector
 	if err := json.Unmarshal(raw, &v); err != nil {
 		t.Fatalf("parse vector: %v", err)
 	}
@@ -80,8 +91,8 @@ func loadV4(t *testing.T) v4Vector {
 	return v
 }
 
-func TestCommitmentDigestV4Vector(t *testing.T) {
-	v := loadV4(t)
+func TestCommitmentDigestV5Vector(t *testing.T) {
+	v := loadV5(t)
 	if v.CommitmentDigestDomain != CommitmentDigestDomain || v.ExplanationDigestDomain != ExplanationDomain {
 		t.Fatalf("domain tags drifted: %q / %q", v.CommitmentDigestDomain, v.ExplanationDigestDomain)
 	}
@@ -108,6 +119,7 @@ func TestCommitmentDigestV4Vector(t *testing.T) {
 				TrustBasis: vc.TrustBasis, Committer: vc.Committer,
 				ExplanationDigest: published, Explanation: vc.Explanation, Supersedes: vc.Supersedes,
 				SelectionDigest: optHex(t, tc.SelectionDigest), CertificateDigest: optHex(t, tc.CertificateDigest),
+				GoverningDocSha256: optInts(t, vc.GoverningDocSha256),
 			}
 			// All three field-8 resolutions must agree: entries + published, entries only, published only.
 			only := c
@@ -153,9 +165,78 @@ func TestCommitmentDigestV4Vector(t *testing.T) {
 	if voters == 0 {
 		t.Fatal("no entry carries a voter_verification; the VV framing is untested")
 	}
+	governed := 0
+	for _, tc := range v.Cases {
+		if tc.Commitment.GoverningDocSha256 != nil && len(tc.Commitment.SignedArtifact) > 0 {
+			governed++
+		}
+	}
+	if governed == 0 {
+		t.Fatal("no signed case carries governing_doc_sha256; field 11 is untested under a signature")
+	}
 }
 
-// Fields 9 and 10: a present digest must be exactly 32 bytes, and presence is a different preimage from
+// conformance/commitment_digest_v5_vector.json: the slot vector, generated independently of the
+// runtime (scripts/commitment_digest_v5_vectors.py). Commitments carry only the published
+// explanation_digest (a number array); the slot-9/10/11 digests sit beside them as hex (null = absent).
+// Its `governing_trailer_refusals` are not exercised here: they pin the runtime's 0x06 trailer
+// decoder, and this SDK never decodes sealed trailers — field 11 reaches it as the proto field.
+func TestCommitmentDigestV5SlotVector(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "conformance", "commitment_digest_v5_vector.json"))
+	if err != nil {
+		t.Fatalf("read vector: %v", err)
+	}
+	var v struct {
+		CommitmentDigestDomain string `json:"commitment_digest_domain"`
+		Cases                  []struct {
+			Name       string `json:"name"`
+			Commitment struct {
+				ID                string  `json:"id"`
+				Action            string  `json:"action"`
+				Authority         string  `json:"authority"`
+				AuthMethod        string  `json:"auth_method"`
+				TrustBasis        string  `json:"trust_basis"`
+				Supersedes        *string `json:"supersedes"`
+				Committer         string  `json:"committer"`
+				ExplanationDigest []int   `json:"explanation_digest"`
+			} `json:"commitment"`
+			SelectionDigest    *string `json:"selection_digest"`
+			CertificateDigest  *string `json:"certificate_digest"`
+			GoverningDocSha256 *string `json:"governing_doc_sha256"`
+			CommitmentDigest   string  `json:"commitment_digest"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		t.Fatalf("parse vector: %v", err)
+	}
+	if v.CommitmentDigestDomain != CommitmentDigestDomain {
+		t.Fatalf("domain tag drifted: %q", v.CommitmentDigestDomain)
+	}
+	if len(v.Cases) < 7 {
+		t.Fatalf("expected at least 7 cases, got %d", len(v.Cases))
+	}
+	for _, tc := range v.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			vc := tc.Commitment
+			got, err := seamCommitmentDigest(Commitment{
+				ID: vc.ID, Action: vc.Action, Authority: vc.Authority, AuthMethod: vc.AuthMethod,
+				TrustBasis: vc.TrustBasis, Supersedes: vc.Supersedes, Committer: vc.Committer,
+				ExplanationDigest:  intsToBytes(t, vc.ExplanationDigest),
+				SelectionDigest:    optHex(t, tc.SelectionDigest),
+				CertificateDigest:  optHex(t, tc.CertificateDigest),
+				GoverningDocSha256: optHex(t, tc.GoverningDocSha256),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.CommitmentDigest {
+				t.Fatalf("commitment digest got %s want %s", got, tc.CommitmentDigest)
+			}
+		})
+	}
+}
+
+// Fields 9, 10 and 11: a present digest must be exactly 32 bytes, and presence is a different preimage from
 // absence (no all-zero sentinel).
 func TestCommitmentSlotsRefuseBadLengthAndBindPresence(t *testing.T) {
 	absent, err := seamCommitmentDigest(Commitment{})
@@ -163,7 +244,7 @@ func TestCommitmentSlotsRefuseBadLengthAndBindPresence(t *testing.T) {
 		t.Fatal(err)
 	}
 	zero := make([]byte, 32)
-	for name, c := range map[string]Commitment{"selection": {SelectionDigest: zero}, "certificate": {CertificateDigest: zero}} {
+	for name, c := range map[string]Commitment{"selection": {SelectionDigest: zero}, "certificate": {CertificateDigest: zero}, "governing": {GoverningDocSha256: zero}} {
 		got, err := seamCommitmentDigest(c)
 		if err != nil || got == absent {
 			t.Fatalf("%s: a present all-zero digest must differ from absent (%v)", name, err)
@@ -173,6 +254,9 @@ func TestCommitmentSlotsRefuseBadLengthAndBindPresence(t *testing.T) {
 		"selection 31":   {SelectionDigest: zero[:31]},
 		"selection 0":    {SelectionDigest: []byte{}},
 		"certificate 33": {CertificateDigest: append(append([]byte{}, zero...), 0)},
+		"governing 31":   {GoverningDocSha256: zero[:31]},
+		"governing 0":    {GoverningDocSha256: []byte{}},
+		"governing 33":   {GoverningDocSha256: append(append([]byte{}, zero...), 0)},
 	} {
 		if _, err := seamCommitmentDigest(c); err == nil {
 			t.Fatalf("%s must be refused, not hashed", name)
@@ -238,7 +322,7 @@ func TestExplanationDigestEmptyMatchesSpec(t *testing.T) {
 	}
 	// The spec's worked example: all fields empty, no explanation held.
 	got, err := seamCommitmentDigest(Commitment{})
-	if err != nil || got != "6e3a11bbef5f552f78e6d9114c13b7e48bb0a30de82d38a603981d6d1ca7281a" {
+	if err != nil || got != "f31f8081790860a42529c30c4b75626213c6ad36b7c797ba172a2246eab41207" {
 		t.Fatalf("all-empty worked example: got %s, %v", got, err)
 	}
 }
@@ -359,7 +443,7 @@ func TestEmptyVsAbsentSupersedesDiffer(t *testing.T) {
 	if absent == present {
 		t.Fatal("absent and present-empty supersedes must give different digests")
 	}
-	if present != "a495c011cd353de108bb7c0e2a3bcb90051d59b135696a10848c3a087e5fed50" {
+	if present != "9bf7e384a2d8b003c1cb5669b8198dcd5784401797d0897586baa87afeba4ce3" {
 		t.Fatalf("present-empty supersedes: got %s", present)
 	}
 }

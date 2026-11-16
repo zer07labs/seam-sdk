@@ -225,16 +225,16 @@ _EMPTY_EXPLANATION_DIGEST = hashlib.sha256(
 
 
 def _commitment_digest(c: dict) -> str:
-    """`seam-commitment-digest:v4`: every field `be64(len) || bytes`, except `supersedes`, which is a
-    presence byte (`0x00` absent, `0x01 || F(value)` present), and the selection/certificate slots 9/10,
-    absent (`0x00` each) here."""
+    """`seam-commitment-digest:v5`: every field `be64(len) || bytes`, except `supersedes`, which is a
+    presence byte (`0x00` absent, `0x01 || F(value)` present), and the selection/certificate/governing
+    document slots 9/10/11 (#1711), absent (`0x00` each) here: an ungoverned commitment."""
 
     def f(b: bytes) -> bytes:
         return len(b).to_bytes(8, "big") + b
 
     sup = c["supersedes"]
     return hashlib.sha256(
-        f(b"seam-commitment-digest:v4")
+        f(b"seam-commitment-digest:v5")
         + f(c["id"].encode())
         + f(c["action"].encode())
         + f(c["authority"].encode())
@@ -243,7 +243,7 @@ def _commitment_digest(c: dict) -> str:
         + f(c["trust_basis"].encode())
         + f(c["committer"].encode())
         + f(_EMPTY_EXPLANATION_DIGEST)
-        + b"\x00\x00"
+        + b"\x00\x00\x00"
     ).hexdigest()
 
 
