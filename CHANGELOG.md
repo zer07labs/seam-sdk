@@ -16,6 +16,13 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Fixed
+- **Partner promotion of a pre-release.** `scripts/promote-to-partner.sh` now queries a python package under
+  its PEP 440 spelling (`0.87.0-rc.1` → `0.87.0rc1`), because that is how Cloudsmith stores the wheel and
+  sdist; npm keeps the semver spelling. v0.87.0-rc.1 copied its npm package to `partner` and then refused,
+  with the python package still un-copied. The re-run completes it, and the copy-once check means the npm
+  package is not copied again. Release tooling only; no package changes.
+
 ## 0.87.0-rc.1 — 2026-11-15
 
 **Pre-release, BREAKING, for the #1687 caller wave only.** Generated from BSR label `pr-1713`
