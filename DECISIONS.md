@@ -1221,7 +1221,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:1951-1973` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:1958-1980` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2014,14 +2014,14 @@ any of them, and two of the analyses corrected me rather than the other way roun
 ### Cloudsmith ERRORS on an unrecognised `version:` qualifier rather than ignoring it
 - **Recommender (Opus):** CHANGE the code. The entry's stated mechanism — "wrong-version rows make a
   published target look absent" — is **unreachable**: `registry_formats`
-  (`scripts/check_registry_drift.py:469`) re-applies `.version == version` client-side, so
+  (`scripts/check_registry_drift.py:499`) re-applies `.version == version` client-side, so
   wrong-version rows are inert. Only truncation can hide a published target, and the existing guard
-  at `scripts/check_registry_drift.py:583` tests `len(rows) == PAGE_SIZE` — an **equality**, blind to
+  at `scripts/check_registry_drift.py:614` tests `len(rows) == PAGE_SIZE` — an **equality**, blind to
   every window size except exactly 50. A server-side page cap *below* 50 leaves it permanently
   silent, and then a canary inside the window certifies the instrument while the target outside it
   exits 1 for a published version.
 - **Verdict:** Change. Added a server-side positive control to `fetch_registry`
-  (`scripts/check_registry_drift.py:606`): if a response carries `seam-sdk` rows but none at the
+  (`scripts/check_registry_drift.py:637`): if a response carries `seam-sdk` rows but none at the
   version asked for, raise `InfraError` naming the versions that came back. That is a statement about
   the *server* which no client-side filter can restate; it costs zero extra requests and fires on the
   first canary query, before the target is ever fetched. I tightened the analysis's draft in one
@@ -2051,7 +2051,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:1981` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:1988` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -2080,7 +2080,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
   `?query=seam-sdk` dump", and nothing said so. A human capturing the check's own version-scoped
   response during an incident gets refused — correctly, but with a message blaming the query shape,
   the credential or the file, never the actual mistake. The help string, the refusal text
-  (`scripts/check_registry_drift.py:484`) and the module Usage block now name the required shape.
+  (`scripts/check_registry_drift.py:514`) and the module Usage block now name the required shape.
 - **Status:** CONFIRMED, with the contract documented.
 
 ### Five minutes is the boundary between clock skew and a broken clock
@@ -2552,8 +2552,8 @@ Ranked by blast radius, highest first:
 - **Verdict:** confirm. **Status:** CONFIRMED (2026-10-18). **Decided by:** Opus.
 
 ### A partner fault never hides an internal finding
-- **Evidence:** `scripts/check_registry_drift.py:1785-1795` captures partner faults. `scripts/check_registry_drift.py:2027-2032`, `scripts/check_registry_drift.py:2103-2110` and
-  `scripts/check_registry_drift.py:2256-2260` map the four cases. Tests at `scripts/test_registry_drift_gate.py:1747,3875,3898`.
+- **Evidence:** `scripts/check_registry_drift.py:1831-1841` captures partner faults. `scripts/check_registry_drift.py:2079-2084`, `scripts/check_registry_drift.py:2155-2162` and
+  `scripts/check_registry_drift.py:2308-2312` map the four cases. Tests at `scripts/test_registry_drift_gate.py:1747,3875,3898`.
 - **Analysis:** exit 1 has to mean "a finding was delivered". Under "any fault ⇒ 2", one dead partner credential
   would blind every internal drift for as long as nobody rotated it. This rule matches how `_with_newest` treats a
   newest-question fault, so all three questions share one exit-code vocabulary. `plans/archive/partner-registry-drift.md:57`
@@ -2561,8 +2561,8 @@ Ranked by blast radius, highest first:
 - **Verdict:** confirm. **Status:** CONFIRMED (2026-10-18). **Decided by:** Opus.
 
 ### When both registries are short, one issue is filed: the internal one
-- **Evidence:** `scripts/check_registry_drift.py:2025-2034` routes the subject. `_partner_cell` (`scripts/check_registry_drift.py:1207-1229`) records
-  partner's observed state. `PARTNER_DRIFT_TITLE` (`scripts/check_registry_drift.py:312`) gives partner issues their own suppression scope.
+- **Evidence:** `scripts/check_registry_drift.py:2077-2086` routes the subject. `_partner_cell` (`scripts/check_registry_drift.py:1253-1275`) records
+  partner's observed state. `PARTNER_DRIFT_TITLE` (`scripts/check_registry_drift.py:341`) gives partner issues their own suppression scope.
 - **Analysis:** the build is stronger than the assumption needs. It reports partner as it really is, rather than
   assuming "missing from internal means missing from partner", and it flags a format internal serves but partner lacks
   as a separate promotion lag. One narrow gap remains: under a *suppressed* internal drift, a partner own-lag on a
@@ -2570,8 +2570,8 @@ Ranked by blast radius, highest first:
 - **Verdict:** confirm. **Status:** CONFIRMED (2026-10-18). **Decided by:** Opus.
 
 ### A newest-version finding is never filed from a broken run
-- **Evidence:** `scripts/check_registry_drift.py:1982-1995` handles a git-clock fault: it prints, exits by D3, and
-  makes no gh call. `scripts/check_registry_drift.py:2240-2247` returns 2 when GitHub is down beside a newest drift.
+- **Evidence:** `scripts/check_registry_drift.py:2034-2047` handles a git-clock fault: it prints, exits by D3, and
+  makes no gh call. `scripts/check_registry_drift.py:2292-2299` returns 2 when GitHub is down beside a newest drift.
 - **Analysis:** a partial body would write the broken checkout's missing or wrong tag row into a durable issue. It
   would also break the invariant that no infrastructure fault reaches GitHub. The cost is about one cron period of
   delay, and the job stays red throughout. One wording nit: a comment in the outage handler words the exit-1 rule more
@@ -2581,15 +2581,15 @@ Ranked by blast radius, highest first:
 ### Internal's `sort=-version` ordering is checked, never trusted
 - **Evidence:** `NEWEST_QUERY` at `scripts/check_registry_drift.py:258-271` is pinned by
   `test_the_newest_query_is_pinned_word_for_word` (`scripts/test_registry_drift_gate.py:5155`). The ordering and
-  floor guards are in `fetch_newest` (`scripts/check_registry_drift.py:885-901`), and every one of them raises `InfraError`, which means exit 2.
+  floor guards are in `fetch_newest` (`scripts/check_registry_drift.py:930-946`), and every one of them raises `InfraError`, which means exit 2.
 - **Analysis:** trusting the sort would let a misspelt parameter fall back to sorting by date and silently pick the
   latest upload. Paging every row makes the cost grow with history and proves nothing the canary and declared floors
   don't. The residual needs a server-side fault plus an out-of-order backfill, which is cheaper to accept than to close.
 - **Verdict:** confirm. **Status:** CONFIRMED (2026-10-18). **Decided by:** Opus.
 
 ### The newest question's clock is internal's `uploaded_at`
-- **Evidence:** `newest_upload_clock` at `scripts/check_registry_drift.py:966-985`. Strict parse in
-  `_parse_upload_stamp` (`scripts/check_registry_drift.py:935-963`). The skew guard reuses `CLOCK_SKEW_TOLERANCE_MINUTES` (`scripts/check_registry_drift.py:1841-1870`).
+- **Evidence:** `newest_upload_clock` at `scripts/check_registry_drift.py:1011-1031`. Strict parse in
+  `_parse_upload_stamp` (`scripts/check_registry_drift.py:980-1008`). The skew guard reuses `CLOCK_SKEW_TOLERANCE_MINUTES` (`scripts/check_registry_drift.py:1893-1922`).
 - **Analysis:** internal finishing its upload is exactly what promotion waits on. The clock comes from the same
   response as the newest version, with no dependency on tag depth or main's history. It can only file early, and the
   soft window absorbs that. A re-upload in place would delay a lag by at most one grace window, and this repo doesn't
@@ -2597,8 +2597,8 @@ Ranked by blast radius, highest first:
 - **Verdict:** confirm. **Status:** CONFIRMED (2026-10-18). **Decided by:** Opus.
 
 ### Offline runs check partner only when given a partner dump
-- **Evidence:** `scripts/check_registry_drift.py:1732-1737` refuses a partner dump without an internal one.
-  `scripts/check_registry_drift.py:1760-1777` and `scripts/check_registry_drift.py:2007-2008` handle and print NOT CHECKED, and the clean line at `scripts/check_registry_drift.py:2060-2066` never claims partner.
+- **Evidence:** `scripts/check_registry_drift.py:1778-1783` refuses a partner dump without an internal one.
+  `scripts/check_registry_drift.py:1806-1823` and `scripts/check_registry_drift.py:2059-2060` handle and print NOT CHECKED, and the clean line at `scripts/check_registry_drift.py:2112-2118` never claims partner.
   `test_the_scheduled_run_never_passes_a_saved_response` (`scripts/test_registry_drift_gate.py:3016`) keeps the
   scheduled path online.
 - **Analysis:** only the scheduled path files issues, and it never runs offline. Requiring both dumps would put a

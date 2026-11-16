@@ -22,6 +22,13 @@ than trusting a summary here.
   sdist; npm keeps the semver spelling. v0.87.0-rc.1 copied its npm package to `partner` and then refused,
   with the python package still un-copied. The re-run completes it, and the copy-once check means the npm
   package is not copied again. Release tooling only; no package changes.
+- **The registry drift check now handles a declared pre-release** (#355). While main declares `0.87.0-rc.1`, the
+  check used to refuse the version as unqueryable and exit 2 on every scheduled run. It now checks the rc like any
+  other version, asking for each format under the spelling Cloudsmith stores it as: npm `0.87.0-rc.1`, python
+  `0.87.0rc1`. A missing format is drift (exit 1), and a partner lag is a partner lag. Only
+  `X.Y.Z-rc|alpha|beta.N` is accepted; any other suffix is still exit 2. While main declares a pre-release, the
+  newest-version question still asks about the newest *plain* release, without the "newest ≥ declared" floor.
+  A test keeps the PEP 440 mapping in step with `promote-to-partner.sh`. Release tooling only.
 
 ## 0.87.0-rc.1 — 2026-11-15
 

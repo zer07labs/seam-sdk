@@ -293,6 +293,35 @@ TOKEN_ENV = "SEAM_REGISTRY_TOKEN"
 #: `main`, so a refusal means the world is not the world this script models — exit 2, never 1.
 SAFE_VERSION = re.compile(r"^[0-9]+(\.[0-9]+)*$")
 
+#: A pre-release main may declare (seam-sdk#355): the semver spelling `set_version.sh` stamps and the
+#: tag and npm carry, `X.Y.Z-rc.N` / `-alpha.N` / `-beta.N`. Cloudsmith stores the python rows of the
+#: SAME release under its PEP 440 normal form (`X.Y.ZrcN`), so one declared version has one spelling
+#: per format and every per-version question is asked under the format's own spelling. Both
+#: spellings are `[0-9a-z.-]` only, so neither can restructure the query string `SAFE_VERSION`
+#: guards. The mapping is `promote-to-partner.sh`'s `_format_version`, kept in step by a test.
+PRERELEASE_VERSION = re.compile(r"^([0-9]+\.[0-9]+\.[0-9]+)-(rc|alpha|beta)\.([0-9]+)$")
+_PEP440_PRE = {"rc": "rc", "alpha": "a", "beta": "b"}
+
+
+def stored_version(version: str, fmt: str) -> str:
+    """`version` as Cloudsmith stores it for `fmt`: the PEP 440 form for python, else unchanged."""
+    m = PRERELEASE_VERSION.fullmatch(version)
+    if m is None or fmt != "python":
+        return version
+    return f"{m.group(1)}{_PEP440_PRE[m.group(2)]}{m.group(3)}"
+
+
+def stored_spellings(version: str) -> list[str]:
+    """Every spelling `version` is stored under across REQUIRED_FORMATS, in format order, deduped:
+    one for a plain version, two for a pre-release."""
+    out: list[str] = []
+    for fmt in REQUIRED_FORMATS:
+        v = stored_version(version, fmt)
+        if v not in out:
+            out.append(v)
+    return out
+
+
 #: The reported issue's title, and it must never collide with `release-outcome`'s.
 #:
 #: That job (`publish.yml:788`) files `Release <tag> did not publish`, matching by EXACT title
@@ -461,11 +490,12 @@ def source_version(repo: Path) -> str:
 
 def assert_query_safe(version: str) -> None:
     """Refuse a version that cannot be safely interpolated into the registry query string."""
-    if not SAFE_VERSION.match(version):
+    if not SAFE_VERSION.match(version) and not PRERELEASE_VERSION.fullmatch(version):
         offending = sorted({ch for ch in version if not (ch.isdigit() or ch == ".")})
         rendered = ", ".join(repr(ch) for ch in offending) or "<empty>"
         raise InfraError(
-            f"version {version!r} is not plain digits-and-dots (offending: {rendered}). It is "
+            f"version {version!r} is not plain digits-and-dots, nor an X.Y.Z-rc|alpha|beta.N "
+            f"pre-release (offending: {rendered}). It is "
             "interpolated into `?query=seam-sdk+version:<v>`, where `+` means space and `#`, `&` "
             "and `%` are structural, so a request built from it would silently ask a different "
             "question. Refusing to guess."
@@ -575,7 +605,8 @@ def registry_formats(rows: object, version: str) -> set[str]:
     return {
         str(row.get("format"))
         for row in _seam_sdk_rows(rows)
-        if row.get("version") == version and row.get("format") in REQUIRED_FORMATS
+        if row.get("format") in REQUIRED_FORMATS
+        and row.get("version") == stored_version(version, str(row.get("format")))
     }
 
 
@@ -697,8 +728,22 @@ def _curl_json(url: str, query: str, token: str) -> object:
 
 
 def fetch_registry(version: str, token: str, url: str = REGISTRY_URL) -> object:
-    """GET the rows for one version from one Cloudsmith repository, through `_curl_json`, and
-    refuse an answer that cannot have been scoped to that version."""
+    """GET the rows for one version from one Cloudsmith repository, and refuse an answer that
+    cannot have been scoped to that version.
+
+    A pre-release is stored under one spelling per format (`stored_spellings`), so it is asked once
+    per spelling, each answer proved on its own by `_fetch_one`, and the rows are concatenated."""
+    rows: list = []
+    for spelling in stored_spellings(version):
+        got = _fetch_one(spelling, token, url)
+        if not isinstance(got, list):
+            return got  # the shape error is `_seam_sdk_rows`'s to report, downstream, as before
+        rows.extend(got)
+    return rows
+
+
+def _fetch_one(version: str, token: str, url: str) -> object:
+    """GET the rows for exactly one stored spelling, through `_curl_json`."""
     query = _query_for(version)
     where = registry_name(url)
     rows = _curl_json(url, query, token)
@@ -978,7 +1023,8 @@ def newest_upload_clock(rows: object, version: str) -> datetime:
     stamps = [
         _parse_upload_stamp(row.get("uploaded_at"))
         for row in _seam_sdk_rows(rows)
-        if row.get("version") == version and row.get("format") in REQUIRED_FORMATS
+        if row.get("format") in REQUIRED_FORMATS
+        and row.get("version") == stored_version(version, str(row.get("format")))
     ]
     if not stamps:
         raise InfraError(f"no row for {version} on internal carries an `uploaded_at`")
@@ -1834,7 +1880,13 @@ def main(argv: list[str] | None = None) -> int:
                         )
                     newest_rows: object = rows
                 else:
-                    served = set(REQUIRED_FORMATS) <= registry_formats(rows, version)
+                    # The floor (`fetch_newest` rule 5) is "newest >= declared" in plain-version
+                    # order, so it holds only for a PLAIN declared version: while main declares a
+                    # pre-release (seam-sdk#355), the newest plain release is legitimately below it.
+                    served = (
+                        _plain(version) is not None
+                        and set(REQUIRED_FORMATS) <= registry_formats(rows, version)
+                    )
                     newest, newest_rows, newest_withheld = fetch_newest(
                         token, proved_by=proved_by, declared=version if served else None
                     )
