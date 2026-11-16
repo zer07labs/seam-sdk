@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.87.1 — 2026-11-16
+
 ### Added — voter proofs in Go, Java and Kotlin (#359)
 - Runtime 0.87.0 refuses a vote, ballot or objection without a `seam-voter-pop-v1` proof
   (`voter_proof_required`). Go, Java and Kotlin can now sign one, at parity with Python and TypeScript and
