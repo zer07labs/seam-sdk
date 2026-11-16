@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.89.0 — 2026-11-16
+
 ## 0.88.1 — 2026-11-16
 
 These entries first ship in **0.88.1**: v0.88.0 was tagged and never published (see COMPATIBILITY.md).
