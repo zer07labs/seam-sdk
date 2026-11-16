@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.88.0 — 2026-11-16
+
 ## 0.87.1 — 2026-11-16
 
 ### Added — voter proofs in Go, Java and Kotlin (#359)
