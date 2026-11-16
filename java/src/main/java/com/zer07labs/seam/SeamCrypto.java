@@ -945,4 +945,556 @@ public final class SeamCrypto {
   public static String bodyDigest(byte[] body) {
     return "sha256:" + hex(sha256(body));
   }
+
+  // ── Voter proof-of-possession: seam-voter-pop-v1 (#1687, seam-sdk#359) ─────────────────────────
+  // A vote, ballot or objection must carry the voter's OWN proof, signed by its enrolled `voter` key
+  // (seam-runtime docs/specs/voter-verification.v1.md); runtime 0.87.0 refuses one without
+  // (`voter_proof_required`). Byte-exact against conformance/voter_pop_v1_payload_vector.json; the
+  // twins are Python `seam_sdk.crypto` and TypeScript `crypto.ts`'s voter sections.
+
+  /** Domain tag of the voter proof's signed payload. */
+  public static final String VOTER_POP_V1_DOMAIN = "seam-voter-pop-v1";
+
+  /** Domain tag of the vote content digest. */
+  public static final String VOTE_CONTENT_V1_DOMAIN = "seam-vote-content-v1";
+
+  /** The longest window the runtime accepts: {@code expires - issued <= 15 min}. */
+  public static final long VOTER_POP_MAX_LIFETIME_MS = 15L * 60 * 1000;
+
+  /** The clock skew the runtime allows: {@code issued <= accepted + 60 s}. */
+  public static final long VOTER_POP_MAX_SKEW_MS = 60L * 1000;
+
+  /** The default lifetime of a freshly signed proof (5 minutes). */
+  public static final long VOTER_POP_DEFAULT_LIFETIME_MS = 5L * 60 * 1000;
+
+  /** The audience a voter proof names unless told otherwise. */
+  public static final String VOTER_POP_DEFAULT_AUDIENCE = "seam-runtime";
+
+  /**
+   * The explanation kinds a voter must sign: each carries a sealed voter record, and an evaluation
+   * never does.
+   */
+  public static final List<String> VOTER_VERIFIED_KINDS = List.of("vote", "ballot", "objection");
+
+  private static final long MAX_SAFE_JSON_INTEGER = (1L << 53) - 1;
+
+  /**
+   * Where a vote is cast: the runtime ({@code issuer} AID and {@code audience}, default {@code
+   * seam-runtime}) and the session's tenant/namespace and open identity ({@code sessionId}, {@code
+   * openedAtMillis} = {@code SessionStep.opened_at_millis} from the open; {@code 0} on the one-shot
+   * {@code RunDecision} path). {@code openedAtMillis} is read as UNSIGNED 64-bit.
+   */
+  public record VoterPopTarget(
+      String issuer,
+      String tenant,
+      String namespace,
+      String sessionId,
+      long openedAtMillis,
+      String audience) {
+    /** A target addressed to the default audience ({@code seam-runtime}). */
+    public VoterPopTarget(
+        String issuer, String tenant, String namespace, String sessionId, long openedAtMillis) {
+      this(issuer, tenant, namespace, sessionId, openedAtMillis, VOTER_POP_DEFAULT_AUDIENCE);
+    }
+  }
+
+  /**
+   * The entry the runtime will seal, as the voter signs it. {@code kind} is {@code vote}, {@code
+   * ballot} or {@code objection}; {@code proposalId} is the ballot's {@code request_id} for a ballot;
+   * {@code value} is the vote value, ballot choice, or objection severity ({@code ""} when omitted).
+   * {@code confidence} and {@code rationaleRef} are {@code null} when absent (a stated {@code 0.0} is
+   * different bytes). A {@code null} reason is {@code ""}.
+   */
+  public record VoteEntry(
+      String kind,
+      String participant,
+      String proposalId,
+      String value,
+      String reason,
+      Double confidence,
+      String rationaleRef) {
+    /** An entry with no confidence and no rationale reference. */
+    public VoteEntry(String kind, String participant, String proposalId, String value, String reason) {
+      this(kind, participant, proposalId, value, reason, null, null);
+    }
+  }
+
+  /** One sealed context binding the content digest frames; {@code contentHash} is {@code ""} when none. */
+  public record VoteContext(String ctxRef, String contentHash) {}
+
+  /**
+   * The session's bound vote policy ({@code SessionStep.vote_policy} from the open): {@code
+   * policyVersion} and the 32-byte {@code rulesDigest}.
+   */
+  public record VotePolicyRef(String policyVersion, byte[] rulesDigest) {
+    public VotePolicyRef {
+      rulesDigest = rulesDigest == null ? null : rulesDigest.clone();
+    }
+
+    @Override
+    public byte[] rulesDigest() {
+      return rulesDigest == null ? null : rulesDigest.clone();
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      return o instanceof VotePolicyRef p
+          && Objects.equals(p.policyVersion, policyVersion)
+          && Arrays.equals(p.rulesDigest, rulesDigest);
+    }
+
+    @Override
+    public int hashCode() {
+      return 31 * Objects.hashCode(policyVersion) + Arrays.hashCode(rulesDigest);
+    }
+  }
+
+  /**
+   * The decision a commitment-level voter check is pinned to, when the verifier knows it: the
+   * records' own tenant and session id must equal these.
+   */
+  public record VoterDecisionRef(String tenant, String sessionId) {}
+
+  /**
+   * A signed voter proof: the parts of the generated {@code VoterProof.pop} ({@code VoterPop}). Set
+   * {@link #voterAid}, {@link #issuedAtMs}, {@link #expiresAtMs} and the RAW 64-byte {@link
+   * #signature} on a {@code VoterPop}, wrap it in a {@code VoterProof}, and put it on {@code
+   * VoteRequest.proof}, {@code BallotRequest.proof}, {@code ObjectionRequest.proof} or a one-shot
+   * {@code Vote.proof}. {@link #toRest} is the REST/JSON {@code proof} object. Integers are UNSIGNED
+   * 64-bit.
+   */
+  public record VoterPopProof(String voterAid, long issuedAtMs, long expiresAtMs, byte[] signature) {
+    public VoterPopProof {
+      signature = signature.clone();
+    }
+
+    @Override
+    public byte[] signature() {
+      return signature.clone();
+    }
+
+    /** The signature as unpadded base64url — the REST form. */
+    public String signatureB64url() {
+      return b64urlNoPad(signature);
+    }
+
+    /**
+     * The REST/JSON {@code proof} object: {@code {"pop": {voter_aid, issued_at_ms, expires_at_ms,
+     * signature}}}, the signature as unpadded base64url. The window is a JSON number, so a value past
+     * 2^53 is refused rather than rounded.
+     */
+    public Map<String, Object> toRest() {
+      for (long v : new long[] {issuedAtMs, expiresAtMs}) {
+        if (Long.compareUnsigned(v, MAX_SAFE_JSON_INTEGER) > 0) {
+          throw new IllegalArgumentException(
+              "voter proof window value "
+                  + Long.toUnsignedString(v)
+                  + " exceeds 2^53 and cannot be carried as a JSON number");
+        }
+      }
+      Map<String, Object> pop = new LinkedHashMap<>();
+      pop.put("voter_aid", voterAid);
+      pop.put("issued_at_ms", issuedAtMs);
+      pop.put("expires_at_ms", expiresAtMs);
+      pop.put("signature", signatureB64url());
+      Map<String, Object> m = new LinkedHashMap<>();
+      m.put("pop", pop);
+      return m;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      return o instanceof VoterPopProof p
+          && Objects.equals(p.voterAid, voterAid)
+          && p.issuedAtMs == issuedAtMs
+          && p.expiresAtMs == expiresAtMs
+          && Arrays.equals(p.signature, signature);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(voterAid, issuedAtMs, expiresAtMs) * 31 + Arrays.hashCode(signature);
+    }
+
+    @Override
+    public String toString() {
+      return "VoterPopProof[voterAid="
+          + voterAid
+          + ", issuedAtMs="
+          + Long.toUnsignedString(issuedAtMs)
+          + ", expiresAtMs="
+          + Long.toUnsignedString(expiresAtMs)
+          + ", signature="
+          + signatureB64url()
+          + "]";
+    }
+  }
+
+  /** The REST/JSON {@code proof} object for {@code p} — {@link VoterPopProof#toRest}. */
+  public static Map<String, Object> voterPopToRest(VoterPopProof p) {
+    return p.toRest();
+  }
+
+  private static byte[] utf8(String s, String what) {
+    if (s == null) throw new IllegalArgumentException(what + " must not be null");
+    return s.getBytes(StandardCharsets.UTF_8);
+  }
+
+  private static void countFrame(ByteArrayOutputStream out, int n) {
+    frame(out, u32le(n));
+  }
+
+  /**
+   * {@code seam-vote-content-v1}: what the vote is about (32 raw bytes). {@code content} is the
+   * accepted proposal's {@code option} (vote, objection), the approval request's {@code action}
+   * (ballot), or {@code votes[0].value} (one-shot); {@code participants} / {@code onBehalfOf} as
+   * opened, in request order; {@code context} the sealed provenance in sealed order. {@code features}
+   * is the one-shot {@code RunDecisionRequest.features} in any order — framed sorted by UTF-8 key
+   * bytes, and a repeated key is REFUSED, never deduplicated; a session vote has none. {@code policy}
+   * is the session's bound {@code vote_policy}; {@code null} frames {@code 0x00} (the one-shot,
+   * server-resolved).
+   */
+  public static byte[] voteContentDigest(
+      String mode,
+      String proposalId,
+      String content,
+      List<String> participants,
+      List<String> onBehalfOf,
+      List<VoteContext> context,
+      List<Feature> features,
+      VotePolicyRef policy) {
+    List<String> ps = participants == null ? List.of() : participants;
+    List<String> obo = onBehalfOf == null ? List.of() : onBehalfOf;
+    List<VoteContext> ctx = context == null ? List.of() : context;
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    frame(out, VOTE_CONTENT_V1_DOMAIN.getBytes(StandardCharsets.UTF_8));
+    frame(out, utf8(mode, "mode"));
+    frame(out, utf8(proposalId, "proposalId"));
+    frame(out, utf8(content, "content"));
+    countFrame(out, ps.size());
+    for (String p : ps) frame(out, utf8(p, "participant"));
+    countFrame(out, obo.size());
+    for (String o : obo) frame(out, utf8(o, "onBehalfOf"));
+    countFrame(out, ctx.size());
+    for (VoteContext c : ctx) {
+      frame(out, utf8(c.ctxRef(), "ctxRef"));
+      frame(out, nz(c.contentHash()));
+    }
+    List<byte[][]> feats = canonicalVoteFeatures(features == null ? List.of() : features);
+    countFrame(out, feats.size());
+    for (byte[][] kv : feats) {
+      frame(out, kv[0]);
+      frame(out, kv[1]);
+    }
+    out.writeBytes(votePolicySlot(policy));
+    return sha256(out.toByteArray());
+  }
+
+  /** {@link #voteContentDigest} for a session vote with no features and no bound policy. */
+  public static byte[] voteContentDigest(
+      String mode,
+      String proposalId,
+      String content,
+      List<String> participants,
+      List<String> onBehalfOf,
+      List<VoteContext> context) {
+    return voteContentDigest(
+        mode, proposalId, content, participants, onBehalfOf, context, List.of(), null);
+  }
+
+  private static List<byte[][]> canonicalVoteFeatures(List<Feature> features) {
+    List<byte[][]> out = new ArrayList<>(features.size());
+    for (Feature f : features) {
+      if (f == null || f.key() == null || f.value() == null) {
+        throw new IllegalArgumentException("a feature is a (string, string) pair");
+      }
+      out.add(new byte[][] {utf8(f.key(), "key"), utf8(f.value(), "value")});
+    }
+    out.sort((a, b) -> Arrays.compareUnsigned(a[0], b[0]));
+    for (int i = 1; i < out.size(); i++) {
+      if (Arrays.equals(out.get(i - 1)[0], out.get(i)[0])) {
+        throw new IllegalArgumentException(
+            "feature key \""
+                + new String(out.get(i)[0], StandardCharsets.UTF_8)
+                + "\" is given twice (refused, never deduplicated)");
+      }
+    }
+    return out;
+  }
+
+  private static byte[] votePolicySlot(VotePolicyRef p) {
+    if (p == null) return new byte[] {0};
+    byte[] rules = p.rulesDigest();
+    if (rules == null || rules.length != 32) {
+      throw new IllegalArgumentException(
+          "rulesDigest must be 32 bytes, got " + (rules == null ? "null" : rules.length));
+    }
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    out.write(1);
+    frame(out, utf8(p.policyVersion(), "policyVersion"));
+    frame(out, rules);
+    return out.toByteArray();
+  }
+
+  /**
+   * The frozen {@code entry_bytes} a voter signs ({@code F(x) = be64(len) ‖ x}): {@code F(kind) ‖
+   * F(participant) ‖ F(proposal_id) ‖ F(value) ‖ F(reason) ‖ opt_conf ‖ opt_ref}. A stated {@code
+   * -0.0} confidence folds to {@code +0.0}; a non-finite one is refused. Frozen: an
+   * explanation-digest bump never changes it.
+   */
+  public static byte[] voteEntryBytes(VoteEntry e) {
+    if (e == null || !EXPLANATION_KINDS.contains(e.kind())) {
+      throw new IllegalArgumentException(
+          "unknown explanation kind " + (e == null ? "null" : "\"" + e.kind() + "\""));
+    }
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    be64Frame(out, utf8(e.kind(), "kind"));
+    be64Frame(out, utf8(e.participant(), "participant"));
+    be64Frame(out, utf8(e.proposalId(), "proposalId"));
+    be64Frame(out, utf8(e.value(), "value"));
+    be64Frame(out, nz(e.reason()));
+    if (e.confidence() == null) {
+      out.write(0);
+    } else {
+      double c = e.confidence();
+      if (!Double.isFinite(c)) throw new IllegalArgumentException("non-finite confidence " + c);
+      out.write(1);
+      be64(out, Double.doubleToRawLongBits(c + 0.0)); // -0.0 + 0.0 == +0.0
+    }
+    if (e.rationaleRef() == null) {
+      out.write(0);
+    } else {
+      out.write(1);
+      be64Frame(out, utf8(e.rationaleRef(), "rationaleRef"));
+    }
+    return out.toByteArray();
+  }
+
+  /**
+   * The exact bytes a voter proof signs ({@code framed(x) = u32le(len) ‖ x}): domain, issuer,
+   * audience, tenant, namespace, sessionId, u64le(openedAtMillis), voterAid, contentDigest[32],
+   * u64le(issuedAtMs), u64le(expiresAtMs), entryBytes. A {@code null} audience is {@code
+   * seam-runtime}.
+   */
+  public static byte[] voterPopPayload(
+      VoterPopTarget target,
+      String voterAid,
+      byte[] contentDigest,
+      long issuedAtMs,
+      long expiresAtMs,
+      byte[] entryBytes) {
+    if (contentDigest == null || contentDigest.length != 32) {
+      throw new IllegalArgumentException(
+          "contentDigest must be 32 bytes, got "
+              + (contentDigest == null ? "null" : contentDigest.length));
+    }
+    if (entryBytes == null) throw new IllegalArgumentException("entryBytes must not be null");
+    String audience = target.audience() == null ? VOTER_POP_DEFAULT_AUDIENCE : target.audience();
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    frame(out, VOTER_POP_V1_DOMAIN.getBytes(StandardCharsets.UTF_8));
+    frame(out, utf8(target.issuer(), "issuer"));
+    frame(out, utf8(audience, "audience"));
+    frame(out, utf8(target.tenant(), "tenant"));
+    frame(out, utf8(target.namespace(), "namespace"));
+    frame(out, utf8(target.sessionId(), "sessionId"));
+    frame(out, leBytes(target.openedAtMillis(), 8));
+    frame(out, utf8(voterAid, "voterAid"));
+    frame(out, contentDigest);
+    frame(out, leBytes(issuedAtMs, 8));
+    frame(out, leBytes(expiresAtMs, 8));
+    frame(out, entryBytes);
+    return out.toByteArray();
+  }
+
+  /**
+   * Sign a {@code seam-voter-pop-v1} proof with the voter's OWN enrolled {@code voter} key (32-byte
+   * Ed25519 seed) over {@link #voterPopPayload}. The voter AID is DERIVED from the seed. A window the
+   * runtime must refuse ({@code issued > expires}, or longer than 15 min; both read UNSIGNED) is never
+   * signed.
+   */
+  public static VoterPopProof signVoterPop(
+      byte[] voterSeed,
+      VoterPopTarget target,
+      byte[] contentDigest,
+      byte[] entryBytes,
+      long issuedAtMs,
+      long expiresAtMs) {
+    if (voterSeed == null || voterSeed.length != 32) {
+      throw new IllegalArgumentException("voter seed must be 32 bytes");
+    }
+    if (Long.compareUnsigned(issuedAtMs, expiresAtMs) > 0
+        || Long.compareUnsigned(expiresAtMs - issuedAtMs, VOTER_POP_MAX_LIFETIME_MS) > 0) {
+      throw new IllegalArgumentException(
+          "voter proof window must satisfy issuedAtMs <= expiresAtMs <= issuedAtMs + 15 min");
+    }
+    String voterAid = aidFromPubkey(ed25519Pub(voterSeed));
+    byte[] payload =
+        voterPopPayload(target, voterAid, contentDigest, issuedAtMs, expiresAtMs, entryBytes);
+    return new VoterPopProof(voterAid, issuedAtMs, expiresAtMs, ed25519Sign(voterSeed, payload));
+  }
+
+  /** {@link #signVoterPop} over the {@link #voteEntryBytes} of {@code entry}. */
+  public static VoterPopProof signVoterPop(
+      byte[] voterSeed,
+      VoterPopTarget target,
+      byte[] contentDigest,
+      VoteEntry entry,
+      long issuedAtMs,
+      long expiresAtMs) {
+    return signVoterPop(
+        voterSeed, target, contentDigest, voteEntryBytes(entry), issuedAtMs, expiresAtMs);
+  }
+
+  /**
+   * {@link #signVoterPop} issued now, expiring {@link #VOTER_POP_DEFAULT_LIFETIME_MS} (5 minutes)
+   * later — what a caller signs just before the vote call.
+   */
+  public static VoterPopProof signVoterPop(
+      byte[] voterSeed, VoterPopTarget target, byte[] contentDigest, VoteEntry entry) {
+    long now = System.currentTimeMillis();
+    return signVoterPop(
+        voterSeed, target, contentDigest, entry, now, now + VOTER_POP_DEFAULT_LIFETIME_MS);
+  }
+
+  /**
+   * {@code true} iff {@code signature} is {@code voterAid}'s Ed25519 signature over {@link
+   * #voterPopPayload}. The binding only; the window is the runtime's (and a re-verifier's) to check.
+   * Never throws: anything malformed is {@code false}.
+   */
+  public static boolean verifyVoterPop(
+      VoterPopTarget target,
+      String voterAid,
+      byte[] contentDigest,
+      long issuedAtMs,
+      long expiresAtMs,
+      byte[] entryBytes,
+      byte[] signature) {
+    try {
+      if (signature == null || signature.length != 64) return false;
+      return ed25519Verify(
+          aidToPubkey(voterAid),
+          voterPopPayload(target, voterAid, contentDigest, issuedAtMs, expiresAtMs, entryBytes),
+          signature);
+    } catch (RuntimeException e) {
+      return false;
+    }
+  }
+
+  /** {@link #verifyVoterPop} over the {@link #voteEntryBytes} of {@code entry}. */
+  public static boolean verifyVoterPop(
+      VoterPopTarget target,
+      String voterAid,
+      byte[] contentDigest,
+      long issuedAtMs,
+      long expiresAtMs,
+      VoteEntry entry,
+      byte[] signature) {
+    try {
+      return verifyVoterPop(
+          target,
+          voterAid,
+          contentDigest,
+          issuedAtMs,
+          expiresAtMs,
+          voteEntryBytes(entry),
+          signature);
+    } catch (RuntimeException e) {
+      return false;
+    }
+  }
+
+  /**
+   * Re-check one sealed entry's voter verification record offline, from the record alone: rebuild the
+   * signed input from the record's own addressing fields and the entry's frozen {@code entry_bytes},
+   * check the window at {@code accepted_at_ms} ({@code issued <= expires <= issued + 15 min}, {@code
+   * issued <= accepted + 60 s}, {@code accepted <= expires}), and verify the signature with the key
+   * {@code principal} embeds. {@code false} for a missing record, a non-{@code pop} method, a signer
+   * certificate, or anything that does not verify. Twin of Python {@code verify_voter_record}.
+   */
+  public static boolean verifyVoterRecord(ExplanationEntry entry) {
+    try {
+      VoterVerification vv = entry.voterVerification();
+      if (vv == null || !"pop".equals(vv.method())) return false;
+      long issued = vv.issuedAtMs();
+      long expires = vv.expiresAtMs();
+      long accepted = vv.acceptedAtMs();
+      boolean skewOk =
+          Long.compareUnsigned(issued, VOTER_POP_MAX_SKEW_MS) < 0
+              || Long.compareUnsigned(issued - VOTER_POP_MAX_SKEW_MS, accepted) <= 0;
+      if (!(Long.compareUnsigned(issued, expires) <= 0
+          && Long.compareUnsigned(expires - issued, VOTER_POP_MAX_LIFETIME_MS) <= 0
+          && skewOk
+          && Long.compareUnsigned(accepted, expires) <= 0)) {
+        return false;
+      }
+      if (vv.signerCertificate() != null && vv.signerCertificate().length != 0) return false;
+      VoterPopTarget target =
+          new VoterPopTarget(
+              vv.issuer(),
+              vv.tenant(),
+              vv.namespace(),
+              vv.sessionId(),
+              vv.openedAtMillis(),
+              vv.audience());
+      VoteEntry signed =
+          new VoteEntry(
+              entry.kind(),
+              entry.participant(),
+              entry.proposalId(),
+              entry.value(),
+              entry.reason(),
+              entry.confidence(),
+              entry.rationaleRef());
+      return verifyVoterPop(
+          target, vv.principal(), vv.contentDigest(), issued, expires, signed, vv.signature());
+    } catch (RuntimeException e) {
+      return false;
+    }
+  }
+
+  /** {@link #verifyCommitmentVoters(List, String, VoterDecisionRef)} with no pinned decision. */
+  public static boolean verifyCommitmentVoters(List<ExplanationEntry> entries, String issuer) {
+    return verifyCommitmentVoters(entries, issuer, null);
+  }
+
+  /**
+   * The commitment-level voter check ({@code voter-verification.v1.md} §"The sealed record"). {@code
+   * true} iff every {@code vote}, {@code ballot} and {@code objection} carries a record and no {@code
+   * evaluation} does; every record's {@code issuer} is {@code issuer} (the one the verifier pinned);
+   * all records share one {@code (tenant, namespace, session_id, opened_at_millis, audience)}; when
+   * {@code decision} is given, that is the records' own; and each record re-checks ({@link
+   * #verifyVoterRecord}). An explanation with no voter-kind entries passes. {@code content_digest} is
+   * not re-derived: what it covers is not in the commitment. Twin of Python {@code
+   * verify_commitment_voters}.
+   */
+  public static boolean verifyCommitmentVoters(
+      List<ExplanationEntry> entries, String issuer, VoterDecisionRef decision) {
+    if (entries == null || issuer == null) return false;
+    List<Object> addressing = null;
+    for (ExplanationEntry e : entries) {
+      if (e == null) return false;
+      VoterVerification vv = e.voterVerification();
+      if (!VOTER_VERIFIED_KINDS.contains(e.kind())) {
+        if (vv != null) return false;
+        continue;
+      }
+      if (vv == null || !issuer.equals(vv.issuer())) return false;
+      List<Object> a =
+          Arrays.asList(
+              vv.tenant(),
+              vv.namespace(),
+              vv.sessionId(),
+              Long.toUnsignedString(vv.openedAtMillis()),
+              vv.audience());
+      if (addressing == null) addressing = a;
+      else if (!a.equals(addressing)) return false;
+      if (decision != null
+          && (!Objects.equals(vv.tenant(), decision.tenant())
+              || !Objects.equals(vv.sessionId(), decision.sessionId()))) {
+        return false;
+      }
+      if (!verifyVoterRecord(e)) return false;
+    }
+    return true;
+  }
 }

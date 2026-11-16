@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:888`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:908`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -211,8 +211,12 @@ unchanged against runtime 0.86.0 and earlier. `contract/bsr-label` is back on `m
 **0.87.0: voting is Python and TypeScript only.** Runtime 0.87.0 refuses a vote, ballot or objection
 without a `seam-voter-pop-v1` proof (`voter_proof_required`). Python (`sign_voter_pop`, `proof=`) and TS
 (`signVoterPop`, `opts.proof`) sign and attach one. **Go, Java and Kotlin cannot sign a voter proof in
-0.87.0**, so a caller on those ports cannot vote against runtime 0.87.0. The helpers are planned for SDK
-0.87.1 (seam-sdk#359).
+0.87.0**, so a caller on those ports cannot vote against runtime 0.87.0.
+
+**SDK 0.87.1 pairs with runtime 0.87.0** and adds the voter-proof helpers to Go, Java and Kotlin
+(seam-sdk#359). The change is additive, with no proto, manifest or framing change. It is dispatched
+directly, with no runtime release, as 0.54.3 and 0.82.1 were. 0.87.1 is taken here, so the runtime's next
+release must be 0.87.2 or later (the planned next is 0.88.0).
 
 | SDK change | Requires runtime | Earlier runtimes | Pinned from |
 |---|---|---|---|
@@ -239,7 +243,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1959-1981`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1979-2001`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was

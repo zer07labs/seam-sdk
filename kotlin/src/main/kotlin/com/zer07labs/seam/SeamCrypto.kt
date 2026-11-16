@@ -693,6 +693,310 @@ object SeamCrypto {
      */
     fun bodyDigest(body: ByteArray): String =
         "sha256:" + sha256(body).joinToString("") { "%02x".format(it.toInt() and 0xff) }
+
+    // ── Voter proof-of-possession: seam-voter-pop-v1 (#1687, seam-sdk#359) ─────────────────────
+    // A vote, ballot or objection must carry the voter's OWN proof, signed by its enrolled `voter`
+    // key (seam-runtime docs/specs/voter-verification.v1.md); runtime 0.87.0 refuses one without
+    // (`voter_proof_required`). Byte-exact against conformance/voter_pop_v1_payload_vector.json; the
+    // twins are Python `seam_sdk.crypto`, TypeScript `crypto.ts` and Java `SeamCrypto`.
+
+    /** Domain tag of the voter proof's signed payload. */
+    const val VOTER_POP_V1_DOMAIN = "seam-voter-pop-v1"
+
+    /** Domain tag of the vote content digest. */
+    const val VOTE_CONTENT_V1_DOMAIN = "seam-vote-content-v1"
+
+    /** The longest window the runtime accepts: `expires - issued <= 15 min`. */
+    const val VOTER_POP_MAX_LIFETIME_MS: Long = 15L * 60 * 1000
+
+    /** The clock skew the runtime allows: `issued <= accepted + 60 s`. */
+    const val VOTER_POP_MAX_SKEW_MS: Long = 60L * 1000
+
+    /** The default lifetime of a freshly signed proof (5 minutes). */
+    const val VOTER_POP_DEFAULT_LIFETIME_MS: Long = 5L * 60 * 1000
+
+    /** The audience a voter proof names unless told otherwise. */
+    const val VOTER_POP_DEFAULT_AUDIENCE = "seam-runtime"
+
+    /** The explanation kinds a voter must sign: each carries a sealed voter record; an evaluation never does. */
+    val VOTER_VERIFIED_KINDS: List<String> = listOf("vote", "ballot", "objection")
+
+    private val MAX_LIFETIME = VOTER_POP_MAX_LIFETIME_MS.toULong()
+    private val MAX_SKEW = VOTER_POP_MAX_SKEW_MS.toULong()
+
+    private fun ByteArrayOutputStream.frameLE(b: ByteArray) {
+        writeBytes(u32le(b.size))
+        writeBytes(b)
+    }
+
+    /**
+     * `seam-vote-content-v1`: what the vote is about (32 raw bytes). [content] is the accepted
+     * proposal's `option` (vote, objection), the approval request's `action` (ballot), or
+     * `votes[0].value` (one-shot); [participants] / [onBehalfOf] as opened, in request order; [context]
+     * the sealed provenance in sealed order. [features] is the one-shot `RunDecisionRequest.features` in
+     * any order — framed sorted by UTF-8 key bytes, and a repeated key is REFUSED, never deduplicated; a
+     * session vote has none. [policy] is the session's bound `vote_policy`; `null` frames `0x00` (the
+     * one-shot, server-resolved).
+     */
+    fun voteContentDigest(
+        mode: String,
+        proposalId: String,
+        content: String,
+        participants: List<String> = emptyList(),
+        onBehalfOf: List<String> = emptyList(),
+        context: List<VoteContext> = emptyList(),
+        features: List<Pair<String, String>> = emptyList(),
+        policy: VotePolicyRef? = null,
+    ): ByteArray {
+        val out = ByteArrayOutputStream()
+        out.frameLE(VOTE_CONTENT_V1_DOMAIN.toByteArray(Charsets.UTF_8))
+        out.frameLE(mode.toByteArray(Charsets.UTF_8))
+        out.frameLE(proposalId.toByteArray(Charsets.UTF_8))
+        out.frameLE(content.toByteArray(Charsets.UTF_8))
+        out.frameLE(u32le(participants.size))
+        participants.forEach { out.frameLE(it.toByteArray(Charsets.UTF_8)) }
+        out.frameLE(u32le(onBehalfOf.size))
+        onBehalfOf.forEach { out.frameLE(it.toByteArray(Charsets.UTF_8)) }
+        out.frameLE(u32le(context.size))
+        for (c in context) {
+            out.frameLE(c.ctxRef.toByteArray(Charsets.UTF_8))
+            out.frameLE(c.contentHash.toByteArray(Charsets.UTF_8))
+        }
+        val feats = features.map { (k, v) -> k.toByteArray(Charsets.UTF_8) to v.toByteArray(Charsets.UTF_8) }
+            .sortedWith { a, b -> Arrays.compareUnsigned(a.first, b.first) }
+        for (i in 1 until feats.size) {
+            require(!feats[i - 1].first.contentEquals(feats[i].first)) {
+                "feature key \"${String(feats[i].first, Charsets.UTF_8)}\" is given twice (refused, never deduplicated)"
+            }
+        }
+        out.frameLE(u32le(feats.size))
+        for ((k, v) in feats) {
+            out.frameLE(k)
+            out.frameLE(v)
+        }
+        if (policy == null) {
+            out.write(0)
+        } else {
+            val rules = policy.rulesDigest
+            require(rules.size == 32) { "rulesDigest must be 32 bytes, got ${rules.size}" }
+            out.write(1)
+            out.frameLE(policy.policyVersion.toByteArray(Charsets.UTF_8))
+            out.frameLE(rules)
+        }
+        return sha256(out.toByteArray())
+    }
+
+    /**
+     * The frozen `entry_bytes` a voter signs (`F(x) = be64(len) ‖ x`): `F(kind) ‖ F(participant) ‖
+     * F(proposal_id) ‖ F(value) ‖ F(reason) ‖ opt_conf ‖ opt_ref`. A stated `-0.0` confidence folds to
+     * `+0.0`; a non-finite one is refused. Frozen: an explanation-digest bump never changes it.
+     */
+    fun voteEntryBytes(e: VoteEntry): ByteArray {
+        require(e.kind in EXPLANATION_KINDS) { "unknown explanation kind \"${e.kind}\"" }
+        val out = ByteArrayOutputStream()
+        out.frame(e.kind.toByteArray(Charsets.UTF_8))
+        out.frame(e.participant.toByteArray(Charsets.UTF_8))
+        out.frame(e.proposalId.toByteArray(Charsets.UTF_8))
+        out.frame(e.value.toByteArray(Charsets.UTF_8))
+        out.frame(e.reason.toByteArray(Charsets.UTF_8))
+        val c = e.confidence
+        if (c == null) {
+            out.write(0)
+        } else {
+            require(c.isFinite()) { "non-finite confidence $c" }
+            out.write(1)
+            out.writeBytes(be64((c + 0.0).toRawBits())) // -0.0 + 0.0 == +0.0
+        }
+        val r = e.rationaleRef
+        if (r == null) {
+            out.write(0)
+        } else {
+            out.write(1)
+            out.frame(r.toByteArray(Charsets.UTF_8))
+        }
+        return out.toByteArray()
+    }
+
+    /**
+     * The exact bytes a voter proof signs (`framed(x) = u32le(len) ‖ x`): domain, issuer, audience,
+     * tenant, namespace, sessionId, u64le(openedAtMillis), voterAid, contentDigest[32], u64le(issuedAtMs),
+     * u64le(expiresAtMs), entryBytes.
+     */
+    fun voterPopPayload(
+        target: VoterPopTarget,
+        voterAid: String,
+        contentDigest: ByteArray,
+        issuedAtMs: ULong,
+        expiresAtMs: ULong,
+        entryBytes: ByteArray,
+    ): ByteArray {
+        require(contentDigest.size == 32) { "contentDigest must be 32 bytes, got ${contentDigest.size}" }
+        val out = ByteArrayOutputStream()
+        out.frameLE(VOTER_POP_V1_DOMAIN.toByteArray(Charsets.UTF_8))
+        out.frameLE(target.issuer.toByteArray(Charsets.UTF_8))
+        out.frameLE(target.audience.toByteArray(Charsets.UTF_8))
+        out.frameLE(target.tenant.toByteArray(Charsets.UTF_8))
+        out.frameLE(target.namespace.toByteArray(Charsets.UTF_8))
+        out.frameLE(target.sessionId.toByteArray(Charsets.UTF_8))
+        out.frameLE(leBytes(target.openedAtMillis.toLong(), 8))
+        out.frameLE(voterAid.toByteArray(Charsets.UTF_8))
+        out.frameLE(contentDigest)
+        out.frameLE(leBytes(issuedAtMs.toLong(), 8))
+        out.frameLE(leBytes(expiresAtMs.toLong(), 8))
+        out.frameLE(entryBytes)
+        return out.toByteArray()
+    }
+
+    /**
+     * Sign a `seam-voter-pop-v1` proof with the voter's OWN enrolled `voter` key (32-byte Ed25519 seed)
+     * over [voterPopPayload]. The voter AID is DERIVED from the seed. A window the runtime must refuse
+     * (`issued > expires`, or longer than 15 min) is never signed.
+     */
+    fun signVoterPop(
+        voterSeed: ByteArray,
+        target: VoterPopTarget,
+        contentDigest: ByteArray,
+        entryBytes: ByteArray,
+        issuedAtMs: ULong,
+        expiresAtMs: ULong,
+    ): VoterPopProof {
+        require(voterSeed.size == 32) { "voter seed must be 32 bytes" }
+        require(issuedAtMs <= expiresAtMs && expiresAtMs - issuedAtMs <= MAX_LIFETIME) {
+            "voter proof window must satisfy issuedAtMs <= expiresAtMs <= issuedAtMs + 15 min"
+        }
+        val voterAid = aidFromPubkey(ed25519Pub(voterSeed))
+        val payload = voterPopPayload(target, voterAid, contentDigest, issuedAtMs, expiresAtMs, entryBytes)
+        return VoterPopProof(voterAid, issuedAtMs, expiresAtMs, ed25519Sign(voterSeed, payload))
+    }
+
+    /**
+     * [signVoterPop] over the [voteEntryBytes] of [entry]. [issuedAtMs] defaults to now and
+     * [expiresAtMs] to [VOTER_POP_DEFAULT_LIFETIME_MS] (5 minutes) later — sign just before the vote call.
+     */
+    fun signVoterPop(
+        voterSeed: ByteArray,
+        target: VoterPopTarget,
+        contentDigest: ByteArray,
+        entry: VoteEntry,
+        issuedAtMs: ULong = System.currentTimeMillis().toULong(),
+        expiresAtMs: ULong = issuedAtMs + VOTER_POP_DEFAULT_LIFETIME_MS.toULong(),
+    ): VoterPopProof = signVoterPop(voterSeed, target, contentDigest, voteEntryBytes(entry), issuedAtMs, expiresAtMs)
+
+    /**
+     * `true` iff [signature] is [voterAid]'s Ed25519 signature over [voterPopPayload]. The binding only;
+     * the window is the runtime's (and a re-verifier's) to check. Never throws: anything malformed is
+     * `false`.
+     */
+    fun verifyVoterPop(
+        target: VoterPopTarget,
+        voterAid: String,
+        contentDigest: ByteArray,
+        issuedAtMs: ULong,
+        expiresAtMs: ULong,
+        entryBytes: ByteArray,
+        signature: ByteArray,
+    ): Boolean =
+        try {
+            signature.size == 64 &&
+                ed25519Verify(
+                    aidToPubkey(voterAid),
+                    voterPopPayload(target, voterAid, contentDigest, issuedAtMs, expiresAtMs, entryBytes),
+                    signature,
+                )
+        } catch (e: RuntimeException) {
+            false
+        }
+
+    /** [verifyVoterPop] over the [voteEntryBytes] of [entry]. */
+    fun verifyVoterPop(
+        target: VoterPopTarget,
+        voterAid: String,
+        contentDigest: ByteArray,
+        issuedAtMs: ULong,
+        expiresAtMs: ULong,
+        entry: VoteEntry,
+        signature: ByteArray,
+    ): Boolean =
+        try {
+            verifyVoterPop(target, voterAid, contentDigest, issuedAtMs, expiresAtMs, voteEntryBytes(entry), signature)
+        } catch (e: RuntimeException) {
+            false
+        }
+
+    /** The REST/JSON `proof` object for [p] — [VoterPopProof.toRest]. */
+    fun voterPopToRest(p: VoterPopProof): Map<String, Any> = p.toRest()
+
+    /**
+     * Re-check one sealed entry's voter verification record offline, from the record alone: rebuild the
+     * signed input from the record's own addressing fields and the entry's frozen `entry_bytes`, check the
+     * window at `accepted_at_ms` (`issued <= expires <= issued + 15 min`, `issued <= accepted + 60 s`,
+     * `accepted <= expires`), and verify the signature with the key `principal` embeds. `false` for a
+     * missing record, a non-`pop` method, a signer certificate, or anything that does not verify. Twin of
+     * Python `verify_voter_record`.
+     */
+    fun verifyVoterRecord(entry: ExplanationEntry): Boolean {
+        val vv = entry.voterVerification ?: return false
+        if (vv.method != "pop") return false
+        return try {
+            val issued = vv.issuedAtMs
+            val expires = vv.expiresAtMs
+            val accepted = vv.acceptedAtMs
+            val skewOk = issued < MAX_SKEW || issued - MAX_SKEW <= accepted
+            if (!(issued <= expires && expires - issued <= MAX_LIFETIME && skewOk && accepted <= expires)) {
+                return false
+            }
+            if (vv.signerCertificate.isNotEmpty()) return false
+            verifyVoterPop(
+                VoterPopTarget(vv.issuer, vv.tenant, vv.namespace, vv.sessionId, vv.openedAtMillis, vv.audience),
+                vv.principal,
+                vv.contentDigest,
+                issued,
+                expires,
+                VoteEntry(
+                    entry.kind,
+                    entry.participant,
+                    entry.proposalId,
+                    entry.value,
+                    entry.reason,
+                    entry.confidence,
+                    entry.rationaleRef,
+                ),
+                vv.signature,
+            )
+        } catch (e: RuntimeException) {
+            false
+        }
+    }
+
+    /**
+     * The commitment-level voter check (`voter-verification.v1.md` §"The sealed record"). `true` iff
+     * every `vote`, `ballot` and `objection` carries a record and no `evaluation` does; every record's
+     * `issuer` is [issuer] (the one the verifier pinned); all records share one `(tenant, namespace,
+     * session_id, opened_at_millis, audience)`; when [decision] is given, that is the records' own; and
+     * each record re-checks ([verifyVoterRecord]). An explanation with no voter-kind entries passes.
+     * `content_digest` is not re-derived: what it covers is not in the commitment. Twin of Python
+     * `verify_commitment_voters`.
+     */
+    fun verifyCommitmentVoters(
+        entries: List<ExplanationEntry>,
+        issuer: String,
+        decision: VoterDecisionRef? = null,
+    ): Boolean {
+        var addressing: List<Any>? = null
+        for (e in entries) {
+            val vv = e.voterVerification
+            if (e.kind !in VOTER_VERIFIED_KINDS) {
+                if (vv != null) return false
+                continue
+            }
+            if (vv == null || vv.issuer != issuer) return false
+            val a = listOf(vv.tenant, vv.namespace, vv.sessionId, vv.openedAtMillis.toString(), vv.audience)
+            if (addressing == null) addressing = a else if (a != addressing) return false
+            if (decision != null && (vv.tenant != decision.tenant || vv.sessionId != decision.sessionId)) return false
+            if (!verifyVoterRecord(e)) return false
+        }
+        return true
+    }
 }
 
 /**
@@ -745,4 +1049,106 @@ class EnrollProof(val issuedAtMs: ULong, val nonce: String, signature: ByteArray
     override fun hashCode(): Int = 31 * (31 * issuedAtMs.hashCode() + nonce.hashCode()) + sig.contentHashCode()
 
     override fun toString(): String = "EnrollProof(issuedAtMs=$issuedAtMs, nonce=$nonce, signature=$signatureB64url)"
+}
+
+/**
+ * Where a vote is cast: the runtime ([issuer] AID and [audience], default `seam-runtime`) and the
+ * session's tenant/namespace and open identity ([sessionId], [openedAtMillis] =
+ * `SessionStep.opened_at_millis` from the open; `0` on the one-shot `RunDecision` path).
+ */
+data class VoterPopTarget(
+    val issuer: String,
+    val tenant: String,
+    val namespace: String,
+    val sessionId: String,
+    val openedAtMillis: ULong = 0uL,
+    val audience: String = SeamCrypto.VOTER_POP_DEFAULT_AUDIENCE,
+)
+
+/**
+ * The entry the runtime will seal, as the voter signs it. [kind] is `vote`, `ballot` or `objection`;
+ * [proposalId] is the ballot's `request_id` for a ballot; [value] is the vote value, ballot choice, or
+ * objection severity (`""` when omitted). [confidence] and [rationaleRef] are `null` when absent (a
+ * stated `0.0` is different bytes).
+ */
+data class VoteEntry(
+    val kind: String,
+    val participant: String,
+    val proposalId: String,
+    val value: String,
+    val reason: String = "",
+    val confidence: Double? = null,
+    val rationaleRef: String? = null,
+)
+
+/** One sealed context binding the content digest frames; [contentHash] is `""` when none. */
+data class VoteContext(val ctxRef: String, val contentHash: String = "")
+
+/**
+ * The session's bound vote policy (`SessionStep.vote_policy` from the open): [policyVersion] and the
+ * 32-byte [rulesDigest]. Not a data class: it holds a byte array, compared by content here.
+ */
+class VotePolicyRef(val policyVersion: String, rulesDigest: ByteArray) {
+    private val rules = rulesDigest.copyOf()
+
+    /** The 32-byte rules digest (a copy). */
+    val rulesDigest: ByteArray get() = rules.copyOf()
+
+    override fun equals(other: Any?): Boolean =
+        other is VotePolicyRef && other.policyVersion == policyVersion && other.rules.contentEquals(rules)
+
+    override fun hashCode(): Int = 31 * policyVersion.hashCode() + rules.contentHashCode()
+
+    override fun toString(): String = "VotePolicyRef(policyVersion=$policyVersion)"
+}
+
+/** The decision a commitment-level voter check is pinned to: the records' own tenant and session id. */
+data class VoterDecisionRef(val tenant: String, val sessionId: String)
+
+/**
+ * A signed voter proof: the parts of the generated `VoterProof.pop` (`VoterPop`). Set [voterAid],
+ * [issuedAtMs], [expiresAtMs] and the RAW 64-byte [signature] on a `VoterPop`, wrap it in a
+ * `VoterProof`, and put it on `VoteRequest.proof`, `BallotRequest.proof`, `ObjectionRequest.proof` or a
+ * one-shot `Vote.proof`. [toRest] is the REST/JSON `proof` object. Not a data class: it holds a byte
+ * array, compared by content here.
+ */
+class VoterPopProof(val voterAid: String, val issuedAtMs: ULong, val expiresAtMs: ULong, signature: ByteArray) {
+    private val sig = signature.copyOf()
+
+    /** The raw 64-byte signature (a copy). */
+    val signature: ByteArray get() = sig.copyOf()
+
+    /** The signature as unpadded base64url — the REST form. */
+    val signatureB64url: String get() = Base64.getUrlEncoder().withoutPadding().encodeToString(sig)
+
+    /**
+     * The REST/JSON `proof` object: `{"pop": {voter_aid, issued_at_ms, expires_at_ms, signature}}`, the
+     * signature as unpadded base64url and the window as [Long]s. The window is a JSON number, so a value
+     * past 2^53 is refused rather than rounded.
+     */
+    fun toRest(): Map<String, Any> {
+        val maxSafe = (1uL shl 53) - 1uL
+        for (v in listOf(issuedAtMs, expiresAtMs)) {
+            require(v <= maxSafe) { "voter proof window value $v exceeds 2^53 and cannot be carried as a JSON number" }
+        }
+        return linkedMapOf(
+            "pop" to
+                linkedMapOf<String, Any>(
+                    "voter_aid" to voterAid,
+                    "issued_at_ms" to issuedAtMs.toLong(),
+                    "expires_at_ms" to expiresAtMs.toLong(),
+                    "signature" to signatureB64url,
+                ),
+        )
+    }
+
+    override fun equals(other: Any?): Boolean =
+        other is VoterPopProof && other.voterAid == voterAid && other.issuedAtMs == issuedAtMs &&
+            other.expiresAtMs == expiresAtMs && other.sig.contentEquals(sig)
+
+    override fun hashCode(): Int =
+        31 * (31 * (31 * voterAid.hashCode() + issuedAtMs.hashCode()) + expiresAtMs.hashCode()) + sig.contentHashCode()
+
+    override fun toString(): String =
+        "VoterPopProof(voterAid=$voterAid, issuedAtMs=$issuedAtMs, expiresAtMs=$expiresAtMs, signature=$signatureB64url)"
 }

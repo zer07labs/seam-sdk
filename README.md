@@ -50,7 +50,7 @@ The single source of truth is the `seam.api.v1` protobuf contract, published as 
    The Rust reference implementation of this shim lives in the runtime repo (`seam-client`). **Python and
    TypeScript** mirror its full surface (`Agent`, `SeamClient`, verification) and add the ergonomic
    clients documented below; **Go, Java, and Kotlin** ship the crypto shim only (`BuildPresentation`/
-   `VerifyTCT`/AID derivation, plus the D123 `x-seam-tenant` gRPC interceptor — see the Status table), by ADR.
+   `VerifyTCT`/AID derivation, the `seam-voter-pop-v1` voter proofs, plus the D123 `x-seam-tenant` gRPC interceptor — see the Status table), by ADR.
 
 ## Generate
 

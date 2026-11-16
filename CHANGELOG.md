@@ -16,6 +16,26 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added — voter proofs in Go, Java and Kotlin (#359)
+- Runtime 0.87.0 refuses a vote, ballot or objection without a `seam-voter-pop-v1` proof
+  (`voter_proof_required`). Go, Java and Kotlin can now sign one, at parity with Python and TypeScript and
+  byte-exact against `conformance/voter_pop_v1_payload_vector.json`. They also re-check sealed voter
+  records offline:
+  - **Go** (`crypto`): `VoteContentDigest`, `VoteEntryBytes`, `VoterPopPayload`, `SignVoterPop` /
+    `SignVoterPopAt` / `SignVoterPopEntryBytes`, `VerifyVoterPop`, `VerifyVoterRecord` and
+    `VerifyCommitmentVoters`, with `VoterPopTarget`, `VoteContent`, `VoteEntry`, `VoteContext`,
+    `VotePolicyRef`, `VoterDecision`, and `VoterPopProof` with `.ToREST()`.
+  - **Java and Kotlin** (`SeamCrypto`): `voteContentDigest`, `voteEntryBytes`, `voterPopPayload`,
+    `signVoterPop`, `verifyVoterPop`, `voterPopToRest`, `verifyVoterRecord` and `verifyCommitmentVoters`,
+    with `VoterPopTarget`, `VoteEntry`, `VoteContext`, `VotePolicyRef`, `VoterDecisionRef` and
+    `VoterPopProof`.
+- These ports have no in-package transport. Set the `VoterPopProof` fields on the generated
+  `VoterProof.pop`, as `VoteRequest.proof`, `BallotRequest.proof`, `ObjectionRequest.proof` or a one-shot
+  `Vote.proof`.
+- A signing window is refused before it is signed if issued > expires or it is longer than 15 minutes.
+  The default window is now to now + 5 minutes.
+- No proto, manifest, framing, Python or TypeScript change.
+
 ## 0.87.0 — 2026-11-16
 
 ### Fixed
