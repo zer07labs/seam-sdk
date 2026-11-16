@@ -25,6 +25,21 @@ Also, outside `vectors.json`:
 - **`crypto.RequestCredentials`** — the `seam-request-call-v1` credential (pinned by
   `conformance/request_sig_payload_vector.json`) with the bound-agent default (#202): an explicit
   credential wins, else the bound `Agent`, else no headers. The ticket comes from your own transport.
+- **Voter proofs (`seam-voter-pop-v1`, #359)**, pinned by `conformance/voter_pop_v1_payload_vector.json`:
+  runtime 0.87.0+ refuses a vote, ballot or objection without one (`voter_proof_required`). Use
+  `crypto.VoteContentDigest(VoteContent{…})` and `crypto.SignVoterPop(voterSeed, VoterPopTarget{…},
+  digest[:], VoteEntry{…})`, or `SignVoterPopAt` with an explicit window of at most 15 minutes. The
+  seed is the voter's own enrolled `voter` key (`VoterEnrolmentProof`). Set the resulting
+  `VoterPopProof` field for field on your generated `VoterProof{Pop: &VoterPop{…}}`, as
+  `VoteRequest.proof`, `BallotRequest.proof`, `ObjectionRequest.proof` or a one-shot `Vote.proof`.
+  `ToREST()` gives the REST `proof` object. Two cases set the target and content:
+  - A **session** vote is addressed by `SessionStep.opened_at_millis` and signs the session's
+    `vote_policy`.
+  - A **one-shot** `RunDecision` is addressed with `OpenedAtMillis: 0` and signs the request `Features`
+    with no policy.
+
+  `VerifyVoterPop`, `VerifyVoterRecord` and `VerifyCommitmentVoters` re-check proofs and sealed
+  records offline.
 
 The vector file's `chain_head_attestation` and `record_digest_v2` sections — like the call-sig/JCS
 surface — are exercised by the full Python/TypeScript clients only, not by this shim.
