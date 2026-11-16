@@ -206,9 +206,13 @@ build. 0.87.0 final follows #1713's merge and the runtime's 0.87.0 release (#352
 
 **SDK 0.87.0 pairs with runtime 0.87.0** (#1713 merged as `ede96dd3`). The contract is byte-identical
 to 0.87.0-rc.1: BSR `main` and `pr-1713` export the same module, so the incompatibilities above hold
-unchanged against runtime 0.86.0 and earlier. `contract/bsr-label` is back on `main`. The
-voter-PoP helpers and proof-taking vote APIs are still Python-only in 0.87.0; TS, Go, Java and Kotlin
-follow in a later release.
+unchanged against runtime 0.86.0 and earlier. `contract/bsr-label` is back on `main`.
+
+**0.87.0: voting is Python and TypeScript only.** Runtime 0.87.0 refuses a vote, ballot or objection
+without a `seam-voter-pop-v1` proof (`voter_proof_required`). Python (`sign_voter_pop`, `proof=`) and TS
+(`signVoterPop`, `opts.proof`) sign and attach one. **Go, Java and Kotlin cannot sign a voter proof in
+0.87.0**, so a caller on those ports cannot vote against runtime 0.87.0. The helpers are planned for SDK
+0.87.1 (seam-sdk#359).
 
 | SDK change | Requires runtime | Earlier runtimes | Pinned from |
 |---|---|---|---|
