@@ -16,7 +16,8 @@ from governing_root import STREAM_ID
 from live_server import spawn_server
 
 from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as evpb
-from seam_sdk import KNOWN_KINDS, SeamClient, verify_streamed_record_digest  # noqa: E402
+from demo_voters import DemoVotingClient
+from seam_sdk import KNOWN_KINDS, verify_streamed_record_digest  # noqa: E402
 from seam_sdk.crypto import (  # noqa: E402
     RecordDigestStripError,
     UnsupportedRecordDigestVersion,
@@ -235,7 +236,7 @@ def test_streamed_events_carry_a14_payloads_live(dual_plane):
     from seam_sdk import Agent
 
     data_addr, mgmt_addr = dual_plane
-    data = SeamClient.connect(data_addr)
+    data = DemoVotingClient.connect(data_addr)
     from operator_token import mint_operator_token
 
     admin = SeamAdminClient.connect(
@@ -249,7 +250,7 @@ def test_streamed_events_carry_a14_payloads_live(dual_plane):
         agent,
         "p6-sid-0123456789abcdef",
         ["fraud-v3", "risk-v2"],
-        [("fraud-v3", "BLOCK"), ("risk-v2", "BLOCK")],
+        [("fraud-v3", "APPROVE"), ("risk-v2", "APPROVE")],
     )
     assert dec.outcome == "Resolved"
 

@@ -17,6 +17,40 @@ import org.junit.jupiter.api.Test
  * Build a [Commitment] from the REST projection used by the vectors: byte fields as JSON number
  * arrays (or hex strings), absent `confidence` / `rationale_ref` / `supersedes` as `null`.
  */
+/** Bytes from a vector: a `<name>_hex` string, or `<name>` as a hex string or a list of byte values. */
+@Suppress("UNCHECKED_CAST")
+internal fun vectorBytes(m: Map<String, Any?>, name: String): ByteArray? {
+    fun unhex(d: String) = ByteArray(d.length / 2) { d.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
+    (m[name + "_hex"] as String?)?.let { return unhex(it) }
+    return when (val d = m[name]) {
+        null -> null
+        is String -> unhex(d)
+        else -> (d as List<Number>).map { it.toInt().toByte() }.toByteArray()
+    }
+}
+
+/** A sealed voter verification record from a vector's JSON projection (`null` when absent). */
+internal fun voterVerificationFromJson(v: Map<String, Any?>?): VoterVerification? {
+    if (v == null) return null
+    fun u(k: String) = (v[k] as Number).toLong().toULong()
+    return VoterVerification(
+        method = v["method"] as String,
+        principal = v["principal"] as String,
+        contentDigest = vectorBytes(v, "content_digest")!!,
+        issuedAtMs = u("issued_at_ms"),
+        expiresAtMs = u("expires_at_ms"),
+        signature = vectorBytes(v, "signature")!!,
+        signerCertificate = vectorBytes(v, "signer_certificate") ?: ByteArray(0),
+        tenant = v["tenant"] as String,
+        namespace = v["namespace"] as String,
+        sessionId = v["session_id"] as String,
+        openedAtMillis = u("opened_at_millis"),
+        issuer = v["issuer"] as String,
+        audience = v["audience"] as String,
+        acceptedAtMs = u("accepted_at_ms"),
+    )
+}
+
 @Suppress("UNCHECKED_CAST")
 internal fun commitmentFromJson(c: Map<String, Any?>): Commitment {
     val explanation = (c["explanation"] as List<Map<String, Any?>>?)?.map { e ->
@@ -28,6 +62,7 @@ internal fun commitmentFromJson(c: Map<String, Any?>): Commitment {
             reason = e["reason"] as String,
             confidence = (e["confidence"] as Number?)?.toDouble(),
             rationaleRef = e["rationale_ref"] as String?,
+            voterVerification = voterVerificationFromJson(e["voter_verification"] as Map<String, Any?>?),
         )
     }
     val published = when (val d = c["explanation_digest"]) {
@@ -49,14 +84,14 @@ internal fun commitmentFromJson(c: Map<String, Any?>): Commitment {
 }
 
 /**
- * `seam-commitment-digest:v3` + `seam-explanation-digest:v1` against
- * conformance/commitment_digest_v3_vector.json, plus the self-attestation TCT shape `verifyTct`
+ * `seam-commitment-digest:v4` + `seam-explanation-digest:v2` against
+ * conformance/commitment_digest_v4_vector.json, plus the self-attestation TCT shape `verifyTct`
  * accepts — and nothing beside it.
  */
-class CommitmentDigestV3Test {
+class CommitmentDigestV4Test {
     private val vector: Map<String, Any?> =
         Gson().fromJson(
-            File("../conformance/commitment_digest_v3_vector.json").readText(),
+            File("../conformance/commitment_digest_v4_vector.json").readText(),
             object : TypeToken<Map<String, Any?>>() {}.type,
         )
 
@@ -67,7 +102,11 @@ class CommitmentDigestV3Test {
     private fun case(name: String) = cases.single { it["name"] == name }
 
     @Suppress("UNCHECKED_CAST")
-    private fun commitmentOf(c: Map<String, Any?>) = commitmentFromJson(c["commitment"] as Map<String, Any?>)
+    private fun commitmentOf(c: Map<String, Any?>) =
+        commitmentFromJson(c["commitment"] as Map<String, Any?>).copy(
+            selectionDigest = vectorBytes(c, "selection_digest"),
+            certificateDigest = vectorBytes(c, "certificate_digest"),
+        )
 
     private fun hex(b: ByteArray) = b.joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
@@ -85,13 +124,18 @@ class CommitmentDigestV3Test {
 
     @Test
     fun domainsMatch() {
-        assertEquals("seam-commitment-digest:v3", vector["commitment_digest_domain"])
-        assertEquals("seam-explanation-digest:v1", vector["explanation_digest_domain"])
+        assertEquals(SeamCrypto.COMMITMENT_DIGEST_DOMAIN, vector["commitment_digest_domain"])
+        assertEquals(SeamCrypto.EXPLANATION_DIGEST_DOMAIN, vector["explanation_digest_domain"])
+        assertEquals("seam-commitment-digest:v4", SeamCrypto.COMMITMENT_DIGEST_DOMAIN)
+        assertEquals("seam-explanation-digest:v2", SeamCrypto.EXPLANATION_DIGEST_DOMAIN)
     }
 
     @Test
     fun reproducesEveryDigest() {
-        assertEquals(listOf("all_empty", "empty_supersedes", "populated_signed"), cases.map { it["name"] })
+        assertEquals(listOf(
+                "all_empty", "empty_supersedes", "populated_signed",
+                "selection_present", "certificate_present", "both_present",
+            ), cases.map { it["name"] })
         for (c in cases) {
             val cm = commitmentOf(c)
             val name = c["name"]
@@ -106,15 +150,15 @@ class CommitmentDigestV3Test {
     @Test
     fun emptyExplanationDigestIsPinned() {
         assertEquals(
-            "eb7853dc086ef5385db8408cf35c9c984e845ccc03d269102f942eed7806ce40",
+            "cabe83af912ea38ef4525f5a7d8580b4c4e217417edc0c93f936d2c18c4fd8f5",
             hex(SeamCrypto.explanationDigest(emptyList())),
         )
         // Neither entries nor a published digest: field 8 is the empty explanation's digest.
         val bare = Commitment("", "", "", null, "", "")
-        assertEquals("9238441205cd395f9507a5152e2c67f93fa83ca8d336d2ce7b8e01a385c3dd2e", SeamCrypto.seamCommitmentDigest(bare))
+        assertEquals("6e3a11bbef5f552f78e6d9114c13b7e48bb0a30de82d38a603981d6d1ca7281a", SeamCrypto.seamCommitmentDigest(bare))
     }
 
-    /** v3's presence byte: absent supersedes and present-empty supersedes are different digests. */
+    /** The supersedes presence byte: absent supersedes and present-empty supersedes are different digests. */
     @Test
     fun emptyAndAbsentSupersedesDiffer() {
         val absent = commitmentOf(case("all_empty"))
@@ -123,8 +167,56 @@ class CommitmentDigestV3Test {
         assertEquals("", empty.supersedes)
         assertNotEquals(SeamCrypto.seamCommitmentDigest(absent), SeamCrypto.seamCommitmentDigest(empty))
         assertEquals(
-            "b7f0e7a2a14e91f0d7dc1a56781a39f7601bce4df979f3b25a58aa9d86d3263c",
+            "a495c011cd353de108bb7c0e2a3bcb90051d59b135696a10848c3a087e5fed50",
             SeamCrypto.seamCommitmentDigest(empty),
+        )
+    }
+
+    /** Fields 9/10: each slot is bound, the two are not interchangeable, and a bad length is refused. */
+    @Test
+    fun selectionAndCertificateSlots() {
+        val none = commitmentOf(case("all_empty"))
+        val sel = commitmentOf(case("selection_present"))
+        val cert = commitmentOf(case("certificate_present"))
+        val both = commitmentOf(case("both_present"))
+        assertEquals(null, none.selectionDigest)
+        assertEquals(4, listOf(none, sel, cert, both).map { SeamCrypto.seamCommitmentDigest(it) }.toSet().size)
+        assertNotEquals(
+            SeamCrypto.seamCommitmentDigest(sel),
+            SeamCrypto.seamCommitmentDigest(sel.copy(selectionDigest = null, certificateDigest = sel.selectionDigest)),
+        )
+        for (len in listOf(0, 31, 33)) {
+            assertThrows(IllegalArgumentException::class.java, { SeamCrypto.seamCommitmentDigest(none.copy(selectionDigest = ByteArray(len))) }, "selection $len")
+            assertThrows(IllegalArgumentException::class.java, { SeamCrypto.seamCommitmentDigest(none.copy(certificateDigest = ByteArray(len))) }, "certificate $len")
+        }
+    }
+
+    /** A voter record with an unknown method, or a content digest that is not 32 bytes, is refused. */
+    @Test
+    fun malformedVoterRecordRefused() {
+        val e = commitmentOf(case("populated_signed")).explanation!![3]
+        val v = e.voterVerification!!
+        assertEquals("pop", v.method)
+        for (m in listOf("POP", "VOTER_VERIFICATION_POP", "unspecified", "")) {
+            assertThrows(IllegalArgumentException::class.java, {
+                SeamCrypto.explanationDigest(listOf(e.copy(voterVerification = v.copy(method = m))))
+            }, "method $m")
+        }
+        for (len in listOf(0, 31, 33)) {
+            assertThrows(IllegalArgumentException::class.java, {
+                SeamCrypto.explanationDigest(listOf(e.copy(voterVerification = v.copy(contentDigest = ByteArray(len)))))
+            }, "content digest $len")
+        }
+        // cp_signed is a known word (declared, not served): it frames, and differs from pop.
+        assertNotEquals(
+            hex(SeamCrypto.explanationDigest(listOf(e))),
+            hex(SeamCrypto.explanationDigest(listOf(e.copy(voterVerification = v.copy(method = "cp_signed"))))),
+        )
+        // The record is bound: stripping it or moving accepted_at_ms changes the digest.
+        assertNotEquals(hex(SeamCrypto.explanationDigest(listOf(e))), hex(SeamCrypto.explanationDigest(listOf(e.copy(voterVerification = null)))))
+        assertNotEquals(
+            hex(SeamCrypto.explanationDigest(listOf(e))),
+            hex(SeamCrypto.explanationDigest(listOf(e.copy(voterVerification = v.copy(acceptedAtMs = v.acceptedAtMs + 1uL))))),
         )
     }
 

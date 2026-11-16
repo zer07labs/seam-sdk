@@ -1,8 +1,8 @@
-"""seam-commitment-digest:v3 + seam-explanation-digest:v1, and the RFC-AITP-0005 self-attestation TCT.
+"""seam-commitment-digest:v4 + seam-explanation-digest:v2 (#1687), and the RFC-AITP-0005 self-attestation TCT.
 
-Pinned against the runtime's reference vector (`conformance/commitment_digest_v3_vector.json`,
+Pinned against the runtime's reference vector (`conformance/commitment_digest_v4_vector.json`,
 copied verbatim from the runtime's trust-aitp test fixtures) and the `tct` block of
-`conformance/vectors.json`. Framing: seam-runtime `docs/specs/seam-commitment-digest.v3.md`. The TCT
+`conformance/vectors.json`. Framing: seam-runtime `docs/specs/seam-commitment-digest.v4.md`. The TCT
 shape (`grants: ["aitp.attestation"]`, the digest under `ext["com.zer07labs.seam"]`) is taken from the
 signed vectors, which are the source of truth where the pinned spec's prose still describes the
 retired grants form.
@@ -23,24 +23,52 @@ from seam_sdk.client import commitment_view
 from seam_sdk.crypto import _seam_commitment_digest
 
 ROOT = Path(__file__).resolve().parents[2] / "conformance"
-V3 = json.loads((ROOT / "commitment_digest_v3_vector.json").read_text())
+V4 = json.loads((ROOT / "commitment_digest_v4_vector.json").read_text())
 TCT = json.loads((ROOT / "vectors.json").read_text())["tct"]
-EMPTY = "eb7853dc086ef5385db8408cf35c9c984e845ccc03d269102f942eed7806ce40"
+EMPTY = "cabe83af912ea38ef4525f5a7d8580b4c4e217417edc0c93f936d2c18c4fd8f5"
 
 
-@pytest.mark.parametrize("case", V3["cases"], ids=lambda c: c["name"])
+@pytest.mark.parametrize("case", V4["cases"], ids=lambda c: c["name"])
 def test_reference_vector_digests(case):
     c = case["commitment"]
     assert explanation_digest(c["explanation"]).hex() == case["explanation_digest"]
     assert bytes(c["explanation_digest"]).hex() == case["explanation_digest"]
-    assert _seam_commitment_digest(c) == case["commitment_digest"]
+    slots = {
+        k: case[k] for k in ("selection_digest", "certificate_digest") if case.get(k)
+    }
+    assert _seam_commitment_digest({**c, **slots}) == case["commitment_digest"]
+
+
+def test_reference_vector_voter_records_reverify():
+    """Every voter-kind entry in the vector carries a record that re-checks offline."""
+    from seam_sdk.crypto import verify_commitment_voters
+
+    for case in V4["cases"]:
+        entries = case["commitment"]["explanation"]
+        assert verify_commitment_voters(entries, V4["issuer_aid"]), case["name"]
+
+
+@pytest.mark.parametrize("bad", [b"", bytes(31), bytes(33)])
+@pytest.mark.parametrize("slot", ["selection_digest", "certificate_digest"])
+def test_digest_slot_length_is_refused(slot, bad):
+    with pytest.raises(ValueError):
+        _seam_commitment_digest(
+            dict(
+                id="",
+                action="",
+                authority="",
+                auth_method="",
+                trust_basis="",
+                **{slot: bad},
+            )
+        )
 
 
 def test_reference_vector_signed_case_verifies():
-    (case,) = [c for c in V3["cases"] if c["commitment"]["signed_artifact"]]
+    (case,) = [c for c in V4["cases"] if c["commitment"]["signed_artifact"]]
     c = case["commitment"]
     assert verify_tct(
-        V3["issuer_aid"], bytes(c["signed_artifact"]).decode(), c, now_s=0
+        V4["issuer_aid"], bytes(c["signed_artifact"]).decode(), c, now_s=0
     )
 
 
@@ -48,13 +76,13 @@ def test_spec_worked_examples():
     assert explanation_digest([]).hex() == EMPTY
     # The spec's worked example: six empty fields, an absent `supersedes`, the empty explanation.
     empty = dict(id="", action="", authority="", auth_method="", trust_basis="")
-    (all_empty,) = [c for c in V3["cases"] if c["name"] == "all_empty"]
+    (all_empty,) = [c for c in V4["cases"] if c["name"] == "all_empty"]
     assert _seam_commitment_digest(empty) == all_empty["commitment_digest"]
 
 
 def test_absent_and_present_empty_supersedes_differ():
-    """The one change v3 makes: a presence byte. v2 framed absent as the empty string."""
-    by = {c["name"]: c for c in V3["cases"]}
+    """v3 added a presence byte to `supersedes` (v2 framed absent as the empty string); v4 keeps it."""
+    by = {c["name"]: c for c in V4["cases"]}
     assert by["all_empty"]["commitment"]["supersedes"] is None
     assert by["empty_supersedes"]["commitment"]["supersedes"] == ""
     assert (
@@ -145,6 +173,28 @@ def _proto_from_vector(c: dict) -> pb.Commitment:
             entry.confidence = e["confidence"]
         if e["rationale_ref"] is not None:
             entry.rationale_ref = e["rationale_ref"]
+        vv = e.get("voter_verification")
+        if vv is not None:
+            r = entry.voter_verification
+            r.method = {
+                "pop": pb.VOTER_VERIFICATION_POP,
+                "cp_signed": pb.VOTER_VERIFICATION_CP_SIGNED,
+            }[vv["method"]]
+            for name in ("content_digest", "signature", "signer_certificate"):
+                setattr(r, name, bytes.fromhex(vv[name + "_hex"]))
+            for name in (
+                "principal",
+                "issued_at_ms",
+                "expires_at_ms",
+                "tenant",
+                "namespace",
+                "session_id",
+                "opened_at_millis",
+                "issuer",
+                "audience",
+                "accepted_at_ms",
+            ):
+                setattr(r, name, vv[name])
     return m
 
 
@@ -206,14 +256,14 @@ def _sign(header: bytes, payload: bytes) -> str:
 
 
 def _vector_claims():
-    (case,) = [c for c in V3["cases"] if c["commitment"]["signed_artifact"]]
+    (case,) = [c for c in V4["cases"] if c["commitment"]["signed_artifact"]]
     h, p, _ = bytes(case["commitment"]["signed_artifact"]).decode().split(".")
     return case["commitment"], json.loads(_unb64(h)), json.loads(_unb64(p))
 
 
 def _verify(commitment, header, payload) -> bool:
     jws = _sign(json.dumps(header).encode(), json.dumps(payload).encode())
-    return verify_tct(V3["issuer_aid"], jws, commitment, now_s=0)
+    return verify_tct(V4["issuer_aid"], jws, commitment, now_s=0)
 
 
 def test_the_resigned_vector_still_verifies():
@@ -274,14 +324,14 @@ def test_a_duplicate_json_key_fails_closed():
     forged = body[:-1] + ', "grants": ["aitp.attestation"]}'
     assert (
         verify_tct(
-            V3["issuer_aid"], _sign(json.dumps(h).encode(), forged.encode()), c, now_s=0
+            V4["issuer_aid"], _sign(json.dumps(h).encode(), forged.encode()), c, now_s=0
         )
         is False
     )
     dup_header = json.dumps(h)[:-1] + ', "typ": "aitp-tct+jwt"}'
     assert (
         verify_tct(
-            V3["issuer_aid"], _sign(dup_header.encode(), body.encode()), c, now_s=0
+            V4["issuer_aid"], _sign(dup_header.encode(), body.encode()), c, now_s=0
         )
         is False
     )
@@ -294,3 +344,74 @@ def test_commitment_view_keeps_supersedes_presence():
     assert commitment_view(m)["supersedes"] is None
     m.supersedes = ""
     assert commitment_view(m)["supersedes"] == ""
+
+
+def test_commitment_view_carries_the_voter_record_and_it_reverifies():
+    from seam_sdk.crypto import verify_commitment_voters
+
+    view = commitment_view(_proto_from_vector(TCT["inputs"]["commitment"]))
+    vv = view["explanation"][2]["voter_verification"]
+    assert vv["method"] == "pop" and len(vv["content_digest"]) == 32
+    assert verify_commitment_voters(view["explanation"], TCT["issuer_aid"])
+    assert verify_commitment_voters(
+        view["explanation"], TCT["issuer_aid"], ("acme", "s-conformance-0000000")
+    )
+    assert not verify_commitment_voters(
+        view["explanation"], TCT["issuer_aid"], ("acme", "s-other")
+    )
+    assert not verify_commitment_voters(view["explanation"], "aid:pubkey:someone-else")
+
+
+def test_an_unspecified_voter_method_fails_closed():
+    m = _proto_from_vector(TCT["inputs"]["commitment"])
+    m.explanation[2].voter_verification.method = pb.VOTER_VERIFICATION_UNSPECIFIED
+    m.explanation_digest = bytes.fromhex(TCT["explanation_digest_hex"])
+    assert (
+        verify_tct(
+            TCT["issuer_aid"], TCT["signed_artifact_jws"], commitment_view(m), now_s=0
+        )
+        is False
+    )
+
+
+def _voter_entries():
+    return [dict(e) for e in TCT["inputs"]["commitment"]["explanation"]]
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda es: es[2].update(voter_verification=None),  # a vote with no record
+        lambda es: es[0].update(
+            voter_verification=es[2]["voter_verification"]
+        ),  # an evaluation with one
+        lambda es: es[2].update(reason="other reason"),  # entry bytes no longer signed
+        lambda es: es[2].update(
+            voter_verification={
+                **es[2]["voter_verification"],
+                "accepted_at_ms": 1700000300001,
+            }
+        ),  # accepted after expiry
+        lambda es: es[2].update(
+            voter_verification={**es[2]["voter_verification"], "session_id": "s-other"}
+        ),
+        lambda es: es[2].update(
+            voter_verification={**es[2]["voter_verification"], "method": "cp_signed"}
+        ),
+    ],
+    ids=[
+        "missing",
+        "on-evaluation",
+        "entry-changed",
+        "late",
+        "other-session",
+        "cp-signed",
+    ],
+)
+def test_the_voter_tamper_table_fails_closed(mutate):
+    from seam_sdk.crypto import verify_commitment_voters
+
+    es = _voter_entries()
+    assert verify_commitment_voters(es, TCT["issuer_aid"])
+    mutate(es)
+    assert not verify_commitment_voters(es, TCT["issuer_aid"])

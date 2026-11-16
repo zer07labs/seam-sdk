@@ -22,8 +22,8 @@ import org.bouncycastle.crypto.signers.Ed25519Signer;
 import org.junit.jupiter.api.Test;
 
 /**
- * The enrolment proof-of-possession (#205). conformance/enroll_pop_v1_payload_vector.json is the
- * cross-language contract. NO bless mode: a mismatch is a contract break (a v2 domain tag), not a
+ * The enrolment proof-of-possession (#205). conformance/enroll_pop_v2_payload_vector.json (#1687) is
+ * the cross-language contract. NO bless mode: a mismatch is a contract break (a v3 domain tag), not a
  * stale fixture.
  */
 class EnrollPopTest {
@@ -35,9 +35,9 @@ class EnrollPopTest {
     Map<String, Object> v =
         new Gson()
             .fromJson(
-                Files.readString(Path.of("..", "conformance", "enroll_pop_v1_payload_vector.json")),
+                Files.readString(Path.of("..", "conformance", "enroll_pop_v2_payload_vector.json")),
                 MAP);
-    assertEquals(SeamCrypto.ENROLL_POP_V1_CONTEXT, v.get("domain"));
+    assertEquals(SeamCrypto.ENROLL_POP_V2_CONTEXT, v.get("domain"));
     List<Map<String, Object>> cases = (List<Map<String, Object>>) v.get("cases");
     assertFalse(cases.isEmpty(), "vector is empty; every assertion below would pass vacuously");
     for (Map<String, Object> c : cases) {
@@ -47,6 +47,7 @@ class EnrollPopTest {
               (String) c.get("subject_aid"),
               (String) c.get("tenant"),
               (String) c.get("namespace"),
+              (String) c.get("participant_id"),
               ((Number) c.get("issued_at_ms")).longValue(),
               (String) c.get("nonce"));
       assertEquals(c.get("payload_hex"), hex(SeamCrypto.enrollPopPayload(f)), label);
@@ -78,6 +79,10 @@ class EnrollPopTest {
           verify(pub, SeamCrypto.enrollPopPayload(other), sig),
           "a tenant-a/ns-x proof verified for " + tn[0] + "/" + tn[1]);
     }
+    // #1687: the participant is signed — a non-voter proof does not verify as a voter one.
+    SeamCrypto.EnrollPopFields voter =
+        new SeamCrypto.EnrollPopFields(aid, "tenant-a", "ns-x", "risk", f.issuedAtMs(), f.nonce());
+    assertFalse(verify(pub, SeamCrypto.enrollPopPayload(voter), sig));
   }
 
   @Test

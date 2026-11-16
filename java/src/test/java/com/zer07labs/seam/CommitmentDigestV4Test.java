@@ -24,18 +24,18 @@ import org.bouncycastle.crypto.signers.Ed25519Signer;
 import org.junit.jupiter.api.Test;
 
 /**
- * {@code seam-commitment-digest:v3} + {@code seam-explanation-digest:v1} against the runtime's
- * reference vector ({@code conformance/commitment_digest_v3_vector.json}). Conforming iff every digest
+ * {@code seam-commitment-digest:v4} + {@code seam-explanation-digest:v2} against the runtime's
+ * reference vector ({@code conformance/commitment_digest_v4_vector.json}). Conforming iff every digest
  * is reproduced and the signed case verifies against the issuer AID. NO bless mode. Also pins the
  * self-attestation TCT shape {@code verifyTct} accepts, and nothing beside it.
  */
-class CommitmentDigestV3Test {
+class CommitmentDigestV4Test {
   private static final Type MAP = new TypeToken<Map<String, Object>>() {}.getType();
   private static final long NOW_S = 1_700_000_001L;
   private static final HexFormat HEX = HexFormat.of();
 
   private static Map<String, Object> vector() throws Exception {
-    String raw = Files.readString(Path.of("..", "conformance", "commitment_digest_v3_vector.json"));
+    String raw = Files.readString(Path.of("..", "conformance", "commitment_digest_v4_vector.json"));
     return new Gson().fromJson(raw, MAP);
   }
 
@@ -50,9 +50,20 @@ class CommitmentDigestV3Test {
     throw new AssertionError("no case " + name);
   }
 
+  /** The case's commitment, with its field-9/10 slots (case-level hex, {@code null} when absent). */
   @SuppressWarnings("unchecked")
   private static SeamCrypto.Commitment commitmentOf(Map<String, Object> k) {
-    return ConformanceTest.commitment((Map<String, Object>) k.get("commitment"));
+    SeamCrypto.Commitment b = ConformanceTest.commitment((Map<String, Object>) k.get("commitment"));
+    return withSlots(
+        b, ConformanceTest.vectorBytes(k, "selection_digest"),
+        ConformanceTest.vectorBytes(k, "certificate_digest"));
+  }
+
+  private static SeamCrypto.Commitment withSlots(
+      SeamCrypto.Commitment b, byte[] selection, byte[] certificate) {
+    return new SeamCrypto.Commitment(
+        b.id(), b.action(), b.authority(), b.supersedes(), b.authMethod(), b.trustBasis(),
+        b.committer(), b.explanationDigest(), b.explanation(), selection, certificate);
   }
 
   @SuppressWarnings("unchecked")
@@ -71,12 +82,12 @@ class CommitmentDigestV3Test {
       SeamCrypto.Commitment b, byte[] published, List<SeamCrypto.ExplanationEntry> entries) {
     return new SeamCrypto.Commitment(
         b.id(), b.action(), b.authority(), b.supersedes(), b.authMethod(), b.trustBasis(),
-        b.committer(), published, entries);
+        b.committer(), published, entries, b.selectionDigest(), b.certificateDigest());
   }
 
   @Test
   void everyCaseDigestIsByteExact() throws Exception {
-    assertEquals(3, cases().size());
+    assertEquals(6, cases().size());
     for (Map<String, Object> k : cases()) {
       SeamCrypto.Commitment c = commitmentOf(k);
       String name = (String) k.get("name");
@@ -102,7 +113,7 @@ class CommitmentDigestV3Test {
   @Test
   void emptyExplanationDigestMatchesSpec() {
     assertEquals(
-        "eb7853dc086ef5385db8408cf35c9c984e845ccc03d269102f942eed7806ce40",
+        "cabe83af912ea38ef4525f5a7d8580b4c4e217417edc0c93f936d2c18c4fd8f5",
         HEX.formatHex(SeamCrypto.explanationDigest(List.of())));
   }
 
@@ -110,11 +121,11 @@ class CommitmentDigestV3Test {
   void neitherEntriesNorDigestIsTheEmptyExplanation() throws Exception {
     SeamCrypto.Commitment c = commitmentOf(caseNamed("all_empty"));
     assertEquals(
-        "9238441205cd395f9507a5152e2c67f93fa83ca8d336d2ce7b8e01a385c3dd2e",
+        "6e3a11bbef5f552f78e6d9114c13b7e48bb0a30de82d38a603981d6d1ca7281a",
         SeamCrypto.seamCommitmentDigest(withEntries(c, null, null)));
   }
 
-  /** v3's presence byte: absent supersedes and present-empty supersedes are different digests. */
+  /** The supersedes presence byte: absent supersedes and present-empty supersedes are different digests. */
   @Test
   void emptyAndAbsentSupersedesDiffer() throws Exception {
     SeamCrypto.Commitment absent = commitmentOf(caseNamed("all_empty"));
@@ -124,8 +135,84 @@ class CommitmentDigestV3Test {
     assertNotEquals(
         SeamCrypto.seamCommitmentDigest(absent), SeamCrypto.seamCommitmentDigest(empty));
     assertEquals(
-        "b7f0e7a2a14e91f0d7dc1a56781a39f7601bce4df979f3b25a58aa9d86d3263c",
+        "a495c011cd353de108bb7c0e2a3bcb90051d59b135696a10848c3a087e5fed50",
         SeamCrypto.seamCommitmentDigest(empty));
+  }
+
+  /** Fields 9/10: each slot is bound, the two are not interchangeable, and a bad length is refused. */
+  @Test
+  void selectionAndCertificateSlots() throws Exception {
+    SeamCrypto.Commitment none = commitmentOf(caseNamed("all_empty"));
+    SeamCrypto.Commitment sel = commitmentOf(caseNamed("selection_present"));
+    SeamCrypto.Commitment cert = commitmentOf(caseNamed("certificate_present"));
+    SeamCrypto.Commitment both = commitmentOf(caseNamed("both_present"));
+    assertEquals(null, none.selectionDigest());
+    assertEquals(null, none.certificateDigest());
+    java.util.Set<String> digests =
+        new java.util.HashSet<>(
+            List.of(
+                SeamCrypto.seamCommitmentDigest(none), SeamCrypto.seamCommitmentDigest(sel),
+                SeamCrypto.seamCommitmentDigest(cert), SeamCrypto.seamCommitmentDigest(both)));
+    assertEquals(4, digests.size());
+    // The same 32 bytes in the other slot is a different digest.
+    assertNotEquals(
+        SeamCrypto.seamCommitmentDigest(sel),
+        SeamCrypto.seamCommitmentDigest(withSlots(sel, null, sel.selectionDigest())));
+    for (int len : new int[] {0, 31, 33}) {
+      byte[] bad = new byte[len];
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> SeamCrypto.seamCommitmentDigest(withSlots(none, bad, null)), "selection " + len);
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> SeamCrypto.seamCommitmentDigest(withSlots(none, null, bad)), "certificate " + len);
+    }
+  }
+
+  /** A voter record with an unknown method, or a content digest that is not 32 bytes, is refused. */
+  @Test
+  void malformedVoterRecordIsRefused() throws Exception {
+    SeamCrypto.Commitment c = commitmentOf(caseNamed("populated_signed"));
+    SeamCrypto.ExplanationEntry e = c.explanation().get(3);
+    SeamCrypto.VoterVerification v = e.voterVerification();
+    assertEquals("pop", v.method());
+    for (String method : new String[] {"POP", "VOTER_VERIFICATION_POP", "unspecified", "", null}) {
+      SeamCrypto.VoterVerification bad =
+          new SeamCrypto.VoterVerification(
+              method, v.principal(), v.contentDigest(), v.issuedAtMs(), v.expiresAtMs(),
+              v.signature(), v.signerCertificate(), v.tenant(), v.namespace(), v.sessionId(),
+              v.openedAtMillis(), v.issuer(), v.audience(), v.acceptedAtMs());
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> SeamCrypto.explanationDigest(List.of(replaceVv(e, bad))),
+          "method " + method);
+    }
+    for (byte[] digest : new byte[][] {null, new byte[0], new byte[31], new byte[33]}) {
+      SeamCrypto.VoterVerification bad =
+          new SeamCrypto.VoterVerification(
+              v.method(), v.principal(), digest, v.issuedAtMs(), v.expiresAtMs(),
+              v.signature(), v.signerCertificate(), v.tenant(), v.namespace(), v.sessionId(),
+              v.openedAtMillis(), v.issuer(), v.audience(), v.acceptedAtMs());
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> SeamCrypto.explanationDigest(List.of(replaceVv(e, bad))));
+    }
+    // cp_signed is a known word (declared, not served): it frames, and differs from pop.
+    SeamCrypto.VoterVerification cp =
+        new SeamCrypto.VoterVerification(
+            "cp_signed", v.principal(), v.contentDigest(), v.issuedAtMs(), v.expiresAtMs(),
+            v.signature(), v.signerCertificate(), v.tenant(), v.namespace(), v.sessionId(),
+            v.openedAtMillis(), v.issuer(), v.audience(), v.acceptedAtMs());
+    assertNotEquals(
+        HEX.formatHex(SeamCrypto.explanationDigest(List.of(e))),
+        HEX.formatHex(SeamCrypto.explanationDigest(List.of(replaceVv(e, cp)))));
+  }
+
+  private static SeamCrypto.ExplanationEntry replaceVv(
+      SeamCrypto.ExplanationEntry e, SeamCrypto.VoterVerification v) {
+    return new SeamCrypto.ExplanationEntry(
+        e.kind(), e.participant(), e.proposalId(), e.value(), e.reason(), e.confidence(),
+        e.rationaleRef(), v);
   }
 
   @Test

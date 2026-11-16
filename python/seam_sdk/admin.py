@@ -66,6 +66,7 @@ __all__ = [
     "ENROLMENT_KIND_AGENT",
     "ENROLMENT_KIND_CHANGESET_WORKER",
     "ENROLMENT_KIND_OUTCOME_REPORTER",
+    "ENROLMENT_KIND_VOTER",
     "ENROLMENT_KINDS",
     "verify_streamed_record_digest",
 ]
@@ -74,15 +75,19 @@ __all__ = [
 # `EnrollTenantRequest.kind`, and the value `TenantView.kind` / `WhoAmIResponse.kind` report. Name a
 # kind with these rather than hand-typing the string — any other value, `""` included, is the
 # runtime's INVALID_ARGUMENT. An `outcome_reporter` or `changeset_worker` credential is refused
-# PERMISSION_DENIED (`SUBJECT_KIND_CONFINED`) on every verb outside its kind.
+# PERMISSION_DENIED (`SUBJECT_KIND_CONFINED`) on every verb outside its kind. A `voter` (runtime 0.87.0,
+# #1687) is signer-only: it permits no data-plane verb and exists to sign `seam-voter-pop-v1` proofs for
+# the one `participant_id` it is bound to.
 ENROLMENT_KIND_AGENT = "agent"
 ENROLMENT_KIND_OUTCOME_REPORTER = "outcome_reporter"
 ENROLMENT_KIND_CHANGESET_WORKER = "changeset_worker"
+ENROLMENT_KIND_VOTER = "voter"
 ENROLMENT_KINDS = frozenset(
     {
         ENROLMENT_KIND_AGENT,
         ENROLMENT_KIND_OUTCOME_REPORTER,
         ENROLMENT_KIND_CHANGESET_WORKER,
+        ENROLMENT_KIND_VOTER,
     }
 )
 
@@ -531,6 +536,7 @@ class SeamAdminClient:
         *,
         pop: Optional[EnrollProof | pb.EnrollPop] = None,
         kind: Optional[str] = None,
+        participant_id: Optional[str] = None,
         timeout: float = DEFAULT_ADMIN_TIMEOUT_S,
     ) -> pb.TenantView:
         """Bind an agent identity to a tenant/namespace.
@@ -549,7 +555,15 @@ class SeamAdminClient:
         AID with a different kind is ``FailedPreconditionError`` (``ENROLMENT_KIND_CONFLICT``): revoke
         first. A runtime older than 0.71.0 does not know the field and enrols ``agent`` regardless, so
         send ``kind`` only to a runtime that advertises the ``enroll.kind`` wire feature, and read
-        the kind it stored on the returned view's ``kind``."""
+        the kind it stored on the returned view's ``kind``.
+
+        ``participant_id`` (runtime 0.87.0, #1687) is the participant a ``voter`` AID votes as. It is
+        REQUIRED with ``kind="voter"`` and refused with any other kind (the runtime's INVALID_ARGUMENT),
+        and it is SIGNED by ``pop`` (``seam-enroll-pop-v2``), so mint the proof with the same value:
+        ``Agent.enrolment_proof(tenant, namespace, participant_id=...)``. A ``voter`` enrolment needs a
+        ``pop`` even with a fleet token. At most one active voter per (tenant, namespace, participant):
+        binding a held participant is ``FailedPreconditionError`` (revoke first). Omitted, no field is
+        sent."""
         req = pb.EnrollTenantRequest(
             subject_aid=subject_aid,
             tenant=tenant,
@@ -562,6 +576,8 @@ class SeamAdminClient:
                     f"enroll_tenant: kind {kind!r} is not one of {sorted(ENROLMENT_KINDS)}"
                 )
             req.kind = kind
+        if participant_id is not None:
+            req.participant_id = participant_id
         return self._admin.EnrollTenant(req, timeout=timeout)
 
     def list_tenants(

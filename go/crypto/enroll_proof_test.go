@@ -28,7 +28,7 @@ func TestEnrollProofRESTMatchesVector(t *testing.T) {
 			if aid := AIDFromPubkey(ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)); aid != tc.SubjectAID {
 				t.Fatalf("aid = %s, want %s", aid, tc.SubjectAID)
 			}
-			proof, err := EnrollPop(seed, tc.Tenant, tc.Namespace, tc.IssuedAtMs, tc.Nonce)
+			proof, err := EnrollPopForParticipant(seed, tc.Tenant, tc.Namespace, tc.Participant, tc.IssuedAtMs, tc.Nonce)
 			if err != nil {
 				t.Fatal(err)
 			}

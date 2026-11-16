@@ -22,6 +22,7 @@ import {
   KNOWN_KINDS,
   verifyStreamedRecordDigest,
 } from "../src/admin.js";
+import { demoVoting } from "./demo_voters.js";
 import { STREAM_ID, governanceEnv, mintOperatorToken } from "./operator_token.js";
 import { RecordDigestStripError, UnsupportedRecordDigestVersion } from "../src/crypto.js";
 
@@ -265,7 +266,7 @@ test(
     try {
       await waitPort(dataPort);
       await waitPort(mgmtPort);
-      const data = SeamClient.connect(`http://127.0.0.1:${dataPort}`);
+      const data = demoVoting(SeamClient.connect(`http://127.0.0.1:${dataPort}`));
       const admin = SeamAdminClient.connect(`http://127.0.0.1:${mgmtPort}`, {
         token: mintOperatorToken(["audit:read"]),
       });
@@ -274,8 +275,8 @@ test(
       // Interactive open → SESSION_LIFECYCLE; one-shot decision → v4 DECISION_SEALED.
       await data.openSession(agent, { sessionId: "p6-ts-sid-0123456789abcdef", participants: ["lead", "peer"] });
       const dec = await data.runDecision(agent, "p6d-sid-0123456789abcdef", ["fraud-v3", "risk-v2"], [
-        ["fraud-v3", "BLOCK"],
-        ["risk-v2", "BLOCK"],
+        ["fraud-v3", "APPROVE"],
+        ["risk-v2", "APPROVE"],
       ]);
       assert.equal(dec.outcome, "Resolved");
 

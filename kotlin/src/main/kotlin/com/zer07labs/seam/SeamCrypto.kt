@@ -36,10 +36,34 @@ data class Presentation(
 )
 
 /**
+ * A sealed voter verification record (seam-runtime #1687, `voter-verification.v1.md`): the voter's own
+ * proof of possession plus where it was cast and when the runtime accepted it. [method] is `pop` or
+ * `cp_signed` (never the proto enum name); [contentDigest] is the 32 raw bytes of
+ * `seam-vote-content-v1`; [signerCertificate] is empty for `pop`.
+ */
+data class VoterVerification(
+    val method: String,
+    val principal: String,
+    val contentDigest: ByteArray,
+    val issuedAtMs: ULong,
+    val expiresAtMs: ULong,
+    val signature: ByteArray,
+    val signerCertificate: ByteArray = ByteArray(0),
+    val tenant: String,
+    val namespace: String,
+    val sessionId: String,
+    val openedAtMillis: ULong,
+    val issuer: String,
+    val audience: String,
+    val acceptedAtMs: ULong,
+)
+
+/**
  * One entry of a commitment's sealed explanation, framed by [SeamCrypto.explanationDigest]. [kind] is
  * the lowercase word `vote`, `evaluation`, `objection` or `ballot` (exactly; never the proto enum
  * name). [confidence] and [rationaleRef] are `null` when absent — an absent confidence and a stated
- * `0.0` are different bytes, which is the point of the digest.
+ * `0.0` are different bytes, which is the point of the digest. [voterVerification] is `null` when
+ * absent (evaluations); the runtime seals one on every vote, ballot and objection (#1687).
  */
 data class ExplanationEntry(
     val kind: String,
@@ -49,11 +73,14 @@ data class ExplanationEntry(
     val reason: String,
     val confidence: Double? = null,
     val rationaleRef: String? = null,
+    val voterVerification: VoterVerification? = null,
 )
 
 /**
- * The commitment fields `seam-commitment-digest:v3` binds. [committer] is the verified AID that
- * committed (empty when absent). [supersedes] is `null` when ABSENT, which v3 frames as `0x00` — a
+ * The commitment fields `seam-commitment-digest:v4` binds. [committer] is the verified AID that
+ * committed (empty when absent). [selectionDigest] (field 9) and [certificateDigest] (field 10) are
+ * `null` when absent — every record runtime 0.87.0 seals — and exactly 32 bytes when present.
+ * [supersedes] is `null` when ABSENT, which v4 frames as `0x00` — a
  * different digest from a present empty string (`0x01 ‖ F("")`). Field 8 (the explanation digest) is resolved from [explanation] and
  * [explanationDigest] (32 raw bytes) — see [SeamCrypto.verifyTct].
  */
@@ -67,6 +94,8 @@ data class Commitment(
     val committer: String = "",
     val explanation: List<ExplanationEntry>? = null,
     val explanationDigest: ByteArray? = null,
+    val selectionDigest: ByteArray? = null,
+    val certificateDigest: ByteArray? = null,
 )
 
 /**
@@ -204,20 +233,30 @@ object SeamCrypto {
         writeBytes(b)
     }
 
+    /** The voter-verification `method` words the explanation digest frames — lowercase, exactly. */
+    val VOTER_VERIFICATION_METHODS: List<String> = listOf("pop", "cp_signed")
+
+    /** Domain tag of the explanation digest. */
+    const val EXPLANATION_DIGEST_DOMAIN = "seam-explanation-digest:v2"
+
     /**
-     * `seam-explanation-digest:v1` over a sealed explanation, in sealed order (32 raw bytes):
-     * `SHA-256(F("seam-explanation-digest:v1") ‖ be64(count) ‖ Σ ENTRY)`, with
-     * `ENTRY = F(kind) ‖ F(participant) ‖ F(proposal_id) ‖ F(value) ‖ F(reason) ‖ CONF ‖ REF`,
-     * `CONF = 0x00 | 0x01 ‖ be64(IEEE-754 bits)`, `REF = 0x00 | 0x01 ‖ F(rationale_ref)`. Never sorts,
-     * never de-duplicates.
+     * `seam-explanation-digest:v2` over a sealed explanation, in sealed order (32 raw bytes):
+     * `SHA-256(F("seam-explanation-digest:v2") ‖ be64(count) ‖ Σ ENTRY)`, with
+     * `ENTRY = F(kind) ‖ F(participant) ‖ F(proposal_id) ‖ F(value) ‖ F(reason) ‖ CONF ‖ REF ‖ VV`,
+     * `CONF = 0x00 | 0x01 ‖ be64(IEEE-754 bits)`, `REF = 0x00 | 0x01 ‖ F(rationale_ref)`,
+     * `VV = 0x00 | 0x01 ‖ F(method) ‖ F(principal) ‖ F(content_digest) ‖ be64(issued_at_ms) ‖
+     * be64(expires_at_ms) ‖ F(signature) ‖ F(signer_certificate) ‖ F(tenant) ‖ F(namespace) ‖
+     * F(session_id) ‖ be64(opened_at_millis) ‖ F(issuer) ‖ F(audience) ‖ be64(accepted_at_ms)`. Never
+     * sorts, never de-duplicates.
      *
-     * Throws [IllegalArgumentException] on an unknown kind or a non-canonical confidence (NaN, ±inf,
-     * outside `[0.0, 1.0]`, or `-0.0`) rather than hashing it. Normative:
-     * `seam-runtime/docs/specs/seam-commitment-digest.v3.md`.
+     * Throws [IllegalArgumentException] on an unknown kind, a non-canonical confidence (NaN, ±inf,
+     * outside `[0.0, 1.0]`, or `-0.0`), an unknown voter-verification method, or a content digest that
+     * is not 32 bytes, rather than hashing it. Normative:
+     * `seam-runtime/docs/specs/seam-commitment-digest.v4.md`.
      */
     fun explanationDigest(entries: List<ExplanationEntry>): ByteArray {
         val out = ByteArrayOutputStream()
-        out.frame("seam-explanation-digest:v1".toByteArray(Charsets.UTF_8))
+        out.frame(EXPLANATION_DIGEST_DOMAIN.toByteArray(Charsets.UTF_8))
         out.writeBytes(be64(entries.size.toLong()))
         for (e in entries) {
             require(e.kind in EXPLANATION_KINDS) { "unknown explanation kind ${e.kind}" }
@@ -245,6 +284,30 @@ object SeamCrypto {
                 out.write(1)
                 out.frame(ref.toByteArray(Charsets.UTF_8))
             }
+            val v = e.voterVerification
+            if (v == null) {
+                out.write(0)
+            } else {
+                require(v.method in VOTER_VERIFICATION_METHODS) {
+                    "unknown voter verification method ${v.method}"
+                }
+                require(v.contentDigest.size == 32) { "voter verification content_digest must be 32 bytes" }
+                out.write(1)
+                out.frame(v.method.toByteArray(Charsets.UTF_8))
+                out.frame(v.principal.toByteArray(Charsets.UTF_8))
+                out.frame(v.contentDigest)
+                out.writeBytes(be64(v.issuedAtMs.toLong()))
+                out.writeBytes(be64(v.expiresAtMs.toLong()))
+                out.frame(v.signature)
+                out.frame(v.signerCertificate)
+                out.frame(v.tenant.toByteArray(Charsets.UTF_8))
+                out.frame(v.namespace.toByteArray(Charsets.UTF_8))
+                out.frame(v.sessionId.toByteArray(Charsets.UTF_8))
+                out.writeBytes(be64(v.openedAtMillis.toLong()))
+                out.frame(v.issuer.toByteArray(Charsets.UTF_8))
+                out.frame(v.audience.toByteArray(Charsets.UTF_8))
+                out.writeBytes(be64(v.acceptedAtMs.toLong()))
+            }
         }
         return sha256(out.toByteArray())
     }
@@ -267,7 +330,7 @@ object SeamCrypto {
     }
 
     /** Domain tag of the commitment digest. */
-    const val COMMITMENT_DIGEST_DOMAIN = "seam-commitment-digest:v3"
+    const val COMMITMENT_DIGEST_DOMAIN = "seam-commitment-digest:v4"
 
     /** The one grant a commitment self-attestation carries. */
     const val ATTESTATION_GRANT = "aitp.attestation"
@@ -279,13 +342,14 @@ object SeamCrypto {
     const val COMMITMENT_STATEMENT = "seam:commitment"
 
     /**
-     * `seam-commitment-digest:v3` (hex): SHA-256 over a **length-prefixed** framing of a domain tag
+     * `seam-commitment-digest:v4` (hex): SHA-256 over a **length-prefixed** framing of a domain tag
      * plus the commitment fields — each field preceded by its 8-byte big-endian length. Mirrors the
-     * runtime byte-for-byte, and mirrors the Go/Java/Python/TypeScript shims. v2 is deleted, not
-     * dual-verified. Normative: `seam-runtime/docs/specs/seam-commitment-digest.v3.md`. v3's one
-     * framing change: `supersedes` carries a presence byte — `0x00` when absent (`null`), `0x01 ‖
-     * F(s)` when present — so "supersedes nothing" and "supersedes the empty id" are no longer the
-     * same digest.
+     * runtime byte-for-byte, and mirrors the Go/Java/Python/TypeScript shims. v3 is deleted, not
+     * dual-verified. Normative: `seam-runtime/docs/specs/seam-commitment-digest.v4.md`. `supersedes`
+     * carries a presence byte — `0x00` when absent (`null`), `0x01 ‖ F(s)` when present. v4 (#1687)
+     * binds the v2 explanation digest as field 8 and appends two always-framed slots: field 9 (selection
+     * digest) and field 10 (Gate certificate digest), each `0x00` when absent or `0x01 ‖ be64(32) ‖ 32
+     * raw bytes`; a present slot that is not 32 bytes throws [IllegalArgumentException].
      *
      * **The length prefixes are not decoration and must never be "simplified" to a separator.** The
      * fields are arbitrary text that may itself contain NUL — UTF-8 permits U+0000, and it survives
@@ -306,6 +370,12 @@ object SeamCrypto {
      * explanation digest binds *why*. `ConformanceTest` asserts every one of these is bound.
      */
     internal fun seamCommitmentDigest(c: Commitment): String {
+        require(c.selectionDigest == null || c.selectionDigest.size == 32) {
+            "selection_digest must be 32 bytes when present"
+        }
+        require(c.certificateDigest == null || c.certificateDigest.size == 32) {
+            "certificate_digest must be 32 bytes when present"
+        }
         val explanation = commitmentExplanationDigest(c)
         val h = ByteArrayOutputStream()
         h.frame(COMMITMENT_DIGEST_DOMAIN.toByteArray(Charsets.UTF_8))
@@ -323,6 +393,14 @@ object SeamCrypto {
         h.frame(c.trustBasis.toByteArray(Charsets.UTF_8))
         h.frame(c.committer.toByteArray(Charsets.UTF_8))
         h.frame(explanation)
+        for (slot in listOf(c.selectionDigest, c.certificateDigest)) {
+            if (slot == null) {
+                h.write(0x00)
+            } else {
+                h.write(0x01)
+                h.frame(slot)
+            }
+        }
         return sha256(h.toByteArray()).joinToString("") { "%02x".format(it.toInt() and 0xff) }
     }
 
@@ -332,7 +410,7 @@ object SeamCrypto {
      * claims (`iss == sub == aud == issuerAid`); `exp`; that `grants` is exactly
      * `["aitp.attestation"]`; and that `ext` is exactly
      * `{"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":<hex>}}` with the hex equal
-     * to the recomputed `seam-commitment-digest:v3` of this exact commitment (the decided content, the
+     * to the recomputed `seam-commitment-digest:v4` of this exact commitment (the decided content, the
      * committer, and the sealed explanation). A header or payload whose JSON repeats an object key at
      * any depth is refused: Gson would keep one of the two, and another parser might keep the other. Any malformed/forged input fails closed (returns false),
      * never throws — including explanation entries that disagree with the published
@@ -475,19 +553,20 @@ object SeamCrypto {
     /**
      * Domain tag of the enrolment proof-of-possession (seam-runtime #1157): the subject AID's own
      * consent, by the key it embeds, to ONE `EnrollTenant` binding. Bump it only in lockstep with the
-     * runtime.
+     * runtime. v2 (#1687) signs the `participant_id` a `voter` enrolment binds (`""` for every other
+     * kind); v1 is refused by runtime 0.87.0 and is gone.
      */
-    const val ENROLL_POP_V1_CONTEXT = "seam-enroll-pop-v1"
+    const val ENROLL_POP_V2_CONTEXT = "seam-enroll-pop-v2"
 
     private val ENROLL_POP_NONCE = Regex("[A-Za-z0-9_-]{1,128}")
 
     /**
      * The exact bytes [enrollPop] signs: `frame(context) | frame(subject_aid) | frame(tenant) |
-     * frame(namespace) | frame(u64le(issued_at_ms)) | frame(nonce)`, with
+     * frame(namespace) | frame(participant_id) | frame(u64le(issued_at_ms)) | frame(nonce)`, with
      * `frame(x) = u32le(len_bytes(x)) | x`. `issued_at_ms` is 8 raw little-endian bytes, not ASCII
      * decimal.
      *
-     * Pinned by `conformance/enroll_pop_v1_payload_vector.json`. Public so a caller can reproduce or
+     * Pinned by `conformance/enroll_pop_v2_payload_vector.json`. Public so a caller can reproduce or
      * verify the binding without re-deriving it from prose.
      */
     fun enrollPopPayload(f: EnrollPopFields): ByteArray {
@@ -496,10 +575,11 @@ object SeamCrypto {
             out.writeBytes(leBytes(b.size.toLong(), 4))
             out.writeBytes(b)
         }
-        frame(ENROLL_POP_V1_CONTEXT.toByteArray(Charsets.UTF_8))
+        frame(ENROLL_POP_V2_CONTEXT.toByteArray(Charsets.UTF_8))
         frame(f.subjectAid.toByteArray(Charsets.UTF_8))
         frame(f.tenant.toByteArray(Charsets.UTF_8))
         frame(f.namespace.toByteArray(Charsets.UTF_8))
+        frame(f.participantId.toByteArray(Charsets.UTF_8))
         frame(leBytes(f.issuedAtMs.toLong(), 8))
         frame(f.nonce.toByteArray(Charsets.UTF_8))
         return out.toByteArray()
@@ -544,7 +624,9 @@ object SeamCrypto {
      *
      * [issuedAtMs] defaults to now and [nonce] to 16 fresh random bytes as 22 base64url characters;
      * both are overridable for tests. The runtime accepts the proof for 5 minutes (and up to 60 s ahead
-     * of its clock), so mint it just before the enrolment call. The counterpart of Python's
+     * of its clock), so mint it just before the enrolment call. [participantId] is the participant a
+     * `voter` enrolment binds (`""`, the default, for every other kind); the operator sends the same
+     * value as `EnrollTenantRequest.participant_id`. The counterpart of Python's
      * `Agent.enrolment_proof` and TypeScript's `Agent.enrolmentProof`.
      */
     fun enrolmentProof(
@@ -553,10 +635,12 @@ object SeamCrypto {
         namespace: String,
         issuedAtMs: ULong = System.currentTimeMillis().toULong(),
         nonce: String = newEnrollPopNonce(),
+        participantId: String = "",
     ): EnrollProof {
         require(agentSeed.size == 32) { "agent seed must be 32 bytes" }
         val subject = aidFromPubkey(ed25519Pub(agentSeed))
-        val sig = enrollPop(agentSeed, EnrollPopFields(subject, tenant, namespace, issuedAtMs, nonce))
+        val sig =
+            enrollPop(agentSeed, EnrollPopFields(subject, tenant, namespace, issuedAtMs, nonce, participantId))
         return EnrollProof(issuedAtMs, nonce, sig)
     }
     // ── The per-request credential (`seam-request-call-v1`, #508) ──────────────────────────────
@@ -621,6 +705,8 @@ data class EnrollPopFields(
     val namespace: String,
     val issuedAtMs: ULong,
     val nonce: String,
+    /** The participant a `voter` enrolment binds (#1687); `""` for every other kind. */
+    val participantId: String = "",
 )
 
 /**

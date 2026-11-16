@@ -51,16 +51,24 @@ func NewEnrollPopNonce() (string, error) {
 // — and the nonce is validated first, since a proof the runtime will refuse is not worth producing.
 // Prefer EnrolmentProof, which defaults issuedAtMs to now and the nonce to a fresh random one.
 func EnrollPop(agentSeed []byte, tenant, namespace string, issuedAtMs uint64, nonce string) (EnrollProof, error) {
+	return EnrollPopForParticipant(agentSeed, tenant, namespace, "", issuedAtMs, nonce)
+}
+
+// EnrollPopForParticipant is EnrollPop for a `voter` enrolment (seam-runtime #1687): participantID is the
+// participant the voter key binds, signed into `seam-enroll-pop-v2`, and must equal the
+// `participant_id` sent beside the proof. "" is every other kind, exactly EnrollPop.
+func EnrollPopForParticipant(agentSeed []byte, tenant, namespace, participantID string, issuedAtMs uint64, nonce string) (EnrollProof, error) {
 	if len(agentSeed) != ed25519.SeedSize {
 		return EnrollProof{}, fmt.Errorf("agent seed must be %d bytes", ed25519.SeedSize)
 	}
 	subject := AIDFromPubkey(ed25519.NewKeyFromSeed(agentSeed).Public().(ed25519.PublicKey))
 	sig, err := EnrollPopSign(agentSeed, EnrollPopFields{
-		SubjectAID: subject,
-		Tenant:     tenant,
-		Namespace:  namespace,
-		IssuedAtMs: issuedAtMs,
-		Nonce:      nonce,
+		SubjectAID:    subject,
+		Tenant:        tenant,
+		Namespace:     namespace,
+		ParticipantID: participantID,
+		IssuedAtMs:    issuedAtMs,
+		Nonce:         nonce,
 	})
 	if err != nil {
 		return EnrollProof{}, err
@@ -79,4 +87,14 @@ func EnrolmentProof(agentSeed []byte, tenant, namespace string) (EnrollProof, er
 		return EnrollProof{}, err
 	}
 	return EnrollPop(agentSeed, tenant, namespace, uint64(time.Now().UnixMilli()), nonce)
+}
+
+// VoterEnrolmentProof is EnrolmentProof for a `voter` enrolment bound to participantID (seam-runtime
+// #1687): issuedAtMs is now and the nonce fresh; use EnrollPopForParticipant to pin either.
+func VoterEnrolmentProof(agentSeed []byte, tenant, namespace, participantID string) (EnrollProof, error) {
+	nonce, err := NewEnrollPopNonce()
+	if err != nil {
+		return EnrollProof{}, err
+	}
+	return EnrollPopForParticipant(agentSeed, tenant, namespace, participantID, uint64(time.Now().UnixMilli()), nonce)
 }

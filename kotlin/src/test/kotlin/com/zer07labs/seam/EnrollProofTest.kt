@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test
 
 /**
  * The agent-side enrolment proof and its REST form (#214), against the same shared vector as the raw
- * signer (conformance/enroll_pop_v1_payload_vector.json). The REST `pop` object must match the
+ * signer (conformance/enroll_pop_v2_payload_vector.json). The REST `pop` object must match the
  * vector's fields byte for byte once serialized. NO bless mode.
  */
 class EnrollProofTest {
@@ -26,7 +26,7 @@ class EnrollProofTest {
     fun enrolmentProofAndRestFormMatchVector() {
         val v: Map<String, Any?> =
             Gson().fromJson(
-                File("../conformance/enroll_pop_v1_payload_vector.json").readText(),
+                File("../conformance/enroll_pop_v2_payload_vector.json").readText(),
                 object : TypeToken<Map<String, Any?>>() {}.type,
             )
         val cases = v["cases"] as List<Map<String, Any?>>
@@ -47,6 +47,7 @@ class EnrollProofTest {
                     c["namespace"] as String,
                     issuedAtMs = issuedAtMs.toULong(),
                     nonce = nonce,
+                    participantId = c["participant_id"] as String,
                 )
             // RAW 64 bytes — the gRPC form.
             assertEquals(64, proof.signature.size, label)

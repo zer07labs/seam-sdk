@@ -31,8 +31,8 @@ seam-verify
 linked Seam's own library would be *Seam checking Seam* — which is precisely what "don't trust us" says you
 should not have to accept.
 
-It is written from the specs in `docs/` (plus the runtime's `seam-commitment-digest.v2.md`, which the bundle
-spec cites and the shared `conformance/` vectors pin), and nothing else.
+It is written from the specs in `docs/` (plus the runtime's `seam-commitment-digest.v4.md` and
+`voter-verification.v1.md`, which the bundle spec cites and the shared `conformance/` vectors pin), and nothing else.
 `cargo tree` is the assertion: if a Seam crate ever appears in it, the claim has quietly stopped being true.
 
 **The former exception: the (b′) entry preimages.** Spec clause (b′) requires `--issuer` to recompute every
@@ -399,7 +399,8 @@ EVIDENCE BUNDLE VERIFIED (seam-evidence-bundle.v1)
   - manifest: seam-evidence-bundle.v1, issuer is the pinned AID, every listed file matches its SHA-256 and size
   - window authenticated from the issuer-signed anchor (base_len 2): 4 link(s), 1 covering attestation(s)
   - decision 'dec:d1' is a chained link of tenant 'design-partner' inside the authenticated window
-  - the Commitment's TCT verifies against the pinned issuer and binds its seam-commitment-digest:v3
+  - 2 voter verification record(s) re-verify offline (seam-voter-pop-v1), all addressed to the pinned issuer from this decision's session
+  - the Commitment's TCT verifies against the pinned issuer and binds its seam-commitment-digest:v4
   - the issuer's signed binding ties this Commitment to the decision's chain link
   - context.json recomputes the chained context_digest
   - SHA-256(policy.json) is the chained policy_rules_digest
@@ -416,10 +417,20 @@ The six steps run in the spec's order and the first failure refuses with exit 2,
    anchor.json --strict` runs: the anchor's signature, every link, every attestation, a covering one.
 3. **Inclusion** — exactly one chained `DECISION_SEALED` for the manifest's decision, in its tenant, whose
    checksum is `inclusion.record_checksum`.
-4. **Commitment** — the self-attestation TCT verifies against the pinned AID (`iss == sub == aud`,
-   grants exactly `["aitp.attestation"]`) and its `ext` binding carries the recomputed
-   `seam-commitment-digest:v3` (the sealed explanation included, so a re-worded reason fails), and
-   `supersedes` matches the chained record. A Commitment with no TCT (`identity: local-sealed`) is bound
+4. **Commitment** — first the **voters** (seam-runtime#1687, D-045): every `vote`, `ballot` and
+   `objection` carries a sealed voter verification record and no `evaluation` does; every record is
+   addressed to the pinned issuer (compared by key); all come from one `(tenant, namespace, session,
+   open time, audience)`, which is this decision's `dec:{tenant}:{session}`; and each re-checks from the
+   record and its entry alone — the `seam-voter-pop-v1` input rebuilt, the window checked at
+   `accepted_at_ms`, the Ed25519 signature verified (`verify_strict`) under the key the `principal`
+   embeds. A P-256 voter key and the declared-but-unserved `cp_signed` method are refused, not skipped. A
+   record proves **distinct keys, not distinct parties**, and the vote content digest it signs is not
+   re-derived (what it covers is not in the bundle). The JSON output carries `voters_verified`. Then the
+   self-attestation TCT verifies against the pinned AID (`iss == sub == aud`, grants exactly
+   `["aitp.attestation"]`) and its `ext` binding carries the recomputed `seam-commitment-digest:v4` (the
+   sealed explanation, voter records included, under `seam-explanation-digest:v2`, so a re-worded reason
+   fails; fields 9/10 must be absent, since the bundle spec projects neither), and `supersedes` matches
+   the chained record. A Commitment with no TCT (`identity: local-sealed`) is bound
    by step 5 alone, and the output says so.
 5. **Binding** — the `seam.evidence-binding.v1` signature verifies against the pinned AID, and it names
    this decision, tenant, chain link and Commitment digest.

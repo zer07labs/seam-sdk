@@ -12,7 +12,7 @@ import secrets
 import threading
 import warnings
 from dataclasses import dataclass
-from typing import Callable, Dict, Mapping, Optional, Sequence, TypeVar
+from typing import Any, Callable, Dict, Mapping, Optional, Sequence, TypeVar
 
 import grpc
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -27,6 +27,7 @@ from ._authorize import (
 )
 from .crypto import (
     EnrollProof,
+    VoterPop,
     aid_from_pubkey,
     build_presentation,
     enroll_pop,
@@ -91,27 +92,61 @@ _REPLAY_GUARDED = frozenset(
 # stay importable from here (``from seam_sdk.client import SeamError``) for backward compatibility.
 
 
+def _voter_proof_pb(proof, where: str) -> "pb.VoterProof":
+    """A ``VoterProof`` from a :class:`~seam_sdk.crypto.VoterPop` (what :func:`sign_voter_pop` returns)
+    or a generated ``VoterProof``. Anything else is a caller bug, refused before the wire."""
+    if isinstance(proof, VoterPop):
+        if len(proof.signature) != 64:
+            raise ValueError(f"{where}: voter proof signature must be 64 bytes")
+        return proof.to_pb(pb)
+    if isinstance(proof, pb.VoterProof):
+        return proof
+    raise TypeError(
+        f"{where}: proof must be a seam_sdk.VoterPop (sign_voter_pop) or a VoterProof, "
+        f"got {type(proof).__name__}"
+    )
+
+
 def _vote_messages(votes) -> list:
-    """`run_decision`'s ballot: ``(agent, value)`` or ``(agent, value, reason)`` per vote, mixed.
+    """`run_decision`'s ballot: per vote a generated ``Vote``, or ``(agent, value, reason, proof)``,
+    ``(agent, value, reason)`` or ``(agent, value)``, mixed.
 
     Shape only. An entry of any other length is a caller bug in THIS process, refused before the
     wire with the vote's index; the reason's content is the runtime's to judge, never checked here.
+    Since runtime 0.87.0 (#1687) every vote needs its voter's ``seam-voter-pop-v1`` proof: a 2- or
+    3-element vote sends none and the runtime refuses the decision ``voter_proof_required``.
     """
     out = []
     for i, vote in enumerate(votes):
+        if isinstance(vote, pb.Vote):
+            out.append(vote)
+            continue
         # Any non-string sequence, as the old `for a, v in votes` unpacking accepted; a str/bytes of
-        # length 2 or 3 would otherwise unpack into characters and send a nonsense vote.
+        # length 2-4 would otherwise unpack into characters and send a nonsense vote.
         if (
             isinstance(vote, (str, bytes))
             or not isinstance(vote, Sequence)
-            or len(vote) not in (2, 3)
+            or len(vote) not in (2, 3, 4)
         ):
             raise TypeError(
-                f"votes[{i}] must be an (agent, value) pair or an (agent, value, reason) triple"
+                f"votes[{i}] must be a Vote, or an (agent, value[, reason[, proof]]) tuple"
             )
         agent, value, *rest = vote
-        out.append(pb.Vote(agent=agent, value=value, reason=rest[0] if rest else ""))
+        msg = pb.Vote(agent=agent, value=value, reason=rest[0] if rest else "")
+        if len(rest) == 2:
+            msg.proof.CopyFrom(_voter_proof_pb(rest[1], f"votes[{i}]"))
+        out.append(msg)
     return out
+
+
+def _decision_of(decision_id: str) -> Optional[tuple[str, str]]:
+    """``(tenant, session_id)`` of a ``dec:{tenant}:{session_id}`` decision id, or ``None`` when it is
+    not one. The tenant holds no ``:``; the session id is everything after it."""
+    prefix, _, rest = decision_id.partition(":")
+    tenant, sep, session = rest.partition(":")
+    if prefix != "dec" or not sep or not tenant or not session:
+        return None
+    return tenant, session
 
 
 def _now_ms() -> int:
@@ -219,6 +254,7 @@ class Agent:
         tenant: str,
         namespace: str,
         *,
+        participant_id: str = "",
         issued_at_ms: Optional[int] = None,
         nonce: Optional[str] = None,
     ) -> EnrollProof:
@@ -228,13 +264,18 @@ class Agent:
 
         ``issued_at_ms`` defaults to now and ``nonce`` to 16 fresh random bytes as 22 base64url
         characters; both are overridable for tests. The runtime accepts the proof for 5 minutes (and
-        up to 60 s ahead of its clock), so mint it just before the enrolment call."""
+        up to 60 s ahead of its clock), so mint it just before the enrolment call.
+
+        ``participant_id`` is signed (``seam-enroll-pop-v2``, runtime 0.87.0): ``""`` for every kind but
+        ``voter``, and for a ``voter`` the participant it is being bound to, the same value the operator
+        passes as ``enroll_tenant(..., kind="voter", participant_id=...)``."""
         return enroll_pop(
             self.seed,
             tenant,
             namespace,
             issued_at_ms=_now_ms() if issued_at_ms is None else issued_at_ms,
             nonce=new_enroll_pop_nonce() if nonce is None else nonce,
+            participant_id=participant_id,
         )
 
 
@@ -796,6 +837,7 @@ class SeamClient:
         proposal_id: str,
         value: str,
         *,
+        proof: Any = None,
         reason: str = "",
         usage: Optional[StepUsage] = None,
         credential: Optional[Agent] = None,
@@ -804,7 +846,17 @@ class SeamClient:
         """Cast a vote on a proposal. ``reason`` is the voter's stated reason, sealed into the vote
         envelope (seam-runtime #804). Empty means no reason, byte-identical to a vote without one. The
         server bounds it (4096 bytes, injection-redacted, classified) and REQUIRES it when the governing
-        policy sets ``rules["x-com.zer07labs.seam"].capture_dissent``; those checks are deliberately not mirrored here."""
+        policy sets ``rules["x-com.zer07labs.seam"].capture_dissent``; those checks are deliberately not mirrored here.
+
+        ``proof`` (required by runtime 0.87.0+, #1687; omitted, none is sent and the runtime refuses) is the voter's own ``seam-voter-pop-v1``
+        proof: :func:`seam_sdk.sign_voter_pop` with the ``voter`` key enrolled for ``voter``, over
+        ``VoterPopTarget(issuer, tenant, namespace, session_id, opened_at_millis)`` (the open's
+        ``SessionStep.opened_at_millis``), the :func:`seam_sdk.vote_content_digest` of the accepted
+        proposal's option, and the entry ``{"kind": "vote", "participant": voter, "proposal_id":
+        proposal_id, "value": value, "reason": reason}``. A :class:`~seam_sdk.VoterPop` or a generated
+        ``VoterProof``. Without a valid one the runtime refuses ``voter_proof_required`` /
+        ``voter_proof_invalid`` (``PermissionDeniedError``).
+        """
         req = pb.VoteRequest(
             session_id=session_id,
             voter=voter,
@@ -812,6 +864,8 @@ class SeamClient:
             value=value,
             reason=reason,
         )
+        if proof is not None:
+            req.proof.CopyFrom(_voter_proof_pb(proof, "submit_vote"))
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
         return self._credentialed_call(
@@ -851,8 +905,8 @@ class SeamClient:
 
         ``rationale_ref`` is a ``sha256:<hex>`` context ref. Since runtime 0.44.0 it is **sealed**:
         every accepted evaluation's ``rationale_ref`` (and whether a ``confidence`` was stated at
-        all) is bound into the Commitment's explanation under ``seam-explanation-digest:v1``, which
-        ``seam-commitment-digest:v3`` covers. ``verify_decision`` recomputes it locally.
+        all) is bound into the Commitment's explanation under ``seam-explanation-digest:v2``, which
+        ``seam-commitment-digest:v4`` covers. ``verify_decision`` recomputes it locally.
         """
         req = pb.EvaluationRequest(
             session_id=session_id,
@@ -885,6 +939,7 @@ class SeamClient:
         proposal_id: str,
         reason: str,
         *,
+        proof: Any = None,
         severity: str = "",
         usage: Optional[StepUsage] = None,
         credential: Optional[Agent] = None,
@@ -894,6 +949,11 @@ class SeamClient:
 
         ``severity`` is one of ``low | medium | high | critical``; empty defaults to ``medium``
         (the MACP default, applied server-side).
+
+        ``proof`` (required by runtime 0.87.0+, #1687; omitted, none is sent and the runtime refuses) is the objector's own ``seam-voter-pop-v1``
+        proof (:func:`seam_sdk.sign_voter_pop`) over the entry ``{"kind": "objection", "participant":
+        objector, "proposal_id": proposal_id, "value": severity, "reason": reason}`` and the content
+        digest of the proposal's option; see :meth:`submit_vote`.
         """
         req = pb.ObjectionRequest(
             session_id=session_id,
@@ -902,6 +962,8 @@ class SeamClient:
             reason=reason,
             severity=severity,
         )
+        if proof is not None:
+            req.proof.CopyFrom(_voter_proof_pb(proof, "submit_objection"))
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
         return self._credentialed_call(
@@ -1009,6 +1071,7 @@ class SeamClient:
         request_id: str,
         choice: "pb.BallotChoice.ValueType",
         *,
+        proof: Any = None,
         reason: str = "",
         usage: Optional[StepUsage] = None,
         credential: Optional[Agent] = None,
@@ -1020,6 +1083,13 @@ class SeamClient:
         ``_ABSTAIN``. One RPC covers all three: the three upstream MACP payloads are structurally
         identical, and the tag is what selects the wire envelope. ``BALLOT_CHOICE_UNSPECIFIED`` is
         not a vote — passing it is the server's INVALID_ARGUMENT to raise.
+
+        ``proof`` (required by runtime 0.87.0+, #1687; omitted, none is sent and the runtime refuses) is the voter's own ``seam-voter-pop-v1``
+        proof (:func:`seam_sdk.sign_voter_pop`) over the entry ``{"kind": "ballot", "participant":
+        voter, "proposal_id": request_id, "value": <the choice's word: "APPROVE", "REJECT" or "ABSTAIN">,
+        "reason": reason}`` and the content digest
+        of the approval request's ``action`` (mode ``macp.mode.quorum.v1``, proposal id ``request_id``);
+        see :meth:`submit_vote`.
         """
         req = pb.BallotRequest(
             session_id=session_id,
@@ -1028,6 +1098,8 @@ class SeamClient:
             choice=choice,
             reason=reason,
         )
+        if proof is not None:
+            req.proof.CopyFrom(_voter_proof_pb(proof, "submit_ballot"))
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
         return self._credentialed_call(
@@ -1481,12 +1553,19 @@ class SeamClient:
         if proof.issuer_aid != expected_issuer:
             raise IssuerMismatchError(proof.issuer_aid, expected_issuer)
         c = proof.commitment
+        # #1687: the decision id names the session every sealed voter record must come from.
+        decision = _decision_of(decision_id)
+        if decision is None:
+            return False
         return verify_tct(
-            expected_issuer, c.signed_artifact.decode(), commitment_view(c)
+            expected_issuer,
+            c.signed_artifact.decode(),
+            commitment_view(c),
+            decision=decision,
         )
 
 
-# The lowercase words `seam-explanation-digest:v1` frames, by `ExplanationKind` value. An unknown or
+# The lowercase words `seam-explanation-digest:v2` frames, by `ExplanationKind` value. An unknown or
 # UNSPECIFIED kind maps to a word the digest refuses, so verification fails closed rather than guessing.
 _EXPLANATION_KIND_WORDS = {
     pb.EXPLANATION_KIND_VOTE: "vote",
@@ -1500,7 +1579,7 @@ def commitment_view(c: "pb.Commitment") -> dict:
     """The dict :func:`~seam_sdk.crypto.verify_tct` takes, from a served ``Commitment``.
 
     Carries the committer and the sealed explanation (entries AND the published digest), so
-    verification checks the entries against the digest before binding it (seam-commitment-digest:v3).
+    verification checks the entries against the digest before binding it (seam-commitment-digest:v4).
     Explicit presence is preserved: an absent ``confidence`` / ``rationale_ref`` stays ``None``."""
     return {
         "id": c.id,
@@ -1526,9 +1605,40 @@ def commitment_view(c: "pb.Commitment") -> dict:
                 "rationale_ref": e.rationale_ref
                 if e.HasField("rationale_ref")
                 else None,
+                "voter_verification": _voter_record_view(e.voter_verification)
+                if e.HasField("voter_verification")
+                else None,
             }
             for e in c.explanation
         ],
+    }
+
+
+# The method words `seam-explanation-digest:v2` frames, by `VoterVerification` value (#1687). UNSPECIFIED
+# and an unknown value map to a word the digest refuses, so verification fails closed.
+_VOTER_METHOD_WORDS = {
+    pb.VOTER_VERIFICATION_POP: "pop",
+    pb.VOTER_VERIFICATION_CP_SIGNED: "cp_signed",
+}
+
+
+def _voter_record_view(v: "pb.VoterVerificationRecord") -> dict:
+    """A sealed ``VoterVerificationRecord``, field for field, as the digest and voter checks take it."""
+    return {
+        "method": _VOTER_METHOD_WORDS.get(v.method, f"<unknown method {v.method}>"),
+        "principal": v.principal,
+        "content_digest": bytes(v.content_digest),
+        "issued_at_ms": v.issued_at_ms,
+        "expires_at_ms": v.expires_at_ms,
+        "signature": bytes(v.signature),
+        "signer_certificate": bytes(v.signer_certificate),
+        "tenant": v.tenant,
+        "namespace": v.namespace,
+        "session_id": v.session_id,
+        "opened_at_millis": v.opened_at_millis,
+        "issuer": v.issuer,
+        "audience": v.audience,
+        "accepted_at_ms": v.accepted_at_ms,
     }
 
 

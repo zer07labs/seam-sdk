@@ -403,3 +403,33 @@ transcription, so no digest, refusal or vector changed. Only the source it cites
 
 D-035's clean-room claim now holds without exception for this crate's own code. D-043 stays above unedited,
 as the record of why the transcription existed.
+
+## D-045 — verified voters: commitment digest v4, explanation digest v2, and the offline voter check (seam-runtime#1687)
+
+**Decision.** This crate follows seam-runtime PR #1713 (head `8f4e30ee`, branch `feat/1687-verified-voters`,
+not yet on main) for the seam-sdk 0.87.0 pre-releases, written from `seam-commitment-digest.v4.md` and
+`voter-verification.v1.md` and never from the runtime's Rust:
+
+* **Digests.** `seam-explanation-digest:v2` appends `VV` per entry (a presence byte, then fifteen always-framed
+  fields); `seam-commitment-digest:v4` frames field 8 as that digest and appends fields 9 (selection) and 10
+  (Gate certificate) as `0x00 | 0x01 ‖ be64(32) ‖ digest`. A slot digest of any other length, an unknown
+  method word or a content digest that is not 32 bytes is refused, never hashed. The v3/v1 framings are deleted,
+  not dual-verified, as the runtime deleted them (a history boundary: a pre-#1687 record does not verify here).
+* **The voter check** (`src/voter.rs`, `verify_commitment_voters`) runs in `bundle` step 4, **before** the TCT,
+  with the decision bound from the manifest's `dec:{tenant}:{session}`. It mirrors the runtime's commitment-level
+  check and its shared tamper table (`voter_verifier_agreement.rs`), which `src/voter.rs` reproduces as a unit
+  test that ships with the crate.
+* **The pinned issuer is compared by key**, not by string, as everywhere else in this crate (the two AID
+  spellings name one key). The runtime compares strings; both accept every record the runtime seals, since it
+  writes its own issuer AID verbatim. The issuer string is still signed, so it cannot be swapped.
+* **Ed25519 only.** A P-256 voter AID fails the check (`BadSignature`): this crate carries no P-256 primitive,
+  and adding one is a dependency decision, not a port. It fails closed. `cp_signed` is refused the same way.
+* **No `commitment` subcommand.** The runtime's `seam-verify commitment` (a standalone proof file) has no
+  counterpart here; `bundle` is this crate's only Commitment surface, and its JSON carries `voters_verified`.
+* **Fixtures re-exported** from the runtime's own exporter at `8f4e30ee` (provenance in `tests/bundle.rs`).
+  `full/` is now a genuine runtime export with policy disclosed, so the old manifest edit is gone. The
+  `allocated/` commitment digest now differs from `full/`'s, because each voter record binds its own session;
+  the test asserts that this is the only difference.
+* **Vendored docs** `seam-event.v1.md` and `evidence-bundle.v1.md` are pinned `@ 8f4e30e tracking
+  feat/1687-verified-voters`. The tracking pin is self-terminating (`scripts/check_vendored_spec.py`); re-pin
+  to main when #1713 lands (seam-sdk#352).

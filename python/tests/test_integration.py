@@ -19,10 +19,13 @@ import pytest
 
 from live_server import spawn_server
 
+from demo_voters import DemoVotingClient
+from seam_sdk.client import commitment_view
 from seam_sdk import (
     Agent,
     BudgetLimits,
     InvalidArgumentError,
+    PermissionDeniedError,
     IssuerMismatchError,
     SeamAdminClient,
     SeamClient,
@@ -52,7 +55,7 @@ _SEMVER = re.compile(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?")
 
 
 def test_full_round_trip(server):
-    client = SeamClient.connect(server)
+    client = DemoVotingClient.connect(server)
     agent = Agent(bytes([42] * 32))  # the enrolled reference agent
 
     # Session ids follow the runtime's P4 rule (a v4/v7 UUID, or a token of at least 22 chars from
@@ -61,9 +64,10 @@ def test_full_round_trip(server):
         agent,
         "py-int-sid-0123456789abcdef",
         ["fraud-v3", "risk-v2"],
-        [("fraud-v3", "BLOCK"), ("risk-v2", "BLOCK")],
+        [("fraud-v3", "APPROVE"), ("risk-v2", "APPROVE")],
     )
-    assert dec.decided_value == "BLOCK"
+    # #1687: a one-shot vote value is exactly APPROVE/REJECT/ABSTAIN (the voter signs it as sealed).
+    assert dec.decided_value == "APPROVE"
     assert dec.outcome == "Resolved"
 
     record = client.get_decision(dec.decision_id)
@@ -119,7 +123,7 @@ def test_full_round_trip(server):
 
 def test_session_lifecycle_seals(server):
     """open → propose → vote → commit seals a decision over the incremental session API."""
-    client = SeamClient.connect(server)
+    client = DemoVotingClient.connect(server)
     agent = Agent(bytes([42] * 32))
 
     client.open_session(agent, "py-sess-sid-0123456789abcdef", ["lead", "peer"])
@@ -135,9 +139,9 @@ def test_session_lifecycle_seals(server):
 def test_features_do_not_affect_the_record(server):
     """H4: request features steer the advisory serving read but NEVER touch the sealed record — a
     decision run *with* features seals the same structural record as one run *without*."""
-    client = SeamClient.connect(server)
+    client = DemoVotingClient.connect(server)
     agent = Agent(bytes([42] * 32))
-    votes = [("fraud-v3", "BLOCK"), ("risk-v2", "BLOCK")]
+    votes = [("fraud-v3", "APPROVE"), ("risk-v2", "APPROVE")]
 
     plain = client.run_decision(
         agent, "py-feat-off-sid-0123456789abcdef", ["fraud-v3", "risk-v2"], votes
@@ -166,12 +170,12 @@ def test_outcome_fields_follow_the_advertised_gate(server):
     """BP-2 / OI-R6 end to end: ``reward`` / ``metrics`` / ``observed_at`` are accepted exactly while the
     replica advertises them, and refused INVALID_ARGUMENT (never dropped) while it does not. Holds on
     either side of BP-2c, so no version branch."""
-    client = SeamClient.connect(server)
+    client = DemoVotingClient.connect(server)
     dec = client.run_decision(
         Agent(bytes([42] * 32)),
         "py-bp2-sid-0123456789abcdef",
         ["fraud-v3", "risk-v2"],
-        [("fraud-v3", "BLOCK"), ("risk-v2", "BLOCK")],
+        [("fraud-v3", "APPROVE"), ("risk-v2", "APPROVE")],
     )
     features = client.server_wire_features()
     # Every runtime this lane runs (seamd:main) is 0.71.0+; below that the fields would be dropped.
@@ -229,7 +233,7 @@ def test_budget_suspend_resume_loop(dual_plane):
     dimension-raising resume un-suspends it and the session seals. Resume is the R9 approver action on the
     **management** plane (rt-D: `SeamCoordination.ResumeSession` is now a tombstone)."""
     data_addr, mgmt_addr = dual_plane
-    client = SeamClient.connect(data_addr)
+    client = DemoVotingClient.connect(data_addr)
     from operator_token import mint_operator_token
 
     # No dev-open mgmt plane since seam-runtime #1156: the R9 approver presents an operator token.
@@ -316,7 +320,7 @@ def governed_server(tmp_path):
 
 
 def test_authorize_live_allow_deny_transform_sync(governed_server):
-    client = SeamClient.connect(governed_server)
+    client = DemoVotingClient.connect(governed_server)
     agent = Agent(bytes([42] * 32))
 
     # ALLOW: in-scope tool, benign content.
@@ -374,13 +378,13 @@ def test_authorize_live_round_trip_aio(governed_server):
 
 def test_authorize_live_on_behalf_of_decision(server):
     """Phase 0b over the wire: a decision made on_behalf_of end users seals and reads back."""
-    client = SeamClient.connect(server)
+    client = DemoVotingClient.connect(server)
     agent = Agent(bytes([42] * 32))
     dec = client.run_decision(
         agent,
         "py-obo-sid-0123456789abcdef",
         ["fraud-v3", "risk-v2"],
-        [("fraud-v3", "BLOCK"), ("risk-v2", "BLOCK")],
+        [("fraud-v3", "APPROVE"), ("risk-v2", "APPROVE")],
         on_behalf_of=["user:alice@example.com"],
     )
     assert dec.outcome == "Resolved"
@@ -421,14 +425,14 @@ def _seal(client: SeamClient, agent: Agent, tag: str) -> str:
         agent,
         tag,
         ["fraud-v3", "risk-v2"],
-        [("fraud-v3", "BLOCK"), ("risk-v2", "BLOCK")],
+        [("fraud-v3", "APPROVE"), ("risk-v2", "APPROVE")],
     )
     assert dec.outcome == "Resolved"
     return dec.decision_id
 
 
 def test_deny_plane_credentialed_read_succeeds_and_bare_read_is_refused(deny_plane):
-    client = SeamClient.connect(deny_plane)
+    client = DemoVotingClient.connect(deny_plane)
     agent = Agent(bytes([42] * 32))
     decision_id = _seal(client, agent, "py-deny-cred-sid-0123456789abcdef")
 
@@ -443,7 +447,7 @@ def test_deny_plane_credentialed_read_succeeds_and_bare_read_is_refused(deny_pla
         client.replay_decision(decision_id)
 
     # A client bound to the agent (#202) attaches the credential without a per-call argument.
-    bound = SeamClient.connect(deny_plane, agent=agent)
+    bound = DemoVotingClient.connect(deny_plane, agent=agent)
     assert bound.get_decision(decision_id).decision_id == decision_id
 
     # #275: a ticket the runtime rejects is refreshed once, transparently. Corrupt the cached
@@ -471,7 +475,7 @@ def test_deny_plane_refuses_a_header_subject_and_a_wrong_context_signature(
     from seam_sdk._gen.seam.api.v1 import seam_pb2_grpc as rpc
     from seam_sdk.crypto import request_sig
 
-    client = SeamClient.connect(deny_plane)
+    client = DemoVotingClient.connect(deny_plane)
     agent = Agent(bytes([42] * 32))
     first = _seal(client, agent, "py-deny-a-sid-0123456789abcdef")
     second = _seal(client, agent, "py-deny-b-sid-0123456789abcdef")
@@ -602,7 +606,7 @@ def test_submit_retry_lands_once_and_resends_are_deduped(deny_plane):
     """Criterion 4(a)-(d) on one session with a 1000-token hard limit and a 600-token vote: a second
     debit would put spend at 1200 and the commit would come back Suspended. It resolves instead, and
     its tally holds ONE approve. Then the resolving commit itself is resent."""
-    client = SeamClient.connect(deny_plane)
+    client = DemoVotingClient.connect(deny_plane)
     agent = Agent(bytes([42] * 32))
     sid = "py-submit-retry-sid-0123456789abcdef"
     first, same, other = _vote_then_resend_twice(client, agent, sid, 1000)
@@ -647,7 +651,7 @@ def test_submit_retry_debits_the_vote_exactly_once(deny_plane):
     """The other half of "debited once": with the hard limit AT the vote's 600 tokens, one debit
     alone exhausts the budget, so the commit is refused + Suspended. Together with the test above
     (1000-token limit → Resolved) that pins the debit to exactly one."""
-    client = SeamClient.connect(deny_plane)
+    client = DemoVotingClient.connect(deny_plane)
     agent = Agent(bytes([42] * 32))
     sid = "py-submit-debit-sid-0123456789abcdef"
     _vote_then_resend_twice(client, agent, sid, _VOTE_TOKENS)
@@ -659,8 +663,8 @@ def test_submit_retry_debits_the_vote_exactly_once(deny_plane):
 def test_submit_retry_after_client_seal_returns_sealed_id(deny_plane):
     """The session is cancelled between the rejection and the retry. The resend is answered from the
     sealed early return: Ok, the CANCEL's decision_id, collective_outcome unset — not an error."""
-    client = SeamClient.connect(deny_plane)
-    canceller = SeamClient.connect(
+    client = DemoVotingClient.connect(deny_plane)
+    canceller = DemoVotingClient.connect(
         deny_plane
     )  # its own ticket cache: its call is independent
     agent = Agent(bytes([42] * 32))
@@ -705,3 +709,41 @@ def test_submit_retry_after_sweeper_expiry_raises_failed_precondition():
         "typed and is not retried) is test_credential_refresh."
         "test_submit_retry_failed_precondition_propagates_typed_and_is_not_retried."
     )
+
+
+def test_an_unsigned_vote_is_refused_and_a_signed_one_seals_a_verifiable_record(server):
+    """#1687 end to end: the runtime refuses a vote without its voter's proof (no flag, no dev bypass),
+    and the same vote signed with the voter's enrolled key seals a record whose every voter verification
+    re-checks offline (``verify_decision`` now runs ``verify_commitment_voters``)."""
+    agent = Agent(bytes([42] * 32))
+    plain = SeamClient.connect(server)
+    sid = "py-unsigned-sid-0123456789abcdef"
+    plain.open_session(agent, sid, ["lead", "peer"])
+    plain.submit_proposal(sid, "lead", "p1", "BLOCK")
+    with pytest.raises(PermissionDeniedError) as e:
+        plain.submit_vote(sid, "peer", "p1", "APPROVE")
+    assert "voter_proof_required" in str(e.value) or getattr(e.value, "reason", "") == (
+        "voter_proof_required"
+    ), e.value
+    with pytest.raises(PermissionDeniedError):
+        plain.run_decision(
+            agent,
+            "py-unsigned-1s-sid-0123456789abcdef",
+            ["fraud-v3"],
+            [("fraud-v3", "APPROVE")],
+        )
+
+    signed = DemoVotingClient.connect(server)
+    dec = signed.run_decision(
+        agent,
+        "py-signed-1s-sid-0123456789abcdef",
+        ["fraud-v3", "risk-v2"],
+        [("fraud-v3", "APPROVE"), ("risk-v2", "APPROVE", "looks fine")],
+    )
+    view = commitment_view(signed.get_commitment_proof(dec.decision_id).commitment)
+    voters = [
+        e for e in view["explanation"] if e["kind"] in ("vote", "ballot", "objection")
+    ]
+    assert len(voters) == 2, view["explanation"]
+    assert all(e["voter_verification"]["method"] == "pop" for e in voters), voters
+    assert signed.verify_decision(dec.decision_id, signed.issuer_aid()) is True

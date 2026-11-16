@@ -1,14 +1,16 @@
-// `seam-commitment-digest:v3` + `seam-explanation-digest:v1`, and the RFC-AITP-0005 self-attestation TCT.
+// `seam-commitment-digest:v4` + `seam-explanation-digest:v2`, and the RFC-AITP-0005 self-attestation TCT.
 //
-// `conformance/commitment_digest_v3_vector.json` is seam-runtime's trust-aitp reference fixture,
-// vendored. Per the normative spec (`seam-runtime/docs/specs/seam-commitment-digest.v3.md`) an
+// `conformance/commitment_digest_v4_vector.json` is seam-runtime's trust-aitp reference fixture (#1687),
+// vendored. Per the normative spec (`seam-runtime/docs/specs/seam-commitment-digest.v4.md`) an
 // implementation is conforming iff it reproduces EVERY digest in that file and verifies its
 // `signed_artifact` against its `issuer_aid`. The `commitment` objects are the REST projection:
 // snake_case, byte fields as JSON number arrays, absent `supersedes` / `confidence` / `rationale_ref`
-// as `null`. The TCT shape (`grants: ["aitp.attestation"]`, the digest under
+// as `null`. v4 adds the sealed voter verification record on every vote / ballot / objection (`VV`, byte
+// fields as number arrays) and the always-framed slots 9 (selection) and 10 (Gate certificate), given
+// per case as `selection_digest` / `certificate_digest` hex or `null`. The TCT shape (`grants: ["aitp.attestation"]`, the digest under
 // `ext["com.zer07labs.seam"]`) is taken from the signed vectors, which are the source of truth where
 // the pinned spec's prose still describes the retired grants form. Mirrors
-// `python/tests/test_commitment_digest_v3.py`.
+// `python/tests/test_commitment_digest_v4.py`.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -24,7 +26,8 @@ import {
   verifyTct,
 } from "../src/crypto.js";
 import { commitmentView } from "../src/client.js";
-import { CommitmentSchema, ExplanationKind } from "../gen/seam/api/v1/seam_pb.js";
+import { CommitmentSchema, ExplanationKind, VoterVerification } from "../gen/seam/api/v1/seam_pb.js";
+import { commitmentFromVector } from "./vector_commitment.js";
 
 interface RestCommitment {
   id: string;
@@ -42,20 +45,32 @@ interface RestCommitment {
 const conf = (name: string) =>
   JSON.parse(readFileSync(new URL(`../../conformance/${name}`, import.meta.url), "utf8"));
 
-const vector = conf("commitment_digest_v3_vector.json") as {
+const vector = conf("commitment_digest_v4_vector.json") as {
   issuer_aid: string;
-  cases: { name: string; commitment: RestCommitment; explanation_digest: string; commitment_digest: string }[];
+  commitment_digest_domain: string;
+  explanation_digest_domain: string;
+  cases: {
+    name: string;
+    commitment: RestCommitment;
+    selection_digest?: string | null;
+    certificate_digest?: string | null;
+    explanation_digest: string;
+    commitment_digest: string;
+  }[];
 };
 const vectors = conf("vectors.json");
 const TCT = vectors.tct;
-const EMPTY = "eb7853dc086ef5385db8408cf35c9c984e845ccc03d269102f942eed7806ce40";
+TCT.inputs.commitment = commitmentFromVector(TCT.inputs.commitment);
+const EMPTY = "cabe83af912ea38ef4525f5a7d8580b4c4e217417edc0c93f936d2c18c4fd8f5";
 
 // The shared vectors pin `now = 0` (see verifyTct's `exp` comment); every `exp` is far in the future.
 const NOW_S = 0;
 const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
 
-function toCommitment(r: RestCommitment): Commitment {
+function toCommitment(r: RestCommitment, slots?: { selection_digest?: string | null; certificate_digest?: string | null }): Commitment {
   return {
+    selection_digest: slots?.selection_digest ?? null,
+    certificate_digest: slots?.certificate_digest ?? null,
     id: r.id,
     action: r.action,
     authority: r.authority,
@@ -80,20 +95,25 @@ const signedCase = () => {
   return signed[0];
 };
 
-test("v3 vector: every case reproduces its explanation and commitment digests", () => {
-  assert.ok(vector.cases.length >= 3, "vector has fewer cases than the spec describes");
+test("v4 vector: the domains are the ones this SDK frames", () => {
+  assert.equal(vector.commitment_digest_domain, "seam-commitment-digest:v4");
+  assert.equal(vector.explanation_digest_domain, "seam-explanation-digest:v2");
+});
+
+test("v4 vector: every case reproduces its explanation and commitment digests", () => {
+  assert.ok(vector.cases.length >= 6, "vector has fewer cases than the spec describes");
   for (const c of vector.cases) {
     assert.equal(hex(explanationDigest(c.commitment.explanation)), c.explanation_digest, `${c.name}: explanation`);
     assert.equal(hex(new Uint8Array(c.commitment.explanation_digest)), c.explanation_digest, `${c.name}: published`);
-    const cm = toCommitment(c.commitment);
+    const cm = toCommitment(c.commitment, c);
     assert.equal(seamCommitmentDigest(cm), c.commitment_digest, `${c.name}: entries + published`);
-    // Published digest only (verifies who/what, not why), and entries only: the same field 9.
+    // Published digest only (verifies who/what, not why), and entries only: the same field 8.
     assert.equal(seamCommitmentDigest({ ...cm, explanation: undefined }), c.commitment_digest, `${c.name}: published only`);
     assert.equal(seamCommitmentDigest({ ...cm, explanation_digest: undefined }), c.commitment_digest, `${c.name}: entries only`);
   }
 });
 
-test("v3 spec: empty explanation and the all-empty worked example", () => {
+test("v4 spec: empty explanation and the all-empty worked example", () => {
   assert.equal(hex(explanationDigest([])), EMPTY);
   // Six empty fields, an absent `supersedes`, the empty explanation.
   assert.equal(
@@ -102,8 +122,8 @@ test("v3 spec: empty explanation and the all-empty worked example", () => {
   );
 });
 
-test("v3: absent and present-empty supersedes are different digests", () => {
-  // The one change v3 makes: a presence byte. v2 framed absent as the empty string.
+test("v4: absent and present-empty supersedes are different digests", () => {
+  // The presence byte (since v3). v2 framed absent as the empty string.
   const absent = caseNamed("all_empty");
   const empty = caseNamed("empty_supersedes");
   assert.equal(absent.commitment.supersedes, null);
@@ -118,7 +138,67 @@ test("v3: absent and present-empty supersedes are different digests", () => {
   );
 });
 
-test("v3 vector: populated_signed verifies against issuer_aid; tampering does not", () => {
+test("v4: fields 9 and 10 — each slot is bound, and absent is not present", () => {
+  const empty = toCommitment(caseNamed("all_empty").commitment);
+  const sel = caseNamed("selection_present");
+  const cert = caseNamed("certificate_present");
+  const both = caseNamed("both_present");
+  assert.equal(seamCommitmentDigest({ ...empty, selection_digest: sel.selection_digest }), sel.commitment_digest);
+  assert.equal(seamCommitmentDigest({ ...empty, certificate_digest: cert.certificate_digest }), cert.commitment_digest);
+  // Bytes, a number array and hex are the same input.
+  const selBytes = new Uint8Array(Buffer.from(sel.selection_digest!, "hex"));
+  assert.equal(seamCommitmentDigest({ ...empty, selection_digest: selBytes }), sel.commitment_digest);
+  assert.equal(seamCommitmentDigest({ ...empty, selection_digest: [...selBytes] }), sel.commitment_digest);
+  // The two slots are distinct positions: swapping them moves the digest.
+  assert.notEqual(
+    seamCommitmentDigest({ ...empty, selection_digest: cert.certificate_digest, certificate_digest: sel.selection_digest }),
+    both.commitment_digest,
+  );
+  const digests = new Set([caseNamed("all_empty"), sel, cert, both].map((c) => c.commitment_digest));
+  assert.equal(digests.size, 4);
+});
+
+test("v4: a slot digest that is not 32 bytes is refused, and verifyTct fails closed on it", () => {
+  const sc = signedCase();
+  const jws = Buffer.from(sc.commitment.signed_artifact).toString("utf8");
+  const cm = toCommitment(sc.commitment);
+  for (const bad of [new Uint8Array(0), new Uint8Array(31), new Uint8Array(33), "ab", "zz".repeat(32)]) {
+    assert.throws(() => seamCommitmentDigest({ ...cm, selection_digest: bad }), Error);
+    assert.throws(() => seamCommitmentDigest({ ...cm, certificate_digest: bad }), Error);
+    assert.equal(verifyTct(vector.issuer_aid, jws, { ...cm, selection_digest: bad }, NOW_S), false);
+  }
+});
+
+test("v4: the voter verification record is bound, and a malformed one is refused", () => {
+  const sc = signedCase();
+  const jws = Buffer.from(sc.commitment.signed_artifact).toString("utf8");
+  const cm = toCommitment(sc.commitment);
+  const withRecord = cm.explanation!.findIndex((e) => e.voter_verification);
+  assert.ok(withRecord >= 0, "the signed case should carry a voter record");
+  const vv = cm.explanation![withRecord].voter_verification!;
+  const swap = (v: unknown) =>
+    cm.explanation!.map((e, i) => (i === withRecord ? { ...e, voter_verification: v as typeof vv } : e));
+  const verifies = (v: unknown) =>
+    verifyTct(vector.issuer_aid, jws, { ...cm, explanation: swap(v), explanation_digest: undefined }, NOW_S);
+  assert.equal(verifies(vv), true, "control");
+  assert.equal(verifies(null), false, "record dropped");
+  assert.equal(verifies({ ...vv, accepted_at_ms: BigInt(vv.accepted_at_ms) + 1n }), false, "accepted_at_ms bound");
+  assert.equal(verifies({ ...vv, audience: "seam-partner" }), false, "audience bound");
+  for (const [name, bad] of [
+    ["unknown method", { ...vv, method: "POP" }],
+    ["unspecified method", { ...vv, method: "" }],
+    ["31-byte content digest", { ...vv, content_digest: new Array(31).fill(0) }],
+    ["33-byte content digest", { ...vv, content_digest: new Array(33).fill(0) }],
+    ["negative time", { ...vv, issued_at_ms: -1 }],
+    ["u64 overflow", { ...vv, expires_at_ms: 1n << 64n }],
+    ["not bytes", { ...vv, signature: [256] }],
+  ] as [string, unknown][]) {
+    assert.throws(() => explanationDigest(swap(bad)), Error, `${name} must be refused`);
+    assert.equal(verifies(bad), false, `${name} must verify false, never throw`);
+  }
+});
+
+test("v4 vector: populated_signed verifies against issuer_aid; tampering does not", () => {
   const c = caseNamed("populated_signed");
   const jws = Buffer.from(c.commitment.signed_artifact).toString("utf8");
   const cm = toCommitment(c.commitment);
@@ -131,13 +211,13 @@ test("v3 vector: populated_signed verifies against issuer_aid; tampering does no
   assert.equal(verifyTct(vector.issuer_aid, jws, { ...cm, action: cm.action.normalize("NFC") }, NOW_S), false);
 });
 
-test("v3: the conformance tct block reproduces", () => {
+test("v4: the conformance tct block reproduces", () => {
   const c = TCT.inputs.commitment as Commitment;
   assert.equal(hex(explanationDigest(c.explanation!)), TCT.explanation_digest_hex);
   assert.equal(seamCommitmentDigest(c), TCT.commitment_digest_hex);
 });
 
-test("v3: entries disagreeing with the published digest → verifyTct false (and the digest throws)", () => {
+test("v4: entries disagreeing with the published digest → verifyTct false (and the digest throws)", () => {
   const c = caseNamed("populated_signed");
   const jws = Buffer.from(c.commitment.signed_artifact).toString("utf8");
   const cm = toCommitment(c.commitment);
@@ -157,7 +237,7 @@ test("v3: entries disagreeing with the published digest → verifyTct false (and
   );
 });
 
-test("v3: the published digest alone verifies who and what", () => {
+test("v4: the published digest alone verifies who and what", () => {
   const { explanation: _drop, ...c } = TCT.inputs.commitment;
   assert.equal(
     verifyTct(TCT.issuer_aid, TCT.signed_artifact_jws, { ...c, explanation_digest: TCT.explanation_digest_hex }, NOW_S),
@@ -165,7 +245,7 @@ test("v3: the published digest alone verifies who and what", () => {
   );
 });
 
-test("v3: absent confidence and a stated 0.0 are different digests", () => {
+test("v4: absent confidence and a stated 0.0 are different digests", () => {
   const e: ExplanationEntryInput = {
     kind: "evaluation",
     participant: "a",
@@ -179,7 +259,7 @@ test("v3: absent confidence and a stated 0.0 are different digests", () => {
   assert.notEqual(hex(explanationDigest([{ ...e, rationale_ref: "" }])), absent, "empty ref is not absent ref");
 });
 
-test("v3: non-canonical confidence and unknown kind are refused, and verifyTct fails closed on them", () => {
+test("v4: non-canonical confidence and unknown kind are refused, and verifyTct fails closed on them", () => {
   const c = caseNamed("populated_signed");
   const jws = Buffer.from(c.commitment.signed_artifact).toString("utf8");
   const cm = toCommitment(c.commitment);
@@ -221,6 +301,9 @@ const KINDS: Record<string, ExplanationKind> = {
   ballot: ExplanationKind.BALLOT,
 };
 
+const bytesOf = (b: Uint8Array | readonly number[] | string) =>
+  typeof b === "string" ? new Uint8Array(Buffer.from(b, "hex")) : Uint8Array.from(b);
+
 function protoFromVector(c: Record<string, any>) {
   return create(CommitmentSchema, {
     id: c.id,
@@ -229,6 +312,7 @@ function protoFromVector(c: Record<string, any>) {
     authMethod: c.auth_method,
     trustBasis: c.trust_basis,
     committer: c.committer,
+    ...(c.supersedes === null || c.supersedes === undefined ? {} : { supersedes: c.supersedes }),
     explanation: (c.explanation as ExplanationEntryInput[]).map((e) => ({
       kind: KINDS[e.kind],
       participant: e.participant,
@@ -237,6 +321,26 @@ function protoFromVector(c: Record<string, any>) {
       reason: e.reason,
       ...(e.confidence === null || e.confidence === undefined ? {} : { confidence: e.confidence }),
       ...(e.rationale_ref === null || e.rationale_ref === undefined ? {} : { rationaleRef: e.rationale_ref }),
+      ...(e.voter_verification === null || e.voter_verification === undefined
+        ? {}
+        : {
+            voterVerification: {
+              method: e.voter_verification.method === "pop" ? VoterVerification.POP : VoterVerification.CP_SIGNED,
+              principal: e.voter_verification.principal,
+              contentDigest: bytesOf(e.voter_verification.content_digest),
+              issuedAtMs: BigInt(e.voter_verification.issued_at_ms),
+              expiresAtMs: BigInt(e.voter_verification.expires_at_ms),
+              signature: bytesOf(e.voter_verification.signature),
+              signerCertificate: bytesOf(e.voter_verification.signer_certificate),
+              tenant: e.voter_verification.tenant,
+              namespace: e.voter_verification.namespace,
+              sessionId: e.voter_verification.session_id,
+              openedAtMillis: BigInt(e.voter_verification.opened_at_millis),
+              issuer: e.voter_verification.issuer,
+              audience: e.voter_verification.audience,
+              acceptedAtMs: BigInt(e.voter_verification.accepted_at_ms),
+            },
+          }),
     })),
   });
 }
@@ -254,6 +358,22 @@ test("commitmentView of the served proto verifies (explicit presence survives)",
 
   m.explanation[0].rationaleRef = undefined;
   assert.equal(verifyTct(TCT.issuer_aid, TCT.signed_artifact_jws, commitmentView(m), NOW_S), false);
+});
+
+test("commitmentView maps the served voter record, and an UNSPECIFIED method fails closed", () => {
+  const sc = signedCase();
+  const jws = Buffer.from(sc.commitment.signed_artifact).toString("utf8");
+  const m = protoFromVector(sc.commitment);
+  m.explanationDigest = new Uint8Array(sc.commitment.explanation_digest);
+  const view = commitmentView(m);
+  assert.ok(view.explanation!.some((e) => e.voter_verification?.method === "pop"));
+  assert.equal(verifyTct(vector.issuer_aid, jws, view, NOW_S), true);
+  const i = m.explanation.findIndex((e) => e.voterVerification);
+  m.explanation[i].voterVerification!.method = VoterVerification.UNSPECIFIED;
+  assert.equal(verifyTct(vector.issuer_aid, jws, commitmentView(m), NOW_S), false);
+  m.explanation[i].voterVerification!.method = VoterVerification.POP;
+  m.explanation[i].voterVerification!.contentDigest = new Uint8Array(31);
+  assert.equal(verifyTct(vector.issuer_aid, jws, commitmentView(m), NOW_S), false);
 });
 
 test("an UNSPECIFIED kind from the wire fails closed", () => {

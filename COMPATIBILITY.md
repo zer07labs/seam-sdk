@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:801`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:872`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -195,6 +195,15 @@ The sealed `SessionStart` bytes of new sessions differ; records sealed earlier s
 status or reason code changes, so no SDK change is needed. AITP 0.25.1 in the same train changes no
 wire or sealed byte, and its new `hold:read` operator scope is management-plane only.
 
+**SDK 0.87.0-rc.1 pairs only with a runtime built from seam-runtime PR #1713** (verified voters, #1687;
+head `8f4e30ee`, BSR label `pr-1713`, `contract/bsr-label`). It is a pre-release for the caller wave,
+cut before #1713 merges. There is **no compatibility** with runtime 0.86.0 or earlier, in either
+direction: commitment digest v4 and explanation digest v2 replace v3/v1, so neither side verifies the
+other's TCTs; enrolment proofs are `seam-enroll-pop-v2`, so a v1 proof is refused; and a vote, ballot or
+objection needs its voter's `seam-voter-pop-v1` proof, so one without is refused `voter_proof_required`.
+Pin `seam-sdk==0.87.0rc1` / `@zer07labs/seam-sdk@0.87.0-rc.1` (npm dist-tag `next`) only beside that
+build. 0.87.0 final follows #1713's merge and the runtime's 0.87.0 release (#352).
+
 | SDK change | Requires runtime | Earlier runtimes | Pinned from |
 |---|---|---|---|
 | Protocol pass 2026-10 (seam-sdk#265) | seam-runtime 0.48.0 (seam-runtime#1365, carries `protocol-pass-2026-10`) | **none** — no compatibility | runtime `main` @ `32f8196` (contract byte-identical to the freeze `1ac5de5`) |
@@ -220,7 +229,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1872-1894`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:1943-1965`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -290,7 +299,7 @@ this by trying.
 
 | Language | How you get it | Versioned? | Status |
 |---|---|---|---|
-| **Python** (`seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:381`) | Yes | **Published + supported** |
+| **Python** (`seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:386`) | Yes | **Published + supported** |
 | **TypeScript** (`@zer07labs/seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:199`, `ts/package.json:12`) | Yes | **Published + supported** |
 | **Go** | Module proxy, from the `go/vX.Y.Z` tag (`.github/workflows/release-on-runtime.yml:253`) | Tag only — no in-tree version | Resolvable, crypto shim only. **0.48.0 is retracted:** Go's runtime-0.48.0 module is `go/v0.48.1` (`go/go.mod` `retract`) |
 | **Java** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |
@@ -375,9 +384,9 @@ gencode — though **not** through this gap: its CI was *red* on exactly that fl
 `ci-green` closes the path that release actually took. This gap is the one a *genuinely green*
 release could still have shipped through, and nothing closed it until Phase 6. Two steps close it now:
 the floor guards run again after the
-publish job's own generation (`.github/workflows/publish.yml:354`), and the built wheel is then
+publish job's own generation (`.github/workflows/publish.yml:359`), and the built wheel is then
 installed into a venv with `protobuf` pinned at the floor it declares and imported there
-(`.github/workflows/publish.yml:428`) — the only check that answers *is this metadata true?*, since
+(`.github/workflows/publish.yml:433`) — the only check that answers *is this metadata true?*, since
 every other smoke installs unconstrained and so satisfies any gencode by construction. Both are
 executed against stub trees by `scripts/test_publish_gate.py`, including the red case.
 
@@ -446,7 +455,7 @@ the wire" and "no consumer impact" are different claims.
 ## 5. What "independently verifiable" does and does not cover
 
 The published verifier (`verify/`) links **zero** Seam crates, and that is a CI gate rather than a
-comment — `.github/workflows/ci.yml:554-555` runs `scripts/check-independence.sh`, which renders
+comment — `.github/workflows/ci.yml:556-557` runs `scripts/check-independence.sh`, which renders
 `cargo tree -e normal` and fails on any `seam-*`. What it verifies:
 
 **Covered:**
@@ -587,7 +596,7 @@ patch, so the callouts have to live here rather than in a version number.
 ### The accepted integer set widened, and that is irreversible
 
 `jcs_canonicalize` previously refused any `int` with `|v| > 2^53`. It now accepts an integer iff JCS
-renders it as itself (`python/seam_sdk/crypto.py:304`, `ts/src/crypto.ts:305`). Practically:
+renders it as itself (`python/seam_sdk/crypto.py:397`, `ts/src/crypto.ts:410`). Practically:
 
 | value | before | now | why |
 |---|---|---|---|
@@ -623,8 +632,8 @@ so it cannot reach the taxonomy. Use `canonicalize_tool_input()`
 
 ### `canonical=` hands you the derivation, and the responsibility with it
 
-`authorize(canonical=…)` (`python/seam_sdk/client.py:417`, `python/seam_sdk/aio.py:233`; `opts.canonical`
-in TypeScript, `ts/src/client.ts:1128`) is additive and keyword-only. The SDK does **not** verify the
+`authorize(canonical=…)` (`python/seam_sdk/client.py:458`, `python/seam_sdk/aio.py:235`; `opts.canonical`
+in TypeScript, `ts/src/client.ts:1189`) is additive and keyword-only. The SDK does **not** verify the
 bytes — re-deriving to check would reinstate the second derivation the parameter exists to remove.
 So two things become possible that were not:
 
@@ -652,17 +661,17 @@ values reached one digest. Measured against the pre-fix build, `recordDigestV2({
 `b566fdea56b8487bc5ebc26d1d6585339e9ab2a3a499247bd7230e4f20f05d7f`. That is a digest failing at the
 only thing a digest does.
 
-The guard is `uintSlot` (`ts/src/crypto.ts:1039`), which already governed the v3 record digest;
-`u64le`/`u32le` (`ts/src/crypto.ts:754`) now route through it, so v2 and the attestation framing get
+The guard is `uintSlot` (`ts/src/crypto.ts:1149`), which already governed the v3 record digest;
+`u64le`/`u32le` (`ts/src/crypto.ts:864`) now route through it, so v2 and the attestation framing get
 the rule that was always written for them. Python got the same treatment: `_uint_slot`
-(`python/seam_sdk/crypto.py:776`) was `_v3_uint`, and `record_digest_v2` shared it (both v2 and v3
+(`python/seam_sdk/crypto.py:874`) was `_v3_uint`, and `record_digest_v2` shared it (both v2 and v3
 are now deleted; `record_digest_v4` uses it). Every
 "before" below was measured against the pre-fix build, not inferred.
 
 **Read the `now` column as the record-digest arm.** In the chain-head **attestation** arm every one
 of these refusals was observed as `false` rather than as a thrown error, because
 `verifyChainHeadAttestation` wrapped its whole body in a catch that returned `false`
-(`const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid }, framingTenant);`, `ts/src/crypto.ts:1318`). The
+(`const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid }, framingTenant);`, `ts/src/crypto.ts:1428`). The
 distinction mattered for the `true` row in particular, where the attestation arm showed no
 caller-visible change at all — `false` before, `false` after — even though what it was refusing had
 changed. **§10 closed that**: the type checks now run before the `try`, so a wrong type throws there
@@ -689,7 +698,7 @@ Python never had it. What Python had was three smaller defects in the same code:
 
 - `verify_chain_head_attestation` let that `struct.error` escape a function documented to return
   `False` on any tamper, so an out-of-range length **crashed** a caller instead of being rejected. It
-  now returns `False` (`python/seam_sdk/crypto.py:990-1116`).
+  now returns `False` (`python/seam_sdk/crypto.py:1088-1214`).
 - `attested_len`, `attested_at` and `digest_schema` are now required to be `int`. Previously
   `True` was digested as `1` (`bool` subclasses `int`) and `5.0` raised `struct.error` — a *third*
   answer from a function that should only ever give two. Both now raise `TypeError`.
@@ -811,7 +820,7 @@ writes without thinking about it.
 
 The guard is a rule, not a denylist: an object is accepted iff its prototype is a root — `null`, or
 something whose own prototype is `null` (`function isPlainObject(v: object): boolean {`,
-`ts/src/crypto.ts:501`). An enumeration of
+`ts/src/crypto.ts:611`). An enumeration of
 `Date | Map | Set | ...` is only correct until the next exotic type. Testing the prototype chain's
 *depth* rather than `proto === Object.prototype` is also what keeps objects from other realms (`vm`
 contexts, iframes) working — they have their own `Object.prototype`, and an identity check would
@@ -823,7 +832,7 @@ covered `{}` — so it did not mean what you thought. Convert at the boundary:
 `date.toISOString()`, `Object.fromEntries(map)`, `[...set]`. The error names the type and the
 conversion.
 
-**This reaches you through `authorize()`, not only through the helper.** `ts/src/client.ts:967` calls
+**This reaches you through `authorize()`, not only through the helper.** `ts/src/client.ts:975` calls
 `jcsCanonicalize(toolInput ?? {})` directly, so `authorize({ toolInput: { deadline: new Date() } })`
 now throws where it previously signed a digest over `{"deadline":{}}`. That is the case worth
 checking in your own code, because it is the one where the aliased digest was being *signed*.

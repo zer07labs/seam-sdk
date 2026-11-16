@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import warnings
-from typing import Awaitable, Callable, Mapping, Optional, Sequence, TypeVar
+from typing import Any, Awaitable, Callable, Mapping, Optional, Sequence, TypeVar
 
 import grpc
 import grpc.aio
@@ -32,10 +32,12 @@ from .client import (
     BudgetLimits,
     StepUsage,
     _check_idempotency_key,
+    _decision_of,
     _set_outcome_fields,
     _now_ms,
     _submit_retry_doc,
     _vote_messages,
+    _voter_proof_pb,
     commitment_view,
     _u32,
     _REPLAY_GUARDED,
@@ -536,6 +538,7 @@ class SeamClient:
         proposal_id: str,
         value: str,
         *,
+        proof: Any = None,
         reason: str = "",
         usage: Optional[StepUsage] = None,
         credential: Optional[Agent] = None,
@@ -544,7 +547,17 @@ class SeamClient:
         """Cast a vote on a proposal. ``reason`` is the voter's stated reason, sealed into the vote
         envelope (seam-runtime #804). Empty means no reason, byte-identical to a vote without one. The
         server bounds it (4096 bytes, injection-redacted, classified) and REQUIRES it when the governing
-        policy sets ``rules["x-com.zer07labs.seam"].capture_dissent``; those checks are deliberately not mirrored here."""
+        policy sets ``rules["x-com.zer07labs.seam"].capture_dissent``; those checks are deliberately not mirrored here.
+
+        ``proof`` (required by runtime 0.87.0+, #1687; omitted, none is sent and the runtime refuses) is the voter's own ``seam-voter-pop-v1``
+        proof: :func:`seam_sdk.sign_voter_pop` with the ``voter`` key enrolled for ``voter``, over
+        ``VoterPopTarget(issuer, tenant, namespace, session_id, opened_at_millis)`` (the open's
+        ``SessionStep.opened_at_millis``), the :func:`seam_sdk.vote_content_digest` of the accepted
+        proposal's option, and the entry ``{"kind": "vote", "participant": voter, "proposal_id":
+        proposal_id, "value": value, "reason": reason}``. A :class:`~seam_sdk.VoterPop` or a generated
+        ``VoterProof``. Without a valid one the runtime refuses ``voter_proof_required`` /
+        ``voter_proof_invalid`` (``PermissionDeniedError``).
+        """
         req = pb.VoteRequest(
             session_id=session_id,
             voter=voter,
@@ -552,6 +565,8 @@ class SeamClient:
             value=value,
             reason=reason,
         )
+        if proof is not None:
+            req.proof.CopyFrom(_voter_proof_pb(proof, "submit_vote"))
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
         return await self._credentialed_call(
@@ -591,8 +606,8 @@ class SeamClient:
 
         ``rationale_ref`` is a ``sha256:<hex>`` context ref. Since runtime 0.44.0 it is **sealed**:
         every accepted evaluation's ``rationale_ref`` (and whether a ``confidence`` was stated at
-        all) is bound into the Commitment's explanation under ``seam-explanation-digest:v1``, which
-        ``seam-commitment-digest:v3`` covers. ``verify_decision`` recomputes it locally.
+        all) is bound into the Commitment's explanation under ``seam-explanation-digest:v2``, which
+        ``seam-commitment-digest:v4`` covers. ``verify_decision`` recomputes it locally.
         """
         req = pb.EvaluationRequest(
             session_id=session_id,
@@ -625,6 +640,7 @@ class SeamClient:
         proposal_id: str,
         reason: str,
         *,
+        proof: Any = None,
         severity: str = "",
         usage: Optional[StepUsage] = None,
         credential: Optional[Agent] = None,
@@ -634,6 +650,11 @@ class SeamClient:
 
         ``severity`` is one of ``low | medium | high | critical``; empty defaults to ``medium``
         (the MACP default, applied server-side).
+
+        ``proof`` (required by runtime 0.87.0+, #1687; omitted, none is sent and the runtime refuses) is the objector's own ``seam-voter-pop-v1``
+        proof (:func:`seam_sdk.sign_voter_pop`) over the entry ``{"kind": "objection", "participant":
+        objector, "proposal_id": proposal_id, "value": severity, "reason": reason}`` and the content
+        digest of the proposal's option; see :meth:`submit_vote`.
         """
         req = pb.ObjectionRequest(
             session_id=session_id,
@@ -642,6 +663,8 @@ class SeamClient:
             reason=reason,
             severity=severity,
         )
+        if proof is not None:
+            req.proof.CopyFrom(_voter_proof_pb(proof, "submit_objection"))
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
         return await self._credentialed_call(
@@ -748,6 +771,7 @@ class SeamClient:
         request_id: str,
         choice: "pb.BallotChoice.ValueType",
         *,
+        proof: Any = None,
         reason: str = "",
         usage: Optional[StepUsage] = None,
         credential: Optional[Agent] = None,
@@ -759,6 +783,13 @@ class SeamClient:
         ``_ABSTAIN``. One RPC covers all three: the three upstream MACP payloads are structurally
         identical, and the tag is what selects the wire envelope. ``BALLOT_CHOICE_UNSPECIFIED`` is
         not a vote — passing it is the server's INVALID_ARGUMENT to raise.
+
+        ``proof`` (required by runtime 0.87.0+, #1687; omitted, none is sent and the runtime refuses) is the voter's own ``seam-voter-pop-v1``
+        proof (:func:`seam_sdk.sign_voter_pop`) over the entry ``{"kind": "ballot", "participant":
+        voter, "proposal_id": request_id, "value": <the choice's word: "APPROVE", "REJECT" or "ABSTAIN">,
+        "reason": reason}`` and the content digest
+        of the approval request's ``action`` (mode ``macp.mode.quorum.v1``, proposal id ``request_id``);
+        see :meth:`submit_vote`.
         """
         req = pb.BallotRequest(
             session_id=session_id,
@@ -767,6 +798,8 @@ class SeamClient:
             choice=choice,
             reason=reason,
         )
+        if proof is not None:
+            req.proof.CopyFrom(_voter_proof_pb(proof, "submit_ballot"))
         if usage is not None:
             req.usage.CopyFrom(usage.to_pb())
         return await self._credentialed_call(
@@ -1156,6 +1189,13 @@ class SeamClient:
         if proof.issuer_aid != expected_issuer:
             raise IssuerMismatchError(proof.issuer_aid, expected_issuer)
         c = proof.commitment
+        # #1687: the decision id names the session every sealed voter record must come from.
+        decision = _decision_of(decision_id)
+        if decision is None:
+            return False
         return verify_tct(
-            expected_issuer, c.signed_artifact.decode(), commitment_view(c)
+            expected_issuer,
+            c.signed_artifact.decode(),
+            commitment_view(c),
+            decision=decision,
         )

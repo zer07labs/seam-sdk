@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * The agent-side enrolment proof and its REST form (#214), against the same shared vector as the raw
- * signer (conformance/enroll_pop_v1_payload_vector.json). The REST {@code pop} object must match the
+ * signer (conformance/enroll_pop_v2_payload_vector.json). The REST {@code pop} object must match the
  * vector's fields byte for byte once serialized. NO bless mode.
  */
 class EnrollProofTest {
@@ -36,7 +36,7 @@ class EnrollProofTest {
     Map<String, Object> v =
         new Gson()
             .fromJson(
-                Files.readString(Path.of("..", "conformance", "enroll_pop_v1_payload_vector.json")),
+                Files.readString(Path.of("..", "conformance", "enroll_pop_v2_payload_vector.json")),
                 MAP);
     List<Map<String, Object>> cases = (List<Map<String, Object>>) v.get("cases");
     assertTrue(cases.size() >= 6, "the vector lost cases; it pins a wire contract");
@@ -53,7 +53,12 @@ class EnrollProofTest {
 
       SeamCrypto.EnrollProof proof =
           SeamCrypto.enrolmentProof(
-              seed, (String) c.get("tenant"), (String) c.get("namespace"), issuedAtMs, nonce);
+              seed,
+              (String) c.get("tenant"),
+              (String) c.get("namespace"),
+              (String) c.get("participant_id"),
+              issuedAtMs,
+              nonce);
       // RAW 64 bytes — the gRPC form.
       assertEquals(64, proof.signature().length, label);
       assertArrayEquals(Base64.getUrlDecoder().decode(signature), proof.signature(), label);

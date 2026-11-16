@@ -121,7 +121,7 @@ fn usage() -> ! {
              issuer AID, in the spec's order, refusing at the first failure: (1) the manifest: format,\n    \
              pinned issuer, every listed file's sha256 and size; (2) the window, exactly as `chain\n    \
              events.jsonl --issuer AID --from-anchor anchor.json --strict`; (3) the decision's chained\n    \
-             DECISION_SEALED and its checksum; (4) the Commitment's TCT and seam-commitment-digest:v3;\n    \
+             DECISION_SEALED and its checksum; (4) the Commitment's TCT and seam-commitment-digest:v4;\n    \
              (5) the issuer's signed binding of that Commitment to the chain link; (6) the disclosed\n    \
              context.json and policy.json against the chained digests. Withheld items are printed.\n    \
              Exactly one --issuer: the bundle names its issuer, and that name is never trusted.\n\
@@ -732,7 +732,8 @@ fn cmd_bundle(dir: &str, issuer: &str, json: bool) -> ExitCode {
                 println!(
                     "{{\"verified\":true,\"format\":{},\"decision_id\":{},\"tenant\":{},\
                      \"events\":{},\"links\":{},\"attestations\":{},\"covering_attestations\":{},\
-                     \"base_len\":{},\"head\":\"{}\",\"tct\":{},\"checks\":{},\"withheld\":[{}]}}",
+                     \"base_len\":{},\"head\":\"{}\",\"tct\":{},\"voters_verified\":{},\"checks\":{},\
+                     \"withheld\":[{}]}}",
                     q(seam_verify::bundle::FORMAT),
                     q(&r.decision_id),
                     q(&r.tenant),
@@ -747,6 +748,8 @@ fn cmd_bundle(dir: &str, issuer: &str, json: bool) -> ExitCode {
                         Some(false) => "\"absent\"",
                         None => "null",
                     },
+                    r.voters_verified
+                        .map_or_else(|| "null".to_owned(), |n| n.to_string()),
                     q_arr(&checks),
                     withheld.join(","),
                 );

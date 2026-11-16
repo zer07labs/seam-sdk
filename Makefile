@@ -16,7 +16,9 @@
 # `check-contract` makes "what surface does the active contract actually expose?" a verifiable fact rather
 # than an assumption — the SDK's equivalent of the runtime's published-surface gate.
 
-BUF_MODULE ?= buf.build/zer07labs/seam
+# The label comes from contract/bsr-label line 1 (`main` normally; a runtime PR label only for a pre-release).
+BUF_LABEL  ?= $(shell sed -n '1p' contract/bsr-label)
+BUF_MODULE ?= buf.build/zer07labs/seam:$(BUF_LABEL)
 RUNTIME    ?= ../seam-runtime
 
 .PHONY: generate generate-local check-contract clean lint probe-frameworks
