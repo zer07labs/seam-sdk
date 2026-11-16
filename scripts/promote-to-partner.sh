@@ -172,14 +172,27 @@ for r in rows: print(r["slug"] + "\t" + r["filename"])'; }
 
 promoted=0; skipped=0
 
+# A PRE-RELEASE IS SPELLED TWO WAYS. The tag and npm carry semver (`0.87.0-rc.1`); a python package
+# is stored under its PEP 440 normal form (`0.87.0rc1`), so querying python by the semver spelling
+# finds nothing and the promotion refuses (v0.87.0-rc.1 did exactly that, after npm had copied).
+# Only the pre-release spellings this repo cuts are mapped; anything else passes through unchanged.
+_format_version() {  # _format_version <format> <version> -> the version as that format stores it
+  if [ "$1" = python ]; then
+    printf '%s' "$2" | sed -E 's/-rc\.?([0-9]+)$/rc\1/; s/-(alpha|a)\.?([0-9]+)$/a\2/; s/-(beta|b)\.?([0-9]+)$/b\2/'
+  else
+    printf '%s' "$2"
+  fi
+}
+
 promote_version() {  # promote_version <version>
-  local ver="$1" entry name format src dst_files row slug file
+  local semver="$1" ver="$1" entry name format src dst_files row slug file
   echo "promoting ${OWNER}/${SOURCE_REPO} → ${OWNER}/${DEST_REPO} at version ${ver}"
 
   for entry in "${PARTNER_ALLOWLIST[@]}"; do
     name="${entry%%|*}"; format="${entry##*|}"
     [ -n "$name" ] && [ -n "$format" ] && [ "$name" != "$entry" ] \
       || die "malformed allowlist entry '$entry' — expected 'name|format'."
+    ver="$(_format_version "$format" "$semver")"
 
     src="$(_query "$SOURCE_REPO" "$name" "$format" "$ver")" \
       || die "could not query ${OWNER}/${SOURCE_REPO} for ${name} ${ver} (${format})."

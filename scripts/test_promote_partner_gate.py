@@ -437,3 +437,39 @@ def test_the_backfill_refuses_both_inputs_at_once() -> None:
         yaml.safe_load(BACKFILL.read_text())["jobs"]["backfill"]["steps"][-1]["run"]
     )
     assert "not both" in run
+
+
+# ── pre-releases: one version, two spellings ─────────────────────────────────────────────────────
+def _prerelease_world(partner=None):
+    """Exactly how Cloudsmith stored v0.87.0-rc.1: npm keeps the semver spelling, python is stored
+    under its PEP 440 normal form."""
+    return _world(
+        internal=[
+            _pkg("@zer07labs/seam-sdk", "0.87.0-rc.1", "npm", "seam-sdk-0.87.0-rc.1.tgz"),
+            _pkg("seam-sdk", "0.87.0rc1", "python", "seam_sdk-0.87.0rc1.tar.gz"),
+            _pkg("seam-sdk", "0.87.0rc1", "python", "seam_sdk-0.87.0rc1-py3-none-any.whl"),
+        ],
+        partner=partner,
+    )
+
+
+def test_a_prerelease_promotes_python_under_its_pep440_spelling(tmp_path: Path) -> None:
+    """v0.87.0-rc.1 copied npm, then refused: it asked for python `0.87.0-rc.1`, which Cloudsmith
+    stores as `0.87.0rc1`."""
+    proc, world, copies = _run(tmp_path, "0.87.0-rc.1", world=_prerelease_world())
+    assert proc.returncode == 0, proc.stderr
+    assert sorted(r["filename"] for r in world["partner"]) == [
+        "seam-sdk-0.87.0-rc.1.tgz",
+        "seam_sdk-0.87.0rc1-py3-none-any.whl",
+        "seam_sdk-0.87.0rc1.tar.gz",
+    ]
+    assert len(copies) == 3
+
+
+def test_the_half_promoted_prerelease_completes_without_duplicating_npm(tmp_path: Path) -> None:
+    """The state v0.87.0-rc.1's failed run left: npm already in partner, python not."""
+    already = [_pkg("@zer07labs/seam-sdk", "0.87.0-rc.1", "npm", "seam-sdk-0.87.0-rc.1.tgz")]
+    proc, world, copies = _run(tmp_path, "0.87.0-rc.1", world=_prerelease_world(already))
+    assert proc.returncode == 0, proc.stderr
+    assert len(copies) == 2 and all("seamsdk0870rc1" in c for c in copies), copies
+    assert sum(r["format"] == "npm" for r in world["partner"]) == 1
