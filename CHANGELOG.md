@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.87.0 — 2026-11-16
+
 ### Fixed
 - **Partner promotion of a pre-release.** `scripts/promote-to-partner.sh` now queries a python package under
   its PEP 440 spelling (`0.87.0-rc.1` → `0.87.0rc1`), because that is how Cloudsmith stores the wheel and
