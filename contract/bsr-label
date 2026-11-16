@@ -1,4 +1,3 @@
-pr-1713
+main
 # Line 1 is the BSR label `make generate` builds from (buf.build/zer07labs/seam:<label>); `main` is the release default.
-# pr-1713 = seam-runtime PR #1713 head 8f4e30eec5034cf56e0afb3415beb10fb3d4589f (BSR commit 867d111583f5474da2d19b7c8c83bb6d),
-# pushed for the 0.87.0 pre-releases only. Re-push the label whenever #1713's head moves; flip back to `main` at 0.87.0 final.
+# Set a `pr-<N>` label here only for a lockstep pre-release train, and flip back to `main` at the final release.

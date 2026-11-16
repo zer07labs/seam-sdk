@@ -204,6 +204,12 @@ objection needs its voter's `seam-voter-pop-v1` proof, so one without is refused
 Pin `seam-sdk==0.87.0rc1` / `@zer07labs/seam-sdk@0.87.0-rc.1` (npm dist-tag `next`) only beside that
 build. 0.87.0 final follows #1713's merge and the runtime's 0.87.0 release (#352).
 
+**SDK 0.87.0 pairs with runtime 0.87.0** (#1713 merged as `ede96dd3`). The contract is byte-identical
+to 0.87.0-rc.1: BSR `main` and `pr-1713` export the same module, so the incompatibilities above hold
+unchanged against runtime 0.86.0 and earlier. `contract/bsr-label` is back on `main`. The
+voter-PoP helpers and proof-taking vote APIs are still Python-only in 0.87.0; TS, Go, Java and Kotlin
+follow in a later release.
+
 | SDK change | Requires runtime | Earlier runtimes | Pinned from |
 |---|---|---|---|
 | Protocol pass 2026-10 (seam-sdk#265) | seam-runtime 0.48.0 (seam-runtime#1365, carries `protocol-pass-2026-10`) | **none** — no compatibility | runtime `main` @ `32f8196` (contract byte-identical to the freeze `1ac5de5`) |
