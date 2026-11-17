@@ -1136,7 +1136,7 @@ them change what the phases do:
 | `ts/tests/integration.test.ts:54` | "Distinct ports avoid cross-test collisions" — the TS suite reached this conclusion and applied it everywhere. It has never shown this flake. |
 | `.github/workflows/ci.yml` (cont.) | At `960cf81`: the smoke step's `kill "$pid"` (line 290), immediately followed by `exit 0` — it never waited for the process it started. Replaced by `reap()`. |
 | `.github/workflows/ci.yml:384-395` | The python live step (the `pytest` line is `.github/workflows/ci.yml:394`). Phase 2 added an `if: failure()` log dump + artifact upload at the **end of the job**, after the TypeScript step at `.github/workflows/ci.yml:396` — a step is evaluated at its own position, so anything placed earlier cannot see a TypeScript failure. |
-| `.github/workflows/ci.yml:759` | `ADVISORY: integration,spec-pin`. Advisory means *may skip*, not *may fail* — a red `integration` still reddens `ci-ok`, which lists it at `.github/workflows/ci.yml:744`. |
+| `.github/workflows/ci.yml:765` | `ADVISORY: integration,spec-pin`. Advisory means *may skip*, not *may fail* — a red `integration` still reddens `ci-ok`, which lists it at `.github/workflows/ci.yml:744`. |
 | `scripts/check-contract.sh:274` · `scripts/check-contract.sh:294` | `fields_python` and `fields_ts`. Already parameterised on stub path (and package, for TS) when #88 landed — measured, they yield 90/90 on the event stubs with zero one-sided entries. **Phase 5 did NOT touch them**: the gap it closed is one level up, at the VERB surface, so it parameterised `rpcs_python`/`rpcs_ts` instead. This row said Phase 5 would do it; that was a planning-time guess about the wrong pair. Two full citations on one row, not `` `:248` `` as a bare number: a pathless line reference matches `CITATION` not at all, so it is invisible to every check in `test_compatibility_citations_resolve.py`. Both needles are in `ANCHORED` and bound to this row by `CLAIM_LINES`. |
 | `scripts/check-contract.sh:317` | `manifest_fields` — its stripper claims every `#`-free line, which is why the event surface cannot share `contract/field-manifest.txt`. |
 | `scripts/check-contract.sh:684-693` | `--write-manifest` deletes `contract/expected-local-lag.txt`; the cited block is the comment scoping that delete to the api write (`# Scoped to the API write, deliberately`), and the `-f` guard and `rm -f` are the two lines immediately below it. **Re-targeted:** it pointed at the FIELD-manifest write for two rounds — the number was faithfully remapped each time the file moved, which preserved a wrong target rather than fixing it. A remap can only keep a citation pointing where it already pointed; it is now ANCHORED so the content, not just the line, is checked. The second reason the event surface needs its own file. Deliberately no bare `:NNN` for those two — a naked line number inside a row is invisible to `test_compatibility_citations_resolve.py` (it checks backticked `file:line`, and a bare `:473` has no path), so it rots unnoticed. This one had: it still said `:473` after the guard moved to `:571`. |
@@ -2407,7 +2407,7 @@ citation it finds, so binding one bare back-reference to its file created a case
 
 Both of this phase's late citation failures were **self-inflicted and caught by that guard**. Adding
 a six-line comment to the workflow pushed the Go-tag line six lines down, stranding the citation in
-`COMPATIBILITY.md` that pointed at it — now `.github/workflows/release-on-runtime.yml:186`. And a
+`COMPATIBILITY.md` that pointed at it — now `.github/workflows/release-on-runtime.yml:191`. And a
 back-reference written bare bound to `CHANGELOG.md`, the subject of its table row, rather than to
 this file; the guard's ratchet then refused the bare form outright, which is the correct outcome —
 it wants the reference bound, not the ceiling raised. Ninth and tenth repointings this phase. The
@@ -3153,12 +3153,12 @@ Every line below was opened and verified during planning; line numbers are as of
 
 **The release path, end to end**
 
-- `.github/workflows/release-on-runtime.yml:173-187` — commit-and-tag. The push to `main` sits at
-  `.github/workflows/release-on-runtime.yml:180` and `:182`, `:186`, `:187` (two `git tag -a` calls
+- `.github/workflows/release-on-runtime.yml:177-192` — commit-and-tag. The push to `main` sits at
+  `.github/workflows/release-on-runtime.yml:185` and `:182`, `:186`, `:187` (two `git tag -a` calls
   and the tag push) all come after it — which is what makes "tag absent, in-tree version bumped"
-  (state C) reachable. `.github/workflows/release-on-runtime.yml:187` pushes its two refspecs
+  (state C) reachable. `.github/workflows/release-on-runtime.yml:192` pushes its two refspecs
   **non-atomically**, so `v` landing without `go/v` is reachable too.
-- `.github/workflows/release-on-runtime.yml:80-161` — the wire-framing gate; every refusal here
+- `.github/workflows/release-on-runtime.yml:84-165` — the wire-framing gate; every refusal here
   leaves no commit and no tag (state A, which is consistent and must not alarm).
 - `scripts/set_version.sh:46-61` — the only stamp; touches `ts/package.json` and
   `python/pyproject.toml` and nothing else, with a read-back postcondition.
@@ -3374,7 +3374,7 @@ filed as its own issue during finalization.
   `scripts/test_registry_drift_gate.py` (new, 37 tests) · one new `workflow-guards` step in
   `.github/workflows/ci.yml`.
 * **The comparison is `is main's declared version installable?`** — one question, no tag involved.
-  `.github/workflows/release-on-runtime.yml:180` pushes the version commit before `:182`/`:186`/`:187` tag, so that
+  `.github/workflows/release-on-runtime.yml:185` pushes the version commit before `:182`/`:186`/`:187` tag, so that
   one comparison is true in the never-dispatched state and false in both failure states. The tag is
   read only to choose the remediation text.
 * **A skip path the plan did not anticipate, found by running the script.** A negative age — a
@@ -5366,7 +5366,7 @@ not filed here. OQ-1 is resolved, so no phase is gated.
   - `verify/tests/bundle.rs:1-41`: fixture provenance rule; fixtures in `verify/fixtures/evidence-bundle/`.
   - `COMPATIBILITY.md:194-214` (seal row at line 183), `README.md` "Explaining a sealed record".
   - `.github/workflows/ci.yml`: 14 jobs, all blacksmith-4vcpu, ci-ok job `ci-ok`.
-  - `.github/workflows/publish.yml:63` and `.github/workflows/release-on-runtime.yml:177` read ci-ok by SHA (off-limits).
+  - `.github/workflows/publish.yml:63` and `.github/workflows/release-on-runtime.yml:181` read ci-ok by SHA (off-limits).
 - PR strategy: one PR (feat/bp8-allocation-view). Why: the manifest fix is what turns main green and unblocks the 0.76.0 release, and the owner brief requires the CI pass in the same PR. Risk: P1 and P2 complex (public API); P3+P4 batched simple; P5 simple.
 - 2026-11-08 P1 DONE: PASS (Opus verifier, solo, since it is a complex public-API phase), 1 round. The gaps were minor (add a 0.0001 propensity case, an unknown-7-with-payload case, and sort the import) and were closed before the commit. Files: `python/seam_sdk/_allocation.py` (new), `python/tests/test_allocation.py` (new), `python/tests/fixtures/allocation_cases.json` (new, 24 cases), `__init__.py`, `client.py`, `aio.py`, `test_integration.py`, `test_field_manifest_gate.py`, `contract/field-manifest.txt` (+24/-0). Results: contract gate 0; ruff clean; pytest 2601 passed. Next: P2 (TS).
 - 2026-11-08 P2 DONE: PASS (Opus verifier, solo: complex public API), 1 round.

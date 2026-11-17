@@ -1,0 +1,113 @@
+name: release re-fire (a refused release, once main is green)
+
+# release-on-runtime.yml refuses a seam-release dispatch BEFORE writing anything when main is not
+# green or when the contract gate, re-run fresh against the BSR, is red. The second is the
+# proto-train race that burned 0.88.0 and 0.90.0: the runtime pushed its new contract at merge, the
+# dispatch arrived at its tag, and this repo's catch-up had not merged yet. The refusal records the
+# asked-for version and wire framing in one open `release-pending` issue.
+#
+# This workflow closes the loop. When ci.yml completes GREEN on a push to main, it asks
+# scripts/release_pending.py what to do with each pending issue, and re-dispatches exactly the
+# recorded version and framing. It never re-fires "the latest". It refuses, and says so on the
+# issue, when seam-runtime or seam-sdk has released a newer version since.
+#
+# Scope is deliberately narrow (scripts/test_release_refire_gate.py pins all of it):
+#   * it acts only on ci.yml runs triggered by a PUSH to THIS repo's main, never a PR or fork run;
+#   * it acts only when that run's commit is still main's head (a later push brings its own run);
+#   * the token can read contents, write issues and dispatch workflows. Nothing else.
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: release-refire
+  cancel-in-progress: false
+
+jobs:
+  refire:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      actions: write
+    steps:
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
+        with:
+          ref: main
+          fetch-depth: 1
+
+      # Runtime release tags, read only to decide whether a newer runtime release supersedes a
+      # pending one. Scoped to seam-runtime, read-only by what the App grants.
+      - name: Mint a seam-runtime read token
+        id: rt
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.SEAM_BOT_APP_ID }}
+          private-key: ${{ secrets.SEAM_BOT_PRIVATE_KEY }}
+          owner: zer07labs
+          repositories: seam-runtime
+
+      - name: Re-fire the recorded version, or refuse and say why
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RT_TOKEN: ${{ steps.rt.outputs.token }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          MAIN_SHA="$(git ls-remote origin refs/heads/main | cut -f1)"
+          if [ "$MAIN_SHA" != "$RUN_SHA" ]; then
+            echo "main moved on ($RUN_SHA → $MAIN_SHA); that push's own CI run decides"
+            exit 0
+          fi
+
+          W="$(mktemp -d)"
+          gh issue list -R "$GITHUB_REPOSITORY" --state open --label release-pending --limit 100 \
+            --json number,title,body,comments \
+            --jq '[.[] | {number, title, body, comments: [.comments[].body]}]' > "$W/issues.json"
+          if [ "$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))))' "$W/issues.json")" = "0" ]; then
+            echo "no pending release"
+            exit 0
+          fi
+          GH_TOKEN="$RT_TOKEN" gh api --paginate repos/zer07labs/seam-runtime/tags --jq '.[].name' > "$W/rt.txt"
+          git ls-remote --tags origin | sed -n 's#.*refs/tags/\([^^]*\)$#\1#p' > "$W/sdk.txt"
+          python3 - "$W" "$MAIN_SHA" > "$W/in.json" <<'PY'
+          import json, sys
+          w, sha = sys.argv[1], sys.argv[2]
+          lines = lambda p: [l.strip() for l in open(p) if l.strip()]
+          json.dump({"issues": json.load(open(f"{w}/issues.json")), "runtime_tags": lines(f"{w}/rt.txt"),
+                     "sdk_tags": lines(f"{w}/sdk.txt"), "main_sha": sha}, sys.stdout)
+          PY
+          python3 scripts/release_pending.py decide < "$W/in.json" > "$W/decisions.jsonl"
+          cat "$W/decisions.jsonl"
+
+          RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          MARK="$(python3 -c 'import sys;sys.path.insert(0,"scripts");import release_pending as r;print(r.refired_marker(sys.argv[1]))' "$MAIN_SHA")"
+          while IFS= read -r line; do
+            ACTION="$(jq -r .action <<<"$line")"; N="$(jq -r .issue <<<"$line")"
+            VER="$(jq -r .version <<<"$line")"; WF="$(jq -r .wire_framing_version <<<"$line")"
+            REASON="$(jq -r .reason <<<"$line")"
+            case "$ACTION" in
+              fire)
+                gh workflow run release-on-runtime.yml -R "$GITHUB_REPOSITORY" --ref main \
+                  -f version="$VER" -f wire_framing_version="$WF"
+                gh issue comment "$N" -R "$GITHUB_REPOSITORY" \
+                  --body "$MARK"$'\n'"Re-dispatched release-on-runtime for v$VER (framing $WF): $REASON. $RUN_URL" ;;
+              close)
+                gh issue close "$N" -R "$GITHUB_REPOSITORY" --comment "$REASON. $RUN_URL" ;;
+              refuse)
+                gh issue comment "$N" -R "$GITHUB_REPOSITORY" \
+                  --body "Not re-fired: $REASON. A human decides now. $RUN_URL" ;;
+              skip) echo "#$N: $REASON" ;;
+              *) echo "::error::unknown action $ACTION"; exit 1 ;;
+            esac
+          done < "$W/decisions.jsonl"

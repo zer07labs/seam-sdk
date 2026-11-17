@@ -755,6 +755,12 @@ jobs:
       # releases closed without ever running its comparison — see the module docstring.
       - name: the release framing gate is where it can actually run
         run: python -m pytest scripts/test_release_gate.py -q
+      # The proto-train race that burned 0.88.0 and 0.90.0: release-on-runtime's fresh contract gate
+      # must refuse BEFORE anything is written, and release-refire.yml must re-dispatch only the
+      # recorded version, only from main's own push CI. The release job is EXECUTED here against a
+      # red gate and a throwaway origin, and must leave no commit and no tag.
+      - name: a refused proto-train release writes nothing and re-fires only what was asked
+        run: python -m pytest scripts/test_release_refire_gate.py -q
       # publish.yml's CI gate races the CI it checks (commit push starts ci.yml, tag push starts
       # publish.yml). These execute the real gate script against a stubbed gh, so "waits for a
       # transient absence" and "still refuses a settled red" are both proven, not just read.
