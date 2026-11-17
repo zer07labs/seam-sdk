@@ -1,6 +1,6 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ c551425 tracking feat/rt3-tenant-cancel (refreshed 2026-11-17).
-     seam-runtime#1773 (RT3 operator admin-cancel), NOT yet on runtime main: seam-sdk#378 pins ahead of it
-     so the control plane may grant `session:cancel` (leader sequencing). Movement since e605d5b: the (b′)
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 62ee84d (refreshed 2026-11-17).
+     seam-runtime#1773 (RT3 operator admin-cancel), squash-merged to runtime main as 62ee84d; the body is
+     byte-identical to the c551425 copy seam-sdk#378 pinned ahead of it on feat/rt3-tenant-cancel. Movement since e605d5b: the (b′)
      `seam.audit.management.v1` row gains `session_cancelled`, after `session_resumed`, classification
      `Internal`. No framing, digest or vector change to any other entry.
      Prior pin, kept for history:
