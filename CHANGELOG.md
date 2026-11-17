@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.93.0 — 2026-11-17
+
 ## 0.92.0 — 2026-11-17
 
 ### Changed — no gate can fail after a tag exists (#375)
