@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.90.1 — 2026-11-17
+
 These entries first ship in **0.90.1**: v0.90.0 was tagged and never published (see COMPATIBILITY.md).
 
 ### Added — option selection, the reader side (runtime 0.90.0, seam-runtime#1748)
