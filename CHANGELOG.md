@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.91.1 — 2026-11-17
+
 These entries, and the cert-ref entries under 0.91.0 below, first ship in **0.91.1**: v0.91.0 was tagged
 and never published (see COMPATIBILITY.md).
 
