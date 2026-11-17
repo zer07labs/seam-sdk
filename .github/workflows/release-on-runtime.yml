@@ -34,6 +34,10 @@ permissions:
   contents: write
   # The "main must be green" step reads the checked-out commit's check runs. Read-only.
   checks: read
+  # A refusal at the two pre-write gates records the asked-for version in ONE `release-pending`
+  # issue (scripts/release_pending.py), and a release that tags closes it. Nothing else here
+  # touches issues.
+  issues: write
 
 jobs:
   release:
@@ -175,6 +179,7 @@ jobs:
       # Same resolution as publish.yml's ci-green: every ci-ok run must be success, pending waits,
       # an API failure is not a verdict, and a timeout is a refusal.
       - name: main must be green before anything is tagged
+        id: green
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -220,6 +225,51 @@ jobs:
           echo "::error::Last seen: $STATE. Refusing to tag; nothing was written, so a re-fire is safe."
           exit 1
 
+      # ── The fresh contract gate: main's green is not enough on a proto train ──────────────────
+      # The runtime's `buf push --label main` runs at the runtime MERGE, and its seam-release dispatch
+      # fires later, at the release TAG. Between the two, main's `ci-ok` above is a green computed
+      # against the OLD contract. 0.88.0 and 0.90.0 both passed that gate, were stamped and tagged,
+      # and were then refused by publish.yml once the release commit's own CI regenerated from the
+      # moved BSR. They are public tags that can never be re-cut.
+      #
+      # So regenerate from the BSR AS IT IS NOW and run the same two contract checks CI runs, before
+      # anything is written. The script is called directly, not via `make check-contract`, because
+      # make replaces a failed recipe's exit code with 2 (see CLAUDE.md), and the code is the verdict.
+      # A refusal here leaves no commit and no tag. `Record the refused version` below files it, and
+      # release-refire.yml re-dispatches the same version once main's CI is green again.
+      # scripts/test_release_refire_gate.py executes this job against a red gate and asserts that.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ github.token }}
+      - name: the contract gate, fresh against the BSR as it is now
+        id: fresh
+        env:
+          BUF_TOKEN: ${{ secrets.BUF_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$BUF_TOKEN" | buf registry login buf.build --token-stdin
+          make generate
+          STREAM=1 EVENTS=1 ./scripts/check-contract.sh
+
+      # The vendored runtime specs must be current too: 0.90.0's release commit was ALSO red on
+      # spec-pin. It reads the private runtime through the API, so it needs a runtime-scoped token.
+      - name: Mint a seam-runtime read token for the spec pin
+        id: rt
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.SEAM_BOT_APP_ID }}
+          private-key: ${{ secrets.SEAM_BOT_PRIVATE_KEY }}
+          owner: zer07labs
+          repositories: seam-runtime
+      - name: the vendored specs, fresh against the runtime as it is now
+        id: specpin
+        env:
+          GH_TOKEN: ${{ steps.rt.outputs.token }}
+        run: python3 scripts/check_vendored_spec.py --from gh
+
       - name: Bump both packages to the runtime version
         run: ./scripts/set_version.sh "${{ steps.v.outputs.version }}"
 
@@ -258,3 +308,56 @@ jobs:
           # main's declared version, deliberately one comparison and not a tag survey, so a
           # missing Go module tag is invisible from there by design.
           git push --atomic origin "v$VER" "go/v$VER"
+
+      # ── The pending-release ledger (scripts/release_pending.py) ───────────────────────────────
+      # Only a refusal at a PRE-WRITE gate is recorded: main not green, or the fresh contract or spec
+      # gate red. Those are the refusals a merged catch-up PR resolves, so release-refire.yml may
+      # retry them. A framing mismatch, or a failure after the stamp, is not recorded: those need a
+      # human. This step does no git operation; it only files or comments on one issue.
+      - name: Record the refused version for release-refire
+        if: >-
+          failure() && (steps.green.outcome == 'failure' || steps.fresh.outcome == 'failure' ||
+          steps.specpin.outcome == 'failure')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VER: ${{ steps.v.outputs.version }}
+          WF: ${{ github.event.client_payload.wire_framing_version || github.event.inputs.wire_framing_version }}
+          GREEN: ${{ steps.green.outcome }}
+          FRESH: ${{ steps.fresh.outcome }}
+          SPECPIN: ${{ steps.specpin.outcome }}
+        run: |
+          set -euo pipefail
+          REASON="main must be green: $GREEN; fresh contract gate: $FRESH; vendored specs: $SPECPIN"
+          OUT="$(mktemp)"
+          python3 scripts/release_pending.py body --version "$VER" --wire-framing-version "$WF" \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --reason "$REASON" > "$OUT"
+          TITLE="$(head -1 "$OUT")"
+          BODY="$(mktemp)"; tail -n +2 "$OUT" > "$BODY"
+          LISTING="$(mktemp)"
+          gh issue list -R "$GITHUB_REPOSITORY" --state open --label release-pending --limit 100 \
+            --json number,title --jq '.[] | "\(.number)\t\(.title)"' > "$LISTING"
+          EXISTING="$(awk -F'\t' -v t="$TITLE" '$2 == t { print $1; exit }' "$LISTING")"
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" -R "$GITHUB_REPOSITORY" --body "Refused again: $REASON. $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "refusal recorded on existing #$EXISTING"
+          else
+            gh label create release-pending -R "$GITHUB_REPOSITORY" --color FBCA04 \
+              --description "A refused release that release-refire.yml will retry" 2>/dev/null || true
+            gh issue create -R "$GITHUB_REPOSITORY" --title "$TITLE" --body-file "$BODY" --label release-pending
+            echo "refusal recorded as a new release-pending issue"
+          fi
+
+      - name: Close this version's pending issue, if any
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VER: ${{ steps.v.outputs.version }}
+        run: |
+          set -euo pipefail
+          LISTING="$(mktemp)"
+          gh issue list -R "$GITHUB_REPOSITORY" --state open --label release-pending --limit 100 \
+            --json number,title --jq '.[] | "\(.number)\t\(.title)"' > "$LISTING"
+          awk -F'\t' -v t="release pending: v$VER" '$2 == t { print $1 }' "$LISTING" | while read -r N; do
+            gh issue close "$N" -R "$GITHUB_REPOSITORY" --comment "Tagged v$VER (run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
+          done

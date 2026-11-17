@@ -342,7 +342,7 @@ this by trying.
 |---|---|---|---|
 | **Python** (`seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:386`) | Yes | **Published + supported** |
 | **TypeScript** (`@zer07labs/seam-sdk`) | Cloudsmith `zer07labs/internal` (`.github/workflows/publish.yml:199`, `ts/package.json:12`) | Yes | **Published + supported** |
-| **Go** | Module proxy, from the `go/vX.Y.Z` tag (`.github/workflows/release-on-runtime.yml:253`) | Tag only — no in-tree version | Resolvable, crypto shim only. **0.48.0 is retracted:** Go's runtime-0.48.0 module is `go/v0.48.1` (`go/go.mod` `retract`) |
+| **Go** | Module proxy, from the `go/vX.Y.Z` tag (`.github/workflows/release-on-runtime.yml:303`) | Tag only — no in-tree version | Resolvable, crypto shim only. **0.48.0 is retracted:** Go's runtime-0.48.0 module is `go/v0.48.1` (`go/go.mod` `retract`) |
 | **Java** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |
 | **Kotlin** | Build from source | **No `version`, no `maven-publish`** | Build-from-source only |
 
