@@ -14,7 +14,7 @@ import uuid
 
 import json
 import time
-from typing import Any
+from typing import Any, Optional
 from typing import NamedTuple as _NamedTuple
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -118,7 +118,9 @@ def _aid_to_pubkey(aid: str) -> bytes:
 
 
 #: The ``kind`` words the explanation digest frames — lowercase ASCII, exactly; never the proto enum name.
-EXPLANATION_KINDS = ("vote", "evaluation", "objection", "ballot")
+#: ``proposal`` (runtime 0.90.0, option selection) is one accepted option of a selection session; it never
+#: carries a voter record.
+EXPLANATION_KINDS = ("vote", "evaluation", "objection", "ballot", "proposal")
 
 
 def _be64_frame(field: bytes) -> bytes:
@@ -271,6 +273,35 @@ def _digest_slot(commitment: dict, name: str) -> bytes:
     return b"\x01" + _be64_frame(b)
 
 
+def _selection_block(commitment: dict) -> dict | None:
+    """The commitment's selection block, strictly decoded, or ``None`` when it carries none ("not a
+    selection decision"). ``selection`` is the canonical body (bytes) or a block mapping /
+    ``SelectionRecord``; anything that does not strictly decode raises, never reads as absent."""
+    v = commitment.get("selection")
+    if v is None:
+        return None
+    body = (
+        bytes(v) if isinstance(v, (bytes, bytearray, memoryview)) else selection_body(v)
+    )
+    return decode_selection_body(body)
+
+
+def _selection_slot(commitment: dict) -> bytes:
+    """v5 field 9. With a ``selection`` block it is framed from this verifier's own recomputation over the
+    block (spec: never from anywhere else); a ``selection_digest`` given beside it must agree. Without one,
+    the plain ``selection_digest`` slot."""
+    blk = _selection_block(commitment)
+    if blk is None:
+        return _digest_slot(commitment, "selection_digest")
+    d = selection_digest(selection_body(blk))
+    given = commitment.get("selection_digest")
+    if given is not None:
+        g = bytes.fromhex(given) if isinstance(given, str) else bytes(given)
+        if g != d:
+            raise ValueError("selection_digest does not match the selection block")
+    return b"\x01" + _be64_frame(d)
+
+
 def _seam_commitment_digest(commitment: dict) -> str:
     """``seam-commitment-digest:v5`` (hex): SHA-256 over the length-prefixed domain tag and fields.
 
@@ -284,8 +315,9 @@ def _seam_commitment_digest(commitment: dict) -> str:
     Never "simplify" them away. ``supersedes`` carries a presence byte: ``0x00`` when absent (key missing
     or ``None``), ``0x01 || F(value)`` when present. Field 8 is the 32 raw bytes of the v2 explanation
     digest (see :func:`_commitment_explanation_digest`). Fields 9 and 10 are the optional
-    ``selection_digest`` and ``certificate_digest`` (32 bytes each, :func:`_digest_slot`), absent on
-    every record the runtime seals today. Field 11 is ``governing_doc_sha256`` (#1711), the SHA-256 of
+    ``selection_digest`` and ``certificate_digest`` (32 bytes each, :func:`_digest_slot`). Field 9 is
+    framed from the ``selection`` block when the commitment carries one (runtime 0.90.0,
+    :func:`_selection_slot`), and is ``0x00`` on every record that did not run under selection. Field 11 is ``governing_doc_sha256`` (#1711), the SHA-256 of
     the tenant governing document the decision was opened under: the same slot, present on every
     governed record and absent on an ungoverned one. v1-v4 are deleted, not dual-verified: a v4 TCT
     does not verify here, and there is no fallback.
@@ -301,7 +333,7 @@ def _seam_commitment_digest(commitment: dict) -> str:
         _be64_frame(commitment["trust_basis"].encode()),
         _be64_frame((commitment.get("committer") or "").encode()),
         _be64_frame(_commitment_explanation_digest(commitment)),
-        _digest_slot(commitment, "selection_digest"),
+        _selection_slot(commitment),
         _digest_slot(commitment, "certificate_digest"),
         _digest_slot(commitment, "governing_doc_sha256"),
     ]
@@ -350,6 +382,11 @@ def verify_tct(
     ``seam-voter-pop-v1`` record addressed to ``issuer_aid`` that re-verifies offline, all from one
     session, and, with ``decision=(tenant, session_id)``, from that decision's session. With only the
     published ``explanation_digest`` there are no entries to check, so this proves *who* and *what*.
+
+    When ``commitment`` carries a ``selection`` block (runtime 0.90.0, option selection), field 9 is
+    framed from it and the winner is recomputed offline (:func:`seam_sdk.selection.verify_selection`):
+    the committed action must be the winning option and every vote's signed content must link to it. A
+    block with no ``explanation`` entries verifies ``False``. No block is "not a selection decision".
     """
     # Any malformed/forged input must fail closed (return False), never raise.
     try:
@@ -413,7 +450,17 @@ def verify_tct(
             entries, issuer_aid, decision
         ):
             return False
-        return stmt["commitment_digest"] == _seam_commitment_digest(commitment)
+        if stmt["commitment_digest"] != _seam_commitment_digest(commitment):
+            return False
+        # Option selection (runtime 0.90.0, selection-rule.v1 §5 steps 4, 6-9). No block means "not a
+        # selection decision" and nothing more. A block without the entries cannot be checked, so it
+        # fails closed rather than passing as if the winner had been recomputed.
+        blk = _selection_block(commitment)
+        if blk is not None:
+            if entries is None:
+                return False
+            return verify_selection(blk, entries, commitment["action"]).ok
+        return True
     except Exception:
         return False
 
@@ -2003,3 +2050,463 @@ def context_digest_v4(bindings) -> bytes:
         for t in tail:
             pre += _rd_opt_text(t)
     return hashlib.sha256(pre).digest()
+
+
+# ── option selection (`seam.selection.weighted_plurality` v1, runtime 0.90.0) ───────────────────────
+#
+# Written from seam-runtime ``docs/specs/selection-rule.v1.md`` and pinned by
+# ``conformance/selection_rule_v1_vectors.json``. Kept in this file (re-exported by
+# :mod:`seam_sdk.selection`) because ``verify_tct`` needs it and this module must stay loadable as a single
+# file (``tests/test_errors_is_import_light.py``).
+
+#: The domain tag of v5 field 9.
+SELECTION_DIGEST_DOMAIN = b"seam-selection-digest:v1"
+#: The one rule v1 defines, and its parameters' only v1 values.
+SELECTION_RULE = "seam.selection.weighted_plurality"
+SELECTION_RULE_VERSION = 1
+SELECTION_TIE = "no_winner"
+SELECTION_ABSTENTION = "excluded_counts_for_quorum"
+#: Selection is admitted only on the decision mode, so the vote-content mode is this constant (§4.2).
+SELECTION_MODE = "macp.mode.decision.v1"
+#: The ``0x04`` trailer marker and its body version byte (§4.3).
+SELECTION_TRAILER_MARKER = 0x04
+SELECTION_BODY_V1 = 0x01
+VOTE_VALUES = ("APPROVE", "REJECT", "ABSTAIN")
+
+_U32_MAX = 2**32 - 1
+
+
+class SelectionDecodeError(ValueError):
+    """A selection block (or ``0x04`` trailer) that does not strictly decode. ``reason`` is the spec's
+    name: ``truncated``, ``u32_overflow``, ``weights_not_canonical``, ``rules_digest_not_32``,
+    ``invalid_utf8``, ``empty_winner``, ``trailing_bytes``, and for the trailer ``zero_length_body``,
+    ``unknown_version``, ``wrong_marker``. The whole commitment is refused."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"selection block refused: {reason}")
+        self.reason = reason
+
+
+class SelectionResult(_NamedTuple):
+    """The outcome of :func:`verify_selection`. ``result`` is ``"verified"`` or one of the spec's verifier
+    result names (``selection_malformed``, ``selection_no_winner_sealed``, ``selection_winner_mismatch``,
+    ``selection_action_mismatch``, ``selection_vote_unverified``, ``selection_content_link_mismatch``,
+    ``selection_principal_not_one_to_one``). ``at`` is the entry index where the check failed, when the
+    spec names one; ``reason`` is ``decide()``'s reason for a malformed or no-winner record;
+    ``recomputed`` is the winner this verifier computed when it disagrees with the sealed one."""
+
+    result: str
+    winner_proposal_id: Optional[str] = None
+    votes_linked: int = 0
+    at: Optional[int] = None
+    reason: Optional[str] = None
+    recomputed: Optional[str] = None
+
+    @property
+    def ok(self) -> bool:
+        return self.result == "verified"
+
+
+# ── the canonical body (§4.2) ────────────────────────────────────────────────────────────────────────
+
+
+def _F(b: bytes) -> bytes:
+    return struct.pack(">Q", len(b)) + b
+
+
+def _U(n: int) -> bytes:
+    if isinstance(n, bool) or not isinstance(n, int) or not 0 <= n < 2**64:
+        raise ValueError(f"not an unsigned integer: {n!r}")
+    return struct.pack(">Q", n)
+
+
+def _u32(name: str, n) -> int:
+    if isinstance(n, bool) or not isinstance(n, int) or not 0 <= n <= _U32_MAX:
+        raise ValueError(f"selection {name} must be a u32, got {n!r}")
+    return n
+
+
+def _rules_digest(v) -> bytes:
+    if isinstance(v, str):
+        if len(v) != 64 or any(c not in "0123456789abcdef" for c in v):
+            raise ValueError(
+                "selection rules_digest must be 64 lowercase hex characters"
+            )
+        return bytes.fromhex(v)
+    b = bytes(v)
+    if len(b) != 32:
+        raise ValueError(f"selection rules_digest must be 32 bytes, got {len(b)}")
+    return b
+
+
+def _pair(item, a: str, b: str) -> tuple:
+    if isinstance(item, dict):
+        return item[a], item[b]
+    if isinstance(item, (tuple, list)):
+        x, y = item
+        return x, y
+    return getattr(item, a), getattr(item, b)
+
+
+def selection_block_of(record) -> dict:
+    """A selection block as a plain dict (the vector's ``block`` shape, ``rules_digest`` as 32 raw bytes),
+    from a generated ``SelectionRecord`` or a mapping with the same field names."""
+    get = record.get if isinstance(record, dict) else (lambda k: getattr(record, k))
+    return {
+        "rule": get("rule"),
+        "rule_version": _u32("rule_version", get("rule_version")),
+        "default_weight": _u32("default_weight", get("default_weight")),
+        "weights": [
+            {"participant": p, "weight": _u32("weight", w)}
+            for p, w in (_pair(x, "participant", "weight") for x in get("weights"))
+        ],
+        "tie": get("tie"),
+        "abstention": get("abstention"),
+        "min_ballots": _u32("min_ballots", get("min_ballots")),
+        "policy_version": get("policy_version"),
+        "rules_digest": _rules_digest(get("rules_digest")),
+        "participants": list(get("participants")),
+        "on_behalf_of": list(get("on_behalf_of")),
+        "context": [
+            {"ctx_ref": r, "content_hash": h or ""}
+            for r, h in (_pair(x, "ctx_ref", "content_hash") for x in get("context"))
+        ],
+        "winner_proposal_id": get("winner_proposal_id"),
+    }
+
+
+def selection_body(record) -> bytes:
+    """The canonical selection block body (§4.2) of a ``SelectionRecord`` or mapping.
+
+    Refuses (``ValueError``) a block the runtime could not have sealed rather than hashing it: weights not
+    strictly ascending by the participant's UTF-8 bytes, a ``rules_digest`` that is not 32 bytes, an empty
+    winner. The result always round-trips through :func:`decode_selection_body`."""
+    blk = selection_block_of(record)
+    out = [
+        _F(blk["rule"].encode()),
+        _U(blk["rule_version"]),
+        _U(blk["default_weight"]),
+        _U(len(blk["weights"])),
+    ]
+    for w in blk["weights"]:
+        out += [_F(w["participant"].encode()), _U(w["weight"])]
+    out += [
+        _F(blk["tie"].encode()),
+        _F(blk["abstention"].encode()),
+        _U(blk["min_ballots"]),
+        _F(blk["policy_version"].encode()),
+        _F(blk["rules_digest"]),
+        _U(len(blk["participants"])),
+        *(_F(p.encode()) for p in blk["participants"]),
+        _U(len(blk["on_behalf_of"])),
+        *(_F(o.encode()) for o in blk["on_behalf_of"]),
+        _U(len(blk["context"])),
+    ]
+    for c in blk["context"]:
+        out += [_F(c["ctx_ref"].encode()), _F(c["content_hash"].encode())]
+    out.append(_F(blk["winner_proposal_id"].encode()))
+    body = b"".join(out)
+    decode_selection_body(
+        body
+    )  # the strict decode is the one definition of "could have been sealed"
+    return body
+
+
+def selection_digest(body: bytes) -> bytes:
+    """v5 field 9's 32 bytes: ``SHA-256(F("seam-selection-digest:v1") ‖ body)``. The trailer's version byte
+    is not hashed."""
+    return hashlib.sha256(_F(SELECTION_DIGEST_DOMAIN) + bytes(body)).digest()
+
+
+class _Reader:
+    def __init__(self, b: bytes) -> None:
+        self.b, self.i = b, 0
+
+    def take(self, n: int) -> bytes:
+        if n > len(self.b) - self.i:
+            raise SelectionDecodeError("truncated")
+        out = self.b[self.i : self.i + n]
+        self.i += n
+        return out
+
+    def u(self) -> int:
+        return struct.unpack(">Q", self.take(8))[0]
+
+    def u32(self) -> int:
+        n = self.u()
+        if n > _U32_MAX:
+            raise SelectionDecodeError("u32_overflow")
+        return n
+
+    def count(self, min_item: int) -> int:
+        n = self.u()
+        if n * min_item > len(self.b) - self.i:
+            raise SelectionDecodeError("truncated")
+        return n
+
+    def raw(self) -> bytes:
+        return self.take(self.u())
+
+    def text(self) -> str:
+        try:
+            return self.raw().decode("utf-8")
+        except UnicodeDecodeError:
+            raise SelectionDecodeError("invalid_utf8") from None
+
+
+def decode_selection_body(body: bytes) -> dict:
+    """Strictly decode a selection block body (§4.2) to a block dict (``rules_digest`` as 32 raw bytes).
+
+    Raises :class:`SelectionDecodeError` on anything the runtime could not have sealed. Semantic checks
+    (rule name, version, electorate, …) are :func:`decide`'s, not the decoder's."""
+    r = _Reader(bytes(body))
+    blk: dict = {
+        "rule": r.text(),
+        "rule_version": r.u32(),
+        "default_weight": r.u32(),
+        "weights": [],
+    }
+    for _ in range(r.count(16)):
+        blk["weights"].append({"participant": r.text(), "weight": r.u32()})
+    keys = [w["participant"].encode() for w in blk["weights"]]
+    if any(a >= b for a, b in zip(keys, keys[1:])):
+        raise SelectionDecodeError("weights_not_canonical")
+    blk["tie"] = r.text()
+    blk["abstention"] = r.text()
+    blk["min_ballots"] = r.u32()
+    blk["policy_version"] = r.text()
+    rd = r.raw()
+    if len(rd) != 32:
+        raise SelectionDecodeError("rules_digest_not_32")
+    blk["rules_digest"] = rd
+    blk["participants"] = [r.text() for _ in range(r.count(8))]
+    blk["on_behalf_of"] = [r.text() for _ in range(r.count(8))]
+    blk["context"] = [
+        {"ctx_ref": r.text(), "content_hash": r.text()} for _ in range(r.count(16))
+    ]
+    blk["winner_proposal_id"] = r.text()
+    if blk["winner_proposal_id"] == "":
+        raise SelectionDecodeError("empty_winner")
+    if r.i != len(r.b):
+        raise SelectionDecodeError("trailing_bytes")
+    return blk
+
+
+def decode_selection_trailer(trailer: bytes) -> dict:
+    """Strictly decode a whole ``0x04`` trailer (``0x04 ‖ u32_LE(1 + len(body)) ‖ 0x01 ‖ body``, §4.3)."""
+    t = bytes(trailer)
+    if len(t) < 5:
+        raise SelectionDecodeError("truncated")
+    if t[0] != SELECTION_TRAILER_MARKER:
+        raise SelectionDecodeError("wrong_marker")
+    n = struct.unpack("<I", t[1:5])[0]
+    if n == 0:
+        raise SelectionDecodeError("zero_length_body")
+    if len(t) - 5 < n:
+        raise SelectionDecodeError("truncated")
+    if len(t) - 5 > n:
+        raise SelectionDecodeError("trailing_bytes")
+    if t[5] != SELECTION_BODY_V1:
+        raise SelectionDecodeError("unknown_version")
+    return decode_selection_body(t[6:])
+
+
+# ── decide() (§3) ────────────────────────────────────────────────────────────────────────────────────
+
+
+def _record_malformed(blk: dict) -> Optional[str]:
+    if blk["rule"] != SELECTION_RULE:
+        return "unknown_rule"
+    if blk["rule_version"] != SELECTION_RULE_VERSION:
+        return "unknown_rule_version"
+    if blk["tie"] != SELECTION_TIE:
+        return "unknown_tie"
+    if blk["abstention"] != SELECTION_ABSTENTION:
+        return "unknown_abstention"
+    keys = [w["participant"].encode() for w in blk["weights"]]
+    if any(a >= b for a, b in zip(keys, keys[1:])):
+        return "weights_not_canonical"
+    if blk["default_weight"] == 0 and all(w["weight"] == 0 for w in blk["weights"]):
+        return "zero_electorate"
+    if blk["min_ballots"] == 0:
+        return "min_ballots_zero"
+    if not blk["participants"]:
+        return "no_participants"
+    if len(set(blk["participants"])) != len(blk["participants"]):
+        return "duplicate_participant"
+    return None
+
+
+def decide(record, entries) -> dict:
+    """``decide(record, entries)`` (§3): a pure function of the selection record (its winner is ignored)
+    and the sealed explanation entries (``kind`` as the lowercase digest word).
+
+    Returns ``{"result": "winner", "winner_proposal_id", "option", "scores", "ballots"}``,
+    ``{"result": "no_winner", "reason", "scores", "ballots"}`` or ``{"result": "malformed", "reason",
+    "at"}`` (``at`` is the entry index, ``None`` for a record-level check). ``scores`` lists every
+    proposal in sealed order. Options compare by UTF-8 bytes, never normalised."""
+    blk = (
+        record
+        if isinstance(record, dict) and "weights" in record
+        else selection_block_of(record)
+    )
+    bad = _record_malformed(blk)
+    if bad:
+        return {"result": "malformed", "reason": bad, "at": None}
+    weights = {w["participant"]: w["weight"] for w in blk["weights"]}
+    participants = set(blk["participants"])
+    proposals: dict[str, str] = {}
+    options: set[bytes] = set()
+    voted: set[tuple[str, str]] = set()
+    approvers: set[str] = set()
+    voters: list[str] = []
+    approvals: list[tuple[str, str]] = []
+    seen_vote = False
+    for i, e in enumerate(entries):
+        kind = e["kind"]
+
+        def mal(reason: str, i: int = i) -> dict:
+            return {"result": "malformed", "reason": reason, "at": i}
+
+        if kind == "proposal":
+            if seen_vote:
+                return mal("proposal_after_vote")
+            if e.get("voter_verification") is not None:
+                return mal("proposal_has_voter_record")
+            if (
+                e.get("reason", "") != ""
+                or e.get("confidence") is not None
+                or e.get("rationale_ref") is not None
+            ):
+                return mal("proposal_has_extra_fields")
+            if e["proposal_id"] == "":
+                return mal("empty_proposal_id")
+            if e["value"] == "":
+                return mal("empty_option")
+            if e["proposal_id"] in proposals:
+                return mal("duplicate_proposal_id")
+            if e["value"].encode() in options:
+                return mal("duplicate_option")
+            proposals[e["proposal_id"]] = e["value"]
+            options.add(e["value"].encode())
+        elif kind == "vote":
+            seen_vote = True
+            who, pid = e["participant"], e["proposal_id"]
+            if pid not in proposals:
+                return mal("vote_unknown_proposal")
+            if e["value"] not in VOTE_VALUES:
+                return mal("vote_bad_value")
+            if who not in participants:
+                return mal("vote_not_participant")
+            if (who, pid) in voted:
+                return mal("duplicate_vote")
+            if e["value"] == "APPROVE":
+                if who in approvers:
+                    return mal("double_approve")
+                approvers.add(who)
+                approvals.append((who, pid))
+            voted.add((who, pid))
+            if who not in voters:
+                voters.append(who)
+        elif kind in ("evaluation", "objection"):
+            continue  # sealed, never scored (v1 admits no objection veto)
+        elif kind == "ballot":
+            return mal("ballot_in_selection")
+        else:
+            return mal("unknown_kind")
+    if not proposals:
+        return {"result": "malformed", "reason": "no_proposals", "at": None}
+    scores = dict.fromkeys(proposals, 0)
+    for who, pid in approvals:
+        scores[pid] += weights.get(who, blk["default_weight"])
+    ballots = len(voters)
+    top = max(scores.values())
+    leaders = [pid for pid, sc in scores.items() if sc == top]
+    tally = {
+        "scores": [{"proposal_id": p, "score": sc} for p, sc in scores.items()],
+        "ballots": ballots,
+    }
+    if ballots < blk["min_ballots"]:
+        return {"result": "no_winner", "reason": "below_min_ballots", **tally}
+    if top == 0:
+        return {"result": "no_winner", "reason": "no_positive_score", **tally}
+    if len(leaders) > 1:
+        return {"result": "no_winner", "reason": "tie", **tally}
+    return {
+        "result": "winner",
+        "winner_proposal_id": leaders[0],
+        "option": proposals[leaders[0]],
+        **tally,
+    }
+
+
+# ── the verifier's selection steps (§5 steps 4, 6-9) ─────────────────────────────────────────────────
+
+
+def _digest_bytes(v) -> bytes:
+    if isinstance(v, str):
+        return bytes.fromhex(v)
+    return bytes(v)
+
+
+def verify_selection(record, entries, action: str) -> SelectionResult:
+    """§5 steps 6-9 over a decoded selection record, the sealed entries and ``Commitment.action``.
+
+    Step 6 recomputes the winner (:func:`decide`) and checks it is the sealed one; step 7 checks the
+    winner's sealed option is ``action`` byte for byte; step 8 re-derives every vote's
+    ``seam-vote-content-v1`` digest from sealed inputs alone and checks it is the one the voter signed
+    (the record's ``content_digest``); step 9 checks participant ↔ principal is one-to-one across the
+    votes. It does not re-check signatures or the TCT: that is :func:`~seam_sdk.crypto.verify_tct`'s
+    (steps 1-3 and 5), which calls this when the commitment carries a block."""
+    blk = (
+        record
+        if isinstance(record, dict) and "weights" in record
+        else selection_block_of(record)
+    )
+    entries = list(entries)
+    d = decide(blk, entries)
+    if d["result"] == "malformed":
+        return SelectionResult("selection_malformed", reason=d["reason"], at=d["at"])
+    if d["result"] == "no_winner":
+        return SelectionResult("selection_no_winner_sealed", reason=d["reason"])
+    if d["winner_proposal_id"] != blk["winner_proposal_id"]:
+        return SelectionResult(
+            "selection_winner_mismatch", recomputed=d["winner_proposal_id"]
+        )
+    if d["option"].encode() != action.encode():
+        return SelectionResult("selection_action_mismatch")
+    proposals = {
+        e["proposal_id"]: e["value"] for e in entries if e["kind"] == "proposal"
+    }
+    policy = (blk["policy_version"], _rules_digest(blk["rules_digest"]))
+    linked = 0
+    for i, e in enumerate(entries):
+        if e["kind"] != "vote":
+            continue
+        vv = e.get("voter_verification")
+        if vv is None:
+            return SelectionResult("selection_vote_unverified", at=i)
+        want = vote_content_digest(
+            SELECTION_MODE,
+            e["proposal_id"],
+            proposals[e["proposal_id"]],
+            blk["participants"],
+            blk["on_behalf_of"],
+            blk["context"],
+            (),
+            policy,
+        )
+        if _digest_bytes(vv["content_digest"]) != want:
+            return SelectionResult("selection_content_link_mismatch", at=i)
+        linked += 1
+    by_participant: dict[str, str] = {}
+    by_principal: dict[str, str] = {}
+    for i, e in enumerate(entries):
+        if e["kind"] != "vote":
+            continue
+        p, a = e["participant"], e["voter_verification"]["principal"]
+        if by_participant.setdefault(p, a) != a or by_principal.setdefault(a, p) != p:
+            return SelectionResult("selection_principal_not_one_to_one", at=i)
+    return SelectionResult(
+        "verified", winner_proposal_id=d["winner_proposal_id"], votes_linked=linked
+    )

@@ -33,8 +33,15 @@ categories = ["command-line-utilities", "cryptography"]
 # `../conformance/commitment_digest_v5_signed_vector.json`, `commitment_digest_v5_vector.json` and
 # `vectors.json`), and `tests/voter_vectors.rs`
 # (it reads `../conformance/voter_pop_v1_payload_vector.json`); the commitment digest's own
-# worked examples are unit tests in `src/commitment.rs`, which ship.
-exclude = ["tests/conformance.rs", "tests/commitment_vectors.rs", "tests/voter_vectors.rs"]
+# worked examples are unit tests in `src/commitment.rs`, which ship. `tests/selection_vectors.rs` too (it
+# reads `../conformance/selection_rule_v1_vectors.json`); option selection's own unit tests are in
+# `src/selection.rs`, which ship.
+exclude = [
+    "tests/conformance.rs",
+    "tests/commitment_vectors.rs",
+    "tests/voter_vectors.rs",
+    "tests/selection_vectors.rs",
+]
 
 # MSRV. There was NONE before publishing was contemplated, and crates.io would have accepted that
 # silently: a published crate with no `rust-version` gives a consumer no signal at all, and they find

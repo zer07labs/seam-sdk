@@ -48,10 +48,11 @@ public final class SeamCrypto {
 
   /**
    * The {@code kind} words the explanation digest frames — lowercase ASCII, exactly; never the proto
-   * enum name ({@code EXPLANATION_KIND_VOTE} → {@code "vote"}).
+   * enum name ({@code EXPLANATION_KIND_VOTE} → {@code "vote"}). {@code "proposal"} (runtime 0.90.0,
+   * option selection) is one accepted option of a selection session; it never carries a voter record.
    */
   public static final List<String> EXPLANATION_KINDS =
-      List.of("vote", "evaluation", "objection", "ballot");
+      List.of("vote", "evaluation", "objection", "ballot", "proposal");
 
   /** The voter-verification {@code method} words the explanation digest frames — lowercase, exactly. */
   public static final List<String> VOTER_VERIFICATION_METHODS = List.of("pop", "cp_signed");
@@ -310,6 +311,122 @@ public final class SeamCrypto {
 
   private static void be64(ByteArrayOutputStream out, long v) {
     out.writeBytes(ByteBuffer.allocate(8).putLong(v).array());
+  }
+
+  /**
+   * Domain tag of the option-selection block digest that {@code seam-commitment-digest:v5} binds as
+   * field 9 (runtime 0.90.0, seam-runtime {@code docs/specs/selection-rule.v1.md}).
+   */
+  public static final String SELECTION_DIGEST_DOMAIN = "seam-selection-digest:v1";
+
+  /** One weight override of a {@link SelectionBlock}; {@code weight} is a u32. */
+  public record SelectionWeight(String participant, long weight) {}
+
+  /** One sealed context pair of a {@link SelectionBlock}; {@code contentHash} is "" when none. */
+  public record SelectionContext(String ctxRef, String contentHash) {}
+
+  /**
+   * The sealed {@code seam.selection.weighted_plurality} block (selection-rule.v1 §4.2), field for
+   * field in {@code body} order; the generated {@code SelectionRecord} ({@code Commitment.selection =
+   * 12}) maps onto it one to one. Integer fields are u32 carried as {@code long}.
+   */
+  public record SelectionBlock(
+      String rule,
+      long ruleVersion,
+      long defaultWeight,
+      List<SelectionWeight> weights,
+      String tie,
+      String abstention,
+      long minBallots,
+      String policyVersion,
+      byte[] rulesDigest,
+      List<String> participants,
+      List<String> onBehalfOf,
+      List<SelectionContext> context,
+      String winnerProposalId) {}
+
+  private static void u32(ByteArrayOutputStream out, String name, long v) {
+    if (v < 0 || v > 0xFFFF_FFFFL) {
+      throw new IllegalArgumentException(name + " is " + v + ", outside u32");
+    }
+    be64(out, v);
+  }
+
+  private static byte[] utf8(String s) {
+    return nz(s);
+  }
+
+  /**
+   * The canonical selection block {@code body} (selection-rule.v1 §4.2), framed only with {@code F(x)
+   * = be64(len) ‖ x} and {@code U(n) = be64(n)}. Field 9 of {@code seam-commitment-digest:v5} is
+   * {@link #selectionDigest}{@code (selectionBody(block))}: pass it as {@link
+   * Commitment#selectionDigest()}.
+   *
+   * <p>This port frames the block (so a selection decision's TCT verifies) but does not recompute the
+   * winner: selection-rule.v1 §5 steps 6-9 are implemented by the Rust verifier and the Python SDK.
+   *
+   * @throws IllegalArgumentException for a block the runtime could not have sealed: weights not
+   *     strictly ascending by participant UTF-8 bytes (duplicates included), a rules digest that is
+   *     not 32 bytes, an empty winner, or an integer outside u32 — refused rather than hashed.
+   */
+  public static byte[] selectionBody(SelectionBlock b) {
+    List<SelectionWeight> weights = b.weights() == null ? List.of() : b.weights();
+    for (int i = 1; i < weights.size(); i++) {
+      if (Arrays.compareUnsigned(
+              utf8(weights.get(i - 1).participant()), utf8(weights.get(i).participant()))
+          >= 0) {
+        throw new IllegalArgumentException(
+            "selection weights are not strictly ascending by participant (weights_not_canonical)");
+      }
+    }
+    if (b.rulesDigest() == null || b.rulesDigest().length != 32) {
+      throw new IllegalArgumentException("selection rules_digest must be 32 bytes");
+    }
+    if (b.winnerProposalId() == null || b.winnerProposalId().isEmpty()) {
+      throw new IllegalArgumentException("selection winner_proposal_id is empty (empty_winner)");
+    }
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    be64Frame(out, utf8(b.rule()));
+    u32(out, "rule_version", b.ruleVersion());
+    u32(out, "default_weight", b.defaultWeight());
+    be64(out, weights.size());
+    for (SelectionWeight w : weights) {
+      be64Frame(out, utf8(w.participant()));
+      u32(out, "weight", w.weight());
+    }
+    be64Frame(out, utf8(b.tie()));
+    be64Frame(out, utf8(b.abstention()));
+    u32(out, "min_ballots", b.minBallots());
+    be64Frame(out, utf8(b.policyVersion()));
+    be64Frame(out, b.rulesDigest());
+    List<String> participants = b.participants() == null ? List.of() : b.participants();
+    be64(out, participants.size());
+    for (String p : participants) {
+      be64Frame(out, utf8(p));
+    }
+    List<String> onBehalfOf = b.onBehalfOf() == null ? List.of() : b.onBehalfOf();
+    be64(out, onBehalfOf.size());
+    for (String o : onBehalfOf) {
+      be64Frame(out, utf8(o));
+    }
+    List<SelectionContext> context = b.context() == null ? List.of() : b.context();
+    be64(out, context.size());
+    for (SelectionContext c : context) {
+      be64Frame(out, utf8(c.ctxRef()));
+      be64Frame(out, utf8(c.contentHash()));
+    }
+    be64Frame(out, utf8(b.winnerProposalId()));
+    return out.toByteArray();
+  }
+
+  /**
+   * {@code SHA-256(F("seam-selection-digest:v1") ‖ body)}: the 32 bytes v5 field 9 binds.
+   */
+  public static byte[] selectionDigest(byte[] body) {
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    be64Frame(out, SELECTION_DIGEST_DOMAIN.getBytes(StandardCharsets.UTF_8));
+    out.writeBytes(body);
+    return sha256(out.toByteArray());
   }
 
   /** Domain tag of the explanation digest. */

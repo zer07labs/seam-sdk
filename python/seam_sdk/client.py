@@ -45,6 +45,7 @@ from .errors import (  # noqa: F401  (SeamError re-exported)
     is_tenant_moving,
 )
 from ._outcome import ObservedAt, check_outcome_fields
+from .selection import selection_block_of
 from .tenant import TenantInterceptor
 
 # The generated transport stubs are ROOTED subpackages (`scripts/root_gen.py` rewrites the
@@ -903,7 +904,9 @@ class SeamClient:
         (MACP refuses it — ``macp-modes-0.5.0 src/mode/decision.rs:166-171``), deliberately not
         mirrored client-side.
 
-        ``rationale_ref`` is a ``sha256:<hex>`` context ref. Since runtime 0.44.0 it is **sealed**:
+        ``rationale_ref`` is a ``sha256:<hex>`` context ref, or the typed decision-certificate ref
+        ``decision-cert:sha256:<64 hex>``, which the runtime accepts only when the tenant's ``cert_ref``
+        flag is on. Either form is framed as opaque UTF-8. Since runtime 0.44.0 it is **sealed**:
         every accepted evaluation's ``rationale_ref`` (and whether a ``confidence`` was stated at
         all) is bound into the Commitment's explanation under ``seam-explanation-digest:v2``, which
         ``seam-commitment-digest:v5`` covers. ``verify_decision`` recomputes it locally.
@@ -1572,6 +1575,7 @@ _EXPLANATION_KIND_WORDS = {
     pb.EXPLANATION_KIND_EVALUATION: "evaluation",
     pb.EXPLANATION_KIND_OBJECTION: "objection",
     pb.EXPLANATION_KIND_BALLOT: "ballot",
+    pb.EXPLANATION_KIND_PROPOSAL: "proposal",
 }
 
 
@@ -1598,6 +1602,11 @@ def commitment_view(c: "pb.Commitment") -> dict:
         # v5 field 11 (#1711): `optional bytes`, so presence is explicit and must survive.
         "governing_doc_sha256": bytes(c.governing_doc_sha256)
         if c.HasField("governing_doc_sha256")
+        else None,
+        # Option selection (runtime 0.90.0): `optional SelectionRecord`, explicit presence. Absent is
+        # "not a selection decision" (field 9 = 0x00); present is framed and the winner recomputed.
+        "selection": selection_block_of(c.selection)
+        if c.HasField("selection")
         else None,
         # proto3 bytes cannot say "absent": empty means not published, and the entries decide.
         "explanation_digest": bytes(c.explanation_digest) or None,

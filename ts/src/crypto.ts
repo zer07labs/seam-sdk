@@ -77,8 +77,10 @@ export interface Presentation {
   pop_nonce: string;
 }
 
-/** The `kind` words `seam-explanation-digest:v2` frames — lowercase ASCII, exactly; never the proto enum name. */
-export const EXPLANATION_KINDS = ["vote", "evaluation", "objection", "ballot"] as const;
+/** The `kind` words `seam-explanation-digest:v2` frames — lowercase ASCII, exactly; never the proto enum name.
+ * `proposal` (runtime 0.90.0, option selection) is one accepted option of a selection session: it never
+ * carries a voter record. */
+export const EXPLANATION_KINDS = ["vote", "evaluation", "objection", "ballot", "proposal"] as const;
 
 /** One sealed explanation entry, as the digest frames it (snake_case, like {@link Commitment}).
  * `confidence` / `rationale_ref` absent (`undefined` or `null`) is NOT the same as a stated `0.0` /
@@ -146,6 +148,10 @@ export interface Commitment {
    * `null`) frames `0x00`, which is what every record the runtime seals today carries; any length other
    * than 32 is refused. */
   selection_digest?: DigestBytes | null;
+  /** The sealed option-selection block (runtime 0.90.0, `Commitment.selection`), from which field 9 is
+   * framed as {@link selectionDigest}`(`{@link selectionBody}`(selection))`. Absent (`undefined` or `null`)
+   * means "not a selection decision". Giving both `selection` and {@link selection_digest} throws. */
+  selection?: SelectionBlock | null;
   /** Field 10 (`seam-commitment-digest:v5`): the Gate certificate's 32-byte digest. Absent frames `0x00`
    * (every record the runtime seals today); any length other than 32 is refused. */
   certificate_digest?: DigestBytes | null;
@@ -389,11 +395,90 @@ export function seamCommitmentDigest(c: Commitment): string {
     frame(utf8Field(c.trust_basis, "trust_basis")),
     frame(utf8Field(c.committer || "", "committer")),
     frame(commitmentExplanationDigest(c)),
-    optDigest32(c.selection_digest, "selection_digest"),
+    selectionSlot(c),
     optDigest32(c.certificate_digest, "certificate_digest"),
     optDigest32(c.governing_doc_sha256, "governing_doc_sha256"),
   ];
   return Buffer.from(sha256(concat(...parts))).toString("hex");
+}
+
+function selectionSlot(c: Commitment): Uint8Array {
+  if (c.selection === undefined || c.selection === null) return optDigest32(c.selection_digest, "selection_digest");
+  if (c.selection_digest !== undefined && c.selection_digest !== null)
+    throw new Error("give selection or selection_digest, not both");
+  return optDigest32(selectionDigest(selectionBody(c.selection)), "selection_digest");
+}
+
+/** Domain tag of the option-selection block digest (v5 field 9). */
+export const SELECTION_DIGEST_DOMAIN = "seam-selection-digest:v1";
+
+/** The sealed `seam.selection.weighted_plurality` block (`selection-rule.v1.md` §4.2), field for field in
+ * `body` order. Integers are u32 (`rule_version`, `default_weight`, each weight, `min_ballots`). */
+export interface SelectionBlock {
+  rule: string;
+  rule_version: number;
+  default_weight: number;
+  /** Overrides, strictly ascending by the participant's UTF-8 bytes (anything else is refused). */
+  weights: readonly { participant: string; weight: number }[];
+  tie: string;
+  abstention: string;
+  min_ballots: number;
+  policy_version: string;
+  /** Exactly 32 bytes: the bound `policy_rules_digest`. */
+  rules_digest: DigestBytes;
+  participants: readonly string[];
+  on_behalf_of: readonly string[];
+  /** Sealed context pairs in sealed order; `content_hash` is `""` when the binding carries none. */
+  context: readonly { ctx_ref: string; content_hash: string }[];
+  /** Never empty: a no-winner session cannot commit. */
+  winner_proposal_id: string;
+}
+
+function u32be64(name: string, n: number | bigint): Uint8Array {
+  return be64(name, uintSlot(name, n, 32));
+}
+
+/** The canonical selection block `body` (`selection-rule.v1.md` §4.2): `F` = `be64(len) ‖ x`, `U` = `be64`.
+ * Refuses (throws) a block the runtime could not have sealed — weights not strictly ascending by
+ * participant UTF-8 bytes (duplicates included), a `rules_digest` that is not 32 bytes, an empty
+ * `winner_proposal_id`, or an integer outside u32 — rather than hashing it. This port frames the block
+ * only; the winner recompute (§5 steps 6-9) is in the Rust verifier and the Python SDK. */
+export function selectionBody(b: SelectionBlock): Uint8Array {
+  const keys = b.weights.map((w) => utf8Field(w.participant, "selection.weights.participant"));
+  for (let i = 1; i < keys.length; i++)
+    if (Buffer.compare(Buffer.from(keys[i - 1]), Buffer.from(keys[i])) >= 0)
+      throw new Error("selection.weights are not strictly ascending by participant (weights_not_canonical)");
+  const rules = digestBytes(b.rules_digest, "selection.rules_digest");
+  if (rules.length !== 32) throw new Error(`selection.rules_digest must be 32 bytes, got ${rules.length}`);
+  if (b.winner_proposal_id === "") throw new Error("selection.winner_proposal_id is empty (empty_winner)");
+  const parts: Uint8Array[] = [
+    frame(utf8Field(b.rule, "selection.rule")),
+    u32be64("selection.rule_version", b.rule_version),
+    u32be64("selection.default_weight", b.default_weight),
+    be64("selection.weights", b.weights.length),
+  ];
+  b.weights.forEach((w, i) => parts.push(frame(keys[i]), u32be64("selection.weights.weight", w.weight)));
+  parts.push(
+    frame(utf8Field(b.tie, "selection.tie")),
+    frame(utf8Field(b.abstention, "selection.abstention")),
+    u32be64("selection.min_ballots", b.min_ballots),
+    frame(utf8Field(b.policy_version, "selection.policy_version")),
+    frame(rules),
+    be64("selection.participants", b.participants.length),
+    ...b.participants.map((p) => frame(utf8Field(p, "selection.participants"))),
+    be64("selection.on_behalf_of", b.on_behalf_of.length),
+    ...b.on_behalf_of.map((o) => frame(utf8Field(o, "selection.on_behalf_of"))),
+    be64("selection.context", b.context.length),
+  );
+  for (const c of b.context)
+    parts.push(frame(utf8Field(c.ctx_ref, "selection.context.ctx_ref")), frame(utf8Field(c.content_hash, "selection.context.content_hash")));
+  parts.push(frame(utf8Field(b.winner_proposal_id, "selection.winner_proposal_id")));
+  return concat(...parts);
+}
+
+/** `selection_digest = SHA-256(F("seam-selection-digest:v1") ‖ body)` — the 32 bytes v5 field 9 binds. */
+export function selectionDigest(body: Uint8Array): Uint8Array {
+  return sha256(concat(frame(enc.encode(SELECTION_DIGEST_DOMAIN)), body));
 }
 
 /** The `ext` key a Seam commitment self-attestation carries its statement under (RFC-AITP-0005). */

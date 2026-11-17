@@ -193,7 +193,7 @@ fn signature_verifies(aid: &str, msg: &[u8], sig: &[u8]) -> bool {
         .unwrap_or(false)
 }
 
-/// Does this entry kind bind a voter? `vote`, `ballot` and `objection` do; `evaluation` does not.
+/// Does this entry kind bind a voter? `vote`, `ballot` and `objection` do; `evaluation` and `proposal` do not.
 pub fn binds_a_voter(kind: &str) -> bool {
     matches!(kind, "vote" | "ballot" | "objection")
 }
@@ -203,7 +203,7 @@ pub fn binds_a_voter(kind: &str) -> bool {
 pub enum VoterFailure {
     /// A vote, ballot or objection with no record.
     Missing,
-    /// A record on an evaluation.
+    /// A record on an entry kind that binds no voter (an evaluation, or an option-selection proposal).
     UnexpectedRecord,
     /// A method this verifier cannot re-check (`cp_signed`, declared, not served).
     UnsupportedMethod,
@@ -223,7 +223,7 @@ impl std::fmt::Display for VoterFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Missing => "a vote, ballot or objection carries no voter verification record",
-            Self::UnexpectedRecord => "an evaluation carries a voter verification record",
+            Self::UnexpectedRecord => "an entry that binds no voter (an evaluation or a proposal) carries a voter verification record",
             Self::UnsupportedMethod => "the record's method cannot be re-checked offline (only `pop` is served)",
             Self::Malformed => "the record is malformed (a signer certificate on `pop`, or the window does not hold at accepted_at_ms)",
             Self::BadSignature => "the voter's signature does not verify over the rebuilt seam-voter-pop-v1 input",

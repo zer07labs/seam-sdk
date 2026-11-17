@@ -108,6 +108,10 @@ type Commitment struct {
 	SelectionDigest    []byte             `json:"-"`
 	CertificateDigest  []byte             `json:"-"`
 	GoverningDocSha256 []byte             `json:"-"`
+	// Selection is the sealed option-selection block (runtime 0.90.0, `Commitment.selection`): when set,
+	// field 9 is SelectionDigest(SelectionBody(*Selection)). nil = "not a selection decision". Setting both
+	// it and SelectionDigest is refused.
+	Selection *SelectionBlock `json:"-"`
 }
 
 // ExplanationEntry is one sealed explanation entry, in the order the runtime accepted it. Kind is the
@@ -277,7 +281,9 @@ func BuildPresentation(agentSeed []byte, receiverAID, popNonce string, nowMs int
 }
 
 // ExplanationKinds are the `kind` words the explanation digest frames — lowercase ASCII, exactly.
-var ExplanationKinds = []string{"vote", "evaluation", "objection", "ballot"}
+// "proposal" (runtime 0.90.0, option selection) is one accepted option of a selection session; it never
+// carries a voter record.
+var ExplanationKinds = []string{"vote", "evaluation", "objection", "ballot", "proposal"}
 
 // ExplanationDomain and CommitmentDigestDomain are the two domain tags of the commitment binding.
 // Normative: seam-runtime docs/specs/seam-commitment-digest.v5.md.
@@ -432,10 +438,14 @@ func seamCommitmentDigest(c Commitment) (string, error) {
 	for _, f := range [][]byte{[]byte(c.AuthMethod), []byte(c.TrustBasis), []byte(c.Committer), ed} {
 		out = be64Frame(out, f)
 	}
+	sel, err := selectionSlot(c)
+	if err != nil {
+		return "", err
+	}
 	for _, slot := range []struct {
 		name string
 		d    []byte
-	}{{"selection_digest", c.SelectionDigest}, {"certificate_digest", c.CertificateDigest}, {"governing_doc_sha256", c.GoverningDocSha256}} {
+	}{{"selection_digest", sel}, {"certificate_digest", c.CertificateDigest}, {"governing_doc_sha256", c.GoverningDocSha256}} {
 		if slot.d == nil {
 			out = append(out, 0x00)
 			continue

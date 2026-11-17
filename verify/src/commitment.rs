@@ -30,7 +30,10 @@
 use sha2::{Digest, Sha256};
 
 /// The `kind` words the explanation digest frames — lowercase ASCII, exactly; never the proto enum name.
-pub const EXPLANATION_KINDS: &[&str] = &["vote", "evaluation", "objection", "ballot"];
+///
+/// `proposal` (option selection, seam-runtime 0.90.0) is additive under `seam-explanation-digest:v2`: the kind
+/// set is closed per release, and a new word is not a new framing, so no tag moves.
+pub const EXPLANATION_KINDS: &[&str] = &["vote", "evaluation", "objection", "ballot", "proposal"];
 
 /// The TCT protocol version a Seam-minted TCT carries (`aitp/0.3`, AITP 0.17.0). Strict: AITP
 /// 0.17.0 cut over with no dual-accept, so an `aitp/0.2` TCT — any record sealed before the
@@ -92,7 +95,9 @@ pub struct Commitment {
     pub trust_basis: String,
     pub committer: String,
     pub explanation: Vec<ExplanationEntry>,
-    /// Field 9, the selection block's digest. `None` on every record this release seals.
+    /// Field 9, the selection block's digest (`crate::selection::selection_digest` over the sealed body),
+    /// `None` when the decision did not run under option selection. A verifier frames it only from its
+    /// own recomputation over the body, never from a stated digest.
     pub selection_digest: Option<Vec<u8>>,
     /// Field 10, the Gate certificate digest. `None` on every record this release seals.
     pub certificate_digest: Option<Vec<u8>>,

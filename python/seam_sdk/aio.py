@@ -604,7 +604,9 @@ class SeamClient:
         (MACP refuses it — ``macp-modes-0.5.0 src/mode/decision.rs:166-171``), deliberately not
         mirrored client-side.
 
-        ``rationale_ref`` is a ``sha256:<hex>`` context ref. Since runtime 0.44.0 it is **sealed**:
+        ``rationale_ref`` is a ``sha256:<hex>`` context ref, or the typed decision-certificate ref
+        ``decision-cert:sha256:<64 hex>``, which the runtime accepts only when the tenant's ``cert_ref``
+        flag is on. Either form is framed as opaque UTF-8. Since runtime 0.44.0 it is **sealed**:
         every accepted evaluation's ``rationale_ref`` (and whether a ``confidence`` was stated at
         all) is bound into the Commitment's explanation under ``seam-explanation-digest:v2``, which
         ``seam-commitment-digest:v5`` covers. ``verify_decision`` recomputes it locally.
