@@ -22,7 +22,9 @@ name: ci
 # commit is pushed to main first, so the main push run is the one they resolve.
 on:
   push:
-    branches: [main]
+    # `release/**`: release-on-runtime pushes the release commit there and waits for THIS run's ci-ok
+    # before main moves or any tag exists (#375).
+    branches: [main, "release/**"]
   pull_request:
 
 # A new push to a PR cancels that PR's superseded run. Every other run gets its own group (keyed by

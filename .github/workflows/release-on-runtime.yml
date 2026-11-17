@@ -284,23 +284,69 @@ jobs:
       - name: Retitle CHANGELOG.md's Unreleased heading to this version
         run: ./scripts/retitle_changelog.sh "${{ steps.v.outputs.version }}" "$(date -u +%Y-%m-%d)"
 
-      - name: Commit + tag (triggers publish.yml)
+      # ── #375: no gate may fail after a tag exists ───────────────────────────────────────────
+      # 0.88.0, 0.90.0 and 0.91.0 were each tagged and then refused by a gate that first saw the
+      # RELEASE COMMIT's own CI: publish.yml's ci-green. By then `v$VER` and `go/v$VER` were public and
+      # could never be re-cut. So the release commit now goes to a branch first, its own full `ci-ok`
+      # must be green, and only then does main fast-forward to it and the tags get created.
+      # Any red or timeout leaves main untouched, no tag, and a release-pending issue.
+      - name: Commit the release to its branch (no tag yet)
+        id: stage
         env:
           VER: ${{ steps.v.outputs.version }}
         run: |
+          set -euo pipefail
           git config user.name "seam-deps-bot[bot]"
           git config user.email "seam-deps-bot[bot]@users.noreply.github.com"
+          BASE="$(git rev-parse HEAD)"
           if git diff --quiet; then
+            # The tree already carries $VER (a re-run after the release commit reached main): main's
+            # own green, checked above, is this commit's green. Nothing to stage.
             echo "already at $VER — tagging only"
+            echo "staged=false" >> "$GITHUB_OUTPUT"
           else
             git commit -am "chore(release): v$VER — follow the runtime version"
-            git push origin HEAD:main
+            # --force: a branch left by an earlier refused attempt holds an unpublished commit only.
+            git push --force origin "HEAD:refs/heads/release/v$VER"
+            echo "staged=true" >> "$GITHUB_OUTPUT"
           fi
-          git tag -a "v$VER" -m "seam-sdk v$VER (follows seam-runtime)"
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: ci-ok must be green on the release commit itself
+        id: relci
+        if: steps.stage.outputs.staged == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.stage.outputs.sha }}
+          VER: ${{ steps.v.outputs.version }}
+        run: ./scripts/wait_ci_ok.sh "$SHA" "the release commit on release/v$VER"
+
+      - name: Advance main and tag (triggers publish.yml)
+        id: advance
+        env:
+          VER: ${{ steps.v.outputs.version }}
+          SHA: ${{ steps.stage.outputs.sha }}
+          BASE: ${{ steps.stage.outputs.base }}
+          STAGED: ${{ steps.stage.outputs.staged }}
+        run: |
+          set -euo pipefail
+          if [ "$STAGED" = "true" ]; then
+            # A plain (non-force) push of a descendant of BASE: if main moved while CI ran, the push is
+            # not a fast-forward and is rejected, so nothing CI did not see can be tagged.
+            git fetch -q origin main
+            if [ "$(git rev-parse origin/main)" != "$BASE" ]; then
+              echo "::error::main moved from $BASE to $(git rev-parse origin/main) while the release commit's CI ran."
+              echo "::error::Refusing to tag: the CI'd commit is no longer a fast-forward of main."
+              exit 1
+            fi
+            git push origin "$SHA:refs/heads/main"
+          fi
+          git tag -a "v$VER" -m "seam-sdk v$VER (follows seam-runtime)" "$SHA"
           # The Go module lives in go/ (module path github.com/zer07labs/seam-sdk/go), and Go resolves a
           # nested module's versions ONLY from `go/vX.Y.Z` tags — the root `v$VER` tag is invisible to
           # `go get`. Tag the SAME commit both ways so every release is fetchable in every language.
-          git tag -a "go/v$VER" -m "seam-sdk Go module v$VER (follows seam-runtime)"
+          git tag -a "go/v$VER" -m "seam-sdk Go module v$VER (follows seam-runtime)" "$SHA"
           # --atomic: without it git updates the two refs one at a time, so a network failure, a
           # hook rejection or a race between them leaves `v$VER` pushed and `go/v$VER` absent —
           # half a release, where pip resolves fine and `go get` resolves nothing at that version
@@ -309,15 +355,23 @@ jobs:
           # missing Go module tag is invisible from there by design.
           git push --atomic origin "v$VER" "go/v$VER"
 
+      # The release branch only ever holds a commit that is either now on main or never will be.
+      - name: Delete the release branch
+        if: always() && steps.stage.outputs.staged == 'true'
+        env:
+          VER: ${{ steps.v.outputs.version }}
+        run: git push origin --delete "refs/heads/release/v$VER" || true
+
       # ── The pending-release ledger (scripts/release_pending.py) ───────────────────────────────
-      # Only a refusal at a PRE-WRITE gate is recorded: main not green, or the fresh contract or spec
-      # gate red. Those are the refusals a merged catch-up PR resolves, so release-refire.yml may
-      # retry them. A framing mismatch, or a failure after the stamp, is not recorded: those need a
-      # human. This step does no git operation; it only files or comments on one issue.
+      # Only a refusal BEFORE A TAG EXISTS is recorded: main not green, the fresh contract or spec gate
+      # red, the release commit's own ci-ok red, or main moved before the tag. Those are the refusals a
+      # merged fix resolves, so release-refire.yml may retry them. A framing mismatch is not recorded:
+      # it needs a human. This step does no git operation; it only files or comments on one issue.
       - name: Record the refused version for release-refire
         if: >-
           failure() && (steps.green.outcome == 'failure' || steps.fresh.outcome == 'failure' ||
-          steps.specpin.outcome == 'failure')
+          steps.specpin.outcome == 'failure' || steps.relci.outcome == 'failure' ||
+          steps.advance.outcome == 'failure')
         env:
           GH_TOKEN: ${{ github.token }}
           VER: ${{ steps.v.outputs.version }}
@@ -325,9 +379,11 @@ jobs:
           GREEN: ${{ steps.green.outcome }}
           FRESH: ${{ steps.fresh.outcome }}
           SPECPIN: ${{ steps.specpin.outcome }}
+          RELCI: ${{ steps.relci.outcome }}
+          ADVANCE: ${{ steps.advance.outcome }}
         run: |
           set -euo pipefail
-          REASON="main must be green: $GREEN; fresh contract gate: $FRESH; vendored specs: $SPECPIN"
+          REASON="main must be green: $GREEN; fresh contract gate: $FRESH; vendored specs: $SPECPIN; release commit ci-ok: ${RELCI:-skipped}; advance main and tag: ${ADVANCE:-skipped}"
           OUT="$(mktemp)"
           python3 scripts/release_pending.py body --version "$VER" --wire-framing-version "$WF" \
             --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \

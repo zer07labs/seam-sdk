@@ -40,7 +40,7 @@ GATE = "The runtime's wire framing must be one this SDK implements"
 CHECKOUT = ("actions/checkout", "useblacksmith/checkout")
 STAMP = "Bump both packages to the runtime version"
 RETITLE = "Retitle CHANGELOG.md's Unreleased heading to this version"
-TAG = "Commit + tag (triggers publish.yml)"
+TAG = "Advance main and tag (triggers publish.yml)"
 GREEN = "main must be green before anything is tagged"
 
 
