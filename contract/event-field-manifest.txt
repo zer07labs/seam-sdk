@@ -102,6 +102,8 @@ BudgetBreach/messages
 BudgetBreach/severity
 BudgetBreach/tokens
 BudgetBreach/wall_ms
+CertificateRef/id
+CertificateRef/provenance
 ChainHeadAttestation/attested_at
 ChainHeadAttestation/attested_head
 ChainHeadAttestation/attested_len
@@ -110,6 +112,7 @@ ChainHeadAttestation/issuer_aid
 ChainHeadAttestation/signature
 ChainHeadAttestation/tenant
 DecisionSealed/auth_method
+DecisionSealed/certificate
 DecisionSealed/ciphertext_digest
 DecisionSealed/classification
 DecisionSealed/context_digest

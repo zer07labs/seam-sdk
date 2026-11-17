@@ -1,4 +1,11 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 83e691d (refreshed 2026-11-16).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ e605d5b (refreshed 2026-11-17).
+     Runtime 0.91.0 (seam-runtime#1749, cert-ref), on runtime main; the body is unchanged from the
+     4d9658f branch pin it replaces. Movement since 83e691d: the additive, UNSEALED `DecisionSealed.certificate` (tag 19,
+     `CertificateRef {id, provenance}`, provenance a closed int32 with unknown read as UNSPECIFIED, malformed
+     id read as absent), and two cross-links now cite `seam-commitment-digest.v5.md`. No digest, framing or
+     vector change, so `seam-verify` is unchanged.
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 83e691d (refreshed 2026-11-16).
      Runtime 0.88.0 (#1740), on runtime main. Movement since ede96dd (the #1713 merge): `stream_id` is now
      REQUIRED on every event (#1488). The legacy-row rule and `SEAM_STREAM_ID_CUTOFF_SEQ` are retired, and a
      consumer MUST refuse an empty `stream_id`. It stays UNSEALED: no digest, checksum, signature, tag or vector
@@ -1104,7 +1111,7 @@ GoverningConfig {
   `session_governing_root` log line, joined on `session_id` and `SESSION_LIFECYCLE.opened_at_millis`.
   That log line is staff-only and never on a tenant's stream.
 - **Not tamper-evident.** It is outside record digest v4 and
-  [`seam-commitment-digest:v4`](seam-commitment-digest.v4.md) (see §What the record digest binds). A
+  [`seam-commitment-digest:v5`](seam-commitment-digest.v5.md) (see §What the record digest binds). A
   consumer MUST NOT treat it as evidence of what bound the decision; `policy_rules_digest` (tag 13) is
   the bound evidence.
 - **Non-empty when present.** A conforming producer never emits an empty `tenant_snapshot_id`. A consumer
@@ -1116,6 +1123,61 @@ GoverningConfig {
 - **Wire shape.** Tag 18 is emitted after tag 17, so a payload with it equals the payload without it
   plus `0x92 0x01 <len> <GoverningConfig bytes>`. It is a message field, so presence-tracked by
   construction; the `DecisionSealed` cardinality rule (§Presence on the wire) has nothing to decide for it.
+
+### `DecisionSealed.certificate` (additive, payload tag 19 — UNSEALED) — cert-ref
+
+Since 0.91.0 a `DECISION_SEALED` payload MAY name the decision certificate its evaluations cite
+(cert-ref, #1638 part 1):
+
+```
+DecisionSealed {
+  …                                        // tags 1-18 as above
+  certificate: CertificateRef?             // tag 19 — derived from the sealed commitment; outside every digest
+}
+CertificateRef {
+  id: string                               // tag 1 — sha256:<64 lowercase hex>
+  provenance: int32                        // tag 2 — 0 UNSPECIFIED, 1 AGENT_ASSERTED (closed)
+}
+```
+
+- **The typed ref.** An agent names a certificate on purpose: an EVALUATION whose `rationale_ref` is
+  `decision-cert:sha256:<64 lowercase hex>`. The runtime accepts it only when the control-plane feature flag
+  `cert_ref` resolved ON at session open; the resolution is **pinned** for the session's life (carried
+  through park and hydrate, never re-resolved, so a mid-session flag change does not move it). With the
+  flag off the typed ref is refused with the plain-ref refusal, byte for byte. Accepted, it is sealed
+  verbatim in the explanation, so it is bound by explanation digest v2 inside the TCT.
+- **The id is the suffix.** `CertificateRef.id` is the typed ref with the `decision-cert:` prefix removed:
+  always `sha256:<64 lowercase hex>`, the certificate's own id. The runtime never dereferences, fetches or
+  verifies the certificate.
+- **A pure function of the sealed bytes.** Tag 19 is SET iff the record's outcome is RESOLVED **and** the
+  sealed EVALUATION entries carry exactly one distinct typed ref. With a selection block (option
+  selection), only the evaluations whose `proposal_id` is the block's `winner_proposal_id` count. Zero
+  typed refs, several distinct ones, or any other outcome → tag 19 is ABSENT. No flag, clock or lookup
+  enters the derivation, so anyone holding the decrypted commitment re-derives the same value; the flag
+  only decides what may be sealed in the first place.
+- **Not tamper-evident.** It is outside record digest v4 and
+  [`seam-commitment-digest:v5`](seam-commitment-digest.v5.md); v5 field 10 (the Gate certificate slot)
+  stays `0x00`. The sealed binding is the evaluation's `rationale_ref`; a consumer MUST NOT treat tag 19
+  as evidence and MUST bind against the sealed `rationale_ref` instead.
+- **Provenance.** `AGENT_ASSERTED` (1): the evaluating agent asserted the reference and the runtime checked
+  only its shape (evaluations carry no proof of possession). Any value a consumer does not know MUST read
+  as `UNSPECIFIED` (0), the least trusted reading: a value outside `{0, 1}` decodes as `UNSPECIFIED`.
+  Carried as a closed `int32` because this file's descriptor encoding has no enum form; the wire bytes
+  equal a proto3 enum's. A future value (2 and up, e.g. a runtime-evaluated provenance with Gate) is
+  added here and in the event descriptor as a new `int32` value, **never** by turning the field into an
+  enum. `spec_version` is deliberately not
+  carried: the certificate states its own.
+- **Well-formed when present.** A consumer MUST treat a tag-19 message whose `id` is not
+  `sha256:<64 lowercase hex>` exactly as an absent tag 19.
+- **Absent** also means: a row sealed before 0.91.0, or a row served by a pre-0.91.0 replica (which drops
+  unknown tags when it re-encodes). Consumers MUST tolerate absence (§Versioning). A session pinned with
+  the flag on is refused, never adopted, by a pre-0.91.0 replica (the live-session snapshot refuses the
+  unknown `view.cert_ref` key), so such a session never seals without its pin.
+- **Wire shape.** Tag 19 is emitted after tag 18, so a payload with it equals the payload without it plus
+  `0x9a 0x01 <len> <CertificateRef bytes>`. JSON: `"certificate": {"id": "sha256:…", "provenance":
+  "AGENT_ASSERTED"}`, the key omitted when absent.
+- **`DecisionRecordView`** (`seam.api.v1`) does not carry it yet; tag 14 there is reserved for a later
+  certificate view.
 
 ## Tenant tag — a producer rule (invariant 10)
 

@@ -16,6 +16,21 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added — cert-ref, the reader side (runtime 0.91.0, seam-runtime#1749)
+- **`DecisionSealed.certificate`** (`seam.event.v1` tag 19, `CertificateRef {id, provenance}`) is in the
+  event field manifest. Python `certificate_ref_of` / TS `certificateRefOf` read it. It names the
+  decision certificate a RESOLVED seal's evaluations cite (`rationale_ref =
+  "decision-cert:sha256:<hex>"`). It is **outside every digest and is not evidence**: bind against the
+  sealed `rationale_ref` instead. It is absent on every row sealed before 0.91.0, and a malformed `id`
+  reads exactly as absent.
+- **`provenance` is a closed `int32`**, not a proto enum. The constants are
+  `CERTIFICATE_PROVENANCE_UNSPECIFIED` (0) and `CERTIFICATE_PROVENANCE_AGENT_ASSERTED` (1). Any other
+  value reads as UNSPECIFIED, the least trusted reading.
+- **`WIRE_FEATURE_CERT_REF`** (`feature_flag.cert_ref`, Python and TS): the replica consumes the
+  `cert_ref` feature flag.
+- `verify/docs/seam-event.v1.md` is re-pinned to the cert-ref branch. There is no digest, framing or
+  vector change, so `seam-verify` is unchanged.
+
 ## 0.90.1 — 2026-11-17
 
 These entries first ship in **0.90.1**: v0.90.0 was tagged and never published (see COMPATIBILITY.md).

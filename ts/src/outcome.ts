@@ -15,6 +15,11 @@ export const WIRE_FEATURE_ENROLL_KIND = "enroll.kind";
 export const WIRE_FEATURE_OUTCOME_REWARD_METRICS = "outcome.reward_metrics";
 /** `ReportOutcome` accepts `observedAt` (runtime BP-2c). */
 export const WIRE_FEATURE_OUTCOME_OBSERVED_AT = "outcome.observed_at";
+/**
+ * This replica consumes the `cert_ref` feature flag (runtime 0.91.0): typed
+ * `decision-cert:sha256:<hex>` evaluation refs, and `DecisionSealed.certificate`.
+ */
+export const WIRE_FEATURE_CERT_REF = "feature_flag.cert_ref";
 
 /** The most `metrics` entries one report may carry (`seamd::facade::OUTCOME_METRICS_MAX`). */
 export const OUTCOME_METRICS_MAX = 16;
