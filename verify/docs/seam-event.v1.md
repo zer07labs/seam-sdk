@@ -1,4 +1,10 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ e605d5b (refreshed 2026-11-17).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ c551425 tracking feat/rt3-tenant-cancel (refreshed 2026-11-17).
+     seam-runtime#1773 (RT3 operator admin-cancel), NOT yet on runtime main: seam-sdk#378 pins ahead of it
+     so the control plane may grant `session:cancel` (leader sequencing). Movement since e605d5b: the (b′)
+     `seam.audit.management.v1` row gains `session_cancelled`, after `session_resumed`, classification
+     `Internal`. No framing, digest or vector change to any other entry.
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ e605d5b (refreshed 2026-11-17).
      Runtime 0.91.0 (seam-runtime#1749, cert-ref), on runtime main; the body is unchanged from the
      4d9658f branch pin it replaces. Movement since 83e691d: the additive, UNSEALED `DecisionSealed.certificate` (tag 19,
      `CertificateRef {id, provenance}`, provenance a closed int32 with unknown read as UNSPECIFIED, malformed
@@ -483,7 +489,7 @@ when present** (absent appends nothing; `Some("")` appends a zero length and so 
 
 | domain | actions | envelope `classification` |
 |---|---|---|
-| `seam.audit.management.v1` | `session_resumed`, `party_registered`, `party_removed`, `cross_namespace_grant_placed`, `cross_namespace_grant_revoked`, `tenant_enrolled`, `tenant_revoked`, `config_snapshot_installed`, `config_section_removed`, `events_redriven`, `erasure_previewed`, `subject_commitments_recomputed`, `subject_commitment_recompute_refused`, `subject_commitment_tombstoned`, `tenant_move_out`, `tenant_move_in` | `Internal` |
+| `seam.audit.management.v1` | `session_resumed`, `session_cancelled`, `party_registered`, `party_removed`, `cross_namespace_grant_placed`, `cross_namespace_grant_revoked`, `tenant_enrolled`, `tenant_revoked`, `config_snapshot_installed`, `config_section_removed`, `events_redriven`, `erasure_previewed`, `subject_commitments_recomputed`, `subject_commitment_recompute_refused`, `subject_commitment_tombstoned`, `tenant_move_out`, `tenant_move_in` | `Internal` |
 | `seam.audit.legal-hold.v1` | `hold_placed`, `hold_released` | `Internal` |
 | `seam.audit.archive-evict.v1` | `ciphertext_evicted` | `Internal` |
 | `seam.audit.boundary.v1` | `boundary.data_flagged` | `Confidential` |

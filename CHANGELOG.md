@@ -16,6 +16,13 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added — `seam-verify` covers the runtime's `session_cancelled` audit entry (#378)
+
+- RT3's operator admin-cancel (`POST /v1/sessions/:id/admin-cancel`, scope `session:cancel`) writes a chained `session_cancelled` management entry. `MANAGEMENT_ACTIONS` gains it at its spec-row position, after `session_resumed` (16 → 17), digested under `seam.audit.management.v1`, classification `Internal`.
+- Before this, `chain --issuer` refused any tenant chain holding a cancel as an UNCOVERED ENTRY (exit 2). The control plane grants `session:cancel` only after this ships.
+- `verify/docs/seam-event.v1.md` is re-pinned to seam-runtime `c551425` tracking `feat/rt3-tenant-cancel` (seam-runtime#1773); the only movement is that (b′) row.
+- `verify/tests/session_cancelled.rs` vendors the runtime's own vector, written by the real cancel path and sha256-pinned: it authenticates under `--issuer --strict` with nothing uncovered, and one changed byte of the reason fails as ENTRY REWRITE.
+
 ## 0.93.0 — 2026-11-17
 
 ## 0.92.0 — 2026-11-17
