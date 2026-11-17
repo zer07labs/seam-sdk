@@ -16,6 +16,14 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Changed — no gate can fail after a tag exists (#375)
+- `release-on-runtime.yml` no longer pushes the release commit to main and tags it in one step. It pushes
+  the commit to `release/v<ver>`, and waits for that exact commit's full `ci-ok` (`ci.yml` now runs on
+  `release/**`). Only then does it fast-forward main and create `v<ver>` + `go/v<ver>`. A red or
+  unsettled CI, or a main that moved meanwhile, leaves main untouched, no tag, and a `release-pending`
+  issue for `release-refire.yml`. 0.88.0, 0.90.0 and 0.91.0 were each burned by a gate that ran after
+  the tag; `scripts/test_release_refire_gate.py` executes all three refusals against a throwaway origin.
+
 ## 0.91.1 — 2026-11-17
 
 These entries, and the cert-ref entries under 0.91.0 below, first ship in **0.91.1**: v0.91.0 was tagged

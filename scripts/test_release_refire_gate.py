@@ -227,7 +227,8 @@ def _at(step_id: str | None = None, name: str | None = None) -> int:
 WRITES = (
     "Bump both packages to the runtime version",
     "Retitle CHANGELOG.md's Unreleased heading to this version",
-    "Commit + tag (triggers publish.yml)",
+    "Commit the release to its branch (no tag yet)",
+    "Advance main and tag (triggers publish.yml)",
 )
 
 
@@ -267,6 +268,8 @@ def test_the_ledger_step_records_only_pre_write_refusals_and_writes_no_git() -> 
         "green",
         "fresh",
         "specpin",
+        "relci",
+        "advance",
     }
     assert not re.search(r"\bgit\b", step["run"])
 
@@ -298,6 +301,8 @@ def _expr(expr: str, ctx: dict) -> str:
         return "repository_dispatch"
     if m := re.fullmatch(r"steps\.(\w+)\.outcome", e):
         return ctx["outcomes"].get(m.group(1), "")
+    if m := re.fullmatch(r"steps\.(\w+)\.outputs\.(\w+)", e):
+        return ctx["outputs"].get(m.group(1), {}).get(m.group(2), "")
     raise AssertionError(
         f"the dry run does not know the expression `{e}`; teach it, do not skip it"
     )
@@ -314,9 +319,15 @@ def _cond(cond: str | None, ctx: dict) -> bool:
     c = re.sub(
         r"steps\.(\w+)\.outcome", lambda m: repr(ctx["outcomes"].get(m.group(1), "")), c
     )
+    c = re.sub(
+        r"steps\.(\w+)\.outputs\.(\w+)",
+        lambda m: repr(ctx["outputs"].get(m.group(1), {}).get(m.group(2), "")),
+        c,
+    )
     c = c.replace("failure()", str(ctx["failed"])).replace(
         "success()", str(not ctx["failed"])
     )
+    c = c.replace("always()", "True")
     c = c.replace("&&", " and ").replace("||", " or ")
     return bool(eval(c, {"__builtins__": {}}, {}))  # noqa: S307 -- our own workflow's literal condition
 
@@ -324,7 +335,9 @@ def _cond(cond: str | None, ctx: dict) -> bool:
 _GH = r"""#!/bin/bash
 echo "$*" >> "$LOG/gh.log"
 case "$1 $2" in
-  "api --paginate") echo success ;;
+  "api --paginate")
+    # main's own ci-ok is green; any other commit (the release commit) answers $RELEASE_CI.
+    if [[ "$*" == *"$BASE_SHA"* ]]; then echo success; else echo "${RELEASE_CI:-success}"; fi ;;
   "issue list") : ;;
   "issue create")
     while [ $# -gt 0 ]; do [ "$1" = --body-file ] && cat "$2" >> "$LOG/issue-body"; shift; done ;;
@@ -340,7 +353,18 @@ exit 0
 DRY_RUN_VERSION = "999.0.0"
 
 
-def _dry_run(tmp: Path, contract_exit: int, version: str = DRY_RUN_VERSION) -> dict:
+def _dry_run(
+    tmp: Path,
+    contract_exit: int,
+    version: str = DRY_RUN_VERSION,
+    release_ci: str = "success",
+    move_main_before: str | None = None,
+) -> dict:
+    """Execute release-on-runtime's job, step by step with GitHub's `if:` semantics.
+
+    `release_ci` is the ci-ok verdict the release commit gets on its branch; main's own is green.
+    `move_main_before` names a step before which another commit lands on origin's main.
+    """
     origin, wc, bin_dir, log = tmp / "origin.git", tmp / "wc", tmp / "bin", tmp / "log"
     for d in (bin_dir, log):
         d.mkdir()
@@ -375,6 +399,7 @@ def _dry_run(tmp: Path, contract_exit: int, version: str = DRY_RUN_VERSION) -> d
     )
     (wc / "scripts/check-contract.sh").chmod(0o755)
     (wc / "scripts/check_vendored_spec.py").write_text("print('stubbed spec pin')\n")
+    shutil.copy2(REPO / "scripts/wait_ci_ok.sh", wc / "scripts/wait_ci_ok.sh")
     git("add", "-A")
     git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base")
     git("remote", "add", "origin", str(origin))
@@ -387,12 +412,22 @@ def _dry_run(tmp: Path, contract_exit: int, version: str = DRY_RUN_VERSION) -> d
     for f in bin_dir.iterdir():
         f.chmod(0o755)
 
-    ctx = {"version": version, "failed": False, "outcomes": {}}
+    ctx = {"version": version, "failed": False, "outcomes": {}, "outputs": {}}
     ran: list[str] = []
     errors: dict[str, str] = {}
     for i, step in enumerate(_steps()):
         if "run" not in step:  # `uses:` steps: checkout, setup actions, token mints
             continue
+        if step.get("name") == move_main_before:
+            other = tmp / "other"
+            subprocess.run(["git", "clone", "-q", str(origin), str(other)], check=True)
+            (other / "MOVED").write_text("someone else merged\n")
+            for a in (
+                ["add", "MOVED"],
+                ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "moved"],
+                ["push", "-q", "origin", "main"],
+            ):
+                subprocess.run(["git", *a], cwd=other, check=True, capture_output=True)
         if not _cond(step.get("if"), ctx):
             continue
         out = tmp / f"out{i}"
@@ -409,6 +444,10 @@ def _dry_run(tmp: Path, contract_exit: int, version: str = DRY_RUN_VERSION) -> d
             "GIT_AUTHOR_EMAIL": "t@t",
             "GIT_COMMITTER_NAME": "t",
             "GIT_COMMITTER_EMAIL": "t@t",
+            "BASE_SHA": base,
+            "RELEASE_CI": release_ci,
+            "CI_WAIT_ATTEMPTS": "3",
+            "CI_WAIT_INTERVAL": "0",
         }
         env.update({k: _sub(str(v), ctx) for k, v in (step.get("env") or {}).items()})
         r = subprocess.run(
@@ -429,6 +468,9 @@ def _dry_run(tmp: Path, contract_exit: int, version: str = DRY_RUN_VERSION) -> d
         ran.append(step.get("name", step.get("id", "?")))
         if step.get("id"):
             ctx["outcomes"][step["id"]] = "success" if r.returncode == 0 else "failure"
+            ctx["outputs"][step["id"]] = dict(
+                ln.split("=", 1) for ln in out.read_text().splitlines() if "=" in ln
+            )
         if r.returncode != 0:
             ctx["failed"] = True
             errors[ran[-1]] = (r.stdout + r.stderr)[-2000:]
@@ -439,6 +481,12 @@ def _dry_run(tmp: Path, contract_exit: int, version: str = DRY_RUN_VERSION) -> d
         "base": base,
         "origin_head": git("rev-parse", "refs/heads/main", cwd=origin).strip(),
         "origin_tags": git("tag", "-l", cwd=origin).split(),
+        "origin_branches": git(
+            "branch", "--format=%(refname:short)", cwd=origin
+        ).split(),
+        "tagged": git("rev-list", "-n1", f"v{version}", cwd=origin).strip()
+        if f"v{version}" in git("tag", "-l", cwd=origin).split()
+        else "",
         "gh": (log / "gh.log").read_text() if (log / "gh.log").exists() else "",
         "issue_body": (log / "issue-body").read_text()
         if (log / "issue-body").exists()
@@ -472,6 +520,10 @@ def test_a_green_fresh_gate_really_tags(tmp_path: Path) -> None:
     assert not r["failed"], r["errors"]
     assert r["origin_head"] != r["base"]
     assert sorted(r["origin_tags"]) == [f"go/v{DRY_RUN_VERSION}", f"v{DRY_RUN_VERSION}"]
+    assert r["tagged"] == r["origin_head"], (
+        "the tag must be exactly the CI'd commit main now holds"
+    )
+    assert r["origin_branches"] == ["main"], "the release branch must be cleaned up"
     assert "Record the refused version for release-refire" not in r["ran"]
     assert "Close this version's pending issue, if any" in r["ran"]
     assert "issue create" not in r["gh"]
@@ -509,3 +561,49 @@ def test_the_ledger_cli_round_trips() -> None:
         check=True,
     ).stdout
     assert json.loads(out)["action"] == "fire"
+
+
+# ── #375: the release commit's own CI gates the tag ───────────────────────────────────────────
+
+
+def test_a_red_release_commit_ci_leaves_main_untouched_and_no_tag(
+    tmp_path: Path,
+) -> None:
+    """0.91.0's failure mode: every gate before the stamp green, the release commit's CI red."""
+    r = _dry_run(tmp_path, contract_exit=0, release_ci="failure")
+    assert r["failed"]
+    assert r["origin_head"] == r["base"], "main moved to a commit whose CI is red"
+    assert r["origin_tags"] == [], "a tag exists for a commit whose CI is red"
+    assert "Advance main and tag (triggers publish.yml)" not in r["ran"]
+    assert r["origin_branches"] == ["main"], (
+        "the refused release branch was left behind"
+    )
+    assert "release commit ci-ok: failure" in r["issue_body"]
+
+
+def test_a_release_commit_ci_that_never_settles_is_a_refusal(tmp_path: Path) -> None:
+    r = _dry_run(tmp_path, contract_exit=0, release_ci="pending")
+    assert r["failed"] and r["origin_tags"] == [] and r["origin_head"] == r["base"]
+
+
+def test_main_moving_during_release_ci_refuses_the_tag(tmp_path: Path) -> None:
+    r = _dry_run(
+        tmp_path,
+        contract_exit=0,
+        move_main_before="Advance main and tag (triggers publish.yml)",
+    )
+    assert r["failed"]
+    assert r["origin_tags"] == []
+    assert r["origin_head"] != r["base"], (
+        "the other commit must survive (no force push)"
+    )
+    assert "advance main and tag: failure" in r["issue_body"]
+
+
+def test_the_release_commit_ci_runs_on_the_release_branch() -> None:
+    ci = yaml.safe_load((REPO / ".github/workflows/ci.yml").read_text())
+    assert "release/**" in ci[True]["push"]["branches"]
+
+
+def test_refire_still_ignores_release_branch_ci() -> None:
+    assert _refire()[True]["workflow_run"]["branches"] == ["main"]
