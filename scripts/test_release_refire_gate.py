@@ -333,7 +333,14 @@ exit 0
 """
 
 
-def _dry_run(tmp: Path, contract_exit: int, version: str = "0.91.0") -> dict:
+# The dry run's version must never be the in-tree one. 0.91.0 was burned by exactly that: on the
+# release commit the tree already says 0.91.0, so the job takes its "already at — tagging only" path,
+# pushes no commit, and the green twin's `origin_head != base` failed on the very commit publish.yml
+# gates on. A version no release will ever carry keeps this test independent of where main is.
+DRY_RUN_VERSION = "999.0.0"
+
+
+def _dry_run(tmp: Path, contract_exit: int, version: str = DRY_RUN_VERSION) -> dict:
     origin, wc, bin_dir, log = tmp / "origin.git", tmp / "wc", tmp / "bin", tmp / "log"
     for d in (bin_dir, log):
         d.mkdir()
@@ -439,6 +446,11 @@ def _dry_run(tmp: Path, contract_exit: int, version: str = "0.91.0") -> dict:
     }
 
 
+def test_the_dry_run_version_is_never_the_in_tree_version() -> None:
+    tree = json.loads((REPO / "ts" / "package.json").read_text())["version"]
+    assert DRY_RUN_VERSION != tree
+
+
 def test_a_red_fresh_gate_leaves_no_commit_and_no_tag(tmp_path: Path) -> None:
     r = _dry_run(tmp_path, contract_exit=6)
     assert r["failed"]
@@ -448,7 +460,7 @@ def test_a_red_fresh_gate_leaves_no_commit_and_no_tag(tmp_path: Path) -> None:
     assert "Record the refused version for release-refire" in r["ran"]
     assert "issue create" in r["gh"] and "--label release-pending" in r["gh"]
     assert (
-        "<!-- release-pending version=0.91.0 wire_framing_version=3 -->"
+        f"<!-- release-pending version={DRY_RUN_VERSION} wire_framing_version=3 -->"
         in r["issue_body"]
     )
     assert "fresh contract gate: failure" in r["issue_body"]
@@ -459,7 +471,7 @@ def test_a_green_fresh_gate_really_tags(tmp_path: Path) -> None:
     r = _dry_run(tmp_path, contract_exit=0)
     assert not r["failed"], r["errors"]
     assert r["origin_head"] != r["base"]
-    assert sorted(r["origin_tags"]) == ["go/v0.91.0", "v0.91.0"]
+    assert sorted(r["origin_tags"]) == [f"go/v{DRY_RUN_VERSION}", f"v{DRY_RUN_VERSION}"]
     assert "Record the refused version for release-refire" not in r["ran"]
     assert "Close this version's pending issue, if any" in r["ran"]
     assert "issue create" not in r["gh"]
@@ -467,9 +479,18 @@ def test_a_green_fresh_gate_really_tags(tmp_path: Path) -> None:
 
 def test_the_recorded_issue_is_what_refire_will_fire(tmp_path: Path) -> None:
     body = _dry_run(tmp_path, contract_exit=6)["issue_body"]
-    issue = {"number": 1, "title": rp.title("0.91.0"), "body": body, "comments": []}
-    [d] = rp.decide([issue], ["seamd-v0.91.0"], ["v0.90.1"], SHA)
-    assert (d.action, d.version, d.wire_framing_version) == ("fire", "0.91.0", "3")
+    issue = {
+        "number": 1,
+        "title": rp.title(DRY_RUN_VERSION),
+        "body": body,
+        "comments": [],
+    }
+    [d] = rp.decide([issue], [f"seamd-v{DRY_RUN_VERSION}"], ["v0.90.1"], SHA)
+    assert (d.action, d.version, d.wire_framing_version) == (
+        "fire",
+        DRY_RUN_VERSION,
+        "3",
+    )
 
 
 def test_the_ledger_cli_round_trips() -> None:
