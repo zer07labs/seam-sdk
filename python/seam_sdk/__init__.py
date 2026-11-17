@@ -8,6 +8,14 @@ vectors generated from the Rust runtime pin the exact bytes (see ``conformance/v
 from . import aio
 from ._allocation import Allocation, AllocationView, allocation_of
 from ._authorize import AuthorizeResult, canonicalize_tool_input
+from ._certificate import (
+    CERTIFICATE_PROVENANCE_AGENT_ASSERTED,
+    CERTIFICATE_PROVENANCE_UNSPECIFIED,
+    CERTIFICATE_PROVENANCES,
+    CertificateRef,
+    certificate_provenance,
+    certificate_ref_of,
+)
 from ._collective import CollectiveOutcome, collective_outcome_of
 from ._policy import PolicyEnforcement, policy_enforcement_of
 from ._seal import SealAttestation, seal_attestation_of
@@ -142,6 +150,7 @@ from .dpop import (
 )
 from ._outcome import (
     OUTCOME_METRICS_MAX,
+    WIRE_FEATURE_CERT_REF,
     WIRE_FEATURE_ENROLL_KIND,
     WIRE_FEATURE_OUTCOME_OBSERVED_AT,
     WIRE_FEATURE_OUTCOME_REWARD_METRICS,
@@ -244,7 +253,15 @@ __all__ = [
     "ENROLMENT_KIND_VOTER",
     "ENROLMENT_KINDS",
     # Wire features (OI-R6) — ServerInfo.wire_features; gates for ReportOutcome's BP-2 fields
+    "WIRE_FEATURE_CERT_REF",
     "WIRE_FEATURE_ENROLL_KIND",
+    # cert-ref (runtime 0.91.0) — DecisionSealed.certificate; provenance is a closed int32 set
+    "CERTIFICATE_PROVENANCE_UNSPECIFIED",
+    "CERTIFICATE_PROVENANCE_AGENT_ASSERTED",
+    "CERTIFICATE_PROVENANCES",
+    "CertificateRef",
+    "certificate_provenance",
+    "certificate_ref_of",
     "WIRE_FEATURE_OUTCOME_OBSERVED_AT",
     "WIRE_FEATURE_OUTCOME_REWARD_METRICS",
     "OUTCOME_METRICS_MAX",

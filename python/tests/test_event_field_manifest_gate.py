@@ -420,9 +420,10 @@ def test_the_committed_manifest_is_not_empty_and_names_every_message() -> None:
     # 0.57.0: SeamEvent.stream_id (k8s P7). 112 since runtime 0.70.0: DecisionSealed.governing_config
     # and its GoverningConfig message (D6, seam-runtime#1340). 121 since runtime 0.71.0:
     # LearningDecision tags 10-14 and LearningOutcome tags 4-7 (outcome-ingestion BP-2a,
-    # seam-runtime#1572).
-    assert len(fields) == 121, (
-        f"expected 121 declared event fields, found {len(fields)}"
+    # seam-runtime#1572). 124 since runtime 0.91.0: DecisionSealed.certificate and its CertificateRef
+    # message (cert-ref, seam-runtime#1749).
+    assert len(fields) == 124, (
+        f"expected 124 declared event fields, found {len(fields)}"
     )
     messages = {line.split("/")[0] for line in fields}
     assert messages == {
@@ -430,6 +431,7 @@ def test_the_committed_manifest_is_not_empty_and_names_every_message() -> None:
         "AuditEntryEvent",
         "AuthorizeEvaluated",
         "BudgetBreach",
+        "CertificateRef",
         "ChainHeadAttestation",
         "DecisionSealed",
         "ErasureCertificate",
