@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.94.0 — 2026-11-17
+
 ### Added — `seam-verify` covers the runtime's `session_cancelled` audit entry (#378)
 
 - RT3's operator admin-cancel (`POST /v1/sessions/:id/admin-cancel`, scope `session:cancel`) writes a chained `session_cancelled` management entry. `MANAGEMENT_ACTIONS` gains it at its spec-row position, after `session_resumed` (16 → 17), digested under `seam.audit.management.v1`, classification `Internal`.
