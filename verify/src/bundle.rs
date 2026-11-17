@@ -11,6 +11,9 @@
 //!    whose `checksum` is `inclusion.record_checksum`.
 //! 4. **Commitment** — the TCT (when present) verifies against the pinned AID and binds this
 //!    Commitment's `seam-commitment-digest:v5` (after every voter record re-verifies, `src/voter.rs`); `supersedes` matches the chained payload's.
+//!    A `selection` block (option selection) is strictly decoded, frames field 9, and its winner, action,
+//!    vote content links and participant ↔ principal pairing re-verify (`src/selection.rs`); without one,
+//!    the decision is reported as "not a selection decision", never as passed.
 //! 5. **Binding** — the `seam.evidence-binding.v1` signature verifies against the pinned AID and names
 //!    this decision, tenant, link checksum and recomputed Commitment digest.
 //! 6. **Disclosures** — `context.json` recomputes the chained `context_digest`;
@@ -24,6 +27,7 @@ use std::path::Path;
 use sha2::{Digest, Sha256};
 
 use crate::commitment::{self, Commitment, ExplanationEntry, VoterVerification};
+use crate::selection;
 use crate::verify;
 use crate::wire::{Attestation, Event};
 
@@ -78,6 +82,9 @@ pub struct BundleReport {
     /// How many voter verification records re-verified offline (#1687), `None` when no Commitment was
     /// disclosed.
     pub voters_verified: Option<usize>,
+    /// The option-selection outcome (seam-runtime 0.90.0). `None` means "not a selection decision" (no
+    /// Commitment disclosed, or one with no `selection` block) and never "passed".
+    pub selection: Option<selection::SelectionVerified>,
     /// The checks that passed, in order, as one human-readable line each.
     pub checks: Vec<String>,
     /// The manifest's `withheld` list, `(item, reason)`, verbatim. Part of what the reader is told.
@@ -323,9 +330,13 @@ pub fn parse_commitment(c: &serde_json::Value) -> Result<Commitment, String> {
         trust_basis: req("trust_basis")?,
         committer: req("committer")?,
         explanation,
-        // Fields 9 and 10: the bundle spec projects neither, and every record this release seals has
-        // both absent. A commitment.json that names either is a block this verifier cannot digest.
-        selection_digest: refuse_slot(c, "selection_digest")?,
+        // Field 9 is framed only from this verifier's own recomputation over the disclosed `selection`
+        // body (spec: "a verifier never takes field 9 from anywhere but the recomputation"), so a
+        // `selection_digest` key is refused. Field 10: the bundle spec does not project it.
+        selection_digest: {
+            refuse_slot(c, "selection_digest")?;
+            parse_selection(c)?.map(|(_, d)| d.to_vec())
+        },
         certificate_digest: refuse_slot(c, "certificate_digest")?,
         governing_doc_sha256: governing_doc(c)?,
         signed_artifact: req("signed_artifact")?,
@@ -349,6 +360,35 @@ fn governing_doc(c: &serde_json::Value) -> Result<Option<Vec<u8>>, String> {
         ),
         Some(_) => Err("commitment.json: 'governing_doc_sha256' is not a string or null".into()),
     }
+}
+
+/// `commitment.json`'s `selection` (option selection, seam-runtime 0.90.0): the sealed block's canonical
+/// `body` as lowercase hex, or `null`/absent when the decision did not run under selection. Returns the
+/// strictly decoded block and the `selection_digest` v5 field 9 frames. Absent is "not a selection
+/// decision" and nothing else; a present value that is not a non-empty lowercase-hex string, or whose bytes
+/// do not strictly decode, is refused, never downgraded to absent.
+pub fn parse_selection(
+    c: &serde_json::Value,
+) -> Result<Option<(selection::SelectionBlock, [u8; 32])>, String> {
+    let h = match c.get("selection") {
+        None | Some(serde_json::Value::Null) => return Ok(None),
+        Some(serde_json::Value::String(h)) => h,
+        Some(_) => return Err("commitment.json: 'selection' is not a string or null".into()),
+    };
+    if h.is_empty()
+        || h.len() % 2 != 0
+        || !h.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        return Err(
+            "commitment.json: 'selection' is not a non-empty, even-length lowercase hex string"
+                .into(),
+        );
+    }
+    let body = hex_decode(h).ok_or("commitment.json: 'selection' is not hex")?;
+    let block = selection::decode_body(&body).map_err(|r| {
+        format!("commitment.json: 'selection' does not decode as a selection block: {r}")
+    })?;
+    Ok(Some((block, selection::selection_digest(&body))))
 }
 
 /// Fail closed on a field 9/10 block: absent (or `null`) is the only shape the bundle spec defines.
@@ -708,13 +748,15 @@ pub fn verify_bundle(dir: &Path, pinned: &str, now_secs: u64) -> Result<BundleRe
     // 4 + 5. Commitment, then its binding.
     let mut tct_verified = None;
     let mut voters_verified = None;
+    let mut selection_outcome = None;
     if has("commitment.json") {
-        let c = parse_json(
+        let raw = parse_json(
             &read_member(dir, "commitment.json", 4)?,
             "commitment.json",
             4,
         )?;
-        let c = parse_commitment(&c).map_err(|e| failed(4, e))?;
+        let c = parse_commitment(&raw).map_err(|e| failed(4, e))?;
+        let block = parse_selection(&raw).map_err(|e| failed(4, e))?;
         let digest = commitment::commitment_digest(&c).map_err(|e| failed(4, e))?;
         // #1687: every vote, ballot and objection carries a voter record addressed to the pinned
         // issuer, all from ONE session, and that session is this decision's (`dec:{tenant}:{session}`).
@@ -771,6 +813,19 @@ pub fn verify_bundle(dir: &Path, pinned: &str, now_secs: u64) -> Result<BundleRe
                 4,
                 "commitment.json: supersedes differs from the chained record's",
             ));
+        }
+        // Option selection (selection-rule.v1 §5 steps 6-9), after the TCT bound field 9 and every
+        // voter record re-verified. No block: "not a selection decision", never reported as passed.
+        if let Some((block, _)) = block {
+            let v = selection::verify_selection(&block, &c.explanation, &c.action)
+                .map_err(|e| failed(4, format!("commitment.json: option selection: {e}")))?;
+            checks.push(format!(
+                "option selection re-verifies offline: the winner recomputes to '{}', the action is its \
+                 option, {} vote(s) link to the option they credit, and participants and principals \
+                 pair one-to-one",
+                v.winner_proposal_id, v.votes_linked
+            ));
+            selection_outcome = Some(v);
         }
 
         let b = parse_json(&read_member(dir, "binding.json", 5)?, "binding.json", 5)?;
@@ -883,6 +938,7 @@ pub fn verify_bundle(dir: &Path, pinned: &str, now_secs: u64) -> Result<BundleRe
         head: w.report.head,
         tct_verified,
         voters_verified,
+        selection: selection_outcome,
         checks,
         withheld,
     })

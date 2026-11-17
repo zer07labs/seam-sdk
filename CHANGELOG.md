@@ -16,7 +16,43 @@ than trusting a summary here.
 
 ## Unreleased
 
+These entries first ship in **0.90.1**: v0.90.0 was tagged and never published (see COMPATIBILITY.md).
+
+### Added — option selection, the reader side (runtime 0.90.0, seam-runtime#1748)
+- **`Commitment.selection`** (tag 12, `SelectionRecord` / `SelectionWeight` / `SelectionContext`) and
+  **`ExplanationKind.PROPOSAL`** (word `proposal`) are in the field manifest. Python `commitment_view` and TS
+  `commitmentView` carry `selection` with explicit presence. Absent means "not a selection decision"
+  (v5 field 9 = `0x00`), never "passed". Present, field 9 is framed from the block itself:
+  `SHA-256(F("seam-selection-digest:v1") ‖ body)` over the canonical body (`selection-rule.v1.md` §4.2).
+- **Winner recompute** in Python (`seam_sdk.selection`: `decide`, `verify_selection`,
+  `decode_selection_body`) and in `seam-verify`. A sealed selection commitment is re-checked offline:
+  - the winner recomputes from the sealed entries, and the committed action is its option byte for byte;
+  - every vote's signed `seam-vote-content-v1` digest links to that option;
+  - participant ↔ principal is one-to-one.
+
+  Each failure is reported by its spec name (`selection_winner_mismatch`, `selection_action_mismatch`,
+  `selection_content_link_mismatch`, …). Python `verify_tct` / `verify_decision` return `False` on any of
+  them, and on a block that is present with no entries.
+- **`seam-verify bundle`** reads `commitment.json`'s `selection`: `null` is "not a selection decision"
+  (reported as such in text and JSON). Present, it must be non-empty lowercase hex of a body that strictly
+  decodes, or the bundle fails at step 4. Never read as absent.
+- **TS, Go, Java and Kotlin** frame the `proposal` word and field 9 (`selectionBody` / `selectionDigest`),
+  so a selection decision's TCT verifies there. **They do not recompute the winner**: that is Python and
+  `seam-verify` only (see COMPATIBILITY.md §5).
+- **Vectors:** `conformance/selection_rule_v1_vectors.json`, copied from the runtime's fixture. Python and
+  `verify/` pass every `codec`, `rule_cases`, `sealed_cases` and `commitment_digest_v5` case, and the other
+  ports pass the codec and digest cases. The activation, policy-ingress, proposal-ingress and flag-off
+  groups pin server-side gates a client never runs.
+- `verify/docs/evidence-bundle.v1.md` re-pinned to `780b1b7`.
+
+### Changed
+- The `rationale_ref` docstrings (Python `evaluate`, TS `evaluate`) say it may also be the typed
+  `decision-cert:sha256:<64 hex>` form, accepted only when the tenant's `cert_ref` flag is on. Every port
+  still frames it as opaque UTF-8.
+
 ## 0.90.0 — 2026-11-17
+
+Tagged, never published (see COMPATIBILITY.md). It carried no entries; 0.90.1 supersedes it.
 
 ## 0.89.0 — 2026-11-16
 

@@ -732,7 +732,8 @@ fn cmd_bundle(dir: &str, issuer: &str, json: bool) -> ExitCode {
                 println!(
                     "{{\"verified\":true,\"format\":{},\"decision_id\":{},\"tenant\":{},\
                      \"events\":{},\"links\":{},\"attestations\":{},\"covering_attestations\":{},\
-                     \"base_len\":{},\"head\":\"{}\",\"tct\":{},\"voters_verified\":{},\"checks\":{},\
+                     \"base_len\":{},\"head\":\"{}\",\"tct\":{},\"voters_verified\":{},\"selection\":{},\
+                     \"checks\":{},\
                      \"withheld\":[{}]}}",
                     q(seam_verify::bundle::FORMAT),
                     q(&r.decision_id),
@@ -750,6 +751,15 @@ fn cmd_bundle(dir: &str, issuer: &str, json: bool) -> ExitCode {
                     },
                     r.voters_verified
                         .map_or_else(|| "null".to_owned(), |n| n.to_string()),
+                    // `null` = not a selection decision (or no Commitment disclosed), never "passed".
+                    r.selection.as_ref().map_or_else(
+                        || "null".to_owned(),
+                        |s| format!(
+                            "{{\"winner_proposal_id\":{},\"votes_linked\":{}}}",
+                            q(&s.winner_proposal_id),
+                            s.votes_linked
+                        )
+                    ),
                     q_arr(&checks),
                     withheld.join(","),
                 );
@@ -758,6 +768,14 @@ fn cmd_bundle(dir: &str, issuer: &str, json: bool) -> ExitCode {
                 println!("  decision  : {}", r.decision_id);
                 println!("  tenant    : {}", r.tenant);
                 println!("  head      : {}", verify::hex(&r.head));
+                match (&r.selection, r.voters_verified) {
+                    (Some(s), _) => println!(
+                        "  selection : winner {}, {} vote(s) linked",
+                        s.winner_proposal_id, s.votes_linked
+                    ),
+                    (None, Some(_)) => println!("  selection : not a selection decision"),
+                    (None, None) => {}
+                }
                 for c in &r.checks {
                     println!("  - {c}");
                 }

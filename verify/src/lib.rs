@@ -102,6 +102,7 @@
 pub mod bundle;
 pub mod commitment;
 mod entry;
+pub mod selection;
 pub mod verify;
 pub mod voter;
 pub mod wire;

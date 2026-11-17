@@ -34,6 +34,15 @@ from .client import (
     SeamClient,
     StepUsage,
 )
+from .selection import (
+    SelectionDecodeError,
+    SelectionResult,
+    decide as selection_decide,
+    decode_selection_body,
+    selection_body,
+    selection_digest,
+    verify_selection,
+)
 from .crypto import (
     aid_from_pubkey,
     build_presentation,
@@ -218,6 +227,13 @@ __all__ = [
     "verify_voter_pop",
     "verify_voter_record",
     "verify_commitment_voters",
+    "SelectionDecodeError",
+    "SelectionResult",
+    "selection_decide",
+    "decode_selection_body",
+    "selection_body",
+    "selection_digest",
+    "verify_selection",
     "vote_content_digest",
     "vote_entry_bytes",
     "voter_pop_payload",

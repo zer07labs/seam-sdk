@@ -1,4 +1,13 @@
-<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 83e691d (refreshed 2026-11-16).
+<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 780b1b7 (refreshed 2026-11-16).
+     seam-runtime 0.90.0 (#1748, option selection S1), on runtime main. Movement since 83e691d: commitment.json
+     carries `selection`, the sealed option-selection block's canonical body as lowercase hex, or `null` when the
+     decision did not run under selection ("not a selection decision", never "passed"). A verifier strictly
+     decodes it, frames v5 field 9 = SHA-256(F("seam-selection-digest:v1") ‖ body) from it, and re-runs
+     selection-rule.v1 §5 steps 6-9 (winner recompute, action, vote content-digest link, participant ↔
+     principal). `selection-rule.v1.md` is NOT vendored; it is implemented in `src/selection.rs` and pinned by
+     `conformance/selection_rule_v1_vectors.json`.
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 83e691d (refreshed 2026-11-16).
      seam-runtime 0.88.0 (#1740, carrying #1727: #1711 commitment digest v5), on runtime main. Movement since 8f4e30e:
      commitment.json binds `seam-commitment-digest:v5` and carries `governing_doc_sha256` (64 lowercase hex, or
      `null` for an ungoverned decision; any other spelling is refused), and the binding's `commitment_digest`
@@ -115,6 +124,7 @@ convenience.
                        "namespace": "…", "session_id": "…", "opened_at_millis": 0,
                        "issuer": "aid:…", "audience": "…", "accepted_at_ms": 0 } } ],
   "governing_doc_sha256": "<64 hex>" | null,
+  "selection": "<hex>" | null,
   "issuer_aid": "…", "commitment_digest": "<64 hex>" }
 ```
 
@@ -123,7 +133,14 @@ convenience.
 framing reads them (`supersedes` is `null` when absent and `{session_id}/sha256:<hex>` when present;
 `explanation` is in sealed order, each entry's `kind` is the lowercase digest word, and `confidence` / `rationale_ref` are `null` when absent — never
 `0.0`; `governing_doc_sha256` is the 64-lowercase-hex v5 field 11, `null` for an ungoverned decision, and
-a verifier refuses any other spelling). Every `vote`, `ballot` and `objection` carries its sealed `voter_verification` record
+a verifier refuses any other spelling). `selection` is the sealed option-selection block — its canonical
+`body` ([`selection-rule.v1.md`](selection-rule.v1.md) §4.2) as lowercase hex (uppercase or a sign is refused, as
+for every hex field here), the bytes v5 field 9 hashes —
+or `null` when the decision did not run under selection. A verifier strictly decodes it (refusing what the
+`0x04` trailer would), frames field 9 from it, then re-runs §5 steps 6-9: the winner recomputes from
+`explanation`, `action` is its option, every vote's signed content digest links it to that option, and
+participants and principals pair one-to-one. A `null` block is reported as "not a selection decision",
+never as passed, and never as a failed read. A present block that does not decode fails the bundle. Every `vote`, `ballot` and `objection` carries its sealed `voter_verification` record
 ([`voter-verification.v1.md`](voter-verification.v1.md); byte fields as JSON number arrays, `null` on an
 evaluation); a verifier re-checks each signature offline and refuses a binding entry without one. A verifier recomputes the `seam-explanation-digest:v2` from the entries, so a re-worded entry
 fails the TCT. `signed_artifact` is the TCT. It is empty

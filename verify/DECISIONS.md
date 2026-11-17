@@ -457,3 +457,30 @@ and never from the runtime's Rust:
   `populated_signed_ungoverned` real TCT.
 * **Vendored doc** `evidence-bundle.v1.md` was pinned `@ c2817d8 tracking feat/1711-commitment-v5-p1`, and is re-pinned
   `@ 83e691d` (runtime 0.88.0, #1740) now that #1727 has landed; the doc is unchanged between the two.
+
+## D-047 — option selection: the `selection` block reader (seam-runtime 0.90.0, option selection S1)
+
+**Decision.** This crate reads option selection from seam-runtime 0.90.0 (`780b1b70`, #1748), written from
+`selection-rule.v1.md` §3-§5 and `seam-commitment-digest.v5.md` § Field 9, never from the runtime's Rust
+(`src/selection.rs`):
+
+* **Absent is "not a selection decision", and nothing else.** `commitment.json`'s `selection` absent or `null`
+  frames field 9 = `0x00` and is reported as `selection : not a selection decision` (JSON `"selection": null`).
+  It is never reported as a passed selection, and never as a failed read.
+* **Present and malformed fails closed.** The value must be a non-empty, even-length, LOWERCASE hex string of
+  the canonical `body` (§4.2); uppercase, a non-string, or a body that fails the strict decode (`truncated`,
+  `u32_overflow`, `weights_not_canonical`, `rules_digest_not_32`, `invalid_utf8`, `empty_winner`,
+  `trailing_bytes`) refuses the bundle at step 4. It is never downgraded to absent.
+* **Field 9 comes only from the recomputation.** `selection_digest = SHA-256(F("seam-selection-digest:v1") ‖
+  body)` is framed into v5 field 9; a stated `selection_digest` key stays refused.
+* **Steps 6-9 after the TCT and the voters.** `decide()` recomputes the winner; the action must be its option
+  byte for byte; every vote's `content_digest` must equal `seam-vote-content-v1` over the sealed PROPOSAL
+  value and the block's participants, `on_behalf_of`, context pairs and policy (mode `macp.mode.decision.v1`,
+  no features); participants and principals pair one-to-one. Failures carry the spec's result names.
+* **`proposal` is an explanation kind word** (additive under `seam-explanation-digest:v2`); a proposal with a
+  voter record is `UnexpectedRecord`.
+* **No trailer list is opened.** The bundle carries the body itself; `decode_trailer` exists to pin the spec's
+  twelve `0x04` trailer refusals. The fixtures were not re-exported: none is a selection decision, and the
+  selection paths are pinned by `conformance/selection_rule_v1_vectors.json` (`tests/selection_vectors.rs`)
+  and by fail-closed edits of the `full` fixture (`tests/bundle.rs`).
+* **Vendored doc** `evidence-bundle.v1.md` is re-pinned `@ 780b1b7`; `selection-rule.v1.md` is not vendored.

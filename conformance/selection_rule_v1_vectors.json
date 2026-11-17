@@ -1,0 +1,5475 @@
+{
+  "spec": "docs/specs/selection-rule.v1.md",
+  "selection_digest_domain": "seam-selection-digest:v1",
+  "commitment_digest_domain": "seam-commitment-digest:v5",
+  "vote_content_domain": "seam-vote-content-v1",
+  "generator": "scripts/selection_rule_v1_vectors.py --write (independent, stdlib only)",
+  "rules_digest": "SHA-256(\"seam-selection-rules-digest:test-vector\") (a label, not a JCS policy)",
+  "deny_codes": [
+    "seam_selection_mismatch",
+    "seam_selection_no_winner",
+    "seam_selection_double_approve",
+    "seam_selection_duplicate_option",
+    "seam_selection_unsupported_path",
+    "seam_selection_budget_insufficient",
+    "seam_selection_flag_unreadable",
+    "seam_selection_option_negative_action"
+  ],
+  "rule_cases": [
+    {
+      "name": "unique_winner",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "bob",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "winner",
+        "winner_proposal_id": "p1",
+        "option": "rate 5%",
+        "scores": [
+          {
+            "proposal_id": "p1",
+            "score": 2
+          },
+          {
+            "proposal_id": "p2",
+            "score": 1
+          },
+          {
+            "proposal_id": "p3",
+            "score": 0
+          }
+        ],
+        "ballots": 3
+      }
+    },
+    {
+      "name": "tie",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "bob",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "no_winner",
+        "reason": "tie",
+        "scores": [
+          {
+            "proposal_id": "p1",
+            "score": 1
+          },
+          {
+            "proposal_id": "p2",
+            "score": 1
+          },
+          {
+            "proposal_id": "p3",
+            "score": 0
+          }
+        ],
+        "ballots": 2
+      }
+    },
+    {
+      "name": "all_abstain",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "ABSTAIN",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "bob",
+          "proposal_id": "p2",
+          "value": "ABSTAIN",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p3",
+          "value": "ABSTAIN",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "no_winner",
+        "reason": "no_positive_score",
+        "scores": [
+          {
+            "proposal_id": "p1",
+            "score": 0
+          },
+          {
+            "proposal_id": "p2",
+            "score": 0
+          },
+          {
+            "proposal_id": "p3",
+            "score": 0
+          }
+        ],
+        "ballots": 3
+      }
+    },
+    {
+      "name": "below_min_ballots",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 3,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "bob",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "no_winner",
+        "reason": "below_min_ballots",
+        "scores": [
+          {
+            "proposal_id": "p1",
+            "score": 2
+          },
+          {
+            "proposal_id": "p2",
+            "score": 0
+          },
+          {
+            "proposal_id": "p3",
+            "score": 0
+          }
+        ],
+        "ballots": 2
+      }
+    },
+    {
+      "name": "max_score_zero",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "REJECT",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "bob",
+          "proposal_id": "p2",
+          "value": "REJECT",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "no_winner",
+        "reason": "no_positive_score",
+        "scores": [
+          {
+            "proposal_id": "p1",
+            "score": 0
+          },
+          {
+            "proposal_id": "p2",
+            "score": 0
+          },
+          {
+            "proposal_id": "p3",
+            "score": 0
+          }
+        ],
+        "ballots": 2
+      }
+    },
+    {
+      "name": "default_weight_fallback",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 2,
+        "weights": [
+          {
+            "participant": "bob",
+            "weight": 3
+          }
+        ],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "bob",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "winner",
+        "winner_proposal_id": "p1",
+        "option": "rate 5%",
+        "scores": [
+          {
+            "proposal_id": "p1",
+            "score": 4
+          },
+          {
+            "proposal_id": "p2",
+            "score": 3
+          },
+          {
+            "proposal_id": "p3",
+            "score": 0
+          }
+        ],
+        "ballots": 3
+      }
+    },
+    {
+      "name": "override_weight_zero",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [
+          {
+            "participant": "bob",
+            "weight": 0
+          }
+        ],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "bob",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "winner",
+        "winner_proposal_id": "p1",
+        "option": "rate 5%",
+        "scores": [
+          {
+            "proposal_id": "p1",
+            "score": 1
+          },
+          {
+            "proposal_id": "p2",
+            "score": 0
+          },
+          {
+            "proposal_id": "p3",
+            "score": 0
+          }
+        ],
+        "ballots": 2
+      }
+    },
+    {
+      "name": "override_zero_cannot_win_alone",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [
+          {
+            "participant": "bob",
+            "weight": 0
+          }
+        ],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "bob",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "no_winner",
+        "reason": "no_positive_score",
+        "scores": [
+          {
+            "proposal_id": "p1",
+            "score": 0
+          },
+          {
+            "proposal_id": "p2",
+            "score": 0
+          },
+          {
+            "proposal_id": "p3",
+            "score": 0
+          }
+        ],
+        "ballots": 1
+      }
+    },
+    {
+      "name": "one_approve_two_rejects_one_ballot",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 2,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p2",
+          "value": "REJECT",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p3",
+          "value": "REJECT",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "no_winner",
+        "reason": "below_min_ballots",
+        "scores": [
+          {
+            "proposal_id": "p1",
+            "score": 1
+          },
+          {
+            "proposal_id": "p2",
+            "score": 0
+          },
+          {
+            "proposal_id": "p3",
+            "score": 0
+          }
+        ],
+        "ballots": 1
+      }
+    },
+    {
+      "name": "one_approve_two_rejects_wins",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p2",
+          "value": "REJECT",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p3",
+          "value": "REJECT",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "winner",
+        "winner_proposal_id": "p1",
+        "option": "rate 5%",
+        "scores": [
+          {
+            "proposal_id": "p1",
+            "score": 1
+          },
+          {
+            "proposal_id": "p2",
+            "score": 0
+          },
+          {
+            "proposal_id": "p3",
+            "score": 0
+          }
+        ],
+        "ballots": 1
+      }
+    },
+    {
+      "name": "nfc_vs_nfd_distinct_options",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "approuvé",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "approuvé",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "bob",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "winner",
+        "winner_proposal_id": "p2",
+        "option": "approuvé",
+        "scores": [
+          {
+            "proposal_id": "p1",
+            "score": 1
+          },
+          {
+            "proposal_id": "p2",
+            "score": 2
+          }
+        ],
+        "ballots": 3
+      }
+    },
+    {
+      "name": "block_option_wins",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "BLOCK",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "pay",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "bob",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "winner",
+        "winner_proposal_id": "p1",
+        "option": "BLOCK",
+        "scores": [
+          {
+            "proposal_id": "p1",
+            "score": 2
+          },
+          {
+            "proposal_id": "p2",
+            "score": 0
+          }
+        ],
+        "ballots": 2
+      }
+    },
+    {
+      "name": "evaluations_and_objections_not_scored",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "evaluation",
+          "participant": "carol",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "objection",
+          "participant": "bob",
+          "proposal_id": "p1",
+          "value": "critical",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "winner",
+        "winner_proposal_id": "p1",
+        "option": "rate 5%",
+        "scores": [
+          {
+            "proposal_id": "p1",
+            "score": 1
+          },
+          {
+            "proposal_id": "p2",
+            "score": 0
+          },
+          {
+            "proposal_id": "p3",
+            "score": 0
+          }
+        ],
+        "ballots": 1
+      }
+    },
+    {
+      "name": "malformed_proposal_after_vote",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "a",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "b",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "malformed",
+        "reason": "proposal_after_vote",
+        "at": 2
+      }
+    },
+    {
+      "name": "malformed_double_approve",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "malformed",
+        "reason": "double_approve",
+        "at": 4
+      }
+    },
+    {
+      "name": "malformed_vote_unknown_proposal",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p9",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "malformed",
+        "reason": "vote_unknown_proposal",
+        "at": 3
+      }
+    },
+    {
+      "name": "malformed_duplicate_option",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "same",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "same",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "malformed",
+        "reason": "duplicate_option",
+        "at": 1
+      }
+    },
+    {
+      "name": "malformed_zero_proposals",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [],
+      "expect": {
+        "result": "malformed",
+        "reason": "no_proposals",
+        "at": null
+      }
+    },
+    {
+      "name": "malformed_duplicate_proposal_id",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "a",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "b",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "malformed",
+        "reason": "duplicate_proposal_id",
+        "at": 1
+      }
+    },
+    {
+      "name": "malformed_duplicate_vote",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "REJECT",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "REJECT",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "malformed",
+        "reason": "duplicate_vote",
+        "at": 4
+      }
+    },
+    {
+      "name": "malformed_vote_bad_value",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "approve",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "malformed",
+        "reason": "vote_bad_value",
+        "at": 3
+      }
+    },
+    {
+      "name": "malformed_vote_not_participant",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "mallory",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "malformed",
+        "reason": "vote_not_participant",
+        "at": 3
+      }
+    },
+    {
+      "name": "malformed_proposal_with_voter_record",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "a",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:x",
+            "content_digest": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        }
+      ],
+      "expect": {
+        "result": "malformed",
+        "reason": "proposal_has_voter_record",
+        "at": 0
+      }
+    },
+    {
+      "name": "malformed_ballot_kind",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "ballot",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "malformed",
+        "reason": "ballot_in_selection",
+        "at": 3
+      }
+    },
+    {
+      "name": "malformed_unknown_rule_version",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 2,
+        "default_weight": 1,
+        "weights": [],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "malformed",
+        "reason": "unknown_rule_version",
+        "at": null
+      }
+    },
+    {
+      "name": "malformed_unknown_tie",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [],
+        "tie": "first_proposed",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "malformed",
+        "reason": "unknown_tie",
+        "at": null
+      }
+    },
+    {
+      "name": "malformed_zero_electorate",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 0,
+        "weights": [
+          {
+            "participant": "bob",
+            "weight": 0
+          }
+        ],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "malformed",
+        "reason": "zero_electorate",
+        "at": null
+      }
+    },
+    {
+      "name": "malformed_min_ballots_zero",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 0,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "malformed",
+        "reason": "min_ballots_zero",
+        "at": null
+      }
+    },
+    {
+      "name": "malformed_weights_not_canonical",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [
+          {
+            "participant": "carol",
+            "weight": 1
+          },
+          {
+            "participant": "alice",
+            "weight": 1
+          }
+        ],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "malformed",
+        "reason": "weights_not_canonical",
+        "at": null
+      }
+    },
+    {
+      "name": "malformed_duplicate_participant",
+      "record": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 1,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "alice",
+          "alice"
+        ],
+        "on_behalf_of": [],
+        "context": []
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        }
+      ],
+      "expect": {
+        "result": "malformed",
+        "reason": "duplicate_participant",
+        "at": null
+      }
+    }
+  ],
+  "sealed_cases": [
+    {
+      "name": "verified",
+      "block": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [
+          {
+            "participant": "bob",
+            "weight": 2
+          }
+        ],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 3,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [
+          "subject:applicant-42"
+        ],
+        "context": [
+          {
+            "ctx_ref": "ctx:credit-file",
+            "content_hash": "sha256:552d10a3ee9ef9bf9571f4e3c9a7468c3881cd6d9ceb07e0bedaedf18e40f7ed"
+          }
+        ],
+        "winner_proposal_id": "p2"
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:alice-test-key",
+            "content_digest": "24f277ca063371173e7079eb0a4e33ac9d47a8500550ad3e51bc8b2f917bc71b",
+            "issued_at_ms": 1760000000500,
+            "expires_at_ms": 1760000061000,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001000
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "bob",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:bob-test-key",
+            "content_digest": "d3ea3578618c39ffefcc5cc2a347565995c98ff8fce14984ddace3c487105e43",
+            "issued_at_ms": 1760000000501,
+            "expires_at_ms": 1760000061001,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001001
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:carol-test-key",
+            "content_digest": "d3ea3578618c39ffefcc5cc2a347565995c98ff8fce14984ddace3c487105e43",
+            "issued_at_ms": 1760000000502,
+            "expires_at_ms": 1760000061002,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001002
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p3",
+          "value": "REJECT",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:carol-test-key",
+            "content_digest": "df38e4715e89c2056612e674bd16a5ade48dd4af916a23a95950abc28fae164b",
+            "issued_at_ms": 1760000000503,
+            "expires_at_ms": 1760000061003,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001003
+          }
+        }
+      ],
+      "action": "rate 7%",
+      "expect": {
+        "result": "verified",
+        "winner_proposal_id": "p2",
+        "votes_linked": 4
+      }
+    },
+    {
+      "name": "action_not_winner_option",
+      "block": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [
+          {
+            "participant": "bob",
+            "weight": 2
+          }
+        ],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 3,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [
+          "subject:applicant-42"
+        ],
+        "context": [
+          {
+            "ctx_ref": "ctx:credit-file",
+            "content_hash": "sha256:552d10a3ee9ef9bf9571f4e3c9a7468c3881cd6d9ceb07e0bedaedf18e40f7ed"
+          }
+        ],
+        "winner_proposal_id": "p2"
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:alice-test-key",
+            "content_digest": "24f277ca063371173e7079eb0a4e33ac9d47a8500550ad3e51bc8b2f917bc71b",
+            "issued_at_ms": 1760000000500,
+            "expires_at_ms": 1760000061000,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001000
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "bob",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:bob-test-key",
+            "content_digest": "d3ea3578618c39ffefcc5cc2a347565995c98ff8fce14984ddace3c487105e43",
+            "issued_at_ms": 1760000000501,
+            "expires_at_ms": 1760000061001,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001001
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:carol-test-key",
+            "content_digest": "d3ea3578618c39ffefcc5cc2a347565995c98ff8fce14984ddace3c487105e43",
+            "issued_at_ms": 1760000000502,
+            "expires_at_ms": 1760000061002,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001002
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p3",
+          "value": "REJECT",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:carol-test-key",
+            "content_digest": "df38e4715e89c2056612e674bd16a5ade48dd4af916a23a95950abc28fae164b",
+            "issued_at_ms": 1760000000503,
+            "expires_at_ms": 1760000061003,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001003
+          }
+        }
+      ],
+      "action": "rate 5%",
+      "expect": {
+        "result": "selection_action_mismatch"
+      }
+    },
+    {
+      "name": "action_winner_plus_whitespace",
+      "block": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [
+          {
+            "participant": "bob",
+            "weight": 2
+          }
+        ],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 3,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [
+          "subject:applicant-42"
+        ],
+        "context": [
+          {
+            "ctx_ref": "ctx:credit-file",
+            "content_hash": "sha256:552d10a3ee9ef9bf9571f4e3c9a7468c3881cd6d9ceb07e0bedaedf18e40f7ed"
+          }
+        ],
+        "winner_proposal_id": "p2"
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:alice-test-key",
+            "content_digest": "24f277ca063371173e7079eb0a4e33ac9d47a8500550ad3e51bc8b2f917bc71b",
+            "issued_at_ms": 1760000000500,
+            "expires_at_ms": 1760000061000,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001000
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "bob",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:bob-test-key",
+            "content_digest": "d3ea3578618c39ffefcc5cc2a347565995c98ff8fce14984ddace3c487105e43",
+            "issued_at_ms": 1760000000501,
+            "expires_at_ms": 1760000061001,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001001
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:carol-test-key",
+            "content_digest": "d3ea3578618c39ffefcc5cc2a347565995c98ff8fce14984ddace3c487105e43",
+            "issued_at_ms": 1760000000502,
+            "expires_at_ms": 1760000061002,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001002
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p3",
+          "value": "REJECT",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:carol-test-key",
+            "content_digest": "df38e4715e89c2056612e674bd16a5ade48dd4af916a23a95950abc28fae164b",
+            "issued_at_ms": 1760000000503,
+            "expires_at_ms": 1760000061003,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001003
+          }
+        }
+      ],
+      "action": "rate 7% ",
+      "expect": {
+        "result": "selection_action_mismatch"
+      }
+    },
+    {
+      "name": "action_is_winner_proposal_id",
+      "block": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [
+          {
+            "participant": "bob",
+            "weight": 2
+          }
+        ],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 3,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [
+          "subject:applicant-42"
+        ],
+        "context": [
+          {
+            "ctx_ref": "ctx:credit-file",
+            "content_hash": "sha256:552d10a3ee9ef9bf9571f4e3c9a7468c3881cd6d9ceb07e0bedaedf18e40f7ed"
+          }
+        ],
+        "winner_proposal_id": "p2"
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:alice-test-key",
+            "content_digest": "24f277ca063371173e7079eb0a4e33ac9d47a8500550ad3e51bc8b2f917bc71b",
+            "issued_at_ms": 1760000000500,
+            "expires_at_ms": 1760000061000,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001000
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "bob",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:bob-test-key",
+            "content_digest": "d3ea3578618c39ffefcc5cc2a347565995c98ff8fce14984ddace3c487105e43",
+            "issued_at_ms": 1760000000501,
+            "expires_at_ms": 1760000061001,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001001
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:carol-test-key",
+            "content_digest": "d3ea3578618c39ffefcc5cc2a347565995c98ff8fce14984ddace3c487105e43",
+            "issued_at_ms": 1760000000502,
+            "expires_at_ms": 1760000061002,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001002
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p3",
+          "value": "REJECT",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:carol-test-key",
+            "content_digest": "df38e4715e89c2056612e674bd16a5ade48dd4af916a23a95950abc28fae164b",
+            "issued_at_ms": 1760000000503,
+            "expires_at_ms": 1760000061003,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001003
+          }
+        }
+      ],
+      "action": "p2",
+      "expect": {
+        "result": "selection_action_mismatch"
+      }
+    },
+    {
+      "name": "winner_id_tampered",
+      "block": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [
+          {
+            "participant": "bob",
+            "weight": 2
+          }
+        ],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 3,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [
+          "subject:applicant-42"
+        ],
+        "context": [
+          {
+            "ctx_ref": "ctx:credit-file",
+            "content_hash": "sha256:552d10a3ee9ef9bf9571f4e3c9a7468c3881cd6d9ceb07e0bedaedf18e40f7ed"
+          }
+        ],
+        "winner_proposal_id": "p1"
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:alice-test-key",
+            "content_digest": "24f277ca063371173e7079eb0a4e33ac9d47a8500550ad3e51bc8b2f917bc71b",
+            "issued_at_ms": 1760000000500,
+            "expires_at_ms": 1760000061000,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001000
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "bob",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:bob-test-key",
+            "content_digest": "d3ea3578618c39ffefcc5cc2a347565995c98ff8fce14984ddace3c487105e43",
+            "issued_at_ms": 1760000000501,
+            "expires_at_ms": 1760000061001,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001001
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:carol-test-key",
+            "content_digest": "d3ea3578618c39ffefcc5cc2a347565995c98ff8fce14984ddace3c487105e43",
+            "issued_at_ms": 1760000000502,
+            "expires_at_ms": 1760000061002,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001002
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p3",
+          "value": "REJECT",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:carol-test-key",
+            "content_digest": "df38e4715e89c2056612e674bd16a5ade48dd4af916a23a95950abc28fae164b",
+            "issued_at_ms": 1760000000503,
+            "expires_at_ms": 1760000061003,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001003
+          }
+        }
+      ],
+      "action": "rate 7%",
+      "expect": {
+        "result": "selection_winner_mismatch",
+        "recomputed": "p2"
+      }
+    },
+    {
+      "name": "weight_tampered_flips_winner",
+      "block": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [
+          {
+            "participant": "alice",
+            "weight": 5
+          },
+          {
+            "participant": "bob",
+            "weight": 2
+          }
+        ],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 3,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [
+          "subject:applicant-42"
+        ],
+        "context": [
+          {
+            "ctx_ref": "ctx:credit-file",
+            "content_hash": "sha256:552d10a3ee9ef9bf9571f4e3c9a7468c3881cd6d9ceb07e0bedaedf18e40f7ed"
+          }
+        ],
+        "winner_proposal_id": "p2"
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:alice-test-key",
+            "content_digest": "24f277ca063371173e7079eb0a4e33ac9d47a8500550ad3e51bc8b2f917bc71b",
+            "issued_at_ms": 1760000000500,
+            "expires_at_ms": 1760000061000,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001000
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "bob",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:bob-test-key",
+            "content_digest": "d3ea3578618c39ffefcc5cc2a347565995c98ff8fce14984ddace3c487105e43",
+            "issued_at_ms": 1760000000501,
+            "expires_at_ms": 1760000061001,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001001
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:carol-test-key",
+            "content_digest": "d3ea3578618c39ffefcc5cc2a347565995c98ff8fce14984ddace3c487105e43",
+            "issued_at_ms": 1760000000502,
+            "expires_at_ms": 1760000061002,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001002
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p3",
+          "value": "REJECT",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:carol-test-key",
+            "content_digest": "df38e4715e89c2056612e674bd16a5ade48dd4af916a23a95950abc28fae164b",
+            "issued_at_ms": 1760000000503,
+            "expires_at_ms": 1760000061003,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001003
+          }
+        }
+      ],
+      "action": "rate 7%",
+      "expect": {
+        "result": "selection_winner_mismatch",
+        "recomputed": "p1"
+      }
+    },
+    {
+      "name": "principal_one_key_two_participants",
+      "block": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [
+          {
+            "participant": "bob",
+            "weight": 2
+          }
+        ],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 3,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [
+          "subject:applicant-42"
+        ],
+        "context": [
+          {
+            "ctx_ref": "ctx:credit-file",
+            "content_hash": "sha256:552d10a3ee9ef9bf9571f4e3c9a7468c3881cd6d9ceb07e0bedaedf18e40f7ed"
+          }
+        ],
+        "winner_proposal_id": "p2"
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:alice-test-key",
+            "content_digest": "24f277ca063371173e7079eb0a4e33ac9d47a8500550ad3e51bc8b2f917bc71b",
+            "issued_at_ms": 1760000000500,
+            "expires_at_ms": 1760000061000,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001000
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "bob",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:bob-test-key",
+            "content_digest": "d3ea3578618c39ffefcc5cc2a347565995c98ff8fce14984ddace3c487105e43",
+            "issued_at_ms": 1760000000501,
+            "expires_at_ms": 1760000061001,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001001
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:bob-test-key",
+            "content_digest": "d3ea3578618c39ffefcc5cc2a347565995c98ff8fce14984ddace3c487105e43",
+            "issued_at_ms": 1760000000502,
+            "expires_at_ms": 1760000061002,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001002
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p3",
+          "value": "REJECT",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:bob-test-key",
+            "content_digest": "df38e4715e89c2056612e674bd16a5ade48dd4af916a23a95950abc28fae164b",
+            "issued_at_ms": 1760000000503,
+            "expires_at_ms": 1760000061003,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001003
+          }
+        }
+      ],
+      "action": "rate 7%",
+      "expect": {
+        "result": "selection_principal_not_one_to_one",
+        "at": 5
+      }
+    },
+    {
+      "name": "principal_one_participant_two_keys",
+      "block": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [
+          {
+            "participant": "bob",
+            "weight": 2
+          }
+        ],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 3,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [
+          "subject:applicant-42"
+        ],
+        "context": [
+          {
+            "ctx_ref": "ctx:credit-file",
+            "content_hash": "sha256:552d10a3ee9ef9bf9571f4e3c9a7468c3881cd6d9ceb07e0bedaedf18e40f7ed"
+          }
+        ],
+        "winner_proposal_id": "p2"
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:alice-test-key",
+            "content_digest": "24f277ca063371173e7079eb0a4e33ac9d47a8500550ad3e51bc8b2f917bc71b",
+            "issued_at_ms": 1760000000500,
+            "expires_at_ms": 1760000061000,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001000
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "bob",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:bob-test-key",
+            "content_digest": "d3ea3578618c39ffefcc5cc2a347565995c98ff8fce14984ddace3c487105e43",
+            "issued_at_ms": 1760000000501,
+            "expires_at_ms": 1760000061001,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001001
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:carol-rotated-key",
+            "content_digest": "d3ea3578618c39ffefcc5cc2a347565995c98ff8fce14984ddace3c487105e43",
+            "issued_at_ms": 1760000000502,
+            "expires_at_ms": 1760000061002,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001002
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p3",
+          "value": "REJECT",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:carol-test-key",
+            "content_digest": "df38e4715e89c2056612e674bd16a5ade48dd4af916a23a95950abc28fae164b",
+            "issued_at_ms": 1760000000503,
+            "expires_at_ms": 1760000061003,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001003
+          }
+        }
+      ],
+      "action": "rate 7%",
+      "expect": {
+        "result": "selection_principal_not_one_to_one",
+        "at": 6
+      }
+    },
+    {
+      "name": "missing_sealed_on_behalf_of",
+      "block": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [
+          {
+            "participant": "bob",
+            "weight": 2
+          }
+        ],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 3,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [],
+        "context": [
+          {
+            "ctx_ref": "ctx:credit-file",
+            "content_hash": "sha256:552d10a3ee9ef9bf9571f4e3c9a7468c3881cd6d9ceb07e0bedaedf18e40f7ed"
+          }
+        ],
+        "winner_proposal_id": "p2"
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:alice-test-key",
+            "content_digest": "24f277ca063371173e7079eb0a4e33ac9d47a8500550ad3e51bc8b2f917bc71b",
+            "issued_at_ms": 1760000000500,
+            "expires_at_ms": 1760000061000,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001000
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "bob",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:bob-test-key",
+            "content_digest": "d3ea3578618c39ffefcc5cc2a347565995c98ff8fce14984ddace3c487105e43",
+            "issued_at_ms": 1760000000501,
+            "expires_at_ms": 1760000061001,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001001
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:carol-test-key",
+            "content_digest": "d3ea3578618c39ffefcc5cc2a347565995c98ff8fce14984ddace3c487105e43",
+            "issued_at_ms": 1760000000502,
+            "expires_at_ms": 1760000061002,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001002
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p3",
+          "value": "REJECT",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:carol-test-key",
+            "content_digest": "df38e4715e89c2056612e674bd16a5ade48dd4af916a23a95950abc28fae164b",
+            "issued_at_ms": 1760000000503,
+            "expires_at_ms": 1760000061003,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001003
+          }
+        }
+      ],
+      "action": "rate 7%",
+      "expect": {
+        "result": "selection_content_link_mismatch",
+        "at": 3
+      }
+    },
+    {
+      "name": "missing_sealed_context",
+      "block": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [
+          {
+            "participant": "bob",
+            "weight": 2
+          }
+        ],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 3,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [
+          "subject:applicant-42"
+        ],
+        "context": [],
+        "winner_proposal_id": "p2"
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:alice-test-key",
+            "content_digest": "24f277ca063371173e7079eb0a4e33ac9d47a8500550ad3e51bc8b2f917bc71b",
+            "issued_at_ms": 1760000000500,
+            "expires_at_ms": 1760000061000,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001000
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "bob",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:bob-test-key",
+            "content_digest": "d3ea3578618c39ffefcc5cc2a347565995c98ff8fce14984ddace3c487105e43",
+            "issued_at_ms": 1760000000501,
+            "expires_at_ms": 1760000061001,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001001
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:carol-test-key",
+            "content_digest": "d3ea3578618c39ffefcc5cc2a347565995c98ff8fce14984ddace3c487105e43",
+            "issued_at_ms": 1760000000502,
+            "expires_at_ms": 1760000061002,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001002
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p3",
+          "value": "REJECT",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:carol-test-key",
+            "content_digest": "df38e4715e89c2056612e674bd16a5ade48dd4af916a23a95950abc28fae164b",
+            "issued_at_ms": 1760000000503,
+            "expires_at_ms": 1760000061003,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001003
+          }
+        }
+      ],
+      "action": "rate 7%",
+      "expect": {
+        "result": "selection_content_link_mismatch",
+        "at": 3
+      }
+    },
+    {
+      "name": "sealed_policy_not_the_signed_one",
+      "block": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [
+          {
+            "participant": "bob",
+            "weight": 2
+          }
+        ],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 3,
+        "policy_version": "loan-panel",
+        "rules_digest": "5dbbc278695b8de4a02f21e3ca8c0bff9318ee28620b08f5389c3eb2780d2dd5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [
+          "subject:applicant-42"
+        ],
+        "context": [
+          {
+            "ctx_ref": "ctx:credit-file",
+            "content_hash": "sha256:552d10a3ee9ef9bf9571f4e3c9a7468c3881cd6d9ceb07e0bedaedf18e40f7ed"
+          }
+        ],
+        "winner_proposal_id": "p2"
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:alice-test-key",
+            "content_digest": "24f277ca063371173e7079eb0a4e33ac9d47a8500550ad3e51bc8b2f917bc71b",
+            "issued_at_ms": 1760000000500,
+            "expires_at_ms": 1760000061000,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001000
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "bob",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:bob-test-key",
+            "content_digest": "d3ea3578618c39ffefcc5cc2a347565995c98ff8fce14984ddace3c487105e43",
+            "issued_at_ms": 1760000000501,
+            "expires_at_ms": 1760000061001,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001001
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:carol-test-key",
+            "content_digest": "d3ea3578618c39ffefcc5cc2a347565995c98ff8fce14984ddace3c487105e43",
+            "issued_at_ms": 1760000000502,
+            "expires_at_ms": 1760000061002,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001002
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p3",
+          "value": "REJECT",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:carol-test-key",
+            "content_digest": "df38e4715e89c2056612e674bd16a5ade48dd4af916a23a95950abc28fae164b",
+            "issued_at_ms": 1760000000503,
+            "expires_at_ms": 1760000061003,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001003
+          }
+        }
+      ],
+      "action": "rate 7%",
+      "expect": {
+        "result": "selection_content_link_mismatch",
+        "at": 3
+      }
+    },
+    {
+      "name": "vote_without_voter_record",
+      "block": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [
+          {
+            "participant": "bob",
+            "weight": 2
+          }
+        ],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 3,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [
+          "subject:applicant-42"
+        ],
+        "context": [
+          {
+            "ctx_ref": "ctx:credit-file",
+            "content_hash": "sha256:552d10a3ee9ef9bf9571f4e3c9a7468c3881cd6d9ceb07e0bedaedf18e40f7ed"
+          }
+        ],
+        "winner_proposal_id": "p2"
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:alice-test-key",
+            "content_digest": "24f277ca063371173e7079eb0a4e33ac9d47a8500550ad3e51bc8b2f917bc71b",
+            "issued_at_ms": 1760000000500,
+            "expires_at_ms": 1760000061000,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001000
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "bob",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:carol-test-key",
+            "content_digest": "d3ea3578618c39ffefcc5cc2a347565995c98ff8fce14984ddace3c487105e43",
+            "issued_at_ms": 1760000000502,
+            "expires_at_ms": 1760000061002,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001002
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p3",
+          "value": "REJECT",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:carol-test-key",
+            "content_digest": "df38e4715e89c2056612e674bd16a5ade48dd4af916a23a95950abc28fae164b",
+            "issued_at_ms": 1760000000503,
+            "expires_at_ms": 1760000061003,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001003
+          }
+        }
+      ],
+      "action": "rate 7%",
+      "expect": {
+        "result": "selection_vote_unverified",
+        "at": 4
+      }
+    },
+    {
+      "name": "proposal_value_tampered",
+      "block": {
+        "rule": "seam.selection.weighted_plurality",
+        "rule_version": 1,
+        "default_weight": 1,
+        "weights": [
+          {
+            "participant": "bob",
+            "weight": 2
+          }
+        ],
+        "tie": "no_winner",
+        "abstention": "excluded_counts_for_quorum",
+        "min_ballots": 3,
+        "policy_version": "loan-panel",
+        "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+        "participants": [
+          "orchestrator",
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "on_behalf_of": [
+          "subject:applicant-42"
+        ],
+        "context": [
+          {
+            "ctx_ref": "ctx:credit-file",
+            "content_hash": "sha256:552d10a3ee9ef9bf9571f4e3c9a7468c3881cd6d9ceb07e0bedaedf18e40f7ed"
+          }
+        ],
+        "winner_proposal_id": "p2"
+      },
+      "entries": [
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p1",
+          "value": "rate 5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p2",
+          "value": "rate 7.5%",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "proposal",
+          "participant": "orchestrator",
+          "proposal_id": "p3",
+          "value": "decline",
+          "reason": "",
+          "voter_verification": null
+        },
+        {
+          "kind": "vote",
+          "participant": "alice",
+          "proposal_id": "p1",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:alice-test-key",
+            "content_digest": "24f277ca063371173e7079eb0a4e33ac9d47a8500550ad3e51bc8b2f917bc71b",
+            "issued_at_ms": 1760000000500,
+            "expires_at_ms": 1760000061000,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001000
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "bob",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:bob-test-key",
+            "content_digest": "d3ea3578618c39ffefcc5cc2a347565995c98ff8fce14984ddace3c487105e43",
+            "issued_at_ms": 1760000000501,
+            "expires_at_ms": 1760000061001,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001001
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p2",
+          "value": "APPROVE",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:carol-test-key",
+            "content_digest": "d3ea3578618c39ffefcc5cc2a347565995c98ff8fce14984ddace3c487105e43",
+            "issued_at_ms": 1760000000502,
+            "expires_at_ms": 1760000061002,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001002
+          }
+        },
+        {
+          "kind": "vote",
+          "participant": "carol",
+          "proposal_id": "p3",
+          "value": "REJECT",
+          "reason": "",
+          "voter_verification": {
+            "method": "pop",
+            "principal": "aid:pubkey:ed25519:carol-test-key",
+            "content_digest": "df38e4715e89c2056612e674bd16a5ade48dd4af916a23a95950abc28fae164b",
+            "issued_at_ms": 1760000000503,
+            "expires_at_ms": 1760000061003,
+            "signature": "11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "signer_certificate": "",
+            "tenant": "acme",
+            "namespace": "acme/loans",
+            "session_id": "sess-selection-0001",
+            "opened_at_millis": 1760000000000,
+            "issuer": "aid:pubkey:ed25519:issuer-test-key",
+            "audience": "seam-runtime",
+            "accepted_at_ms": 1760000001003
+          }
+        }
+      ],
+      "action": "rate 7.5%",
+      "expect": {
+        "result": "selection_content_link_mismatch",
+        "at": 4
+      }
+    }
+  ],
+  "activation_cases": [
+    {
+      "policy_has_selection": true,
+      "voting_algorithm": "none",
+      "evaluator_available": true,
+      "flag": {
+        "on": true,
+        "level": "policy"
+      },
+      "path": "session",
+      "expect": {
+        "result": "active"
+      }
+    },
+    {
+      "policy_has_selection": true,
+      "voting_algorithm": "none",
+      "evaluator_available": true,
+      "flag": {
+        "on": true,
+        "level": "policy"
+      },
+      "path": "run_decision",
+      "expect": {
+        "result": "refused",
+        "code": "seam_selection_unsupported_path"
+      }
+    },
+    {
+      "policy_has_selection": true,
+      "voting_algorithm": "none",
+      "evaluator_available": true,
+      "flag": {
+        "on": true,
+        "level": "use_case"
+      },
+      "path": "session",
+      "expect": {
+        "result": "active"
+      }
+    },
+    {
+      "policy_has_selection": true,
+      "voting_algorithm": "none",
+      "evaluator_available": true,
+      "flag": {
+        "on": true,
+        "level": "use_case"
+      },
+      "path": "run_decision",
+      "expect": {
+        "result": "refused",
+        "code": "seam_selection_unsupported_path"
+      }
+    },
+    {
+      "policy_has_selection": true,
+      "voting_algorithm": "none",
+      "evaluator_available": true,
+      "flag": {
+        "on": true,
+        "level": "tenant"
+      },
+      "path": "session",
+      "expect": {
+        "result": "active"
+      }
+    },
+    {
+      "policy_has_selection": true,
+      "voting_algorithm": "none",
+      "evaluator_available": true,
+      "flag": {
+        "on": true,
+        "level": "tenant"
+      },
+      "path": "run_decision",
+      "expect": {
+        "result": "refused",
+        "code": "seam_selection_unsupported_path"
+      }
+    },
+    {
+      "policy_has_selection": true,
+      "voting_algorithm": "none",
+      "evaluator_available": true,
+      "flag": {
+        "on": false,
+        "level": "policy"
+      },
+      "path": "session",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": true,
+      "voting_algorithm": "none",
+      "evaluator_available": true,
+      "flag": {
+        "on": false,
+        "level": "policy"
+      },
+      "path": "run_decision",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": true,
+      "voting_algorithm": "none",
+      "evaluator_available": true,
+      "flag": {
+        "on": false,
+        "level": "use_case"
+      },
+      "path": "session",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": true,
+      "voting_algorithm": "none",
+      "evaluator_available": true,
+      "flag": {
+        "on": false,
+        "level": "use_case"
+      },
+      "path": "run_decision",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": true,
+      "voting_algorithm": "none",
+      "evaluator_available": true,
+      "flag": {
+        "on": false,
+        "level": "tenant"
+      },
+      "path": "session",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": true,
+      "voting_algorithm": "none",
+      "evaluator_available": true,
+      "flag": {
+        "on": false,
+        "level": "tenant"
+      },
+      "path": "run_decision",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": true,
+      "voting_algorithm": "none",
+      "evaluator_available": true,
+      "flag": {
+        "on": false,
+        "level": "default"
+      },
+      "path": "session",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": true,
+      "voting_algorithm": "none",
+      "evaluator_available": true,
+      "flag": {
+        "on": false,
+        "level": "default"
+      },
+      "path": "run_decision",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": true,
+      "voting_algorithm": "none",
+      "evaluator_available": true,
+      "flag": {
+        "on": false,
+        "level": "section_refused"
+      },
+      "path": "session",
+      "expect": {
+        "result": "refused",
+        "code": "seam_selection_flag_unreadable"
+      }
+    },
+    {
+      "policy_has_selection": true,
+      "voting_algorithm": "none",
+      "evaluator_available": true,
+      "flag": {
+        "on": false,
+        "level": "section_refused"
+      },
+      "path": "run_decision",
+      "expect": {
+        "result": "refused",
+        "code": "seam_selection_flag_unreadable"
+      }
+    },
+    {
+      "policy_has_selection": true,
+      "voting_algorithm": "none",
+      "evaluator_available": true,
+      "flag": {
+        "on": false,
+        "level": "ignored_version"
+      },
+      "path": "session",
+      "expect": {
+        "result": "refused",
+        "code": "seam_selection_flag_unreadable"
+      }
+    },
+    {
+      "policy_has_selection": true,
+      "voting_algorithm": "none",
+      "evaluator_available": true,
+      "flag": {
+        "on": false,
+        "level": "ignored_version"
+      },
+      "path": "run_decision",
+      "expect": {
+        "result": "refused",
+        "code": "seam_selection_flag_unreadable"
+      }
+    },
+    {
+      "policy_has_selection": false,
+      "voting_algorithm": "majority",
+      "evaluator_available": true,
+      "flag": {
+        "on": true,
+        "level": "policy"
+      },
+      "path": "session",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": false,
+      "voting_algorithm": "majority",
+      "evaluator_available": true,
+      "flag": {
+        "on": true,
+        "level": "policy"
+      },
+      "path": "run_decision",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": false,
+      "voting_algorithm": "majority",
+      "evaluator_available": true,
+      "flag": {
+        "on": true,
+        "level": "use_case"
+      },
+      "path": "session",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": false,
+      "voting_algorithm": "majority",
+      "evaluator_available": true,
+      "flag": {
+        "on": true,
+        "level": "use_case"
+      },
+      "path": "run_decision",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": false,
+      "voting_algorithm": "majority",
+      "evaluator_available": true,
+      "flag": {
+        "on": true,
+        "level": "tenant"
+      },
+      "path": "session",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": false,
+      "voting_algorithm": "majority",
+      "evaluator_available": true,
+      "flag": {
+        "on": true,
+        "level": "tenant"
+      },
+      "path": "run_decision",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": false,
+      "voting_algorithm": "majority",
+      "evaluator_available": true,
+      "flag": {
+        "on": false,
+        "level": "policy"
+      },
+      "path": "session",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": false,
+      "voting_algorithm": "majority",
+      "evaluator_available": true,
+      "flag": {
+        "on": false,
+        "level": "policy"
+      },
+      "path": "run_decision",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": false,
+      "voting_algorithm": "majority",
+      "evaluator_available": true,
+      "flag": {
+        "on": false,
+        "level": "use_case"
+      },
+      "path": "session",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": false,
+      "voting_algorithm": "majority",
+      "evaluator_available": true,
+      "flag": {
+        "on": false,
+        "level": "use_case"
+      },
+      "path": "run_decision",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": false,
+      "voting_algorithm": "majority",
+      "evaluator_available": true,
+      "flag": {
+        "on": false,
+        "level": "tenant"
+      },
+      "path": "session",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": false,
+      "voting_algorithm": "majority",
+      "evaluator_available": true,
+      "flag": {
+        "on": false,
+        "level": "tenant"
+      },
+      "path": "run_decision",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": false,
+      "voting_algorithm": "majority",
+      "evaluator_available": true,
+      "flag": {
+        "on": false,
+        "level": "default"
+      },
+      "path": "session",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": false,
+      "voting_algorithm": "majority",
+      "evaluator_available": true,
+      "flag": {
+        "on": false,
+        "level": "default"
+      },
+      "path": "run_decision",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": false,
+      "voting_algorithm": "majority",
+      "evaluator_available": true,
+      "flag": {
+        "on": false,
+        "level": "section_refused"
+      },
+      "path": "session",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": false,
+      "voting_algorithm": "majority",
+      "evaluator_available": true,
+      "flag": {
+        "on": false,
+        "level": "section_refused"
+      },
+      "path": "run_decision",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": false,
+      "voting_algorithm": "majority",
+      "evaluator_available": true,
+      "flag": {
+        "on": false,
+        "level": "ignored_version"
+      },
+      "path": "session",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": false,
+      "voting_algorithm": "majority",
+      "evaluator_available": true,
+      "flag": {
+        "on": false,
+        "level": "ignored_version"
+      },
+      "path": "run_decision",
+      "expect": {
+        "result": "inactive"
+      }
+    },
+    {
+      "policy_has_selection": true,
+      "voting_algorithm": "none",
+      "evaluator_available": false,
+      "flag": {
+        "on": true,
+        "level": "policy"
+      },
+      "path": "session",
+      "expect": {
+        "result": "refused",
+        "code": "seam_selection_flag_unreadable"
+      }
+    },
+    {
+      "policy_has_selection": true,
+      "voting_algorithm": "none",
+      "evaluator_available": false,
+      "flag": {
+        "on": false,
+        "level": "default"
+      },
+      "path": "session",
+      "expect": {
+        "result": "refused",
+        "code": "seam_selection_flag_unreadable"
+      }
+    }
+  ],
+  "policy_ingress_cases": [
+    {
+      "name": "valid",
+      "policy": {
+        "mode": "macp.mode.decision.v1",
+        "rules": {
+          "voting": {
+            "algorithm": "none"
+          },
+          "x-com.zer07labs.seam": {
+            "selection": {
+              "rule": "seam.selection.weighted_plurality",
+              "version": 1,
+              "default_weight": 1,
+              "weights": {
+                "bob": 2
+              },
+              "tie": "no_winner",
+              "abstention": "excluded_counts_for_quorum",
+              "min_ballots": 2
+            }
+          }
+        }
+      },
+      "expect": "accepted"
+    },
+    {
+      "name": "valid_no_weights",
+      "policy": {
+        "mode": "macp.mode.decision.v1",
+        "rules": {
+          "voting": {
+            "algorithm": "none"
+          },
+          "x-com.zer07labs.seam": {
+            "selection": {
+              "rule": "seam.selection.weighted_plurality",
+              "version": 1,
+              "default_weight": 1,
+              "tie": "no_winner",
+              "abstention": "excluded_counts_for_quorum",
+              "min_ballots": 2
+            }
+          }
+        }
+      },
+      "expect": "accepted"
+    },
+    {
+      "name": "valid_with_capture_dissent",
+      "policy": {
+        "mode": "macp.mode.decision.v1",
+        "rules": {
+          "voting": {
+            "algorithm": "none"
+          },
+          "x-com.zer07labs.seam": {
+            "selection": {
+              "rule": "seam.selection.weighted_plurality",
+              "version": 1,
+              "default_weight": 1,
+              "weights": {
+                "bob": 2
+              },
+              "tie": "no_winner",
+              "abstention": "excluded_counts_for_quorum",
+              "min_ballots": 2
+            },
+            "capture_dissent": true
+          }
+        }
+      },
+      "expect": "accepted"
+    },
+    {
+      "name": "not_decision_mode",
+      "policy": {
+        "mode": "macp.mode.quorum.v1",
+        "rules": {
+          "voting": {
+            "algorithm": "none"
+          },
+          "x-com.zer07labs.seam": {
+            "selection": {
+              "rule": "seam.selection.weighted_plurality",
+              "version": 1,
+              "default_weight": 1,
+              "weights": {
+                "bob": 2
+              },
+              "tie": "no_winner",
+              "abstention": "excluded_counts_for_quorum",
+              "min_ballots": 2
+            }
+          }
+        }
+      },
+      "expect": {
+        "refused": "selection_requires_decision_mode"
+      }
+    },
+    {
+      "name": "algorithm_plurality",
+      "policy": {
+        "mode": "macp.mode.decision.v1",
+        "rules": {
+          "voting": {
+            "algorithm": "plurality"
+          },
+          "x-com.zer07labs.seam": {
+            "selection": {
+              "rule": "seam.selection.weighted_plurality",
+              "version": 1,
+              "default_weight": 1,
+              "weights": {
+                "bob": 2
+              },
+              "tie": "no_winner",
+              "abstention": "excluded_counts_for_quorum",
+              "min_ballots": 2
+            }
+          }
+        }
+      },
+      "expect": {
+        "refused": "selection_requires_algorithm_none"
+      }
+    },
+    {
+      "name": "algorithm_absent",
+      "policy": {
+        "mode": "macp.mode.decision.v1",
+        "rules": {
+          "voting": {},
+          "x-com.zer07labs.seam": {
+            "selection": {
+              "rule": "seam.selection.weighted_plurality",
+              "version": 1,
+              "default_weight": 1,
+              "weights": {
+                "bob": 2
+              },
+              "tie": "no_winner",
+              "abstention": "excluded_counts_for_quorum",
+              "min_ballots": 2
+            }
+          }
+        }
+      },
+      "expect": {
+        "refused": "selection_requires_algorithm_none"
+      }
+    },
+    {
+      "name": "voting_weights_present",
+      "policy": {
+        "mode": "macp.mode.decision.v1",
+        "rules": {
+          "voting": {
+            "algorithm": "none",
+            "weights": {
+              "bob": 2
+            }
+          },
+          "x-com.zer07labs.seam": {
+            "selection": {
+              "rule": "seam.selection.weighted_plurality",
+              "version": 1,
+              "default_weight": 1,
+              "weights": {
+                "bob": 2
+              },
+              "tie": "no_winner",
+              "abstention": "excluded_counts_for_quorum",
+              "min_ballots": 2
+            }
+          }
+        }
+      },
+      "expect": {
+        "refused": "selection_forbids_voting_weights"
+      }
+    },
+    {
+      "name": "objection_veto_enabled",
+      "policy": {
+        "mode": "macp.mode.decision.v1",
+        "rules": {
+          "voting": {
+            "algorithm": "none"
+          },
+          "objection_handling": {
+            "critical_severity_vetoes": true
+          },
+          "x-com.zer07labs.seam": {
+            "selection": {
+              "rule": "seam.selection.weighted_plurality",
+              "version": 1,
+              "default_weight": 1,
+              "weights": {
+                "bob": 2
+              },
+              "tie": "no_winner",
+              "abstention": "excluded_counts_for_quorum",
+              "min_ballots": 2
+            }
+          }
+        }
+      },
+      "expect": {
+        "refused": "selection_forbids_objection_veto"
+      }
+    },
+    {
+      "name": "objection_veto_false_ok",
+      "policy": {
+        "mode": "macp.mode.decision.v1",
+        "rules": {
+          "voting": {
+            "algorithm": "none"
+          },
+          "objection_handling": {
+            "critical_severity_vetoes": false
+          },
+          "x-com.zer07labs.seam": {
+            "selection": {
+              "rule": "seam.selection.weighted_plurality",
+              "version": 1,
+              "default_weight": 1,
+              "weights": {
+                "bob": 2
+              },
+              "tie": "no_winner",
+              "abstention": "excluded_counts_for_quorum",
+              "min_ballots": 2
+            }
+          }
+        }
+      },
+      "expect": "accepted"
+    },
+    {
+      "name": "unknown_key",
+      "policy": {
+        "mode": "macp.mode.decision.v1",
+        "rules": {
+          "voting": {
+            "algorithm": "none"
+          },
+          "x-com.zer07labs.seam": {
+            "selection": {
+              "rule": "seam.selection.weighted_plurality",
+              "version": 1,
+              "default_weight": 1,
+              "weights": {
+                "bob": 2
+              },
+              "tie": "no_winner",
+              "abstention": "excluded_counts_for_quorum",
+              "min_ballots": 2,
+              "tally_reveal": true
+            }
+          }
+        }
+      },
+      "expect": {
+        "refused": "selection_unknown_field"
+      }
+    },
+    {
+      "name": "missing_default_weight",
+      "policy": {
+        "mode": "macp.mode.decision.v1",
+        "rules": {
+          "voting": {
+            "algorithm": "none"
+          },
+          "x-com.zer07labs.seam": {
+            "selection": {
+              "rule": "seam.selection.weighted_plurality",
+              "version": 1,
+              "weights": {
+                "bob": 2
+              },
+              "tie": "no_winner",
+              "abstention": "excluded_counts_for_quorum",
+              "min_ballots": 2
+            }
+          }
+        }
+      },
+      "expect": {
+        "refused": "selection_missing_field"
+      }
+    },
+    {
+      "name": "missing_min_ballots",
+      "policy": {
+        "mode": "macp.mode.decision.v1",
+        "rules": {
+          "voting": {
+            "algorithm": "none"
+          },
+          "x-com.zer07labs.seam": {
+            "selection": {
+              "rule": "seam.selection.weighted_plurality",
+              "version": 1,
+              "default_weight": 1,
+              "weights": {
+                "bob": 2
+              },
+              "tie": "no_winner",
+              "abstention": "excluded_counts_for_quorum"
+            }
+          }
+        }
+      },
+      "expect": {
+        "refused": "selection_missing_field"
+      }
+    },
+    {
+      "name": "unknown_rule",
+      "policy": {
+        "mode": "macp.mode.decision.v1",
+        "rules": {
+          "voting": {
+            "algorithm": "none"
+          },
+          "x-com.zer07labs.seam": {
+            "selection": {
+              "rule": "seam.selection.borda",
+              "version": 1,
+              "default_weight": 1,
+              "weights": {
+                "bob": 2
+              },
+              "tie": "no_winner",
+              "abstention": "excluded_counts_for_quorum",
+              "min_ballots": 2
+            }
+          }
+        }
+      },
+      "expect": {
+        "refused": "selection_unknown_rule"
+      }
+    },
+    {
+      "name": "version_2",
+      "policy": {
+        "mode": "macp.mode.decision.v1",
+        "rules": {
+          "voting": {
+            "algorithm": "none"
+          },
+          "x-com.zer07labs.seam": {
+            "selection": {
+              "rule": "seam.selection.weighted_plurality",
+              "version": 2,
+              "default_weight": 1,
+              "weights": {
+                "bob": 2
+              },
+              "tie": "no_winner",
+              "abstention": "excluded_counts_for_quorum",
+              "min_ballots": 2
+            }
+          }
+        }
+      },
+      "expect": {
+        "refused": "selection_unknown_version"
+      }
+    },
+    {
+      "name": "tie_not_closed_set",
+      "policy": {
+        "mode": "macp.mode.decision.v1",
+        "rules": {
+          "voting": {
+            "algorithm": "none"
+          },
+          "x-com.zer07labs.seam": {
+            "selection": {
+              "rule": "seam.selection.weighted_plurality",
+              "version": 1,
+              "default_weight": 1,
+              "weights": {
+                "bob": 2
+              },
+              "tie": "random",
+              "abstention": "excluded_counts_for_quorum",
+              "min_ballots": 2
+            }
+          }
+        }
+      },
+      "expect": {
+        "refused": "selection_bad_value"
+      }
+    },
+    {
+      "name": "abstention_not_closed_set",
+      "policy": {
+        "mode": "macp.mode.decision.v1",
+        "rules": {
+          "voting": {
+            "algorithm": "none"
+          },
+          "x-com.zer07labs.seam": {
+            "selection": {
+              "rule": "seam.selection.weighted_plurality",
+              "version": 1,
+              "default_weight": 1,
+              "weights": {
+                "bob": 2
+              },
+              "tie": "no_winner",
+              "abstention": "counts_as_reject",
+              "min_ballots": 2
+            }
+          }
+        }
+      },
+      "expect": {
+        "refused": "selection_bad_value"
+      }
+    },
+    {
+      "name": "weight_not_integer",
+      "policy": {
+        "mode": "macp.mode.decision.v1",
+        "rules": {
+          "voting": {
+            "algorithm": "none"
+          },
+          "x-com.zer07labs.seam": {
+            "selection": {
+              "rule": "seam.selection.weighted_plurality",
+              "version": 1,
+              "default_weight": 1,
+              "weights": {
+                "bob": 1.5
+              },
+              "tie": "no_winner",
+              "abstention": "excluded_counts_for_quorum",
+              "min_ballots": 2
+            }
+          }
+        }
+      },
+      "expect": {
+        "refused": "selection_bad_type"
+      }
+    },
+    {
+      "name": "weight_over_u32",
+      "policy": {
+        "mode": "macp.mode.decision.v1",
+        "rules": {
+          "voting": {
+            "algorithm": "none"
+          },
+          "x-com.zer07labs.seam": {
+            "selection": {
+              "rule": "seam.selection.weighted_plurality",
+              "version": 1,
+              "default_weight": 1,
+              "weights": {
+                "bob": 4294967296
+              },
+              "tie": "no_winner",
+              "abstention": "excluded_counts_for_quorum",
+              "min_ballots": 2
+            }
+          }
+        }
+      },
+      "expect": {
+        "refused": "selection_bad_value"
+      }
+    },
+    {
+      "name": "weight_negative",
+      "policy": {
+        "mode": "macp.mode.decision.v1",
+        "rules": {
+          "voting": {
+            "algorithm": "none"
+          },
+          "x-com.zer07labs.seam": {
+            "selection": {
+              "rule": "seam.selection.weighted_plurality",
+              "version": 1,
+              "default_weight": 1,
+              "weights": {
+                "bob": -1
+              },
+              "tie": "no_winner",
+              "abstention": "excluded_counts_for_quorum",
+              "min_ballots": 2
+            }
+          }
+        }
+      },
+      "expect": {
+        "refused": "selection_bad_value"
+      }
+    },
+    {
+      "name": "zero_electorate",
+      "policy": {
+        "mode": "macp.mode.decision.v1",
+        "rules": {
+          "voting": {
+            "algorithm": "none"
+          },
+          "x-com.zer07labs.seam": {
+            "selection": {
+              "rule": "seam.selection.weighted_plurality",
+              "version": 1,
+              "default_weight": 0,
+              "weights": {
+                "bob": 0
+              },
+              "tie": "no_winner",
+              "abstention": "excluded_counts_for_quorum",
+              "min_ballots": 2
+            }
+          }
+        }
+      },
+      "expect": {
+        "refused": "selection_zero_electorate"
+      }
+    },
+    {
+      "name": "min_ballots_zero",
+      "policy": {
+        "mode": "macp.mode.decision.v1",
+        "rules": {
+          "voting": {
+            "algorithm": "none"
+          },
+          "x-com.zer07labs.seam": {
+            "selection": {
+              "rule": "seam.selection.weighted_plurality",
+              "version": 1,
+              "default_weight": 1,
+              "weights": {
+                "bob": 2
+              },
+              "tie": "no_winner",
+              "abstention": "excluded_counts_for_quorum",
+              "min_ballots": 0
+            }
+          }
+        }
+      },
+      "expect": {
+        "refused": "selection_bad_value"
+      }
+    }
+  ],
+  "codec": {
+    "block": {
+      "rule": "seam.selection.weighted_plurality",
+      "rule_version": 1,
+      "default_weight": 1,
+      "weights": [
+        {
+          "participant": "bob",
+          "weight": 2
+        }
+      ],
+      "tie": "no_winner",
+      "abstention": "excluded_counts_for_quorum",
+      "min_ballots": 3,
+      "policy_version": "loan-panel",
+      "rules_digest": "fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce5",
+      "participants": [
+        "orchestrator",
+        "alice",
+        "bob",
+        "carol"
+      ],
+      "on_behalf_of": [
+        "subject:applicant-42"
+      ],
+      "context": [
+        {
+          "ctx_ref": "ctx:credit-file",
+          "content_hash": "sha256:552d10a3ee9ef9bf9571f4e3c9a7468c3881cd6d9ceb07e0bedaedf18e40f7ed"
+        }
+      ],
+      "winner_proposal_id": "p2"
+    },
+    "body": "00000000000000217365616d2e73656c656374696f6e2e77656967687465645f706c7572616c6974790000000000000001000000000000000100000000000000010000000000000003626f62000000000000000200000000000000096e6f5f77696e6e6572000000000000001a6578636c756465645f636f756e74735f666f725f71756f72756d0000000000000003000000000000000a6c6f616e2d70616e656c0000000000000020fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce50000000000000004000000000000000c6f7263686573747261746f720000000000000005616c6963650000000000000003626f6200000000000000056361726f6c000000000000000100000000000000147375626a6563743a6170706c6963616e742d34320000000000000001000000000000000f6374783a6372656469742d66696c6500000000000000477368613235363a3535326431306133656539656639626639353731663465336339613734363863333838316364366439636562303765306265646165646631386534306637656400000000000000027032",
+    "selection_digest": "cbf0571fafb126a3a44b290906a5f54ad26f59eb1d5e6204ae138edb39df5034",
+    "field_9": "010000000000000020cbf0571fafb126a3a44b290906a5f54ad26f59eb1d5e6204ae138edb39df5034",
+    "trailer": "04a70100000100000000000000217365616d2e73656c656374696f6e2e77656967687465645f706c7572616c6974790000000000000001000000000000000100000000000000010000000000000003626f62000000000000000200000000000000096e6f5f77696e6e6572000000000000001a6578636c756465645f636f756e74735f666f725f71756f72756d0000000000000003000000000000000a6c6f616e2d70616e656c0000000000000020fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce50000000000000004000000000000000c6f7263686573747261746f720000000000000005616c6963650000000000000003626f6200000000000000056361726f6c000000000000000100000000000000147375626a6563743a6170706c6963616e742d34320000000000000001000000000000000f6374783a6372656469742d66696c6500000000000000477368613235363a3535326431306133656539656639626639353731663465336339613734363863333838316364366439636562303765306265646165646631386534306637656400000000000000027032",
+    "trailer_refusals": [
+      {
+        "name": "zero_length_body",
+        "trailer": "0400000000",
+        "reason": "zero_length_body",
+        "expect": "refused: the whole commitment fails to decode"
+      },
+      {
+        "name": "unknown_version",
+        "trailer": "04a70100000200000000000000217365616d2e73656c656374696f6e2e77656967687465645f706c7572616c6974790000000000000001000000000000000100000000000000010000000000000003626f62000000000000000200000000000000096e6f5f77696e6e6572000000000000001a6578636c756465645f636f756e74735f666f725f71756f72756d0000000000000003000000000000000a6c6f616e2d70616e656c0000000000000020fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce50000000000000004000000000000000c6f7263686573747261746f720000000000000005616c6963650000000000000003626f6200000000000000056361726f6c000000000000000100000000000000147375626a6563743a6170706c6963616e742d34320000000000000001000000000000000f6374783a6372656469742d66696c6500000000000000477368613235363a3535326431306133656539656639626639353731663465336339613734363863333838316364366439636562303765306265646165646631386534306637656400000000000000027032",
+        "reason": "unknown_version",
+        "expect": "refused: the whole commitment fails to decode"
+      },
+      {
+        "name": "bare_body_no_version",
+        "trailer": "04a601000000000000000000217365616d2e73656c656374696f6e2e77656967687465645f706c7572616c6974790000000000000001000000000000000100000000000000010000000000000003626f62000000000000000200000000000000096e6f5f77696e6e6572000000000000001a6578636c756465645f636f756e74735f666f725f71756f72756d0000000000000003000000000000000a6c6f616e2d70616e656c0000000000000020fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce50000000000000004000000000000000c6f7263686573747261746f720000000000000005616c6963650000000000000003626f6200000000000000056361726f6c000000000000000100000000000000147375626a6563743a6170706c6963616e742d34320000000000000001000000000000000f6374783a6372656469742d66696c6500000000000000477368613235363a3535326431306133656539656639626639353731663465336339613734363863333838316364366439636562303765306265646165646631386534306637656400000000000000027032",
+        "reason": "unknown_version",
+        "expect": "refused: the whole commitment fails to decode"
+      },
+      {
+        "name": "trailing_byte_inside_body",
+        "trailer": "04a80100000100000000000000217365616d2e73656c656374696f6e2e77656967687465645f706c7572616c6974790000000000000001000000000000000100000000000000010000000000000003626f62000000000000000200000000000000096e6f5f77696e6e6572000000000000001a6578636c756465645f636f756e74735f666f725f71756f72756d0000000000000003000000000000000a6c6f616e2d70616e656c0000000000000020fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce50000000000000004000000000000000c6f7263686573747261746f720000000000000005616c6963650000000000000003626f6200000000000000056361726f6c000000000000000100000000000000147375626a6563743a6170706c6963616e742d34320000000000000001000000000000000f6374783a6372656469742d66696c6500000000000000477368613235363a353532643130613365653965663962663935373166346533633961373436386333383831636436643963656230376530626564616564663138653430663765640000000000000002703200",
+        "reason": "trailing_bytes",
+        "expect": "refused: the whole commitment fails to decode"
+      },
+      {
+        "name": "truncated_length",
+        "trailer": "042100",
+        "reason": "truncated",
+        "expect": "refused: the whole commitment fails to decode"
+      },
+      {
+        "name": "truncated_body",
+        "trailer": "04a70100000100000000000000217365616d2e73656c656374696f6e2e77656967687465645f706c7572616c6974790000000000000001000000000000000100000000000000010000000000000003626f62000000000000000200000000000000096e6f5f77696e6e6572000000000000001a6578636c756465645f636f756e74735f666f725f71756f72756d0000000000000003000000000000000a6c6f616e2d70616e656c0000000000000020fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce50000000000000004000000000000000c6f7263686573747261746f720000000000000005616c6963650000000000000003626f6200000000000000056361726f6c000000000000000100000000000000147375626a6563743a6170706c6963616e742d34320000000000000001000000000000000f6374783a6372656469742d66696c6500000000000000477368613235363a35353264313061336565396566396266393537316634653363396137343638633338383163643664396365623037653062656461656466313865343066376564000000000000000270",
+        "reason": "truncated",
+        "expect": "refused: the whole commitment fails to decode"
+      },
+      {
+        "name": "weights_unsorted",
+        "trailer": "04be0100000100000000000000217365616d2e73656c656374696f6e2e77656967687465645f706c7572616c69747900000000000000010000000000000001000000000000000200000000000000056361726f6c00000000000000010000000000000005616c696365000000000000000100000000000000096e6f5f77696e6e6572000000000000001a6578636c756465645f636f756e74735f666f725f71756f72756d0000000000000003000000000000000a6c6f616e2d70616e656c0000000000000020fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce50000000000000004000000000000000c6f7263686573747261746f720000000000000005616c6963650000000000000003626f6200000000000000056361726f6c000000000000000100000000000000147375626a6563743a6170706c6963616e742d34320000000000000001000000000000000f6374783a6372656469742d66696c6500000000000000477368613235363a3535326431306133656539656639626639353731663465336339613734363863333838316364366439636562303765306265646165646631386534306637656400000000000000027032",
+        "reason": "weights_not_canonical",
+        "expect": "refused: the whole commitment fails to decode"
+      },
+      {
+        "name": "weights_duplicate_key",
+        "trailer": "04ba0100000100000000000000217365616d2e73656c656374696f6e2e77656967687465645f706c7572616c6974790000000000000001000000000000000100000000000000020000000000000003626f6200000000000000010000000000000003626f62000000000000000200000000000000096e6f5f77696e6e6572000000000000001a6578636c756465645f636f756e74735f666f725f71756f72756d0000000000000003000000000000000a6c6f616e2d70616e656c0000000000000020fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce50000000000000004000000000000000c6f7263686573747261746f720000000000000005616c6963650000000000000003626f6200000000000000056361726f6c000000000000000100000000000000147375626a6563743a6170706c6963616e742d34320000000000000001000000000000000f6374783a6372656469742d66696c6500000000000000477368613235363a3535326431306133656539656639626639353731663465336339613734363863333838316364366439636562303765306265646165646631386534306637656400000000000000027032",
+        "reason": "weights_not_canonical",
+        "expect": "refused: the whole commitment fails to decode"
+      },
+      {
+        "name": "rules_digest_31_bytes",
+        "trailer": "04a60100000100000000000000217365616d2e73656c656374696f6e2e77656967687465645f706c7572616c6974790000000000000001000000000000000100000000000000010000000000000003626f62000000000000000200000000000000096e6f5f77696e6e6572000000000000001a6578636c756465645f636f756e74735f666f725f71756f72756d0000000000000003000000000000000a6c6f616e2d70616e656c000000000000001f000000000000000000000000000000000000000000000000000000000000000000000000000004000000000000000c6f7263686573747261746f720000000000000005616c6963650000000000000003626f6200000000000000056361726f6c000000000000000100000000000000147375626a6563743a6170706c6963616e742d34320000000000000001000000000000000f6374783a6372656469742d66696c6500000000000000477368613235363a3535326431306133656539656639626639353731663465336339613734363863333838316364366439636562303765306265646165646631386534306637656400000000000000027032",
+        "reason": "rules_digest_not_32",
+        "expect": "refused: the whole commitment fails to decode"
+      },
+      {
+        "name": "default_weight_over_u32",
+        "trailer": "04a70100000100000000000000217365616d2e73656c656374696f6e2e77656967687465645f706c7572616c6974790000000000000001000000010000000000000000000000010000000000000003626f62000000000000000200000000000000096e6f5f77696e6e6572000000000000001a6578636c756465645f636f756e74735f666f725f71756f72756d0000000000000003000000000000000a6c6f616e2d70616e656c0000000000000020fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce50000000000000004000000000000000c6f7263686573747261746f720000000000000005616c6963650000000000000003626f6200000000000000056361726f6c000000000000000100000000000000147375626a6563743a6170706c6963616e742d34320000000000000001000000000000000f6374783a6372656469742d66696c6500000000000000477368613235363a3535326431306133656539656639626639353731663465336339613734363863333838316364366439636562303765306265646165646631386534306637656400000000000000027032",
+        "reason": "u32_overflow",
+        "expect": "refused: the whole commitment fails to decode"
+      },
+      {
+        "name": "empty_winner",
+        "trailer": "04a50100000100000000000000217365616d2e73656c656374696f6e2e77656967687465645f706c7572616c6974790000000000000001000000000000000100000000000000010000000000000003626f62000000000000000200000000000000096e6f5f77696e6e6572000000000000001a6578636c756465645f636f756e74735f666f725f71756f72756d0000000000000003000000000000000a6c6f616e2d70616e656c0000000000000020fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce50000000000000004000000000000000c6f7263686573747261746f720000000000000005616c6963650000000000000003626f6200000000000000056361726f6c000000000000000100000000000000147375626a6563743a6170706c6963616e742d34320000000000000001000000000000000f6374783a6372656469742d66696c6500000000000000477368613235363a353532643130613365653965663962663935373166346533633961373436386333383831636436643963656230376530626564616564663138653430663765640000000000000000",
+        "reason": "empty_winner",
+        "expect": "refused: the whole commitment fails to decode"
+      },
+      {
+        "name": "invalid_utf8_participant",
+        "trailer": "04a70100000100000000000000217365616d2e73656c656374696f6e2e77656967687465645f706c7572616c6974790000000000000001000000000000000100000000000000010000000000000003626f62000000000000000200000000000000096e6f5f77696e6e6572000000000000001a6578636c756465645f636f756e74735f666f725f71756f72756d0000000000000003000000000000000a6c6f616e2d70616e656c0000000000000020fd6d1eb05019fefd7b8b5a036713913846ba7134aa3ea8916fa7012b88054ce50000000000000004000000000000000c6f7263686573747261746f720000000000000005616c6963650000000000000003626f620000000000000005636172ff6c000000000000000100000000000000147375626a6563743a6170706c6963616e742d34320000000000000001000000000000000f6374783a6372656469742d66696c6500000000000000477368613235363a3535326431306133656539656639626639353731663465336339613734363863333838316364366439636562303765306265646165646631386534306637656400000000000000027032",
+        "reason": "invalid_utf8",
+        "expect": "refused: the whole commitment fails to decode"
+      }
+    ]
+  },
+  "commitment_digest_v5": {
+    "explanation_entries": "the `entries` of the `verified` sealed case (signatures are placeholders)",
+    "cases": [
+      {
+        "name": "empty_with_selection_and_doc",
+        "commitment": {
+          "id": "",
+          "action": "",
+          "authority": "",
+          "supersedes": null,
+          "auth_method": "",
+          "trust_basis": "",
+          "committer": ""
+        },
+        "explanation_digest": "cabe83af912ea38ef4525f5a7d8580b4c4e217417edc0c93f936d2c18c4fd8f5",
+        "selection_digest": "cbf0571fafb126a3a44b290906a5f54ad26f59eb1d5e6204ae138edb39df5034",
+        "certificate_digest": null,
+        "governing_doc_sha256": "3488696887c9b0454b0947e69ec0b51c62c9d63f3f840ea98f3fd3b8e1004a05",
+        "commitment_digest": "8ece0d3eba41e3ddf3869102c6eb250fb318689a9e92165508673e52c4917cdb"
+      },
+      {
+        "name": "populated_selection_governed",
+        "commitment": {
+          "id": "cmt:selection-1",
+          "action": "rate 7%",
+          "authority": "macp.mode.decision.v1",
+          "supersedes": null,
+          "auth_method": "aitp-pinned-handshake",
+          "trust_basis": "aid:pubkey:ed25519:committer-test-key:Trusted",
+          "committer": "aid:pubkey:ed25519:committer-test-key"
+        },
+        "explanation_digest": "40a4e742ffce841dcb2deb0ee6912c590a7268068117dd593bbd11bb4f76e34c",
+        "selection_digest": "cbf0571fafb126a3a44b290906a5f54ad26f59eb1d5e6204ae138edb39df5034",
+        "certificate_digest": null,
+        "governing_doc_sha256": "3488696887c9b0454b0947e69ec0b51c62c9d63f3f840ea98f3fd3b8e1004a05",
+        "commitment_digest": "38c1b451c354bdeee10c508f3875b1d5195af34a7303d5a8ace4dd7b771df22b"
+      },
+      {
+        "name": "populated_selection_stripped",
+        "commitment": {
+          "id": "cmt:selection-1",
+          "action": "rate 7%",
+          "authority": "macp.mode.decision.v1",
+          "supersedes": null,
+          "auth_method": "aitp-pinned-handshake",
+          "trust_basis": "aid:pubkey:ed25519:committer-test-key:Trusted",
+          "committer": "aid:pubkey:ed25519:committer-test-key"
+        },
+        "explanation_digest": "40a4e742ffce841dcb2deb0ee6912c590a7268068117dd593bbd11bb4f76e34c",
+        "selection_digest": null,
+        "certificate_digest": null,
+        "governing_doc_sha256": "3488696887c9b0454b0947e69ec0b51c62c9d63f3f840ea98f3fd3b8e1004a05",
+        "commitment_digest": "609d22b8b6acce6ea9192aa7c04fd07033948c4fd24c93bf1b6e1d088abd7b1f"
+      }
+    ],
+    "v5_crosscheck": {
+      "doc_and_selection_present": "580fa48d22ed851250d96bf250050d18c1336db2e5ba67bcbd04acb220df727c",
+      "note": "this script's v5 framing over the v5 vector file's test labels; --check asserts it equals commitment_digest_v5_vector.json"
+    }
+  },
+  "negative_action_source": {
+    "crate": "macp-modes",
+    "version": "0.14.1",
+    "file": "src/mode/util.rs",
+    "fn": "validate_outcome_positive",
+    "fn_line": 85,
+    "suffixes": [
+      "rejected",
+      "failed",
+      "declined"
+    ],
+    "match": "str::ends_with on the raw action: suffix-anchored, case-sensitive, byte-exact, no trim"
+  },
+  "proposal_ingress_cases": [
+    {
+      "name": "suffix_rejected",
+      "option": "application rejected",
+      "accepted_options": [
+        "rate 5%"
+      ],
+      "expect": {
+        "result": "refused",
+        "code": "seam_selection_option_negative_action"
+      }
+    },
+    {
+      "name": "suffix_failed",
+      "option": "application failed",
+      "accepted_options": [
+        "rate 5%"
+      ],
+      "expect": {
+        "result": "refused",
+        "code": "seam_selection_option_negative_action"
+      }
+    },
+    {
+      "name": "suffix_declined",
+      "option": "application declined",
+      "accepted_options": [
+        "rate 5%"
+      ],
+      "expect": {
+        "result": "refused",
+        "code": "seam_selection_option_negative_action"
+      }
+    },
+    {
+      "name": "near_miss_declined_review",
+      "option": "declined_review",
+      "accepted_options": [
+        "rate 5%"
+      ],
+      "expect": {
+        "result": "accepted"
+      }
+    }
+  ],
+  "flag_off_golden_cases": [
+    {
+      "name": "flag_off_all_empty",
+      "golden_case": "all_empty",
+      "activation": {
+        "result": "inactive"
+      },
+      "flag": {
+        "on": false,
+        "level": "default"
+      },
+      "policy_has_selection": true,
+      "selection_trailer": null,
+      "governing_trailer": null,
+      "commitment_digest": "f31f8081790860a42529c30c4b75626213c6ad36b7c797ba172a2246eab41207"
+    },
+    {
+      "name": "flag_off_doc_present",
+      "golden_case": "doc_present",
+      "activation": {
+        "result": "inactive"
+      },
+      "flag": {
+        "on": false,
+        "level": "default"
+      },
+      "policy_has_selection": true,
+      "selection_trailer": null,
+      "governing_trailer": "0621000000013488696887c9b0454b0947e69ec0b51c62c9d63f3f840ea98f3fd3b8e1004a05",
+      "commitment_digest": "f3adf45b1eea210f1022bb53a9bf63d8219f309702506075da35dbeb419b749e"
+    },
+    {
+      "name": "flag_off_populated_ungoverned",
+      "golden_case": "populated_ungoverned",
+      "activation": {
+        "result": "inactive"
+      },
+      "flag": {
+        "on": false,
+        "level": "default"
+      },
+      "policy_has_selection": true,
+      "selection_trailer": null,
+      "governing_trailer": null,
+      "commitment_digest": "2e70a6fa0d0c5c75f65cea993c0bd783c00774915293d5ca74af6075b2d90b1e"
+    },
+    {
+      "name": "flag_off_populated_governed",
+      "golden_case": "populated_governed",
+      "activation": {
+        "result": "inactive"
+      },
+      "flag": {
+        "on": false,
+        "level": "default"
+      },
+      "policy_has_selection": true,
+      "selection_trailer": null,
+      "governing_trailer": "0621000000013488696887c9b0454b0947e69ec0b51c62c9d63f3f840ea98f3fd3b8e1004a05",
+      "commitment_digest": "89fe53484251ba1cb8a2ddcf00ac3618ef8e4435002bcd8d474aaa678a6d0292"
+    }
+  ]
+}

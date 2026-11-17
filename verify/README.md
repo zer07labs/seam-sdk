@@ -32,7 +32,7 @@ linked Seam's own library would be *Seam checking Seam* — which is precisely w
 should not have to accept.
 
 It is written from the specs in `docs/` (plus the runtime's `seam-commitment-digest.v5.md` with the `.v4.md` it builds on, and
-`voter-verification.v1.md`, which the bundle spec cites and the shared `conformance/` vectors pin), and nothing else.
+`voter-verification.v1.md` and `selection-rule.v1.md`, which the bundle spec cites and the shared `conformance/` vectors pin), and nothing else.
 `cargo tree` is the assertion: if a Seam crate ever appears in it, the claim has quietly stopped being true.
 
 **The former exception: the (b′) entry preimages.** Spec clause (b′) requires `--issuer` to recompute every
@@ -396,6 +396,7 @@ EVIDENCE BUNDLE VERIFIED (seam-evidence-bundle.v1)
   decision  : dec:d1
   tenant    : design-partner
   head      : f8c1…
+  selection : not a selection decision
   - manifest: seam-evidence-bundle.v1, issuer is the pinned AID, every listed file matches its SHA-256 and size
   - window authenticated from the issuer-signed anchor (base_len 2): 4 link(s), 1 covering attestation(s)
   - decision 'dec:d1' is a chained link of tenant 'design-partner' inside the authenticated window
@@ -429,11 +430,21 @@ The six steps run in the spec's order and the first failure refuses with exit 2,
    self-attestation TCT verifies against the pinned AID (`iss == sub == aud`, grants exactly
    `["aitp.attestation"]`) and its `ext` binding carries the recomputed `seam-commitment-digest:v5` (the
    sealed explanation, voter records included, under `seam-explanation-digest:v2`, so a re-worded reason
-   fails; fields 9/10 must be absent, since the bundle spec projects neither; field 11,
+   fails; field 9 is framed only from this verifier's own `selection_digest` over the disclosed `selection`
+   block (a stated `selection_digest` is refused), and field 10 must be absent; field 11,
    `governing_doc_sha256`, is the governing tenant document's SHA-256 as 64 lowercase hex, or `null` for an
    ungoverned decision, and any other spelling is refused, never read as ungoverned — seam-runtime#1711),
    and `supersedes` matches
-   the chained record. A Commitment with no TCT (`identity: local-sealed`) is bound
+   the chained record. Then **option selection** (seam-runtime 0.90.0, D-047): `commitment.json`'s
+   `selection` is the sealed block's canonical body as lowercase hex, or `null`/absent. Absent is reported as
+   `selection : not a selection decision` (JSON `"selection": null`) — never as passed. A present block is
+   strictly decoded (uppercase hex, a non-string, or a body that does not decode is refused, never read as
+   absent), and `selection-rule.v1` §5 steps 6-9 re-run: the winner recomputes from the sealed explanation
+   (`selection_malformed`, `selection_no_winner_sealed`, `selection_winner_mismatch`), the action is the
+   winner's option byte for byte (`selection_action_mismatch`), every vote's signed content digest links to
+   the sealed option it credits (`selection_vote_unverified`, `selection_content_link_mismatch`), and
+   participants and principals pair one-to-one (`selection_principal_not_one_to_one`). The output names the
+   winner and how many votes linked. A Commitment with no TCT (`identity: local-sealed`) is bound
    by step 5 alone, and the output says so.
 5. **Binding** — the `seam.evidence-binding.v1` signature verifies against the pinned AID, and it names
    this decision, tenant, chain link and Commitment digest.

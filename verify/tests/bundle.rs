@@ -192,6 +192,8 @@ fn json_output_reports_the_verdict_and_the_withheld_items() {
     assert_eq!(v["tct"], "verified");
     // #1687: the fixture's two votes each carry a voter record that re-verifies offline.
     assert_eq!(v["voters_verified"], 2);
+    // No `selection` block: "not a selection decision", reported as null, never as passed.
+    assert_eq!(v["selection"], serde_json::Value::Null);
     assert_eq!(v["base_len"], 2);
     let withheld: Vec<&str> = v["withheld"]
         .as_array()
@@ -938,6 +940,115 @@ fn step_4_governing_document_tampers_are_refused() {
     );
 }
 
+/// A valid canonical selection body (the spec's §4.2 shape): one participant, winner `p1`.
+fn selection_body_hex() -> String {
+    let mut b = Vec::new();
+    let f = |b: &mut Vec<u8>, x: &[u8]| {
+        b.extend_from_slice(&(x.len() as u64).to_be_bytes());
+        b.extend_from_slice(x);
+    };
+    let u = |b: &mut Vec<u8>, n: u64| b.extend_from_slice(&n.to_be_bytes());
+    f(&mut b, b"seam.selection.weighted_plurality");
+    u(&mut b, 1);
+    u(&mut b, 1);
+    u(&mut b, 0);
+    f(&mut b, b"no_winner");
+    f(&mut b, b"excluded_counts_for_quorum");
+    u(&mut b, 1);
+    f(&mut b, b"policy");
+    f(&mut b, &[7u8; 32]);
+    u(&mut b, 1);
+    f(&mut b, b"alice");
+    u(&mut b, 0);
+    u(&mut b, 0);
+    f(&mut b, b"p1");
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+#[test]
+fn step_4_selection_absent_is_not_a_selection_decision_and_a_malformed_block_fails_closed() {
+    // Absent and `null` both read as "not a selection decision": the bundle verifies, and says so.
+    let d = copy("full", "selection-null");
+    edit_and_rehash(&d, "commitment.json", |v| {
+        v["selection"] = serde_json::Value::Null
+    });
+    let (code, out) = verify(&d, ISSUER);
+    assert_eq!(code, VERIFIED, "{out}");
+    assert!(
+        out.contains("selection : not a selection decision"),
+        "{out}"
+    );
+    assert!(!out.contains("option selection re-verifies"), "{out}");
+    let _ = std::fs::remove_dir_all(&d);
+
+    let body = selection_body_hex();
+    let upper = body.to_uppercase();
+    let trailing = format!("{body}00");
+    assert_refused(
+        "full",
+        vec![
+            (
+                // A well-formed block the TCT did not bind: field 9 is framed from it, so the TCT fails.
+                "selection added",
+                Box::new(move |d: &Path| {
+                    let b = body.clone();
+                    edit_and_rehash(d, "commitment.json", |v| v["selection"] = b.into())
+                }),
+                "step 4: commitment.json: the TCT does not verify",
+            ),
+            (
+                "selection uppercase hex",
+                Box::new(move |d: &Path| {
+                    let b = upper.clone();
+                    edit_and_rehash(d, "commitment.json", |v| v["selection"] = b.into())
+                }),
+                "'selection' is not a non-empty, even-length lowercase hex string",
+            ),
+            (
+                "selection empty string",
+                Box::new(|d: &Path| {
+                    edit_and_rehash(d, "commitment.json", |v| v["selection"] = "".into())
+                }),
+                "'selection' is not a non-empty, even-length lowercase hex string",
+            ),
+            (
+                "selection trailing byte",
+                Box::new(move |d: &Path| {
+                    let b = trailing.clone();
+                    edit_and_rehash(d, "commitment.json", |v| v["selection"] = b.into())
+                }),
+                "'selection' does not decode as a selection block: trailing_bytes",
+            ),
+            (
+                "selection truncated",
+                Box::new(|d: &Path| {
+                    edit_and_rehash(d, "commitment.json", |v| v["selection"] = "0000".into())
+                }),
+                "'selection' does not decode as a selection block: truncated",
+            ),
+            (
+                "selection as an object",
+                Box::new(|d: &Path| {
+                    edit_and_rehash(d, "commitment.json", |v| {
+                        v["selection"] = serde_json::json!({"rule": "x"})
+                    })
+                }),
+                "'selection' is not a string or null",
+            ),
+            (
+                // Field 9 is framed only from the verifier's own recomputation, never a stated digest.
+                "selection digest stated",
+                Box::new(|d: &Path| {
+                    edit_and_rehash(d, "commitment.json", |v| {
+                        v["selection_digest"] = "00".repeat(32).into()
+                    })
+                }),
+                "'selection_digest' is present",
+            ),
+        ],
+    );
+}
+
 #[test]
 fn step_4_voter_verification_tampers_are_refused() {
     // #1687: the voter check runs before the TCT, so each of these is refused for the voter record.
@@ -983,7 +1094,7 @@ fn step_4_voter_verification_tampers_are_refused() {
                             v["explanation"][2]["voter_verification"].clone()
                     })
                 }),
-                "an evaluation carries a voter verification record",
+                "(an evaluation or a proposal) carries a voter verification record",
             ),
             (
                 "a field 9 block",

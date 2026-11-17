@@ -1606,7 +1606,8 @@ export class SeamClient {
    * must be in `[0.0, 1.0]`; out-of-range is the server's `INVALID_ARGUMENT` (MACP refuses it —
    * `macp-modes-0.5.0 src/mode/decision.rs:166-171`), deliberately not mirrored client-side.
    *
-   * `rationaleRef` is a `sha256:<hex>` context ref. Since runtime 0.44.0 it is **sealed**: every
+   * `rationaleRef` is a `sha256:<hex>` context ref, or the typed `decision-cert:sha256:<64 hex>` form,
+   * which the runtime accepts only when the tenant's `cert_ref` flag is on. Since runtime 0.44.0 it is **sealed**: every
    * accepted evaluation's `rationaleRef` (and whether a `confidence` was stated at all) is bound
    * into the Commitment's explanation under `seam-explanation-digest:v2`, which
    * `seam-commitment-digest:v5` covers. `verifyDecision` recomputes it locally.
@@ -2240,6 +2241,7 @@ const EXPLANATION_KIND_WORDS: Partial<Record<ExplanationKind, string>> = {
   [ExplanationKind.EVALUATION]: "evaluation",
   [ExplanationKind.OBJECTION]: "objection",
   [ExplanationKind.BALLOT]: "ballot",
+  [ExplanationKind.PROPOSAL]: "proposal",
 };
 
 /**
@@ -2255,9 +2257,12 @@ const EXPLANATION_KIND_WORDS: Partial<Record<ExplanationKind, string>> = {
  * `undefined` while a present empty one stays `""` — v4 frames the two differently (a presence byte).
  * Each entry's `voterVerification` (#1687) maps field for field; an UNSPECIFIED or unknown `method`
  * maps to a word the digest refuses, and a `contentDigest` that is not 32 bytes is refused too, so
- * verification fails closed rather than hashing a record the runtime never sealed. Fields 9 and 10
- * (selection / Gate certificate) are not on the served `Commitment` and are absent, as the runtime
- * seals them today. Field 11, `governingDocSha256` (#1711, `optional bytes`), keeps its explicit
+ * verification fails closed rather than hashing a record the runtime never sealed. Field 9 is framed
+ * from the served `selection` (runtime 0.90.0, option selection) with explicit presence: absent is "not a
+ * selection decision" (`0x00`), and a present block is projected field for field and re-encoded, so a
+ * block the runtime could not have sealed fails verification closed. This SDK checks the block's digest
+ * only; the winner recompute is in the Rust verifier and the Python SDK. Field 10 (Gate certificate) is
+ * not on the served `Commitment` and is absent. Field 11, `governingDocSha256` (#1711, `optional bytes`), keeps its explicit
  * presence: `undefined` (ungoverned) stays absent, and a present value — even an empty one — is passed
  * through as served, so a wrong length fails closed rather than reading as ungoverned.
  */
@@ -2274,6 +2279,24 @@ export function commitmentView(c: Commitment): CommitmentView {
     supersedes: c.supersedes,
     committer: c.committer,
     governing_doc_sha256: c.governingDocSha256 ?? null,
+    selection:
+      c.selection === undefined
+        ? null
+        : {
+            rule: c.selection.rule,
+            rule_version: c.selection.ruleVersion,
+            default_weight: c.selection.defaultWeight,
+            weights: c.selection.weights.map((w) => ({ participant: w.participant, weight: w.weight })),
+            tie: c.selection.tie,
+            abstention: c.selection.abstention,
+            min_ballots: c.selection.minBallots,
+            policy_version: c.selection.policyVersion,
+            rules_digest: c.selection.rulesDigest,
+            participants: [...c.selection.participants],
+            on_behalf_of: [...c.selection.onBehalfOf],
+            context: c.selection.context.map((x) => ({ ctx_ref: x.ctxRef, content_hash: x.contentHash })),
+            winner_proposal_id: c.selection.winnerProposalId,
+          },
     explanation_digest: c.explanationDigest,
     explanation: c.explanation.map((e) => ({
       kind: EXPLANATION_KIND_WORDS[e.kind] ?? `<unknown kind ${e.kind}>`,

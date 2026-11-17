@@ -102,6 +102,36 @@ data class Commitment(
     val governingDocSha256: ByteArray? = null,
 )
 
+/** One weight override of a [SelectionBlock]. */
+data class SelectionWeight(val participant: String, val weight: UInt)
+
+/** One sealed context pair of a [SelectionBlock]; [contentHash] is `""` when the binding carries none. */
+data class SelectionContext(val ctxRef: String, val contentHash: String)
+
+/**
+ * The sealed `seam.selection.weighted_plurality` block (runtime 0.90.0, seam-runtime
+ * `docs/specs/selection-rule.v1.md` §4.2), field for field in `body` order; the generated
+ * `SelectionRecord` (`Commitment.selection = 12`) maps onto it one to one. [weights] are strictly
+ * ascending by participant UTF-8 bytes, [rulesDigest] is the 32-byte bound `policy_rules_digest`, and
+ * [winnerProposalId] is never empty. Field 9 of `seam-commitment-digest:v5` is
+ * `SeamCrypto.selectionDigest(SeamCrypto.selectionBody(block))`: pass it as [Commitment.selectionDigest].
+ */
+data class SelectionBlock(
+    val rule: String,
+    val ruleVersion: UInt,
+    val defaultWeight: UInt,
+    val weights: List<SelectionWeight>,
+    val tie: String,
+    val abstention: String,
+    val minBallots: UInt,
+    val policyVersion: String,
+    val rulesDigest: ByteArray,
+    val participants: List<String>,
+    val onBehalfOf: List<String>,
+    val context: List<SelectionContext>,
+    val winnerProposalId: String,
+)
+
 /**
  * The inputs [SeamCrypto.callSigV3Payload] frames. Every string is signed as its UTF-8 bytes; an
  * absent optional field is the empty string (the default), signed verbatim rather than skipped.
@@ -226,8 +256,70 @@ object SeamCrypto {
         )
     }
 
-    /** The `kind` words the explanation digest frames — lowercase ASCII, exactly; never the proto enum name. */
-    val EXPLANATION_KINDS: List<String> = listOf("vote", "evaluation", "objection", "ballot")
+    /**
+     * The `kind` words the explanation digest frames — lowercase ASCII, exactly; never the proto enum name.
+     * `"proposal"` (runtime 0.90.0, option selection) is one accepted option of a selection session; it
+     * never carries a voter record.
+     */
+    val EXPLANATION_KINDS: List<String> = listOf("vote", "evaluation", "objection", "ballot", "proposal")
+
+    /** Domain tag of the option-selection block digest v5 field 9 binds. */
+    const val SELECTION_DIGEST_DOMAIN = "seam-selection-digest:v1"
+
+    /**
+     * The canonical selection block `body` (selection-rule.v1 §4.2), framed only with `F(x) =
+     * be64(len) ‖ x` and `U(n) = be64(n)`. This port frames the block (so a selection decision's TCT
+     * verifies) but does not recompute the winner: selection-rule.v1 §5 steps 6-9 are implemented by
+     * the Rust verifier and the Python SDK.
+     *
+     * @throws IllegalArgumentException for a block the runtime could not have sealed: weights not
+     *   strictly ascending by participant UTF-8 bytes (duplicates included), a rules digest that is not
+     *   32 bytes, or an empty winner — refused rather than hashed.
+     */
+    fun selectionBody(b: SelectionBlock): ByteArray {
+        val keys = b.weights.map { it.participant.toByteArray(Charsets.UTF_8) }
+        for (i in 1 until keys.size) {
+            require(Arrays.compareUnsigned(keys[i - 1], keys[i]) < 0) {
+                "selection weights are not strictly ascending by participant (weights_not_canonical)"
+            }
+        }
+        require(b.rulesDigest.size == 32) { "selection rules_digest must be 32 bytes, got ${b.rulesDigest.size}" }
+        require(b.winnerProposalId.isNotEmpty()) { "selection winner_proposal_id is empty (empty_winner)" }
+        fun utf8(s: String) = s.toByteArray(Charsets.UTF_8)
+        val out = ByteArrayOutputStream()
+        out.frame(utf8(b.rule))
+        out.writeBytes(be64(b.ruleVersion.toLong()))
+        out.writeBytes(be64(b.defaultWeight.toLong()))
+        out.writeBytes(be64(b.weights.size.toLong()))
+        b.weights.forEachIndexed { i, w ->
+            out.frame(keys[i])
+            out.writeBytes(be64(w.weight.toLong()))
+        }
+        out.frame(utf8(b.tie))
+        out.frame(utf8(b.abstention))
+        out.writeBytes(be64(b.minBallots.toLong()))
+        out.frame(utf8(b.policyVersion))
+        out.frame(b.rulesDigest)
+        out.writeBytes(be64(b.participants.size.toLong()))
+        b.participants.forEach { out.frame(utf8(it)) }
+        out.writeBytes(be64(b.onBehalfOf.size.toLong()))
+        b.onBehalfOf.forEach { out.frame(utf8(it)) }
+        out.writeBytes(be64(b.context.size.toLong()))
+        b.context.forEach {
+            out.frame(utf8(it.ctxRef))
+            out.frame(utf8(it.contentHash))
+        }
+        out.frame(utf8(b.winnerProposalId))
+        return out.toByteArray()
+    }
+
+    /** `SHA-256(F("seam-selection-digest:v1") ‖ body)`: the 32 bytes v5 field 9 binds. */
+    fun selectionDigest(body: ByteArray): ByteArray {
+        val out = ByteArrayOutputStream()
+        out.frame(SELECTION_DIGEST_DOMAIN.toByteArray(Charsets.UTF_8))
+        out.writeBytes(body)
+        return sha256(out.toByteArray())
+    }
 
     private fun be64(n: Long): ByteArray = ByteBuffer.allocate(8).putLong(n).array()
 
