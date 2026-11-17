@@ -46,6 +46,7 @@ pub(crate) const MANAGEMENT_DOMAIN: &str = "seam.audit.management.v1";
 /// The `seam.audit.management.v1` row of the spec's table, in its order.
 const MANAGEMENT_ACTIONS: &[&str] = &[
     "session_resumed",
+    "session_cancelled",
     "party_registered",
     "party_removed",
     "cross_namespace_grant_placed",
@@ -301,7 +302,7 @@ mod tests {
         assert!(!all.contains(&FACT_APPENDED), "fact_appended has no domain");
         assert_eq!(
             MANAGEMENT_ACTIONS.len(),
-            16,
+            17,
             "AuditAction::ALL minus fact_appended"
         );
         for (domain, actions) in DOMAINS {
