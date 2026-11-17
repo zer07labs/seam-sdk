@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.92.0 — 2026-11-17
+
 ### Changed — no gate can fail after a tag exists (#375)
 - `release-on-runtime.yml` no longer pushes the release commit to main and tags it in one step. It pushes
   the commit to `release/v<ver>`, and waits for that exact commit's full `ci-ok` (`ci.yml` now runs on
