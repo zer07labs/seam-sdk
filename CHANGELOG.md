@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.91.0 — 2026-11-17
+
 ### Added — cert-ref, the reader side (runtime 0.91.0, seam-runtime#1749)
 - **`DecisionSealed.certificate`** (`seam.event.v1` tag 19, `CertificateRef {id, provenance}`) is in the
   event field manifest. Python `certificate_ref_of` / TS `certificateRefOf` read it. It names the
