@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:1001`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:1012`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -231,6 +231,15 @@ v5 (#357), so CI on that commit failed against the v5 runtime and `publish.yml` 
 re-cut, so v5 ships as v0.88.1, and the `v0.88.0` tags stay where they are, unpublished. The runtime's next
 release must be 0.89.0 or later, because 0.88.1 is taken here. Pin `seam-sdk 0.88.1` beside seamd 0.88.0.
 
+**SDK v0.91.1 pairs with runtime 0.91.0.** SDK v0.91.0 was tagged at `762c150` and never published. The
+cert-ref reader (#371) had merged and the release-on-runtime fresh contract gate (#369) worked as designed:
+it refused the first 0.91.0 dispatch before writing anything, and `release-refire.yml` re-fired it once
+main was green. But the release commit's own CI was red, on the new dry-run test in #369, which released
+the hard-coded version 0.91.0 and so could not pass on a tree that already said 0.91.0. `publish.yml`
+refused. A public tag is not re-cut, so cert-ref ships as v0.91.1, and the `v0.91.0` tags stay where they
+are, unpublished. The runtime's next release must be 0.92.0 or later, because 0.91.1 is taken here. Pin
+`seam-sdk 0.91.1` beside seamd 0.91.0.
+
 **SDK v0.90.1 pairs with runtime 0.90.0.** SDK v0.90.0 was tagged at `14b43e5` and never published: the
 runtime's 0.90.0 release (seam-runtime#1748, option selection S1) added `Commitment.selection` and
 `ExplanationKind.PROPOSAL` to `seam.api.v1` and changed `docs/specs/evidence-bundle.v1.md`, so the contract
@@ -270,7 +279,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2072-2094`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2083-2105`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was

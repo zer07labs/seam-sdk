@@ -16,7 +16,18 @@ than trusting a summary here.
 
 ## Unreleased
 
+These entries, and the cert-ref entries under 0.91.0 below, first ship in **0.91.1**: v0.91.0 was tagged
+and never published (see COMPATIBILITY.md).
+
+### Fixed
+- `scripts/test_release_refire_gate.py`'s executed dry run released the hard-coded version `0.91.0`. On
+  the 0.91.0 release commit the tree already said 0.91.0, so the dry run took the "tagging only" path,
+  pushed no commit, and its green twin failed on the very commit `publish.yml` gates on. It now
+  releases `999.0.0`, and a guard asserts that is never the in-tree version.
+
 ## 0.91.0 — 2026-11-17
+
+Tagged, never published (see COMPATIBILITY.md). Its entries first ship in 0.91.1.
 
 ### Added — cert-ref, the reader side (runtime 0.91.0, seam-runtime#1749)
 - **`DecisionSealed.certificate`** (`seam.event.v1` tag 19, `CertificateRef {id, provenance}`) is in the
