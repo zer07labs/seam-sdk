@@ -1221,7 +1221,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:2125-2147` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:2133-2155` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2051,7 +2051,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:2155` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:2163` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -3211,3 +3211,17 @@ Ranked by blast radius. The two possible one-way doors (a public exception API, 
 - **Kind surface:** the clients take the id only. HUMAN is the only kind the runtime accepts. Another kind
   would be an additive parameter, so taking a kind now would expose a value the runtime refuses.
 - **Decided by:** Opus (reversible tier: additive optional parameter). **Verdict:** CONFIRM. **Status:** CONFIRMED.
+
+## 2026-11-19 — `SessionStep.decided_value` (runtime 0.98.0, seam-runtime#1785): carried through the stubs, no wrapper
+
+- **The field:** `optional string decided_value = 7` on `seam.api.v1.SessionStep`. It is set only on the step whose
+  commit applied this call's own commitment envelope and freshly sealed the session, with the same presence rule as
+  `collective_outcome`. Every other step withholds it, including a resubmit, a seal retry, a non-fresh seal and the
+  expiry seal. seam-adapters core reads it from the step instead of calling `ReplayDecision` (seam-adapters#296).
+- **Decision:** the SDK carries it. Every hand-written `submit_*` wrapper returns the generated `SessionStep`
+  unchanged, so the field reaches callers in all five languages with explicit presence: Python `HasField`, TS
+  `decidedValue === undefined`, and Go/Java/Kotlin `Has…`. A wrapper would only re-encode presence the stub already
+  states correctly, and an empty string is a real sealed value, so the SDK must never collapse absence into `""`.
+- **Pinned by:** `python/tests/test_commit_supersedes.py` (sync and aio) and `ts/tests/unit_plumbing.test.ts`.
+  Each test checks that a present value, an empty value and an absent value stay distinct.
+- **Decided by:** Opus (reversible tier: additive optional response field). **Verdict:** CONFIRM. **Status:** CONFIRMED.

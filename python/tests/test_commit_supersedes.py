@@ -76,3 +76,65 @@ def test_async_submit_commit_omits_supersedes_when_absent_and_sends_it_when_give
         await client.close()
 
     asyncio.run(scenario())
+
+
+# ── SessionStep.decided_value (runtime 0.98.0, seam-runtime#1785): the sealing step's value ──────
+# The client returns the generated step unchanged, so presence is the stub's `HasField`: set only on
+# the commit that freshly sealed this call's own commitment, absent on every other step. An absent
+# value must never read as "" (an empty action is a real value).
+
+
+class _StepRecorder:
+    def __init__(self, step: pb.SessionStep):
+        self._step = step
+
+    def __getattr__(self, name):
+        def record(req, **kw):
+            return self._step
+
+        return record
+
+
+def test_submit_commit_returns_the_sealing_steps_decided_value_with_its_presence() -> (
+    None
+):
+    client = SeamClient.connect("127.0.0.1:1")  # lazy channel, never dialed
+    client._coord = _StepRecorder(
+        pb.SessionStep(state="Resolved", decided_value="approve")
+    )
+    step = client.submit_commit("s", "c-1", "approve")
+    assert step.HasField("decided_value")
+    assert step.decided_value == "approve"
+
+    client._coord = _StepRecorder(pb.SessionStep(state="Resolved", decided_value=""))
+    assert client.submit_commit("s", "c-1", "approve").HasField("decided_value")
+
+    client._coord = _StepRecorder(pb.SessionStep(state="Resolved"))
+    assert not client.submit_commit("s", "c-1", "approve").HasField("decided_value")
+
+
+def test_async_submit_commit_returns_the_decided_value_with_its_presence() -> None:
+    class _AioStep:
+        def __init__(self, step: pb.SessionStep):
+            self._step = step
+
+        def __getattr__(self, name):
+            async def record(req, **kw):
+                return self._step
+
+            return record
+
+    async def scenario() -> None:
+        client = AioSeamClient.connect("127.0.0.1:1")  # lazy channel, never dialed
+        client._coord = _AioStep(
+            pb.SessionStep(state="Resolved", decided_value="approve")
+        )
+        step = await client.submit_commit("s", "c-1", "approve")
+        assert step.HasField("decided_value") and step.decided_value == "approve"
+        client._coord = _AioStep(pb.SessionStep(state="Open"))
+        assert not (await client.submit_commit("s", "c-1", "approve")).HasField(
+            "decided_value"
+        )
+        await client.close()
+
+    asyncio.run(scenario())
