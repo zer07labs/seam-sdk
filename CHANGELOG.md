@@ -16,6 +16,21 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added — the `SUBJECT_ERASED` refusal, in all five languages (runtime 0.96.0, #383)
+
+- The runtime refuses a session open or a one-shot decision when a subject it binds (the opener/trust subject or an `on_behalf_of` subject) carries a GDPR erasure tombstone in the tenant (seam-runtime#1774): gRPC `PERMISSION_DENIED`, reason `SUBJECT_ERASED`, a fixed message naming no subject.
+- `SUBJECT_ERASED_REASON` in every SDK (Go `crypto.SubjectErasedReason`, Java/Kotlin `RequestCredentials.SUBJECT_ERASED_REASON`). Python `is_subject_erased` and TS `isSubjectErased` recognise it on `PermissionDeniedError` by reason only.
+- It is **never retryable**: `is_retryable` / `isRetryable` stay false for it, so `with_session_retry` never loops on it. It already mapped to `PermissionDeniedError` with `reason == "SUBJECT_ERASED"` before this change; what is new is the name, the predicate and the documented class.
+
+### Added — `open_session` takes an optional `requester` (RT4, runtime 0.95.0, #381)
+
+- `seam.api.v1` gains `OpenSessionRequest.requester = 10 { RequesterKind kind; string id }` (seam-runtime#1776). Python (`open_session(…, requester=…)`, sync and aio) and TS (`openSession(…, { requester })`) send `{REQUESTER_KIND_HUMAN, id}` when it is given, and nothing when it is not.
+- The id is checked locally against the runtime's rule (`p_` + `[A-Za-z0-9._:-]`, 3–128 bytes) before any RPC, including the admit handshake. A refusal raises `ValueError` / `RangeError` and never echoes the id. `valid_requester_id` / `validRequesterId` and the byte bounds are exported.
+- `RequesterKind` is request-only: no response message carries it, so the fail-closed verdict readers (`_collective.py`, `errors.py`) never meet it and are unchanged. The five new names are recorded in `contract/field-manifest.txt`.
+- Go, Java and Kotlin carry the field through the regenerated stubs (they have no hand-written session builders).
+- `verify/docs/evidence-bundle.v1.md` is re-pinned to seam-runtime `59cae17` (0.97.0, #1782): an erased record now withholds `context` too, and `commitment`/`binding` share one "the record is erased" reason. It is withheld-table prose only, so no verifier code changes (`context.json` was already optional, and `withheld` is printed verbatim).
+- seam-verify 0.5.0 was published to Cloudsmith internal on 2026-11-18 (owner decision, manual `publish-verify` dispatch). It is the first published verifier with entry recompute, the uncovered refusal, and `session_cancelled` (#378).
+
 ## 0.94.0 — 2026-11-17
 
 ### Added — `seam-verify` covers the runtime's `session_cancelled` audit entry (#378)

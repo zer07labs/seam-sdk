@@ -53,6 +53,7 @@ from .errors import (
     map_rpc_error,
 )
 from ._outcome import ObservedAt
+from ._requester import requester_pb
 from .tenant import AioTenantInterceptor
 
 from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
@@ -478,9 +479,11 @@ class SeamClient:
         limits: Optional[BudgetLimits] = None,
         mode: str = "",
         on_behalf_of: Sequence[str] = (),
+        requester: Optional[str] = None,
         credential: Optional[Agent] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.SessionStep:
+        requester_msg = requester_pb(requester)
         req = pb.OpenSessionRequest(
             session_id=session_id,
             participants=list(participants),
@@ -491,6 +494,8 @@ class SeamClient:
         )
         if limits is not None:
             req.limits.CopyFrom(limits.to_pb())
+        if requester_msg is not None:
+            req.requester.CopyFrom(requester_msg)
         return await self._signed_once(
             credential,
             "/seam.api.v1.SeamCoordination/OpenSession",

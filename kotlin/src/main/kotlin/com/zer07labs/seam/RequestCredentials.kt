@@ -61,5 +61,13 @@ class RequestCredentials(val agent: Agent? = null, private val tickets: TicketSo
          * resending, or the resend is refused UNAUTHENTICATED `request_replayed`.
          */
         const val SESSION_UNAVAILABLE_REASON = "SESSION_UNAVAILABLE"
+
+        /**
+         * The ErrorInfo.reason (domain seam.zer07labs.com) of a PERMISSION_DENIED (HTTP 403) refusal: a subject the
+         * request binds (the opener/trust subject or an on_behalf_of subject) carries a GDPR erasure tombstone in the
+         * tenant (seam-runtime#1774, runtime 0.96.0). Not retryable: the same request is always refused. The message is a
+         * fixed string naming no subject or commitment, so branch on this reason, never on the text.
+         */
+        const val SUBJECT_ERASED_REASON = "SUBJECT_ERASED"
     }
 }

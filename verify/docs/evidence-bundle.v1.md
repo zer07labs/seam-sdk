@@ -1,4 +1,12 @@
-<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 780b1b7 (refreshed 2026-11-16).
+<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 59cae17 (refreshed 2026-11-19).
+     seam-runtime 0.97.0 (#1782, #1788), on runtime main. Movement since 780b1b7: the withheld table only. An
+     erased record (key destroyed, or erasure decided with no legal hold) now withholds `context` too, even
+     under `--disclose context`, and `commitment`/`binding` share one "the record is erased" reason. No
+     manifest, digest or member-format change: `context.json` was already optional to this verifier and the
+     `withheld` list is printed verbatim, so no verifier code moves. The `shredded` fixture keeps its older
+     reason text; it is a genuine bundle of its runtime and still verifies.
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 780b1b7 (refreshed 2026-11-16).
      seam-runtime 0.90.0 (#1748, option selection S1), on runtime main. Movement since 83e691d: commitment.json
      carries `selection`, the sealed option-selection block's canonical body as lowercase hex, or `null` when the
      decision did not run under selection ("not a selection decision", never "passed"). A verifier strictly
@@ -229,9 +237,13 @@ what the adverse party is told.
 | Item | When | Reason |
 |---|---|---|
 | `participation` | always | `participation[].subject` is the GDPR erasure predicate. Only `participation_digest` is chained and published. |
-| `context` | without `--disclose context` | A disclosure decision, made by the exporter per bundle. |
+| `context` | without `--disclose context`, or the record is erased | A disclosure decision, made by the exporter per bundle. An erased record's context is withheld even when disclosure is asked for, because the bindings are personal data that survive the shred in plaintext. |
 | `policy` | without `--disclose policy`, no policy bound, or the bound bytes are no longer loadable | As stated in the reason. |
-| `commitment`, `binding` | the record is crypto-shredded, tiered to cold storage, or missing | A shredded record's plaintext is unrecoverable, though its link still verifies. A cold record must be replayed from its archive bundle first. |
+| `commitment`, `binding` | the record is erased (key destroyed or erasure decided; a legal hold wins), tiered to cold storage, or missing | An erased record's plaintext is withdrawn, though its link still verifies. A cold record must be replayed from its archive bundle first. |
+
+An erased item (`context`, `commitment`, `binding`) carries one shared reason: "the record is erased (its key is
+destroyed or its erasure is decided); the plaintext is withdrawn, the chained link still verifies". An archived
+record is not erased: it keeps its context.
 
 The record's `trust_basis` is never in a bundle and is not a `withheld` item: it is an erasure-predicate
 value, and the chain carries only its keyed commitment (`DECISION_SEALED.trust_basis_commitment`, tag 16),

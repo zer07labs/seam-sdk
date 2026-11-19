@@ -99,4 +99,9 @@ class RequestCredentialsTest {
     fun sessionUnavailableReasonIsTheRuntimeLiteral() {
         assertEquals("SESSION_UNAVAILABLE", RequestCredentials.SESSION_UNAVAILABLE_REASON)
     }
+
+    @Test
+    fun subjectErasedReasonIsTheRuntimeLiteral() {
+        assertEquals("SUBJECT_ERASED", RequestCredentials.SUBJECT_ERASED_REASON)
+    }
 }

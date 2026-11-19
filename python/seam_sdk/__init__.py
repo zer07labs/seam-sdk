@@ -17,6 +17,11 @@ from ._certificate import (
     certificate_ref_of,
 )
 from ._collective import CollectiveOutcome, collective_outcome_of
+from ._requester import (
+    REQUESTER_ID_MAX_BYTES,
+    REQUESTER_ID_MIN_BYTES,
+    valid_requester_id,
+)
 from ._policy import PolicyEnforcement, policy_enforcement_of
 from ._seal import SealAttestation, seal_attestation_of
 from .admin import (
@@ -125,10 +130,12 @@ from .errors import (
     UnknownCollectiveVerdictError,
     UnknownVerdictError,
     SESSION_UNAVAILABLE_REASON,
+    SUBJECT_ERASED_REASON,
     TENANT_MOVING_REASON,
     WRONG_CELL_REASON,
     is_retryable,
     is_session_unavailable,
+    is_subject_erased,
     is_tenant_moving,
     is_wrong_cell,
     map_rpc_error,
@@ -262,6 +269,10 @@ __all__ = [
     "CertificateRef",
     "certificate_provenance",
     "certificate_ref_of",
+    # RT4 (runtime 0.95.0) — OpenSessionRequest.requester; open_session(requester="p_…")
+    "REQUESTER_ID_MIN_BYTES",
+    "REQUESTER_ID_MAX_BYTES",
+    "valid_requester_id",
     "WIRE_FEATURE_OUTCOME_OBSERVED_AT",
     "WIRE_FEATURE_OUTCOME_REWARD_METRICS",
     "OUTCOME_METRICS_MAX",
@@ -299,6 +310,9 @@ __all__ = [
     "RetryClassifier",
     "load_shed_retry_classifier",
     "is_session_unavailable",
+    # SUBJECT_ERASED (runtime 0.96.0, #1774): PERMISSION_DENIED, never retryable
+    "SUBJECT_ERASED_REASON",
+    "is_subject_erased",
     "DEFAULT_RETRY_BUDGET_S",
     "with_session_retry",
     "with_session_retry_async",

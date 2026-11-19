@@ -123,4 +123,9 @@ class RequestCredentialsTest {
   void sessionUnavailableReasonIsTheRuntimeLiteral() {
     assertEquals("SESSION_UNAVAILABLE", RequestCredentials.SESSION_UNAVAILABLE_REASON);
   }
+
+  @Test
+  void subjectErasedReasonIsTheRuntimeLiteral() {
+    assertEquals("SUBJECT_ERASED", RequestCredentials.SUBJECT_ERASED_REASON);
+  }
 }

@@ -114,7 +114,8 @@ def test_an_unknown_macp_code_is_surfaced_raw_not_dropped():
 
 
 @pytest.mark.parametrize(
-    "reason", ["POLICY_DENIED", "SCOPE_DENIED", "FACT_ATTESTOR_REJECTED"]
+    "reason",
+    ["POLICY_DENIED", "SCOPE_DENIED", "FACT_ATTESTOR_REJECTED", "SUBJECT_ERASED"],
 )
 def test_the_permission_denied_classes_are_told_apart_by_reason(reason):
     """POLICY_DENIED moved from FAILED_PRECONDITION to PERMISSION_DENIED, which it now shares with two
@@ -122,6 +123,27 @@ def test_the_permission_denied_classes_are_told_apart_by_reason(reason):
     err = _mapped(grpc.StatusCode.PERMISSION_DENIED, status(7, error_info(reason)))
     assert isinstance(err, PermissionDeniedError)
     assert err.reason == reason
+
+
+def test_subject_erased_is_recognised_and_never_retryable():
+    """SUBJECT_ERASED (runtime 0.96.0, #1774): PERMISSION_DENIED, recognised by reason only, never
+    retryable, and only on PermissionDeniedError (the same reason under another status is not it)."""
+    from seam_sdk import SUBJECT_ERASED_REASON, is_retryable, is_subject_erased
+
+    assert SUBJECT_ERASED_REASON == "SUBJECT_ERASED"
+    err = _mapped(
+        grpc.StatusCode.PERMISSION_DENIED, status(7, error_info("SUBJECT_ERASED"))
+    )
+    assert is_subject_erased(err)
+    assert not is_retryable(err)
+    for other in ("POLICY_DENIED", "SCOPE_DENIED"):
+        assert not is_subject_erased(
+            _mapped(grpc.StatusCode.PERMISSION_DENIED, status(7, error_info(other)))
+        )
+    assert not is_subject_erased(
+        _mapped(grpc.StatusCode.UNAVAILABLE, status(14, error_info("SUBJECT_ERASED")))
+    )
+    assert not is_subject_erased(ValueError("SUBJECT_ERASED"))
 
 
 def test_macp_code_is_only_read_on_a_protocol_reason():

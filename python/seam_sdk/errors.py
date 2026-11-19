@@ -315,6 +315,11 @@ PROTOCOL_REASON = "PROTOCOL"
 #: ``docs/specs/error-model.md``). The same call is safe to re-issue after the delay — the step
 #: either never ran or its session write was dropped. A single-replica runtime never returns it.
 SESSION_UNAVAILABLE_REASON = "SESSION_UNAVAILABLE"
+#: ``PERMISSION_DENIED`` (HTTP 403): a subject the request binds (the opener/trust subject or an
+#: ``on_behalf_of`` subject) carries a GDPR erasure tombstone in the tenant (seam-runtime#1774, runtime
+#: 0.96.0). **Not retryable**: the same request is always refused. The message is a fixed string that
+#: names no subject or commitment, so there is nothing to parse; branch on this reason only.
+SUBJECT_ERASED_REASON = "SUBJECT_ERASED"
 #: ``FAILED_PRECONDITION``: the call reached a cell that does not hold the caller's tenant
 #: (seam-runtime k8s P15, D123; runtime 0.58.0). :attr:`SeamRpcError.error_metadata` names the
 #: ``cell`` that answered and the fleet root it routed by (``root_snapshot_id``,
@@ -465,7 +470,7 @@ class FailedPreconditionError(SeamRpcError):
 
 
 class PermissionDeniedError(SeamRpcError):
-    """`PERMISSION_DENIED` — shared by four refusal classes, so **branch on** :attr:`reason`, **never
+    """`PERMISSION_DENIED` — shared by five refusal classes, so **branch on** :attr:`reason`, **never
     on the status or the message text**:
 
     * ``POLICY_DENIED`` — the bound coordination policy refused the commitment (ballots, objections,
@@ -476,6 +481,8 @@ class PermissionDeniedError(SeamRpcError):
     * ``SCOPE_DENIED`` — the caller's credential lacks the scope for the action (the R8 floor).
     * ``FACT_ATTESTOR_REJECTED`` — a fact's attestor is not accepted.
     * ``PROTOCOL`` with :attr:`macp_code` ``FORBIDDEN`` — MACP refused the sender.
+    * ``SUBJECT_ERASED`` — a subject the request binds has been erased in the tenant (runtime 0.96.0).
+      **Not retryable**; see :func:`is_subject_erased`.
     """
 
 
@@ -540,6 +547,15 @@ def is_session_unavailable(exc: BaseException) -> bool:
     ``CHALLENGE_REFUSED`` — is False."""
     return (
         isinstance(exc, UnavailableError) and exc.reason == SESSION_UNAVAILABLE_REASON
+    )
+
+
+def is_subject_erased(exc: BaseException) -> bool:
+    """True when ``exc`` is the runtime's ``SUBJECT_ERASED`` refusal: a
+    :class:`PermissionDeniedError` whose :attr:`~SeamRpcError.reason` is
+    :data:`SUBJECT_ERASED_REASON`. Never :func:`is_retryable`."""
+    return (
+        isinstance(exc, PermissionDeniedError) and exc.reason == SUBJECT_ERASED_REASON
     )
 
 

@@ -732,6 +732,7 @@ def test_the_committed_manifest_enum_section_is_not_vacuous_and_covers_every_enu
         "SealAttestationAvailability",
         "SealReason",
         "VoterVerification",  # #1687, runtime 0.87.0
+        "RequesterKind",  # #381, runtime 0.95.0 (request-only)
     }, names
     # UNSPECIFIED zero values are DECLARED, never filtered — removing the fail-safe default every
     # OTHER value's fail-closed behaviour depends on is exactly as real a breaking change as removing
@@ -742,6 +743,7 @@ def test_the_committed_manifest_enum_section_is_not_vacuous_and_covers_every_enu
         "BallotChoice#BALLOT_CHOICE_UNSPECIFIED",
         "CollectiveVerdict#COLLECTIVE_VERDICT_UNSPECIFIED",
         "ExplanationKind#EXPLANATION_KIND_UNSPECIFIED",
+        "RequesterKind#REQUESTER_KIND_UNSPECIFIED",
         "SealAttestationAvailability#SEAL_ATTESTATION_AVAILABILITY_UNSPECIFIED",
         "SealReason#SEAL_REASON_UNSPECIFIED",
     ):
