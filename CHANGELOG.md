@@ -16,6 +16,14 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added — `open_session` takes an optional `requester` (RT4, runtime 0.95.0, #381)
+
+- `seam.api.v1` gains `OpenSessionRequest.requester = 10 { RequesterKind kind; string id }` (seam-runtime#1776). Python (`open_session(…, requester=…)`, sync and aio) and TS (`openSession(…, { requester })`) send `{REQUESTER_KIND_HUMAN, id}` when it is given, and nothing when it is not.
+- The id is checked locally against the runtime's rule (`p_` + `[A-Za-z0-9._:-]`, 3–128 bytes) before any RPC, including the admit handshake. A refusal raises `ValueError` / `RangeError` and never echoes the id. `valid_requester_id` / `validRequesterId` and the byte bounds are exported.
+- `RequesterKind` is request-only: no response message carries it, so the fail-closed verdict readers (`_collective.py`, `errors.py`) never meet it and are unchanged. The five new names are recorded in `contract/field-manifest.txt`.
+- Go, Java and Kotlin carry the field through the regenerated stubs (they have no hand-written session builders).
+- seam-verify 0.5.0 was published to Cloudsmith internal on 2026-11-18 (owner decision, manual `publish-verify` dispatch). It is the first published verifier with entry recompute, the uncovered refusal, and `session_cancelled` (#378).
+
 ## 0.94.0 — 2026-11-17
 
 ### Added — `seam-verify` covers the runtime's `session_cancelled` audit entry (#378)

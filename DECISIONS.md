@@ -1221,7 +1221,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:2108-2130` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:2116-2138` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2051,7 +2051,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:2138` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:2146` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -3185,3 +3185,29 @@ Ranked by blast radius. The two possible one-way doors (a public exception API, 
   compatibility consumer table. A demo app's dependency pin is not a platform compatibility promise.
   seam-adapters remains checked, including its SDK constraint and editable-source caveat.
 - **Decided by:** owner, aegis-v2 D7 (wave A0). Historical references remain unchanged.
+
+## 2026-11-18 — publish seam-verify 0.5.0
+
+- **Decision:** publish `seam-verify` 0.5.0 to Cloudsmith internal by the manual `publish-verify` dispatch
+  (run 44221756900, main `421eb40`). 0.5.0 had been in `verify/Cargo.toml` since #321 (2026-10-31) and
+  never dispatched. `plans/verify-a4-parity.md` named the dispatch an owner step. It is the first
+  published verifier with entry recompute, the uncovered refusal under `--issuer`, and `session_cancelled`
+  (#378). The previous published verifier was 0.4.0.
+- **Why now:** the RT3 sequencing (runtime dormant → verifier covers `session_cancelled` → control plane
+  grants `session:cancel`) assumed a published verifier. Tag pushes never publish the verifier, so
+  SDK v0.94.0 alone did not provide one.
+- **Decided by:** owner, 2026-11-18 (interactive prompt). One-way: a published crate version is permanent.
+
+## 2026-11-19 — RT4 `requester`: Python and TS wire it, the enum is request-only (#381)
+
+- **Decision:** carry `OpenSessionRequest.requester` (runtime 0.95.0). Python (sync and aio) and TS take an
+  optional id and send `{REQUESTER_KIND_HUMAN, id}`, and validate it locally against the runtime rule
+  without echoing it. Go, Java and Kotlin carry it through the stubs only, since they have no session
+  builders (the cert-ref precedent).
+- **The enum-value refusal:** `RequesterKind` appears in no response message, so the fail-closed verdict
+  readers the gate names (`_collective.py`, `errors.py`) cannot receive it. No change there is the correct
+  answer, not an omission. If a response ever carries `Requester`, the field gate refuses again at that
+  message's field, which is the moment to add a reader.
+- **Kind surface:** the clients take the id only. HUMAN is the only kind the runtime accepts. Another kind
+  would be an additive parameter, so taking a kind now would expose a value the runtime refuses.
+- **Decided by:** Opus (reversible tier: additive optional parameter). **Verdict:** CONFIRM. **Status:** CONFIRMED.

@@ -45,6 +45,7 @@ from .errors import (  # noqa: F401  (SeamError re-exported)
     is_tenant_moving,
 )
 from ._outcome import ObservedAt, check_outcome_fields
+from ._requester import requester_pb
 from .selection import selection_block_of
 from .tenant import TenantInterceptor
 
@@ -773,6 +774,7 @@ class SeamClient:
         limits: Optional[BudgetLimits] = None,
         mode: str = "",
         on_behalf_of: Sequence[str] = (),
+        requester: Optional[str] = None,
         credential: Optional[Agent] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.SessionStep:
@@ -780,7 +782,11 @@ class SeamClient:
         message count (0 means the server default, currently 32 — the proto's semantics, so the
         server owns the number); ``limits`` adds the other 6.2 dimensions. ``on_behalf_of`` binds
         end-user data subjects to the session (see :meth:`run_decision`). ``credential`` is the
-        per-request identity (#508), defaulting to the bound agent (#202) — see :meth:`get_decision`."""
+        per-request identity (#508), defaulting to the bound agent (#202) — see :meth:`get_decision`. ``requester`` is the
+        human principal the session was opened for, as the control plane's pseudonymous ``p_…`` id (RT4,
+        runtime 0.95.0); it is optional, sent with kind ``REQUESTER_KIND_HUMAN``, and an id the runtime
+        would refuse raises ``ValueError`` before any RPC, without echoing it."""
+        requester_msg = requester_pb(requester)
         req = pb.OpenSessionRequest(
             session_id=session_id,
             participants=list(participants),
@@ -791,6 +797,8 @@ class SeamClient:
         )
         if limits is not None:
             req.limits.CopyFrom(limits.to_pb())
+        if requester_msg is not None:
+            req.requester.CopyFrom(requester_msg)
         return self._signed_once(
             credential,
             "/seam.api.v1.SeamCoordination/OpenSession",

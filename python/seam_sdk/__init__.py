@@ -17,6 +17,11 @@ from ._certificate import (
     certificate_ref_of,
 )
 from ._collective import CollectiveOutcome, collective_outcome_of
+from ._requester import (
+    REQUESTER_ID_MAX_BYTES,
+    REQUESTER_ID_MIN_BYTES,
+    valid_requester_id,
+)
 from ._policy import PolicyEnforcement, policy_enforcement_of
 from ._seal import SealAttestation, seal_attestation_of
 from .admin import (
@@ -262,6 +267,10 @@ __all__ = [
     "CertificateRef",
     "certificate_provenance",
     "certificate_ref_of",
+    # RT4 (runtime 0.95.0) — OpenSessionRequest.requester; open_session(requester="p_…")
+    "REQUESTER_ID_MIN_BYTES",
+    "REQUESTER_ID_MAX_BYTES",
+    "valid_requester_id",
     "WIRE_FEATURE_OUTCOME_OBSERVED_AT",
     "WIRE_FEATURE_OUTCOME_REWARD_METRICS",
     "OUTCOME_METRICS_MAX",

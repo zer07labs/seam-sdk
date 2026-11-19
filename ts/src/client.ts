@@ -7,6 +7,7 @@ import { createGrpcTransport, Http2SessionManager } from "@connectrpc/connect-no
 import { create, toBinary, type DescMessage, type MessageInitShape } from "@bufbuild/protobuf";
 import { ed25519 } from "@noble/curves/ed25519";
 
+import { requesterMessage } from "./requester.js";
 import {
   AllocationAvailability,
   ApprovalRequestRequestSchema,
@@ -1480,10 +1481,15 @@ export class SeamClient {
       limits?: BudgetLimits;
       mode?: string;
       onBehalfOf?: string[];
+      /** The human principal the session is opened for, as the control plane's pseudonymous `p_…` id
+       * (RT4, runtime 0.95.0). Optional; sent with kind `REQUESTER_KIND_HUMAN`. An id the runtime would
+       * refuse throws a `RangeError` before any RPC, without echoing it. */
+      requester?: string;
       credential?: Agent;
       timeoutMs?: number;
     },
   ) {
+    const requester = requesterMessage(opts.requester);
     const init = {
       sessionId: opts.sessionId,
       participants: opts.participants,
@@ -1493,6 +1499,7 @@ export class SeamClient {
       presentation: await this.presentation(agent, opts),
       limits: opts.limits,
       onBehalfOf: opts.onBehalfOf ?? [],
+      requester,
     };
     return this.signedOnce(
       opts.credential,

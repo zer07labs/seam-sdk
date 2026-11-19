@@ -575,6 +575,30 @@ test("openSession / resumeSession send budget 0 when unspecified (the proto owns
   assert.equal(adminCalls[0]!.input.budget, 0);
 });
 
+// ── RT4 requester: optional, HUMAN kind, refused locally before the admit handshake ──────────────
+
+test("openSession sends requester {HUMAN, id} only when given, and refuses a bad id before any RPC", async () => {
+  const calls: Recorded[] = [];
+  const { handle } = fakeSeam();
+  const client = new SeamClient(fakeTransport(calls, handle));
+
+  await client.openSession(new Agent(SEED), { sessionId: "s", participants: ["a"], requester: "p_abc" });
+  const sent = calls.find((c) => c.method === "OpenSession")!.input.requester as { kind: number; id: string };
+  assert.equal(sent.kind, 1); // REQUESTER_KIND_HUMAN
+  assert.equal(sent.id, "p_abc");
+
+  calls.length = 0;
+  await client.openSession(new Agent(SEED), { sessionId: "s2", participants: ["a"] });
+  assert.equal(calls.find((c) => c.method === "OpenSession")!.input.requester, undefined);
+
+  calls.length = 0;
+  await assert.rejects(
+    client.openSession(new Agent(SEED), { sessionId: "s3", participants: ["a"], requester: "alice@example.com" }),
+    (e: unknown) => e instanceof RangeError && !e.message.includes("alice@example.com"),
+  );
+  assert.equal(calls.length, 0, "no IssueChallenge, no OpenSession for a refused requester");
+});
+
 // ── Ticket refresh: adopt a concurrently-minted ticket, never stampede ───────────────────────────
 
 test("a caller holding a stale ticket ADOPTS the concurrently-refreshed one instead of re-admitting", async () => {

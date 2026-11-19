@@ -388,6 +388,7 @@ OpenSessionRequest/mode
 OpenSessionRequest/on_behalf_of
 OpenSessionRequest/participants
 OpenSessionRequest/presentation
+OpenSessionRequest/requester
 OpenSessionRequest/session_id
 ParticipantVerdict/agent
 ParticipantVerdict/recommendation
@@ -434,6 +435,8 @@ ReportOutcomeRequest/reward
 ReportOutcomeRequest/verified_by
 ReportOutcomeResponse/recorded
 ReportOutcomeResponse/wire_features
+Requester/id
+Requester/kind
 ResolveContextRequest/refs
 ResolveContextResponse/bindings
 ResumeRequest/budget
@@ -574,6 +577,8 @@ ExplanationKind#EXPLANATION_KIND_OBJECTION
 ExplanationKind#EXPLANATION_KIND_PROPOSAL
 ExplanationKind#EXPLANATION_KIND_UNSPECIFIED
 ExplanationKind#EXPLANATION_KIND_VOTE
+RequesterKind#REQUESTER_KIND_HUMAN
+RequesterKind#REQUESTER_KIND_UNSPECIFIED
 SealAttestationAvailability#SEAL_ATTESTATION_AVAILABILITY_ARCHIVED
 SealAttestationAvailability#SEAL_ATTESTATION_AVAILABILITY_CLEARANCE_DENIED
 SealAttestationAvailability#SEAL_ATTESTATION_AVAILABILITY_KEY_UNAVAILABLE

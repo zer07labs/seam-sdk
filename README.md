@@ -441,6 +441,23 @@ so it is `SeamAdminClient.resume_session(session_id, approver, …)`, not a data
 `uint64` budget dimensions are `bigint` in TypeScript and `int` in Python. The live 6.2 suspend→raise→resume
 loop is covered by `test_budget_suspend_resume_loop` (Python) and the "6.2 budget loop" test (TS).
 
+### Requester (RT4, runtime 0.95.0)
+
+`open_session(…, requester="p_…")` (TS: `openSession(agent, { …, requester: "p_…" })`) names the human
+principal the session was opened for, as the control plane's **pseudonymous** principal id. It is
+optional: omitted, the request carries no `requester` and behaves exactly as before. It is
+caller-asserted metadata, enters no digest or event, and the runtime stores it sealed as personal data.
+
+- The SDK sends `requester { kind: REQUESTER_KIND_HUMAN, id }`, the gRPC/proto spelling (proto JSON:
+  `"REQUESTER_KIND_HUMAN"` or `1`). The runtime's own HTTP `POST /v1/sessions` route spells the kind
+  `"human"` and refuses the proto spelling; this SDK speaks gRPC only, so that never applies to it.
+- The id must be `p_` followed by `[A-Za-z0-9._:-]`, 3–128 bytes in total. A raw email or IdP subject is
+  refused. The SDK checks this before any RPC (Python `ValueError`, TS `RangeError`), and the runtime
+  refuses it again with `INVALID_ARGUMENT`. Neither error echoes the id. `valid_requester_id` /
+  `validRequesterId` exposes the check.
+- Go, Java and Kotlin have no hand-written session builders. They set `OpenSessionRequest.requester`
+  on the generated stubs, and only the runtime checks the id.
+
 ## Request features (advisory serving)
 
 `run_decision`/`runDecision` take an optional `features` map (`dict[str, str]` / `Record<string, string>`).
