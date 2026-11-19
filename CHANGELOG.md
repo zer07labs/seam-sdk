@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.97.0 — 2026-11-19
+
 ### Added — the `SUBJECT_ERASED` refusal, in all five languages (runtime 0.96.0, #383)
 
 - The runtime refuses a session open or a one-shot decision when a subject it binds (the opener/trust subject or an `on_behalf_of` subject) carries a GDPR erasure tombstone in the tenant (seam-runtime#1774): gRPC `PERMISSION_DENIED`, reason `SUBJECT_ERASED`, a fixed message naming no subject.
