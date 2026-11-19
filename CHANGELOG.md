@@ -22,6 +22,7 @@ than trusting a summary here.
 - The id is checked locally against the runtime's rule (`p_` + `[A-Za-z0-9._:-]`, 3–128 bytes) before any RPC, including the admit handshake. A refusal raises `ValueError` / `RangeError` and never echoes the id. `valid_requester_id` / `validRequesterId` and the byte bounds are exported.
 - `RequesterKind` is request-only: no response message carries it, so the fail-closed verdict readers (`_collective.py`, `errors.py`) never meet it and are unchanged. The five new names are recorded in `contract/field-manifest.txt`.
 - Go, Java and Kotlin carry the field through the regenerated stubs (they have no hand-written session builders).
+- `verify/docs/evidence-bundle.v1.md` is re-pinned to seam-runtime `59cae17` (0.97.0, #1782): an erased record now withholds `context` too, and `commitment`/`binding` share one "the record is erased" reason. It is withheld-table prose only, so no verifier code changes (`context.json` was already optional, and `withheld` is printed verbatim).
 - seam-verify 0.5.0 was published to Cloudsmith internal on 2026-11-18 (owner decision, manual `publish-verify` dispatch). It is the first published verifier with entry recompute, the uncovered refusal, and `session_cancelled` (#378).
 
 ## 0.94.0 — 2026-11-17
