@@ -297,6 +297,23 @@ test("unary data-plane wrappers default to the 2s deadline and accept an overrid
   assert.equal(calls[2]!.timeoutMs, 88);
 });
 
+// ── SessionStep.decidedValue (runtime 0.98.0, seam-runtime#1785) ────────────────────────────────
+// submitCommit returns the generated step unchanged: `decidedValue` is set only on the step that
+// freshly sealed this call's own commitment, and is `undefined` (never "") everywhere else.
+
+test("submitCommit surfaces the sealing step's decidedValue and keeps absence distinct from empty", async () => {
+  const replies: Array<Record<string, unknown>> = [
+    { state: "Resolved", decidedValue: "approve" },
+    { state: "Resolved", decidedValue: "" },
+    { state: "Open" },
+  ];
+  let i = 0;
+  const client = new SeamClient(fakeTransport([], () => replies[i++]!));
+  assert.equal((await client.submitCommit("s1", "c1", "approve")).decidedValue, "approve");
+  assert.equal((await client.submitCommit("s1", "c1", "approve")).decidedValue, "");
+  assert.equal((await client.submitCommit("s1", "c1", "approve")).decidedValue, undefined);
+});
+
 // ── The per-request credential (`seam-request-call-v1`, #508): every target verb ─────────────────
 
 const CREDENTIAL_TICKET = new Uint8Array([1, 2, 3, 9, 9]);

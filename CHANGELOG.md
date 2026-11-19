@@ -16,6 +16,14 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added — `SessionStep.decided_value`, the sealing step's decided value (runtime 0.98.0, seam-runtime#1785)
+
+- `seam.api.v1` `SessionStep` gains `optional string decided_value = 7`. It is set only on the commit step that
+  freshly sealed this call's own commitment: the commitment's action as sealed, after ingress redaction. Every other
+  step withholds it. A caller that sealed no longer needs a `ReplayDecision` read-back to learn the value.
+- All five SDKs return the generated step unchanged, so read it with presence: Python
+  `step.HasField("decided_value")`, TS `step.decidedValue !== undefined`. An empty string is a sealed value, not absence.
+
 ## 0.97.0 — 2026-11-19
 
 ### Added — the `SUBJECT_ERASED` refusal, in all five languages (runtime 0.96.0, #383)
