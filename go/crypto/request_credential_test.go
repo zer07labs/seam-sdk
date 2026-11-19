@@ -153,3 +153,9 @@ func TestSessionUnavailableReasonIsTheRuntimeLiteral(t *testing.T) {
 		t.Fatalf("SessionUnavailableReason = %q", SessionUnavailableReason)
 	}
 }
+
+func TestSubjectErasedReasonIsTheRuntimeLiteral(t *testing.T) {
+	if SubjectErasedReason != "SUBJECT_ERASED" {
+		t.Fatalf("SubjectErasedReason = %q", SubjectErasedReason)
+	}
+}

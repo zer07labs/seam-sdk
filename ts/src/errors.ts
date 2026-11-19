@@ -119,6 +119,12 @@ export const PROTOCOL_REASON = "PROTOCOL";
  * TTL), or 1s while the store is down. A single-replica runtime never returns it. **Retryable** —
  * see {@link isSessionUnavailable} and {@link withSessionRetry}. */
 export const SESSION_UNAVAILABLE_REASON = "SESSION_UNAVAILABLE";
+/** `ErrorInfo.reason` of a `PERMISSION_DENIED` (HTTP 403) refusal: a subject the request binds (the
+ * opener/trust subject or an `onBehalfOf` subject) carries a GDPR erasure tombstone in the tenant
+ * (seam-runtime#1774, runtime 0.96.0). **Not retryable**: the same request is always refused. The
+ * message is a fixed string naming no subject or commitment; branch on this reason only — see
+ * {@link isSubjectErased}. */
+export const SUBJECT_ERASED_REASON = "SUBJECT_ERASED";
 /** `ErrorInfo.reason` of a `FAILED_PRECONDITION` refusal: the call reached a cell that does not hold the
  * caller's tenant (seam-runtime k8s P15, D123; runtime 0.58.0). {@link SeamRpcError.errorMetadata}
  * names the `cell` that answered and the fleet root it routed by (`root_snapshot_id`,
@@ -294,7 +300,7 @@ export class InvalidArgumentError extends SeamRpcError {}
  * the runtime now answers a `POLICY_DENIED` with `PERMISSION_DENIED`, the MACP error-code registry's
  * status (RFC-MACP-0006 §13) — see {@link PermissionDeniedError}. */
 export class FailedPreconditionError extends SeamRpcError {}
-/** `PERMISSION_DENIED` — shared by four refusal classes, so **branch on** `reason`, **never on the
+/** `PERMISSION_DENIED` — shared by five refusal classes, so **branch on** `reason`, **never on the
  * status or the message text**:
  *
  * - `POLICY_DENIED` — the bound coordination policy refused the commitment (ballots, objections,
@@ -304,7 +310,9 @@ export class FailedPreconditionError extends SeamRpcError {}
  *   address objections) and commit again. No `macpCode` by contract.
  * - `SCOPE_DENIED` — the caller's credential lacks the scope for the action (the R8 floor).
  * - `FACT_ATTESTOR_REJECTED` — a fact's attestor is not accepted.
- * - `PROTOCOL` with `macpCode` `FORBIDDEN` — MACP refused the sender. */
+ * - `PROTOCOL` with `macpCode` `FORBIDDEN` — MACP refused the sender.
+ * - `SUBJECT_ERASED` — a subject the request binds has been erased in the tenant (runtime 0.96.0).
+ *   **Not retryable**; see {@link isSubjectErased}. */
 export class PermissionDeniedError extends SeamRpcError {}
 /** `UNAUTHENTICATED` — a refused admission ticket / request credential, or a missing or invalid
  * management operator token. Thrown from `authorize`, a credentialed read (`sessionStatus`,
@@ -332,6 +340,11 @@ export function isNotGoverned(e: unknown): boolean {
   if (!(e instanceof InvalidArgumentError)) return false;
   if (e.reason === NOT_GOVERNED_REASON) return true;
   return e.reason === "COORDINATION" && e.errorMetadata?.cause === NOT_GOVERNED_REASON;
+}
+
+/** True for the runtime's `SUBJECT_ERASED` refusal (see {@link SUBJECT_ERASED_REASON}). Never retryable. */
+export function isSubjectErased(e: unknown): boolean {
+  return e instanceof PermissionDeniedError && e.reason === SUBJECT_ERASED_REASON;
 }
 
 /** True for the runtime's `SESSION_UNAVAILABLE` refusal (see {@link SESSION_UNAVAILABLE_REASON}). */

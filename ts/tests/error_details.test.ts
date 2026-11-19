@@ -22,6 +22,9 @@ import { Agent, SeamClient } from "../src/client.js";
 import {
   PermissionDeniedError,
   ResourceExhaustedError,
+  SUBJECT_ERASED_REASON,
+  isRetryable,
+  isSubjectErased,
   SeamRpcError,
   UnauthenticatedError,
   UnavailableError,
@@ -126,11 +129,23 @@ test("an unknown macpCode is surfaced raw, not dropped", () => {
 test("the PERMISSION_DENIED classes are told apart by reason", () => {
   // POLICY_DENIED moved from FAILED_PRECONDITION to PERMISSION_DENIED, which it now shares with two
   // other classes. The status cannot tell them apart; the reason can.
-  for (const reason of ["POLICY_DENIED", "SCOPE_DENIED", "FACT_ATTESTOR_REJECTED"]) {
+  for (const reason of ["POLICY_DENIED", "SCOPE_DENIED", "FACT_ATTESTOR_REJECTED", "SUBJECT_ERASED"]) {
     const err = mapped(Code.PermissionDenied, statusOf(7, errorInfo(reason)));
     assert.ok(err instanceof PermissionDeniedError);
     assert.equal(err.reason, reason);
   }
+});
+
+test("SUBJECT_ERASED is recognised by reason only and never retryable (runtime 0.96.0, #1774)", () => {
+  assert.equal(SUBJECT_ERASED_REASON, "SUBJECT_ERASED");
+  const err = mapped(Code.PermissionDenied, statusOf(7, errorInfo("SUBJECT_ERASED")));
+  assert.equal(isSubjectErased(err), true);
+  assert.equal(isRetryable(err), false);
+  for (const other of ["POLICY_DENIED", "SCOPE_DENIED"]) {
+    assert.equal(isSubjectErased(mapped(Code.PermissionDenied, statusOf(7, errorInfo(other)))), false);
+  }
+  assert.equal(isSubjectErased(mapped(Code.Unavailable, statusOf(14, errorInfo("SUBJECT_ERASED")))), false);
+  assert.equal(isSubjectErased(new Error("SUBJECT_ERASED")), false);
 });
 
 test("macpCode is only read on a PROTOCOL reason", () => {

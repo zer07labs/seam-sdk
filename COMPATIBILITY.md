@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:1045`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:1051`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -188,7 +188,7 @@ gRPC: the runtime ignores a stale `now_millis` tag and uses its own clock.
 and opt-in load-shed retry hooks. The runtime's next release must be 0.83.0 or later because
 0.82.1 is reserved here. `NOT_GOVERNED_REASON` requires seamd >= 0.82.0; status remains
 INVALID_ARGUMENT and the wire message is unchanged. Recognition checks reason first, then the
-COORDINATION cause metadata (`python/seam_sdk/errors.py:521`, `ts/src/errors.ts:328`).
+COORDINATION cause metadata (`python/seam_sdk/errors.py:528`, `ts/src/errors.ts:336`).
 
 **Runtime 0.86.0 adopts MACP semantics rev 5 (MACP 0.14.1) for new sessions** (seam-runtime#1703).
 The sealed `SessionStart` bytes of new sessions differ; records sealed earlier still verify. No API,
@@ -279,7 +279,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2116-2138`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2122-2144`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -376,6 +376,7 @@ grpc-java 1.66.0, both as floors that a caller's newer gRPC replaces.
 | Send `x-seam-tenant` on every call, IssueChallenge and Admit included (k8s P15, D123) | `SeamClient.connect(tenant=)` (sync + aio); `TenantInterceptor` / `AioTenantInterceptor` | `SeamClient.connect(url, { tenant })`; `tenantHeaderInterceptor` | `routing.WithTenant` (`UnaryInterceptor` / `StreamInterceptor`) | `TenantRouting.interceptor` | `TenantRouting.interceptor` |
 | Read ErrorInfo metadata; `WRONG_CELL` (D123, runtime 0.58.0), never retryable | `error_metadata`, `WRONG_CELL_REASON`, `is_wrong_cell` | `errorMetadata`, `WRONG_CELL_REASON`, `isWrongCell` | `routing.SeamErrorInfo`, `routing.WrongCellReason`, `routing.IsWrongCell` | `TenantRouting.errorInfo`, `WRONG_CELL_REASON`, `isWrongCell` | `TenantRouting.errorInfo`, `WRONG_CELL_REASON`, `isWrongCell` |
 | `TENANT_MOVING` (k8s P16, runtime 0.59.0), retryable after `RetryInfo`; `move_id` / `target_cell` in the metadata | `TENANT_MOVING_REASON`, `is_tenant_moving`; `is_retryable` and `with_session_retry` include it | `TENANT_MOVING_REASON`, `isTenantMoving`; `isRetryable` and `withSessionRetry` include it | `routing.TenantMovingReason`, `routing.IsTenantMoving` | `TENANT_MOVING_REASON`, `isTenantMoving` | `TENANT_MOVING_REASON`, `isTenantMoving` |
+| `SUBJECT_ERASED` (#1774, runtime 0.96.0): `PERMISSION_DENIED`, a bound subject is erased; never retryable, fixed message | `SUBJECT_ERASED_REASON`, `is_subject_erased`; not in `is_retryable` | `SUBJECT_ERASED_REASON`, `isSubjectErased`; not in `isRetryable` | `crypto.SubjectErasedReason` | `RequestCredentials.SUBJECT_ERASED_REASON` | `RequestCredentials.SUBJECT_ERASED_REASON` |
 | Classify it, and an opt-in retry loop (D79) | `is_retryable` / `is_session_unavailable`, `with_session_retry` (+ `_async`) | `isRetryable` / `isSessionUnavailable`, `withSessionRetry` | N/A, no client | N/A, no client | N/A, no client |
 
 Go, Java and Kotlin have no client to bind an agent to, so their #202 default lives on a

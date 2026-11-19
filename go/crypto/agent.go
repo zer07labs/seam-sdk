@@ -73,6 +73,12 @@ const RequestSigContext = "seam-request-call-v1"
 // resending, or the resend is refused UNAUTHENTICATED request_replayed.
 const SessionUnavailableReason = "SESSION_UNAVAILABLE"
 
+// SubjectErasedReason is the ErrorInfo.reason (domain seam.zer07labs.com) of a PERMISSION_DENIED (HTTP 403) refusal: a subject the
+// request binds (the opener/trust subject or an on_behalf_of subject) carries a GDPR erasure tombstone in the
+// tenant (seam-runtime#1774, runtime 0.96.0). Not retryable: the same request is always refused. The message is a
+// fixed string naming no subject or commitment, so branch on this reason, never on the text.
+const SubjectErasedReason = "SUBJECT_ERASED"
+
 // RequestSigPayload is the exact byte string RequestSig signs:
 //
 //	frame(context) | frame(ticket) | frame(rpc_full_name) | frame(resource_id) | frame(body_digest)

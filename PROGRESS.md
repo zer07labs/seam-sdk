@@ -35,7 +35,7 @@ Checkpoint trail and repo map for #275 (B-SDK-REFRESH) and #274 (B-CORE-FACTS). 
 - `ts/src/index.ts`: TS public exports.
 - `ts/tests/unit_plumbing.test.ts`: refresh tests at :549/:581, the fake's `UnauthenticatedError` at :244, `deferRejections` at :248.
 - `ts/tests/identity_file.test.ts` plus `ts/tests/fixtures/identity_v1_python.json`: the exact key list is at :103, the cross-language byte test at :226.
-- `go/identity/identity.go` plus `identity_test.go`: `LoadIdentityFile` at :66, `CreateIdentityFile` at :128. No client exists (`go/crypto/agent.go:105`).
+- `go/identity/identity.go` plus `identity_test.go`: `LoadIdentityFile` at :66, `CreateIdentityFile` at :128. No client exists (`go/crypto/agent.go:111`).
 - `java/src/main/java/com/zer07labs/seam/IdentityFile.java` plus `IdentityFileTest.java`: `load` at :84, `loadResolved` at :94, `create` at :176.
 - `kotlin/src/main/kotlin/com/zer07labs/seam/IdentityFile.kt` plus `IdentityFileTest.kt`: `load` at :67, `create` at :138.
 - `README.md`:
@@ -4069,7 +4069,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:2147`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:2153`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -4556,12 +4556,12 @@ green before any code changed.
   this — "rather than refusing outright" was wrong, fixed before merge). (2) the release's
   `retitle_changelog.sh` run shifted `CHANGELOG.md`'s "No yank" paragraph from line 1054 to 1056
   (a +2 insert right after `## Unreleased`), pushing `COMPATIBILITY.md:135` and
-  `DECISIONS.md:1222`'s `CHANGELOG.md:1924-1941` citations past the citation test's slack
-  tolerance; repointed both to `CHANGELOG.md:1926-1943`. Tested: `check_vendored_spec.py` OK via both
+  `DECISIONS.md:1222`'s `CHANGELOG.md:1930-1947` citations past the citation test's slack
+  tolerance; repointed both to `CHANGELOG.md:1932-1949`. Tested: `check_vendored_spec.py` OK via both
   `--from local` and `--from gh`; `test_compatibility_citations_resolve.py` 489 passed/0 failed
   standalone (was 4 failed). Verifier also flagged two pre-existing, gate-invisible citations
   elsewhere that the same +2 shift widened further — `DECISIONS.md:2035` cites
-  `CHANGELOG.md:1826` and `PROGRESS.md:3981` cites `CHANGELOG.md:1711`, both already ~130-250
+  `CHANGELOG.md:1832` and `PROGRESS.md:3981` cites `CHANGELOG.md:1717`, both already ~130-250
   lines stale before this release — out of scope for this release-unblock hotfix; filed as a
   follow-up issue rather than folded in here.
   **Rebased `feat/verify-anchor-tenant` onto this commit during `/sweep`'s ship pass.** Four
@@ -4571,7 +4571,7 @@ green before any code changed.
   `CHANGELOG.md`/`COMPATIBILITY.md`/`DECISIONS.md`: the feature branch's own new
   `## Unreleased` entry (16 lines) was kept above this hotfix's `## 0.33.3` header, which
   shifted "No yank" from this entry's `1056` to `1072` and recomputed the two citations above
-  (`CHANGELOG.md:1926-1943`) to `CHANGELOG.md:1942-1959` — verified against the exact
+  (`CHANGELOG.md:1932-1949`) to `CHANGELOG.md:1948-1965` — verified against the exact
   paragraph-boundary text at both the old and new line numbers before trusting the new range,
   not just the arithmetic. A dedicated ship-gate verifier independently re-derived this same
   shift from the diff and confirmed it exact.
@@ -5376,7 +5376,7 @@ not filed here. OQ-1 is resolved, so no phase is gated.
     - TSDoc carries the "operator alteration breaks the chain re-verify" sentence;
     - re-anchored `PROGRESS.md:163` (`confidence`, now `ts/src/client.ts:1658`).
   - Files: `ts/src/client.ts` (allocationOf + interfaces after sealAttestationOf), `ts/src/index.ts` (EIGHT dual-declared names), `ts/tests/allocation.test.ts` (new; reads the Python fixture), `ts/tests/integration.test.ts`.
-  - The client.ts insertion shifted citations by 149: `COMPATIBILITY.md:677,803` and `PROGRESS.md:160,162` were re-anchored.
+  - The client.ts insertion shifted citations by 149: `COMPATIBILITY.md:678,803` and `PROGRESS.md:160,162` were re-anchored.
   - Results: TS typecheck/build clean, 567 tests pass; pytest 2601 passed.
   - Plan drift: `test_shadowed_names_comment.py` needed no edit, because it derives the count word.
   - Next: P3 + P4 (batched simple).

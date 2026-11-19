@@ -16,6 +16,12 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added — the `SUBJECT_ERASED` refusal, in all five languages (runtime 0.96.0, #383)
+
+- The runtime refuses a session open or a one-shot decision when a subject it binds (the opener/trust subject or an `on_behalf_of` subject) carries a GDPR erasure tombstone in the tenant (seam-runtime#1774): gRPC `PERMISSION_DENIED`, reason `SUBJECT_ERASED`, a fixed message naming no subject.
+- `SUBJECT_ERASED_REASON` in every SDK (Go `crypto.SubjectErasedReason`, Java/Kotlin `RequestCredentials.SUBJECT_ERASED_REASON`). Python `is_subject_erased` and TS `isSubjectErased` recognise it on `PermissionDeniedError` by reason only.
+- It is **never retryable**: `is_retryable` / `isRetryable` stay false for it, so `with_session_retry` never loops on it. It already mapped to `PermissionDeniedError` with `reason == "SUBJECT_ERASED"` before this change; what is new is the name, the predicate and the documented class.
+
 ### Added — `open_session` takes an optional `requester` (RT4, runtime 0.95.0, #381)
 
 - `seam.api.v1` gains `OpenSessionRequest.requester = 10 { RequesterKind kind; string id }` (seam-runtime#1776). Python (`open_session(…, requester=…)`, sync and aio) and TS (`openSession(…, { requester })`) send `{REQUESTER_KIND_HUMAN, id}` when it is given, and nothing when it is not.

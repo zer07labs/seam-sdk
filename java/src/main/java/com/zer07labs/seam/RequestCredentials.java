@@ -34,6 +34,14 @@ public final class RequestCredentials {
   public static final String SESSION_UNAVAILABLE_REASON = "SESSION_UNAVAILABLE";
 
   /**
+   * The ErrorInfo.reason (domain seam.zer07labs.com) of a PERMISSION_DENIED (HTTP 403) refusal: a subject the
+   * request binds (the opener/trust subject or an on_behalf_of subject) carries a GDPR erasure tombstone in the
+   * tenant (seam-runtime#1774, runtime 0.96.0). Not retryable: the same request is always refused. The message is a
+   * fixed string naming no subject or commitment, so branch on this reason, never on the text.
+   */
+  public static final String SUBJECT_ERASED_REASON = "SUBJECT_ERASED";
+
+  /**
    * Returns a live admission ticket for {@code agent}. The Java SDK carries no transport, so the
    * caller's own client admits ({@link SeamCrypto#buildPresentation} → Admit) and caches.
    */
