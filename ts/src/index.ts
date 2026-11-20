@@ -5,6 +5,17 @@
 // governance), which targets a separate endpoint with an optional bearer token.
 
 export * from "./client.js";
+export {
+  CLEARANCES,
+  CLEARANCE_CONFIDENTIAL,
+  CLEARANCE_FINANCIAL,
+  CLEARANCE_HEADER,
+  CLEARANCE_INTERNAL,
+  CLEARANCE_PHI,
+  CLEARANCE_PII,
+  CLEARANCE_PUBLIC,
+  type Clearance,
+} from "./clearance.js";
 export * from "./admin.js";
 export * from "./outcome.js";
 export * from "./certificate.js";

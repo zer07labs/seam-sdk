@@ -698,11 +698,27 @@ the raw `DecisionRecordView`. Read it through three decoders rather than the raw
   ```
 
 The attestation and the allocation are chain-bound but **not client-verifiable**: neither is a TCT input, so
-`verify_decision` covers neither, and of these `verify/` sees only the chained `ciphertext_digest`, never the contents. Reads go at clearance **PUBLIC** (the SDK sends no
-`x-seam-clearance`), so a record whose handling rule needs more reads `CLEARANCE_DENIED`, never an
+`verify_decision` covers neither, and of these `verify/` sees only the chained `ciphertext_digest`, never the contents. Reads go at clearance **PUBLIC** unless you pass
+`clearance=` (below), so a record whose handling rule needs more reads `CLEARANCE_DENIED`, never an
 error. Participant verdicts are not on the view: read them from `get_commitment_proof`.
 `policy_version` and `policy_rules_digest` are display values with no presence, not
 `record_digest_v4` inputs. Go, Java and Kotlin carry the generated fields only, with no decoders.
+
+**Clearance on the decision reads (#384).** `get_decision`, `replay_decision`, `get_commitment_proof`
+and `verify_decision` take an opt-in `clearance=` (TypeScript: `{ clearance }`), sent as
+`x-seam-clearance`. It must be exactly `Public`, `Internal`, `Confidential`, `Financial`, `Pii` or `Phi`
+(`CLEARANCES`); anything else raises before any call, because the runtime would quietly read an unknown
+label as `Public`. Omitted, nothing is sent. On `get_decision` it decides whether the seal attestation
+and allocation read `CLEARANCE_DENIED`; on replay (runtime 0.101.0+) and proof it decides
+`PERMISSION_DENIED`. The runtime honours it only on a plane in `allow` subject-header posture (behind a
+trusted gateway); a `deny` or peer-cert plane strips it. Go: `clearance.NewContext`; Java/Kotlin:
+`Clearance.X.interceptor()`. Details: `COMPATIBILITY.md` §4.
+
+```python
+from seam_sdk import CLEARANCE_FINANCIAL
+
+view = client.replay_decision(decision_id, credential=agent, clearance=CLEARANCE_FINANCIAL)
+```
 
 **Async (Python).** `seam_sdk.aio` mirrors the full data-plane `SeamClient` for `asyncio` (same
 signatures, shared ticket core). The management plane is **sync-only by design** — an async operator

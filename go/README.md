@@ -50,6 +50,15 @@ Also, outside `vectors.json`:
   `VerifyVoterPop`, `VerifyVoterRecord` and `VerifyCommitmentVoters` re-check proofs and sealed
   records offline.
 
+- **`clearance`** (#384) — the caller's decrypt clearance on the decision reads (`GetDecision`,
+  `ReplayDecision` on runtime 0.101.0+, `GetCommitmentProof`), per call:
+  `ctx, err := clearance.NewContext(ctx, clearance.Financial)`, then call the generated stub with `ctx`.
+  The value is exactly one of `Public`, `Internal`, `Confidential`, `Financial`, `Pii`, `Phi`
+  (case-sensitive); anything else returns `ErrClearance` and sends nothing. A second `NewContext`
+  replaces the value. Without it, no `x-seam-clearance` is sent. The runtime honours the header only
+  on a plane in `allow` subject-header posture; a `deny` or peer-cert plane strips it, so the read is
+  at `Public`.
+
 The vector file's `chain_head_attestation` and `record_digest_v2` sections — like the call-sig/JCS
 surface — are exercised by the full Python/TypeScript clients only, not by this shim.
 

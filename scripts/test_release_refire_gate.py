@@ -407,8 +407,15 @@ def _dry_run(
     base = git("rev-parse", "HEAD").strip()
 
     (bin_dir / "gh").write_text(_GH)
-    for tool in ("buf", "make"):
-        (bin_dir / tool).write_text("#!/bin/bash\nexit 0\n")
+    # The `buf` stub must DRAIN stdin, as the real `buf registry login --token-stdin` does. The fresh
+    # step runs `printf ... | buf registry login --token-stdin` under `pipefail`; a stub that exits
+    # without reading races printf, and when the stub wins printf takes SIGPIPE (141) and the fresh
+    # gate reads as RED. On a loaded Linux runner that is ~1 in 1000, and it is #391: a dry run
+    # that meant to exercise the release commit's CI refused at the fresh gate instead.
+    (bin_dir / "buf").write_text(
+        '#!/bin/bash\n[[ " $* " == *" --token-stdin "* ]] && cat >/dev/null\nexit 0\n'
+    )
+    (bin_dir / "make").write_text("#!/bin/bash\nexit 0\n")
     for f in bin_dir.iterdir():
         f.chmod(0o755)
 
@@ -462,6 +469,7 @@ def _dry_run(
             ],
             cwd=wc,
             env=env,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
         )
@@ -494,6 +502,17 @@ def _dry_run(
     }
 
 
+def _why(r: dict) -> str:
+    """The whole dry run, untruncated: pytest elides the middle of a long `in` operand, which is
+    exactly where the refusal reason sits (#391)."""
+    errors = "\n".join(f"--- {k} ---\n{v}" for k, v in r["errors"].items())
+    return (
+        f"\n=== issue body ===\n{r['issue_body']}\n=== steps run ===\n"
+        + "\n".join(r["ran"])
+        + f"\n=== failed steps' output ===\n{errors}"
+    )
+
+
 def test_the_dry_run_version_is_never_the_in_tree_version() -> None:
     tree = json.loads((REPO / "ts" / "package.json").read_text())["version"]
     assert DRY_RUN_VERSION != tree
@@ -511,7 +530,7 @@ def test_a_red_fresh_gate_leaves_no_commit_and_no_tag(tmp_path: Path) -> None:
         f"<!-- release-pending version={DRY_RUN_VERSION} wire_framing_version=3 -->"
         in r["issue_body"]
     )
-    assert "fresh contract gate: failure" in r["issue_body"]
+    assert "fresh contract gate: failure" in r["issue_body"], _why(r)
 
 
 def test_a_green_fresh_gate_really_tags(tmp_path: Path) -> None:
@@ -578,7 +597,7 @@ def test_a_red_release_commit_ci_leaves_main_untouched_and_no_tag(
     assert r["origin_branches"] == ["main"], (
         "the refused release branch was left behind"
     )
-    assert "release commit ci-ok: failure" in r["issue_body"]
+    assert "release commit ci-ok: failure" in r["issue_body"], _why(r)
 
 
 def test_a_release_commit_ci_that_never_settles_is_a_refusal(tmp_path: Path) -> None:
@@ -597,7 +616,7 @@ def test_main_moving_during_release_ci_refuses_the_tag(tmp_path: Path) -> None:
     assert r["origin_head"] != r["base"], (
         "the other commit must survive (no force push)"
     )
-    assert "advance main and tag: failure" in r["issue_body"]
+    assert "advance main and tag: failure" in r["issue_body"], _why(r)
 
 
 def test_the_release_commit_ci_runs_on_the_release_branch() -> None:

@@ -17,6 +17,7 @@ from typing import Any, Callable, Dict, Mapping, Optional, Sequence, TypeVar
 import grpc
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from ._clearance import _check_clearance, _with_clearance
 from ._authorize import (
     AuthorizeResult,
     TicketCache,
@@ -1205,6 +1206,7 @@ class SeamClient:
         decision_id: str,
         *,
         credential: Optional[Agent] = None,
+        clearance: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.DecisionRecordView:
         """``credential``, when supplied, carries the caller's identity in band (#508) — the sound
@@ -1223,14 +1225,23 @@ class SeamClient:
         Returns the raw view. Read its policy enforcement with
         :func:`~seam_sdk.policy_enforcement_of` and its seal attestation with
         :func:`~seam_sdk.seal_attestation_of` (runtime 0.61.0+) and its experiment allocation with
-        :func:`~seam_sdk.allocation_of` (runtime 0.76.0+) rather than the raw fields."""
+        :func:`~seam_sdk.allocation_of` (runtime 0.76.0+) rather than the raw fields.
+
+        ``clearance`` (one of :data:`~seam_sdk.CLEARANCES`, exact) sends ``x-seam-clearance`` on this
+        read; the same option is on :meth:`replay_decision` (runtime 0.101.0+),
+        :meth:`get_commitment_proof` and :meth:`verify_decision`. ``None`` (the default) sends no
+        header. Anything else raises ``ValueError`` before any RPC. The runtime honours it only on an
+        ``allow``-posture plane; elsewhere the read stays at ``Public`` (see ``COMPATIBILITY.md``)."""
+        _check_clearance("get_decision", clearance)
         return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/GetDecision",
             decision_id,
             None,
             lambda md: self._coord.GetDecision(
-                pb.DecisionRef(decision_id=decision_id), timeout=timeout, metadata=md
+                pb.DecisionRef(decision_id=decision_id),
+                timeout=timeout,
+                metadata=_with_clearance(md, clearance),
             ),
             timeout=timeout,
         )
@@ -1240,15 +1251,19 @@ class SeamClient:
         decision_id: str,
         *,
         credential: Optional[Agent] = None,
+        clearance: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.ReplayView:
+        _check_clearance("replay_decision", clearance)
         return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/ReplayDecision",
             decision_id,
             None,
             lambda md: self._coord.ReplayDecision(
-                pb.DecisionRef(decision_id=decision_id), timeout=timeout, metadata=md
+                pb.DecisionRef(decision_id=decision_id),
+                timeout=timeout,
+                metadata=_with_clearance(md, clearance),
             ),
             timeout=timeout,
         )
@@ -1522,15 +1537,19 @@ class SeamClient:
         decision_id: str,
         *,
         credential: Optional[Agent] = None,
+        clearance: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.CommitmentProof:
+        _check_clearance("get_commitment_proof", clearance)
         return self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/GetCommitmentProof",
             decision_id,
             None,
             lambda md: self._coord.GetCommitmentProof(
-                pb.DecisionRef(decision_id=decision_id), timeout=timeout, metadata=md
+                pb.DecisionRef(decision_id=decision_id),
+                timeout=timeout,
+                metadata=_with_clearance(md, clearance),
             ),
             timeout=timeout,
         )
@@ -1541,6 +1560,7 @@ class SeamClient:
         expected_issuer: str,
         *,
         credential: Optional[Agent] = None,
+        clearance: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> bool:
         """Fetch a sealed decision's proof and verify its rooted TCT locally — zero server trust.
@@ -1559,7 +1579,7 @@ class SeamClient:
         to the client's bound agent, which a credential-only deployment needs for this subject-scoped read.
         """
         proof = self.get_commitment_proof(
-            decision_id, credential=credential, timeout=timeout
+            decision_id, credential=credential, clearance=clearance, timeout=timeout
         )
         if proof.issuer_aid != expected_issuer:
             raise IssuerMismatchError(proof.issuer_aid, expected_issuer)
