@@ -441,8 +441,8 @@ function u32be64(name: string, n: number | bigint): Uint8Array {
 /** The canonical selection block `body` (`selection-rule.v1.md` §4.2): `F` = `be64(len) ‖ x`, `U` = `be64`.
  * Refuses (throws) a block the runtime could not have sealed — weights not strictly ascending by
  * participant UTF-8 bytes (duplicates included), a `rules_digest` that is not 32 bytes, an empty
- * `winner_proposal_id`, or an integer outside u32 — rather than hashing it. This port frames the block
- * only; the winner recompute (§5 steps 6-9) is in the Rust verifier and the Python SDK. */
+ * `winner_proposal_id`, or an integer outside u32 — rather than hashing it. The winner recompute
+ * (§5 steps 6-9) is {@link verifySelection}, which {@link verifyTct} runs whenever a block is present. */
 export function selectionBody(b: SelectionBlock): Uint8Array {
   const keys = b.weights.map((w) => utf8Field(w.participant, "selection.weights.participant"));
   for (let i = 1; i < keys.length; i++)
@@ -479,6 +479,206 @@ export function selectionBody(b: SelectionBlock): Uint8Array {
 /** `selection_digest = SHA-256(F("seam-selection-digest:v1") ‖ body)` — the 32 bytes v5 field 9 binds. */
 export function selectionDigest(body: Uint8Array): Uint8Array {
   return sha256(concat(frame(enc.encode(SELECTION_DIGEST_DOMAIN)), body));
+}
+
+// ── decide() (§3) and the verifier's selection steps (§5 steps 6-9) ──────────────────────────────────
+// Ports of the Python SDK's `decide` / `verify_selection` (and `verify/src/selection.rs`), reason strings
+// and `at` indices identical. Driven by every `rule_cases` / `sealed_cases` vector.
+
+export const SELECTION_RULE = "seam.selection.weighted_plurality";
+export const SELECTION_RULE_VERSION = 1;
+export const SELECTION_TIE = "no_winner";
+export const SELECTION_ABSTENTION = "excluded_counts_for_quorum";
+/** Selection is admitted only on the decision mode, so the vote-content mode is this constant (§4.2). */
+export const SELECTION_MODE = "macp.mode.decision.v1";
+export const SELECTION_VOTE_VALUES = ["APPROVE", "REJECT", "ABSTAIN"] as const;
+
+/** The selection record `decide` reads: a {@link SelectionBlock} whose winner is ignored (and may be absent). */
+export type SelectionRuleRecord = Omit<SelectionBlock, "winner_proposal_id"> & { winner_proposal_id?: string };
+
+export interface SelectionScore {
+  proposal_id: string;
+  score: number;
+}
+
+/** `decide()`'s outcome. `at` is the entry index of a malformed entry, `null` for a record-level check;
+ * `scores` lists every proposal in sealed order. */
+export type SelectionDecision =
+  | { result: "winner"; winner_proposal_id: string; option: string; scores: SelectionScore[]; ballots: number }
+  | { result: "no_winner"; reason: string; scores: SelectionScore[]; ballots: number }
+  | { result: "malformed"; reason: string; at: number | null };
+
+/** The outcome of {@link verifySelection}. `result` is `"verified"` or one of the spec's verifier result
+ * names; `at` is the entry index where the check failed when the spec names one; `reason` is `decide()`'s
+ * reason for a malformed or no-winner record; `recomputed` is the winner this verifier computed when it
+ * disagrees with the sealed one. */
+export interface SelectionResult {
+  result:
+    | "verified"
+    | "selection_malformed"
+    | "selection_no_winner_sealed"
+    | "selection_winner_mismatch"
+    | "selection_action_mismatch"
+    | "selection_vote_unverified"
+    | "selection_content_link_mismatch"
+    | "selection_principal_not_one_to_one";
+  ok: boolean;
+  winner_proposal_id: string | null;
+  votes_linked: number;
+  at: number | null;
+  reason: string | null;
+  recomputed: string | null;
+}
+
+function selectionResult(result: SelectionResult["result"], extra: Partial<SelectionResult> = {}): SelectionResult {
+  return { result, ok: result === "verified", winner_proposal_id: null, votes_linked: 0, at: null, reason: null, recomputed: null, ...extra };
+}
+
+/** Options and actions compare by their UTF-8 bytes, never normalised. */
+function utf8Key(s: string): string {
+  return Buffer.from(enc.encode(s)).toString("hex");
+}
+
+function recordMalformed(b: SelectionRuleRecord): string | null {
+  if (b.rule !== SELECTION_RULE) return "unknown_rule";
+  if (b.rule_version !== SELECTION_RULE_VERSION) return "unknown_rule_version";
+  if (b.tie !== SELECTION_TIE) return "unknown_tie";
+  if (b.abstention !== SELECTION_ABSTENTION) return "unknown_abstention";
+  const keys = b.weights.map((w) => Buffer.from(enc.encode(w.participant)));
+  for (let i = 1; i < keys.length; i++) if (Buffer.compare(keys[i - 1]!, keys[i]!) >= 0) return "weights_not_canonical";
+  if (b.default_weight === 0 && b.weights.every((w) => w.weight === 0)) return "zero_electorate";
+  if (b.min_ballots === 0) return "min_ballots_zero";
+  if (b.participants.length === 0) return "no_participants";
+  if (new Set(b.participants).size !== b.participants.length) return "duplicate_participant";
+  return null;
+}
+
+/** `decide(record, entries)` (`selection-rule.v1.md` §3): a pure function of the selection record (its
+ * winner is ignored) and the sealed explanation entries (`kind` as the lowercase digest word). */
+export function decide(record: SelectionRuleRecord, entries: readonly ExplanationEntryInput[]): SelectionDecision {
+  const bad = recordMalformed(record);
+  if (bad !== null) return { result: "malformed", reason: bad, at: null };
+  const weights = new Map(record.weights.map((w) => [w.participant, w.weight]));
+  const participants = new Set(record.participants);
+  const proposals = new Map<string, string>();
+  const options = new Set<string>();
+  const voted = new Set<string>();
+  const approvers = new Set<string>();
+  const voters: string[] = [];
+  const approvals: [string, string][] = [];
+  let seenVote = false;
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i]!;
+    const mal = (reason: string): SelectionDecision => ({ result: "malformed", reason, at: i });
+    if (e.kind === "proposal") {
+      if (seenVote) return mal("proposal_after_vote");
+      if (e.voter_verification !== undefined && e.voter_verification !== null) return mal("proposal_has_voter_record");
+      if ((e.reason ?? "") !== "" || (e.confidence !== undefined && e.confidence !== null) || (e.rationale_ref !== undefined && e.rationale_ref !== null))
+        return mal("proposal_has_extra_fields");
+      if (e.proposal_id === "") return mal("empty_proposal_id");
+      if (e.value === "") return mal("empty_option");
+      if (proposals.has(e.proposal_id)) return mal("duplicate_proposal_id");
+      if (options.has(utf8Key(e.value))) return mal("duplicate_option");
+      proposals.set(e.proposal_id, e.value);
+      options.add(utf8Key(e.value));
+    } else if (e.kind === "vote") {
+      seenVote = true;
+      const who = e.participant;
+      const pid = e.proposal_id;
+      if (!proposals.has(pid)) return mal("vote_unknown_proposal");
+      if (!(SELECTION_VOTE_VALUES as readonly string[]).includes(e.value)) return mal("vote_bad_value");
+      if (!participants.has(who)) return mal("vote_not_participant");
+      const pair = JSON.stringify([who, pid]);
+      if (voted.has(pair)) return mal("duplicate_vote");
+      if (e.value === "APPROVE") {
+        if (approvers.has(who)) return mal("double_approve");
+        approvers.add(who);
+        approvals.push([who, pid]);
+      }
+      voted.add(pair);
+      if (!voters.includes(who)) voters.push(who);
+    } else if (e.kind === "evaluation" || e.kind === "objection") {
+      continue; // sealed, never scored (v1 admits no objection veto)
+    } else if (e.kind === "ballot") {
+      return mal("ballot_in_selection");
+    } else {
+      return mal("unknown_kind");
+    }
+  }
+  if (proposals.size === 0) return { result: "malformed", reason: "no_proposals", at: null };
+  const scores = new Map<string, number>([...proposals.keys()].map((p) => [p, 0]));
+  for (const [who, pid] of approvals) scores.set(pid, scores.get(pid)! + (weights.get(who) ?? record.default_weight));
+  const ballots = voters.length;
+  const top = Math.max(...scores.values());
+  const leaders = [...scores].filter(([, sc]) => sc === top).map(([p]) => p);
+  const tally = { scores: [...scores].map(([proposal_id, score]) => ({ proposal_id, score })), ballots };
+  if (ballots < record.min_ballots) return { result: "no_winner", reason: "below_min_ballots", ...tally };
+  if (top === 0) return { result: "no_winner", reason: "no_positive_score", ...tally };
+  if (leaders.length > 1) return { result: "no_winner", reason: "tie", ...tally };
+  return { result: "winner", winner_proposal_id: leaders[0]!, option: proposals.get(leaders[0]!)!, ...tally };
+}
+
+/** {@link decide} under the Python SDK's public name (`seam_sdk.selection_decide`). */
+export const selectionDecide = decide;
+
+function selectionRulesDigest(v: DigestBytes): Uint8Array {
+  if (typeof v === "string" && !/^[0-9a-f]{64}$/.test(v))
+    throw new Error("selection rules_digest must be 64 lowercase hex characters");
+  const b = digestBytes(v, "selection.rules_digest");
+  if (b.length !== 32) throw new Error(`selection rules_digest must be 32 bytes, got ${b.length}`);
+  return b;
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  return a.length === b.length && a.every((x, i) => x === b[i]);
+}
+
+/** §5 steps 6-9 over a selection block, the sealed entries and `Commitment.action`.
+ *
+ * Step 6 recomputes the winner ({@link decide}) and checks it is the sealed one; step 7 checks the
+ * winner's sealed option is `action` byte for byte; step 8 re-derives every vote's `seam-vote-content-v1`
+ * digest from sealed inputs alone and checks it is the one the voter signed (the record's
+ * `content_digest`); step 9 checks participant ↔ principal is one-to-one across the votes. It does not
+ * re-check signatures or the TCT: that is {@link verifyTct}'s, which calls this when the commitment
+ * carries a block. Throws only on an input the codec itself refuses (e.g. a `rules_digest` that is not
+ * 32 bytes); `verifyTct` folds that to `false`. */
+export function verifySelection(block: SelectionBlock, entries: readonly ExplanationEntryInput[], action: string): SelectionResult {
+  const d = decide(block, entries);
+  if (d.result === "malformed") return selectionResult("selection_malformed", { reason: d.reason, at: d.at });
+  if (d.result === "no_winner") return selectionResult("selection_no_winner_sealed", { reason: d.reason });
+  if (d.winner_proposal_id !== block.winner_proposal_id)
+    return selectionResult("selection_winner_mismatch", { recomputed: d.winner_proposal_id });
+  if (utf8Key(d.option) !== utf8Key(action)) return selectionResult("selection_action_mismatch");
+  const proposals = new Map(entries.filter((e) => e.kind === "proposal").map((e) => [e.proposal_id, e.value]));
+  const policy = { policyVersion: block.policy_version, rulesDigest: selectionRulesDigest(block.rules_digest) };
+  const context = block.context.map((c): [string, string] => [c.ctx_ref, c.content_hash]);
+  let linked = 0;
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i]!;
+    if (e.kind !== "vote") continue;
+    const vv = e.voter_verification;
+    if (vv === undefined || vv === null) return selectionResult("selection_vote_unverified", { at: i });
+    const want = voteContentDigest(SELECTION_MODE, e.proposal_id, proposals.get(e.proposal_id)!, block.participants, block.on_behalf_of, context, {
+      features: [],
+      policy,
+    });
+    if (!bytesEqual(digestBytes(vv.content_digest, "voter_verification.content_digest"), want))
+      return selectionResult("selection_content_link_mismatch", { at: i });
+    linked++;
+  }
+  const byParticipant = new Map<string, string>();
+  const byPrincipal = new Map<string, string>();
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i]!;
+    if (e.kind !== "vote") continue;
+    const p = e.participant;
+    const a = e.voter_verification!.principal;
+    if (!byParticipant.has(p)) byParticipant.set(p, a);
+    if (!byPrincipal.has(a)) byPrincipal.set(a, p);
+    if (byParticipant.get(p) !== a || byPrincipal.get(a) !== p)
+      return selectionResult("selection_principal_not_one_to_one", { at: i });
+  }
+  return selectionResult("verified", { winner_proposal_id: d.winner_proposal_id, votes_linked: linked });
 }
 
 /** The `ext` key a Seam commitment self-attestation carries its statement under (RFC-AITP-0005). */
@@ -547,8 +747,10 @@ function isJsonObject(v: unknown): v is Record<string, unknown> {
  * `seam-commitment-digest:v5` of this exact commitment — its decided content, its committer and its
  * sealed explanation. A duplicate JSON key anywhere in the header or payload, a statement carried in
  * `grants` (the retired v2 shape), or an extra grant verifies `false`. Explanation entries that disagree
- * with the published digest, an unknown kind, or a non-canonical confidence verify `false`; this never
- * throws. */
+ * with the published digest, an unknown kind, or a non-canonical confidence verify `false`. When the
+ * commitment carries a `selection` block, the winner is recomputed from the sealed entries
+ * ({@link verifySelection}): a block without `explanation` entries, or any selection result other than
+ * `verified`, verifies `false`. This never throws. */
 export function verifyTct(
   issuerAid: string,
   tctJws: string,
@@ -613,7 +815,16 @@ export function verifyTct(
       return false;
     // Exact string compare: the runtime emits lowercase hex, and an uppercase spelling is a different
     // statement, not a normalization opportunity.
-    return stmt.commitment_digest === seamCommitmentDigest(commitment);
+    if (stmt.commitment_digest !== seamCommitmentDigest(commitment)) return false;
+    // Option selection (runtime 0.90.0, selection-rule.v1 §5 steps 4, 6-9). No block means "not a
+    // selection decision" and nothing more. A block without the entries cannot be checked, so it fails
+    // closed rather than passing as if the winner had been recomputed.
+    const blk = commitment.selection;
+    if (blk !== undefined && blk !== null) {
+      if (entries === undefined || entries === null) return false;
+      return verifySelection(blk, entries, commitment.action).ok;
+    }
+    return true;
   } catch {
     return false;
   }
