@@ -62,10 +62,17 @@ DEMO_MODES = [
     "macp.mode.quorum.v1",
 ]
 
-# The golden operator keys (public halves), as pinned in conformance/registry_snapshot_operator_keys.json.
+# The golden operator keys (public halves), read from conformance/registry_snapshot_operator_keys.json:
+# a byte copy of seam-control-plane's fixtures/registry_snapshot_operator_keys_golden.json (the same
+# bytes seam-runtime pins), so a key rotation there reaches these suites through the re-sync alone.
+_OPERATOR_KEYS_GOLDEN = (
+    pathlib.Path(__file__).resolve().parents[2]
+    / "conformance"
+    / "registry_snapshot_operator_keys.json"
+)
 OPERATOR_KEYS = [
-    "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
-    "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025",
+    k["public_key_hex"]
+    for k in json.loads(_OPERATOR_KEYS_GOLDEN.read_text())["operator_keys"]
 ]
 
 GENERATED_AT = 1

@@ -1,59 +1,18 @@
 {
   "snapshot_id": "snap-operator-keys-1",
   "generated_at": 1751600000000,
-  "tenant": "design-partner",
-  "capability_registry": {
-    "manifests": [
+  "tenant": "default",
+  "tenant_roster": {
+    "schema_version": 1,
+    "tenants": [
       {
-        "agent_id": "lead",
-        "version": "1.0.0",
-        "protocol": "macp",
-        "supported_modes": [
-          "macp.mode.decision.v1"
-        ],
-        "max_scope": {
-          "tools": [
-            "search"
-          ],
-          "actions": [
-            "ALLOW"
-          ],
-          "mode_cap": [
-            "macp.mode.decision.v1"
-          ]
-        },
-        "compat": {
-          "min": 1,
-          "max": 2
-        }
+        "tenant_id": "design-partner",
+        "signer_keys": [
+          "43a72e714401762df66b68c26dfbdf2682aaec9f2474eca4613e424a0fbafd3c"
+        ]
       }
-    ],
-    "pins": []
+    ]
   },
-  "namespaces": [
-    {
-      "namespace_id": "fraud",
-      "active_policy": "pol-A",
-      "policy_candidates": [
-        "pol-B",
-        "pol-C"
-      ],
-      "quota": {
-        "max_messages": 500,
-        "max_tokens": 100000,
-        "max_cost_micros": 250000,
-        "max_wall_ms": 900000,
-        "max_live_sessions": 0,
-        "open_rate_limit": 100,
-        "open_rate_window_secs": 60
-      }
-    },
-    {
-      "namespace_id": "billing",
-      "active_policy": "pol-D",
-      "policy_candidates": []
-    }
-  ],
   "retention_schedule": {
     "default": {
       "full_days": 365,
@@ -62,7 +21,7 @@
     },
     "rules": [
       {
-        "namespace": "fraud",
+        "namespace": "design-partner/fraud",
         "classification": "Pii",
         "policy": {
           "full_days": 30,
@@ -72,22 +31,6 @@
       }
     ]
   },
-  "handling_policies": [
-    {
-      "namespace": "fraud",
-      "rules": [
-        {
-          "label": "Internal",
-          "store_fidelity": "Digest",
-          "min_classification_to_decrypt": "Confidential",
-          "retention_class": "SealedDigest",
-          "egress_redaction": "none",
-          "worm": true,
-          "default_legal_hold": false
-        }
-      ]
-    }
-  ],
   "operator_keys": [
     {
       "alg": "ed25519",
