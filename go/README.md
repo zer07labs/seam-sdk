@@ -21,9 +21,11 @@ Also pinned, by `conformance/selection_rule_v1_vectors.json`:
 - **Option selection (runtime 0.90.0)** — the `proposal` explanation word, and the sealed selection
   block's codec: `crypto.SelectionBody(SelectionBlock{…})` and `crypto.SelectionDigest(body)` frame v5
   field 9 (set `Commitment.Selection`, or `Commitment.SelectionDigest` to the digest). A block the runtime
-  could not have sealed is refused, never hashed. This shim **checks the digest only**: it does not
-  recompute the winner (selection-rule.v1 §5 steps 6-9). That is done by the Rust verifier (`verify/`) and
-  the Python SDK.
+  could not have sealed is refused, never hashed. `crypto.DecodeSelectionBody` is the strict decoder.
+  The winner is **recomputed**, as in Python and the Rust verifier: `crypto.Decide(record, entries)`
+  (§3, every `rule_cases` entry) and `crypto.VerifySelection(block, entries, action)` (§5 steps 6-9,
+  every `sealed_cases` entry, by result name). `VerifyTCT` runs `VerifySelection` whenever
+  `Commitment.Selection` is set, and fails closed when the block comes without `Explanation` entries.
 
 Also, outside `vectors.json`:
 

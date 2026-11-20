@@ -12,7 +12,7 @@ import (
 // conformance/selection_rule_v1_vectors.json is seam-runtime's option-selection fixture (runtime 0.90.0,
 // docs/specs/selection-rule.v1.md), vendored verbatim. This port frames the selection block's digest
 // (v5 field 9) and the `proposal` explanation word; the winner recompute (`rule_cases`, `sealed_cases`)
-// is the Rust verifier's and the Python SDK's, so those groups are not exercised here.
+// is driven in selection_decide_test.go.
 
 type selBlockJSON struct {
 	SelectionBlock

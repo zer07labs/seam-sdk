@@ -362,8 +362,9 @@ public final class SeamCrypto {
    * {@link #selectionDigest}{@code (selectionBody(block))}: pass it as {@link
    * Commitment#selectionDigest()}.
    *
-   * <p>This port frames the block (so a selection decision's TCT verifies) but does not recompute the
-   * winner: selection-rule.v1 §5 steps 6-9 are implemented by the Rust verifier and the Python SDK.
+   * <p>Framing the block is not checking it: {@link #verifySelection} recomputes the winner offline
+   * (selection-rule.v1 §5 steps 6-9), and {@link #verifyTct(String, String, Commitment, long,
+   * SelectionBlock)} runs it whenever a block is supplied.
    *
    * @throws IllegalArgumentException for a block the runtime could not have sealed: weights not
    *     strictly ascending by participant UTF-8 bytes (duplicates included), a rules digest that is
@@ -427,6 +428,272 @@ public final class SeamCrypto {
     be64Frame(out, SELECTION_DIGEST_DOMAIN.getBytes(StandardCharsets.UTF_8));
     out.writeBytes(body);
     return sha256(out.toByteArray());
+  }
+
+  // ── decide() (selection-rule.v1 §3) and the verifier's selection steps (§5 steps 6-9) ─────────
+
+  /** The one selection rule v1 knows. */
+  public static final String SELECTION_RULE = "seam.selection.weighted_plurality";
+
+  /** The one rule version v1 knows. */
+  public static final long SELECTION_RULE_VERSION = 1;
+
+  /** The one tie policy v1 knows. */
+  public static final String SELECTION_TIE = "no_winner";
+
+  /** The one abstention policy v1 knows. */
+  public static final String SELECTION_ABSTENTION = "excluded_counts_for_quorum";
+
+  /** The mode a selection session's votes sign ({@code seam-vote-content-v1}'s {@code mode}). */
+  public static final String SELECTION_MODE = "macp.mode.decision.v1";
+
+  /** The vote values a selection vote may carry. */
+  public static final List<String> SELECTION_VOTE_VALUES = List.of("APPROVE", "REJECT", "ABSTAIN");
+
+  /** One proposal's tally in a {@link SelectionDecision}, in sealed proposal order. */
+  public record SelectionScore(String proposalId, long score) {}
+
+  /**
+   * The outcome of {@link #decide}. {@code result} is {@code "winner"}, {@code "no_winner"} or
+   * {@code "malformed"}. A winner carries {@code winnerProposalId} and {@code option}; a no-winner
+   * carries {@code reason} ({@code below_min_ballots}, {@code no_positive_score}, {@code tie}); both
+   * carry {@code scores} (every proposal, sealed order) and {@code ballots}. A malformed record carries
+   * {@code reason} and {@code at}: the entry index, {@code null} for a record-level check.
+   */
+  public record SelectionDecision(
+      String result,
+      String winnerProposalId,
+      String option,
+      List<SelectionScore> scores,
+      long ballots,
+      String reason,
+      Integer at) {
+    static SelectionDecision malformed(String reason, Integer at) {
+      return new SelectionDecision("malformed", null, null, null, 0, reason, at);
+    }
+  }
+
+  /**
+   * The outcome of {@link #verifySelection}. {@code result} is {@code "verified"} or one of the spec's
+   * verifier result names ({@code selection_malformed}, {@code selection_no_winner_sealed}, {@code
+   * selection_winner_mismatch}, {@code selection_action_mismatch}, {@code selection_vote_unverified},
+   * {@code selection_content_link_mismatch}, {@code selection_principal_not_one_to_one}). {@code at}
+   * is the entry index where the check failed, when the spec names one; {@code reason} is {@link
+   * #decide}'s reason for a malformed or no-winner record; {@code recomputed} is the winner this
+   * verifier computed when it disagrees with the sealed one.
+   */
+  public record SelectionResult(
+      String result,
+      String winnerProposalId,
+      int votesLinked,
+      Integer at,
+      String reason,
+      String recomputed) {
+    static SelectionResult of(String result) {
+      return new SelectionResult(result, null, 0, null, null, null);
+    }
+
+    static SelectionResult at(String result, int at) {
+      return new SelectionResult(result, null, 0, at, null, null);
+    }
+
+    public boolean ok() {
+      return "verified".equals(result);
+    }
+  }
+
+  private static String recordMalformed(SelectionBlock b) {
+    if (!SELECTION_RULE.equals(b.rule())) return "unknown_rule";
+    if (b.ruleVersion() != SELECTION_RULE_VERSION) return "unknown_rule_version";
+    if (!SELECTION_TIE.equals(b.tie())) return "unknown_tie";
+    if (!SELECTION_ABSTENTION.equals(b.abstention())) return "unknown_abstention";
+    List<SelectionWeight> weights = b.weights() == null ? List.of() : b.weights();
+    for (int i = 1; i < weights.size(); i++) {
+      if (Arrays.compareUnsigned(
+              utf8(weights.get(i - 1).participant()), utf8(weights.get(i).participant()))
+          >= 0) {
+        return "weights_not_canonical";
+      }
+    }
+    if (b.defaultWeight() == 0 && weights.stream().allMatch(w -> w.weight() == 0)) {
+      return "zero_electorate";
+    }
+    if (b.minBallots() == 0) return "min_ballots_zero";
+    List<String> participants = b.participants() == null ? List.of() : b.participants();
+    if (participants.isEmpty()) return "no_participants";
+    if (new HashSet<>(participants).size() != participants.size()) return "duplicate_participant";
+    return null;
+  }
+
+  /**
+   * {@code decide(record, entries)} (selection-rule.v1 §3): a pure function of the selection record
+   * and the sealed explanation entries. The record's {@code winnerProposalId} is ignored (it may be
+   * {@code null}). Options compare by UTF-8 bytes, never normalised. Twin of Python {@code decide}.
+   */
+  public static SelectionDecision decide(SelectionBlock b, List<ExplanationEntry> entries) {
+    String bad = recordMalformed(b);
+    if (bad != null) return SelectionDecision.malformed(bad, null);
+    Map<String, Long> weights = new java.util.HashMap<>();
+    for (SelectionWeight w : b.weights() == null ? List.<SelectionWeight>of() : b.weights()) {
+      weights.put(w.participant(), w.weight());
+    }
+    Set<String> participants = new HashSet<>(b.participants());
+    Map<String, String> proposals = new LinkedHashMap<>();
+    Set<ByteBuffer> options = new HashSet<>();
+    Set<List<String>> voted = new HashSet<>();
+    Set<String> approvers = new HashSet<>();
+    Set<String> voters = new HashSet<>();
+    List<String[]> approvals = new ArrayList<>();
+    boolean seenVote = false;
+    for (int i = 0; i < entries.size(); i++) {
+      ExplanationEntry e = entries.get(i);
+      String kind = e.kind();
+      if ("proposal".equals(kind)) {
+        if (seenVote) return SelectionDecision.malformed("proposal_after_vote", i);
+        if (e.voterVerification() != null) {
+          return SelectionDecision.malformed("proposal_has_voter_record", i);
+        }
+        if (!nzs(e.reason()).isEmpty() || e.confidence() != null || e.rationaleRef() != null) {
+          return SelectionDecision.malformed("proposal_has_extra_fields", i);
+        }
+        String pid = nzs(e.proposalId());
+        String value = nzs(e.value());
+        if (pid.isEmpty()) return SelectionDecision.malformed("empty_proposal_id", i);
+        if (value.isEmpty()) return SelectionDecision.malformed("empty_option", i);
+        if (proposals.containsKey(pid)) {
+          return SelectionDecision.malformed("duplicate_proposal_id", i);
+        }
+        ByteBuffer opt = ByteBuffer.wrap(utf8(value));
+        if (options.contains(opt)) return SelectionDecision.malformed("duplicate_option", i);
+        proposals.put(pid, value);
+        options.add(opt);
+      } else if ("vote".equals(kind)) {
+        seenVote = true;
+        String who = nzs(e.participant());
+        String pid = nzs(e.proposalId());
+        if (!proposals.containsKey(pid)) {
+          return SelectionDecision.malformed("vote_unknown_proposal", i);
+        }
+        if (e.value() == null || !SELECTION_VOTE_VALUES.contains(e.value())) {
+          return SelectionDecision.malformed("vote_bad_value", i);
+        }
+        if (!participants.contains(who)) {
+          return SelectionDecision.malformed("vote_not_participant", i);
+        }
+        List<String> key = List.of(who, pid);
+        if (voted.contains(key)) return SelectionDecision.malformed("duplicate_vote", i);
+        if ("APPROVE".equals(e.value())) {
+          if (!approvers.add(who)) return SelectionDecision.malformed("double_approve", i);
+          approvals.add(new String[] {who, pid});
+        }
+        voted.add(key);
+        voters.add(who);
+      } else if ("evaluation".equals(kind) || "objection".equals(kind)) {
+        continue; // sealed, never scored (v1 admits no objection veto)
+      } else if ("ballot".equals(kind)) {
+        return SelectionDecision.malformed("ballot_in_selection", i);
+      } else {
+        return SelectionDecision.malformed("unknown_kind", i);
+      }
+    }
+    if (proposals.isEmpty()) return SelectionDecision.malformed("no_proposals", null);
+    Map<String, Long> scores = new LinkedHashMap<>();
+    for (String pid : proposals.keySet()) scores.put(pid, 0L);
+    for (String[] a : approvals) {
+      scores.merge(a[1], weights.getOrDefault(a[0], b.defaultWeight()), Long::sum);
+    }
+    long ballots = voters.size();
+    long top = scores.values().stream().mapToLong(Long::longValue).max().orElse(0);
+    List<String> leaders = new ArrayList<>();
+    List<SelectionScore> tally = new ArrayList<>();
+    for (Map.Entry<String, Long> s : scores.entrySet()) {
+      tally.add(new SelectionScore(s.getKey(), s.getValue()));
+      if (s.getValue() == top) leaders.add(s.getKey());
+    }
+    String noWinner =
+        ballots < b.minBallots()
+            ? "below_min_ballots"
+            : top == 0 ? "no_positive_score" : leaders.size() > 1 ? "tie" : null;
+    if (noWinner != null) {
+      return new SelectionDecision("no_winner", null, null, tally, ballots, noWinner, null);
+    }
+    String w = leaders.get(0);
+    return new SelectionDecision("winner", w, proposals.get(w), tally, ballots, null, null);
+  }
+
+  private static String nzs(String s) {
+    return s == null ? "" : s;
+  }
+
+  /**
+   * Selection-rule.v1 §5 steps 6-9 over a selection block, the sealed entries and {@code
+   * Commitment.action}. Step 6 recomputes the winner ({@link #decide}) and checks it is the sealed
+   * one; step 7 checks the winner's sealed option is {@code action} byte for byte; step 8 re-derives
+   * every vote's {@code seam-vote-content-v1} digest from sealed inputs alone and checks it is the
+   * record's {@code contentDigest}; step 9 checks participant ↔ principal is one-to-one across the
+   * votes. Signatures and the TCT are {@link #verifyTct}'s. Twin of Python {@code verify_selection}.
+   */
+  public static SelectionResult verifySelection(
+      SelectionBlock b, List<ExplanationEntry> entries, String action) {
+    SelectionDecision d = decide(b, entries);
+    if ("malformed".equals(d.result())) {
+      return new SelectionResult("selection_malformed", null, 0, d.at(), d.reason(), null);
+    }
+    if ("no_winner".equals(d.result())) {
+      return new SelectionResult("selection_no_winner_sealed", null, 0, null, d.reason(), null);
+    }
+    if (!d.winnerProposalId().equals(b.winnerProposalId())) {
+      return new SelectionResult(
+          "selection_winner_mismatch", null, 0, null, null, d.winnerProposalId());
+    }
+    if (action == null || !Arrays.equals(utf8(d.option()), utf8(action))) {
+      return SelectionResult.of("selection_action_mismatch");
+    }
+    Map<String, String> proposals = new java.util.HashMap<>();
+    for (ExplanationEntry e : entries) {
+      if ("proposal".equals(e.kind())) proposals.put(e.proposalId(), e.value());
+    }
+    VotePolicyRef policy = new VotePolicyRef(b.policyVersion(), b.rulesDigest());
+    List<VoteContext> ctx = new ArrayList<>();
+    for (SelectionContext c : b.context() == null ? List.<SelectionContext>of() : b.context()) {
+      ctx.add(new VoteContext(c.ctxRef(), c.contentHash()));
+    }
+    int linked = 0;
+    for (int i = 0; i < entries.size(); i++) {
+      ExplanationEntry e = entries.get(i);
+      if (!"vote".equals(e.kind())) continue;
+      VoterVerification vv = e.voterVerification();
+      if (vv == null) return SelectionResult.at("selection_vote_unverified", i);
+      byte[] want =
+          voteContentDigest(
+              SELECTION_MODE,
+              e.proposalId(),
+              proposals.get(e.proposalId()),
+              b.participants(),
+              b.onBehalfOf(),
+              ctx,
+              List.of(),
+              policy);
+      if (!Arrays.equals(vv.contentDigest(), want)) {
+        return SelectionResult.at("selection_content_link_mismatch", i);
+      }
+      linked++;
+    }
+    Map<String, String> byParticipant = new java.util.HashMap<>();
+    Map<String, String> byPrincipal = new java.util.HashMap<>();
+    for (int i = 0; i < entries.size(); i++) {
+      ExplanationEntry e = entries.get(i);
+      if (!"vote".equals(e.kind())) continue;
+      String p = e.participant();
+      String a = e.voterVerification().principal();
+      String sealedPrincipal = byParticipant.putIfAbsent(p, a);
+      String sealedParticipant = byPrincipal.putIfAbsent(a, p);
+      if ((sealedPrincipal != null && !sealedPrincipal.equals(a))
+          || (sealedParticipant != null && !sealedParticipant.equals(p))) {
+        return SelectionResult.at("selection_principal_not_one_to_one", i);
+      }
+    }
+    return new SelectionResult("verified", d.winnerProposalId(), linked, null, null, null);
   }
 
   /** Domain tag of the explanation digest. */
@@ -677,6 +944,35 @@ public final class SeamCrypto {
         return false;
       }
       return digest.equals(seamCommitmentDigest(c));
+    } catch (RuntimeException e) {
+      return false;
+    }
+  }
+
+  /**
+   * {@link #verifyTct(String, String, Commitment, long)} for an option-selection decision (runtime
+   * 0.90.0, selection-rule.v1 §5 steps 4, 6-9). With {@code selection == null} this is exactly the
+   * four-argument form: "not a selection decision". With a block, v5 field 9 is framed from this
+   * verifier's own {@link #selectionDigest}{@code (}{@link #selectionBody}{@code (selection))} — a
+   * {@link Commitment#selectionDigest()} given beside it must agree — and the winner is recomputed
+   * offline ({@link #verifySelection}): the committed action must be the winning option and every
+   * vote's signed content must link to it. A block with no {@link Commitment#explanation()} entries
+   * cannot be checked, so it fails closed ({@code false}) rather than passing as if it had been.
+   */
+  public static boolean verifyTct(
+      String issuerAid, String tctJws, Commitment c, long nowS, SelectionBlock selection) {
+    if (selection == null) return verifyTct(issuerAid, tctJws, c, nowS);
+    try {
+      byte[] field9 = selectionDigest(selectionBody(selection));
+      if (c.selectionDigest() != null && !Arrays.equals(c.selectionDigest(), field9)) return false;
+      Commitment framed =
+          new Commitment(
+              c.id(), c.action(), c.authority(), c.supersedes(), c.authMethod(), c.trustBasis(),
+              c.committer(), c.explanationDigest(), c.explanation(), field9, c.certificateDigest(),
+              c.governingDocSha256());
+      if (!verifyTct(issuerAid, tctJws, framed, nowS)) return false;
+      if (c.explanation() == null) return false;
+      return verifySelection(selection, c.explanation(), c.action()).ok();
     } catch (RuntimeException e) {
       return false;
     }
