@@ -171,7 +171,7 @@ the wave leader's train). There is no SDK-only version.
 
 ### P4 — Go: `go/clearance` package
 - **Risk:** simple
-- **Status:** TODO
+- **Status:** DONE (Opus verify PASS, batched with P5, 1 round). Verifier notes, non-blocking: `md.Copy()` after `FromOutgoingContext` is redundant (that map is already a copy), harmless; the error message reads "not one of" twice.
 - **Delivers:** the D6 API, plus the `Header = "x-seam-clearance"` const and `ErrClearance`.
 - **Depends on:** none.
 - **Files:** `go/clearance/clearance.go`, `go/clearance/clearance_test.go`, `go/README.md` (a short section).
@@ -194,7 +194,7 @@ the wave leader's train). There is no SDK-only version.
 
 ### P5 — Java + Kotlin: `Clearance` enum + interceptor
 - **Risk:** simple
-- **Status:** TODO
+- **Status:** DONE (Opus verify PASS, batched with P4, 1 round). Divergence: Kotlin `parse` throws `IllegalArgumentException` directly instead of using `require` (same type). Known asymmetry: a Java caller passing `null` to Kotlin `parse(String)` gets Kotlin's NPE where Java's `parse` throws IAE. Null was not in scope.
 - **Delivers:** the D5 API in both languages, with `HEADER` / `KEY` constants.
 - **Depends on:** none.
 - **Files:** `java/src/main/java/com/zer07labs/seam/Clearance.java`, `java/src/test/.../ClearanceTest.java`,
