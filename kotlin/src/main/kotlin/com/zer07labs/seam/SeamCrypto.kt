@@ -86,6 +86,10 @@ data class ExplanationEntry(
  * [supersedes] is `null` when ABSENT, which v5 frames as `0x00` — a
  * different digest from a present empty string (`0x01 ‖ F("")`). Field 8 (the explanation digest) is resolved from [explanation] and
  * [explanationDigest] (32 raw bytes) — see [SeamCrypto.verifyTct].
+ * [selection] is the sealed option-selection block (`Commitment.selection`, runtime 0.90.0), `null`
+ * when the commitment carries none (the default, and today's behaviour). Given, field 9 is framed from
+ * this verifier's own [SeamCrypto.selectionDigest] over it (a [selectionDigest] given beside it must
+ * agree), and [SeamCrypto.verifyTct] additionally recomputes the winner (selection-rule.v1 §5 steps 6-9).
  */
 data class Commitment(
     val id: String,
@@ -100,6 +104,7 @@ data class Commitment(
     val selectionDigest: ByteArray? = null,
     val certificateDigest: ByteArray? = null,
     val governingDocSha256: ByteArray? = null,
+    val selection: SelectionBlock? = null,
 )
 
 /** One weight override of a [SelectionBlock]. */
@@ -131,6 +136,44 @@ data class SelectionBlock(
     val context: List<SelectionContext>,
     val winnerProposalId: String,
 )
+
+/** One proposal's score in a [SelectionDecision], in sealed proposal order. */
+data class SelectionScore(val proposalId: String, val score: Long)
+
+/**
+ * The outcome of [SeamCrypto.decide]: [result] is `winner` (with [winnerProposalId] and [option]),
+ * `no_winner` (with [reason]: `below_min_ballots`, `no_positive_score` or `tie`) or `malformed` (with
+ * [reason] and [at], the entry index, `null` for a record-level check). [scores] list every proposal
+ * in sealed order and [ballots] counts distinct voters; both are empty / 0 for `malformed`.
+ */
+data class SelectionDecision(
+    val result: String,
+    val winnerProposalId: String? = null,
+    val option: String? = null,
+    val reason: String? = null,
+    val at: Int? = null,
+    val scores: List<SelectionScore> = emptyList(),
+    val ballots: Int = 0,
+)
+
+/**
+ * The outcome of [SeamCrypto.verifySelection]. [result] is `verified` or one of the spec's verifier
+ * result names (`selection_malformed`, `selection_no_winner_sealed`, `selection_winner_mismatch`,
+ * `selection_action_mismatch`, `selection_vote_unverified`, `selection_content_link_mismatch`,
+ * `selection_principal_not_one_to_one`). [at] is the entry index where the check failed, when the
+ * spec names one; [reason] is [SeamCrypto.decide]'s reason for a malformed or no-winner record;
+ * [recomputed] is the winner this verifier computed when it disagrees with the sealed one.
+ */
+data class SelectionResult(
+    val result: String,
+    val winnerProposalId: String? = null,
+    val votesLinked: Int = 0,
+    val at: Int? = null,
+    val reason: String? = null,
+    val recomputed: String? = null,
+) {
+    val ok: Boolean get() = result == "verified"
+}
 
 /**
  * The inputs [SeamCrypto.callSigV3Payload] frames. Every string is signed as its UTF-8 bytes; an
@@ -268,9 +311,9 @@ object SeamCrypto {
 
     /**
      * The canonical selection block `body` (selection-rule.v1 §4.2), framed only with `F(x) =
-     * be64(len) ‖ x` and `U(n) = be64(n)`. This port frames the block (so a selection decision's TCT
-     * verifies) but does not recompute the winner: selection-rule.v1 §5 steps 6-9 are implemented by
-     * the Rust verifier and the Python SDK.
+     * be64(len) ‖ x` and `U(n) = be64(n)`. The winner is recomputed by [decide] and checked by
+     * [verifySelection] (selection-rule.v1 §3, §5 steps 6-9), which [verifyTct] runs whenever the
+     * commitment carries a [Commitment.selection] block.
      *
      * @throws IllegalArgumentException for a block the runtime could not have sealed: weights not
      *   strictly ascending by participant UTF-8 bytes (duplicates included), a rules digest that is not
@@ -311,6 +354,166 @@ object SeamCrypto {
         }
         out.frame(utf8(b.winnerProposalId))
         return out.toByteArray()
+    }
+
+    /** The one rule word v1 knows (selection-rule.v1 §2). */
+    const val SELECTION_RULE = "seam.selection.weighted_plurality"
+    const val SELECTION_RULE_VERSION: UInt = 1u
+    const val SELECTION_TIE = "no_winner"
+    const val SELECTION_ABSTENTION = "excluded_counts_for_quorum"
+
+    /** The `mode` a selection vote's `seam-vote-content-v1` digest frames. */
+    const val SELECTION_MODE = "macp.mode.decision.v1"
+
+    /** The vote values a selection `vote` entry may carry. */
+    val VOTE_VALUES: List<String> = listOf("APPROVE", "REJECT", "ABSTAIN")
+
+    private fun recordMalformed(b: SelectionBlock): String? {
+        if (b.rule != SELECTION_RULE) return "unknown_rule"
+        if (b.ruleVersion != SELECTION_RULE_VERSION) return "unknown_rule_version"
+        if (b.tie != SELECTION_TIE) return "unknown_tie"
+        if (b.abstention != SELECTION_ABSTENTION) return "unknown_abstention"
+        val keys = b.weights.map { it.participant.toByteArray(Charsets.UTF_8) }
+        for (i in 1 until keys.size) {
+            if (Arrays.compareUnsigned(keys[i - 1], keys[i]) >= 0) return "weights_not_canonical"
+        }
+        if (b.defaultWeight == 0u && b.weights.all { it.weight == 0u }) return "zero_electorate"
+        if (b.minBallots == 0u) return "min_ballots_zero"
+        if (b.participants.isEmpty()) return "no_participants"
+        if (b.participants.toSet().size != b.participants.size) return "duplicate_participant"
+        return null
+    }
+
+    private fun utf8Key(s: String): ByteBuffer = ByteBuffer.wrap(s.toByteArray(Charsets.UTF_8))
+
+    /**
+     * `decide(record, entries)` (selection-rule.v1 §3): a pure function of the selection block (its
+     * [SelectionBlock.winnerProposalId] is ignored) and the sealed explanation entries, in sealed order.
+     * [SelectionDecision.at] is the entry index of a malformed entry, `null` for a record-level check.
+     * Options compare by UTF-8 bytes, never normalised. Twin of Python `decide`.
+     */
+    fun decide(block: SelectionBlock, entries: List<ExplanationEntry>): SelectionDecision {
+        recordMalformed(block)?.let { return SelectionDecision("malformed", reason = it) }
+        val weights = block.weights.associate { it.participant to it.weight }
+        val participants = block.participants.toSet()
+        val proposals = LinkedHashMap<String, String>()
+        val options = HashSet<ByteBuffer>()
+        val voted = HashSet<Pair<String, String>>()
+        val approvers = HashSet<String>()
+        val voters = LinkedHashSet<String>()
+        val approvals = ArrayList<Pair<String, String>>()
+        var seenVote = false
+        entries.forEachIndexed { i, e ->
+            fun mal(reason: String) = SelectionDecision("malformed", reason = reason, at = i)
+            when (e.kind) {
+                "proposal" -> {
+                    if (seenVote) return mal("proposal_after_vote")
+                    if (e.voterVerification != null) return mal("proposal_has_voter_record")
+                    if (e.reason != "" || e.confidence != null || e.rationaleRef != null) {
+                        return mal("proposal_has_extra_fields")
+                    }
+                    if (e.proposalId == "") return mal("empty_proposal_id")
+                    if (e.value == "") return mal("empty_option")
+                    if (e.proposalId in proposals) return mal("duplicate_proposal_id")
+                    if (!options.add(utf8Key(e.value))) return mal("duplicate_option")
+                    proposals[e.proposalId] = e.value
+                }
+                "vote" -> {
+                    seenVote = true
+                    val who = e.participant
+                    val pid = e.proposalId
+                    if (pid !in proposals) return mal("vote_unknown_proposal")
+                    if (e.value !in VOTE_VALUES) return mal("vote_bad_value")
+                    if (who !in participants) return mal("vote_not_participant")
+                    if ((who to pid) in voted) return mal("duplicate_vote")
+                    if (e.value == "APPROVE") {
+                        if (!approvers.add(who)) return mal("double_approve")
+                        approvals.add(who to pid)
+                    }
+                    voted.add(who to pid)
+                    voters.add(who)
+                }
+                "evaluation", "objection" -> Unit // sealed, never scored (v1 admits no objection veto)
+                "ballot" -> return mal("ballot_in_selection")
+                else -> return mal("unknown_kind")
+            }
+        }
+        if (proposals.isEmpty()) return SelectionDecision("malformed", reason = "no_proposals")
+        val scores = LinkedHashMap<String, Long>()
+        proposals.keys.forEach { scores[it] = 0L }
+        for ((who, pid) in approvals) scores[pid] = scores.getValue(pid) + (weights[who] ?: block.defaultWeight).toLong()
+        val tally = scores.map { (p, sc) -> SelectionScore(p, sc) }
+        val ballots = voters.size
+        val top = scores.values.max()
+        val leaders = scores.filterValues { it == top }.keys.toList()
+        if (ballots.toLong() < block.minBallots.toLong()) {
+            return SelectionDecision("no_winner", reason = "below_min_ballots", scores = tally, ballots = ballots)
+        }
+        if (top == 0L) return SelectionDecision("no_winner", reason = "no_positive_score", scores = tally, ballots = ballots)
+        if (leaders.size > 1) return SelectionDecision("no_winner", reason = "tie", scores = tally, ballots = ballots)
+        return SelectionDecision(
+            "winner",
+            winnerProposalId = leaders[0],
+            option = proposals.getValue(leaders[0]),
+            scores = tally,
+            ballots = ballots,
+        )
+    }
+
+    /**
+     * selection-rule.v1 §5 steps 6-9 over a selection block, the sealed entries and `Commitment.action`.
+     * Step 6 recomputes the winner ([decide]) and checks it is the sealed one; step 7 checks the
+     * winner's sealed option is [action] byte for byte; step 8 re-derives every vote's
+     * `seam-vote-content-v1` digest ([SELECTION_MODE]) from sealed inputs alone and checks it is the one
+     * the voter signed (the record's `contentDigest`); step 9 checks participant ↔ principal is
+     * one-to-one across the votes. It does not re-check signatures or the TCT: signatures are
+     * [verifyCommitmentVoters]'s, the TCT [verifyTct]'s (which calls this when the commitment carries a
+     * block). Never throws for a malformed block or entries: they are a non-`verified` result. Twin of
+     * Python `verify_selection`.
+     */
+    fun verifySelection(block: SelectionBlock, entries: List<ExplanationEntry>, action: String): SelectionResult {
+        val d = decide(block, entries)
+        if (d.result == "malformed") return SelectionResult("selection_malformed", reason = d.reason, at = d.at)
+        if (d.result == "no_winner") return SelectionResult("selection_no_winner_sealed", reason = d.reason)
+        if (d.winnerProposalId != block.winnerProposalId) {
+            return SelectionResult("selection_winner_mismatch", recomputed = d.winnerProposalId)
+        }
+        if (!d.option!!.toByteArray(Charsets.UTF_8).contentEquals(action.toByteArray(Charsets.UTF_8))) {
+            return SelectionResult("selection_action_mismatch")
+        }
+        val proposals = entries.filter { it.kind == "proposal" }.associate { it.proposalId to it.value }
+        // A sealed block always carries a 32-byte rules digest (selectionBody refuses any other).
+        if (block.rulesDigest.size != 32) return SelectionResult("selection_malformed", reason = "rules_digest_not_32")
+        val policy = VotePolicyRef(block.policyVersion, block.rulesDigest)
+        val context = block.context.map { VoteContext(it.ctxRef, it.contentHash) }
+        var linked = 0
+        entries.forEachIndexed { i, e ->
+            if (e.kind != "vote") return@forEachIndexed
+            val vv = e.voterVerification ?: return SelectionResult("selection_vote_unverified", at = i)
+            val want = voteContentDigest(
+                SELECTION_MODE,
+                e.proposalId,
+                proposals.getValue(e.proposalId),
+                block.participants,
+                block.onBehalfOf,
+                context,
+                emptyList(),
+                policy,
+            )
+            if (!vv.contentDigest.contentEquals(want)) return SelectionResult("selection_content_link_mismatch", at = i)
+            linked++
+        }
+        val byParticipant = HashMap<String, String>()
+        val byPrincipal = HashMap<String, String>()
+        entries.forEachIndexed { i, e ->
+            if (e.kind != "vote") return@forEachIndexed
+            val p = e.participant
+            val a = e.voterVerification!!.principal
+            if (byParticipant.getOrPut(p) { a } != a || byPrincipal.getOrPut(a) { p } != p) {
+                return SelectionResult("selection_principal_not_one_to_one", at = i)
+            }
+        }
+        return SelectionResult("verified", winnerProposalId = d.winnerProposalId, votesLinked = linked)
     }
 
     /** `SHA-256(F("seam-selection-digest:v1") ‖ body)`: the 32 bytes v5 field 9 binds. */
@@ -477,6 +680,13 @@ object SeamCrypto {
             "governing_doc_sha256 must be 32 bytes when present"
         }
         val explanation = commitmentExplanationDigest(c)
+        val selectionSlot = c.selection?.let { blk ->
+            val d = selectionDigest(selectionBody(blk))
+            require(c.selectionDigest == null || c.selectionDigest.contentEquals(d)) {
+                "selection_digest does not match the selection block"
+            }
+            d
+        } ?: c.selectionDigest
         val h = ByteArrayOutputStream()
         h.frame(COMMITMENT_DIGEST_DOMAIN.toByteArray(Charsets.UTF_8))
         h.frame(c.id.toByteArray(Charsets.UTF_8))
@@ -493,7 +703,7 @@ object SeamCrypto {
         h.frame(c.trustBasis.toByteArray(Charsets.UTF_8))
         h.frame(c.committer.toByteArray(Charsets.UTF_8))
         h.frame(explanation)
-        for (slot in listOf(c.selectionDigest, c.certificateDigest, c.governingDocSha256)) {
+        for (slot in listOf(selectionSlot, c.certificateDigest, c.governingDocSha256)) {
             if (slot == null) {
                 h.write(0x00)
             } else {
@@ -547,7 +757,13 @@ object SeamCrypto {
             val stmt = ext[COMMITMENT_EXT_NAMESPACE] as? Map<*, *> ?: return false
             if (stmt.size != 2 || stmt["type"] != COMMITMENT_STATEMENT) return false
             val digest = stmt["commitment_digest"] as? String ?: return false
-            digest == seamCommitmentDigest(commitment)
+            if (digest != seamCommitmentDigest(commitment)) return false
+            // Option selection (selection-rule.v1 §5 steps 6-9). No block means "not a selection
+            // decision" and nothing more. A block without the entries cannot be checked, so it fails
+            // closed rather than passing as if the winner had been recomputed.
+            val blk = commitment.selection ?: return true
+            val entries = commitment.explanation ?: return false
+            verifySelection(blk, entries, commitment.action).ok
         } catch (e: RuntimeException) {
             false
         }
