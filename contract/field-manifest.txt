@@ -172,6 +172,13 @@
 #
 # TO REGENERATE (after deciding, not before):
 #     scripts/check-contract.sh --write-manifest
+AdminCancelRequest/namespace
+AdminCancelRequest/reason
+AdminCancelRequest/session_id
+AdminCancelRequest/tenant
+AdminCancelResponse/already_terminal
+AdminCancelResponse/decision_id
+AdminCancelResponse/state
 AdminResumeRequest/approver
 AdminResumeRequest/budget
 AdminResumeRequest/namespace

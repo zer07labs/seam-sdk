@@ -1221,7 +1221,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:2137-2159` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:2151-2173` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2051,7 +2051,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:2167` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:2181` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -3225,3 +3225,24 @@ Ranked by blast radius. The two possible one-way doors (a public exception API, 
 - **Pinned by:** `python/tests/test_commit_supersedes.py` (sync and aio) and `ts/tests/unit_plumbing.test.ts`.
   Each test checks that a present value, an empty value and an absent value stay distinct.
 - **Decided by:** Opus (reversible tier: additive optional response field). **Verdict:** CONFIRM. **Status:** CONFIRMED.
+
+## 2026-11-20 — `SeamAdmin.CancelSession`, the gRPC tenant stop (runtime 0.102.0, RT3/#1771): wired into both admin clients
+
+- **The verb:** `rpc CancelSession(AdminCancelRequest) returns (AdminCancelResponse)` on `SeamAdmin`. It is the gRPC
+  twin of `POST <mgmt>/v1/sessions/:id/admin-cancel`: an operator cancels a live session, and the runtime seals a
+  `Cancelled` record after one chained `session_cancelled` audit entry. It needs the `session:cancel` scope, and it is
+  destructive (a fresh `jti` per call, burned on first use).
+- **Decision:** Python `SeamAdminClient.cancel_session(session_id, reason, *, tenant="", namespace="")` and TS
+  `SeamAdminClient.cancelSession(sessionId, reason, {tenant, namespace})`. Each returns the generated
+  `AdminCancelResponse` unchanged.
+  - **One call, no retry.** The DPoP interceptor mints the fresh `jti` per call, and a retry under a destructive verb
+    is exactly what the burned `jti` exists to refuse.
+  - **No local validation of `reason` or the both-or-neither scope rule.** The runtime owns both rules and answers
+    `INVALID_ARGUMENT`. A local copy would drift from the server's bound.
+  - **Named like `resume_session`,** the other management-plane session verb. It lives on the admin client, so it never
+    collides with the data-plane `SeamClient.cancel_session` (a participant's own cancel); the docstrings say which is which.
+- **Not added:** Go/Java/Kotlin carry the verb through their stubs only. Those SDKs have no hand-written admin client,
+  as with every other `SeamAdmin` verb.
+- **Pinned by:** `python/tests/test_admin.py` (wire shape, empty scope), `ADMIN_CALLS` deadline tables in
+  `python/tests/test_lifecycle_and_timeouts.py` and `ts/tests/unit_plumbing.test.ts`, and the TS wire test.
+- **Decided by:** Opus (reversible tier: additive wrapper). **Verdict:** CONFIRM. **Status:** CONFIRMED.

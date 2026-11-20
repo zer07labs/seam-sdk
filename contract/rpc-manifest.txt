@@ -26,6 +26,7 @@
 # Sorted, one `Service/Method` per line. Regenerate with:
 #   scripts/check-contract.sh --write-manifest
 SeamAdmin/AuditTrail
+SeamAdmin/CancelSession
 SeamAdmin/EnforceRetention
 SeamAdmin/EnrollTenant
 SeamAdmin/EraseSubject

@@ -23,6 +23,7 @@ import { createGrpcTransport, Http2SessionManager } from "@connectrpc/connect-no
 import {
   SeamAdmin,
   SeamEvents,
+  type AdminCancelResponse,
   type ErasurePreview,
   type GrantView,
   type ListLegalHoldsResponse,
@@ -543,6 +544,30 @@ export class SeamAdminClient {
         budget: opts?.budget ?? 0,
         raise: opts?.raise,
       },
+      call(opts),
+    );
+  }
+
+  /** The tenant stop (runtime 0.102.0, RT3/#1771): an operator cancels a live session on the
+   * **management** plane. The runtime seals a `Cancelled` record after one chained `session_cancelled`
+   * audit entry, whose actor is the token's `sub`. Requires the `session:cancel` operator scope.
+   *
+   * This is not `SeamClient.cancelSession`, which is a participant's own cancel on the data plane. The verb
+   * is **destructive**: every call needs a fresh DPoP `jti` (the auth interceptor mints one per call), and
+   * this method makes exactly one call and never retries.
+   *
+   * `reason` is required and non-empty, and lands verbatim in the chained audit entry. `tenant` and
+   * `namespace` are the session's scope: give both, or leave both empty (fleet operator, enforcement off).
+   * Exactly one empty is `INVALID_ARGUMENT`. A tenant-scoped operator must name its own tenant
+   * (`PERMISSION_DENIED`). Another tenant's session and an unknown id are the same `NOT_FOUND`.
+   * `alreadyTerminal` is true when nothing was cancelled, sealed or audited. */
+  async cancelSession(
+    sessionId: string,
+    reason: string,
+    opts?: { tenant?: string; namespace?: string; timeoutMs?: number },
+  ): Promise<AdminCancelResponse> {
+    return this.admin.cancelSession(
+      { sessionId, reason, tenant: opts?.tenant ?? "", namespace: opts?.namespace ?? "" },
       call(opts),
     );
   }

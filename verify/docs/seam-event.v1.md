@@ -1,4 +1,8 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 62ee84d (refreshed 2026-11-17).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 94d2335 (refreshed 2026-11-20).
+     seam-runtime v0.100.0 (94d2335, #1779): the `subject_commitment_tombstoned` anchor is now
+     `subject-tombstone:<tag>`, a keyed rotation-stable tag under the tenant's erasure key, and an unavailable
+     erasure key refuses the seal like the commitment key. Neither changes the verifier: it digests the
+     management entry whatever its anchor holds and never parses the anchor. Earlier pin history follows.
      seam-runtime#1773 (RT3 operator admin-cancel), squash-merged to runtime main as 62ee84d; the body is
      byte-identical to the c551425 copy seam-sdk#378 pinned ahead of it on feat/rt3-tenant-cancel. Movement since e605d5b: the (b′)
      `seam.audit.management.v1` row gains `session_cancelled`, after `session_resumed`, classification
@@ -191,7 +195,7 @@ by `,`):
 | `erasure_previewed` | an operator previews a GDPR erasure (`erasure:preview`), before the preview is returned | `erasure-preview:<tenant>@<millis>` |
 | `subject_commitments_recomputed` | an operator recomputes subject commitments (`erasure:preview`), before they are returned | `subject-recompute:<tenant>@<millis>` |
 | `subject_commitment_recompute_refused` | a recompute named a subject that is tombstoned in the tenant | `subject-recompute-refused:<tenant>@<millis>` |
-| `subject_commitment_tombstoned` | a GDPR erasure, before anything is destroyed (once per subject and tenant) | `subject-tombstone:<commitment>` |
+| `subject_commitment_tombstoned` | a GDPR erasure, before anything is destroyed (once per subject and tenant) | `subject-tombstone:<tag>`: a keyed, rotation-stable tag under the tenant's erasure key (#1779), not the commitment; `subject` carries the commitment |
 
 #1493 ACDP-4 adds one runtime value, chained under the **relying decision's** tenant (domain
 `seam.audit.context-recall.v1`). It is a recall notice, never a change to the sealed record it names:
@@ -1677,8 +1681,9 @@ UTF-8. It is not subject-bearing and is not keyed.
 computed over the sentinel — so tags 14-17 are never empty and a trust-less seal stays distinguishable.
 
 **Fail closed on the key.** If the tenant's commitment key is unavailable (shredded, or an unwrap
-failure) the seal is **refused** with reason `commitment_key_unavailable` and no record is written. A
-producer never falls back to an unkeyed or empty commitment.
+failure) the seal is **refused** with reason `commitment_key_unavailable` and no record is written. The
+same holds for the tenant's erasure key (#1779), which the seal's erasure probe needs to check the bound
+subjects' tombstones. A producer never falls back to an unkeyed or empty commitment.
 
 #### `None` is not `Some("")` is not an empty list
 
