@@ -16,6 +16,20 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added — clearance on the decision reads (#384; ReplayDecision needs runtime 0.101.0+)
+
+- An opt-in `x-seam-clearance` on `GetDecision`, `ReplayDecision` and `GetCommitmentProof`. The value is exactly one of
+  `Public`, `Internal`, `Confidential`, `Financial`, `Pii`, `Phi` (case-sensitive). Anything else is refused before any
+  RPC, because the runtime would silently read an unknown label as `Public`. Omitted, nothing is sent and the wire is
+  byte-identical to before.
+- Python `clearance=` on `get_decision` / `replay_decision` / `get_commitment_proof` / `verify_decision` (sync and
+  `aio`), with `CLEARANCES` and `CLEARANCE_*`. TS `{ clearance }` on the same four verbs, with `CLEARANCES` and
+  `CLEARANCE_*`. Go `clearance.NewContext(ctx, clearance.Financial)`. Java/Kotlin
+  `stub.withInterceptors(Clearance.FINANCIAL.interceptor())`.
+- The runtime honours the header only on a plane in `allow` subject-header posture. A `deny` or peer-cert plane strips
+  it, so the read there is at `Public`. It is not part of the #508 call signature. See COMPATIBILITY.md.
+- Closes the #273 Q2 deferral ("record reads send no `x-seam-clearance`").
+
 ## 0.102.0 — 2026-11-20
 
 ### Added — `SeamAdminClient.cancel_session` / `cancelSession`, the gRPC tenant stop (runtime 0.102.0, RT3/#1771)

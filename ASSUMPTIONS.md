@@ -1012,11 +1012,11 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
   What is still inferred rather than observed is only "and nobody has deleted them since". Against
   that: `yank.yml` has 27 runs and the only versions ever deleted are 0.7.7 and 0.7.13–0.7.19 — the
   exact scope of issue #43, closed sixteen minutes after the final run, and corroborated
-  independently by `CHANGELOG.md:1037-1038` in the repo's own words.
+  independently by `CHANGELOG.md:1051-1052` in the repo's own words.
 - **Correction to this entry's stated rationale (2026-09-06):** the code comment justified the age
   spread as a hedge against a *retention* sweep aging all entries out at once. No retention sweep
   has ever run here, and the real yank predicate is "named in an advisory as unconditionally
-  broken", not "old" — `CHANGELOG.md:1084` records that 0.7.39–0.7.43 was deliberately **not**
+  broken", not "old" — `CHANGELOG.md:1098` records that 0.7.39–0.7.43 was deliberately **not**
   deleted despite being older than every roster entry. A wrong reason in that comment is how the
   next editor re-points the roster badly, dropping a safe old version in favour of one sitting
   inside an advisory band; the comment now states the real predicate. None of the four roster
@@ -1492,7 +1492,7 @@ Reconciled 2026-08-16 — see `DECISIONS.md` for the full record.
 - **Chose:** no clearance option on `get_decision` / `getDecision`. Every read is at the default PUBLIC clearance, so a record whose handling rule needs more reads `"CLEARANCE_DENIED"` — documented in `_seal.py` and the TS twin, never an error.
 - **Alternatives:** add a `clearance=` keyword now (new public surface with no consumer asking for it).
 - **Blast radius if wrong:** a consumer that needs restricted attestations gets `CLEARANCE_DENIED` until an option is added; adding one later is additive. The deferral is recorded in `DEFERRED.md`.
-- **Status:** CONFIRMED (2026-10-28) — /reconcile, decided by Opus; see DECISIONS.md
+- **Status:** CONFIRMED (2026-10-28) — /reconcile, decided by Opus; see DECISIONS.md **SUPERSEDED 2026-11-20 by #384** (opt-in clearance on the decision reads; DECISIONS.md "#384").
 
 ## `server_info` returns a plain string
 - **Plan:** plans/archive/server-info.md (Phase 1, open question Q1)

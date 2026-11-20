@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:1081`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:1095`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -279,7 +279,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2152-2174`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2166-2188`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -360,7 +360,8 @@ transport and no verb methods — they implement AID derivation, the pinned-key 
 verification, the commitment digest, the `Authorize` call_sig and enrolment proof (`pop`, raw and REST
 form) framings, identity custody (`Agent` generation + the schema-v1 bootstrap file, #201) and the
 `seam-request-call-v1` request credential, plus the `x-seam-tenant` routing interceptor and the
-`WRONG_CELL` / `TENANT_MOVING` readers (D123, P16), and nothing else. If you need to *call* Seam, that is Python or TypeScript. The routing
+`WRONG_CELL` / `TENANT_MOVING` readers (D123, P16), plus the per-call `x-seam-clearance` helper on the
+decision reads (#384), and nothing else. If you need to *call* Seam, that is Python or TypeScript. The routing
 helpers are why the Go module and the Java and Kotlin builds now depend on gRPC: grpc-go 1.83.1 and
 grpc-java 1.66.0, both as floors that a caller's newer gRPC replaces.
 
@@ -374,6 +375,7 @@ grpc-java 1.66.0, both as floors that a caller's newer gRPC replaces.
 | Refresh a rejected ticket once on the credentialed reads, `report_outcome` and the seven `submit_*` steps (#275) | yes (sync + aio) | yes | N/A, no client | N/A, no client | N/A, no client |
 | `SESSION_UNAVAILABLE` reason constant (D79) | `SESSION_UNAVAILABLE_REASON` | `SESSION_UNAVAILABLE_REASON` | `crypto.SessionUnavailableReason` | `RequestCredentials.SESSION_UNAVAILABLE_REASON` | `RequestCredentials.SESSION_UNAVAILABLE_REASON` |
 | Send `x-seam-tenant` on every call, IssueChallenge and Admit included (k8s P15, D123) | `SeamClient.connect(tenant=)` (sync + aio); `TenantInterceptor` / `AioTenantInterceptor` | `SeamClient.connect(url, { tenant })`; `tenantHeaderInterceptor` | `routing.WithTenant` (`UnaryInterceptor` / `StreamInterceptor`) | `TenantRouting.interceptor` | `TenantRouting.interceptor` |
+| Send `x-seam-clearance` on the decision reads, opt-in, exactly `Public` / `Internal` / `Confidential` / `Financial` / `Pii` / `Phi` (#384) | `clearance=` on `get_decision` / `replay_decision` / `get_commitment_proof` / `verify_decision` (sync + aio); `CLEARANCES`, `CLEARANCE_*` | `{ clearance }` (`DecisionReadOptions`) on `getDecision` / `replayDecision` / `getCommitmentProof` / `verifyDecision`; `CLEARANCES`, `CLEARANCE_*` | `clearance.NewContext(ctx, clearance.Financial)`, `clearance.Parse` | `Clearance.FINANCIAL.interceptor()`, `Clearance.parse` | `Clearance.FINANCIAL.interceptor()`, `Clearance.parse` |
 | Read ErrorInfo metadata; `WRONG_CELL` (D123, runtime 0.58.0), never retryable | `error_metadata`, `WRONG_CELL_REASON`, `is_wrong_cell` | `errorMetadata`, `WRONG_CELL_REASON`, `isWrongCell` | `routing.SeamErrorInfo`, `routing.WrongCellReason`, `routing.IsWrongCell` | `TenantRouting.errorInfo`, `WRONG_CELL_REASON`, `isWrongCell` | `TenantRouting.errorInfo`, `WRONG_CELL_REASON`, `isWrongCell` |
 | `TENANT_MOVING` (k8s P16, runtime 0.59.0), retryable after `RetryInfo`; `move_id` / `target_cell` in the metadata | `TENANT_MOVING_REASON`, `is_tenant_moving`; `is_retryable` and `with_session_retry` include it | `TENANT_MOVING_REASON`, `isTenantMoving`; `isRetryable` and `withSessionRetry` include it | `routing.TenantMovingReason`, `routing.IsTenantMoving` | `TENANT_MOVING_REASON`, `isTenantMoving` | `TENANT_MOVING_REASON`, `isTenantMoving` |
 | `SUBJECT_ERASED` (#1774, runtime 0.96.0): `PERMISSION_DENIED`, a bound subject is erased; never retryable, fixed message | `SUBJECT_ERASED_REASON`, `is_subject_erased`; not in `is_retryable` | `SUBJECT_ERASED_REASON`, `isSubjectErased`; not in `isRetryable` | `crypto.SubjectErasedReason` | `RequestCredentials.SUBJECT_ERASED_REASON` | `RequestCredentials.SUBJECT_ERASED_REASON` |
@@ -391,6 +393,21 @@ credentialed reads (`get_escalation`, `session_status`, `get_decision`, `replay_
 ticket, so there is no retry. `open_session`, `cancel_session` and `expire_session` still make exactly
 one call (D-WRITES-EXCLUDED). A `submit_*` resend after a step that sealed the session returns the
 sealed `decision_id` with `collective_outcome` unset, so read `get_decision` for the outcome.
+
+The #384 row is opt-in too, and the default sends nothing, so the wire is byte-identical to an SDK
+without it. seam-runtime reads the caller's decrypt clearance from `x-seam-clearance` and applies a
+namespace's §2.3 decrypt-clearance floor on three reads: `GetCommitmentProof` (since runtime 0.4.0 or
+earlier), `GetDecision` (the seal attestation since 0.61.0 and the experiment allocation since 0.76.0)
+and `ReplayDecision` (since 0.101.0). On `GetDecision` the clearance never causes an error; it only
+decides whether the view's seal attestation and allocation read `CLEARANCE_DENIED`. On replay and
+proof it decides `PERMISSION_DENIED`. The runtime parses the value exactly and case-sensitively, and
+reads an absent or unknown one as `Public`, so every SDK refuses anything outside the six labels
+before any call: `ValueError` (Python), `InvalidArgumentError` (TypeScript), `ErrClearance` (Go),
+`IllegalArgumentException` (Java, Kotlin). Sending it is an assertion, not a grant: the runtime honours
+it only on a data plane in the `allow` subject-header posture, behind a trusted gateway. A plane in
+`deny` posture (`SEAM_GRPC_SUBJECT_HEADERS=deny`) and a peer-cert plane strip it, and the read is at
+`Public` whatever the SDK sent. The header is not part of the #508 call signature. Against a runtime
+older than 0.101.0, `replay_decision` ignores it.
 
 The D79 rows are opt-in. The SDK still never retries `SESSION_UNAVAILABLE` on its own; a caller wraps
 the calls it chooses in `with_session_retry`, which re-invokes them with the server's `RetryInfo` plus

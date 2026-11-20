@@ -1221,7 +1221,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:2153-2175` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:2167-2189` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2051,7 +2051,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:2183` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:2197` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -2994,7 +2994,7 @@ A reversible, SDK-internal retry bound; not a one-way door, so Opus decided it.
 ### Q2: record reads send no `x-seam-clearance`
 - **Assumption:** no clearance option on `get_decision` / `getDecision`; a restricted record reads `CLEARANCE_DENIED`.
 - **Analysis (fresh Opus):** P4b reads only the partner's own records under its own identity, and no consumer asks for restricted reads. The proto returns `CLEARANCE_DENIED` on the view, never an error (seam.proto:1101-1104). A keyword-only Python argument or a TS `opts` field can be added later without breaking callers. The deferral is in `DEFERRED.md`.
-- **Decided by:** Opus (reversible tier). **Verdict:** CONFIRM. **Status:** CONFIRMED.
+- **Decided by:** Opus (reversible tier). **Verdict:** CONFIRM. **Status:** CONFIRMED. **SUPERSEDED 2026-11-20** by #384 (the record reads now take an opt-in clearance; see "#384: clearance on the decision reads" at the end of this file).
 
 ## 2026-10-29 — No version-comparison helper beside `server_info` (plans/archive/server-info.md, Q2)
 - **Assumption:** the one consumer parses versions itself, so the SDK returns the string verbatim and validates nothing.
@@ -3246,3 +3246,26 @@ Ranked by blast radius. The two possible one-way doors (a public exception API, 
 - **Pinned by:** `python/tests/test_admin.py` (wire shape, empty scope), `ADMIN_CALLS` deadline tables in
   `python/tests/test_lifecycle_and_timeouts.py` and `ts/tests/unit_plumbing.test.ts`, and the TS wire test.
 - **Decided by:** Opus (reversible tier: additive wrapper). **Verdict:** CONFIRM. **Status:** CONFIRMED.
+
+
+## #384: clearance on the decision reads (2026-11-20, plans/384-clearance.md)
+
+- **Context:** the runtime reads the caller's decrypt clearance from `x-seam-clearance` on `GetDecision`,
+  `ReplayDecision` (0.101.0+) and `GetCommitmentProof`, mapping absent or unknown to `Public`. The SDK sent none (#273
+  Q2, above), so a restricted record could be neither replayed nor explained. This supersedes Q2.
+- **D1, GetDecision is included** alongside replay and proof in Python and TS. Q2's deferral was about exactly that
+  read, and leaving it out would let the SDK replay a record it cannot explain. Go/Java/Kotlin helpers are per call.
+- **D2, a closed set validated client-side before any RPC** (admission included): `Public`, `Internal`,
+  `Confidential`, `Financial`, `Pii`, `Phi`, exact and case-sensitive. An unknown value would silently become
+  `Public` at the runtime: fail-closed but undiagnosable. Errors: Python `ValueError`, TS `InvalidArgumentError`, Go
+  `ErrClearance`, Java/Kotlin `IllegalArgumentException`.
+- **D3, the default is byte-identical:** no header, and Python metadata stays `None` / TS headers `undefined`.
+- **D4, `Public` is sent when asked for,** not elided, so the wire matches the caller's request.
+- **D5, Java/Kotlin:** a `Clearance` enum with `parse` and `interceptor()`, which removes any earlier value before
+  putting its own (one header, however interceptors stack). Not `MetadataUtils` (grpc-stub is test-only here) and not
+  `CallCredentials` (that is for auth).
+- **D6, Go:** package `go/clearance`, `NewContext(ctx, c)` copies the outgoing metadata and `Set`s the key (replaces,
+  never appends); per call, so no channel-wide interceptor.
+- **Caveat recorded in COMPATIBILITY.md:** honoured only on an `allow` subject-header plane; `deny` and peer-cert
+  planes strip it. Not part of the #508 signature.
+- **Decided by:** Opus (reversible tier: additive opt-in surface, default unchanged). **Status:** CONFIRMED.

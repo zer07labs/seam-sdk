@@ -4069,7 +4069,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:2183`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:2197`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -5376,7 +5376,7 @@ not filed here. OQ-1 is resolved, so no phase is gated.
     - TSDoc carries the "operator alteration breaks the chain re-verify" sentence;
     - re-anchored `PROGRESS.md:163` (`confidence`, now `ts/src/client.ts:1667`).
   - Files: `ts/src/client.ts` (allocationOf + interfaces after sealAttestationOf), `ts/src/index.ts` (EIGHT dual-declared names), `ts/tests/allocation.test.ts` (new; reads the Python fixture), `ts/tests/integration.test.ts`.
-  - The client.ts insertion shifted citations by 149: `COMPATIBILITY.md:678,803` and `PROGRESS.md:160,162` were re-anchored.
+  - The client.ts insertion shifted citations by 149: `COMPATIBILITY.md:695,820` and `PROGRESS.md:160,162` were re-anchored.
   - Results: TS typecheck/build clean, 567 tests pass; pytest 2601 passed.
   - Plan drift: `test_shadowed_names_comment.py` needed no edit, because it derives the count word.
   - Next: P3 + P4 (batched simple).
@@ -5407,7 +5407,7 @@ Branch `feat/384-clearance-391-flake` off `009728f`. One PR.
 - `ts/src/client.ts`: `CredentialedCallOptions` :139-146; `call()` :175; `credentialedCall` :1375-1406; `getDecision` :1940, `replayDecision` :1949, `getCommitmentProof` :2008, `verifyDecision` :2210-2215; clearance docs :507-508, :678-679. `ts/src/admin.ts:115-131`: union/set + InvalidArgumentError precedent. `ts/tests/unit_plumbing.test.ts:88`.
 - `go/routing/routing.go` + `go/routing/routing_test.go:27-75`: metadata helper + raw-invoke test pattern (gen stubs are outside the go module).
 - `java/src/main/java/com/zer07labs/seam/TenantRouting.java:33-90`, `java/src/test/java/com/zer07labs/seam/TenantRoutingTest.java:45-120`; `kotlin/src/main/kotlin/com/zer07labs/seam/TenantRouting.kt:26-60`, `kotlin/src/test/kotlin/com/zer07labs/seam/TenantRoutingTest.kt:62-88`: interceptor + in-process test pattern. `grpc-stub` is test-only.
-- `COMPATIBILITY.md` §4 :345, identity table :367-380 (`x-seam-tenant` row :375). `DEFERRED.md:2` (#273 Q2). `CHANGELOG.md:17` Unreleased.
+- `COMPATIBILITY.md` §4 :345, identity table :367-380 (`x-seam-tenant` row :375). the `DEFERRED.md` #273 Q2 line (removed by P6). `CHANGELOG.md:17` Unreleased.
 - `python/tests/test_compatibility_citations_resolve.py`: checks file:line citations in COMPATIBILITY/DECISIONS/PROGRESS (slack 3), incl. this section; use repo-relative paths.
 - Release: `.github/workflows/release-on-runtime.yml` (version must equal the runtime's), `publish.yml` (v* tag).
 - #391: `scripts/test_release_refire_gate.py` ~:569.
@@ -5419,3 +5419,4 @@ Risk tiers: P1 simple · P2 complex (Python public API + credentialed send path)
 - 2026-11-20 P2 (Python): PASS, 1 round, Opus verifier (complex, so it gated alone). `clearance=` on get_decision/replay_decision/get_commitment_proof/verify_decision, sync and aio; `_clearance.py`; exports; `_seal.py`/`_allocation.py` docstrings; `tests/test_clearance.py` (155 tests). Suite: 3010 passed, 42 skipped, 1 deselected (environmental adapters-pin quote). Nits not acted on: aio docstrings, a test for a bound agent with no credential (same code path). README :701 goes to P6. Next: P3.
 - 2026-11-20 P3 (TypeScript): PASS, 1 round, Opus verifier (complex, so it gated alone). `DecisionReadOptions.clearance` on getDecision/replayDecision/getCommitmentProof/verifyDecision; `ts/src/clearance.ts` (labels, `CLEARANCES`, `CLEARANCE_HEADER`, check/with helpers); root exports; SealAttestation/AllocationView docs; `ts/tests/clearance.test.ts`. 21 `ts/src/client.ts` citations re-pointed. Gates: typecheck, build, 674 tests (656 pass, 0 fail, 18 skipped). Verifier nits closed: a BigInt or circular value gives InvalidArgumentError, and a type-level pin. A bound-agent test was not added (same signer path). Next: P4+P5 (batched).
 - 2026-11-20 P4 (Go) + P5 (Java/Kotlin): PASS, batched gate (both simple), Opus verifier, 1 round, separate verdict per phase. P4: `go/clearance` (`NewContext` copy-then-Set, `Parse`, `ErrClearance`), 7 raw-invoke wire tests, `go/README.md` bullet. P5: `Clearance` enum + `interceptor()` (removeAll+put) in Java and Kotlin, 5 in-process tests each; gradle green for both. Non-blocking notes are recorded in the plan Status lines. Next: P6 docs.
+- 2026-11-20 P6 (docs): PASS, Opus verifier, 2 rounds. R1 GAPS: PROGRESS :5379/:5410 not re-pointed; remap had rewritten historical repoint values in PROGRESS :4559-4574 (restored); plans/README.md:44 re-pointed. Files: COMPATIBILITY, README, CHANGELOG (Unreleased), DEFERRED (#273 Q2 removed), DECISIONS (Q2 superseded + #384 D1-D6), ASSUMPTIONS (Q2 superseded), PROGRESS, plans/README. Finalization gates all green: py 3010 pass (1 known env fail), ruff, ts 656/0, go, java, kotlin, contract exit 0. Next: whole-feature verify.

@@ -211,7 +211,7 @@ the wave leader's train). There is no SDK-only version.
 
 ### P6 — Docs, compatibility, changelog
 - **Risk:** simple
-- **Status:** TODO
+- **Status:** DONE (Opus verify GAPS then PASS, 2 rounds; round 1 found citation bookkeeping only: two missed re-points in PROGRESS and historical log lines rewritten by the remap script, restored).
 - **Depends on:** P2–P5.
 - **Files:**
   - `COMPATIBILITY.md`: §4 table, the :360-363 "…and nothing else" surface list, the "N/A, no client" rows
