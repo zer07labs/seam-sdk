@@ -715,6 +715,8 @@ trusted gateway); a `deny` or peer-cert plane strips it. Go: `clearance.NewConte
 `Clearance.X.interceptor()`. Details: `COMPATIBILITY.md` §4.
 
 ```python
+from seam_sdk import CLEARANCE_FINANCIAL
+
 view = client.replay_decision(decision_id, credential=agent, clearance=CLEARANCE_FINANCIAL)
 ```
 
