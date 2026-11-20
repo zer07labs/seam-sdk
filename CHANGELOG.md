@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.99.1 — 2026-11-20
+
 ## 0.99.0 — 2026-11-20
 
 ### Added — `SessionStep.decided_value`, the sealing step's decided value (runtime 0.98.0, seam-runtime#1785)
