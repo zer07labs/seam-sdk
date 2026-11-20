@@ -724,7 +724,7 @@ wrong answers rather than misses:
   line happened to mention.
 
 So: same line only, subject cell first, and an alias with no extension binds nothing. The rule is in
-`python/tests/test_compatibility_citations_resolve.py:1304`, and both failure modes are pinned by
+`python/tests/test_compatibility_citations_resolve.py:1305`, and both failure modes are pinned by
 mutation tests rather than described in prose.
 
 **The 94 references that bind to nothing are not a backlog.** They are mostly two kinds that must
