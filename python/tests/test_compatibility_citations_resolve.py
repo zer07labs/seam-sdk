@@ -1274,8 +1274,9 @@ QUOTED = [
         # 0.88.1,<0.89 -> 0.89.0,<0.90 on 2026-11-16 by seam-agent-core 0.30.0 (seam-adapters#293, 0a324a9),
         # then 0.89.0,<0.90 -> 0.90.1,<0.91 on 2026-11-17 by seam-agent-core 0.31.0 (seam-adapters#294, 29ba843),
         # then 0.90.1,<0.91 -> 0.92.0,<0.93 on 2026-11-17 by seam-agent-core 0.32.0 (seam-adapters#295, 3d5f3fe);
-        # no adapters release pinned 0.91.x.
-        "seam-sdk>=0.92.0,<0.93",
+        # no adapters release pinned 0.91.x. Then 0.92.0,<0.93 -> 0.99.0,<0.100 on 2026-11-20 by
+        # seam-agent-core 0.33.0 (seam-adapters#297, 356fa6b, SessionStep.decided_value).
+        "seam-sdk>=0.99.0,<0.100",
     ),
     (
         "COMPATIBILITY.md",

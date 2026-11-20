@@ -16,6 +16,20 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added — `SeamAdminClient.cancel_session` / `cancelSession`, the gRPC tenant stop (runtime 0.102.0, RT3/#1771)
+
+- `SeamAdmin.CancelSession(AdminCancelRequest) → AdminCancelResponse`, the gRPC twin of the HTTP admin cancel. An
+  operator with the `session:cancel` scope cancels a live session. The runtime seals a `Cancelled` record after one
+  chained `session_cancelled` audit entry.
+- Python `cancel_session(session_id, reason, *, tenant="", namespace="")`, TS
+  `cancelSession(sessionId, reason, { tenant, namespace })`. Both make one call and never retry, because the verb is
+  destructive and burns its `jti`. `already_terminal` / `alreadyTerminal` is true when nothing was cancelled.
+- This is not the data-plane `SeamClient.cancel_session`, which is a participant cancelling its own session.
+
+### Changed — `verify/docs/seam-event.v1.md` re-pinned to runtime 94d2335 (v0.100.0, #1779)
+
+- The `subject_commitment_tombstoned` anchor is now a keyed tag under the tenant's erasure key, and an unavailable erasure key refuses the seal. Spec text only: the verifier digests the entry whatever its anchor holds.
+
 ## 0.99.1 — 2026-11-20
 
 ## 0.99.0 — 2026-11-20

@@ -704,6 +704,40 @@ class SeamAdminClient:
             getattr(req, "raise").CopyFrom(raise_.to_pb())
         return self._admin.ResumeSession(req, timeout=timeout)
 
+    def cancel_session(
+        self,
+        session_id: str,
+        reason: str,
+        *,
+        tenant: str = "",
+        namespace: str = "",
+        timeout: float = DEFAULT_ADMIN_TIMEOUT_S,
+    ) -> pb.AdminCancelResponse:
+        """The tenant stop (runtime 0.102.0, RT3/#1771): an operator cancels a live session on the
+        **management** plane. The runtime seals a ``Cancelled`` record after one chained ``session_cancelled``
+        audit entry, whose actor is the token's ``sub``. Requires the ``session:cancel`` operator scope.
+
+        This is not :meth:`SeamClient.cancel_session`, which is a participant's own cancel on the data
+        plane. The verb is **destructive**: every call needs a fresh DPoP ``jti`` (the auth interceptor mints
+        one per call), and this method makes exactly one call and never retries.
+
+        ``reason`` is required and non-empty, and lands verbatim in the chained audit entry. ``tenant`` and
+        ``namespace`` are the session's scope: give both, or leave both empty (fleet operator, enforcement
+        off). Exactly one empty is ``INVALID_ARGUMENT``. A tenant-scoped operator must name its own tenant
+        (``PERMISSION_DENIED``). Another tenant's session and an unknown id are the same ``NOT_FOUND``.
+
+        The response's ``already_terminal`` is true when the session was already terminal. Nothing was
+        cancelled, sealed or audited, and ``state`` is the state it already held."""
+        return self._admin.CancelSession(
+            pb.AdminCancelRequest(
+                session_id=session_id,
+                reason=reason,
+                tenant=tenant,
+                namespace=namespace,
+            ),
+            timeout=timeout,
+        )
+
     # ── Retention & legal hold ───────────────────────────────────────────────────────────────────
 
     def list_legal_holds(

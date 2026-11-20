@@ -146,6 +146,7 @@ ADMIN_CALLS = {
     "revoke_grant": lambda a: a.revoke_grant("acme", "ns-a", "ns-b", "op", timeout=0.1),
     "list_grants": lambda a: a.list_grants(timeout=0.1),
     "resume_session": lambda a: a.resume_session("s", "approver", timeout=0.1),
+    "cancel_session": lambda a: a.cancel_session("s", "operator stop", timeout=0.1),
     "list_legal_holds": lambda a: a.list_legal_holds(timeout=0.1),
     "place_legal_hold": lambda a: a.place_legal_hold("d", timeout=0.1),
     "release_legal_hold": lambda a: a.release_legal_hold("d", timeout=0.1),

@@ -164,6 +164,7 @@ const ADMIN_CALLS: Record<
   revokeGrant: (a, o) => a.revokeGrant("acme", "from", "to", "op:x", o),
   listGrants: (a, o) => a.listGrants(o),
   resumeSession: (a, o) => a.resumeSession("s", "op:approver", o),
+  cancelSession: (a, o) => a.cancelSession("s", "operator stop", o),
   listLegalHolds: (a, o) => a.listLegalHolds(o),
   placeLegalHold: (a, o) => a.placeLegalHold("d", o),
   releaseLegalHold: (a, o) => a.releaseLegalHold("d", o),
@@ -570,6 +571,28 @@ test("bound agent: every target verb attaches its credential, and an explicit cr
     );
     assert.equal(ed25519.verify(sig, payload, ed25519.getPublicKey(bound.seed)), false, `${name}: bound key used`);
   }
+});
+
+// ── SeamAdmin.CancelSession: the tenant stop (runtime 0.102.0, RT3/#1771) ───────────────────────
+
+test("admin cancelSession sends one CancelSession with the scope and returns the response", async () => {
+  const calls: Recorded[] = [];
+  const admin = new SeamAdminClient(
+    fakeTransport(calls, () => ({ decisionId: "d-1", state: "Cancelled", alreadyTerminal: true })),
+  );
+  const r = await admin.cancelSession("s-1", "operator stop", { tenant: "acme", namespace: "payments" });
+  assert.deepEqual(calls.map((c) => c.method), ["CancelSession"]);
+  assert.equal(calls[0]!.input.sessionId, "s-1");
+  assert.equal(calls[0]!.input.reason, "operator stop");
+  assert.equal(calls[0]!.input.tenant, "acme");
+  assert.equal(calls[0]!.input.namespace, "payments");
+  assert.equal(r.decisionId, "d-1");
+  assert.equal(r.alreadyTerminal, true);
+
+  calls.length = 0;
+  await admin.cancelSession("s-1", "operator stop");
+  assert.equal(calls[0]!.input.tenant, "");
+  assert.equal(calls[0]!.input.namespace, "");
 });
 
 // ── Budget default: 0 ⇒ the server owns the default; the client never re-states 32 ───────────────

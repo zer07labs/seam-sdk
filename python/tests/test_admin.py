@@ -44,6 +44,13 @@ class RecordingAdmin(rpc.SeamAdminServicer):
         self.erase_requests: list[pb.ErasureRequest] = []
         # (verb, decision_id, invocation metadata as a list of (key, value)) per legal-hold call.
         self.legal_hold_calls: list[tuple[str, str, list[tuple[str, str]]]] = []
+        self.cancels: list[pb.AdminCancelRequest] = []
+
+    def CancelSession(self, request, context):  # noqa: N802
+        self.cancels.append(request)
+        return pb.AdminCancelResponse(
+            decision_id="d-1", state="Cancelled", already_terminal=False
+        )
 
     def RemoveParty(self, request, context):  # noqa: N802
         self.removed = request
@@ -93,6 +100,29 @@ def recording_admin():
     server.start()
     yield servicer, f"127.0.0.1:{port}"
     server.stop(None)
+
+
+def test_admin_cancel_session_sends_one_request_and_returns_the_response(
+    recording_admin,
+):
+    """The tenant stop (runtime 0.102.0): SeamAdmin.CancelSession, one call, never retried."""
+    servicer, addr = recording_admin
+    with SeamAdminClient.connect(addr) as admin:
+        r = admin.cancel_session(
+            "s-1", "operator stop", tenant="acme", namespace="payments"
+        )
+    assert [
+        (c.session_id, c.reason, c.tenant, c.namespace) for c in servicer.cancels
+    ] == [("s-1", "operator stop", "acme", "payments")]
+    assert (r.decision_id, r.state, r.already_terminal) == ("d-1", "Cancelled", False)
+
+
+def test_admin_cancel_session_leaves_the_scope_empty_when_not_given(recording_admin):
+    servicer, addr = recording_admin
+    with SeamAdminClient.connect(addr) as admin:
+        admin.cancel_session("s-1", "operator stop")
+    (req,) = servicer.cancels
+    assert (req.tenant, req.namespace) == ("", "")
 
 
 def test_remove_party_sends_the_party_id_and_returns_none(recording_admin):

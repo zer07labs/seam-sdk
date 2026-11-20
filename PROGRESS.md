@@ -142,7 +142,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 >
 > **Done in Phase 1 (2026-08-31).** Delivery was verified against this tree — `record_digest_v3` (since the
 > protocol pass, `record_digest_v4`) at `python/seam_sdk/crypto.py:1003`, `ts/src/crypto.ts:1342`, `verify/src/verify.rs:648`; the 6a/6b
-> streamed arms live at `python/seam_sdk/admin.py:141` and `ts/src/admin.ts:161`; KATs at
+> streamed arms live at `python/seam_sdk/admin.py:141` and `ts/src/admin.ts:162`; KATs at
 > `conformance/vectors.json:70` — and the plan is now `plans/archive/record-digest-v3.md`.
 > `plans/authorize-single-canonicalization.md` turned out to be delivered too (issue #60, closed
 > 2026-08-25) and had **no index row at all**, so it was archived in the same pass. Delivery PRs:
@@ -167,7 +167,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 
 | `python/seam_sdk/_authorize.py:180,223` | `AuthorizeRequest.subjects` — one shared builder feeds sync + aio + TS. Delivered; tests at `python/tests/test_authorize.py:639,646`. |
 | `scripts/check-contract.sh` | The contract-freshness gate. `:192` probe 1 (one named RPC) · `:196-210` probe 1b and `:212-226` probe 1c (hardcoded names; 1b includes **two `seam.api.v1` field names**, `call_sig` and `on_behalf_of`, at `:205-206`) · `:228-241` probe 2 (**exactly four hardcoded field names, all on `seam.event.v1`**; `STREAM=1` hardens) · `:242-247` probe 3 (`EVENTS=1`) · `:249-275` probe 4 (RPC set comparison, both directions). Every field probe names a *pre-existing* field, so **a new message field is invisible to all of them — that is the hole Phase 5 closes.** Extractors to mirror: `:158-161` `rpcs_python` (greps `_pb2_grpc.py`), `:163-166` `rpcs_ts` (greps `@generated from rpc`), `:173-188` `--write-manifest` (**writes from Python only**, preserves the header verbatim), `:88-97` the exit-3 no-stubs guard. |
-| `contract/rpc-manifest.txt:60-61` | Declares `SubmitEvaluation`/`SubmitObjection`. The model Phase 5 mirrors one level down. |
+| `contract/rpc-manifest.txt:61-62` | Declares `SubmitEvaluation`/`SubmitObjection`. The model Phase 5 mirrors one level down. |
 | `contract/field-manifest.txt` | **Phase 5 creates.** Whole-surface `seam.api.v1` field declaration (measured: **223 fields over 65 messages** — both extractors agree exactly, given the `_FIELD_NUMBER` rule in the row below), set-compared per language both directions, `--write-manifest` escape. Also the ACDP tags-7-10 tripwire. **As shipped: 228, not 223** — the plan measured the surface before ACDP reached the BSR. |
 | `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi` | `AuthorizeRequest.FeaturesEntry` / `RunDecisionRequest.FeaturesEntry` — **synthetic map-entry messages Python emits and protobuf-es does not**. Phase 5's extractors must exclude them **by nesting, not by the `*Entry` name** — `AuditEntry` is a real top-level message (cited by symbol: this tree regenerates). `.pyi` carries **no `oneof` grouping at all** (and `seam.api.v1` has zero `oneof`s). |
 | `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi` | **`__slots__` is NOT the field list.** `ResumeRequest`/`AdminResumeRequest` carry a proto field named `raise`; the `.pyi` generator cannot emit a Python keyword, so `__slots__` omits it and only `RAISE_FIELD_NUMBER` survives. Measured: `__slots__` = 221 fields, protobuf-es = 223. **Phase 5 must extract from `<NAME>_FIELD_NUMBER: _ClassVar[int]` lowercased** — that reconciles both sides at 223 with zero diff. |
@@ -240,8 +240,8 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   documentation-precision; none was a correctness risk, and the commit is docs-only.
   - *R1 GAPS (4):* the repo-map cell asserted a staleness this very commit had just fixed;
     the Approach's "add the delivery PR numbers" instruction was silently skipped;
-    `ts/src/admin.ts:121` was cited as the streamed v3 arm when it is the version-ceiling refusal
-    (`ts/src/admin.ts:160` is the dispatch); and the archive move orphaned citations — two line-anchors plus seven
+    `ts/src/admin.ts:122` was cited as the streamed v3 arm when it is the version-ceiling refusal
+    (`ts/src/admin.ts:161` is the dispatch); and the archive move orphaned citations — two line-anchors plus seven
     `**Plan:**` paths in `ASSUMPTIONS.md`, which no guard covers.
   - *R2 GAPS (3):* the `:109`→`:141` fix reached `PROGRESS.md` but missed
     `plans/archive/record-digest-v3.md:12`; removing a duplicated execution-order block ate the
@@ -260,7 +260,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 - **Delivery verified against code, not status tables** (the whole point of the phase):
   `record_digest_v3` at `python/seam_sdk/crypto.py:928`, `ts/src/crypto.ts:1342`,
   `verify/src/verify.rs:648`; streamed v3 arms at `python/seam_sdk/admin.py:141` (with `:107`
-  refusing `schema_version > 3`) and `ts/src/admin.ts:161` (with `:109` the matching ceiling
+  refusing `schema_version > 3`) and `ts/src/admin.ts:162` (with `:109` the matching ceiling
   refusal); KATs at `conformance/vectors.json:70`;
   issue #56 CLOSED 2026-08-25.
 - **Divergence:** `plans/authorize-single-canonicalization.md` was also fully delivered (5/5 phases
@@ -4069,7 +4069,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:2167`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:2181`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -4397,13 +4397,13 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
   `ts/src/client.ts:794-816` (`authorize`'s inline-opts precedent),
   `ts/src/client.ts:1553-1565` (`verifyPartyAnchor` itself) — the TS surface Phase 2 changes
   and the conventions it must match.
-- `ts/src/admin.ts:365-388` — `resumeSession`'s inline `tenant?: string` precedent, the pattern
+- `ts/src/admin.ts:366-389` — `resumeSession`'s inline `tenant?: string` precedent, the pattern
   Phase 2 mirrors on the data plane.
 - `ts/tests/verify_attestation.test.ts` — sibling test file to model Phase 2's new
   `verify_anchor.test.ts` after (`clientWithTrust` unit pattern, `withPlanes` live pattern).
 - `ts/tests/operator_token.ts` — already carries `mintOperatorToken`'s `opts.tenant` (added in
   PR #174); reused as-is.
-- `contract/field-manifest.txt:420` — already lists `VerifyAnchorRequest/tenant`; no change.
+- `contract/field-manifest.txt:427` — already lists `VerifyAnchorRequest/tenant`; no change.
 - `DECISIONS.md:2294-2327` — the 2026-10-04 deferral entry; Phase 3 amends its stale trigger
   bullet (`DECISIONS.md:2313-2314`) in place AND appends a new dated entry (this file is not
   append-only — `DECISIONS.md:1220-1221`, `DECISIONS.md:1551`, and `DECISIONS.md:1952` are
@@ -4556,12 +4556,12 @@ green before any code changed.
   this — "rather than refusing outright" was wrong, fixed before merge). (2) the release's
   `retitle_changelog.sh` run shifted `CHANGELOG.md`'s "No yank" paragraph from line 1054 to 1056
   (a +2 insert right after `## Unreleased`), pushing `COMPATIBILITY.md:135` and
-  `DECISIONS.md:1222`'s `CHANGELOG.md:1944-1961` citations past the citation test's slack
-  tolerance; repointed both to `CHANGELOG.md:1946-1963`. Tested: `check_vendored_spec.py` OK via both
+  `DECISIONS.md:1222`'s `CHANGELOG.md:1958-1975` citations past the citation test's slack
+  tolerance; repointed both to `CHANGELOG.md:1960-1977`. Tested: `check_vendored_spec.py` OK via both
   `--from local` and `--from gh`; `test_compatibility_citations_resolve.py` 489 passed/0 failed
   standalone (was 4 failed). Verifier also flagged two pre-existing, gate-invisible citations
   elsewhere that the same +2 shift widened further — `DECISIONS.md:2035` cites
-  `CHANGELOG.md:1846` and `PROGRESS.md:3981` cites `CHANGELOG.md:1731`, both already ~130-250
+  `CHANGELOG.md:1860` and `PROGRESS.md:3981` cites `CHANGELOG.md:1745`, both already ~130-250
   lines stale before this release — out of scope for this release-unblock hotfix; filed as a
   follow-up issue rather than folded in here.
   **Rebased `feat/verify-anchor-tenant` onto this commit during `/sweep`'s ship pass.** Four
@@ -4571,7 +4571,7 @@ green before any code changed.
   `CHANGELOG.md`/`COMPATIBILITY.md`/`DECISIONS.md`: the feature branch's own new
   `## Unreleased` entry (16 lines) was kept above this hotfix's `## 0.33.3` header, which
   shifted "No yank" from this entry's `1056` to `1072` and recomputed the two citations above
-  (`CHANGELOG.md:1946-1963`) to `CHANGELOG.md:1962-1979` — verified against the exact
+  (`CHANGELOG.md:1960-1977`) to `CHANGELOG.md:1976-1993` — verified against the exact
   paragraph-boundary text at both the old and new line numbers before trusting the new range,
   not just the arithmetic. A dedicated ship-gate verifier independently re-derived this same
   shift from the diff and confirmed it exact.
@@ -4593,7 +4593,7 @@ green before any code changed.
      `python/seam_sdk/admin.py:636` returns `EventStream(lambda: self._events.StreamEvents(...))`,
      whose `__next__` (`python/seam_sdk/admin.py:249`) yields the raw generated `ev.SeamEvent` object directly —
      same shape as `preview_erasure` returning the whole `pb.ErasurePreview` (PR #182's finding).
-     `ts/src/admin.ts:486-494`'s `streamEvents` generator does `for await (const ev of
+     `ts/src/admin.ts:487-495`'s `streamEvents` generator does `for await (const ev of
      events.streamEvents(...)) { yield ev; }` — also raw pass-through, typed
      `AsyncIterable<SeamEvent>`. So `tenant_seq` will be reachable as `event.tenant_seq` in both
      languages the instant the stubs regenerate, with zero method/type changes — exactly the
