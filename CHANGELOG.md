@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.104.0 — 2026-11-20
+
 ### Added — option-selection winner recompute in TS, Go, Java and Kotlin (#368)
 
 - All four ports now run selection-rule.v1 §3 `decide` and §5 steps 6-9 `verifySelection` at parity with Python and
