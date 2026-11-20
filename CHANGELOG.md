@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.102.0 — 2026-11-20
+
 ### Added — `SeamAdminClient.cancel_session` / `cancelSession`, the gRPC tenant stop (runtime 0.102.0, RT3/#1771)
 
 - `SeamAdmin.CancelSession(AdminCancelRequest) → AdminCancelResponse`, the gRPC twin of the HTTP admin cancel. An
