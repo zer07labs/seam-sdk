@@ -18,6 +18,7 @@ from typing import Any, Awaitable, Callable, Mapping, Optional, Sequence, TypeVa
 import grpc
 import grpc.aio
 
+from ._clearance import _check_clearance, _with_clearance
 from ._authorize import (
     AuthorizeResult,
     TicketCache,
@@ -898,18 +899,22 @@ class SeamClient:
         decision_id: str,
         *,
         credential: Optional[Agent] = None,
+        clearance: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.DecisionRecordView:
         """Async twin of :meth:`seam_sdk.SeamClient.get_decision`. Returns the raw view; read it with
         :func:`~seam_sdk.policy_enforcement_of`, :func:`~seam_sdk.seal_attestation_of` and
         :func:`~seam_sdk.allocation_of`."""
+        _check_clearance("get_decision", clearance)
         return await self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/GetDecision",
             decision_id,
             None,
             lambda md: self._coord.GetDecision(
-                pb.DecisionRef(decision_id=decision_id), timeout=timeout, metadata=md
+                pb.DecisionRef(decision_id=decision_id),
+                timeout=timeout,
+                metadata=_with_clearance(md, clearance),
             ),
             timeout=timeout,
         )
@@ -919,15 +924,19 @@ class SeamClient:
         decision_id: str,
         *,
         credential: Optional[Agent] = None,
+        clearance: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.ReplayView:
+        _check_clearance("replay_decision", clearance)
         return await self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/ReplayDecision",
             decision_id,
             None,
             lambda md: self._coord.ReplayDecision(
-                pb.DecisionRef(decision_id=decision_id), timeout=timeout, metadata=md
+                pb.DecisionRef(decision_id=decision_id),
+                timeout=timeout,
+                metadata=_with_clearance(md, clearance),
             ),
             timeout=timeout,
         )
@@ -1166,15 +1175,19 @@ class SeamClient:
         decision_id: str,
         *,
         credential: Optional[Agent] = None,
+        clearance: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.CommitmentProof:
+        _check_clearance("get_commitment_proof", clearance)
         return await self._credentialed_call(
             credential,
             "/seam.api.v1.SeamCoordination/GetCommitmentProof",
             decision_id,
             None,
             lambda md: self._coord.GetCommitmentProof(
-                pb.DecisionRef(decision_id=decision_id), timeout=timeout, metadata=md
+                pb.DecisionRef(decision_id=decision_id),
+                timeout=timeout,
+                metadata=_with_clearance(md, clearance),
             ),
             timeout=timeout,
         )
@@ -1185,13 +1198,14 @@ class SeamClient:
         expected_issuer: str,
         *,
         credential: Optional[Agent] = None,
+        clearance: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> bool:
         """Async twin of :meth:`seam_sdk.SeamClient.verify_decision` — zero-server-trust local TCT
         verification against the caller-pinned issuer; raises :class:`IssuerMismatchError` on an
         attempted key substitution."""
         proof = await self.get_commitment_proof(
-            decision_id, credential=credential, timeout=timeout
+            decision_id, credential=credential, clearance=clearance, timeout=timeout
         )
         if proof.issuer_aid != expected_issuer:
             raise IssuerMismatchError(proof.issuer_aid, expected_issuer)

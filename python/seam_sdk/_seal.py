@@ -44,9 +44,9 @@ That is a normal state, not an error. For such a record, the seal-time immediate
 only source of its collective outcome.
 
 **Clearance.** Opening the attestation goes through the same decrypt gate as
-``GetCommitmentProof``. This SDK sends no ``x-seam-clearance`` header, so every read is at the
-default PUBLIC clearance, and a record whose handling rule needs more reads ``"CLEARANCE_DENIED"``
-— never an error on the call.
+``GetCommitmentProof``. Without ``clearance=`` on ``get_decision`` no ``x-seam-clearance`` is sent
+and the read is at PUBLIC; a record whose handling rule needs more reads ``"CLEARANCE_DENIED"`` —
+never an error on the call. The header is honoured only on an ``allow``-posture plane.
 
 **The two policy scalars beside it stay raw.** ``DecisionRecordView.policy_version`` (``str``) and
 ``policy_rules_digest`` (``bytes``) are plain proto3 scalars with no presence and no enum, so there
@@ -108,8 +108,8 @@ class SealAttestation:
     #: Only ``"RECORDED"`` means the payload below was read. ``"NOT_RECORDED"`` (sealed by a runtime
     #: that wrote none; every 0.61.x record) is normal. ``"KEY_UNAVAILABLE"`` is crypto-shred — the
     #: structural columns and ``policy_enforcement`` still answer. ``"ARCHIVED"`` means cold storage;
-    #: cold-replay the archive bundle. ``"CLEARANCE_DENIED"`` means this read's clearance (PUBLIC —
-    #: this SDK sends none) is below the record's decrypt floor. ``"UNAVAILABLE"`` is the runtime
+    #: cold-replay the archive bundle. ``"CLEARANCE_DENIED"`` means this read's clearance (PUBLIC unless
+    #: ``clearance=`` was sent and honoured) is below the record's decrypt floor. ``"UNAVAILABLE"`` is the runtime
     #: saying it could not read it (a transient fault, where a retry may succeed, or an attestation
     #: it cannot decode). ``"UNRECOGNIZED"`` is THIS SDK not knowing the value, UNSPECIFIED included;
     #: read it as withheld, and upgrade.

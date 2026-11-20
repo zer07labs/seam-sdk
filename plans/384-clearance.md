@@ -98,7 +98,7 @@ the wave leader's train). There is no SDK-only version.
 
 ### P2 — Python: `clearance=` on get_decision / replay_decision / get_commitment_proof / verify_decision (sync + aio)
 - **Risk:** complex
-- **Status:** TODO
+- **Status:** DONE (Opus verify PASS, 1 round; also exports `CLEARANCE_HEADER`, one more name than planned)
 - **Delivers:**
   - Exported constants `CLEARANCE_PUBLIC … CLEARANCE_PHI` and a frozenset `CLEARANCES`, following the
     `ENROLMENT_KIND_*` precedent (`admin.py:81-92`, `__init__.py` exports + `__all__`).

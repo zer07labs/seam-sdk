@@ -22,6 +22,16 @@ from ._requester import (
     REQUESTER_ID_MIN_BYTES,
     valid_requester_id,
 )
+from ._clearance import (
+    CLEARANCE_CONFIDENTIAL,
+    CLEARANCE_FINANCIAL,
+    CLEARANCE_HEADER,
+    CLEARANCE_INTERNAL,
+    CLEARANCE_PHI,
+    CLEARANCE_PII,
+    CLEARANCE_PUBLIC,
+    CLEARANCES,
+)
 from ._policy import PolicyEnforcement, policy_enforcement_of
 from ._seal import SealAttestation, seal_attestation_of
 from .admin import (
@@ -253,6 +263,16 @@ __all__ = [
     "vote_content_digest",
     "vote_entry_bytes",
     "voter_pop_payload",
+    # Decrypt clearance on the decision reads (#384) — clearance= on get_decision/replay_decision/
+    # get_commitment_proof/verify_decision
+    "CLEARANCE_CONFIDENTIAL",
+    "CLEARANCE_FINANCIAL",
+    "CLEARANCE_HEADER",
+    "CLEARANCE_INTERNAL",
+    "CLEARANCE_PHI",
+    "CLEARANCE_PII",
+    "CLEARANCE_PUBLIC",
+    "CLEARANCES",
     # Enrolment kind (runtime 0.71.0, OI-R2a) — EnrollTenantRequest.kind / TenantView.kind / WhoAmI
     "ENROLMENT_KIND_AGENT",
     "ENROLMENT_KIND_CHANGESET_WORKER",

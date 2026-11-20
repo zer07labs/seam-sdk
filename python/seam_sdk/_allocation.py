@@ -43,9 +43,9 @@ non-recorded state). That is a normal state, not an error — it also means "ran
 experiment" once a runtime does write them.
 
 **Clearance.** Opening the allocation goes through the same decrypt gate as ``seal_attestation``.
-This SDK sends no ``x-seam-clearance`` header, so every read is at the default PUBLIC clearance,
-and a record whose handling rule needs more reads ``"CLEARANCE_DENIED"`` — never an error on the
-call.
+Without ``clearance=`` on ``get_decision`` no ``x-seam-clearance`` is sent and the read is at
+PUBLIC; a record whose handling rule needs more reads ``"CLEARANCE_DENIED"`` — never an error on the
+call. The header is honoured only on an ``allow``-posture plane (see :mod:`seam_sdk._clearance`).
 
 **``"UNAVAILABLE"`` is two things.** The runtime could not open or decode the commitment: a
 transient store or KMS fault (a retry may succeed), or a trailer that runtime cannot decode (which
@@ -128,8 +128,8 @@ class AllocationView:
     #: Only ``"RECORDED"`` means :attr:`allocation` was read. ``"NOT_RECORDED"`` (the decision ran
     #: outside any experiment, or was sealed by a runtime that wrote none — every 0.76.0 record) is
     #: normal. ``"KEY_UNAVAILABLE"`` is crypto-shred. ``"ARCHIVED"`` means cold storage; cold-replay
-    #: the archive bundle. ``"CLEARANCE_DENIED"`` means this read's clearance (PUBLIC — this SDK
-    #: sends none) is below the record's decrypt floor. ``"UNAVAILABLE"`` is the runtime saying it
+    #: the archive bundle. ``"CLEARANCE_DENIED"`` means this read's clearance (PUBLIC unless
+    #: ``clearance=`` was sent and honoured) is below the record's decrypt floor. ``"UNAVAILABLE"`` is the runtime saying it
     #: could not open or decode it (transient, or a trailer that runtime cannot decode).
     #: ``"UNRECOGNIZED"`` is THIS SDK not knowing the value, UNSPECIFIED included; read it as
     #: withheld, and upgrade.
