@@ -5392,3 +5392,27 @@ not filed here. OQ-1 is resolved, so no phase is gated.
 - 2026-11-08 Finalization: full local gates green (ruff; pytest 2603; TS typecheck/build, 567 pass 0 fail; go; verify test/clippy/fmt; contract gate exit 0; scripts 720). Final Opus verify of the cumulative diff: (B) P3 residuals PASS, (C) whole feature PASS, (A) P5 GAPS, doc-only: the durations table was missing, the GitHub-hosted saving was overstated, and the #279 date. All three fixed with the verifier's numbers. /reconcile: A-BP8S-1 and A-BP8S-2 CONFIRMED by Opus (reversible tier). Next: /ship, a draft PR.
 - pushed feat/bp8-allocation-view 802b31e; PR #338 opened (draft): https://github.com/zer07labs/seam-sdk/pull/338
 - PR #338 CI green (run 42534222847); 2vcpu durations recorded in docs/ci-cost.md (P5 AC3); all jobs under 60 s.
+
+# PROGRESS — plans/384-clearance.md (wave 2026-11-21 W1: #384 clearance, #391 flake)
+
+Branch `feat/384-clearance-391-flake` off `009728f`. One PR.
+
+## Repo map (anchors at 009728f)
+
+- `python/seam_sdk/client.py`: `_credentialed_call` :637-712 (send(None) with no signer :686; first send :689-693; #275 retry :705-709); `get_decision` ~:1220, `replay_decision` :1238-1253, `get_commitment_proof` :1520-1536, `verify_decision` :1538-1572 (forwards credential/timeout :1561).
+- `python/seam_sdk/aio.py`: `_credentialed_call` ~:390; `replay_decision` :917-932, `get_commitment_proof` :1164-1180, `verify_decision` :1182-1210.
+- `python/seam_sdk/admin.py:81-92`, `python/seam_sdk/__init__.py:29-33`: constant + frozenset export precedent (`ENROLMENT_KIND_*`). `python/seam_sdk/admin.py:574-577`: ValueError precedent.
+- `python/seam_sdk/_seal.py:46-49`, `python/seam_sdk/_allocation.py:45-48`: "sends no x-seam-clearance" docstrings.
+- `python/tests/test_credential_wiring.py:60-86`: recorders + default-wire pins. `python/tests/test_credential_refresh.py:114`: retry harness.
+- `ts/src/client.ts`: `CredentialedCallOptions` :139-146; `call()` :175; `credentialedCall` :1375-1406; `getDecision` :1940, `replayDecision` :1949, `getCommitmentProof` :2008, `verifyDecision` :2210-2215; clearance docs :507-508, :678-679. `ts/src/admin.ts:115-131`: union/set + InvalidArgumentError precedent. `ts/tests/unit_plumbing.test.ts:88`.
+- `go/routing/routing.go` + `go/routing/routing_test.go:27-75`: metadata helper + raw-invoke test pattern (gen stubs are outside the go module).
+- `java/src/main/java/com/zer07labs/seam/TenantRouting.java:33-90`, `java/src/test/java/com/zer07labs/seam/TenantRoutingTest.java:45-120`; `kotlin/src/main/kotlin/com/zer07labs/seam/TenantRouting.kt:26-60`, `kotlin/src/test/kotlin/com/zer07labs/seam/TenantRoutingTest.kt:62-88`: interceptor + in-process test pattern. `grpc-stub` is test-only.
+- `COMPATIBILITY.md` §4 :345, identity table :367-380 (`x-seam-tenant` row :375). `DEFERRED.md:2` (#273 Q2). `CHANGELOG.md:17` Unreleased.
+- `python/tests/test_compatibility_citations_resolve.py`: checks file:line citations in COMPATIBILITY/DECISIONS/PROGRESS (slack 3), incl. this section; use repo-relative paths.
+- Release: `.github/workflows/release-on-runtime.yml` (version must equal the runtime's), `publish.yml` (v* tag).
+- #391: `scripts/test_release_refire_gate.py` ~:569.
+
+## Phase log
+PR strategy: one PR (brief: one PR per unit; phases are additive per-language, no landing-order seam).
+Risk tiers: P1 simple · P2 complex (Python public API + credentialed send path) · P3 complex (TS public API + send path) · P4 simple · P5 simple (new self-contained helpers, batched gate) · P6 simple (docs; citation tests).
+- 2026-11-20 P1 (#391): PASS, 1 round, Opus verifier (simple phase, solo because P2 is complex). Root cause: SIGPIPE from the `buf` stub not draining `--token-stdin` under pipefail. Files: `scripts/test_release_refire_gate.py`, `plans/384-clearance.md`. Optional verifier notes were not acted on (out of scope): two refusal tests don't check which gate refused. Next: P2.
