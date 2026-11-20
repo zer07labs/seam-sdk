@@ -47,6 +47,7 @@ import {
 // ChainHeadAttestation moved to the canonical seam.event.v1 package.
 import { type ChainHeadAttestation } from "../gen/seam/event/v1/seam_event_pb.js";
 import { tenantHeaderInterceptor } from "./tenant.js";
+import { type Clearance, checkClearance, withClearance } from "./clearance.js";
 import { type ObservedAt, checkOutcomeFields } from "./outcome.js";
 import {
   aidFromPubkey,
@@ -143,6 +144,14 @@ export interface CredentialedCallOptions extends UnaryCallOptions {
    * it defaults to the agent the client is bound to ({@link SeamClientOptions.agent}, seam-sdk#202);
    * on an unbound client no credential is sent. */
   credential?: Agent;
+}
+
+/** {@link CredentialedCallOptions} plus the opt-in {@link Clearance} — accepted only by the decision
+ * reads it applies to ({@link SeamClient.getDecision}, {@link SeamClient.replayDecision},
+ * {@link SeamClient.getCommitmentProof}, {@link SeamClient.verifyDecision}). */
+export interface DecisionReadOptions extends CredentialedCallOptions {
+  /** Omitted, no `x-seam-clearance` is sent and the wire is byte-identical to an SDK without it. */
+  clearance?: Clearance;
 }
 
 /** Options for {@link SeamClient.connect} and the {@link SeamClient} constructor. */
@@ -505,7 +514,7 @@ export interface SealAttestation {
    * record the seal-time immediate response is the only source of its collective outcome.
    * `"KEY_UNAVAILABLE"` is crypto-shred (the structural columns and `policyEnforcement` still
    * answer). `"ARCHIVED"` means cold storage; cold-replay the archive bundle. `"CLEARANCE_DENIED"`
-   * means this read's clearance — PUBLIC, since this SDK sends no `x-seam-clearance` — is below the
+   * means this read's clearance — PUBLIC unless `clearance` was sent and honoured — is below the
    * record's decrypt floor; never an error on the call. `"UNAVAILABLE"` is the runtime saying it
    * could not read it (a transient fault, where a retry may succeed, or an attestation it cannot
    * decode). `"UNRECOGNIZED"` is THIS SDK not knowing the value, UNSPECIFIED included: read it as
@@ -676,7 +685,7 @@ export interface AllocationView {
    * outside any experiment, or was sealed by a runtime that wrote none — is normal, and is what
    * **every 0.76.0 record** reads. `"KEY_UNAVAILABLE"` is crypto-shred. `"ARCHIVED"` means cold
    * storage; cold-replay the archive bundle. `"CLEARANCE_DENIED"` means this read's clearance —
-   * PUBLIC, since this SDK sends no `x-seam-clearance` — is below the record's decrypt floor; never
+   * PUBLIC unless `clearance` was sent and honoured — is below the record's decrypt floor; never
    * an error on the call. `"UNAVAILABLE"` is the runtime saying it could not open or decode it: a
    * transient fault (a retry may succeed) or a trailer that runtime cannot decode (persists until
    * the RUNTIME is upgraded). `"UNRECOGNIZED"` is THIS SDK not knowing the value, UNSPECIFIED
@@ -1936,23 +1945,34 @@ export class SeamClient {
   /** Returns the raw `DecisionRecordView`. Read its policy enforcement with
    * {@link policyEnforcementOf}, its seal attestation with {@link sealAttestationOf} (runtime
    * 0.61.0+) and its experiment allocation with {@link allocationOf} (runtime 0.76.0+) rather than
-   * the raw fields. */
-  async getDecision(decisionId: string, opts?: CredentialedCallOptions) {
+   * the raw fields. `opts.clearance` sends `x-seam-clearance` ({@link Clearance}); omitted, the read
+   * is at `Public`. */
+  async getDecision(decisionId: string, opts?: DecisionReadOptions) {
+    checkClearance("getDecision", opts?.clearance);
     return this.credentialedCall(
       opts?.credential,
       "/seam.api.v1.SeamCoordination/GetDecision",
       decisionId,
       opts,
-      (headers) => this.coord.getDecision({ decisionId }, { ...call(opts), headers }),
+      (headers) =>
+        this.coord.getDecision(
+          { decisionId },
+          { ...call(opts), headers: withClearance(headers, opts?.clearance) },
+        ),
     );
   }
-  async replayDecision(decisionId: string, opts?: CredentialedCallOptions) {
+  async replayDecision(decisionId: string, opts?: DecisionReadOptions) {
+    checkClearance("replayDecision", opts?.clearance);
     return this.credentialedCall(
       opts?.credential,
       "/seam.api.v1.SeamCoordination/ReplayDecision",
       decisionId,
       opts,
-      (headers) => this.coord.replayDecision({ decisionId }, { ...call(opts), headers }),
+      (headers) =>
+        this.coord.replayDecision(
+          { decisionId },
+          { ...call(opts), headers: withClearance(headers, opts?.clearance) },
+        ),
     );
   }
   issuerAid(opts?: UnaryCallOptions) {
@@ -2005,13 +2025,18 @@ export class SeamClient {
       (headers) => this.trust.whoAmI({}, { ...call(opts), headers }),
     );
   }
-  async getCommitmentProof(decisionId: string, opts?: CredentialedCallOptions) {
+  async getCommitmentProof(decisionId: string, opts?: DecisionReadOptions) {
+    checkClearance("getCommitmentProof", opts?.clearance);
     return this.credentialedCall(
       opts?.credential,
       "/seam.api.v1.SeamCoordination/GetCommitmentProof",
       decisionId,
       opts,
-      (headers) => this.coord.getCommitmentProof({ decisionId }, { ...call(opts), headers }),
+      (headers) =>
+        this.coord.getCommitmentProof(
+          { decisionId },
+          { ...call(opts), headers: withClearance(headers, opts?.clearance) },
+        ),
     );
   }
 
@@ -2210,7 +2235,7 @@ export class SeamClient {
   async verifyDecision(
     decisionId: string,
     expectedIssuer: string,
-    opts?: CredentialedCallOptions,
+    opts?: DecisionReadOptions,
   ): Promise<boolean> {
     const proof = await this.getCommitmentProof(decisionId, opts);
     if (proof.issuerAid !== expectedIssuer)

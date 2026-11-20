@@ -146,11 +146,11 @@ the wave leader's train). There is no SDK-only version.
 
 ### P3 — TypeScript: `clearance` on getDecision / replayDecision / getCommitmentProof / verifyDecision
 - **Risk:** complex
-- **Status:** TODO
+- **Status:** DONE (Opus verify PASS, 1 round). Divergence: the labels and helpers live in a new `ts/src/clearance.ts`, mirroring Python's `_clearance.py`, to keep `client.ts` citation shifts small. `CLEARANCE_HEADER` is exported too. The tests use their own `wire()` fake rather than `fakeTransport`. Verifier nits closed: an unprintable value (BigInt, circular) still throws InvalidArgumentError, and a `@ts-expect-error` test pins clearance as decision-reads-only.
 - **Delivers:**
   - `export type Clearance = "Public"|…|"Phi"`, `CLEARANCE_*` consts and `CLEARANCES: ReadonlySet<Clearance>`.
   - `export interface DecisionReadOptions extends CredentialedCallOptions { clearance?: Clearance }`,
-    used only by the 4 verbs. This keeps the narrow-options rule (`client.ts:135-146`): an unwired
+    used only by the 4 verbs. This keeps the narrow-options rule (`client.ts:136-155`): an unwired
     option is a compile error elsewhere.
 - **Depends on:** none.
 - **Files:** `ts/src/client.ts` (docs at :507-508, :678-679 too), `ts/tests/clearance.test.ts` (new).
