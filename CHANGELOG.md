@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.103.0 — 2026-11-20
+
 ### Added — clearance on the decision reads (#384; ReplayDecision needs runtime 0.101.0+)
 
 - An opt-in `x-seam-clearance` on `GetDecision`, `ReplayDecision` and `GetCommitmentProof`. The value is exactly one of
