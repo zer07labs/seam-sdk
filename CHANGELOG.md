@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.99.0 — 2026-11-20
+
 ### Added — `SessionStep.decided_value`, the sealing step's decided value (runtime 0.98.0, seam-runtime#1785)
 
 - `seam.api.v1` `SessionStep` gains `optional string decided_value = 7`. It is set only on the commit step that
