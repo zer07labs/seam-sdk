@@ -16,6 +16,24 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added — option-selection winner recompute in TS, Go, Java and Kotlin (#368)
+
+- All four ports now run selection-rule.v1 §3 `decide` and §5 steps 6-9 `verifySelection` at parity with Python and
+  `seam-verify`. A seal whose action is not the recomputed winner no longer verifies in any port. Each failure is
+  reported by its spec name (`selection_malformed`, `selection_no_winner_sealed`, `selection_winner_mismatch`,
+  `selection_action_mismatch`, `selection_vote_unverified`, `selection_content_link_mismatch`,
+  `selection_principal_not_one_to_one`), with the same `reason` and `at` as Python.
+- **Wired in:**
+  - TS: `verifyTct`, which also covers `verifyDecision`.
+  - Go: `VerifyTCT`.
+  - Kotlin: `verifyTct`, when the new optional `Commitment.selection` is set.
+  - Java: a new `verifyTct(…, SelectionBlock)` overload. `Commitment` is unchanged.
+- **Fail closed:** in every port, a block with no explanation entries fails.
+- **Unchanged:** a commitment with no block is "not a selection decision" and verifies as before.
+- **Go:** also adds a strict `DecodeSelectionBody`.
+- **Tests:** every port now passes all 30 `rule_cases` and all 13 `sealed_cases` of
+  `conformance/selection_rule_v1_vectors.json`. COMPATIBILITY.md §5 no longer lists the gap.
+
 ## 0.103.0 — 2026-11-20
 
 ### Added — clearance on the decision reads (#384; ReplayDecision needs runtime 0.101.0+)

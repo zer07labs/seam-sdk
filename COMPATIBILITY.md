@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:1097`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:1115`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -251,8 +251,10 @@ seamd 0.90.0.
 **Option selection pairs with runtime 0.90.0 or later.** It is additive: a commitment with no `selection`
 block is "not a selection decision", field 9 stays `0x00`, and every earlier record verifies as before. An
 SDK below 0.90.1 cannot verify a selection decision's TCT, because it frames field 9 as `0x00`, and it
-refuses the `proposal` kind word. **Winner recompute is Python and `seam-verify` only.** TS, Go, Java and
-Kotlin verify the TCT over the block, but not that the action is the winner.
+refuses the `proposal` kind word. Every port recomputes the winner (#368, the release after 0.103.0): Python,
+`seam-verify`, TS, Go, Java and Kotlin all run selection-rule.v1 §5 steps 6-9 and refuse a tampered
+selection under the same result name. Below that release, TS, Go, Java and Kotlin verified the TCT over the
+block but not that the action is the winner.
 
 | SDK change | Requires runtime | Earlier runtimes | Pinned from |
 |---|---|---|---|
@@ -279,7 +281,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2168-2190`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2186-2208`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -531,8 +533,11 @@ comment — `.github/workflows/ci.yml:558-559` runs `scripts/check-independence.
 - **Option selection (runtime 0.90.0+)**: when a commitment carries a `selection` block, the winner is
   recomputed from the sealed entries alone. The action must be its option, every vote's signed content
   digest must link to that option, and participant ↔ principal must be one-to-one (`selection-rule.v1.md`
-  §5). This is in `seam-verify` and Python; TS, Go, Java and Kotlin bind the block through the TCT but do
-  not recompute the winner. Not covered: whether the block's parameters equal the policy text (only a
+  §5). Every port does this: `seam-verify`, Python (`verify_tct`), TS (`verifyTct`, so `verifyDecision`),
+  Go (`VerifyTCT`), Java (the `verifyTct` overload that takes the `SelectionBlock`) and Kotlin
+  (`verifyTct`, with `Commitment.selection` set). A block with no explanation entries fails closed. In
+  Go, Java and Kotlin, `verifyTct` does not re-check vote signatures; run `verifyCommitmentVoters` beside
+  it, as before. Not covered: whether the block's parameters equal the policy text (only a
   holder of the policy can check `rules_digest`), and anything about proposals, which are not PoP-signed.
 - **Chain integrity** — the `seam-event.v1` hash chain, from the stream alone.
 - **Authenticity** — every `CHAIN_HEAD_ATTESTATION` verifies against a pinned issuer key and sits at
@@ -670,7 +675,7 @@ patch, so the callouts have to live here rather than in a version number.
 ### The accepted integer set widened, and that is irreversible
 
 `jcs_canonicalize` previously refused any `int` with `|v| > 2^53`. It now accepts an integer iff JCS
-renders it as itself (`python/seam_sdk/crypto.py:441`, `ts/src/crypto.ts:503`). Practically:
+renders it as itself (`python/seam_sdk/crypto.py:441`, `ts/src/crypto.ts:703`). Practically:
 
 | value | before | now | why |
 |---|---|---|---|
@@ -735,8 +740,8 @@ values reached one digest. Measured against the pre-fix build, `recordDigestV2({
 `b566fdea56b8487bc5ebc26d1d6585339e9ab2a3a499247bd7230e4f20f05d7f`. That is a digest failing at the
 only thing a digest does.
 
-The guard is `uintSlot` (`ts/src/crypto.ts:1242`), which already governed the v3 record digest;
-`u64le`/`u32le` (`ts/src/crypto.ts:957`) now route through it, so v2 and the attestation framing get
+The guard is `uintSlot` (`ts/src/crypto.ts:1453`), which already governed the v3 record digest;
+`u64le`/`u32le` (`ts/src/crypto.ts:1168`) now route through it, so v2 and the attestation framing get
 the rule that was always written for them. Python got the same treatment: `_uint_slot`
 (`python/seam_sdk/crypto.py:928`) was `_v3_uint`, and `record_digest_v2` shared it (both v2 and v3
 are now deleted; `record_digest_v4` uses it). Every
@@ -745,7 +750,7 @@ are now deleted; `record_digest_v4` uses it). Every
 **Read the `now` column as the record-digest arm.** In the chain-head **attestation** arm every one
 of these refusals was observed as `false` rather than as a thrown error, because
 `verifyChainHeadAttestation` wrapped its whole body in a catch that returned `false`
-(`const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid }, framingTenant);`, `ts/src/crypto.ts:1521`). The
+(`const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid }, framingTenant);`, `ts/src/crypto.ts:1732`). The
 distinction mattered for the `true` row in particular, where the attestation arm showed no
 caller-visible change at all — `false` before, `false` after — even though what it was refusing had
 changed. **§10 closed that**: the type checks now run before the `try`, so a wrong type throws there
@@ -894,7 +899,7 @@ writes without thinking about it.
 
 The guard is a rule, not a denylist: an object is accepted iff its prototype is a root — `null`, or
 something whose own prototype is `null` (`function isPlainObject(v: object): boolean {`,
-`ts/src/crypto.ts:704`). An enumeration of
+`ts/src/crypto.ts:915`). An enumeration of
 `Date | Map | Set | ...` is only correct until the next exotic type. Testing the prototype chain's
 *depth* rather than `proto === Object.prototype` is also what keeps objects from other realms (`vm`
 contexts, iframes) working — they have their own `Object.prototype`, and an identity check would
