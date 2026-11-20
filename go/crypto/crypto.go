@@ -110,7 +110,8 @@ type Commitment struct {
 	GoverningDocSha256 []byte             `json:"-"`
 	// Selection is the sealed option-selection block (runtime 0.90.0, `Commitment.selection`): when set,
 	// field 9 is SelectionDigest(SelectionBody(*Selection)). nil = "not a selection decision". Setting both
-	// it and SelectionDigest is refused.
+	// it and SelectionDigest is refused. When set, VerifyTCT also recomputes the winner from Explanation
+	// (VerifySelection) and fails closed when Explanation is nil.
 	Selection *SelectionBlock `json:"-"`
 }
 
@@ -517,8 +518,9 @@ func hasDuplicateKey(raw []byte) bool {
 // the committer, and the sealed explanation. A repeated JSON key anywhere in the header or payload
 // refuses the token, and a digest carried in `grants` (the retired v2 shape) does not verify.
 // Explanation entries that disagree with a published ExplanationDigest, an unknown kind, or a
-// non-canonical confidence verify false. Any malformed/forged input fails closed (returns false),
-// never panics.
+// non-canonical confidence verify false. When c.Selection is set, the winner is recomputed from
+// c.Explanation (VerifySelection) and must verify; a block with nil Explanation fails closed. Any
+// malformed/forged input fails closed (returns false), never panics.
 func VerifyTCT(issuerAID, tctJWS string, c Commitment, nowS int64) bool {
 	parts := strings.Split(tctJWS, ".")
 	if len(parts) != 3 {
@@ -602,7 +604,19 @@ func VerifyTCT(issuerAID, tctJWS string, c Commitment, nowS int64) bool {
 		return false
 	}
 	got, ok := stmt["commitment_digest"].(string)
-	return ok && got == digest
+	if !ok || got != digest {
+		return false
+	}
+	// Option selection (runtime 0.90.0, selection-rule.v1 §5 steps 6-9). No block means "not a selection
+	// decision" and nothing more. A block without the entries cannot be checked, so it fails closed
+	// rather than passing as if the winner had been recomputed.
+	if c.Selection != nil {
+		if c.Explanation == nil {
+			return false
+		}
+		return VerifySelection(*c.Selection, c.Explanation, c.Action).OK()
+	}
+	return true
 }
 
 // CallSigV3Context is the domain tag of the `Authorize` per-call proof-of-possession, v3 (#197). v3
