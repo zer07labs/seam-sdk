@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:1117`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:1135`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -248,13 +248,22 @@ the selection reader ships as v0.90.1, and the `v0.90.0` tags stay where they ar
 runtime's next release must be 0.91.0 or later, because 0.90.1 is taken here. Pin `seam-sdk 0.90.1` beside
 seamd 0.90.0.
 
+**SDK v0.106.0 pairs with runtime 0.105.0 and 0.106.0.** There is no SDK 0.105.0, and no tag for it. The
+runtime's 0.105.0 release (seam-runtime#1834, option selection S2a-S4) added `SessionStep.selection` and
+`SelectionView` to `seam.api.v1`, so the release-on-runtime fresh contract gate refused the dispatch before
+writing anything (#400). Runtime 0.106.0 shipped before this repo caught up and changed no API or event field,
+so the catch-up releases as 0.106.0: `release-refire.yml` re-fires the 0.106.0 dispatch and refuses the
+superseded 0.105.0 (`scripts/release_pending.py`). Pin `seam-sdk 0.106.0` beside
+seamd 0.105.0 or 0.106.0.
+
 **Option selection pairs with runtime 0.90.0 or later.** It is additive: a commitment with no `selection`
 block is "not a selection decision", field 9 stays `0x00`, and every earlier record verifies as before. An
 SDK below 0.90.1 cannot verify a selection decision's TCT, because it frames field 9 as `0x00`, and it
 refuses the `proposal` kind word. Every port recomputes the winner (#368, the release after 0.103.0): Python,
 `seam-verify`, TS, Go, Java and Kotlin all run selection-rule.v1 §5 steps 6-9 and refuse a tampered
 selection under the same result name. Below that release, TS, Go, Java and Kotlin verified the TCT over the
-block but not that the action is the winner.
+block but not that the action is the winner. The live view on every step of a selection session (`SessionStep.selection`, runtime
+0.105.0) is not sealed, so it is never verifier input. A verifier trusts only the recomputed winner.
 
 | SDK change | Requires runtime | Earlier runtimes | Pinned from |
 |---|---|---|---|
@@ -281,7 +290,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2188-2210`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2206-2228`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was

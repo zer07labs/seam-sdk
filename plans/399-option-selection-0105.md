@@ -25,14 +25,14 @@ Branch `feat/399-option-selection-0105` off `c43a8cd` (v0.104.0), worktree `seam
 - Release: `scripts/release_pending.py:111-120` refuses #400 (0.106.0 superseded it); #401 fires on
   green main (`:151-165`). The SDK release this ships in is **0.106.0**; 0.105.0 is never published.
 
-## Phase 1 — carry the live selection view (simple)  Status: TODO
+## Phase 1 — carry the live selection view (simple)  Status: DONE (5ccaa67)
 - Decision (DECISIONS.md): carry `SessionStep.selection` through the stubs, no wrapper; presence
   means "selection session", never "threshold met"; not sealed, not verifier input.
 - Tests: Python (sync + aio) and TS pin that a step's `selection` presence, `has_winner` and
   `winner_proposal_id` survive the hand-written wrappers, and absence stays distinct.
 - `scripts/check-contract.sh --write-manifest` after the decision; gate exits 0.
 
-## Phase 2 — docs (simple)  Status: TODO
+## Phase 2 — docs (simple)  Status: DONE
 - CHANGELOG Unreleased: the field; no digest/vector change at 0.105.0; v0.105.0 not published.
 - COMPATIBILITY: pairing note — SDK 0.106.0 pairs with runtime 0.106.0; 0.105.0 skipped; the 0.104.0
   verifier already verifies 0.105.0 selection records.
