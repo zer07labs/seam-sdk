@@ -222,61 +222,19 @@ def test_stream_events_defaults_to_no_deadline():
     assert default is None
 
 
-# ── The tombstoned data-plane resume warns before it round-trips ─────────────────────────────────
+# ── The data-plane resume is gone; resume lives on the management plane only ─────────────────────
 
 
-class _RecordingCoord:
-    """A fake coordination stub: records the ResumeSession request, answers a benign step."""
-
-    def __init__(self):
-        self.seen = None
-
-    def ResumeSession(self, req, **_kw):  # noqa: N802 — mirrors the generated stub method name
-        self.seen = req
-        return pb.SessionStep(state="Active")
-
-
-def test_the_sync_tombstoned_resume_warns_deprecation():
-    """The docstring already said deprecated; a ``DeprecationWarning`` is what tooling actually
-    SEES (-W error::DeprecationWarning, pytest filters, linters) — pointing the caller at
-    ``SeamAdminClient.resume_session`` before the server's PERMISSION_DENIED does."""
-    client = SeamClient.connect("127.0.0.1:1")  # lazy insecure channel; never dialed
-    coord = _RecordingCoord()
-    client._coord = coord
-    with pytest.warns(DeprecationWarning, match="SeamAdmin.ResumeSession"):
-        client.resume_session("s-1")
-    assert coord.seen.session_id == "s-1"
-    assert coord.seen.budget == 0, (
-        "0 on the wire — the server owns the real default (32)"
-    )
-
-
-def test_the_aio_tombstoned_resume_warns_deprecation():
-    import asyncio
-
+def test_the_data_plane_resume_is_removed_from_both_clients():
+    """Flows W0: the data-plane ``resume_session`` tombstone (PERMISSION_DENIED since rt-D) is
+    removed ahead of the runtime dropping ``SeamCoordination.ResumeSession`` (X1). Resume is the
+    R9 approver action on ``SeamAdminClient.resume_session``; neither data-plane client may grow
+    it back."""
     from seam_sdk.aio import SeamClient as AioSeamClient
 
-    class _AsyncRecordingCoord:
-        def __init__(self):
-            self.seen = None
-
-        async def ResumeSession(self, req, **_kw):  # noqa: N802
-            self.seen = req
-            return pb.SessionStep(state="Active")
-
-    async def scenario():
-        client = AioSeamClient.connect("127.0.0.1:1")  # lazy channel; never dialed
-        coord = _AsyncRecordingCoord()
-        client._coord = coord
-        try:
-            with pytest.warns(DeprecationWarning, match="SeamAdmin.ResumeSession"):
-                await client.resume_session("s-1")
-        finally:
-            await client.close()
-        assert coord.seen.session_id == "s-1"
-        assert coord.seen.budget == 0
-
-    asyncio.run(scenario())
+    assert not hasattr(SeamClient, "resume_session")
+    assert not hasattr(AioSeamClient, "resume_session")
+    assert callable(SeamAdminClient.resume_session)
 
 
 # ── ListLegalHolds request presence ─────────────────────────────────────────────────────────────

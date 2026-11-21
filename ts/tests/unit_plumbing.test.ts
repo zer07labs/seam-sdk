@@ -266,7 +266,7 @@ function fakeSeam() {
       }
       return { verdict: AuthorizeVerdict.ALLOW, reason: "", authorizeId: "az-1", policyVersion: "p1" };
     }
-    if (method === "OpenSession" || method === "ResumeSession") return {};
+    if (method === "OpenSession") return {};
     return {};
   };
   return { state, handle };
@@ -633,7 +633,7 @@ test("admin cancelSession sends one CancelSession with the scope and returns the
 
 // ── Budget default: 0 ⇒ the server owns the default; the client never re-states 32 ───────────────
 
-test("openSession / resumeSession send budget 0 when unspecified (the proto owns the default)", async () => {
+test("openSession / admin resumeSession send budget 0 when unspecified (the proto owns the default)", async () => {
   const calls: Recorded[] = [];
   const { handle } = fakeSeam();
   const client = new SeamClient(fakeTransport(calls, handle));
@@ -641,14 +641,16 @@ test("openSession / resumeSession send budget 0 when unspecified (the proto owns
   const open = calls.find((c) => c.method === "OpenSession")!;
   assert.equal(open.input.budget, 0);
 
-  await client.resumeSession("s");
-  const resume = calls.find((c) => c.method === "ResumeSession")!;
-  assert.equal(resume.input.budget, 0);
-
   const adminCalls: Recorded[] = [];
   const admin = new SeamAdminClient(fakeTransport(adminCalls, () => ({})));
   await admin.resumeSession("s", "op:approver");
   assert.equal(adminCalls[0]!.input.budget, 0);
+});
+
+test("the data-plane resumeSession is removed; resume is the management-plane R9 action only", () => {
+  // Flows W0: the tombstone (PERMISSION_DENIED since rt-D) is gone ahead of runtime X1.
+  assert.equal("resumeSession" in SeamClient.prototype, false);
+  assert.equal(typeof SeamAdminClient.prototype.resumeSession, "function");
 });
 
 // ── RT4 requester: optional, HUMAN kind, refused locally before the admit handshake ──────────────

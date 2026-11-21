@@ -687,7 +687,7 @@ class SeamAdminClient:
         timeout: float = DEFAULT_ADMIN_TIMEOUT_S,
     ) -> pb.SessionStep:
         """Resume a Suspended session — the R9 approver action, on the **management** plane (rt-D: this
-        moved off the data plane, where ``SeamCoordination.ResumeSession`` is now a tombstone). It requires
+        moved off the data plane; the ``SeamClient.resume_session`` tombstone is removed). It requires
         the ``session:resume`` operator scope. ``approver`` is a **required**, non-empty attribution for the
         approval (an R9 approval must name who granted it). ``raise_`` raises any budget dimension; absent,
         ``budget`` raises the message count (0 means the server default, currently 32).

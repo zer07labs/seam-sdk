@@ -16,6 +16,21 @@ than trusting a summary here.
 
 ## Unreleased
 
+**Breaking, under whatever number the runtime computes.** This SDK cannot express its own semver (see above).
+
+### Removed (BREAKING) — the data-plane `resume_session` tombstone (Flows W0, ahead of runtime X1)
+
+- Python `SeamClient.resume_session` and `seam_sdk.aio.SeamClient.resume_session`, and TypeScript
+  `SeamClient.resumeSession`, are removed. Each was a deprecated tombstone for the data-plane
+  `SeamCoordination.ResumeSession`, which the runtime has answered with `PERMISSION_DENIED` ("call
+  SeamAdmin.ResumeSession") since rt-D, so no call through them could succeed. The runtime removes that RPC
+  and `ResumeRequest` next (X1); the SDK drops its wrappers first so X1 strands no hand-written client.
+- **Migrate to the management plane:** `SeamAdminClient.resume_session(session_id, approver, …)` (Python) /
+  `SeamAdminClient.resumeSession(sessionId, approver, …)` (TS), the R9 approver action, with an operator token
+  carrying `session:resume`. It is unchanged. Go, Java and Kotlin had no hand-written data-plane wrapper.
+- The generated stubs still carry `SeamCoordination.ResumeSession` and `ResumeRequest` until runtime X1 lands
+  on the BSR; the contract manifests follow that, not this entry.
+
 ## 0.107.0 — 2026-11-21
 
 ### Added — `SessionStep.selection`, the live option-selection view (runtime 0.105.0, seam-runtime#1834, #399)

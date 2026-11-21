@@ -52,9 +52,7 @@ def test_every_budget_default_is_zero_meaning_server_default():
     number. Pinned across every entry point that carries a ``budget``."""
     entry_points = [
         SeamClient.open_session,
-        SeamClient.resume_session,
         aio.SeamClient.open_session,
-        aio.SeamClient.resume_session,
         SeamAdminClient.resume_session,
     ]
     for method in entry_points:
@@ -68,7 +66,6 @@ def test_client_exposes_the_full_session_lifecycle():
         "submit_proposal",
         "submit_vote",
         "submit_commit",
-        "resume_session",
         "cancel_session",
         "expire_session",
         "session_status",

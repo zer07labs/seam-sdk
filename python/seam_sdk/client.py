@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import secrets
 import threading
-import warnings
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence, TypeVar
 
@@ -1123,31 +1122,6 @@ class SeamClient:
             timeout=timeout,
             retry=True,  # D-SUBMIT-RETRY (#275): see _SUBMIT_RETRY_NOTE
         )
-
-    def resume_session(
-        self,
-        session_id: str,
-        *,
-        budget: int = 0,
-        raise_: Optional[BudgetLimits] = None,
-        timeout: float = DEFAULT_TIMEOUT_S,
-    ) -> pb.SessionStep:
-        """**Deprecated / tombstone.** Resume moved to the **management** plane (rt-D): this data-plane RPC
-        now returns ``PERMISSION_DENIED`` ("call SeamAdmin.ResumeSession"). Use
-        :meth:`SeamAdminClient.resume_session` (the R9 approver action) with an operator token instead.
-        Retained only so an old caller gets a clear, typed error rather than a missing attribute.
-        ``budget`` follows the proto's semantics: 0 means the server default, currently 32."""
-        warnings.warn(
-            "SeamClient.resume_session is a tombstone: resume moved to the management plane "
-            "(SeamAdmin.ResumeSession) — use SeamAdminClient.resume_session with an operator token",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        req = pb.ResumeRequest(session_id=session_id, budget=budget)
-        if raise_ is not None:
-            # `raise` is a Python keyword, so the generated field is reached via getattr.
-            getattr(req, "raise").CopyFrom(raise_.to_pb())
-        return self._coord.ResumeSession(req, timeout=timeout)
 
     def cancel_session(
         self,
