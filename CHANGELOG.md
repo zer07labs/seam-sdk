@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.109.0 — 2026-11-21
+
 ## 0.108.0 — 2026-11-21
 
 **Breaking, under whatever number the runtime computes.** This SDK cannot express its own semver (see above).
