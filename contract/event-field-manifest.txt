@@ -10,7 +10,7 @@
 #
 # What was covering it before, and still is, narrowly: the four STREAM/EVENTS presence probes in
 # `scripts/check-contract.sh` assert `session_lifecycle`, `chain_head_attestation`,
-# `ciphertext_digest` and `AuditEntryEvent.actor` — four of the 90 fields below, chosen because the
+# `ciphertext_digest` and `AuditEntryEvent.actor` — four of the 133 fields below, chosen because the
 # SDK decodes them. They never fail on anything else being added, removed or renamed. They are kept
 # deliberately: they fire even when this manifest is absent or has just been rewritten, and they
 # assert what the SDK READS rather than what the contract CONTAINS. Two different questions.
@@ -76,7 +76,7 @@
 # SPELLING
 # --------
 # One line per field: `<Message>/<field_name>`, proto spelling (snake_case), sorted, no tags, no
-# types. A `map` field is ONE entry on its owner, never a key/value pair. 90 fields, 11 messages.
+# types. A `map` field is ONE entry on its owner, never a key/value pair. 133 fields, 18 messages (measured at the Flows W1 tags 28/29 adoption).
 #
 AgentPin/agent_id
 AgentPin/version
@@ -111,6 +111,10 @@ ChainHeadAttestation/digest_schema
 ChainHeadAttestation/issuer_aid
 ChainHeadAttestation/signature
 ChainHeadAttestation/tenant
+ChainRef/env
+ChainRef/flow_id
+ChainRef/kind
+ChainRef/seq
 DecisionSealed/auth_method
 DecisionSealed/certificate
 DecisionSealed/ciphertext_digest
@@ -141,6 +145,9 @@ EventRedriven/event
 EventRedriven/original_event_id
 EventRedriven/original_kind
 EventRedriven/original_seq
+FlowRef/env
+FlowRef/flow_id
+FlowRef/rev
 GoverningConfig/tenant_snapshot_id
 LearningDecision/algorithm_arm
 LearningDecision/algorithm_id
@@ -173,6 +180,7 @@ PolicyKey/tenant
 SeamEvent/audit_entry
 SeamEvent/authorize_evaluated
 SeamEvent/budget_breach
+SeamEvent/chain
 SeamEvent/chain_head_attestation
 SeamEvent/checksum
 SeamEvent/classification
@@ -182,6 +190,7 @@ SeamEvent/digest
 SeamEvent/erasure_certificate
 SeamEvent/event_id
 SeamEvent/event_redriven
+SeamEvent/flow_ref
 SeamEvent/kind
 SeamEvent/learning_decision
 SeamEvent/learning_outcome

@@ -3287,3 +3287,35 @@ Ranked by blast radius. The two possible one-way doors (a public exception API, 
 - **Pinned by:** `python/tests/test_selection_view.py` (wire field 8 from hand-encoded bytes; sync and aio presence) and
   `ts/tests/unit_plumbing.test.ts` (wire round trip; `submitProposal` presence).
 - **Decided by:** Opus (reversible tier: additive optional response field). **Verdict:** CONFIRM. **Status:** CONFIRMED.
+
+## 2026-11-21 — `seam.event.v1` tags 28 `flow_ref` and 29 `chain` (Flows W1 R3, CL C6): carried through the stubs, decoded in W2
+
+- **The fields:** `FlowRef flow_ref = 28` and `ChainRef chain = 29` on `SeamEvent`. Both are top-level messages:
+  `FlowRef { string flow_id = 1; uint64 rev = 2; string env = 3; }` and
+  `ChainRef { string flow_id = 1; string env = 2; uint64 seq = 3; uint32 kind = 4; }`. Nine manifest lines in all.
+  They are UNSEALED: no digest, checksum or signature covers them (the runtime's `seam-event.v1.md` §Flow attribution).
+  There is **no writer until W4**. In W1 and W2 every emitted event has both absent.
+- **Tag 30 is not a field yet.** `seam-event.v1.md` reserves it by a comment only, for `ChainManifest chain_manifest`
+  in chain_bundle v2. It is neither a placeholder field nor proto `reserved`, so the stubs carry nothing and there is no
+  manifest line to write. The W1 exit test's "tags 28–30" is therefore met by 28 and 29 plus the reservation. Tag 30
+  gets its own decision when chain_bundle v2 lands.
+- **Decision:** ADOPT into `contract/event-field-manifest.txt`. The generated Python and TS stubs carry both fields
+  as-is. This is the SDK's HUB Q2 role: it is not a golden holder, and this manifest decision is how it takes tag 28.
+- **Why no hand-written decoding in W1:** `seam.event.v1` has no hand-written client layer here. What carries it is
+  `verify/`, as for `PolicyDenied` above, and the verifier's treatment is specified work for W2:
+  - A9 decodes tag 28 and keeps it **out of** `with_identity()`, unlike tags 25 and 27. Two copies differing only in
+    `flow_ref` are a `FLOW_REF_CONFLICT` warning, not a forgery.
+  - A9/C4 also decode tag 29 and check `chain.seq` by walking.
+
+  W1 is safe without them. The JSON envelope structs (`verify/src/wire.rs`) do not use `deny_unknown_fields`, and prost
+  skips unknown tags, so an event carrying either field still decodes. A tag 29 cell `ChainRef` can arrive as an empty
+  message (`EA 01 00`), which prost skips as an unknown length-delimited field. And until the W4 writer, no event
+  carries either field anyway.
+- **Gate shape:** both messages are top-level and `ChainRef.kind` is a `uint32`, not an enum. So
+  `assert_event_surface_preconditions` (exit 7: zero enums, zero nested messages) holds. Before this change,
+  `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exited 8, naming these nine lines in both languages. After it,
+  against the BSR following seam-runtime#1847 (01a09caf, the hub H3 re-vendor that landed both tags), it exits 0.
+- **Vendored spec re-pinned** in the same change: `verify/docs/seam-event.v1.md` is now the runtime's file at
+  01a09caf, verbatim, so the `spec-pin` job stays green.
+- **Decided by:** Opus (reversible tier: additive, unsealed, writerless fields; the decode work is already planned in
+  client-surfaces A7/A9). **Verdict:** ADOPT. **Status:** ADOPTED.
