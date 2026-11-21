@@ -3312,8 +3312,10 @@ Ranked by blast radius. The two possible one-way doors (a public exception API, 
   message (`EA 01 00`), which prost skips as an unknown length-delimited field. And until the W4 writer, no event
   carries either field anyway.
 - **Gate shape:** both messages are top-level and `ChainRef.kind` is a `uint32`, not an enum. So
-  `assert_event_surface_preconditions` (exit 7: zero enums, zero nested messages) holds. Against a runtime tree with the
-  readers proto, `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` went from exit 8 (these nine lines, in both languages)
-  to exit 0.
+  `assert_event_surface_preconditions` (exit 7: zero enums, zero nested messages) holds. Before this change,
+  `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exited 8, naming these nine lines in both languages. After it,
+  against the BSR following seam-runtime#1847 (01a09caf, the hub H3 re-vendor that landed both tags), it exits 0.
+- **Vendored spec re-pinned** in the same change: `verify/docs/seam-event.v1.md` is now the runtime's file at
+  01a09caf, verbatim, so the `spec-pin` job stays green.
 - **Decided by:** Opus (reversible tier: additive, unsealed, writerless fields; the decode work is already planned in
   client-surfaces A7/A9). **Verdict:** ADOPT. **Status:** ADOPTED.
