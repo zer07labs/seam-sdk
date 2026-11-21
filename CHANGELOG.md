@@ -32,9 +32,9 @@ than trusting a summary here.
   0.90.0 specified. The selection digest, the `0x04` trailer, the winner rule and
   `conformance/selection_rule_v1_vectors.json` are byte-identical to the runtime fixtures, so SDK 0.104.0 already
   verifies a 0.105.0 selection decision.
-- **There is no SDK 0.105.0.** The runtime 0.105.0 dispatch was refused before writing anything, because the contract
-  gate found these three fields undeclared (#400). Runtime 0.106.0 changed no `seam.api.v1` or `seam.event.v1` field,
-  so this release follows it as 0.106.0 and pairs with runtime 0.105.0 and 0.106.0 alike.
+- **There is no SDK 0.105.0 or 0.106.0.** Both runtime dispatches were refused before writing anything, because the
+  contract gate found these three fields undeclared (#400, #401). Runtime 0.106.0 and 0.107.0 changed no `seam.api.v1` or
+  `seam.event.v1` field, and 0.107.0 was released before this catch-up landed, so it ships here as 0.107.0.
 
 ## 0.104.0 — 2026-11-20
 
