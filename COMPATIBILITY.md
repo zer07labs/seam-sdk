@@ -248,13 +248,13 @@ the selection reader ships as v0.90.1, and the `v0.90.0` tags stay where they ar
 runtime's next release must be 0.91.0 or later, because 0.90.1 is taken here. Pin `seam-sdk 0.90.1` beside
 seamd 0.90.0.
 
-**SDK v0.106.0 pairs with runtime 0.105.0 and 0.106.0.** There is no SDK 0.105.0, and no tag for it. The
-runtime's 0.105.0 release (seam-runtime#1834, option selection S2a-S4) added `SessionStep.selection` and
-`SelectionView` to `seam.api.v1`, so the release-on-runtime fresh contract gate refused the dispatch before
-writing anything (#400). Runtime 0.106.0 shipped before this repo caught up and changed no API or event field,
-so the catch-up releases as 0.106.0: `release-refire.yml` re-fires the 0.106.0 dispatch and refuses the
-superseded 0.105.0 (`scripts/release_pending.py`). Pin `seam-sdk 0.106.0` beside
-seamd 0.105.0 or 0.106.0.
+**SDK v0.107.0 carries the runtime 0.105.0 surface.** There is no SDK 0.105.0 or 0.106.0, and no tag for either.
+The runtime's 0.105.0 release (seam-runtime#1834, option selection S2a-S4) added `SessionStep.selection` and
+`SelectionView` to `seam.api.v1`, so the release-on-runtime fresh contract gate refused that dispatch, and then
+the 0.106.0 one, before writing anything (#400, #401). Runtime 0.106.0 and 0.107.0 changed no API or event field.
+0.107.0 was released before the catch-up landed, so `release-refire.yml` refused both older dispatches as
+superseded (`scripts/release_pending.py`), and the catch-up shipped under the 0.107.0 dispatch. Pin `seam-sdk
+0.107.0` beside seamd 0.107.0.
 
 **Option selection pairs with runtime 0.90.0 or later.** It is additive: a commitment with no `selection`
 block is "not a selection decision", field 9 stays `0x00`, and every earlier record verifies as before. An
