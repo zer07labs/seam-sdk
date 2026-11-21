@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:1135`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:1190`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way

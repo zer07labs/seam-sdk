@@ -1,5 +1,10 @@
 # Plan — seam-sdk#399: runtime 0.105.0 option-selection surface (wave 2026-11-21 W5)
 
+> **📦 ARCHIVED 2026-11-21 — DELIVERED by the PR that closes seam-sdk#399.** The archive move rides that same PR,
+> so this note becomes true at its merge. Both phases verified by a fresh Opus pass (proto facts, wire field 8,
+> vector byte-identity against the runtime fixtures, `release_pending.decide` on #400/#401, contract gate exit 0).
+
+
 Branch `feat/399-option-selection-0105` off `c43a8cd` (v0.104.0), worktree `seam-sdk-w5-399`. One PR.
 
 ## Analysis (anchors at c43a8cd; runtime origin/main 8034af2d)
