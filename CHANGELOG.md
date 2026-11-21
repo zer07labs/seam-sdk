@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.108.0 — 2026-11-21
+
 **Breaking, under whatever number the runtime computes.** This SDK cannot express its own semver (see above).
 
 ### Removed (BREAKING) — the data-plane `resume_session` tombstone (Flows W0, ahead of runtime X1)
