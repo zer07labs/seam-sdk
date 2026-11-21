@@ -234,7 +234,7 @@ test("session lifecycle: open → propose → vote → commit seals", { skip: SK
 });
 
 test("6.2 budget loop: hard breach suspends, mgmt-plane resume continues and seals", { skip: !BIN }, async () => {
-  // Resume moved to the management plane (rt-D: SeamCoordination.ResumeSession is now a tombstone), so
+  // Resume moved to the management plane (rt-D; the data-plane SeamCoordination.ResumeSession is removed), so
   // this needs both planes; since seam-runtime #1156 there is no dev-open mgmt plane, so the R9
   // approver presents an operator token.
   await withPlanes(8217, 8218, async (dataAddr, mgmtUrl) => {

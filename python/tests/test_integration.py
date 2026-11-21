@@ -231,7 +231,7 @@ def dual_plane(tmp_path):
 def test_budget_suspend_resume_loop(dual_plane):
     """The enterprise-6.2 loop: a hard budget breach suspends (an Ok step, not an error); the
     dimension-raising resume un-suspends it and the session seals. Resume is the R9 approver action on the
-    **management** plane (rt-D: `SeamCoordination.ResumeSession` is now a tombstone)."""
+    **management** plane (rt-D; the data-plane `SeamCoordination.ResumeSession` is removed)."""
     data_addr, mgmt_addr = dual_plane
     client = DemoVotingClient.connect(data_addr)
     from operator_token import mint_operator_token

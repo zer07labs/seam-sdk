@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import warnings
 from typing import Any, Awaitable, Callable, Mapping, Optional, Sequence, TypeVar
 
 import grpc
@@ -819,28 +818,6 @@ class SeamClient:
             timeout=timeout,
             retry=True,  # D-SUBMIT-RETRY (#275): see _SUBMIT_RETRY_NOTE
         )
-
-    async def resume_session(
-        self,
-        session_id: str,
-        *,
-        budget: int = 0,
-        raise_: Optional[BudgetLimits] = None,
-        timeout: float = DEFAULT_TIMEOUT_S,
-    ) -> pb.SessionStep:
-        """**Deprecated / tombstone** — see :meth:`seam_sdk.SeamClient.resume_session`. ``budget``
-        follows the proto's semantics: 0 means the server default, currently 32."""
-        warnings.warn(
-            "seam_sdk.aio.SeamClient.resume_session is a tombstone: resume moved to the management "
-            "plane (SeamAdmin.ResumeSession) — use SeamAdminClient.resume_session with an operator "
-            "token",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        req = pb.ResumeRequest(session_id=session_id, budget=budget)
-        if raise_ is not None:
-            getattr(req, "raise").CopyFrom(raise_.to_pb())
-        return await self._coord.ResumeSession(req, timeout=timeout)
 
     async def cancel_session(
         self,

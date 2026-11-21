@@ -20,7 +20,6 @@ import hashlib
 import json
 import threading
 import time
-import warnings
 from concurrent import futures
 
 import grpc
@@ -488,7 +487,6 @@ def test_every_public_method_enforces_timeout(hanging_server):
         lambda: client.submit_proposal("s", "a", "p", "o", timeout=0.1),
         lambda: client.submit_vote("s", "a", "p", "v", timeout=0.1),
         lambda: client.submit_commit("s", "c", "act", timeout=0.1),
-        lambda: client.resume_session("s", timeout=0.1),
         lambda: client.cancel_session("s", timeout=0.1),
         lambda: client.expire_session("s", timeout=0.1),
         lambda: client.session_status("s", timeout=0.1),
@@ -510,9 +508,7 @@ def test_every_public_method_enforces_timeout(hanging_server):
         lambda: client.get_escalation("a", timeout=0.1),
     ]
     for call in calls:
-        with pytest.raises(DeadlineExceededError), warnings.catch_warnings():
-            # resume_session is a tombstone and warns; the matrix pins DEADLINES, not deprecation.
-            warnings.simplefilter("ignore", DeprecationWarning)
+        with pytest.raises(DeadlineExceededError):
             call()
 
 
@@ -591,7 +587,6 @@ def test_aio_deadlines_enforced(hanging_server):
                 lambda: client.submit_proposal("s", "a", "p", "o", timeout=0.1),
                 lambda: client.submit_vote("s", "a", "p", "v", timeout=0.1),
                 lambda: client.submit_commit("s", "c", "act", timeout=0.1),
-                lambda: client.resume_session("s", timeout=0.1),
                 lambda: client.cancel_session("s", timeout=0.1),
                 lambda: client.expire_session("s", timeout=0.1),
                 lambda: client.session_status("s", timeout=0.1),
@@ -614,9 +609,7 @@ def test_aio_deadlines_enforced(hanging_server):
                 lambda: client.verify_decision("d", "aid:pubkey:x", timeout=0.1),
                 lambda: client.get_escalation("a", timeout=0.1),
             ]:
-                with pytest.raises(DeadlineExceededError), warnings.catch_warnings():
-                    # resume_session is a tombstone and warns; this matrix pins deadlines only.
-                    warnings.simplefilter("ignore", DeprecationWarning)
+                with pytest.raises(DeadlineExceededError):
                     await call()
 
     asyncio.run(scenario())

@@ -1893,23 +1893,6 @@ export class SeamClient {
     );
   }
 
-  /** @deprecated Resume moved to the **management** plane (rt-D): this data-plane RPC now returns
-   * `PERMISSION_DENIED` ("call SeamAdmin.ResumeSession"). Use {@link SeamAdminClient.resumeSession} (the R9
-   * approver action) with an operator token instead. Retained only so an old caller gets a clear error. */
-  resumeSession(
-    sessionId: string,
-    opts?: { budget?: number; raise?: BudgetLimits; timeoutMs?: number },
-  ) {
-    return this.coord.resumeSession(
-      {
-        sessionId,
-        budget: opts?.budget ?? 0,
-        raise: opts?.raise,
-      },
-      call(opts),
-    );
-  }
-
   async cancelSession(sessionId: string, opts?: CredentialedCallOptions) {
     const init = { sessionId };
     return this.signedOnce(

@@ -519,7 +519,7 @@ export class SeamAdminClient {
   }
 
   /** Resume a Suspended session — the R9 approver action, on the **management** plane (rt-D: this moved
-   * off the data plane, where `SeamCoordination.ResumeSession` is now a tombstone). Requires the
+   * off the data plane, where the `SeamClient.resumeSession` tombstone is now removed). Requires the
    * `session:resume` operator scope. `approver` is a **required**, non-empty attribution for the approval.
    * `raise` raises any budget dimension; absent, `budget` raises the message count. `tenant`/`namespace`
    * scope the lookup — leave empty to resolve the session by id alone. */

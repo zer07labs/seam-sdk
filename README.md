@@ -424,7 +424,7 @@ Python and TypeScript expose the **incremental session** path — `open_session`
 `submit_vote` → `submit_commit`, with `cancel_session`/`expire_session`/`session_status` — alongside the
 one-shot `run_decision`. The R9 **resume** is the exception: it moved to the **management** plane (rt-D),
 so it is `SeamAdminClient.resume_session(session_id, approver, …)`, not a data-plane call (the data-plane
-`resume_session` is now a tombstone). The multi-dimension budget surface is first-class; all three clients
+`resume_session` tombstone is removed). The multi-dimension budget surface is first-class; all three clients
 (Py/TS + the Rust `seam-client`) document **identical** semantics:
 
 | Rule | Behavior |
@@ -741,9 +741,9 @@ runs `SeamAdminClient` in a thread.
 - **Deadlines.** Every unary call is bounded in both SDKs: ~2 s on the data plane, 30 s on the
   management plane (destructive calls must not hang forever), streams unbounded. Override per call
   (`timeout=` in Python, `timeoutMs` in TS); a breach maps to the typed `DeadlineExceeded` error.
-- **Lifecycle.** Both clients expose idempotent `close()` (Python also context-manages); the deprecated
-  data-plane `resume_session` tombstone emits a `DeprecationWarning` pointing at the management-plane
-  resume.
+- **Lifecycle.** Both clients expose idempotent `close()` (Python also context-manages). The data-plane
+  `resume_session` tombstone is removed; resume is `SeamAdminClient.resume_session` on the management
+  plane.
 
 ## Status
 
