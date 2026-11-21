@@ -9,7 +9,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { create, toBinary } from "@bufbuild/protobuf";
+import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
+import { SelectionViewSchema, SessionStepSchema } from "../gen/seam/api/v1/seam_pb.js";
 import type {
   DescMessage,
   DescMethodStreaming,
@@ -313,6 +314,41 @@ test("submitCommit surfaces the sealing step's decidedValue and keeps absence di
   assert.equal((await client.submitCommit("s1", "c1", "approve")).decidedValue, "approve");
   assert.equal((await client.submitCommit("s1", "c1", "approve")).decidedValue, "");
   assert.equal((await client.submitCommit("s1", "c1", "approve")).decidedValue, undefined);
+});
+
+// ── SessionStep.selection (runtime 0.105.0, seam-runtime#1834, #399): the live selection view ─────
+// Field 8 (field 7 is decidedValue). Present on every step of a selection session, absent elsewhere;
+// presence means "selection session", never "threshold met". Not sealed, so never verifier input.
+// submitProposal returns the generated step unchanged.
+
+test("SessionStep.selection is wire field 8 and SelectionView carries has_winner=1, winner_proposal_id=2", () => {
+  const inner = [0x08, 0x01, 0x12, 0x02, 0x70, 0x32]; // hasWinner=true, winnerProposalId="p2"
+  const step = fromBinary(SessionStepSchema, new Uint8Array([0x42, inner.length, ...inner]));
+  assert.equal(step.selection?.hasWinner, true);
+  assert.equal(step.selection?.winnerProposalId, "p2");
+  const empty = fromBinary(SessionStepSchema, new Uint8Array([0x42, 0x00]));
+  assert.notEqual(empty.selection, undefined);
+  assert.equal(empty.selection?.hasWinner, false);
+  const view = create(SelectionViewSchema, { hasWinner: true, winnerProposalId: "p2" });
+  const bytes = toBinary(SessionStepSchema, create(SessionStepSchema, { selection: view }));
+  assert.deepEqual(Array.from(bytes), [0x42, inner.length, ...inner]);
+});
+
+test("submitProposal surfaces the live selection view and keeps absence distinct", async () => {
+  const replies: Array<Record<string, unknown>> = [
+    { state: "Open", selection: { hasWinner: true, winnerProposalId: "p-1" } },
+    { state: "Open", selection: {} },
+    { state: "Open" },
+  ];
+  let i = 0;
+  const client = new SeamClient(fakeTransport([], () => replies[i++]!));
+  const won = await client.submitProposal("s1", "agent-a", "p-1", "approve");
+  assert.equal(won.selection?.hasWinner, true);
+  assert.equal(won.selection?.winnerProposalId, "p-1");
+  const open = await client.submitProposal("s1", "agent-a", "p-1", "approve");
+  assert.notEqual(open.selection, undefined);
+  assert.equal(open.selection?.hasWinner, false);
+  assert.equal((await client.submitProposal("s1", "agent-a", "p-1", "approve")).selection, undefined);
 });
 
 // ── The per-request credential (`seam-request-call-v1`, #508): every target verb ─────────────────

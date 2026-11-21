@@ -3269,3 +3269,21 @@ Ranked by blast radius. The two possible one-way doors (a public exception API, 
 - **Caveat recorded in COMPATIBILITY.md:** honoured only on an `allow` subject-header plane; `deny` and peer-cert
   planes strip it. Not part of the #508 signature.
 - **Decided by:** Opus (reversible tier: additive opt-in surface, default unchanged). **Status:** CONFIRMED.
+
+## 2026-11-21 — `SessionStep.selection`, the live option-selection view (runtime 0.105.0, seam-runtime#1834, #399): carried through the stubs, no wrapper
+
+- **The fields:** `optional SelectionView selection = 8` on `seam.api.v1.SessionStep` (field 7 is `decided_value`) and
+  `message SelectionView { bool has_winner = 1; string winner_proposal_id = 2; }`. The runtime sets it on every step of a
+  selection session, from the open response on, and on no other session. `has_winner` is the selection rule's verdict over the
+  entries accepted so far, with no scores or per-option counts. Presence means "this is a selection session", never "the
+  threshold is met". It is not sealed.
+- **Decision:** the SDK carries it. Every hand-written session wrapper in Python (sync and aio) and TS returns the generated
+  `SessionStep` unchanged, so callers read it with presence: Python `step.HasField("selection")`, TS
+  `step.selection !== undefined`. Go, Java and Kotlin have no session client, so their generated stubs carry it as is.
+  This follows the `decided_value` precedent above. A wrapper would only re-encode presence the stub already states.
+- **Not verifier input:** the view is a live, unsealed hint. The winner a verifier trusts is the one `verify_selection` /
+  `verifySelection` recomputes from the sealed `SelectionRecord` (`Commitment.selection = 12`). All six ports have done that
+  since 0.90.0 / 0.104.0, against `conformance/selection_rule_v1_vectors.json`, which #1834 left byte-identical.
+- **Pinned by:** `python/tests/test_selection_view.py` (wire field 8 from hand-encoded bytes; sync and aio presence) and
+  `ts/tests/unit_plumbing.test.ts` (wire round trip; `submitProposal` presence).
+- **Decided by:** Opus (reversible tier: additive optional response field). **Verdict:** CONFIRM. **Status:** CONFIRMED.
