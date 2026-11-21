@@ -254,10 +254,10 @@ manifest_rpcs() {
 # fresh python/_gen is visible, and never derive one from the other.
 #
 # Python reads `<NAME>_FIELD_NUMBER: _ClassVar[int]`, lowercased — deliberately NOT `__slots__`.
-# `ResumeRequest.raise` and `AdminResumeRequest.raise` are real proto fields, but `raise` is a Python
-# keyword, so the .pyi generator cannot emit it in `__slots__` or as an attribute annotation. It DOES
-# emit RAISE_FIELD_NUMBER. A __slots__-derived set yields 221 against protobuf-es's 223 and is
-# permanently red on two fields no escape hatch can clear.
+# `AdminResumeRequest.raise` is a real proto field, but `raise` is a Python keyword, so the .pyi
+# generator cannot emit it in `__slots__` or as an attribute annotation. It DOES emit
+# RAISE_FIELD_NUMBER. A __slots__-derived set is permanently red on it, no escape hatch can clear that
+# (measured with ResumeRequest.raise too, before runtime X1: 221 against protobuf-es's 223).
 #
 # Nesting is the map-entry filter, NOT the name. Python emits synthetic `AuthorizeRequest.FeaturesEntry`
 # / `RunDecisionRequest.FeaturesEntry`; protobuf-es emits no type for either. Top-level classes match at

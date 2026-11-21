@@ -56,7 +56,6 @@ SeamCoordination/GetDecision
 SeamCoordination/OpenSession
 SeamCoordination/ReplayDecision
 SeamCoordination/ReportOutcome
-SeamCoordination/ResumeSession
 SeamCoordination/RunDecision
 SeamCoordination/SessionStatus
 SeamCoordination/SubmitApprovalRequest
