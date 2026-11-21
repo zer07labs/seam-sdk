@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.107.0 — 2026-11-21
+
 ### Added — `SessionStep.selection`, the live option-selection view (runtime 0.105.0, seam-runtime#1834, #399)
 
 - `seam.api.v1` `SessionStep` gains `optional SelectionView selection = 8` (field 7 is `decided_value`), and the new
