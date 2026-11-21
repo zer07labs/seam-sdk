@@ -421,9 +421,10 @@ def test_the_committed_manifest_is_not_empty_and_names_every_message() -> None:
     # and its GoverningConfig message (D6, seam-runtime#1340). 121 since runtime 0.71.0:
     # LearningDecision tags 10-14 and LearningOutcome tags 4-7 (outcome-ingestion BP-2a,
     # seam-runtime#1572). 124 since runtime 0.91.0: DecisionSealed.certificate and its CertificateRef
-    # message (cert-ref, seam-runtime#1749).
-    assert len(fields) == 124, (
-        f"expected 124 declared event fields, found {len(fields)}"
+    # message (cert-ref, seam-runtime#1749). 133 since Flows W1 R3: SeamEvent.flow_ref (tag 28) and
+    # .chain (tag 29) with their FlowRef and ChainRef messages (DECISIONS 2026-11-21, CL C6).
+    assert len(fields) == 133, (
+        f"expected 133 declared event fields, found {len(fields)}"
     )
     messages = {line.split("/")[0] for line in fields}
     assert messages == {
@@ -433,9 +434,11 @@ def test_the_committed_manifest_is_not_empty_and_names_every_message() -> None:
         "BudgetBreach",
         "CertificateRef",
         "ChainHeadAttestation",
+        "ChainRef",
         "DecisionSealed",
         "ErasureCertificate",
         "EventRedriven",
+        "FlowRef",
         "GoverningConfig",
         "LearningDecision",
         "LearningOutcome",
