@@ -16,6 +16,24 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added — `SessionStep.selection`, the live option-selection view (runtime 0.105.0, seam-runtime#1834, #399)
+
+- `seam.api.v1` `SessionStep` gains `optional SelectionView selection = 8` (field 7 is `decided_value`), and the new
+  `SelectionView { has_winner = 1, winner_proposal_id = 2 }`. The runtime sets it on every step of a selection session,
+  from the open response on, and on no other session. Presence means "this is a selection session", never "the
+  threshold is met"; `winner_proposal_id` is empty while `has_winner` is false.
+- All five SDKs return the generated step unchanged, so read it with presence: Python `step.HasField("selection")`,
+  TS `step.selection !== undefined`. Go, Java and Kotlin carry it in their generated stubs.
+- The view is **not sealed** and is never verifier input. A verifier trusts only the winner it recomputes from the
+  sealed `SelectionRecord`, which every port has done since 0.104.0.
+- **No framing or vector change.** Runtime 0.105.0 begins writing the selection block, but its bytes are the ones
+  0.90.0 specified. The selection digest, the `0x04` trailer, the winner rule and
+  `conformance/selection_rule_v1_vectors.json` are byte-identical to the runtime fixtures, so SDK 0.104.0 already
+  verifies a 0.105.0 selection decision.
+- **There is no SDK 0.105.0.** The runtime 0.105.0 dispatch was refused before writing anything, because the contract
+  gate found these three fields undeclared (#400). Runtime 0.106.0 changed no `seam.api.v1` or `seam.event.v1` field,
+  so this release follows it as 0.106.0 and pairs with runtime 0.105.0 and 0.106.0 alike.
+
 ## 0.104.0 — 2026-11-20
 
 ### Added — option-selection winner recompute in TS, Go, Java and Kotlin (#368)

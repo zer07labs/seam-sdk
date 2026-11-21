@@ -4069,7 +4069,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:2219`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:2235`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -4556,12 +4556,12 @@ green before any code changed.
   this — "rather than refusing outright" was wrong, fixed before merge). (2) the release's
   `retitle_changelog.sh` run shifted `CHANGELOG.md`'s "No yank" paragraph from line 1054 to 1056
   (a +2 insert right after `## Unreleased`), pushing `COMPATIBILITY.md:135` and
-  `DECISIONS.md:1222`'s `CHANGELOG.md:1982-1999` citations past the citation test's slack
-  tolerance; repointed both to `CHANGELOG.md:1984-2001`. Tested: `check_vendored_spec.py` OK via both
+  `DECISIONS.md:1222`'s `CHANGELOG.md:2000-2017` citations past the citation test's slack
+  tolerance; repointed both to `CHANGELOG.md:2002-2019`. Tested: `check_vendored_spec.py` OK via both
   `--from local` and `--from gh`; `test_compatibility_citations_resolve.py` 489 passed/0 failed
   standalone (was 4 failed). Verifier also flagged two pre-existing, gate-invisible citations
   elsewhere that the same +2 shift widened further — `DECISIONS.md:2035` cites
-  `CHANGELOG.md:1884` and `PROGRESS.md:3981` cites `CHANGELOG.md:1769`, both already ~130-250
+  `CHANGELOG.md:1902` and `PROGRESS.md:3981` cites `CHANGELOG.md:1787`, both already ~130-250
   lines stale before this release — out of scope for this release-unblock hotfix; filed as a
   follow-up issue rather than folded in here.
   **Rebased `feat/verify-anchor-tenant` onto this commit during `/sweep`'s ship pass.** Four
@@ -4571,7 +4571,7 @@ green before any code changed.
   `CHANGELOG.md`/`COMPATIBILITY.md`/`DECISIONS.md`: the feature branch's own new
   `## Unreleased` entry (16 lines) was kept above this hotfix's `## 0.33.3` header, which
   shifted "No yank" from this entry's `1056` to `1072` and recomputed the two citations above
-  (`CHANGELOG.md:1984-2001`) to `CHANGELOG.md:2000-2017` — verified against the exact
+  (`CHANGELOG.md:2002-2019`) to `CHANGELOG.md:2018-2035` — verified against the exact
   paragraph-boundary text at both the old and new line numbers before trusting the new range,
   not just the arithmetic. A dedicated ship-gate verifier independently re-derived this same
   shift from the diff and confirmed it exact.
@@ -5420,3 +5420,12 @@ Risk tiers: P1 simple · P2 complex (Python public API + credentialed send path)
 - 2026-11-20 P3 (TypeScript): PASS, 1 round, Opus verifier (complex, so it gated alone). `DecisionReadOptions.clearance` on getDecision/replayDecision/getCommitmentProof/verifyDecision; `ts/src/clearance.ts` (labels, `CLEARANCES`, `CLEARANCE_HEADER`, check/with helpers); root exports; SealAttestation/AllocationView docs; `ts/tests/clearance.test.ts`. 21 `ts/src/client.ts` citations re-pointed. Gates: typecheck, build, 674 tests (656 pass, 0 fail, 18 skipped). Verifier nits closed: a BigInt or circular value gives InvalidArgumentError, and a type-level pin. A bound-agent test was not added (same signer path). Next: P4+P5 (batched).
 - 2026-11-20 P4 (Go) + P5 (Java/Kotlin): PASS, batched gate (both simple), Opus verifier, 1 round, separate verdict per phase. P4: `go/clearance` (`NewContext` copy-then-Set, `Parse`, `ErrClearance`), 7 raw-invoke wire tests, `go/README.md` bullet. P5: `Clearance` enum + `interceptor()` (removeAll+put) in Java and Kotlin, 5 in-process tests each; gradle green for both. Non-blocking notes are recorded in the plan Status lines. Next: P6 docs.
 - 2026-11-20 P6 (docs): PASS, Opus verifier, 2 rounds. R1 GAPS: PROGRESS :5379/:5410 not re-pointed; remap had rewritten historical repoint values in PROGRESS :4559-4574 (restored); plans/README.md:44 re-pointed. Files: COMPATIBILITY, README, CHANGELOG (Unreleased), DEFERRED (#273 Q2 removed), DECISIONS (Q2 superseded + #384 D1-D6), ASSUMPTIONS (Q2 superseded), PROGRESS, plans/README. Finalization gates all green: py 3010 pass (1 known env fail), ruff, ts 656/0, go, java, kotlin, contract exit 0. Next: whole-feature verify.
+
+# PROGRESS — plans/archive/399-option-selection-0105.md (wave 2026-11-21 W5: #399)
+
+Branch `feat/399-option-selection-0105` off `c43a8cd`, worktree. One PR. Release target 0.106.0 via release-refire (#401); #400 superseded.
+## Phase log
+PR strategy: one PR. Risk tiers: P1 simple · P2 simple (batched gate). No Fable phases.
+- 2026-11-21 P1 (wire + tests + manifest): 5ccaa67. Pass-through decision (DECISIONS 2026-11-21); test_selection_view.py (4), 2 TS tests; manifest +3; contract gate exit 0.
+- 2026-11-21 P2 (docs): CHANGELOG Unreleased, COMPATIBILITY pairing (no SDK 0.105.0; 0.106.0 pairs with runtime 0.105.0/0.106.0). CHANGELOG citations shifted +18 via scripts/shift_changelog_citations.py. Gates: py 3014 pass/42 skip, ruff, ts 707/0, go, cargo test+clippy+fmt, java, kotlin, contract 0. Next: batched Opus verify (P1+P2) + final verify.
+- 2026-11-21 Batched verify P1+P2 (fresh Opus): GAPS round 1 — COMPATIBILITY:47 0.33.2 citation (wrong since base) → :1190; DECISIONS:2054/PROGRESS:4072 :2237 → :2235; plan archived. Fixed; re-ran gates.

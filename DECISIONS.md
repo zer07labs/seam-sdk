@@ -1221,7 +1221,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:2189-2211` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:2207-2229` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2051,7 +2051,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:2219` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:2235` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -3269,3 +3269,21 @@ Ranked by blast radius. The two possible one-way doors (a public exception API, 
 - **Caveat recorded in COMPATIBILITY.md:** honoured only on an `allow` subject-header plane; `deny` and peer-cert
   planes strip it. Not part of the #508 signature.
 - **Decided by:** Opus (reversible tier: additive opt-in surface, default unchanged). **Status:** CONFIRMED.
+
+## 2026-11-21 — `SessionStep.selection`, the live option-selection view (runtime 0.105.0, seam-runtime#1834, #399): carried through the stubs, no wrapper
+
+- **The fields:** `optional SelectionView selection = 8` on `seam.api.v1.SessionStep` (field 7 is `decided_value`) and
+  `message SelectionView { bool has_winner = 1; string winner_proposal_id = 2; }`. The runtime sets it on every step of a
+  selection session, from the open response on, and on no other session. `has_winner` is the selection rule's verdict over the
+  entries accepted so far, with no scores or per-option counts. Presence means "this is a selection session", never "the
+  threshold is met". It is not sealed.
+- **Decision:** the SDK carries it. Every hand-written session wrapper in Python (sync and aio) and TS returns the generated
+  `SessionStep` unchanged, so callers read it with presence: Python `step.HasField("selection")`, TS
+  `step.selection !== undefined`. Go, Java and Kotlin have no session client, so their generated stubs carry it as is.
+  This follows the `decided_value` precedent above. A wrapper would only re-encode presence the stub already states.
+- **Not verifier input:** the view is a live, unsealed hint. The winner a verifier trusts is the one `verify_selection` /
+  `verifySelection` recomputes from the sealed `SelectionRecord` (`Commitment.selection = 12`). All six ports have done that
+  since 0.90.0 / 0.104.0, against `conformance/selection_rule_v1_vectors.json`, which #1834 left byte-identical.
+- **Pinned by:** `python/tests/test_selection_view.py` (wire field 8 from hand-encoded bytes; sync and aio presence) and
+  `ts/tests/unit_plumbing.test.ts` (wire round trip; `submitProposal` presence).
+- **Decided by:** Opus (reversible tier: additive optional response field). **Verdict:** CONFIRM. **Status:** CONFIRMED.

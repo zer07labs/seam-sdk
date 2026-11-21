@@ -484,6 +484,8 @@ SelectionRecord/rules_digest
 SelectionRecord/tie
 SelectionRecord/weights
 SelectionRecord/winner_proposal_id
+SelectionView/has_winner
+SelectionView/winner_proposal_id
 SelectionWeight/participant
 SelectionWeight/weight
 ServerInfoResponse/runtime_version
@@ -496,6 +498,7 @@ SessionStep/decided_value
 SessionStep/decision_id
 SessionStep/opened_at_millis
 SessionStep/policy_enforcement
+SessionStep/selection
 SessionStep/state
 SessionStep/vote_policy
 StepUsage/cost_micros
