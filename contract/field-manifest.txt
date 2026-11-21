@@ -34,10 +34,11 @@
 #
 # THE PYTHON EXTRACTOR READS `*_FIELD_NUMBER`, **NOT** `__slots__`
 # ----------------------------------------------------------------
-# `ResumeRequest.raise` (tag 3) and `AdminResumeRequest.raise` (tag 6) are real fields. `raise` is a
-# Python keyword, so the .pyi generator cannot put it in `__slots__` or in an attribute annotation —
-# it emits only `RAISE_FIELD_NUMBER` and a `**kwargs` catch-all. Measured: `__slots__` yields 221,
-# protobuf-es yields 223. A `__slots__`-derived manifest is therefore permanently red on two fields no
+# `AdminResumeRequest.raise` (tag 6) is a real field. `raise` is a Python keyword, so the .pyi
+# generator cannot put it in `__slots__` or in an attribute annotation — it emits only
+# `RAISE_FIELD_NUMBER` and a `**kwargs` catch-all. (When measured there were two such fields — the
+# data-plane `ResumeRequest.raise` left with runtime X1 — and `__slots__` yielded 221 against
+# protobuf-es's 223.) A `__slots__`-derived manifest is therefore permanently red on a field no
 # escape hatch can clear, and — worse — blind to any future field named `class`, `from`, `import`,
 # `global`, `lambda`, `pass`, `return`, `in`, `is`, `not` or `and`.
 #
@@ -446,9 +447,6 @@ Requester/id
 Requester/kind
 ResolveContextRequest/refs
 ResolveContextResponse/bindings
-ResumeRequest/budget
-ResumeRequest/raise
-ResumeRequest/session_id
 RetentionRequest/commitment_only_days
 RetentionRequest/full_days
 RetentionRequest/sealed_digest_days

@@ -336,9 +336,9 @@ def test_the_manifest_is_not_vacuous(manifests) -> None:
 @pytest.mark.parametrize(
     "field",
     [
-        # The two the `__slots__` extractor silently drops: `raise` is a Python keyword, so the .pyi
-        # generator cannot emit it as an attribute — only as RAISE_FIELD_NUMBER.
-        "ResumeRequest/raise",
+        # The one the `__slots__` extractor silently drops: `raise` is a Python keyword, so the .pyi
+        # generator cannot emit it as an attribute — only as RAISE_FIELD_NUMBER. (The data-plane
+        # `ResumeRequest/raise` was the other, until runtime X1 removed the message.)
         "AdminResumeRequest/raise",
         # AuditEntry is a REAL top-level message. An `*Entry` name filter would drop it from BOTH
         # sides — symmetric, so the gate would stay green while going blind to a real message.
