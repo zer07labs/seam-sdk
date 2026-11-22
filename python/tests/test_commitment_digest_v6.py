@@ -338,12 +338,21 @@ def test_signed_case_verifies(case):
 
 @pytest.mark.parametrize("case", SIGNED["cases"], ids=lambda c: c["name"])
 def test_signed_case_needs_its_trailers(case):
-    """VG1: a verifier frames fields 10-12 from the trailers, so a v6 TCT without them fails closed,
-    and a different trailer run is a different digest."""
+    """VG1, the same rule in every port: under v6 fields 10-12 come from the trailers only. Absent
+    trailers read as a record with neither trailer, so a governed case without them fails (its doc digest
+    beside them is refused, never framed), an ungoverned one still verifies, and a different trailer run
+    is a different digest."""
     c = _signed_commitment(case)
     assert verify_tct(SIGNED["issuer_aid"], case["signed_artifact"], c, now_s=0)
     c["trailers"] = None
-    assert not verify_tct(SIGNED["issuer_aid"], case["signed_artifact"], c, now_s=0)
+    absent_ok = verify_tct(SIGNED["issuer_aid"], case["signed_artifact"], c, now_s=0)
+    assert absent_ok is (case["trailers"] == "")
+    assert not verify_tct(
+        SIGNED["issuer_aid"],
+        case["signed_artifact"],
+        {**c, "governing_doc_sha256": case["commitment"]["governing_doc_sha256"] or "11" * 32},
+        now_s=0,
+    )
     other = "" if case["trailers"] else "0622000000" + "02" + bytes(32).hex() + "00"
     assert not verify_tct(
         SIGNED["issuer_aid"],

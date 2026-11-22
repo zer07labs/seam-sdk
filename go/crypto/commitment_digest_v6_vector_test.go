@@ -454,6 +454,14 @@ func TestCommitmentDigestV6SignedVector(t *testing.T) {
 					t.Fatal("a doc disagreeing with the trailer must not verify")
 				}
 			}
+			// The cross-port rule: under v6 nil Trailers is a record with neither trailer, so the record's
+			// doc beside them is refused, never framed; an ungoverned case still verifies.
+			absent := c
+			absent.Trailers = nil
+			absent.GoverningDocSha256 = doc
+			if got := VerifyTCT(v.IssuerAID, tc.SignedArtifact, absent, now); got != (len(c.Trailers) == 0) {
+				t.Fatalf("nil trailers with the record's doc beside: verified=%v", got)
+			}
 			if VerifyTCT(v.IssuerAID, tc.SignedArtifact, c, 4920825600) {
 				t.Fatal("an expired TCT must not verify")
 			}

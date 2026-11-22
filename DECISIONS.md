@@ -370,8 +370,8 @@ architecture as the accidental arbiter — a normative rule that is not one. All
 outside `[-2^63, 2^63)` explicitly. Python and TypeScript need no such bound alone; they carry Go's
 constraint so the five agree, which is the same trade this whole decision is made of.
 3. **It is the only one with a written rationale.** The type assertion that *is* the rule
-   (`exp, ok := payload["exp"].(float64)`, `go/crypto/crypto.go:570`) and the truncation semantics
-   below it (`go/crypto/crypto.go:581-588`) are both argued in comments at the code; the other two
+   (`exp, ok := payload["exp"].(float64)`, `go/crypto/crypto.go:578`) and the truncation semantics
+   below it (`go/crypto/crypto.go:589-596`) are both argued in comments at the code; the other two
    rules were the shortest expression that worked in that language.
 
 The alternative considered and rejected was **union semantics** — accept anything any SDK accepts,

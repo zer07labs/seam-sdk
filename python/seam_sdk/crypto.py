@@ -3013,10 +3013,11 @@ def _v5_commitment_input(commitment: dict) -> dict:
 
 
 def _tct_commitment_digest(version: str, commitment: dict) -> str:
-    """The digest :func:`verify_tct` compares, under the selected ``version`` only. A v6 commitment must
-    carry its raw ``trailers``: a verifier frames fields 10-12 from them, never from values beside (VG1)."""
+    """The digest :func:`verify_tct` compares, under the selected ``version`` only. Under v6 fields 10-12
+    come from the raw ``trailers`` only, never from values beside them (VG1): absent trailers mean a record
+    with neither trailer, and a gate digest, doc digest or env given beside must agree with them."""
     if version == "v6":
         if commitment.get("trailers") is None:
-            raise ValueError("a v6 commitment is verified from its raw trailers")
+            commitment = {**commitment, "trailers": b""}
         return commitment_digest_v6(commitment)
     return _seam_commitment_digest(_v5_commitment_input(commitment))

@@ -815,7 +815,7 @@ export function verifyTct(
       return false;
     // Exact string compare: the runtime emits lowercase hex, and an uppercase spelling is a different
     // statement, not a normalization opportunity.
-    if (stmt.commitment_digest !== commitmentDigestUnder(version, commitment)) return false;
+    if (stmt.commitment_digest !== commitmentDigestUnder(version, version === "v6" && commitment.trailers == null ? { ...commitment, trailers: "" } : commitment)) return false;
     // Option selection (runtime 0.90.0, selection-rule.v1 §5 steps 4, 6-9). No block means "not a
     // selection decision" and nothing more. A block without the entries cannot be checked, so it fails
     // closed rather than passing as if the winner had been recomputed.
@@ -2419,8 +2419,9 @@ export interface Commitment {
    * appends, in sequence order — bytes, a number array or hex. When present, a verifier derives fields
    * 10-12 from these bytes only (VG1), under the scheme statement selection chose; `""` means a record with
    * neither trailer. Absent (`undefined` or `null`) keeps the pre-W2 behaviour: v5 frames fields 10 and 11
-   * from `certificate_digest` / `governing_doc_sha256`, and v6 frames field 11 from `governing_doc_sha256`
-   * with fields 10 and 12 `0x00`. No other marker is carried here: `0x01`-`0x04` and `0x07` are refused. */
+   * from `certificate_digest` / `governing_doc_sha256`; the v6 digest functions take field 11 from
+   * `governing_doc_sha256` (the digest-only path), but `verifyTct` reads absent as `""` under v6, so fields
+   * 10-12 come from the trailers only. No other marker is carried: `0x01`-`0x04` and `0x07` are refused. */
   trailers?: DigestBytes | null;
 }
 

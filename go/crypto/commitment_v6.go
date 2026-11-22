@@ -434,9 +434,9 @@ func selectFromExt(extRaw []byte) (CommitmentVersion, string, error) {
 // expectedCommitmentDigest recomputes the digest of c under the selected version ONLY (never both, never a
 // fallback), applying that scheme's trailer rules. c.Trailers, when non-nil, is the only source of fields
 // 10-12; a CertificateDigest / GoverningDocSha256 carried beside it must agree with it or the commitment is
-// refused. With nil Trailers, v5 is exactly seamCommitmentDigest(c), and v6 frames field 11 from
-// GoverningDocSha256 with fields 10 and 12 absent (a CertificateDigest is refused: v6 field 10 is only ever
-// a recomputed Gate digest).
+// refused. With nil Trailers, v5 is exactly seamCommitmentDigest(c), and v6 reads it as a record with
+// neither trailer (fields 10-12 0x00), so a GoverningDocSha256 or CertificateDigest beside it is refused:
+// under v6 those fields only ever come from the trailers.
 func expectedCommitmentDigest(version CommitmentVersion, c Commitment) (string, error) {
 	switch version {
 	case CommitmentV5:
@@ -459,21 +459,18 @@ func expectedCommitmentDigest(version CommitmentVersion, c Commitment) (string, 
 			return "", err
 		}
 		f := CommitmentDigestFields{SelectionDigest: sel, GoverningDocSha256: c.GoverningDocSha256}
-		if c.Trailers != nil {
-			t, err := DecodeCommitmentTrailers(c.Trailers, SchemeV6)
-			if err != nil {
-				return "", err
-			}
-			if c.GoverningDocSha256 != nil && !bytes.Equal(c.GoverningDocSha256, t.GoverningDocSha256) {
-				return "", refuse("governing_doc_disagrees_with_trailer")
-			}
-			if c.CertificateDigest != nil && !bytes.Equal(c.CertificateDigest, t.GateDigest) {
-				return "", refuse("gate_digest_disagrees_with_trailer")
-			}
-			f.GateDigest, f.GoverningDocSha256, f.Env = t.GateDigest, t.GoverningDocSha256, t.Env
-		} else if c.CertificateDigest != nil {
-			return "", refuse("gate_digest_without_trailer")
+		// nil Trailers is a record with neither trailer: fields 10-12 come from the trailers only.
+		t, err := DecodeCommitmentTrailers(c.Trailers, SchemeV6)
+		if err != nil {
+			return "", err
 		}
+		if c.GoverningDocSha256 != nil && !bytes.Equal(c.GoverningDocSha256, t.GoverningDocSha256) {
+			return "", refuse("governing_doc_disagrees_with_trailer")
+		}
+		if c.CertificateDigest != nil && !bytes.Equal(c.CertificateDigest, t.GateDigest) {
+			return "", refuse("gate_digest_disagrees_with_trailer")
+		}
+		f.GateDigest, f.GoverningDocSha256, f.Env = t.GateDigest, t.GoverningDocSha256, t.Env
 		return CommitmentDigest(CommitmentV6, c, f)
 	}
 	return "", refuse("unknown_commitment_version")

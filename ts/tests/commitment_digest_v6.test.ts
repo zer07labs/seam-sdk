@@ -251,6 +251,10 @@ test("v6 signed: every case verifies, selected v6 from its raw ext and recompute
     const flip = (h: string) => h.slice(0, -2) + (parseInt(h.slice(-2), 16) ^ 0x01).toString(16).padStart(2, "0");
     const bad = { ...cm, trailers: c.trailers === "" ? "00" : flip(c.trailers) };
     assert.equal(verifyTct(S.issuer_aid, c.signed_artifact, bad, NOW_S), false, `${c.name}: tampered`);
+    // The cross-port rule: under v6 absent trailers are a record with neither trailer, so the record's doc
+    // beside them is refused, never framed; an ungoverned case still verifies.
+    const absent = { ...cm, trailers: undefined };
+    assert.equal(verifyTct(S.issuer_aid, c.signed_artifact, absent, NOW_S), c.trailers === "", `${c.name}: absent`);
   }
 });
 
