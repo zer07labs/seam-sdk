@@ -264,8 +264,9 @@ fn cmd_chain(
 
     // Collapse retries BEFORE sorting: two copies of one event sort adjacent, and the second would
     // otherwise read as a second link on the same head.
-    let (mut events, duplicates) = match verify::dedup(events) {
-        Ok(v) => v,
+    // FLOW_REF_CONFLICT (client-surfaces A9) is collected here and reported as a warning: exit 0.
+    let (mut events, duplicates, warnings) = match verify::dedup_with_warnings(events) {
+        Ok(d) => (d.events, d.duplicates, d.warnings),
         Err(e) => return fail(&e, json, "CHAIN VERIFICATION FAILED"),
     };
     // Delivery is not ordered (at-least-once, replays, merged shards). Sort rather than demand order.
@@ -332,7 +333,21 @@ fn cmd_chain(
             // fanned out per tenant instead, via `tenant_issuer_reports` below. Under `--from-anchor`
             // that is the anchored tenant from its anchor (`tc.base_len`/`tc.heads[0]`) and every other
             // tenant from genesis — the anchor seeds exactly the tenant it names (#835 step 4).
-            let multi_tenant = r.tenants.len() > 1;
+            // Chain-keyed chains (tag 29) are integrity-checked from genesis(K); their authenticity
+            // (attestation v3, chain_bundle v2) is W5. Fail closed rather than vouch for them.
+            if !issuers.is_empty() && !r.chains.is_empty() {
+                return fail(
+                    &format!(
+                        "{} chain-keyed chain(s) (tag 29) in this window: --issuer authenticity over a \
+                         chain-keyed chain needs chain_bundle v2 (attestation v3), which this build \
+                         does not verify. Re-run without --issuer for the integrity check.",
+                        r.chains.len()
+                    ),
+                    json,
+                    "REFUSED (--issuer)",
+                );
+            }
+            let multi_tenant = r.tenants.len() + r.chains.len() > 1;
             // The library refuses an uncovered entry (spec `:293`) unless this is set, and only the
             // `--allow-uncovered` diagnostic sets it (argument validation keeps it off `--json`).
             let opts = verify::AuthOptions::allow_uncovered(allow_uncovered);
@@ -420,6 +435,36 @@ fn cmd_chain(
             } else {
                 String::new()
             };
+            // Additive keys, absent when empty, so JSON for every stream written today is unchanged.
+            let chains_json = if r.chains.is_empty() {
+                String::new()
+            } else {
+                let entries: Vec<String> = r
+                    .chains
+                    .iter()
+                    .map(|(k, tc)| {
+                        format!(
+                            "{{\"kind\":{},\"stream_id\":{},\"tenant\":{},\"flow_id\":{},\
+                             \"env\":{},\"links\":{},\"genesis\":\"{}\",\"head\":\"{}\"}}",
+                            k.kind,
+                            q(&k.stream_id),
+                            q(&k.tenant),
+                            q(&k.flow_id),
+                            q(&k.env),
+                            tc.links,
+                            verify::hex(&tc.heads[0]),
+                            verify::hex(&tc.head),
+                        )
+                    })
+                    .collect();
+                format!(",\"chains\":[{}]", entries.join(","))
+            };
+            let warnings_json = if warnings.is_empty() {
+                String::new()
+            } else {
+                let w: Vec<&str> = warnings.iter().map(String::as_str).collect();
+                format!(",\"warnings\":{}", q_arr(&w))
+            };
             // Anchored-only key, so JSON stays byte-identical to before this flag existed whenever
             // `--expect-anchor` is absent.
             let truncation_extra = match &expect {
@@ -453,7 +498,7 @@ fn cmd_chain(
                 println!(
                     "{{\"verified\":true,\"events\":{},\"links\":{},\"advisory\":{},\"duplicates\":{},\
                      \"unverifiable\":{},\"unverified_content\":{},\"unmodelled_kinds\":{},\
-                     \"head\":\"{}\"{}{}{}}}",
+                     \"head\":\"{}\"{}{}{}{}{}}}",
                     r.events,
                     r.links,
                     r.advisory,
@@ -470,6 +515,8 @@ fn cmd_chain(
                     authenticity,
                     tenants_json,
                     truncation_extra,
+                    chains_json,
+                    warnings_json,
                 );
             } else {
                 // `--allow-uncovered` with something uncovered REPLACES the AUTHENTICATED banners: no
@@ -589,6 +636,22 @@ fn cmd_chain(
                          fields. Re-run with --strict to refuse rather than skip them.",
                         r.unverifiable.len()
                     );
+                }
+                if !r.chains.is_empty() {
+                    println!(
+                        "  chain-keyed chains: {} (tag 29, each from genesis(K); integrity only)",
+                        r.chains.len()
+                    );
+                    for (k, tc) in &r.chains {
+                        println!(
+                            "    {k}: links {}, head {}",
+                            tc.links,
+                            verify::hex(&tc.head)
+                        );
+                    }
+                }
+                for w in &warnings {
+                    println!("  WARNING           : {w}");
                 }
                 if multi_tenant {
                     println!("  tenants           : {}", r.tenants.len());

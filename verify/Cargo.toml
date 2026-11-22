@@ -35,10 +35,16 @@ categories = ["command-line-utilities", "cryptography"]
 # (it reads `../conformance/voter_pop_v1_payload_vector.json`); the commitment digest's own
 # worked examples are unit tests in `src/commitment.rs`, which ship. `tests/selection_vectors.rs` too (it
 # reads `../conformance/selection_rule_v1_vectors.json`); option selection's own unit tests are in
-# `src/selection.rs`, which ship.
+# `src/selection.rs`, which ship. `tests/commitment_v6_vectors.rs` too (it reads
+# `../conformance/commitment_digest_v6_vector.json`, `commitment_digest_v6_signed_vector.json` and
+# `gate_block_vector.json`), and `tests/chain_vectors.rs` (it reads `../conformance/chain/`); the v6
+# digest, Gate body and chain-key unit tests are in `src/commitment.rs`, `src/gate.rs` and
+# `src/chain_key.rs`, which ship.
 exclude = [
     "tests/conformance.rs",
     "tests/commitment_vectors.rs",
+    "tests/commitment_v6_vectors.rs",
+    "tests/chain_vectors.rs",
     "tests/voter_vectors.rs",
     "tests/selection_vectors.rs",
 ]

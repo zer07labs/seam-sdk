@@ -361,6 +361,35 @@ pub fn verify_tct(
     digest: &[u8; 32],
     now_secs: u64,
 ) -> Result<(), String> {
+    let claims = verify_tct_envelope(pinned_aid, token, now_secs)?;
+    let binding = sole_seam_statement(&claims)?;
+    if binding.len() != 2 || binding.get("type").and_then(|t| t.as_str()) != Some(EXT_TYPE) {
+        return Err(format!(
+            "the TCT's ext.{EXT_NAMESPACE} is not exactly {{\"type\":\"{EXT_TYPE}\",\
+             \"commitment_digest\":…}}"
+        ));
+    }
+    let want = crate::verify::hex(digest);
+    if binding.get("commitment_digest").and_then(|d| d.as_str()) != Some(want.as_str()) {
+        return Err(
+            "the TCT's ext does not bind this Commitment's seam-commitment-digest:v5 (forged \
+             token, or an edited field)"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// Everything [`verify_tct`] checks except the `ext` statement: the compact JWS, the header, the
+/// signature under the pinned key, the strict (duplicate-refusing) claims parse, `ver`, `iss`/`aud`/
+/// `sub`, `iat`/`exp`, `cnf.jkt` and `grants`. Returns the parsed claims. Shared by the v5-only
+/// [`verify_tct`] and the version-selecting [`verify_commitment_tct`], so the two cannot drift on any
+/// check but the one that differs.
+fn verify_tct_envelope(
+    pinned_aid: &str,
+    token: &str,
+    now_secs: u64,
+) -> Result<serde_json::Value, String> {
     use base64::Engine;
     use ed25519_dalek::{Signature, Verifier, VerifyingKey};
     let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -429,6 +458,15 @@ pub fn verify_tct(
              self-attestation and carries no other grant)"
         ));
     }
+    Ok(claims)
+}
+
+/// The TCT's `ext` must be an object carrying exactly one namespace, [`EXT_NAMESPACE`], whose value is an
+/// object; returns that statement object. (A Seam-minted TCT carries no other namespace; this verifier
+/// has always refused one, under v5 and now under v6 alike.)
+fn sole_seam_statement(
+    claims: &serde_json::Value,
+) -> Result<&serde_json::Map<String, serde_json::Value>, String> {
     let Some(ext) = claims.get("ext").and_then(|e| e.as_object()) else {
         return Err("the TCT carries no ext object".into());
     };
@@ -437,24 +475,634 @@ pub fn verify_tct(
             "the TCT's ext carries a namespace other than {EXT_NAMESPACE} (exactly one is allowed)"
         ));
     }
-    let Some(binding) = ext.get(EXT_NAMESPACE).and_then(|b| b.as_object()) else {
-        return Err(format!("the TCT's ext has no {EXT_NAMESPACE} object"));
+    ext.get(EXT_NAMESPACE)
+        .and_then(|b| b.as_object())
+        .ok_or_else(|| format!("the TCT's ext has no {EXT_NAMESPACE} object"))
+}
+
+// ==================================================================================================
+// `seam-commitment-digest:v6` (Flows W2, A18) — beside v5, never instead of it.
+//
+// Written from `seam-runtime/docs/specs/seam-commitment-digest.v6.md` and `seam-gate-block.v1.md` and
+// pinned by `conformance/commitment_digest_v6_vector.json`, `commitment_digest_v6_signed_vector.json`
+// and `gate_block_vector.json`. v6 is v5 plus field 12 (the env, `sandbox` or `live`) and with field 10
+// defined as the Gate digest. Every v5 function above is byte-unchanged; nothing here calls into the
+// v5 hash except `commitment_digest_under(V5, ..)`, which delegates to it.
+//
+// The scheme is never read off the bytes: an ungoverned v6 seal looks exactly like an ungoverned v5
+// seal. A verifier takes it from the signed statement ([`select_commitment_version`]) and recomputes
+// under that version only — never both, never a fallback.
+// ==================================================================================================
+
+/// The v6 domain tag, field 0.
+pub const COMMITMENT_DIGEST_DOMAIN_V6: &[u8] = b"seam-commitment-digest:v6";
+
+/// The statement member that names the digest version, REQUIRED from v6 on.
+pub const COMMITMENT_DIGEST_DOMAIN_MEMBER: &str = "commitment_digest_domain";
+
+/// The governing-document trailer's marker.
+pub const GOVERNING_TRAILER: u8 = 0x06;
+
+/// Which commitment digest a record is recomputed under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommitmentDigestVersion {
+    V5,
+    V6,
+}
+
+/// A refusal of the whole commitment, before anything is hashed. `rule` is the spec's rule name, which is
+/// **advisory** (spec §Refusal rules): where an input breaks more than one rule, another applicable name
+/// is equally conforming. Only the refusal is normative.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitmentRefusal {
+    pub rule: &'static str,
+    pub detail: String,
+}
+
+impl CommitmentRefusal {
+    fn new(rule: &'static str, detail: impl Into<String>) -> Self {
+        Self {
+            rule,
+            detail: detail.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for CommitmentRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{} ({})", self.detail, self.rule)
+    }
+}
+
+impl From<crate::gate::GateRefusal> for CommitmentRefusal {
+    fn from(g: crate::gate::GateRefusal) -> Self {
+        Self::new(g.rule(), g.to_string())
+    }
+}
+
+/// A presence slot's encoding: `0x00` absent, else `0x01 ‖ be64(len) ‖ bytes` (fields 9–12).
+pub fn encode_slot(x: Option<&[u8]>) -> Vec<u8> {
+    match x {
+        None => vec![0],
+        Some(x) => {
+            let mut v = Vec::with_capacity(9 + x.len());
+            v.push(1);
+            v.extend_from_slice(&(x.len() as u64).to_be_bytes());
+            v.extend_from_slice(x);
+            v
+        }
+    }
+}
+
+/// The commitment digest under `version`, with field 8 supplied as the explanation digest and fields 10
+/// and 12 supplied directly (the digest-only path; a verifier derives them from the trailers with
+/// [`decode_commitment_trailers`]). `c.certificate_digest` is **ignored**: field 10 is `field_10`.
+/// Fields 9 and 11 are `c.selection_digest` and `c.governing_doc_sha256`.
+///
+/// Under v5 it is exactly [`commitment_digest_with_explanation`] (field 10 the opaque v5 slot), and an
+/// env refuses (`v5_refuses_env`). Under v6 it refuses, before hashing, a present field 9/10/11 that is
+/// not 32 bytes (`slot_length_not_32`), an env that is not exactly `sandbox`/`live`
+/// (`env_not_sandbox_or_live`, the empty string included: empty is not absence), and an env without a
+/// governing document (`env_without_governing_doc`).
+pub fn commitment_digest_under(
+    version: CommitmentDigestVersion,
+    c: &Commitment,
+    explanation: &[u8; 32],
+    field_10: Option<&[u8]>,
+    env: Option<&[u8]>,
+) -> Result<[u8; 32], CommitmentRefusal> {
+    if version == CommitmentDigestVersion::V5 {
+        if env.is_some() {
+            return Err(CommitmentRefusal::new(
+                "v5_refuses_env",
+                "a v5 commitment digest cannot frame an env",
+            ));
+        }
+        let mut v5 = c.clone();
+        v5.certificate_digest = field_10.map(<[u8]>::to_vec);
+        return commitment_digest_with_explanation(&v5, explanation)
+            .map_err(|e| CommitmentRefusal::new("slot_length_not_32", e));
+    }
+    for (name, slot) in [
+        ("selection_digest", c.selection_digest.as_deref()),
+        ("gate_digest", field_10),
+        ("governing_doc_sha256", c.governing_doc_sha256.as_deref()),
+    ] {
+        if let Some(d) = slot {
+            if d.len() != 32 {
+                return Err(CommitmentRefusal::new(
+                    "slot_length_not_32",
+                    format!("{name} is {} bytes; a present digest must be 32", d.len()),
+                ));
+            }
+        }
+    }
+    if let Some(e) = env {
+        if !crate::gate::is_flow_env(e) {
+            return Err(CommitmentRefusal::new(
+                "env_not_sandbox_or_live",
+                "the env is not exactly the bytes `sandbox` or `live`",
+            ));
+        }
+        if c.governing_doc_sha256.is_none() {
+            return Err(CommitmentRefusal::new(
+                "env_without_governing_doc",
+                "field 12 (env) is present but field 11 (governing document) is absent",
+            ));
+        }
+    }
+    let mut h = Sha256::new();
+    for field in [
+        COMMITMENT_DIGEST_DOMAIN_V6,
+        c.id.as_bytes(),
+        c.action.as_bytes(),
+        c.authority.as_bytes(),
+    ] {
+        be64_frame(&mut h, field);
+    }
+    h.update(encode_slot(c.supersedes.as_deref().map(str::as_bytes)));
+    for field in [
+        c.auth_method.as_bytes(),
+        c.trust_basis.as_bytes(),
+        c.committer.as_bytes(),
+        explanation.as_slice(),
+    ] {
+        be64_frame(&mut h, field);
+    }
+    h.update(encode_slot(c.selection_digest.as_deref()));
+    h.update(encode_slot(field_10));
+    h.update(encode_slot(c.governing_doc_sha256.as_deref()));
+    h.update(encode_slot(env));
+    Ok(h.finalize().into())
+}
+
+/// `seam-commitment-digest:v6` over `c` (explanation recomputed from its entries), with field 10 the
+/// Gate digest and field 12 the env. See [`commitment_digest_under`] for the refusals.
+pub fn commitment_digest_v6(
+    c: &Commitment,
+    gate_digest: Option<&[u8]>,
+    env: Option<&[u8]>,
+) -> Result<[u8; 32], CommitmentRefusal> {
+    let e = explanation_digest(&c.explanation)
+        .map_err(|e| CommitmentRefusal::new("explanation_invalid", e))?;
+    commitment_digest_under(CommitmentDigestVersion::V6, c, &e, gate_digest, env)
+}
+
+/// A decoded `0x06` body, either version (the scheme-free decode).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GoverningBody {
+    /// `0x01 ‖ doc_sha256` — v5's body, exactly 33 bytes.
+    V1 { doc_sha256: [u8; 32] },
+    /// `0x02 ‖ doc_sha256 ‖ (0x00 | 0x01 ‖ F(env))`. `env` is `None` for a governed seal whose namespace
+    /// maps to no (flow, env).
+    V2 {
+        doc_sha256: [u8; 32],
+        env: Option<String>,
+    },
+}
+
+impl GoverningBody {
+    pub fn version(&self) -> u8 {
+        match self {
+            Self::V1 { .. } => 1,
+            Self::V2 { .. } => 2,
+        }
+    }
+    pub fn doc_sha256(&self) -> &[u8; 32] {
+        match self {
+            Self::V1 { doc_sha256 } | Self::V2 { doc_sha256, .. } => doc_sha256,
+        }
+    }
+    pub fn env(&self) -> Option<&str> {
+        match self {
+            Self::V1 { .. } => None,
+            Self::V2 { env, .. } => env.as_deref(),
+        }
+    }
+}
+
+/// Decode a `0x06` body of either version (the trailer's body, after `marker ‖ u32le(len)`). Scheme-free:
+/// both versions are accepted and reported, and every rule that needs no scheme is applied. A be64 env
+/// length is compared as a `u64`, so 2^64−1 refuses as truncated instead of wrapping.
+pub fn decode_governing_body(body: &[u8]) -> Result<GoverningBody, CommitmentRefusal> {
+    let r = |rule, d: &str| Err(CommitmentRefusal::new(rule, d));
+    let Some((&version, rest)) = body.split_first() else {
+        return r("governing_body_empty", "the 0x06 body is zero bytes");
     };
-    if binding.len() != 2 || binding.get("type").and_then(|t| t.as_str()) != Some(EXT_TYPE) {
-        return Err(format!(
-            "the TCT's ext.{EXT_NAMESPACE} is not exactly {{\"type\":\"{EXT_TYPE}\",\
-             \"commitment_digest\":…}}"
+    match version {
+        1 => match <[u8; 32]>::try_from(rest) {
+            Ok(doc_sha256) => Ok(GoverningBody::V1 { doc_sha256 }),
+            Err(_) => r(
+                "governing_body_length",
+                "a 0x06 body v1 is not exactly 33 bytes",
+            ),
+        },
+        2 => {
+            if rest.len() < 32 {
+                return r(
+                    "governing_body_truncated",
+                    "the doc digest runs past the body",
+                );
+            }
+            let (doc, slot) = rest.split_at(32);
+            let doc_sha256 = <[u8; 32]>::try_from(doc).expect("32 bytes");
+            let env = match slot.split_first() {
+                None => {
+                    return r(
+                        "env_presence_missing",
+                        "a 0x06 body v2 ends right after the doc digest",
+                    )
+                }
+                Some((0, [])) => None,
+                Some((0, _)) => {
+                    return r(
+                        "governing_body_trailing_bytes",
+                        "bytes follow the absent env",
+                    )
+                }
+                Some((1, frame)) => {
+                    if frame.len() < 8 {
+                        return r(
+                            "governing_body_truncated",
+                            "the env length runs past the body",
+                        );
+                    }
+                    let (len, tail) = frame.split_at(8);
+                    let len = u64::from_be_bytes(len.try_into().expect("8 bytes"));
+                    if len > tail.len() as u64 {
+                        return r(
+                            "governing_body_truncated",
+                            "the env bytes run past the body",
+                        );
+                    }
+                    let (env, trailing) = tail.split_at(len as usize);
+                    if !crate::gate::is_flow_env(env) {
+                        return r(
+                            "env_not_sandbox_or_live",
+                            "the 0x06 env is not exactly the bytes `sandbox` or `live`",
+                        );
+                    }
+                    if !trailing.is_empty() {
+                        return r(
+                            "governing_body_trailing_bytes",
+                            "bytes follow the env frame",
+                        );
+                    }
+                    Some(String::from_utf8(env.to_vec()).expect("a flow env is ASCII"))
+                }
+                Some(_) => {
+                    return r(
+                        "env_presence_invalid",
+                        "the env presence byte is not 0x00 or 0x01",
+                    )
+                }
+            };
+            Ok(GoverningBody::V2 { doc_sha256, env })
+        }
+        _ => r(
+            "governing_body_unknown_version",
+            "the 0x06 body version is neither 0x01 nor 0x02",
+        ),
+    }
+}
+
+/// A decoded `0x05`/`0x06` trailer run: the Gate block with its recomputed digest, and the governing body.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CommitmentTrailers {
+    pub gate: Option<crate::gate::GateBlock>,
+    /// `seam-gate-digest:v1` recomputed over the `0x05` body (never taken from beside it, VG1).
+    pub gate_digest: Option<[u8; 32]>,
+    pub governing: Option<GoverningBody>,
+}
+
+impl CommitmentTrailers {
+    pub fn governing_doc_sha256(&self) -> Option<&[u8; 32]> {
+        self.governing.as_ref().map(GoverningBody::doc_sha256)
+    }
+    pub fn env(&self) -> Option<&str> {
+        self.governing.as_ref().and_then(GoverningBody::env)
+    }
+    /// `1`, `2`, or `None` without a `0x06` trailer.
+    pub fn governing_body_version(&self) -> Option<u8> {
+        self.governing.as_ref().map(GoverningBody::version)
+    }
+    /// v6 field 10's encoding.
+    pub fn field_10(&self) -> Vec<u8> {
+        encode_slot(self.gate_digest.as_ref().map(|d| d.as_slice()))
+    }
+    /// Field 11's encoding (either version).
+    pub fn field_11(&self) -> Vec<u8> {
+        encode_slot(self.governing_doc_sha256().map(|d| d.as_slice()))
+    }
+    /// v6 field 12's encoding.
+    pub fn field_12(&self) -> Vec<u8> {
+        encode_slot(self.env().map(str::as_bytes))
+    }
+}
+
+/// Decode the raw `0x05`/`0x06` trailer bytes a commitment appends (spec §The `0x06` trailer, Gate spec
+/// §The trailer). `scheme` is `Some(V5)`/`Some(V6)` for a reader that knows the scheme (a verifier, from
+/// statement selection), or `None` for the scheme-free decode.
+///
+/// Always applied: each trailer is `marker ‖ u32le(len) ‖ body`; markers strictly increase (a repeated or
+/// misordered `0x05`/`0x06` refuses, `marker_order`); a marker outside `0x01`–`0x07` refuses
+/// (`unknown_marker`); a length or body past the input refuses; the `0x05` body is decoded strictly
+/// ([`crate::gate::decode_gate_body`]) and the `0x06` body by [`decode_governing_body`]; and a `0x05` is
+/// legal only beside a `0x06` body v2 whose env is present and equal to the Gate body's
+/// (`gate_env_binding`). Then the scheme's rules: under v5 a `0x05` (`v5_refuses_gate_block`) or a body v2
+/// (`v5_refuses_governing_body_v2`) refuses; under v6 a body v1 (`v6_refuses_governing_body_v1`).
+///
+/// **Input scope.** This takes the `0x05`/`0x06` run only. The other known markers (`0x01`–`0x04`,
+/// `0x07`) are not all length-framed alike, and this crate never opens a sealed trailer list: field 9
+/// comes from the disclosed selection body as it does under v5. One of them here refuses
+/// (`trailer_out_of_scope`) rather than being skipped unread.
+pub fn decode_commitment_trailers(
+    trailers: &[u8],
+    scheme: Option<CommitmentDigestVersion>,
+) -> Result<CommitmentTrailers, CommitmentRefusal> {
+    let mut out = CommitmentTrailers::default();
+    let mut pos = 0usize;
+    let mut last = 0u8;
+    while let Some(&marker) = trailers.get(pos) {
+        if !(0x01..=0x07).contains(&marker) {
+            return Err(CommitmentRefusal::new(
+                "unknown_marker",
+                format!("trailer marker {marker:#04x} is outside 0x01-0x07"),
+            ));
+        }
+        if marker <= last {
+            return Err(CommitmentRefusal::new(
+                "marker_order",
+                format!("trailer marker {marker:#04x} does not strictly follow {last:#04x}"),
+            ));
+        }
+        last = marker;
+        let truncated = if marker == crate::gate::GATE_TRAILER {
+            "gate_trailer_truncated"
+        } else {
+            "governing_trailer_truncated"
+        };
+        if marker != crate::gate::GATE_TRAILER && marker != GOVERNING_TRAILER {
+            return Err(CommitmentRefusal::new(
+                "trailer_out_of_scope",
+                format!(
+                    "trailer marker {marker:#04x} is not a 0x05/0x06 trailer; pass only that run"
+                ),
+            ));
+        }
+        let Some(len) = trailers.get(pos + 1..pos + 5) else {
+            return Err(CommitmentRefusal::new(
+                truncated,
+                "the trailer's u32le length runs past the input",
+            ));
+        };
+        let len = u32::from_le_bytes(len.try_into().expect("4 bytes")) as usize;
+        let start = pos + 5;
+        let Some(body) = trailers.get(start..start.saturating_add(len)) else {
+            return Err(CommitmentRefusal::new(
+                truncated,
+                "the trailer's body runs past the input",
+            ));
+        };
+        if marker == crate::gate::GATE_TRAILER {
+            out.gate = Some(crate::gate::decode_gate_body(body)?);
+            out.gate_digest = Some(crate::gate::gate_digest(body));
+        } else {
+            out.governing = Some(decode_governing_body(body)?);
+        }
+        pos = start + len;
+    }
+    match scheme {
+        Some(CommitmentDigestVersion::V5) => {
+            if out.gate.is_some() {
+                return Err(CommitmentRefusal::new(
+                    "v5_refuses_gate_block",
+                    "a v5 commitment carries a 0x05 Gate block",
+                ));
+            }
+            if out.governing_body_version() == Some(2) {
+                return Err(CommitmentRefusal::new(
+                    "v5_refuses_governing_body_v2",
+                    "a v5 commitment carries a 0x06 body v2",
+                ));
+            }
+        }
+        Some(CommitmentDigestVersion::V6) if out.governing_body_version() == Some(1) => {
+            return Err(CommitmentRefusal::new(
+                "v6_refuses_governing_body_v1",
+                "a v6 commitment carries a 0x06 body v1",
+            ));
+        }
+        _ => {}
+    }
+    if let Some(g) = &out.gate {
+        if out.env() != Some(g.env.as_str()) {
+            return Err(CommitmentRefusal::new(
+                "gate_env_binding",
+                "a 0x05 Gate block needs a 0x06 body v2 whose env is present and equal to the Gate env",
+            ));
+        }
+    }
+    Ok(out)
+}
+
+/// A statement that selected a version, with the digest it carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelectedStatement {
+    pub version: CommitmentDigestVersion,
+    pub commitment_digest: [u8; 32],
+}
+
+/// Parse raw statement/`ext` JSON: not JSON refuses `statement_not_json`; then a duplicate member name at
+/// ANY depth refuses `statement_duplicate_member`. The duplicate guard is [`parse_no_duplicate_keys`]: a
+/// streaming visitor that sees every member as the deserializer reads it off the raw text (names after
+/// JSON unescaping, so `"type"` and `"type"` collide) — never a map parse that keeps the last of two.
+fn parse_statement_json(raw: &[u8]) -> Result<serde_json::Value, CommitmentRefusal> {
+    serde_json::from_slice::<serde_json::Value>(raw)
+        .map_err(|e| CommitmentRefusal::new("statement_not_json", e.to_string()))?;
+    parse_no_duplicate_keys(raw)
+        .map_err(|e| CommitmentRefusal::new("statement_duplicate_member", e))
+}
+
+fn select_from_statement(
+    statement: &serde_json::Value,
+) -> Result<SelectedStatement, CommitmentRefusal> {
+    let Some(obj) = statement.as_object() else {
+        return Err(CommitmentRefusal::new(
+            "statement_not_object",
+            "the statement is not a JSON object",
+        ));
+    };
+    let has = |k: &str| obj.contains_key(k);
+    let version = match obj.len() {
+        2 if has("type") && has("commitment_digest") => CommitmentDigestVersion::V5,
+        3 if has("type") && has("commitment_digest") && has(COMMITMENT_DIGEST_DOMAIN_MEMBER) => {
+            if obj[COMMITMENT_DIGEST_DOMAIN_MEMBER].as_str()
+                != std::str::from_utf8(COMMITMENT_DIGEST_DOMAIN_V6).ok()
+            {
+                return Err(CommitmentRefusal::new(
+                    "statement_domain_not_v6",
+                    "commitment_digest_domain is not the string seam-commitment-digest:v6",
+                ));
+            }
+            CommitmentDigestVersion::V6
+        }
+        _ => {
+            return Err(CommitmentRefusal::new(
+                "statement_member_set",
+                "the statement's members are neither {type, commitment_digest} nor {type, \
+                 commitment_digest, commitment_digest_domain}",
+            ))
+        }
+    };
+    if obj["type"].as_str() != Some(EXT_TYPE) {
+        return Err(CommitmentRefusal::new(
+            "statement_type",
+            format!("the statement's type is not {EXT_TYPE}"),
         ));
     }
-    let want = crate::verify::hex(digest);
-    if binding.get("commitment_digest").and_then(|d| d.as_str()) != Some(want.as_str()) {
-        return Err(
-            "the TCT's ext does not bind this Commitment's seam-commitment-digest:v5 (forged \
-             token, or an edited field)"
-                .into(),
-        );
+    let Some(hex) = obj["commitment_digest"]
+        .as_str()
+        .filter(|h| h.len() == 64 && h.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+    else {
+        return Err(CommitmentRefusal::new(
+            "statement_digest_not_lowercase_hex",
+            "commitment_digest is not exactly 64 lowercase hex characters",
+        ));
+    };
+    let mut commitment_digest = [0u8; 32];
+    for (i, d) in commitment_digest.iter_mut().enumerate() {
+        *d = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).expect("lowercase hex");
     }
-    Ok(())
+    Ok(SelectedStatement {
+        version,
+        commitment_digest,
+    })
+}
+
+fn select_from_ext(ext: &serde_json::Value) -> Result<SelectedStatement, CommitmentRefusal> {
+    let Some(ext) = ext.as_object() else {
+        return Err(CommitmentRefusal::new(
+            "statement_not_object",
+            "the ext is not a JSON object",
+        ));
+    };
+    select_from_statement(ext.get(EXT_NAMESPACE).ok_or_else(|| {
+        CommitmentRefusal::new(
+            "statement_missing",
+            format!("the ext has no {EXT_NAMESPACE} member"),
+        )
+    })?)
+}
+
+/// Statement selection over the raw statement object text, by EXACT member set (spec §Verifiers:
+/// choosing v5 or v6): `{type, commitment_digest}` ⇒ v5; `{type, commitment_digest,
+/// commitment_digest_domain}` with the domain the string `seam-commitment-digest:v6` ⇒ v6; anything else
+/// refuses. Member order is not significant. `type` must be `seam:commitment` and `commitment_digest`
+/// exactly 64 lowercase hex characters.
+pub fn select_commitment_version(
+    raw_statement: &[u8],
+) -> Result<SelectedStatement, CommitmentRefusal> {
+    select_from_statement(&parse_statement_json(raw_statement)?)
+}
+
+/// [`select_commitment_version`] entered from the raw TCT `ext` object: the duplicate guard covers the
+/// whole `ext` (every namespace, every depth), and the statement is its [`EXT_NAMESPACE`] member. Other
+/// namespaces are tolerated HERE, as the spec's selection rule does; [`verify_commitment_tct`] keeps this
+/// verifier's older, stricter rule that a Seam TCT's `ext` carries no other namespace.
+pub fn select_commitment_version_in_ext(
+    raw_ext: &[u8],
+) -> Result<SelectedStatement, CommitmentRefusal> {
+    select_from_ext(&parse_statement_json(raw_ext)?)
+}
+
+/// Verify a commitment TCT against a **pinned** issuer AID, choosing v5 or v6 from the signed statement
+/// and recomputing under that version ONLY (spec §Verifiers: choosing v5 or v6). Returns the version.
+///
+/// Every envelope check of [`verify_tct`] applies unchanged (signature, `ver`, `iss`/`aud`/`sub`,
+/// `iat`/`exp`, `cnf.jkt`, `grants`, the claims parsed with duplicate members refused at every depth,
+/// which covers the whole `ext`). Then:
+///
+/// 1. the `ext` carries exactly the [`EXT_NAMESPACE`] statement, which selects the version;
+/// 2. `trailers` (the raw `0x05`/`0x06` bytes; empty when the record has neither) decode under that
+///    scheme ([`decode_commitment_trailers`]);
+/// 3. under **v5**, field 10 is `c.certificate_digest` and field 11 the `0x06` v1 doc (or
+///    `c.governing_doc_sha256` with no trailer, exactly as before); under **v6**, field 10 is the Gate
+///    digest recomputed over the `0x05` body and fields 11/12 come from the `0x06` body v2 — a
+///    `c.certificate_digest`, or a `c.governing_doc_sha256` with no `0x06` trailer, is refused, since v6
+///    frames those fields from the trailers only;
+/// 4. the recomputed digest must equal the statement's. A 2-member statement over a v6 commitment
+///    therefore selects v5 and fails here; it is never retried under v6.
+pub fn verify_commitment_tct(
+    pinned_aid: &str,
+    c: &Commitment,
+    trailers: &[u8],
+    now_secs: u64,
+) -> Result<CommitmentDigestVersion, String> {
+    let claims = verify_tct_envelope(pinned_aid, &c.signed_artifact, now_secs)?;
+    sole_seam_statement(&claims)?;
+    let sel = select_from_ext(&claims["ext"])
+        .map_err(|r| format!("the TCT's statement selects no commitment digest version: {r}"))?;
+    let t = decode_commitment_trailers(trailers, Some(sel.version))
+        .map_err(|r| format!("the commitment's trailers are refused: {r}"))?;
+    let explanation = explanation_digest(&c.explanation)?;
+    let trailer_doc = t.governing_doc_sha256().map(|d| d.to_vec());
+    if let (Some(stated), Some(sealed)) = (&c.governing_doc_sha256, &trailer_doc) {
+        if stated != sealed {
+            return Err(
+                "the commitment's governing_doc_sha256 disagrees with its 0x06 trailer".into(),
+            );
+        }
+    }
+    let mut framed = c.clone();
+    let digest = match sel.version {
+        CommitmentDigestVersion::V5 => {
+            framed.governing_doc_sha256 = trailer_doc.or(c.governing_doc_sha256.clone());
+            commitment_digest_under(
+                sel.version,
+                &framed,
+                &explanation,
+                c.certificate_digest.as_deref(),
+                None,
+            )
+        }
+        CommitmentDigestVersion::V6 => {
+            if c.certificate_digest.is_some() {
+                return Err(
+                    "under v6 field 10 is framed only from the 0x05 Gate block, never from \
+                            a stated certificate_digest"
+                        .into(),
+                );
+            }
+            if c.governing_doc_sha256.is_some() && trailer_doc.is_none() {
+                return Err(
+                    "under v6 a governed commitment carries its doc in the 0x06 body v2; \
+                            none was supplied"
+                        .into(),
+                );
+            }
+            framed.governing_doc_sha256 = trailer_doc;
+            commitment_digest_under(
+                sel.version,
+                &framed,
+                &explanation,
+                t.gate_digest.as_ref().map(|d| d.as_slice()),
+                t.env().map(str::as_bytes),
+            )
+        }
+    }
+    .map_err(|r| format!("the commitment digest is refused: {r}"))?;
+    if digest != sel.commitment_digest {
+        let tag = match sel.version {
+            CommitmentDigestVersion::V5 => "seam-commitment-digest:v5",
+            CommitmentDigestVersion::V6 => "seam-commitment-digest:v6",
+        };
+        return Err(format!(
+            "the TCT's ext does not bind this Commitment's {tag} (commitment_digest_mismatch: forged \
+             token, an edited field, or a statement naming the wrong version)"
+        ));
+    }
+    Ok(sel.version)
 }
 
 #[cfg(test)]
