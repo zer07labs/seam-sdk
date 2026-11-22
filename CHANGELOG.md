@@ -29,6 +29,8 @@ than trusting a summary here.
   `conformance/flow_ref_unsealed_vectors.json` added (case f). The vendored `seam-event.v1.md` tracks
   seam-runtime#1864. `CHAIN_MANIFEST` is a recorded content-coverage gap until W5.
 
+## 0.113.1 — 2026-11-22
+
 ### Added — v6 voter-record vector (Flows W3, train step 2)
 
 - **`conformance/commitment_digest_v6_voter_vector.json`**, copied byte for byte from seam-runtime
