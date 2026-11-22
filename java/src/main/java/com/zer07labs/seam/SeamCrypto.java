@@ -117,7 +117,11 @@ public final class SeamCrypto {
    * absent — every record runtime 0.88.0 seals — and exactly 32 bytes when present. {@code
    * governingDocSha256} (field 11, #1711) is the SHA-256 of the tenant governing document the decision
    * was sealed under ({@code Commitment.governing_doc_sha256} on the wire): {@code null} for an
-   * ungoverned decision, else exactly 32 bytes.
+   * ungoverned decision, else exactly 32 bytes. {@code trailers} (Flows W2) is the raw {@code 0x05}
+   * (Gate block) and {@code 0x06} (governing document) trailer bytes the sealed commitment appends, in
+   * order and nothing else; {@code null} when not given. {@link #verifyTct} derives fields 10-12 from
+   * them under the version the TCT's statement selects ({@link #decodeCommitmentTrailers}); with
+   * {@code null} a v5 verification is exactly what it was before the field existed.
    */
   public record Commitment(
       String id,
@@ -131,7 +135,38 @@ public final class SeamCrypto {
       List<ExplanationEntry> explanation,
       byte[] selectionDigest,
       byte[] certificateDigest,
-      byte[] governingDocSha256) {
+      byte[] governingDocSha256,
+      byte[] trailers) {
+    /** A commitment given without its raw trailers (every pre-W2 caller). */
+    public Commitment(
+        String id,
+        String action,
+        String authority,
+        String supersedes,
+        String authMethod,
+        String trustBasis,
+        String committer,
+        byte[] explanationDigest,
+        List<ExplanationEntry> explanation,
+        byte[] selectionDigest,
+        byte[] certificateDigest,
+        byte[] governingDocSha256) {
+      this(
+          id,
+          action,
+          authority,
+          supersedes,
+          authMethod,
+          trustBasis,
+          committer,
+          explanationDigest,
+          explanation,
+          selectionDigest,
+          certificateDigest,
+          governingDocSha256,
+          null);
+    }
+
     /** An ungoverned commitment (field 11 absent) with the given field 9/10 slots. */
     public Commitment(
         String id,
@@ -894,7 +929,11 @@ public final class SeamCrypto {
    * exactly {@code ["aitp.attestation"]}; and that {@code ext} is exactly {@code
    * {"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":<hex>}}} with the hex equal to
    * the recomputed {@code seam-commitment-digest:v5} of this exact commitment (decided content,
-   * committer, governing document digest, and sealed explanation). A header or payload whose JSON repeats an object key at any
+   * committer, governing document digest, and sealed explanation). Since Flows W2 the statement may
+   * instead carry {@code "commitment_digest_domain":"seam-commitment-digest:v6"}: the exact member
+   * set selects the version ({@link #selectCommitmentVersion}), that version's trailer rules apply
+   * to {@link Commitment#trailers()}, and the digest is recomputed under it alone (v6 spec
+   * §Verifiers). A v5 statement with no trailers verifies exactly as before. A header or payload whose JSON repeats an object key at any
    * depth is refused: Gson would keep one of the two, and another parser might keep the other. Any malformed/forged input fails closed (returns {@code false}), never throws
    * — including explanation entries that disagree with the published digest, an unknown kind, or a
    * non-canonical confidence.
@@ -935,15 +974,13 @@ public final class SeamCrypto {
           || !ATTESTATION_GRANT.equals(grants.get(0))) {
         return false;
       }
-      if (!(payload.get("ext") instanceof Map<?, ?> ext)
-          || ext.size() != 1
-          || !(ext.get(COMMITMENT_EXT_NAMESPACE) instanceof Map<?, ?> stmt)
-          || stmt.size() != 2
-          || !COMMITMENT_STATEMENT.equals(stmt.get("type"))
-          || !(stmt.get("commitment_digest") instanceof String digest)) {
-        return false;
-      }
-      return digest.equals(seamCommitmentDigest(c));
+      if (!(payload.get("ext") instanceof Map<?, ?> ext) || ext.size() != 1) return false;
+      // Flows W2: the statement's exact member set selects v5 or v6 (the duplicate-member guard ran
+      // over the raw payload above, so it covers every depth of ext). Recompute under that version
+      // only: never both, never a fallback.
+      CommitmentVersion version = selectFromExtObject(ext);
+      Object digest = ((Map<?, ?>) ext.get(COMMITMENT_EXT_NAMESPACE)).get("commitment_digest");
+      return digest.equals(recomputeCommitmentDigest(version, c));
     } catch (RuntimeException e) {
       return false;
     }
@@ -969,7 +1006,7 @@ public final class SeamCrypto {
           new Commitment(
               c.id(), c.action(), c.authority(), c.supersedes(), c.authMethod(), c.trustBasis(),
               c.committer(), c.explanationDigest(), c.explanation(), field9, c.certificateDigest(),
-              c.governingDocSha256());
+              c.governingDocSha256(), c.trailers());
       if (!verifyTct(issuerAid, tctJws, framed, nowS)) return false;
       if (c.explanation() == null) return false;
       return verifySelection(selection, c.explanation(), c.action()).ok();
@@ -1015,6 +1052,524 @@ public final class SeamCrypto {
         return false;
       }
     }
+  }
+
+  // ── seam-commitment-digest:v6 + the Gate block v1 (Flows W2, readers only) ──────────────────
+  //
+  // Normative: seam-runtime docs/specs/seam-commitment-digest.v6.md and seam-gate-block.v1.md.
+  // Pinned by conformance/commitment_digest_v6_vector.json, commitment_digest_v6_signed_vector.json
+  // and gate_block_vector.json. Every be64 is an UNSIGNED 64-bit value held in a Java long: compared
+  // with Long.compareUnsigned and printed with Long.toUnsignedString, never as a signed number.
+
+  /** Domain tag of the v6 commitment digest. v5 ({@link #COMMITMENT_DIGEST_DOMAIN}) is unchanged. */
+  public static final String COMMITMENT_DIGEST_DOMAIN_V6 = "seam-commitment-digest:v6";
+
+  /** Domain tag of the Gate digest v6 field 10 frames: SHA-256(F(tag) ‖ gate_body). */
+  public static final String GATE_DIGEST_DOMAIN = "seam-gate-digest:v1";
+
+  /** The {@code ext} statement member that selects v6 ({@code commitment_digest_domain}). */
+  public static final String COMMITMENT_DIGEST_DOMAIN_MEMBER = "commitment_digest_domain";
+
+  private static final int GATE_TRAILER = 0x05;
+  private static final int GOVERNING_TRAILER = 0x06;
+  private static final byte[] ENV_SANDBOX = "sandbox".getBytes(StandardCharsets.US_ASCII);
+  private static final byte[] ENV_LIVE = "live".getBytes(StandardCharsets.US_ASCII);
+  private static final Set<String> V5_MEMBERS = Set.of("type", "commitment_digest");
+  private static final Set<String> V6_MEMBERS =
+      Set.of("type", "commitment_digest", COMMITMENT_DIGEST_DOMAIN_MEMBER);
+
+  /** The commitment digest version a statement selects, or the scheme a trailer decode applies. */
+  public enum CommitmentVersion {
+    V5,
+    V6
+  }
+
+  /**
+   * A v6 / Gate-block refusal. {@link #rule()} names the spec rule. The name is ADVISORY (spec
+   * §Refusal rules): where an input breaks more than one rule any applicable one may be named, so a
+   * caller must branch on the refusal, never on the name.
+   */
+  public static final class CommitmentRefusal extends IllegalArgumentException {
+    private static final long serialVersionUID = 1L;
+    private final String rule;
+
+    public CommitmentRefusal(String rule) {
+      super(rule);
+      this.rule = rule;
+    }
+
+    public String rule() {
+      return rule;
+    }
+  }
+
+  /**
+   * The digest-function inputs for fields 9-12 ({@link #commitmentDigest}). Each digest is {@code
+   * null} when absent, else exactly 32 bytes; {@code env} is {@code null} when absent, else exactly
+   * {@code "sandbox"} or {@code "live"}. Under v5 {@code gateDigest} is v5's opaque field-10 slot.
+   */
+  public record CommitmentDigestFields(
+      byte[] selectionDigest, byte[] gateDigest, byte[] governingDocSha256, String env) {}
+
+  /**
+   * A decoded Gate block v1 ({@code 0x05} body). {@code status} is {@code answered} or {@code
+   * unavailable}; {@code onOutage} is {@code refuse_seal} or {@code seal_gate_unavailable}. {@code
+   * timeoutMs}, {@code requestedAtMs} and {@code givenUpAtMs} are UNSIGNED 64-bit values (read them
+   * with {@link Long#toUnsignedString(long)}). Answered only: {@code receiptJcs}, {@code keyId},
+   * {@code signature} (64 raw bytes) and {@code certificateJcs} ({@code null} for a route answer).
+   * Unavailable only: {@code reason} ({@code timeout}, {@code connect}, {@code http_5xx}, {@code
+   * circuit_open}, {@code token_mint}) and {@code givenUpAtMs}. Absent fields are {@code null}.
+   */
+  public record GateBlock(
+      String status,
+      String attemptId,
+      String domain,
+      String flowId,
+      String env,
+      long timeoutMs,
+      String onOutage,
+      long requestedAtMs,
+      String receiptJcs,
+      String keyId,
+      byte[] signature,
+      String certificateJcs,
+      String reason,
+      Long givenUpAtMs) {}
+
+  /**
+   * The {@code 0x05} / {@code 0x06} trailers decoded ({@link #decodeCommitmentTrailers}). {@code
+   * field10}/{@code field11}/{@code field12} are the encoded digest fields ({@code 0x00}, or {@code
+   * 0x01 ‖ F(x)}); {@code field12} is {@code null} when the scheme has no field 12 (v5, or a
+   * scheme-free decode without a body v2). {@code governingBodyVersion} is the {@code 0x06} body
+   * version (1 or 2), {@code null} with no {@code 0x06}. The decoded values beside them are {@code
+   * null} when absent.
+   */
+  public record CommitmentTrailers(
+      byte[] field10,
+      byte[] field11,
+      byte[] field12,
+      Integer governingBodyVersion,
+      byte[] gateDigest,
+      GateBlock gate,
+      byte[] governingDocSha256,
+      String env) {}
+
+  private static CommitmentRefusal refused(String rule) {
+    return new CommitmentRefusal(rule);
+  }
+
+  /** A strict reader over one body; every overrun refuses with {@code truncated}. */
+  private static final class Reader {
+    private final byte[] b;
+    private final String truncated;
+    private int p;
+
+    Reader(byte[] b, int start, String truncated) {
+      this.b = b;
+      this.p = start;
+      this.truncated = truncated;
+    }
+
+    /** {@code n} is UNSIGNED: a be64 length of 2^64-1 is -1 here and still refuses as truncated. */
+    byte[] take(long n) {
+      if (Long.compareUnsigned(n, b.length - p) > 0) throw refused(truncated);
+      byte[] out = Arrays.copyOfRange(b, p, p + (int) n);
+      p += (int) n;
+      return out;
+    }
+
+    int u8() {
+      return take(1)[0] & 0xff;
+    }
+
+    long be64() {
+      return ByteBuffer.wrap(take(8)).getLong();
+    }
+
+    byte[] framed() {
+      return take(be64());
+    }
+
+    boolean atEnd() {
+      return p == b.length;
+    }
+
+    void done(String rule) {
+      if (!atEnd()) throw refused(rule);
+    }
+  }
+
+  private static String strictUtf8(byte[] raw, String rule) {
+    try {
+      return StandardCharsets.UTF_8
+          .newDecoder()
+          .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+          .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+          .decode(ByteBuffer.wrap(raw))
+          .toString();
+    } catch (java.nio.charset.CharacterCodingException e) {
+      throw refused(rule);
+    }
+  }
+
+  /** A Gate text field: valid UTF-8 and non-empty. */
+  private static String gateText(Reader r) {
+    String out = strictUtf8(r.framed(), "gate_text_not_utf8");
+    if (out.isEmpty()) throw refused("gate_text_empty");
+    return out;
+  }
+
+  /** The env rule on raw bytes: exactly {@code sandbox} or {@code live}, compared byte for byte. */
+  private static String envOf(byte[] raw) {
+    if (Arrays.equals(raw, ENV_SANDBOX)) return "sandbox";
+    if (Arrays.equals(raw, ENV_LIVE)) return "live";
+    throw refused("env_not_sandbox_or_live");
+  }
+
+  /**
+   * Decode a Gate block v1 ({@code 0x05} body, after {@code marker ‖ u32le(len)}) strictly: every
+   * {@code gate_*} rule of {@code seam-gate-block.v1.md}. The receipt, key id, signature and
+   * certificate are framed bytes and are never parsed.
+   *
+   * @throws CommitmentRefusal on any refusal.
+   */
+  public static GateBlock decodeGateBody(byte[] body) {
+    if (body.length == 0) throw refused("gate_body_empty");
+    Reader r = new Reader(body, 0, "gate_body_truncated");
+    if (r.u8() != 0x01) throw refused("gate_body_unknown_version");
+    int status = r.u8();
+    if (status != 1 && status != 2) throw refused("gate_status_invalid");
+    String attemptId = gateText(r);
+    String domain = gateText(r);
+    String flowId = gateText(r);
+    String env = envOf(r.framed());
+    long timeoutMs = r.be64();
+    int onOutage = r.u8();
+    if (onOutage != 1 && onOutage != 2) throw refused("gate_on_outage_invalid");
+    long requestedAtMs = r.be64();
+    String outage = onOutage == 1 ? "refuse_seal" : "seal_gate_unavailable";
+    GateBlock out;
+    if (status == 1) {
+      String receipt = gateText(r);
+      String keyId = gateText(r);
+      byte[] sig = r.framed();
+      if (sig.length != 64) throw refused("gate_signature_length");
+      byte[] cert = r.framed();
+      String certificate = cert.length == 0 ? null : strictUtf8(cert, "gate_text_not_utf8");
+      out =
+          new GateBlock(
+              "answered", attemptId, domain, flowId, env, timeoutMs, outage, requestedAtMs, receipt,
+              keyId, sig, certificate, null, null);
+    } else {
+      if (onOutage == 1) throw refused("gate_unavailable_under_refuse_seal");
+      int reason = r.u8();
+      String why =
+          switch (reason) {
+            case 1 -> "timeout";
+            case 2 -> "connect";
+            case 3 -> "http_5xx";
+            case 4 -> throw refused("gate_reason_reserved");
+            case 5 -> "circuit_open";
+            case 6 -> "token_mint";
+            default -> throw refused("gate_reason_invalid");
+          };
+      long givenUpAtMs = r.be64();
+      out =
+          new GateBlock(
+              "unavailable", attemptId, domain, flowId, env, timeoutMs, outage, requestedAtMs, null,
+              null, null, null, why, givenUpAtMs);
+    }
+    r.done("gate_body_trailing_bytes");
+    return out;
+  }
+
+  /**
+   * {@code seam-gate-digest:v1}: SHA-256({@code be64(19) ‖ "seam-gate-digest:v1" ‖ gate_body}), the
+   * body hashed whole, version byte included. The body is decoded strictly first ({@link
+   * #decodeGateBody}), so a body the decoder refuses never yields a digest.
+   *
+   * @throws CommitmentRefusal when the body is refused.
+   */
+  public static byte[] gateDigest(byte[] body) {
+    decodeGateBody(body);
+    ByteArrayOutputStream h = new ByteArrayOutputStream();
+    be64Frame(h, GATE_DIGEST_DOMAIN.getBytes(StandardCharsets.US_ASCII));
+    h.writeBytes(body);
+    return sha256(h.toByteArray());
+  }
+
+  /** {@code 0x00}, or {@code 0x01 ‖ F(d)}. */
+  private static byte[] slotBytes(byte[] d) {
+    ByteArrayOutputStream h = new ByteArrayOutputStream();
+    optionalDigestSlot(h, d);
+    return h.toByteArray();
+  }
+
+  private static byte[] envSlotBytes(String env) {
+    return slotBytes(env == null ? null : env.getBytes(StandardCharsets.US_ASCII));
+  }
+
+  /**
+   * Decode the {@code 0x05} / {@code 0x06} trailers a sealed commitment appends into digest fields
+   * 10-12. {@code scheme} is {@link CommitmentVersion#V5}, {@link CommitmentVersion#V6}, or {@code
+   * null} for the scheme-free decode (both {@code 0x06} body versions accepted, the version
+   * reported; the caller applies the scheme rules once it knows the scheme).
+   *
+   * <p>Markers strictly increase, an unknown marker refuses, nothing may follow the last trailer.
+   * {@code 0x05} is decoded by {@link #decodeGateBody}, and field 10 frames this decoder's own {@link
+   * #gateDigest} over it (VG1); a {@code 0x05} needs a {@code 0x06} body v2 whose env equals the Gate
+   * env ({@code gate_env_binding}). Under v5 a {@code 0x05} or a body v2 refuses; under v6 a body v1
+   * refuses. {@code trailers} carries only these two trailers: any other commitment trailer marker
+   * ({@code 0x01}-{@code 0x04}, {@code 0x07}) is refused as not a digest input; the selection digest
+   * (field 9) is given as {@link Commitment#selectionDigest()} or a selection block, as for v5.
+   *
+   * @throws CommitmentRefusal (or {@link IllegalArgumentException}) on any refusal.
+   */
+  public static CommitmentTrailers decodeCommitmentTrailers(
+      byte[] trailers, CommitmentVersion scheme) {
+    int pos = 0;
+    int last = 0;
+    byte[] gateBody = null;
+    GateBlock gate = null;
+    byte[] doc = null;
+    String env = null;
+    Integer version = null;
+    while (pos < trailers.length) {
+      int marker = trailers[pos] & 0xff;
+      if (marker < 0x01 || marker > 0x07) throw refused("unknown_marker");
+      if (marker <= last) throw refused("marker_order");
+      last = marker;
+      String truncated;
+      if (marker == GATE_TRAILER) {
+        if (scheme == CommitmentVersion.V5) throw refused("v5_refuses_gate_block");
+        truncated = "gate_trailer_truncated";
+      } else if (marker == GOVERNING_TRAILER) {
+        truncated = "governing_trailer_truncated";
+      } else {
+        throw new IllegalArgumentException(
+            String.format(
+                "trailer marker 0x%02x is not a commitment-digest input: pass only the 0x05/0x06"
+                    + " trailers",
+                marker));
+      }
+      if (trailers.length - pos < 5) throw refused(truncated);
+      long n =
+          Integer.toUnsignedLong(
+              ByteBuffer.wrap(trailers, pos + 1, 4).order(ByteOrder.LITTLE_ENDIAN).getInt());
+      if (n > trailers.length - pos - 5) throw refused(truncated);
+      byte[] body = Arrays.copyOfRange(trailers, pos + 5, pos + 5 + (int) n);
+      pos += 5 + (int) n;
+      if (marker == GATE_TRAILER) {
+        gate = decodeGateBody(body);
+        gateBody = body;
+      } else {
+        if (body.length == 0) throw refused("governing_body_empty");
+        int v = body[0] & 0xff;
+        if (v != 0x01 && v != 0x02) throw refused("governing_body_unknown_version");
+        if (scheme == CommitmentVersion.V5 && v == 0x02) {
+          throw refused("v5_refuses_governing_body_v2");
+        }
+        if (scheme == CommitmentVersion.V6 && v == 0x01) {
+          throw refused("v6_refuses_governing_body_v1");
+        }
+        version = v;
+        if (v == 0x01) {
+          if (body.length != 33) throw refused("governing_body_length");
+          doc = Arrays.copyOfRange(body, 1, 33);
+        } else {
+          Reader r = new Reader(body, 1, "governing_body_truncated");
+          doc = r.take(32);
+          if (r.atEnd()) throw refused("env_presence_missing");
+          int presence = r.u8();
+          if (presence == 0x01) {
+            env = envOf(r.framed());
+          } else if (presence != 0x00) {
+            throw refused("env_presence_invalid");
+          }
+          r.done("governing_body_trailing_bytes");
+        }
+      }
+    }
+    if (gate != null && (doc == null || env == null || !env.equals(gate.env()))) {
+      throw refused("gate_env_binding");
+    }
+    byte[] gd = gateBody == null ? null : gateDigest(gateBody);
+    boolean hasField12 =
+        scheme == CommitmentVersion.V6 || (scheme == null && version != null && version == 2);
+    return new CommitmentTrailers(
+        slotBytes(gd), slotBytes(doc), hasField12 ? envSlotBytes(env) : null, version, gd, gate,
+        doc, env);
+  }
+
+  private static void requireAgree(String name, byte[] beside, byte[] field) {
+    if (beside != null && !Arrays.equals(beside, field)) {
+      throw new IllegalArgumentException(name + " given on the commitment disagrees with the field");
+    }
+  }
+
+  /**
+   * The commitment digest (hex) under {@code version}: fields 0-8 from {@code c}, fields 9-12 from
+   * {@code f} (the digest-only path; a field-9/10/11 slot also set on {@code c} must equal {@code
+   * f}'s). Every refusal is checked before anything is hashed: a present slot that is not 32 bytes
+   * ({@code slot_length_not_32}), an env that is not exactly {@code sandbox}/{@code live} ({@code
+   * env_not_sandbox_or_live}), an env without the governing doc ({@code env_without_governing_doc}),
+   * and any env under v5 ({@code v5_refuses_env}). {@link CommitmentVersion#V5} with no env is
+   * byte-for-byte {@code seam-commitment-digest:v5}; {@link CommitmentVersion#V6} is {@code
+   * seam-commitment-digest:v6} (v5's framing plus field 12, {@code 0x00} or {@code 0x01 ‖ F(env)}).
+   *
+   * @throws IllegalArgumentException ({@link CommitmentRefusal} for a spec rule) on any refusal.
+   */
+  public static String commitmentDigest(
+      CommitmentVersion version, Commitment c, CommitmentDigestFields f) {
+    if (f.selectionDigest() != null && f.selectionDigest().length != 32
+        || f.gateDigest() != null && f.gateDigest().length != 32
+        || f.governingDocSha256() != null && f.governingDocSha256().length != 32) {
+      throw refused("slot_length_not_32");
+    }
+    if (f.env() != null) {
+      if (version == CommitmentVersion.V5) throw refused("v5_refuses_env");
+      if (!"sandbox".equals(f.env()) && !"live".equals(f.env())) {
+        throw refused("env_not_sandbox_or_live");
+      }
+      if (f.governingDocSha256() == null) throw refused("env_without_governing_doc");
+    }
+    requireAgree("selection_digest", c.selectionDigest(), f.selectionDigest());
+    requireAgree("certificate_digest", c.certificateDigest(), f.gateDigest());
+    requireAgree("governing_doc_sha256", c.governingDocSha256(), f.governingDocSha256());
+    Commitment framed =
+        new Commitment(
+            c.id(), c.action(), c.authority(), c.supersedes(), c.authMethod(), c.trustBasis(),
+            c.committer(), c.explanationDigest(), c.explanation(), f.selectionDigest(),
+            f.gateDigest(), f.governingDocSha256());
+    if (version == CommitmentVersion.V5) return seamCommitmentDigest(framed);
+    byte[] explanation = commitmentExplanationDigest(framed);
+    ByteArrayOutputStream h = new ByteArrayOutputStream();
+    be64Frame(h, COMMITMENT_DIGEST_DOMAIN_V6.getBytes(StandardCharsets.UTF_8));
+    be64Frame(h, nz(c.id()));
+    be64Frame(h, nz(c.action()));
+    be64Frame(h, nz(c.authority()));
+    if (c.supersedes() == null) {
+      h.write(0x00);
+    } else {
+      h.write(0x01);
+      be64Frame(h, c.supersedes().getBytes(StandardCharsets.UTF_8));
+    }
+    be64Frame(h, nz(c.authMethod()));
+    be64Frame(h, nz(c.trustBasis()));
+    be64Frame(h, nz(c.committer()));
+    be64Frame(h, explanation);
+    optionalDigestSlot(h, f.selectionDigest());
+    optionalDigestSlot(h, f.gateDigest());
+    optionalDigestSlot(h, f.governingDocSha256());
+    h.writeBytes(envSlotBytes(f.env()));
+    return hex(sha256(h.toByteArray()));
+  }
+
+  /**
+   * The digest {@link #verifyTct} compares, under the selected version only. v5 with no trailers is
+   * exactly {@link #seamCommitmentDigest}. Otherwise fields 10-12 come from this decoder's reading of
+   * {@link Commitment#trailers()} under that scheme (v6 field 10 never from a value carried beside
+   * it), and a slot also set on the commitment must agree with the trailers.
+   */
+  private static String recomputeCommitmentDigest(CommitmentVersion version, Commitment c) {
+    if (version == CommitmentVersion.V5) {
+      if (c.trailers() == null) return seamCommitmentDigest(c);
+      CommitmentTrailers t = decodeCommitmentTrailers(c.trailers(), CommitmentVersion.V5);
+      return commitmentDigest(
+          version,
+          c,
+          new CommitmentDigestFields(
+              c.selectionDigest(), c.certificateDigest(), t.governingDocSha256(), null));
+    }
+    byte[] raw = c.trailers() == null ? new byte[0] : c.trailers();
+    CommitmentTrailers t = decodeCommitmentTrailers(raw, CommitmentVersion.V6);
+    return commitmentDigest(
+        version,
+        c,
+        new CommitmentDigestFields(
+            c.selectionDigest(), t.gateDigest(), t.governingDocSha256(), t.env()));
+  }
+
+  /**
+   * Statement selection (v6 spec §Verifiers) over the raw {@code ext} JSON text of a commitment TCT.
+   * A duplicate member name at ANY depth of {@code ext} refuses, found on the raw text with names
+   * compared after JSON unescaping ({@code "type"} and {@code "type"} are one name). The
+   * {@code com.zer07labs.seam} member must exist; members exactly {@code {type, commitment_digest}}
+   * select v5, exactly {@code {type, commitment_digest, commitment_digest_domain}} with the domain
+   * the string {@code seam-commitment-digest:v6} select v6; any other set, domain, {@code type}, or a
+   * {@code commitment_digest} that is not 64 lowercase hex refuses. Member order is not significant.
+   *
+   * @throws CommitmentRefusal on any refusal.
+   */
+  public static CommitmentVersion selectCommitmentVersion(String extRaw) {
+    Object ext = parseStatementJson(extRaw);
+    if (!(ext instanceof Map<?, ?> m)) throw refused("statement_not_object");
+    return selectFromExtObject(m);
+  }
+
+  /**
+   * {@link #selectCommitmentVersion} entered from the raw statement object itself (the value of
+   * {@code com.zer07labs.seam}), with the same duplicate-member guard over it.
+   *
+   * @throws CommitmentRefusal on any refusal.
+   */
+  public static CommitmentVersion selectStatementVersion(String statementRaw) {
+    return selectFromStatement(parseStatementJson(statementRaw));
+  }
+
+  /** Selection from an {@code ext} map already cleared of duplicates. */
+  private static CommitmentVersion selectFromExtObject(Map<?, ?> ext) {
+    if (!ext.containsKey(COMMITMENT_EXT_NAMESPACE)) throw refused("statement_missing");
+    return selectFromStatement(ext.get(COMMITMENT_EXT_NAMESPACE));
+  }
+
+  private static CommitmentVersion selectFromStatement(Object statement) {
+    if (!(statement instanceof Map<?, ?> stmt)) throw refused("statement_not_object");
+    Set<Object> keys = new HashSet<>(stmt.keySet());
+    CommitmentVersion version;
+    if (keys.equals(V5_MEMBERS)) {
+      version = CommitmentVersion.V5;
+    } else if (keys.equals(V6_MEMBERS)) {
+      if (!COMMITMENT_DIGEST_DOMAIN_V6.equals(stmt.get(COMMITMENT_DIGEST_DOMAIN_MEMBER))) {
+        throw refused("statement_domain_not_v6");
+      }
+      version = CommitmentVersion.V6;
+    } else {
+      throw refused("statement_member_set");
+    }
+    if (!COMMITMENT_STATEMENT.equals(stmt.get("type"))) throw refused("statement_type");
+    if (!(stmt.get("commitment_digest") instanceof String d) || !isLowerHex64(d)) {
+      throw refused("statement_digest_not_lowercase_hex");
+    }
+    return version;
+  }
+
+  private static boolean isLowerHex64(String d) {
+    if (d.length() != 64) return false;
+    for (int i = 0; i < 64; i++) {
+      char ch = d.charAt(i);
+      if (!(ch >= '0' && ch <= '9' || ch >= 'a' && ch <= 'f')) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Parse statement JSON strictly: not one well-formed JSON value refuses {@code
+   * statement_not_json}; a repeated member name at any depth refuses {@code
+   * statement_duplicate_member}, detected on the raw text (Gson's streaming reader unescapes each
+   * name) before any map parse could keep one of the two.
+   */
+  private static Object parseStatementJson(String raw) {
+    try (JsonReader r = new JsonReader(new StringReader(raw))) {
+      r.setStrictness(Strictness.STRICT);
+      if (scanForDuplicate(r)) throw refused("statement_duplicate_member");
+      if (r.peek() != JsonToken.END_DOCUMENT) throw refused("statement_not_json");
+    } catch (CommitmentRefusal e) {
+      throw e;
+    } catch (IOException | RuntimeException e) {
+      throw refused("statement_not_json");
+    }
+    return GSON.fromJson(raw, Object.class);
   }
 
   // ── Authorize call_sig v3 (#197) ────────────────────────────────────────────────────────────
