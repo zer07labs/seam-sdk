@@ -1221,7 +1221,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:2256-2278` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:2260-2282` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2051,7 +2051,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:2284` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:2288` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -3348,4 +3348,25 @@ Ranked by blast radius. The two possible one-way doors (a public exception API, 
   - The signed v6 vector carries no sealed voter records, so its cases verify over the published
     explanation digest; each port pins that passing the entries fails closed.
 - **Decided by:** Opus (reversible tier: additive verify-side code, v5 byte-unchanged, no contract change).
+
+## 2026-11-22 — Runtime 0.112.0's ten `seam.api.v1` fields (Flows W2 R3, seam-runtime#1850): carried, `flow_ref` read
+
+- **The fields:** `Commitment.gate = 13` (`GateRecord { bytes body = 1 }`, the exact `0x05` body) and
+  `Commitment.env = 14`; `FlowAssertion { flow_id, env }` as `expected_flow` on `OpenSessionRequest` (11) and
+  `RunDecisionRequest` (9); and `seam.event.v1.FlowRef flow_ref` on `DecisionRecordView` (14), `SessionStep` (9)
+  and `WhoAmIResponse` (5). The runtime sets none of them in this release.
+- **`flow_ref` (three lines): WIRED.** `flow_ref_of` (Python) / `flowRefOf` (TS) take the three api messages
+  as well as `SeamEvent`, which closes the A7 record overload W2 deferred. Same reading: attributed, unsealed,
+  absence normal. Python refuses a message outside the carrier set with `TypeError`, so a wrong object never
+  reads as "no flow".
+- **`Commitment.gate` / `env`, `GateRecord.body`: carried through the stubs, no wrapper yet.** No writer
+  exists, and the v6 verifiers already take the raw trailers. Mapping `gate.body` and `env` into those
+  trailers is a byte-level choice (`GateRecord.body` is a number array over HTTP but lowercase hex in the
+  evidence bundle and seam-verify, A-FW2-3), so it lands with the writer wave, against a real v6 record.
+- **`expected_flow`, `FlowAssertion`: carried through the stubs, no client parameter.** The proto says a
+  client sends it only to a runtime that announces `flow_assertion` in discovery, and no runtime does yet. A
+  parameter now would send it to runtimes that do not announce it. It is wired when discovery announces it.
+- **Gate:** before, `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exited 6 naming these ten lines; after,
+  it exits 0.
+- **Decided by:** Opus (reversible tier: additive fields, no writer, no contract change here).
 

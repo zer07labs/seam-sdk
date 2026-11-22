@@ -32,3 +32,18 @@ test("flowRefOf: an empty FlowRef that is present on the wire is still present",
   assert.ok(ref);
   assert.equal(ref.flowId, "");
 });
+
+test("flowRefOf: the seam.api.v1 carriers (record 14, step 9, WhoAmI 5) read the same way", async () => {
+  const api = await import("../gen/seam/api/v1/seam_pb.js");
+  const ref = create(FlowRefSchema, { flowId: "flow-loans", rev: 2n, env: "sandbox" });
+  for (const [schema, tag] of [
+    [api.DecisionRecordViewSchema, 14],
+    [api.SessionStepSchema, 9],
+    [api.WhoAmIResponseSchema, 5],
+  ] as const) {
+    assert.equal(schema.fields.find((f) => f.name === "flow_ref")?.number, tag, schema.typeName);
+    assert.equal(flowRefOf(create(schema, {})), undefined, schema.typeName);
+    const decoded = fromBinary(schema, toBinary(schema, create(schema, { flowRef: ref })));
+    assert.equal(flowRefOf(decoded)?.flowId, "flow-loans", schema.typeName);
+  }
+});

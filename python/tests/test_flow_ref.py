@@ -7,6 +7,9 @@ default-valued `FlowRef`.
 from __future__ import annotations
 
 from seam_sdk import flow_ref_of
+import pytest
+
+from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
 from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as ev
 
 
@@ -32,3 +35,21 @@ def test_an_empty_but_set_flow_ref_is_present():
 
 def test_the_tag_is_28():
     assert ev.SeamEvent.DESCRIPTOR.fields_by_name["flow_ref"].number == 28
+
+
+RECORDS = [(pb.DecisionRecordView, 14), (pb.SessionStep, 9), (pb.WhoAmIResponse, 5)]
+
+
+@pytest.mark.parametrize(
+    "cls,tag", RECORDS, ids=lambda x: getattr(x, "__name__", str(x))
+)
+def test_the_api_carriers_read_the_same_way(cls, tag):
+    assert cls.DESCRIPTOR.fields_by_name["flow_ref"].number == tag
+    assert flow_ref_of(cls()) is None
+    m = cls(flow_ref=ev.FlowRef(flow_id="flow-loans", rev=2, env="sandbox"))
+    assert flow_ref_of(m) == ev.FlowRef(flow_id="flow-loans", rev=2, env="sandbox")
+
+
+def test_a_message_without_flow_ref_is_a_type_error_not_none():
+    with pytest.raises(TypeError):
+        flow_ref_of(pb.Commitment())
