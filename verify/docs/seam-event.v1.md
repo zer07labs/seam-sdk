@@ -1,4 +1,7 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 9223b384 tracking lanes/w4-v2-content (refreshed 2026-11-22).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ cd8505ce tracking golden-gate/revendor-bced9ba1890e-45063536209 (refreshed 2026-11-22).
+     seam-runtime#1873 (Flows W4, the 0.114.0 contract release): body byte-identical to the 9223b384 pin below;
+     re-pinned to the release head so the vendored copy names the commit that ships it. Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 9223b384 tracking lanes/w4-v2-content (refreshed 2026-11-22).
      seam-runtime#1864 (Flows W4 train 1, hub seam#264): chain_bundle v2. The chain key gains a u32 version part framed
      last, genesis domain v2, refusals live_key_has_version / sandbox_version_missing; FlowRef.version (field 4,
      flow_ref_sandbox_version_missing) and ChainRef.version (field 5); tag 30 CHAIN_MANIFEST, attestation v3 and
