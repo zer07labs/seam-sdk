@@ -39,6 +39,10 @@ than trusting a summary here.
   on its chain key from `genesis(K)`; untagged events keep the per-tenant rule). `--json` gains `warnings`
   and `chains` arrays, present only when non-empty. `--issuer` and `bundle` refuse a window holding a keyed
   chain. Chain vectors are vendored byte-for-byte in `conformance/chain/`.
+- **Runtime 0.112.0's ten `seam.api.v1` fields are carried** (`contract/field-manifest.txt`):
+  `Commitment.gate` / `env`, `GateRecord.body`, `FlowAssertion`, `expected_flow` on `OpenSessionRequest` /
+  `RunDecisionRequest`, and `flow_ref` on `DecisionRecordView`, `SessionStep` and `WhoAmIResponse`.
+  `flow_ref_of` / `flowRefOf` now also take those three messages. The runtime writes none of them yet.
 
 ## 0.111.0 — 2026-11-21
 

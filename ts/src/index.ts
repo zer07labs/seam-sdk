@@ -22,7 +22,7 @@ export * from "./certificate.js";
 export { REQUESTER_ID_MAX_BYTES, REQUESTER_ID_MIN_BYTES, validRequesterId } from "./requester.js";
 export * from "./crypto.js";
 // Flows W2 (A7): the event's flow attribution — attributed, unsealed; absence is normal.
-export { flowRefOf } from "./flow.js";
+export { flowRefOf, type FlowRefCarrier } from "./flow.js";
 export * from "./errors.js";
 // Cell routing (seam-runtime k8s P15, D123): the `x-seam-tenant` hint (Python's `seam_sdk.tenant`).
 export * from "./tenant.js";

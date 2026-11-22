@@ -263,8 +263,10 @@ Commitment/action
 Commitment/auth_method
 Commitment/authority
 Commitment/committer
+Commitment/env
 Commitment/explanation
 Commitment/explanation_digest
+Commitment/gate
 Commitment/governing_doc_sha256
 Commitment/id
 Commitment/selection
@@ -294,6 +296,7 @@ ContextRef/content_ref
 DecisionRecordView/allocation
 DecisionRecordView/classification
 DecisionRecordView/decision_id
+DecisionRecordView/flow_ref
 DecisionRecordView/key_ref
 DecisionRecordView/namespace
 DecisionRecordView/outcome
@@ -361,6 +364,9 @@ ExplanationEntry/rationale_ref
 ExplanationEntry/reason
 ExplanationEntry/value
 ExplanationEntry/voter_verification
+FlowAssertion/env
+FlowAssertion/flow_id
+GateRecord/body
 GrantView/expires_at
 GrantView/from_ns
 GrantView/grantor
@@ -391,6 +397,7 @@ ObjectionRequest/usage
 OpenSessionRequest/budget
 OpenSessionRequest/context_refs
 OpenSessionRequest/contexts
+OpenSessionRequest/expected_flow
 OpenSessionRequest/limits
 OpenSessionRequest/mode
 OpenSessionRequest/on_behalf_of
@@ -458,6 +465,7 @@ RevokeGrantRequest/to_ns
 RevokeTenantRequest/subject_aid
 RunDecisionRequest/context_refs
 RunDecisionRequest/contexts
+RunDecisionRequest/expected_flow
 RunDecisionRequest/features
 RunDecisionRequest/on_behalf_of
 RunDecisionRequest/participants
@@ -494,6 +502,7 @@ SessionStatusResponse/state
 SessionStep/collective_outcome
 SessionStep/decided_value
 SessionStep/decision_id
+SessionStep/flow_ref
 SessionStep/opened_at_millis
 SessionStep/policy_enforcement
 SessionStep/selection
@@ -554,6 +563,7 @@ VoterVerificationRecord/session_id
 VoterVerificationRecord/signature
 VoterVerificationRecord/signer_certificate
 VoterVerificationRecord/tenant
+WhoAmIResponse/flow_ref
 WhoAmIResponse/kind
 WhoAmIResponse/namespace
 WhoAmIResponse/subject_enforcement
