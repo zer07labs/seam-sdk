@@ -16,6 +16,17 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added — v6 voter-record vector (Flows W3, train step 2)
+
+- **`conformance/commitment_digest_v6_voter_vector.json`**, copied byte for byte from seam-runtime
+  0.113.0 (`crates/seam-trust-aitp/tests/fixtures/`), is now verified in all six ports (Python, TS, Go,
+  Java, Kotlin, `verify/`). Unlike the plain v6 signed vector, its vote, ballot and objection entries carry
+  real `seam-voter-pop-v1` records, so each port checks a v6 TCT **with** its entries and runs the
+  commitment-level voter check against the vector's `decision`: both cases verify with 3 records, and each
+  of the 8 negatives is refused by the TCT check or the voter check (rule names stay advisory). No reader
+  changed; this pins behaviour the ports already had. The runtime's `sdk-digest-parity` adds the file pair
+  in step 3.
+
 ## 0.113.0 — 2026-11-22
 
 ## 0.112.0 — 2026-11-22
