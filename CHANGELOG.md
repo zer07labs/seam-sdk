@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.113.0 — 2026-11-22
+
 ## 0.112.0 — 2026-11-22
 
 ### Added — Flows W2 readers (commitment digest v6, Gate block v1, flow attribution)
