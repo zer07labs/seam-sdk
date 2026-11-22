@@ -620,6 +620,15 @@ fn check_window(dir: &Path, pinned: &str) -> Result<Window, BundleError> {
     // A bundle's window is one tenant's: the single-tenant view below (`report.heads`) is only
     // meaningful for exactly one chain, so a window spanning more is refused rather than checked
     // against the genesis sentinel.
+    // A chain-keyed (tag 29) entry is outside the single-tenant view below and its authenticity needs
+    // chain_bundle v2 (W5): refused, never silently left unchecked.
+    if !report.chains.is_empty() {
+        return Err(f2(format!(
+            "the window carries {} chain-keyed chain(s) (tag 29); an evidence bundle over a \
+             chain-keyed chain needs chain_bundle v2, which this build does not verify",
+            report.chains.len()
+        )));
+    }
     if report.tenants.len() != 1 {
         return Err(f2(format!(
             "the window's chained events span {} tenants — an evidence bundle's window is exactly \

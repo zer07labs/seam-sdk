@@ -120,6 +120,40 @@ no chain fields at all — and a stream that merely outran your verifier is not 
 history nobody can check. The spec permits refusing (a MAY) and requires disclosing (a MUST); this tool
 discloses, and leaves refusing to the caller, who has the number.
 
+#### Flow attribution (`flow_ref`, tag 28) — NOT covered by the seal
+
+An event may carry a `flow_ref` (`{flow_id, rev, env}`): which flow the runtime attributed it to. It is
+**unsealed**. No digest covers it, so the chain, the attestations and `--issuer` say nothing about it, and
+it is deliberately **outside the event's identity**: a redrive restamped after a flow revision is the same
+event, not a forgery. Two copies of one event that differ **only** in `flow_ref` are counted once (as a
+duplicate) and reported as a warning, exit 0:
+
+```
+  WARNING           : FLOW_REF_CONFLICT — event_id dev/d1#1 (seq 1) arrived twice with different flow_ref stamps: …
+```
+
+The same warning is raised when an event's `flow_ref` names another `flow_id`/`env` than its flow-kind
+`chain` (tag 29). Identical stamps warn nothing. A copy that differs in anything inside the identity,
+`stream_id` included, is still the hard `CHAIN VERIFICATION FAILED` (exit 2). Under `--json` the warnings
+are a `"warnings"` array, present only when non-empty. Treat a `flow_ref` as a label you were told, never
+as something this tool proved. (Checking `flow_ref.env` against the env a v6 Commitment seals needs the
+record's env, which the event stream does not carry: not checked yet.)
+
+#### Chain-keyed chains (`chain`, tag 29) — `chain_bundle` v1
+
+A chained event that carries `chain` (`{flow_id, env, seq, kind}`; present-but-empty is the cell chain) is
+walked on the chain its key names, `K = (kind, stream_id, tenant, flow_id, env)`, starting at
+`genesis(K)` (a domain-separated SHA-256 of K, never 32 zero bytes). `chain.seq` must be the entry's
+position on that chain, and a key outside the table (unknown kind, invalid `stream_id`, a flow chain with
+an env other than `sandbox`/`live`, …) is refused. An entry relabelled into a sibling chain, or re-stamped
+onto another stream, fails at its first link. An event without `chain` stays on the legacy rule: one chain
+per tenant, from the zero genesis. Each keyed chain is printed (JSON `"chains"`, present only when
+non-empty).
+
+This build checks **integrity only** for keyed chains. Authenticity over them needs attestation v3
+(`chain_bundle` v2), so `--issuer` and `bundle` refuse a window that contains one rather than vouch for
+it. No producer emits tag 29 yet.
+
 #### AUTHENTICITY — `chain <FILE> --issuer <AID>`
 
 Integrity proves the chain is *internally consistent*. It does not prove Seam *wrote* it: an unkeyed
@@ -444,7 +478,9 @@ The six steps run in the spec's order and the first failure refuses with exit 2,
    winner's option byte for byte (`selection_action_mismatch`), every vote's signed content digest links to
    the sealed option it credits (`selection_vote_unverified`, `selection_content_link_mismatch`), and
    participants and principals pair one-to-one (`selection_principal_not_one_to_one`). The output names the
-   winner and how many votes linked. A Commitment with no TCT (`identity: local-sealed`) is bound
+   winner and how many votes linked. A `seam-commitment-digest:v6` binding is refused here: `commitment.json`
+   projects no Gate block, governing trailer or env yet (the library's `verify_commitment_tct` verifies v6
+   from the raw trailers). A Commitment with no TCT (`identity: local-sealed`) is bound
    by step 5 alone, and the output says so.
 5. **Binding** — the `seam.evidence-binding.v1` signature verifies against the pinned AID, and it names
    this decision, tenant, chain link and Commitment digest.
@@ -478,6 +514,8 @@ Stated plainly, because a verifier that oversells itself is worse than none:
   participation list is always withheld. A v1 verifier also does not check a disclosure file the v1 spec
   does not define; an unknown `format` is refused.
 * **It cannot verify pre-cutover history** (see `--strict` above). It will say so rather than pretend.
+* **It cannot tell you which flow an event belongs to.** `flow_ref` is unsealed attribution (see above);
+  a `FLOW_REF_CONFLICT` warning means two stamps disagree, and no stamp is proved by the seal.
 * **It cannot tell a newer entry domain from a rewrite.** No entry domain is carried on the wire, and the
   runtime plans no discriminator. If the runtime ever bumps one (a `seam.audit.chain-attest-entry.v2`, say),
   its entries will not recompute under this build's domain and are refused as `ENTRY REWRITE`, not as

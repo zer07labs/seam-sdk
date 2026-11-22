@@ -100,8 +100,10 @@
 #![forbid(unsafe_code)]
 
 pub mod bundle;
+pub mod chain_key;
 pub mod commitment;
 mod entry;
+pub mod gate;
 pub mod selection;
 pub mod verify;
 pub mod voter;
