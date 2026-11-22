@@ -16,6 +16,30 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added — Flows W2 readers (commitment digest v6, Gate block v1, flow attribution)
+
+- **Commitment digest v6 and Gate block v1 readers in all six digest ports** (Python, TS, Go, Java,
+  Kotlin, `verify/`), held to `conformance/commitment_digest_v6_vector.json`,
+  `commitment_digest_v6_signed_vector.json` and `gate_block_vector.json` (every reader-side row; the
+  writer-side `outage_classification` / `writer_refusals` sections are skipped by name). Each port gains a
+  strict `0x05` Gate-body decoder and its gate digest, the `0x06` v1/v2 trailer decode (scheme-free, v5 and
+  v6 rules), and statement selection from the raw `ext` JSON (exact member set; duplicate members refused
+  at every depth after unescaping). The commitment TCT verifier now selects v5 or v6 from the statement
+  and recomputes under that version only — never both, never a fallback. **v5 is byte-unchanged**, and the
+  runtime still writes v5: v6 is verify-only until the runtime's writer wave.
+- A commitment may carry its raw `trailers` (the `0x05`/`0x06` bytes). Under v6, fields 10-12 come from
+  them only: absent trailers are a record with neither trailer, and a gate digest, doc digest or env given
+  beside them must agree or the commitment is refused. `seam.api.v1` has no `Commitment.gate`/`env` yet,
+  so the trailers are supplied as bytes until it does.
+- **`flow_ref_of(event)`** (Python) / **`flowRefOf(event)`** (TS): the `seam.event.v1` tag 28 `FlowRef`,
+  or none. Attributed and **unsealed** — no digest or signature covers it. Go, Java and Kotlin have no
+  generated event stubs to take, so they wait for the generated-stubs item (CL A17).
+- **`verify/`:** decodes tag 28 `flow_ref` (outside the event identity; copies differing only in it are a
+  `FLOW_REF_CONFLICT` warning, exit 0, counted once) and tag 29 `chain` (a tagged chained event is walked
+  on its chain key from `genesis(K)`; untagged events keep the per-tenant rule). `--json` gains `warnings`
+  and `chains` arrays, present only when non-empty. `--issuer` and `bundle` refuse a window holding a keyed
+  chain. Chain vectors are vendored byte-for-byte in `conformance/chain/`.
+
 ## 0.111.0 — 2026-11-21
 
 ## 0.110.0 — 2026-11-21

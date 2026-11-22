@@ -214,8 +214,8 @@ REQUIRED_FORMATS = ("python", "npm")
 #: re-points this roster badly: `yank.yml` has 27 runs, and the ONLY versions ever deleted are
 #: 0.7.7 and 0.7.13-0.7.19 — the exact scope of issue #43, which closed 16 minutes after the last
 #: run. The predicate is "named in an advisory as unconditionally broken", NOT "old".
-#: `CHANGELOG.md:662` names the two broken bands, and 0.7.39-0.7.43 was deliberately NOT deleted
-#: despite being older than everything in this roster (`CHANGELOG.md:696`). No retention sweep has
+#: `CHANGELOG.md:686` names the two broken bands, and 0.7.39-0.7.43 was deliberately NOT deleted
+#: despite being older than everything in this roster (`CHANGELOG.md:720`). No retention sweep has
 #: ever run here. An earlier draft of this comment justified the age spread as a hedge against
 #: retention aging all entries out at once; that hazard is not real in this repo, and stating a
 #: wrong reason invites a future editor to optimise for the wrong variable — dropping a safe old

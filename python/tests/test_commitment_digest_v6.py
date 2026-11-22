@@ -350,7 +350,11 @@ def test_signed_case_needs_its_trailers(case):
     assert not verify_tct(
         SIGNED["issuer_aid"],
         case["signed_artifact"],
-        {**c, "governing_doc_sha256": case["commitment"]["governing_doc_sha256"] or "11" * 32},
+        {
+            **c,
+            "governing_doc_sha256": case["commitment"]["governing_doc_sha256"]
+            or "11" * 32,
+        },
         now_s=0,
     )
     other = "" if case["trailers"] else "0622000000" + "02" + bytes(32).hex() + "00"
