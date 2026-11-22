@@ -100,7 +100,17 @@ from .crypto import (
     verify_chain_head_attestation,
     verify_chain_head_attestation_message,
     verify_tct,
+    COMMITMENT_DIGEST_V6_DOMAIN,
+    FLOW_ENVS,
+    CommitmentRefused,
+    CommitmentTrailers,
+    commitment_digest_v6,
+    decode_commitment_trailers,
+    decode_gate_body,
+    gate_digest,
+    select_commitment_version,
 )
+from ._flow import flow_ref_of
 from .ids import (
     DecisionId,
     InvalidDecisionIdError,
@@ -213,6 +223,18 @@ __all__ = [
     "build_presentation",
     "verify_tct",
     "explanation_digest",
+    # seam-commitment-digest:v6 + the Gate block v1 (Flows W2, readers only; v5 unchanged until W9)
+    "COMMITMENT_DIGEST_V6_DOMAIN",
+    "FLOW_ENVS",
+    "CommitmentRefused",
+    "CommitmentTrailers",
+    "commitment_digest_v6",
+    "decode_commitment_trailers",
+    "decode_gate_body",
+    "gate_digest",
+    "select_commitment_version",
+    # Flows A7 (S4): SeamEvent.flow_ref, attributed and UNSEALED; absence is normal
+    "flow_ref_of",
     # Advisory authorization (Authorize verb)
     "AuthorizeResult",
     "canonicalize_tool_input",
