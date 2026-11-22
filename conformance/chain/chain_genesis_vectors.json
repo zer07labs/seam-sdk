@@ -1,57 +1,75 @@
 {
   "bundle": "chain_bundle",
-  "bundle_version": 1,
+  "bundle_version": 2,
   "cases": [
     {
-      "genesis_hex": "c41ce6adcb017bd5dc8378fc47acadd94f1ddc40e9df779e6842ef1160e0e6f2",
+      "genesis_hex": "58336694b00675fba6de5bfd9cd0fc36e135e3b6761342efb2316e768783188d",
       "key": {
         "env": "",
         "flow_id": "",
         "kind": 0,
         "stream_id": "cell-a",
-        "tenant": ""
+        "tenant": "",
+        "version": 0
       },
       "name": "cell",
-      "preimage_hex": "1b0000007365616d2e61756469742e636861696e2d67656e657369732e763101000000000600000063656c6c2d61000000000000000000000000",
+      "preimage_hex": "1b0000007365616d2e61756469742e636861696e2d67656e657369732e763201000000000600000063656c6c2d6100000000000000000000000000000000",
       "type": "genesis"
     },
     {
-      "genesis_hex": "69439e11a645d6739b6ee59963a8403b0148f8d266ac5d197b70527cb0cc13c4",
+      "genesis_hex": "3ef99bf37c6434514172f945f2e9b86296bca053eebaff452fe0423fdb19b8a9",
       "key": {
         "env": "",
         "flow_id": "",
         "kind": 1,
         "stream_id": "cell-a",
-        "tenant": "acme"
+        "tenant": "acme",
+        "version": 0
       },
       "name": "tenant",
-      "preimage_hex": "1b0000007365616d2e61756469742e636861696e2d67656e657369732e763101000000010600000063656c6c2d610400000061636d650000000000000000",
+      "preimage_hex": "1b0000007365616d2e61756469742e636861696e2d67656e657369732e763201000000010600000063656c6c2d610400000061636d65000000000000000000000000",
       "type": "genesis"
     },
     {
-      "genesis_hex": "e3e89cc353f086d90f5fe02f9bbc3729f695cf65432d1b49bc1cba5d5bf800b5",
+      "genesis_hex": "c0b1b2f3518f17f70b91e2e506be3137bdd495620b10c1354dcef241d3b2d596",
       "key": {
         "env": "sandbox",
         "flow_id": "flow-fraud",
         "kind": 2,
         "stream_id": "cell-a",
-        "tenant": "acme"
+        "tenant": "acme",
+        "version": 1
       },
-      "name": "flow_sandbox",
-      "preimage_hex": "1b0000007365616d2e61756469742e636861696e2d67656e657369732e763101000000020600000063656c6c2d610400000061636d650a000000666c6f772d66726175640700000073616e64626f78",
+      "name": "flow_sandbox_v1",
+      "preimage_hex": "1b0000007365616d2e61756469742e636861696e2d67656e657369732e763201000000020600000063656c6c2d610400000061636d650a000000666c6f772d66726175640700000073616e64626f780400000001000000",
       "type": "genesis"
     },
     {
-      "genesis_hex": "f621e272a0430ffd45ea41a88a2213feb24d8af289191bbb5dd76b3c460ba342",
+      "genesis_hex": "203f3ef217f33ff35e398f16e37a34a4578850e0734d3f2e19f2916edff50746",
+      "key": {
+        "env": "sandbox",
+        "flow_id": "flow-fraud",
+        "kind": 2,
+        "stream_id": "cell-a",
+        "tenant": "acme",
+        "version": 2
+      },
+      "name": "flow_sandbox_v2",
+      "preimage_hex": "1b0000007365616d2e61756469742e636861696e2d67656e657369732e763201000000020600000063656c6c2d610400000061636d650a000000666c6f772d66726175640700000073616e64626f780400000002000000",
+      "type": "genesis"
+    },
+    {
+      "genesis_hex": "f4b3c5e2e33d12f70f8dd060b6fdac251a2a6254098b1da2682fd449e4a70906",
       "key": {
         "env": "live",
         "flow_id": "flow-fraud",
         "kind": 2,
         "stream_id": "cell-a",
-        "tenant": "acme"
+        "tenant": "acme",
+        "version": 0
       },
       "name": "flow_live",
-      "preimage_hex": "1b0000007365616d2e61756469742e636861696e2d67656e657369732e763101000000020600000063656c6c2d610400000061636d650a000000666c6f772d6672617564040000006c697665",
+      "preimage_hex": "1b0000007365616d2e61756469742e636861696e2d67656e657369732e763201000000020600000063656c6c2d610400000061636d650a000000666c6f772d6672617564040000006c69766500000000",
       "type": "genesis"
     },
     {
@@ -60,7 +78,8 @@
         "flow_id": "flow-fraud",
         "kind": 3,
         "stream_id": "cell-a",
-        "tenant": "acme"
+        "tenant": "acme",
+        "version": 0
       },
       "name": "refuse_kind_3",
       "rule": "unknown_kind",
@@ -72,7 +91,8 @@
         "flow_id": "",
         "kind": 1,
         "stream_id": "",
-        "tenant": "acme"
+        "tenant": "acme",
+        "version": 0
       },
       "name": "refuse_stream_id_empty",
       "rule": "stream_id_invalid",
@@ -84,7 +104,8 @@
         "flow_id": "",
         "kind": 1,
         "stream_id": "Cell-A",
-        "tenant": "acme"
+        "tenant": "acme",
+        "version": 0
       },
       "name": "refuse_stream_id_uppercase",
       "rule": "stream_id_invalid",
@@ -96,7 +117,8 @@
         "flow_id": "",
         "kind": 0,
         "stream_id": "cell-a",
-        "tenant": "acme"
+        "tenant": "acme",
+        "version": 0
       },
       "name": "refuse_cell_with_tenant",
       "rule": "cell_key_not_empty",
@@ -108,7 +130,8 @@
         "flow_id": "flow-fraud",
         "kind": 0,
         "stream_id": "cell-a",
-        "tenant": ""
+        "tenant": "",
+        "version": 0
       },
       "name": "refuse_cell_with_flow",
       "rule": "cell_key_not_empty",
@@ -120,7 +143,8 @@
         "flow_id": "",
         "kind": 0,
         "stream_id": "cell-a",
-        "tenant": ""
+        "tenant": "",
+        "version": 0
       },
       "name": "refuse_cell_with_env",
       "rule": "cell_key_not_empty",
@@ -132,7 +156,8 @@
         "flow_id": "",
         "kind": 1,
         "stream_id": "cell-a",
-        "tenant": ""
+        "tenant": "",
+        "version": 0
       },
       "name": "refuse_tenant_empty_tenant",
       "rule": "tenant_empty",
@@ -144,7 +169,8 @@
         "flow_id": "flow-fraud",
         "kind": 1,
         "stream_id": "cell-a",
-        "tenant": "acme"
+        "tenant": "acme",
+        "version": 0
       },
       "name": "refuse_tenant_with_flow",
       "rule": "tenant_key_has_flow",
@@ -156,7 +182,8 @@
         "flow_id": "",
         "kind": 1,
         "stream_id": "cell-a",
-        "tenant": "acme"
+        "tenant": "acme",
+        "version": 0
       },
       "name": "refuse_tenant_with_env",
       "rule": "tenant_key_has_flow",
@@ -168,7 +195,8 @@
         "flow_id": "flow-fraud",
         "kind": 2,
         "stream_id": "cell-a",
-        "tenant": ""
+        "tenant": "",
+        "version": 0
       },
       "name": "refuse_flow_empty_tenant",
       "rule": "tenant_empty",
@@ -180,7 +208,8 @@
         "flow_id": "",
         "kind": 2,
         "stream_id": "cell-a",
-        "tenant": "acme"
+        "tenant": "acme",
+        "version": 0
       },
       "name": "refuse_flow_empty_flow_id",
       "rule": "flow_id_empty",
@@ -192,7 +221,8 @@
         "flow_id": "flow-fraud",
         "kind": 2,
         "stream_id": "cell-a",
-        "tenant": "acme"
+        "tenant": "acme",
+        "version": 0
       },
       "name": "refuse_flow_env_empty",
       "rule": "env_not_sandbox_or_live",
@@ -204,7 +234,8 @@
         "flow_id": "flow-fraud",
         "kind": 2,
         "stream_id": "cell-a",
-        "tenant": "acme"
+        "tenant": "acme",
+        "version": 0
       },
       "name": "refuse_flow_env_prod",
       "rule": "env_not_sandbox_or_live",
@@ -216,10 +247,63 @@
         "flow_id": "flow-fraud",
         "kind": 2,
         "stream_id": "cell-a",
-        "tenant": "acme"
+        "tenant": "acme",
+        "version": 0
       },
       "name": "refuse_flow_env_wrong_case",
       "rule": "env_not_sandbox_or_live",
+      "type": "key_refusal"
+    },
+    {
+      "key": {
+        "env": "",
+        "flow_id": "",
+        "kind": 0,
+        "stream_id": "cell-a",
+        "tenant": "",
+        "version": 1
+      },
+      "name": "refuse_cell_with_version",
+      "rule": "cell_key_not_empty",
+      "type": "key_refusal"
+    },
+    {
+      "key": {
+        "env": "",
+        "flow_id": "",
+        "kind": 1,
+        "stream_id": "cell-a",
+        "tenant": "acme",
+        "version": 1
+      },
+      "name": "refuse_tenant_with_version",
+      "rule": "tenant_key_has_flow",
+      "type": "key_refusal"
+    },
+    {
+      "key": {
+        "env": "live",
+        "flow_id": "flow-fraud",
+        "kind": 2,
+        "stream_id": "cell-a",
+        "tenant": "acme",
+        "version": 1
+      },
+      "name": "refuse_live_with_version",
+      "rule": "live_key_has_version",
+      "type": "key_refusal"
+    },
+    {
+      "key": {
+        "env": "sandbox",
+        "flow_id": "flow-fraud",
+        "kind": 2,
+        "stream_id": "cell-a",
+        "tenant": "acme",
+        "version": 0
+      },
+      "name": "refuse_sandbox_version_zero",
+      "rule": "sandbox_version_missing",
       "type": "key_refusal"
     },
     {
@@ -229,7 +313,8 @@
         "flow_id": "flow-fraud",
         "kind": 2,
         "stream_id": "cell-a",
-        "tenant": "acme"
+        "tenant": "acme",
+        "version": 0
       },
       "name": "refuse_zero_genesis_flow_env",
       "rule": "genesis_mismatch",
@@ -242,6 +327,6 @@
     "regen_env": "BLESS_GOLDEN",
     "repo": "seam-runtime"
   },
-  "rule": "genesis(K) = SHA-256(P(\"seam.audit.chain-genesis.v1\") || P([kind]) || P(stream_id) || P(tenant) || P(flow_id) || P(env)), P(x) = u32le(len(x)) || x; every part framed, an empty part is P(\"\") = 00000000",
+  "rule": "genesis(K) = SHA-256(P(\"seam.audit.chain-genesis.v2\") || P([kind]) || P(stream_id) || P(tenant) || P(flow_id) || P(env) || V), P(x) = u32le(len(x)) || x; every part framed, an empty part is P(\"\") = 00000000; V = P(\"\") for version 0 (cell, tenant, live), P(u32le(version)) for a sandbox version >= 1. Refusals: a version on a cell/tenant key is cell_key_not_empty/tenant_key_has_flow, on a live key live_key_has_version; version 0 (= absent) on a sandbox key is sandbox_version_missing",
   "spec": "seam-runtime docs/specs/seam-event.v1.md §Chain key and genesis"
 }

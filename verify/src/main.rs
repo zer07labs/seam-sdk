@@ -445,12 +445,13 @@ fn cmd_chain(
                     .map(|(k, tc)| {
                         format!(
                             "{{\"kind\":{},\"stream_id\":{},\"tenant\":{},\"flow_id\":{},\
-                             \"env\":{},\"links\":{},\"genesis\":\"{}\",\"head\":\"{}\"}}",
+                             \"env\":{},\"version\":{},\"links\":{},\"genesis\":\"{}\",\"head\":\"{}\"}}",
                             k.kind,
                             q(&k.stream_id),
                             q(&k.tenant),
                             q(&k.flow_id),
                             q(&k.env),
+                            k.version,
                             tc.links,
                             verify::hex(&tc.heads[0]),
                             verify::hex(&tc.head),

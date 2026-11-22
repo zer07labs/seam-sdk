@@ -3370,3 +3370,22 @@ Ranked by blast radius. The two possible one-way doors (a public exception API, 
   it exits 0.
 - **Decided by:** Opus (reversible tier: additive fields, no writer, no contract change here).
 
+## 2026-11-22 — `seam-verify` chain_bundle v2: chain key version, genesis v2, FlowRef version (Flows W4 train 1, seam#264)
+
+- **What:** `verify/` reads the train-1 freeze (seam-runtime#1864 @ 9223b384, hub seam#264): the
+  `ChainKey` version part (`P("")` for 0, else `P(u32le(version))`, framed last), the genesis domain
+  `seam.audit.chain-genesis.v2`, the refusals `live_key_has_version` / `sandbox_version_missing`, tag 28/29
+  `version` fields, and `flow_ref_sandbox_version_missing` at decode. Pinned by the hub's vectors (sha256
+  matches `contract/golden-manifest.json`).
+- **Only `verify/` changes.** No other port has a chain key, and `flow_ref_of` (Python/TS) returns the
+  `FlowRef` message as-is, so `version` arrives with the next `make generate` once the runtime publishes
+  the event proto to the BSR. That regeneration will make `check-contract` exit 8 on the new event fields.
+  It is a decision for whoever regenerates, not a chore.
+- **`CHAIN_MANIFEST` is a recorded gap, not modelled.** The vendored spec gains the kind. Its payload check
+  is W5 multi-chain verify, so `modelled_kinds_are_pinned_to_the_spec` names it in `RECORDED_UNMODELLED`
+  and the verifier discloses it as unverified content. Attestation v3 and erasure certificate v2 are also
+  W5.
+- **A sandbox `flow_ref` without a version refuses the event**, as the runtime reader does. A missing
+  JSON member already refused it, so this follows the existing rule.
+- **Decided by:** Opus (reversible tier: reader-side code following a frozen, hub-pinned contract).
+

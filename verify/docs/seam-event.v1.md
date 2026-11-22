@@ -1,4 +1,9 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 01a09caf (refreshed 2026-11-21).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 9223b384 tracking lanes/w4-v2-content (refreshed 2026-11-22).
+     seam-runtime#1864 (Flows W4 train 1, hub seam#264): chain_bundle v2. The chain key gains a u32 version part framed
+     last, genesis domain v2, refusals live_key_has_version / sandbox_version_missing; FlowRef.version (field 4,
+     flow_ref_sandbox_version_missing) and ChainRef.version (field 5); tag 30 CHAIN_MANIFEST, attestation v3 and
+     erasure certificate v2 (their verification is W5). Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 01a09caf (refreshed 2026-11-21).
      seam-runtime#1847 (Flows W1 hub H3 re-vendor, on runtime main): adds envelope tags 28 `flow_ref` and 29
      `chain` (UNSEALED, no writer until W4), the chain key and genesis (chain_bundle v1), and reserves tag 30 by
      comment. No new event kind, so ADVISORY_KINDS is unchanged; the verifier tolerates both tags as unknown fields
@@ -142,7 +147,8 @@ SeamEvent {
   payload:         bytes     // kind-specific body (central seam-guard redaction on the outbox is NOT YET WIRED — see the Redaction note below)
   stream_id:       string    // k8s P7 — the runtime cell's delivery stream (`SEAM_STREAM_ID`); REQUIRED — never empty; UNSEALED; see §Delivery stream (tag 27)
   flow_ref:        FlowRef?  // Flows W1 — flow attribution; UNSEALED; NO WRITER YET; see §Flow attribution `flow_ref` and chain key `chain` (tag 28)
-  chain:           ChainRef? // Flows W1 — chain key position, CHAINED kinds only; UNSEALED; NO WRITER YET (tag 29). Tag 30 reserved by comment (`chain_manifest`, chain_bundle v2)
+  chain:           ChainRef? // Flows W1 — chain key position, CHAINED kinds only; UNSEALED; NO WRITER YET (tag 29)
+  chain_manifest:  ChainManifest? // Flows train 1 — the signed per-tenant chain manifest; payload of CHAIN_MANIFEST; NO WRITER YET; see §`CHAIN_MANIFEST` (tag 30)
 }
 
 enum EventKind {
@@ -157,6 +163,7 @@ enum EventKind {
   AUTHORIZE_EVALUATED // ADVISORY — one advisory authorization was evaluated (not chained; tag 23)
   POLICY_DENIED     // ADVISORY — a bound policy REFUSED a commitment (not chained; tag 24)
   EVENT_REDRIVEN    // ADVISORY — an operator re-drove an existing outbox event by reference; wraps its bytes (not chained; tag 26)
+  CHAIN_MANIFEST    // the issuer-signed list of a tenant's flow chains (Flows train 1; CHAINED on the tenant chain; tag 30)
 }
 ```
 
@@ -1108,8 +1115,8 @@ stream**, so `(stream_id, seq)` is the identity a multi-cell consumer keys on.
 ### Flow attribution `flow_ref` and chain key `chain` (additive, tags 28/29 — UNSEALED) — Flows W1
 
 ```
-message FlowRef  { string flow_id = 1; uint64 rev = 2; string env = 3; }               // tag 28
-message ChainRef { string flow_id = 1; string env = 2; uint64 seq = 3; uint32 kind = 4; } // tag 29
+message FlowRef  { string flow_id = 1; uint64 rev = 2; string env = 3; uint32 version = 4; }               // tag 28
+message ChainRef { string flow_id = 1; string env = 2; uint64 seq = 3; uint32 kind = 4; uint32 version = 5; } // tag 29
 ```
 
 - **No writer yet.** In W1 no producer sets either field: every emitted event has both absent, and its bytes
@@ -1124,45 +1131,55 @@ message ChainRef { string flow_id = 1; string env = 2; uint64 seq = 3; uint32 ki
   `"sandbox"` or `"live"`. On session-bound kinds; may also ride a tenant-chain entry (attribution, not chain
   membership).
 - **`chain` (tag 29)** — the chain this CHAINED event belongs to (DECISION_SEALED, AUDIT_ENTRY,
-  ERASURE_CERTIFICATE, CHAIN_HEAD_ATTESTATION); absent on advisory kinds. `kind`: `0` = cell, `1` = tenant,
-  `2` = flow; `flow_id`/`env` are empty unless `kind = 2`. `seq` is the 0-based position in that chain (a
+  ERASURE_CERTIFICATE, CHAIN_HEAD_ATTESTATION, CHAIN_MANIFEST); absent on advisory kinds. `kind`: `0` = cell, `1` = tenant,
+  `2` = flow; `flow_id`/`env` are empty unless `kind = 2`. `version` (train 1) is the chain key's version
+  part: `>= 1` exactly when `kind = 2` and `env = "sandbox"`, else `0`. `seq` is the 0-based position in that chain (a
   convenience: verifiers recompute it by walking and refuse a mismatch). A `tenant`-scheme writer never emits
   tag 29; a chained event without it is `tenant`-scheme.
 - **Presence is the signal.** `kind = 0` is the proto3 default, so a cell `ChainRef` may carry no field
   bytes at all (`EA 01 00` on the wire: tag 29, length 0). A decoder MUST treat a present-but-empty message as
   a cell `ChainRef`, never as absent.
 - **JSON.** Keys `flow_ref` and `chain`, each omitted when absent (a writer never emits `null`). A present `ChainRef`
-  **always writes all four members**, `"kind": 0` included, and a present `FlowRef` all three; a reader MUST
+  **always writes all five members**, `"kind": 0` and `"version": 0` included, and a present `FlowRef` all four
+  (`FlowRef.version` is the CP flow version, attribution only: `>= 1` exactly when `env = "sandbox"`, else
+  `flow_ref_sandbox_version_missing`; on Live `0` before Promote (W5) or `>= 1` after); a reader MUST
   **refuse** an object missing any member (a missing `kind` would otherwise alias the cell chain). Unknown
   members are tolerated, as everywhere in the projection.
 - **Consistency rule (checked by verifiers).** If an event carries both `flow_ref` and a flow-kind (`kind = 2`)
-  `chain`, their `flow_id` and `env` MUST be equal; a difference is `FLOW_REF_CONFLICT`.
+  `chain`, their `flow_id` and `env` MUST be equal, and on `env = "sandbox"` their `version` too (on Live,
+  `chain.version` is 0 and `flow_ref.version` is attribution only); a difference is `FLOW_REF_CONFLICT`.
 - **Redrive.** The `EVENT_REDRIVEN` wrapper **copies** the original's `flow_ref` and does **not** copy its
   `chain`: the wrapper is advisory and unchained, and the original inside `event` keeps its own tag 29.
 - **Every re-encoding path carries both** (`event_to_proto` for `StreamEvents`, the HTTP JSON projection): a
   path that dropped tag 29 would make every downstream verifier read the event as `tenant`-scheme.
-- **Tag 30** is reserved by comment for `ChainManifest chain_manifest` (`chain_bundle` v2). It is neither a
-  placeholder field nor proto `reserved`.
+- **Tag 30** is `ChainManifest chain_manifest` (train 1, `chain_bundle` v2); see §`CHAIN_MANIFEST`.
 
-### Chain key and genesis (`chain_bundle` v1 — normative) — Flows W1
+### Chain key and genesis (`chain_bundle` v2 — normative) — Flows W1, train 1
 
 A chained event's tag 29, its `stream_id` (tag 27) and its `tenant` name one **chain key**:
 
 ```
-ChainKey   = (kind, stream_id, tenant, flow_id, env)
-             kind 0 = cell   : tenant = flow_id = env = ""
-             kind 1 = tenant : tenant ≠ "", flow_id = env = ""
+ChainKey   = (kind, stream_id, tenant, flow_id, env, version)
+             kind 0 = cell   : tenant = flow_id = env = "", version = 0
+             kind 1 = tenant : tenant ≠ "", flow_id = env = "", version = 0
              kind 2 = flow   : tenant ≠ "", flow_id ≠ "", env ∈ {"sandbox", "live"} (exact bytes)
+                               env = "sandbox" ⇒ version ≥ 1 (one chain per flow version)
+                               env = "live"    ⇒ version = 0 (one continuous Live chain per flow)
              stream_id       : a valid delivery stream id (§Delivery stream `stream_id`)
 P(x)       = u32le(len(x)) ‖ x
-genesis(K) = SHA-256( P("seam.audit.chain-genesis.v1") ‖ P([kind]) ‖ P(stream_id) ‖ P(tenant) ‖ P(flow_id) ‖ P(env) )
+V          = P("") when version = 0, else P(u32le(version))       // the version part
+genesis(K) = SHA-256( P("seam.audit.chain-genesis.v2") ‖ P([kind]) ‖ P(stream_id) ‖ P(tenant) ‖ P(flow_id) ‖ P(env) ‖ V )
 ```
 
 - **Every part is framed**, the one-byte kind included (`P([kind]) = 01 00 00 00 ‖ kind`), and an empty part is
   `P("")` = four zero bytes, never omitted. Every preimage therefore starts with
-  `1b 00 00 00 ‖ "seam.audit.chain-genesis.v1"`.
+  `1b 00 00 00 ‖ "seam.audit.chain-genesis.v2"`. The version part is the key's last frame; version `0` is its
+  absent form (`P("")`): apart from the domain frame, the cell, tenant and Live keys frame as a v1 key
+  plus four zero bytes.
 - **A key outside the table refuses** before anything is hashed (rules: `unknown_kind`, `stream_id_invalid`,
-  `cell_key_not_empty`, `tenant_empty`, `tenant_key_has_flow`, `flow_id_empty`, `env_not_sandbox_or_live`).
+  `cell_key_not_empty`, `tenant_empty`, `tenant_key_has_flow`, `flow_id_empty`, `env_not_sandbox_or_live`,
+  `live_key_has_version`, `sandbox_version_missing`; a version on a cell or tenant key is `cell_key_not_empty`
+  / `tenant_key_has_flow`).
 - **The link rule is unchanged** (`checksum = SHA-256(prev_checksum ‖ digest)`). On a `flow-env`-scheme chain
   the first entry's `prev_checksum` is `genesis(K)`, never 32 zero bytes. A verifier derives K from each entry,
   requires one K and `chain.seq` = the entry's index along the chain, and refuses a first entry that does not
@@ -1170,11 +1187,79 @@ genesis(K) = SHA-256( P("seam.audit.chain-genesis.v1") ‖ P([kind]) ‖ P(strea
   at its link.
 - **No writer in W1.** Nothing appends under a chain key yet (the W4 writer). A `tenant`-scheme chain keeps the
   zero genesis and carries no tag 29.
-- **Vectors.** `fixtures/chain/chain_genesis_vectors.json` (the four geneses with preimages and the refusals)
-  and `fixtures/chain/chain_link_vectors.json` (a 3-entry chain per key, a relabel and a wrong-`stream_id`
-  negative), generated by `crates/seam-store/tests/chain_bundle_golden.rs` and pinned by the hub as
-  `chain_bundle` v1. `fixtures/flow_ref_unsealed_vectors.json` (HUB A3) shows tags 28/29 move no sealed byte.
-  `chain_bundle` v2 (tag 30, attestation v3, erasure v2) is a later train.
+- **Vectors (`chain_bundle` v2).** All generated by `crates/seam-store/tests/chain_bundle_golden.rs`
+  (`BLESS_GOLDEN=1`) and pinned by the hub: `fixtures/chain/chain_genesis_vectors.json` (five geneses —
+  cell, tenant, sandbox v1, sandbox v2, live — with preimages and the refusals),
+  `fixtures/chain/chain_link_vectors.json` (a 3-entry chain per key; relabels into Live, into a sibling
+  version, a version on a Live entry, a sandbox entry without one, a wrong `stream_id`),
+  `fixtures/chain/chain_head_attestation_v3_vectors.json`, `fixtures/chain/chain_manifest_vectors.json` and
+  `fixtures/chain/erasure_certificate_v2_vectors.json` (below). Signatures use a published TEST key (seed
+  32 × `0x5e`). `fixtures/flow_ref_unsealed_vectors.json` (HUB A3) shows tags 28/29 move no sealed byte.
+
+### Chain artifacts v2 — attestation v3, `CHAIN_MANIFEST`, erasure certificate v2 (train 1 — normative, NO WRITER YET)
+
+Format only: the runtime builds these bytes (`seam_types::chain`), nothing appends them yet, and this
+build's verifiers (`VerifyPartyAttestation`, `seam-verify`) verify v1/v2 attestations and v1 certificates
+only: they **refuse** an attestation with any of fields 8-12 set and a certificate with any of fields
+8-11 set, never verifying the older bytes while ignoring the newer claims.
+
+**Version dispatch.** An attestation is v3 iff `stream_id` (field 8) is non-empty; a v3 attestation's
+(`chain_kind`, `stream_id`, `tenant`, `flow_id`, `env`, `version`) MUST pass the chain-key table, and any of
+fields 9-12 set with field 8 empty refuses. An erasure certificate is v2 iff `stream_id` (field 8) is
+non-empty; a v2 certificate MUST leave `erased`, `held` and `chain_head` (fields 2, 3, 5) empty — the v2
+signature does not cover them, so any of them set is refused as `v1_fields_set` — and any of fields 9-11
+set with field 8 empty refuses. Attestation v3 has no v1-only field: its preimage covers fields 1-7
+(`tenant` inside the key frames), so `v1_fields_set` does not apply to it. A v3 attestation's entry id (and event id stem) is
+`chain-attest:{kind}:{flow_id}:{env}:{version}:{len}`, `version` always written (0 included), so two
+Sandbox versions at the same length never share an id.
+Every signature is Ed25519 by the issuer key over `SHA-256(preimage)`; every chain-entry digest is
+`SHA-256(P(entry_domain) ‖ P(preimage) ‖ P(signature))`. `K(...)` below is the chain key's frames as in
+genesis (`P([kind]) ‖ P(stream_id) ‖ P(tenant) ‖ P(flow_id) ‖ P(env) ‖ V`), integers LE inside their frame.
+
+```
+attestation v3 = P("seam.audit.chain-head-attestation.v3") ‖ P(le64 attested_len) ‖ P(attested_head)
+                 ‖ P(le64 attested_at) ‖ P(le32 digest_schema) ‖ P(issuer_aid) ‖ K(attested chain)
+  payload: ChainHeadAttestation fields 1-7 plus stream_id = 8, flow_id = 9, env = 10, chain_kind = 11,
+           version = 12 (all omitted on v1/v2); entry domain seam.audit.chain-attest-entry.v2
+
+manifest       = P("seam.audit.chain-manifest.v1") ‖ P(stream_id) ‖ P(tenant) ‖ P(governing_doc_sha256)
+                 ‖ P(le64 governing_generated_at) ‖ P(le64 manifest_at) ‖ P(le32 n)
+                 ‖ n × { P(flow_id) ‖ P(env) ‖ V ‖ P(le64 len) ‖ P(head) ‖ P(le32 state) }
+                 ‖ P(issuer_aid) ‖ P(le32 digest_schema)
+  entry domain seam.audit.chain-manifest-entry.v1
+
+erasure v2     = P("seam.erasure-certificate.v2") ‖ P(tenant) ‖ P(stream_id) ‖ P(subject)
+                 ‖ P(le32 n) ‖ n × { P(decision_id) ‖ P(flow_id) ‖ P(env) ‖ V }        // erased
+                 ‖ P(le32 m) ‖ m × { P(decision_id) ‖ P(flow_id) ‖ P(env) ‖ V }        // held
+                 ‖ P(le64 erased_at) ‖ P(issuer_aid)
+                 ‖ P(le32 h) ‖ h × { P(flow_id) ‖ P(env) ‖ V ‖ P(le64 len) ‖ P(head) }  // chain heads
+  payload: ErasureCertificate fields 1-7 plus stream_id = 8, heads = 9, erased_items = 10,
+           held_items = 11; entry domain seam.audit.erasure-cert.v3
+```
+
+### `CHAIN_MANIFEST` (additive, tag 30 — chained on the tenant chain) — Flows train 1
+
+```
+ChainManifest      { stream_id = 1; tenant = 2; governing_doc_sha256 = 3; governing_generated_at = 4;
+                     manifest_at = 5; repeated ChainManifestEntry chains = 6; issuer_aid = 7;
+                     digest_schema = 8; signature = 9 }
+ChainManifestEntry { flow_id = 1; env = 2; len = 3; head = 4; state = 5; version = 6 }
+```
+
+- The tenant's declared flow chains, signed (fields 1-8, preimage above). It is appended to the **tenant**
+  chain (`chain.kind = 1`), envelope `classification` `Internal`, `namespace` `""`, entry id
+  `chain-manifest:<len>`.
+- `chains` is **strictly ascending** by `flow_id`, then `env` (both bytewise), then `version` (numeric); a
+  duplicate or out-of-order entry refuses (`chains_not_ascending`). `state`: 1 active, 2 retired,
+  3 moved_out, 4 destroyed (else `state_unknown`). A declared-but-empty chain has `len = 0` and
+  `head = genesis(K)` (else `empty_head_not_genesis`). An entry key outside the chain-key table refuses by
+  that table's rule (e.g. `live_key_has_version`); a bad signature is `signature_invalid`.
+- **Erasure v2 structure** (refused before the signature): each item and head key is the tenant chain
+  (empty `flow_id`/`env`, version 0) or passes the chain-key table (its rule names the refusal); `erased`
+  and `held` are each strictly ascending by `decision_id` (bytewise; `items_not_ascending`) and share no
+  decision (`item_in_both_lists`); `heads` is strictly ascending by `flow_id`, `env` (bytewise), then
+  `version` (`heads_not_ascending`), and its first entry is the tenant chain's head after the tombstone
+  (`tenant_head_missing`).
 
 ### `DecisionSealed.governing_config` (additive, payload tag 18 — UNSEALED) — D6
 

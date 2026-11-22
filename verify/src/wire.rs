@@ -126,7 +126,9 @@ pub struct SeamEventPb {
     pub chain: Option<ChainRefPb>,
 }
 
-/// `FlowRef` (envelope tag 28): `{flow_id = 1, rev = 2, env = 3}`.
+/// `FlowRef` (envelope tag 28): `{flow_id = 1, rev = 2, env = 3, version = 4}`. `version` is the CP flow
+/// version: `≥ 1` on sandbox (else [`FLOW_REF_SANDBOX_VERSION_MISSING`]); on live `0` before Promote or
+/// `≥ 1` after. Attribution only, never in any byte.
 #[derive(Clone, PartialEq, Eq, Message)]
 pub struct FlowRefPb {
     #[prost(string, tag = "1")]
@@ -135,10 +137,15 @@ pub struct FlowRefPb {
     pub rev: u64,
     #[prost(string, tag = "3")]
     pub env: String,
+    #[prost(uint32, tag = "4")]
+    pub version: u32,
 }
 
-/// `ChainRef` (envelope tag 29): `{flow_id = 1, env = 2, seq = 3, kind = 4}`; `kind` 0 cell, 1 tenant,
-/// 2 flow.
+/// A sandbox `flow_ref` without a version (`version = 0`) is refused at decode.
+pub const FLOW_REF_SANDBOX_VERSION_MISSING: &str = "flow_ref_sandbox_version_missing";
+
+/// `ChainRef` (envelope tag 29): `{flow_id = 1, env = 2, seq = 3, kind = 4, version = 5}`; `kind` 0 cell,
+/// 1 tenant, 2 flow; `version` is the chain key's version part (`≥ 1` exactly on a sandbox flow chain).
 #[derive(Clone, PartialEq, Eq, Message)]
 pub struct ChainRefPb {
     #[prost(string, tag = "1")]
@@ -149,6 +156,8 @@ pub struct ChainRefPb {
     pub seq: u64,
     #[prost(uint32, tag = "4")]
     pub kind: u32,
+    #[prost(uint32, tag = "5")]
+    pub version: u32,
 }
 
 /// The JSON projection of tag 28. Every member is REQUIRED (no `serde(default)`): a reader refuses an
@@ -158,16 +167,18 @@ pub struct FlowRefJson {
     pub flow_id: String,
     pub rev: u64,
     pub env: String,
+    pub version: u32,
 }
 
-/// The JSON projection of tag 29. All four members REQUIRED, `"kind": 0` included: a missing `kind`
-/// would otherwise alias the cell chain.
+/// The JSON projection of tag 29. All five members REQUIRED, `"kind": 0` and `"version": 0` included: a
+/// missing `kind` would otherwise alias the cell chain, a missing `version` the live one.
 #[derive(Deserialize)]
 pub struct ChainRefJson {
     pub flow_id: String,
     pub env: String,
     pub seq: u64,
     pub kind: u32,
+    pub version: u32,
 }
 
 /// The `CHAIN_HEAD_ATTESTATION` payload (tag 22), transcribed from `seam-event.v1.md` §CHAIN_HEAD_ATTESTATION.
@@ -820,8 +831,21 @@ impl Event {
     /// Decode one line: the JSON projection, or base64-encoded protobuf.
     ///
     /// A consumer holds whichever the transport gave them — a webhook sink has JSON, an outbox relay has
-    /// protobuf — and the verdict must not depend on which.
+    /// protobuf — and the verdict must not depend on which. A sandbox `flow_ref` without a version is
+    /// refused ([`FLOW_REF_SANDBOX_VERSION_MISSING`]).
     pub fn parse(line: &str) -> Result<Self, String> {
+        let e = Self::decode_line(line)?;
+        match &e.flow_ref {
+            Some(f) if f.env == "sandbox" && f.version == 0 => Err(format!(
+                "{FLOW_REF_SANDBOX_VERSION_MISSING}: event_id {} flow_ref names sandbox flow {:?} with \
+                 no version",
+                e.event_id, f.flow_id
+            )),
+            _ => Ok(e),
+        }
+    }
+
+    fn decode_line(line: &str) -> Result<Self, String> {
         let line = line.trim();
         if line.starts_with('{') {
             let j: SeamEventJson =
@@ -951,12 +975,14 @@ impl Event {
                     flow_id: f.flow_id,
                     rev: f.rev,
                     env: f.env,
+                    version: f.version,
                 }),
                 chain: j.chain.map(|c| ChainRefPb {
                     flow_id: c.flow_id,
                     env: c.env,
                     seq: c.seq,
                     kind: c.kind,
+                    version: c.version,
                 }),
                 cert: cert.transpose()?,
                 attestation: attestation.transpose()?,
@@ -1379,7 +1405,17 @@ mod tests {
 
         // Layer 2 — the spec itself. Same source, same override, same no-skip rule as the advisory
         // tripwire; see `spec_event_kinds` for why there is no environment in which this cannot read.
-        let (spec_path, spec_set) = spec_event_kinds(|_| true);
+        //
+        // The one recorded gap: `CHAIN_MANIFEST` (chain_bundle v2, W4 train 1). Its payload check is W5
+        // multi-chain verify; until then it is linked by field presence and disclosed as unverified
+        // content (`ChainReport::unmodelled`), never folded into a green claim. No writer emits it
+        // before the partner scheme switch. Remove the entry when W5 models the payload.
+        const RECORDED_UNMODELLED: &[&str] = &["CHAIN_MANIFEST"];
+        let (spec_path, spec_set) = spec_event_kinds(|l| {
+            !RECORDED_UNMODELLED
+                .iter()
+                .any(|k| l.trim_start().starts_with(k))
+        });
         let ours: BTreeSet<String> = MODELLED_KINDS.iter().map(|s| (*s).to_owned()).collect();
         assert_eq!(
             ours,
