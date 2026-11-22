@@ -16,6 +16,19 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Changed — `seam-verify` reads chain_bundle v2 (Flows W4 train 1, seam#264)
+
+- **Breaking for a v1 keyed chain, and deliberately so.** The chain key gains a u32 `version` part framed
+  last, and the genesis domain is `seam.audit.chain-genesis.v2`, so every `genesis(K)` moves. New key
+  refusals `live_key_has_version` and `sandbox_version_missing`; a version on a cell or tenant key is
+  `cell_key_not_empty` / `tenant_key_has_flow`. No producer emitted tag 29 before this train.
+- Tag 29 `chain` gains `version` (field 5) and tag 28 `flow_ref` gains `version` (field 4), both REQUIRED
+  in JSON. A sandbox `flow_ref` with version 0 is refused (`flow_ref_sandbox_version_missing`).
+  `FLOW_REF_CONFLICT` compares the version on sandbox only. `--json` `"chains"` entries carry `version`.
+- `conformance/chain/` re-pinned to the hub's chain_bundle v2 vectors, and
+  `conformance/flow_ref_unsealed_vectors.json` added (case f). The vendored `seam-event.v1.md` tracks
+  seam-runtime#1864. `CHAIN_MANIFEST` is a recorded content-coverage gap until W5.
+
 ## 0.113.1 — 2026-11-22
 
 ### Added — v6 voter-record vector (Flows W3, train step 2)

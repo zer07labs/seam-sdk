@@ -139,20 +139,27 @@ are a `"warnings"` array, present only when non-empty. Treat a `flow_ref` as a l
 as something this tool proved. (Checking `flow_ref.env` against the env a v6 Commitment seals needs the
 record's env, which the event stream does not carry: not checked yet.)
 
-#### Chain-keyed chains (`chain`, tag 29) — `chain_bundle` v1
+#### Chain-keyed chains (`chain`, tag 29) — `chain_bundle` v2
 
-A chained event that carries `chain` (`{flow_id, env, seq, kind}`; present-but-empty is the cell chain) is
-walked on the chain its key names, `K = (kind, stream_id, tenant, flow_id, env)`, starting at
-`genesis(K)` (a domain-separated SHA-256 of K, never 32 zero bytes). `chain.seq` must be the entry's
-position on that chain, and a key outside the table (unknown kind, invalid `stream_id`, a flow chain with
-an env other than `sandbox`/`live`, …) is refused. An entry relabelled into a sibling chain, or re-stamped
-onto another stream, fails at its first link. An event without `chain` stays on the legacy rule: one chain
-per tenant, from the zero genesis. Each keyed chain is printed (JSON `"chains"`, present only when
-non-empty).
+A chained event that carries `chain` (`{flow_id, env, seq, kind, version}`; present-but-empty is the cell
+chain) is walked on the chain its key names, `K = (kind, stream_id, tenant, flow_id, env, version)`,
+starting at `genesis(K)` (a domain-separated SHA-256 of K, domain `seam.audit.chain-genesis.v2`, the u32
+version framed last; never 32 zero bytes). `chain.seq` must be the entry's position on that chain, and a
+key outside the table (unknown kind, invalid `stream_id`, a flow chain with an env other than
+`sandbox`/`live`, a version on a cell, tenant or live key (`live_key_has_version`), a sandbox key without
+one (`sandbox_version_missing`), …) is refused. An entry relabelled into a sibling chain or sibling
+version, or re-stamped onto another stream, fails at its first link. An event without `chain` stays on the
+legacy rule: one chain per tenant, from the zero genesis. Each keyed chain is printed (JSON `"chains"`,
+with its `version`, present only when non-empty).
+
+`flow_ref.version` is required in JSON and must be `≥ 1` on sandbox (else the event is refused,
+`flow_ref_sandbox_version_missing`); on live it is `0` before Promote or the promoted version after.
+`FLOW_REF_CONFLICT` compares the version against the chain on sandbox only.
 
 This build checks **integrity only** for keyed chains. Authenticity over them needs attestation v3
-(`chain_bundle` v2), so `--issuer` and `bundle` refuse a window that contains one rather than vouch for
-it. No producer emits tag 29 yet.
+(W5 multi-chain verify), so `--issuer` and `bundle` refuse a window that contains one rather than vouch
+for it. No producer emits tag 29 yet. `CHAIN_MANIFEST` events are linked but their payload is not
+modelled yet: they are disclosed as unverified content.
 
 #### AUTHENTICITY — `chain <FILE> --issuer <AID>`
 

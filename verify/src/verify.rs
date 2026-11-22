@@ -264,8 +264,8 @@ pub fn dedup_with_warnings(events: Vec<Event>) -> Result<Dedup, String> {
     let show = |f: &Option<crate::wire::FlowRefPb>| match f {
         None => "absent".to_string(),
         Some(f) => format!(
-            "{{flow_id {:?}, rev {}, env {:?}}}",
-            f.flow_id, f.rev, f.env
+            "{{flow_id {:?}, rev {}, env {:?}, version {}}}",
+            f.flow_id, f.rev, f.env, f.version
         ),
     };
 
@@ -286,11 +286,14 @@ pub fn dedup_with_warnings(events: Vec<Event>) -> Result<Dedup, String> {
             continue;
         }
         if let (Some(f), Some(c)) = (&e.flow_ref, &e.chain) {
-            if c.kind == 2 && (f.flow_id != c.flow_id || f.env != c.env) {
+            // The version is compared on sandbox only: a live flow_ref carries the promoted version
+            // (or 0 before Promote) while the live chain key never carries one.
+            let version_differs = f.env == "sandbox" && f.version != c.version;
+            if c.kind == 2 && (f.flow_id != c.flow_id || f.env != c.env || version_differs) {
                 warnings.push(format!(
-                    "{FLOW_REF_CONFLICT} — event_id {} (seq {}): flow_ref names flow {:?} env {:?}, \
-                     but its flow chain (tag 29) is flow {:?} env {:?}.",
-                    e.event_id, e.seq, f.flow_id, f.env, c.flow_id, c.env
+                    "{FLOW_REF_CONFLICT} — event_id {} (seq {}): flow_ref names flow {:?} env {:?} \
+                     version {}, but its flow chain (tag 29) is flow {:?} env {:?} version {}.",
+                    e.event_id, e.seq, f.flow_id, f.env, f.version, c.flow_id, c.env, c.version
                 ));
             }
         }
@@ -397,12 +400,19 @@ pub fn chain_by_tenant(
         // `chain_bundle` v1 (RTC C4): a chained event carrying tag 29 is on the chain its key names, from
         // `genesis(K)`. Without tag 29 it is `tenant`-scheme and falls through to the legacy walk below.
         if let Some(cref) = &e.chain {
-            let key = ChainKey::new(cref.kind, &e.stream_id, &e.tenant, &cref.flow_id, &cref.env)
-                .map_err(|rule| {
+            let key = ChainKey::new(
+                cref.kind,
+                &e.stream_id,
+                &e.tenant,
+                &cref.flow_id,
+                &cref.env,
+                cref.version,
+            )
+            .map_err(|rule| {
                 format!(
-                    "seq {}: INVALID CHAIN KEY — tag 29 (kind {}, flow {:?}, env {:?}) with \
-                         stream_id {:?} and tenant {:?} names no chain ({rule}).",
-                    e.seq, cref.kind, cref.flow_id, cref.env, e.stream_id, e.tenant
+                    "seq {}: INVALID CHAIN KEY — tag 29 (kind {}, flow {:?}, env {:?}, version {}) \
+                     with stream_id {:?} and tenant {:?} names no chain ({rule}).",
+                    e.seq, cref.kind, cref.flow_id, cref.env, cref.version, e.stream_id, e.tenant
                 )
             })?;
             let genesis = key.genesis().to_vec();

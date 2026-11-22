@@ -1,12 +1,13 @@
-//! `chain_bundle` v1 (RTC C4) against the runtime's chain vectors, copied byte for byte from seam-runtime
+//! `chain_bundle` v2 (W4 train 1, seam#264) against the runtime's chain vectors, copied byte for byte from seam-runtime
 //! `fixtures/chain/` into `conformance/chain/`:
 //!
 //! * `chain_genesis_vectors.json` — every `genesis` row (preimage and digest), every `key_refusal` row, and
-//!   the `genesis_mismatch` row (a claimed zero genesis is not `genesis(K)`);
+//!   the `genesis_mismatch` row (a claimed zero genesis is not `genesis(K)`); each refusal by its rule name;
 //! * `chain_link_vectors.json` — every `chain` row decoded from BOTH projections (JSON and pb must give the
 //!   same event), walked by the verifier from `genesis(K)` to `head_hex`, each `DECISION_SEALED` digest
 //!   recomputed as record digest v4 (the `AUDIT_ENTRY` digests are opaque stand-ins, linked only, as the
-//!   file's `rule` says); and every `chain_refusal` row refused at its `fails_at` entry.
+//!   file's `rule` says); and every `chain_refusal` row refused at its `fails_at` entry, by its rule;
+//! * `../conformance/flow_ref_unsealed_vectors.json` case f — the FlowRef version rule.
 //!
 //! Reader scope is decode, keying and genesis (W2). The V-checks beyond that are W5 (see `src/chain_key.rs`).
 
@@ -33,13 +34,14 @@ fn key(k: &Value) -> Result<ChainKey, &'static str> {
         k["tenant"].as_str().unwrap(),
         k["flow_id"].as_str().unwrap(),
         k["env"].as_str().unwrap(),
+        k["version"].as_u64().unwrap() as u32,
     )
 }
 
 #[test]
 fn every_genesis_row_matches() {
     let v = load("chain_genesis_vectors.json");
-    assert_eq!(v["bundle_version"], 1);
+    assert_eq!(v["bundle_version"], 2);
     let cases = v["cases"].as_array().unwrap();
     let (mut genesis, mut refusals, mut mismatch) = (0, 0, 0);
     for row in cases {
@@ -53,7 +55,11 @@ fn every_genesis_row_matches() {
             }
             "key_refusal" => {
                 refusals += 1;
-                assert!(key(&row["key"]).is_err(), "{name}: must refuse");
+                assert_eq!(
+                    key(&row["key"]),
+                    Err(row["rule"].as_str().unwrap()),
+                    "{name}"
+                );
             }
             "genesis_mismatch" => {
                 mismatch += 1;
@@ -67,8 +73,7 @@ fn every_genesis_row_matches() {
             other => panic!("{name}: unknown type {other}"),
         }
     }
-    assert_eq!((genesis, mismatch), (4, 1));
-    assert!(refusals > 0);
+    assert_eq!((genesis, refusals, mismatch), (5, 18, 1));
 }
 
 /// Decode one entry from both projections and require the same canonical event.
@@ -127,7 +132,7 @@ fn every_chain_row_walks_from_genesis_to_its_head() {
         // The sole-chain mirror reports the same head at the top level.
         assert_eq!(hex(&r.head), row["head_hex"], "{name}");
     }
-    assert_eq!(walked, 4);
+    assert_eq!(walked, 5);
 }
 
 #[test]
@@ -154,14 +159,19 @@ fn every_chain_refusal_fails_at_its_entry() {
             err.starts_with(&format!("seq {}:", events[at].seq)),
             "{name}: must fail at entry {at}: {err}"
         );
-        assert!(
-            err.contains("NOT GENESIS"),
-            "{name}: genesis_mismatch: {err}"
-        );
+        let rule = row["rule"].as_str().unwrap();
+        if rule == "genesis_mismatch" {
+            assert!(err.contains("NOT GENESIS"), "{name}: {err}");
+        } else {
+            assert!(
+                err.contains("INVALID CHAIN KEY") && err.contains(&format!("({rule})")),
+                "{name}: {rule}: {err}"
+            );
+        }
         // The prefix before the failing entry still walks.
         assert!(chain(&events[..at]).is_ok(), "{name}");
     }
-    assert_eq!(refused, 2);
+    assert_eq!(refused, 5);
 }
 
 fn flow_live_lines() -> Vec<Value> {
@@ -183,12 +193,15 @@ fn flow_live_lines() -> Vec<Value> {
 
 /// The spec's consistency rule: a `flow_ref` naming another flow/env than the event's flow-kind chain is a
 /// `FLOW_REF_CONFLICT` warning (flow_ref is unsealed); a matching one is silent. The chain still verifies.
+/// On live the version is not compared (a promoted live ref carries one, the live key never does).
 #[test]
 fn a_flow_ref_disagreeing_with_its_flow_chain_warns() {
     use seam_verify::verify::{dedup_with_warnings, FLOW_REF_CONFLICT};
     let mut lines = flow_live_lines();
-    lines[0]["flow_ref"] = serde_json::json!({"flow_id": "flow-fraud", "rev": 3, "env": "live"});
-    lines[1]["flow_ref"] = serde_json::json!({"flow_id": "flow-fraud", "rev": 3, "env": "sandbox"});
+    lines[0]["flow_ref"] =
+        serde_json::json!({"flow_id": "flow-fraud", "rev": 3, "env": "live", "version": 5});
+    lines[1]["flow_ref"] =
+        serde_json::json!({"flow_id": "flow-fraud", "rev": 3, "env": "sandbox", "version": 1});
     let events: Vec<Event> = lines
         .iter()
         .map(|l| Event::parse(&l.to_string()).unwrap())
@@ -197,6 +210,70 @@ fn a_flow_ref_disagreeing_with_its_flow_chain_warns() {
     assert_eq!(d.warnings.len(), 1, "{:?}", d.warnings);
     assert!(d.warnings[0].starts_with(FLOW_REF_CONFLICT));
     assert!(chain(&d.events).is_ok());
+}
+
+/// On sandbox the version is compared: a ref naming sibling version 1 on the version-2 chain warns.
+#[test]
+fn a_sandbox_flow_ref_naming_another_version_warns() {
+    use seam_verify::verify::{dedup_with_warnings, FLOW_REF_CONFLICT};
+    let v = load("chain_link_vectors.json");
+    let row = v["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "flow_sandbox_v2")
+        .unwrap();
+    let ref_of = |version: u32| serde_json::json!({"flow_id": "flow-fraud", "rev": 3, "env": "sandbox", "version": version});
+    let events: Vec<Event> = row["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let mut l: Value = serde_json::from_str(e["json"].as_str().unwrap()).unwrap();
+            l["flow_ref"] = ref_of(if i == 0 { 1 } else { 2 });
+            Event::parse(&l.to_string()).unwrap()
+        })
+        .collect();
+    let d = dedup_with_warnings(events).unwrap();
+    assert_eq!(d.warnings.len(), 1, "{:?}", d.warnings);
+    assert!(d.warnings[0].starts_with(FLOW_REF_CONFLICT));
+    assert!(chain(&d.events).is_ok());
+}
+
+/// `flow_ref_unsealed_vectors.json` case f: `FlowRef.version ≥ 1` exactly when env = sandbox; live may
+/// carry 0 or a promoted version. Each ref stamped on a real event and decoded through the JSON reader.
+#[test]
+fn the_flow_ref_version_rule_matches_case_f() {
+    use seam_verify::wire::FLOW_REF_SANDBOX_VERSION_MISSING;
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../conformance/flow_ref_unsealed_vectors.json");
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap();
+    let f = v["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["type"] == "flow_ref_version_rule")
+        .unwrap();
+    let base = flow_live_lines().remove(0);
+    let mut n = 0;
+    for r in f["refs"].as_array().unwrap() {
+        n += 1;
+        let mut l = base.clone();
+        l["flow_ref"] = r["flow_ref"].clone();
+        let got = Event::parse(&l.to_string());
+        match r["refusal"].as_str() {
+            None => assert_eq!(
+                got.unwrap().flow_ref.unwrap().version as u64,
+                r["flow_ref"]["version"].as_u64().unwrap()
+            ),
+            Some(rule) => {
+                assert_eq!(rule, FLOW_REF_SANDBOX_VERSION_MISSING);
+                assert!(got.err().unwrap().starts_with(rule));
+            }
+        }
+    }
+    assert_eq!(n, 4);
 }
 
 /// Authenticity over a chain-keyed chain needs attestation v3 (chain_bundle v2, W5): `--issuer` fails
@@ -221,6 +298,7 @@ fn issuer_over_a_chain_keyed_window_fails_closed() {
     let (code, v) = run(&[]);
     assert_eq!(code, 0, "{v}");
     assert_eq!(v["chains"][0]["kind"], 2);
+    assert_eq!(v["chains"][0]["version"], 0);
     assert_eq!(v["chains"][0]["links"], 3);
     let (code, v) = run(&[
         "--issuer",

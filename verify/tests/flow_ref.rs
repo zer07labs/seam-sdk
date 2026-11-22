@@ -35,7 +35,8 @@ fn golden() -> Vec<Value> {
 
 fn stamp(v: &Value, flow_id: &str, rev: u64, env: &str) -> Value {
     let mut v = v.clone();
-    v["flow_ref"] = json!({"flow_id": flow_id, "rev": rev, "env": env});
+    let version = u32::from(env == "sandbox");
+    v["flow_ref"] = json!({"flow_id": flow_id, "rev": rev, "env": env, "version": version});
     v
 }
 
@@ -157,7 +158,7 @@ fn flow_ref_decodes_from_both_projections_and_json_requires_every_member() {
     assert_eq!(e.bytes, Event::parse(&g[0].to_string()).unwrap().bytes);
     assert!(e.chain.is_none(), "no tag 29 → legacy tenant rule");
 
-    for missing in ["flow_id", "rev", "env"] {
+    for missing in ["flow_id", "rev", "env", "version"] {
         let mut v = stamp(&g[0], "flow-fraud", 7, "live");
         v["flow_ref"].as_object_mut().unwrap().remove(missing);
         assert!(
